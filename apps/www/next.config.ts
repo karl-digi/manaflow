@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  experimental: {
+    instrumentationHook: true,
+  },
   serverExternalPackages: ["morphcloud", "ssh2", "node-ssh", "cpu-features"],
   webpack: (config, { isServer }) => {
     if (isServer) {
