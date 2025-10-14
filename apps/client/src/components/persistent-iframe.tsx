@@ -9,6 +9,7 @@ import {
 import { createPortal } from "react-dom";
 
 import { usePersistentIframe } from "../hooks/usePersistentIframe";
+import { useIframePreflightStream } from "../hooks/useIframePreflightStream";
 import { cn } from "@/lib/utils";
 
 export type PersistentIframeStatus = "loading" | "loaded" | "error";
@@ -36,6 +37,17 @@ interface PersistentIframeProps {
 }
 
 type ScrollTarget = HTMLElement | Window;
+
+const MORPH_HOST_REGEX = /^port-(\d+)-morphvm-([^.]+)\.http\.cloud\.morph\.so$/;
+
+function isMorphUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return MORPH_HOST_REGEX.test(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
 
 interface IframePreflightResult {
   ok: boolean;
@@ -139,6 +151,22 @@ export function PersistentIframe({
   const loadTimeoutRef = useRef<number | null>(null);
   const preflightAbortRef = useRef<AbortController | null>(null);
 
+  // Determine if this is a morph URL that needs resume support
+  const useMorphStream = preflight && isMorphUrl(src);
+
+  // Use streaming preflight for morph URLs
+  const morphPreflightState = useIframePreflightStream({
+    url: src,
+    enabled: useMorphStream,
+    onReady: () => {
+      // Preflight ready doesn't mean iframe loaded yet
+      // We'll handle that in the iframe's onLoad
+    },
+    onError: (error) => {
+      handleError(error);
+    },
+  });
+
   useEffect(() => {
     setStatus("loading");
   }, [persistKey, src]);
@@ -230,6 +258,11 @@ export function PersistentIframe({
       return;
     }
 
+    // Skip preflight for morph URLs - handled by streaming hook
+    if (useMorphStream) {
+      return;
+    }
+
     preflightAbortRef.current?.abort();
     const controller = new AbortController();
     preflightAbortRef.current = controller;
@@ -305,7 +338,7 @@ export function PersistentIframe({
         preflightAbortRef.current = null;
       }
     };
-  }, [handleError, persistKey, preflight, src]);
+  }, [handleError, persistKey, preflight, src, useMorphStream]);
 
   const showLoadingOverlay = effectiveStatus === "loading" && loadingFallback;
   const showErrorOverlay = effectiveStatus === "error" && errorFallback;
@@ -416,6 +449,30 @@ export function PersistentIframe({
   }, [clearLoadTimeout]);
 
   const overlayElement = overlayRef.current;
+
+  // Render custom loading message for morph resume states
+  let customLoadingNode: ReactNode | null = null;
+  if (useMorphStream && showLoadingOverlay) {
+    if (morphPreflightState.status === "resuming-iframe") {
+      customLoadingNode = (
+        <div className="flex flex-col items-center gap-2">
+          <div className="text-sm text-neutral-700 dark:text-neutral-300">
+            Resuming instance...
+          </div>
+          <div className="text-xs text-neutral-500 dark:text-neutral-400">
+            Attempt {morphPreflightState.attempt} of {morphPreflightState.maxAttempts}
+          </div>
+        </div>
+      );
+    } else if (morphPreflightState.status === "instance-not-found") {
+      customLoadingNode = (
+        <div className="text-sm text-neutral-700 dark:text-neutral-300">
+          Instance not found
+        </div>
+      );
+    }
+  }
+
   const overlayContent = showErrorOverlay
     ? {
         node: errorFallback,
@@ -426,7 +483,7 @@ export function PersistentIframe({
       }
     : showLoadingOverlay
       ? {
-          node: loadingFallback,
+          node: customLoadingNode || loadingFallback,
           className: cn(
             "pointer-events-none flex h-full w-full items-center justify-center bg-neutral-50 dark:bg-neutral-950",
             loadingClassName,
