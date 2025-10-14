@@ -371,7 +371,7 @@ async def _expose_standard_ports(
     instance: Instance,
     console: Console,
 ) -> dict[int, str]:
-    ports = [EXEC_HTTP_PORT, 39376, 39377, VSCODE_HTTP_PORT, 39379, VNC_HTTP_PORT, CDP_HTTP_PORT]
+    ports = [EXEC_HTTP_PORT, 39376, 39377, VSCODE_HTTP_PORT, 39379, VNC_HTTP_PORT, CDP_HTTP_PORT, 39382]
     console.info("Exposing standard HTTP services...")
 
     async def _expose(port: int) -> tuple[int, str]:
@@ -1660,8 +1660,27 @@ async def task_build_cmux_proxy(ctx: TaskContext) -> None:
 
 
 @registry.task(
+    name="build-cmux-xterm",
+    deps=("upload-repo", "install-rust-toolchain"),
+    description="Build cmux-xterm binary via cargo install",
+)
+async def task_build_cmux_xterm(ctx: TaskContext) -> None:
+    repo = shlex.quote(ctx.remote_repo_root)
+    cmd = textwrap.dedent(
+        f"""
+        export RUSTUP_HOME=/usr/local/rustup
+        export CARGO_HOME=/usr/local/cargo
+        export PATH="${{CARGO_HOME}}/bin:$PATH"
+        cd {repo}
+        cargo install --path crates/cmux-xterm --locked --force
+        """
+    )
+    await ctx.run("build-cmux-xterm", cmd, timeout=60 * 30)
+
+
+@registry.task(
     name="link-rust-binaries",
-    deps=("build-env-binaries", "build-cmux-proxy"),
+    deps=("build-env-binaries", "build-cmux-proxy", "build-cmux-xterm"),
     description="Symlink built Rust binaries into /usr/local/bin",
 )
 async def task_link_rust_binaries(ctx: TaskContext) -> None:
@@ -1670,6 +1689,7 @@ async def task_link_rust_binaries(ctx: TaskContext) -> None:
         install -m 0755 /usr/local/cargo/bin/envd /usr/local/bin/envd
         install -m 0755 /usr/local/cargo/bin/envctl /usr/local/bin/envctl
         install -m 0755 /usr/local/cargo/bin/cmux-proxy /usr/local/bin/cmux-proxy
+        install -m 0755 /usr/local/cargo/bin/cmux-xterm /usr/local/bin/cmux-xterm
         """
     )
     await ctx.run("link-rust-binaries", cmd)
@@ -1987,6 +2007,26 @@ async def task_check_worker(ctx: TaskContext) -> None:
         """
     )
     await ctx.run("check-worker", cmd)
+
+
+@registry.task(
+    name="check-cmux-xterm",
+    deps=("link-rust-binaries",),
+    description="Verify cmux-xterm binary is installed and working",
+)
+async def task_check_cmux_xterm(ctx: TaskContext) -> None:
+    cmd = textwrap.dedent(
+        """
+        set -euo pipefail
+        if ! command -v cmux-xterm >/dev/null 2>&1; then
+          echo "ERROR: cmux-xterm binary not found in PATH" >&2
+          exit 1
+        fi
+        cmux-xterm --version || cmux-xterm --help >/dev/null 2>&1 || true
+        echo "cmux-xterm binary is installed"
+        """
+    )
+    await ctx.run("check-cmux-xterm", cmd)
 
 
 async def verify_devtools_via_exposed_url(
