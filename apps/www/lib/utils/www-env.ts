@@ -18,6 +18,9 @@ export const env = createEnv({
     GEMINI_API_KEY: z.string().min(1).optional(),
     ANTHROPIC_API_KEY: z.string().min(1),
     CMUX_TASK_RUN_JWT_SECRET: z.string().min(1),
+    AXIOM_API_TOKEN: z.string().min(1).optional(),
+    AXIOM_DATASET: z.string().min(1).optional(),
+    AXIOM_DOMAIN: z.string().min(1).optional(),
   },
   client: {
     NEXT_PUBLIC_STACK_PROJECT_ID: z.string().min(1),

@@ -21,6 +21,7 @@ import {
   iframePreflightRouter,
 } from "@/lib/routes/index";
 import { stackServerApp } from "@/lib/utils/stack";
+import { context as otelContext, SpanStatusCode, trace } from "@opentelemetry/api";
 import { swaggerUI } from "@hono/swagger-ui";
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { cors } from "hono/cors";
@@ -47,6 +48,39 @@ const app = new OpenAPIHono({
     }
   },
 }).basePath("/api");
+
+const tracer = trace.getTracer("cmux-www-hono");
+
+app.use("*", async (c, next) => {
+  const spanName = `${c.req.method} ${c.req.path}`;
+  const span = tracer.startSpan(spanName, {
+    attributes: {
+      "http.method": c.req.method,
+      "http.route": c.req.path,
+      "http.target": c.req.path,
+      "http.url": c.req.url,
+    },
+  });
+
+  const spanContext = trace.setSpan(otelContext.active(), span);
+
+  return otelContext.with(spanContext, async () => {
+    try {
+      await next();
+      const status = c.res.status ?? 200;
+      span.setAttribute("http.status_code", status);
+      if (status >= 400) {
+        span.setStatus({ code: SpanStatusCode.ERROR });
+      }
+    } catch (error) {
+      span.recordException(error as Error);
+      span.setStatus({ code: SpanStatusCode.ERROR });
+      throw error;
+    } finally {
+      span.end();
+    }
+  });
+});
 
 // Debug middleware
 app.use("*", async (c, next) => {
