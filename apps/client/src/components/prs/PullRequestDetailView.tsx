@@ -5,7 +5,7 @@ import { gitDiffQueryOptions } from "@/queries/git-diff";
 import { api } from "@cmux/convex/api";
 import { useQuery as useRQ, useMutation } from "@tanstack/react-query";
 import { useQuery as useConvexQuery } from "convex/react";
-import { ExternalLink, X, Check, Circle, Clock, AlertCircle, Loader2, ChevronRight, ChevronDown, Copy, GitBranch } from "lucide-react";
+import { ExternalLink, X, Check, Circle, Clock, AlertCircle, Loader2, ChevronRight, ChevronDown, Copy, GitBranch, FolderTree } from "lucide-react";
 import { Suspense, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useClipboard } from "@mantine/hooks";
@@ -28,6 +28,8 @@ type DiffControls = {
   totalDeletions: number;
   expandChecks?: () => void;
   collapseChecks?: () => void;
+  toggleFileTree?: () => void;
+  fileTreeVisible?: boolean;
 };
 
 type AdditionsAndDeletionsProps = {
@@ -588,6 +590,16 @@ export function PullRequestDetailView({
               </div>
 
               <div className="col-start-3 row-start-1 row-span-2 self-center flex items-center gap-2 shrink-0">
+                {diffControls?.toggleFileTree && (
+                  <button
+                    onClick={diffControls.toggleFileTree}
+                    className="flex items-center gap-1.5 px-3 py-1 h-[26px] bg-neutral-200 dark:bg-neutral-800 text-neutral-900 dark:text-white border border-neutral-300 dark:border-neutral-700 rounded hover:bg-neutral-300 dark:hover:bg-neutral-700 font-medium text-xs select-none whitespace-nowrap transition-colors"
+                    title={diffControls.fileTreeVisible ? "Hide file tree" : "Show file tree"}
+                  >
+                    <FolderTree className="w-3.5 h-3.5" />
+                    {diffControls.fileTreeVisible ? "Hide" : "Show"} Files
+                  </button>
+                )}
                 {currentPR.state === "open" && !currentPR.merged && (
                   <>
                     <MergeButton

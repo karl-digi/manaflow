@@ -35,6 +35,7 @@ import {
   Crown,
   EllipsisVertical,
   ExternalLink,
+  FolderTree,
   GitBranch,
   GitMerge,
   Trash2,
@@ -67,6 +68,8 @@ interface TaskDetailHeaderProps {
   taskRunId: Id<"taskRuns">;
   onExpandAll?: () => void;
   onCollapseAll?: () => void;
+  onToggleFileTree?: () => void;
+  fileTreeVisible?: boolean;
   teamSlugOrId: string;
 }
 
@@ -199,6 +202,8 @@ export function TaskDetailHeader({
   taskRunId,
   onExpandAll,
   onCollapseAll,
+  onToggleFileTree,
+  fileTreeVisible,
   teamSlugOrId,
 }: TaskDetailHeaderProps) {
   const navigate = useNavigate();
@@ -301,6 +306,16 @@ export function TaskDetailHeader({
           }
         >
           {/* Removed Latest/Landed toggle; using smart diff */}
+          {onToggleFileTree && (
+            <button
+              onClick={onToggleFileTree}
+              className="flex items-center gap-1.5 px-3 py-1 h-[26px] bg-neutral-200 dark:bg-neutral-800 text-neutral-900 dark:text-white border border-neutral-300 dark:border-neutral-700 rounded hover:bg-neutral-300 dark:hover:bg-neutral-700 font-medium text-xs select-none whitespace-nowrap transition-colors"
+              title={fileTreeVisible ? "Hide file tree" : "Show file tree"}
+            >
+              <FolderTree className="w-3.5 h-3.5" />
+              {fileTreeVisible ? "Hide" : "Show"} Files
+            </button>
+          )}
           <Suspense
             fallback={
               <div className="flex items-center gap-2">

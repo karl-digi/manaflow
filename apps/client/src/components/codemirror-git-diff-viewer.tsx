@@ -30,6 +30,8 @@ export interface GitDiffViewerProps {
     collapseAll: () => void;
     totalAdditions: number;
     totalDeletions: number;
+    toggleFileTree?: () => void;
+    fileTreeVisible?: boolean;
   }) => void;
   classNames?: GitDiffViewerClassNames;
   onFileToggle?: (filePath: string, isExpanded: boolean) => void;
@@ -138,6 +140,8 @@ export function GitDiffViewer({
         collapseAll: () => void;
         totalAdditions: number;
         totalDeletions: number;
+        toggleFileTree?: () => void;
+        fileTreeVisible?: boolean;
       }) => void)
     | null
   >(null);
@@ -150,6 +154,8 @@ export function GitDiffViewer({
       collapseAll,
       totalAdditions,
       totalDeletions,
+      toggleFileTree: undefined,
+      fileTreeVisible: undefined,
     });
     // Totals update when diffs change; avoid including function identities
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -12,6 +12,7 @@ export interface RunDiffSectionProps {
   onControlsChange?: ComponentProps<typeof GitDiffViewer>["onControlsChange"];
   additionalRepoFullNames?: string[];
   withRepoPrefix?: boolean;
+  fileTreeVisible?: boolean;
   metadataByRepo?: Record<
     string,
     {

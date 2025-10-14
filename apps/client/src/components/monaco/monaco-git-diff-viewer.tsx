@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import type { ReplaceDiffEntry } from "@cmux/shared/diff-types";
 
 import { FileDiffHeader } from "../file-diff-header";
+import { DiffFileTree } from "../diff-file-tree";
 import { kitties } from "../kitties";
 import type { GitDiffViewerProps } from "../codemirror-git-diff-viewer";
 export type { GitDiffViewerProps } from "../codemirror-git-diff-viewer";
@@ -993,6 +994,10 @@ export function MonacoGitDiffViewer({
     () => new Set(diffs.map((diff) => diff.filePath)),
   );
 
+  const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
+  const [showFileTree, setShowFileTree] = useState(true);
+  const selectedFileRef = useRef<HTMLDivElement | null>(null);
+
   const fileGroups: MonacoFileGroup[] = useMemo(
     () =>
       diffs.map((diff) => {
@@ -1058,6 +1063,23 @@ export function MonacoGitDiffViewer({
     });
   };
 
+  const handleFileSelect = (filePath: string) => {
+    setSelectedFilePath(filePath);
+
+    // Expand the selected file if it's not already expanded
+    if (!expandedFiles.has(filePath)) {
+      toggleFile(filePath);
+    }
+
+    // Scroll to the file after a brief delay to ensure it's rendered
+    setTimeout(() => {
+      selectedFileRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+      });
+    }, 100);
+  };
+
   const totalAdditions = diffs.reduce((sum, diff) => sum + diff.additions, 0);
   const totalDeletions = diffs.reduce((sum, diff) => sum + diff.deletions, 0);
 
@@ -1067,6 +1089,8 @@ export function MonacoGitDiffViewer({
         collapseAll: () => void;
         totalAdditions: number;
         totalDeletions: number;
+        toggleFileTree?: () => void;
+        fileTreeVisible?: boolean;
       }) => void)
     | null
   >(null);
@@ -1075,16 +1099,22 @@ export function MonacoGitDiffViewer({
     controlsHandlerRef.current = onControlsChange ?? null;
   }, [onControlsChange]);
 
+  const toggleFileTree = () => {
+    setShowFileTree((prev) => !prev);
+  };
+
   useEffect(() => {
     controlsHandlerRef.current?.({
       expandAll,
       collapseAll,
       totalAdditions,
       totalDeletions,
+      toggleFileTree,
+      fileTreeVisible: showFileTree,
     });
     // Totals update when diffs change; avoid including function identities
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [totalAdditions, totalDeletions, diffs.length]);
+  }, [totalAdditions, totalDeletions, diffs.length, showFileTree]);
 
   const editorTheme = theme === "dark" ? "cmux-dark" : "cmux-light";
 
@@ -1117,34 +1147,49 @@ export function MonacoGitDiffViewer({
   use(loaderInitPromise);
 
   return (
-    <div className="grow bg-white dark:bg-neutral-900">
-      <div className="flex flex-col -space-y-[2px]">
-        {fileGroups.map((file, index) => (
-          <MemoMonacoFileDiffRow
-            key={`monaco:${file.filePath}`}
-            file={file}
-            isExpanded={expandedFiles.has(file.filePath)}
-            onToggle={() => toggleFile(file.filePath)}
-            editorTheme={editorTheme}
-            diffOptions={diffOptions}
-            classNames={{
-              ...classNames?.fileDiffRow,
-              button: cn(
-                classNames?.fileDiffRow?.button,
-                index === 0 && "!border-t-0"
-              ),
-            }}
+    <div className="grow bg-white dark:bg-neutral-900 flex min-h-0">
+      {showFileTree && (
+        <div className="w-64 flex-shrink-0 border-r border-neutral-200 dark:border-neutral-800 overflow-y-auto">
+          <DiffFileTree
+            diffs={diffs}
+            selectedFilePath={selectedFilePath}
+            onFileSelect={handleFileSelect}
           />
-        ))}
-        <hr className="border-neutral-200 dark:border-neutral-800" />
-        <div className="px-3 py-6 text-center">
-          <span className="select-none text-xs text-neutral-500 dark:text-neutral-400">
-            You’ve reached the end of the diff!
-          </span>
-          <div className="grid place-content-center">
-            <pre className="mt-2 pb-20 select-none text-left text-[8px] font-mono text-neutral-500 dark:text-neutral-400">
-              {kitty}
-            </pre>
+        </div>
+      )}
+      <div className="flex-1 min-w-0 overflow-y-auto">
+        <div className="flex flex-col -space-y-[2px]">
+          {fileGroups.map((file, index) => (
+            <div
+              key={`monaco:${file.filePath}`}
+              ref={selectedFilePath === file.filePath ? selectedFileRef : null}
+            >
+              <MemoMonacoFileDiffRow
+                file={file}
+                isExpanded={expandedFiles.has(file.filePath)}
+                onToggle={() => toggleFile(file.filePath)}
+                editorTheme={editorTheme}
+                diffOptions={diffOptions}
+                classNames={{
+                  ...classNames?.fileDiffRow,
+                  button: cn(
+                    classNames?.fileDiffRow?.button,
+                    index === 0 && "!border-t-0"
+                  ),
+                }}
+              />
+            </div>
+          ))}
+          <hr className="border-neutral-200 dark:border-neutral-800" />
+          <div className="px-3 py-6 text-center">
+            <span className="select-none text-xs text-neutral-500 dark:text-neutral-400">
+              You've reached the end of the diff!
+            </span>
+            <div className="grid place-content-center">
+              <pre className="mt-2 pb-20 select-none text-left text-[8px] font-mono text-neutral-500 dark:text-neutral-400">
+                {kitty}
+              </pre>
+            </div>
           </div>
         </div>
       </div>

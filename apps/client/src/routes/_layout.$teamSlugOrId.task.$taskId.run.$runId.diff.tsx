@@ -538,6 +538,11 @@ export const Route = createFileRoute(
 function RunDiffPage() {
   const { taskId, teamSlugOrId, runId } = Route.useParams();
   const [diffControls, setDiffControls] = useState<DiffControls | null>(null);
+  const [fileTreeVisible, setFileTreeVisible] = useState(true);
+
+  const toggleFileTree = () => {
+    setFileTreeVisible((prev) => !prev);
+  };
   const task = useQuery(api.tasks.getById, {
     teamSlugOrId,
     id: taskId,
@@ -656,6 +661,8 @@ function RunDiffPage() {
             taskRunId={taskRunId}
             onExpandAll={diffControls?.expandAll}
             onCollapseAll={diffControls?.collapseAll}
+            onToggleFileTree={toggleFileTree}
+            fileTreeVisible={fileTreeVisible}
             teamSlugOrId={teamSlugOrId}
           />
           {task?.text && (
