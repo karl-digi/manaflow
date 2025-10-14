@@ -637,7 +637,7 @@ export const postApiMorphSetupInstanceMutation = (options?: Partial<Options<Post
 export const getApiIframePreflightQueryKey = (options: Options<GetApiIframePreflightData>) => createQueryKey('getApiIframePreflight', options);
 
 /**
- * Validate iframe target availability via server-side preflight.
+ * Validate iframe target availability and resume Morph instances if needed.
  */
 export const getApiIframePreflightOptions = (options: Options<GetApiIframePreflightData>) => {
     return queryOptions({

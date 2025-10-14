@@ -337,23 +337,22 @@ export type SetupInstanceBody = {
     ttlSeconds?: number;
 };
 
-export type IframePreflightResponse = {
-    /**
-     * Whether the target responded successfully to the probe request.
-     */
-    ok: boolean;
-    /**
-     * HTTP status code returned by the target.
-     */
-    status: number | null;
-    /**
-     * HTTP method used for the successful probe.
-     */
-    method: 'HEAD' | 'GET';
-    /**
-     * Error message if the probe failed.
-     */
+export type IframePreflightStreamEvent = {
+    type: 'resume';
+    instanceId: string;
+    status: 'starting' | 'attempt' | 'success' | 'failed' | 'instance_not_found';
+    attempt?: number;
+    attempts?: number;
     error?: string;
+} | {
+    type: 'preflight';
+    ok: boolean;
+    status: number | null;
+    method: 'HEAD' | 'GET';
+    error?: string;
+} | {
+    type: 'error';
+    error: string;
 };
 
 export type CreateEnvironmentResponse = {
@@ -1479,9 +1478,9 @@ export type GetApiIframePreflightErrors = {
 
 export type GetApiIframePreflightResponses = {
     /**
-     * Result of the preflight check for the requested iframe URL.
+     * Streamed status updates for the preflight check.
      */
-    200: IframePreflightResponse;
+    200: IframePreflightStreamEvent;
 };
 
 export type GetApiIframePreflightResponse = GetApiIframePreflightResponses[keyof GetApiIframePreflightResponses];
