@@ -1,0 +1,22 @@
+[Unit]
+Description=Cmux Xterm Backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/opt/app/app.env
+Environment=BIND=0.0.0.0:39382
+Environment=TERM=xterm-256color
+Environment=HOME=/root
+WorkingDirectory=/root/workspace
+LogsDirectory=cmux
+ExecStartPre=/bin/mkdir -p /var/log/cmux
+ExecStart=/bin/bash -lc 'exec /usr/local/bin/cmux-xterm-server'
+Restart=on-failure
+RestartSec=2
+StandardOutput=append:/var/log/cmux/cmux-xterm.log
+StandardError=append:/var/log/cmux/cmux-xterm.log
+
+[Install]
+WantedBy=cmux.target

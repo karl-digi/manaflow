@@ -64,6 +64,7 @@ EXEC_BUILD_OUTPUT_DIR = Path("scripts/execd/dist")
 VSCODE_HTTP_PORT = 39378
 VNC_HTTP_PORT = 39380
 CDP_HTTP_PORT = 39381
+XTERM_HTTP_PORT = 39382
 CDP_PROXY_BINARY_NAME = "cmux-cdp-proxy"
 
 
@@ -371,7 +372,7 @@ async def _expose_standard_ports(
     instance: Instance,
     console: Console,
 ) -> dict[int, str]:
-    ports = [EXEC_HTTP_PORT, 39376, 39377, VSCODE_HTTP_PORT, 39379, VNC_HTTP_PORT, CDP_HTTP_PORT]
+    ports = [EXEC_HTTP_PORT, 39376, 39377, VSCODE_HTTP_PORT, 39379, VNC_HTTP_PORT, CDP_HTTP_PORT, XTERM_HTTP_PORT]
     console.info("Exposing standard HTTP services...")
 
     async def _expose(port: int) -> tuple[int, str]:
@@ -1508,6 +1509,7 @@ async def task_install_systemd_units(ctx: TaskContext) -> None:
         install -Dm0644 {repo}/configs/systemd/cmux-x11vnc.service /usr/lib/systemd/system/cmux-x11vnc.service
         install -Dm0644 {repo}/configs/systemd/cmux-websockify.service /usr/lib/systemd/system/cmux-websockify.service
         install -Dm0644 {repo}/configs/systemd/cmux-cdp-proxy.service /usr/lib/systemd/system/cmux-cdp-proxy.service
+        install -Dm0644 {repo}/configs/systemd/cmux-xterm.service /usr/lib/systemd/system/cmux-xterm.service
         install -Dm0755 {repo}/configs/systemd/bin/configure-openvscode /usr/local/lib/cmux/configure-openvscode
         touch /usr/local/lib/cmux/dockerd.flag
         mkdir -p /var/log/cmux
@@ -1524,6 +1526,7 @@ async def task_install_systemd_units(ctx: TaskContext) -> None:
         ln -sf /usr/lib/systemd/system/cmux-x11vnc.service /etc/systemd/system/cmux.target.wants/cmux-x11vnc.service
         ln -sf /usr/lib/systemd/system/cmux-websockify.service /etc/systemd/system/cmux.target.wants/cmux-websockify.service
         ln -sf /usr/lib/systemd/system/cmux-cdp-proxy.service /etc/systemd/system/cmux.target.wants/cmux-cdp-proxy.service
+        ln -sf /usr/lib/systemd/system/cmux-xterm.service /etc/systemd/system/cmux.target.wants/cmux-xterm.service
         systemctl daemon-reload
         systemctl enable cmux.target
         chown root:root /usr/local
@@ -1660,8 +1663,27 @@ async def task_build_cmux_proxy(ctx: TaskContext) -> None:
 
 
 @registry.task(
+    name="build-cmux-xterm",
+    deps=("upload-repo", "install-rust-toolchain"),
+    description="Build cmux-xterm-server binary via cargo install",
+)
+async def task_build_cmux_xterm(ctx: TaskContext) -> None:
+    repo = shlex.quote(ctx.remote_repo_root)
+    cmd = textwrap.dedent(
+        f"""
+        export RUSTUP_HOME=/usr/local/rustup
+        export CARGO_HOME=/usr/local/cargo
+        export PATH="${{CARGO_HOME}}/bin:$PATH"
+        cd {repo}
+        cargo install --path crates/cmux-xterm/server --locked --force
+        """
+    )
+    await ctx.run("build-cmux-xterm", cmd, timeout=60 * 30)
+
+
+@registry.task(
     name="link-rust-binaries",
-    deps=("build-env-binaries", "build-cmux-proxy"),
+    deps=("build-env-binaries", "build-cmux-proxy", "build-cmux-xterm"),
     description="Symlink built Rust binaries into /usr/local/bin",
 )
 async def task_link_rust_binaries(ctx: TaskContext) -> None:
@@ -1670,6 +1692,7 @@ async def task_link_rust_binaries(ctx: TaskContext) -> None:
         install -m 0755 /usr/local/cargo/bin/envd /usr/local/bin/envd
         install -m 0755 /usr/local/cargo/bin/envctl /usr/local/bin/envctl
         install -m 0755 /usr/local/cargo/bin/cmux-proxy /usr/local/bin/cmux-proxy
+        install -m 0755 /usr/local/cargo/bin/cmux-xterm-server /usr/local/bin/cmux-xterm-server
         """
     )
     await ctx.run("link-rust-binaries", cmd)
@@ -1928,6 +1951,31 @@ async def task_check_vnc(ctx: TaskContext) -> None:
         """
     )
     await ctx.run("check-vnc", cmd)
+
+
+@registry.task(
+    name="check-cmux-xterm",
+    deps=("install-systemd-units",),
+    description="Verify cmux-xterm backend is accessible",
+)
+async def task_check_cmux_xterm(ctx: TaskContext) -> None:
+    cmd = textwrap.dedent(
+        """
+        set -euo pipefail
+        for attempt in $(seq 1 15); do
+          if curl -fsS -o /dev/null http://127.0.0.1:39382/api/tabs; then
+            echo "cmux-xterm endpoint is reachable"
+            exit 0
+          fi
+          sleep 2
+        done
+        echo "ERROR: cmux-xterm endpoint not reachable after 30s" >&2
+        systemctl status cmux-xterm.service --no-pager || true
+        tail -n 80 /var/log/cmux/cmux-xterm.log || true
+        exit 1
+        """
+    )
+    await ctx.run("check-cmux-xterm", cmd)
 
 
 @registry.task(
