@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>cmux VNC</title>
+
+    <!-- noVNC CSS -->
+    <link rel="stylesheet" href="app/styles/base.css">
+
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #000;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        }
+
+        #noVNC_container {
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+        }
+
+        #noVNC_screen {
+            width: 100%;
+            height: 100%;
+        }
+
+        #clipboard-status {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            color: #fff;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            z-index: 1000;
+            opacity: 0;
+            transition: opacity 0.3s;
+            pointer-events: none;
+        }
+
+        #clipboard-status.show {
+            opacity: 1;
+        }
+
+        #clipboard-status.success {
+            background: rgba(34, 197, 94, 0.9);
+        }
+
+        #clipboard-status.error {
+            background: rgba(239, 68, 68, 0.9);
+        }
+    </style>
+</head>
+<body>
+    <div id="noVNC_container">
+        <div id="noVNC_screen">
+            <canvas id="noVNC_canvas" width="640" height="20" style="display: none;">
+                Canvas not supported.
+            </canvas>
+        </div>
+    </div>
+
+    <div id="clipboard-status"></div>
+
+    <!-- noVNC JS -->
+    <script type="module" crossorigin="anonymous">
+        import RFB from './core/rfb.js';
+
+        let rfb;
+        let desktopName;
+
+        // Show status message
+        function showStatus(message, isSuccess = true) {
+            const status = document.getElementById('clipboard-status');
+            status.textContent = message;
+            status.classList.remove('success', 'error');
+            status.classList.add(isSuccess ? 'success' : 'error');
+            status.classList.add('show');
+
+            setTimeout(() => {
+                status.classList.remove('show');
+            }, 2000);
+        }
+
+        // Handle clipboard paste events
+        async function handlePaste(event) {
+            if (!rfb) return;
+
+            try {
+                let text = '';
+
+                // Try to get text from clipboard event
+                if (event.clipboardData) {
+                    text = event.clipboardData.getData('text/plain');
+                }
+
+                // If no text from event, try Clipboard API
+                if (!text && navigator.clipboard && navigator.clipboard.readText) {
+                    try {
+                        text = await navigator.clipboard.readText();
+                    } catch (err) {
+                        console.warn('Could not read from clipboard API:', err);
+                    }
+                }
+
+                if (text) {
+                    // Send text to VNC session
+                    rfb.clipboardPasteFrom(text);
+                    showStatus('Pasted to VNC session', true);
+
+                    // Prevent default paste behavior
+                    if (event.preventDefault) {
+                        event.preventDefault();
+                    }
+                } else {
+                    console.warn('No text found in clipboard');
+                }
+            } catch (err) {
+                console.error('Error handling paste:', err);
+                showStatus('Paste failed', false);
+            }
+        }
+
+        // Connect to VNC server
+        function connect() {
+            const url = new URL(window.location);
+            const params = new URLSearchParams(url.search);
+
+            // Get connection parameters
+            const host = url.hostname;
+            const port = url.port || (url.protocol === 'https:' ? 443 : 80);
+            const path = params.get('path') || 'websockify';
+            const password = params.get('password') || '';
+            const autoconnect = params.get('autoconnect') === '1';
+            const resize = params.get('resize') || 'scale';
+
+            // Build WebSocket URL
+            const scheme = url.protocol === 'https:' ? 'wss' : 'ws';
+            const wsUrl = `${scheme}://${host}:${port}/${path}`;
+
+            try {
+                // Create RFB object
+                rfb = new RFB(document.getElementById('noVNC_canvas'), wsUrl, {
+                    credentials: { password: password },
+                    shared: true,
+                    repeaterID: '',
+                });
+
+                // Set scaling mode
+                if (resize === 'scale') {
+                    rfb.scaleViewport = true;
+                    rfb.resizeSession = false;
+                } else if (resize === 'remote') {
+                    rfb.scaleViewport = false;
+                    rfb.resizeSession = true;
+                } else {
+                    rfb.scaleViewport = false;
+                    rfb.resizeSession = false;
+                }
+
+                // Set up event handlers
+                rfb.addEventListener('connect', () => {
+                    console.log('Connected to VNC server');
+                    showStatus('Connected', true);
+                });
+
+                rfb.addEventListener('disconnect', (e) => {
+                    console.log('Disconnected from VNC server:', e.detail.clean ? 'clean' : 'unclean');
+                    if (!e.detail.clean) {
+                        showStatus('Disconnected', false);
+                    }
+                });
+
+                rfb.addEventListener('credentialsrequired', () => {
+                    const pwd = prompt('Password required:');
+                    rfb.sendCredentials({ password: pwd });
+                });
+
+                rfb.addEventListener('desktopname', (e) => {
+                    desktopName = e.detail.name;
+                    document.title = `${desktopName} - cmux VNC`;
+                });
+
+                // Set up clipboard event listeners
+                document.addEventListener('paste', handlePaste);
+
+                // Also listen on window for broader coverage
+                window.addEventListener('paste', handlePaste);
+
+                // Handle Cmd+V / Ctrl+V explicitly
+                document.addEventListener('keydown', async (e) => {
+                    if ((e.metaKey || e.ctrlKey) && e.key === 'v') {
+                        // Let the paste event handler deal with it
+                        // Just ensure focus is on the document
+                        if (document.activeElement !== document.body) {
+                            document.body.focus();
+                        }
+                    }
+                });
+
+                console.log('VNC client initialized');
+            } catch (err) {
+                console.error('Failed to create RFB client:', err);
+                showStatus('Connection failed', false);
+            }
+        }
+
+        // Wait for DOM to be ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', connect);
+        } else {
+            connect();
+        }
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            if (rfb && rfb.scaleViewport) {
+                rfb.scaleViewport = true;
+            }
+        });
+    </script>
+</body>
+</html>

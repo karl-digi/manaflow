@@ -677,6 +677,9 @@ RUN chmod +x /usr/local/bin/envctl /usr/local/bin/envd /usr/local/bin/cmux-proxy
 # Install tmux configuration for better mouse scrolling behavior
 COPY configs/tmux.conf /etc/tmux.conf
 
+# Install custom noVNC HTML with automatic clipboard paste support
+COPY configs/novnc/vnc.html /usr/share/novnc/vnc.html
+
 # Create workspace and lifecycle directories
 RUN mkdir -p /workspace /root/workspace /root/lifecycle
 
