@@ -11,6 +11,7 @@ export * from "./verifyTaskRunToken";
 export * from "./utils/normalize-origin";
 export * from "./utils/reserved-cmux-ports";
 export * from "./utils/morph-instance";
+export * from "./utils/plus-one";
 export * from "./utils/validate-exposed-ports";
 export * from "./vscode-schemas";
 export * from "./worker-schemas";
