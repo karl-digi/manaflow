@@ -8,9 +8,11 @@ import {
   $isRangeSelection,
   $isTextNode,
   BLUR_COMMAND,
+  COMMAND_PRIORITY_CRITICAL,
   COMMAND_PRIORITY_HIGH,
   KEY_ARROW_DOWN_COMMAND,
   KEY_ARROW_UP_COMMAND,
+  KEY_DOWN_COMMAND,
   KEY_ENTER_COMMAND,
   KEY_ESCAPE_COMMAND,
   TextNode,
@@ -483,6 +485,28 @@ export function MentionPlugin({
       COMMAND_PRIORITY_HIGH
     );
 
+    // Handle Ctrl+J/K with higher priority when menu is open
+    const removeCtrlJK = editor.registerCommand(
+      KEY_DOWN_COMMAND,
+      (event: KeyboardEvent) => {
+        if (!isShowingMenuRef.current || !event.ctrlKey) return false;
+        switch (event.key) {
+          case "j":
+          case "J":
+            event.preventDefault();
+            handleArrowDown();
+            return true;
+          case "k":
+          case "K":
+            event.preventDefault();
+            handleArrowUp();
+            return true;
+        }
+        return false;
+      },
+      COMMAND_PRIORITY_CRITICAL
+    );
+
     // Hide menu on blur
     const removeBlur = editor.registerCommand(
       BLUR_COMMAND,
@@ -502,6 +526,7 @@ export function MentionPlugin({
       removeArrowUp();
       removeEnter();
       removeEscape();
+      removeCtrlJK();
       removeBlur();
       document.removeEventListener("keydown", handleKeyDown);
     };
