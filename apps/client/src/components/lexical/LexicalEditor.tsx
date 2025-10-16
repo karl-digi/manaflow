@@ -9,7 +9,7 @@ import { AutoLinkNode, LinkNode } from "@lexical/link";
 import { ListItemNode, ListNode } from "@lexical/list";
 import { TRANSFORMERS } from "@lexical/markdown";
 import { AutoFocusPlugin } from "@lexical/react/LexicalAutoFocusPlugin";
-import { LexicalComposer } from "@lexical/react/LexicalComposer";
+import { LexicalComposer } from "@lexical/react/LexicalComposerContext";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
 import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
@@ -29,6 +29,7 @@ import {
   INSERT_LINE_BREAK_COMMAND,
   KEY_DOWN_COMMAND,
   KEY_ENTER_COMMAND,
+  PASTE_COMMAND,
   type SerializedEditorState,
 } from "lexical";
 import { useCallback, useEffect, useMemo, useRef } from "react";
@@ -162,6 +163,50 @@ function KeyboardCommandPlugin({ onSubmit }: { onSubmit?: () => void }) {
       unregisterCtrlJ();
     };
   }, [editor, onSubmit]);
+
+  return null;
+}
+
+// Custom plugin to handle paste without formatting
+function PastePlugin() {
+  const [editor] = useLexicalComposerContext();
+
+  useEffect(() => {
+    const unregister = editor.registerCommand(
+      PASTE_COMMAND,
+      (event: ClipboardEvent) => {
+        // Check if this is cmd+shift+v (Mac) or ctrl+shift+v (other platforms)
+        const isPasteWithoutFormatting =
+          (event.metaKey || event.ctrlKey) && event.shiftKey && !event.altKey;
+
+        if (isPasteWithoutFormatting) {
+          event.preventDefault();
+
+          const text = event.clipboardData?.getData("text/plain");
+          if (text) {
+            editor.update(() => {
+              const lines = text.split("\n");
+              lines.forEach((line, index) => {
+                if (index > 0) {
+                  // Insert line break for multiline
+                  editor.dispatchCommand(INSERT_LINE_BREAK_COMMAND, false);
+                }
+                // Insert the text
+                editor.insertText(line);
+              });
+            });
+          }
+          return true;
+        }
+
+        // Let default paste behavior handle other cases
+        return false;
+      },
+      COMMAND_PRIORITY_HIGH
+    );
+
+    return unregister;
+  }, [editor]);
 
   return null;
 }
@@ -578,6 +623,7 @@ export default function LexicalEditor({
         <LinkPlugin />
         <MarkdownShortcutPlugin transformers={TRANSFORMERS} />
         <KeyboardCommandPlugin onSubmit={onSubmit} />
+        <PastePlugin />
         <ClearEditorPlugin value={value} />
         <LocalStoragePersistencePlugin
           persistenceKey={persistenceKey}
