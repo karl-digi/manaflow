@@ -58,6 +58,11 @@ export class DockerVSCodeInstance extends VSCodeInstance {
     timestamp: number;
   } | null = null;
   private static readonly PORT_CACHE_DURATION = 2000; // 2 seconds
+  private static readonly LOOPBACK_HOST =
+    process.env.CMUX_LOOPBACK_HOST?.trim() || "127.0.0.1";
+  private static readonly VSCODE_READINESS_MAX_ATTEMPTS = 60;
+  private static readonly VSCODE_READINESS_DELAY_MS = 1000;
+  private static readonly VSCODE_READINESS_REQUEST_TIMEOUT_MS = 5000;
   private static eventsStream: NodeJS.ReadableStream | null = null;
   private static dockerInstance: Docker | null = null;
   private static eventStreamRetryTimer: NodeJS.Timeout | null = null;
@@ -72,6 +77,10 @@ export class DockerVSCodeInstance extends VSCodeInstance {
         : new Docker();
     }
     return DockerVSCodeInstance.dockerInstance;
+  }
+
+  private static buildLoopbackHttpUrl(port: string): string {
+    return `http://${DockerVSCodeInstance.LOOPBACK_HOST}:${port}`;
   }
 
   constructor(config: VSCodeInstanceConfig) {
@@ -492,6 +501,11 @@ export class DockerVSCodeInstance extends VSCodeInstance {
       throw new Error("Failed to get VNC port mapping for port 39380");
     }
 
+    dockerLogger.info(
+      `Waiting for VS Code HTTP server to be ready on port ${vscodePort}...`
+    );
+    await this.waitForVSCodeReady(vscodePort);
+
     // Update the container mapping with actual ports
     const mapping = containerMappings.get(this.containerName);
     if (mapping) {
@@ -532,7 +546,9 @@ export class DockerVSCodeInstance extends VSCodeInstance {
     for (let i = 0; i < maxAttempts; i++) {
       try {
         const response = await fetch(
-          `http://localhost:${workerPort}/socket.io/?EIO=4&transport=polling`
+          `${DockerVSCodeInstance.buildLoopbackHttpUrl(
+            workerPort
+          )}/socket.io/?EIO=4&transport=polling`
         );
         if (response.ok) {
           dockerLogger.info(`Worker is ready!`);
@@ -549,9 +565,9 @@ export class DockerVSCodeInstance extends VSCodeInstance {
       }
     }
 
-    const baseUrl = `http://localhost:${vscodePort}`;
+    const baseUrl = DockerVSCodeInstance.buildLoopbackHttpUrl(vscodePort);
     const workspaceUrl = this.getWorkspaceUrl(baseUrl);
-    const workerUrl = `http://localhost:${workerPort}`;
+    const workerUrl = DockerVSCodeInstance.buildLoopbackHttpUrl(workerPort);
 
     // Generate the proxy URL that clients will use
     dockerLogger.info(`Docker VSCode instance started:`);
@@ -591,12 +607,92 @@ export class DockerVSCodeInstance extends VSCodeInstance {
     }
 
     return {
-      url: baseUrl, // Store the actual localhost URL
-      workspaceUrl: workspaceUrl, // Store the actual localhost workspace URL
+      url: baseUrl, // Store the actual loopback URL
+      workspaceUrl: workspaceUrl, // Store the actual loopback workspace URL
       instanceId: this.instanceId,
       taskRunId: this.taskRunId,
       provider: "docker",
     };
+  }
+
+  private async waitForVSCodeReady(port: string): Promise<void> {
+    const maxAttempts = DockerVSCodeInstance.VSCODE_READINESS_MAX_ATTEMPTS;
+    const delayMs = DockerVSCodeInstance.VSCODE_READINESS_DELAY_MS;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const readinessUrl = `${DockerVSCodeInstance.buildLoopbackHttpUrl(
+        port
+      )}/?cmuxReady=${Date.now()}`;
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(
+        () => controller.abort(),
+        DockerVSCodeInstance.VSCODE_READINESS_REQUEST_TIMEOUT_MS
+      );
+
+      try {
+        const response = await fetch(readinessUrl, {
+          method: "GET",
+          headers: {
+            "Cache-Control": "no-cache",
+            Pragma: "no-cache",
+          },
+          signal: controller.signal,
+        });
+
+        if (response.ok) {
+          dockerLogger.info(
+            `VS Code HTTP server responded with status ${response.status} on port ${port} (attempt ${attempt})`
+          );
+          return;
+        }
+
+        dockerLogger.warn(
+          `VS Code readiness check attempt ${attempt} on port ${port} returned status ${response.status}`
+        );
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+        if ((error as { name?: string }).name === "AbortError") {
+          dockerLogger.warn(
+            `VS Code readiness check attempt ${attempt} on port ${port} timed out`
+          );
+        } else {
+          dockerLogger.warn(
+            `VS Code readiness check attempt ${attempt} on port ${port} failed: ${errorMessage}`
+          );
+        }
+      } finally {
+        clearTimeout(timeoutId);
+      }
+
+      if (attempt < maxAttempts) {
+        await new Promise<void>((resolve) =>
+          setTimeout(resolve, delayMs)
+        );
+      }
+    }
+
+    let recentLogs: string | null = null;
+    try {
+      recentLogs = await this.getLogs(200);
+    } catch (logError) {
+      const logErrorMessage =
+        logError instanceof Error ? logError.message : String(logError);
+      dockerLogger.error(
+        `Failed to retrieve VS Code logs after readiness timeout on port ${port}: ${logErrorMessage}`
+      );
+    }
+
+    if (recentLogs) {
+      dockerLogger.error(
+        `VS Code logs after readiness timeout on port ${port}:\n${recentLogs.trim()}`
+      );
+    }
+
+    throw new Error(
+      `VS Code server did not become ready on port ${port} after ${DockerVSCodeInstance.VSCODE_READINESS_MAX_ATTEMPTS} attempts`
+    );
   }
 
   private setupContainerEventMonitoring() {
@@ -756,7 +852,9 @@ export class DockerVSCodeInstance extends VSCodeInstance {
         const vscodePort = ports["39378/tcp"]?.[0]?.HostPort;
 
         if (vscodePort) {
-          const baseUrl = `http://localhost:${vscodePort}`;
+          const baseUrl = DockerVSCodeInstance.buildLoopbackHttpUrl(
+            vscodePort
+          );
           const workspaceUrl = this.getWorkspaceUrl(baseUrl);
 
           return {

@@ -12,6 +12,8 @@ interface ContainerInfo {
   vscodeUrl: string;
 }
 
+const loopbackHost = process.env.CMUX_LOOPBACK_HOST?.trim() || "127.0.0.1";
+
 async function spawnVSCodeContainer(docker: Docker): Promise<ContainerInfo> {
   const containerName = `cmux-vscode-minimal-${Date.now()}`;
   const imageName = "cmux-worker:0.0.1";
@@ -74,8 +76,12 @@ async function spawnVSCodeContainer(docker: Docker): Promise<ContainerInfo> {
     throw new Error("Failed to get port mappings");
   }
 
-  console.log(`noVNC will be available at http://localhost:${vncPort}/vnc.html`);
-  console.log(`DevTools will be available at http://localhost:${cdpPort}/json/version`);
+  console.log(
+    `noVNC will be available at http://${loopbackHost}:${vncPort}/vnc.html`
+  );
+  console.log(
+    `DevTools will be available at http://${loopbackHost}:${cdpPort}/json/version`
+  );
 
   // Wait for worker to be ready by polling
   console.log(`Waiting for worker to be ready on port ${workerPort}...`);
@@ -85,7 +91,7 @@ async function spawnVSCodeContainer(docker: Docker): Promise<ContainerInfo> {
   for (let i = 0; i < maxAttempts; i++) {
     try {
       const response = await fetch(
-        `http://localhost:${workerPort}/socket.io/?EIO=4&transport=polling`
+        `http://${loopbackHost}:${workerPort}/socket.io/?EIO=4&transport=polling`
       );
       if (response.ok) {
         console.log(`Worker is ready!`);
@@ -102,7 +108,7 @@ async function spawnVSCodeContainer(docker: Docker): Promise<ContainerInfo> {
     }
   }
 
-  const vscodeUrl = `http://localhost:${vscodePort}/?folder=/root/workspace`;
+  const vscodeUrl = `http://${loopbackHost}:${vscodePort}/?folder=/root/workspace`;
 
   return {
     containerId: container.id,
@@ -119,7 +125,7 @@ async function createTerminalWithPrompt(
   workerPort: string,
   prompt: string
 ): Promise<void> {
-  const workerUrl = `http://localhost:${workerPort}`;
+  const workerUrl = `http://${loopbackHost}:${workerPort}`;
 
   console.log(`Connecting to worker at ${workerUrl}...`);
 
@@ -215,8 +221,12 @@ async function main() {
     console.log(`\nVSCode instance started:`);
     console.log(`  URL: ${containerInfo.vscodeUrl}`);
     console.log(`  Container: ${containerInfo.containerName}`);
-    console.log(`  Proxy: http://localhost:${containerInfo.proxyPort}`);
-    console.log(`  DevTools: http://localhost:${containerInfo.cdpPort}/json/version`);
+    console.log(
+      `  Proxy: http://${loopbackHost}:${containerInfo.proxyPort}`
+    );
+    console.log(
+      `  DevTools: http://${loopbackHost}:${containerInfo.cdpPort}/json/version`
+    );
 
     // Create terminal with prompt
     await createTerminalWithPrompt(containerInfo.workerPort, prompt);

@@ -95,7 +95,9 @@ async function main() {
         console.log("\n\nChecking if terminal is still running...");
 
         // Check container and tmux status
-        const containerId = result.vscodeUrl?.match(/localhost:(\d+)/)?.[1];
+        const containerId = result.vscodeUrl?.match(
+          /(?:localhost|127\.0\.0\.1):(\d+)/
+        )?.[1];
         if (containerId) {
           try {
             const { execSync } = await import("child_process");

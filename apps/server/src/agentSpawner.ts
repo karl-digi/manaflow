@@ -38,6 +38,8 @@ const SWITCH_BRANCH_BUN_SCRIPT = rawSwitchBranchScript;
 
 const { getApiEnvironmentsByIdVars } = await getWwwOpenApiModule();
 
+const LOOPBACK_HOST = process.env.CMUX_LOOPBACK_HOST?.trim() || "127.0.0.1";
+
 export interface AgentSpawnResult {
   agentName: string;
   terminalId: string;
@@ -832,7 +834,7 @@ exit $EXIT_CODE
               ? (vscodeInstance as DockerVSCodeInstance).getPorts()?.worker
               : "39377";
 
-          const uploadUrl = `http://localhost:${workerPort}/upload-image`;
+          const uploadUrl = `http://${LOOPBACK_HOST}:${workerPort}/upload-image`;
 
           serverLogger.info(`[AgentSpawner] Uploading image to ${uploadUrl}`);
 
