@@ -2,9 +2,14 @@ import { EnvironmentConfiguration } from "@/components/EnvironmentConfiguration"
 import { FloatingPane } from "@/components/floating-pane";
 import { RepositoryPicker } from "@/components/RepositoryPicker";
 import { TitleBar } from "@/components/TitleBar";
+import { DEFAULT_MORPH_SNAPSHOT_ID, MORPH_SNAPSHOT_PRESETS, type MorphSnapshotId } from "@cmux/shared";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo } from "react";
 import { z } from "zod";
+
+const morphSnapshotIds = MORPH_SNAPSHOT_PRESETS.map(
+  (preset) => preset.id
+) as [MorphSnapshotId, ...MorphSnapshotId[]];
 
 const searchSchema = z.object({
   step: z.enum(["select", "configure"]).default("select"),
@@ -12,6 +17,7 @@ const searchSchema = z.object({
   instanceId: z.string().optional(),
   connectionLogin: z.string().optional(),
   repoSearch: z.string().optional(),
+  snapshotId: z.enum(morphSnapshotIds).default(DEFAULT_MORPH_SNAPSHOT_ID),
 });
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/environments/new")(
@@ -26,6 +32,7 @@ function EnvironmentsPage() {
   const step = searchParams.step ?? "select";
   const urlSelectedRepos = searchParams.selectedRepos ?? [];
   const urlInstanceId = searchParams.instanceId;
+  const selectedSnapshotId = searchParams.snapshotId ?? DEFAULT_MORPH_SNAPSHOT_ID;
   const { teamSlugOrId } = Route.useParams();
   const derivedVscodeUrl = useMemo(() => {
     if (!urlInstanceId) return undefined;
@@ -42,6 +49,7 @@ function EnvironmentsPage() {
               teamSlugOrId={teamSlugOrId}
               instanceId={urlInstanceId}
               initialSelectedRepos={urlSelectedRepos}
+              initialSnapshotId={selectedSnapshotId}
               showHeader={true}
               showContinueButton={true}
               showManualConfigOption={true}

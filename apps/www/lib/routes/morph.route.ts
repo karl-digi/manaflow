@@ -1,4 +1,8 @@
-import { DEFAULT_MORPH_SNAPSHOT_ID } from "@/lib/utils/morph-defaults";
+import {
+  DEFAULT_MORPH_SNAPSHOT_ID,
+  MORPH_SNAPSHOT_PRESETS,
+  type MorphSnapshotId,
+} from "@/lib/utils/morph-defaults";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { env } from "@/lib/utils/www-env";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
@@ -14,12 +18,21 @@ import {
 
 export const morphRouter = new OpenAPIHono();
 
+const morphSnapshotIds = MORPH_SNAPSHOT_PRESETS.map(
+  (preset) => preset.id
+) as MorphSnapshotId[];
+
+const SnapshotIdSchema = z.enum(
+  morphSnapshotIds as [MorphSnapshotId, ...MorphSnapshotId[]]
+);
+
 const SetupInstanceBody = z
   .object({
     teamSlugOrId: z.string(),
     instanceId: z.string().optional(), // Existing instance ID to reuse
     selectedRepos: z.array(z.string()).optional(), // Repositories to clone
     ttlSeconds: z.number().default(60 * 30), // 30 minutes default
+    snapshotId: SnapshotIdSchema.optional(),
   })
   .openapi("SetupInstanceBody");
 
@@ -73,6 +86,7 @@ morphRouter.openapi(
       instanceId: existingInstanceId,
       selectedRepos,
       ttlSeconds,
+      snapshotId,
     } = c.req.valid("json");
 
     const convex = getConvex({ accessToken });
@@ -114,12 +128,15 @@ morphRouter.openapi(
 
       let instance;
       let instanceId = existingInstanceId;
+      const selectedSnapshotId = snapshotId ?? DEFAULT_MORPH_SNAPSHOT_ID;
 
       // If no instanceId provided, create a new instance
       if (!instanceId) {
-        console.log("Creating new Morph instance");
+        console.log(
+          `Creating new Morph instance (snapshot: ${selectedSnapshotId})`
+        );
         instance = await client.instances.start({
-          snapshotId: DEFAULT_MORPH_SNAPSHOT_ID,
+          snapshotId: selectedSnapshotId,
           ttlSeconds,
           ttlAction: "pause",
           metadata: {

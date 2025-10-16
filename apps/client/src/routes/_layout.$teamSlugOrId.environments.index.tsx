@@ -44,6 +44,7 @@ function EnvironmentsListPage() {
               connectionLogin: undefined,
               repoSearch: undefined,
               instanceId: undefined,
+              snapshotId: undefined,
             }}
             className="inline-flex items-center gap-2 rounded-md bg-neutral-900 text-white px-4 py-2 text-sm font-medium hover:bg-neutral-800 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200 transition-colors"
           >
@@ -122,6 +123,7 @@ function EnvironmentsListPage() {
                         connectionLogin: undefined,
                         repoSearch: undefined,
                         instanceId: undefined,
+                        snapshotId: env.morphSnapshotId ?? undefined,
                       }}
                       className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-1.5 text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-900 transition-colors"
                     >
@@ -163,6 +165,7 @@ function EnvironmentsListPage() {
                 connectionLogin: undefined,
                 repoSearch: undefined,
                 instanceId: undefined,
+                snapshotId: undefined,
               }}
               className="inline-flex items-center gap-2 rounded-md bg-neutral-900 text-white px-4 py-2 text-sm hover:bg-neutral-800 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200"
             >

@@ -39,6 +39,7 @@ const environmentSearchDefaults = {
   connectionLogin: undefined,
   repoSearch: undefined,
   instanceId: undefined,
+  snapshotId: undefined,
 } as const;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>

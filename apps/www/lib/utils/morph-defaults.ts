@@ -1,11 +1,5 @@
-// export const DEFAULT_MORPH_SNAPSHOT_ID = "snapshot_nnucpxen";
-// export const DEFAULT_MORPH_SNAPSHOT_ID = "snapshot_osr8ngj4";
-// export const DEFAULT_MORPH_SNAPSHOT_ID = "snapshot_r6j3rkmo";
-// export const DEFAULT_MORPH_SNAPSHOT_ID = "snapshot_xo8ptbkl";
-// export const DEFAULT_MORPH_SNAPSHOT_ID = "snapshot_x4zc18s4";
-// export const DEFAULT_MORPH_SNAPSHOT_ID = "snapshot_3w6tkrw5";
-// export const DEFAULT_MORPH_SNAPSHOT_ID = "snapshot_bp1tdp4o";
-// export const DEFAULT_MORPH_SNAPSHOT_ID = "snapshot_s7dbgujd";
-// export const DEFAULT_MORPH_SNAPSHOT_ID = "snapshot_tlugo1we"; // 10cpu/32ram
-// export const DEFAULT_MORPH_SNAPSHOT_ID = "snapshot_txvgd1b6";
-export const DEFAULT_MORPH_SNAPSHOT_ID = "snapshot_vb7uqz8o"; // 4cpu/16gb-ram/6gb-swap/48gb-disk
+export {
+  DEFAULT_MORPH_SNAPSHOT_ID,
+  MORPH_SNAPSHOT_PRESETS,
+} from "@cmux/shared";
+export type { MorphSnapshotId } from "@cmux/shared";
