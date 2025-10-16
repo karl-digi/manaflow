@@ -464,10 +464,35 @@ export function PullRequestDetailView({
     headSha: currentPR?.headSha,
   });
 
-  const hasAnyFailure = useMemo(() => {
-    return workflowData.allRuns.some(
-      (run) => run.conclusion === "failure" || run.conclusion === "timed_out" || run.conclusion === "action_required"
-    );
+  const { hasAnyFailure, allChecksPassed } = useMemo(() => {
+    const failureConclusions = new Set([
+      "failure",
+      "timed_out",
+      "action_required",
+    ]);
+    const successConclusions = new Set([
+      "success",
+      "neutral",
+      "skipped",
+    ]);
+
+    let failureDetected = false;
+    let checksPassed = workflowData.allRuns.length === 0;
+
+    for (const run of workflowData.allRuns) {
+      const conclusion = run.conclusion;
+      if (conclusion && failureConclusions.has(conclusion)) {
+        failureDetected = true;
+      }
+      if (!conclusion || !successConclusions.has(conclusion)) {
+        checksPassed = false;
+      }
+    }
+
+    return {
+      hasAnyFailure: failureDetected,
+      allChecksPassed: checksPassed,
+    };
   }, [workflowData.allRuns]);
 
   const [checksExpandedOverride, setChecksExpandedOverride] = useState<boolean | null>(null);
@@ -543,6 +568,8 @@ export function PullRequestDetailView({
     });
   };
 
+  const mergeBlockedByChecks = workflowData.isLoading || !allChecksPassed;
+
   if (!currentPR) {
     return (
       <div className="h-full w-full flex items-center justify-center text-neutral-500 dark:text-neutral-400">
@@ -595,7 +622,8 @@ export function PullRequestDetailView({
                       isOpen={true}
                       disabled={
                         mergePrMutation.isPending ||
-                        closePrMutation.isPending
+                        closePrMutation.isPending ||
+                        mergeBlockedByChecks
                       }
                       isLoading={mergePrMutation.isPending}
                     />
