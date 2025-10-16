@@ -199,9 +199,9 @@ export class StackAuthClient {
     });
 
     if (!response.ok) {
-      const errorBody = await this.safeReadText(response);
+      const text = await response.text();
       throw new Error(
-        `Stack Auth request failed (${response.status} ${response.statusText}): ${errorBody}`,
+        `Stack Auth request to ${endpoint} failed (${response.status}): ${text}`,
       );
     }
 
@@ -210,21 +210,10 @@ export class StackAuthClient {
 
   private async safeJson(response: Response): Promise<unknown> {
     try {
-      return await response.clone().json();
-    } catch (_error) {
-      try {
-        return await response.clone().text();
-      } catch (__error) {
-        return "<failed to read response body>";
-      }
-    }
-  }
-
-  private async safeReadText(response: Response): Promise<string> {
-    try {
-      return await response.text();
-    } catch (_error) {
-      return "<failed to read response body>";
+      return await response.json();
+    } catch (error) {
+      const err = error instanceof Error ? error.message : "Unknown error";
+      throw new Error(`Failed to parse JSON response: ${err}`);
     }
   }
 }

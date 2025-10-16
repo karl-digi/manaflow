@@ -8,7 +8,7 @@ import { makeFunctionReference } from "convex/server";
 import { z } from "zod";
 
 import type { CLIConfig } from "./config";
-import type { StackUser } from "./stackAuth";
+import type { StackUser } from "./auth";
 
 export interface TeamMembership {
   teamId: string;

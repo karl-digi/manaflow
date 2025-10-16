@@ -1,4 +1,4 @@
-import type { CLIConfig } from "./config";
+import type { CLIConfig } from "../config";
 import {
   StackAuthClient,
   type PromptLoginOptions,
@@ -8,10 +8,11 @@ import {
   fetchTeamMemberships,
   type TeamMembership,
   type AuthenticatedContext,
-} from "./cmuxClient";
+} from "../cmuxClient";
 import {
   loadSavedRefreshToken,
   persistRefreshToken,
+  clearStoredRefreshToken,
 } from "./tokenStore";
 
 export interface AuthenticationCallbacks
@@ -44,6 +45,20 @@ export async function authenticateUser(
       updateStatus("Refreshing Stack Auth session…");
       accessToken = await stackClient.getAccessToken(refreshToken);
     } catch (_error) {
+      updateStatus(
+        "Stored Stack Auth session is no longer valid. Resetting…",
+      );
+      try {
+        await clearStoredRefreshToken(config.stack.projectId);
+      } catch (clearError) {
+        const message =
+          clearError instanceof Error
+            ? clearError.message
+            : "Failed to clear saved token";
+        updateStatus(
+          `Warning: Unable to clear saved token (${message}). Continuing…`,
+        );
+      }
       refreshToken = null;
       accessToken = null;
     }

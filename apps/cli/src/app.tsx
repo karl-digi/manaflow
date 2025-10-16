@@ -7,13 +7,13 @@ import { cliConfig } from "./config";
 import {
   authenticateUser,
   type AuthenticatedSession,
-} from "./session";
+} from "./auth";
 import {
   describeTeam,
   fetchEnvironmentsForTeam,
   type TeamMembership,
 } from "./cmuxClient";
-import type { StackUser } from "./stackAuth";
+import type { StackUser } from "./auth";
 
 type Phase =
   | { kind: "authenticating" }
