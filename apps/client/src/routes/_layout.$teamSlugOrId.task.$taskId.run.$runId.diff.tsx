@@ -1,6 +1,7 @@
 import { FloatingPane } from "@/components/floating-pane";
 import { type GitDiffViewerProps } from "@/components/git-diff-viewer";
 import { RunDiffSection } from "@/components/RunDiffSection";
+import { WorkflowRunsSection, useCombinedWorkflowData } from "@/components/prs/WorkflowRunsSection";
 import { TaskDetailHeader } from "@/components/task-detail-header";
 import { useTheme } from "@/components/theme/use-theme";
 import { Button } from "@/components/ui/button";
@@ -51,9 +52,14 @@ const gitDiffViewerClassNames: GitDiffViewerProps["classNames"] = {
   },
 };
 
-type DiffControls = Parameters<
+type GitDiffControls = Parameters<
   NonNullable<GitDiffViewerProps["onControlsChange"]>
 >[0];
+
+type DiffControls = GitDiffControls & {
+  expandChecks?: () => void;
+  collapseChecks?: () => void;
+};
 
 type RunEnvironmentSummary = Pick<
   Doc<"environments">,
@@ -538,6 +544,21 @@ export const Route = createFileRoute(
 function RunDiffPage() {
   const { taskId, teamSlugOrId, runId } = Route.useParams();
   const [diffControls, setDiffControls] = useState<DiffControls | null>(null);
+
+  const handleDiffControlsChange = useCallback(
+    (controls: GitDiffControls | null) => {
+      setDiffControls(
+        controls
+          ? {
+            ...controls,
+            expandChecks: expandAllChecks,
+            collapseChecks: collapseAllChecks,
+          }
+          : null,
+      );
+    },
+    [expandAllChecks, collapseAllChecks],
+  );
   const task = useQuery(api.tasks.getById, {
     teamSlugOrId,
     id: taskId,
@@ -615,6 +636,125 @@ function RunDiffPage() {
     };
   }, [primaryRepo, baseBranchMetadata]);
 
+  const pullRequestTarget = useMemo(() => {
+    if (!selectedRun) {
+      return null;
+    }
+
+    const records = (selectedRun.pullRequests ?? [])
+      .filter(
+        (record): record is NonNullable<typeof record> =>
+          Boolean(record?.repoFullName),
+      )
+      .map((record) => {
+        return {
+          ...record,
+          repoFullName: record.repoFullName.trim(),
+        };
+      });
+
+    const candidateRepos = [primaryRepo, ...additionalRepos]
+      .filter((repo): repo is string => Boolean(repo))
+      .map((repo) => repo.trim().toLowerCase());
+
+    const fallbackRepoName = primaryRepo ?? additionalRepos[0] ?? null;
+
+    const matchedRecord =
+      records.find((record) =>
+        candidateRepos.includes(record.repoFullName.toLowerCase()),
+      ) ?? records[0];
+
+    const fallbackNumber =
+      selectedRun.pullRequestNumber ?? matchedRecord?.number;
+    const fallbackUrl = selectedRun.pullRequestUrl ?? matchedRecord?.url;
+
+    if (matchedRecord?.repoFullName && fallbackNumber !== undefined) {
+      return {
+        repoFullName: matchedRecord.repoFullName,
+        number: fallbackNumber,
+      } as const;
+    }
+
+    if (fallbackUrl) {
+      const match = fallbackUrl.match(
+        /github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/i,
+      );
+      if (match) {
+        const parsedNumber = Number(match[2]);
+        if (Number.isFinite(parsedNumber)) {
+          return {
+            repoFullName: match[1],
+            number: parsedNumber,
+          } as const;
+        }
+      }
+    }
+
+    if (matchedRecord?.repoFullName && matchedRecord.number !== undefined) {
+      return {
+        repoFullName: matchedRecord.repoFullName,
+        number: matchedRecord.number,
+      } as const;
+    }
+
+    if (fallbackRepoName && fallbackNumber !== undefined) {
+      return {
+        repoFullName: fallbackRepoName,
+        number: fallbackNumber,
+      } as const;
+    }
+
+    return null;
+  }, [selectedRun, primaryRepo, additionalRepos]);
+
+  const pullRequestDetails = useQuery(
+    api.github_prs.getPullRequest,
+    pullRequestTarget
+      ? {
+        teamSlugOrId,
+        repoFullName: pullRequestTarget.repoFullName,
+        number: pullRequestTarget.number,
+      }
+      : undefined,
+  );
+
+  const workflowData = useCombinedWorkflowData({
+    teamSlugOrId,
+    repoFullName: pullRequestTarget?.repoFullName,
+    prNumber: pullRequestTarget?.number,
+    headSha: pullRequestDetails?.headSha ?? undefined,
+  });
+
+  const hasAnyFailure = useMemo(() => {
+    return workflowData.allRuns.some(
+      (run) =>
+        run.conclusion === "failure" ||
+        run.conclusion === "timed_out" ||
+        run.conclusion === "action_required",
+    );
+  }, [workflowData.allRuns]);
+
+  const [checksExpandedOverride, setChecksExpandedOverride] =
+    useState<boolean | null>(null);
+
+  const checksExpanded = checksExpandedOverride !== null
+    ? checksExpandedOverride
+    : hasAnyFailure;
+
+  const handleToggleChecks = useCallback(() => {
+    setChecksExpandedOverride((prev) =>
+      prev === null ? !hasAnyFailure : !prev,
+    );
+  }, [hasAnyFailure]);
+
+  const expandAllChecks = useCallback(() => setChecksExpandedOverride(true), []);
+  const collapseAllChecks = useCallback(
+    () => setChecksExpandedOverride(false),
+    [],
+  );
+
+  const showChecks = workflowData.hasTarget;
+
   const restartAgents = useMemo(() => {
     const previousAgents = collectAgentNamesFromRuns(taskRuns);
     if (previousAgents.length > 0) {
@@ -679,16 +819,26 @@ function RunDiffPage() {
               }
             >
               {hasDiffSources ? (
-                <RunDiffSection
-                  repoFullName={primaryRepo as string}
-                  additionalRepoFullNames={additionalRepos}
-                  withRepoPrefix={shouldPrefixDiffs}
-                  ref1={baseRef}
-                  ref2={headRef}
-                  onControlsChange={setDiffControls}
-                  classNames={gitDiffViewerClassNames}
-                  metadataByRepo={metadataByRepo}
-                />
+                <>
+                  {showChecks && (
+                    <WorkflowRunsSection
+                      allRuns={workflowData.allRuns}
+                      isLoading={workflowData.isLoading}
+                      isExpanded={checksExpanded}
+                      onToggle={handleToggleChecks}
+                    />
+                  )}
+                  <RunDiffSection
+                    repoFullName={primaryRepo as string}
+                    additionalRepoFullNames={additionalRepos}
+                    withRepoPrefix={shouldPrefixDiffs}
+                    ref1={baseRef}
+                    ref2={headRef}
+                    onControlsChange={handleDiffControlsChange}
+                    classNames={gitDiffViewerClassNames}
+                    metadataByRepo={metadataByRepo}
+                  />
+                </>
               ) : (
                 <div className="p-6 text-sm text-neutral-600 dark:text-neutral-300">
                   Missing repo or branches to show diff.
