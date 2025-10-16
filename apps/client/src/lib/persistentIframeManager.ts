@@ -111,7 +111,7 @@ class PersistentIframeManager {
         width: 0;
         height: 0;
         pointer-events: none;
-        z-index: var(--z-overlay);
+        z-index: var(--z-iframe, 9998);
       `;
       document.body.appendChild(this.container);
     };

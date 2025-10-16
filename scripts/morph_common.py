@@ -10,9 +10,9 @@ if TYPE_CHECKING:  # pragma: no cover - typing helpers only
     from morphcloud.api import Instance, Snapshot
 
 MORPH_EXPECTED_UNAME_ARCH = "x86_64"
-DOCKER_ENGINE_VERSION = "28.4.0"
-DOCKER_COMPOSE_VERSION = "v2.39.4"
-DOCKER_BUILDX_VERSION = "v0.29.0"
+DOCKER_ENGINE_VERSION = "28.5.1"
+DOCKER_COMPOSE_VERSION = "v2.40.0"
+DOCKER_BUILDX_VERSION = "v0.29.1"
 
 
 def write_remote_file(

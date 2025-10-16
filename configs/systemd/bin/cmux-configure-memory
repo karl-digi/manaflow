@@ -81,6 +81,15 @@ in_container=0
 if [ -n "$container_type" ]; then
   in_container=1
 fi
+memory_container="$in_container"
+
+force_swap="${CMUX_FORCE_SWAP:-0}"
+container_label="${container_type:-container}"
+if [ "$in_container" -eq 1 ] && [ "$force_swap" = "1" ]; then
+  log "CMUX_FORCE_SWAP enabled; overriding container memory guard (detected ${container_label})."
+  summary+=("Overrode container memory guard to provision swap/zram inside ${container_label}.")
+  memory_container=0
+fi
 
 before_free="$(capture_output free -h || true)"
 before_swapon="$(capture_output swapon --show=NAME,TYPE,SIZE,USED,PRIO || true)"
@@ -141,7 +150,7 @@ elif [ "${distro_id,,}" = "debian" ] || [ "${distro_id,,}" = "ubuntu" ] || [[ "$
 fi
 
 zram_changed=0
-if [ "$in_container" -eq 1 ]; then
+if [ "$memory_container" -eq 1 ]; then
   log "Container environment (${container_type:-unknown}) detected; skipping zram configuration."
   summary+=("Skipped zram configuration inside container environment.")
 else
@@ -198,7 +207,7 @@ else
 fi
 
 # Ensure zram device is using the requested compression algorithm; restart once if needed.
-if [ "$in_container" -eq 0 ] && command -v zramctl >/dev/null 2>&1; then
+if [ "$memory_container" -eq 0 ] && command -v zramctl >/dev/null 2>&1; then
   current_algo="$(zramctl | awk 'NR==2 {print tolower($2)}')"
   target_algo="zstd"
   available_algos=""
@@ -223,11 +232,47 @@ fi
 
 # Swapfile configuration
 swapfile_path="/var/swap/cmux-swapfile"
-swapfile_size_gib=10
+swapfile_size_gib=0
+swapfile_override_applied=0
+swapfile_size_override="${CMUX_SWAPFILE_SIZE_GIB:-}"
+if [ -n "$swapfile_size_override" ]; then
+  case "$swapfile_size_override" in
+    *[!0-9]*)
+      log "Ignoring invalid CMUX_SWAPFILE_SIZE_GIB='${swapfile_size_override}' (expected positive integer GiB)."
+      ;;
+    *)
+      if [ "$swapfile_size_override" -le 0 ]; then
+        log "Ignoring non-positive CMUX_SWAPFILE_SIZE_GIB='${swapfile_size_override}'."
+      else
+        swapfile_size_gib="$swapfile_size_override"
+        swapfile_override_applied=1
+        log "Using swapfile size override: ${swapfile_size_gib}GiB."
+      fi
+      ;;
+  esac
+fi
+
+# Size swap at roughly half of RAM while avoiding oversized files on small disks.
+if [ "$swapfile_override_applied" -eq 0 ]; then
+  mem_total_kib="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)"
+  if [ "$mem_total_kib" -gt 0 ]; then
+    mem_total_gib=$(( (mem_total_kib + 1024 * 1024 - 1) / (1024 * 1024) ))
+    swapfile_size_gib=$((mem_total_gib / 2))
+  fi
+  if [ "$swapfile_size_gib" -lt 4 ]; then
+    swapfile_size_gib=4
+  fi
+  if [ "$swapfile_size_gib" -gt 6 ]; then
+    swapfile_size_gib=6
+  fi
+  if [ "$swapfile_size_gib" -eq 0 ]; then
+    swapfile_size_gib=4
+  fi
+fi
 swapfile_bytes=$((swapfile_size_gib * 1024 * 1024 * 1024))
 swapfile_dir="$(dirname "$swapfile_path")"
 
-if [ "$in_container" -eq 1 ]; then
+if [ "$memory_container" -eq 1 ]; then
   log "Container environment (${container_type:-unknown}) detected; skipping swapfile provisioning."
   summary+=("Skipped swapfile provisioning inside container environment.")
 else

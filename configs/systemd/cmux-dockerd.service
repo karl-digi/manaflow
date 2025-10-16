@@ -10,7 +10,8 @@ EnvironmentFile=-/opt/app/app.env
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 LogsDirectory=cmux
 ExecStartPre=/bin/mkdir -p /var/log/cmux
-ExecStart=/bin/bash -lc 'exec /usr/local/bin/dockerd'
+ExecStart=/usr/local/lib/cmux/cmux-manage-dockerd
+ExecStop=/usr/local/lib/cmux/cmux-stop-dockerd
 Restart=always
 RestartSec=2
 StandardOutput=append:/var/log/cmux/dockerd.log

@@ -413,6 +413,7 @@ function EnvironmentDetailsPage() {
           connectionLogin: undefined,
           repoSearch: undefined,
           instanceId: undefined,
+          snapshotId: undefined,
         },
       });
     } catch (error) {
@@ -473,6 +474,7 @@ function EnvironmentDetailsPage() {
         instanceId: data.instanceId,
         vscodeUrl: vscodeUrlWithFolder,
         step: "configure",
+        snapshotId: environment.morphSnapshotId ?? undefined,
       },
     });
   };
@@ -551,6 +553,7 @@ function EnvironmentDetailsPage() {
                   connectionLogin: undefined,
                   repoSearch: undefined,
                   instanceId: undefined,
+                  snapshotId: undefined,
                 }}
                 className="inline-flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100 transition-colors"
               >
@@ -1088,6 +1091,7 @@ function EnvironmentDetailsPage() {
                 connectionLogin: undefined,
                 repoSearch: undefined,
                 instanceId: undefined,
+                snapshotId: undefined,
               }}
               className="inline-flex items-center gap-2 rounded-md bg-neutral-900 text-white px-4 py-2 text-sm hover:bg-neutral-800 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200"
             >

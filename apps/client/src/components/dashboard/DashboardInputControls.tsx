@@ -449,6 +449,7 @@ export const DashboardInputControls = memo(function DashboardInputControls({
                   connectionLogin: undefined,
                   repoSearch: undefined,
                   instanceId: undefined,
+                  snapshotId: undefined,
                 }}
                 className="w-full px-2 h-8 flex items-center gap-2 text-[13.5px] text-neutral-800 dark:text-neutral-200 rounded-md hover:bg-neutral-50 dark:hover:bg-neutral-900 cursor-default"
               >

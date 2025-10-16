@@ -48,7 +48,6 @@ from morphcloud.api import (
     Snapshot,
 )
 
-from morph_common import ensure_docker_cli_plugins
 
 Command = t.Union[str, t.Sequence[str]]
 TaskFunc = t.Callable[["TaskContext"], t.Awaitable[None]]
@@ -205,7 +204,11 @@ class TaskContext:
             """
             export RUSTUP_HOME=/usr/local/rustup
             export CARGO_HOME=/usr/local/cargo
-            export PATH="/root/.local/bin:/usr/local/cargo/bin:/usr/local/go/bin:/usr/local/bin:$PATH"
+            export NVM_DIR=/root/.nvm
+            export GOPATH=/usr/local/go-workspace
+            export GOMODCACHE="${GOPATH}/pkg/mod"
+            export GOCACHE=/usr/local/go-cache
+            export PATH="/root/.local/bin:/usr/local/cargo/bin:/usr/local/go/bin:${GOPATH}/bin:/usr/local/bin:$PATH"
             """
         ).strip()
         self.environment_prelude = exports
@@ -967,32 +970,65 @@ async def task_ensure_docker(ctx: TaskContext) -> None:
     install_cmd = textwrap.dedent(
         """
         set -euo pipefail
-        if command -v docker >/dev/null 2>&1; then
-          docker --version
-        else
-          DEBIAN_FRONTEND=noninteractive apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            ca-certificates curl gnupg lsb-release \
-            docker.io python3-docker git
-          systemctl enable docker >/dev/null 2>&1 || true
-          systemctl restart docker || true
+
+        echo "[docker] ensuring Docker APT repository"
+        DEBIAN_FRONTEND=noninteractive apt-get update
+        DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl
+        os_release="/etc/os-release"
+        if [ ! -f "$os_release" ]; then
+          echo "Missing /etc/os-release; unable to determine distribution" >&2
+          exit 1
         fi
+        . "$os_release"
+        distro_codename="${UBUNTU_CODENAME:-${VERSION_CODENAME:-stable}}"
+        distro_id="${ID:-debian}"
+        case "$distro_id" in
+          ubuntu|Ubuntu|UBUNTU)
+            repo_id="ubuntu"
+            ;;
+          debian|Debian|DEBIAN)
+            repo_id="debian"
+            ;;
+          *)
+            echo "Unrecognized distro id '$distro_id'; defaulting to debian" >&2
+            repo_id="debian"
+            ;;
+        esac
+        install -m 0755 -d /etc/apt/keyrings
+        curl -fsSL "https://download.docker.com/linux/${repo_id}/gpg" -o /etc/apt/keyrings/docker.asc
+        chmod a+r /etc/apt/keyrings/docker.asc
+        printf 'deb [arch=%s signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/%s %s stable\\n' \
+          "$(dpkg --print-architecture)" "$repo_id" "$distro_codename" \
+          > /etc/apt/sources.list.d/docker.list
+
+        echo "[docker] installing engine and CLI plugins"
+        DEBIAN_FRONTEND=noninteractive apt-get update
+        DEBIAN_FRONTEND=noninteractive apt-get install -y \
+          docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+        systemctl enable docker.service
+        systemctl enable docker.socket || true
+        systemctl start docker.service
+
         for attempt in $(seq 1 30); do
           if docker info >/dev/null 2>&1; then
-            echo "Docker ready"
+            echo "[docker] daemon is ready"
             break
           fi
           if [ "$attempt" -eq 30 ]; then
-            echo "Docker failed to start after 30 attempts" >&2
+            echo "[docker] daemon failed to start within expected window" >&2
             exit 1
           fi
           sleep 2
         done
+
         docker --version
+        docker compose version
+        docker buildx version
+        docker run --rm hello-world
         """
     )
-    await ctx.run("ensure-docker-basic", install_cmd)
-    await ctx.run("ensure-docker-plugins", ensure_docker_cli_plugins())
+    await ctx.run("ensure-docker-install", install_cmd)
 
 
 @registry.task(
@@ -1102,6 +1138,10 @@ async def task_install_go_toolchain(ctx: TaskContext) -> None:
         rm -rf /usr/local/go
         tar -C /usr/local -xzf go.tar.gz
         install -d /usr/local/bin
+        install -d -m 0755 /usr/local/go-workspace/bin
+        install -d -m 0755 /usr/local/go-workspace/pkg/mod
+        install -d -m 0755 /usr/local/go-workspace/pkg/sumdb
+        install -d -m 0755 /usr/local/go-cache
         ln -sf /usr/local/go/bin/go /usr/local/bin/go
         ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt
         /usr/local/go/bin/go version
@@ -1362,6 +1402,10 @@ async def task_configure_zsh(ctx: TaskContext) -> None:
 export SHELL="${zsh_path}"
 export PATH="/usr/local/bin:/usr/local/cargo/bin:\$HOME/.local/bin:\$PATH"
 export XDG_RUNTIME_DIR="/run/user/0"
+export NVM_DIR="\$HOME/.nvm"
+if [ -s /etc/profile.d/nvm.sh ]; then
+  . /etc/profile.d/nvm.sh
+fi
 
 alias code='/app/openvscode-server/bin/openvscode-server'
 alias c='code'
@@ -1461,6 +1505,8 @@ async def task_install_service_scripts(ctx: TaskContext) -> None:
         f"""
         install -d /usr/local/lib/cmux
         install -m 0755 {repo}/configs/systemd/bin/cmux-start-chrome /usr/local/lib/cmux/cmux-start-chrome
+        install -m 0755 {repo}/configs/systemd/bin/cmux-manage-dockerd /usr/local/lib/cmux/cmux-manage-dockerd
+        install -m 0755 {repo}/configs/systemd/bin/cmux-stop-dockerd /usr/local/lib/cmux/cmux-stop-dockerd
         install -m 0755 {repo}/configs/systemd/bin/cmux-configure-memory /usr/local/sbin/cmux-configure-memory
         """
     )
@@ -1599,7 +1645,31 @@ async def task_configure_memory_protection(ctx: TaskContext) -> None:
     cmd = textwrap.dedent(
         """
         set -euo pipefail
-        /usr/local/sbin/cmux-configure-memory
+        CMUX_FORCE_SWAP=1 CMUX_SWAPFILE_SIZE_GIB=6 /usr/local/sbin/cmux-configure-memory
+        expected_kib=$((6 * 1024 * 1024))
+        tolerance_kib=8
+        min_expected_kib=$((expected_kib - tolerance_kib))
+        actual_kib="$(awk '$1 == "/var/swap/cmux-swapfile" {print $3}' /proc/swaps 2>/dev/null || true)"
+        if [ -z "${actual_kib}" ]; then
+            echo "Swapfile /var/swap/cmux-swapfile missing from /proc/swaps after configuration." >&2
+            swapon --show=NAME,TYPE,SIZE,USED,PRIO || true
+            exit 1
+        fi
+        case "${actual_kib}" in
+            *[!0-9]*)
+                echo "Swapfile size reported as '${actual_kib}' KiB; expected numeric value." >&2
+                swapon --show=NAME,TYPE,SIZE,USED,PRIO || true
+                exit 1
+                ;;
+        esac
+        if [ "${actual_kib}" -lt "${min_expected_kib}" ]; then
+            echo "Swapfile size ${actual_kib} KiB is below required ${min_expected_kib} KiB minimum (6 GiB minus tolerance)." >&2
+            swapon --show=NAME,TYPE,SIZE,USED,PRIO || true
+            exit 1
+        fi
+        if [ "${actual_kib}" -lt "${expected_kib}" ]; then
+            echo "Swapfile size ${actual_kib} KiB slightly below nominal ${expected_kib} KiB target; continuing (within tolerance ${tolerance_kib} KiB)." >&2
+        fi
         """
     )
     await ctx.run("configure-memory-protection", cmd)
@@ -1774,12 +1844,30 @@ PROFILE
         if ! grep -q 'cmux-paths.sh' /root/.bashrc 2>/dev/null; then
           echo '[ -f /etc/profile.d/cmux-paths.sh ] && . /etc/profile.d/cmux-paths.sh' >> /root/.bashrc
         fi
+        if ! grep -q 'nvm.sh' /root/.bashrc 2>/dev/null; then
+          echo '[ -f /etc/profile.d/nvm.sh ] && . /etc/profile.d/nvm.sh' >> /root/.bashrc
+        fi
         if ! grep -q 'XDG_RUNTIME_DIR=/run/user/0' /root/.zshrc 2>/dev/null; then
           echo 'export XDG_RUNTIME_DIR=/run/user/0' >> /root/.zshrc
         fi
         """
     )
     await ctx.run("configure-envctl", cmd)
+
+
+@registry.task(
+    name="cleanup-build-artifacts",
+    deps=(
+        "configure-memory-protection",
+        "configure-envctl",
+        "install-prompt-wrapper",
+        "install-tmux-conf",
+        "install-collect-scripts",
+    ),
+    description="Remove repository upload and toolchain caches prior to final validation",
+)
+async def task_cleanup_build_artifacts(ctx: TaskContext) -> None:
+    await cleanup_instance_disk(ctx)
 
 
 async def run_task_graph(registry: TaskRegistry, ctx: TaskContext) -> None:
@@ -1822,7 +1910,7 @@ async def _run_task_with_timing(ctx: TaskContext, task: TaskDefinition) -> None:
 
 @registry.task(
     name="check-cargo",
-    deps=("install-rust-toolchain",),
+    deps=("install-rust-toolchain", "cleanup-build-artifacts"),
     description="Verify cargo is installed and working",
 )
 async def task_check_cargo(ctx: TaskContext) -> None:
@@ -1831,7 +1919,7 @@ async def task_check_cargo(ctx: TaskContext) -> None:
 
 @registry.task(
     name="check-node",
-    deps=("install-node-runtime",),
+    deps=("install-node-runtime", "cleanup-build-artifacts"),
     description="Verify node is installed and working",
 )
 async def task_check_node(ctx: TaskContext) -> None:
@@ -1840,7 +1928,7 @@ async def task_check_node(ctx: TaskContext) -> None:
 
 @registry.task(
     name="check-bun",
-    deps=("install-bun",),
+    deps=("install-bun", "cleanup-build-artifacts"),
     description="Verify bun is installed and working",
 )
 async def task_check_bun(ctx: TaskContext) -> None:
@@ -1849,7 +1937,7 @@ async def task_check_bun(ctx: TaskContext) -> None:
 
 @registry.task(
     name="check-uv",
-    deps=("install-uv-python",),
+    deps=("install-uv-python", "cleanup-build-artifacts"),
     description="Verify uv is installed and working",
 )
 async def task_check_uv(ctx: TaskContext) -> None:
@@ -1858,7 +1946,7 @@ async def task_check_uv(ctx: TaskContext) -> None:
 
 @registry.task(
     name="check-gh",
-    deps=("install-base-packages",),
+    deps=("install-base-packages", "cleanup-build-artifacts"),
     description="Verify GitHub CLI is installed and working",
 )
 async def task_check_gh(ctx: TaskContext) -> None:
@@ -1867,7 +1955,7 @@ async def task_check_gh(ctx: TaskContext) -> None:
 
 @registry.task(
     name="check-envctl",
-    deps=("configure-envctl",),
+    deps=("configure-envctl", "cleanup-build-artifacts"),
     description="Verify envctl is installed and working",
 )
 async def task_check_envctl(ctx: TaskContext) -> None:
@@ -1876,7 +1964,7 @@ async def task_check_envctl(ctx: TaskContext) -> None:
 
 @registry.task(
     name="check-ssh-service",
-    deps=("configure-memory-protection",),
+    deps=("configure-memory-protection", "cleanup-build-artifacts"),
     description="Verify SSH service is active",
 )
 async def task_check_ssh_service(ctx: TaskContext) -> None:
@@ -1896,7 +1984,7 @@ async def task_check_ssh_service(ctx: TaskContext) -> None:
 
 @registry.task(
     name="check-vscode",
-    deps=("configure-memory-protection",),
+    deps=("configure-memory-protection", "cleanup-build-artifacts"),
     description="Verify VS Code endpoint is accessible",
 )
 async def task_check_vscode(ctx: TaskContext) -> None:
@@ -1919,7 +2007,7 @@ async def task_check_vscode(ctx: TaskContext) -> None:
 
 @registry.task(
     name="check-vscode-via-proxy",
-    deps=("configure-memory-protection",),
+    deps=("configure-memory-protection", "cleanup-build-artifacts"),
     description="Verify VS Code endpoint is accessible through cmux-proxy",
 )
 async def task_check_vscode_via_proxy(ctx: TaskContext) -> None:
@@ -1945,7 +2033,7 @@ async def task_check_vscode_via_proxy(ctx: TaskContext) -> None:
 
 @registry.task(
     name="check-xterm",
-    deps=("install-systemd-units",),
+    deps=("install-systemd-units", "cleanup-build-artifacts"),
     description="Verify cmux-xterm service is accessible",
 )
 async def task_check_xterm(ctx: TaskContext) -> None:
@@ -1969,7 +2057,7 @@ async def task_check_xterm(ctx: TaskContext) -> None:
 
 @registry.task(
     name="check-vnc",
-    deps=("configure-memory-protection",),
+    deps=("configure-memory-protection", "cleanup-build-artifacts"),
     description="Verify VNC packages and endpoint are accessible",
 )
 async def task_check_vnc(ctx: TaskContext) -> None:
@@ -2009,7 +2097,7 @@ async def task_check_vnc(ctx: TaskContext) -> None:
 
 @registry.task(
     name="check-devtools",
-    deps=("configure-memory-protection",),
+    deps=("configure-memory-protection", "cleanup-build-artifacts"),
     description="Verify Chrome browser and DevTools endpoint are accessible",
 )
 async def task_check_devtools(ctx: TaskContext) -> None:
@@ -2041,7 +2129,7 @@ async def task_check_devtools(ctx: TaskContext) -> None:
 
 @registry.task(
     name="check-worker",
-    deps=("configure-memory-protection",),
+    deps=("configure-memory-protection", "cleanup-build-artifacts"),
     description="Verify worker service is running",
 )
 async def task_check_worker(ctx: TaskContext) -> None:
@@ -2120,6 +2208,88 @@ async def snapshot_instance(
     return snapshot
 
 
+async def cleanup_instance_disk(ctx: TaskContext) -> None:
+    ctx.console.info("Cleaning up build artifacts before snapshot...")
+    repo = shlex.quote(ctx.remote_repo_root)
+    tar_path = shlex.quote(ctx.remote_repo_tar)
+    cleanup_script = textwrap.dedent(
+        f"""
+        set -euo pipefail
+        rm -rf {repo}
+        rm -f {tar_path}
+        if [ -d /usr/local/cargo ]; then
+            rm -rf /usr/local/cargo/registry
+            rm -rf /usr/local/cargo/git
+            install -d -m 0755 /usr/local/cargo/registry
+            install -d -m 0755 /usr/local/cargo/git
+        fi
+        if [ -d /usr/local/rustup ]; then
+            rm -rf /usr/local/rustup/tmp
+            rm -rf /usr/local/rustup/downloads
+            install -d -m 0755 /usr/local/rustup/tmp
+            install -d -m 0755 /usr/local/rustup/downloads
+        fi
+        if [ -d /root/.cache ]; then
+            rm -rf /root/.cache/go-build
+            rm -rf /root/.cache/pip
+            rm -rf /root/.cache/uv
+            rm -rf /root/.cache/bun
+        fi
+        if [ -d /root/.bun ]; then
+            rm -rf /root/.bun/install/cache
+        fi
+        rm -rf /root/.npm
+        rm -rf /root/.pnpm-store
+        rm -rf /root/go
+        rm -rf /usr/local/go-workspace/bin
+        rm -rf /usr/local/go-workspace/pkg/mod
+        rm -rf /usr/local/go-workspace/pkg/sumdb
+        rm -rf /usr/local/go-cache
+        install -d -m 0755 /root/.cache
+        install -d -m 0755 /root/.cache/go-build
+        install -d -m 0755 /root/.cache/pip
+        install -d -m 0755 /root/.cache/uv
+        install -d -m 0755 /root/.cache/bun
+        install -d -m 0755 /usr/local/go-workspace
+        install -d -m 0755 /usr/local/go-workspace/bin
+        install -d -m 0755 /usr/local/go-workspace/pkg/mod
+        install -d -m 0755 /usr/local/go-workspace/pkg/sumdb
+        install -d -m 0755 /usr/local/go-cache
+        if [ -d /var/cache/apt ]; then
+            rm -rf /var/cache/apt/archives/*.deb
+            rm -rf /var/cache/apt/archives/partial
+            install -d -m 0755 /var/cache/apt/archives/partial
+        fi
+        if [ -d /var/lib/apt/lists ]; then
+            find /var/lib/apt/lists -mindepth 1 -maxdepth 1 -type f -delete
+            rm -rf /var/lib/apt/lists/partial
+            install -d -m 0755 /var/lib/apt/lists/partial
+        fi
+        """
+    ).strip()
+    await ctx.run("cleanup-disk-artifacts", cleanup_script)
+
+
+async def report_disk_usage(ctx: TaskContext) -> None:
+    ctx.console.info("Collecting disk usage statistics...")
+    disk_script = textwrap.dedent(
+        """
+        set -euo pipefail
+        echo "==== Disk usage (df -h /) ===="
+        df -h /
+        echo
+        echo "==== Key directories ===="
+        for path in /var/swap /cmux /usr/local /usr/local/go-workspace /usr/local/cargo /root; do
+            if [ -e "$path" ]; then
+                du -sh "$path" 2>/dev/null || true
+            fi
+        done
+        echo
+        """
+    ).strip()
+    await ctx.run("disk-usage-summary", disk_script)
+
+
 async def provision_and_snapshot(args: argparse.Namespace) -> None:
     console = Console()
     timings = TimingsCollector()
@@ -2184,6 +2354,8 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
         for line in summary:
             console.always(line)
 
+    await report_disk_usage(ctx)
+
     vscode_url = port_map.get(VSCODE_HTTP_PORT)
     if vscode_url is None:
         raise RuntimeError("Failed to expose VS Code service URL")
@@ -2205,6 +2377,8 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
         "Review the workspace URLs above, then press Enter to create the snapshot."
     )
     await asyncio.to_thread(input, "")
+
+    await cleanup_instance_disk(ctx)
 
     snapshot = await snapshot_instance(instance, console=console)
 
@@ -2297,7 +2471,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--disk-size",
         type=int,
-        default=32_768,
+        # 48gb
+        default=49_152,
         help="Disk size (MiB) for instance",
     )
     parser.add_argument(

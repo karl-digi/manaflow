@@ -21,6 +21,10 @@ const DEBUG_FLAGS = {
   githubWebhook: false, // set true to emit verbose push diagnostics
 };
 
+const FEATURE_FLAGS = {
+  githubEyesReactionOnPrOpen: false,
+};
+
 async function verifySignature(
   secret: string,
   payload: string,
@@ -494,6 +498,22 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
             teamId,
             payload: prPayload,
           });
+
+          // Add eyes emoji reaction when a new PR is opened
+          if (
+            FEATURE_FLAGS.githubEyesReactionOnPrOpen &&
+            prPayload.action === "opened"
+          ) {
+            const prNumber = Number(prPayload.pull_request?.number ?? 0);
+            if (prNumber) {
+              await _ctx.runAction(internal.github_pr_comments.addPrReaction, {
+                installationId: installation,
+                repoFullName,
+                prNumber,
+                content: "eyes",
+              });
+            }
+          }
         } catch (err) {
           console.error("github_webhook pull_request handler failed", {
             err,

@@ -296,7 +296,7 @@ export function PersistentIframe({
       overlay.style.top = "0";
       overlay.style.left = "0";
       overlay.style.pointerEvents = "none";
-      overlay.style.zIndex = "var(--z-global-blocking, 2147483647)";
+      overlay.style.zIndex = "var(--z-overlay, 9999)";
       overlay.style.visibility = "hidden";
       overlayRef.current = overlay;
       document.body.appendChild(overlay);

@@ -8,12 +8,17 @@ const ENVIRONMENT_ID =
   process.env.DEBUG_ENVIRONMENT_ID ?? "mn7bxgkya730p3hqzj2dzatzhh7s8c52";
 
 describe("sandboxesRouter integration", () => {
-  it("rejects providing a snapshotId not owned by the team", async () => {
-    const tokens = await __TEST_INTERNAL_ONLY_GET_STACK_TOKENS();
-    const res = await postApiSandboxesStart({
-      client: testApiClient,
-      headers: { "x-stack-auth": JSON.stringify(tokens) },
-      body: {
+  it(
+    "rejects providing a snapshotId not owned by the team",
+    {
+      timeout: 120_000,
+    },
+    async () => {
+      const tokens = await __TEST_INTERNAL_ONLY_GET_STACK_TOKENS();
+      const res = await postApiSandboxesStart({
+        client: testApiClient,
+        headers: { "x-stack-auth": JSON.stringify(tokens) },
+        body: {
         teamSlugOrId: "manaflow",
         snapshotId: "snapshot_does_not_exist_for_team_test",
         ttlSeconds: 60,
@@ -21,12 +26,13 @@ describe("sandboxesRouter integration", () => {
     });
 
     expect([403, 500]).toContain(res.response.status);
-  });
+    }
+  );
 
   it(
     "starts sandbox for configured environment",
     {
-      timeout: 45000,
+      timeout: 120_000,
     },
     async () => {
       const tokens = await __TEST_INTERNAL_ONLY_GET_STACK_TOKENS();

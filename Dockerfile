@@ -705,9 +705,12 @@ COPY configs/systemd/cmux-xterm.service /usr/lib/systemd/system/cmux-xterm.servi
 COPY configs/systemd/cmux-memory-setup.service /usr/lib/systemd/system/cmux-memory-setup.service
 COPY configs/systemd/bin/configure-openvscode /usr/local/lib/cmux/configure-openvscode
 COPY configs/systemd/bin/cmux-start-chrome /usr/local/lib/cmux/cmux-start-chrome
+COPY configs/systemd/bin/cmux-manage-dockerd /usr/local/lib/cmux/cmux-manage-dockerd
+COPY configs/systemd/bin/cmux-stop-dockerd /usr/local/lib/cmux/cmux-stop-dockerd
 COPY configs/systemd/bin/cmux-configure-memory /usr/local/sbin/cmux-configure-memory
 COPY --from=builder /usr/local/lib/cmux/cmux-cdp-proxy /usr/local/lib/cmux/cmux-cdp-proxy
 RUN chmod +x /usr/local/lib/cmux/configure-openvscode /usr/local/lib/cmux/cmux-start-chrome /usr/local/lib/cmux/cmux-cdp-proxy && \
+  chmod +x /usr/local/lib/cmux/cmux-manage-dockerd /usr/local/lib/cmux/cmux-stop-dockerd && \
   chmod +x /usr/local/sbin/cmux-configure-memory && \
   touch /usr/local/lib/cmux/dockerd.flag && \
   mkdir -p /var/log/cmux && \

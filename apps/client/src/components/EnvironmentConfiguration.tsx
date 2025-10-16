@@ -9,6 +9,7 @@ import {
   TASK_RUN_IFRAME_SANDBOX,
 } from "@/lib/preloadTaskRunIframes";
 import { formatEnvVarsContent } from "@cmux/shared/utils/format-env-vars-content";
+import type { MorphSnapshotId } from "@cmux/shared";
 import { validateExposedPorts } from "@cmux/shared/utils/validate-exposed-ports";
 import {
   postApiEnvironmentsMutation,
@@ -82,6 +83,7 @@ export function EnvironmentConfiguration({
     connectionLogin?: string;
     repoSearch?: string;
     instanceId?: string;
+    snapshotId?: MorphSnapshotId;
   };
   const [iframeLoaded, setIframeLoaded] = useState(false);
   const [iframeError, setIframeError] = useState<string | null>(null);
@@ -291,6 +293,7 @@ export function EnvironmentConfiguration({
                 connectionLogin: undefined,
                 repoSearch: undefined,
                 instanceId: undefined,
+                snapshotId: undefined,
               }),
             });
           },
@@ -326,6 +329,7 @@ export function EnvironmentConfiguration({
                 connectionLogin: undefined,
                 repoSearch: undefined,
                 instanceId: undefined,
+                snapshotId: undefined,
               },
             });
           },
@@ -353,6 +357,7 @@ export function EnvironmentConfiguration({
                   instanceId: search.instanceId,
                   connectionLogin: search.connectionLogin,
                   repoSearch: search.repoSearch,
+                  snapshotId: search.snapshotId,
                 },
               });
             }}
@@ -376,6 +381,7 @@ export function EnvironmentConfiguration({
                   connectionLogin: search.connectionLogin,
                   repoSearch: search.repoSearch,
                   instanceId: search.instanceId,
+                  snapshotId: search.snapshotId,
                 },
               });
             }}
