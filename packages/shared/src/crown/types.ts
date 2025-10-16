@@ -1,6 +1,30 @@
 import { z } from "zod";
 import { typedZid } from "../utils/typed-zid";
 
+export type CrownHarnessId =
+  | "cmux-default"
+  | "anthropic"
+  | "openai"
+  | "gemini";
+
+export type CrownHarnessProvider = "anthropic" | "openai" | "gemini";
+
+export interface CrownModelOption {
+  id: string;
+  label: string;
+  note?: string;
+}
+
+export interface CrownHarnessOption {
+  id: CrownHarnessId;
+  label: string;
+  description?: string;
+  provider: CrownHarnessProvider;
+  requiresApiKey: string | null;
+  usesCmuxKey?: boolean;
+  models: readonly CrownModelOption[];
+}
+
 export const WorkerRunStatusSchema = z.enum([
   "pending",
   "running",

@@ -6,23 +6,42 @@ import { TitleBar } from "@/components/TitleBar";
 import { api } from "@cmux/convex/api";
 import type { Doc } from "@cmux/convex/dataModel";
 import { AGENT_CONFIGS, type AgentConfig } from "@cmux/shared/agentConfig";
+import {
+  CROWN_HARNESS_OPTIONS,
+  CROWN_HARNESS_OPTIONS_BY_ID,
+  DEFAULT_CROWN_HARNESS_ID,
+  DEFAULT_CROWN_MODEL_ID,
+  DEFAULT_CROWN_SYSTEM_PROMPT,
+  getDefaultModelForHarness,
+  type CrownHarnessId,
+} from "@cmux/shared/crown";
 import { API_KEY_MODELS_BY_ENV } from "@cmux/shared/model-usage";
 import { convexQuery } from "@convex-dev/react-query";
 import { Switch } from "@heroui/react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useConvex } from "convex/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/settings")({
   component: SettingsComponent,
 });
 
+type WorkspaceCrownFields = {
+  crownHarness?: string | null;
+  crownModel?: string | null;
+  crownSystemPrompt?: string | null;
+};
+
 function SettingsComponent() {
   const { teamSlugOrId } = Route.useParams();
   const { resolvedTheme, setTheme } = useTheme();
   const convex = useConvex();
+  const normalizeSystemPromptValue = (value: string) =>
+    value.replace(/\r\n/g, "\n").trim();
+  const harnessExists = (value?: string | null): value is CrownHarnessId =>
+    Boolean(value && value in CROWN_HARNESS_OPTIONS_BY_ID);
   const [apiKeyValues, setApiKeyValues] = useState<Record<string, string>>({});
   const [originalApiKeyValues, setOriginalApiKeyValues] = useState<
     Record<string, string>
@@ -40,6 +59,22 @@ function SettingsComponent() {
   const [autoPrEnabled, setAutoPrEnabled] = useState<boolean>(false);
   const [originalAutoPrEnabled, setOriginalAutoPrEnabled] =
     useState<boolean>(false);
+  const [crownHarness, setCrownHarness] = useState<CrownHarnessId>(
+    DEFAULT_CROWN_HARNESS_ID,
+  );
+  const [originalCrownHarness, setOriginalCrownHarness] =
+    useState<CrownHarnessId>(DEFAULT_CROWN_HARNESS_ID);
+  const [crownModel, setCrownModel] = useState<string>(
+    getDefaultModelForHarness(DEFAULT_CROWN_HARNESS_ID) ?? DEFAULT_CROWN_MODEL_ID,
+  );
+  const [originalCrownModel, setOriginalCrownModel] = useState<string>(
+    getDefaultModelForHarness(DEFAULT_CROWN_HARNESS_ID) ?? DEFAULT_CROWN_MODEL_ID,
+  );
+  const [crownSystemPrompt, setCrownSystemPrompt] = useState<string>(
+    DEFAULT_CROWN_SYSTEM_PROMPT,
+  );
+  const [originalCrownSystemPrompt, setOriginalCrownSystemPrompt] =
+    useState<string>(DEFAULT_CROWN_SYSTEM_PROMPT);
   // const [isSaveButtonVisible, setIsSaveButtonVisible] = useState(true);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const saveButtonRef = useRef<HTMLDivElement>(null);
@@ -85,6 +120,49 @@ function SettingsComponent() {
   // Query workspace settings
   const { data: workspaceSettings } = useQuery(
     convexQuery(api.workspaceSettings.get, { teamSlugOrId })
+  );
+
+  const availableHarnessOptions = useMemo(() => {
+    const hasKey = (envVar: string | null) => {
+      if (!envVar) return true;
+      const value = apiKeyValues[envVar] ?? "";
+      return value.trim().length > 0;
+    };
+
+    return CROWN_HARNESS_OPTIONS.filter((option) =>
+      hasKey(option.requiresApiKey)
+    );
+  }, [apiKeyValues]);
+
+  useEffect(() => {
+    if (!availableHarnessOptions.some((option) => option.id === crownHarness)) {
+      setCrownHarness(DEFAULT_CROWN_HARNESS_ID);
+    }
+  }, [availableHarnessOptions, crownHarness]);
+
+  const selectedHarnessOption = useMemo(() => {
+    return (
+      CROWN_HARNESS_OPTIONS_BY_ID[crownHarness] ||
+      CROWN_HARNESS_OPTIONS_BY_ID[DEFAULT_CROWN_HARNESS_ID]
+    );
+  }, [crownHarness]);
+
+  const availableHarnessModels = selectedHarnessOption?.models ?? [];
+
+  useEffect(() => {
+    if (!selectedHarnessOption) return;
+    if (
+      !selectedHarnessOption.models.some((model) => model.id === crownModel)
+    ) {
+      const fallbackModel =
+        selectedHarnessOption.models[0]?.id ??
+        getDefaultModelForHarness(selectedHarnessOption.id);
+      setCrownModel(fallbackModel);
+    }
+  }, [selectedHarnessOption, crownModel]);
+
+  const hasAdditionalHarnesses = availableHarnessOptions.some(
+    (option) => option.requiresApiKey,
   );
 
   // Initialize form values when data loads
@@ -145,6 +223,39 @@ function SettingsComponent() {
       const effective = enabled === undefined ? false : Boolean(enabled);
       setAutoPrEnabled(effective);
       setOriginalAutoPrEnabled(effective);
+
+      const workspaceCrown =
+        workspaceSettings as unknown as WorkspaceCrownFields;
+
+      const resolvedHarness = harnessExists(workspaceCrown?.crownHarness)
+        ? (workspaceCrown?.crownHarness as CrownHarnessId)
+        : DEFAULT_CROWN_HARNESS_ID;
+
+      const rawModel =
+        typeof workspaceCrown?.crownModel === "string"
+          ? workspaceCrown.crownModel.trim()
+          : "";
+      const harnessModels =
+        CROWN_HARNESS_OPTIONS_BY_ID[resolvedHarness]?.models ?? [];
+      const resolvedModel = harnessModels.some((model) => model.id === rawModel)
+        ? rawModel
+        : getDefaultModelForHarness(resolvedHarness);
+
+      const rawPrompt =
+        typeof workspaceCrown?.crownSystemPrompt === "string"
+          ? workspaceCrown.crownSystemPrompt
+          : "";
+      const resolvedPrompt =
+        rawPrompt.trim().length > 0
+          ? rawPrompt
+          : DEFAULT_CROWN_SYSTEM_PROMPT;
+
+      setCrownHarness(resolvedHarness);
+      setOriginalCrownHarness(resolvedHarness);
+      setCrownModel(resolvedModel);
+      setOriginalCrownModel(resolvedModel);
+      setCrownSystemPrompt(resolvedPrompt);
+      setOriginalCrownSystemPrompt(resolvedPrompt);
     }
   }, [workspaceSettings]);
 
@@ -244,11 +355,20 @@ function SettingsComponent() {
     // Auto PR toggle changes
     const autoPrChanged = autoPrEnabled !== originalAutoPrEnabled;
 
+    const harnessChanged = crownHarness !== originalCrownHarness;
+    const modelChanged = crownModel !== originalCrownModel;
+    const systemPromptChanged =
+      normalizeSystemPromptValue(crownSystemPrompt) !==
+      normalizeSystemPromptValue(originalCrownSystemPrompt);
+
     return (
       worktreePathChanged ||
       autoPrChanged ||
       apiKeysChanged ||
-      containerSettingsChanged
+      containerSettingsChanged ||
+      harnessChanged ||
+      modelChanged ||
+      systemPromptChanged
     );
   };
 
@@ -258,19 +378,58 @@ function SettingsComponent() {
     try {
       let savedCount = 0;
       let deletedCount = 0;
+      let workspaceSettingsUpdated = false;
+      let containerSettingsUpdated = false;
 
-      // Save worktree path / auto PR if changed
-      if (
-        worktreePath !== originalWorktreePath ||
-        autoPrEnabled !== originalAutoPrEnabled
-      ) {
+      const normalizedCurrentPrompt =
+        normalizeSystemPromptValue(crownSystemPrompt);
+      const normalizedOriginalPrompt = normalizeSystemPromptValue(
+        originalCrownSystemPrompt,
+      );
+
+      const workspaceUpdates: {
+        worktreePath?: string;
+        autoPrEnabled?: boolean;
+        crownHarness?: CrownHarnessId;
+        crownModel?: string;
+        crownSystemPrompt?: string;
+      } = {};
+
+      if (worktreePath !== originalWorktreePath) {
+        workspaceUpdates.worktreePath = worktreePath || undefined;
+      }
+      if (autoPrEnabled !== originalAutoPrEnabled) {
+        workspaceUpdates.autoPrEnabled = autoPrEnabled;
+      }
+      if (crownHarness !== originalCrownHarness) {
+        workspaceUpdates.crownHarness = crownHarness;
+      }
+      if (crownModel !== originalCrownModel) {
+        workspaceUpdates.crownModel = crownModel;
+      }
+      if (normalizedCurrentPrompt !== normalizedOriginalPrompt) {
+        workspaceUpdates.crownSystemPrompt =
+          normalizedCurrentPrompt.length > 0
+            ? normalizedCurrentPrompt
+            : undefined;
+      }
+
+      if (Object.keys(workspaceUpdates).length > 0) {
         await convex.mutation(api.workspaceSettings.update, {
           teamSlugOrId,
-          worktreePath: worktreePath || undefined,
-          autoPrEnabled,
+          ...workspaceUpdates,
         });
+        workspaceSettingsUpdated = true;
         setOriginalWorktreePath(worktreePath);
         setOriginalAutoPrEnabled(autoPrEnabled);
+        setOriginalCrownHarness(crownHarness);
+        setOriginalCrownModel(crownModel);
+        const effectivePrompt =
+          normalizedCurrentPrompt.length > 0
+            ? normalizedCurrentPrompt
+            : DEFAULT_CROWN_SYSTEM_PROMPT;
+        setOriginalCrownSystemPrompt(effectivePrompt);
+        setCrownSystemPrompt(effectivePrompt);
       }
 
       // Save container settings if changed
@@ -285,6 +444,7 @@ function SettingsComponent() {
           ...containerSettingsData,
         });
         setOriginalContainerSettingsData(containerSettingsData);
+        containerSettingsUpdated = true;
       }
 
       for (const key of apiKeys) {
@@ -319,8 +479,19 @@ function SettingsComponent() {
       // After successful save, hide all API key inputs
       setShowKeys({});
 
-      if (savedCount > 0 || deletedCount > 0) {
-        const actions = [];
+      if (
+        workspaceSettingsUpdated ||
+        containerSettingsUpdated ||
+        savedCount > 0 ||
+        deletedCount > 0
+      ) {
+        const actions: string[] = [];
+        if (workspaceSettingsUpdated) {
+          actions.push("updated workspace settings");
+        }
+        if (containerSettingsUpdated) {
+          actions.push("updated container settings");
+        }
         if (savedCount > 0) {
           actions.push(`saved ${savedCount} key${savedCount > 1 ? "s" : ""}`);
         }
@@ -620,7 +791,7 @@ function SettingsComponent() {
                   Crown Evaluator
                 </h2>
               </div>
-              <div className="p-4">
+              <div className="p-4 space-y-6">
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <label className="block text-sm font-medium text-neutral-900 dark:text-neutral-100">
@@ -638,6 +809,103 @@ function SettingsComponent() {
                     isSelected={autoPrEnabled}
                     onValueChange={setAutoPrEnabled}
                   />
+                </div>
+
+                <div className="border-t border-neutral-200 dark:border-neutral-800 pt-4">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div>
+                      <label
+                        htmlFor="crownHarness"
+                        className="block text-sm font-medium text-neutral-900 dark:text-neutral-100"
+                      >
+                        Scoring harness
+                      </label>
+                      <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                        Choose which provider and model evaluate task runs.
+                      </p>
+                      <select
+                        id="crownHarness"
+                        value={crownHarness}
+                        onChange={(event) =>
+                          setCrownHarness(event.target.value as CrownHarnessId)
+                        }
+                        className="mt-2 w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      >
+                        {availableHarnessOptions.map((option) => (
+                          <option key={option.id} value={option.id}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                      {selectedHarnessOption?.description ? (
+                        <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+                          {selectedHarnessOption.description}
+                        </p>
+                      ) : null}
+                      {!hasAdditionalHarnesses && (
+                        <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+                          Add provider API keys below to unlock additional harness options.
+                        </p>
+                      )}
+                    </div>
+                    <div>
+                      <label
+                        htmlFor="crownModel"
+                        className="block text-sm font-medium text-neutral-900 dark:text-neutral-100"
+                      >
+                        Model
+                      </label>
+                      <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                        Crown scoring uses this model for comparisons.
+                      </p>
+                      <select
+                        id="crownModel"
+                        value={crownModel}
+                        onChange={(event) => setCrownModel(event.target.value)}
+                        disabled={availableHarnessModels.length === 0}
+                        className="mt-2 w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
+                      >
+                        {availableHarnessModels.map((model) => (
+                          <option key={model.id} value={model.id}>
+                            {model.label}
+                          </option>
+                        ))}
+                      </select>
+                      {availableHarnessModels.length === 0 && (
+                        <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+                          No models available for this harness.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="border-t border-neutral-200 dark:border-neutral-800 pt-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <label
+                      htmlFor="crownSystemPrompt"
+                      className="text-sm font-medium text-neutral-900 dark:text-neutral-100"
+                    >
+                      System prompt
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setCrownSystemPrompt(DEFAULT_CROWN_SYSTEM_PROMPT)}
+                      className="text-xs text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200"
+                    >
+                      Reset to default
+                    </button>
+                  </div>
+                  <textarea
+                    id="crownSystemPrompt"
+                    value={crownSystemPrompt}
+                    onChange={(event) => setCrownSystemPrompt(event.target.value)}
+                    rows={5}
+                    className="mt-2 w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-y"
+                  />
+                  <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+                    Used as the evaluator’s system prompt. Leave blank to use the cmux default.
+                  </p>
                 </div>
               </div>
             </div>

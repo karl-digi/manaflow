@@ -1,8 +1,18 @@
 "use node";
 
 import { createAnthropic } from "@ai-sdk/anthropic";
-import { generateObject } from "ai";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { createOpenAI } from "@ai-sdk/openai";
+import { generateObject, type LanguageModel } from "ai";
 import { ConvexError, v } from "convex/values";
+import {
+  CROWN_HARNESS_OPTIONS_BY_ID,
+  DEFAULT_CROWN_HARNESS_ID,
+  DEFAULT_CROWN_SYSTEM_PROMPT,
+  getDefaultModelForHarness,
+  type CrownHarnessId,
+  type CrownHarnessOption,
+} from "../../../shared/src/crown/config";
 import {
   CrownEvaluationResponseSchema,
   CrownSummarizationResponseSchema,
@@ -10,10 +20,10 @@ import {
   type CrownEvaluationResponse,
   type CrownSummarizationResponse,
 } from "../../../shared/src/convex-safe";
+import { api } from "../_generated/api";
+import type { Doc } from "../_generated/dataModel";
 import { env } from "../../_shared/convex-env";
 import { action } from "../_generated/server";
-
-const MODEL_NAME = "claude-3-5-sonnet-20241022";
 
 const CrownEvaluationCandidateValidator = v.object({
   runId: v.optional(v.string()),
@@ -25,12 +35,11 @@ const CrownEvaluationCandidateValidator = v.object({
 });
 
 export async function performCrownEvaluation(
-  apiKey: string,
+  model: LanguageModel,
+  systemPrompt: string,
   prompt: string,
   candidates: CrownEvaluationCandidate[],
 ): Promise<CrownEvaluationResponse> {
-  const anthropic = createAnthropic({ apiKey });
-
   const normalizedCandidates = candidates.map((candidate, idx) => {
     const resolvedIndex = candidate.index ?? idx;
     return {
@@ -52,7 +61,7 @@ export async function performCrownEvaluation(
     candidates: normalizedCandidates,
   };
 
-  const anthropicPrompt = `You are evaluating code implementations from different AI models.
+  const evaluationPrompt = `You are evaluating code implementations from different AI models.
 
 Here are the candidates to evaluate:
 ${JSON.stringify(evaluationData, null, 2)}
@@ -76,11 +85,10 @@ IMPORTANT: Respond ONLY with the JSON object, no other text.`;
 
   try {
     const { object } = await generateObject({
-      model: anthropic(MODEL_NAME),
+      model,
       schema: CrownEvaluationResponseSchema,
-      system:
-        "You select the best implementation from structured diff inputs and explain briefly why.",
-      prompt: anthropicPrompt,
+      system: systemPrompt,
+      prompt: evaluationPrompt,
       temperature: 0,
       maxRetries: 2,
     });
@@ -93,12 +101,10 @@ IMPORTANT: Respond ONLY with the JSON object, no other text.`;
 }
 
 export async function performCrownSummarization(
-  apiKey: string,
+  model: LanguageModel,
   prompt: string,
   gitDiff: string,
 ): Promise<CrownSummarizationResponse> {
-  const anthropic = createAnthropic({ apiKey });
-
   const anthropicPrompt = `You are an expert reviewer summarizing a pull request.
 
 GOAL
@@ -128,7 +134,7 @@ OUTPUT FORMAT (Markdown)
 
   try {
     const { object } = await generateObject({
-      model: anthropic(MODEL_NAME),
+      model,
       schema: CrownSummarizationResponseSchema,
       system:
         "You are an expert reviewer summarizing pull requests. Provide a clear, concise summary following the requested format.",
@@ -150,12 +156,38 @@ export const evaluate = action({
     candidates: v.array(CrownEvaluationCandidateValidator),
     teamSlugOrId: v.string(),
   },
-  handler: async (_ctx, args) => {
-    // Get the API key for this team
-    const apiKey = env.ANTHROPIC_API_KEY;
+  handler: async (ctx, args) => {
+    let settings: Doc<"workspaceSettings"> | null = null;
+    let apiKeys: Record<string, string> = {};
 
-    // Perform the evaluation
-    return performCrownEvaluation(apiKey, args.prompt, args.candidates);
+    try {
+      settings = await ctx.runQuery(api.workspaceSettings.get, {
+        teamSlugOrId: args.teamSlugOrId,
+      });
+    } catch (error) {
+      console.warn("[convex.crown] Failed to load workspace settings", error);
+    }
+
+    try {
+      apiKeys = await ctx.runQuery(api.apiKeys.getAllForAgents, {
+        teamSlugOrId: args.teamSlugOrId,
+      });
+    } catch (error) {
+      console.warn("[convex.crown] Failed to load API keys for crown", error);
+      apiKeys = {};
+    }
+
+    const { model, systemPrompt } = resolveCrownInferenceConfig(
+      settings,
+      apiKeys,
+    );
+
+    return performCrownEvaluation(
+      model,
+      systemPrompt,
+      args.prompt,
+      args.candidates,
+    );
   },
 });
 
@@ -165,11 +197,181 @@ export const summarize = action({
     gitDiff: v.string(),
     teamSlugOrId: v.string(),
   },
-  handler: async (_ctx, args) => {
-    // Get the API key for this team
-    const apiKey = env.ANTHROPIC_API_KEY;
+  handler: async (ctx, args) => {
+    let settings: Doc<"workspaceSettings"> | null = null;
+    let apiKeys: Record<string, string> = {};
 
-    // Perform the summarization
-    return performCrownSummarization(apiKey, args.prompt, args.gitDiff);
+    try {
+      settings = await ctx.runQuery(api.workspaceSettings.get, {
+        teamSlugOrId: args.teamSlugOrId,
+      });
+    } catch (error) {
+      console.warn("[convex.crown] Failed to load workspace settings", error);
+    }
+
+    try {
+      apiKeys = await ctx.runQuery(api.apiKeys.getAllForAgents, {
+        teamSlugOrId: args.teamSlugOrId,
+      });
+    } catch (error) {
+      console.warn("[convex.crown] Failed to load API keys for crown", error);
+      apiKeys = {};
+    }
+
+    const { model } = resolveCrownInferenceConfig(settings, apiKeys);
+
+    return performCrownSummarization(model, args.prompt, args.gitDiff);
   },
 });
+
+type WorkspaceSettingsDoc =
+  | (Doc<"workspaceSettings"> & {
+      crownHarness?: string | null;
+      crownModel?: string | null;
+      crownSystemPrompt?: string | null;
+    })
+  | null;
+
+function sanitizeSystemPrompt(value?: string | null): string {
+  const trimmed = (value ?? "").trim();
+  return trimmed.length > 0 ? trimmed : DEFAULT_CROWN_SYSTEM_PROMPT;
+}
+
+function isKnownHarnessId(value?: string | null): value is CrownHarnessId {
+  if (!value) return false;
+  return value in CROWN_HARNESS_OPTIONS_BY_ID;
+}
+
+function createLanguageModelForHarness(
+  option: CrownHarnessOption,
+  modelId: string,
+  apiKeys: Record<string, string>,
+): LanguageModel | null {
+  const trimmedModelId = modelId.trim();
+  if (!trimmedModelId) return null;
+
+  const resolvedKey = option.usesCmuxKey
+    ? env.ANTHROPIC_API_KEY
+    : option.requiresApiKey
+    ? apiKeys[option.requiresApiKey]?.trim()
+    : undefined;
+
+  try {
+    switch (option.provider) {
+      case "anthropic": {
+        const apiKey = resolvedKey ?? apiKeys.ANTHROPIC_API_KEY?.trim();
+        if (!apiKey) return null;
+        const anthropic = createAnthropic({ apiKey });
+        return anthropic(trimmedModelId);
+      }
+      case "openai": {
+        const apiKey = resolvedKey ?? apiKeys.OPENAI_API_KEY?.trim();
+        if (!apiKey) return null;
+        const openai = createOpenAI({ apiKey });
+        return openai(trimmedModelId);
+      }
+      case "gemini": {
+        const apiKey = resolvedKey ?? apiKeys.GEMINI_API_KEY?.trim();
+        if (!apiKey) return null;
+        const google = createGoogleGenerativeAI({ apiKey });
+        return google(trimmedModelId);
+      }
+      default:
+        return null;
+    }
+  } catch (error) {
+    console.error(
+      "[convex.crown] Failed to initialize harness",
+      {
+        harnessId: option.id,
+        modelId: trimmedModelId,
+        error,
+      },
+    );
+    return null;
+  }
+}
+
+function resolveCrownInferenceConfig(
+  settings: WorkspaceSettingsDoc,
+  apiKeys: Record<string, string>,
+): {
+  model: LanguageModel;
+  harnessId: CrownHarnessId;
+  modelId: string;
+  systemPrompt: string;
+} {
+  const requestedHarnessId = isKnownHarnessId(settings?.crownHarness)
+    ? (settings?.crownHarness as CrownHarnessId)
+    : DEFAULT_CROWN_HARNESS_ID;
+
+  const harnessCandidates: CrownHarnessId[] = [requestedHarnessId];
+  if (!harnessCandidates.includes(DEFAULT_CROWN_HARNESS_ID)) {
+    harnessCandidates.push(DEFAULT_CROWN_HARNESS_ID);
+  }
+
+  const rawModelId =
+    typeof settings?.crownModel === "string"
+      ? settings.crownModel.trim()
+      : undefined;
+  const systemPrompt = sanitizeSystemPrompt(settings?.crownSystemPrompt);
+
+  for (const harnessId of harnessCandidates) {
+    const option = CROWN_HARNESS_OPTIONS_BY_ID[harnessId];
+    if (!option) continue;
+
+    if (option.requiresApiKey) {
+      const hasKey = Boolean(apiKeys[option.requiresApiKey]?.trim());
+      if (!hasKey) {
+        if (harnessId === requestedHarnessId) {
+          console.warn(
+            "[convex.crown] Required API key missing for selected harness",
+            {
+              harnessId,
+              requiredKey: option.requiresApiKey,
+            },
+          );
+        }
+        continue;
+      }
+    }
+
+    const effectiveModelId = option.models.some((model) => model.id === rawModelId)
+      ? (rawModelId as string)
+      : getDefaultModelForHarness(harnessId);
+
+    const languageModel = createLanguageModelForHarness(
+      option,
+      effectiveModelId,
+      apiKeys,
+    );
+
+    if (languageModel) {
+      return {
+        model: languageModel,
+        harnessId,
+        modelId: effectiveModelId,
+        systemPrompt,
+      };
+    }
+  }
+
+  const fallbackOption = CROWN_HARNESS_OPTIONS_BY_ID[DEFAULT_CROWN_HARNESS_ID];
+  const fallbackModelId = getDefaultModelForHarness(DEFAULT_CROWN_HARNESS_ID);
+  const fallbackModel = createLanguageModelForHarness(
+    fallbackOption,
+    fallbackModelId,
+    apiKeys,
+  );
+
+  if (!fallbackModel) {
+    throw new ConvexError("No harness available for crown evaluation");
+  }
+
+  return {
+    model: fallbackModel,
+    harnessId: DEFAULT_CROWN_HARNESS_ID,
+    modelId: fallbackModelId,
+    systemPrompt,
+  };
+}
