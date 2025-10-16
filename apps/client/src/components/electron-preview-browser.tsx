@@ -170,7 +170,7 @@ export function ElectronPreviewBrowser({
         isNavigatingRef.current = false;
       }
     },
-    [isEditing],
+    [isEditing, onErrorStateChange],
   );
 
   useEffect(() => {
