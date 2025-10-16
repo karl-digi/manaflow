@@ -26,6 +26,8 @@ import TextareaAutosize from "react-textarea-autosize";
 
 export type EnvVar = { name: string; value: string; isSecret: boolean };
 
+type ViewMode = 'vscode' | 'browser';
+
 const ensureInitialEnvVars = (initial?: EnvVar[]): EnvVar[] => {
   const base = (initial ?? []).map((item) => ({
     name: item.name,
@@ -83,8 +85,10 @@ export function EnvironmentConfiguration({
     repoSearch?: string;
     instanceId?: string;
   };
-  const [iframeLoaded, setIframeLoaded] = useState(false);
-  const [iframeError, setIframeError] = useState<string | null>(null);
+  const [vscodeIframeLoaded, setVscodeIframeLoaded] = useState(false);
+  const [vscodeIframeError, setVscodeIframeError] = useState<string | null>(null);
+  const [browserIframeLoaded, setBrowserIframeLoaded] = useState(false);
+  const [browserIframeError, setBrowserIframeError] = useState<string | null>(null);
   const [envName, setEnvName] = useState(() => initialEnvName);
   const [envVars, setEnvVars] = useState<EnvVar[]>(() =>
     ensureInitialEnvVars(initialEnvVars)
@@ -106,11 +110,23 @@ export function EnvironmentConfiguration({
   const [localVscodeUrl, setLocalVscodeUrl] = useState<string | undefined>(
     () => vscodeUrl
   );
+  const [viewMode, setViewMode] = useState<ViewMode>('vscode');
+  const derivedBrowserUrl = useMemo(() => {
+    if (!localInstanceId) return undefined;
+    const hostId = localInstanceId.replace(/_/g, "-");
+    const firstPort = exposedPorts
+      .split(",")
+      .map((p) => Number.parseInt(p.trim(), 10))
+      .filter((n) => Number.isFinite(n) && n > 0)[0];
+    if (!firstPort) return undefined;
+    return `https://port-${firstPort}-${hostId}.http.cloud.morph.so/`;
+  }, [localInstanceId, exposedPorts]);
+
   const iframePersistKey = useMemo(() => {
-    if (localInstanceId) return `env-config:${localInstanceId}`;
-    if (localVscodeUrl) return `env-config:${localVscodeUrl}`;
-    return "env-config";
-  }, [localInstanceId, localVscodeUrl]);
+    if (localInstanceId) return `env-config:${localInstanceId}:${viewMode}`;
+    if (localVscodeUrl) return `env-config:${localVscodeUrl}:${viewMode}`;
+    return `env-config:${viewMode}`;
+  }, [localInstanceId, localVscodeUrl, viewMode]);
 
   useEffect(() => {
     setLocalInstanceId(instanceId);
@@ -148,25 +164,45 @@ export function EnvironmentConfiguration({
     }
   }, [pendingFocusIndex, envVars]);
 
-  // Reset iframe loading state when URL changes
+  // Reset iframe loading states when URLs change
   useEffect(() => {
-    setIframeLoaded(false);
-    setIframeError(null);
+    setVscodeIframeLoaded(false);
+    setVscodeIframeError(null);
   }, [localVscodeUrl]);
 
-  const handleIframeLoad = useCallback(() => {
-    setIframeError(null);
-    setIframeLoaded(true);
+  useEffect(() => {
+    setBrowserIframeLoaded(false);
+    setBrowserIframeError(null);
+  }, [derivedBrowserUrl]);
+
+  const handleVscodeIframeLoad = useCallback(() => {
+    setVscodeIframeError(null);
+    setVscodeIframeLoaded(true);
   }, []);
 
-  const handleIframeError = useCallback((error: Error) => {
+  const handleVscodeIframeError = useCallback((error: Error) => {
     console.error("Failed to load VS Code workspace iframe", error);
-    setIframeError(
-      "We couldn’t load VS Code. Try reloading or restarting the environment."
+    setVscodeIframeError(
+      "We couldn't load VS Code. Try reloading or restarting the environment."
     );
   }, []);
 
-  const showIframeOverlay = !iframeLoaded || iframeError !== null;
+  const handleBrowserIframeLoad = useCallback(() => {
+    setBrowserIframeError(null);
+    setBrowserIframeLoaded(true);
+  }, []);
+
+  const handleBrowserIframeError = useCallback((error: Error) => {
+    console.error("Failed to load browser preview iframe", error);
+    setBrowserIframeError(
+      "We couldn't load the browser preview. Try reloading or check if the dev server is running."
+    );
+  }, []);
+
+
+
+  const showVscodeIframeOverlay = !vscodeIframeLoaded || vscodeIframeError !== null;
+  const showBrowserIframeOverlay = !browserIframeLoaded || browserIframeError !== null;
 
   // no-op placeholder removed; using onSnapshot instead
 
@@ -707,6 +743,33 @@ export function EnvironmentConfiguration({
 
   const rightPane = (
     <div className="h-full bg-neutral-50 dark:bg-neutral-950">
+      {!isProvisioning && (localVscodeUrl || derivedBrowserUrl) && (
+        <div className="flex border-b border-neutral-200 dark:border-neutral-800">
+          <button
+            onClick={() => setViewMode('vscode')}
+            className={clsx(
+              "flex-1 px-4 py-2 text-sm font-medium border-b-2 transition-colors",
+              viewMode === 'vscode'
+                ? "border-neutral-900 text-neutral-900 dark:border-neutral-100 dark:text-neutral-100"
+                : "border-transparent text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200"
+            )}
+          >
+            VS Code
+          </button>
+          <button
+            onClick={() => setViewMode('browser')}
+            className={clsx(
+              "flex-1 px-4 py-2 text-sm font-medium border-b-2 transition-colors",
+              viewMode === 'browser'
+                ? "border-neutral-900 text-neutral-900 dark:border-neutral-100 dark:text-neutral-100"
+                : "border-transparent text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200"
+            )}
+            disabled={!derivedBrowserUrl}
+          >
+            Browser
+          </button>
+        </div>
+      )}
       {isProvisioning ? (
         <div className="flex items-center justify-center h-full">
           <div className="text-center max-w-md px-6">
@@ -723,23 +786,23 @@ export function EnvironmentConfiguration({
             </p>
           </div>
         </div>
-      ) : localVscodeUrl ? (
+      ) : viewMode === 'vscode' && localVscodeUrl ? (
         <div className="relative h-full">
           <div
-            aria-hidden={!showIframeOverlay}
+            aria-hidden={!showVscodeIframeOverlay}
             className={clsx(
               "absolute inset-0 z-[var(--z-low)] flex items-center justify-center backdrop-blur-sm transition-opacity duration-300",
               "bg-white/60 dark:bg-neutral-950/60",
-              showIframeOverlay
+              showVscodeIframeOverlay
                 ? "opacity-100 pointer-events-auto"
                 : "opacity-0 pointer-events-none"
             )}
           >
-            {iframeError ? (
+            {vscodeIframeError ? (
               <div className="text-center max-w-sm px-6">
                 <X className="w-8 h-8 mx-auto mb-3 text-red-500" />
                 <p className="text-sm text-neutral-700 dark:text-neutral-300">
-                  {iframeError}
+                  {vscodeIframeError}
                 </p>
               </div>
             ) : (
@@ -759,8 +822,48 @@ export function EnvironmentConfiguration({
             allow={TASK_RUN_IFRAME_ALLOW}
             sandbox={TASK_RUN_IFRAME_SANDBOX}
             retainOnUnmount
-            onLoad={handleIframeLoad}
-            onError={handleIframeError}
+            onLoad={handleVscodeIframeLoad}
+            onError={handleVscodeIframeError}
+          />
+        </div>
+      ) : viewMode === 'browser' && derivedBrowserUrl ? (
+        <div className="relative h-full">
+          <div
+            aria-hidden={!showBrowserIframeOverlay}
+            className={clsx(
+              "absolute inset-0 z-[var(--z-low)] flex items-center justify-center backdrop-blur-sm transition-opacity duration-300",
+              "bg-white/60 dark:bg-neutral-950/60",
+              showBrowserIframeOverlay
+                ? "opacity-100 pointer-events-auto"
+                : "opacity-0 pointer-events-none"
+            )}
+          >
+            {browserIframeError ? (
+              <div className="text-center max-w-sm px-6">
+                <X className="w-8 h-8 mx-auto mb-3 text-red-500" />
+                <p className="text-sm text-neutral-700 dark:text-neutral-300">
+                  {browserIframeError}
+                </p>
+              </div>
+            ) : (
+              <div className="text-center">
+                <Loader2 className="w-6 h-6 mx-auto mb-3 animate-spin text-neutral-500 dark:text-neutral-400" />
+                <p className="text-sm text-neutral-700 dark:text-neutral-300">
+                  Loading browser preview...
+                </p>
+              </div>
+            )}
+          </div>
+          <PersistentWebView
+            persistKey={iframePersistKey}
+            src={derivedBrowserUrl}
+            className="absolute inset-0"
+            iframeClassName="w-full h-full border-0"
+            allow={TASK_RUN_IFRAME_ALLOW}
+            sandbox={TASK_RUN_IFRAME_SANDBOX}
+            retainOnUnmount
+            onLoad={handleBrowserIframeLoad}
+            onError={handleBrowserIframeError}
           />
         </div>
       ) : (
@@ -768,8 +871,15 @@ export function EnvironmentConfiguration({
           <div className="text-center">
             <X className="w-8 h-8 mx-auto mb-4 text-red-500" />
             <p className="text-sm text-neutral-600 dark:text-neutral-400">
-              Waiting for environment URL...
+              {viewMode === 'vscode'
+                ? "Waiting for VS Code environment URL..."
+                : "Waiting for browser preview URL..."}
             </p>
+            {viewMode === 'browser' && !derivedBrowserUrl && (
+              <p className="text-xs text-neutral-500 dark:text-neutral-500 mt-2">
+                Make sure to configure exposed ports in the dev script section.
+              </p>
+            )}
           </div>
         </div>
       )}
