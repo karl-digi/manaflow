@@ -8,9 +8,11 @@ import {
   $isRangeSelection,
   $isTextNode,
   BLUR_COMMAND,
+  COMMAND_PRIORITY_CRITICAL,
   COMMAND_PRIORITY_HIGH,
   KEY_ARROW_DOWN_COMMAND,
   KEY_ARROW_UP_COMMAND,
+  KEY_DOWN_COMMAND,
   KEY_ENTER_COMMAND,
   KEY_ESCAPE_COMMAND,
   TextNode,
@@ -439,24 +441,27 @@ export function MentionPlugin({
       return true;
     };
 
-    // Handle Ctrl+N/P and Ctrl+J/K
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (!isShowingMenuRef.current) return;
-
-      if (event.ctrlKey) {
-        switch (event.key) {
-          case "n":
-          case "j":
-            event.preventDefault();
-            handleArrowDown();
-            break;
-          case "p":
-          case "k":
-            event.preventDefault();
-            handleArrowUp();
-            break;
-        }
+    const handleKeyDownCommand = (event: KeyboardEvent) => {
+      if (!isShowingMenuRef.current) {
+        return false;
       }
+
+      if (!event.ctrlKey) {
+        return false;
+      }
+
+      const key = event.key.toLowerCase();
+      if (key === "n" || key === "j") {
+        handleArrowDown(event);
+        return true;
+      }
+
+      if (key === "p" || key === "k") {
+        handleArrowUp(event);
+        return true;
+      }
+
+      return false;
     };
 
     const removeArrowDown = editor.registerCommand(
@@ -494,8 +499,11 @@ export function MentionPlugin({
       },
       COMMAND_PRIORITY_HIGH
     );
-
-    document.addEventListener("keydown", handleKeyDown);
+    const removeKeyDown = editor.registerCommand(
+      KEY_DOWN_COMMAND,
+      (event) => handleKeyDownCommand(event),
+      COMMAND_PRIORITY_CRITICAL
+    );
 
     return () => {
       removeArrowDown();
@@ -503,7 +511,7 @@ export function MentionPlugin({
       removeEnter();
       removeEscape();
       removeBlur();
-      document.removeEventListener("keydown", handleKeyDown);
+      removeKeyDown();
     };
   }, [editor, selectFile, hideMenu]);
 
