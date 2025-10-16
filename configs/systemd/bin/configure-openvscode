@@ -40,6 +40,18 @@ SETTINGS=$(jq -n \
     "git.branchCompareWith": "main"
   } + (if $theme != "" then {"workbench.colorTheme": $theme} else {} end)')
 
+KEYBINDINGS=$(jq -n '[
+  {
+    "key": "cmd+shift+v",
+    "command": "-markdown.showPreviewToSide"
+  },
+  {
+    "key": "cmd+shift+v",
+    "command": "editor.action.clipboardPasteAndMatchStyle",
+    "when": "editorTextFocus"
+  }
+]')
+
 home="${HOME:-/root}"
 user_base="${home}/.openvscode-server"
 user_dir="${user_base}/data/User"
@@ -51,3 +63,5 @@ mkdir -p "${user_dir}" "${default_profile_dir}" "${machine_dir}"
 printf '%s' "$SETTINGS" > "${user_dir}/settings.json"
 printf '%s' "$SETTINGS" > "${default_profile_dir}/settings.json"
 printf '%s' "$SETTINGS" > "${machine_dir}/settings.json"
+printf '%s' "$KEYBINDINGS" > "${user_dir}/keybindings.json"
+printf '%s' "$KEYBINDINGS" > "${default_profile_dir}/keybindings.json"
