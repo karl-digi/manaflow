@@ -1,6 +1,7 @@
 import { FloatingPane } from "@/components/floating-pane";
 import { type GitDiffViewerProps } from "@/components/git-diff-viewer";
 import { RunDiffSection } from "@/components/RunDiffSection";
+import { TaskRunChecks, type TaskRunPullRequestTarget } from "@/components/TaskRunChecks";
 import { TaskDetailHeader } from "@/components/task-detail-header";
 import { useTheme } from "@/components/theme/use-theme";
 import { Button } from "@/components/ui/button";
@@ -615,6 +616,48 @@ function RunDiffPage() {
     };
   }, [primaryRepo, baseBranchMetadata]);
 
+  const pullRequestTargets = useMemo<TaskRunPullRequestTarget[]>(() => {
+    if (!selectedRun) {
+      return [];
+    }
+
+    const entries: TaskRunPullRequestTarget[] = [];
+    const runPullRequests = selectedRun.pullRequests ?? [];
+
+    for (const pr of runPullRequests) {
+      if (!pr.repoFullName) {
+        continue;
+      }
+      if (pr.number === undefined || pr.number === null) {
+        continue;
+      }
+      entries.push({
+        repoFullName: pr.repoFullName,
+        prNumber: pr.number,
+        url: pr.url ?? undefined,
+      });
+    }
+
+    if (
+      entries.length === 0 &&
+      primaryRepo &&
+      selectedRun.pullRequestNumber !== undefined &&
+      selectedRun.pullRequestNumber !== null
+    ) {
+      const aggregatedUrl =
+        selectedRun.pullRequestUrl && selectedRun.pullRequestUrl !== "pending"
+          ? selectedRun.pullRequestUrl
+          : undefined;
+      entries.push({
+        repoFullName: primaryRepo,
+        prNumber: selectedRun.pullRequestNumber,
+        url: aggregatedUrl,
+      });
+    }
+
+    return entries;
+  }, [selectedRun, primaryRepo]);
+
   const restartAgents = useMemo(() => {
     const previousAgents = collectAgentNamesFromRuns(taskRuns);
     if (previousAgents.length > 0) {
@@ -666,6 +709,14 @@ function RunDiffPage() {
                 </span>
                 <span className="font-medium">{task.text}</span>
               </div>
+            </div>
+          )}
+          {pullRequestTargets.length > 0 && (
+            <div className="px-3.5 pb-3">
+              <TaskRunChecks
+                teamSlugOrId={teamSlugOrId}
+                targets={pullRequestTargets}
+              />
             </div>
           )}
           <div className="bg-white dark:bg-neutral-900 grow flex flex-col">
