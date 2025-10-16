@@ -5,6 +5,13 @@ import { useTheme } from "@/components/theme/use-theme";
 import { TitleBar } from "@/components/TitleBar";
 import { api } from "@cmux/convex/api";
 import type { Doc } from "@cmux/convex/dataModel";
+import {
+  CROWN_HARNESS_OPTIONS,
+  CROWN_MODEL_OPTIONS,
+  DEFAULT_CROWN_HARNESS_ID,
+  DEFAULT_CROWN_MODEL_ID,
+  DEFAULT_CROWN_SYSTEM_PROMPT,
+} from "@cmux/shared";
 import { AGENT_CONFIGS, type AgentConfig } from "@cmux/shared/agentConfig";
 import { API_KEY_MODELS_BY_ENV } from "@cmux/shared/model-usage";
 import { convexQuery } from "@convex-dev/react-query";
@@ -12,7 +19,7 @@ import { Switch } from "@heroui/react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useConvex } from "convex/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/settings")({
@@ -40,6 +47,14 @@ function SettingsComponent() {
   const [autoPrEnabled, setAutoPrEnabled] = useState<boolean>(false);
   const [originalAutoPrEnabled, setOriginalAutoPrEnabled] =
     useState<boolean>(false);
+  const [crownModel, setCrownModel] = useState<string>("");
+  const [originalCrownModel, setOriginalCrownModel] = useState<string>("");
+  const [crownHarness, setCrownHarness] = useState<string>("");
+  const [originalCrownHarness, setOriginalCrownHarness] =
+    useState<string>("");
+  const [crownSystemPrompt, setCrownSystemPrompt] = useState<string>("");
+  const [originalCrownSystemPrompt, setOriginalCrownSystemPrompt] =
+    useState<string>("");
   // const [isSaveButtonVisible, setIsSaveButtonVisible] = useState(true);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const saveButtonRef = useRef<HTMLDivElement>(null);
@@ -71,6 +86,67 @@ function SettingsComponent() {
 
   // Global mapping of envVar -> models (from shared)
   const apiKeyModelsByEnv = API_KEY_MODELS_BY_ENV;
+
+  const availableCrownModels = useMemo(() => {
+    return CROWN_MODEL_OPTIONS.filter((option) => {
+      const value = originalApiKeyValues[option.envVar] ?? "";
+      return value.trim().length > 0;
+    });
+  }, [originalApiKeyValues]);
+
+  const canCustomizeCrown = availableCrownModels.length > 0;
+
+  useEffect(() => {
+    if (canCustomizeCrown) {
+      if (!crownModel && availableCrownModels[0]) {
+        setCrownModel(availableCrownModels[0].id);
+      }
+      if (!crownHarness) {
+        setCrownHarness(DEFAULT_CROWN_HARNESS_ID);
+      }
+    } else {
+      if (crownModel !== "") {
+        setCrownModel("");
+      }
+      if (crownHarness !== "") {
+        setCrownHarness("");
+      }
+      if (crownSystemPrompt !== "") {
+        setCrownSystemPrompt("");
+      }
+    }
+  }, [
+    canCustomizeCrown,
+    availableCrownModels,
+    crownModel,
+    crownHarness,
+    crownSystemPrompt,
+  ]);
+
+  const defaultCrownModelOption =
+    CROWN_MODEL_OPTIONS.find(
+      (option) => option.id === DEFAULT_CROWN_MODEL_ID,
+    ) ?? CROWN_MODEL_OPTIONS[0];
+
+  const displayedCrownModelId =
+    crownModel || (availableCrownModels[0]?.id ?? defaultCrownModelOption.id);
+
+  const displayedCrownHarnessId =
+    crownHarness || DEFAULT_CROWN_HARNESS_ID;
+
+  const selectedCrownModelOption =
+    CROWN_MODEL_OPTIONS.find(
+      (option) => option.id === displayedCrownModelId,
+    ) ?? defaultCrownModelOption;
+
+  const selectedCrownHarnessOption =
+    CROWN_HARNESS_OPTIONS.find(
+      (option) => option.id === displayedCrownHarnessId,
+    ) ??
+    CROWN_HARNESS_OPTIONS.find(
+      (option) => option.id === DEFAULT_CROWN_HARNESS_ID,
+    ) ??
+    CROWN_HARNESS_OPTIONS[0];
 
   // Query existing API keys
   const { data: existingKeys } = useQuery(
@@ -139,12 +215,19 @@ function SettingsComponent() {
     if (workspaceSettings !== undefined) {
       setWorktreePath(workspaceSettings?.worktreePath || "");
       setOriginalWorktreePath(workspaceSettings?.worktreePath || "");
-      const enabled = (
-        workspaceSettings as unknown as { autoPrEnabled?: boolean }
-      )?.autoPrEnabled;
+      const enabled = workspaceSettings?.autoPrEnabled;
       const effective = enabled === undefined ? false : Boolean(enabled);
       setAutoPrEnabled(effective);
       setOriginalAutoPrEnabled(effective);
+      const storedModel = workspaceSettings?.crownModel ?? "";
+      setCrownModel(storedModel);
+      setOriginalCrownModel(storedModel);
+      const storedHarness = workspaceSettings?.crownHarness ?? "";
+      setCrownHarness(storedHarness);
+      setOriginalCrownHarness(storedHarness);
+      const storedPrompt = (workspaceSettings?.crownSystemPrompt ?? "").trim();
+      setCrownSystemPrompt(storedPrompt);
+      setOriginalCrownSystemPrompt(storedPrompt);
     }
   }, [workspaceSettings]);
 
@@ -244,11 +327,31 @@ function SettingsComponent() {
     // Auto PR toggle changes
     const autoPrChanged = autoPrEnabled !== originalAutoPrEnabled;
 
+    const crownModelToSave = canCustomizeCrown
+      ? crownModel || (availableCrownModels[0]?.id ?? "")
+      : "";
+    const crownHarnessToSave = canCustomizeCrown
+      ? crownHarness || DEFAULT_CROWN_HARNESS_ID
+      : "";
+    const crownPromptToSave = canCustomizeCrown
+      ? crownSystemPrompt.trim()
+      : "";
+
+    const crownModelChanged = crownModelToSave !== originalCrownModel;
+    const crownHarnessChanged =
+      crownHarnessToSave !==
+      (originalCrownHarness || (canCustomizeCrown ? DEFAULT_CROWN_HARNESS_ID : ""));
+    const crownPromptChanged =
+      crownPromptToSave !== originalCrownSystemPrompt;
+
     return (
       worktreePathChanged ||
       autoPrChanged ||
       apiKeysChanged ||
-      containerSettingsChanged
+      containerSettingsChanged ||
+      crownModelChanged ||
+      crownHarnessChanged ||
+      crownPromptChanged
     );
   };
 
@@ -259,18 +362,55 @@ function SettingsComponent() {
       let savedCount = 0;
       let deletedCount = 0;
 
-      // Save worktree path / auto PR if changed
-      if (
+      const hasCustomCrown = canCustomizeCrown;
+      const fallbackModelId = availableCrownModels[0]?.id ?? "";
+      const resolvedModelId = hasCustomCrown
+        ? crownModel || fallbackModelId
+        : "";
+      const resolvedHarnessId = hasCustomCrown
+        ? crownHarness || DEFAULT_CROWN_HARNESS_ID
+        : "";
+      const trimmedCrownPrompt = crownSystemPrompt.trim();
+      const crownModelPayload = resolvedModelId ? resolvedModelId : undefined;
+      const crownHarnessPayload = resolvedHarnessId ? resolvedHarnessId : undefined;
+      const crownPromptPayload =
+        hasCustomCrown && trimmedCrownPrompt.length > 0
+          ? trimmedCrownPrompt
+          : undefined;
+
+      const shouldUpdateWorkspaceSettings =
         worktreePath !== originalWorktreePath ||
-        autoPrEnabled !== originalAutoPrEnabled
-      ) {
+        autoPrEnabled !== originalAutoPrEnabled ||
+        (crownModelPayload ?? "") !== originalCrownModel ||
+        (crownHarnessPayload ?? "") !==
+          (originalCrownHarness || (hasCustomCrown ? DEFAULT_CROWN_HARNESS_ID : "")) ||
+        (crownPromptPayload ?? "") !== originalCrownSystemPrompt;
+
+      if (shouldUpdateWorkspaceSettings) {
         await convex.mutation(api.workspaceSettings.update, {
           teamSlugOrId,
           worktreePath: worktreePath || undefined,
           autoPrEnabled,
+          crownModel: crownModelPayload,
+          crownHarness: crownHarnessPayload,
+          crownSystemPrompt: crownPromptPayload,
         });
         setOriginalWorktreePath(worktreePath);
         setOriginalAutoPrEnabled(autoPrEnabled);
+        setOriginalCrownModel(crownModelPayload ?? "");
+        setOriginalCrownHarness(crownHarnessPayload ?? "");
+        setOriginalCrownSystemPrompt(crownPromptPayload ?? "");
+        if (hasCustomCrown) {
+          if (!crownModel && resolvedModelId) {
+            setCrownModel(resolvedModelId);
+          }
+          if (!crownHarness && resolvedHarnessId) {
+            setCrownHarness(resolvedHarnessId);
+          }
+          setCrownSystemPrompt(trimmedCrownPrompt);
+        } else {
+          setCrownSystemPrompt("");
+        }
       }
 
       // Save container settings if changed
@@ -620,7 +760,7 @@ function SettingsComponent() {
                   Crown Evaluator
                 </h2>
               </div>
-              <div className="p-4">
+              <div className="p-4 space-y-4">
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <label className="block text-sm font-medium text-neutral-900 dark:text-neutral-100">
@@ -638,6 +778,82 @@ function SettingsComponent() {
                     isSelected={autoPrEnabled}
                     onValueChange={setAutoPrEnabled}
                   />
+                </div>
+                <div className="pt-4 border-t border-neutral-200 dark:border-neutral-800 space-y-4">
+                  {canCustomizeCrown ? (
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-medium text-neutral-900 dark:text-neutral-100 mb-1">
+                          Evaluation model
+                        </label>
+                        <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-2">
+                          Only models authenticated with your team are available for crown evaluation.
+                        </p>
+                        <select
+                          value={displayedCrownModelId}
+                          onChange={(event) => setCrownModel(event.target.value)}
+                          className="w-full rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                          {availableCrownModels.map((option) => (
+                            <option key={option.id} value={option.id}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                        <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                          Currently selected: {selectedCrownModelOption.label}
+                        </p>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-neutral-900 dark:text-neutral-100 mb-1">
+                          Evaluation harness
+                        </label>
+                        <select
+                          value={displayedCrownHarnessId}
+                          onChange={(event) => setCrownHarness(event.target.value)}
+                          className="w-full rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                          {CROWN_HARNESS_OPTIONS.map((option) => (
+                            <option key={option.id} value={option.id}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                        <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                          {selectedCrownHarnessOption.description}
+                        </p>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-neutral-900 dark:text-neutral-100 mb-1">
+                          System prompt override
+                        </label>
+                        <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-2">
+                          Leave blank to use the cmux default prompt. Customize to steer your evaluator.
+                        </p>
+                        <textarea
+                          value={crownSystemPrompt}
+                          onChange={(event) => setCrownSystemPrompt(event.target.value)}
+                          rows={5}
+                          placeholder={DEFAULT_CROWN_SYSTEM_PROMPT}
+                          className="w-full rounded-lg border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                        <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                          Default prompt: "{DEFAULT_CROWN_SYSTEM_PROMPT}"
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="text-sm text-neutral-600 dark:text-neutral-300">
+                        Crown currently evaluates using our default configuration: {defaultCrownModelOption.label} with the standard harness and cmux system prompt.
+                      </p>
+                      <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                        Add a Claude API key in Provider Credentials to choose your own evaluator and prompt.
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

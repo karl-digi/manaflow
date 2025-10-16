@@ -226,9 +226,21 @@ export const crownEvaluate = httpAction(async (ctx, req) => {
     );
   }
 
-  if (!workerAuth) {
+  let teamId: string;
+  let userId: string;
+
+  if (workerAuth) {
+    teamId = workerAuth.payload.teamId;
+    userId = workerAuth.payload.userId;
+  } else {
     const membership = await ensureTeamMembership(ctx, teamSlugOrId);
     if (membership instanceof Response) return membership;
+    teamId = membership.teamId;
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      return jsonResponse({ code: 401, message: "Unauthorized" }, 401);
+    }
+    userId = identity.subject;
   }
 
   try {
@@ -245,6 +257,8 @@ export const crownEvaluate = httpAction(async (ctx, req) => {
       prompt: data.prompt,
       candidates,
       teamSlugOrId,
+      teamId,
+      userId,
     });
     return jsonResponse(result);
   } catch (error) {
@@ -290,11 +304,30 @@ export const crownSummarize = httpAction(async (ctx, req) => {
     );
   }
 
+  let teamId: string;
+  let userId: string;
+
+  if (workerAuth) {
+    teamId = workerAuth.payload.teamId;
+    userId = workerAuth.payload.userId;
+  } else {
+    const membership = await ensureTeamMembership(ctx, teamSlugOrId);
+    if (membership instanceof Response) return membership;
+    teamId = membership.teamId;
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      return jsonResponse({ code: 401, message: "Unauthorized" }, 401);
+    }
+    userId = identity.subject;
+  }
+
   try {
     const result = await ctx.runAction(api.crown.actions.summarize, {
       prompt: data.prompt,
       gitDiff: data.gitDiff,
       teamSlugOrId,
+      teamId,
+      userId,
     });
     return jsonResponse(result);
   } catch (error) {

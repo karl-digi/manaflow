@@ -10,10 +10,19 @@ import {
   type CrownEvaluationResponse,
   type CrownSummarizationResponse,
 } from "../../../shared/src/convex-safe";
+import {
+  DEFAULT_CROWN_HARNESS_ID,
+  DEFAULT_CROWN_MODEL_ID,
+  DEFAULT_CROWN_SYSTEM_PROMPT,
+  getCrownHarnessOption,
+  getCrownModelOption,
+  type CrownHarnessId,
+  type CrownModelOption,
+} from "../../../shared/src/crown/config";
 import { env } from "../../_shared/convex-env";
+import { internal } from "../_generated/api";
+import type { Doc } from "../_generated/dataModel";
 import { action } from "../_generated/server";
-
-const MODEL_NAME = "claude-3-5-sonnet-20241022";
 
 const CrownEvaluationCandidateValidator = v.object({
   runId: v.optional(v.string()),
@@ -24,12 +33,131 @@ const CrownEvaluationCandidateValidator = v.object({
   index: v.optional(v.number()),
 });
 
-export async function performCrownEvaluation(
-  apiKey: string,
-  prompt: string,
-  candidates: CrownEvaluationCandidate[],
-): Promise<CrownEvaluationResponse> {
-  const anthropic = createAnthropic({ apiKey });
+type ApiKeyMap = Record<string, string>;
+
+type ResolvedCrownRuntimeConfig = {
+  apiKey: string;
+  model: CrownModelOption;
+  harness: CrownHarnessId;
+  systemPrompt: string;
+  allowCustom: boolean;
+};
+
+function mergeApiKeysWithEnv(apiKeys: ApiKeyMap): ApiKeyMap {
+  const merged: ApiKeyMap = { ...apiKeys };
+  if (!merged.ANTHROPIC_API_KEY && env.ANTHROPIC_API_KEY) {
+    merged.ANTHROPIC_API_KEY = env.ANTHROPIC_API_KEY;
+  }
+  return merged;
+}
+
+function computeRuntimeConfig(
+  settings: Doc<"workspaceSettings"> | null,
+  apiKeys: ApiKeyMap,
+): ResolvedCrownRuntimeConfig {
+  const fallbackModel = getCrownModelOption(DEFAULT_CROWN_MODEL_ID);
+  if (!fallbackModel) {
+    throw new ConvexError("Default crown model is not available");
+  }
+
+  const mergedKeys = mergeApiKeysWithEnv(apiKeys);
+
+  const selectedModel = getCrownModelOption(settings?.crownModel);
+  const selectedModelKey =
+    selectedModel && apiKeys[selectedModel.envVar]
+      ? apiKeys[selectedModel.envVar]
+      : undefined;
+  const allowCustom = Boolean(selectedModel && selectedModelKey);
+
+  if (selectedModel && !selectedModelKey) {
+    console.warn(
+      `[convex.crown] No user API key found for selected crown model ${selectedModel.id}; falling back to default.`,
+    );
+  }
+
+  const model = allowCustom ? (selectedModel as CrownModelOption) : fallbackModel;
+  const apiKey = allowCustom
+    ? (selectedModelKey as string)
+    : mergedKeys[model.envVar];
+
+  if (!apiKey) {
+    throw new ConvexError("Missing API key for crown evaluation");
+  }
+
+  const harness = allowCustom
+    ? getCrownHarnessOption(settings?.crownHarness)?.id ?? DEFAULT_CROWN_HARNESS_ID
+    : DEFAULT_CROWN_HARNESS_ID;
+
+  const trimmedPrompt = settings?.crownSystemPrompt?.trim() ?? "";
+  const systemPrompt =
+    allowCustom && trimmedPrompt
+      ? trimmedPrompt
+      : DEFAULT_CROWN_SYSTEM_PROMPT;
+
+  return { apiKey, model, harness, systemPrompt, allowCustom };
+}
+
+function buildEvaluationPrompt(
+  harness: CrownHarnessId,
+  taskPrompt: string,
+  candidates: Array<{
+    index: number;
+    runId?: string;
+    agentName?: string;
+    modelName?: string;
+    gitDiff: string;
+    newBranch: string | null;
+  }>,
+): string {
+  const serialized = JSON.stringify(
+    {
+      task: taskPrompt,
+      candidates,
+    },
+    null,
+    2,
+  );
+
+  if (harness === "scorecard") {
+    return `You are evaluating code implementations from multiple AI coding agents.
+
+Your job is to score each candidate on correctness, completeness, and maintainability before choosing a winner.
+
+Context (JSON):
+${serialized}
+
+Instructions:
+1. Review the task description and diffs for every candidate.
+2. Internally score each candidate from 1-5 for correctness, completeness, and maintainability. Use the diff contents to justify the scores.
+3. Select the highest-scoring candidate overall. Break ties in favor of safer, clearer changes.
+4. Return ONLY a JSON object: {"winner": <index>, "reason": "<concise justification referencing why the winner beats the others>"}.
+5. Do not include the score table or any extra commentary.`;
+  }
+
+  return `You are evaluating code implementations from different AI models.
+
+Context (JSON):
+${serialized}
+
+Consider:
+1. Code quality and correctness.
+2. Completeness of the solution.
+3. Adherence to best practices.
+4. Whether the diff contains meaningful changes (prefer substantive improvements over no-op edits).
+
+Respond ONLY with the JSON object {"winner": <index>, "reason": "<concise justification>"} explaining why the winner is superior.`;
+}
+
+export async function performCrownEvaluation({
+  runtime,
+  prompt,
+  candidates,
+}: {
+  runtime: ResolvedCrownRuntimeConfig;
+  prompt: string;
+  candidates: CrownEvaluationCandidate[];
+}): Promise<CrownEvaluationResponse> {
+  const anthropic = createAnthropic({ apiKey: runtime.apiKey });
 
   const normalizedCandidates = candidates.map((candidate, idx) => {
     const resolvedIndex = candidate.index ?? idx;
@@ -47,57 +175,42 @@ export async function performCrownEvaluation(
     };
   });
 
-  const evaluationData = {
+  const evaluationPrompt = buildEvaluationPrompt(
+    runtime.harness,
     prompt,
-    candidates: normalizedCandidates,
-  };
-
-  const anthropicPrompt = `You are evaluating code implementations from different AI models.
-
-Here are the candidates to evaluate:
-${JSON.stringify(evaluationData, null, 2)}
-
-NOTE: The git diffs shown contain only actual code changes. Lock files, build artifacts, and other non-essential files have been filtered out.
-
-Analyze these implementations and select the best one based on:
-1. Code quality and correctness
-2. Completeness of the solution
-3. Following best practices
-4. Actually having meaningful code changes (if one has no changes, prefer the one with changes)
-
-Respond with a JSON object containing:
-- "winner": the index (0-based) of the best implementation
-- "reason": a brief explanation of why this implementation was chosen
-
-Example response:
-{"winner": 0, "reason": "Model claude/sonnet-4 provided a more complete implementation with better error handling and cleaner code structure."}
-
-IMPORTANT: Respond ONLY with the JSON object, no other text.`;
+    normalizedCandidates,
+  );
 
   try {
     const { object } = await generateObject({
-      model: anthropic(MODEL_NAME),
+      model: anthropic(runtime.model.model),
       schema: CrownEvaluationResponseSchema,
-      system:
-        "You select the best implementation from structured diff inputs and explain briefly why.",
-      prompt: anthropicPrompt,
+      system: runtime.systemPrompt,
+      prompt: evaluationPrompt,
       temperature: 0,
       maxRetries: 2,
     });
 
     return CrownEvaluationResponseSchema.parse(object);
   } catch (error) {
-    console.error("[convex.crown] Evaluation error", error);
+    console.error(
+      `[convex.crown] Evaluation error (model=${runtime.model.id}, harness=${runtime.harness})`,
+      error,
+    );
     throw new ConvexError("Evaluation failed");
   }
 }
 
-export async function performCrownSummarization(
-  apiKey: string,
-  prompt: string,
-  gitDiff: string,
-): Promise<CrownSummarizationResponse> {
-  const anthropic = createAnthropic({ apiKey });
+export async function performCrownSummarization({
+  runtime,
+  prompt,
+  gitDiff,
+}: {
+  runtime: ResolvedCrownRuntimeConfig;
+  prompt: string;
+  gitDiff: string;
+}): Promise<CrownSummarizationResponse> {
+  const anthropic = createAnthropic({ apiKey: runtime.apiKey });
 
   const anthropicPrompt = `You are an expert reviewer summarizing a pull request.
 
@@ -128,7 +241,7 @@ OUTPUT FORMAT (Markdown)
 
   try {
     const { object } = await generateObject({
-      model: anthropic(MODEL_NAME),
+      model: anthropic(runtime.model.model),
       schema: CrownSummarizationResponseSchema,
       system:
         "You are an expert reviewer summarizing pull requests. Provide a clear, concise summary following the requested format.",
@@ -139,7 +252,10 @@ OUTPUT FORMAT (Markdown)
 
     return CrownSummarizationResponseSchema.parse(object);
   } catch (error) {
-    console.error("[convex.crown] Summarization error", error);
+    console.error(
+      `[convex.crown] Summarization error (model=${runtime.model.id})`,
+      error,
+    );
     throw new ConvexError("Summarization failed");
   }
 }
@@ -149,13 +265,28 @@ export const evaluate = action({
     prompt: v.string(),
     candidates: v.array(CrownEvaluationCandidateValidator),
     teamSlugOrId: v.string(),
+    teamId: v.string(),
+    userId: v.string(),
   },
-  handler: async (_ctx, args) => {
-    // Get the API key for this team
-    const apiKey = env.ANTHROPIC_API_KEY;
+  handler: async (ctx, args) => {
+    const [settings, apiKeys] = await Promise.all([
+      ctx.runQuery(internal.workspaceSettings.getByTeamAndUserInternal, {
+        teamId: args.teamId,
+        userId: args.userId,
+      }),
+      ctx.runQuery(internal.apiKeys.getAllForAgentsInternal, {
+        teamId: args.teamId,
+        userId: args.userId,
+      }),
+    ]);
 
-    // Perform the evaluation
-    return performCrownEvaluation(apiKey, args.prompt, args.candidates);
+    const runtime = computeRuntimeConfig(settings, apiKeys);
+
+    return performCrownEvaluation({
+      runtime,
+      prompt: args.prompt,
+      candidates: args.candidates,
+    });
   },
 });
 
@@ -164,12 +295,27 @@ export const summarize = action({
     prompt: v.string(),
     gitDiff: v.string(),
     teamSlugOrId: v.string(),
+    teamId: v.string(),
+    userId: v.string(),
   },
-  handler: async (_ctx, args) => {
-    // Get the API key for this team
-    const apiKey = env.ANTHROPIC_API_KEY;
+  handler: async (ctx, args) => {
+    const [settings, apiKeys] = await Promise.all([
+      ctx.runQuery(internal.workspaceSettings.getByTeamAndUserInternal, {
+        teamId: args.teamId,
+        userId: args.userId,
+      }),
+      ctx.runQuery(internal.apiKeys.getAllForAgentsInternal, {
+        teamId: args.teamId,
+        userId: args.userId,
+      }),
+    ]);
 
-    // Perform the summarization
-    return performCrownSummarization(apiKey, args.prompt, args.gitDiff);
+    const runtime = computeRuntimeConfig(settings, apiKeys);
+
+    return performCrownSummarization({
+      runtime,
+      prompt: args.prompt,
+      gitDiff: args.gitDiff,
+    });
   },
 });
