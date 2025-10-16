@@ -42,11 +42,14 @@ const ensureInitialEnvVars = (initial?: EnvVar[]): EnvVar[] => {
   return base;
 };
 
+type WorkspaceView = "vscode" | "browser";
+
 export function EnvironmentConfiguration({
   selectedRepos,
   teamSlugOrId,
   instanceId,
   vscodeUrl,
+  browserUrl,
   isProvisioning,
   mode = "new",
   sourceEnvironmentId,
@@ -60,6 +63,7 @@ export function EnvironmentConfiguration({
   teamSlugOrId: string;
   instanceId?: string;
   vscodeUrl?: string;
+  browserUrl?: string;
   isProvisioning: boolean;
   mode?: "new" | "snapshot";
   sourceEnvironmentId?: Id<"environments">;
@@ -83,8 +87,16 @@ export function EnvironmentConfiguration({
     repoSearch?: string;
     instanceId?: string;
   };
-  const [iframeLoaded, setIframeLoaded] = useState(false);
-  const [iframeError, setIframeError] = useState<string | null>(null);
+  const [activeWorkspaceView, setActiveWorkspaceView] =
+    useState<WorkspaceView>("vscode");
+  const [vscodeIframeLoaded, setVscodeIframeLoaded] = useState(false);
+  const [vscodeIframeError, setVscodeIframeError] = useState<string | null>(
+    null
+  );
+  const [browserIframeLoaded, setBrowserIframeLoaded] = useState(false);
+  const [browserIframeError, setBrowserIframeError] = useState<string | null>(
+    null
+  );
   const [envName, setEnvName] = useState(() => initialEnvName);
   const [envVars, setEnvVars] = useState<EnvVar[]>(() =>
     ensureInitialEnvVars(initialEnvVars)
@@ -106,11 +118,15 @@ export function EnvironmentConfiguration({
   const [localVscodeUrl, setLocalVscodeUrl] = useState<string | undefined>(
     () => vscodeUrl
   );
+  const [localBrowserUrl, setLocalBrowserUrl] = useState<string | undefined>(
+    () => browserUrl
+  );
   const iframePersistKey = useMemo(() => {
     if (localInstanceId) return `env-config:${localInstanceId}`;
     if (localVscodeUrl) return `env-config:${localVscodeUrl}`;
+    if (localBrowserUrl) return `env-config:${localBrowserUrl}`;
     return "env-config";
-  }, [localInstanceId, localVscodeUrl]);
+  }, [localInstanceId, localVscodeUrl, localBrowserUrl]);
 
   useEffect(() => {
     setLocalInstanceId(instanceId);
@@ -119,6 +135,10 @@ export function EnvironmentConfiguration({
   useEffect(() => {
     setLocalVscodeUrl(vscodeUrl);
   }, [vscodeUrl]);
+
+  useEffect(() => {
+    setLocalBrowserUrl(browserUrl);
+  }, [browserUrl]);
 
   const createEnvironmentMutation = useRQMutation(
     postApiEnvironmentsMutation()
@@ -148,25 +168,64 @@ export function EnvironmentConfiguration({
     }
   }, [pendingFocusIndex, envVars]);
 
-  // Reset iframe loading state when URL changes
   useEffect(() => {
-    setIframeLoaded(false);
-    setIframeError(null);
+    setVscodeIframeLoaded(false);
+    setVscodeIframeError(null);
   }, [localVscodeUrl]);
 
-  const handleIframeLoad = useCallback(() => {
-    setIframeError(null);
-    setIframeLoaded(true);
+  useEffect(() => {
+    setBrowserIframeLoaded(false);
+    setBrowserIframeError(null);
+  }, [localBrowserUrl]);
+
+  useEffect(() => {
+    const hasVscode = Boolean(localVscodeUrl);
+    const hasBrowser = Boolean(localBrowserUrl);
+
+    if (activeWorkspaceView === "vscode" && !hasVscode && hasBrowser) {
+      setActiveWorkspaceView("browser");
+    } else if (
+      activeWorkspaceView === "browser" &&
+      !hasBrowser &&
+      hasVscode
+    ) {
+      setActiveWorkspaceView("vscode");
+    }
+  }, [activeWorkspaceView, localVscodeUrl, localBrowserUrl]);
+
+  const handleVscodeIframeLoad = useCallback(() => {
+    setVscodeIframeError(null);
+    setVscodeIframeLoaded(true);
   }, []);
 
-  const handleIframeError = useCallback((error: Error) => {
+  const handleVscodeIframeError = useCallback((error: Error) => {
     console.error("Failed to load VS Code workspace iframe", error);
-    setIframeError(
+    setVscodeIframeError(
       "We couldn’t load VS Code. Try reloading or restarting the environment."
     );
   }, []);
 
-  const showIframeOverlay = !iframeLoaded || iframeError !== null;
+  const handleBrowserIframeLoad = useCallback(() => {
+    setBrowserIframeError(null);
+    setBrowserIframeLoaded(true);
+  }, []);
+
+  const handleBrowserIframeError = useCallback((error: Error) => {
+    console.error("Failed to load browser workspace iframe", error);
+    setBrowserIframeError(
+      "We couldn’t load the browser. Try reloading or restarting the environment."
+    );
+  }, []);
+
+  const activeIframeLoaded =
+    activeWorkspaceView === "browser"
+      ? browserIframeLoaded
+      : vscodeIframeLoaded;
+  const activeIframeError =
+    activeWorkspaceView === "browser"
+      ? browserIframeError
+      : vscodeIframeError;
+  const showIframeOverlay = !activeIframeLoaded || activeIframeError !== null;
 
   // no-op placeholder removed; using onSnapshot instead
 
@@ -336,6 +395,38 @@ export function EnvironmentConfiguration({
       );
     }
   };
+
+  const hasVscodeWorkspace = Boolean(localVscodeUrl);
+  const hasBrowserWorkspace = Boolean(localBrowserUrl);
+  const availableViews: WorkspaceView[] = [];
+  if (hasVscodeWorkspace) {
+    availableViews.push("vscode");
+  }
+  if (hasBrowserWorkspace) {
+    availableViews.push("browser");
+  }
+  const showViewToggle = availableViews.length > 1;
+  const workspaceViewLabels: Record<WorkspaceView, string> = {
+    vscode: "VS Code",
+    browser: "Browser",
+  };
+  const activeWorkspaceUrl =
+    activeWorkspaceView === "browser" ? localBrowserUrl : localVscodeUrl;
+  const overlayLoadingCopy =
+    activeWorkspaceView === "browser"
+      ? "Loading browser..."
+      : "Loading VS Code...";
+  const waitingMessage =
+    activeWorkspaceView === "browser"
+      ? "Waiting for browser URL..."
+      : "Waiting for workspace URL...";
+  const headerDescription = showViewToggle
+    ? "Switch between VS Code and the browser view as you finalize the environment."
+    : activeWorkspaceView === "browser"
+      ? "Use the in-browser desktop to finish your setup."
+      : "Use the connected VS Code workspace to finish your setup.";
+  const vscodePersistKey = `${iframePersistKey}:vscode`;
+  const browserPersistKey = `${iframePersistKey}:browser`;
 
   const leftPane = (
     <div className="h-full p-6 overflow-y-auto">
@@ -706,73 +797,143 @@ export function EnvironmentConfiguration({
   );
 
   const rightPane = (
-    <div className="h-full bg-neutral-50 dark:bg-neutral-950">
-      {isProvisioning ? (
-        <div className="flex items-center justify-center h-full">
-          <div className="text-center max-w-md px-6">
-            <div className="w-16 h-16 mx-auto mb-4 rounded-lg bg-neutral-200 dark:bg-neutral-800 flex items-center justify-center">
-              <Settings className="w-8 h-8 text-neutral-500 dark:text-neutral-400" />
-            </div>
-            <h3 className="text-lg font-medium text-neutral-900 dark:text-neutral-100 mb-2">
-              Launching Environment
-            </h3>
-            <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-4">
-              {mode === "snapshot"
-                ? "Creating instance from snapshot. Once ready, VS Code will appear here so you can test your changes."
-                : "Your development environment is launching. Once ready, VS Code will appear here so you can configure and test your setup."}
+    <div className="h-full bg-neutral-50 dark:bg-neutral-950 flex flex-col">
+      <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-neutral-800 dark:text-neutral-200">
+              Workspace preview
+            </p>
+            <p className="text-xs text-neutral-500 dark:text-neutral-400">
+              {headerDescription}
             </p>
           </div>
-        </div>
-      ) : localVscodeUrl ? (
-        <div className="relative h-full">
-          <div
-            aria-hidden={!showIframeOverlay}
-            className={clsx(
-              "absolute inset-0 z-[var(--z-low)] flex items-center justify-center backdrop-blur-sm transition-opacity duration-300",
-              "bg-white/60 dark:bg-neutral-950/60",
-              showIframeOverlay
-                ? "opacity-100 pointer-events-auto"
-                : "opacity-0 pointer-events-none"
-            )}
-          >
-            {iframeError ? (
-              <div className="text-center max-w-sm px-6">
-                <X className="w-8 h-8 mx-auto mb-3 text-red-500" />
-                <p className="text-sm text-neutral-700 dark:text-neutral-300">
-                  {iframeError}
-                </p>
+          {availableViews.length > 0 ? (
+            showViewToggle ? (
+              <div className="inline-flex items-center rounded-full border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 p-1 shadow-sm">
+                {availableViews.map((view) => {
+                  const isActive = view === activeWorkspaceView;
+                  return (
+                    <button
+                      key={view}
+                      type="button"
+                      onClick={() => setActiveWorkspaceView(view)}
+                      className={clsx(
+                        "px-3 py-1.5 text-xs font-medium rounded-full transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-400 dark:focus-visible:outline-neutral-600",
+                        isActive
+                          ? "bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900 shadow-sm"
+                          : "text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-200"
+                      )}
+                      aria-pressed={isActive}
+                    >
+                      {workspaceViewLabels[view]}
+                    </button>
+                  );
+                })}
               </div>
             ) : (
-              <div className="text-center">
-                <Loader2 className="w-6 h-6 mx-auto mb-3 animate-spin text-neutral-500 dark:text-neutral-400" />
-                <p className="text-sm text-neutral-700 dark:text-neutral-300">
-                  Loading VS Code...
-                </p>
+              <span className="inline-flex items-center rounded-full border border-neutral-200 dark:border-neutral-700 px-3 py-1.5 text-xs font-medium text-neutral-600 dark:text-neutral-400">
+                {workspaceViewLabels[activeWorkspaceView]}
+              </span>
+            )
+          ) : null}
+        </div>
+      </div>
+      <div className="relative flex-1">
+        {isProvisioning ? (
+          <div className="flex h-full items-center justify-center">
+            <div className="text-center max-w-md px-6">
+              <div className="w-16 h-16 mx-auto mb-4 rounded-lg bg-neutral-200 dark:bg-neutral-800 flex items-center justify-center">
+                <Settings className="w-8 h-8 text-neutral-500 dark:text-neutral-400" />
               </div>
-            )}
+              <h3 className="text-lg font-medium text-neutral-900 dark:text-neutral-100 mb-2">
+                Launching Environment
+              </h3>
+              <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-4">
+                {mode === "snapshot"
+                  ? "Creating instance from snapshot. Once ready, workspace tools will appear here so you can test your changes."
+                  : "Your development environment is launching. Once ready, you can open VS Code or the browser view here to configure and test your setup."}
+              </p>
+            </div>
           </div>
-          <PersistentWebView
-            persistKey={iframePersistKey}
-            src={localVscodeUrl}
-            className="absolute inset-0"
-            iframeClassName="w-full h-full border-0"
-            allow={TASK_RUN_IFRAME_ALLOW}
-            sandbox={TASK_RUN_IFRAME_SANDBOX}
-            retainOnUnmount
-            onLoad={handleIframeLoad}
-            onError={handleIframeError}
-          />
-        </div>
-      ) : (
-        <div className="flex items-center justify-center h-full">
-          <div className="text-center">
-            <X className="w-8 h-8 mx-auto mb-4 text-red-500" />
-            <p className="text-sm text-neutral-600 dark:text-neutral-400">
-              Waiting for environment URL...
-            </p>
+        ) : activeWorkspaceUrl ? (
+          <div className="relative h-full">
+            <div
+              aria-hidden={!showIframeOverlay}
+              className={clsx(
+                "absolute inset-0 z-[var(--z-low)] flex items-center justify-center backdrop-blur-sm transition-opacity duration-300",
+                "bg-white/60 dark:bg-neutral-950/65",
+                showIframeOverlay
+                  ? "opacity-100 pointer-events-auto"
+                  : "opacity-0 pointer-events-none"
+              )}
+            >
+              {activeIframeError ? (
+                <div className="text-center max-w-sm px-6">
+                  <X className="w-8 h-8 mx-auto mb-3 text-red-500" />
+                  <p className="text-sm text-neutral-700 dark:text-neutral-300">
+                    {activeIframeError}
+                  </p>
+                </div>
+              ) : (
+                <div className="text-center">
+                  <Loader2 className="w-6 h-6 mx-auto mb-3 animate-spin text-neutral-500 dark:text-neutral-400" />
+                  <p className="text-sm text-neutral-700 dark:text-neutral-300">
+                    {overlayLoadingCopy}
+                  </p>
+                </div>
+              )}
+            </div>
+            {localVscodeUrl ? (
+              <PersistentWebView
+                key="env-vscode"
+                persistKey={vscodePersistKey}
+                src={localVscodeUrl}
+                className={clsx(
+                  "absolute inset-0 transition-opacity duration-200",
+                  activeWorkspaceView === "vscode"
+                    ? "opacity-100"
+                    : "opacity-0 pointer-events-none"
+                )}
+                iframeClassName="w-full h-full border-0"
+                allow={TASK_RUN_IFRAME_ALLOW}
+                sandbox={TASK_RUN_IFRAME_SANDBOX}
+                retainOnUnmount
+                onLoad={handleVscodeIframeLoad}
+                onError={handleVscodeIframeError}
+              />
+            ) : null}
+            {localBrowserUrl ? (
+              <PersistentWebView
+                key="env-browser"
+                persistKey={browserPersistKey}
+                src={localBrowserUrl}
+                className={clsx(
+                  "absolute inset-0 transition-opacity duration-200",
+                  activeWorkspaceView === "browser"
+                    ? "opacity-100"
+                    : "opacity-0 pointer-events-none"
+                )}
+                iframeClassName="w-full h-full border-0"
+                allow={TASK_RUN_IFRAME_ALLOW}
+                sandbox={TASK_RUN_IFRAME_SANDBOX}
+                retainOnUnmount
+                onLoad={handleBrowserIframeLoad}
+                onError={handleBrowserIframeError}
+              />
+            ) : null}
           </div>
-        </div>
-      )}
+        ) : (
+          <div className="flex h-full items-center justify-center px-6 text-center">
+            <div>
+              <Loader2 className="w-6 h-6 mx-auto mb-3 animate-spin text-neutral-500 dark:text-neutral-400" />
+              <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                {waitingMessage}
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 
