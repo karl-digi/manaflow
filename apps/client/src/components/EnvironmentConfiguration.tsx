@@ -5,6 +5,10 @@ import { SCRIPT_COPY } from "@/components/scriptCopy";
 import { ResizableColumns } from "@/components/ResizableColumns";
 import { parseEnvBlock } from "@/lib/parseEnvBlock";
 import {
+  deleteEnvironmentDraft,
+  updateEnvironmentDraft,
+} from "@/lib/environmentDraftStorage";
+import {
   TASK_RUN_IFRAME_ALLOW,
   TASK_RUN_IFRAME_SANDBOX,
 } from "@/lib/preloadTaskRunIframes";
@@ -51,6 +55,7 @@ export function EnvironmentConfiguration({
   isProvisioning,
   mode = "new",
   sourceEnvironmentId,
+  draftId,
   initialEnvName = "",
   initialMaintenanceScript = "",
   initialDevScript = "",
@@ -64,6 +69,7 @@ export function EnvironmentConfiguration({
   isProvisioning: boolean;
   mode?: "new" | "snapshot";
   sourceEnvironmentId?: Id<"environments">;
+  draftId?: string;
   initialEnvName?: string;
   initialMaintenanceScript?: string;
   initialDevScript?: string;
@@ -121,6 +127,39 @@ export function EnvironmentConfiguration({
   useEffect(() => {
     setLocalVscodeUrl(vscodeUrl);
   }, [vscodeUrl]);
+
+  useEffect(() => {
+    if (!draftId) {
+      return;
+    }
+    updateEnvironmentDraft(draftId, {
+      step: "configure",
+      selectedRepos,
+    });
+  }, [draftId, selectedRepos]);
+
+  useEffect(() => {
+    if (!draftId) {
+      return;
+    }
+    updateEnvironmentDraft(draftId, {
+      envName,
+      maintenanceScript,
+      devScript,
+      exposedPorts,
+      envVars,
+    });
+  }, [draftId, devScript, envName, envVars, exposedPorts, maintenanceScript]);
+
+  useEffect(() => {
+    if (!draftId) {
+      return;
+    }
+    updateEnvironmentDraft(draftId, {
+      instanceId: localInstanceId,
+      vscodeUrl: localVscodeUrl,
+    });
+  }, [draftId, localInstanceId, localVscodeUrl]);
 
   const createEnvironmentMutation = useRQMutation(
     postApiEnvironmentsMutation()
@@ -281,6 +320,9 @@ export function EnvironmentConfiguration({
         },
         {
           onSuccess: async () => {
+            if (draftId) {
+              deleteEnvironmentDraft(draftId);
+            }
             await navigate({
               to: "/$teamSlugOrId/environments/$environmentId",
               params: {
@@ -320,6 +362,9 @@ export function EnvironmentConfiguration({
         },
         {
           onSuccess: async () => {
+            if (draftId) {
+              deleteEnvironmentDraft(draftId);
+            }
             await navigate({
               to: "/$teamSlugOrId/environments",
               params: { teamSlugOrId },
@@ -347,6 +392,9 @@ export function EnvironmentConfiguration({
         {mode === "new" ? (
           <button
             onClick={async () => {
+              if (draftId) {
+                updateEnvironmentDraft(draftId, { step: "select" });
+              }
               await navigate({
                 to: "/$teamSlugOrId/environments/new",
                 params: { teamSlugOrId },

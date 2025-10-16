@@ -19,6 +19,7 @@ import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { api } from "@cmux/convex/api";
 import { DEFAULT_MORPH_SNAPSHOT_ID, type MorphSnapshotId } from "@cmux/shared";
 import { isElectron } from "@/lib/electron";
+import { updateEnvironmentDraft } from "@/lib/environmentDraftStorage";
 import {
   getApiIntegrationsGithubReposOptions,
   postApiMorphSetupInstanceMutation,
@@ -95,6 +96,7 @@ interface RepositoryListSectionProps {
 export interface RepositoryPickerProps {
   teamSlugOrId: string;
   instanceId?: string;
+  draftId?: string;
   initialSelectedRepos?: string[];
   initialSnapshotId?: MorphSnapshotId;
   showHeader?: boolean;
@@ -110,6 +112,7 @@ export interface RepositoryPickerProps {
 export function RepositoryPicker({
   teamSlugOrId,
   instanceId,
+  draftId,
   initialSelectedRepos = [],
   initialSnapshotId,
   showHeader = true,
@@ -154,6 +157,43 @@ export function RepositoryPicker({
       setSelectedSnapshotId(DEFAULT_MORPH_SNAPSHOT_ID);
     }
   }, [initialSnapshotId]);
+
+  useEffect(() => {
+    if (!draftId) {
+      return;
+    }
+    updateEnvironmentDraft(draftId, {
+      step: "select",
+      selectedRepos,
+    });
+  }, [draftId, selectedRepos]);
+
+  useEffect(() => {
+    if (!draftId) {
+      return;
+    }
+    updateEnvironmentDraft(draftId, {
+      snapshotId: selectedSnapshotId,
+    });
+  }, [draftId, selectedSnapshotId]);
+
+  useEffect(() => {
+    if (!draftId) {
+      return;
+    }
+    updateEnvironmentDraft(draftId, {
+      connectionLogin: selectedConnectionLogin ?? undefined,
+    });
+  }, [draftId, selectedConnectionLogin]);
+
+  useEffect(() => {
+    if (!draftId) {
+      return;
+    }
+    updateEnvironmentDraft(draftId, {
+      instanceId: instanceId ?? undefined,
+    });
+  }, [draftId, instanceId]);
 
   const handleConnectionsInvalidated = useCallback((): void => {
     const qc = router.options.context?.queryClient;
@@ -226,6 +266,13 @@ export function RepositoryPicker({
         },
         {
           onSuccess: async (data) => {
+            if (draftId) {
+              updateEnvironmentDraft(draftId, {
+                instanceId: data.instanceId ?? undefined,
+                step: "configure",
+                selectedRepos: repos,
+              });
+            }
             await goToConfigure(repos, data.instanceId);
             console.log("Cloned repos:", data.clonedRepos);
             console.log("Removed repos:", data.removedRepos);
