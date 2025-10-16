@@ -58,6 +58,8 @@ export class DockerVSCodeInstance extends VSCodeInstance {
     timestamp: number;
   } | null = null;
   private static readonly PORT_CACHE_DURATION = 2000; // 2 seconds
+  private static readonly VSCODE_READY_ATTEMPTS = 60;
+  private static readonly VSCODE_READY_DELAY_MS = 500;
   private static eventsStream: NodeJS.ReadableStream | null = null;
   private static dockerInstance: Docker | null = null;
   private static eventStreamRetryTimer: NodeJS.Timeout | null = null;
@@ -502,7 +504,63 @@ export class DockerVSCodeInstance extends VSCodeInstance {
         proxy: proxyPort,
         vnc: vncPort,
       };
+    }
+
+    try {
+      await this.waitForVSCodeServerReady(vscodePort);
+    } catch (error) {
+      dockerLogger.error(
+        `VS Code server failed to become ready on port ${vscodePort}:`,
+        error
+      );
+      if (mapping) {
+        mapping.status = "stopped";
+      }
+      try {
+        const startupLogs = await this.getLogs(300);
+        dockerLogger.error(
+          `Recent container logs for ${this.containerName} (startup failure):\n${startupLogs.trim()}`
+        );
+      } catch (logError) {
+        dockerLogger.error(
+          `Unable to fetch logs for ${this.containerName} after readiness failure:`,
+          logError
+        );
+      }
+      if (this.container) {
+        try {
+          await this.container.stop();
+        } catch (stopError) {
+          if ((stopError as { statusCode?: number }).statusCode !== 304) {
+            dockerLogger.error(
+              `Failed to stop container ${this.containerName} after readiness failure:`,
+              stopError
+            );
+          }
+        }
+      }
+      if (!(error instanceof Error)) {
+        throw new Error(
+          `VS Code server failed to become ready on port ${vscodePort}`
+        );
+      }
+      throw error;
+    }
+
+    if (mapping) {
       mapping.status = "running";
+    }
+
+    try {
+      await runWithAuthToken(this.authToken, async () =>
+        getConvex().mutation(api.taskRuns.updateVSCodeStatus, {
+          teamSlugOrId: this.teamSlugOrId,
+          id: this.taskRunId,
+          status: "running",
+        })
+      );
+    } catch (error) {
+      dockerLogger.error("Failed to update VSCode status in Convex:", error);
     }
 
     // Update VSCode ports in Convex
@@ -597,6 +655,49 @@ export class DockerVSCodeInstance extends VSCodeInstance {
       taskRunId: this.taskRunId,
       provider: "docker",
     };
+  }
+
+  private async waitForVSCodeServerReady(vscodePort: string): Promise<void> {
+    const healthUrl = `http://localhost:${vscodePort}/healthz`;
+    for (
+      let attempt = 1;
+      attempt <= DockerVSCodeInstance.VSCODE_READY_ATTEMPTS;
+      attempt += 1
+    ) {
+      try {
+        const response = await fetch(healthUrl);
+        if (attempt > 1) {
+          dockerLogger.info(
+            `[DockerVSCodeInstance] OpenVSCode server responded with status ${response.status} on attempt ${attempt}`
+          );
+        }
+        return;
+      } catch (error) {
+        if (
+          attempt === 1 ||
+          attempt % 10 === 0 ||
+          attempt === DockerVSCodeInstance.VSCODE_READY_ATTEMPTS
+        ) {
+          dockerLogger.info(
+            `[DockerVSCodeInstance] Waiting for OpenVSCode on ${healthUrl} (attempt ${attempt}/${DockerVSCodeInstance.VSCODE_READY_ATTEMPTS}): ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+        }
+      }
+
+      await new Promise((resolve) =>
+        setTimeout(resolve, DockerVSCodeInstance.VSCODE_READY_DELAY_MS)
+      );
+    }
+
+    const timeoutSeconds =
+      (DockerVSCodeInstance.VSCODE_READY_ATTEMPTS *
+        DockerVSCodeInstance.VSCODE_READY_DELAY_MS) /
+      1000;
+    throw new Error(
+      `Timed out waiting for OpenVSCode server on ${healthUrl} after ${timeoutSeconds} seconds`
+    );
   }
 
   private setupContainerEventMonitoring() {
