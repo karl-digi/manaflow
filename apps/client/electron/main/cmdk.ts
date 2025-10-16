@@ -250,7 +250,50 @@ export function initCmdK(opts: {
           // Non-mac: require ctrl only; disallow meta
           return Boolean(input.control) && !input.meta;
         })();
-        if (!isCmdK) return;
+        if (!isCmdK) {
+          // Check for Cmd+B (sidebar toggle)
+          const isCmdB = (() => {
+            if (input.key.toLowerCase() !== "b") return false;
+            if (input.alt || input.shift) return false;
+            if (isMac) {
+              // Require meta only; disallow ctrl on mac
+              return Boolean(input.meta) && !input.control;
+            }
+            // Non-mac: require ctrl only; disallow meta
+            return Boolean(input.control) && !input.meta;
+          })();
+          if (!isCmdB) return;
+          // Prevent default to avoid in-app conflicts
+          e.preventDefault();
+          keyDebug("cmd-sidebar-toggle-detected", {
+            sourceId: contents.id,
+            type: contents.getType?.(),
+          });
+
+          const getTargetWindow = (): BrowserWindow | null => {
+            return (
+              BrowserWindow.getFocusedWindow() ??
+              opts.getMainWindow() ??
+              BrowserWindow.getAllWindows()[0] ??
+              null
+            );
+          };
+
+          const targetWin = getTargetWindow();
+          if (targetWin && !targetWin.isDestroyed()) {
+            try {
+              targetWin.webContents.send("cmux:event:shortcut:sidebar-toggle");
+              keyDebug("emit-sidebar-toggle", {
+                to: targetWin.webContents.id,
+                from: contents.id,
+              });
+            } catch (err) {
+              opts.logger.warn("Failed to emit sidebar toggle", err);
+              keyDebug("emit-sidebar-toggle-error", { err: String(err) });
+            }
+          }
+          return;
+        }
         // Prevent default to avoid in-app conflicts and ensure single toggle
         e.preventDefault();
         keyDebug("cmdk-detected", {

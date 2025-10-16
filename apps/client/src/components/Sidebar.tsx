@@ -106,6 +106,18 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
+  // Global shortcut to toggle sidebar (Cmd+B in Electron)
+  useEffect(() => {
+    if (isElectron) {
+      const off = window.cmux.on("shortcut:sidebar-toggle", () => {
+        setIsHidden((prev) => !prev);
+      });
+      return () => {
+        if (typeof off === "function") off();
+      };
+    }
+  }, [isElectron]);
+
   // Listen for storage events from command bar
   useEffect(() => {
     const handleStorage = (e: StorageEvent) => {
