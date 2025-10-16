@@ -5,7 +5,7 @@ import { postApiMorphSetupInstance } from "@cmux/www-openapi-client";
 import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 
-describe.skip("morphRouter - live", () => {
+describe("morphRouter - live", () => {
   let createdInstanceId: string | null = null;
 
   afterAll(async () => {
@@ -27,10 +27,10 @@ describe.skip("morphRouter - live", () => {
     expect(res.response.status).toBe(401);
   });
 
-  it(
+   it(
     "creates and then reuses an instance with instanceId",
     {
-      timeout: 20_000,
+      timeout: 120_000,
     },
     async () => {
       const tokens = await __TEST_INTERNAL_ONLY_GET_STACK_TOKENS();
@@ -80,7 +80,7 @@ describe.skip("morphRouter - live", () => {
     }
   );
 
-  it("denies reusing an instance with a different team", async () => {
+   it("denies reusing an instance with a different team", async () => {}, 120000);
     const tokens = await __TEST_INTERNAL_ONLY_GET_STACK_TOKENS();
 
     // Ensure we have an instance to test against

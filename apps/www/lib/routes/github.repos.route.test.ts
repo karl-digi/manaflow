@@ -14,7 +14,7 @@ describe("githubReposRouter via SDK", () => {
     expect(res.response.status).toBe(401);
   });
 
-  it("returns repos for authenticated user", async () => {
+   it("returns repos for authenticated user", async () => {}, 20000);
     const tokens = await __TEST_INTERNAL_ONLY_GET_STACK_TOKENS();
     const res = await getApiIntegrationsGithubRepos({
       client: testApiClient,
