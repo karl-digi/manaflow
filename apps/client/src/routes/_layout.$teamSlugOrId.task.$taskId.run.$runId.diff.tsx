@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
+import { useQuery as useConvexQuery } from "convex/react";
 import type { TaskAcknowledged, TaskStarted, TaskError } from "@cmux/shared";
 import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
@@ -39,6 +40,7 @@ import { attachTaskLifecycleListeners } from "@/lib/socket/taskLifecycleListener
 import z from "zod";
 import type { EditorApi } from "@/components/dashboard/DashboardInput";
 import LexicalEditor from "@/components/lexical/LexicalEditor";
+import { CheckCircle, XCircle, Clock, AlertCircle, ExternalLink } from "lucide-react";
 
 const paramsSchema = z.object({
   taskId: typedZid("tasks"),
@@ -387,6 +389,182 @@ const RestartTaskForm = memo(function RestartTaskForm({
 
 RestartTaskForm.displayName = "RestartTaskForm";
 
+type CombinedRun = {
+  type: 'workflow' | 'check' | 'deployment' | 'status';
+  name: string;
+  status?: string;
+  conclusion?: string;
+  timestamp?: number;
+  url?: string;
+  appName?: string;
+  appSlug?: string;
+};
+
+function TaskRunChecksSection({
+  workflowRuns,
+  checkRuns,
+  deployments,
+  commitStatuses,
+  prDetails,
+}: {
+  workflowRuns: unknown[] | undefined;
+  checkRuns: unknown[] | undefined;
+  deployments: unknown[] | undefined;
+  commitStatuses: unknown[] | undefined;
+  prDetails: { repoFullName: string; number: number } | null;
+}) {
+  const allRuns = useMemo((): CombinedRun[] => {
+    const runs: CombinedRun[] = [];
+
+    // Add workflow runs
+    if (workflowRuns && Array.isArray(workflowRuns)) {
+      runs.push(...workflowRuns.map((run: any) => ({ // eslint-disable-line @typescript-eslint/no-explicit-any
+        ...run,
+        type: 'workflow' as const,
+        name: run.workflowName,
+        timestamp: run.runStartedAt,
+        url: run.htmlUrl,
+      })));
+    }
+
+    // Add check runs
+    if (checkRuns && Array.isArray(checkRuns)) {
+      runs.push(...checkRuns.map((run: any) => ({ // eslint-disable-line @typescript-eslint/no-explicit-any
+        ...run,
+        type: 'check' as const,
+        timestamp: run.startedAt,
+        url: run.htmlUrl || (prDetails ? `https://github.com/${prDetails.repoFullName}/pull/${prDetails.number}/checks?check_run_id=${run.checkRunId}` : undefined),
+      })));
+    }
+
+    // Add deployments
+    if (deployments && Array.isArray(deployments)) {
+      runs.push(...deployments
+        .filter((dep: any) => dep.environment !== 'Preview') // eslint-disable-line @typescript-eslint/no-explicit-any
+        .map((dep: any) => ({ // eslint-disable-line @typescript-eslint/no-explicit-any
+          ...dep,
+          type: 'deployment' as const,
+          name: dep.description || dep.environment || 'Deployment',
+          status: dep.state === 'pending' || dep.state === 'queued' || dep.state === 'in_progress' ? 'in_progress' : 'completed',
+          conclusion: dep.state === 'success' ? 'success' : dep.state === 'failure' || dep.state === 'error' ? 'failure' : undefined,
+          timestamp: dep.createdAt,
+          url: dep.targetUrl,
+        })));
+    }
+
+    // Add commit statuses
+    if (commitStatuses && Array.isArray(commitStatuses)) {
+      runs.push(...commitStatuses.map((status: any) => ({ // eslint-disable-line @typescript-eslint/no-explicit-any
+        ...status,
+        type: 'status' as const,
+        timestamp: status.createdAt,
+      })));
+    }
+
+    // Sort by timestamp (most recent first)
+    return runs.sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
+  }, [workflowRuns, checkRuns, deployments, commitStatuses, prDetails]);
+
+  if (allRuns.length === 0) {
+    return null;
+  }
+
+  const getStatusIcon = (run: CombinedRun) => {
+    const status = run.status || 'completed';
+    const conclusion = run.conclusion;
+
+    if (status === 'in_progress' || status === 'pending' || status === 'queued' || status === 'waiting') {
+      return <Clock className="w-4 h-4 text-blue-500" />;
+    }
+
+    if (conclusion === 'success') {
+      return <CheckCircle className="w-4 h-4 text-green-500" />;
+    }
+
+    if (conclusion === 'failure' || conclusion === 'error' || conclusion === 'timed_out' || conclusion === 'cancelled') {
+      return <XCircle className="w-4 h-4 text-red-500" />;
+    }
+
+    if (conclusion === 'neutral' || conclusion === 'skipped') {
+      return <AlertCircle className="w-4 h-4 text-yellow-500" />;
+    }
+
+    return <Clock className="w-4 h-4 text-neutral-400" />;
+  };
+
+  const getAppLabel = (run: CombinedRun) => {
+    if (run.type === 'check' && run.appSlug) {
+      return run.appSlug;
+    }
+    if (run.type === 'check' && run.appName) {
+      return run.appName;
+    }
+    if (run.type === 'workflow') {
+      return 'GitHub Actions';
+    }
+    if (run.type === 'deployment') {
+      return 'GitHub Deployments';
+    }
+    if (run.type === 'status') {
+      return 'Commit Status';
+    }
+    return '';
+  };
+
+  return (
+    <div className="border-b border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800/50">
+      <div className="px-3.5 py-2">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+            CI/CD Checks
+          </h3>
+          {prDetails && (
+            <a
+              href={`https://github.com/${prDetails.repoFullName}/pull/${prDetails.number}/checks`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1 text-xs text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200"
+            >
+              View on GitHub
+              <ExternalLink className="w-3 h-3" />
+            </a>
+          )}
+        </div>
+        <div className="space-y-1">
+          {allRuns.slice(0, 10).map((run, index) => (
+            <div key={`${run.type}-${run.name}-${index}`} className="flex items-center gap-2 text-xs">
+              {getStatusIcon(run)}
+              <span className="flex-1 truncate text-neutral-700 dark:text-neutral-300">
+                {run.name}
+              </span>
+              {getAppLabel(run) && (
+                <span className="text-neutral-500 dark:text-neutral-400 truncate max-w-24">
+                  {getAppLabel(run)}
+                </span>
+              )}
+              {run.url && (
+                <a
+                  href={run.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-neutral-400 hover:text-neutral-600 dark:text-neutral-500 dark:hover:text-neutral-300"
+                >
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              )}
+            </div>
+          ))}
+          {allRuns.length > 10 && (
+            <div className="text-xs text-neutral-500 dark:text-neutral-400">
+              And {allRuns.length - 10} more...
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function collectAgentNamesFromRuns(
   runs: TaskRunWithChildren[] | undefined,
 ): string[] {
@@ -549,6 +727,12 @@ function RunDiffPage() {
   const selectedRun = useMemo(() => {
     return taskRuns?.find((run) => run._id === runId);
   }, [runId, taskRuns]);
+
+  // Check if task run has an associated PR
+  const hasAssociatedPR = useMemo(() => {
+    return Boolean(selectedRun?.pullRequestNumber && selectedRun?.pullRequestUrl);
+  }, [selectedRun?.pullRequestNumber, selectedRun?.pullRequestUrl]);
+
   const restartProvider = selectedRun?.vscode?.provider;
   const restartRunEnvironmentId = selectedRun?.environmentId;
   const taskEnvironmentId = task?.environmentId;
@@ -627,6 +811,104 @@ function RunDiffPage() {
     return [];
   }, [selectedRun?.agentName, taskRuns]);
 
+
+
+  const baseRef = selectedRun ? normalizeGitRef(task?.baseBranch || "main") : "";
+  const headRef = selectedRun ? normalizeGitRef(selectedRun.newBranch) : "";
+  const hasDiffSources =
+    Boolean(primaryRepo) && Boolean(baseRef) && Boolean(headRef);
+  const shouldPrefixDiffs = repoFullNames.length > 1;
+
+  // Extract PR details for checks fetching
+  const prDetails = useMemo(() => {
+    if (!hasAssociatedPR || !selectedRun || !primaryRepo) {
+      return null;
+    }
+
+    // Extract owner/repo from primaryRepo (format: "owner/repo")
+    const [owner, repo] = primaryRepo.split('/');
+    if (!owner || !repo) {
+      return null;
+    }
+
+    return {
+      owner,
+      repo,
+      repoFullName: primaryRepo,
+      number: selectedRun.pullRequestNumber!,
+      headSha: headRef, // Use the head ref as the commit SHA for checks
+    };
+  }, [hasAssociatedPR, selectedRun, primaryRepo, headRef]);
+
+  // Fetch checks data for the associated PR
+  const workflowRuns = useConvexQuery(
+    api.github_workflows.getWorkflowRunsForPr,
+    prDetails ? {
+      teamSlugOrId,
+      repoFullName: prDetails.repoFullName,
+      prNumber: prDetails.number,
+      headSha: prDetails.headSha,
+      limit: 20,
+    } : {
+      teamSlugOrId: "",
+      repoFullName: "",
+      prNumber: 0,
+      headSha: undefined,
+      limit: 20,
+    }
+  );
+
+  const checkRuns = useConvexQuery(
+    api.github_check_runs.getCheckRunsForPr,
+    prDetails ? {
+      teamSlugOrId,
+      repoFullName: prDetails.repoFullName,
+      prNumber: prDetails.number,
+      headSha: prDetails.headSha,
+      limit: 20,
+    } : {
+      teamSlugOrId: "",
+      repoFullName: "",
+      prNumber: 0,
+      headSha: undefined,
+      limit: 20,
+    }
+  );
+
+  const deployments = useConvexQuery(
+    api.github_deployments.getDeploymentsForPr,
+    prDetails ? {
+      teamSlugOrId,
+      repoFullName: prDetails.repoFullName,
+      prNumber: prDetails.number,
+      headSha: prDetails.headSha,
+      limit: 20,
+    } : {
+      teamSlugOrId: "",
+      repoFullName: "",
+      prNumber: 0,
+      headSha: undefined,
+      limit: 20,
+    }
+  );
+
+  const commitStatuses = useConvexQuery(
+    api.github_commit_statuses.getCommitStatusesForPr,
+    prDetails ? {
+      teamSlugOrId,
+      repoFullName: prDetails.repoFullName,
+      prNumber: prDetails.number,
+      headSha: prDetails.headSha,
+      limit: 20,
+    } : {
+      teamSlugOrId: "",
+      repoFullName: "",
+      prNumber: 0,
+      headSha: undefined,
+      limit: 20,
+    }
+  );
+
   const taskRunId = selectedRun?._id ?? runId;
   const restartTaskPersistenceKey = `restart-task-${taskId}-${runId}`;
 
@@ -638,12 +920,6 @@ function RunDiffPage() {
       </div>
     );
   }
-
-  const baseRef = normalizeGitRef(task?.baseBranch || "main");
-  const headRef = normalizeGitRef(selectedRun.newBranch);
-  const hasDiffSources =
-    Boolean(primaryRepo) && Boolean(baseRef) && Boolean(headRef);
-  const shouldPrefixDiffs = repoFullNames.length > 1;
 
   return (
     <FloatingPane>
@@ -658,17 +934,26 @@ function RunDiffPage() {
             onCollapseAll={diffControls?.collapseAll}
             teamSlugOrId={teamSlugOrId}
           />
-          {task?.text && (
-            <div className="mb-2 px-3.5">
-              <div className="text-xs text-neutral-600 dark:text-neutral-300">
-                <span className="text-neutral-500 dark:text-neutral-400 select-none">
-                  Prompt:{" "}
-                </span>
-                <span className="font-medium">{task.text}</span>
-              </div>
-            </div>
-          )}
-          <div className="bg-white dark:bg-neutral-900 grow flex flex-col">
+           {task?.text && (
+             <div className="mb-2 px-3.5">
+               <div className="text-xs text-neutral-600 dark:text-neutral-300">
+                 <span className="text-neutral-500 dark:text-neutral-400 select-none">
+                   Prompt:{" "}
+                 </span>
+                 <span className="font-medium">{task.text}</span>
+               </div>
+             </div>
+           )}
+           {hasAssociatedPR && prDetails && (
+             <TaskRunChecksSection
+               workflowRuns={workflowRuns ?? []}
+               checkRuns={checkRuns ?? []}
+               deployments={deployments ?? []}
+               commitStatuses={commitStatuses ?? []}
+               prDetails={prDetails}
+             />
+           )}
+           <div className="bg-white dark:bg-neutral-900 grow flex flex-col">
             <Suspense
               fallback={
                 <div className="flex items-center justify-center h-full">
