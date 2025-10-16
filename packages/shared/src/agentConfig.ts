@@ -6,6 +6,7 @@ import type {
 import { AMP_CONFIG, AMP_GPT_5_CONFIG } from "./providers/amp/configs";
 import {
   CLAUDE_HAIKU_4_5_CONFIG,
+  CLAUDE_HAIKU_4_5_20251001_CONFIG,
   CLAUDE_OPUS_4_1_CONFIG,
   CLAUDE_OPUS_4_CONFIG,
   CLAUDE_SONNET_4_CONFIG,
@@ -91,6 +92,7 @@ export interface AgentConfig {
 
 export const AGENT_CONFIGS: AgentConfig[] = [
   CLAUDE_HAIKU_4_5_CONFIG,
+  CLAUDE_HAIKU_4_5_20251001_CONFIG,
   CLAUDE_SONNET_4_5_CONFIG,
   CLAUDE_OPUS_4_1_CONFIG,
   CLAUDE_SONNET_4_CONFIG,

@@ -100,3 +100,8 @@ export const CLAUDE_HAIKU_4_5_CONFIG: AgentConfig = {
   applyApiKeys: applyClaudeApiKeys,
   completionDetector: startClaudeCompletionDetector,
 };
+
+export const CLAUDE_HAIKU_4_5_20251001_CONFIG: AgentConfig = {
+  ...CLAUDE_HAIKU_4_5_CONFIG,
+  name: "claude-haiku-4-5-20251001",
+};
