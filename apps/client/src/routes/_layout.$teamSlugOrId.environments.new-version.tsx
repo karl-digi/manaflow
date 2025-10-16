@@ -2,6 +2,7 @@ import { EnvironmentConfiguration } from "@/components/EnvironmentConfiguration"
 import { FloatingPane } from "@/components/floating-pane";
 import { TitleBar } from "@/components/TitleBar";
 import { parseEnvBlock } from "@/lib/parseEnvBlock";
+import { toMorphVncUrl } from "@/lib/toProxyWorkspaceUrl";
 import type { Id } from "@cmux/convex/dataModel";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import {
@@ -120,6 +121,10 @@ function NewSnapshotVersionPage() {
   }, [snapshotVersionsQuery.data, environment?.maintenanceScript, environment?.devScript]);
 
   const effectiveVscodeUrl = urlVscodeUrl ?? derivedVscodeUrl;
+  const derivedBrowserUrl = useMemo(() => {
+    if (!effectiveVscodeUrl) return undefined;
+    return toMorphVncUrl(effectiveVscodeUrl) ?? undefined;
+  }, [effectiveVscodeUrl]);
 
   return (
     <FloatingPane header={<TitleBar title="New Snapshot Version" />}>
@@ -138,6 +143,7 @@ function NewSnapshotVersionPage() {
             teamSlugOrId={teamSlugOrId}
             instanceId={urlInstanceId}
             vscodeUrl={effectiveVscodeUrl}
+            browserUrl={derivedBrowserUrl}
             isProvisioning={false}
             mode="snapshot"
             sourceEnvironmentId={sourceEnvironmentId}

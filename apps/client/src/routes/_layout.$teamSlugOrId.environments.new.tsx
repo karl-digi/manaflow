@@ -2,6 +2,7 @@ import { EnvironmentConfiguration } from "@/components/EnvironmentConfiguration"
 import { FloatingPane } from "@/components/floating-pane";
 import { RepositoryPicker } from "@/components/RepositoryPicker";
 import { TitleBar } from "@/components/TitleBar";
+import { toMorphVncUrl } from "@/lib/toProxyWorkspaceUrl";
 import { DEFAULT_MORPH_SNAPSHOT_ID, MORPH_SNAPSHOT_PRESETS, type MorphSnapshotId } from "@cmux/shared";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo } from "react";
@@ -39,6 +40,10 @@ function EnvironmentsPage() {
     const hostId = urlInstanceId.replace(/_/g, "-");
     return `https://port-39378-${hostId}.http.cloud.morph.so/?folder=/root/workspace`;
   }, [urlInstanceId]);
+  const derivedBrowserUrl = useMemo(() => {
+    if (!derivedVscodeUrl) return undefined;
+    return toMorphVncUrl(derivedVscodeUrl) ?? undefined;
+  }, [derivedVscodeUrl]);
 
   return (
     <FloatingPane header={<TitleBar title="Environments" />}>
@@ -61,6 +66,7 @@ function EnvironmentsPage() {
             teamSlugOrId={teamSlugOrId}
             instanceId={urlInstanceId}
             vscodeUrl={derivedVscodeUrl}
+            browserUrl={derivedBrowserUrl}
             isProvisioning={false}
           />
         )}
