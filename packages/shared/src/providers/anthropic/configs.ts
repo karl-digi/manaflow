@@ -82,3 +82,21 @@ export const CLAUDE_SONNET_4_5_CONFIG: AgentConfig = {
   applyApiKeys: applyClaudeApiKeys,
   completionDetector: startClaudeCompletionDetector,
 };
+
+export const CLAUDE_HAIKU_4_5_CONFIG: AgentConfig = {
+  name: "claude/haiku-4.5",
+  command: "bunx",
+  args: [
+    "@anthropic-ai/claude-code",
+    "--model",
+    "claude-haiku-4-5-20251001",
+    "--dangerously-skip-permissions",
+    "--ide",
+    "$PROMPT",
+  ],
+  environment: getClaudeEnvironment,
+  checkRequirements: checkClaudeRequirements,
+  apiKeys: [ANTHROPIC_API_KEY],
+  applyApiKeys: applyClaudeApiKeys,
+  completionDetector: startClaudeCompletionDetector,
+};
