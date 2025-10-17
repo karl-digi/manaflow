@@ -74,60 +74,114 @@ fi`;
   let maintenanceError: string | null = null;
   let devError: string | null = null;
 
-  if (maintenanceScript && maintenanceScript.trim().length > 0) {
-    const maintenanceRunId = `maintenance_${Date.now().toString(36)}_${Math.random()
-      .toString(36)
-      .slice(2, 10)}`;
-    const maintenanceExitCodePath = `${ids.maintenance.scriptPath}.${maintenanceRunId}.exit-code`;
+  const hasMaintenanceScript = Boolean(
+    maintenanceScript && maintenanceScript.trim().length > 0,
+  );
+  const hasDevScript = Boolean(devScript && devScript.trim().length > 0);
 
+  const maintenanceRunId = hasMaintenanceScript
+    ? `maintenance_${Date.now().toString(36)}_${Math.random()
+        .toString(36)
+        .slice(2, 10)}`
+    : null;
+  const maintenanceExitCodePath = maintenanceRunId
+    ? `${ids.maintenance.scriptPath}.${maintenanceRunId}.exit-code`
+    : null;
+  const maintenanceSignalName = maintenanceRunId
+    ? `cmux_maintenance_${maintenanceRunId}_done`
+    : null;
+  const devLauncherPath = maintenanceRunId
+    ? `${ids.dev.scriptPath}.${maintenanceRunId}.launcher.sh`
+    : null;
+
+  if (hasMaintenanceScript) {
+    if (!maintenanceExitCodePath || !maintenanceSignalName) {
+      throw new Error("Missing maintenance identifiers");
+    }
     const maintenanceScriptContent = `#!/bin/zsh
 set -eux
 cd ${WORKSPACE_ROOT}
 
-echo "=== Maintenance Script Started at \$(date) ==="
+echo "=== Maintenance Script Started at \\$(date) ==="
+trap 'EXIT_CODE=$?; echo "${'${'}EXIT_CODE}" > "${maintenanceExitCodePath}"; tmux wait-for -S "${maintenanceSignalName}" || true; echo "=== Maintenance Script Completed at \\$(date) with exit code \\$EXIT_CODE ==="' EXIT
+
 ${maintenanceScript}
-echo "=== Maintenance Script Completed at \$(date) ==="
 `;
 
-    const maintenanceWindowCommand = `zsh "${ids.maintenance.scriptPath}"
-EXIT_CODE=$?
-echo "$EXIT_CODE" > "${maintenanceExitCodePath}"
-if [ "$EXIT_CODE" -ne 0 ]; then
-  echo "[MAINTENANCE] Script exited with code $EXIT_CODE" >&2
-else
-  echo "[MAINTENANCE] Script completed successfully"
-fi
-exec zsh`;
+    const commandParts: string[] = [
+      "set -eu",
+      `mkdir -p ${CMUX_RUNTIME_DIR}`,
+      `cat > ${ids.maintenance.scriptPath} <<'SCRIPT_EOF'`,
+      maintenanceScriptContent,
+      "SCRIPT_EOF",
+      `chmod +x ${ids.maintenance.scriptPath}`,
+      `rm -f ${maintenanceExitCodePath}`,
+    ];
 
-    const maintenanceCommand = `set -eu
-mkdir -p ${CMUX_RUNTIME_DIR}
-cat > ${ids.maintenance.scriptPath} <<'SCRIPT_EOF'
-${maintenanceScriptContent}
-SCRIPT_EOF
-chmod +x ${ids.maintenance.scriptPath}
-rm -f ${maintenanceExitCodePath}
-${waitForTmuxSession}
-tmux new-window -t cmux: -n ${ids.maintenance.windowName} -d ${singleQuote(maintenanceWindowCommand)}
-sleep 2
-if tmux list-windows -t cmux | grep -q "${ids.maintenance.windowName}"; then
-  echo "[MAINTENANCE] Window is running"
-else
-  echo "[MAINTENANCE] Window may have exited (normal if script completed)"
-fi
-while [ ! -f ${maintenanceExitCodePath} ]; do
-  sleep 1
-done
-MAINTENANCE_EXIT_CODE=0
-if [ -f ${maintenanceExitCodePath} ]; then
-  MAINTENANCE_EXIT_CODE=$(cat ${maintenanceExitCodePath} || echo 0)
-else
-  echo "[MAINTENANCE] Missing exit code file; assuming failure" >&2
-  MAINTENANCE_EXIT_CODE=1
-fi
-rm -f ${maintenanceExitCodePath}
-echo "[MAINTENANCE] Wait complete with exit code $MAINTENANCE_EXIT_CODE"
-exit $MAINTENANCE_EXIT_CODE
+    if (hasDevScript && devLauncherPath) {
+      const devScriptContent = `#!/bin/zsh
+set -ux
+cd ${WORKSPACE_ROOT}
+
+echo "=== Dev Script Started at \\$(date) ==="
+${devScript}
 `;
+
+      const devLauncherContent = `#!/bin/zsh
+set -eu
+EXIT_CODE_PATH="${maintenanceExitCodePath}"
+LAUNCHER_SELF="${devLauncherPath}"
+echo "[DEV LAUNCHER] Waiting for maintenance completion signal"
+tmux wait-for "${maintenanceSignalName}"
+DEV_EXIT_CODE=0
+if [ -f "$EXIT_CODE_PATH" ]; then
+  DEV_EXIT_CODE=$(cat "$EXIT_CODE_PATH" || echo 0)
+fi
+echo "[DEV LAUNCHER] Maintenance exited with code $DEV_EXIT_CODE"
+tmux kill-window -t cmux:${ids.dev.windowName} 2>/dev/null || true
+tmux new-window -t cmux: -n ${ids.dev.windowName} -d
+tmux send-keys -t cmux:${ids.dev.windowName} "zsh ${ids.dev.scriptPath}" C-m
+rm -f "$LAUNCHER_SELF" 2>/dev/null || true
+`;
+
+      commandParts.push(
+        `cat > ${ids.dev.scriptPath} <<'DEV_EOF'`,
+        devScriptContent,
+        "DEV_EOF",
+        `chmod +x ${ids.dev.scriptPath}`,
+        `rm -f ${devLauncherPath}`,
+        `cat > ${devLauncherPath} <<'LAUNCHER_EOF'`,
+        devLauncherContent,
+        "LAUNCHER_EOF",
+        `chmod +x ${devLauncherPath}`,
+      );
+    }
+
+    commandParts.push(
+      waitForTmuxSession,
+      `tmux kill-window -t cmux:${ids.maintenance.windowName} 2>/dev/null || true`,
+    );
+
+    if (hasDevScript && devLauncherPath) {
+      commandParts.push(
+        `tmux kill-window -t cmux:${ids.dev.windowName} 2>/dev/null || true`,
+        `tmux run-shell -b ${singleQuote(`zsh ${devLauncherPath}`)}`,
+      );
+    }
+
+    commandParts.push(
+      `tmux new-window -t cmux: -n ${ids.maintenance.windowName} -d ${singleQuote(
+        `zsh ${ids.maintenance.scriptPath}`,
+      )}`,
+      "sleep 1",
+      `if tmux list-windows -t cmux | grep -q "${ids.maintenance.windowName}"; then`,
+      "  echo \"[MAINTENANCE] Window is running\"",
+      "else",
+      "  echo \"[MAINTENANCE] Window may have exited early\" >&2",
+      "fi",
+    );
+
+    const maintenanceCommand = commandParts.join("\n");
 
     try {
       const result = await instance.exec(
@@ -138,25 +192,69 @@ exit $MAINTENANCE_EXIT_CODE
         const stderr = result.stderr?.trim() || "";
         const stdout = result.stdout?.trim() || "";
         const messageParts = [
-          `Maintenance script finished with exit code ${result.exit_code}`,
+          `Maintenance script preparation exited with code ${result.exit_code}`,
           stderr ? `stderr: ${stderr}` : null,
           stdout ? `stdout: ${stdout}` : null,
         ].filter((part): part is string => part !== null);
         maintenanceError = messageParts.join(" | ");
       } else {
-        console.log(`[MAINTENANCE SCRIPT VERIFICATION]\n${result.stdout || ""}`);
+        console.log(`[MAINTENANCE SCRIPT LAUNCH]\n${result.stdout || ""}`);
       }
     } catch (error) {
-      maintenanceError = `Maintenance script execution failed: ${error instanceof Error ? error.message : String(error)}`;
+      maintenanceError = `Maintenance script launch failed: ${error instanceof Error ? error.message : String(error)}`;
+    }
+
+    if (!maintenanceError && maintenanceExitCodePath) {
+      const waitIterations = 18; // ~9 seconds @ 0.5s interval
+      const waitCommand = `set -eu
+for i in $(seq 1 ${waitIterations}); do
+  if [ -f ${maintenanceExitCodePath} ]; then
+    cat ${maintenanceExitCodePath}
+    exit 0
+  fi
+  sleep 0.5
+done
+exit 99
+`;
+
+      try {
+        const waitResult = await instance.exec(
+          `zsh -lc ${singleQuote(waitCommand)}`,
+        );
+
+        if (waitResult.exit_code === 0) {
+          const exitCodeRaw = waitResult.stdout?.trim();
+          const parsedExitCode = exitCodeRaw ? Number(exitCodeRaw) : 0;
+          if (!Number.isNaN(parsedExitCode) && parsedExitCode !== 0) {
+            maintenanceError = `Maintenance script exited with code ${parsedExitCode}`;
+          }
+        } else if (waitResult.exit_code === 99) {
+          console.log(
+            "[MAINTENANCE SCRIPT LAUNCH] Maintenance still running past initial wait window",
+          );
+        } else {
+          const stderr = waitResult.stderr?.trim() || "";
+          maintenanceError = `Failed to check maintenance completion (exit ${waitResult.exit_code}${
+            stderr ? `, stderr: ${stderr}` : ""
+          })`;
+        }
+      } catch (error) {
+        maintenanceError = `Maintenance completion check failed: ${error instanceof Error ? error.message : String(error)}`;
+      }
+
+      if (maintenanceError && maintenanceExitCodePath) {
+        maintenanceError +=
+          " | Maintenance still scheduled remotely; check tmux maintenance window for details.";
+      }
     }
   }
 
-  if (devScript && devScript.trim().length > 0) {
+  if (hasDevScript && !hasMaintenanceScript) {
     const devScriptContent = `#!/bin/zsh
 set -ux
 cd ${WORKSPACE_ROOT}
 
-echo "=== Dev Script Started at \$(date) ==="
+echo "=== Dev Script Started at \\$(date) ==="
 ${devScript}
 `;
 
@@ -167,9 +265,10 @@ ${devScriptContent}
 SCRIPT_EOF
 chmod +x ${ids.dev.scriptPath}
 ${waitForTmuxSession}
+tmux kill-window -t cmux:${ids.dev.windowName} 2>/dev/null || true
 tmux new-window -t cmux: -n ${ids.dev.windowName} -d
 tmux send-keys -t cmux:${ids.dev.windowName} "zsh ${ids.dev.scriptPath}" C-m
-sleep 2
+sleep 1
 if tmux list-windows -t cmux | grep -q "${ids.dev.windowName}"; then
   echo "[DEV] Window is running"
 else
@@ -191,7 +290,7 @@ fi
         ].filter((part): part is string => part !== null);
         devError = messageParts.join(" | ");
       } else {
-        console.log(`[DEV SCRIPT VERIFICATION]\n${result.stdout || ""}`);
+        console.log(`[DEV SCRIPT LAUNCH]\n${result.stdout || ""}`);
       }
     } catch (error) {
       devError = `Dev script execution failed: ${error instanceof Error ? error.message : String(error)}`;
