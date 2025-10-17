@@ -38,6 +38,7 @@ import {
   useMemo,
   useState,
 } from "react";
+import clsx from "clsx";
 import { RepositoryAdvancedOptions } from "./RepositoryAdvancedOptions";
 
 function ConnectionIcon({ type }: { type?: string }) {
@@ -82,6 +83,7 @@ interface RepositoryConnectionsSectionProps {
   onSelectedLoginChange: (login: string | null) => void;
   onContextChange: (context: ConnectionContext) => void;
   onConnectionsInvalidated: () => void;
+  isDisabled: boolean;
 }
 
 interface RepositoryListSectionProps {
@@ -90,6 +92,7 @@ interface RepositoryListSectionProps {
   selectedRepos: readonly string[];
   onToggleRepo: (repo: string) => void;
   hasConnections: boolean;
+  isDisabled: boolean;
 }
 
 export interface RepositoryPickerProps {
@@ -294,9 +297,10 @@ export function RepositoryPicker({
 
   const isContinueLoading = setupInstanceMutation.isPending;
   const isManualLoading = setupManualInstanceMutation.isPending;
+  const isMutationPending = isContinueLoading || isManualLoading;
 
   return (
-    <div className={className}>
+    <div className={className} aria-busy={isMutationPending}>
       {showHeader && (
         <>
           <h1 className="text-xl font-semibold text-neutral-900 dark:text-neutral-100">
@@ -315,6 +319,7 @@ export function RepositoryPicker({
           onSelectedLoginChange={setSelectedConnectionLogin}
           onContextChange={setConnectionContextSafe}
           onConnectionsInvalidated={handleConnectionsInvalidated}
+          isDisabled={isMutationPending}
         />
 
         <RepositoryListSection
@@ -323,6 +328,7 @@ export function RepositoryPicker({
           selectedRepos={selectedRepos}
           onToggleRepo={toggleRepo}
           hasConnections={connectionContext.hasConnections}
+          isDisabled={isMutationPending}
         />
 
         {selectedRepos.length > 0 ? (
@@ -336,7 +342,13 @@ export function RepositoryPicker({
                   type="button"
                   aria-label={`Remove ${fullName}`}
                   onClick={() => removeRepo(fullName)}
-                  className="-ml-1 inline-flex h-4 w-4 items-center justify-center rounded-full hover:bg-neutral-100 dark:hover:bg-neutral-900"
+                  disabled={isMutationPending}
+                  className={clsx(
+                    "-ml-1 inline-flex h-4 w-4 items-center justify-center rounded-full",
+                    isMutationPending
+                      ? "cursor-not-allowed opacity-60"
+                      : "hover:bg-neutral-100 dark:hover:bg-neutral-900"
+                  )}
                 >
                   <X className="h-3 w-3" />
                 </button>
@@ -350,6 +362,7 @@ export function RepositoryPicker({
         <RepositoryAdvancedOptions
           selectedSnapshotId={selectedSnapshotId}
           onSnapshotChange={updateSnapshotSelection}
+          isDisabled={isMutationPending}
         />
 
         {showContinueButton && (
@@ -363,9 +376,12 @@ export function RepositoryPicker({
                   isManualLoading
                 }
                 onClick={() => handleContinue(selectedRepos)}
-                className={`inline-flex items-center gap-2 rounded-md bg-neutral-900 text-white disabled:bg-neutral-300 dark:disabled:bg-neutral-700 disabled:cursor-not-allowed px-3 py-2 text-sm hover:bg-neutral-800 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200 transition-opacity ${
-                  isManualLoading ? "opacity-50" : "opacity-100"
-                }`}
+                className={clsx(
+                  "inline-flex items-center gap-2 rounded-md bg-neutral-900 text-white disabled:bg-neutral-300 dark:disabled:bg-neutral-700 disabled:cursor-not-allowed px-3 py-2 text-sm dark:bg-neutral-100 dark:text-neutral-900 transition-opacity",
+                  isManualLoading && "opacity-50",
+                  !(isContinueLoading || isManualLoading) &&
+                    "hover:bg-neutral-800 dark:hover:bg-neutral-200"
+                )}
               >
                 {isContinueLoading && (
                   <Loader2 className="h-3 w-3 animate-spin" />
@@ -377,9 +393,12 @@ export function RepositoryPicker({
                   type="button"
                   disabled={isContinueLoading || isManualLoading}
                   onClick={() => handleContinue([])}
-                  className={`inline-flex items-center gap-2 rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2 text-sm text-neutral-800 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-900 disabled:cursor-not-allowed transition-opacity ${
-                    isContinueLoading ? "opacity-50" : "opacity-100"
-                  }`}
+                  className={clsx(
+                    "inline-flex items-center gap-2 rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2 text-sm text-neutral-800 dark:text-neutral-200 disabled:cursor-not-allowed transition-opacity",
+                    isContinueLoading && "opacity-50",
+                    !(isContinueLoading || isManualLoading) &&
+                      "hover:bg-neutral-50 dark:hover:bg-neutral-900"
+                  )}
                 >
                   {isManualLoading && (
                     <Loader2 className="h-3 w-3 animate-spin" />
@@ -407,6 +426,7 @@ function RepositoryConnectionsSection({
   onSelectedLoginChange,
   onContextChange,
   onConnectionsInvalidated,
+  isDisabled,
 }: RepositoryConnectionsSectionProps) {
   const connections = useQuery(api.github.listProviderConnections, {
     teamSlugOrId,
@@ -546,7 +566,7 @@ function RepositoryConnectionsSection({
   }, [onConnectionsInvalidated]);
 
   const handleInstallApp = useCallback(async () => {
-    if (!installNewUrl) return;
+    if (isDisabled || !installNewUrl) return;
     try {
       const { state } = await mintState({ teamSlugOrId });
       const sep = installNewUrl.includes("?") ? "&" : "?";
@@ -561,6 +581,7 @@ function RepositoryConnectionsSection({
       alert("Failed to start installation. Please try again.");
     }
   }, [
+    isDisabled,
     handlePopupClosedRefetch,
     installNewUrl,
     mintState,
@@ -568,17 +589,38 @@ function RepositoryConnectionsSection({
     teamSlugOrId,
   ]);
 
+  useEffect(() => {
+    if (isDisabled) {
+      setConnectionDropdownOpen(false);
+    }
+  }, [isDisabled]);
+
   return (
-    <div className="space-y-2">
+    <div
+      className={clsx("space-y-2", isDisabled && "opacity-60 pointer-events-none")}
+    >
       <label className="block text-sm font-medium text-neutral-800 dark:text-neutral-200">
         Connection
       </label>
       <Popover.Root
         open={connectionDropdownOpen}
-        onOpenChange={setConnectionDropdownOpen}
+        onOpenChange={(next) => {
+          if (isDisabled) {
+            return;
+          }
+          setConnectionDropdownOpen(next);
+        }}
       >
         <Popover.Trigger asChild>
-          <button className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 h-9 flex items-center justify-between text-sm text-neutral-800 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-900 transition-colors">
+          <button
+            disabled={isDisabled}
+            className={clsx(
+              "w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 h-9 flex items-center justify-between text-sm text-neutral-800 dark:text-neutral-200 transition-colors",
+              isDisabled
+                ? "cursor-not-allowed"
+                : "hover:bg-neutral-50 dark:hover:bg-neutral-900"
+            )}
+          >
             <div className="flex items-center gap-2 min-w-0">
               {currentLogin ? (
                 <>
@@ -605,6 +647,7 @@ function RepositoryConnectionsSection({
                 placeholder="Search connections..."
                 value={connectionSearch}
                 onValueChange={setConnectionSearch}
+                disabled={isDisabled}
               />
               <CommandList>
                 {connections === undefined ? (
@@ -631,6 +674,9 @@ function RepositoryConnectionsSection({
                               key={`${c.accountLogin}:${c.installationId}`}
                               value={name}
                               onSelect={() => {
+                                if (isDisabled) {
+                                  return;
+                                }
                                 onSelectedLoginChange(c.accountLogin ?? null);
                                 setConnectionDropdownOpen(false);
                               }}
@@ -648,10 +694,19 @@ function RepositoryConnectionsSection({
                                   <TooltipTrigger asChild>
                                     <button
                                       type="button"
-                                      className="p-1 rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 relative z-[var(--z-popover-hover)]"
+                                      className={clsx(
+                                        "p-1 rounded relative z-[var(--z-popover-hover)]",
+                                        isDisabled
+                                          ? "cursor-not-allowed opacity-60"
+                                          : "hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                                      )}
+                                      disabled={isDisabled}
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         e.preventDefault();
+                                        if (isDisabled) {
+                                          return;
+                                        }
                                         openCenteredPopup(
                                           cfgUrl,
                                           { name: "github-config" },
@@ -684,6 +739,9 @@ function RepositoryConnectionsSection({
                             value="add-github-account"
                             forceMount
                             onSelect={() => {
+                              if (isDisabled) {
+                                return;
+                              }
                               void handleInstallApp();
                               setConnectionDropdownOpen(false);
                             }}
@@ -711,6 +769,9 @@ function RepositoryConnectionsSection({
                             value="add-github-account"
                             forceMount
                             onSelect={() => {
+                              if (isDisabled) {
+                                return;
+                              }
                               void handleInstallApp();
                               setConnectionDropdownOpen(false);
                             }}
@@ -740,6 +801,7 @@ function RepositoryListSection({
   selectedRepos,
   onToggleRepo,
   hasConnections,
+  isDisabled,
 }: RepositoryListSectionProps) {
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search, 300);
@@ -800,7 +862,12 @@ function RepositoryListSection({
   }
 
   return (
-    <div className="space-y-2 mt-4">
+    <div
+      className={clsx(
+        "space-y-2 mt-4",
+        isDisabled && "opacity-60 pointer-events-none"
+      )}
+    >
       <label className="block text-sm font-medium text-neutral-800 dark:text-neutral-200">
         Repositories
       </label>
@@ -811,7 +878,11 @@ function RepositoryListSection({
           onChange={(event) => setSearch(event.target.value)}
           placeholder="Search recent repositories"
           aria-busy={showSpinner}
-          className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 pr-8 h-9 text-sm text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700"
+          disabled={isDisabled}
+          className={clsx(
+            "w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 pr-8 h-9 text-sm text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700",
+            isDisabled && "cursor-not-allowed"
+          )}
         />
         {showSpinner ? (
           <Loader2 className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-400 animate-spin" />
@@ -847,14 +918,22 @@ function RepositoryListSection({
                   key={repo.full_name}
                   role="option"
                   aria-selected={isSelected}
-                  onClick={() => onToggleRepo(repo.full_name)}
+                  onClick={() => {
+                    if (isDisabled) {
+                      return;
+                    }
+                    onToggleRepo(repo.full_name);
+                  }}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === " ") {
                       event.preventDefault();
+                      if (isDisabled) {
+                        return;
+                      }
                       onToggleRepo(repo.full_name);
                     }
                   }}
-                  tabIndex={0}
+                  tabIndex={isDisabled ? -1 : 0}
                   className="px-3 h-9 flex items-center justify-between bg-white dark:bg-neutral-950 cursor-default select-none outline-none"
                 >
                   <div className="text-sm flex items-center gap-2 min-w-0 flex-1">

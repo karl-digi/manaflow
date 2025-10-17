@@ -156,6 +156,9 @@ export function EnvironmentConfiguration({
     postApiSandboxesByIdEnvMutation()
   );
   const applySandboxEnv = applySandboxEnvMutation.mutate;
+  const isMutationPending =
+    createEnvironmentMutation.isPending || createSnapshotMutation.isPending;
+  const isFormLocked = isProvisioning || isMutationPending;
 
   useEffect(() => {
     if (pendingFocusIndex !== null) {
@@ -176,12 +179,15 @@ export function EnvironmentConfiguration({
 
   const handlePreviewSelect = useCallback(
     (view: "vscode" | "browser") => {
+      if (isFormLocked) {
+        return;
+      }
       if (view === "browser" && !browserUrl) {
         return;
       }
       setActivePreview(view);
     },
-    [browserUrl]
+    [browserUrl, isFormLocked]
   );
 
   const handleVscodeLoad = useCallback(() => {
@@ -538,21 +544,25 @@ export function EnvironmentConfiguration({
         <button
           type="button"
           onClick={() => handlePreviewSelect("vscode")}
-          className={previewButtonClass("vscode", false)}
+          className={previewButtonClass("vscode", isFormLocked)}
           aria-pressed={activePreview === "vscode"}
           aria-label="Show VS Code workspace"
           title="Show VS Code workspace"
+          disabled={isFormLocked}
         >
           <Code2 className="h-3.5 w-3.5" />
         </button>
         <button
           type="button"
           onClick={() => handlePreviewSelect("browser")}
-          className={previewButtonClass("browser", !isBrowserAvailable)}
+          className={previewButtonClass(
+            "browser",
+            isFormLocked || !isBrowserAvailable
+          )}
           aria-pressed={activePreview === "browser"}
           aria-label="Show browser preview"
           title="Show browser preview"
-          disabled={!isBrowserAvailable}
+          disabled={isFormLocked || !isBrowserAvailable}
         >
           <Monitor className="h-3.5 w-3.5" />
         </button>
@@ -560,6 +570,7 @@ export function EnvironmentConfiguration({
     );
   }, [
     activePreview,
+    isFormLocked,
     handlePreviewSelect,
     isBrowserAvailable,
     isProvisioning,
@@ -599,7 +610,13 @@ export function EnvironmentConfiguration({
                 },
               });
             }}
-            className="inline-flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
+            disabled={isFormLocked}
+            className={clsx(
+              "inline-flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400",
+              isFormLocked
+                ? "cursor-not-allowed opacity-60"
+                : "hover:text-neutral-900 dark:hover:text-neutral-100"
+            )}
           >
             <ArrowLeft className="w-4 h-4" />
             Back to repository selection
@@ -623,7 +640,13 @@ export function EnvironmentConfiguration({
                 },
               });
             }}
-            className="inline-flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
+            disabled={isFormLocked}
+            className={clsx(
+              "inline-flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400",
+              isFormLocked
+                ? "cursor-not-allowed opacity-60"
+                : "hover:text-neutral-900 dark:hover:text-neutral-100"
+            )}
           >
             <ArrowLeft className="w-4 h-4" />
             Back to environment
@@ -653,6 +676,7 @@ export function EnvironmentConfiguration({
             onChange={(e) => setEnvName(e.target.value)}
             readOnly={mode === "snapshot"}
             aria-readonly={mode === "snapshot"}
+            disabled={isFormLocked}
             placeholder={
               mode === "snapshot"
                 ? "Auto-generated from environment"
@@ -660,6 +684,7 @@ export function EnvironmentConfiguration({
             }
             className={clsx(
               "w-full rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2 text-sm placeholder:text-neutral-400 focus:outline-none focus:ring-2",
+              isFormLocked && "cursor-not-allowed opacity-60",
               mode === "snapshot"
                 ? "bg-neutral-100 text-neutral-600 cursor-not-allowed focus:ring-neutral-300/0 dark:bg-neutral-900 dark:text-neutral-400 dark:focus:ring-neutral-700/0"
                 : "bg-white text-neutral-900 focus:ring-neutral-300 dark:bg-neutral-950 dark:text-neutral-100 dark:focus:ring-neutral-700"
@@ -709,6 +734,9 @@ export function EnvironmentConfiguration({
             <div
               className="pb-2"
               onPasteCapture={(e) => {
+                if (isFormLocked) {
+                  return;
+                }
                 const text = e.clipboardData?.getData("text") ?? "";
                 if (text && (/\n/.test(text) || /(=|:)\s*\S/.test(text))) {
                   e.preventDefault();
@@ -784,8 +812,12 @@ export function EnvironmentConfiguration({
                           return next;
                         });
                       }}
+                      disabled={isFormLocked}
                       placeholder="EXAMPLE_NAME"
-                      className="w-full min-w-0 self-start rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700"
+                      className={clsx(
+                        "w-full min-w-0 self-start rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700",
+                        isFormLocked && "cursor-not-allowed opacity-60"
+                      )}
                     />
                     <TextareaAutosize
                       value={row.value}
@@ -797,10 +829,14 @@ export function EnvironmentConfiguration({
                           return next;
                         });
                       }}
+                      disabled={isFormLocked}
                       placeholder="I9JU23NF394R6HH"
                       minRows={1}
                       maxRows={10}
-                      className="w-full min-w-0 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 resize-none"
+                      className={clsx(
+                        "w-full min-w-0 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 resize-none",
+                        isFormLocked && "cursor-not-allowed opacity-60"
+                      )}
                     />
                     <div className="self-start flex items-center justify-end w-[44px]">
                       <button
@@ -813,7 +849,13 @@ export function EnvironmentConfiguration({
                               : [{ name: "", value: "", isSecret: true }];
                           });
                         }}
-                        className="h-10 w-[44px] rounded-md border border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300 grid place-items-center hover:bg-neutral-50 dark:hover:bg-neutral-900"
+                        disabled={isFormLocked}
+                        className={clsx(
+                          "h-10 w-[44px] rounded-md border border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300 grid place-items-center",
+                          isFormLocked
+                            ? "cursor-not-allowed opacity-60"
+                            : "hover:bg-neutral-50 dark:hover:bg-neutral-900"
+                        )}
                         aria-label="Remove variable"
                       >
                         <Minus className="w-4 h-4" />
@@ -832,7 +874,13 @@ export function EnvironmentConfiguration({
                       { name: "", value: "", isSecret: true },
                     ])
                   }
-                  className="inline-flex items-center gap-2 rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2 text-sm text-neutral-800 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-900"
+                  disabled={isFormLocked}
+                  className={clsx(
+                    "inline-flex items-center gap-2 rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2 text-sm text-neutral-800 dark:text-neutral-200",
+                    isFormLocked
+                      ? "cursor-not-allowed opacity-60"
+                      : "hover:bg-neutral-50 dark:hover:bg-neutral-900"
+                  )}
                 >
                   <Plus className="w-4 h-4" /> Add More
                 </button>
@@ -874,6 +922,7 @@ export function EnvironmentConfiguration({
                 value={maintenanceScript}
                 onChange={(next) => setMaintenanceScript(next)}
                 placeholder={SCRIPT_COPY.maintenance.placeholder}
+                disabled={isFormLocked}
                 descriptionClassName="mb-3"
                 minHeightClassName="min-h-[114px]"
               />
@@ -892,6 +941,7 @@ export function EnvironmentConfiguration({
                 value={devScript}
                 onChange={(next) => setDevScript(next)}
                 placeholder={SCRIPT_COPY.dev.placeholder}
+                disabled={isFormLocked}
                 minHeightClassName="min-h-[130px]"
               />
 
@@ -903,8 +953,12 @@ export function EnvironmentConfiguration({
                   type="text"
                   value={exposedPorts}
                   onChange={(e) => setExposedPorts(e.target.value)}
+                  disabled={isFormLocked}
                   placeholder="3000, 8080, 5432"
-                  className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700"
+                  className={clsx(
+                    "w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700",
+                    isFormLocked && "cursor-not-allowed opacity-60"
+                  )}
                 />
                 <p className="text-xs text-neutral-500 dark:text-neutral-500">
                   Comma-separated list of ports that should be exposed from the
@@ -922,16 +976,13 @@ export function EnvironmentConfiguration({
           <button
             type="button"
             onClick={onSnapshot}
-            disabled={
-              isProvisioning ||
-              createEnvironmentMutation.isPending ||
-              createSnapshotMutation.isPending
-            }
-            className="inline-flex items-center rounded-md bg-neutral-900 text-white disabled:bg-neutral-300 dark:disabled:bg-neutral-700 disabled:cursor-not-allowed px-4 py-2 text-sm hover:bg-neutral-800 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200"
+            disabled={isFormLocked}
+            className={clsx(
+              "inline-flex items-center rounded-md bg-neutral-900 text-white disabled:bg-neutral-300 dark:disabled:bg-neutral-700 disabled:cursor-not-allowed px-4 py-2 text-sm dark:bg-neutral-100 dark:text-neutral-900",
+              isFormLocked ? null : "hover:bg-neutral-800 dark:hover:bg-neutral-200"
+            )}
           >
-            {isProvisioning ||
-            createEnvironmentMutation.isPending ||
-            createSnapshotMutation.isPending ? (
+            {isProvisioning || isMutationPending ? (
               <>
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                 {mode === "snapshot"
