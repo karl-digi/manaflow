@@ -1,12 +1,24 @@
 import { FloatingPane } from "@/components/floating-pane";
 import { TitleBar } from "@/components/TitleBar";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
+import {
+  clearPendingEnvironment,
+  usePendingEnvironment,
+} from "@/lib/pendingEnvironmentsStore";
 import { api } from "@cmux/convex/api";
 import { convexQuery } from "@convex-dev/react-query";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { formatDistanceToNow } from "date-fns";
-import { Calendar, Eye, GitBranch, Play, Plus, Server } from "lucide-react";
+import {
+  Calendar,
+  Eye,
+  GitBranch,
+  Loader2,
+  Play,
+  Plus,
+  Server,
+} from "lucide-react";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/environments/")({
   loader: async ({ params }) => {
@@ -27,6 +39,57 @@ function EnvironmentsListPage() {
       teamSlugOrId,
     })
   );
+
+  const pending = usePendingEnvironment(teamSlugOrId);
+  const pendingHasMeaningfulProgress = Boolean(
+    pending &&
+      (
+        pending.instanceId ||
+        pending.selectedRepos.length > 0 ||
+        (pending.envName && pending.envName.trim().length > 0) ||
+        (pending.maintenanceScript && pending.maintenanceScript.trim().length > 0) ||
+        (pending.devScript && pending.devScript.trim().length > 0) ||
+        (pending.exposedPorts && pending.exposedPorts.trim().length > 0) ||
+        (pending.envVars &&
+          pending.envVars.some(
+            (item) =>
+              item.name.trim().length > 0 || item.value.trim().length > 0
+          ))
+      )
+  );
+
+  const pendingEnvironmentName = pending?.envName?.trim().length
+    ? pending.envName.trim()
+    : "Untitled environment";
+
+  const pendingReposPreview = pending?.selectedRepos?.slice(0, 3) ?? [];
+  const pendingReposOverflow = pending
+    ? Math.max(pending.selectedRepos.length - pendingReposPreview.length, 0)
+    : 0;
+
+  const resumeSearch = pending
+    ? {
+        step: pending.step,
+        selectedRepos: pending.selectedRepos,
+        connectionLogin: pending.connectionLogin ?? undefined,
+        repoSearch: pending.repoSearch ?? undefined,
+        instanceId: pending.instanceId ?? undefined,
+        snapshotId: pending.snapshotId ?? undefined,
+      }
+    : undefined;
+
+  const pendingUpdatedAt = pending
+    ? formatDistanceToNow(new Date(pending.updatedAt), {
+        addSuffix: true,
+      })
+    : null;
+
+  const pendingVscodeUrl = pending
+    ? pending.vscodeUrl ??
+      (pending.instanceId
+        ? `https://port-39378-${pending.instanceId.replace(/_/g, "-")}.http.cloud.morph.so/?folder=/root/workspace`
+        : undefined)
+    : undefined;
 
   return (
     <FloatingPane header={<TitleBar title="Environments" />}>
@@ -52,6 +115,84 @@ function EnvironmentsListPage() {
             New Environment
           </Link>
         </div>
+        {pendingHasMeaningfulProgress && pending ? (
+          <div className="mb-6 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-950 p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2 text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                  <Loader2 className="h-4 w-4 animate-spin text-neutral-500 dark:text-neutral-400" />
+                  Pending environment
+                </div>
+                {pendingUpdatedAt ? (
+                  <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-500">
+                    Updated {pendingUpdatedAt}
+                  </p>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                onClick={() => clearPendingEnvironment(teamSlugOrId)}
+                className="text-xs font-medium text-neutral-500 hover:text-neutral-700 dark:text-neutral-500 dark:hover:text-neutral-300"
+              >
+                Discard
+              </button>
+            </div>
+            <div className="mt-3 space-y-1">
+              <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                {pendingEnvironmentName}
+              </h3>
+              <p className="text-xs text-neutral-500 dark:text-neutral-500">
+                {pending.step === "configure"
+                  ? "Configuration in progress"
+                  : "Repository selection in progress"}
+              </p>
+            </div>
+            {pendingReposPreview.length > 0 ? (
+              <div className="flex flex-wrap gap-2 mt-3">
+                {pendingReposPreview.map((repo) => (
+                  <span
+                    key={repo}
+                    className="inline-flex items-center rounded-full bg-neutral-100 dark:bg-neutral-900 px-2 py-0.5 text-xs text-neutral-700 dark:text-neutral-300"
+                  >
+                    {repo.split("/")[1] ?? repo}
+                  </span>
+                ))}
+                {pendingReposOverflow > 0 ? (
+                  <span className="inline-flex items-center rounded-full bg-neutral-100 dark:bg-neutral-900 px-2 py-0.5 text-xs text-neutral-700 dark:text-neutral-300">
+                    +{pendingReposOverflow}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
+            <div className="flex flex-wrap gap-2 mt-4">
+              <Link
+                to="/$teamSlugOrId/environments/new"
+                params={{ teamSlugOrId }}
+                search={resumeSearch ?? {
+                  step: "select",
+                  selectedRepos: undefined,
+                  connectionLogin: undefined,
+                  repoSearch: undefined,
+                  instanceId: undefined,
+                  snapshotId: undefined,
+                }}
+                className="inline-flex items-center gap-1.5 rounded-md bg-neutral-900 text-white px-3 py-1.5 text-sm font-medium hover:bg-neutral-800 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200 transition-colors"
+              >
+                Resume setup
+              </Link>
+              {pendingVscodeUrl ? (
+                <a
+                  href={pendingVscodeUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-1.5 text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-900 transition-colors"
+                >
+                  Open VS Code
+                </a>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
         {environments && environments.length > 0 ? (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {environments.map((env) => (
@@ -143,6 +284,10 @@ function EnvironmentsListPage() {
                 </div>
               </div>
             ))}
+          </div>
+        ) : pendingHasMeaningfulProgress ? (
+          <div className="rounded-lg border border-dashed border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 p-6 text-sm text-neutral-600 dark:text-neutral-400">
+            Finish configuring your pending environment to see it in your saved list.
           </div>
         ) : (
           <div className="text-center py-12">

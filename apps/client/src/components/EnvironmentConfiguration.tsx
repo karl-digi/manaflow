@@ -5,6 +5,11 @@ import { SCRIPT_COPY } from "@/components/scriptCopy";
 import { ResizableColumns } from "@/components/ResizableColumns";
 import { parseEnvBlock } from "@/lib/parseEnvBlock";
 import {
+  clearPendingEnvironment,
+  updatePendingEnvironment,
+} from "@/lib/pendingEnvironmentsStore";
+import type { PendingEnvironmentUpdate } from "@/lib/pendingEnvironmentsStore";
+import {
   TASK_RUN_IFRAME_ALLOW,
   TASK_RUN_IFRAME_SANDBOX,
 } from "@/lib/preloadTaskRunIframes";
@@ -132,6 +137,34 @@ export function EnvironmentConfiguration({
     postApiSandboxesByIdEnvMutation()
   );
   const applySandboxEnv = applySandboxEnvMutation.mutate;
+
+  const persistDraft = useCallback(
+    (partial: PendingEnvironmentUpdate) => {
+      if (mode !== "new") {
+        return;
+      }
+      updatePendingEnvironment(teamSlugOrId, {
+        step: "configure",
+        selectedRepos,
+        snapshotId: search.snapshotId,
+        instanceId: localInstanceId ?? instanceId,
+        vscodeUrl: localVscodeUrl ?? vscodeUrl,
+        connectionLogin: search.connectionLogin ?? null,
+        ...partial,
+      });
+    },
+    [
+      instanceId,
+      localInstanceId,
+      localVscodeUrl,
+      mode,
+      search.connectionLogin,
+      search.snapshotId,
+      selectedRepos,
+      teamSlugOrId,
+      vscodeUrl,
+    ]
+  );
 
   useEffect(() => {
     if (pendingFocusIndex !== null) {
@@ -320,6 +353,7 @@ export function EnvironmentConfiguration({
         },
         {
           onSuccess: async () => {
+            clearPendingEnvironment(teamSlugOrId);
             await navigate({
               to: "/$teamSlugOrId/environments",
               params: { teamSlugOrId },
@@ -347,6 +381,16 @@ export function EnvironmentConfiguration({
         {mode === "new" ? (
           <button
             onClick={async () => {
+              if (mode === "new") {
+                updatePendingEnvironment(teamSlugOrId, {
+                  step: "select",
+                  selectedRepos,
+                  snapshotId: search.snapshotId,
+                  instanceId: localInstanceId ?? instanceId,
+                  connectionLogin: search.connectionLogin ?? null,
+                  vscodeUrl: localVscodeUrl ?? vscodeUrl,
+                });
+              }
               await navigate({
                 to: "/$teamSlugOrId/environments/new",
                 params: { teamSlugOrId },
@@ -412,7 +456,11 @@ export function EnvironmentConfiguration({
           <input
             type="text"
             value={envName}
-            onChange={(e) => setEnvName(e.target.value)}
+            onChange={(e) => {
+              const next = e.target.value;
+              setEnvName(next);
+              persistDraft({ envName: next });
+            }}
             readOnly={mode === "snapshot"}
             aria-readonly={mode === "snapshot"}
             placeholder={
@@ -505,6 +553,7 @@ export function EnvironmentConfiguration({
                       const next = Array.from(map.values());
                       next.push({ name: "", value: "", isSecret: true });
                       setPendingFocusIndex(next.length - 1);
+                      persistDraft({ envVars: next });
                       return next;
                     });
                   }
@@ -543,6 +592,7 @@ export function EnvironmentConfiguration({
                         setEnvVars((prev) => {
                           const next = [...prev];
                           next[idx] = { ...next[idx]!, name: v };
+                          persistDraft({ envVars: next });
                           return next;
                         });
                       }}
@@ -556,6 +606,7 @@ export function EnvironmentConfiguration({
                         setEnvVars((prev) => {
                           const next = [...prev];
                           next[idx] = { ...next[idx]!, value: v };
+                          persistDraft({ envVars: next });
                           return next;
                         });
                       }}
@@ -570,9 +621,12 @@ export function EnvironmentConfiguration({
                         onClick={() => {
                           setEnvVars((prev) => {
                             const next = prev.filter((_, i) => i !== idx);
-                            return next.length > 0
-                              ? next
-                              : [{ name: "", value: "", isSecret: true }];
+                            const ensured =
+                              next.length > 0
+                                ? next
+                                : [{ name: "", value: "", isSecret: true }];
+                            persistDraft({ envVars: ensured });
+                            return ensured;
                           });
                         }}
                         className="h-10 w-[44px] rounded-md border border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300 grid place-items-center hover:bg-neutral-50 dark:hover:bg-neutral-900"
@@ -589,10 +643,14 @@ export function EnvironmentConfiguration({
                 <button
                   type="button"
                   onClick={() =>
-                    setEnvVars((prev) => [
-                      ...prev,
-                      { name: "", value: "", isSecret: true },
-                    ])
+                    setEnvVars((prev) => {
+                      const next = [
+                        ...prev,
+                        { name: "", value: "", isSecret: true },
+                      ];
+                      persistDraft({ envVars: next });
+                      return next;
+                    })
                   }
                   className="inline-flex items-center gap-2 rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2 text-sm text-neutral-800 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-900"
                 >
@@ -634,7 +692,10 @@ export function EnvironmentConfiguration({
                 description={SCRIPT_COPY.maintenance.description}
                 subtitle={SCRIPT_COPY.maintenance.subtitle}
                 value={maintenanceScript}
-                onChange={(next) => setMaintenanceScript(next)}
+                onChange={(next) => {
+                  setMaintenanceScript(next);
+                  persistDraft({ maintenanceScript: next });
+                }}
                 placeholder={SCRIPT_COPY.maintenance.placeholder}
                 descriptionClassName="mb-3"
                 minHeightClassName="min-h-[114px]"
@@ -652,7 +713,10 @@ export function EnvironmentConfiguration({
                 description={SCRIPT_COPY.dev.description}
                 subtitle={SCRIPT_COPY.dev.subtitle}
                 value={devScript}
-                onChange={(next) => setDevScript(next)}
+                onChange={(next) => {
+                  setDevScript(next);
+                  persistDraft({ devScript: next });
+                }}
                 placeholder={SCRIPT_COPY.dev.placeholder}
                 minHeightClassName="min-h-[130px]"
               />
@@ -664,7 +728,11 @@ export function EnvironmentConfiguration({
                 <input
                   type="text"
                   value={exposedPorts}
-                  onChange={(e) => setExposedPorts(e.target.value)}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setExposedPorts(next);
+                    persistDraft({ exposedPorts: next });
+                  }}
                   placeholder="3000, 8080, 5432"
                   className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700"
                 />

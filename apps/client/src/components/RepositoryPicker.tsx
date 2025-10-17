@@ -38,6 +38,10 @@ import {
   useMemo,
   useState,
 } from "react";
+import {
+  updatePendingEnvironment,
+  usePendingEnvironment,
+} from "@/lib/pendingEnvironmentsStore";
 import { RepositoryAdvancedOptions } from "./RepositoryAdvancedOptions";
 
 function ConnectionIcon({ type }: { type?: string }) {
@@ -123,21 +127,41 @@ export function RepositoryPicker({
 }: RepositoryPickerProps) {
   const router = useRouter();
   const navigate = useNavigate();
+  const pending = usePendingEnvironment(teamSlugOrId);
   const [selectedRepos, setSelectedRepos] = useState<string[]>(() =>
-    Array.from(new Set(initialSelectedRepos))
+    Array.from(
+      new Set(
+        initialSelectedRepos.length > 0
+          ? initialSelectedRepos
+          : pending?.selectedRepos ?? []
+      )
+    )
   );
   const [selectedSnapshotId, setSelectedSnapshotId] = useState<MorphSnapshotId>(
-    initialSnapshotId ?? DEFAULT_MORPH_SNAPSHOT_ID
+    initialSnapshotId ?? pending?.snapshotId ?? DEFAULT_MORPH_SNAPSHOT_ID
   );
   const [selectedConnectionLogin, setSelectedConnectionLogin] = useState<
     string | null
-  >(null);
+  >(() => pending?.connectionLogin ?? null);
   const [connectionContext, setConnectionContext] = useState<ConnectionContext>(
     {
-      selectedLogin: null,
+      selectedLogin: pending?.connectionLogin ?? null,
       installationId: null,
       hasConnections: false,
     }
+  );
+
+  const handleSelectedLoginChange = useCallback(
+    (login: string | null) => {
+      setSelectedConnectionLogin(login);
+      updatePendingEnvironment(teamSlugOrId, {
+        step: "select",
+        selectedRepos,
+        snapshotId: selectedSnapshotId,
+        connectionLogin: login,
+      });
+    },
+    [selectedRepos, selectedSnapshotId, teamSlugOrId]
   );
 
   const setupInstanceMutation = useRQMutation(
@@ -226,6 +250,14 @@ export function RepositoryPicker({
         },
         {
           onSuccess: async (data) => {
+            updatePendingEnvironment(teamSlugOrId, {
+              step: "configure",
+              selectedRepos: repos,
+              snapshotId: selectedSnapshotId,
+              instanceId: data.instanceId,
+              connectionLogin: selectedConnectionLogin,
+              vscodeUrl: data.vscodeUrl,
+            });
             await goToConfigure(repos, data.instanceId);
             console.log("Cloned repos:", data.clonedRepos);
             console.log("Removed repos:", data.removedRepos);
@@ -237,9 +269,10 @@ export function RepositoryPicker({
       );
     },
     [
-      goToConfigure,
       instanceId,
+      goToConfigure,
       selectedSnapshotId,
+      selectedConnectionLogin,
       setupInstanceMutation,
       setupManualInstanceMutation,
       teamSlugOrId,
@@ -249,6 +282,12 @@ export function RepositoryPicker({
   const updateSnapshotSelection = useCallback(
     (nextSnapshotId: MorphSnapshotId) => {
       setSelectedSnapshotId(nextSnapshotId);
+      updatePendingEnvironment(teamSlugOrId, {
+        step: "select",
+        selectedRepos,
+        snapshotId: nextSnapshotId,
+        connectionLogin: selectedConnectionLogin,
+      });
       void navigate({
         to: "/$teamSlugOrId/environments/new",
         params: { teamSlugOrId },
@@ -263,34 +302,66 @@ export function RepositoryPicker({
         replace: true,
       });
     },
-    [navigate, teamSlugOrId]
+    [navigate, selectedConnectionLogin, selectedRepos, teamSlugOrId]
   );
 
-  const toggleRepo = useCallback((repo: string) => {
-    setSelectedRepos((prev) => {
-      if (prev.includes(repo)) {
-        return prev.filter((item) => item !== repo);
-      }
-      return [...prev, repo];
-    });
-  }, []);
+  const toggleRepo = useCallback(
+    (repo: string) => {
+      setSelectedRepos((prev) => {
+        const next = prev.includes(repo)
+          ? prev.filter((item) => item !== repo)
+          : [...prev, repo];
+        updatePendingEnvironment(teamSlugOrId, {
+          step: "select",
+          selectedRepos: next,
+          snapshotId: selectedSnapshotId,
+          connectionLogin: selectedConnectionLogin,
+        });
+        return next;
+      });
+    },
+    [selectedConnectionLogin, selectedSnapshotId, teamSlugOrId]
+  );
 
-  const removeRepo = useCallback((repo: string) => {
-    setSelectedRepos((prev) => prev.filter((item) => item !== repo));
-  }, []);
+  const removeRepo = useCallback(
+    (repo: string) => {
+      setSelectedRepos((prev) => {
+        const next = prev.filter((item) => item !== repo);
+        if (next.length !== prev.length) {
+          updatePendingEnvironment(teamSlugOrId, {
+            step: "select",
+            selectedRepos: next,
+            snapshotId: selectedSnapshotId,
+            connectionLogin: selectedConnectionLogin,
+          });
+        }
+        return next;
+      });
+    },
+    [selectedConnectionLogin, selectedSnapshotId, teamSlugOrId]
+  );
 
-  const setConnectionContextSafe = useCallback((ctx: ConnectionContext) => {
-    setConnectionContext((prev) => {
-      if (
-        prev.selectedLogin === ctx.selectedLogin &&
-        prev.installationId === ctx.installationId &&
-        prev.hasConnections === ctx.hasConnections
-      ) {
-        return prev;
-      }
-      return ctx;
-    });
-  }, []);
+  const setConnectionContextSafe = useCallback(
+    (ctx: ConnectionContext) => {
+      setConnectionContext((prev) => {
+        if (
+          prev.selectedLogin === ctx.selectedLogin &&
+          prev.installationId === ctx.installationId &&
+          prev.hasConnections === ctx.hasConnections
+        ) {
+          return prev;
+        }
+        updatePendingEnvironment(teamSlugOrId, {
+          step: "select",
+          selectedRepos,
+          snapshotId: selectedSnapshotId,
+          connectionLogin: ctx.selectedLogin,
+        });
+        return ctx;
+      });
+    },
+    [selectedRepos, selectedSnapshotId, teamSlugOrId]
+  );
 
   const isContinueLoading = setupInstanceMutation.isPending;
   const isManualLoading = setupManualInstanceMutation.isPending;
@@ -312,7 +383,7 @@ export function RepositoryPicker({
         <RepositoryConnectionsSection
           teamSlugOrId={teamSlugOrId}
           selectedLogin={selectedConnectionLogin}
-          onSelectedLoginChange={setSelectedConnectionLogin}
+          onSelectedLoginChange={handleSelectedLoginChange}
           onContextChange={setConnectionContextSafe}
           onConnectionsInvalidated={handleConnectionsInvalidated}
         />
