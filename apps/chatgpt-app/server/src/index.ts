@@ -3,8 +3,8 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { config as loadEnv } from "dotenv";
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio";
+import { McpServer } from "@modelcontextprotocol/sdk/dist/esm/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/dist/esm/server/stdio.js";
 import * as StackframeJs from "@stackframe/js";
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
@@ -47,7 +47,7 @@ const serverInfo = {
 
 const config = resolveConfig();
 
-let stackAdmin: StackAdminApp | null = null;
+let stackAdmin: InstanceType<typeof StackAdminApp> | null = null;
 let cachedAccessToken: { value: string; expiresAt: number } | null = null;
 let pendingAccessToken: Promise<string> | null = null;
 
@@ -291,7 +291,7 @@ mcpServer.tool(
 async function startServer(): Promise<void> {
   console.log("cmux ChatGPT MCP server starting...");
   const transport = new StdioServerTransport();
-  transport.onerror = (error) => {
+  transport.onerror = (error: unknown) => {
     console.error("cmux ChatGPT MCP transport error", error);
   };
   const closed = new Promise<void>((resolve) => {
@@ -308,6 +308,8 @@ async function startServer(): Promise<void> {
   await closed;
   clearInterval(keepAlive);
 }
+
+export { mcpServer, getServiceAccessToken, config, startServer };
 
 const entryPath = process.argv[1]
   ? resolve(process.cwd(), process.argv[1])

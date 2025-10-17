@@ -9,6 +9,7 @@
   "scripts": {
     "dev:server": "bunx tsx --watch server/src/index.ts",
     "serve": "bunx tsx server/src/index.ts",
+    "serve:http": "bunx tsx server/src/http.ts",
     "dev:web": "bunx --bun esbuild web/src/component.tsx --bundle --format=esm --sourcemap --outfile=web/dist/component.js --watch",
     "build:server": "bunx --bun esbuild server/src/index.ts --bundle --platform=node --format=esm --sourcemap --outfile=server/dist/index.js --external:@modelcontextprotocol/sdk/server/* --external:@stackframe/js --external:@stackframe/js/*",
     "build:web": "bunx --bun esbuild web/src/component.tsx --bundle --format=esm --outfile=web/dist/component.js",
