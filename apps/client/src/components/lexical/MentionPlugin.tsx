@@ -8,9 +8,11 @@ import {
   $isRangeSelection,
   $isTextNode,
   BLUR_COMMAND,
+  COMMAND_PRIORITY_CRITICAL,
   COMMAND_PRIORITY_HIGH,
   KEY_ARROW_DOWN_COMMAND,
   KEY_ARROW_UP_COMMAND,
+  KEY_DOWN_COMMAND,
   KEY_ENTER_COMMAND,
   KEY_ESCAPE_COMMAND,
   TextNode,
@@ -439,26 +441,6 @@ export function MentionPlugin({
       return true;
     };
 
-    // Handle Ctrl+N/P and Ctrl+J/K
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (!isShowingMenuRef.current) return;
-
-      if (event.ctrlKey) {
-        switch (event.key) {
-          case "n":
-          case "j":
-            event.preventDefault();
-            handleArrowDown();
-            break;
-          case "p":
-          case "k":
-            event.preventDefault();
-            handleArrowUp();
-            break;
-        }
-      }
-    };
-
     const removeArrowDown = editor.registerCommand(
       KEY_ARROW_DOWN_COMMAND,
       (event) => handleArrowDown(event || undefined),
@@ -483,6 +465,31 @@ export function MentionPlugin({
       COMMAND_PRIORITY_HIGH
     );
 
+    // Handle Ctrl+N/P/J/K with critical priority to override other handlers
+    const removeKeyDown = editor.registerCommand(
+      KEY_DOWN_COMMAND,
+      (event: KeyboardEvent) => {
+        if (!isShowingMenuRef.current) return false;
+
+        if (event.ctrlKey) {
+          switch (event.key) {
+            case "n":
+            case "j":
+              event.preventDefault();
+              handleArrowDown();
+              return true;
+            case "p":
+            case "k":
+              event.preventDefault();
+              handleArrowUp();
+              return true;
+          }
+        }
+        return false;
+      },
+      COMMAND_PRIORITY_CRITICAL
+    );
+
     // Hide menu on blur
     const removeBlur = editor.registerCommand(
       BLUR_COMMAND,
@@ -495,15 +502,13 @@ export function MentionPlugin({
       COMMAND_PRIORITY_HIGH
     );
 
-    document.addEventListener("keydown", handleKeyDown);
-
     return () => {
       removeArrowDown();
       removeArrowUp();
       removeEnter();
       removeEscape();
+      removeKeyDown();
       removeBlur();
-      document.removeEventListener("keydown", handleKeyDown);
     };
   }, [editor, selectFile, hideMenu]);
 
