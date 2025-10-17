@@ -157,6 +157,12 @@ export function EnvironmentConfiguration({
   );
   const applySandboxEnv = applySandboxEnvMutation.mutate;
 
+  const isAnyMutationPending =
+    isProvisioning ||
+    createEnvironmentMutation.isPending ||
+    createSnapshotMutation.isPending ||
+    applySandboxEnvMutation.isPending;
+
   useEffect(() => {
     if (pendingFocusIndex !== null) {
       const el = keyInputRefs.current[pendingFocusIndex];
@@ -529,7 +535,7 @@ export function EnvironmentConfiguration({
   );
 
   const headerControls = useMemo(() => {
-    if (isProvisioning) {
+    if (isAnyMutationPending) {
       return null;
     }
 
@@ -562,7 +568,7 @@ export function EnvironmentConfiguration({
     activePreview,
     handlePreviewSelect,
     isBrowserAvailable,
-    isProvisioning,
+    isAnyMutationPending,
     previewButtonClass,
   ]);
 
@@ -599,7 +605,13 @@ export function EnvironmentConfiguration({
                 },
               });
             }}
-            className="inline-flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
+            disabled={isAnyMutationPending}
+            className={clsx(
+              "inline-flex items-center gap-2 text-sm",
+              isAnyMutationPending
+                ? "text-neutral-400 dark:text-neutral-600 cursor-not-allowed"
+                : "text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
+            )}
           >
             <ArrowLeft className="w-4 h-4" />
             Back to repository selection
@@ -623,7 +635,13 @@ export function EnvironmentConfiguration({
                 },
               });
             }}
-            className="inline-flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
+            disabled={isAnyMutationPending}
+            className={clsx(
+              "inline-flex items-center gap-2 text-sm",
+              isAnyMutationPending
+                ? "text-neutral-400 dark:text-neutral-600 cursor-not-allowed"
+                : "text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
+            )}
           >
             <ArrowLeft className="w-4 h-4" />
             Back to environment
@@ -651,8 +669,8 @@ export function EnvironmentConfiguration({
             type="text"
             value={envName}
             onChange={(e) => setEnvName(e.target.value)}
-            readOnly={mode === "snapshot"}
-            aria-readonly={mode === "snapshot"}
+            readOnly={mode === "snapshot" || isAnyMutationPending}
+            aria-readonly={mode === "snapshot" || isAnyMutationPending}
             placeholder={
               mode === "snapshot"
                 ? "Auto-generated from environment"
@@ -660,7 +678,7 @@ export function EnvironmentConfiguration({
             }
             className={clsx(
               "w-full rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2 text-sm placeholder:text-neutral-400 focus:outline-none focus:ring-2",
-              mode === "snapshot"
+              mode === "snapshot" || isAnyMutationPending
                 ? "bg-neutral-100 text-neutral-600 cursor-not-allowed focus:ring-neutral-300/0 dark:bg-neutral-900 dark:text-neutral-400 dark:focus:ring-neutral-700/0"
                 : "bg-white text-neutral-900 focus:ring-neutral-300 dark:bg-neutral-950 dark:text-neutral-100 dark:focus:ring-neutral-700"
             )}
@@ -770,52 +788,70 @@ export function EnvironmentConfiguration({
                         "minmax(0, 1fr) minmax(0, 1.4fr) 44px",
                     }}
                   >
-                    <input
-                      type="text"
-                      value={row.name}
-                      ref={(el) => {
-                        keyInputRefs.current[idx] = el;
-                      }}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setEnvVars((prev) => {
-                          const next = [...prev];
-                          next[idx] = { ...next[idx]!, name: v };
-                          return next;
-                        });
-                      }}
-                      placeholder="EXAMPLE_NAME"
-                      className="w-full min-w-0 self-start rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700"
-                    />
-                    <TextareaAutosize
-                      value={row.value}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setEnvVars((prev) => {
-                          const next = [...prev];
-                          next[idx] = { ...next[idx]!, value: v };
-                          return next;
-                        });
-                      }}
-                      placeholder="I9JU23NF394R6HH"
-                      minRows={1}
-                      maxRows={10}
-                      className="w-full min-w-0 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 resize-none"
-                    />
+                     <input
+                       type="text"
+                       value={row.name}
+                       ref={(el) => {
+                         keyInputRefs.current[idx] = el;
+                       }}
+                       onChange={(e) => {
+                         const v = e.target.value;
+                         setEnvVars((prev) => {
+                           const next = [...prev];
+                           next[idx] = { ...next[idx]!, name: v };
+                           return next;
+                         });
+                       }}
+                       disabled={isAnyMutationPending}
+                       placeholder="EXAMPLE_NAME"
+                       className={clsx(
+                         "w-full min-w-0 self-start rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2 text-sm font-mono placeholder:text-neutral-400 focus:outline-none focus:ring-2",
+                         isAnyMutationPending
+                           ? "bg-neutral-100 text-neutral-600 cursor-not-allowed focus:ring-neutral-300/0 dark:bg-neutral-900 dark:text-neutral-400 dark:focus:ring-neutral-700/0"
+                           : "bg-white text-neutral-900 focus:ring-neutral-300 dark:bg-neutral-950 dark:text-neutral-100 dark:focus:ring-neutral-700"
+                       )}
+                     />
+                     <TextareaAutosize
+                       value={row.value}
+                       onChange={(e) => {
+                         const v = e.target.value;
+                         setEnvVars((prev) => {
+                           const next = [...prev];
+                           next[idx] = { ...next[idx]!, value: v };
+                           return next;
+                         });
+                       }}
+                       disabled={isAnyMutationPending}
+                       placeholder="I9JU23NF394R6HH"
+                       minRows={1}
+                       maxRows={10}
+                       className={clsx(
+                         "w-full min-w-0 rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2 text-sm font-mono placeholder:text-neutral-400 focus:outline-none focus:ring-2 resize-none",
+                         isAnyMutationPending
+                           ? "bg-neutral-100 text-neutral-600 cursor-not-allowed focus:ring-neutral-300/0 dark:bg-neutral-900 dark:text-neutral-400 dark:focus:ring-neutral-700/0"
+                           : "bg-white text-neutral-900 focus:ring-neutral-300 dark:bg-neutral-950 dark:text-neutral-100 dark:focus:ring-neutral-700"
+                       )}
+                     />
                     <div className="self-start flex items-center justify-end w-[44px]">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEnvVars((prev) => {
-                            const next = prev.filter((_, i) => i !== idx);
-                            return next.length > 0
-                              ? next
-                              : [{ name: "", value: "", isSecret: true }];
-                          });
-                        }}
-                        className="h-10 w-[44px] rounded-md border border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300 grid place-items-center hover:bg-neutral-50 dark:hover:bg-neutral-900"
-                        aria-label="Remove variable"
-                      >
+                       <button
+                         type="button"
+                         onClick={() => {
+                           setEnvVars((prev) => {
+                             const next = prev.filter((_, i) => i !== idx);
+                             return next.length > 0
+                               ? next
+                               : [{ name: "", value: "", isSecret: true }];
+                           });
+                         }}
+                         disabled={isAnyMutationPending}
+                         className={clsx(
+                           "h-10 w-[44px] rounded-md border border-neutral-200 dark:border-neutral-800 grid place-items-center",
+                           isAnyMutationPending
+                             ? "text-neutral-400 dark:text-neutral-600 cursor-not-allowed"
+                             : "text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-900"
+                         )}
+                         aria-label="Remove variable"
+                       >
                         <Minus className="w-4 h-4" />
                       </button>
                     </div>
@@ -823,20 +859,26 @@ export function EnvironmentConfiguration({
                 ))}
               </div>
 
-              <div className="pt-2">
-                <button
-                  type="button"
-                  onClick={() =>
-                    setEnvVars((prev) => [
-                      ...prev,
-                      { name: "", value: "", isSecret: true },
-                    ])
-                  }
-                  className="inline-flex items-center gap-2 rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2 text-sm text-neutral-800 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-900"
-                >
-                  <Plus className="w-4 h-4" /> Add More
-                </button>
-              </div>
+               <div className="pt-2">
+                 <button
+                   type="button"
+                   onClick={() =>
+                     setEnvVars((prev) => [
+                       ...prev,
+                       { name: "", value: "", isSecret: true },
+                     ])
+                   }
+                   disabled={isAnyMutationPending}
+                   className={clsx(
+                     "inline-flex items-center gap-2 rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2 text-sm",
+                     isAnyMutationPending
+                       ? "text-neutral-400 dark:text-neutral-600 cursor-not-allowed"
+                       : "text-neutral-800 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-900"
+                   )}
+                 >
+                   <Plus className="w-4 h-4" /> Add More
+                 </button>
+               </div>
 
               <p className="text-xs text-neutral-500 dark:text-neutral-500 pt-2">
                 Tip: Paste an .env above to populate the form. Values are
@@ -899,13 +941,19 @@ export function EnvironmentConfiguration({
                 <label className="block text-sm font-medium text-neutral-800 dark:text-neutral-200">
                   Exposed ports
                 </label>
-                <input
-                  type="text"
-                  value={exposedPorts}
-                  onChange={(e) => setExposedPorts(e.target.value)}
-                  placeholder="3000, 8080, 5432"
-                  className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700"
-                />
+                 <input
+                   type="text"
+                   value={exposedPorts}
+                   onChange={(e) => setExposedPorts(e.target.value)}
+                   disabled={isAnyMutationPending}
+                   placeholder="3000, 8080, 5432"
+                   className={clsx(
+                     "w-full rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2 text-sm placeholder:text-neutral-400 focus:outline-none focus:ring-2",
+                     isAnyMutationPending
+                       ? "bg-neutral-100 text-neutral-600 cursor-not-allowed focus:ring-neutral-300/0 dark:bg-neutral-900 dark:text-neutral-400 dark:focus:ring-neutral-700/0"
+                       : "bg-white text-neutral-900 focus:ring-neutral-300 dark:bg-neutral-950 dark:text-neutral-100 dark:focus:ring-neutral-700"
+                   )}
+                 />
                 <p className="text-xs text-neutral-500 dark:text-neutral-500">
                   Comma-separated list of ports that should be exposed from the
                   container for preview URLs.
@@ -922,16 +970,10 @@ export function EnvironmentConfiguration({
           <button
             type="button"
             onClick={onSnapshot}
-            disabled={
-              isProvisioning ||
-              createEnvironmentMutation.isPending ||
-              createSnapshotMutation.isPending
-            }
+            disabled={isAnyMutationPending}
             className="inline-flex items-center rounded-md bg-neutral-900 text-white disabled:bg-neutral-300 dark:disabled:bg-neutral-700 disabled:cursor-not-allowed px-4 py-2 text-sm hover:bg-neutral-800 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200"
           >
-            {isProvisioning ||
-            createEnvironmentMutation.isPending ||
-            createSnapshotMutation.isPending ? (
+            {isAnyMutationPending ? (
               <>
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                 {mode === "snapshot"
