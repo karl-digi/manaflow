@@ -1,83 +1,41 @@
 import { GitHubIcon } from "@/components/icons/github";
-import { api } from "@cmux/convex/api";
 import { Link } from "@tanstack/react-router";
-import { useQuery as useConvexQuery } from "convex/react";
 import {
   GitMerge,
   GitPullRequest,
   GitPullRequestClosed,
   GitPullRequestDraft,
 } from "lucide-react";
-import { useMemo, useState, type MouseEvent } from "react";
+import { type MouseEvent } from "react";
 import { SidebarListItem } from "./SidebarListItem";
-import { SIDEBAR_PRS_DEFAULT_LIMIT } from "./const";
 import type { Doc } from "@cmux/convex/dataModel";
 
-type Props = {
-  teamSlugOrId: string;
-  limit?: number;
-};
-
-export function SidebarPullRequestList({
-  teamSlugOrId,
-  limit = SIDEBAR_PRS_DEFAULT_LIMIT,
-}: Props) {
-  const prs = useConvexQuery(api.github_prs.listPullRequests, {
-    teamSlugOrId,
-    state: "open",
-    limit,
-  });
-
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-
-  const list = useMemo(() => prs ?? [], [prs]);
-
-  if (prs === undefined) {
-    return (
-      <ul className="flex flex-col gap-px" aria-label="Loading pull requests">
-        {Array.from({ length: limit }).map((_, index) => (
-          <li key={index} className="px-2 py-1.5">
-            <div className="h-3 rounded bg-neutral-200 dark:bg-neutral-800 animate-pulse" />
-          </li>
-        ))}
-      </ul>
-    );
-  }
-
-  if (list.length === 0) {
-    return (
-      <p className="mt-1 pl-2 pr-3 py-2 text-xs text-neutral-500 dark:text-neutral-400 select-none">
-        No pull requests
-      </p>
-    );
-  }
-
+export function SidebarPullRequestSkeletonRow() {
   return (
-    <ul className="flex flex-col gap-px">
-      {list.map((pr) => (
-        <PullRequestListItem
-          key={`${pr.repoFullName}#${pr.number}`}
-          pr={pr}
-          teamSlugOrId={teamSlugOrId}
-          expanded={expanded}
-          setExpanded={setExpanded}
-        />
-      ))}
-    </ul>
+    <div className="px-2 py-1.5">
+      <div className="h-3 rounded bg-neutral-200 dark:bg-neutral-800 animate-pulse" />
+    </div>
   );
 }
 
-type PullRequestListItemProps = {
+export interface SidebarPullRequestListItemProps {
   pr: Doc<"pullRequests">;
   teamSlugOrId: string;
-  expanded: Record<string, boolean>;
-  setExpanded: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
-};
+  isExpanded: boolean;
+  onToggle: (
+    event?: MouseEvent<HTMLButtonElement | HTMLAnchorElement>
+  ) => void;
+  isActive?: boolean;
+}
 
-function PullRequestListItem({ pr, teamSlugOrId, expanded, setExpanded }: PullRequestListItemProps) {
+export function SidebarPullRequestListItem({
+  pr,
+  teamSlugOrId,
+  isExpanded,
+  onToggle,
+  isActive = false,
+}: SidebarPullRequestListItemProps) {
   const [owner = "", repo = ""] = pr.repoFullName?.split("/", 2) ?? ["", ""];
-  const key = `${pr.repoFullName}#${pr.number}`;
-  const isExpanded = expanded[key] ?? false;
   const branchLabel = pr.headRef;
 
   const secondaryParts = [
@@ -99,16 +57,13 @@ function PullRequestListItem({ pr, teamSlugOrId, expanded, setExpanded }: PullRe
   );
 
   const handleToggle = (
-    _event?: MouseEvent<HTMLButtonElement | HTMLAnchorElement>
+    event?: MouseEvent<HTMLButtonElement | HTMLAnchorElement>
   ) => {
-    setExpanded((prev) => ({
-      ...prev,
-      [key]: !isExpanded,
-    }));
+    onToggle(event);
   };
 
   return (
-    <li key={key} className="rounded-md select-none">
+    <div className="rounded-md select-none" data-active={isActive || undefined}>
       <Link
         to="/$teamSlugOrId/prs-only/$owner/$repo/$number"
         params={{
@@ -118,6 +73,7 @@ function PullRequestListItem({ pr, teamSlugOrId, expanded, setExpanded }: PullRe
           number: String(pr.number),
         }}
         className="group block"
+        data-sidebar-pr-link="true"
         onClick={(event) => {
           if (
             event.defaultPrevented ||
@@ -166,8 +122,6 @@ function PullRequestListItem({ pr, teamSlugOrId, expanded, setExpanded }: PullRe
           </a>
         </div>
       ) : null}
-    </li>
+    </div>
   );
 }
-
-export default SidebarPullRequestList;

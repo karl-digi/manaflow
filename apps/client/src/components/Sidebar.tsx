@@ -1,14 +1,26 @@
 import { TaskTree } from "@/components/TaskTree";
-import { TaskTreeSkeleton } from "@/components/TaskTreeSkeleton";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { isElectron } from "@/lib/electron";
+import clsx from "clsx";
+import { api } from "@cmux/convex/api";
 import { type Doc } from "@cmux/convex/dataModel";
+import { useQuery as useConvexQuery } from "convex/react";
 import type { LinkProps } from "@tanstack/react-router";
-import { Link } from "@tanstack/react-router";
+import { Link, useLocation } from "@tanstack/react-router";
+import {
+  ListBox,
+  ListBoxItem,
+  ListBoxSection,
+  Header,
+  type Key,
+  type ListBoxItemRenderProps,
+  type PressEvent,
+} from "react-aria-components";
 import { Home, Plus, Server, Settings } from "lucide-react";
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ComponentType,
@@ -16,8 +28,12 @@ import {
 } from "react";
 import CmuxLogo from "./logo/cmux-logo";
 import { SidebarNavLink } from "./sidebar/SidebarNavLink";
-import { SidebarPullRequestList } from "./sidebar/SidebarPullRequestList";
+import {
+  SidebarPullRequestListItem,
+  SidebarPullRequestSkeletonRow,
+} from "./sidebar/SidebarPullRequestList";
 import { SidebarSectionLink } from "./sidebar/SidebarSectionLink";
+import { SIDEBAR_PRS_DEFAULT_LIMIT } from "./sidebar/const";
 
 interface SidebarProps {
   tasks: Doc<"tasks">[] | undefined;
@@ -59,12 +75,149 @@ const navItems: SidebarNavItem[] = [
   },
 ];
 
+const WORKSPACE_SKELETON_COUNT = 5;
+
+function getPullRequestItemKey(pr: Doc<"pullRequests">) {
+  return `pr:${pr.repoFullName ?? ""}#${pr.number}`;
+}
+
+function getWorkspaceItemKey(task: Doc<"tasks">) {
+  return `workspace:${task._id}`;
+}
+
+function getListBoxItemClassName(
+  states: ListBoxItemRenderProps,
+  options: { isActive?: boolean } = {}
+) {
+  const { isFocusVisible, isFocused, isSelected } = states;
+  const isHighlighted = options.isActive || isSelected;
+
+  return clsx(
+    "rounded-sm outline-none transition-colors",
+    isHighlighted
+      ? "bg-neutral-200/75 dark:bg-neutral-800/65"
+      : isFocused
+        ? "bg-neutral-200/45 dark:bg-neutral-800/45"
+        : null,
+    isFocusVisible
+      ? "ring-2 ring-neutral-400 dark:ring-neutral-500"
+      : null
+  );
+}
+
+interface SidebarPullRequestListBoxItemProps {
+  itemKey: string;
+  pr: Doc<"pullRequests">;
+  teamSlugOrId: string;
+  isExpanded: boolean;
+  onToggle: (key: string) => void;
+  isActive: boolean;
+}
+
+function SidebarPullRequestListBoxItem({
+  itemKey,
+  pr,
+  teamSlugOrId,
+  isExpanded,
+  onToggle,
+  isActive,
+}: SidebarPullRequestListBoxItemProps) {
+  const itemRef = useRef<HTMLDivElement | null>(null);
+
+  const handlePress = useCallback((event: PressEvent) => {
+    if (event.pointerType === "keyboard" || event.pointerType === "virtual") {
+      const anchor = itemRef.current?.querySelector<HTMLAnchorElement>(
+        '[data-sidebar-pr-link="true"]'
+      );
+      anchor?.click();
+    }
+  }, []);
+
+  const textValue = pr.title || `${pr.repoFullName ?? ""} #${String(pr.number)}`;
+
+  return (
+    <ListBoxItem
+      id={itemKey}
+      textValue={textValue}
+      ref={itemRef}
+      onPress={handlePress}
+      data-active={isActive || undefined}
+      className={(states) =>
+        clsx(getListBoxItemClassName(states, { isActive }), "px-0 py-0")
+      }
+    >
+      <SidebarPullRequestListItem
+        pr={pr}
+        teamSlugOrId={teamSlugOrId}
+        isExpanded={isExpanded}
+        onToggle={() => onToggle(itemKey)}
+        isActive={isActive}
+      />
+    </ListBoxItem>
+  );
+}
+
+interface SidebarWorkspaceListBoxItemProps {
+  itemKey: string;
+  task: Doc<"tasks">;
+  teamSlugOrId: string;
+  defaultExpanded: boolean;
+  isActive: boolean;
+}
+
+function SidebarWorkspaceListBoxItem({
+  itemKey,
+  task,
+  teamSlugOrId,
+  defaultExpanded,
+  isActive,
+}: SidebarWorkspaceListBoxItemProps) {
+  const itemRef = useRef<HTMLDivElement | null>(null);
+
+  const handlePress = useCallback((event: PressEvent) => {
+    if (event.pointerType === "keyboard" || event.pointerType === "virtual") {
+      const anchor = itemRef.current?.querySelector<HTMLAnchorElement>(
+        '[data-sidebar-workspace-link="true"]'
+      );
+      anchor?.click();
+    }
+  }, []);
+
+  return (
+    <ListBoxItem
+      id={itemKey}
+      textValue={task.text}
+      ref={itemRef}
+      onPress={handlePress}
+      data-active={isActive || undefined}
+      className={(states) =>
+        clsx(getListBoxItemClassName(states, { isActive }), "px-0 py-0")
+      }
+    >
+      <TaskTree
+        task={task}
+        defaultExpanded={defaultExpanded}
+        teamSlugOrId={teamSlugOrId}
+      />
+    </ListBoxItem>
+  );
+}
+
+function SidebarWorkspaceSkeletonRow() {
+  return (
+    <div className="pl-2 pr-3 py-1.5">
+      <div className="h-3 rounded bg-neutral-200 dark:bg-neutral-800 animate-pulse" />
+    </div>
+  );
+}
+
 export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
   const DEFAULT_WIDTH = 256;
   const MIN_WIDTH = 240;
   const MAX_WIDTH = 600;
 
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const listBoxRef = useRef<HTMLDivElement | null>(null);
   const containerLeftRef = useRef<number>(0);
   const rafIdRef = useRef<number | null>(null);
   const [width, setWidth] = useState<number>(() => {
@@ -78,8 +231,22 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
     const stored = localStorage.getItem("sidebarHidden");
     return stored === "true";
   });
+  const [expandedPullRequests, setExpandedPullRequests] = useState<
+    Record<string, boolean>
+  >({});
 
   const { expandTaskIds } = useExpandTasks();
+  const location = useLocation();
+  const pullRequests = useConvexQuery(api.github_prs.listPullRequests, {
+    teamSlugOrId,
+    state: "open",
+    limit: SIDEBAR_PRS_DEFAULT_LIMIT,
+  });
+  const isPullRequestsLoading = pullRequests === undefined;
+  const pullRequestList = useMemo(
+    () => pullRequests ?? [],
+    [pullRequests]
+  );
 
   useEffect(() => {
     localStorage.setItem("sidebarWidth", String(width));
@@ -88,6 +255,149 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
   useEffect(() => {
     localStorage.setItem("sidebarHidden", String(isHidden));
   }, [isHidden]);
+
+  useEffect(() => {
+    setExpandedPullRequests((prev) => {
+      const next: Record<string, boolean> = {};
+      for (const pr of pullRequestList) {
+        const key = getPullRequestItemKey(pr);
+        if (prev[key]) {
+          next[key] = prev[key];
+        }
+      }
+
+      const prevKeys = Object.keys(prev);
+      const nextKeys = Object.keys(next);
+      if (prevKeys.length === nextKeys.length) {
+        const unchanged = prevKeys.every((key) => prev[key] === next[key]);
+        if (unchanged) {
+          return prev;
+        }
+      }
+
+      return next;
+    });
+  }, [pullRequestList]);
+
+  const pullRequestItems = useMemo(
+    () =>
+      pullRequestList.map((pr) => {
+        const key = getPullRequestItemKey(pr);
+        const [owner = "", repo = ""] = pr.repoFullName?.split("/", 2) ?? ["", ""];
+        const detailPath = `/${teamSlugOrId}/prs-only/${owner}/${repo}/${pr.number}`;
+        const drawerPath = `/${teamSlugOrId}/prs/${owner}/${repo}/${pr.number}`;
+        const isActive =
+          location.pathname.includes(detailPath) ||
+          location.pathname.includes(drawerPath);
+        return {
+          key,
+          pr,
+          isExpanded: expandedPullRequests[key] ?? false,
+          isActive,
+        };
+      }),
+    [
+      expandedPullRequests,
+      location.pathname,
+      pullRequestList,
+      teamSlugOrId,
+    ]
+  );
+
+  const pullRequestSkeletonKeys = useMemo<Key[]>(() => {
+    if (!isPullRequestsLoading) {
+      return [];
+    }
+    return Array.from({ length: SIDEBAR_PRS_DEFAULT_LIMIT }, (_, index) =>
+      `pr-loading-${index}`
+    );
+  }, [isPullRequestsLoading]);
+
+  const workspaceSkeletonKeys = useMemo<Key[]>(() => {
+    if (tasks !== undefined) {
+      return [];
+    }
+    return Array.from({ length: WORKSPACE_SKELETON_COUNT }, (_, index) =>
+      `workspace-loading-${index}`
+    );
+  }, [tasks]);
+
+  const disabledKeys = useMemo(() => {
+    const keys: Key[] = [];
+    if (isPullRequestsLoading) {
+      keys.push(...pullRequestSkeletonKeys);
+    } else if (pullRequestList.length === 0) {
+      keys.push("pr-empty");
+    }
+
+    if (tasks === undefined) {
+      keys.push(...workspaceSkeletonKeys);
+    } else if (tasks.length === 0) {
+      keys.push("workspace-empty");
+    }
+
+    return new Set<Key>(keys);
+  }, [
+    isPullRequestsLoading,
+    pullRequestList.length,
+    pullRequestSkeletonKeys,
+    tasks,
+    workspaceSkeletonKeys,
+  ]);
+
+  const togglePullRequestExpansion = useCallback((key: string) => {
+    setExpandedPullRequests((prev) => ({
+      ...prev,
+      [key]: !prev[key],
+    }));
+  }, []);
+
+  const focusListBox = useCallback(() => {
+    const element = listBoxRef.current;
+    if (!element) {
+      return;
+    }
+    element.focus({ preventScroll: false });
+    const activeOption =
+      element.querySelector<HTMLElement>('[role="option"][data-active="true"]') ??
+      element.querySelector<HTMLElement>(
+        '[role="option"]:not([data-disabled="true"])'
+      );
+    if (activeOption) {
+      activeOption.scrollIntoView({ block: "nearest" });
+    }
+  }, []);
+
+  useEffect(() => {
+    const handleShortcut = () => {
+      focusListBox();
+    };
+
+    let off: (() => void) | undefined;
+    if (isElectron && window.cmux?.on) {
+      off = window.cmux.on("shortcut:sidebar-focus", handleShortcut);
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.ctrlKey &&
+        event.shiftKey &&
+        (event.code === "KeyE" || event.key.toLowerCase() === "e")
+      ) {
+        event.preventDefault();
+        focusListBox();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      if (typeof off === "function") {
+        off();
+      }
+    };
+  }, [focusListBox]);
 
   // Keyboard shortcut to toggle sidebar (Ctrl+Shift+S)
   useEffect(() => {
@@ -269,47 +579,133 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
           </ul>
 
           <div className="mt-4 flex flex-col">
-            <SidebarSectionLink
-              to="/$teamSlugOrId/prs"
-              params={{ teamSlugOrId }}
-              exact
+            <ListBox
+              ref={listBoxRef}
+              aria-label="Sidebar resources"
+              selectionMode="single"
+              disallowEmptySelection={false}
+              disabledKeys={disabledKeys}
+              className="flex flex-col gap-3 pr-1 focus:outline-none"
             >
-              Pull requests
-            </SidebarSectionLink>
-            <div className="ml-2 pt-px">
-              <SidebarPullRequestList teamSlugOrId={teamSlugOrId} />
-            </div>
-          </div>
+              <ListBoxSection
+                id="pull-requests"
+                className="flex flex-col gap-1 pl-1"
+              >
+                <Header>
+                  <SidebarSectionLink
+                    to="/$teamSlugOrId/prs"
+                    params={{ teamSlugOrId }}
+                    exact
+                  >
+                    Pull requests
+                  </SidebarSectionLink>
+                </Header>
+                {isPullRequestsLoading ? (
+                  pullRequestSkeletonKeys.map((key) => (
+                    <ListBoxItem
+                      key={key}
+                      id={key}
+                      textValue="Loading pull request"
+                      className={(states) =>
+                        clsx(
+                          getListBoxItemClassName(states),
+                          "pointer-events-none select-none"
+                        )
+                      }
+                    >
+                      <SidebarPullRequestSkeletonRow />
+                    </ListBoxItem>
+                  ))
+                ) : pullRequestList.length === 0 ? (
+                  <ListBoxItem
+                    id="pr-empty"
+                    textValue="No pull requests"
+                    className={(states) =>
+                      clsx(
+                        getListBoxItemClassName(states),
+                        "pointer-events-none select-none"
+                      )
+                    }
+                  >
+                    <p className="pl-2 pr-3 py-1.5 text-xs text-neutral-500 dark:text-neutral-400 select-none">
+                      No pull requests
+                    </p>
+                  </ListBoxItem>
+                ) : (
+                  pullRequestItems.map((item) => (
+                    <SidebarPullRequestListBoxItem
+                      key={item.key}
+                      itemKey={item.key}
+                      pr={item.pr}
+                      teamSlugOrId={teamSlugOrId}
+                      isExpanded={item.isExpanded}
+                      onToggle={togglePullRequestExpansion}
+                      isActive={item.isActive}
+                    />
+                  ))
+                )}
+              </ListBoxSection>
 
-          <div className="mt-2 flex flex-col gap-0.5">
-            <SidebarSectionLink
-              to="/$teamSlugOrId/workspaces"
-              params={{ teamSlugOrId }}
-              exact
-            >
-              Workspaces
-            </SidebarSectionLink>
-          </div>
-
-          <div className="ml-2 pt-px">
-            <div className="space-y-px">
-              {tasks === undefined ? (
-                <TaskTreeSkeleton count={5} />
-              ) : tasks && tasks.length > 0 ? (
-                tasks.map((task) => (
-                  <TaskTree
-                    key={task._id}
-                    task={task}
-                    defaultExpanded={expandTaskIds?.includes(task._id) ?? false}
-                    teamSlugOrId={teamSlugOrId}
-                  />
-                ))
-              ) : (
-                <p className="pl-2 pr-3 py-1.5 text-xs text-neutral-500 dark:text-neutral-400 select-none">
-                  No recent tasks
-                </p>
-              )}
-            </div>
+              <ListBoxSection
+                id="workspaces"
+                className="flex flex-col gap-1 pl-1"
+              >
+                <Header>
+                  <SidebarSectionLink
+                    to="/$teamSlugOrId/workspaces"
+                    params={{ teamSlugOrId }}
+                    exact
+                  >
+                    Workspaces
+                  </SidebarSectionLink>
+                </Header>
+                {tasks === undefined ? (
+                  workspaceSkeletonKeys.map((key) => (
+                    <ListBoxItem
+                      key={key}
+                      id={key}
+                      textValue="Loading workspace"
+                      className={(states) =>
+                        clsx(
+                          getListBoxItemClassName(states),
+                          "pointer-events-none select-none"
+                        )
+                      }
+                    >
+                      <SidebarWorkspaceSkeletonRow />
+                    </ListBoxItem>
+                  ))
+                ) : tasks.length > 0 ? (
+                  tasks.map((task) => (
+                    <SidebarWorkspaceListBoxItem
+                      key={getWorkspaceItemKey(task)}
+                      itemKey={getWorkspaceItemKey(task)}
+                      task={task}
+                      teamSlugOrId={teamSlugOrId}
+                      defaultExpanded={
+                        expandTaskIds?.includes(task._id) ?? false
+                      }
+                      isActive={location.pathname.includes(`/task/${task._id}`)}
+                    />
+                  ))
+                ) : (
+                  <ListBoxItem
+                    id="workspace-empty"
+                    textValue="No recent tasks"
+                    className={(states) =>
+                      clsx(
+                        getListBoxItemClassName(states),
+                        "pointer-events-none select-none"
+                      )
+                    }
+                  >
+                    <p className="pl-2 pr-3 py-1.5 text-xs text-neutral-500 dark:text-neutral-400 select-none">
+                      No recent tasks
+                    </p>
+                  </ListBoxItem>
+                )}
+              </ListBoxSection>
+            </ListBox>
           </div>
         </div>
       </nav>

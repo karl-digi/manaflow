@@ -259,7 +259,15 @@ export function initCmdK(opts: {
           return Boolean(input.control);
         })();
 
-        if (!isCmdK && !isSidebarToggle) return;
+        const isSidebarFocus = (() => {
+          if (input.key.toLowerCase() !== "e") return false;
+          if (!input.shift) return false;
+          if (input.alt || input.meta) return false;
+          // Require control to align with renderer shortcut (Ctrl+Shift+E)
+          return Boolean(input.control);
+        })();
+
+        if (!isCmdK && !isSidebarToggle && !isSidebarFocus) return;
 
         // Prevent default to avoid in-app conflicts and ensure single toggle
         e.preventDefault();
@@ -289,6 +297,27 @@ export function initCmdK(opts: {
             } catch (err) {
               opts.logger.warn("Failed to emit sidebar toggle shortcut", err);
               keyDebug("emit-sidebar-toggle-error", { err: String(err) });
+            }
+          }
+          return;
+        }
+
+        if (isSidebarFocus) {
+          keyDebug("sidebar-focus-detected", {
+            sourceId: contents.id,
+            type: contents.getType?.(),
+          });
+          const targetWin = getTargetWindow();
+          if (targetWin && !targetWin.isDestroyed()) {
+            try {
+              targetWin.webContents.send("cmux:event:shortcut:sidebar-focus");
+              keyDebug("emit-sidebar-focus", {
+                to: targetWin.webContents.id,
+                from: contents.id,
+              });
+            } catch (err) {
+              opts.logger.warn("Failed to emit sidebar focus shortcut", err);
+              keyDebug("emit-sidebar-focus-error", { err: String(err) });
             }
           }
           return;

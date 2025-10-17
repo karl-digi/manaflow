@@ -291,12 +291,13 @@ function TaskTreeInner({
           <ContextMenu.Trigger>
             <Link
               to="/$teamSlugOrId/task/$taskId"
-              params={{ teamSlugOrId, taskId: task._id }}
-              search={{ runId: undefined }}
-              activeOptions={{ exact: true }}
-              className="group block"
-              onMouseEnter={handlePrefetch}
-              onFocus={handlePrefetch}
+          params={{ teamSlugOrId, taskId: task._id }}
+          search={{ runId: undefined }}
+          activeOptions={{ exact: true }}
+          className="group block"
+          data-sidebar-workspace-link="true"
+          onMouseEnter={handlePrefetch}
+          onFocus={handlePrefetch}
               onClick={(event) => {
                 if (
                   event.defaultPrevented ||
