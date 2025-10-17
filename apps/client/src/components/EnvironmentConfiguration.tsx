@@ -5,6 +5,10 @@ import { SCRIPT_COPY } from "@/components/scriptCopy";
 import { ResizableColumns } from "@/components/ResizableColumns";
 import { parseEnvBlock } from "@/lib/parseEnvBlock";
 import {
+  saveConfigurationDraft,
+  removeDraftByInstance,
+} from "@/lib/pendingEnvironmentStorage";
+import {
   TASK_RUN_IFRAME_ALLOW,
   TASK_RUN_IFRAME_SANDBOX,
 } from "@/lib/preloadTaskRunIframes";
@@ -113,10 +117,102 @@ export function EnvironmentConfiguration({
     if (localVscodeUrl) return `env-config:${localVscodeUrl}`;
     return "env-config";
   }, [localInstanceId, localVscodeUrl]);
+  const persistConfigurationDraft = useCallback(
+    (overrides?: {
+      envName?: string;
+      maintenanceScript?: string;
+      devScript?: string;
+      exposedPorts?: string;
+      envVars?: EnvVar[];
+    }) => {
+      if (!localInstanceId || mode !== "new") {
+        return;
+      }
+      const snapshotId = search.snapshotId ?? DEFAULT_MORPH_SNAPSHOT_ID;
+      const envVarsToPersist = overrides?.envVars ?? envVars;
+      saveConfigurationDraft({
+        teamSlugOrId,
+        instanceId: localInstanceId,
+        selectedRepos,
+        snapshotId,
+        envName: overrides?.envName ?? envName,
+        maintenanceScript:
+          overrides?.maintenanceScript ?? maintenanceScript,
+        devScript: overrides?.devScript ?? devScript,
+        exposedPorts: overrides?.exposedPorts ?? exposedPorts,
+        envVars: envVarsToPersist,
+        connectionLogin: search.connectionLogin ?? null,
+        repoSearch: search.repoSearch ?? null,
+      });
+    },
+    [
+      devScript,
+      envName,
+      envVars,
+      exposedPorts,
+      localInstanceId,
+      maintenanceScript,
+      mode,
+      search.connectionLogin,
+      search.repoSearch,
+      search.snapshotId,
+      selectedRepos,
+      teamSlugOrId,
+    ]
+  );
+  const updateEnvName = useCallback(
+    (value: string) => {
+      setEnvName(value);
+      persistConfigurationDraft({ envName: value });
+    },
+    [persistConfigurationDraft]
+  );
+  const updateEnvVars = useCallback(
+    (updater: EnvVar[] | ((prev: EnvVar[]) => EnvVar[])) => {
+      if (typeof updater === "function") {
+        setEnvVars((prev) => {
+          const next = updater(prev);
+          persistConfigurationDraft({ envVars: next });
+          return next;
+        });
+      } else {
+        const next = updater;
+        setEnvVars(next);
+        persistConfigurationDraft({ envVars: next });
+      }
+    },
+    [persistConfigurationDraft]
+  );
+  const updateMaintenanceScript = useCallback(
+    (value: string) => {
+      setMaintenanceScript(value);
+      persistConfigurationDraft({ maintenanceScript: value });
+    },
+    [persistConfigurationDraft]
+  );
+  const updateDevScript = useCallback(
+    (value: string) => {
+      setDevScript(value);
+      persistConfigurationDraft({ devScript: value });
+    },
+    [persistConfigurationDraft]
+  );
+  const updateExposedPorts = useCallback(
+    (value: string) => {
+      setExposedPorts(value);
+      persistConfigurationDraft({ exposedPorts: value });
+    },
+    [persistConfigurationDraft]
+  );
 
   useEffect(() => {
-    setLocalInstanceId(instanceId);
-  }, [instanceId]);
+    setLocalInstanceId((prev) => {
+      if (mode === "new" && prev && instanceId && prev !== instanceId) {
+        removeDraftByInstance(prev);
+      }
+      return instanceId;
+    });
+  }, [instanceId, mode]);
 
   useEffect(() => {
     setLocalVscodeUrl(vscodeUrl);
@@ -281,6 +377,9 @@ export function EnvironmentConfiguration({
         },
         {
           onSuccess: async () => {
+            if (mode === "new" && localInstanceId) {
+              removeDraftByInstance(localInstanceId);
+            }
             await navigate({
               to: "/$teamSlugOrId/environments/$environmentId",
               params: {
@@ -320,6 +419,9 @@ export function EnvironmentConfiguration({
         },
         {
           onSuccess: async () => {
+            if (mode === "new" && localInstanceId) {
+              removeDraftByInstance(localInstanceId);
+            }
             await navigate({
               to: "/$teamSlugOrId/environments",
               params: { teamSlugOrId },
@@ -412,7 +514,7 @@ export function EnvironmentConfiguration({
           <input
             type="text"
             value={envName}
-            onChange={(e) => setEnvName(e.target.value)}
+            onChange={(e) => updateEnvName(e.target.value)}
             readOnly={mode === "snapshot"}
             aria-readonly={mode === "snapshot"}
             placeholder={
@@ -476,7 +578,7 @@ export function EnvironmentConfiguration({
                   e.preventDefault();
                   const items = parseEnvBlock(text);
                   if (items.length > 0) {
-                    setEnvVars((prev) => {
+                    updateEnvVars((prev) => {
                       const map = new Map(
                         prev
                           .filter(
@@ -540,7 +642,7 @@ export function EnvironmentConfiguration({
                       }}
                       onChange={(e) => {
                         const v = e.target.value;
-                        setEnvVars((prev) => {
+                        updateEnvVars((prev) => {
                           const next = [...prev];
                           next[idx] = { ...next[idx]!, name: v };
                           return next;
@@ -553,7 +655,7 @@ export function EnvironmentConfiguration({
                       value={row.value}
                       onChange={(e) => {
                         const v = e.target.value;
-                        setEnvVars((prev) => {
+                        updateEnvVars((prev) => {
                           const next = [...prev];
                           next[idx] = { ...next[idx]!, value: v };
                           return next;
@@ -568,7 +670,7 @@ export function EnvironmentConfiguration({
                       <button
                         type="button"
                         onClick={() => {
-                          setEnvVars((prev) => {
+                          updateEnvVars((prev) => {
                             const next = prev.filter((_, i) => i !== idx);
                             return next.length > 0
                               ? next
@@ -589,7 +691,7 @@ export function EnvironmentConfiguration({
                 <button
                   type="button"
                   onClick={() =>
-                    setEnvVars((prev) => [
+                    updateEnvVars((prev) => [
                       ...prev,
                       { name: "", value: "", isSecret: true },
                     ])
@@ -634,7 +736,7 @@ export function EnvironmentConfiguration({
                 description={SCRIPT_COPY.maintenance.description}
                 subtitle={SCRIPT_COPY.maintenance.subtitle}
                 value={maintenanceScript}
-                onChange={(next) => setMaintenanceScript(next)}
+                onChange={updateMaintenanceScript}
                 placeholder={SCRIPT_COPY.maintenance.placeholder}
                 descriptionClassName="mb-3"
                 minHeightClassName="min-h-[114px]"
@@ -652,7 +754,7 @@ export function EnvironmentConfiguration({
                 description={SCRIPT_COPY.dev.description}
                 subtitle={SCRIPT_COPY.dev.subtitle}
                 value={devScript}
-                onChange={(next) => setDevScript(next)}
+                onChange={updateDevScript}
                 placeholder={SCRIPT_COPY.dev.placeholder}
                 minHeightClassName="min-h-[130px]"
               />
@@ -664,7 +766,7 @@ export function EnvironmentConfiguration({
                 <input
                   type="text"
                   value={exposedPorts}
-                  onChange={(e) => setExposedPorts(e.target.value)}
+                  onChange={(e) => updateExposedPorts(e.target.value)}
                   placeholder="3000, 8080, 5432"
                   className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700"
                 />

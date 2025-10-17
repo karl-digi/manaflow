@@ -38,6 +38,12 @@ import {
   useMemo,
   useState,
 } from "react";
+import {
+  saveSelectionDraft,
+  getSelectionDraft,
+  saveConfigurationDraft,
+} from "@/lib/pendingEnvironmentStorage";
+import type { EnvVar } from "@/components/EnvironmentConfiguration";
 import { RepositoryAdvancedOptions } from "./RepositoryAdvancedOptions";
 
 function ConnectionIcon({ type }: { type?: string }) {
@@ -123,21 +129,71 @@ export function RepositoryPicker({
 }: RepositoryPickerProps) {
   const router = useRouter();
   const navigate = useNavigate();
-  const [selectedRepos, setSelectedRepos] = useState<string[]>(() =>
-    Array.from(new Set(initialSelectedRepos))
+  const selectionDraft = useMemo(
+    () => getSelectionDraft(teamSlugOrId),
+    [teamSlugOrId]
   );
+  const [selectedRepos, setSelectedRepos] = useState<string[]>(() => {
+    if (selectionDraft && selectionDraft.stage === "select") {
+      return Array.from(new Set(selectionDraft.selectedRepos));
+    }
+    return Array.from(new Set(initialSelectedRepos));
+  });
   const [selectedSnapshotId, setSelectedSnapshotId] = useState<MorphSnapshotId>(
-    initialSnapshotId ?? DEFAULT_MORPH_SNAPSHOT_ID
+    selectionDraft?.snapshotId ?? initialSnapshotId ?? DEFAULT_MORPH_SNAPSHOT_ID
   );
   const [selectedConnectionLogin, setSelectedConnectionLogin] = useState<
     string | null
-  >(null);
+  >(selectionDraft?.connectionLogin ?? null);
   const [connectionContext, setConnectionContext] = useState<ConnectionContext>(
     {
       selectedLogin: null,
       installationId: null,
       hasConnections: false,
     }
+  );
+  const persistSelectionDraft = useCallback(
+    (overrides?: {
+      selectedRepos?: string[];
+      snapshotId?: MorphSnapshotId | null;
+      connectionLogin?: string | null;
+      repoSearch?: string | null;
+    }) => {
+      const repos = overrides?.selectedRepos ?? selectedRepos;
+      const snapshot =
+        overrides?.snapshotId !== undefined
+          ? overrides.snapshotId
+          : selectedSnapshotId;
+      const connectionLoginValue =
+        overrides?.connectionLogin !== undefined
+          ? overrides.connectionLogin
+          : selectedConnectionLogin;
+      const repoSearchValue =
+        overrides?.repoSearch !== undefined
+          ? overrides.repoSearch
+          : selectionDraft?.repoSearch ?? null;
+      saveSelectionDraft({
+        teamSlugOrId,
+        selectedRepos: repos,
+        snapshotId: snapshot,
+        connectionLogin: connectionLoginValue,
+        repoSearch: repoSearchValue,
+      });
+    },
+    [
+      selectedRepos,
+      selectedSnapshotId,
+      selectedConnectionLogin,
+      selectionDraft?.repoSearch,
+      teamSlugOrId,
+    ]
+  );
+  const handleSelectedLoginChange = useCallback(
+    (login: string | null) => {
+      setSelectedConnectionLogin(login);
+      persistSelectionDraft({ connectionLogin: login });
+    },
+    [persistSelectionDraft]
   );
 
   const setupInstanceMutation = useRQMutation(
@@ -226,7 +282,28 @@ export function RepositoryPicker({
         },
         {
           onSuccess: async (data) => {
-            await goToConfigure(repos, data.instanceId);
+            const nextInstanceId = data.instanceId;
+            const defaultEnvVars: EnvVar[] = [
+              { name: "", value: "", isSecret: true },
+            ];
+            if (nextInstanceId) {
+              saveConfigurationDraft({
+                teamSlugOrId,
+                instanceId: nextInstanceId,
+                selectedRepos: repos,
+                snapshotId: selectedSnapshotId,
+                envName: "",
+                maintenanceScript: "",
+                devScript: "",
+                exposedPorts: "",
+                envVars: defaultEnvVars,
+                connectionLogin: selectedConnectionLogin,
+                repoSearch: selectionDraft?.repoSearch ?? null,
+              });
+            } else {
+              console.error("Missing instanceId for new environment draft");
+            }
+            await goToConfigure(repos, nextInstanceId);
             console.log("Cloned repos:", data.clonedRepos);
             console.log("Removed repos:", data.removedRepos);
           },
@@ -243,12 +320,15 @@ export function RepositoryPicker({
       setupInstanceMutation,
       setupManualInstanceMutation,
       teamSlugOrId,
+      selectedConnectionLogin,
+      selectionDraft?.repoSearch,
     ]
   );
 
   const updateSnapshotSelection = useCallback(
     (nextSnapshotId: MorphSnapshotId) => {
       setSelectedSnapshotId(nextSnapshotId);
+      persistSelectionDraft({ snapshotId: nextSnapshotId });
       void navigate({
         to: "/$teamSlugOrId/environments/new",
         params: { teamSlugOrId },
@@ -263,21 +343,26 @@ export function RepositoryPicker({
         replace: true,
       });
     },
-    [navigate, teamSlugOrId]
+    [navigate, persistSelectionDraft, teamSlugOrId]
   );
 
   const toggleRepo = useCallback((repo: string) => {
     setSelectedRepos((prev) => {
-      if (prev.includes(repo)) {
-        return prev.filter((item) => item !== repo);
-      }
-      return [...prev, repo];
+      const next = prev.includes(repo)
+        ? prev.filter((item) => item !== repo)
+        : [...prev, repo];
+      persistSelectionDraft({ selectedRepos: next });
+      return next;
     });
-  }, []);
+  }, [persistSelectionDraft]);
 
   const removeRepo = useCallback((repo: string) => {
-    setSelectedRepos((prev) => prev.filter((item) => item !== repo));
-  }, []);
+    setSelectedRepos((prev) => {
+      const next = prev.filter((item) => item !== repo);
+      persistSelectionDraft({ selectedRepos: next });
+      return next;
+    });
+  }, [persistSelectionDraft]);
 
   const setConnectionContextSafe = useCallback((ctx: ConnectionContext) => {
     setConnectionContext((prev) => {
@@ -312,7 +397,7 @@ export function RepositoryPicker({
         <RepositoryConnectionsSection
           teamSlugOrId={teamSlugOrId}
           selectedLogin={selectedConnectionLogin}
-          onSelectedLoginChange={setSelectedConnectionLogin}
+          onSelectedLoginChange={handleSelectedLoginChange}
           onContextChange={setConnectionContextSafe}
           onConnectionsInvalidated={handleConnectionsInvalidated}
         />

@@ -5,8 +5,14 @@ import { api } from "@cmux/convex/api";
 import { convexQuery } from "@convex-dev/react-query";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useCallback, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { Calendar, Eye, GitBranch, Play, Plus, Server } from "lucide-react";
+import {
+  listPendingDrafts,
+  removeDraftById,
+  type PendingEnvironmentDraft,
+} from "@/lib/pendingEnvironmentStorage";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/environments/")({
   loader: async ({ params }) => {
@@ -27,6 +33,13 @@ function EnvironmentsListPage() {
       teamSlugOrId,
     })
   );
+  const [pendingDrafts, setPendingDrafts] = useState<PendingEnvironmentDraft[]>(
+    () => listPendingDrafts(teamSlugOrId)
+  );
+  const handleDiscardDraft = useCallback((draftId: string) => {
+    removeDraftById(draftId);
+    setPendingDrafts((prev) => prev.filter((draft) => draft.id !== draftId));
+  }, []);
 
   return (
     <FloatingPane header={<TitleBar title="Environments" />}>
@@ -52,6 +65,107 @@ function EnvironmentsListPage() {
             New Environment
           </Link>
         </div>
+        {pendingDrafts.length > 0 ? (
+          <div className="mb-6">
+            <h3 className="text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-3">
+              Pending environments
+            </h3>
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {pendingDrafts.map((draft) => {
+                const title = draft.envName?.trim()?.length
+                  ? draft.envName.trim()
+                  : draft.selectedRepos[0]?.split("/")[1] ?? draft.selectedRepos[0] ?? "Untitled environment";
+                const stageLabel =
+                  draft.stage === "configure"
+                    ? "Configuration"
+                    : "Selection";
+                const updatedLabel = formatDistanceToNow(
+                  new Date(draft.updatedAt),
+                  { addSuffix: true }
+                );
+                const continueSearch =
+                  draft.stage === "configure"
+                    ? {
+                        step: "configure" as const,
+                        selectedRepos: draft.selectedRepos,
+                        instanceId: draft.instanceId,
+                        connectionLogin: draft.connectionLogin ?? undefined,
+                        repoSearch: draft.repoSearch ?? undefined,
+                        snapshotId: draft.snapshotId ?? undefined,
+                      }
+                    : {
+                        step: "select" as const,
+                        selectedRepos: draft.selectedRepos,
+                        instanceId: draft.instanceId ?? undefined,
+                        connectionLogin: draft.connectionLogin ?? undefined,
+                        repoSearch: draft.repoSearch ?? undefined,
+                        snapshotId: draft.snapshotId ?? undefined,
+                      };
+                return (
+                  <div
+                    key={draft.id}
+                    className="rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-950/60 p-4 flex flex-col gap-3"
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-center gap-2">
+                        <Server className="w-5 h-5 text-neutral-600 dark:text-neutral-400" />
+                        <div>
+                          <div className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                            {title}
+                          </div>
+                          <div className="text-xs text-neutral-500 dark:text-neutral-500">
+                            {stageLabel}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="text-xs text-neutral-500 dark:text-neutral-500">
+                        {updatedLabel}
+                      </div>
+                    </div>
+                    {draft.selectedRepos.length > 0 ? (
+                      <div className="flex flex-wrap gap-1">
+                        {draft.selectedRepos.slice(0, 3).map((repo) => (
+                          <span
+                            key={repo}
+                            className="inline-flex items-center rounded-full bg-white dark:bg-neutral-900 px-2 py-0.5 text-xs text-neutral-700 dark:text-neutral-300"
+                          >
+                            {repo.split("/")[1] ?? repo}
+                          </span>
+                        ))}
+                        {draft.selectedRepos.length > 3 ? (
+                          <span className="inline-flex items-center rounded-full bg-white dark:bg-neutral-900 px-2 py-0.5 text-xs text-neutral-700 dark:text-neutral-300">
+                            +{draft.selectedRepos.length - 3}
+                          </span>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-neutral-500 dark:text-neutral-500">
+                        No repositories selected yet
+                      </div>
+                    )}
+                    <div className="flex gap-2 pt-2">
+                      <Link
+                        to="/$teamSlugOrId/environments/new"
+                        params={{ teamSlugOrId }}
+                        search={continueSearch}
+                        className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-md bg-neutral-900 text-white px-3 py-1.5 text-sm font-medium hover:bg-neutral-800 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200 transition-colors"
+                      >
+                        Continue
+                      </Link>
+                      <button
+                        type="button"
+                        onClick={() => handleDiscardDraft(draft.id)}
+                        className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-1.5 text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-900 transition-colors"
+                      >
+                        Discard
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
         {environments && environments.length > 0 ? (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {environments.map((env) => (
