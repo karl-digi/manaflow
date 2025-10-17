@@ -2,6 +2,7 @@ import { EnvironmentConfiguration } from "@/components/EnvironmentConfiguration"
 import { FloatingPane } from "@/components/floating-pane";
 import { RepositoryPicker } from "@/components/RepositoryPicker";
 import { TitleBar } from "@/components/TitleBar";
+import { usePendingEnvironment } from "@/lib/pendingEnvironmentsStore";
 import { toMorphVncUrl } from "@/lib/toProxyWorkspaceUrl";
 import { DEFAULT_MORPH_SNAPSHOT_ID, MORPH_SNAPSHOT_PRESETS, type MorphSnapshotId } from "@cmux/shared";
 import { createFileRoute } from "@tanstack/react-router";
@@ -30,11 +31,17 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/environments/new")(
 
 function EnvironmentsPage() {
   const searchParams = Route.useSearch();
-  const step = searchParams.step ?? "select";
-  const urlSelectedRepos = searchParams.selectedRepos ?? [];
-  const urlInstanceId = searchParams.instanceId;
-  const selectedSnapshotId = searchParams.snapshotId ?? DEFAULT_MORPH_SNAPSHOT_ID;
   const { teamSlugOrId } = Route.useParams();
+  const pendingEnvironment = usePendingEnvironment(teamSlugOrId);
+  const step = pendingEnvironment?.step ?? searchParams.step ?? "select";
+  const urlSelectedRepos =
+    pendingEnvironment?.selectedRepos ?? searchParams.selectedRepos ?? [];
+  const urlInstanceId =
+    pendingEnvironment?.instanceId ?? searchParams.instanceId;
+  const selectedSnapshotId =
+    pendingEnvironment?.snapshotId ??
+    searchParams.snapshotId ??
+    DEFAULT_MORPH_SNAPSHOT_ID;
   const [headerActions, setHeaderActions] = useState<ReactNode | null>(null);
   const derivedVscodeUrl = useMemo(() => {
     if (!urlInstanceId) return undefined;
@@ -65,6 +72,7 @@ function EnvironmentsPage() {
               instanceId={urlInstanceId}
               initialSelectedRepos={urlSelectedRepos}
               initialSnapshotId={selectedSnapshotId}
+              initialConnectionLogin={pendingEnvironment?.connectionLogin ?? null}
               showHeader={true}
               showContinueButton={true}
               showManualConfigOption={true}
@@ -78,6 +86,13 @@ function EnvironmentsPage() {
             vscodeUrl={derivedVscodeUrl}
             browserUrl={derivedBrowserUrl}
             isProvisioning={false}
+            initialEnvName={pendingEnvironment?.envName ?? ""}
+            initialMaintenanceScript={
+              pendingEnvironment?.maintenanceScript ?? ""
+            }
+            initialDevScript={pendingEnvironment?.devScript ?? ""}
+            initialExposedPorts={pendingEnvironment?.exposedPorts ?? ""}
+            initialEnvVars={pendingEnvironment?.envVars}
             onHeaderControlsChange={setHeaderActions}
           />
         )}
