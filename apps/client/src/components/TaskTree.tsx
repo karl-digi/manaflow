@@ -34,6 +34,7 @@ import {
   GitPullRequestDraft,
   Globe,
   Monitor,
+  Terminal,
   Loader2,
   XCircle,
 } from "lucide-react";
@@ -563,6 +564,7 @@ function TaskRunTreeInner({
 
   const shouldRenderDiffLink = true;
   const shouldRenderBrowserLink = run.vscode?.provider === "morph";
+  const shouldRenderTerminalLink = shouldRenderBrowserLink;
   const shouldRenderPullRequestLink = Boolean(
     (run.pullRequestUrl && run.pullRequestUrl !== "pending") ||
     run.pullRequests?.some((pr) => pr.url)
@@ -579,6 +581,7 @@ function TaskRunTreeInner({
     hasActiveVSCode ||
     shouldRenderDiffLink ||
     shouldRenderBrowserLink ||
+    shouldRenderTerminalLink ||
     shouldRenderPullRequestLink ||
     shouldRenderPreviewLink;
 
@@ -840,6 +843,16 @@ function TaskRunDetails({
         params={{ teamSlugOrId, taskId, runId: run._id }}
         icon={<Monitor className="w-3 h-3 mr-2 text-neutral-400" />}
         label="Browser"
+        indentLevel={indentLevel}
+      />
+    ) : null}
+
+    {shouldRenderTerminalLink ? (
+      <TaskRunDetailLink
+        to="/$teamSlugOrId/task/$taskId/run/$runId/terminal"
+        params={{ teamSlugOrId, taskId, runId: run._id }}
+        icon={<Terminal className="w-3 h-3 mr-2 text-neutral-400" />}
+        label="Terminal"
         indentLevel={indentLevel}
       />
     ) : null}
