@@ -25,7 +25,8 @@ type TaskRunDoc = Doc<"taskRuns">;
 
 const { StackAdminApp } = StackframeJs;
 
-const moduleDir = dirname(fileURLToPath(import.meta.url));
+const modulePath = fileURLToPath(import.meta.url);
+const moduleDir = dirname(modulePath);
 loadEnv({ path: resolve(moduleDir, "../../../../.env") });
 loadEnv();
 
@@ -288,12 +289,31 @@ mcpServer.tool(
 );
 
 async function startServer(): Promise<void> {
+  console.log("cmux ChatGPT MCP server starting...");
   const transport = new StdioServerTransport();
+  transport.onerror = (error) => {
+    console.error("cmux ChatGPT MCP transport error", error);
+  };
+  const closed = new Promise<void>((resolve) => {
+    transport.onclose = () => {
+      console.log("cmux ChatGPT MCP transport closed");
+      resolve();
+    };
+  });
   await mcpServer.connect(transport);
+  const keepAlive = setInterval(() => {
+    // noop timer to keep event loop alive while waiting for stdio
+  }, 1_000_000);
   console.log("cmux ChatGPT MCP server ready (stdio)");
+  await closed;
+  clearInterval(keepAlive);
 }
 
-if (import.meta.main) {
+const entryPath = process.argv[1]
+  ? resolve(process.cwd(), process.argv[1])
+  : undefined;
+
+if (entryPath === modulePath) {
   startServer().catch((error) => {
     console.error("cmux MCP server failed", error);
     process.exitCode = 1;
