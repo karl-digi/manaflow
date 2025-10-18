@@ -1,5 +1,6 @@
 import { FloatingPane } from "@/components/floating-pane";
 import { PersistentWebView } from "@/components/persistent-webview";
+import { WorkflowRuns, WorkflowRunsSection, useCombinedWorkflowData } from "@/components/prs/PullRequestChecks";
 import { getTaskRunPullRequestPersistKey } from "@/lib/persistent-webview-keys";
 import { api } from "@cmux/convex/api";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
@@ -14,6 +15,29 @@ const paramsSchema = z.object({
   taskId: typedZid("tasks"),
   runId: typedZid("taskRuns"),
 });
+
+type RepoAndNumber = {
+  repoFullName: string;
+  number: number;
+};
+
+function parseRepoAndNumberFromUrl(url: string | null | undefined): RepoAndNumber | null {
+  if (!url) {
+    return null;
+  }
+  const match = url.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)(?:\b|\/)/i);
+  if (!match) {
+    return null;
+  }
+  const parsedNumber = Number.parseInt(match[2], 10);
+  if (Number.isNaN(parsedNumber)) {
+    return null;
+  }
+  return {
+    repoFullName: match[1],
+    number: parsedNumber,
+  };
+}
 
 export const Route = createFileRoute(
   "/_layout/$teamSlugOrId/task/$taskId/run/$runId/pr"
@@ -102,6 +126,79 @@ function RunPullRequestPage() {
 
   const headerTitle = pullRequests.length > 1 ? "Pull Requests" : "Pull Request";
   const activeUrl = activePullRequest?.url ?? fallbackPullRequestUrl;
+  const parsedFromUrl = useMemo(() => parseRepoAndNumberFromUrl(activeUrl), [activeUrl]);
+  const activeRepoFullName =
+    activePullRequest?.repoFullName ?? parsedFromUrl?.repoFullName ?? null;
+  const activePrNumber =
+    activePullRequest?.number ??
+    parsedFromUrl?.number ??
+    selectedRun?.pullRequestNumber ??
+    null;
+  const hasActivePrIdentifiers = Boolean(
+    activeRepoFullName && typeof activePrNumber === "number",
+  );
+
+  const activePrQueryArgs = useMemo(
+    () =>
+      hasActivePrIdentifiers
+        ? {
+            teamSlugOrId,
+            repoFullName: activeRepoFullName as string,
+            number: activePrNumber as number,
+          }
+        : "skip" as const,
+    [
+      hasActivePrIdentifiers,
+      teamSlugOrId,
+      activeRepoFullName,
+      activePrNumber,
+    ],
+  );
+
+  const activePullRequestDetails = useQuery(
+    api.github_prs.getPullRequest,
+    activePrQueryArgs,
+  );
+
+  const workflowRepoFullName = hasActivePrIdentifiers
+    ? activePullRequestDetails?.repoFullName ?? (activeRepoFullName as string)
+    : "";
+  const workflowPrNumber = hasActivePrIdentifiers
+    ? activePullRequestDetails?.number ?? (activePrNumber as number)
+    : 0;
+
+  const workflowData = useCombinedWorkflowData({
+    teamSlugOrId,
+    repoFullName: workflowRepoFullName,
+    prNumber: workflowPrNumber,
+    headSha: hasActivePrIdentifiers
+      ? activePullRequestDetails?.headSha
+      : undefined,
+  });
+
+  const hasAnyFailure = useMemo(
+    () =>
+      workflowData.allRuns.some(
+        (run) =>
+          run.conclusion === "failure" ||
+          run.conclusion === "timed_out" ||
+          run.conclusion === "action_required",
+      ),
+    [workflowData.allRuns],
+  );
+
+  const [checksExpandedOverride, setChecksExpandedOverride] =
+    useState<boolean | null>(null);
+  const checksExpanded =
+    checksExpandedOverride !== null ? checksExpandedOverride : hasAnyFailure;
+
+  const handleToggleChecks = () => {
+    setChecksExpandedOverride(!checksExpanded);
+  };
+
+  useEffect(() => {
+    setChecksExpandedOverride(null);
+  }, [activeRepoFullName, activePrNumber]);
 
   return (
     <FloatingPane>
@@ -117,6 +214,12 @@ function RunPullRequestPage() {
                 <span className="text-xs px-2 py-0.5 rounded-full bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400">
                   {selectedRun.pullRequestState}
                 </span>
+              )}
+              {hasActivePrIdentifiers && (
+                <WorkflowRuns
+                  allRuns={workflowData.allRuns}
+                  isLoading={workflowData.isLoading}
+                />
               )}
             </div>
             {activeUrl && (
@@ -182,20 +285,30 @@ function RunPullRequestPage() {
                     );
                   })}
                 </div>
-                <div className="flex-1">
-                  {activePullRequest?.url ? (
-                    <PersistentWebView
-                      persistKey={persistKey}
-                      src={activePullRequest.url}
-                      className="w-full h-full border-0"
-                      borderRadius={paneBorderRadius}
-                      forceWebContentsViewIfElectron
+                <div className="flex-1 flex flex-col">
+                  {hasActivePrIdentifiers && (
+                    <WorkflowRunsSection
+                      allRuns={workflowData.allRuns}
+                      isLoading={workflowData.isLoading}
+                      isExpanded={checksExpanded}
+                      onToggle={handleToggleChecks}
                     />
-                  ) : (
-                    <div className="flex h-full items-center justify-center px-6 text-sm text-neutral-500 dark:text-neutral-400">
-                      No pull request URL available for this repository yet.
-                    </div>
                   )}
+                  <div className="flex-1">
+                    {activePullRequest?.url ? (
+                      <PersistentWebView
+                        persistKey={persistKey}
+                        src={activePullRequest.url}
+                        className="w-full h-full border-0"
+                        borderRadius={paneBorderRadius}
+                        forceWebContentsViewIfElectron
+                      />
+                    ) : (
+                      <div className="flex h-full items-center justify-center px-6 text-sm text-neutral-500 dark:text-neutral-400">
+                        No pull request URL available for this repository yet.
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             ) : isPending ? (
