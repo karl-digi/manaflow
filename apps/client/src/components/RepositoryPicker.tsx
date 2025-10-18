@@ -36,9 +36,13 @@ import {
   useDeferredValue,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
-import { updatePendingEnvironment } from "@/lib/pendingEnvironmentsStore";
+import {
+  updatePendingEnvironment,
+  type PendingEnvironmentId,
+} from "@/lib/pendingEnvironmentsStore";
 import { RepositoryAdvancedOptions } from "./RepositoryAdvancedOptions";
 
 function ConnectionIcon({ type }: { type?: string }) {
@@ -107,6 +111,8 @@ export interface RepositoryPickerProps {
   headerTitle?: string;
   headerDescription?: string;
   className?: string;
+  pendingEnvironmentId?: PendingEnvironmentId;
+  onDraftCreated?: () => Promise<PendingEnvironmentId | undefined>;
 }
 
 export function RepositoryPicker({
@@ -123,6 +129,8 @@ export function RepositoryPicker({
   headerTitle = "Select Repositories",
   headerDescription = "Choose repositories to include in your environment.",
   className = "",
+  pendingEnvironmentId,
+  onDraftCreated,
 }: RepositoryPickerProps) {
   const router = useRouter();
   const navigate = useNavigate();
@@ -131,22 +139,9 @@ export function RepositoryPicker({
     [initialSelectedRepos]
   );
   const initialSnapshot = initialSnapshotId ?? DEFAULT_MORPH_SNAPSHOT_ID;
-  const [selectedRepos, setSelectedRepos] = useState<string[]>(() => {
-    const next = [...uniqueInitialRepos];
-    updatePendingEnvironment(teamSlugOrId, {
-      step: "select",
-      selectedRepos: next,
-      snapshotId: initialSnapshot,
-      instanceId: instanceId ?? undefined,
-      connectionLogin: initialConnectionLogin ?? null,
-      envName: null,
-      maintenanceScript: null,
-      devScript: null,
-      envVars: null,
-      exposedPorts: null,
-    });
-    return next;
-  });
+  const [selectedRepos, setSelectedRepos] = useState<string[]>(() => [
+    ...uniqueInitialRepos,
+  ]);
   const [selectedSnapshotId, setSelectedSnapshotId] = useState<MorphSnapshotId>(
     () => initialSnapshot
   );
@@ -161,18 +156,57 @@ export function RepositoryPicker({
     }
   );
 
+  const pendingIdRef = useRef<PendingEnvironmentId | null>(
+    pendingEnvironmentId ?? null
+  );
+  useEffect(() => {
+    pendingIdRef.current = pendingEnvironmentId ?? null;
+  }, [pendingEnvironmentId]);
+
+  const ensureDraftId = useCallback(
+    async (): Promise<PendingEnvironmentId | undefined> => {
+      if (pendingIdRef.current) {
+        return pendingIdRef.current;
+      }
+      if (!onDraftCreated) {
+        return undefined;
+      }
+      const createdId = await onDraftCreated();
+      if (createdId) {
+        pendingIdRef.current = createdId;
+      }
+      return createdId;
+    },
+    [onDraftCreated]
+  );
+
   const handleSelectedLoginChange = useCallback(
     (login: string | null) => {
       setSelectedConnectionLogin(login);
-      updatePendingEnvironment(teamSlugOrId, {
-        step: "select",
-        selectedRepos,
-        snapshotId: selectedSnapshotId,
-        instanceId: instanceId ?? undefined,
-        connectionLogin: login,
-      });
+      if (!pendingIdRef.current && selectedRepos.length === 0) {
+        return;
+      }
+      void (async () => {
+        const draftId = pendingIdRef.current ?? (await ensureDraftId());
+        if (!draftId) {
+          return;
+        }
+        updatePendingEnvironment(teamSlugOrId, draftId, {
+          step: "select",
+          selectedRepos,
+          snapshotId: selectedSnapshotId,
+          instanceId: instanceId ?? undefined,
+          connectionLogin: login === null ? null : login,
+        });
+      })();
     },
-    [instanceId, selectedRepos, selectedSnapshotId, teamSlugOrId]
+    [
+      ensureDraftId,
+      instanceId,
+      selectedRepos,
+      selectedSnapshotId,
+      teamSlugOrId,
+    ]
   );
 
   const setupInstanceMutation = useRQMutation(
@@ -185,7 +219,10 @@ export function RepositoryPicker({
   useEffect(() => {
     const nextSnapshot = initialSnapshotId ?? DEFAULT_MORPH_SNAPSHOT_ID;
     setSelectedSnapshotId(nextSnapshot);
-    updatePendingEnvironment(teamSlugOrId, {
+    if (!pendingIdRef.current) {
+      return;
+    }
+    updatePendingEnvironment(teamSlugOrId, pendingIdRef.current, {
       snapshotId: nextSnapshot,
     });
   }, [initialSnapshotId, teamSlugOrId]);
@@ -215,41 +252,45 @@ export function RepositoryPicker({
 
   const goToConfigure = useCallback(
     async (repos: string[], maybeInstanceId?: string): Promise<void> => {
+      const effectiveInstanceId = maybeInstanceId ?? instanceId ?? undefined;
+      const draftId = pendingIdRef.current ?? (await ensureDraftId());
+      if (!draftId) {
+        return;
+      }
       await navigate({
         to: "/$teamSlugOrId/environments/new",
         params: { teamSlugOrId },
         search: (prev) => ({
           step: "configure",
           selectedRepos: repos,
-          instanceId: prev.instanceId,
-          connectionLogin: prev.connectionLogin,
+          instanceId: effectiveInstanceId ?? prev.instanceId,
+          connectionLogin:
+            selectedConnectionLogin ?? prev.connectionLogin ?? undefined,
           repoSearch: prev.repoSearch,
           snapshotId: selectedSnapshotId,
+          pendingId: draftId,
         }),
+        replace: !instanceId && Boolean(maybeInstanceId),
       });
-      if (!instanceId && maybeInstanceId) {
-        await navigate({
-          to: "/$teamSlugOrId/environments/new",
-          params: { teamSlugOrId },
-          search: (prev) => ({
-            step: "configure",
-            selectedRepos: repos,
-            instanceId: maybeInstanceId,
-            connectionLogin: prev.connectionLogin,
-            repoSearch: prev.repoSearch,
-            snapshotId: selectedSnapshotId,
-          }),
-          replace: true,
-        });
-      }
-      updatePendingEnvironment(teamSlugOrId, {
+      updatePendingEnvironment(teamSlugOrId, draftId, {
         step: "configure",
         selectedRepos: repos,
         snapshotId: selectedSnapshotId,
-        instanceId: maybeInstanceId ?? instanceId ?? undefined,
+        instanceId: effectiveInstanceId,
+        connectionLogin:
+          selectedConnectionLogin === null
+            ? null
+            : selectedConnectionLogin,
       });
     },
-    [instanceId, navigate, selectedSnapshotId, teamSlugOrId]
+    [
+      ensureDraftId,
+      instanceId,
+      navigate,
+      selectedConnectionLogin,
+      selectedSnapshotId,
+      teamSlugOrId,
+    ]
   );
 
   const handleContinue = useCallback(
@@ -290,59 +331,102 @@ export function RepositoryPicker({
   const updateSnapshotSelection = useCallback(
     (nextSnapshotId: MorphSnapshotId) => {
       setSelectedSnapshotId(nextSnapshotId);
-      updatePendingEnvironment(teamSlugOrId, {
-        step: "select",
-        selectedRepos,
-        snapshotId: nextSnapshotId,
-        instanceId: instanceId ?? undefined,
-      });
-      void navigate({
-        to: "/$teamSlugOrId/environments/new",
-        params: { teamSlugOrId },
-        search: (prev) => ({
-          step: prev.step ?? "select",
-          selectedRepos: prev.selectedRepos ?? [],
-          instanceId: prev.instanceId,
-          connectionLogin: prev.connectionLogin,
-          repoSearch: prev.repoSearch,
-          snapshotId: nextSnapshotId,
-        }),
-        replace: true,
-      });
+      void (async () => {
+        let draftId: PendingEnvironmentId | undefined =
+          pendingIdRef.current ?? undefined;
+        if (!draftId && selectedRepos.length > 0) {
+          draftId = await ensureDraftId();
+        }
+        await navigate({
+          to: "/$teamSlugOrId/environments/new",
+          params: { teamSlugOrId },
+          search: (prev) => ({
+            step: prev.step ?? "select",
+            selectedRepos: prev.selectedRepos ?? [],
+            instanceId: prev.instanceId,
+          connectionLogin:
+            selectedConnectionLogin ?? prev.connectionLogin ?? undefined,
+            repoSearch: prev.repoSearch,
+            snapshotId: nextSnapshotId,
+            pendingId: draftId ?? prev.pendingId,
+          }),
+          replace: true,
+        });
+        if (draftId) {
+          updatePendingEnvironment(teamSlugOrId, draftId, {
+            step: "select",
+            selectedRepos,
+            snapshotId: nextSnapshotId,
+            instanceId: instanceId ?? undefined,
+          });
+        }
+      })();
     },
-    [instanceId, navigate, selectedRepos, teamSlugOrId]
+    [
+      ensureDraftId,
+      instanceId,
+      navigate,
+      selectedConnectionLogin,
+      selectedRepos,
+      teamSlugOrId,
+    ]
   );
 
-  const toggleRepo = useCallback((repo: string) => {
-    setSelectedRepos((prev) => {
-      let next: string[];
-      if (prev.includes(repo)) {
-        next = prev.filter((item) => item !== repo);
-      } else {
-        next = [...prev, repo];
+  const syncSelectedRepos = useCallback(
+    (nextSelected: string[]) => {
+      if (nextSelected.length === 0 && !pendingIdRef.current) {
+        return;
       }
-      updatePendingEnvironment(teamSlugOrId, {
-        step: "select",
-        selectedRepos: next,
-        snapshotId: selectedSnapshotId,
-        instanceId: instanceId ?? undefined,
-      });
-      return next;
-    });
-  }, [instanceId, selectedSnapshotId, teamSlugOrId]);
+      void (async () => {
+        const draftId: PendingEnvironmentId | undefined =
+          pendingIdRef.current ?? (await ensureDraftId());
+        if (!draftId) {
+          return;
+        }
+        updatePendingEnvironment(teamSlugOrId, draftId, {
+          step: "select",
+          selectedRepos: nextSelected,
+          snapshotId: selectedSnapshotId,
+          instanceId: instanceId ?? undefined,
+          connectionLogin:
+            selectedConnectionLogin === null
+              ? null
+              : selectedConnectionLogin,
+        });
+      })();
+    },
+    [
+      ensureDraftId,
+      instanceId,
+      selectedConnectionLogin,
+      selectedSnapshotId,
+      teamSlugOrId,
+    ]
+  );
 
-  const removeRepo = useCallback((repo: string) => {
-    setSelectedRepos((prev) => {
-      const next = prev.filter((item) => item !== repo);
-      updatePendingEnvironment(teamSlugOrId, {
-        step: "select",
-        selectedRepos: next,
-        snapshotId: selectedSnapshotId,
-        instanceId: instanceId ?? undefined,
+  const toggleRepo = useCallback(
+    (repo: string) => {
+      setSelectedRepos((prev) => {
+        const next = prev.includes(repo)
+          ? prev.filter((item) => item !== repo)
+          : [...prev, repo];
+        syncSelectedRepos(next);
+        return next;
       });
-      return next;
-    });
-  }, [instanceId, selectedSnapshotId, teamSlugOrId]);
+    },
+    [syncSelectedRepos]
+  );
+
+  const removeRepo = useCallback(
+    (repo: string) => {
+      setSelectedRepos((prev) => {
+        const next = prev.filter((item) => item !== repo);
+        syncSelectedRepos(next);
+        return next;
+      });
+    },
+    [syncSelectedRepos]
+  );
 
   const setConnectionContextSafe = useCallback((ctx: ConnectionContext) => {
     setConnectionContext((prev) => {
@@ -376,7 +460,7 @@ export function RepositoryPicker({
       <div className="space-y-6 mt-6">
         <RepositoryConnectionsSection
           teamSlugOrId={teamSlugOrId}
-          selectedLogin={selectedConnectionLogin}
+          selectedLogin={selectedConnectionLogin ?? null}
           onSelectedLoginChange={handleSelectedLoginChange}
           onContextChange={setConnectionContextSafe}
           onConnectionsInvalidated={handleConnectionsInvalidated}

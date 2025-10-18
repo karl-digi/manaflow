@@ -9,6 +9,7 @@ import {
   clearPendingEnvironment,
   updatePendingEnvironment,
   type PendingEnvironmentDraft,
+  type PendingEnvironmentId,
 } from "@/lib/pendingEnvironmentsStore";
 import {
   TASK_RUN_IFRAME_ALLOW,
@@ -72,6 +73,7 @@ export function EnvironmentConfiguration({
   initialExposedPorts = "",
   initialEnvVars,
   onHeaderControlsChange,
+  pendingEnvironmentId,
 }: {
   selectedRepos: string[];
   teamSlugOrId: string;
@@ -87,6 +89,7 @@ export function EnvironmentConfiguration({
   initialExposedPorts?: string;
   initialEnvVars?: EnvVar[];
   onHeaderControlsChange?: (controls: ReactNode | null) => void;
+  pendingEnvironmentId?: PendingEnvironmentId;
 }) {
   const navigate = useNavigate();
   const searchRoute:
@@ -102,6 +105,7 @@ export function EnvironmentConfiguration({
     repoSearch?: string;
     instanceId?: string;
     snapshotId?: MorphSnapshotId;
+    pendingId?: string;
   };
   const [envName, setEnvName] = useState(() => initialEnvName);
   const [envVars, setEnvVars] = useState<EnvVar[]>(() =>
@@ -138,10 +142,10 @@ export function EnvironmentConfiguration({
   const shouldPersistDraft = mode === "new";
   const syncPendingEnvironment = useCallback(
     (patch?: PendingEnvironmentDraft) => {
-      if (!shouldPersistDraft) {
+      if (!shouldPersistDraft || !pendingEnvironmentId) {
         return;
       }
-      updatePendingEnvironment(teamSlugOrId, {
+      updatePendingEnvironment(teamSlugOrId, pendingEnvironmentId, {
         step: "configure",
         selectedRepos,
         instanceId,
@@ -160,18 +164,23 @@ export function EnvironmentConfiguration({
       exposedPorts,
       instanceId,
       maintenanceScript,
+      pendingEnvironmentId,
       selectedRepos,
       shouldPersistDraft,
       teamSlugOrId,
     ]
   );
   const hasSyncedInitialDraft = useRef(false);
-  if (shouldPersistDraft && !hasSyncedInitialDraft.current) {
+  if (shouldPersistDraft && pendingEnvironmentId && !hasSyncedInitialDraft.current) {
     syncPendingEnvironment();
     hasSyncedInitialDraft.current = true;
   }
   const previousInstanceId = useRef(instanceId);
-  if (shouldPersistDraft && previousInstanceId.current !== instanceId) {
+  if (
+    shouldPersistDraft &&
+    pendingEnvironmentId &&
+    previousInstanceId.current !== instanceId
+  ) {
     syncPendingEnvironment({ instanceId });
     previousInstanceId.current = instanceId;
   }
@@ -405,7 +414,9 @@ export function EnvironmentConfiguration({
         },
         {
           onSuccess: async () => {
-            clearPendingEnvironment(teamSlugOrId);
+            if (pendingEnvironmentId) {
+              clearPendingEnvironment(teamSlugOrId, pendingEnvironmentId);
+            }
             await navigate({
               to: "/$teamSlugOrId/environments",
               params: { teamSlugOrId },
@@ -642,6 +653,7 @@ export function EnvironmentConfiguration({
                   connectionLogin: search.connectionLogin,
                   repoSearch: search.repoSearch,
                   snapshotId: search.snapshotId,
+                  pendingId: pendingEnvironmentId ?? search.pendingId,
                 },
               });
             }}

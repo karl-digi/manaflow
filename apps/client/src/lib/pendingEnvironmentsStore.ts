@@ -3,12 +3,13 @@ import { useSyncExternalStore } from "react";
 import type { EnvVar } from "@/components/EnvironmentConfiguration";
 
 export type PendingEnvironmentStep = "select" | "configure";
+export type PendingEnvironmentId = string;
 
 export interface PendingEnvironmentDraft {
   step?: PendingEnvironmentStep;
   selectedRepos?: string[];
   snapshotId?: MorphSnapshotId;
-  connectionLogin?: string | null;
+  connectionLogin?: string | null | undefined;
   repoSearch?: string | null;
   instanceId?: string;
   envName?: string | null;
@@ -18,26 +19,111 @@ export interface PendingEnvironmentDraft {
   exposedPorts?: string | null;
 }
 
-export interface PendingEnvironment
-  extends PendingEnvironmentDraft {
+export interface PendingEnvironment extends PendingEnvironmentDraft {
+  id: PendingEnvironmentId;
   teamSlugOrId: string;
   step: PendingEnvironmentStep;
   selectedRepos: string[];
-  snapshotId?: MorphSnapshotId;
+  snapshotId: MorphSnapshotId;
   updatedAt: number;
+  connectionLogin: string | null;
+  repoSearch: string | null;
+  envName: string;
+  maintenanceScript: string;
+  devScript: string;
+  envVars: EnvVar[];
+  exposedPorts: string;
 }
 
 const STORAGE_KEY = "cmux:pending-environments";
 
-type PendingEnvironmentMap = Record<string, PendingEnvironment>;
+type TeamPendingEnvironmentMap = Record<PendingEnvironmentId, PendingEnvironment>;
+type PendingEnvironmentState = Record<string, TeamPendingEnvironmentMap>;
 
 type Listener = () => void;
 
 const listeners = new Set<Listener>();
 
-let state: PendingEnvironmentMap = readFromStorage();
+let state: PendingEnvironmentState = readFromStorage();
+const pendingListCache = new Map<string, PendingEnvironment[]>();
+const emptyPendingList: PendingEnvironment[] = [];
 
-function readFromStorage(): PendingEnvironmentMap {
+function createPendingEnvironmentId(): PendingEnvironmentId {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `pending-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function sanitizeEnvVars(input?: EnvVar[] | null): EnvVar[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+  return input
+    .filter((item) =>
+      item && typeof item === "object" && typeof item.name === "string"
+    )
+    .map((item) => ({
+      name: item.name,
+      value: typeof item.value === "string" ? item.value : "",
+      isSecret: item.isSecret !== false,
+    }));
+}
+
+function sanitizePendingEnvironment(
+  teamSlugOrId: string,
+  id: PendingEnvironmentId,
+  input: Partial<PendingEnvironment>
+): PendingEnvironment {
+  const step: PendingEnvironmentStep =
+    input.step === "configure" ? "configure" : "select";
+  const selectedRepos = Array.isArray(input.selectedRepos)
+    ? Array.from(
+        new Set(
+          input.selectedRepos.filter((item): item is string =>
+            typeof item === "string"
+          )
+        )
+      )
+    : [];
+  const snapshotId =
+    typeof input.snapshotId === "string"
+      ? (input.snapshotId as MorphSnapshotId)
+      : DEFAULT_MORPH_SNAPSHOT_ID;
+  return {
+    id,
+    teamSlugOrId,
+    step,
+    selectedRepos,
+    snapshotId,
+    connectionLogin:
+      input.connectionLogin === undefined ? null : input.connectionLogin,
+    repoSearch: input.repoSearch === undefined ? null : input.repoSearch,
+    instanceId:
+      typeof input.instanceId === "string" && input.instanceId.length > 0
+        ? input.instanceId
+        : undefined,
+    envName:
+      input.envName === undefined || input.envName === null ? "" : input.envName,
+    maintenanceScript:
+      input.maintenanceScript === undefined || input.maintenanceScript === null
+        ? ""
+        : input.maintenanceScript,
+    devScript:
+      input.devScript === undefined || input.devScript === null
+        ? ""
+        : input.devScript,
+    envVars: sanitizeEnvVars(input.envVars),
+    exposedPorts:
+      input.exposedPorts === undefined || input.exposedPorts === null
+        ? ""
+        : input.exposedPorts,
+    updatedAt:
+      typeof input.updatedAt === "number" ? input.updatedAt : Date.now(),
+  };
+}
+
+function readFromStorage(): PendingEnvironmentState {
   if (typeof window === "undefined") {
     return {};
   }
@@ -50,38 +136,70 @@ function readFromStorage(): PendingEnvironmentMap {
     if (!parsed || typeof parsed !== "object") {
       return {};
     }
-    const map = parsed as Record<string, PendingEnvironment>;
-    const entries = Object.entries(map)
-      .filter(([, value]) =>
-        value &&
-        typeof value === "object" &&
-        typeof value.teamSlugOrId === "string"
-      )
-      .map(([key, value]) => {
-        const step: PendingEnvironmentStep =
-          value.step === "configure" ? "configure" : "select";
-        const selectedRepos = Array.isArray(value.selectedRepos)
-          ? value.selectedRepos.filter((item): item is string =>
-              typeof item === "string"
-            )
-          : [];
-        const snapshotId =
-          typeof value.snapshotId === "string"
-            ? (value.snapshotId as MorphSnapshotId)
-            : DEFAULT_MORPH_SNAPSHOT_ID;
-        return [
-          key,
-          {
-            ...value,
-            teamSlugOrId: value.teamSlugOrId,
-            step,
-            selectedRepos,
-            snapshotId,
-            updatedAt: typeof value.updatedAt === "number" ? value.updatedAt : Date.now(),
-          } satisfies PendingEnvironment,
-        ];
-      });
-    return Object.fromEntries(entries);
+    const input = parsed as Record<string, unknown>;
+    const teamEntries: Array<[string, TeamPendingEnvironmentMap]> = [];
+    for (const [teamKey, value] of Object.entries(input)) {
+      if (!value || typeof value !== "object") {
+        continue;
+      }
+
+      const teamMap: TeamPendingEnvironmentMap = {};
+
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          if (!item || typeof item !== "object") {
+            continue;
+          }
+          const id = createPendingEnvironmentId();
+          const sanitized = sanitizePendingEnvironment(teamKey, id, item as PendingEnvironment);
+          teamMap[id] = sanitized;
+        }
+      } else {
+        const recordValue = value as Record<string, unknown>;
+
+        if (
+          "step" in recordValue &&
+          !("id" in recordValue) &&
+          typeof recordValue.step === "string"
+        ) {
+          const id = createPendingEnvironmentId();
+          const sanitized = sanitizePendingEnvironment(
+            teamKey,
+            id,
+            recordValue as Partial<PendingEnvironment>
+          );
+          teamMap[id] = sanitized;
+        } else {
+          for (const [candidateKey, rawValue] of Object.entries(recordValue)) {
+            if (!rawValue || typeof rawValue !== "object") {
+              continue;
+            }
+            const rawEnv = rawValue as Partial<PendingEnvironment>;
+            const envId =
+              typeof rawEnv.id === "string" && rawEnv.id.length > 0
+                ? rawEnv.id
+                : candidateKey;
+            const envTeamSlug =
+              typeof rawEnv.teamSlugOrId === "string" &&
+              rawEnv.teamSlugOrId.length > 0
+                ? rawEnv.teamSlugOrId
+                : teamKey;
+            const sanitized = sanitizePendingEnvironment(
+              envTeamSlug,
+              envId,
+              rawEnv
+            );
+            teamMap[envId] = sanitized;
+          }
+        }
+      }
+
+      if (Object.keys(teamMap).length > 0) {
+        teamEntries.push([teamKey, teamMap]);
+      }
+    }
+
+    return Object.fromEntries(teamEntries);
   } catch (error) {
     console.warn("Failed to parse pending environments from storage", error);
     return {};
@@ -111,19 +229,22 @@ if (typeof window !== "undefined") {
       return;
     }
     state = readFromStorage();
+    pendingListCache.clear();
     emit();
   });
 }
 
 export function updatePendingEnvironment(
   teamSlugOrId: string,
+  pendingEnvironmentId: PendingEnvironmentId,
   patch: PendingEnvironmentDraft
 ): PendingEnvironment {
-  const prev = state[teamSlugOrId];
-  const selectedRepos =
-    patch.selectedRepos ?? prev?.selectedRepos ?? [];
+  const teamState = state[teamSlugOrId] ?? {};
+  const prev = teamState[pendingEnvironmentId];
+  const selectedRepos = patch.selectedRepos ?? prev?.selectedRepos ?? [];
   const sanitizedRepos = Array.from(new Set(selectedRepos));
   const next: PendingEnvironment = {
+    id: pendingEnvironmentId,
     teamSlugOrId,
     step: patch.step ?? prev?.step ?? "select",
     selectedRepos: sanitizedRepos,
@@ -137,7 +258,12 @@ export function updatePendingEnvironment(
       patch.repoSearch === undefined
         ? prev?.repoSearch ?? null
         : patch.repoSearch,
-    instanceId: patch.instanceId ?? prev?.instanceId,
+    instanceId:
+      patch.instanceId === undefined
+        ? prev?.instanceId
+        : patch.instanceId === ""
+          ? undefined
+          : patch.instanceId,
     envName:
       patch.envName === undefined ? prev?.envName : patch.envName ?? "",
     maintenanceScript:
@@ -159,26 +285,119 @@ export function updatePendingEnvironment(
     updatedAt: Date.now(),
   };
 
-  state = { ...state, [teamSlugOrId]: next };
+  state = {
+    ...state,
+    [teamSlugOrId]: { ...teamState, [pendingEnvironmentId]: next },
+  };
+  pendingListCache.delete(teamSlugOrId);
   persistState();
   emit();
   return next;
 }
 
-export function clearPendingEnvironment(teamSlugOrId: string): void {
-  if (!state[teamSlugOrId]) {
+export function createPendingEnvironment(
+  teamSlugOrId: string,
+  draft: PendingEnvironmentDraft
+): PendingEnvironment {
+  const teamState = state[teamSlugOrId] ?? {};
+  const id = createPendingEnvironmentId();
+  const normalized: Partial<PendingEnvironment> = {
+    ...draft,
+    step: draft.step ?? "select",
+    id,
+    teamSlugOrId,
+    updatedAt: Date.now(),
+    envName:
+      draft.envName === undefined || draft.envName === null
+        ? undefined
+        : draft.envName,
+    maintenanceScript:
+      draft.maintenanceScript === undefined || draft.maintenanceScript === null
+        ? undefined
+        : draft.maintenanceScript,
+    devScript:
+      draft.devScript === undefined || draft.devScript === null
+        ? undefined
+        : draft.devScript,
+    envVars: draft.envVars ?? undefined,
+    exposedPorts:
+      draft.exposedPorts === undefined || draft.exposedPorts === null
+        ? undefined
+        : draft.exposedPorts,
+    connectionLogin:
+      draft.connectionLogin === undefined ? undefined : draft.connectionLogin,
+    repoSearch:
+      draft.repoSearch === undefined ? undefined : draft.repoSearch,
+    instanceId:
+      draft.instanceId === undefined || draft.instanceId === ""
+        ? undefined
+        : draft.instanceId,
+  };
+  const next = sanitizePendingEnvironment(teamSlugOrId, id, normalized);
+  state = {
+    ...state,
+    [teamSlugOrId]: { ...teamState, [id]: next },
+  };
+  pendingListCache.delete(teamSlugOrId);
+  persistState();
+  emit();
+  return next;
+}
+
+export function clearPendingEnvironment(
+  teamSlugOrId: string,
+  pendingEnvironmentId?: PendingEnvironmentId
+): void {
+  const teamState = state[teamSlugOrId];
+  if (!teamState) {
     return;
   }
-  const { [teamSlugOrId]: _removed, ...rest } = state;
-  state = rest;
+
+  if (pendingEnvironmentId) {
+    if (!teamState[pendingEnvironmentId]) {
+      return;
+    }
+    const { [pendingEnvironmentId]: _removed, ...restForTeam } = teamState;
+    const nextTeamState = restForTeam;
+    const { [teamSlugOrId]: _teamRemoved, ...rest } = state;
+    if (Object.keys(nextTeamState).length === 0) {
+      state = rest;
+    } else {
+      state = { ...rest, [teamSlugOrId]: nextTeamState };
+    }
+    pendingListCache.delete(teamSlugOrId);
+  } else {
+    const { [teamSlugOrId]: _removed, ...rest } = state;
+    state = rest;
+    pendingListCache.delete(teamSlugOrId);
+  }
   persistState();
   emit();
 }
 
 export function getPendingEnvironment(
-  teamSlugOrId: string
+  teamSlugOrId: string,
+  pendingEnvironmentId: PendingEnvironmentId
 ): PendingEnvironment | undefined {
-  return state[teamSlugOrId];
+  return state[teamSlugOrId]?.[pendingEnvironmentId];
+}
+
+export function getPendingEnvironments(
+  teamSlugOrId: string
+): PendingEnvironment[] {
+  const cached = pendingListCache.get(teamSlugOrId);
+  if (cached) {
+    return cached;
+  }
+  const teamState = state[teamSlugOrId];
+  if (!teamState) {
+    return emptyPendingList;
+  }
+  const next = [...Object.values(teamState)].sort(
+    (a, b) => b.updatedAt - a.updatedAt
+  );
+  pendingListCache.set(teamSlugOrId, next);
+  return next;
 }
 
 function subscribe(listener: Listener): () => void {
@@ -189,15 +408,32 @@ function subscribe(listener: Listener): () => void {
 }
 
 export function usePendingEnvironment(
-  teamSlugOrId: string
+  teamSlugOrId: string,
+  pendingEnvironmentId: PendingEnvironmentId | undefined
 ): PendingEnvironment | undefined {
   return useSyncExternalStore(
     subscribe,
-    () => state[teamSlugOrId],
+    () =>
+      pendingEnvironmentId
+        ? state[teamSlugOrId]?.[pendingEnvironmentId]
+        : undefined,
     () => undefined
   );
 }
 
+export function usePendingEnvironments(
+  teamSlugOrId: string
+): PendingEnvironment[] {
+  return useSyncExternalStore(
+    subscribe,
+    () => getPendingEnvironments(teamSlugOrId),
+    () => []
+  );
+}
+
 export function listPendingEnvironments(): PendingEnvironment[] {
-  return Object.values(state).sort((a, b) => b.updatedAt - a.updatedAt);
+  const flattened = Object.values(state).flatMap((teamMap) =>
+    Object.values(teamMap)
+  );
+  return flattened.sort((a, b) => b.updatedAt - a.updatedAt);
 }
