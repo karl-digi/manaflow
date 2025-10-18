@@ -27,6 +27,8 @@ interface ElectronPreviewBrowserProps {
   persistKey: string;
   src: string;
   borderRadius?: number;
+  onErrorPageChange?: (isErrorPage: boolean) => void;
+  onLoadingChange?: (isLoading: boolean) => void;
 }
 
 interface NativeViewHandle {
@@ -93,6 +95,8 @@ function useLoadingProgress(isLoading: boolean) {
 export function ElectronPreviewBrowser({
   persistKey,
   src,
+  onErrorPageChange,
+  onLoadingChange,
 }: ElectronPreviewBrowserProps) {
   const [viewHandle, setViewHandle] = useState<NativeViewHandle | null>(null);
   const [addressValue, setAddressValue] = useState(src);
@@ -640,6 +644,14 @@ export function ElectronPreviewBrowser({
       }
     };
   }, [viewHandle]);
+
+  useEffect(() => {
+    onErrorPageChange?.(isShowingErrorPage);
+  }, [isShowingErrorPage, onErrorPageChange]);
+
+  useEffect(() => {
+    onLoadingChange?.(isLoading);
+  }, [isLoading, onLoadingChange]);
 
   const devtoolsTooltipLabel = devtoolsOpen
     ? "Close DevTools"
