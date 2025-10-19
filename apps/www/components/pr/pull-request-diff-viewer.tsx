@@ -18,8 +18,6 @@ import {
   Diff,
   Hunk,
   computeNewLineNumber,
-  isDelete,
-  isInsert,
   parseDiff,
   pickRanges,
   tokenize,
@@ -1036,12 +1034,6 @@ function FileDiffCard({
               const normalizedChanges = changes.filter(
                 (change): change is ChangeData => Boolean(change)
               );
-              const hasInsert = normalizedChanges.some((change) =>
-                isInsert(change)
-              );
-              const hasDelete = normalizedChanges.some((change) =>
-                isDelete(change)
-              );
               if (diffHeatmap && diffHeatmap.lineClasses.size > 0) {
                 let bestHeatmapClass: string | null = null;
                 for (const change of normalizedChanges) {
@@ -1069,13 +1061,7 @@ function FileDiffCard({
                 }
               }
 
-              if (hasInsert) {
-                classNames.push("bg-emerald-50 text-emerald-900");
-              } else if (hasDelete) {
-                classNames.push("bg-rose-50 text-rose-900");
-              } else {
-                classNames.push("bg-white text-neutral-800");
-              }
+              classNames.push("text-neutral-800");
 
               return cn(defaultClassName, classNames);
             }}
