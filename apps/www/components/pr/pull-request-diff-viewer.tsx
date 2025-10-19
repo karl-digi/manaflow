@@ -604,9 +604,7 @@ function ReviewProgressIndicator({
           <p className="text-sm font-medium text-neutral-700">
             Automated review progress
           </p>
-          <p className="text-xs text-neutral-500">
-            {statusText}
-          </p>
+          <p className="text-xs text-neutral-500">{statusText}</p>
         </div>
         <div className="flex items-center gap-2 text-xs font-semibold">
           <span
@@ -801,7 +799,11 @@ function FileDiffCard({
       return undefined;
     }
 
-    const renderTokenWithTooltip: RenderToken = (token, renderDefault, index) => {
+    const renderTokenWithTooltip: RenderToken = (
+      token,
+      renderDefault,
+      index
+    ) => {
       if (token && typeof token === "object") {
         const tokenRecord = token as Record<string, unknown>;
         const className =
@@ -823,7 +825,10 @@ function FileDiffCard({
           if (tooltipMeta) {
             const rendered = renderDefault(token, index);
             return (
-              <Tooltip key={`heatmap-char-${lineNumber}-${index}`} delayDuration={120}>
+              <Tooltip
+                key={`heatmap-char-${lineNumber}-${index}`}
+                delayDuration={120}
+              >
                 <TooltipTrigger asChild>
                   <span className="cmux-heatmap-char-wrapper">{rendered}</span>
                 </TooltipTrigger>
@@ -945,7 +950,8 @@ function FileDiffCard({
     return extractAutomatedReviewText(review.codexReviewOutput);
   }, [review]);
 
-  const showReview = Boolean(reviewContent);
+  // const showReview = Boolean(reviewContent);
+  const showReview = false;
 
   return (
     <TooltipProvider
@@ -968,124 +974,125 @@ function FileDiffCard({
           className="flex w-full items-center gap-3 border-b border-neutral-200 bg-neutral-50/80 px-3.5 py-2.5 text-left transition hover:bg-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
           aria-expanded={!isCollapsed}
         >
-        <span className="flex h-5 w-5 items-center justify-center text-neutral-400">
-          {isCollapsed ? (
-            <ChevronRight className="h-3.5 w-3.5" />
-          ) : (
-            <ChevronDown className="h-3.5 w-3.5" />
-          )}
-        </span>
-
-        <span
-          className={cn(
-            "flex h-5 w-5 items-center justify-center",
-            statusMeta.colorClassName
-          )}
-        >
-          {statusMeta.icon}
-          <span className="sr-only">{statusMeta.label}</span>
-        </span>
-
-        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span className="font-mono text-xs text-neutral-700 truncate">
-            {file.filename}
+          <span className="flex h-5 w-5 items-center justify-center text-neutral-400">
+            {isCollapsed ? (
+              <ChevronRight className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronDown className="h-3.5 w-3.5" />
+            )}
           </span>
-          {file.previous_filename ? (
-            <span className="font-mono text-[11px] text-neutral-500 truncate">
-              Renamed from {file.previous_filename}
-            </span>
-          ) : null}
-        </div>
 
-        <div className="flex items-center gap-2 text-[11px] font-medium text-neutral-600">
-          <span className="text-emerald-600">+{file.additions}</span>
-          <span className="text-rose-600">-{file.deletions}</span>
-        </div>
-      </button>
-
-      {showReview ? (
-        <div className="border-b border-neutral-200 bg-sky-50 px-4 py-4">
-          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-sky-700">
-            <Sparkles className="h-4 w-4" aria-hidden />
-            Automated review
-          </div>
-          <pre className="mt-2 max-h-[9.5rem] overflow-hidden whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-neutral-900">
-            {reviewContent}
-          </pre>
-        </div>
-      ) : null}
-
-      {!isCollapsed ? (
-        diff ? (
-          <Diff
-            diffType={diff.type}
-            hunks={diff.hunks}
-            viewType="split"
-            optimizeSelection
-            className="diff-syntax system-mono overflow-auto bg-white text-xs leading-5 text-neutral-800"
-            gutterClassName="system-mono bg-white text-xs text-neutral-500"
-            codeClassName="system-mono text-xs text-neutral-800"
-            tokens={tokens ?? undefined}
-            renderToken={renderHeatmapToken}
-            renderGutter={renderHeatmapGutter}
-            generateLineClassName={({ changes, defaultGenerate }) => {
-              const defaultClassName = defaultGenerate();
-              const classNames: string[] = ["system-mono text-xs py-1"];
-              const normalizedChanges = changes.filter(
-                (change): change is ChangeData => Boolean(change)
-              );
-              if (diffHeatmap && diffHeatmap.lineClasses.size > 0) {
-                let bestHeatmapClass: string | null = null;
-                for (const change of normalizedChanges) {
-                  const newLineNumber = computeNewLineNumber(change);
-                  if (newLineNumber <= 0) {
-                    continue;
-                  }
-                  const candidate = diffHeatmap.lineClasses.get(newLineNumber);
-                  if (!candidate) {
-                    continue;
-                  }
-                  if (!bestHeatmapClass) {
-                    bestHeatmapClass = candidate;
-                    continue;
-                  }
-                  const currentTier = extractHeatmapTier(bestHeatmapClass);
-                  const nextTier = extractHeatmapTier(candidate);
-                  if (nextTier > currentTier) {
-                    bestHeatmapClass = candidate;
-                  }
-                }
-
-                if (bestHeatmapClass) {
-                  classNames.push(bestHeatmapClass);
-                }
-              }
-
-              classNames.push("text-neutral-800");
-
-              return cn(defaultClassName, classNames);
-            }}
+          <span
+            className={cn(
+              "flex h-5 w-5 items-center justify-center",
+              statusMeta.colorClassName
+            )}
           >
-            {(hunks) =>
-              hunks.map((hunk) => (
-                <Fragment key={hunk.content}>
-                  <Decoration>
-                    <div className="bg-sky-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-sky-700">
-                      {hunk.content}
-                    </div>
-                  </Decoration>
-                  <Hunk hunk={hunk} />
-                </Fragment>
-              ))
-            }
-          </Diff>
-        ) : (
-          <div className="bg-neutral-50 px-4 py-6 text-sm text-neutral-600">
-            {error ??
-              "Diff content is unavailable for this file. It might be binary or too large to display."}
+            {statusMeta.icon}
+            <span className="sr-only">{statusMeta.label}</span>
+          </span>
+
+          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <span className="font-mono text-xs text-neutral-700 truncate">
+              {file.filename}
+            </span>
+            {file.previous_filename ? (
+              <span className="font-mono text-[11px] text-neutral-500 truncate">
+                Renamed from {file.previous_filename}
+              </span>
+            ) : null}
           </div>
-        )
-      ) : null}
+
+          <div className="flex items-center gap-2 text-[11px] font-medium text-neutral-600">
+            <span className="text-emerald-600">+{file.additions}</span>
+            <span className="text-rose-600">-{file.deletions}</span>
+          </div>
+        </button>
+
+        {showReview ? (
+          <div className="border-b border-neutral-200 bg-sky-50 px-4 py-4">
+            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-sky-700">
+              <Sparkles className="h-4 w-4" aria-hidden />
+              Automated review
+            </div>
+            <pre className="mt-2 max-h-[9.5rem] overflow-hidden whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-neutral-900">
+              {reviewContent}
+            </pre>
+          </div>
+        ) : null}
+
+        {!isCollapsed ? (
+          diff ? (
+            <Diff
+              diffType={diff.type}
+              hunks={diff.hunks}
+              viewType="split"
+              optimizeSelection
+              className="diff-syntax system-mono overflow-auto bg-white text-xs leading-5 text-neutral-800"
+              gutterClassName="system-mono bg-white text-xs text-neutral-500"
+              codeClassName="system-mono text-xs text-neutral-800"
+              tokens={tokens ?? undefined}
+              renderToken={renderHeatmapToken}
+              renderGutter={renderHeatmapGutter}
+              generateLineClassName={({ changes, defaultGenerate }) => {
+                const defaultClassName = defaultGenerate();
+                const classNames: string[] = ["system-mono text-xs py-1"];
+                const normalizedChanges = changes.filter(
+                  (change): change is ChangeData => Boolean(change)
+                );
+                if (diffHeatmap && diffHeatmap.lineClasses.size > 0) {
+                  let bestHeatmapClass: string | null = null;
+                  for (const change of normalizedChanges) {
+                    const newLineNumber = computeNewLineNumber(change);
+                    if (newLineNumber <= 0) {
+                      continue;
+                    }
+                    const candidate =
+                      diffHeatmap.lineClasses.get(newLineNumber);
+                    if (!candidate) {
+                      continue;
+                    }
+                    if (!bestHeatmapClass) {
+                      bestHeatmapClass = candidate;
+                      continue;
+                    }
+                    const currentTier = extractHeatmapTier(bestHeatmapClass);
+                    const nextTier = extractHeatmapTier(candidate);
+                    if (nextTier > currentTier) {
+                      bestHeatmapClass = candidate;
+                    }
+                  }
+
+                  if (bestHeatmapClass) {
+                    classNames.push(bestHeatmapClass);
+                  }
+                }
+
+                classNames.push("text-neutral-800");
+
+                return cn(defaultClassName, classNames);
+              }}
+            >
+              {(hunks) =>
+                hunks.map((hunk) => (
+                  <Fragment key={hunk.content}>
+                    <Decoration>
+                      <div className="bg-sky-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-sky-700">
+                        {hunk.content}
+                      </div>
+                    </Decoration>
+                    <Hunk hunk={hunk} />
+                  </Fragment>
+                ))
+              }
+            </Diff>
+          ) : (
+            <div className="bg-neutral-50 px-4 py-6 text-sm text-neutral-600">
+              {error ??
+                "Diff content is unavailable for this file. It might be binary or too large to display."}
+            </div>
+          )
+        ) : null}
       </article>
     </TooltipProvider>
   );
@@ -1101,7 +1108,9 @@ function HeatmapTooltipBody({
   const theme = getHeatmapTooltipTheme(score);
   return (
     <div className="space-y-1 text-left text-xs leading-relaxed">
-      <p className={cn("font-semibold", theme.titleClass)}>Worth a closer look</p>
+      <p className={cn("font-semibold", theme.titleClass)}>
+        Worth a closer look
+      </p>
       {reason ? (
         <p className={cn("text-xs", theme.reasonClass)}>{reason}</p>
       ) : null}
