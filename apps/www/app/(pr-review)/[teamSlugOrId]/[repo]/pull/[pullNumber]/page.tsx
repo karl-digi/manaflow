@@ -55,7 +55,7 @@ export async function generateMetadata({
 
   try {
     const pullRequest = await fetchPullRequest(
-      selectedTeam.id,
+      githubOwner,
       repo,
       pullNumber
     );
