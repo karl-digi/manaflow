@@ -225,6 +225,12 @@ type ReviewErrorTarget = {
   changeKey: string | null;
 };
 
+type FocusNavigateOptions = {
+  source?: "keyboard" | "pointer";
+};
+
+type KeyboardTooltipTarget = "previous" | "next";
+
 type HeatmapTooltipTheme = {
   contentClass: string;
   titleClass: string;
@@ -337,17 +343,6 @@ export function PullRequestDiffViewer({
     api.codeReview.listFileOutputsForPr,
     fileOutputArgs
   );
-
-  useEffect(() => {
-    if (!fileOutputs) {
-      return;
-    }
-
-    console.log("[code-review] automatedCodeReviewFileOutputs", {
-      args: fileOutputArgs,
-      outputs: fileOutputs,
-    });
-  }, [fileOutputs, fileOutputArgs]);
 
   const fileOutputIndex = useMemo(() => {
     if (!fileOutputs) {
@@ -469,6 +464,58 @@ export function PullRequestDiffViewer({
   const [focusedErrorIndex, setFocusedErrorIndex] = useState<number | null>(
     null
   );
+  const [keyboardTooltip, setKeyboardTooltip] =
+    useState<KeyboardTooltipTarget | null>(null);
+  const keyboardTooltipTimeoutRef =
+    useRef<{ id: number; target: KeyboardTooltipTarget } | null>(null);
+
+  const clearKeyboardTooltip = useCallback(
+    (target?: KeyboardTooltipTarget) => {
+      setKeyboardTooltip((current) => {
+        if (target === undefined) {
+          return null;
+        }
+        if (current === target) {
+          return null;
+        }
+        return current;
+      });
+
+      const timeoutEntry = keyboardTooltipTimeoutRef.current;
+      if (!timeoutEntry) {
+        return;
+      }
+
+      if (target === undefined || timeoutEntry.target === target) {
+        window.clearTimeout(timeoutEntry.id);
+        keyboardTooltipTimeoutRef.current = null;
+      }
+    },
+    []
+  );
+
+  const showKeyboardTooltip = useCallback(
+    (target: KeyboardTooltipTarget) => {
+      if (keyboardTooltipTimeoutRef.current) {
+        window.clearTimeout(keyboardTooltipTimeoutRef.current.id);
+        keyboardTooltipTimeoutRef.current = null;
+      }
+
+      setKeyboardTooltip(target);
+
+      const timeoutId = window.setTimeout(() => {
+        clearKeyboardTooltip(target);
+      }, 1800);
+      keyboardTooltipTimeoutRef.current = { id: timeoutId, target };
+    },
+    [clearKeyboardTooltip]
+  );
+  const handleKeyboardTooltipClear = useCallback(
+    (target: KeyboardTooltipTarget) => {
+      clearKeyboardTooltip(target);
+    },
+    [clearKeyboardTooltip]
+  );
 
   useEffect(() => {
     if (targetCount === 0) {
@@ -486,6 +533,17 @@ export function PullRequestDiffViewer({
       return previous;
     });
   }, [targetCount]);
+  useEffect(() => {
+    if (targetCount === 0) {
+      clearKeyboardTooltip();
+    }
+  }, [targetCount, clearKeyboardTooltip]);
+
+  useEffect(() => {
+    return () => {
+      clearKeyboardTooltip();
+    };
+  }, [clearKeyboardTooltip]);
 
   const focusedError =
     focusedErrorIndex === null ? null : errorTargets[focusedErrorIndex] ?? null;
@@ -610,29 +668,45 @@ export function PullRequestDiffViewer({
     window.location.hash = encodeURIComponent(path);
   }, []);
 
-  const handleFocusPrevious = useCallback(() => {
-    if (targetCount === 0) {
-      return;
-    }
-    setFocusedErrorIndex((previous) => {
-      if (previous === null) {
-        return targetCount - 1;
+  const handleFocusPrevious = useCallback(
+    (options?: FocusNavigateOptions) => {
+      if (targetCount === 0) {
+        return;
       }
-      return (previous - 1 + targetCount) % targetCount;
-    });
-  }, [targetCount]);
 
-  const handleFocusNext = useCallback(() => {
-    if (targetCount === 0) {
-      return;
-    }
-    setFocusedErrorIndex((previous) => {
-      if (previous === null) {
-        return 0;
+      if (options?.source === "keyboard") {
+        showKeyboardTooltip("previous");
       }
-      return (previous + 1) % targetCount;
-    });
-  }, [targetCount]);
+
+      setFocusedErrorIndex((previous) => {
+        if (previous === null) {
+          return targetCount - 1;
+        }
+        return (previous - 1 + targetCount) % targetCount;
+      });
+    },
+    [targetCount, showKeyboardTooltip]
+  );
+
+  const handleFocusNext = useCallback(
+    (options?: FocusNavigateOptions) => {
+      if (targetCount === 0) {
+        return;
+      }
+
+      if (options?.source === "keyboard") {
+        showKeyboardTooltip("next");
+      }
+
+      setFocusedErrorIndex((previous) => {
+        if (previous === null) {
+          return 0;
+        }
+        return (previous + 1) % targetCount;
+      });
+    },
+    [targetCount, showKeyboardTooltip]
+  );
 
   const handleToggleDirectory = useCallback((path: string) => {
     setExpandedPaths((previous) => {
@@ -675,10 +749,10 @@ export function PullRequestDiffViewer({
       const key = event.key.toLowerCase();
       if (key === "j") {
         event.preventDefault();
-        handleFocusNext();
+        handleFocusNext({ source: "keyboard" });
       } else if (key === "k") {
         event.preventDefault();
-        handleFocusPrevious();
+        handleFocusPrevious({ source: "keyboard" });
       }
     };
 
@@ -740,6 +814,8 @@ export function PullRequestDiffViewer({
                 currentIndex={focusedErrorIndex}
                 onPrevious={handleFocusPrevious}
                 onNext={handleFocusNext}
+                keyboardTooltip={keyboardTooltip}
+                onKeyboardTooltipClear={handleKeyboardTooltipClear}
               />
             </div>
           ) : null}
@@ -755,7 +831,7 @@ export function PullRequestDiffViewer({
         </aside>
 
         <div className="flex-1 space-y-6">
-          {fileEntries.map(({ entry, review, reviewHeatmap, diffHeatmap }) => {
+          {fileEntries.map(({ entry, review, diffHeatmap }) => {
             const isFocusedFile =
               focusedError?.filePath === entry.file.filename;
             const focusedLineNumber = isFocusedFile
@@ -771,7 +847,6 @@ export function PullRequestDiffViewer({
                 entry={entry}
                 isActive={entry.anchorId === activeAnchor}
                 review={review}
-                reviewHeatmap={reviewHeatmap}
                 diffHeatmap={diffHeatmap}
                 focusedLineNumber={focusedLineNumber}
                 focusedChangeKey={focusedChangeKey}
@@ -862,8 +937,10 @@ function ReviewProgressIndicator({
 type ErrorNavigatorProps = {
   totalCount: number;
   currentIndex: number | null;
-  onPrevious: () => void;
-  onNext: () => void;
+  onPrevious: (options?: FocusNavigateOptions) => void;
+  onNext: (options?: FocusNavigateOptions) => void;
+  keyboardTooltip: KeyboardTooltipTarget | null;
+  onKeyboardTooltipClear: (target: KeyboardTooltipTarget) => void;
 };
 
 function ErrorNavigator({
@@ -871,10 +948,34 @@ function ErrorNavigator({
   currentIndex,
   onPrevious,
   onNext,
+  keyboardTooltip,
+  onKeyboardTooltipClear,
 }: ErrorNavigatorProps) {
+  const [previousPointerOpen, setPreviousPointerOpen] = useState(false);
+  const [nextPointerOpen, setNextPointerOpen] = useState(false);
+
   if (totalCount === 0) {
     return null;
   }
+
+  const isPreviousKeyboardOpen = keyboardTooltip === "previous";
+  const isNextKeyboardOpen = keyboardTooltip === "next";
+  const previousOpen = isPreviousKeyboardOpen || previousPointerOpen;
+  const nextOpen = isNextKeyboardOpen || nextPointerOpen;
+
+  const handlePreviousOpenChange = (open: boolean) => {
+    setPreviousPointerOpen(open);
+    if (!open && isPreviousKeyboardOpen) {
+      onKeyboardTooltipClear("previous");
+    }
+  };
+
+  const handleNextOpenChange = (open: boolean) => {
+    setNextPointerOpen(open);
+    if (!open && isNextKeyboardOpen) {
+      onKeyboardTooltipClear("next");
+    }
+  };
 
   const hasSelection =
     typeof currentIndex === "number" && currentIndex >= 0 && currentIndex < totalCount;
@@ -899,11 +1000,11 @@ function ErrorNavigator({
           )}
         </span>
         <div className="flex items-center gap-1">
-          <Tooltip>
+          <Tooltip open={previousOpen} onOpenChange={handlePreviousOpenChange}>
             <TooltipTrigger asChild>
               <button
                 type="button"
-                onClick={onPrevious}
+                onClick={() => onPrevious()}
                 className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-neutral-200 bg-white text-neutral-600 transition hover:bg-neutral-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
                 aria-label="Go to previous error (Shift+K)"
                 disabled={totalCount === 0}
@@ -924,11 +1025,11 @@ function ErrorNavigator({
               </span>
             </TooltipContent>
           </Tooltip>
-          <Tooltip>
+          <Tooltip open={nextOpen} onOpenChange={handleNextOpenChange}>
             <TooltipTrigger asChild>
               <button
                 type="button"
-                onClick={onNext}
+                onClick={() => onNext()}
                 className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-neutral-200 bg-white text-neutral-600 transition hover:bg-neutral-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
                 aria-label="Go to next error (Shift+J)"
                 disabled={totalCount === 0}
@@ -1040,7 +1141,6 @@ function FileDiffCard({
   entry,
   isActive,
   review,
-  reviewHeatmap,
   diffHeatmap,
   focusedLineNumber,
   focusedChangeKey,
@@ -1048,7 +1148,6 @@ function FileDiffCard({
   entry: ParsedFileDiff;
   isActive: boolean;
   review: FileOutput | null;
-  reviewHeatmap: ReviewHeatmapLine[];
   diffHeatmap: DiffHeatmap | null;
   focusedLineNumber: number | null;
   focusedChangeKey: string | null;
@@ -1074,19 +1173,6 @@ function FileDiffCard({
     }
     setIsCollapsed(false);
   }, [focusedChangeKey]);
-
-  useEffect(() => {
-    if (!review) {
-      return;
-    }
-
-    console.log("[diff-viewer] heatmap payload", {
-      file: file.filename,
-      raw: review.codexReviewOutput,
-      parsedHeatmap: reviewHeatmap,
-      hydrated: diffHeatmap,
-    });
-  }, [review, reviewHeatmap, diffHeatmap, file.filename]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1269,8 +1355,8 @@ function FileDiffCard({
           refractor: refractorAdapter,
           ...(enhancers ? { enhancers } : {}),
         });
-      } catch (error) {
-        console.warn("[diff-viewer] highlight failed", file.filename, error);
+      } catch {
+        // Ignore highlight errors; fall back to default tokenization.
       }
     }
 
@@ -1282,7 +1368,7 @@ function FileDiffCard({
           }
         : undefined
     );
-  }, [diff, language, file.filename, diffHeatmap]);
+  }, [diff, language, diffHeatmap]);
 
   const reviewContent = useMemo(() => {
     if (!review) {
@@ -1632,10 +1718,6 @@ function scrollElementToViewportCenter(
   const viewportHeight =
     window.innerHeight || document.documentElement?.clientHeight || 0;
   if (viewportHeight === 0) {
-    console.log("[error-nav] skip scroll, zero viewport", {
-      tag: element.tagName,
-      rect,
-    });
     return;
   }
 
@@ -1649,19 +1731,6 @@ function scrollElementToViewportCenter(
   const rawTargetTop = rect.top + currentScrollY - halfViewport;
   const maxScrollTop = Math.max(scrollHeight - viewportHeight, 0);
   const targetTop = Math.max(0, Math.min(rawTargetTop, maxScrollTop));
-
-  console.log("[error-nav] scroll center", {
-    tag: element.tagName,
-    rect,
-    viewportHeight,
-    currentScrollY,
-    currentScrollX,
-    scrollHeight,
-    halfViewport,
-    rawTargetTop,
-    maxScrollTop,
-    targetTop,
-  });
 
   window.scrollTo({
     top: targetTop,

@@ -81,10 +81,11 @@ export async function startCodeReviewJob({
         teamSlugOrId: payload.teamSlugOrId,
       });
     } catch (error) {
-      console.warn("[code-review] Proceeding without verified team access", {
+      console.warn("[code-review] Failed to verify team access", {
         teamSlugOrId: payload.teamSlugOrId,
         error,
       });
+      throw error;
     }
   } else {
     const inferredSlug = payload.githubLink.split("/")[3] ?? "unknown";
