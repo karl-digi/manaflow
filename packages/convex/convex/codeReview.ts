@@ -9,10 +9,6 @@ import { internal } from "./_generated/api";
 const GITHUB_HOST = "github.com";
 type JobDoc = Doc<"automatedCodeReviewJobs">;
 
-function isActiveState(state: JobDoc["state"]): boolean {
-  return state === "pending" || state === "running";
-}
-
 function serializeJob(job: JobDoc) {
   return {
     jobId: job._id,
@@ -82,28 +78,21 @@ async function findExistingActiveJob(
   repoFullName: string,
   prNumber: number
 ): Promise<JobDoc | null> {
-  const teamFilter = teamId ?? undefined;
-  const query = db
+  const job = await db
     .query("automatedCodeReviewJobs")
     .withIndex("by_team_repo_pr_updated", (q) =>
       q
-        .eq("teamId", teamFilter)
+        .eq("teamId", teamId ?? undefined)
         .eq("repoFullName", repoFullName)
         .eq("prNumber", prNumber)
     )
-    .order("desc");
+    .order("desc")
+    .filter((q) =>
+      q.or(q.eq("state", "pending"), q.eq("state", "running"))
+    )
+    .first();
 
-  let inspected = 0;
-  for await (const job of query) {
-    if (isActiveState(job.state)) {
-      return job;
-    }
-    inspected += 1;
-    if (inspected >= 10) {
-      break;
-    }
-  }
-  return null;
+  return job ?? null;
 }
 
 async function schedulePauseMorphInstance(
