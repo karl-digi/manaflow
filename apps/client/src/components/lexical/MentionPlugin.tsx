@@ -112,7 +112,10 @@ function MentionMenu({
           return (
           <button
             key={file.relativePath}
-            onClick={() => onSelect(file)}
+            onMouseDown={(e) => {
+              e.preventDefault(); // Prevent blur event from firing
+              onSelect(file);
+            }}
             className={clsx(
               "w-full text-left px-2.5 py-1 text-xs flex items-center gap-1.5",
               index === selectedIndex

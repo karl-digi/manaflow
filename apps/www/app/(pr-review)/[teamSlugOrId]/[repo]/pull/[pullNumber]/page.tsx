@@ -4,6 +4,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { waitUntil } from "@vercel/functions";
 import { ExternalLink, GitPullRequest } from "lucide-react";
+import { type Team } from "@stackframe/stack";
 
 import { PullRequestDiffViewer } from "@/components/pr/pull-request-diff-viewer";
 import {
