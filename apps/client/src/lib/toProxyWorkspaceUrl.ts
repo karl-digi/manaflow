@@ -68,3 +68,45 @@ export function toMorphVncUrl(sourceUrl: string): string | null {
 
   return vncUrl.toString();
 }
+
+function createMorphScopedHostname(
+  morphId: string,
+  port: number,
+  scope: string = "base"
+): string {
+  return `cmux-${morphId}-${scope}-${port}.cmux.app`;
+}
+
+export function toTerminalServiceBaseUrl(
+  workspaceUrl: string,
+  options: { port?: number; scope?: string } = {}
+): string | null {
+  const port = options.port ?? 39383;
+  const scope = options.scope ?? "base";
+  const components = parseMorphUrl(workspaceUrl);
+
+  if (components) {
+    const proxiedUrl = new URL(components.url.toString());
+    proxiedUrl.hostname = createMorphScopedHostname(
+      components.morphId,
+      port,
+      scope
+    );
+    proxiedUrl.port = "";
+    proxiedUrl.pathname = "/";
+    proxiedUrl.search = "";
+    proxiedUrl.hash = "";
+    return proxiedUrl.origin;
+  }
+
+  try {
+    const url = new URL(workspaceUrl);
+    url.port = String(port);
+    url.pathname = "/";
+    url.search = "";
+    url.hash = "";
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
