@@ -1,5 +1,4 @@
 import {
-  DMG_SUFFIXES,
   GITHUB_RELEASE_URL,
   MacArchitecture,
   MacDownloadUrls,
@@ -28,6 +27,31 @@ const emptyDownloads: MacDownloadUrls = {
 const normalizeVersion = (tag: string): string =>
   tag.startsWith("v") ? tag.slice(1) : tag;
 
+const hasValue = (value: unknown): value is string =>
+  typeof value === "string" && value.trim() !== "";
+
+const parseMacArchitecture = (assetName: string): MacArchitecture | null => {
+  const normalized = assetName.toLowerCase();
+
+  if (!normalized.endsWith(".dmg")) {
+    return null;
+  }
+
+  if (normalized.includes("arm64") || normalized.includes("aarch64")) {
+    return "arm64";
+  }
+
+  if (normalized.includes("x64") || normalized.includes("x86_64") || normalized.includes("intel")) {
+    return "x64";
+  }
+
+  if (normalized.includes("arm")) {
+    return "arm64";
+  }
+
+  return "x64";
+};
+
 const deriveReleaseInfo = (data: GithubRelease | null): ReleaseInfo => {
   if (!data) {
     return {
@@ -46,23 +70,21 @@ const deriveReleaseInfo = (data: GithubRelease | null): ReleaseInfo => {
 
   if (Array.isArray(data.assets)) {
     for (const asset of data.assets) {
-      const assetName = asset.name?.toLowerCase();
-
-      if (typeof assetName !== "string") {
+      if (!hasValue(asset.browser_download_url)) {
         continue;
       }
 
-      for (const architecture of Object.keys(DMG_SUFFIXES) as MacArchitecture[]) {
-        const suffix = DMG_SUFFIXES[architecture];
-
-        if (assetName.endsWith(suffix)) {
-          const downloadUrl = asset.browser_download_url;
-
-          if (typeof downloadUrl === "string" && downloadUrl.trim() !== "") {
-            macDownloadUrls[architecture] = downloadUrl;
-          }
-        }
+      if (typeof asset.name !== "string") {
+        continue;
       }
+
+      const architecture = parseMacArchitecture(asset.name);
+
+      if (!architecture || macDownloadUrls[architecture]) {
+        continue;
+      }
+
+      macDownloadUrls[architecture] = asset.browser_download_url.trim();
     }
   }
 

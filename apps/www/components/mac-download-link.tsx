@@ -111,6 +111,14 @@ const resolveUrl = (
     return candidate;
   }
 
+  if (typeof urls.arm64 === "string" && urls.arm64.trim() !== "") {
+    return urls.arm64;
+  }
+
+  if (typeof urls.x64 === "string" && urls.x64.trim() !== "") {
+    return urls.x64;
+  }
+
   return fallbackUrl;
 };
 
