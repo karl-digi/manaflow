@@ -73,7 +73,9 @@ async fn create_tab(
 ) -> Result<Json<CreateTabResponse>, (StatusCode, String)> {
     let cols = payload.cols.unwrap_or(80);
     let rows = payload.rows.unwrap_or(24);
+    let created_order = state.next_sequence();
     let (id, _session) = Session::spawn(
+        created_order,
         payload.cmd.as_deref(),
         payload.args.unwrap_or_default(),
         cols,
@@ -86,7 +88,16 @@ async fn create_tab(
 }
 
 async fn list_tabs(State(state): State<Arc<AppState>>) -> Json<Vec<Uuid>> {
-    let ids = state.sessions.iter().map(|r| *r.key()).collect();
+    let mut sessions: Vec<_> = state
+        .sessions
+        .iter()
+        .map(|entry| {
+            let session = entry.value();
+            (session.created_at, session.created_order, *entry.key())
+        })
+        .collect();
+    sessions.sort_by_key(|(_, order, _)| *order);
+    let ids = sessions.into_iter().map(|(_, _, id)| id).collect();
     Json(ids)
 }
 

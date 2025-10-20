@@ -317,7 +317,7 @@ function TaskRunTerminals() {
     return (
       <div className="flex flex-col grow min-h-0">
         <div className="flex items-center justify-between gap-3 border-b border-neutral-200 bg-neutral-100/70 px-3 dark:border-neutral-800 dark:bg-neutral-900/40">
-          <div className="flex min-h-[40px] items-center gap-1 overflow-x-auto py-2">
+          <div className="flex min-h-[40px] items-center overflow-x-auto py-2">
             {terminalIds.length > 0 ? (
               terminalIds.map((id, index) => {
                 const state = connectionStates[id] ?? "connecting";
@@ -412,17 +412,17 @@ function TaskRunTerminals() {
                 )}
               </button>
             </div>
-            {createTerminalError ? (
-              <span className="text-xs text-red-500 dark:text-red-400">
-                {createTerminalError}
-              </span>
-            ) : null}
-            {deleteTerminalError ? (
-              <span className="text-xs text-red-500 dark:text-red-400">
-                {deleteTerminalError}
-              </span>
-            ) : null}
           </div>
+          {createTerminalError ? (
+            <span className="text-xs text-red-500 dark:text-red-400">
+              {createTerminalError}
+            </span>
+          ) : null}
+          {deleteTerminalError ? (
+            <span className="text-xs text-red-500 dark:text-red-400">
+              {deleteTerminalError}
+            </span>
+          ) : null}
         </div>
         <div className="relative flex-1 min-h-0 bg-neutral-950">
           {tabsQuery.isLoading ? (

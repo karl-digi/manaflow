@@ -175,7 +175,7 @@ export function deleteTerminalTabQueryOptions({
 
   const effectiveEnabled = Boolean(enabled && baseUrl && triggerKey !== null);
 
-  return queryOptions<void>({
+  return queryOptions<boolean>({
     queryKey,
     enabled: effectiveEnabled,
     queryFn: async () => {
@@ -193,6 +193,7 @@ export function deleteTerminalTabQueryOptions({
       if (!response.ok) {
         throw new Error(`Failed to delete terminal (${response.status})`);
       }
+      return true;
     },
     retry: false,
   });
