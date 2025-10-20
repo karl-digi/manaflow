@@ -19,6 +19,7 @@ import {
   getConvexHttpActionBaseUrl,
   startCodeReviewJob,
 } from "@/lib/services/code-review/start-code-review";
+import { type Team } from "@stackframe/stack";
 
 type PageParams = {
   teamSlugOrId: string;
@@ -32,11 +33,20 @@ type PageProps = {
 
 export const dynamic = "force-dynamic";
 
+async function getFirstTeam(): Promise<Team | null> {
+  const teams = await stackServerApp.listTeams();
+  const firstTeam = teams[0];
+  if (!firstTeam) {
+    return null;
+  }
+  return firstTeam;
+}
+
 export async function generateMetadata({
   params,
 }: PageProps): Promise<Metadata> {
   const user = await stackServerApp.getUser({ or: "redirect" });
-  const selectedTeam = user.selectedTeam;
+  const selectedTeam = user.selectedTeam || (await getFirstTeam());
   if (!selectedTeam) {
     throw notFound();
   }
@@ -54,11 +64,7 @@ export async function generateMetadata({
   }
 
   try {
-    const pullRequest = await fetchPullRequest(
-      githubOwner,
-      repo,
-      pullNumber
-    );
+    const pullRequest = await fetchPullRequest(githubOwner, repo, pullNumber);
 
     return {
       title: `${pullRequest.title} · #${pullRequest.number} · ${githubOwner}/${repo}`,
@@ -77,7 +83,7 @@ export async function generateMetadata({
 
 export default async function PullRequestPage({ params }: PageProps) {
   const user = await stackServerApp.getUser({ or: "redirect" });
-  const selectedTeam = user.selectedTeam;
+  const selectedTeam = user.selectedTeam || (await getFirstTeam());
   if (!selectedTeam) {
     throw notFound();
   }
