@@ -19,6 +19,29 @@ interface ParsedPrUrl {
   number: number;
 }
 
+interface CliOptions {
+  prUrl: string | null;
+  isProduction: boolean;
+}
+
+function parseCliArgs(argv: readonly string[]): CliOptions {
+  const remainingArgs: string[] = [];
+  let isProduction = false;
+
+  argv.forEach((arg) => {
+    if (arg === "--production") {
+      isProduction = true;
+      return;
+    }
+    remainingArgs.push(arg);
+  });
+
+  return {
+    prUrl: remainingArgs[0] ?? null,
+    isProduction,
+  };
+}
+
 function parsePrUrl(prUrl: string): ParsedPrUrl {
   let url: URL;
   try {
@@ -77,7 +100,19 @@ async function resolveCommitRef(
 }
 
 async function main(): Promise<void> {
-  const prUrlInput = process.argv[2] ?? DEFAULT_PR_URL;
+  const { prUrl: prUrlArg, isProduction } = parseCliArgs(
+    process.argv.slice(2)
+  );
+  if (isProduction) {
+    console.log("[cli] Production mode enabled via --production flag.");
+  }
+
+  const productionMode =
+    isProduction ||
+    process.env.NODE_ENV === "production" ||
+    process.env.CMUX_PR_REVIEW_ENV === "production";
+
+  const prUrlInput = prUrlArg ?? DEFAULT_PR_URL;
   const prUrl = prUrlInput.trim();
   if (prUrl.length === 0) {
     throw new Error("PR URL argument cannot be empty");
@@ -101,6 +136,7 @@ async function main(): Promise<void> {
     prUrl,
     commitRef,
     morphSnapshotId: "snapshot_vb7uqz8o",
+    productionMode,
   };
 
   try {
