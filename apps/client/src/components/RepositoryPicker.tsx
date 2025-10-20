@@ -255,7 +255,7 @@ export function RepositoryPicker({
         search: (prev) => ({
           step: prev.step ?? "select",
           selectedRepos: prev.selectedRepos ?? [],
-          instanceId: prev.instanceId,
+          instanceId: undefined,
           connectionLogin: prev.connectionLogin,
           repoSearch: prev.repoSearch,
           snapshotId: nextSnapshotId,
