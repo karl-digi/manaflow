@@ -34,6 +34,7 @@ import {
   GitPullRequestDraft,
   Globe,
   Monitor,
+  Terminal as TerminalIcon,
   Loader2,
   XCircle,
 } from "lucide-react";
@@ -843,6 +844,14 @@ function TaskRunDetails({
         indentLevel={indentLevel}
       />
     ) : null}
+
+    <TaskRunDetailLink
+      to="/$teamSlugOrId/task/$taskId/run/$runId/terminals"
+      params={{ teamSlugOrId, taskId, runId: run._id }}
+      icon={<TerminalIcon className="w-3 h-3 mr-2 text-neutral-400" />}
+      label="Terminals"
+      indentLevel={indentLevel}
+    />
 
     {shouldRenderPullRequestLink ? (
       <TaskRunDetailLink
