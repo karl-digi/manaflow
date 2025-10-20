@@ -1,6 +1,11 @@
 import { FloatingPane } from "@/components/floating-pane";
 import { type GitDiffViewerProps } from "@/components/git-diff-viewer";
 import { RunDiffSection } from "@/components/RunDiffSection";
+import {
+  WorkflowRuns,
+  WorkflowRunsSection,
+  useCombinedWorkflowData,
+} from "@/components/github/pull-request-checks";
 import { TaskDetailHeader } from "@/components/task-detail-header";
 import { useTheme } from "@/components/theme/use-theme";
 import { Button } from "@/components/ui/button";
@@ -29,6 +34,7 @@ import {
   Suspense,
   memo,
   useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -538,6 +544,8 @@ export const Route = createFileRoute(
 function RunDiffPage() {
   const { taskId, teamSlugOrId, runId } = Route.useParams();
   const [diffControls, setDiffControls] = useState<DiffControls | null>(null);
+  const [checksExpandedOverride, setChecksExpandedOverride] =
+    useState<boolean | null>(null);
   const task = useQuery(api.tasks.getById, {
     teamSlugOrId,
     id: taskId,
@@ -580,6 +588,179 @@ function RunDiffPage() {
   }, [task?.projectFullName, environmentRepos]);
 
   const [primaryRepo, ...additionalRepos] = repoFullNames;
+
+  const normalizedRunBranch = useMemo(
+    () => normalizeGitRef(selectedRun?.newBranch),
+    [selectedRun?.newBranch],
+  );
+
+  const trimmedPrimaryRepo = useMemo(() => {
+    const value = primaryRepo?.trim() ?? "";
+    return value.length > 0 ? value : null;
+  }, [primaryRepo]);
+
+  const pullRequestCandidates = useMemo(() => {
+    const entries = selectedRun?.pullRequests ?? [];
+    const list: { repoFullName: string; number: number | null }[] = [];
+    for (const pr of entries) {
+      const repoFullName = pr.repoFullName?.trim();
+      if (!repoFullName) {
+        continue;
+      }
+      const number =
+        typeof pr.number === "number" && Number.isFinite(pr.number)
+          ? pr.number
+          : null;
+      list.push({ repoFullName, number });
+    }
+    return list;
+  }, [selectedRun?.pullRequests]);
+
+  const candidateByNumber = useMemo(() => {
+    if (trimmedPrimaryRepo) {
+      const primaryMatch = pullRequestCandidates.find(
+        (candidate) =>
+          candidate.repoFullName === trimmedPrimaryRepo &&
+          candidate.number !== null,
+      );
+      if (primaryMatch && primaryMatch.number !== null) {
+        return {
+          repoFullName: primaryMatch.repoFullName,
+          number: primaryMatch.number,
+        } as const;
+      }
+    }
+
+    const firstWithNumber = pullRequestCandidates.find(
+      (candidate) => candidate.number !== null,
+    );
+    if (firstWithNumber && firstWithNumber.number !== null) {
+      return {
+        repoFullName: firstWithNumber.repoFullName,
+        number: firstWithNumber.number,
+      } as const;
+    }
+
+    const fallbackRepo =
+      trimmedPrimaryRepo ?? pullRequestCandidates[0]?.repoFullName ?? null;
+    if (
+      fallbackRepo &&
+      typeof selectedRun?.pullRequestNumber === "number" &&
+      Number.isFinite(selectedRun.pullRequestNumber)
+    ) {
+      return {
+        repoFullName: fallbackRepo,
+        number: selectedRun.pullRequestNumber,
+      } as const;
+    }
+
+    return null;
+  }, [
+    pullRequestCandidates,
+    trimmedPrimaryRepo,
+    selectedRun?.pullRequestNumber,
+  ]);
+
+  const repoForChecks = useMemo(() => {
+    if (trimmedPrimaryRepo) {
+      return trimmedPrimaryRepo;
+    }
+    return pullRequestCandidates[0]?.repoFullName ?? null;
+  }, [pullRequestCandidates, trimmedPrimaryRepo]);
+
+  const pullRequestByNumber = useQuery(
+    api.github_prs.getPullRequest,
+    candidateByNumber
+      ? {
+          teamSlugOrId,
+          repoFullName: candidateByNumber.repoFullName,
+          number: candidateByNumber.number,
+        }
+      : "skip",
+  );
+
+  const prMatchesBranch = useMemo(() => {
+    if (!pullRequestByNumber) {
+      return false;
+    }
+    if (!normalizedRunBranch) {
+      return false;
+    }
+    const normalizedHead = normalizeGitRef(pullRequestByNumber.headRef ?? undefined);
+    if (!normalizedHead) {
+      return false;
+    }
+    return normalizedHead === normalizedRunBranch;
+  }, [pullRequestByNumber, normalizedRunBranch]);
+
+  const isNumberQuerySettled = pullRequestByNumber !== undefined;
+
+  const pullRequestByHeadRef = useQuery(
+    api.github_prs.getPullRequestByHeadRef,
+    isNumberQuerySettled && !prMatchesBranch && repoForChecks && normalizedRunBranch
+      ? {
+          teamSlugOrId,
+          repoFullName: repoForChecks,
+          headRef: normalizedRunBranch,
+          limit: 200,
+        }
+      : "skip",
+  );
+
+  const activePullRequest = prMatchesBranch
+    ? pullRequestByNumber
+    : pullRequestByHeadRef ?? null;
+
+  const workflowData = useCombinedWorkflowData({
+    teamSlugOrId,
+    repoFullName: activePullRequest?.repoFullName ?? "",
+    prNumber: activePullRequest?.number ?? 0,
+    headSha: activePullRequest?.headSha ?? undefined,
+  });
+
+  const hasAnyFailure = useMemo(() => {
+    return workflowData.allRuns.some(
+      (run) =>
+        run.conclusion === "failure" ||
+        run.conclusion === "timed_out" ||
+        run.conclusion === "action_required",
+    );
+  }, [workflowData.allRuns]);
+
+  const checksExpanded =
+    checksExpandedOverride === null
+      ? hasAnyFailure
+      : checksExpandedOverride;
+
+  const handleToggleChecks = useCallback(() => {
+    setChecksExpandedOverride((prev) =>
+      prev === null ? !hasAnyFailure : !prev,
+    );
+  }, [hasAnyFailure]);
+
+  useEffect(() => {
+    setChecksExpandedOverride(null);
+  }, [selectedRun?._id, activePullRequest?._id]);
+
+  const onHeaderExpandAll = useMemo(() => {
+    if (!diffControls?.expandAll) {
+      return undefined;
+    }
+    return () => {
+      diffControls.expandAll?.();
+      setChecksExpandedOverride(true);
+    };
+  }, [diffControls]);
+
+  const onHeaderCollapseAll = useMemo(() => {
+    if (!diffControls?.collapseAll) {
+      return undefined;
+    }
+    return () => {
+      diffControls.collapseAll?.();
+      setChecksExpandedOverride(false);
+    };
+  }, [diffControls]);
 
   const branchMetadataQuery = useRQ({
     ...convexQuery(api.github.getBranchesByRepo, {
@@ -654,10 +835,18 @@ function RunDiffPage() {
             taskRuns={taskRuns ?? null}
             selectedRun={selectedRun ?? null}
             taskRunId={taskRunId}
-            onExpandAll={diffControls?.expandAll}
-            onCollapseAll={diffControls?.collapseAll}
+            onExpandAll={onHeaderExpandAll}
+            onCollapseAll={onHeaderCollapseAll}
             teamSlugOrId={teamSlugOrId}
           />
+          {activePullRequest ? (
+            <div className="px-3.5 pb-2">
+              <WorkflowRuns
+                allRuns={workflowData.allRuns}
+                isLoading={workflowData.isLoading}
+              />
+            </div>
+          ) : null}
           {task?.text && (
             <div className="mb-2 px-3.5">
               <div className="text-xs text-neutral-600 dark:text-neutral-300">
@@ -669,6 +858,14 @@ function RunDiffPage() {
             </div>
           )}
           <div className="bg-white dark:bg-neutral-900 grow flex flex-col">
+            {activePullRequest ? (
+              <WorkflowRunsSection
+                allRuns={workflowData.allRuns}
+                isLoading={workflowData.isLoading}
+                isExpanded={checksExpanded}
+                onToggle={handleToggleChecks}
+              />
+            ) : null}
             <Suspense
               fallback={
                 <div className="flex items-center justify-center h-full">

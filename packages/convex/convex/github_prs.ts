@@ -1,3 +1,4 @@
+import { normalizeGitRef } from "@cmux/shared/utils/normalizeGitRef";
 import { v } from "convex/values";
 import { getTeamId } from "../_shared/team";
 import {
@@ -299,6 +300,43 @@ export const getPullRequest = authQuery({
       .first();
 
     return pr ?? null;
+  },
+});
+
+export const getPullRequestByHeadRef = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    repoFullName: v.string(),
+    headRef: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, { teamSlugOrId, repoFullName, headRef, limit }) => {
+    const normalizedTarget = normalizeGitRef(headRef);
+    if (!normalizedTarget) {
+      return null;
+    }
+
+    const teamId = await getTeamId(ctx, teamSlugOrId);
+    const trimmedRepoFullName = repoFullName.trim();
+    if (!trimmedRepoFullName) {
+      return null;
+    }
+
+    const rows = await ctx.db
+      .query("pullRequests")
+      .withIndex("by_repo", (q) => q.eq("repoFullName", trimmedRepoFullName))
+      .filter((q) => q.eq(q.field("teamId"), teamId))
+      .order("desc")
+      .take(Math.max(1, Math.min(limit ?? 200, 500)));
+
+    for (const row of rows) {
+      const normalizedRowRef = normalizeGitRef(row.headRef ?? undefined);
+      if (normalizedRowRef && normalizedRowRef === normalizedTarget) {
+        return row;
+      }
+    }
+
+    return null;
   },
 });
 

@@ -1,10 +1,3 @@
-export function refWithOrigin(ref: string) {
-  if (ref.startsWith("origin/")) {
-    return ref;
-  }
-  return `origin/${ref}`;
-}
-
 const GIT_SHA_PATTERN = /^[0-9a-f]{7,40}$/i;
 const SPECIAL_GIT_REFS = new Set([
   "HEAD",
@@ -13,7 +6,14 @@ const SPECIAL_GIT_REFS = new Set([
   "ORIG_HEAD",
 ]);
 
-export function normalizeGitRef(ref?: string | null) {
+export function refWithOrigin(ref: string): string {
+  if (ref.startsWith("origin/")) {
+    return ref;
+  }
+  return `origin/${ref}`;
+}
+
+export function normalizeGitRef(ref?: string | null): string {
   if (!ref) {
     return "";
   }
