@@ -17,6 +17,10 @@ import { api, internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { httpAction } from "./_generated/server";
 import type { ActionCtx } from "./_generated/server";
+import {
+  performCrownEvaluation,
+  performCrownSummarization,
+} from "./crown/actions";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json",
@@ -226,12 +230,14 @@ export const crownEvaluate = httpAction(async (ctx, req) => {
     );
   }
 
-  if (!workerAuth) {
-    const membership = await ensureTeamMembership(ctx, teamSlugOrId);
-    if (membership instanceof Response) return membership;
-  }
-
   try {
+    let teamId = workerAuth ? workerAuth.payload.teamId : null;
+    if (!workerAuth) {
+      const membership = await ensureTeamMembership(ctx, teamSlugOrId);
+      if (membership instanceof Response) return membership;
+      teamId = membership.teamId;
+    }
+
     const candidates = data.candidates.map((candidate, index) => ({
       modelName:
         candidate.agentName ??
@@ -241,10 +247,23 @@ export const crownEvaluate = httpAction(async (ctx, req) => {
       index: candidate.index ?? index,
     }));
 
-    const result = await ctx.runAction(api.crown.actions.evaluate, {
-      prompt: data.prompt,
-      candidates,
-      teamSlugOrId,
+    const identity = await ctx.auth.getUserIdentity();
+    const resolvedUserId =
+      workerAuth?.payload.userId ?? identity?.subject ?? null;
+    const resolvedTeamId = teamId ?? teamSlugOrId;
+    const workspaceSettings =
+      resolvedTeamId && resolvedUserId
+        ? await ctx.runQuery(
+            internal.workspaceSettings.getByTeamAndUserInternal,
+            {
+              teamId: resolvedTeamId,
+              userId: resolvedUserId,
+            },
+          )
+        : null;
+
+    const result = await performCrownEvaluation(data.prompt, candidates, {
+      workspaceSettings,
     });
     return jsonResponse(result);
   } catch (error) {
@@ -291,11 +310,35 @@ export const crownSummarize = httpAction(async (ctx, req) => {
   }
 
   try {
-    const result = await ctx.runAction(api.crown.actions.summarize, {
-      prompt: data.prompt,
-      gitDiff: data.gitDiff,
-      teamSlugOrId,
-    });
+    let teamId = workerAuth ? workerAuth.payload.teamId : null;
+    if (!workerAuth && teamSlugOrId) {
+      const membership = await ensureTeamMembership(ctx, teamSlugOrId);
+      if (membership instanceof Response) return membership;
+      teamId = membership.teamId;
+    }
+
+    const identity = await ctx.auth.getUserIdentity();
+    const resolvedUserId =
+      workerAuth?.payload.userId ?? identity?.subject ?? null;
+    const resolvedTeamId = teamId ?? teamSlugOrId;
+    const workspaceSettings =
+      resolvedTeamId && resolvedUserId
+        ? await ctx.runQuery(
+            internal.workspaceSettings.getByTeamAndUserInternal,
+            {
+              teamId: resolvedTeamId,
+              userId: resolvedUserId,
+            },
+          )
+        : null;
+
+    const result = await performCrownSummarization(
+      data.prompt,
+      data.gitDiff,
+      {
+        workspaceSettings,
+      },
+    );
     return jsonResponse(result);
   } catch (error) {
     console.error("[convex.crown] Summarization error", error);

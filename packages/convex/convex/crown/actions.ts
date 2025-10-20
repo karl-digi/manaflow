@@ -11,11 +11,19 @@ import {
   type CrownEvaluationResponse,
   type CrownSummarizationResponse,
 } from "../../../shared/src/convex-safe";
+import {
+  AVAILABLE_CROWN_MODEL_OPTIONS,
+  DEFAULT_CROWN_MODEL,
+  findCrownModelOption,
+  getDefaultModelForProvider,
+  type CrownModelOption,
+  type CrownModelProvider,
+} from "../../../shared/src/crown/config";
 import { env } from "../../_shared/convex-env";
+import { resolveTeamIdLoose } from "../../_shared/team";
+import { internal } from "../_generated/api";
+import type { Doc } from "../_generated/dataModel";
 import { action } from "../_generated/server";
-
-const OPENAI_CROWN_MODEL = "gpt-5-mini";
-const ANTHROPIC_CROWN_MODEL = "claude-3-5-sonnet-20241022";
 
 const CrownEvaluationCandidateValidator = v.object({
   runId: v.optional(v.string()),
@@ -26,35 +34,112 @@ const CrownEvaluationCandidateValidator = v.object({
   index: v.optional(v.number()),
 });
 
-function resolveCrownModel(): {
-  provider: "openai" | "anthropic";
-  model: LanguageModel;
-} {
-  const openaiKey = env.OPENAI_API_KEY;
-  if (openaiKey) {
-    const openai = createOpenAI({ apiKey: openaiKey });
-    return { provider: "openai", model: openai(OPENAI_CROWN_MODEL) };
+type WorkspaceCrownSettings = Pick<
+  Doc<"workspaceSettings">,
+  "crownModel" | "crownModelProvider" | "crownSystemPrompt"
+>;
+
+const DEFAULT_EVALUATION_SYSTEM_PROMPT =
+  "You select the best implementation from structured diff inputs and explain briefly why.";
+
+function normalizeProvider(provider?: string | null): CrownModelProvider {
+  return provider === "openai" ? "openai" : "anthropic";
+}
+
+function resolveSelectedModel(
+  settings?: WorkspaceCrownSettings | null,
+): CrownModelOption {
+  const preferredProvider = normalizeProvider(settings?.crownModelProvider);
+  const candidate = settings?.crownModel
+    ? findCrownModelOption(settings.crownModel)
+    : undefined;
+
+  let option = candidate;
+  if (!option || option.provider !== preferredProvider) {
+    option = getDefaultModelForProvider(preferredProvider);
   }
 
-  const anthropicKey = env.ANTHROPIC_API_KEY;
-  if (anthropicKey) {
-    const anthropic = createAnthropic({ apiKey: anthropicKey });
+  if (
+    option.provider !== "openai" &&
+    !AVAILABLE_CROWN_MODEL_OPTIONS.some((item) => item.id === option.id)
+  ) {
+    option = DEFAULT_CROWN_MODEL;
+  }
+
+  return option;
+}
+
+function ensureModelForProvider(option: CrownModelOption): CrownModelOption {
+  if (option.provider === "openai") {
+    if (!AVAILABLE_CROWN_MODEL_OPTIONS.some((item) => item.id === option.id)) {
+      // For now crown only supports Claude models; fall back gracefully.
+      return DEFAULT_CROWN_MODEL;
+    }
+
+    if (!env.OPENAI_API_KEY) {
+      throw new ConvexError(
+        "OpenAI crown evaluation requires OPENAI_API_KEY to be configured.",
+      );
+    }
+
+    return option;
+  }
+
+  if (!env.ANTHROPIC_API_KEY) {
+    throw new ConvexError(
+      "Anthropic crown evaluation requires ANTHROPIC_API_KEY to be configured.",
+    );
+  }
+
+  if (!AVAILABLE_CROWN_MODEL_OPTIONS.some((item) => item.id === option.id)) {
+    return DEFAULT_CROWN_MODEL;
+  }
+
+  return option;
+}
+
+function resolveCrownModel(
+  settings?: WorkspaceCrownSettings | null,
+): {
+  provider: CrownModelProvider;
+  modelId: string;
+  model: LanguageModel;
+} {
+  const selected = ensureModelForProvider(resolveSelectedModel(settings));
+
+  if (selected.provider === "openai") {
+    const openai = createOpenAI({ apiKey: env.OPENAI_API_KEY! });
     return {
-      provider: "anthropic",
-      model: anthropic(ANTHROPIC_CROWN_MODEL),
+      provider: "openai",
+      modelId: selected.id,
+      model: openai(selected.id),
     };
   }
 
-  throw new ConvexError(
-    "Crown evaluation is not configured (missing OpenAI or Anthropic API key)",
-  );
+  const anthropic = createAnthropic({ apiKey: env.ANTHROPIC_API_KEY! });
+  return {
+    provider: "anthropic",
+    modelId: selected.id,
+    model: anthropic(selected.id),
+  };
+}
+
+function resolveEvaluationSystemPrompt(
+  settings?: WorkspaceCrownSettings | null,
+): string {
+  const custom = settings?.crownSystemPrompt?.trim();
+  if (custom && custom.length > 0) return custom;
+  return DEFAULT_EVALUATION_SYSTEM_PROMPT;
 }
 
 export async function performCrownEvaluation(
   prompt: string,
   candidates: CrownEvaluationCandidate[],
+  options?: { workspaceSettings?: WorkspaceCrownSettings | null },
 ): Promise<CrownEvaluationResponse> {
-  const { model, provider } = resolveCrownModel();
+  const { model, provider, modelId } = resolveCrownModel(
+    options?.workspaceSettings,
+  );
 
   const normalizedCandidates = candidates.map((candidate, idx) => {
     const resolvedIndex = candidate.index ?? idx;
@@ -103,8 +188,7 @@ IMPORTANT: Respond ONLY with the JSON object, no other text.`;
     const { object } = await generateObject({
       model,
       schema: CrownEvaluationResponseSchema,
-      system:
-        "You select the best implementation from structured diff inputs and explain briefly why.",
+      system: resolveEvaluationSystemPrompt(options?.workspaceSettings),
       prompt: evaluationPrompt,
       ...(provider === "openai" ? {} : { temperature: 0 }),
       maxRetries: 2,
@@ -120,8 +204,11 @@ IMPORTANT: Respond ONLY with the JSON object, no other text.`;
 export async function performCrownSummarization(
   prompt: string,
   gitDiff: string,
+  options?: { workspaceSettings?: WorkspaceCrownSettings | null },
 ): Promise<CrownSummarizationResponse> {
-  const { model, provider } = resolveCrownModel();
+  const { model, provider } = resolveCrownModel(
+    options?.workspaceSettings,
+  );
 
   const summarizationPrompt = `You are an expert reviewer summarizing a pull request.
 
@@ -174,8 +261,22 @@ export const evaluate = action({
     candidates: v.array(CrownEvaluationCandidateValidator),
     teamSlugOrId: v.string(),
   },
-  handler: async (_ctx, args) => {
-    return performCrownEvaluation(args.prompt, args.candidates);
+  handler: async (ctx, args) => {
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const identity = await ctx.auth.getUserIdentity();
+    const workspaceSettings = identity
+      ? await ctx.runQuery(
+          internal.workspaceSettings.getByTeamAndUserInternal,
+          {
+            teamId,
+            userId: identity.subject,
+          },
+        )
+      : null;
+
+    return performCrownEvaluation(args.prompt, args.candidates, {
+      workspaceSettings,
+    });
   },
 });
 
@@ -185,7 +286,21 @@ export const summarize = action({
     gitDiff: v.string(),
     teamSlugOrId: v.string(),
   },
-  handler: async (_ctx, args) => {
-    return performCrownSummarization(args.prompt, args.gitDiff);
+  handler: async (ctx, args) => {
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const identity = await ctx.auth.getUserIdentity();
+    const workspaceSettings = identity
+      ? await ctx.runQuery(
+          internal.workspaceSettings.getByTeamAndUserInternal,
+          {
+            teamId,
+            userId: identity.subject,
+          },
+        )
+      : null;
+
+    return performCrownSummarization(args.prompt, args.gitDiff, {
+      workspaceSettings,
+    });
   },
 });

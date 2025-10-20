@@ -23,10 +23,20 @@ export const update = authMutation({
     teamSlugOrId: v.string(),
     worktreePath: v.optional(v.string()),
     autoPrEnabled: v.optional(v.boolean()),
+    crownModel: v.optional(v.string()),
+    crownModelProvider: v.optional(v.string()),
+    crownSystemPrompt: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const trimmedSystemPrompt = args.crownSystemPrompt
+      ?.trim()
+      .slice(0, 4000);
+    const normalizedSystemPrompt =
+      trimmedSystemPrompt && trimmedSystemPrompt.length > 0
+        ? trimmedSystemPrompt
+        : undefined;
     const existing = await ctx.db
       .query("workspaceSettings")
       .withIndex("by_team_user", (q) =>
@@ -39,6 +49,9 @@ export const update = authMutation({
       await ctx.db.patch(existing._id, {
         worktreePath: args.worktreePath,
         autoPrEnabled: args.autoPrEnabled,
+        crownModel: args.crownModel,
+        crownModelProvider: args.crownModelProvider,
+        crownSystemPrompt: normalizedSystemPrompt,
         userId,
         teamId,
         updatedAt: now,
@@ -47,6 +60,9 @@ export const update = authMutation({
       await ctx.db.insert("workspaceSettings", {
         worktreePath: args.worktreePath,
         autoPrEnabled: args.autoPrEnabled,
+        crownModel: args.crownModel,
+        crownModelProvider: args.crownModelProvider,
+        crownSystemPrompt: normalizedSystemPrompt,
         createdAt: now,
         updatedAt: now,
         userId,

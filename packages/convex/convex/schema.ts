@@ -404,6 +404,9 @@ const convexSchema = defineSchema({
   workspaceSettings: defineTable({
     worktreePath: v.optional(v.string()), // Custom path for git worktrees
     autoPrEnabled: v.optional(v.boolean()), // Auto-create PR for crown winner (default: false)
+    crownModel: v.optional(v.string()), // Preferred model identifier for crown LLM calls
+    crownModelProvider: v.optional(v.string()), // Provider backing the configured crown model
+    crownSystemPrompt: v.optional(v.string()), // Optional override for the crown evaluation system prompt
     createdAt: v.number(),
     updatedAt: v.number(),
     userId: v.string(),
