@@ -34,6 +34,7 @@ import {
   GitPullRequestDraft,
   Globe,
   Monitor,
+  TerminalSquare,
   Loader2,
   XCircle,
 } from "lucide-react";
@@ -829,10 +830,10 @@ function TaskRunDetails({
       <TaskRunDetailLink
         to="/$teamSlugOrId/task/$taskId/run/$runId/diff"
         params={{ teamSlugOrId, taskId, runId: run._id }}
-      icon={<GitCompare className="w-3 h-3 mr-2 text-neutral-400" />}
-      label="Git diff"
-      indentLevel={indentLevel}
-    />
+        icon={<GitCompare className="w-3 h-3 mr-2 text-neutral-400" />}
+        label="Git diff"
+        indentLevel={indentLevel}
+      />
 
     {shouldRenderBrowserLink ? (
       <TaskRunDetailLink
@@ -843,6 +844,14 @@ function TaskRunDetails({
         indentLevel={indentLevel}
       />
     ) : null}
+
+    <TaskRunDetailLink
+      to="/$teamSlugOrId/task/$taskId/run/$runId/terminals"
+      params={{ teamSlugOrId, taskId, runId: run._id }}
+      icon={<TerminalSquare className="w-3 h-3 mr-2 text-neutral-400" />}
+      label="Terminals"
+      indentLevel={indentLevel}
+    />
 
     {shouldRenderPullRequestLink ? (
       <TaskRunDetailLink
