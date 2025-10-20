@@ -40,6 +40,15 @@ function SettingsComponent() {
   const [autoPrEnabled, setAutoPrEnabled] = useState<boolean>(false);
   const [originalAutoPrEnabled, setOriginalAutoPrEnabled] =
     useState<boolean>(false);
+  const [crownEvaluationModel, setCrownEvaluationModel] = useState<string>("");
+  const [originalCrownEvaluationModel, setOriginalCrownEvaluationModel] =
+    useState<string>("");
+  const [crownEvaluationSystemPrompt, setCrownEvaluationSystemPrompt] =
+    useState<string>("");
+  const [
+    originalCrownEvaluationSystemPrompt,
+    setOriginalCrownEvaluationSystemPrompt,
+  ] = useState<string>("");
   // const [isSaveButtonVisible, setIsSaveButtonVisible] = useState(true);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const saveButtonRef = useRef<HTMLDivElement>(null);
@@ -64,9 +73,9 @@ function SettingsComponent() {
   const apiKeys = Array.from(
     new Map(
       AGENT_CONFIGS.flatMap((config: AgentConfig) => config.apiKeys || []).map(
-        (key) => [key.envVar, key]
-      )
-    ).values()
+        (key) => [key.envVar, key],
+      ),
+    ).values(),
   );
 
   // Global mapping of envVar -> models (from shared)
@@ -74,17 +83,17 @@ function SettingsComponent() {
 
   // Query existing API keys
   const { data: existingKeys } = useQuery(
-    convexQuery(api.apiKeys.getAll, { teamSlugOrId })
+    convexQuery(api.apiKeys.getAll, { teamSlugOrId }),
   );
 
   // Query team info (slug)
   const { data: teamInfo } = useQuery(
-    convexQuery(api.teams.get, { teamSlugOrId })
+    convexQuery(api.teams.get, { teamSlugOrId }),
   );
 
   // Query workspace settings
   const { data: workspaceSettings } = useQuery(
-    convexQuery(api.workspaceSettings.get, { teamSlugOrId })
+    convexQuery(api.workspaceSettings.get, { teamSlugOrId }),
   );
 
   // Initialize form values when data loads
@@ -145,6 +154,28 @@ function SettingsComponent() {
       const effective = enabled === undefined ? false : Boolean(enabled);
       setAutoPrEnabled(effective);
       setOriginalAutoPrEnabled(effective);
+      setCrownEvaluationModel(
+        (workspaceSettings as unknown as { crownEvaluationModel?: string })
+          ?.crownEvaluationModel || "",
+      );
+      setOriginalCrownEvaluationModel(
+        (workspaceSettings as unknown as { crownEvaluationModel?: string })
+          ?.crownEvaluationModel || "",
+      );
+      setCrownEvaluationSystemPrompt(
+        (
+          workspaceSettings as unknown as {
+            crownEvaluationSystemPrompt?: string;
+          }
+        )?.crownEvaluationSystemPrompt || "",
+      );
+      setOriginalCrownEvaluationSystemPrompt(
+        (
+          workspaceSettings as unknown as {
+            crownEvaluationSystemPrompt?: string;
+          }
+        )?.crownEvaluationSystemPrompt || "",
+      );
     }
   }, [workspaceSettings]);
 
@@ -219,7 +250,7 @@ function SettingsComponent() {
         setOriginalContainerSettingsData(data);
       }
     },
-    [originalContainerSettingsData]
+    [originalContainerSettingsData],
   );
 
   // Check if there are any changes
@@ -244,9 +275,17 @@ function SettingsComponent() {
     // Auto PR toggle changes
     const autoPrChanged = autoPrEnabled !== originalAutoPrEnabled;
 
+    // Crown evaluation settings changes
+    const crownModelChanged =
+      crownEvaluationModel !== originalCrownEvaluationModel;
+    const crownPromptChanged =
+      crownEvaluationSystemPrompt !== originalCrownEvaluationSystemPrompt;
+
     return (
       worktreePathChanged ||
       autoPrChanged ||
+      crownModelChanged ||
+      crownPromptChanged ||
       apiKeysChanged ||
       containerSettingsChanged
     );
@@ -259,18 +298,24 @@ function SettingsComponent() {
       let savedCount = 0;
       let deletedCount = 0;
 
-      // Save worktree path / auto PR if changed
+      // Save worktree path / auto PR / crown evaluation settings if changed
       if (
         worktreePath !== originalWorktreePath ||
-        autoPrEnabled !== originalAutoPrEnabled
+        autoPrEnabled !== originalAutoPrEnabled ||
+        crownEvaluationModel !== originalCrownEvaluationModel ||
+        crownEvaluationSystemPrompt !== originalCrownEvaluationSystemPrompt
       ) {
         await convex.mutation(api.workspaceSettings.update, {
           teamSlugOrId,
           worktreePath: worktreePath || undefined,
           autoPrEnabled,
+          crownEvaluationModel: crownEvaluationModel || undefined,
+          crownEvaluationSystemPrompt: crownEvaluationSystemPrompt || undefined,
         });
         setOriginalWorktreePath(worktreePath);
         setOriginalAutoPrEnabled(autoPrEnabled);
+        setOriginalCrownEvaluationModel(crownEvaluationModel);
+        setOriginalCrownEvaluationSystemPrompt(crownEvaluationSystemPrompt);
       }
 
       // Save container settings if changed
@@ -326,7 +371,7 @@ function SettingsComponent() {
         }
         if (deletedCount > 0) {
           actions.push(
-            `removed ${deletedCount} key${deletedCount > 1 ? "s" : ""}`
+            `removed ${deletedCount} key${deletedCount > 1 ? "s" : ""}`,
           );
         }
         toast.success(`Successfully ${actions.join(" and ")}`);
@@ -620,7 +665,7 @@ function SettingsComponent() {
                   Crown Evaluator
                 </h2>
               </div>
-              <div className="p-4">
+              <div className="p-4 space-y-6">
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <label className="block text-sm font-medium text-neutral-900 dark:text-neutral-100">
@@ -628,7 +673,7 @@ function SettingsComponent() {
                     </label>
                     <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
                       When enabled, cmux automatically creates a pull request
-                      for the winning model’s code diff.
+                      for the winning model's code diff.
                     </p>
                   </div>
                   <Switch
@@ -637,6 +682,61 @@ function SettingsComponent() {
                     color="primary"
                     isSelected={autoPrEnabled}
                     onValueChange={setAutoPrEnabled}
+                  />
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="crownEvaluationModel"
+                    className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2"
+                  >
+                    Crown Evaluation Model
+                  </label>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
+                    Choose which AI model to use for evaluating and ranking
+                    model outputs. Only Claude models are currently supported.
+                  </p>
+                  <select
+                    id="crownEvaluationModel"
+                    value={crownEvaluationModel}
+                    onChange={(e) => setCrownEvaluationModel(e.target.value)}
+                    className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100"
+                  >
+                    <option value="">
+                      Default (claude-3-5-sonnet-20241022)
+                    </option>
+                    <option value="claude-3-5-sonnet-20241022">
+                      Claude 3.5 Sonnet
+                    </option>
+                    <option value="claude-3-5-haiku-20241022">
+                      Claude 3.5 Haiku
+                    </option>
+                    <option value="claude-3-opus-20240229">
+                      Claude 3 Opus
+                    </option>
+                  </select>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="crownEvaluationSystemPrompt"
+                    className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2"
+                  >
+                    Crown Evaluation System Prompt
+                  </label>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
+                    Customize the system prompt used for crown evaluation. Leave
+                    empty to use the default prompt.
+                  </p>
+                  <textarea
+                    id="crownEvaluationSystemPrompt"
+                    value={crownEvaluationSystemPrompt}
+                    onChange={(e) =>
+                      setCrownEvaluationSystemPrompt(e.target.value)
+                    }
+                    rows={4}
+                    className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 resize-vertical"
+                    placeholder="You select the best implementation from structured diff inputs and explain briefly why."
                   />
                 </div>
               </div>
@@ -826,7 +926,7 @@ function SettingsComponent() {
                                                       ...prev,
                                                       [key.envVar]:
                                                         !prev[key.envVar],
-                                                    })
+                                                    }),
                                                   );
                                                 }}
                                                 className="flex-none text-[10px] text-blue-600 hover:underline dark:text-blue-400"
@@ -879,7 +979,7 @@ function SettingsComponent() {
                                   onChange={(e) =>
                                     handleApiKeyChange(
                                       key.envVar,
-                                      e.target.value
+                                      e.target.value,
                                     )
                                   }
                                   className="w-full px-3 py-2 pr-10 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 font-mono text-xs"

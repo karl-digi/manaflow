@@ -79,8 +79,8 @@ const convexSchema = defineSchema({
           id: v.string(),
           accountId: v.string(),
           email: v.optional(v.string()),
-        })
-      )
+        }),
+      ),
     ),
     // Anonymous flag
     isAnonymous: v.optional(v.boolean()),
@@ -116,8 +116,8 @@ const convexSchema = defineSchema({
         v.literal("pr_approved"), // PR has been approved
         v.literal("pr_changes_requested"), // PR has changes requested
         v.literal("pr_merged"), // PR has been merged
-        v.literal("pr_closed") // PR closed without merging
-      )
+        v.literal("pr_closed"), // PR closed without merging
+      ),
     ),
     images: v.optional(
       v.array(
@@ -125,8 +125,8 @@ const convexSchema = defineSchema({
           storageId: v.id("_storage"), // Convex storage ID
           fileName: v.optional(v.string()),
           altText: v.string(),
-        })
-      )
+        }),
+      ),
     ),
   })
     .index("by_created", ["createdAt"])
@@ -143,7 +143,7 @@ const convexSchema = defineSchema({
       v.literal("pending"),
       v.literal("running"),
       v.literal("completed"),
-      v.literal("failed")
+      v.literal("failed"),
     ),
     // Optional log retained for backward compatibility; no longer written to.
     log: v.optional(v.string()), // CLI output log (deprecated)
@@ -174,8 +174,8 @@ const convexSchema = defineSchema({
         v.literal("open"), // PR exists and is open/ready for review
         v.literal("merged"), // PR merged
         v.literal("closed"), // PR closed without merge
-        v.literal("unknown") // fallback/unsure
-      )
+        v.literal("unknown"), // fallback/unsure
+      ),
     ),
     pullRequestNumber: v.optional(v.number()), // Numeric PR number on provider
     pullRequests: v.optional(
@@ -190,11 +190,11 @@ const convexSchema = defineSchema({
             v.literal("open"),
             v.literal("merged"),
             v.literal("closed"),
-            v.literal("unknown")
+            v.literal("unknown"),
           ),
           isDraft: v.optional(v.boolean()),
-        })
-      )
+        }),
+      ),
     ),
     diffsLastUpdated: v.optional(v.number()), // Timestamp when diffs were last fetched/updated
     // VSCode instance information
@@ -204,13 +204,13 @@ const convexSchema = defineSchema({
           v.literal("docker"),
           v.literal("morph"),
           v.literal("daytona"),
-          v.literal("other")
+          v.literal("other"),
         ), // Extensible for future providers
         containerName: v.optional(v.string()), // For Docker provider
         status: v.union(
           v.literal("starting"),
           v.literal("running"),
-          v.literal("stopped")
+          v.literal("stopped"),
         ),
         ports: v.optional(
           v.object({
@@ -219,7 +219,7 @@ const convexSchema = defineSchema({
             extension: v.optional(v.string()),
             proxy: v.optional(v.string()),
             vnc: v.optional(v.string()),
-          })
+          }),
         ),
         url: v.optional(v.string()), // The VSCode URL
         workspaceUrl: v.optional(v.string()), // The workspace URL
@@ -228,7 +228,7 @@ const convexSchema = defineSchema({
         lastAccessedAt: v.optional(v.number()), // Track when user last accessed the container
         keepAlive: v.optional(v.boolean()), // User requested to keep container running
         scheduledStopAt: v.optional(v.number()), // When container is scheduled to stop
-      })
+      }),
     ),
     networking: v.optional(
       v.array(
@@ -236,12 +236,12 @@ const convexSchema = defineSchema({
           status: v.union(
             v.literal("starting"),
             v.literal("running"),
-            v.literal("stopped")
+            v.literal("stopped"),
           ),
           port: v.number(),
           url: v.string(),
-        })
-      )
+        }),
+      ),
     ),
   })
     .index("by_task", ["taskId", "createdAt"])
@@ -263,7 +263,7 @@ const convexSchema = defineSchema({
       v.object({
         path: v.string(),
         changes: v.string(),
-      })
+      }),
     ),
   })
     .index("by_task", ["taskId", "version"])
@@ -293,7 +293,12 @@ const convexSchema = defineSchema({
     errorDetail: v.optional(v.string()),
     codeReviewOutput: v.optional(v.record(v.string(), v.any())),
   })
-    .index("by_team_repo_pr", ["teamId", "repoFullName", "prNumber", "createdAt"])
+    .index("by_team_repo_pr", [
+      "teamId",
+      "repoFullName",
+      "prNumber",
+      "createdAt",
+    ])
     .index("by_team_repo_pr_updated", [
       "teamId",
       "repoFullName",
@@ -352,7 +357,7 @@ const convexSchema = defineSchema({
     providerRepoId: v.optional(v.number()),
     ownerLogin: v.optional(v.string()),
     ownerType: v.optional(
-      v.union(v.literal("User"), v.literal("Organization"))
+      v.union(v.literal("User"), v.literal("Organization")),
     ),
     visibility: v.optional(v.union(v.literal("public"), v.literal("private"))),
     defaultBranch: v.optional(v.string()),
@@ -404,6 +409,8 @@ const convexSchema = defineSchema({
   workspaceSettings: defineTable({
     worktreePath: v.optional(v.string()), // Custom path for git worktrees
     autoPrEnabled: v.optional(v.boolean()), // Auto-create PR for crown winner (default: false)
+    crownEvaluationModel: v.optional(v.string()), // Model to use for crown evaluation (e.g., "claude-3-5-sonnet-20241022")
+    crownEvaluationSystemPrompt: v.optional(v.string()), // Custom system prompt for crown evaluation
     createdAt: v.number(),
     updatedAt: v.number(),
     userId: v.string(),
@@ -495,7 +502,7 @@ const convexSchema = defineSchema({
     accountLogin: v.optional(v.string()), // org or user login
     accountId: v.optional(v.number()),
     accountType: v.optional(
-      v.union(v.literal("User"), v.literal("Organization"))
+      v.union(v.literal("User"), v.literal("Organization")),
     ),
     isActive: v.optional(v.boolean()),
     createdAt: v.number(),
@@ -559,7 +566,7 @@ const convexSchema = defineSchema({
     status: v.union(
       v.literal("pending"),
       v.literal("used"),
-      v.literal("expired")
+      v.literal("expired"),
     ),
     createdAt: v.number(),
   }).index("by_nonce", ["nonce"]),
@@ -641,8 +648,8 @@ const convexSchema = defineSchema({
         v.literal("in_progress"),
         v.literal("completed"),
         v.literal("pending"),
-        v.literal("waiting")
-      )
+        v.literal("waiting"),
+      ),
     ),
     conclusion: v.optional(
       v.union(
@@ -652,8 +659,8 @@ const convexSchema = defineSchema({
         v.literal("cancelled"),
         v.literal("skipped"),
         v.literal("timed_out"),
-        v.literal("action_required")
-      )
+        v.literal("action_required"),
+      ),
     ),
 
     // Branch and commit info
@@ -707,8 +714,8 @@ const convexSchema = defineSchema({
         v.literal("in_progress"),
         v.literal("completed"),
         v.literal("pending"),
-        v.literal("waiting")
-      )
+        v.literal("waiting"),
+      ),
     ),
     conclusion: v.optional(
       v.union(
@@ -718,8 +725,8 @@ const convexSchema = defineSchema({
         v.literal("cancelled"),
         v.literal("skipped"),
         v.literal("timed_out"),
-        v.literal("action_required")
-      )
+        v.literal("action_required"),
+      ),
     ),
 
     // Commit info
@@ -776,8 +783,8 @@ const convexSchema = defineSchema({
         v.literal("pending"),
         v.literal("in_progress"),
         v.literal("queued"),
-        v.literal("success")
-      )
+        v.literal("success"),
+      ),
     ),
     statusDescription: v.optional(v.string()),
     targetUrl: v.optional(v.string()),
@@ -807,7 +814,7 @@ const convexSchema = defineSchema({
       v.literal("error"),
       v.literal("failure"),
       v.literal("pending"),
-      v.literal("success")
+      v.literal("success"),
     ),
     context: v.string(),
     description: v.optional(v.string()),

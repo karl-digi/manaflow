@@ -11,7 +11,7 @@ export const get = authQuery({
     const settings = await ctx.db
       .query("workspaceSettings")
       .withIndex("by_team_user", (q) =>
-        q.eq("teamId", teamId).eq("userId", userId)
+        q.eq("teamId", teamId).eq("userId", userId),
       )
       .first();
     return settings ?? null;
@@ -23,6 +23,8 @@ export const update = authMutation({
     teamSlugOrId: v.string(),
     worktreePath: v.optional(v.string()),
     autoPrEnabled: v.optional(v.boolean()),
+    crownEvaluationModel: v.optional(v.string()),
+    crownEvaluationSystemPrompt: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
@@ -30,7 +32,7 @@ export const update = authMutation({
     const existing = await ctx.db
       .query("workspaceSettings")
       .withIndex("by_team_user", (q) =>
-        q.eq("teamId", teamId).eq("userId", userId)
+        q.eq("teamId", teamId).eq("userId", userId),
       )
       .first();
     const now = Date.now();
@@ -39,6 +41,8 @@ export const update = authMutation({
       await ctx.db.patch(existing._id, {
         worktreePath: args.worktreePath,
         autoPrEnabled: args.autoPrEnabled,
+        crownEvaluationModel: args.crownEvaluationModel,
+        crownEvaluationSystemPrompt: args.crownEvaluationSystemPrompt,
         userId,
         teamId,
         updatedAt: now,
@@ -47,6 +51,8 @@ export const update = authMutation({
       await ctx.db.insert("workspaceSettings", {
         worktreePath: args.worktreePath,
         autoPrEnabled: args.autoPrEnabled,
+        crownEvaluationModel: args.crownEvaluationModel,
+        crownEvaluationSystemPrompt: args.crownEvaluationSystemPrompt,
         createdAt: now,
         updatedAt: now,
         userId,
@@ -62,7 +68,7 @@ export const getByTeamAndUserInternal = internalQuery({
     const settings = await ctx.db
       .query("workspaceSettings")
       .withIndex("by_team_user", (q) =>
-        q.eq("teamId", args.teamId).eq("userId", args.userId)
+        q.eq("teamId", args.teamId).eq("userId", args.userId),
       )
       .first();
     return settings ?? null;

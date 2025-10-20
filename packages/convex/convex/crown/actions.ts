@@ -12,6 +12,7 @@ import {
   type CrownSummarizationResponse,
 } from "../../../shared/src/convex-safe";
 import { env } from "../../_shared/convex-env";
+import { resolveTeamIdLoose } from "../../_shared/team";
 import { action } from "../_generated/server";
 
 const OPENAI_CROWN_MODEL = "gpt-5-mini";
@@ -26,17 +27,31 @@ const CrownEvaluationCandidateValidator = v.object({
   index: v.optional(v.number()),
 });
 
-function resolveCrownModel(): {
+function resolveCrownModel(modelName?: string): {
   provider: "openai" | "anthropic";
   model: LanguageModel;
 } {
   const openaiKey = env.OPENAI_API_KEY;
+  const anthropicKey = env.ANTHROPIC_API_KEY;
+
+  // If a specific model is requested, try to use it
+  if (modelName) {
+    if (modelName.startsWith("gpt-") && openaiKey) {
+      const openai = createOpenAI({ apiKey: openaiKey });
+      return { provider: "openai", model: openai(modelName) };
+    }
+    if (modelName.startsWith("claude-") && anthropicKey) {
+      const anthropic = createAnthropic({ apiKey: anthropicKey });
+      return { provider: "anthropic", model: anthropic(modelName) };
+    }
+  }
+
+  // Fallback to default behavior
   if (openaiKey) {
     const openai = createOpenAI({ apiKey: openaiKey });
     return { provider: "openai", model: openai(OPENAI_CROWN_MODEL) };
   }
 
-  const anthropicKey = env.ANTHROPIC_API_KEY;
   if (anthropicKey) {
     const anthropic = createAnthropic({ apiKey: anthropicKey });
     return {
@@ -53,8 +68,10 @@ function resolveCrownModel(): {
 export async function performCrownEvaluation(
   prompt: string,
   candidates: CrownEvaluationCandidate[],
+  modelName?: string,
+  customSystemPrompt?: string,
 ): Promise<CrownEvaluationResponse> {
-  const { model, provider } = resolveCrownModel();
+  const { model, provider } = resolveCrownModel(modelName);
 
   const normalizedCandidates = candidates.map((candidate, idx) => {
     const resolvedIndex = candidate.index ?? idx;
@@ -104,6 +121,7 @@ IMPORTANT: Respond ONLY with the JSON object, no other text.`;
       model,
       schema: CrownEvaluationResponseSchema,
       system:
+        customSystemPrompt ||
         "You select the best implementation from structured diff inputs and explain briefly why.",
       prompt: evaluationPrompt,
       ...(provider === "openai" ? {} : { temperature: 0 }),
@@ -120,8 +138,10 @@ IMPORTANT: Respond ONLY with the JSON object, no other text.`;
 export async function performCrownSummarization(
   prompt: string,
   gitDiff: string,
+  modelName?: string,
+  customSystemPrompt?: string,
 ): Promise<CrownSummarizationResponse> {
-  const { model, provider } = resolveCrownModel();
+  const { model, provider } = resolveCrownModel(modelName);
 
   const summarizationPrompt = `You are an expert reviewer summarizing a pull request.
 
@@ -155,6 +175,7 @@ OUTPUT FORMAT (Markdown)
       model,
       schema: CrownSummarizationResponseSchema,
       system:
+        customSystemPrompt ||
         "You are an expert reviewer summarizing pull requests. Provide a clear, concise summary following the requested format.",
       prompt: summarizationPrompt,
       ...(provider === "openai" ? {} : { temperature: 0 }),
@@ -174,8 +195,46 @@ export const evaluate = action({
     candidates: v.array(CrownEvaluationCandidateValidator),
     teamSlugOrId: v.string(),
   },
-  handler: async (_ctx, args) => {
-    return performCrownEvaluation(args.prompt, args.candidates);
+  handler: async (ctx, args) => {
+    // Get workspace settings for crown evaluation configuration
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new ConvexError("User not authenticated");
+    }
+    const userId = identity.subject;
+
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+
+    const workspaceSettings = await ctx.db
+      .query("workspaceSettings")
+      .withIndex("by_team_user", (q) =>
+        q.eq("teamId", teamId).eq("userId", userId)
+      )
+      .first();
+
+    return performCrownEvaluation(
+      args.prompt,
+      args.candidates,
+      workspaceSettings?.crownEvaluationModel,
+      workspaceSettings?.crownEvaluationSystemPrompt
+    );
+  },
+});
+
+    const workspaceSettings = await ctx.runQuery(
+      internal.workspaceSettings.getByTeamAndUserInternal,
+      {
+        teamId,
+        userId,
+      },
+    );
+
+    return performCrownEvaluation(
+      args.prompt,
+      args.candidates,
+      workspaceSettings?.crownEvaluationModel,
+      workspaceSettings?.crownEvaluationSystemPrompt,
+    );
   },
 });
 
@@ -185,7 +244,45 @@ export const summarize = action({
     gitDiff: v.string(),
     teamSlugOrId: v.string(),
   },
-  handler: async (_ctx, args) => {
-    return performCrownSummarization(args.prompt, args.gitDiff);
+  handler: async (ctx, args) => {
+    // Get workspace settings for crown evaluation configuration
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new ConvexError("User not authenticated");
+    }
+    const userId = identity.subject;
+
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+
+    const workspaceSettings = await ctx.db
+      .query("workspaceSettings")
+      .withIndex("by_team_user", (q) =>
+        q.eq("teamId", teamId).eq("userId", userId)
+      )
+      .first();
+
+    return performCrownSummarization(
+      args.prompt,
+      args.gitDiff,
+      workspaceSettings?.crownEvaluationModel,
+      workspaceSettings?.crownEvaluationSystemPrompt
+    );
+  },
+});
+
+    const workspaceSettings = await ctx.runQuery(
+      internal.workspaceSettings.getByTeamAndUserInternal,
+      {
+        teamId,
+        userId,
+      },
+    );
+
+    return performCrownSummarization(
+      args.prompt,
+      args.gitDiff,
+      workspaceSettings?.crownEvaluationModel,
+      workspaceSettings?.crownEvaluationSystemPrompt,
+    );
   },
 });
