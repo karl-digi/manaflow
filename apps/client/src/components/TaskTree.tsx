@@ -34,6 +34,7 @@ import {
   GitPullRequestDraft,
   Globe,
   Monitor,
+  Terminal,
   Loader2,
   XCircle,
 } from "lucide-react";
@@ -829,26 +830,34 @@ function TaskRunDetails({
       <TaskRunDetailLink
         to="/$teamSlugOrId/task/$taskId/run/$runId/diff"
         params={{ teamSlugOrId, taskId, runId: run._id }}
-      icon={<GitCompare className="w-3 h-3 mr-2 text-neutral-400" />}
-      label="Git diff"
-      indentLevel={indentLevel}
-    />
-
-    {shouldRenderBrowserLink ? (
-      <TaskRunDetailLink
-        to="/$teamSlugOrId/task/$taskId/run/$runId/browser"
-        params={{ teamSlugOrId, taskId, runId: run._id }}
-        icon={<Monitor className="w-3 h-3 mr-2 text-neutral-400" />}
-        label="Browser"
+        icon={<GitCompare className="w-3 h-3 mr-2 text-neutral-400" />}
+        label="Git diff"
         indentLevel={indentLevel}
       />
-    ) : null}
 
-    {shouldRenderPullRequestLink ? (
+      {shouldRenderBrowserLink ? (
+        <TaskRunDetailLink
+          to="/$teamSlugOrId/task/$taskId/run/$runId/browser"
+          params={{ teamSlugOrId, taskId, runId: run._id }}
+          icon={<Monitor className="w-3 h-3 mr-2 text-neutral-400" />}
+          label="Browser"
+          indentLevel={indentLevel}
+        />
+      ) : null}
+
       <TaskRunDetailLink
-        to="/$teamSlugOrId/task/$taskId/run/$runId/pr"
+        to="/$teamSlugOrId/task/$taskId/run/$runId/terminals"
         params={{ teamSlugOrId, taskId, runId: run._id }}
-        icon={<GitPullRequest className="w-3 h-3 mr-2 text-neutral-400" />}
+        icon={<Terminal className="w-3 h-3 mr-2 text-neutral-400" />}
+        label="Terminals"
+        indentLevel={indentLevel}
+      />
+
+      {shouldRenderPullRequestLink ? (
+        <TaskRunDetailLink
+          to="/$teamSlugOrId/task/$taskId/run/$runId/pr"
+          params={{ teamSlugOrId, taskId, runId: run._id }}
+          icon={<GitPullRequest className="w-3 h-3 mr-2 text-neutral-400" />}
           label="Pull Request"
           indentLevel={indentLevel}
         />
