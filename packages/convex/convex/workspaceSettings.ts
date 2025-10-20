@@ -23,6 +23,8 @@ export const update = authMutation({
     teamSlugOrId: v.string(),
     worktreePath: v.optional(v.string()),
     autoPrEnabled: v.optional(v.boolean()),
+    crownModel: v.optional(v.string()),
+    crownSystemPrompt: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
@@ -39,6 +41,8 @@ export const update = authMutation({
       await ctx.db.patch(existing._id, {
         worktreePath: args.worktreePath,
         autoPrEnabled: args.autoPrEnabled,
+        crownModel: args.crownModel,
+        crownSystemPrompt: args.crownSystemPrompt,
         userId,
         teamId,
         updatedAt: now,
@@ -47,6 +51,8 @@ export const update = authMutation({
       await ctx.db.insert("workspaceSettings", {
         worktreePath: args.worktreePath,
         autoPrEnabled: args.autoPrEnabled,
+        crownModel: args.crownModel,
+        crownSystemPrompt: args.crownSystemPrompt,
         createdAt: now,
         updatedAt: now,
         userId,

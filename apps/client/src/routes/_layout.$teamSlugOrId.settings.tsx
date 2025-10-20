@@ -7,6 +7,10 @@ import { api } from "@cmux/convex/api";
 import type { Doc } from "@cmux/convex/dataModel";
 import { AGENT_CONFIGS, type AgentConfig } from "@cmux/shared/agentConfig";
 import { API_KEY_MODELS_BY_ENV } from "@cmux/shared/model-usage";
+import {
+  CROWN_MODEL_OPTIONS,
+  DEFAULT_CROWN_MODEL_ID,
+} from "@cmux/shared/crown";
 import { convexQuery } from "@convex-dev/react-query";
 import { Switch } from "@heroui/react";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -59,6 +63,15 @@ function SettingsComponent() {
   } | null>(null);
   const [originalContainerSettingsData, setOriginalContainerSettingsData] =
     useState<typeof containerSettingsData>(null);
+  const [crownModel, setCrownModel] = useState<string>(
+    DEFAULT_CROWN_MODEL_ID
+  );
+  const [originalCrownModel, setOriginalCrownModel] = useState<string>(
+    DEFAULT_CROWN_MODEL_ID
+  );
+  const [crownSystemPrompt, setCrownSystemPrompt] = useState<string>("");
+  const [originalCrownSystemPrompt, setOriginalCrownSystemPrompt] =
+    useState<string>("");
 
   // Get all required API keys from agent configs
   const apiKeys = Array.from(
@@ -71,6 +84,44 @@ function SettingsComponent() {
 
   // Global mapping of envVar -> models (from shared)
   const apiKeyModelsByEnv = API_KEY_MODELS_BY_ENV;
+
+  const crownModelOptionsForSelect = [
+    ...CROWN_MODEL_OPTIONS.map((option) => ({
+      value: option.id,
+      label: option.label,
+    })),
+  ];
+
+  if (
+    crownModel &&
+    !CROWN_MODEL_OPTIONS.some((option) => option.id === crownModel)
+  ) {
+    crownModelOptionsForSelect.push({
+      value: crownModel,
+      label: `${crownModel} (unavailable)`,
+    });
+  }
+
+  const selectedCrownModel = CROWN_MODEL_OPTIONS.find(
+    (option) => option.id === crownModel
+  );
+  const requiredCrownApiKeyEnv =
+    selectedCrownModel?.requiresApiKeyEnv ?? "ANTHROPIC_API_KEY";
+  const hasRequiredCrownApiKey = Boolean(
+    apiKeyValues[requiredCrownApiKeyEnv]?.trim()
+  );
+  const fallbackApiKeyLabel = requiredCrownApiKeyEnv
+    .toLowerCase()
+    .replace(/_api_key$/i, "")
+    .replace(/_/g, " ");
+  const requiredCrownApiKeyLabel =
+    requiredCrownApiKeyEnv === "OPENAI_API_KEY"
+      ? "OpenAI"
+      : requiredCrownApiKeyEnv === "ANTHROPIC_API_KEY"
+        ? "Anthropic"
+        : fallbackApiKeyLabel
+            .replace(/\b\w/g, (char) => char.toUpperCase())
+            .trim();
 
   // Query existing API keys
   const { data: existingKeys } = useQuery(
@@ -145,6 +196,14 @@ function SettingsComponent() {
       const effective = enabled === undefined ? false : Boolean(enabled);
       setAutoPrEnabled(effective);
       setOriginalAutoPrEnabled(effective);
+      const resolvedCrownModel =
+        workspaceSettings?.crownModel || DEFAULT_CROWN_MODEL_ID;
+      setCrownModel(resolvedCrownModel);
+      setOriginalCrownModel(resolvedCrownModel);
+      const resolvedSystemPrompt =
+        workspaceSettings?.crownSystemPrompt ?? "";
+      setCrownSystemPrompt(resolvedSystemPrompt);
+      setOriginalCrownSystemPrompt(resolvedSystemPrompt);
     }
   }, [workspaceSettings]);
 
@@ -244,11 +303,17 @@ function SettingsComponent() {
     // Auto PR toggle changes
     const autoPrChanged = autoPrEnabled !== originalAutoPrEnabled;
 
+    const crownModelChanged = crownModel !== originalCrownModel;
+    const crownSystemPromptChanged =
+      crownSystemPrompt.trim() !== originalCrownSystemPrompt.trim();
+
     return (
       worktreePathChanged ||
       autoPrChanged ||
       apiKeysChanged ||
-      containerSettingsChanged
+      containerSettingsChanged ||
+      crownModelChanged ||
+      crownSystemPromptChanged
     );
   };
 
@@ -259,18 +324,32 @@ function SettingsComponent() {
       let savedCount = 0;
       let deletedCount = 0;
 
-      // Save worktree path / auto PR if changed
-      if (
+      const trimmedCrownSystemPrompt = crownSystemPrompt.trim();
+      const workspaceSettingsChanged =
         worktreePath !== originalWorktreePath ||
-        autoPrEnabled !== originalAutoPrEnabled
-      ) {
+        autoPrEnabled !== originalAutoPrEnabled ||
+        crownModel !== originalCrownModel ||
+        trimmedCrownSystemPrompt !== originalCrownSystemPrompt.trim();
+
+      // Save worktree path / auto PR if changed
+      if (workspaceSettingsChanged) {
         await convex.mutation(api.workspaceSettings.update, {
           teamSlugOrId,
           worktreePath: worktreePath || undefined,
           autoPrEnabled,
+          crownModel,
+          crownSystemPrompt:
+            trimmedCrownSystemPrompt.length > 0
+              ? trimmedCrownSystemPrompt
+              : undefined,
         });
         setOriginalWorktreePath(worktreePath);
         setOriginalAutoPrEnabled(autoPrEnabled);
+        setOriginalCrownModel(crownModel);
+        setOriginalCrownSystemPrompt(trimmedCrownSystemPrompt);
+        if (crownSystemPrompt !== trimmedCrownSystemPrompt) {
+          setCrownSystemPrompt(trimmedCrownSystemPrompt);
+        }
       }
 
       // Save container settings if changed
@@ -620,7 +699,7 @@ function SettingsComponent() {
                   Crown Evaluator
                 </h2>
               </div>
-              <div className="p-4">
+              <div className="p-4 space-y-6">
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <label className="block text-sm font-medium text-neutral-900 dark:text-neutral-100">
@@ -638,6 +717,72 @@ function SettingsComponent() {
                     isSelected={autoPrEnabled}
                     onValueChange={setAutoPrEnabled}
                   />
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="crownModel"
+                    className="block text-sm font-medium text-neutral-900 dark:text-neutral-100"
+                  >
+                    Evaluation model
+                  </label>
+                  <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                    Choose which model crowns agent runs. Each option requires
+                    the matching provider API key.
+                  </p>
+                  <select
+                    id="crownModel"
+                    className="mt-3 w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    value={crownModel}
+                    onChange={(event) => setCrownModel(event.target.value)}
+                  >
+                    {crownModelOptionsForSelect.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  {!selectedCrownModel && crownModel && (
+                    <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+                      This model is no longer supported. Select a different
+                      option to update your crown configuration.
+                    </p>
+                  )}
+                  {!hasRequiredCrownApiKey && (
+                    <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+                      Add a {requiredCrownApiKeyLabel} API key to run crown
+                      evaluations with this model.
+                    </p>
+                  )}
+                  {selectedCrownModel?.description && (
+                    <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+                      {selectedCrownModel.description}
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="crownSystemPrompt"
+                    className="block text-sm font-medium text-neutral-900 dark:text-neutral-100"
+                  >
+                    Custom system prompt
+                  </label>
+                  <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                    Provide extra instructions for crown evaluations. Leaving
+                    this empty uses the cmux default guidance.
+                  </p>
+                  <textarea
+                    id="crownSystemPrompt"
+                    value={crownSystemPrompt}
+                    onChange={(event) => setCrownSystemPrompt(event.target.value)}
+                    rows={5}
+                    className="mt-3 w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Add extra evaluation criteria or override the default system prompt"
+                  />
+                  <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+                    If provided, this replaces the default crown system prompt.
+                  </p>
                 </div>
               </div>
             </div>

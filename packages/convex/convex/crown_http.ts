@@ -245,6 +245,7 @@ export const crownEvaluate = httpAction(async (ctx, req) => {
       prompt: data.prompt,
       candidates,
       teamSlugOrId,
+      requestingUserId: workerAuth?.payload.userId ?? undefined,
     });
     return jsonResponse(result);
   } catch (error) {
@@ -295,6 +296,7 @@ export const crownSummarize = httpAction(async (ctx, req) => {
       prompt: data.prompt,
       gitDiff: data.gitDiff,
       teamSlugOrId,
+      requestingUserId: workerAuth?.payload.userId ?? undefined,
     });
     return jsonResponse(result);
   } catch (error) {
