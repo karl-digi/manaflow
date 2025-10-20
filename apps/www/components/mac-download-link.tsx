@@ -111,6 +111,14 @@ const resolveUrl = (
     return candidate;
   }
 
+  const alternateArchitecture: MacArchitecture =
+    architecture === "arm64" ? "x64" : "arm64";
+  const alternateCandidate = urls[alternateArchitecture];
+
+  if (typeof alternateCandidate === "string" && alternateCandidate.trim() !== "") {
+    return alternateCandidate;
+  }
+
   return fallbackUrl;
 };
 

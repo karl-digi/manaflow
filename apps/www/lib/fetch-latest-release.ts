@@ -28,7 +28,52 @@ const emptyDownloads: MacDownloadUrls = {
 const normalizeVersion = (tag: string): string =>
   tag.startsWith("v") ? tag.slice(1) : tag;
 
-const deriveReleaseInfo = (data: GithubRelease | null): ReleaseInfo => {
+const DMG_EXTENSION = ".dmg";
+
+const architectureHints: Record<
+  MacArchitecture,
+  Array<(value: string) => boolean>
+> = {
+  arm64: [
+    (value) => value.includes("arm64"),
+    (value) => value.includes("aarch64"),
+    (value) => value.includes("arm-64"),
+  ],
+  x64: [
+    (value) => value.includes("x64"),
+    (value) => value.includes("x86_64"),
+    (value) => value.includes("amd64"),
+    (value) => value.includes("intel"),
+  ],
+};
+
+const detectArchitectureFromName = (
+  assetName: string,
+): MacArchitecture | null => {
+  if (!assetName.endsWith(DMG_EXTENSION)) {
+    return null;
+  }
+
+  for (const [architecture, predicates] of Object.entries(architectureHints) as Array<
+    [MacArchitecture, Array<(value: string) => boolean>]
+  >) {
+    if (predicates.some((predicate) => predicate(assetName))) {
+      return architecture;
+    }
+  }
+
+  for (const architecture of Object.keys(DMG_SUFFIXES) as MacArchitecture[]) {
+    const suffix = DMG_SUFFIXES[architecture];
+
+    if (assetName.endsWith(suffix)) {
+      return architecture;
+    }
+  }
+
+  return null;
+};
+
+export const deriveReleaseInfo = (data: GithubRelease | null): ReleaseInfo => {
   if (!data) {
     return {
       latestVersion: null,
@@ -44,6 +89,8 @@ const deriveReleaseInfo = (data: GithubRelease | null): ReleaseInfo => {
 
   const macDownloadUrls: MacDownloadUrls = { ...emptyDownloads };
 
+  const unmatchedDmgUrls: string[] = [];
+
   if (Array.isArray(data.assets)) {
     for (const asset of data.assets) {
       const assetName = asset.name?.toLowerCase();
@@ -52,17 +99,34 @@ const deriveReleaseInfo = (data: GithubRelease | null): ReleaseInfo => {
         continue;
       }
 
-      for (const architecture of Object.keys(DMG_SUFFIXES) as MacArchitecture[]) {
-        const suffix = DMG_SUFFIXES[architecture];
+      const downloadUrl = asset.browser_download_url;
 
-        if (assetName.endsWith(suffix)) {
-          const downloadUrl = asset.browser_download_url;
-
-          if (typeof downloadUrl === "string" && downloadUrl.trim() !== "") {
-            macDownloadUrls[architecture] = downloadUrl;
-          }
-        }
+      if (typeof downloadUrl !== "string" || downloadUrl.trim() === "") {
+        continue;
       }
+
+      const detectedArchitecture = detectArchitectureFromName(assetName);
+
+      if (detectedArchitecture) {
+        if (!macDownloadUrls[detectedArchitecture]) {
+          macDownloadUrls[detectedArchitecture] = downloadUrl;
+        }
+        continue;
+      }
+
+      if (assetName.endsWith(DMG_EXTENSION)) {
+        unmatchedDmgUrls.push(downloadUrl);
+      }
+    }
+  }
+
+  if (unmatchedDmgUrls.length > 0) {
+    if (!macDownloadUrls.arm64) {
+      macDownloadUrls.arm64 = unmatchedDmgUrls[0] ?? null;
+    }
+
+    if (!macDownloadUrls.x64) {
+      macDownloadUrls.x64 = unmatchedDmgUrls[1] ?? unmatchedDmgUrls[0] ?? null;
     }
   }
 
