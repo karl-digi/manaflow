@@ -1,4 +1,4 @@
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
 type PageParams = {
   teamSlugOrId: string;
@@ -17,6 +17,10 @@ export default async function PullRequestCatchallPage({
   params,
 }: PageProps): Promise<never> {
   const { teamSlugOrId, repo, pullNumber } = await params;
+
+  if (!/^\d+$/.test(pullNumber)) {
+    notFound();
+  }
 
   redirect(
     `/${encodeURIComponent(teamSlugOrId)}/${encodeURIComponent(
