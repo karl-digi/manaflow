@@ -35,6 +35,7 @@ import {
   Globe,
   Monitor,
   Loader2,
+  Terminal as TerminalIcon,
   XCircle,
 } from "lucide-react";
 import {
@@ -829,10 +830,10 @@ function TaskRunDetails({
       <TaskRunDetailLink
         to="/$teamSlugOrId/task/$taskId/run/$runId/diff"
         params={{ teamSlugOrId, taskId, runId: run._id }}
-      icon={<GitCompare className="w-3 h-3 mr-2 text-neutral-400" />}
-      label="Git diff"
-      indentLevel={indentLevel}
-    />
+        icon={<GitCompare className="w-3 h-3 mr-2 text-neutral-400" />}
+        label="Git diff"
+        indentLevel={indentLevel}
+      />
 
     {shouldRenderBrowserLink ? (
       <TaskRunDetailLink
@@ -849,10 +850,18 @@ function TaskRunDetails({
         to="/$teamSlugOrId/task/$taskId/run/$runId/pr"
         params={{ teamSlugOrId, taskId, runId: run._id }}
         icon={<GitPullRequest className="w-3 h-3 mr-2 text-neutral-400" />}
-          label="Pull Request"
-          indentLevel={indentLevel}
-        />
-      ) : null}
+        label="Pull Request"
+        indentLevel={indentLevel}
+      />
+    ) : null}
+
+      <TaskRunDetailLink
+        to="/$teamSlugOrId/task/$taskId/run/$runId/terminals"
+        params={{ teamSlugOrId, taskId, runId: run._id }}
+        icon={<TerminalIcon className="w-3 h-3 mr-2 text-neutral-400" />}
+        label="Terminals"
+        indentLevel={indentLevel}
+      />
 
       {previewServices.map((service) => (
         <div key={service.port} className="relative group mt-px">
