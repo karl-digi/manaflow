@@ -23,6 +23,7 @@ export const update = authMutation({
     teamSlugOrId: v.string(),
     worktreePath: v.optional(v.string()),
     autoPrEnabled: v.optional(v.boolean()),
+    preferPrereleaseUpdates: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
@@ -39,6 +40,7 @@ export const update = authMutation({
       await ctx.db.patch(existing._id, {
         worktreePath: args.worktreePath,
         autoPrEnabled: args.autoPrEnabled,
+        preferPrereleaseUpdates: args.preferPrereleaseUpdates,
         userId,
         teamId,
         updatedAt: now,
@@ -47,6 +49,7 @@ export const update = authMutation({
       await ctx.db.insert("workspaceSettings", {
         worktreePath: args.worktreePath,
         autoPrEnabled: args.autoPrEnabled,
+        preferPrereleaseUpdates: args.preferPrereleaseUpdates,
         createdAt: now,
         updatedAt: now,
         userId,

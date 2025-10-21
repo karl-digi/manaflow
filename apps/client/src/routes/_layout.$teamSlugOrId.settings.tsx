@@ -40,6 +40,10 @@ function SettingsComponent() {
   const [autoPrEnabled, setAutoPrEnabled] = useState<boolean>(false);
   const [originalAutoPrEnabled, setOriginalAutoPrEnabled] =
     useState<boolean>(false);
+  const [preferPrereleaseUpdates, setPreferPrereleaseUpdates] =
+    useState<boolean>(false);
+  const [originalPreferPrereleaseUpdates, setOriginalPreferPrereleaseUpdates] =
+    useState<boolean>(false);
   // const [isSaveButtonVisible, setIsSaveButtonVisible] = useState(true);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const saveButtonRef = useRef<HTMLDivElement>(null);
@@ -145,6 +149,15 @@ function SettingsComponent() {
       const effective = enabled === undefined ? false : Boolean(enabled);
       setAutoPrEnabled(effective);
       setOriginalAutoPrEnabled(effective);
+      const preferPrerelease = (
+        workspaceSettings as unknown as {
+          preferPrereleaseUpdates?: boolean | null;
+        }
+      )?.preferPrereleaseUpdates;
+      const preferPrereleaseEffective =
+        preferPrerelease === undefined ? false : Boolean(preferPrerelease);
+      setPreferPrereleaseUpdates(preferPrereleaseEffective);
+      setOriginalPreferPrereleaseUpdates(preferPrereleaseEffective);
     }
   }, [workspaceSettings]);
 
@@ -243,10 +256,13 @@ function SettingsComponent() {
 
     // Auto PR toggle changes
     const autoPrChanged = autoPrEnabled !== originalAutoPrEnabled;
+    const prereleaseChanged =
+      preferPrereleaseUpdates !== originalPreferPrereleaseUpdates;
 
     return (
       worktreePathChanged ||
       autoPrChanged ||
+      prereleaseChanged ||
       apiKeysChanged ||
       containerSettingsChanged
     );
@@ -260,17 +276,29 @@ function SettingsComponent() {
       let deletedCount = 0;
 
       // Save worktree path / auto PR if changed
-      if (
+      const workspaceSettingsChanged =
         worktreePath !== originalWorktreePath ||
-        autoPrEnabled !== originalAutoPrEnabled
-      ) {
+        autoPrEnabled !== originalAutoPrEnabled ||
+        preferPrereleaseUpdates !== originalPreferPrereleaseUpdates;
+      if (workspaceSettingsChanged) {
         await convex.mutation(api.workspaceSettings.update, {
           teamSlugOrId,
           worktreePath: worktreePath || undefined,
           autoPrEnabled,
+          preferPrereleaseUpdates,
         });
         setOriginalWorktreePath(worktreePath);
         setOriginalAutoPrEnabled(autoPrEnabled);
+        setOriginalPreferPrereleaseUpdates(preferPrereleaseUpdates);
+
+        const maybeWindow = typeof window === "undefined" ? undefined : window;
+        const cmuxAutoUpdate = maybeWindow?.cmux?.autoUpdate;
+        const setPreferences = cmuxAutoUpdate?.setPreferences;
+        if (typeof setPreferences === "function") {
+          void setPreferences({
+            allowPrerelease: preferPrereleaseUpdates,
+          }).catch(() => undefined);
+        }
       }
 
       // Save container settings if changed
@@ -639,6 +667,38 @@ function SettingsComponent() {
                     onValueChange={setAutoPrEnabled}
                   />
                 </div>
+              </div>
+            </div>
+
+            {/* Desktop App Updates */}
+            <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
+              <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
+                <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                  Desktop App Updates
+                </h2>
+              </div>
+              <div className="p-4 space-y-3">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                      Always install latest GitHub release
+                    </label>
+                    <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                      Pick up prerelease builds as soon as they are published,
+                      even before they are marked stable.
+                    </p>
+                  </div>
+                  <Switch
+                    aria-label="Always install latest GitHub release"
+                    size="sm"
+                    color="primary"
+                    isSelected={preferPrereleaseUpdates}
+                    onValueChange={setPreferPrereleaseUpdates}
+                  />
+                </div>
+                <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                  Disable this if you prefer to stay on stable releases only.
+                </p>
               </div>
             </div>
 

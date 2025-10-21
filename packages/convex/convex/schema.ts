@@ -404,6 +404,7 @@ const convexSchema = defineSchema({
   workspaceSettings: defineTable({
     worktreePath: v.optional(v.string()), // Custom path for git worktrees
     autoPrEnabled: v.optional(v.boolean()), // Auto-create PR for crown winner (default: false)
+    preferPrereleaseUpdates: v.optional(v.boolean()), // Allow prerelease desktop updates
     createdAt: v.number(),
     updatedAt: v.number(),
     userId: v.string(),

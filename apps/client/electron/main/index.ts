@@ -66,6 +66,7 @@ type AutoUpdateToastPayload = {
 };
 
 let queuedAutoUpdateToast: AutoUpdateToastPayload | null = null;
+let allowPrereleasePreference = false;
 
 // Persistent log files
 let logsDir: string | null = null;
@@ -412,6 +413,45 @@ function registerAutoUpdateIpcHandlers(): void {
       throw err;
     }
   });
+
+  ipcMain.handle(
+    "cmux:auto-update:set-preferences",
+    async (
+      _event,
+      rawOptions: { allowPrerelease?: unknown } | undefined
+    ) => {
+      const allowPrereleaseValue = rawOptions?.allowPrerelease;
+      const allowPrerelease =
+        typeof allowPrereleaseValue === "boolean"
+          ? allowPrereleaseValue
+          : Boolean(allowPrereleaseValue);
+      const changed = allowPrereleasePreference !== allowPrerelease;
+      allowPrereleasePreference = allowPrerelease;
+
+      mainLog("Renderer updated auto-update preferences", {
+        allowPrerelease,
+        changed,
+        isPackaged: app.isPackaged,
+      });
+
+      if (!app.isPackaged) {
+        return { ok: true as const, reason: "not-packaged" as const };
+      }
+
+      try {
+        autoUpdater.allowPrerelease = allowPrerelease;
+        if (changed) {
+          const result = await autoUpdater.checkForUpdates();
+          logUpdateCheckResult("Preference-driven checkForUpdates", result);
+        }
+        return { ok: true as const };
+      } catch (error) {
+        mainWarn("Failed to apply auto-update preferences", error);
+        const err = error instanceof Error ? error : new Error(String(error));
+        throw err;
+      }
+    }
+  );
 }
 
 // Write critical errors to a file to aid debugging packaged crashes
@@ -466,7 +506,7 @@ function setupAutoUpdates(): void {
 
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
-    autoUpdater.allowPrerelease = false;
+    autoUpdater.allowPrerelease = allowPrereleasePreference;
 
     if (process.platform === "darwin") {
       const suffix = process.arch === "arm64" ? "arm64" : "x64";
