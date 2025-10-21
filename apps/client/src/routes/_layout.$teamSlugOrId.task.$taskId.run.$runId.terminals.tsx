@@ -22,6 +22,7 @@ import {
   deleteTerminalTab,
   terminalTabsQueryKey,
   terminalTabsQueryOptions,
+  type CreateTerminalTabRequest,
   type CreateTerminalTabResponse,
   type TerminalTabId,
 } from "@/queries/terminals";
@@ -43,12 +44,60 @@ export const Route = createFileRoute(
     }),
   },
   loader: async (opts) => {
-    await opts.context.queryClient.ensureQueryData(
+    const { params, context } = opts;
+    const { teamSlugOrId, runId } = params;
+    const { queryClient } = context;
+
+    const taskRun = await queryClient.ensureQueryData(
       convexQuery(api.taskRuns.get, {
-        teamSlugOrId: opts.params.teamSlugOrId,
-        id: opts.params.runId,
+        teamSlugOrId,
+        id: runId,
       })
     );
+
+    const vscodeInfo = taskRun?.vscode;
+    const rawMorphUrl = vscodeInfo?.url ?? vscodeInfo?.workspaceUrl ?? null;
+    const isMorphProvider = vscodeInfo?.provider === "morph";
+
+    if (!isMorphProvider || !rawMorphUrl) {
+      return;
+    }
+
+    const baseUrl = toMorphXtermBaseUrl(rawMorphUrl);
+    const tabsQueryKey = terminalTabsQueryKey(baseUrl, runId);
+
+    const tabs = await queryClient.ensureQueryData(
+      terminalTabsQueryOptions({
+        baseUrl,
+        contextKey: runId,
+      })
+    );
+
+    if (tabs.length > 0) {
+      return;
+    }
+
+    try {
+      const created = await createTerminalTab({
+        baseUrl,
+        request: {
+          cmd: "tmux",
+          args: ["attach", "-t", "cmux"],
+        },
+      });
+
+      queryClient.setQueryData<TerminalTabId[]>(tabsQueryKey, (current) => {
+        if (!current || current.length === 0) {
+          return [created.id];
+        }
+        if (current.includes(created.id)) {
+          return current;
+        }
+        return [...current, created.id];
+      });
+    } catch (error) {
+      console.error("Failed to auto-create tmux terminal", error);
+    }
   },
 });
 
@@ -147,13 +196,14 @@ function TaskRunTerminals() {
   const createTerminalMutation = useMutation<
     CreateTerminalTabResponse,
     unknown,
-    void,
+    CreateTerminalTabRequest | undefined,
     void
   >({
     mutationKey: ["terminal-tabs", taskRunId, xtermBaseUrl, "create"],
-    mutationFn: async () =>
+    mutationFn: async (request) =>
       createTerminalTab({
         baseUrl: xtermBaseUrl,
+        request,
       }),
     onSuccess: (payload) => {
       const queryKey = terminalTabsQueryKey(xtermBaseUrl, taskRunId);
@@ -411,7 +461,7 @@ function TaskRunTerminals() {
                   if (!hasTerminalBackend || isCreatingTerminal) {
                     return;
                   }
-                  createTerminalMutation.mutate();
+                  createTerminalMutation.mutate(undefined);
                 }}
                 disabled={!hasTerminalBackend || isCreatingTerminal}
                 className="flex items-center gap-1 rounded-md border border-neutral-200 px-2 py-1 text-xs font-medium text-neutral-600 transition hover:border-neutral-300 hover:text-neutral-900 disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:border-neutral-600 dark:hover:text-neutral-100"
