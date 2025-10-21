@@ -110,24 +110,6 @@ function findRunById(
   return null;
 }
 
-function findLatestRun(runs: TaskRunListItem[]): TaskRunListItem | null {
-  let latest: TaskRunListItem | null = null;
-  const queue = [...runs];
-  while (queue.length) {
-    const run = queue.shift();
-    if (!run) {
-      continue;
-    }
-    if (!latest || run.createdAt > latest.createdAt) {
-      latest = run;
-    }
-    if (run.children?.length) {
-      queue.push(...run.children);
-    }
-  }
-  return latest;
-}
-
 function TaskDetailPage() {
   const { taskId, teamSlugOrId } = Route.useParams();
   const search = Route.useSearch();
@@ -183,7 +165,7 @@ function TaskDetailPage() {
     if (runFromSearch) {
       return runFromSearch;
     }
-    return findLatestRun(taskRuns);
+    return taskRuns[0];
   }, [search.runId, taskRuns]);
 
   const selectedRunId = selectedRun?._id ?? null;
