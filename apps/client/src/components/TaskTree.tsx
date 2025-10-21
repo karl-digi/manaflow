@@ -20,6 +20,7 @@ import {
   AlertTriangle,
   Archive as ArchiveIcon,
   ArchiveRestore as ArchiveRestoreIcon,
+  Clock3,
   CheckCircle,
   Circle,
   Copy as CopyIcon,
@@ -285,6 +286,67 @@ function TaskTreeInner({
     );
   })();
 
+  const crownEvaluationIndicator = (() => {
+    const status = task.crownEvaluationError;
+    if (!status) {
+      return null;
+    }
+
+    if (status === "pending_evaluation") {
+      return (
+        <Tooltip delayDuration={0}>
+          <TooltipTrigger asChild>
+            <Clock3 className="w-3 h-3 text-purple-500" />
+          </TooltipTrigger>
+          <TooltipContent side="right">Crown evaluation queued</TooltipContent>
+        </Tooltip>
+      );
+    }
+
+    if (status === "in_progress") {
+      return (
+        <Tooltip delayDuration={0}>
+          <TooltipTrigger asChild>
+            <Loader2 className="w-3 h-3 text-purple-500 animate-spin" />
+          </TooltipTrigger>
+          <TooltipContent side="right">Crown evaluation running</TooltipContent>
+        </Tooltip>
+      );
+    }
+
+    return (
+      <Tooltip delayDuration={0}>
+        <TooltipTrigger asChild>
+          <AlertTriangle className="w-3 h-3 text-red-500" />
+        </TooltipTrigger>
+        <TooltipContent
+          side="right"
+          className="max-w-xs whitespace-pre-wrap break-words"
+        >
+          Crown evaluation failed: {status}
+        </TooltipContent>
+      </Tooltip>
+    );
+  })();
+
+  const metaContent = (() => {
+    if (taskLeadingIcon && crownEvaluationIndicator) {
+      return (
+        <div className="flex items-center gap-1">
+          <span className="flex items-center">{taskLeadingIcon}</span>
+          <span className="flex items-center">{crownEvaluationIndicator}</span>
+        </div>
+      );
+    }
+    if (taskLeadingIcon) {
+      return taskLeadingIcon;
+    }
+    if (crownEvaluationIndicator) {
+      return crownEvaluationIndicator;
+    }
+    return undefined;
+  })();
+
   return (
     <TaskRunExpansionContext.Provider value={expansionContextValue}>
       <div className="select-none flex flex-col">
@@ -321,7 +383,7 @@ function TaskTreeInner({
                 title={task.pullRequestTitle || task.text}
                 titleClassName="text-[13px] text-neutral-900 dark:text-neutral-100"
                 secondary={taskSecondary || undefined}
-                meta={taskLeadingIcon || undefined}
+                meta={metaContent}
               />
             </Link>
           </ContextMenu.Trigger>
