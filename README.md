@@ -44,3 +44,7 @@ cmux upgrade
 ```bash
 cmux uninstall
 ```
+
+Agents spin in sync
+Docker dreams hum through the night
+Diffs bloom at sunrise
