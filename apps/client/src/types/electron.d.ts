@@ -32,6 +32,16 @@ interface CmuxLogsAPI {
   copyAll: () => Promise<{ ok: boolean }>;
 }
 
+interface CmuxNotificationAPI {
+  showTaskCompletion: (payload: {
+    teamSlugOrId: string;
+    taskId: string;
+    runId: string;
+    taskTitle: string;
+    agentName?: string | null;
+  }) => Promise<{ ok: boolean; reason?: string }>;
+}
+
 interface CmuxRectangle {
   x: number;
   y: number;
@@ -106,6 +116,7 @@ interface CmuxAPI {
   };
   socket: CmuxSocketAPI;
   logs: CmuxLogsAPI;
+  notifications?: CmuxNotificationAPI;
   webContentsView: CmuxWebContentsViewAPI;
   autoUpdate: {
     check: () =>

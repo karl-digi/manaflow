@@ -1,10 +1,12 @@
 import { useTheme } from "@/components/theme/use-theme";
+import type { Id } from "@cmux/convex/dataModel";
 import type { StackClientApp } from "@stackframe/react";
 import type { QueryClient } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import {
   createRootRouteWithContext,
   Outlet,
+  useRouter,
   useRouterState,
 } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
@@ -119,11 +121,53 @@ function useAutoUpdateNotifications() {
 }
 
 function RootComponent() {
+  const router = useRouter();
   const location = useRouterState({
     select: (state) => state.location,
   });
 
   useAutoUpdateNotifications();
+
+  useEffect(() => {
+    const maybeWindow = typeof window === "undefined" ? undefined : window;
+    const cmux = maybeWindow?.cmux;
+    if (!cmux?.on) return;
+
+    const handler = (payload: unknown) => {
+      if (!payload || typeof payload !== "object") return;
+      const record = payload as Record<string, unknown>;
+      const teamSlugOrId =
+        typeof record.teamSlugOrId === "string"
+          ? record.teamSlugOrId.trim()
+          : "";
+      const taskId =
+        typeof record.taskId === "string" ? record.taskId.trim() : "";
+      const runId =
+        typeof record.runId === "string" ? record.runId.trim() : "";
+      if (!teamSlugOrId || !taskId || !runId) {
+        return;
+      }
+
+      router.navigate({
+        to: "/$teamSlugOrId/task/$taskId/run/$runId/diff",
+        params: {
+          teamSlugOrId,
+          taskId: taskId as Id<"tasks">,
+          runId: runId as Id<"taskRuns">,
+        },
+      });
+    };
+
+    const unsubscribe = cmux.on("task-diff:navigate", handler);
+
+    return () => {
+      try {
+        unsubscribe?.();
+      } catch {
+        // ignore
+      }
+    };
+  }, [router]);
 
   useEffect(() => {
     if (import.meta.env.DEV) {

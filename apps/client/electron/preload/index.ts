@@ -23,6 +23,14 @@ type RectanglePayload = {
 type LogListener = (entry: ElectronMainLogMessage) => void;
 const mainLogListeners = new Set<LogListener>();
 
+type TaskCompletionNotificationPayload = {
+  teamSlugOrId: string;
+  taskId: string;
+  runId: string;
+  taskTitle: string;
+  agentName?: string | null;
+};
+
 // Cmux IPC API for Electron server communication
 const cmuxAPI = {
   // Get the current webContents ID
@@ -156,6 +164,16 @@ const cmuxAPI = {
       }>,
     install: () =>
       ipcRenderer.invoke("cmux:auto-update:install") as Promise<{
+        ok: boolean;
+        reason?: string;
+      }>,
+  },
+  notifications: {
+    showTaskCompletion: (payload: TaskCompletionNotificationPayload) =>
+      ipcRenderer.invoke(
+        "cmux:notifications:task-complete",
+        payload
+      ) as Promise<{
         ok: boolean;
         reason?: string;
       }>,

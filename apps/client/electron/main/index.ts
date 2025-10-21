@@ -12,6 +12,7 @@ import {
   MenuItem,
   nativeImage,
   net,
+  Notification as ElectronNotification,
   session,
   shell,
   webFrameMain,
@@ -82,6 +83,190 @@ let pendingProtocolUrl: string | null = null;
 let mainWindow: BrowserWindow | null = null;
 let previewReloadMenuItem: MenuItem | null = null;
 let previewReloadMenuVisible = false;
+
+type TaskDiffNavigationPayload = {
+  teamSlugOrId: string;
+  taskId: string;
+  runId: string;
+};
+
+type TaskCompletionNotificationRequest = TaskDiffNavigationPayload & {
+  taskTitle: string;
+  agentName?: string | null;
+};
+
+type ElectronNotificationInstance = InstanceType<typeof ElectronNotification>;
+
+const pendingTaskDiffNavigations: TaskDiffNavigationPayload[] = [];
+const activeSystemNotifications = new Set<ElectronNotificationInstance>();
+
+function focusMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+  if (!mainWindow.isVisible()) {
+    mainWindow.show();
+  }
+  mainWindow.focus();
+}
+
+function sendTaskDiffNavigation(payload: TaskDiffNavigationPayload): boolean {
+  if (!mainWindow || mainWindow.isDestroyed() || !rendererLoaded) {
+    return false;
+  }
+  try {
+    mainWindow.webContents.send("cmux:event:task-diff:navigate", payload);
+    return true;
+  } catch (error) {
+    mainWarn("Failed to send task diff navigation to renderer", {
+      error,
+      payload,
+    });
+    return false;
+  }
+}
+
+function enqueueTaskDiffNavigation(payload: TaskDiffNavigationPayload): void {
+  if (!sendTaskDiffNavigation(payload)) {
+    pendingTaskDiffNavigations.push(payload);
+  }
+}
+
+function flushPendingTaskDiffNavigations(): void {
+  if (!mainWindow || mainWindow.isDestroyed() || !rendererLoaded) {
+    return;
+  }
+  if (pendingTaskDiffNavigations.length === 0) return;
+  const pending = pendingTaskDiffNavigations.splice(0);
+  for (const payload of pending) {
+    if (!sendTaskDiffNavigation(payload)) {
+      pendingTaskDiffNavigations.unshift(payload);
+      break;
+    }
+  }
+}
+
+function coerceNonEmptyString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function parseTaskNotificationPayload(
+  raw: unknown
+): TaskCompletionNotificationRequest | null {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const record = raw as Record<string, unknown>;
+  const teamSlugOrId = coerceNonEmptyString(record.teamSlugOrId);
+  const taskId = coerceNonEmptyString(record.taskId);
+  const runId = coerceNonEmptyString(record.runId);
+  const taskTitle = coerceNonEmptyString(record.taskTitle);
+  if (!teamSlugOrId || !taskId || !runId || !taskTitle) {
+    return null;
+  }
+  const agentNameValue = record.agentName;
+  const agentName =
+    typeof agentNameValue === "string"
+      ? agentNameValue.trim() || null
+      : null;
+
+  return {
+    teamSlugOrId,
+    taskId,
+    runId,
+    taskTitle,
+    agentName,
+  };
+}
+
+function buildTaskNotificationBody(
+  payload: TaskCompletionNotificationRequest
+): string {
+  const parts: string[] = [];
+  if (payload.agentName) {
+    parts.push(`${payload.agentName} won the crown.`);
+  } else {
+    parts.push("A run won the crown.");
+  }
+  parts.push("Click to review the diff.");
+  return parts.join(" ");
+}
+
+function registerTaskNotificationHandlers(): void {
+  ipcMain.handle(
+    "cmux:notifications:task-complete",
+    async (_event, rawPayload: unknown) => {
+      if (process.platform !== "darwin") {
+        return { ok: false, reason: "unsupported-platform" as const };
+      }
+
+      const payload = parseTaskNotificationPayload(rawPayload);
+      if (!payload) {
+        mainWarn("Task completion notification received invalid payload", {
+          rawPayload,
+        });
+        return { ok: false, reason: "invalid-payload" as const };
+      }
+
+      const notificationClassAvailable =
+        typeof ElectronNotification === "function";
+      const notificationsSupported =
+        notificationClassAvailable &&
+        (typeof ElectronNotification.isSupported !== "function" ||
+          ElectronNotification.isSupported());
+
+      if (!notificationsSupported) {
+        mainWarn(
+          "Task completion notification requested but notifications are unavailable"
+        );
+        return { ok: false, reason: "not-supported" as const };
+      }
+
+      try {
+        const notification = new ElectronNotification({
+          title: "Task complete",
+          subtitle: payload.taskTitle,
+          body: buildTaskNotificationBody(payload),
+        });
+
+        activeSystemNotifications.add(notification);
+
+        const cleanup = () => {
+          activeSystemNotifications.delete(notification);
+        };
+
+        notification.once("close", cleanup);
+        notification.once("failed", cleanup);
+        notification.once("action", cleanup);
+        notification.once("click", () => {
+          cleanup();
+          focusMainWindow();
+          enqueueTaskDiffNavigation({
+            teamSlugOrId: payload.teamSlugOrId,
+            taskId: payload.taskId,
+            runId: payload.runId,
+          });
+          flushPendingTaskDiffNavigations();
+        });
+
+        notification.show();
+
+        mainLog("Displayed task completion notification", {
+          taskId: payload.taskId,
+          runId: payload.runId,
+        });
+
+        return { ok: true as const };
+      } catch (error) {
+        mainWarn("Failed to display task completion notification", error);
+        return { ok: false as const, reason: "show-error" as const };
+      }
+    }
+  );
+}
 
 function getTimestamp(): string {
   return new Date().toISOString();
@@ -617,6 +802,7 @@ function createWindow(): void {
       pendingProtocolUrl = null;
     }
     emitAutoUpdateToastIfPossible();
+    flushPendingTaskDiffNavigations();
   });
 
   mainWindow.webContents.on(
@@ -690,6 +876,7 @@ app.whenReady().then(async () => {
   setupConsoleFileMirrors();
   registerLogIpcHandlers();
   registerAutoUpdateIpcHandlers();
+  registerTaskNotificationHandlers();
   initCmdK({
     getMainWindow: () => mainWindow,
     logger: {
