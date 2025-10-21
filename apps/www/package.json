@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "dotenv -e ../../.env -- next dev --turbo --port 9779",
     "prebuild": "bun run generate-openapi-client",
-    "build": "next build --turbo",
+    "build": "./scripts/build.sh",
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit -p tsconfig.json",

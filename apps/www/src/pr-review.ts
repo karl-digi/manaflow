@@ -1,6 +1,7 @@
 import type { Instance } from "morphcloud";
 import { MorphCloudClient } from "morphcloud";
 import { Octokit } from "octokit";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { dirname, resolve } from "node:path";
@@ -18,13 +19,57 @@ const WORKSPACE_LOG_RELATIVE_PATH = "pr-review-inject.log";
 const WORKSPACE_LOG_ABSOLUTE_PATH = `${REMOTE_WORKSPACE_DIR}/${WORKSPACE_LOG_RELATIVE_PATH}`;
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
+
+function resolveProductionMode(explicit?: boolean): boolean {
+  if (typeof explicit === "boolean") {
+    return explicit;
+  }
+  return (
+    process.env.NODE_ENV === "production" ||
+    process.env.CMUX_PR_REVIEW_ENV === "production"
+  );
+}
+
+function hasInjectScriptDir(baseDir: string): boolean {
+  return existsSync(resolve(baseDir, "scripts/pr-review"));
+}
+
+function findProjectRoot(): string {
+  const envRoot = process.env.CMUX_WWW_APP_ROOT;
+  if (envRoot && hasInjectScriptDir(envRoot)) {
+    return envRoot;
+  }
+
+  const cwdCandidate = process.cwd();
+  if (hasInjectScriptDir(cwdCandidate)) {
+    return cwdCandidate;
+  }
+
+  let currentDir: string | null = moduleDir;
+  // Walk up towards the filesystem root in case code is running from a compiled output directory.
+  while (currentDir) {
+    if (hasInjectScriptDir(currentDir)) {
+      return currentDir;
+    }
+    const parentDir = dirname(currentDir);
+    if (parentDir === currentDir) {
+      break;
+    }
+    currentDir = parentDir;
+  }
+
+  return cwdCandidate;
+}
+
+const projectRoot = findProjectRoot();
+const injectScriptsDir = resolve(projectRoot, "scripts/pr-review");
 const injectScriptSourcePath = resolve(
-  moduleDir,
-  "../scripts/pr-review/pr-review-inject.ts"
+  injectScriptsDir,
+  "pr-review-inject.ts"
 );
 const injectScriptBundlePath = resolve(
-  moduleDir,
-  "../scripts/pr-review/pr-review-inject.bundle.js"
+  injectScriptsDir,
+  "pr-review-inject.bundle.js"
 );
 
 let cachedInjectScriptPromise: Promise<string> | null = null;
@@ -33,10 +78,18 @@ function getBunExecutable(): string {
   return process.env.BUN_RUNTIME ?? process.env.BUN_BIN ?? "bun";
 }
 
-async function buildInjectScript(): Promise<void> {
+async function buildInjectScript(productionMode: boolean): Promise<void> {
+  if (productionMode) {
+    console.log(
+      "[pr-review][debug] Production mode detected; expecting prebuilt inject script bundle."
+    );
+    return;
+  }
+
   const bunExecutable = getBunExecutable();
   console.log("[pr-review][debug] buildInjectScript resolving paths", {
     moduleDir,
+    projectRoot,
     injectScriptSourcePath,
     injectScriptBundlePath,
   });
@@ -80,15 +133,33 @@ async function buildInjectScript(): Promise<void> {
   });
 }
 
-async function getInjectScriptSource(): Promise<string> {
+async function getInjectScriptSource(productionMode: boolean): Promise<string> {
   if (!cachedInjectScriptPromise) {
     cachedInjectScriptPromise = (async () => {
-      console.log("[pr-review][debug] getInjectScriptSource triggering build");
-      await buildInjectScript();
+      console.log(
+        "[pr-review][debug] getInjectScriptSource ensuring inject script bundle is available"
+      );
+      await buildInjectScript(productionMode);
       console.log(
         `[pr-review][debug] Reading inject script bundle from ${injectScriptBundlePath}`
       );
-      return readFile(injectScriptBundlePath, "utf8");
+      try {
+        return await readFile(injectScriptBundlePath, "utf8");
+      } catch (error) {
+        const maybeCode =
+          typeof error === "object" &&
+          error !== null &&
+          "code" in error &&
+          typeof (error as { code?: unknown }).code === "string"
+            ? (error as { code: string }).code
+            : null;
+        if (maybeCode === "ENOENT") {
+          throw new Error(
+            `[pr-review] Inject script bundle not found at ${injectScriptBundlePath}. Run "bun run build" to generate it before running PR review in production.`
+          );
+        }
+        throw error;
+      }
     })().catch((error) => {
       cachedInjectScriptPromise = null;
       throw error;
@@ -113,6 +184,7 @@ export interface PrReviewJobContext {
   callback?: PrReviewCallbackConfig;
   fileCallback?: PrReviewCallbackConfig;
   morphSnapshotId?: string;
+  productionMode?: boolean;
 }
 
 interface ParsedPrUrl {
@@ -466,6 +538,7 @@ async function startMorphInstanceTask(
 export async function startAutomatedPrReview(
   config: PrReviewJobContext
 ): Promise<void> {
+  const productionMode = resolveProductionMode(config.productionMode);
   console.log(
     `[pr-review] Preparing Morph review environment for ${config.prUrl}`
   );
@@ -477,6 +550,8 @@ export async function startAutomatedPrReview(
     hasCallback: Boolean(config.callback),
     hasFileCallback: Boolean(config.fileCallback),
     morphSnapshotId: config.morphSnapshotId,
+    productionMode: config.productionMode ?? null,
+    resolvedProductionMode: productionMode,
   });
   const morphClient = ensureMorphClient();
   let instance: Instance | null = null;
@@ -553,7 +628,7 @@ export async function startAutomatedPrReview(
     }
 
     const remoteScriptPath = "/root/pr-review-inject.ts";
-    const injectScriptSource = await getInjectScriptSource();
+    const injectScriptSource = await getInjectScriptSource(productionMode);
     const baseRepoUrl = `https://github.com/${prMetadata.owner}/${prMetadata.repo}.git`;
     const headRepoUrl = `https://github.com/${prMetadata.headRepoOwner}/${prMetadata.headRepoName}.git`;
 

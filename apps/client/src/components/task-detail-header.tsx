@@ -67,6 +67,8 @@ interface TaskDetailHeaderProps {
   taskRunId: Id<"taskRuns">;
   onExpandAll?: () => void;
   onCollapseAll?: () => void;
+  onExpandAllChecks?: () => void;
+  onCollapseAllChecks?: () => void;
   teamSlugOrId: string;
 }
 
@@ -199,6 +201,8 @@ export function TaskDetailHeader({
   taskRunId,
   onExpandAll,
   onCollapseAll,
+  onExpandAllChecks,
+  onCollapseAllChecks,
   teamSlugOrId,
 }: TaskDetailHeaderProps) {
   const navigate = useNavigate();
@@ -350,10 +354,20 @@ export function TaskDetailHeader({
               <Dropdown.Positioner sideOffset={5}>
                 <Dropdown.Popup>
                   <Dropdown.Arrow />
-                  <Dropdown.Item onClick={() => onExpandAll?.()}>
+                  <Dropdown.Item
+                    onClick={() => {
+                      onExpandAll?.();
+                      onExpandAllChecks?.();
+                    }}
+                  >
                     Expand all
                   </Dropdown.Item>
-                  <Dropdown.Item onClick={() => onCollapseAll?.()}>
+                  <Dropdown.Item
+                    onClick={() => {
+                      onCollapseAll?.();
+                      onCollapseAllChecks?.();
+                    }}
+                  >
                     Collapse all
                   </Dropdown.Item>
                 </Dropdown.Popup>

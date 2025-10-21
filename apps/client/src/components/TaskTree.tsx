@@ -34,6 +34,7 @@ import {
   GitPullRequestDraft,
   Globe,
   Monitor,
+  TerminalSquare,
   Loader2,
   XCircle,
 } from "lucide-react";
@@ -63,10 +64,15 @@ function sanitizeBranchName(input?: string | null): string | null {
   if (!input) return null;
   const trimmed = input.trim();
   if (!trimmed) return null;
-  const idx = trimmed.lastIndexOf("-");
-  if (idx <= 0) return trimmed;
-  const candidate = trimmed.slice(0, idx);
-  return candidate || trimmed;
+  let normalized = trimmed;
+  if (normalized.startsWith("cmux/")) {
+    normalized = normalized.slice("cmux/".length).trim();
+    if (!normalized) return null;
+  }
+  const idx = normalized.lastIndexOf("-");
+  if (idx <= 0) return normalized;
+  const candidate = normalized.slice(0, idx);
+  return candidate || normalized;
 }
 
 function getTaskBranch(task: TaskWithGeneratedBranch): string | null {
@@ -563,6 +569,7 @@ function TaskRunTreeInner({
 
   const shouldRenderDiffLink = true;
   const shouldRenderBrowserLink = run.vscode?.provider === "morph";
+  const shouldRenderTerminalLink = shouldRenderBrowserLink;
   const shouldRenderPullRequestLink = Boolean(
     (run.pullRequestUrl && run.pullRequestUrl !== "pending") ||
     run.pullRequests?.some((pr) => pr.url)
@@ -579,6 +586,7 @@ function TaskRunTreeInner({
     hasActiveVSCode ||
     shouldRenderDiffLink ||
     shouldRenderBrowserLink ||
+    shouldRenderTerminalLink ||
     shouldRenderPullRequestLink ||
     shouldRenderPreviewLink;
 
@@ -681,15 +689,16 @@ function TaskRunTreeInner({
         run={run}
         level={level}
         taskId={taskId}
-      teamSlugOrId={teamSlugOrId}
-      isExpanded={isExpanded}
-      hasActiveVSCode={hasActiveVSCode}
-      hasChildren={hasChildren}
-      shouldRenderBrowserLink={shouldRenderBrowserLink}
-      shouldRenderPullRequestLink={shouldRenderPullRequestLink}
-      previewServices={previewServices}
-      environmentError={run.environmentError}
-    />
+        teamSlugOrId={teamSlugOrId}
+        isExpanded={isExpanded}
+        hasActiveVSCode={hasActiveVSCode}
+        hasChildren={hasChildren}
+        shouldRenderBrowserLink={shouldRenderBrowserLink}
+        shouldRenderTerminalLink={shouldRenderTerminalLink}
+        shouldRenderPullRequestLink={shouldRenderPullRequestLink}
+        previewServices={previewServices}
+        environmentError={run.environmentError}
+      />
     </Fragment>
   );
 }
@@ -749,6 +758,7 @@ interface TaskRunDetailsProps {
   hasActiveVSCode: boolean;
   hasChildren: boolean;
   shouldRenderBrowserLink: boolean;
+  shouldRenderTerminalLink: boolean;
   shouldRenderPullRequestLink: boolean;
   previewServices: PreviewService[];
   environmentError?: {
@@ -766,6 +776,7 @@ function TaskRunDetails({
   hasActiveVSCode,
   hasChildren,
   shouldRenderBrowserLink,
+  shouldRenderTerminalLink,
   shouldRenderPullRequestLink,
   previewServices,
   environmentError,
@@ -808,7 +819,7 @@ function TaskRunDetails({
 
   return (
     <Fragment>
-      {hasActiveVSCode && (
+      {hasActiveVSCode ? (
         <TaskRunDetailLink
           to="/$teamSlugOrId/task/$taskId/run/$runId"
           params={{
@@ -824,31 +835,41 @@ function TaskRunDetails({
           indentLevel={indentLevel}
           trailing={environmentErrorIndicator}
         />
-      )}
+      ) : null}
 
       <TaskRunDetailLink
         to="/$teamSlugOrId/task/$taskId/run/$runId/diff"
         params={{ teamSlugOrId, taskId, runId: run._id }}
-      icon={<GitCompare className="w-3 h-3 mr-2 text-neutral-400" />}
-      label="Git diff"
-      indentLevel={indentLevel}
-    />
-
-    {shouldRenderBrowserLink ? (
-      <TaskRunDetailLink
-        to="/$teamSlugOrId/task/$taskId/run/$runId/browser"
-        params={{ teamSlugOrId, taskId, runId: run._id }}
-        icon={<Monitor className="w-3 h-3 mr-2 text-neutral-400" />}
-        label="Browser"
+        icon={<GitCompare className="w-3 h-3 mr-2 text-neutral-400" />}
+        label="Git diff"
         indentLevel={indentLevel}
       />
-    ) : null}
 
-    {shouldRenderPullRequestLink ? (
-      <TaskRunDetailLink
-        to="/$teamSlugOrId/task/$taskId/run/$runId/pr"
-        params={{ teamSlugOrId, taskId, runId: run._id }}
-        icon={<GitPullRequest className="w-3 h-3 mr-2 text-neutral-400" />}
+      {shouldRenderBrowserLink ? (
+        <TaskRunDetailLink
+          to="/$teamSlugOrId/task/$taskId/run/$runId/browser"
+          params={{ teamSlugOrId, taskId, runId: run._id }}
+          icon={<Monitor className="w-3 h-3 mr-2 text-neutral-400" />}
+          label="Browser"
+          indentLevel={indentLevel}
+        />
+      ) : null}
+
+      {shouldRenderTerminalLink ? (
+        <TaskRunDetailLink
+          to="/$teamSlugOrId/task/$taskId/run/$runId/terminals"
+          params={{ teamSlugOrId, taskId, runId: run._id }}
+          icon={<TerminalSquare className="w-3 h-3 mr-2 text-neutral-400" />}
+          label="Terminals"
+          indentLevel={indentLevel}
+        />
+      ) : null}
+
+      {shouldRenderPullRequestLink ? (
+        <TaskRunDetailLink
+          to="/$teamSlugOrId/task/$taskId/run/$runId/pr"
+          params={{ teamSlugOrId, taskId, runId: run._id }}
+          icon={<GitPullRequest className="w-3 h-3 mr-2 text-neutral-400" />}
           label="Pull Request"
           indentLevel={indentLevel}
         />

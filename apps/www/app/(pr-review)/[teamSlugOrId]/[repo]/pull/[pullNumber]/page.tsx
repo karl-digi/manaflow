@@ -4,6 +4,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { waitUntil } from "@vercel/functions";
 import { ExternalLink, GitPullRequest } from "lucide-react";
+import { type Team } from "@stackframe/stack";
 
 import { PullRequestDiffViewer } from "@/components/pr/pull-request-diff-viewer";
 import {
@@ -32,11 +33,20 @@ type PageProps = {
 
 export const dynamic = "force-dynamic";
 
+async function getFirstTeam(): Promise<Team | null> {
+  const teams = await stackServerApp.listTeams();
+  const firstTeam = teams[0];
+  if (!firstTeam) {
+    return null;
+  }
+  return firstTeam;
+}
+
 export async function generateMetadata({
   params,
 }: PageProps): Promise<Metadata> {
   const user = await stackServerApp.getUser({ or: "redirect" });
-  const selectedTeam = user.selectedTeam;
+  const selectedTeam = user.selectedTeam || (await getFirstTeam());
   if (!selectedTeam) {
     throw notFound();
   }
@@ -77,7 +87,7 @@ export async function generateMetadata({
 
 export default async function PullRequestPage({ params }: PageProps) {
   const user = await stackServerApp.getUser({ or: "redirect" });
-  const selectedTeam = user.selectedTeam;
+  const selectedTeam = user.selectedTeam || (await getFirstTeam());
   if (!selectedTeam) {
     throw notFound();
   }

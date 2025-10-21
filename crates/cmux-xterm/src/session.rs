@@ -2,7 +2,8 @@ use std::{
     collections::VecDeque,
     io::{Read, Write},
     process::{Command, Stdio},
-    sync::{Arc, Mutex},
+    sync::{atomic::{AtomicU64, Ordering}, Arc, Mutex},
+    time::SystemTime,
 };
 
 use axum::extract::ws::{Message, WebSocket};
@@ -16,16 +17,21 @@ use portable_pty::{Child, MasterPty};
 
 const BACKLOG_LIMIT: usize = 200_000;
 
-#[derive(Clone)]
 pub struct AppState {
     pub sessions: Arc<dashmap::DashMap<Uuid, Arc<Session>>>,
+    next_sequence: AtomicU64,
 }
 
 impl AppState {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             sessions: Arc::new(dashmap::DashMap::new()),
+            next_sequence: AtomicU64::new(0),
         })
+    }
+
+    pub fn next_sequence(&self) -> u64 {
+        self.next_sequence.fetch_add(1, Ordering::Relaxed)
     }
 }
 
@@ -66,6 +72,8 @@ impl Backlog {
 
 pub struct Session {
     pub id: Uuid,
+    pub created_order: u64,
+    pub created_at: SystemTime,
     writer: Arc<Mutex<PtyWriter>>, // sync write to pty
     reader_task: JoinHandle<()>,
     kill: Arc<dyn Fn() + Send + Sync>,
@@ -107,6 +115,7 @@ impl Session {
     }
 
     pub fn spawn(
+        created_order: u64,
         cmd: Option<&str>,
         args: Vec<String>,
         cols: u16,
@@ -114,13 +123,14 @@ impl Session {
     ) -> anyhow::Result<(Uuid, Arc<Self>)> {
         let backend = std::env::var("CMUX_BACKEND").unwrap_or_default();
         if backend == "pipe" {
-            Self::spawn_pipe(cmd, args)
+            Self::spawn_pipe(created_order, cmd, args)
         } else {
-            Self::spawn_pty(cmd, args, cols, rows)
+            Self::spawn_pty(created_order, cmd, args, cols, rows)
         }
     }
 
     fn spawn_pty(
+        created_order: u64,
         cmd: Option<&str>,
         args: Vec<String>,
         cols: u16,
@@ -172,6 +182,8 @@ impl Session {
         let master = Arc::new(Mutex::new(master));
         let session = Arc::new(Session {
             id,
+            created_order,
+            created_at: SystemTime::now(),
             writer,
             reader_task,
             kill,
@@ -182,7 +194,11 @@ impl Session {
         Ok((id, session))
     }
 
-    fn spawn_pipe(cmd: Option<&str>, args: Vec<String>) -> anyhow::Result<(Uuid, Arc<Self>)> {
+    fn spawn_pipe(
+        created_order: u64,
+        cmd: Option<&str>,
+        args: Vec<String>,
+    ) -> anyhow::Result<(Uuid, Arc<Self>)> {
         let id = Uuid::new_v4();
         let command = cmd
             .map(|s| s.to_string())
@@ -226,6 +242,8 @@ impl Session {
         let writer = Arc::new(Mutex::new(writer));
         let session = Arc::new(Session {
             id,
+            created_order,
+            created_at: SystemTime::now(),
             writer,
             reader_task,
             kill,

@@ -330,6 +330,7 @@ export function RepositoryPicker({
 
   const updateSnapshotSelection = useCallback(
     (nextSnapshotId: MorphSnapshotId) => {
+      const shouldResetInstanceId = nextSnapshotId !== selectedSnapshotId;
       setSelectedSnapshotId(nextSnapshotId);
       void (async () => {
         let draftId: PendingEnvironmentId | undefined =
@@ -343,9 +344,9 @@ export function RepositoryPicker({
           search: (prev) => ({
             step: prev.step ?? "select",
             selectedRepos: prev.selectedRepos ?? [],
-            instanceId: prev.instanceId,
-          connectionLogin:
-            selectedConnectionLogin ?? prev.connectionLogin ?? undefined,
+            instanceId: shouldResetInstanceId ? undefined : prev.instanceId,
+            connectionLogin:
+              selectedConnectionLogin ?? prev.connectionLogin ?? undefined,
             repoSearch: prev.repoSearch,
             snapshotId: nextSnapshotId,
             pendingId: draftId ?? prev.pendingId,
@@ -368,7 +369,7 @@ export function RepositoryPicker({
       navigate,
       selectedConnectionLogin,
       selectedRepos,
-      teamSlugOrId,
+      selectedSnapshotId, teamSlugOrId,
     ]
   );
 
@@ -512,9 +513,8 @@ export function RepositoryPicker({
                   isManualLoading
                 }
                 onClick={() => handleContinue(selectedRepos)}
-                className={`inline-flex items-center gap-2 rounded-md bg-neutral-900 text-white disabled:bg-neutral-300 dark:disabled:bg-neutral-700 disabled:cursor-not-allowed px-3 py-2 text-sm hover:bg-neutral-800 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200 transition-opacity ${
-                  isManualLoading ? "opacity-50" : "opacity-100"
-                }`}
+                className={`inline-flex items-center gap-2 rounded-md bg-neutral-900 text-white disabled:bg-neutral-300 dark:disabled:bg-neutral-700 disabled:cursor-not-allowed px-3 py-2 text-sm hover:bg-neutral-800 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200 transition-opacity ${isManualLoading ? "opacity-50" : "opacity-100"
+                  }`}
               >
                 {isContinueLoading && (
                   <Loader2 className="h-3 w-3 animate-spin" />
@@ -526,9 +526,8 @@ export function RepositoryPicker({
                   type="button"
                   disabled={isContinueLoading || isManualLoading}
                   onClick={() => handleContinue([])}
-                  className={`inline-flex items-center gap-2 rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2 text-sm text-neutral-800 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-900 disabled:cursor-not-allowed transition-opacity ${
-                    isContinueLoading ? "opacity-50" : "opacity-100"
-                  }`}
+                  className={`inline-flex items-center gap-2 rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2 text-sm text-neutral-800 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-900 disabled:cursor-not-allowed transition-opacity ${isContinueLoading ? "opacity-50" : "opacity-100"
+                    }`}
                 >
                   {isManualLoading && (
                     <Loader2 className="h-3 w-3 animate-spin" />
@@ -1008,16 +1007,14 @@ function RepositoryListSection({
                 >
                   <div className="text-sm flex items-center gap-2 min-w-0 flex-1">
                     <div
-                      className={`mr-1 h-4 w-4 rounded-sm border grid place-items-center shrink-0 ${
-                        isSelected
-                          ? "border-neutral-700 bg-neutral-800"
-                          : "border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-950"
-                      }`}
+                      className={`mr-1 h-4 w-4 rounded-sm border grid place-items-center shrink-0 ${isSelected
+                        ? "border-neutral-700 bg-neutral-800"
+                        : "border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-950"
+                        }`}
                     >
                       <Check
-                        className={`w-3 h-3 text-white transition-opacity ${
-                          isSelected ? "opacity-100" : "opacity-0"
-                        }`}
+                        className={`w-3 h-3 text-white transition-opacity ${isSelected ? "opacity-100" : "opacity-0"
+                          }`}
                       />
                     </div>
                     <GitHubIcon className="h-4 w-4 shrink-0 text-neutral-700 dark:text-neutral-200" />
