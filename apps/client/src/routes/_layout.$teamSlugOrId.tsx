@@ -7,11 +7,23 @@ import { ExpandTasksProvider } from "@/contexts/expand-tasks/ExpandTasksProvider
 import { cachedGetUser } from "@/lib/cachedGetUser";
 import { setLastTeamSlugOrId } from "@/lib/lastTeam";
 import { stackClientApp } from "@/lib/stack";
+import { useTaskCompletionNotifications } from "@/hooks/useTaskCompletionNotifications";
+import { isElectron } from "@/lib/electron";
+import {
+  TASK_NOTIFICATION_OPEN_DIFF_EVENT,
+  type TaskNotificationNavigationPayload,
+} from "@/lib/electron-notifications";
 import { api } from "@cmux/convex/api";
 import { convexQuery } from "@convex-dev/react-query";
-import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
+import {
+  createFileRoute,
+  Outlet,
+  redirect,
+  useNavigate,
+} from "@tanstack/react-router";
 import { useQuery } from "convex/react";
 import { Suspense, useEffect, useMemo } from "react";
+import { typedZid } from "@cmux/shared/utils/typed-zid";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId")({
   component: LayoutComponentWrapper,
@@ -57,7 +69,58 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId")({
 
 function LayoutComponent() {
   const { teamSlugOrId } = Route.useParams();
+  const navigate = useNavigate();
   const tasks = useQuery(api.tasks.get, { teamSlugOrId });
+
+  useTaskCompletionNotifications(teamSlugOrId);
+
+  useEffect(() => {
+    if (!isElectron) return;
+    const unsubscribe = window.cmux?.on?.(
+      TASK_NOTIFICATION_OPEN_DIFF_EVENT,
+      (payload: unknown) => {
+        if (!payload || typeof payload !== "object") {
+          return;
+        }
+        const data =
+          payload as Partial<TaskNotificationNavigationPayload>;
+        if (
+          typeof data.teamSlugOrId !== "string" ||
+          typeof data.taskId !== "string" ||
+          typeof data.runId !== "string"
+        ) {
+          return;
+        }
+
+        try {
+          const parsedTaskId = typedZid("tasks").parse(data.taskId);
+          const parsedRunId = typedZid("taskRuns").parse(data.runId);
+
+          void navigate({
+            to: "/$teamSlugOrId/task/$taskId/run/$runId/diff",
+            params: {
+              teamSlugOrId: data.teamSlugOrId,
+              taskId: parsedTaskId,
+              runId: parsedRunId,
+            },
+          });
+        } catch (error) {
+          console.warn("Invalid task notification payload", {
+            error,
+            payload: data,
+          });
+        }
+      }
+    );
+
+    return () => {
+      try {
+        unsubscribe?.();
+      } catch {
+        // ignore
+      }
+    };
+  }, [navigate]);
 
   // Sort tasks by creation date (newest first) and take the latest 5
   const recentTasks = useMemo(() => {

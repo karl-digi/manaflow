@@ -10,6 +10,7 @@ import type {
   ElectronLogsPayload,
   ElectronMainLogMessage,
 } from "../../src/lib/electron-logs/types";
+import type { TaskCompletionNotificationRequest } from "../../src/lib/electron-notifications";
 
 const api = {};
 
@@ -156,6 +157,13 @@ const cmuxAPI = {
       }>,
     install: () =>
       ipcRenderer.invoke("cmux:auto-update:install") as Promise<{
+        ok: boolean;
+        reason?: string;
+      }>,
+  },
+  notifications: {
+    showTaskComplete: (payload: TaskCompletionNotificationRequest) =>
+      ipcRenderer.invoke("cmux:notification:task-complete", payload) as Promise<{
         ok: boolean;
         reason?: string;
       }>,

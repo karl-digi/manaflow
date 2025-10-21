@@ -10,6 +10,7 @@ import {
   ipcMain,
   Menu,
   MenuItem,
+  Notification,
   nativeImage,
   net,
   session,
@@ -44,6 +45,11 @@ const { autoUpdater } = electronUpdater;
 import util from "node:util";
 import { initCmdK, keyDebug } from "./cmdk";
 import { env } from "./electron-main-env";
+import {
+  TASK_NOTIFICATION_OPEN_DIFF_EVENT,
+  type TaskCompletionNotificationRequest,
+  type TaskNotificationNavigationPayload,
+} from "../../src/lib/electron-notifications";
 
 // Use a cookieable HTTPS origin intercepted locally instead of a custom scheme.
 const PARTITION = "persist:cmux";
@@ -76,6 +82,8 @@ const LOG_ROTATION: LogRotationOptions = {
   maxBytes: 5 * 1024 * 1024,
   maxBackups: 3,
 };
+
+const activeNotifications = new Set<Notification>();
 
 let rendererLoaded = false;
 let pendingProtocolUrl: string | null = null;
@@ -414,6 +422,163 @@ function registerAutoUpdateIpcHandlers(): void {
   });
 }
 
+type TaskNotificationHandlerResult = { ok: boolean; reason?: string };
+
+function truncateText(value: string, max: number): string {
+  if (value.length <= max) return value;
+  const safeLength = Math.max(0, max - 1);
+  return `${value.slice(0, safeLength)}…`;
+}
+
+function normalizeOptionalText(value: unknown): string | null | undefined {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  if (value === null) {
+    return null;
+  }
+  return undefined;
+}
+
+function validateTaskCompletionNotificationPayload(
+  payload: unknown
+): TaskCompletionNotificationRequest | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  const candidate = payload as Partial<TaskCompletionNotificationRequest>;
+
+  if (
+    typeof candidate.taskId !== "string" ||
+    typeof candidate.runId !== "string" ||
+    typeof candidate.teamSlugOrId !== "string" ||
+    typeof candidate.taskTitle !== "string"
+  ) {
+    return null;
+  }
+
+  const agentName = normalizeOptionalText(candidate.agentName);
+  const crownReason = normalizeOptionalText(candidate.crownReason);
+
+  return {
+    taskId: candidate.taskId,
+    runId: candidate.runId,
+    teamSlugOrId: candidate.teamSlugOrId,
+    taskTitle: candidate.taskTitle,
+    agentName: agentName === undefined ? undefined : agentName,
+    crownReason: crownReason === undefined ? undefined : crownReason,
+  };
+}
+
+function deliverTaskCompletionNotification(
+  payload: TaskCompletionNotificationRequest
+): TaskNotificationHandlerResult {
+  if (process.platform !== "darwin") {
+    return { ok: true };
+  }
+
+  if (typeof Notification.isSupported === "function") {
+    try {
+      if (!Notification.isSupported()) {
+        mainWarn("Task notification requested but unsupported on this system");
+        return { ok: false, reason: "notifications-not-supported" };
+      }
+    } catch (error) {
+      mainWarn("Failed to determine notification support", error);
+    }
+  }
+
+  const subtitleSource = payload.taskTitle.trim();
+  const subtitle =
+    subtitleSource.length > 0
+      ? truncateText(subtitleSource, 80)
+      : "Crowned task ready";
+
+  const lines: string[] = [];
+  const agent = payload.agentName?.trim();
+  if (agent) {
+    lines.push(`Winner: ${agent}`);
+  }
+
+  const reason = payload.crownReason?.trim();
+  if (reason) {
+    lines.push(truncateText(reason, 140));
+  }
+
+  lines.push("Click to review the diff.");
+  const body = lines.join("\n");
+
+  try {
+    const notification = new Notification({
+      title: "Task crowned",
+      subtitle,
+      body,
+    });
+
+    const release = () => {
+      activeNotifications.delete(notification);
+    };
+
+    notification.once("close", release);
+    notification.once("click", () => {
+      release();
+
+      const target =
+        (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null) ??
+        BrowserWindow.getAllWindows()[0] ??
+        null;
+
+      if (!target || target.isDestroyed()) {
+        return;
+      }
+
+      try {
+        target.show();
+        target.focus();
+      } catch (error) {
+        mainWarn("Failed to focus window for crowned task notification", error);
+      }
+
+      try {
+        const payloadForRenderer: TaskNotificationNavigationPayload = {
+          teamSlugOrId: payload.teamSlugOrId,
+          taskId: payload.taskId,
+          runId: payload.runId,
+        };
+        target.webContents.send(
+          `cmux:event:${TASK_NOTIFICATION_OPEN_DIFF_EVENT}`,
+          payloadForRenderer
+        );
+      } catch (error) {
+        mainWarn("Failed to forward crowned task notification", error);
+      }
+    });
+
+    activeNotifications.add(notification);
+    notification.show();
+
+    return { ok: true };
+  } catch (error) {
+    mainWarn("Failed to present crowned task notification", error);
+    return { ok: false, reason: "notification-error" };
+  }
+}
+
+function registerTaskNotificationHandlers(): void {
+  ipcMain.handle(
+    "cmux:notification:task-complete",
+    async (_event, rawPayload: unknown) => {
+      const payload = validateTaskCompletionNotificationPayload(rawPayload);
+      if (!payload) {
+        return { ok: false, reason: "invalid-payload" as const };
+      }
+      return deliverTaskCompletionNotification(payload);
+    }
+  );
+}
+
 // Write critical errors to a file to aid debugging packaged crashes
 async function writeFatalLog(...args: unknown[]) {
   try {
@@ -690,6 +855,7 @@ app.whenReady().then(async () => {
   setupConsoleFileMirrors();
   registerLogIpcHandlers();
   registerAutoUpdateIpcHandlers();
+  registerTaskNotificationHandlers();
   initCmdK({
     getMainWindow: () => mainWindow,
     logger: {

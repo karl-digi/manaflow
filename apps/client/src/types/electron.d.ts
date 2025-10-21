@@ -2,6 +2,7 @@ import type {
   ElectronLogsPayload,
   ElectronMainLogMessage,
 } from "../lib/electron-logs/types";
+import type { TaskCompletionNotificationRequest } from "../lib/electron-notifications";
 import type {
   ElectronDevToolsMode,
   ElectronWebContentsEvent,
@@ -116,6 +117,11 @@ interface CmuxAPI {
         version?: string | null;
       }>;
     install: () => Promise<{ ok: boolean; reason?: string }>;
+  };
+  notifications?: {
+    showTaskComplete: (
+      payload: TaskCompletionNotificationRequest
+    ) => Promise<{ ok: boolean; reason?: string }>;
   };
 }
 

@@ -1,4 +1,5 @@
 import { ElectronAPI } from "@electron-toolkit/preload";
+import type { TaskCompletionNotificationRequest } from "../../src/lib/electron-notifications";
 
 declare global {
   interface Window {
@@ -41,6 +42,11 @@ declare global {
             version?: string | null;
           }>;
         install: () => Promise<{ ok: boolean; reason?: string }>;
+      };
+      notifications: {
+        showTaskComplete: (
+          payload: TaskCompletionNotificationRequest
+        ) => Promise<{ ok: boolean; reason?: string }>;
       };
     };
   }
