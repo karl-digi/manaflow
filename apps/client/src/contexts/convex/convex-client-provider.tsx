@@ -1,6 +1,6 @@
 "use client";
 
-import { getRandomKitty } from "@/components/kitties";
+import { getRandomKitty } from "@cmux/shared/ui/diff";
 import CmuxLogoMarkAnimated from "@/components/logo/cmux-logo-mark-animated";
 import { useQuery } from "@tanstack/react-query";
 import { ConvexProvider } from "convex/react";

@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { Suspense, use } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -6,13 +7,14 @@ import { waitUntil } from "@vercel/functions";
 import { ExternalLink, GitPullRequest } from "lucide-react";
 import { type Team } from "@stackframe/stack";
 
-import { PullRequestDiffViewer } from "@/components/pr/pull-request-diff-viewer";
+import { PullRequestMonacoDiffViewer } from "@/components/pr/pull-request-monaco-diff-viewer";
 import {
   fetchPullRequest,
   fetchPullRequestFiles,
   type GithubPullRequest,
   type GithubPullRequestFile,
 } from "@/lib/github/fetch-pull-request";
+import { createGitHubClient } from "@/lib/github/octokit";
 import { isGithubApiError } from "@/lib/github/errors";
 import { cn } from "@/lib/utils";
 import { stackServerApp } from "@/lib/utils/stack";
@@ -20,6 +22,7 @@ import {
   getConvexHttpActionBaseUrl,
   startCodeReviewJob,
 } from "@/lib/services/code-review/start-code-review";
+import type { ReplaceDiffEntry, DiffStatus } from "@cmux/shared/diff-types";
 
 type PageParams = {
   teamSlugOrId: string;
@@ -133,10 +136,8 @@ export default async function PullRequestPage({ params }: PageProps) {
           <PullRequestDiffSection
             filesPromise={pullRequestFilesPromise}
             pullRequestPromise={pullRequestPromise}
-            teamSlugOrId={selectedTeam.id}
             githubOwner={githubOwner}
             repo={repo}
-            pullNumber={pullNumber}
           />
         </Suspense>
       </div>
@@ -455,37 +456,32 @@ function PullRequestDiffSection({
   filesPromise,
   pullRequestPromise,
   githubOwner,
-  teamSlugOrId,
   repo,
-  pullNumber,
 }: {
   filesPromise: PullRequestFilesPromise;
   pullRequestPromise: PullRequestPromise;
   githubOwner: string;
-  teamSlugOrId: string;
   repo: string;
-  pullNumber: number;
 }) {
   try {
     const files = use(filesPromise);
     const pullRequest = use(pullRequestPromise);
     const totals = summarizeFiles(files);
-    const fallbackRepoFullName =
-      pullRequest.base?.repo?.full_name ??
-      pullRequest.head?.repo?.full_name ??
-      `${githubOwner}/${repo}`;
-    const commitRef = pullRequest.head?.sha ?? undefined;
+    const diffEntries = use(
+      buildReplaceDiffEntries({
+        owner: githubOwner,
+        repo,
+        files,
+        pullRequest,
+      }),
+    );
 
     return (
       <PullRequestDiffContent
-        files={files}
+        diffs={diffEntries}
         fileCount={totals.fileCount}
         additions={totals.additions}
         deletions={totals.deletions}
-        teamSlugOrId={teamSlugOrId}
-        repoFullName={fallbackRepoFullName}
-        pullNumber={pullNumber}
-        commitRef={commitRef}
       />
     );
   } catch (error) {
@@ -524,24 +520,169 @@ function summarizeFiles(files: GithubPullRequestFile[]): {
   );
 }
 
-function PullRequestDiffContent({
+const MAX_FILE_BYTES = 1_000_000;
+
+type FileContentFetchResult = {
+  content: string | null;
+  truncated: boolean;
+};
+
+async function buildReplaceDiffEntries({
+  owner,
+  repo,
   files,
+  pullRequest,
+}: {
+  owner: string;
+  repo: string;
+  files: GithubPullRequestFile[];
+  pullRequest: GithubPullRequest;
+}): Promise<ReplaceDiffEntry[]> {
+  const octokit = createGitHubClient();
+  const headSha = pullRequest.head?.sha ?? null;
+  const baseSha = pullRequest.base?.sha ?? null;
+
+  const results: ReplaceDiffEntry[] = [];
+
+  for (const file of files) {
+    let newContent: string | undefined;
+    let oldContent: string | undefined;
+    let contentOmitted = false;
+
+    if (!headSha && file.status !== "removed") {
+      contentOmitted = true;
+    }
+    if (!baseSha && file.status !== "added") {
+      contentOmitted = true;
+    }
+
+    if (headSha && file.status !== "removed") {
+      const headResult = await fetchFileContent({
+        octokit,
+        owner,
+        repo,
+        path: file.filename,
+        ref: headSha,
+      });
+      if (headResult.content !== null) {
+        newContent = headResult.content;
+      }
+      contentOmitted ||= headResult.truncated;
+    }
+
+    if (baseSha && file.status !== "added") {
+      const basePath = file.previous_filename ?? file.filename;
+      const baseResult = await fetchFileContent({
+        octokit,
+        owner,
+        repo,
+        path: basePath,
+        ref: baseSha,
+      });
+      if (baseResult.content !== null) {
+        oldContent = baseResult.content;
+      }
+      contentOmitted ||= baseResult.truncated;
+    }
+
+    const hasTextContent = Boolean(
+      (newContent && newContent.length > 0) ||
+        (oldContent && oldContent.length > 0)
+    );
+
+    results.push({
+      filePath: file.filename,
+      oldPath: file.previous_filename ?? undefined,
+      status: mapGithubStatus(file.status),
+      additions: file.additions ?? 0,
+      deletions: file.deletions ?? 0,
+      patch: file.patch ?? undefined,
+      oldContent,
+      newContent,
+      isBinary: !file.patch && !hasTextContent,
+      contentOmitted,
+    });
+  }
+
+  return results;
+}
+
+async function fetchFileContent({
+  octokit,
+  owner,
+  repo,
+  path,
+  ref,
+}: {
+  octokit: ReturnType<typeof createGitHubClient>;
+  owner: string;
+  repo: string;
+  path: string;
+  ref: string;
+}): Promise<FileContentFetchResult> {
+  try {
+    const response = await octokit.rest.repos.getContent({
+      owner,
+      repo,
+      path,
+      ref,
+    });
+    const data = response.data;
+    if (!data || Array.isArray(data)) {
+      return { content: null, truncated: true };
+    }
+
+    const size =
+      typeof data.size === "number" ? data.size : undefined;
+    if (size !== undefined && size > MAX_FILE_BYTES) {
+      return { content: null, truncated: true };
+    }
+
+    if (data.type !== "file") {
+      return { content: null, truncated: true };
+    }
+
+    if (data.encoding === "base64" && typeof data.content === "string") {
+      const decoded = Buffer.from(data.content, "base64").toString("utf8");
+      return { content: decoded, truncated: false };
+    }
+
+    return { content: null, truncated: true };
+  } catch (error) {
+    console.warn("[pull-request-diff] Failed to fetch file content", {
+      owner,
+      repo,
+      path,
+      ref,
+      error,
+    });
+    return { content: null, truncated: true };
+  }
+}
+
+function mapGithubStatus(status: GithubPullRequestFile["status"] | undefined): DiffStatus {
+  switch (status) {
+    case "added":
+      return "added";
+    case "removed":
+      return "deleted";
+    case "renamed":
+      return "renamed";
+    default:
+      return "modified";
+  }
+}
+
+function PullRequestDiffContent({
+  diffs,
   fileCount,
   additions,
   deletions,
-  teamSlugOrId,
-  repoFullName,
-  pullNumber,
-  commitRef,
 }: {
-  files: GithubPullRequestFile[];
+  diffs: ReplaceDiffEntry[];
   fileCount: number;
   additions: number;
   deletions: number;
-  teamSlugOrId: string;
-  repoFullName: string;
-  pullNumber: number;
-  commitRef?: string;
 }) {
   return (
     <section className="flex flex-col gap-4">
@@ -550,13 +691,12 @@ function PullRequestDiffContent({
         additions={additions}
         deletions={deletions}
       />
-      <PullRequestDiffViewerWrapper
-        files={files}
-        teamSlugOrId={teamSlugOrId}
-        repoFullName={repoFullName}
-        pullNumber={pullNumber}
-        commitRef={commitRef}
-      />
+      <div className="rounded-2xl border border-neutral-200 bg-white shadow-sm">
+        <PullRequestMonacoDiffViewer
+          diffs={diffs}
+          className="overflow-hidden"
+        />
+      </div>
     </section>
   );
 }
@@ -582,30 +722,6 @@ function PullRequestDiffSummary({
         </p>
       </div>
     </header>
-  );
-}
-
-function PullRequestDiffViewerWrapper({
-  files,
-  teamSlugOrId,
-  repoFullName,
-  pullNumber,
-  commitRef,
-}: {
-  files: GithubPullRequestFile[];
-  teamSlugOrId: string;
-  repoFullName: string;
-  pullNumber: number;
-  commitRef?: string;
-}) {
-  return (
-    <PullRequestDiffViewer
-      files={files}
-      teamSlugOrId={teamSlugOrId}
-      repoFullName={repoFullName}
-      prNumber={pullNumber}
-      commitRef={commitRef}
-    />
   );
 }
 

@@ -1,4 +1,3 @@
-import { cn } from "@/lib/utils";
 import {
   ChevronDown,
   ChevronRight,
@@ -8,7 +7,13 @@ import {
   FilePlus,
   FileText,
 } from "lucide-react";
-import type { ReplaceDiffEntry } from "@cmux/shared/diff-types";
+import type { ReplaceDiffEntry } from "../../diff-types";
+
+function cn(
+  ...inputs: Array<string | false | null | undefined>
+): string {
+  return inputs.filter(Boolean).join(" ");
+}
 
 function getStatusColor(status: ReplaceDiffEntry["status"]) {
   switch (status) {
@@ -70,7 +75,7 @@ export function FileDiffHeader({
         className,
       )}
     >
-      <div className="flex items-center" style={{ width: '20px' }}>
+      <div className="flex items-center" style={{ width: "20px" }}>
         <div className="text-neutral-400 dark:text-neutral-500 group-hover:text-neutral-600 dark:group-hover:text-neutral-400">
           {isExpanded ? (
             <ChevronDown className="w-3.5 h-3.5" />
@@ -79,7 +84,7 @@ export function FileDiffHeader({
           )}
         </div>
       </div>
-      <div className="flex items-center" style={{ width: '20px' }}>
+      <div className="flex items-center" style={{ width: "20px" }}>
         <div className={cn("flex-shrink-0", getStatusColor(status))}>
           {getStatusIcon(status)}
         </div>

@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import type { ReplaceDiffEntry } from "@cmux/shared/diff-types";
 
-import { MonacoGitDiffViewer } from "@/components/monaco/monaco-git-diff-viewer";
+import { MonacoGitDiffViewer } from "@cmux/shared/ui/diff";
 import { debugMonacoDiffSamples } from "@/lib/debug-monaco-samples";
 
 const newlinePattern = /\r?\n/;
@@ -126,4 +126,3 @@ function DebugMonacoPage() {
     </div>
   );
 }
-

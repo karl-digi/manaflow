@@ -1,25 +1,32 @@
+"use client";
+
 import { DiffEditor, type DiffOnMount } from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
 import { memo, use, useEffect, useMemo, useRef, useState } from "react";
 
-import { useTheme } from "@/components/theme/use-theme";
-import { loaderInitPromise } from "@/lib/monaco-environment";
-import { isElectron } from "@/lib/electron";
-import { cn } from "@/lib/utils";
-import type { ReplaceDiffEntry } from "@cmux/shared/diff-types";
+import type { ReplaceDiffEntry } from "../../diff-types";
+import { loaderInitPromise } from "../monaco/monaco-environment";
+import { FileDiffHeader } from "./file-diff-header";
+import { kitties } from "./kitties";
+import type { FileDiffRowClassNames, GitDiffViewerProps } from "./types";
+export type { GitDiffViewerProps } from "./types";
 
-import { FileDiffHeader } from "../file-diff-header";
-import { kitties } from "../kitties";
-import type { GitDiffViewerProps } from "../codemirror-git-diff-viewer";
-export type { GitDiffViewerProps } from "../codemirror-git-diff-viewer";
+const isElectronRuntime =
+  typeof navigator !== "undefined" &&
+  navigator.userAgent.toLowerCase().includes("electron");
+
+const isProductionRuntime =
+  typeof process !== "undefined" &&
+  typeof process.env?.NODE_ENV === "string" &&
+  process.env.NODE_ENV === "production";
+
+function cn(
+  ...inputs: Array<string | false | null | undefined>
+): string {
+  return inputs.filter(Boolean).join(" ");
+}
 
 void loaderInitPromise;
-
-type FileDiffRowClassNames = GitDiffViewerProps["classNames"] extends {
-  fileDiffRow?: infer T;
-}
-  ? T
-  : { button?: string; container?: string };
 
 type DiffEditorControls = {
   updateCollapsedState: (collapsed: boolean) => void;
@@ -89,7 +96,7 @@ function debugGitDiffViewerLog(
   message: string,
   payload?: Record<string, unknown>,
 ) {
-  if (!isElectron && import.meta.env.PROD) {
+  if (!isElectronRuntime && isProductionRuntime) {
     return;
   }
   if (payload) {
@@ -982,8 +989,8 @@ export function MonacoGitDiffViewer({
   onControlsChange,
   classNames,
   onFileToggle,
+  theme = "light",
 }: GitDiffViewerProps) {
-  const { theme } = useTheme();
 
   const kitty = useMemo(() => {
     return kitties[Math.floor(Math.random() * kitties.length)];

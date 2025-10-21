@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 
 import { useTheme } from "@/components/theme/use-theme";
-import { loaderInitPromise } from "@/lib/monaco-environment";
+import { loaderInitPromise } from "@cmux/shared/ui/monaco";
 
 type DiffLineKind = "context" | "add" | "remove";
 

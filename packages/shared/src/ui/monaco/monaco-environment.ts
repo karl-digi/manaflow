@@ -4,31 +4,54 @@ import * as monaco from "monaco-editor";
 import "monaco-editor/esm/vs/editor/editor.all";
 import "monaco-editor/esm/vs/editor/browser/services/hoverService/hoverService";
 
-import editorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
-import cssWorker from "monaco-editor/esm/vs/language/css/css.worker?worker";
-import htmlWorker from "monaco-editor/esm/vs/language/html/html.worker?worker";
-import jsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker";
-import tsWorker from "monaco-editor/esm/vs/language/typescript/ts.worker?worker";
+const editorWorkerUrl = new URL(
+  "monaco-editor/esm/vs/editor/editor.worker.js",
+  import.meta.url,
+);
+const cssWorkerUrl = new URL(
+  "monaco-editor/esm/vs/language/css/css.worker.js",
+  import.meta.url,
+);
+const htmlWorkerUrl = new URL(
+  "monaco-editor/esm/vs/language/html/html.worker.js",
+  import.meta.url,
+);
+const jsonWorkerUrl = new URL(
+  "monaco-editor/esm/vs/language/json/json.worker.js",
+  import.meta.url,
+);
+const tsWorkerUrl = new URL(
+  "monaco-editor/esm/vs/language/typescript/ts.worker.js",
+  import.meta.url,
+);
+
+function createWorker(url: URL): Worker {
+  return new Worker(url, { type: "module" });
+}
 
 const monacoEnvironment = {
   getWorker(_: string, label: string): Worker {
     if (label === "json") {
-      return new jsonWorker();
+      return createWorker(jsonWorkerUrl);
     }
     if (label === "css" || label === "scss" || label === "less") {
-      return new cssWorker();
+      return createWorker(cssWorkerUrl);
     }
     if (label === "html" || label === "handlebars" || label === "razor") {
-      return new htmlWorker();
+      return createWorker(htmlWorkerUrl);
     }
     if (label === "typescript" || label === "javascript") {
-      return new tsWorker();
+      return createWorker(tsWorkerUrl);
     }
-    return new editorWorker();
+    return createWorker(editorWorkerUrl);
   },
 };
 
-Object.assign(self, { MonacoEnvironment: monacoEnvironment });
+if (typeof globalThis !== "undefined") {
+  Object.assign(globalThis as { MonacoEnvironment?: unknown }, {
+    MonacoEnvironment: monacoEnvironment,
+  });
+}
 
 loader.config({
   monaco,

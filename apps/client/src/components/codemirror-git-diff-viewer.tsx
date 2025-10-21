@@ -2,6 +2,11 @@ import { useTheme } from "@/components/theme/use-theme";
 import { isElectron } from "@/lib/electron";
 import { cn } from "@/lib/utils";
 import type { ReplaceDiffEntry } from "@cmux/shared/diff-types";
+import {
+  FileDiffHeader,
+  kitties,
+  type GitDiffViewerProps,
+} from "@cmux/shared/ui/diff";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import {
   createMergeBaseExtensions,
@@ -11,29 +16,6 @@ import {
   createDiffMergeView,
   type DiffMergeViewInstance,
 } from "@/lib/codemirror/diff-merge-view";
-import { kitties } from "./kitties";
-import { FileDiffHeader } from "./file-diff-header";
-
-type FileDiffRowClassNames = {
-  button?: string;
-  container?: string;
-};
-
-type GitDiffViewerClassNames = {
-  fileDiffRow?: FileDiffRowClassNames;
-};
-
-export interface GitDiffViewerProps {
-  diffs: ReplaceDiffEntry[];
-  onControlsChange?: (controls: {
-    expandAll: () => void;
-    collapseAll: () => void;
-    totalAdditions: number;
-    totalDeletions: number;
-  }) => void;
-  classNames?: GitDiffViewerClassNames;
-  onFileToggle?: (filePath: string, isExpanded: boolean) => void;
-}
 
 type FileGroup = {
   filePath: string;
@@ -66,8 +48,10 @@ export function GitDiffViewer({
   onControlsChange,
   classNames,
   onFileToggle,
+  theme: themeOverride,
 }: GitDiffViewerProps) {
-  const { theme } = useTheme();
+  const { theme: contextTheme } = useTheme();
+  const theme = themeOverride ?? contextTheme;
 
   const kitty = useMemo(() => {
     return kitties[Math.floor(Math.random() * kitties.length)];
