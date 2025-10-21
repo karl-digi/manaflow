@@ -30,6 +30,10 @@
       "import": "./src/model-usage.ts",
       "types": "./src/model-usage.ts"
     },
+    "./monaco/environment": {
+      "import": "./src/monaco/environment.ts",
+      "types": "./src/monaco/environment.ts"
+    },
     "./agentConfig": {
       "import": "./src/agentConfig.ts",
       "types": "./src/agentConfig.ts"
@@ -81,20 +85,43 @@
     "./providers/common/check-docker": {
       "import": "./src/providers/common/check-docker.ts",
       "types": "./src/providers/common/check-docker.ts"
+    },
+    "./components/diff-viewer": {
+      "import": "./src/components/diff-viewer/index.ts",
+      "types": "./src/components/diff-viewer/index.ts"
+    },
+    "./components/diff-viewer/monaco-git-diff-viewer": {
+      "import": "./src/components/diff-viewer/monaco-git-diff-viewer.tsx",
+      "types": "./src/components/diff-viewer/monaco-git-diff-viewer.tsx"
+    },
+    "./components/diff-viewer/types": {
+      "import": "./src/components/diff-viewer/types.ts",
+      "types": "./src/components/diff-viewer/types.ts"
     }
   },
   "dependencies": {
     "@cmux/convex": "workspace:*",
     "convex": "1.27.1",
+    "@monaco-editor/react": "^4.7.0",
+    "clsx": "^2.1.1",
     "jose": "^6.1.0",
-    "zod": "^4.1.5",
-    "socket.io-client": "^4.8.1"
+    "lucide-react": "^0.460.0",
+    "monaco-editor": "^0.53.0",
+    "socket.io-client": "^4.8.1",
+    "tailwind-merge": "^2.5.5",
+    "zod": "^4.1.5"
   },
   "devDependencies": {
     "@types/node": "^24.3.1",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
     "@xterm/xterm": "^5.5.0",
     "typescript": "^5.8.3",
     "socket.io": "^4.8.1",
     "vitest": "^3.2.4"
+  },
+  "peerDependencies": {
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
   }
 }

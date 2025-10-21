@@ -13,6 +13,14 @@ const nextConfig: NextConfig = {
         : config.externals
           ? [config.externals, ...externals]
           : externals;
+    } else {
+      config.resolve = config.resolve ?? {};
+      config.resolve.fallback = {
+        ...(config.resolve.fallback ?? {}),
+        fs: false,
+        path: false,
+        os: false,
+      };
     }
     return config;
   },
@@ -20,6 +28,8 @@ const nextConfig: NextConfig = {
     "@cmux/server",
     "@cmux/shared",
     "@cmux/convex",
+    "@monaco-editor/react",
+    "monaco-editor",
     "refractor",
   ],
 };

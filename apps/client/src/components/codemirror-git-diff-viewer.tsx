@@ -2,6 +2,12 @@ import { useTheme } from "@/components/theme/use-theme";
 import { isElectron } from "@/lib/electron";
 import { cn } from "@/lib/utils";
 import type { ReplaceDiffEntry } from "@cmux/shared/diff-types";
+import {
+  FileDiffHeader,
+  kitties,
+  type GitDiffViewerProps,
+  type GitDiffViewerControls,
+} from "@cmux/shared/components/diff-viewer";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import {
   createMergeBaseExtensions,
@@ -11,29 +17,6 @@ import {
   createDiffMergeView,
   type DiffMergeViewInstance,
 } from "@/lib/codemirror/diff-merge-view";
-import { kitties } from "./kitties";
-import { FileDiffHeader } from "./file-diff-header";
-
-type FileDiffRowClassNames = {
-  button?: string;
-  container?: string;
-};
-
-type GitDiffViewerClassNames = {
-  fileDiffRow?: FileDiffRowClassNames;
-};
-
-export interface GitDiffViewerProps {
-  diffs: ReplaceDiffEntry[];
-  onControlsChange?: (controls: {
-    expandAll: () => void;
-    collapseAll: () => void;
-    totalAdditions: number;
-    totalDeletions: number;
-  }) => void;
-  classNames?: GitDiffViewerClassNames;
-  onFileToggle?: (filePath: string, isExpanded: boolean) => void;
-}
 
 type FileGroup = {
   filePath: string;
@@ -66,8 +49,10 @@ export function GitDiffViewer({
   onControlsChange,
   classNames,
   onFileToggle,
+  theme: themeProp,
 }: GitDiffViewerProps) {
-  const { theme } = useTheme();
+  const { theme: contextTheme } = useTheme();
+  const theme = themeProp ?? contextTheme;
 
   const kitty = useMemo(() => {
     return kitties[Math.floor(Math.random() * kitties.length)];
@@ -133,13 +118,7 @@ export function GitDiffViewer({
 
   // Keep a stable ref to the controls handler to avoid effect loops
   const controlsHandlerRef = useRef<
-    | ((args: {
-        expandAll: () => void;
-        collapseAll: () => void;
-        totalAdditions: number;
-        totalDeletions: number;
-      }) => void)
-    | null
+    ((args: GitDiffViewerControls) => void) | null
   >(null);
   useEffect(() => {
     controlsHandlerRef.current = onControlsChange ?? null;

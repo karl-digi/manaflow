@@ -6,7 +6,7 @@ import { waitUntil } from "@vercel/functions";
 import { ExternalLink, GitPullRequest } from "lucide-react";
 import { type Team } from "@stackframe/stack";
 
-import { PullRequestDiffViewer } from "@/components/pr/pull-request-diff-viewer";
+import { PullRequestDiffSwitcher } from "@/components/pr/pull-request-diff-switcher";
 import {
   fetchPullRequest,
   fetchPullRequestFiles,
@@ -20,6 +20,7 @@ import {
   getConvexHttpActionBaseUrl,
   startCodeReviewJob,
 } from "@/lib/services/code-review/start-code-review";
+import { Button } from "@/components/ui/button";
 
 type PageParams = {
   teamSlugOrId: string;
@@ -544,66 +545,14 @@ function PullRequestDiffContent({
   commitRef?: string;
 }) {
   return (
-    <section className="flex flex-col gap-4">
-      <PullRequestDiffSummary
-        fileCount={fileCount}
-        additions={additions}
-        deletions={deletions}
-      />
-      <PullRequestDiffViewerWrapper
-        files={files}
-        teamSlugOrId={teamSlugOrId}
-        repoFullName={repoFullName}
-        pullNumber={pullNumber}
-        commitRef={commitRef}
-      />
-    </section>
-  );
-}
-
-function PullRequestDiffSummary({
-  fileCount,
-  additions,
-  deletions,
-}: {
-  fileCount: number;
-  additions: number;
-  deletions: number;
-}) {
-  return (
-    <header className="flex flex-wrap items-center justify-between gap-3">
-      <div>
-        <h2 className="text-lg font-semibold text-neutral-900">
-          Files changed
-        </h2>
-        <p className="text-sm text-neutral-600">
-          {fileCount} file{fileCount === 1 ? "" : "s"}, {additions} additions,{" "}
-          {deletions} deletions
-        </p>
-      </div>
-    </header>
-  );
-}
-
-function PullRequestDiffViewerWrapper({
-  files,
-  teamSlugOrId,
-  repoFullName,
-  pullNumber,
-  commitRef,
-}: {
-  files: GithubPullRequestFile[];
-  teamSlugOrId: string;
-  repoFullName: string;
-  pullNumber: number;
-  commitRef?: string;
-}) {
-  return (
-    <PullRequestDiffViewer
+    <PullRequestDiffSwitcher
       files={files}
+      fileCount={fileCount}
+      additions={additions}
+      deletions={deletions}
       teamSlugOrId={teamSlugOrId}
       repoFullName={repoFullName}
-      prNumber={pullNumber}
+      pullNumber={pullNumber}
       commitRef={commitRef}
     />
   );

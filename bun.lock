@@ -23,7 +23,7 @@
     },
     "apps/client": {
       "name": "@cmux/client",
-      "version": "1.0.106",
+      "version": "1.0.107",
       "dependencies": {
         "@base-ui-components/react": "1.0.0-beta.2",
         "@cmux/convex": "workspace:*",
@@ -412,17 +412,28 @@
       "version": "1.0.0",
       "dependencies": {
         "@cmux/convex": "workspace:*",
+        "@monaco-editor/react": "^4.7.0",
+        "clsx": "^2.1.1",
         "convex": "1.27.1",
         "jose": "^6.1.0",
+        "lucide-react": "^0.460.0",
+        "monaco-editor": "^0.53.0",
         "socket.io-client": "^4.8.1",
+        "tailwind-merge": "^2.5.5",
         "zod": "^4.1.5",
       },
       "devDependencies": {
         "@types/node": "^24.3.1",
+        "@types/react": "^19.1.8",
+        "@types/react-dom": "^19.1.6",
         "@xterm/xterm": "^5.5.0",
         "socket.io": "^4.8.1",
         "typescript": "^5.8.3",
         "vitest": "^3.2.4",
+      },
+      "peerDependencies": {
+        "react": "^19.1.0",
+        "react-dom": "^19.1.0",
       },
     },
     "packages/vscode-extension": {
@@ -4671,6 +4682,10 @@
     "@cmux/server/ignore": ["ignore@7.0.5", "", {}, "sha512-Hs59xBNfUIunMFgWAbGX5cq6893IbWg4KnrjbYwX3tx0ztorVgTDA6B2sxf8ejHJ4wz8BqGUMYlnzNBer5NvGg=="],
 
     "@cmux/server/octokit": ["octokit@3.2.2", "", { "dependencies": { "@octokit/app": "^14.0.2", "@octokit/core": "^5.0.0", "@octokit/oauth-app": "^6.0.0", "@octokit/plugin-paginate-graphql": "^4.0.0", "@octokit/plugin-paginate-rest": "11.4.4-cjs.2", "@octokit/plugin-rest-endpoint-methods": "13.3.2-cjs.1", "@octokit/plugin-retry": "^6.0.0", "@octokit/plugin-throttling": "^8.0.0", "@octokit/request-error": "^5.0.0", "@octokit/types": "^13.0.0", "@octokit/webhooks": "^12.3.1" } }, "sha512-7Abo3nADdja8l/aglU6Y3lpnHSfv0tw7gFPiqzry/yCU+2gTAX7R1roJ8hJrxIK+S1j+7iqRJXtmuHJ/UDsBhQ=="],
+
+    "@cmux/shared/lucide-react": ["lucide-react@0.460.0", "", { "peerDependencies": { "react": "^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0-rc" } }, "sha512-BVtq/DykVeIvRTJvRAgCsOwaGL8Un3Bxh8MbDxMhEWlZay3T4IpEKDEpwt5KZ0KJMHzgm6jrltxlT5eXOWXDHg=="],
+
+    "@cmux/shared/tailwind-merge": ["tailwind-merge@2.6.0", "", {}, "sha512-P+Vu1qXfzediirmHOC3xKGAYeZtPcV9g76X+xg2FD4tYgR71ewMA35Y3sCz3zhiN/dwefRpJX0yBcgwi1fXNQA=="],
 
     "@cmux/worker/@types/node": ["@types/node@24.5.2", "", { "dependencies": { "undici-types": "~7.12.0" } }, "sha512-FYxk1I7wPv3K2XBaoyH2cTnocQEu8AOZ60hPbsyukMPLv5/5qr7V1i8PLHdl6Zf87I+xZXFvPCXYjiTFq+YSDQ=="],
 
