@@ -40,6 +40,10 @@ function SettingsComponent() {
   const [autoPrEnabled, setAutoPrEnabled] = useState<boolean>(false);
   const [originalAutoPrEnabled, setOriginalAutoPrEnabled] =
     useState<boolean>(false);
+  const [allowPrereleaseUpdates, setAllowPrereleaseUpdates] =
+    useState<boolean>(false);
+  const [originalAllowPrereleaseUpdates, setOriginalAllowPrereleaseUpdates] =
+    useState<boolean>(false);
   // const [isSaveButtonVisible, setIsSaveButtonVisible] = useState(true);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const saveButtonRef = useRef<HTMLDivElement>(null);
@@ -145,8 +149,26 @@ function SettingsComponent() {
       const effective = enabled === undefined ? false : Boolean(enabled);
       setAutoPrEnabled(effective);
       setOriginalAutoPrEnabled(effective);
+      const allowPrerelease = (
+        workspaceSettings as unknown as {
+          allowPrereleaseUpdates?: boolean;
+        }
+      )?.allowPrereleaseUpdates;
+      const allowPrereleaseEffective =
+        allowPrerelease === undefined ? false : Boolean(allowPrerelease);
+      setAllowPrereleaseUpdates(allowPrereleaseEffective);
+      setOriginalAllowPrereleaseUpdates(allowPrereleaseEffective);
     }
   }, [workspaceSettings]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const maybeSetAllowPrerelease = window.cmux?.autoUpdate?.setAllowPrerelease;
+    if (!maybeSetAllowPrerelease) return;
+    void maybeSetAllowPrerelease(allowPrereleaseUpdates).catch((error) => {
+      console.warn("Failed to update autoUpdater prerelease setting", error);
+    });
+  }, [allowPrereleaseUpdates]);
 
   // Track save button visibility
   // Footer-based save button; no visibility tracking needed
@@ -243,10 +265,13 @@ function SettingsComponent() {
 
     // Auto PR toggle changes
     const autoPrChanged = autoPrEnabled !== originalAutoPrEnabled;
+    const allowPrereleaseChanged =
+      allowPrereleaseUpdates !== originalAllowPrereleaseUpdates;
 
     return (
       worktreePathChanged ||
       autoPrChanged ||
+      allowPrereleaseChanged ||
       apiKeysChanged ||
       containerSettingsChanged
     );
@@ -260,17 +285,21 @@ function SettingsComponent() {
       let deletedCount = 0;
 
       // Save worktree path / auto PR if changed
-      if (
+      const shouldUpdateWorkspaceSettings =
         worktreePath !== originalWorktreePath ||
-        autoPrEnabled !== originalAutoPrEnabled
-      ) {
+        autoPrEnabled !== originalAutoPrEnabled ||
+        allowPrereleaseUpdates !== originalAllowPrereleaseUpdates;
+
+      if (shouldUpdateWorkspaceSettings) {
         await convex.mutation(api.workspaceSettings.update, {
           teamSlugOrId,
           worktreePath: worktreePath || undefined,
           autoPrEnabled,
+          allowPrereleaseUpdates,
         });
         setOriginalWorktreePath(worktreePath);
         setOriginalAutoPrEnabled(autoPrEnabled);
+        setOriginalAllowPrereleaseUpdates(allowPrereleaseUpdates);
       }
 
       // Save container settings if changed
@@ -609,6 +638,34 @@ function SettingsComponent() {
                       System
                     </button>
                   </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Desktop Updates */}
+            <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
+              <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
+                <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                  Desktop Updates
+                </h2>
+              </div>
+              <div className="p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                      Always install the newest release
+                    </label>
+                    <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                      Include prerelease builds from GitHub so the desktop app updates as soon as a new version is published.
+                    </p>
+                  </div>
+                  <Switch
+                    aria-label="Always install the newest release"
+                    size="sm"
+                    color="primary"
+                    isSelected={allowPrereleaseUpdates}
+                    onValueChange={setAllowPrereleaseUpdates}
+                  />
                 </div>
               </div>
             </div>

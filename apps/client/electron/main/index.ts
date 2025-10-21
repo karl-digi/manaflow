@@ -394,6 +394,26 @@ function registerAutoUpdateIpcHandlers(): void {
     }
   });
 
+  ipcMain.handle(
+    "cmux:auto-update:set-allow-prerelease",
+    (_event, payload: unknown) => {
+      const requested =
+        payload && typeof payload === "object" && payload !== null
+          ? Boolean((payload as { allow?: unknown }).allow)
+          : Boolean(payload);
+
+      autoUpdater.allowPrerelease = requested;
+      mainLog("Renderer updated autoUpdater.allowPrerelease", {
+        allowPrerelease: autoUpdater.allowPrerelease,
+      });
+
+      return {
+        ok: true as const,
+        allowPrerelease: autoUpdater.allowPrerelease,
+      };
+    }
+  );
+
   ipcMain.handle("cmux:auto-update:install", async () => {
     if (!app.isPackaged) {
       mainLog(
