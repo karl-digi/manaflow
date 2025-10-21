@@ -412,6 +412,52 @@ function registerAutoUpdateIpcHandlers(): void {
       throw err;
     }
   });
+
+  ipcMain.handle(
+    "cmux:auto-update:set-allow-prerelease",
+    async (_event, allowPrereleaseRaw?: unknown) => {
+      if (!app.isPackaged) {
+        mainLog(
+          "Allow prerelease toggle requested while app is not packaged; ignoring request"
+        );
+        return { ok: false, reason: "not-packaged" as const };
+      }
+
+      try {
+        const allowPrerelease = Boolean(allowPrereleaseRaw);
+        autoUpdater.allowPrerelease = allowPrerelease;
+        mainLog("Updated autoUpdater.allowPrerelease via renderer", {
+          allowPrerelease,
+        });
+
+        if (allowPrerelease) {
+          void autoUpdater
+            .checkForUpdates()
+            .then((result) =>
+              logUpdateCheckResult(
+                "Allow prerelease toggle checkForUpdates",
+                result
+              )
+            )
+            .catch((error) =>
+              mainWarn(
+                "Allow prerelease toggle checkForUpdates failed",
+                error
+              )
+            );
+        }
+
+        return {
+          ok: true as const,
+          allowPrerelease: autoUpdater.allowPrerelease,
+        };
+      } catch (error) {
+        mainWarn("Failed to update allowPrerelease preference", error);
+        const err = error instanceof Error ? error : new Error(String(error));
+        throw err;
+      }
+    }
+  );
 }
 
 // Write critical errors to a file to aid debugging packaged crashes

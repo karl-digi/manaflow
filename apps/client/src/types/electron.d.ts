@@ -116,6 +116,14 @@ interface CmuxAPI {
         version?: string | null;
       }>;
     install: () => Promise<{ ok: boolean; reason?: string }>;
+    setAllowPrerelease: (
+      allow: boolean
+    ) =>
+      Promise<{
+        ok: boolean;
+        reason?: string;
+        allowPrerelease?: boolean;
+      }>;
   };
 }
 

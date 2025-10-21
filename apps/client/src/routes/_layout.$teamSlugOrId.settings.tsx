@@ -3,6 +3,7 @@ import { FloatingPane } from "@/components/floating-pane";
 import { ProviderStatusSettings } from "@/components/provider-status-settings";
 import { useTheme } from "@/components/theme/use-theme";
 import { TitleBar } from "@/components/TitleBar";
+import { isElectron } from "@/lib/electron";
 import { api } from "@cmux/convex/api";
 import type { Doc } from "@cmux/convex/dataModel";
 import { AGENT_CONFIGS, type AgentConfig } from "@cmux/shared/agentConfig";
@@ -40,9 +41,14 @@ function SettingsComponent() {
   const [autoPrEnabled, setAutoPrEnabled] = useState<boolean>(false);
   const [originalAutoPrEnabled, setOriginalAutoPrEnabled] =
     useState<boolean>(false);
+  const [allowPrereleaseUpdates, setAllowPrereleaseUpdates] =
+    useState<boolean>(false);
+  const [originalAllowPrereleaseUpdates, setOriginalAllowPrereleaseUpdates] =
+    useState<boolean>(false);
   // const [isSaveButtonVisible, setIsSaveButtonVisible] = useState(true);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const saveButtonRef = useRef<HTMLDivElement>(null);
+  const lastAppliedAllowPrereleaseRef = useRef<boolean | null>(null);
   const usedListRefs = useRef<Record<string, HTMLSpanElement | null>>({});
   const [expandedUsedList, setExpandedUsedList] = useState<
     Record<string, boolean>
@@ -86,6 +92,27 @@ function SettingsComponent() {
   const { data: workspaceSettings } = useQuery(
     convexQuery(api.workspaceSettings.get, { teamSlugOrId })
   );
+
+  const { data: releasePreferences } = useQuery(
+    convexQuery(api.releasePreferences.get, { teamSlugOrId })
+  );
+
+  const applyAllowPrereleasePreference = useCallback((value: boolean) => {
+    if (!isElectron) return;
+    const maybeWindow =
+      typeof window === "undefined" ? undefined : window;
+    const setter = maybeWindow?.cmux?.autoUpdate?.setAllowPrerelease;
+    if (typeof setter !== "function") return;
+    if (lastAppliedAllowPrereleaseRef.current === value) return;
+    lastAppliedAllowPrereleaseRef.current = value;
+    void setter(value).catch((error) => {
+      console.error(
+        "Failed to update Electron prerelease preference",
+        error
+      );
+      lastAppliedAllowPrereleaseRef.current = null;
+    });
+  }, []);
 
   // Initialize form values when data loads
   useEffect(() => {
@@ -147,6 +174,14 @@ function SettingsComponent() {
       setOriginalAutoPrEnabled(effective);
     }
   }, [workspaceSettings]);
+
+  useEffect(() => {
+    if (releasePreferences === undefined) return;
+    const allow = releasePreferences?.allowPrerelease ?? false;
+    setAllowPrereleaseUpdates(allow);
+    setOriginalAllowPrereleaseUpdates(allow);
+    applyAllowPrereleasePreference(allow);
+  }, [releasePreferences, applyAllowPrereleasePreference]);
 
   // Track save button visibility
   // Footer-based save button; no visibility tracking needed
@@ -244,9 +279,13 @@ function SettingsComponent() {
     // Auto PR toggle changes
     const autoPrChanged = autoPrEnabled !== originalAutoPrEnabled;
 
+    const prereleaseChanged =
+      allowPrereleaseUpdates !== originalAllowPrereleaseUpdates;
+
     return (
       worktreePathChanged ||
       autoPrChanged ||
+      prereleaseChanged ||
       apiKeysChanged ||
       containerSettingsChanged
     );
@@ -258,6 +297,9 @@ function SettingsComponent() {
     try {
       let savedCount = 0;
       let deletedCount = 0;
+      let workspaceSettingsUpdated = false;
+      let releasePreferenceUpdated = false;
+      let containerSettingsUpdated = false;
 
       // Save worktree path / auto PR if changed
       if (
@@ -271,6 +313,19 @@ function SettingsComponent() {
         });
         setOriginalWorktreePath(worktreePath);
         setOriginalAutoPrEnabled(autoPrEnabled);
+        workspaceSettingsUpdated = true;
+      }
+
+      if (
+        allowPrereleaseUpdates !== originalAllowPrereleaseUpdates
+      ) {
+        await convex.mutation(api.releasePreferences.update, {
+          teamSlugOrId,
+          allowPrerelease: allowPrereleaseUpdates,
+        });
+        setOriginalAllowPrereleaseUpdates(allowPrereleaseUpdates);
+        releasePreferenceUpdated = true;
+        applyAllowPrereleasePreference(allowPrereleaseUpdates);
       }
 
       // Save container settings if changed
@@ -285,6 +340,7 @@ function SettingsComponent() {
           ...containerSettingsData,
         });
         setOriginalContainerSettingsData(containerSettingsData);
+        containerSettingsUpdated = true;
       }
 
       for (const key of apiKeys) {
@@ -319,16 +375,26 @@ function SettingsComponent() {
       // After successful save, hide all API key inputs
       setShowKeys({});
 
-      if (savedCount > 0 || deletedCount > 0) {
-        const actions = [];
-        if (savedCount > 0) {
-          actions.push(`saved ${savedCount} key${savedCount > 1 ? "s" : ""}`);
-        }
-        if (deletedCount > 0) {
-          actions.push(
-            `removed ${deletedCount} key${deletedCount > 1 ? "s" : ""}`
-          );
-        }
+      const actions = [] as string[];
+      if (workspaceSettingsUpdated) {
+        actions.push("updated workspace settings");
+      }
+      if (releasePreferenceUpdated) {
+        actions.push("updated release preference");
+      }
+      if (containerSettingsUpdated) {
+        actions.push("updated container settings");
+      }
+      if (savedCount > 0) {
+        actions.push(`saved ${savedCount} key${savedCount > 1 ? "s" : ""}`);
+      }
+      if (deletedCount > 0) {
+        actions.push(
+          `removed ${deletedCount} key${deletedCount > 1 ? "s" : ""}`
+        );
+      }
+
+      if (actions.length > 0) {
         toast.success(`Successfully ${actions.join(" and ")}`);
       } else {
         toast.info("No changes to save");
@@ -637,6 +703,35 @@ function SettingsComponent() {
                     color="primary"
                     isSelected={autoPrEnabled}
                     onValueChange={setAutoPrEnabled}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Desktop Updates */}
+            <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
+              <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
+                <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                  Desktop Updates
+                </h2>
+              </div>
+              <div className="p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                      Always install the latest GitHub release
+                    </label>
+                    <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                      Include prerelease builds when checking for updates so
+                      your desktop app is always on the newest tagged release.
+                    </p>
+                  </div>
+                  <Switch
+                    aria-label="Always install the latest GitHub release"
+                    size="sm"
+                    color="primary"
+                    isSelected={allowPrereleaseUpdates}
+                    onValueChange={setAllowPrereleaseUpdates}
                   />
                 </div>
               </div>

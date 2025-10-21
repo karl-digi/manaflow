@@ -409,6 +409,13 @@ const convexSchema = defineSchema({
     userId: v.string(),
     teamId: v.string(),
   }).index("by_team_user", ["teamId", "userId"]),
+  releasePreferences: defineTable({
+    allowPrerelease: v.boolean(), // Allow desktop app to install prerelease builds
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    userId: v.string(),
+    teamId: v.string(),
+  }).index("by_team_user", ["teamId", "userId"]),
   crownEvaluations: defineTable({
     taskId: v.id("tasks"),
     evaluatedAt: v.number(),
