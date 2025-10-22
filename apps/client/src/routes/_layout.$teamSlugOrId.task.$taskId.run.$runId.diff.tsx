@@ -13,6 +13,7 @@ import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { normalizeGitRef } from "@/lib/refWithOrigin";
 import { cn } from "@/lib/utils";
+import { branchesQueryOptions } from "@/queries/branches";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
@@ -545,9 +546,9 @@ export const Route = createFileRoute(
           return;
         }
 
-        const baseRefForDiff = normalizeGitRef(task.baseBranch || "main");
+        const baseRefForDiff = normalizeGitRef(task.baseBranch);
         const headRefForDiff = normalizeGitRef(selectedTaskRun.newBranch);
-        if (!headRefForDiff || !baseRefForDiff) {
+        if (!headRefForDiff) {
           return;
         }
 
@@ -567,7 +568,7 @@ export const Route = createFileRoute(
           return opts.context.queryClient
             .ensureQueryData(
               gitDiffQueryOptions({
-                baseRef: baseRefForDiff,
+                baseRef: baseRefForDiff || undefined,
                 headRef: headRefForDiff,
                 repoFullName,
                 lastKnownBaseSha: metadata?.lastKnownBaseSha,
@@ -659,6 +660,14 @@ function RunDiffPage() {
 
   const [primaryRepo, ...additionalRepos] = repoFullNames;
 
+  const remoteBranchesQuery = useRQ({
+    ...branchesQueryOptions({
+      teamSlugOrId,
+      repoFullName: primaryRepo ?? "",
+    }),
+    enabled: Boolean(primaryRepo),
+  });
+
   const branchMetadataQuery = useRQ({
     ...convexQuery(api.github.getBranchesByRepo, {
       teamSlugOrId,
@@ -693,6 +702,39 @@ function RunDiffPage() {
     };
   }, [primaryRepo, baseBranchMetadata]);
 
+  const remoteDefaultBranch = useMemo(() => {
+    const data = remoteBranchesQuery.data;
+    if (!data) {
+      return undefined;
+    }
+    const fromResponse = data.defaultBranch?.trim();
+    if (fromResponse) {
+      return fromResponse;
+    }
+    const flagged = data.branches?.find((branch) => branch.isDefault)?.name?.trim();
+    return flagged || undefined;
+  }, [remoteBranchesQuery.data]);
+
+  const resolvedBaseBranch = useMemo(() => {
+    const explicit = task?.baseBranch?.trim();
+    if (explicit) {
+      return explicit;
+    }
+    return remoteDefaultBranch;
+  }, [task?.baseBranch, remoteDefaultBranch]);
+
+  const baseRef = useMemo(() => {
+    const normalized = normalizeGitRef(resolvedBaseBranch);
+    return normalized || undefined;
+  }, [resolvedBaseBranch]);
+
+  const headRef = useMemo(() => {
+    const normalized = normalizeGitRef(selectedRun?.newBranch);
+    return normalized || undefined;
+  }, [selectedRun?.newBranch]);
+
+  const hasDiffSources = Boolean(primaryRepo) && Boolean(headRef);
+
   const restartAgents = useMemo(() => {
     const previousAgents = collectAgentNamesFromRuns(taskRuns);
     if (previousAgents.length > 0) {
@@ -716,11 +758,6 @@ function RunDiffPage() {
       </div>
     );
   }
-
-  const baseRef = normalizeGitRef(task?.baseBranch || "main");
-  const headRef = normalizeGitRef(selectedRun.newBranch);
-  const hasDiffSources =
-    Boolean(primaryRepo) && Boolean(baseRef) && Boolean(headRef);
   const shouldPrefixDiffs = repoFullNames.length > 1;
 
   return (
@@ -737,6 +774,7 @@ function RunDiffPage() {
             onExpandAllChecks={expandAllChecks}
             onCollapseAllChecks={collapseAllChecks}
             teamSlugOrId={teamSlugOrId}
+            resolvedBaseBranch={resolvedBaseBranch}
           />
           {task?.text && (
             <div className="mb-2 px-3.5">
@@ -778,8 +816,8 @@ function RunDiffPage() {
                   repoFullName={primaryRepo as string}
                   additionalRepoFullNames={additionalRepos}
                   withRepoPrefix={shouldPrefixDiffs}
-                  ref1={baseRef}
-                  ref2={headRef}
+                  baseRef={baseRef}
+                  headRef={headRef!}
                   onControlsChange={setDiffControls}
                   classNames={gitDiffViewerClassNames}
                   metadataByRepo={metadataByRepo}

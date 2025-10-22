@@ -33,21 +33,21 @@ type DiffControls = {
 
 type AdditionsAndDeletionsProps = {
   repoFullName: string;
-  ref1: string;
-  ref2: string;
+  baseRef?: string;
+  headRef: string;
 };
 
 
 function AdditionsAndDeletions({
   repoFullName,
-  ref1,
-  ref2,
+  baseRef,
+  headRef,
 }: AdditionsAndDeletionsProps) {
   const diffsQuery = useRQ(
     gitDiffQueryOptions({
       repoFullName,
-      baseRef: normalizeGitRef(ref1),
-      headRef: normalizeGitRef(ref2),
+      baseRef: normalizeGitRef(baseRef) || undefined,
+      headRef: normalizeGitRef(headRef),
     })
   );
 
@@ -236,8 +236,8 @@ export function PullRequestDetailView({
                 >
                   <AdditionsAndDeletions
                     repoFullName={currentPR.repoFullName}
-                    ref1={currentPR.baseRef || ""}
-                    ref2={currentPR.headRef || ""}
+                    baseRef={currentPR.baseRef}
+                    headRef={currentPR.headRef || ""}
                   />
                 </Suspense>
                 <Suspense fallback={null}>
@@ -385,12 +385,11 @@ export function PullRequestDetailView({
               }
             >
               {currentPR?.repoFullName &&
-                currentPR.baseRef &&
                 currentPR.headRef ? (
                 <RunDiffSection
                   repoFullName={currentPR.repoFullName}
-                  ref1={normalizeGitRef(currentPR.baseRef)}
-                  ref2={normalizeGitRef(currentPR.headRef)}
+                  baseRef={normalizeGitRef(currentPR.baseRef) || undefined}
+                  headRef={normalizeGitRef(currentPR.headRef)}
                   onControlsChange={handleDiffControlsChange}
                   classNames={gitDiffViewerClassNames}
                 />

@@ -6,8 +6,8 @@ import type { ReplaceDiffEntry } from "@cmux/shared/diff-types";
 
 export interface RunDiffSectionProps {
   repoFullName: string;
-  ref1: string;
-  ref2: string;
+  baseRef?: string;
+  headRef: string;
   classNames?: ComponentProps<typeof GitDiffViewer>["classNames"];
   onControlsChange?: ComponentProps<typeof GitDiffViewer>["onControlsChange"];
   additionalRepoFullNames?: string[];
@@ -41,8 +41,8 @@ function applyRepoPrefix(
 export function RunDiffSection(props: RunDiffSectionProps) {
   const {
     repoFullName,
-    ref1,
-    ref2,
+    baseRef,
+    headRef,
     classNames,
     onControlsChange,
     additionalRepoFullNames,
@@ -62,14 +62,14 @@ export function RunDiffSection(props: RunDiffSectionProps) {
     return Array.from(unique);
   }, [repoFullName, additionalRepoFullNames]);
 
-  const canFetch = repoFullNames.length > 0 && Boolean(ref1) && Boolean(ref2);
+  const canFetch = repoFullNames.length > 0 && Boolean(headRef);
 
   const queries = useQueries({
     queries: repoFullNames.map((repo) => ({
       ...gitDiffQueryOptions({
         repoFullName: repo,
-        baseRef: ref1,
-        headRef: ref2,
+        baseRef: baseRef || undefined,
+        headRef: headRef,
         lastKnownBaseSha: metadataByRepo?.[repo]?.lastKnownBaseSha,
         lastKnownMergeCommitSha:
           metadataByRepo?.[repo]?.lastKnownMergeCommitSha,
@@ -134,7 +134,7 @@ export function RunDiffSection(props: RunDiffSectionProps) {
 
   return (
     <GitDiffViewer
-      key={`${repoFullNames.join("|")}:${ref1}:${ref2}`}
+      key={`${repoFullNames.join("|")}:${baseRef ?? ""}:${headRef}`}
       diffs={combinedDiffs}
       onControlsChange={onControlsChange}
       classNames={classNames}
