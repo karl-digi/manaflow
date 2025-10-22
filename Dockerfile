@@ -259,6 +259,7 @@ COPY apps/worker/wait-for-docker.sh ./apps/worker/
 
 # Copy Chrome DevTools proxy source
 COPY scripts/cdp-proxy ./scripts/cdp-proxy/
+COPY scripts/novnc-proxy ./scripts/novnc-proxy/
 
 # Copy VS Code extension source
 COPY packages/vscode-extension/src ./packages/vscode-extension/src
@@ -279,7 +280,7 @@ RUN cd /cmux && \
   cp ./apps/worker/wait-for-docker.sh /usr/local/bin/ && \
   chmod +x /usr/local/bin/wait-for-docker.sh
 
-# Build Chrome DevTools proxy binary
+# Build Go helper binaries
 RUN --mount=type=cache,target=/root/.cache/go-build \
   --mount=type=cache,target=/go/pkg/mod \
   <<'EOF'
@@ -301,9 +302,14 @@ case "${TARGETPLATFORM:-}" in
     ;;
 esac
 export CGO_ENABLED=0
-cd /cmux/scripts/cdp-proxy
-go build -trimpath -ldflags="-s -w" -o /usr/local/lib/cmux/cmux-cdp-proxy .
-test -x /usr/local/lib/cmux/cmux-cdp-proxy
+for entry in "cdp-proxy cmux-cdp-proxy" "novnc-proxy cmux-novnc-proxy"; do
+  set -- ${entry}
+  dir="$1"
+  binary="$2"
+  cd "/cmux/scripts/${dir}"
+  go build -trimpath -ldflags="-s -w" -o "/usr/local/lib/cmux/${binary}" .
+  test -x "/usr/local/lib/cmux/${binary}"
+done
 EOF
 
 # Verify bun is still working in builder
@@ -360,7 +366,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   xvfb \
   x11vnc \
   fluxbox \
-  websockify \
   novnc \
   xauth \
   xdg-utils \
@@ -709,7 +714,8 @@ COPY configs/systemd/bin/cmux-manage-dockerd /usr/local/lib/cmux/cmux-manage-doc
 COPY configs/systemd/bin/cmux-stop-dockerd /usr/local/lib/cmux/cmux-stop-dockerd
 COPY configs/systemd/bin/cmux-configure-memory /usr/local/sbin/cmux-configure-memory
 COPY --from=builder /usr/local/lib/cmux/cmux-cdp-proxy /usr/local/lib/cmux/cmux-cdp-proxy
-RUN chmod +x /usr/local/lib/cmux/configure-openvscode /usr/local/lib/cmux/cmux-start-chrome /usr/local/lib/cmux/cmux-cdp-proxy && \
+COPY --from=builder /usr/local/lib/cmux/cmux-novnc-proxy /usr/local/lib/cmux/cmux-novnc-proxy
+RUN chmod +x /usr/local/lib/cmux/configure-openvscode /usr/local/lib/cmux/cmux-start-chrome /usr/local/lib/cmux/cmux-cdp-proxy /usr/local/lib/cmux/cmux-novnc-proxy && \
   chmod +x /usr/local/lib/cmux/cmux-manage-dockerd /usr/local/lib/cmux/cmux-stop-dockerd && \
   chmod +x /usr/local/sbin/cmux-configure-memory && \
   touch /usr/local/lib/cmux/dockerd.flag && \
@@ -747,7 +753,7 @@ RUN mkdir -p /root/.openvscode-server/data/User && \
 # 39377: Worker service
 # 39378: OpenVSCode server
 # 39379: cmux-proxy
-# 39380: VNC over Websockify (noVNC)
+# 39380: VNC over WebSocket (noVNC proxy)
 # 39381: Chrome DevTools (CDP)
 # 39382: Chrome DevTools target
 # 39383: cmux-xterm server
