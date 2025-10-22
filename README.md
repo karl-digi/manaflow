@@ -44,3 +44,9 @@ cmux upgrade
 ```bash
 cmux uninstall
 ```
+
+---
+
+Agents in containers,  
+Code evolves in parallel streams,  
+Creativity blooms.
