@@ -44,3 +44,9 @@ cmux upgrade
 ```bash
 cmux uninstall
 ```
+
+```
+Silent sandboxes
+Agents weave threads through the code
+Dawn commits the merge
+```
