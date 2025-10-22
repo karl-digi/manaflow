@@ -66,6 +66,7 @@ export function MergeButton({
       <button
         onClick={() => onMerge("squash")}
         disabled={disabled}
+        title={disabled ? disabledReason : undefined}
         className={cn(
           "flex items-center gap-1.5 px-3 py-1 h-[26px] bg-[#1f883d] dark:bg-[#238636] text-white rounded hover:bg-[#1f883d]/90 dark:hover:bg-[#238636]/90 disabled:opacity-50 disabled:cursor-not-allowed font-medium text-xs select-none whitespace-nowrap",
           className
@@ -99,6 +100,7 @@ export function MergeButton({
       <button
         onClick={handleMerge}
         disabled={disabled}
+        title={disabled ? disabledReason : undefined}
         className={cn(
           "flex items-center gap-1.5 px-3 py-1 h-[26px] bg-[#1f883d] dark:bg-[#238636] text-white rounded-l hover:bg-[#1f883d]/90 dark:hover:bg-[#238636]/90 disabled:opacity-50 disabled:cursor-not-allowed font-medium text-xs border-r border-green-700 select-none whitespace-nowrap",
           className
@@ -116,6 +118,7 @@ export function MergeButton({
         <DropdownMenu.Trigger asChild>
           <button
             disabled={disabled}
+            title={disabled ? disabledReason : undefined}
             className="flex items-center px-2 py-1 h-[26px] bg-[#1f883d] dark:bg-[#238636] text-white rounded-r hover:bg-[#1f883d]/90 dark:hover:bg-[#238636]/90 disabled:opacity-50 disabled:cursor-not-allowed select-none"
           >
             <ChevronDown className="w-3.5 h-3.5" />
