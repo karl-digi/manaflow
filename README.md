@@ -44,3 +44,7 @@ cmux upgrade
 ```bash
 cmux uninstall
 ```
+
+Agents in containers,  
+Code flows through parallel streams,  
+Cmux orchestrates dreams.
