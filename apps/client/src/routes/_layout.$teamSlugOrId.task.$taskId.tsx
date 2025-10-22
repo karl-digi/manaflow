@@ -116,7 +116,7 @@ function TaskDetailPage() {
 
         if (flatRuns[runIndex]) {
           navigate({
-            to: "/$teamSlugOrId/task/$taskId/run/$runId",
+            to: "/$teamSlugOrId/task/$taskId/run/$runId/vscode",
             params: {
               teamSlugOrId,
               taskId,
@@ -187,7 +187,7 @@ function TaskDetailPage() {
             {flatRuns.map((run, index) => (
               <Link
                 key={run._id}
-                to="/$teamSlugOrId/task/$taskId/run/$runId"
+                to="/$teamSlugOrId/task/$taskId/run/$runId/vscode"
                 params={{
                   teamSlugOrId,
                   taskId,

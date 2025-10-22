@@ -184,7 +184,7 @@ export function TaskTimeline({
         );
         content = event.runId ? (
           <Link
-            to="/$teamSlugOrId/task/$taskId/run/$runId"
+            to="/$teamSlugOrId/task/$taskId/run/$runId/vscode"
             params={{
               teamSlugOrId: params.teamSlugOrId,
               taskId: params.taskId,
@@ -233,7 +233,7 @@ export function TaskTimeline({
           <>
             {event.runId ? (
               <Link
-                to="/$teamSlugOrId/task/$taskId/run/$runId"
+                to="/$teamSlugOrId/task/$taskId/run/$runId/vscode"
                 params={{
                   teamSlugOrId: params.teamSlugOrId,
                   taskId: params.taskId,
@@ -293,7 +293,7 @@ export function TaskTimeline({
           <>
             {event.runId ? (
               <Link
-                to="/$teamSlugOrId/task/$taskId/run/$runId"
+                to="/$teamSlugOrId/task/$taskId/run/$runId/vscode"
                 params={{
                   teamSlugOrId: params.teamSlugOrId,
                   taskId: params.taskId,
@@ -345,7 +345,7 @@ export function TaskTimeline({
           <>
             {event.runId ? (
               <Link
-                to="/$teamSlugOrId/task/$taskId/run/$runId"
+                to="/$teamSlugOrId/task/$taskId/run/$runId/vscode"
                 params={{
                   teamSlugOrId: params.teamSlugOrId,
                   taskId: params.taskId,

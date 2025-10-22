@@ -26,13 +26,17 @@ export const Route = createFileRoute(
 )({
   component: VSCodeComponent,
   params: {
-    parse: paramsSchema.parse,
-    stringify: (params) => {
+    parse: (params) => {
+      const parsed = paramsSchema.parse(params);
       return {
-        taskId: params.taskId,
-        runId: params.runId,
+        ...parsed,
+        taskRunId: parsed.runId,
       };
     },
+    stringify: (params) => ({
+      taskId: params.taskId,
+      runId: params.runId,
+    }),
   },
   loader: async (opts) => {
     const result = await opts.context.queryClient.ensureQueryData(

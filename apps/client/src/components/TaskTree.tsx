@@ -821,7 +821,7 @@ function TaskRunDetails({
     <Fragment>
       {hasActiveVSCode ? (
         <TaskRunDetailLink
-          to="/$teamSlugOrId/task/$taskId/run/$runId"
+          to="/$teamSlugOrId/task/$taskId/run/$runId/vscode"
           params={{
             teamSlugOrId,
             taskId,
