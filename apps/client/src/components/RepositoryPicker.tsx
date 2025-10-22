@@ -347,46 +347,36 @@ export function RepositoryPicker({
 
   const updateSnapshotSelection = useCallback(
     (nextSnapshotId: MorphSnapshotId) => {
-      const shouldResetInstanceId = nextSnapshotId !== selectedSnapshotId;
+      const hasChanged = nextSnapshotId !== selectedSnapshotId;
+      if (!hasChanged && pendingIdRef.current) {
+        return;
+      }
       setSelectedSnapshotId(nextSnapshotId);
       void (async () => {
-        let draftId: PendingEnvironmentId | undefined =
-          pendingIdRef.current ?? undefined;
-        if (!draftId && selectedRepos.length > 0) {
-          draftId = await ensureDraftId();
+        const draftId: PendingEnvironmentId | undefined =
+          pendingIdRef.current ?? (await ensureDraftId());
+        if (!draftId) {
+          return;
         }
-        await navigate({
-          to: "/$teamSlugOrId/environments/new",
-          params: { teamSlugOrId },
-          search: (prev) => ({
-            step: prev.step ?? "select",
-            selectedRepos: prev.selectedRepos ?? [],
-            instanceId: shouldResetInstanceId ? undefined : prev.instanceId,
-            connectionLogin:
-              selectedConnectionLogin ?? prev.connectionLogin ?? undefined,
-            repoSearch: prev.repoSearch,
-            snapshotId: nextSnapshotId,
-            pendingId: draftId ?? prev.pendingId,
-          }),
-          replace: true,
+        updatePendingEnvironment(teamSlugOrId, draftId, {
+          step: "select",
+          selectedRepos,
+          snapshotId: nextSnapshotId,
+          instanceId: hasChanged ? undefined : instanceId ?? undefined,
+          connectionLogin:
+            selectedConnectionLogin === null
+              ? null
+              : selectedConnectionLogin,
         });
-        if (draftId) {
-          updatePendingEnvironment(teamSlugOrId, draftId, {
-            step: "select",
-            selectedRepos,
-            snapshotId: nextSnapshotId,
-            instanceId: instanceId ?? undefined,
-          });
-        }
       })();
     },
     [
       ensureDraftId,
       instanceId,
-      navigate,
       selectedConnectionLogin,
       selectedRepos,
-      selectedSnapshotId, teamSlugOrId,
+      selectedSnapshotId,
+      teamSlugOrId,
     ]
   );
 

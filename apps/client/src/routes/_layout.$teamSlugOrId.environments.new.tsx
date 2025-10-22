@@ -5,10 +5,11 @@ import { TitleBar } from "@/components/TitleBar";
 import {
   createPendingEnvironment,
   usePendingEnvironment,
+  usePendingEnvironments,
 } from "@/lib/pendingEnvironmentsStore";
 import { toMorphVncUrl } from "@/lib/toProxyWorkspaceUrl";
 import { DEFAULT_MORPH_SNAPSHOT_ID, MORPH_SNAPSHOT_PRESETS, type MorphSnapshotId } from "@cmux/shared";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { z } from "zod";
 
@@ -36,10 +37,12 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/environments/new")(
 function EnvironmentsPage() {
   const searchParams = Route.useSearch();
   const { teamSlugOrId } = Route.useParams();
-  const navigate = useNavigate();
+  const pendingEnvironments = usePendingEnvironments(teamSlugOrId);
+  const resolvedPendingId =
+    searchParams.pendingId ?? pendingEnvironments[0]?.id;
   const pendingEnvironment = usePendingEnvironment(
     teamSlugOrId,
-    searchParams.pendingId
+    resolvedPendingId
   );
   const step = pendingEnvironment?.step ?? searchParams.step ?? "select";
   const urlSelectedRepos =
@@ -74,22 +77,21 @@ function EnvironmentsPage() {
       if (searchParams.pendingId) {
         return searchParams.pendingId;
       }
+      if (resolvedPendingId) {
+        return resolvedPendingId;
+      }
       const pending = createPendingEnvironment(teamSlugOrId, {
         step: "select",
         snapshotId:
           searchParams.snapshotId ?? DEFAULT_MORPH_SNAPSHOT_ID,
       });
-      await navigate({
-        to: "/$teamSlugOrId/environments/new",
-        params: { teamSlugOrId },
-        search: {
-          ...searchParams,
-          pendingId: pending.id,
-        },
-        replace: true,
-      });
       return pending.id;
-    }, [navigate, searchParams, teamSlugOrId]);
+    }, [
+      resolvedPendingId,
+      searchParams.pendingId,
+      searchParams.snapshotId,
+      teamSlugOrId,
+    ]);
 
   return (
     <FloatingPane header={<TitleBar title="Environments" actions={headerActions} />}>
@@ -101,13 +103,13 @@ function EnvironmentsPage() {
               instanceId={urlInstanceId}
               initialSelectedRepos={urlSelectedRepos}
               initialSnapshotId={selectedSnapshotId}
-              initialConnectionLogin={pendingEnvironment?.connectionLogin ?? null}
-              showHeader={true}
-              showContinueButton={true}
-              showManualConfigOption={true}
-              pendingEnvironmentId={searchParams.pendingId}
-              onDraftCreated={handleDraftCreated}
-            />
+            initialConnectionLogin={pendingEnvironment?.connectionLogin ?? null}
+            showHeader={true}
+            showContinueButton={true}
+            showManualConfigOption={true}
+            pendingEnvironmentId={resolvedPendingId}
+            onDraftCreated={handleDraftCreated}
+          />
           </div>
         ) : (
           <EnvironmentConfiguration
@@ -125,7 +127,7 @@ function EnvironmentsPage() {
             initialExposedPorts={pendingEnvironment?.exposedPorts ?? ""}
             initialEnvVars={pendingEnvironment?.envVars}
             onHeaderControlsChange={setHeaderActions}
-            pendingEnvironmentId={searchParams.pendingId}
+            pendingEnvironmentId={resolvedPendingId}
           />
         )}
       </div>
