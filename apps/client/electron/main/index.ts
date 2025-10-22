@@ -18,6 +18,7 @@ import {
   type BrowserWindowConstructorOptions,
   type MenuItemConstructorOptions,
 } from "electron";
+import contextMenu from "electron-context-menu";
 import { startEmbeddedServer } from "./embedded-server";
 import { registerWebContentsViewHandlers } from "./web-contents-view";
 // Auto-updater
@@ -695,6 +696,66 @@ app.whenReady().then(async () => {
     logger: {
       log: mainLog,
       warn: mainWarn,
+    },
+  });
+
+  const toExternalHttpUrl = (raw?: string | null): string | null => {
+    if (!raw) return null;
+    try {
+      const parsed = new URL(raw);
+      if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+        return parsed.toString();
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  };
+
+  contextMenu({
+    showSelectAll: true,
+    showLookUpSelection: false,
+    showSearchWithGoogle: false,
+    showCopyImageAddress: true,
+    showCopyVideoAddress: true,
+    showInspectElement: is.dev,
+    append: (defaultActions, parameters) => {
+      const extras: MenuItemConstructorOptions[] = [];
+      const linkUrl = toExternalHttpUrl(parameters.linkURL);
+      if (linkUrl) {
+        const targetUrl = linkUrl;
+        extras.push({
+          id: "cmux-open-link-external",
+          label: "Open Link in Browser",
+          click: () => {
+            void shell.openExternal(targetUrl);
+          },
+        });
+      }
+
+      const sourceUrl = toExternalHttpUrl(parameters.srcURL);
+      if (parameters.mediaType === "image" && sourceUrl) {
+        const targetUrl = sourceUrl;
+        extras.push({
+          id: "cmux-open-image-external",
+          label: "Open Image in Browser",
+          click: () => {
+            void shell.openExternal(targetUrl);
+          },
+        });
+      } else if (parameters.mediaType === "video" && sourceUrl) {
+        const targetUrl = sourceUrl;
+        extras.push({
+          id: "cmux-open-video-external",
+          label: "Open Video in Browser",
+          click: () => {
+            void shell.openExternal(targetUrl);
+          },
+        });
+      }
+
+      if (extras.length === 0) return [];
+      return [defaultActions.separator(), ...extras];
     },
   });
 
