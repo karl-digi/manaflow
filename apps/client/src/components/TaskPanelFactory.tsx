@@ -49,7 +49,6 @@ interface PanelFactoryProps {
   onEditorError?: (error: Error) => void;
   editorLoadingFallback?: ReactNode;
   editorErrorFallback?: ReactNode;
-  workspacePlaceholderMessage?: string;
   isEditorBusy?: boolean;
   // Terminal panel props
   rawWorkspaceUrl?: string | null;
@@ -265,7 +264,6 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
         onEditorError,
         editorLoadingFallback,
         editorErrorFallback,
-        workspacePlaceholderMessage,
         isEditorBusy,
         PersistentWebView,
         WorkspaceLoadingIndicator,
@@ -304,11 +302,7 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
             <div className="flex h-full items-center justify-center">
               <WorkspaceLoadingIndicator variant="vscode" status="loading" />
             </div>
-          ) : (
-            <div className="flex h-full items-center justify-center px-4 text-center text-sm text-neutral-500 dark:text-neutral-400">
-              {workspacePlaceholderMessage}
-            </div>
-          )}
+          ) : null}
         </div>
       );
     }
@@ -334,7 +328,6 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
         browserUrl,
         browserPersistKey,
         setBrowserStatus,
-        browserOverlayMessage,
         selectedRun,
         isMorphProvider,
         isBrowserBusy,
@@ -376,11 +369,7 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
             <div className="flex h-full items-center justify-center">
               <WorkspaceLoadingIndicator variant="browser" status="loading" />
             </div>
-          ) : (
-            <div className="flex h-full items-center justify-center px-4 text-center text-sm text-neutral-500 dark:text-neutral-400">
-              {browserOverlayMessage}
-            </div>
-          )}
+          ) : null}
         </div>
       );
     }

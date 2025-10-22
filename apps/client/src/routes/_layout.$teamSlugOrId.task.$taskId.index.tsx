@@ -80,20 +80,6 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
   },
 });
 
-function flattenRunsWithDepth(
-  runs: TaskRunListItem[],
-): Array<TaskRunListItem & { depth: number }> {
-  const result: Array<TaskRunListItem & { depth: number }> = [];
-
-  const traverse = (run: TaskRunListItem, depth: number) => {
-    result.push({ ...run, depth });
-    run.children?.forEach((child) => traverse(child, depth + 1));
-  };
-
-  runs.forEach((run) => traverse(run, 0));
-  return result;
-}
-
 function findRunById(
   runs: TaskRunListItem[],
   runId: TaskRunListItem["_id"],
@@ -270,11 +256,6 @@ function TaskDetailPage() {
     });
   }, []);
 
-  const runsWithDepth = useMemo(
-    () => flattenRunsWithDepth(taskRuns ?? []),
-    [taskRuns],
-  );
-
   const selectedRun = useMemo(() => {
     if (!taskRuns?.length) {
       return null;
@@ -381,20 +362,6 @@ function TaskDetailPage() {
     [updateIframeStatus, browserPersistKey, browserUrl],
   );
 
-  const browserOverlayMessage = useMemo(() => {
-    if (!selectedRun) {
-      return runsWithDepth.length
-        ? "Select a run to open the browser preview."
-        : "Browser preview becomes available once a run starts.";
-    }
-    if (!isMorphProvider) {
-      return "Browser preview is loading. Note that browser preview is only supported in cloud mode.";
-    }
-    if (!hasBrowserView) {
-      return "Waiting for the workspace to expose a browser preview...";
-    }
-    return "Launching browser preview...";
-  }, [selectedRun, runsWithDepth.length, isMorphProvider, hasBrowserView]);
   const editorStatus = workspacePersistKey
     ? iframeStatusByKey[workspacePersistKey]?.status ?? "loading"
     : "loading";
@@ -403,16 +370,6 @@ function TaskDetailPage() {
     : "loading";
   const isEditorBusy = Boolean(selectedRun) && (!workspaceUrl || editorStatus !== "loaded");
   const isBrowserBusy = Boolean(selectedRun) && (!hasBrowserView || browserStatus !== "loaded");
-
-  const workspacePlaceholderMessage = useMemo(() => {
-    if (!runsWithDepth.length) {
-      return "Waiting for a run to start the workspace...";
-    }
-    if (!selectedRun) {
-      return "Select a run to open the workspace.";
-    }
-    return "Workspace is starting...";
-  }, [runsWithDepth.length, selectedRun]);
 
   const availablePanels = useMemo(() => getAvailablePanels(panelConfig), [panelConfig]);
 
@@ -430,14 +387,12 @@ function TaskDetailPage() {
       onEditorError,
       editorLoadingFallback,
       editorErrorFallback,
-      workspacePlaceholderMessage,
       isEditorBusy,
       rawWorkspaceUrl,
       browserUrl,
       browserPersistKey,
       browserStatus,
       setBrowserStatus: handleBrowserStatusChange,
-      browserOverlayMessage,
       isMorphProvider,
       isBrowserBusy,
       TaskRunChatPane,
@@ -461,14 +416,12 @@ function TaskDetailPage() {
     onEditorError,
     editorLoadingFallback,
     editorErrorFallback,
-    workspacePlaceholderMessage,
     isEditorBusy,
     rawWorkspaceUrl,
     browserUrl,
     browserPersistKey,
     browserStatus,
     handleBrowserStatusChange,
-    browserOverlayMessage,
     isMorphProvider,
     isBrowserBusy,
     handlePanelClose,

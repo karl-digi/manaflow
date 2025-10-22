@@ -140,7 +140,7 @@ export class DockerVSCodeInstance extends VSCodeInstance {
     if (
       this.portCache &&
       Date.now() - this.portCache.timestamp <
-      DockerVSCodeInstance.PORT_CACHE_DURATION
+        DockerVSCodeInstance.PORT_CACHE_DURATION
     ) {
       return this.portCache.ports?.[containerPort] || null;
     }
@@ -249,8 +249,8 @@ export class DockerVSCodeInstance extends VSCodeInstance {
       const info = await existingContainer.inspect().catch(() => null);
       if (info) {
         dockerLogger.info(`Removing existing container ${this.containerName}`);
-        await existingContainer.stop().catch(() => { });
-        await existingContainer.remove().catch(() => { });
+        await existingContainer.stop().catch(() => {});
+        await existingContainer.remove().catch(() => {});
       }
     } catch (_error) {
       // Container doesn't exist, which is fine
@@ -1203,7 +1203,7 @@ export class DockerVSCodeInstance extends VSCodeInstance {
         let buffer = "";
         stream.on("data", (chunk: Buffer | string) => {
           buffer += chunk.toString();
-          for (; ;) {
+          for (;;) {
             const idx = buffer.indexOf("\n");
             if (idx === -1) break;
             const line = buffer.slice(0, idx);
@@ -1252,9 +1252,9 @@ export class DockerVSCodeInstance extends VSCodeInstance {
   private static logEventStreamError(message: string, error: unknown): void {
     const code =
       error &&
-        typeof error === "object" &&
-        "code" in error &&
-        (typeof error.code === "string" || typeof error.code === "number")
+      typeof error === "object" &&
+      "code" in error &&
+      (typeof error.code === "string" || typeof error.code === "number")
         ? error.code
         : undefined;
     const isConnectionReset =
