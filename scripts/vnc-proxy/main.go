@@ -237,6 +237,9 @@ func newWebsocketHandler(cfg proxyConfig) http.Handler {
 		defer backend.Close()
 
 		opts := &websocket.AcceptOptions{InsecureSkipVerify: true}
+		if subprotocols := readRequestedSubprotocols(r); len(subprotocols) > 0 {
+			opts.Subprotocols = subprotocols
+		}
 		conn, err := websocket.Accept(w, r, opts)
 		if err != nil {
 			log.Printf("websocket accept failed: %v", err)
@@ -287,6 +290,22 @@ func newWebsocketHandler(cfg proxyConfig) http.Handler {
 		conn.Close(websocket.StatusNormalClosure, "")
 		log.Printf("websocket connection closed from %s", r.RemoteAddr)
 	})
+}
+
+func readRequestedSubprotocols(r *http.Request) []string {
+	rawValues := r.Header.Values("Sec-WebSocket-Protocol")
+	if len(rawValues) == 0 {
+		return nil
+	}
+	var subprotocols []string
+	for _, rawValue := range rawValues {
+		for _, candidate := range strings.Split(rawValue, ",") {
+			if protocol := strings.TrimSpace(candidate); protocol != "" {
+				subprotocols = append(subprotocols, protocol)
+			}
+		}
+	}
+	return subprotocols
 }
 
 func isWebSocketRequest(r *http.Request) bool {
