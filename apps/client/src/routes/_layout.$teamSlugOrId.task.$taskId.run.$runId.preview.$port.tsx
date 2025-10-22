@@ -67,11 +67,12 @@ export const Route = createFileRoute(
     }
 
     try {
+      // Attach to cmux session
       const created = await createTerminalTab({
         baseUrl,
         request: {
           cmd: "tmux",
-          args: ["attach", "-t", "cmux:dev"],
+          args: ["attach", "-t", "cmux"],
         },
       });
 
@@ -85,7 +86,7 @@ export const Route = createFileRoute(
         return [...current, created.id];
       });
     } catch (error) {
-      console.error("Failed to auto-create dev script terminal", error);
+      console.error("Failed to auto-create tmux terminal", error);
     }
   },
 });
@@ -136,21 +137,22 @@ function PreviewPage() {
 
   const activeTerminalId = terminalTabsQuery.data?.[0] ?? null;
 
-  // Terminal state
-  const [isTerminalVisible, setIsTerminalVisible] = useState(() => {
-    // Default: closed, but will open if there's an error
-    return false;
-  });
+  // Terminal state - default open if preview URL is not available
+  const [isTerminalVisible, setIsTerminalVisible] = useState(() => !previewUrl);
+
+  // Update terminal visibility when preview URL changes
+  useEffect(() => {
+    if (!previewUrl) {
+      setIsTerminalVisible(true);
+    }
+  }, [previewUrl]);
 
   const [terminalWidth, setTerminalWidth] = useState(400);
   const isResizingRef = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const handleConnectionStateChange = useCallback((state: TerminalConnectionState) => {
-    // Auto-expand terminal on error
-    if (state === "error") {
-      setIsTerminalVisible(true);
-    }
+  const handleConnectionStateChange = useCallback((_state: TerminalConnectionState) => {
+    // Terminal connection state changes don't affect visibility
   }, []);
 
   const toggleTerminal = useCallback(() => {
