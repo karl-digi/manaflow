@@ -2,13 +2,15 @@
 
 import {
   Fragment,
+  cloneElement,
+  isValidElement,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
-import type { ReactElement, ReactNode } from "react";
+import type { CSSProperties, ReactElement, ReactNode } from "react";
 import {
   ChevronLeft,
   ChevronDown,
@@ -27,7 +29,6 @@ import {
   Hunk,
   computeNewLineNumber,
   parseDiff,
-  pickRanges,
   getChangeKey,
   tokenize,
   type ChangeData,
@@ -169,6 +170,17 @@ type RefractorLike = {
   highlight(code: string, language: string): unknown;
 };
 
+type HeatmapPalette = {
+  tokenLight: string;
+  tokenDark: string;
+  tokenBorderLight: string;
+  tokenBorderDark: string;
+  gutterLight: string;
+  gutterDark: string;
+  gutterBorderLight: string;
+  gutterBorderDark: string;
+};
+
 function createRefractorAdapter(base: RefractorLike) {
   const isNodeWithChildren = (
     value: unknown
@@ -212,6 +224,10 @@ type FileOutput = FunctionReturnType<
 type HeatmapTooltipMeta = {
   score: number;
   reason: string | null;
+};
+
+type HeatmapTooltipDetail = HeatmapTooltipMeta & {
+  palette: HeatmapPalette;
 };
 
 type FileDiffViewModel = {
@@ -1237,91 +1253,96 @@ function FileDiffCard({
     });
   }, [focusedChangeKey]);
 
-  const lineTooltips = useMemo(() => {
+  const lineHeatmapDetails = useMemo(() => {
     if (!diffHeatmap) {
       return null;
     }
 
-    const tooltipMap = new Map<number, HeatmapTooltipMeta>();
+    const detailMap = new Map<number, HeatmapTooltipDetail>();
     for (const [lineNumber, metadata] of diffHeatmap.entries.entries()) {
       const score = metadata.score ?? null;
       if (score === null || score <= 0) {
         continue;
       }
 
-      tooltipMap.set(lineNumber, {
+      detailMap.set(lineNumber, {
         score,
         reason: metadata.reason ?? null,
+        palette: createHeatmapPalette(score),
       });
     }
 
-    return tooltipMap.size > 0 ? tooltipMap : null;
+    return detailMap.size > 0 ? detailMap : null;
   }, [diffHeatmap]);
 
   const renderHeatmapToken = useMemo<RenderToken | undefined>(() => {
-    if (!lineTooltips) {
+    if (!lineHeatmapDetails) {
       return undefined;
     }
 
-    const renderTokenWithTooltip: RenderToken = (
+    const seenLineNumbers = new Set<number>();
+
+    const renderTokenWithHeatmap: RenderToken = (
       token,
       renderDefault,
       index
     ) => {
-      if (token && typeof token === "object") {
-        const tokenRecord = token as Record<string, unknown>;
-        const className =
-          typeof tokenRecord.className === "string"
-            ? tokenRecord.className
-            : null;
-        const lineNumber =
-          typeof tokenRecord.lineNumber === "number"
-            ? tokenRecord.lineNumber
-            : null;
-
-        if (
-          className &&
-          lineNumber !== null &&
-          (className.includes("cmux-heatmap-char") ||
-            className.includes("cmux-heatmap-char-tier"))
-        ) {
-          const tooltipMeta = lineTooltips.get(lineNumber);
-          if (tooltipMeta) {
-            const rendered = renderDefault(token, index);
-            return (
-              <Tooltip
-                key={`heatmap-char-${lineNumber}-${index}`}
-                delayDuration={120}
-              >
-                <TooltipTrigger asChild>
-                  <span className="cmux-heatmap-char-wrapper">{rendered}</span>
-                </TooltipTrigger>
-                <TooltipContent
-                  side="top"
-                  align="start"
-                  className={cn(
-                    "max-w-xs space-y-1 text-left leading-relaxed border backdrop-blur",
-                    getHeatmapTooltipTheme(tooltipMeta.score).contentClass
-                  )}
-                >
-                  <HeatmapTooltipBody
-                    score={tooltipMeta.score}
-                    reason={tooltipMeta.reason}
-                  />
-                </TooltipContent>
-              </Tooltip>
-            );
-          }
-        }
+      if (!token || typeof token !== "object") {
+        return renderDefault(token, index);
       }
 
-      return renderDefault(token, index);
+      const tokenRecord = token as Record<string, unknown>;
+      const lineNumber =
+        typeof tokenRecord.lineNumber === "number"
+          ? tokenRecord.lineNumber
+          : null;
+
+      if (lineNumber === null) {
+        return renderDefault(token, index);
+      }
+
+      const detail = lineHeatmapDetails.get(lineNumber);
+      if (!detail) {
+        return renderDefault(token, index);
+      }
+
+      const rendered = renderDefault(token, index);
+      const colored = applyHeatmapTokenStyle(rendered, detail.palette);
+      if (!colored) {
+        return renderDefault(token, index);
+      }
+
+      if (seenLineNumbers.has(lineNumber)) {
+        return colored;
+      }
+
+      seenLineNumbers.add(lineNumber);
+
+      return (
+        <Tooltip key={`heatmap-token-${lineNumber}-${index}`} delayDuration={120}>
+          <TooltipTrigger asChild>{colored}</TooltipTrigger>
+          <TooltipContent
+            side="top"
+            align="start"
+            className={cn(
+              "max-w-xs space-y-1 text-left leading-relaxed border backdrop-blur",
+              getHeatmapTooltipTheme(detail.score).contentClass
+            )}
+          >
+            <HeatmapTooltipBody
+              score={detail.score}
+              reason={detail.reason}
+            />
+          </TooltipContent>
+        </Tooltip>
+      );
     };
-    return renderTokenWithTooltip;
-  }, [lineTooltips]);
+
+    return renderTokenWithHeatmap;
+  }, [lineHeatmapDetails]);
 
   const renderHeatmapGutter = useMemo<RenderGutter | undefined>(() => {
-    if (!lineTooltips) {
+    if (!lineHeatmapDetails) {
       return undefined;
     }
 
@@ -1341,8 +1362,8 @@ function FileDiffCard({
         return wrapInAnchor(content);
       }
 
-      const tooltipMeta = lineTooltips.get(lineNumber);
-      if (!tooltipMeta) {
+      const detail = lineHeatmapDetails.get(lineNumber);
+      if (!detail) {
         return wrapInAnchor(content);
       }
 
@@ -1353,7 +1374,8 @@ function FileDiffCard({
         <HeatmapGutterTooltip
           key={`heatmap-gutter-${lineNumber}`}
           isAutoOpen={isAutoTooltipOpen}
-          tooltipMeta={tooltipMeta}
+          tooltipMeta={detail}
+          palette={detail.palette}
         >
           {content}
         </HeatmapGutterTooltip>
@@ -1361,17 +1383,12 @@ function FileDiffCard({
     };
 
     return renderGutterWithTooltip;
-  }, [lineTooltips, autoTooltipLineNumber]);
+  }, [lineHeatmapDetails, autoTooltipLineNumber]);
 
   const tokens = useMemo<HunkTokens | null>(() => {
     if (!diff) {
       return null;
     }
-
-    const enhancers =
-      diffHeatmap && diffHeatmap.newRanges.length > 0
-        ? [pickRanges([], diffHeatmap.newRanges)]
-        : undefined;
 
     if (language && refractor.registered(language)) {
       try {
@@ -1379,22 +1396,14 @@ function FileDiffCard({
           highlight: true,
           language,
           refractor: refractorAdapter,
-          ...(enhancers ? { enhancers } : {}),
         });
       } catch {
         // Ignore highlight errors; fall back to default tokenization.
       }
     }
 
-    return tokenize(
-      diff.hunks,
-      enhancers
-        ? {
-            enhancers,
-          }
-        : undefined
-    );
-  }, [diff, language, diffHeatmap]);
+    return tokenize(diff.hunks);
+  }, [diff, language]);
 
   const reviewContent = useMemo(() => {
     if (!review) {
@@ -1506,31 +1515,16 @@ function FileDiffCard({
                 if (hasFocus) {
                   classNames.push("cmux-heatmap-focus");
                 }
-                if (diffHeatmap && diffHeatmap.lineClasses.size > 0) {
-                  let bestHeatmapClass: string | null = null;
-                  for (const change of normalizedChanges) {
+                if (lineHeatmapDetails) {
+                  const hasHeatmap = normalizedChanges.some((change) => {
                     const newLineNumber = computeNewLineNumber(change);
-                    if (newLineNumber <= 0) {
-                      continue;
-                    }
-                    const candidate =
-                      diffHeatmap.lineClasses.get(newLineNumber);
-                    if (!candidate) {
-                      continue;
-                    }
-                    if (!bestHeatmapClass) {
-                      bestHeatmapClass = candidate;
-                      continue;
-                    }
-                    const currentTier = extractHeatmapTier(bestHeatmapClass);
-                    const nextTier = extractHeatmapTier(candidate);
-                    if (nextTier > currentTier) {
-                      bestHeatmapClass = candidate;
-                    }
-                  }
-
-                  if (bestHeatmapClass) {
-                    classNames.push(bestHeatmapClass);
+                    return (
+                      newLineNumber > 0 &&
+                      lineHeatmapDetails.has(newLineNumber)
+                    );
+                  });
+                  if (hasHeatmap) {
+                    classNames.push("cmux-heatmap-line");
                   }
                 }
 
@@ -1564,13 +1558,177 @@ function FileDiffCard({
   );
 }
 
+function clampScore(score: number): number {
+  if (!Number.isFinite(score)) {
+    return 0;
+  }
+  if (score <= 0) {
+    return 0;
+  }
+  if (score >= 1) {
+    return 1;
+  }
+  return score;
+}
+
+function hueFromScore(score: number): number {
+  return Math.round((1 - score) * 120);
+}
+
+function toHsla(
+  hue: number,
+  saturation: number,
+  lightness: number,
+  alpha: number
+): string {
+  const clampedAlpha = Math.min(Math.max(alpha, 0), 1);
+  return `hsla(${Math.round(hue)}, ${Math.round(
+    saturation
+  )}%, ${Math.round(lightness)}%, ${clampedAlpha.toFixed(3)})`;
+}
+
+function createHeatmapPalette(score: number): HeatmapPalette {
+  const normalized = clampScore(score);
+  const hue = hueFromScore(normalized);
+
+  const tokenLight = toHsla(
+    hue,
+    88,
+    92 - normalized * 30,
+    0.32 + normalized * 0.24
+  );
+  const tokenDark = toHsla(
+    hue,
+    90,
+    28 + normalized * 10,
+    0.42 + normalized * 0.26
+  );
+  const tokenBorderLight = toHsla(
+    hue,
+    80,
+    72 - normalized * 28,
+    0.25 + normalized * 0.25
+  );
+  const tokenBorderDark = toHsla(
+    hue,
+    86,
+    38 - normalized * 10,
+    0.4 + normalized * 0.25
+  );
+  const gutterLight = toHsla(
+    hue,
+    88,
+    95 - normalized * 30,
+    0.2 + normalized * 0.2
+  );
+  const gutterDark = toHsla(
+    hue,
+    88,
+    28 + normalized * 8,
+    0.28 + normalized * 0.24
+  );
+  const gutterBorderLight = toHsla(
+    hue,
+    82,
+    82 - normalized * 32,
+    0.18 + normalized * 0.2
+  );
+  const gutterBorderDark = toHsla(
+    hue,
+    84,
+    40 - normalized * 10,
+    0.3 + normalized * 0.22
+  );
+
+  return {
+    tokenLight,
+    tokenDark,
+    tokenBorderLight,
+    tokenBorderDark,
+    gutterLight,
+    gutterDark,
+    gutterBorderLight,
+    gutterBorderDark,
+  };
+}
+
+function createTokenCustomProperties(
+  palette: HeatmapPalette
+): CSSProperties {
+  return {
+    "--cmux-heatmap-token-light": palette.tokenLight,
+    "--cmux-heatmap-token-dark": palette.tokenDark,
+    "--cmux-heatmap-token-border-light": palette.tokenBorderLight,
+    "--cmux-heatmap-token-border-dark": palette.tokenBorderDark,
+  } as CSSProperties;
+}
+
+function createGutterCustomProperties(
+  palette: HeatmapPalette
+): CSSProperties {
+  return {
+    "--cmux-heatmap-gutter-light": palette.gutterLight,
+    "--cmux-heatmap-gutter-dark": palette.gutterDark,
+    "--cmux-heatmap-gutter-border-light": palette.gutterBorderLight,
+    "--cmux-heatmap-gutter-border-dark": palette.gutterBorderDark,
+  } as CSSProperties;
+}
+
+function applyHeatmapTokenStyle(
+  node: ReactNode,
+  palette: HeatmapPalette
+): ReactElement | null {
+  if (node === null || typeof node === "boolean") {
+    return null;
+  }
+
+  const style = createTokenCustomProperties(palette);
+
+  if (typeof node === "string" || typeof node === "number") {
+    return (
+      <span className="cmux-heatmap-token" style={style}>
+        {node}
+      </span>
+    );
+  }
+
+  if (Array.isArray(node)) {
+    return (
+      <span className="cmux-heatmap-token" style={style}>
+        {node}
+      </span>
+    );
+  }
+
+  if (isValidElement<{ className?: string; style?: CSSProperties }>(node)) {
+    const mergedClassName = cn(node.props.className, "cmux-heatmap-token");
+    const mergedStyle: CSSProperties = {
+      ...(node.props.style ?? {}),
+      ...style,
+    };
+
+    return cloneElement(node, {
+      className: mergedClassName,
+      style: mergedStyle,
+    });
+  }
+
+  return (
+    <span className="cmux-heatmap-token" style={style}>
+      {node as ReactNode}
+    </span>
+  );
+}
+
 function HeatmapGutterTooltip({
   children,
   tooltipMeta,
+  palette,
   isAutoOpen,
 }: {
   children: ReactNode;
-  tooltipMeta: HeatmapTooltipMeta;
+  tooltipMeta: HeatmapTooltipDetail;
+  palette: HeatmapPalette;
   isAutoOpen: boolean;
 }) {
   const [isManuallyOpen, setIsManuallyOpen] = useState(false);
@@ -1606,6 +1764,7 @@ function HeatmapGutterTooltip({
       <TooltipTrigger asChild>
         <span
           className="cmux-heatmap-gutter"
+          style={createGutterCustomProperties(palette)}
           onPointerEnter={handlePointerEnter}
           onPointerLeave={handlePointerLeave}
         >
@@ -1695,16 +1854,6 @@ function getHeatmapTooltipTheme(score: number): HeatmapTooltipTheme {
         reasonClass: "text-neutral-300",
       };
   }
-}
-
-function extractHeatmapTier(className: string): number {
-  const match = className.match(/cmux-heatmap-tier-(\d+)/);
-  if (!match) {
-    return 0;
-  }
-
-  const parsed = Number.parseInt(match[1] ?? "0", 10);
-  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function extractAutomatedReviewText(value: unknown): string | null {

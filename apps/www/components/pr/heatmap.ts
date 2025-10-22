@@ -1,5 +1,4 @@
 import { computeNewLineNumber, isDelete, type FileData } from "react-diff-view";
-import type { RangeTokenNode } from "react-diff-view";
 
 export type ReviewHeatmapLine = {
   lineNumber: number | null;
@@ -10,13 +9,7 @@ export type ReviewHeatmapLine = {
 };
 
 export type DiffHeatmap = {
-  lineClasses: Map<number, string>;
-  newRanges: HeatmapRangeNode[];
   entries: Map<number, ResolvedHeatmapLine>;
-};
-
-export type HeatmapRangeNode = RangeTokenNode & {
-  className: string;
 };
 
 type ResolvedHeatmapLine = {
@@ -28,8 +21,6 @@ type ResolvedHeatmapLine = {
 
 const SCORE_CLAMP_MIN = 0;
 const SCORE_CLAMP_MAX = 1;
-
-const HEATMAP_TIERS = [0.2, 0.4, 0.6, 0.8] as const;
 
 export function parseReviewHeatmap(raw: unknown): ReviewHeatmapLine[] {
   const payload = unwrapCodexPayload(raw);
@@ -112,53 +103,7 @@ export function buildDiffHeatmap(
     return null;
   }
 
-  const lineClasses = new Map<number, string>();
-  const characterRanges: HeatmapRangeNode[] = [];
-
-  for (const [lineNumber, entry] of aggregated.entries()) {
-    const normalizedScore =
-      entry.score === null
-        ? null
-        : clamp(entry.score, SCORE_CLAMP_MIN, SCORE_CLAMP_MAX);
-    const tier = computeHeatmapTier(normalizedScore);
-
-    if (tier > 0) {
-      lineClasses.set(lineNumber, `cmux-heatmap-tier-${tier}`);
-    }
-
-    if (entry.mostImportantCharacterIndex === null) {
-      continue;
-    }
-
-    const content = newLineContent.get(lineNumber);
-    if (!content || content.length === 0) {
-      continue;
-    }
-
-    const highlightIndex = clamp(
-      Math.floor(entry.mostImportantCharacterIndex),
-      0,
-      Math.max(content.length - 1, 0)
-    );
-
-    const charTier = tier > 0 ? tier : 1;
-    const range: HeatmapRangeNode = {
-      type: "span",
-      lineNumber,
-      start: highlightIndex,
-      length: Math.min(1, Math.max(content.length - highlightIndex, 1)),
-      className: `cmux-heatmap-char cmux-heatmap-char-tier-${charTier}`,
-    };
-    characterRanges.push(range);
-  }
-
-  if (lineClasses.size === 0 && characterRanges.length === 0) {
-    return null;
-  }
-
   return {
-    lineClasses,
-    newRanges: characterRanges,
     entries: aggregated,
   };
 }
@@ -301,20 +246,6 @@ function collectNewLineContent(diff: FileData): Map<number, string> {
   }
 
   return map;
-}
-
-function computeHeatmapTier(score: number | null): number {
-  if (score === null) {
-    return 0;
-  }
-
-  for (let index = HEATMAP_TIERS.length - 1; index >= 0; index -= 1) {
-    if (score >= HEATMAP_TIERS[index]!) {
-      return index + 1;
-    }
-  }
-
-  return score > 0 ? 1 : 0;
 }
 
 function clamp(value: number, min: number, max: number): number {

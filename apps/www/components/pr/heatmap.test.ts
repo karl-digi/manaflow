@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeNewLineNumber, parseDiff } from "react-diff-view";
+import { parseDiff } from "react-diff-view";
 
 import { buildDiffHeatmap, parseReviewHeatmap } from "./heatmap";
 
@@ -62,7 +62,7 @@ describe("parseReviewHeatmap", () => {
 });
 
 describe("buildDiffHeatmap", () => {
-  it("produces tiered classes and character highlights", () => {
+  it("aggregates highest scores and context per line", () => {
     const files = parseDiff(SAMPLE_DIFF);
     const file = files[0] ?? null;
     expect(file).not.toBeNull();
@@ -98,32 +98,14 @@ describe("buildDiffHeatmap", () => {
       return;
     }
 
-    expect(heatmap.entries.get(2)?.score).toBeCloseTo(0.7, 5);
-    expect(heatmap.lineClasses.get(2)).toBe("cmux-heatmap-tier-3");
-    expect(heatmap.lineClasses.get(4)).toBe("cmux-heatmap-tier-4");
+    const entryForLineTwo = heatmap.entries.get(2);
+    expect(entryForLineTwo?.score).toBeCloseTo(0.7, 5);
+    expect(entryForLineTwo?.reason).toBe("updated score");
+    expect(entryForLineTwo?.mostImportantCharacterIndex).toBe(6);
 
-    const rangeForLine2 = heatmap.newRanges.find(
-      (range) => range.lineNumber === 2
-    );
-    expect(rangeForLine2?.start).toBe(6);
-    expect(rangeForLine2?.length).toBe(1);
-
-    const rangeForLine4 = heatmap.newRanges.find(
-      (range) => range.lineNumber === 4
-    );
-    expect(rangeForLine4).toBeDefined();
-    if (!rangeForLine4) {
-      return;
-    }
-
-    const lineFourChange = file!.hunks[0]?.changes.find(
-      (change) => computeNewLineNumber(change) === 4
-    );
-    const expectedStart = Math.max(
-      (lineFourChange?.content.length ?? 1) - 1,
-      0
-    );
-    expect(rangeForLine4.start).toBe(expectedStart);
-    expect(rangeForLine4.length).toBe(1);
+    const entryForLineFour = heatmap.entries.get(4);
+    expect(entryForLineFour?.score).toBeCloseTo(0.92, 5);
+    expect(entryForLineFour?.reason).toBe("new export logic");
+    expect(entryForLineFour?.mostImportantCharacterIndex).toBe(120);
   });
 });
