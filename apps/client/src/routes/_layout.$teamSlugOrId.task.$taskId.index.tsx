@@ -16,6 +16,7 @@ import {
 } from "@/lib/persistent-webview-keys";
 import {
   toMorphVncUrl,
+  toMorphXtermBaseUrl,
   toProxyWorkspaceUrl,
 } from "@/lib/toProxyWorkspaceUrl";
 import {
@@ -23,6 +24,12 @@ import {
   TASK_RUN_IFRAME_SANDBOX,
   preloadTaskRunIframes,
 } from "../lib/preloadTaskRunIframes";
+import {
+  createTerminalTab,
+  terminalTabsQueryKey,
+  terminalTabsQueryOptions,
+  type TerminalTabId,
+} from "@/queries/terminals";
 import { api } from "@cmux/convex/api";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { convexQuery } from "@convex-dev/react-query";
@@ -57,43 +64,110 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
     };
   },
   loader: async (opts) => {
-    await Promise.all([
-      opts.context.queryClient.ensureQueryData(
+    const { queryClient } = opts.context;
+
+    const [taskRuns] = await Promise.all([
+      queryClient.ensureQueryData(
         convexQuery(api.taskRuns.getByTask, {
           teamSlugOrId: opts.params.teamSlugOrId,
           taskId: opts.params.taskId,
         }),
       ),
-      opts.context.queryClient.ensureQueryData(
+      queryClient.ensureQueryData(
         convexQuery(api.tasks.getById, {
           teamSlugOrId: opts.params.teamSlugOrId,
           id: opts.params.taskId,
         }),
       ),
-      opts.context.queryClient.ensureQueryData(
+      queryClient.ensureQueryData(
         convexQuery(api.crown.getCrownEvaluation, {
           teamSlugOrId: opts.params.teamSlugOrId,
           taskId: opts.params.taskId,
         }),
       ),
     ]);
+
+    if (!taskRuns?.length) {
+      return;
+    }
+
+    const taskRunIndex = buildTaskRunIndex(taskRuns);
+    const searchParams = new URLSearchParams(opts.location.search);
+    const runIdParam = searchParams.get("runId");
+    const parsedRunId = runIdParam
+      ? typedZid("taskRuns").safeParse(runIdParam)
+      : null;
+    const selectedRun = parsedRunId?.success
+      ? taskRunIndex.get(parsedRunId.data) ?? taskRuns[0]
+      : taskRuns[0];
+
+    const rawWorkspaceUrl = selectedRun?.vscode?.workspaceUrl ?? null;
+    if (!rawWorkspaceUrl) {
+      return;
+    }
+
+    const baseUrl = toMorphXtermBaseUrl(rawWorkspaceUrl);
+    if (!baseUrl) {
+      return;
+    }
+
+    const tabsKey = terminalTabsQueryKey(baseUrl, rawWorkspaceUrl);
+    let tabs = queryClient.getQueryData<TerminalTabId[]>(tabsKey);
+
+    if (!tabs) {
+      try {
+        tabs = await queryClient.ensureQueryData(
+          terminalTabsQueryOptions({
+            baseUrl,
+            contextKey: rawWorkspaceUrl,
+            enabled: true,
+          }),
+        );
+      } catch (error) {
+        console.error("Failed to preload terminal tabs", error);
+      }
+    }
+
+    if (!tabs?.length) {
+      try {
+        const created = await createTerminalTab({
+          baseUrl,
+          request: {
+            cmd: "tmux",
+            args: ["attach", "-t", "cmux"],
+          },
+        });
+        tabs = [created.id];
+      } catch (error) {
+        console.error("Failed to create default tmux terminal", error);
+        return;
+      }
+    }
+
+    if (tabs) {
+      queryClient.setQueryData<TerminalTabId[]>(tabsKey, tabs);
+    }
   },
 });
 
-function findRunById(
+function buildTaskRunIndex(
   runs: TaskRunListItem[],
-  runId: TaskRunListItem["_id"],
-): TaskRunListItem | null {
-  for (const run of runs) {
-    if (run._id === runId) {
-      return run;
+): Map<TaskRunListItem["_id"], TaskRunListItem> {
+  const index = new Map<TaskRunListItem["_id"], TaskRunListItem>();
+  const stack = [...runs];
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) {
+      continue;
     }
-    const childMatch = run.children ? findRunById(run.children, runId) : null;
-    if (childMatch) {
-      return childMatch;
+    index.set(current._id, current);
+    if (current.children?.length) {
+      stack.push(...current.children);
     }
   }
-  return null;
+
+  return index;
 }
 
 interface EmptyPanelSlotProps {
@@ -256,18 +330,23 @@ function TaskDetailPage() {
     });
   }, []);
 
+  const taskRunIndex = useMemo(
+    () => (taskRuns ? buildTaskRunIndex(taskRuns) : new Map()),
+    [taskRuns],
+  );
+
   const selectedRun = useMemo(() => {
     if (!taskRuns?.length) {
       return null;
     }
     const runFromSearch = search.runId
-      ? findRunById(taskRuns, search.runId)
+      ? taskRunIndex.get(search.runId) ?? null
       : null;
     if (runFromSearch) {
       return runFromSearch;
     }
     return taskRuns[0];
-  }, [search.runId, taskRuns]);
+  }, [search.runId, taskRunIndex, taskRuns]);
 
   const selectedRunId = selectedRun?._id ?? null;
   const headerTaskRunId = selectedRunId ?? taskRuns?.[0]?._id ?? null;

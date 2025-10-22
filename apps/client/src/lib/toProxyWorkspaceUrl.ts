@@ -98,68 +98,8 @@ export function toWorkspaceServiceUrl(
     return serviceUrl.toString();
   }
 
-  try {
-    const url = new URL(workspaceUrl);
-    url.port = String(port);
-    url.pathname = normalizedPath;
-    url.search = "";
-    url.hash = "";
-    if (protocol) {
-      url.protocol = protocol;
-    }
-    return url.toString();
-  } catch {
-    return null;
-  }
+  return null;
 }
-
-export function resolveWorkspaceServiceBases(
-  workspaceUrl: string,
-  port: number,
-): string[] {
-  const results = new Set<string>();
-
-  const add = (value: string | null | undefined) => {
-    if (!value) return;
-    const trimmed = value.replace(/\/$/, "");
-    if (trimmed.length > 0) {
-      results.add(trimmed);
-    }
-  };
-
-  const components = parseMorphUrl(workspaceUrl);
-  if (components) {
-    const proxied = new URL(components.url.toString());
-    proxied.hostname = `cmux-${components.morphId}-base-${port}.cmux.app`;
-    proxied.port = "";
-    proxied.pathname = "/";
-    proxied.search = "";
-    proxied.hash = "";
-    add(proxied.toString());
-
-    const direct = new URL(components.url.toString());
-    direct.hostname = `port-${port}-morphvm-${components.morphId}.http.cloud.morph.so`;
-    direct.port = "";
-    direct.pathname = "/";
-    direct.search = "";
-    direct.hash = "";
-    add(direct.toString());
-  }
-
-  try {
-    const url = new URL(workspaceUrl);
-    url.port = String(port);
-    url.pathname = "/";
-    url.search = "";
-    url.hash = "";
-    add(url.toString());
-  } catch {
-    // ignore invalid URL
-  }
-
-  return Array.from(results);
-}
-
 export function toMorphXtermBaseUrl(sourceUrl: string): string | null {
   const components = parseMorphUrl(sourceUrl);
 
