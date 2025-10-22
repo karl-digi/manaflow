@@ -44,3 +44,7 @@ cmux upgrade
 ```bash
 cmux uninstall
 ```
+
+Circuits hum of code
+Screens glow with truth and error
+Night deploys calm tests
