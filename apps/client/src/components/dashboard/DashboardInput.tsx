@@ -51,9 +51,13 @@ export const DashboardInput = memo(
     const lastPointerEventRef = useRef<{
       ts: number;
       target: EventTarget | null;
+      button: number | null;
+      ctrlKey: boolean;
     }>({
       ts: 0,
       target: null,
+      button: null,
+      ctrlKey: false,
     });
     const lastKeydownRef = useRef<{
       ts: number;
@@ -62,6 +66,7 @@ export const DashboardInput = memo(
       metaKey: boolean;
       ctrlKey: boolean;
       altKey: boolean;
+      shiftKey: boolean;
     }>({
       ts: 0,
       key: "",
@@ -69,6 +74,7 @@ export const DashboardInput = memo(
       metaKey: false,
       ctrlKey: false,
       altKey: false,
+      shiftKey: false,
     });
     const pendingRefocusTimeoutRef = useRef<number | null>(null);
 
@@ -140,20 +146,42 @@ export const DashboardInput = memo(
 
         const now = Date.now();
         const recentPointer = lastPointerEventRef.current;
-        if (
-          recentPointer.ts !== 0 &&
-          now - recentPointer.ts < 400 &&
-          recentPointer.target instanceof Element &&
-          !recentPointer.target.closest(lexicalRootSelector)
-        ) {
-          return false;
+        if (recentPointer.ts !== 0 && now - recentPointer.ts < 400) {
+          const pointerTarget =
+            recentPointer.target instanceof Element
+              ? recentPointer.target
+              : null;
+
+          if (pointerTarget) {
+            const pointerWithinEditor = pointerTarget.closest(
+              lexicalRootSelector
+            );
+
+            if (!pointerWithinEditor) {
+              return false;
+            }
+
+            const pointerOpenedContextMenu =
+              recentPointer.button === 2 || recentPointer.ctrlKey;
+            if (pointerOpenedContextMenu) {
+              return false;
+            }
+          }
         }
 
         const recentKeydown = lastKeydownRef.current;
         if (
           recentKeydown.ts !== 0 &&
           now - recentKeydown.ts < 400 &&
-          (recentKeydown.key === "Tab" || recentKeydown.code === "Tab")
+          (
+            recentKeydown.key === "Tab" ||
+            recentKeydown.code === "Tab" ||
+            recentKeydown.key === "ContextMenu" ||
+            recentKeydown.code === "ContextMenu" ||
+            (recentKeydown.shiftKey &&
+              (recentKeydown.key === "F10" ||
+                recentKeydown.code === "F10"))
+          )
         ) {
           return false;
         }
@@ -232,6 +260,8 @@ export const DashboardInput = memo(
         lastPointerEventRef.current = {
           ts: Date.now(),
           target: event.target,
+          button: typeof event.button === "number" ? event.button : null,
+          ctrlKey: event.ctrlKey,
         };
 
         if (isDev) {
@@ -256,6 +286,7 @@ export const DashboardInput = memo(
             metaKey: event.metaKey,
             ctrlKey: event.ctrlKey,
             altKey: event.altKey,
+            shiftKey: event.shiftKey,
           };
         }
 
