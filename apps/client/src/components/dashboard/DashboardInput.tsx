@@ -51,9 +51,21 @@ export const DashboardInput = memo(
     const lastPointerEventRef = useRef<{
       ts: number;
       target: EventTarget | null;
+      button: number | null;
+      pointerType: string | null;
+      ctrlKey: boolean;
+      metaKey: boolean;
+      altKey: boolean;
+      shiftKey: boolean;
     }>({
       ts: 0,
       target: null,
+      button: null,
+      pointerType: null,
+      ctrlKey: false,
+      metaKey: false,
+      altKey: false,
+      shiftKey: false,
     });
     const lastKeydownRef = useRef<{
       ts: number;
@@ -62,6 +74,7 @@ export const DashboardInput = memo(
       metaKey: boolean;
       ctrlKey: boolean;
       altKey: boolean;
+      shiftKey: boolean;
     }>({
       ts: 0,
       key: "",
@@ -69,6 +82,7 @@ export const DashboardInput = memo(
       metaKey: false,
       ctrlKey: false,
       altKey: false,
+      shiftKey: false,
     });
     const pendingRefocusTimeoutRef = useRef<number | null>(null);
 
@@ -142,20 +156,44 @@ export const DashboardInput = memo(
         const recentPointer = lastPointerEventRef.current;
         if (
           recentPointer.ts !== 0 &&
-          now - recentPointer.ts < 400 &&
-          recentPointer.target instanceof Element &&
-          !recentPointer.target.closest(lexicalRootSelector)
+          now - recentPointer.ts < 400
         ) {
-          return false;
+          if (
+            recentPointer.target instanceof Element &&
+            !recentPointer.target.closest(lexicalRootSelector)
+          ) {
+            return false;
+          }
+
+          const triggeredContextMenuPointer =
+            recentPointer.button === 2 ||
+            (recentPointer.button === 0 && recentPointer.ctrlKey);
+
+          if (triggeredContextMenuPointer) {
+            return false;
+          }
         }
 
         const recentKeydown = lastKeydownRef.current;
         if (
           recentKeydown.ts !== 0 &&
-          now - recentKeydown.ts < 400 &&
-          (recentKeydown.key === "Tab" || recentKeydown.code === "Tab")
+          now - recentKeydown.ts < 400
         ) {
-          return false;
+          if (
+            recentKeydown.key === "Tab" ||
+            recentKeydown.code === "Tab"
+          ) {
+            return false;
+          }
+
+          const triggeredContextMenuKey =
+            recentKeydown.key === "ContextMenu" ||
+            recentKeydown.code === "ContextMenu" ||
+            (recentKeydown.key === "F10" && recentKeydown.shiftKey);
+
+          if (triggeredContextMenuKey) {
+            return false;
+          }
         }
 
         if (!candidateActiveElement) {
@@ -232,6 +270,12 @@ export const DashboardInput = memo(
         lastPointerEventRef.current = {
           ts: Date.now(),
           target: event.target,
+          button: event.button,
+          pointerType: event.pointerType,
+          ctrlKey: event.ctrlKey,
+          metaKey: event.metaKey,
+          altKey: event.altKey,
+          shiftKey: event.shiftKey,
         };
 
         if (isDev) {
@@ -239,6 +283,11 @@ export const DashboardInput = memo(
             eventTarget: describeElement(event.target),
             pointerType: event.pointerType,
             buttons: event.buttons,
+            button: event.button,
+            ctrlKey: event.ctrlKey,
+            metaKey: event.metaKey,
+            altKey: event.altKey,
+            shiftKey: event.shiftKey,
             clientX: event.clientX,
             clientY: event.clientY,
             activeElement: describeElement(document.activeElement),
@@ -256,6 +305,7 @@ export const DashboardInput = memo(
             metaKey: event.metaKey,
             ctrlKey: event.ctrlKey,
             altKey: event.altKey,
+            shiftKey: event.shiftKey,
           };
         }
 
@@ -266,6 +316,7 @@ export const DashboardInput = memo(
             metaKey: event.metaKey,
             ctrlKey: event.ctrlKey,
             altKey: event.altKey,
+            shiftKey: event.shiftKey,
             eventTarget: describeElement(event.target),
             activeElement: describeElement(document.activeElement),
             timestamp: new Date().toISOString(),
