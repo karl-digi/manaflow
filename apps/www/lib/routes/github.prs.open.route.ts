@@ -260,7 +260,7 @@ githubPrsOpenRouter.openapi(
       );
     }
 
-    const baseBranch = task.baseBranch?.trim() || "main";
+    const configuredBaseBranch = task.baseBranch?.trim();
     const title = task.pullRequestTitle || task.text || "cmux changes";
     const truncatedTitle =
       title.length > 72 ? `${title.slice(0, 69)}...` : title;
@@ -276,6 +276,8 @@ githubPrsOpenRouter.openapi(
 
     const octokit = createOctokit(githubAccessToken);
 
+    const baseBranchCache = new Map<string, string>();
+
     const results = await Promise.all(
       repoFullNames.map(async (repoFullName) => {
         try {
@@ -287,6 +289,17 @@ githubPrsOpenRouter.openapi(
           const { owner, repo } = split;
           const existingRecord = existingByRepo.get(repoFullName);
           const existingNumber = existingRecord?.number;
+
+          const baseBranch = await resolveBaseBranch({
+            cache: baseBranchCache,
+            convex,
+            configuredBaseBranch,
+            owner,
+            repo,
+            repoFullName,
+            teamSlugOrId,
+            octokit,
+          });
 
           let detail = await loadPullRequestDetail({
             octokit,
@@ -1174,6 +1187,88 @@ async function createReadyPullRequest({
     state: data.state,
     draft: data.draft ?? undefined,
   };
+}
+
+async function resolveBaseBranch({
+  cache,
+  convex,
+  configuredBaseBranch,
+  owner,
+  repo,
+  repoFullName,
+  teamSlugOrId,
+  octokit,
+}: {
+  cache: Map<string, string>;
+  convex: ConvexClient;
+  configuredBaseBranch: string | undefined | null;
+  owner: string;
+  repo: string;
+  repoFullName: string;
+  teamSlugOrId: string;
+  octokit: Octokit;
+}): Promise<string> {
+  if (configuredBaseBranch) {
+    return configuredBaseBranch;
+  }
+
+  const cached = cache.get(repoFullName);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const githubDefault = await fetchGitHubDefaultBranch({
+    octokit,
+    owner,
+    repo,
+  });
+  if (githubDefault) {
+    cache.set(repoFullName, githubDefault);
+    return githubDefault;
+  }
+
+  try {
+    const stored = await convex.query(api.github.getRepoByFullName, {
+      teamSlugOrId,
+      fullName: repoFullName,
+    });
+    const defaultBranch = stored?.defaultBranch?.trim();
+    if (defaultBranch) {
+      cache.set(repoFullName, defaultBranch);
+      return defaultBranch;
+    }
+  } catch (error) {
+    console.warn(
+      `[github-open-pr] Failed to load stored repo metadata for ${repoFullName}: ${String(error)}`,
+    );
+  }
+
+  console.warn(
+    `[github-open-pr] Falling back to 'main' for ${repoFullName} after failing to detect default branch`,
+  );
+  cache.set(repoFullName, "main");
+  return "main";
+}
+
+async function fetchGitHubDefaultBranch({
+  octokit,
+  owner,
+  repo,
+}: {
+  octokit: Octokit;
+  owner: string;
+  repo: string;
+}): Promise<string | null> {
+  try {
+    const { data } = await octokit.rest.repos.get({ owner, repo });
+    const branch = data.default_branch?.trim();
+    return branch && branch.length > 0 ? branch : null;
+  } catch (error) {
+    console.warn(
+      `[github-open-pr] Failed to fetch default branch for ${owner}/${repo}: ${String(error)}`,
+    );
+    return null;
+  }
 }
 
 async function markPullRequestReady({

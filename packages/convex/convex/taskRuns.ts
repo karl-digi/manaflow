@@ -299,6 +299,36 @@ async function fetchBranchMetadataForRepo(
   return Array.from(byName.values());
 }
 
+async function fetchDefaultBranchForRepo(
+  ctx: QueryCtx,
+  teamId: string,
+  userId: string,
+  repoFullName: string,
+): Promise<string | null> {
+  const trimmed = repoFullName.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const userScoped = await ctx.db
+    .query("repos")
+    .withIndex("by_team_user", (q) => q.eq("teamId", teamId).eq("userId", userId))
+    .filter((q) => q.eq(q.field("fullName"), trimmed))
+    .first();
+  if (userScoped?.defaultBranch) {
+    return userScoped.defaultBranch;
+  }
+
+  const teamScoped = await ctx.db
+    .query("repos")
+    .withIndex("by_team", (q) => q.eq("teamId", teamId))
+    .filter((q) => q.eq(q.field("fullName"), trimmed))
+    .collect();
+
+  const withDefault = teamScoped.find((row) => row.defaultBranch?.trim());
+  return withDefault?.defaultBranch ?? null;
+}
+
 // Update task run status
 export const updateStatus = internalMutation({
   args: {
@@ -354,6 +384,7 @@ export const getRunDiffContext = authQuery({
         task: null,
         taskRuns,
         branchMetadataByRepo: {} as Record<string, Doc<"branches">[]>,
+        defaultBranchByRepo: {} as Record<string, string>,
       };
     }
 
@@ -376,6 +407,7 @@ export const getRunDiffContext = authQuery({
 
     const trimmedProjectFullName = taskDoc.projectFullName?.trim();
     const branchMetadataByRepo: Record<string, Doc<"branches">[]> = {};
+    const defaultBranchByRepo: Record<string, string> = {};
 
     if (trimmedProjectFullName) {
       try {
@@ -393,10 +425,41 @@ export const getRunDiffContext = authQuery({
       }
     }
 
+    const candidateRepos = new Set<string>();
+    if (trimmedProjectFullName) {
+      candidateRepos.add(trimmedProjectFullName);
+    }
+    for (const run of taskRuns) {
+      const repos = run.environment?.selectedRepos ?? [];
+      for (const repo of repos) {
+        const trimmed = typeof repo === "string" ? repo.trim() : "";
+        if (trimmed) {
+          candidateRepos.add(trimmed);
+        }
+      }
+    }
+
+    for (const repoFullName of candidateRepos) {
+      try {
+        const defaultBranch = await fetchDefaultBranchForRepo(
+          ctx,
+          teamId,
+          userId,
+          repoFullName,
+        );
+        if (defaultBranch) {
+          defaultBranchByRepo[repoFullName] = defaultBranch;
+        }
+      } catch {
+        // Unable to resolve default branch – skip and fall back later on the client.
+      }
+    }
+
     return {
       task: taskWithImages,
       taskRuns,
       branchMetadataByRepo,
+      defaultBranchByRepo,
     };
   },
 });
