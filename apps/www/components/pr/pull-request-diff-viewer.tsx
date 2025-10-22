@@ -1646,55 +1646,49 @@ function HeatmapTooltipBody({
   );
 }
 
-const HEATMAP_SCORE_TIERS = [0.2, 0.4, 0.6, 0.8] as const;
-
 function getHeatmapTooltipTheme(score: number): HeatmapTooltipTheme {
-  const tier = (() => {
-    for (let index = HEATMAP_SCORE_TIERS.length - 1; index >= 0; index -= 1) {
-      if (score >= HEATMAP_SCORE_TIERS[index]!) {
-        return index + 1;
-      }
-    }
-    return score > 0 ? 1 : 0;
-  })();
-
-  switch (tier) {
-    case 4:
-      return {
-        contentClass:
-          "bg-rose-900/95 border-rose-500/40 text-rose-50 shadow-lg shadow-rose-950/40",
-        titleClass: "text-rose-100",
-        reasonClass: "text-rose-200",
-      };
-    case 3:
-      return {
-        contentClass:
-          "bg-rose-800/95 border-rose-400/40 text-rose-50 shadow-lg shadow-rose-950/30",
-        titleClass: "text-rose-100",
-        reasonClass: "text-rose-200",
-      };
-    case 2:
-      return {
-        contentClass:
-          "bg-amber-800/95 border-amber-400/40 text-amber-50 shadow-lg shadow-amber-950/30",
-        titleClass: "text-amber-100",
-        reasonClass: "text-amber-200",
-      };
-    case 1:
-      return {
-        contentClass:
-          "bg-amber-900/95 border-amber-500/40 text-amber-50 shadow-lg shadow-amber-950/40",
-        titleClass: "text-amber-100",
-        reasonClass: "text-amber-200",
-      };
-    default:
-      return {
-        contentClass:
-          "bg-neutral-900/95 border-neutral-700/60 text-neutral-100 shadow-lg shadow-black/40",
-        titleClass: "text-neutral-100",
-        reasonClass: "text-neutral-300",
-      };
+  if (score >= 0.85) {
+    return {
+      contentClass:
+        "bg-rose-900/95 border-rose-500/40 text-rose-50 shadow-lg shadow-rose-950/40",
+      titleClass: "text-rose-100",
+      reasonClass: "text-rose-200",
+    };
   }
+
+  if (score >= 0.65) {
+    return {
+      contentClass:
+        "bg-orange-900/95 border-orange-400/40 text-orange-50 shadow-lg shadow-orange-950/40",
+      titleClass: "text-orange-100",
+      reasonClass: "text-orange-200",
+    };
+  }
+
+  if (score >= 0.4) {
+    return {
+      contentClass:
+        "bg-amber-900/95 border-amber-400/40 text-amber-50 shadow-lg shadow-amber-950/40",
+      titleClass: "text-amber-100",
+      reasonClass: "text-amber-200",
+    };
+  }
+
+  if (score > 0) {
+    return {
+      contentClass:
+        "bg-emerald-900/95 border-emerald-500/40 text-emerald-50 shadow-lg shadow-emerald-950/40",
+      titleClass: "text-emerald-100",
+      reasonClass: "text-emerald-200",
+    };
+  }
+
+  return {
+    contentClass:
+      "bg-neutral-900/95 border-neutral-700/60 text-neutral-100 shadow-lg shadow-black/40",
+    titleClass: "text-neutral-100",
+    reasonClass: "text-neutral-300",
+  };
 }
 
 function extractHeatmapTier(className: string): number {

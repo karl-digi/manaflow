@@ -99,8 +99,8 @@ describe("buildDiffHeatmap", () => {
     }
 
     expect(heatmap.entries.get(2)?.score).toBeCloseTo(0.7, 5);
-    expect(heatmap.lineClasses.get(2)).toBe("cmux-heatmap-tier-3");
-    expect(heatmap.lineClasses.get(4)).toBe("cmux-heatmap-tier-4");
+    expect(heatmap.lineClasses.get(2)).toBe("cmux-heatmap-tier-7");
+    expect(heatmap.lineClasses.get(4)).toBe("cmux-heatmap-tier-9");
 
     const rangeForLine2 = heatmap.newRanges.find(
       (range) => range.lineNumber === 2

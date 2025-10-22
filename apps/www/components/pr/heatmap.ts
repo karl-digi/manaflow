@@ -29,7 +29,7 @@ type ResolvedHeatmapLine = {
 const SCORE_CLAMP_MIN = 0;
 const SCORE_CLAMP_MAX = 1;
 
-const HEATMAP_TIERS = [0.2, 0.4, 0.6, 0.8] as const;
+export const HEATMAP_TIER_COUNT = 10;
 
 export function parseReviewHeatmap(raw: unknown): ReviewHeatmapLine[] {
   const payload = unwrapCodexPayload(raw);
@@ -308,13 +308,17 @@ function computeHeatmapTier(score: number | null): number {
     return 0;
   }
 
-  for (let index = HEATMAP_TIERS.length - 1; index >= 0; index -= 1) {
-    if (score >= HEATMAP_TIERS[index]!) {
-      return index + 1;
-    }
+  const normalized = clamp(score, SCORE_CLAMP_MIN, SCORE_CLAMP_MAX);
+  if (normalized <= 0) {
+    return 0;
   }
 
-  return score > 0 ? 1 : 0;
+  const bucket = Math.round(normalized * HEATMAP_TIER_COUNT);
+  if (bucket <= 0) {
+    return 1;
+  }
+
+  return Math.min(bucket, HEATMAP_TIER_COUNT);
 }
 
 function clamp(value: number, min: number, max: number): number {
