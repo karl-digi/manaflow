@@ -9,6 +9,8 @@ import { type CSSProperties } from "react";
 export function SignInComponent() {
   const user = useUser({ or: "return-null" });
   const showSignIn = !user;
+  const showStackAuthWidget = !isElectron || import.meta.env.DEV;
+  const stackAuthWidget = showStackAuthWidget ? <SignIn /> : null;
   return (
     <AnimatePresence mode="wait">
       {showSignIn ? (
@@ -48,10 +50,10 @@ export function SignInComponent() {
               <p className="text-xs text-neutral-500 dark:text-neutral-500 text-center">
                 After signing in, you'll be returned automatically.
               </p>
-              <SignIn />
+              {stackAuthWidget}
             </div>
           ) : (
-            <SignIn />
+            stackAuthWidget
           )}
         </motion.div>
       ) : null}
