@@ -5,7 +5,7 @@ import { isElectron } from "@/lib/electron";
 import { type Doc } from "@cmux/convex/dataModel";
 import type { LinkProps } from "@tanstack/react-router";
 import { Link } from "@tanstack/react-router";
-import { Home, Plus, Server, Settings } from "lucide-react";
+import { Home, Mail, Plus, Server, Settings } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -15,6 +15,7 @@ import {
   type CSSProperties,
 } from "react";
 import CmuxLogo from "./logo/cmux-logo";
+import { DiscordIcon } from "./icons/discord";
 import { SidebarNavLink } from "./sidebar/SidebarNavLink";
 import { SidebarPullRequestList } from "./sidebar/SidebarPullRequestList";
 import { SidebarSectionLink } from "./sidebar/SidebarSectionLink";
@@ -310,6 +311,26 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
                 </p>
               )}
             </div>
+          </div>
+        </div>
+        <div className="shrink-0 border-t border-neutral-200/70 bg-neutral-50/95 px-3 pb-3 pt-2 dark:border-neutral-800/70 dark:bg-black/80">
+          <div className="flex items-center gap-2">
+            <a
+              href="mailto:founders@manaflow.ai"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-50 dark:text-neutral-400 dark:hover:bg-neutral-900 dark:hover:text-neutral-50 dark:focus-visible:ring-neutral-600 dark:focus-visible:ring-offset-neutral-900"
+              aria-label="Send feedback"
+            >
+              <Mail className="h-4 w-4" aria-hidden="true" />
+            </a>
+            <a
+              href="https://discord.gg/Qg9fxZ58b8"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-50 dark:text-neutral-400 dark:hover:bg-neutral-900 dark:hover:text-neutral-50 dark:focus-visible:ring-neutral-600 dark:focus-visible:ring-offset-neutral-900"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="Join the Discord"
+            >
+              <DiscordIcon className="h-4 w-4" />
+            </a>
           </div>
         </div>
       </nav>
