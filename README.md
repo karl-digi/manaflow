@@ -44,3 +44,7 @@ cmux upgrade
 ```bash
 cmux uninstall
 ```
+
+Autumn code winds hum  
+Agents wake in docker dreams  
+Commits fall like leaves
