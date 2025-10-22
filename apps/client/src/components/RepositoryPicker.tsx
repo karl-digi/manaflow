@@ -159,8 +159,14 @@ export function RepositoryPicker({
   const pendingIdRef = useRef<PendingEnvironmentId | null>(
     pendingEnvironmentId ?? null
   );
+  const creatingDraftPromiseRef = useRef<
+    Promise<PendingEnvironmentId | undefined> | null
+  >(null);
   useEffect(() => {
     pendingIdRef.current = pendingEnvironmentId ?? null;
+    if (pendingEnvironmentId) {
+      creatingDraftPromiseRef.current = null;
+    }
   }, [pendingEnvironmentId]);
 
   const ensureDraftId = useCallback(
@@ -168,14 +174,25 @@ export function RepositoryPicker({
       if (pendingIdRef.current) {
         return pendingIdRef.current;
       }
+      if (creatingDraftPromiseRef.current) {
+        return creatingDraftPromiseRef.current;
+      }
       if (!onDraftCreated) {
         return undefined;
       }
-      const createdId = await onDraftCreated();
-      if (createdId) {
-        pendingIdRef.current = createdId;
-      }
-      return createdId;
+      const creationPromise = (async () => {
+        try {
+          const createdId = await onDraftCreated();
+          if (createdId) {
+            pendingIdRef.current = createdId;
+          }
+          return createdId;
+        } finally {
+          creatingDraftPromiseRef.current = null;
+        }
+      })();
+      creatingDraftPromiseRef.current = creationPromise;
+      return creationPromise;
     },
     [onDraftCreated]
   );
