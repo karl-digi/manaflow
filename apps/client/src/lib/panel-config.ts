@@ -15,10 +15,10 @@ export const DEFAULT_PANEL_CONFIG: PanelConfig = {
 };
 
 export const PANEL_LABELS: Record<PanelType, string> = {
-  chat: "Timeline",
+  chat: "Activity",
   workspace: "Workspace",
   terminal: "Terminal",
-  browser: "Browser Preview",
+  browser: "Browser",
   gitDiff: "Git Diff",
 };
 

@@ -371,6 +371,33 @@ function TaskDetailPage() {
   const isEditorBusy = Boolean(selectedRun) && (!workspaceUrl || editorStatus !== "loaded");
   const isBrowserBusy = Boolean(selectedRun) && (!hasBrowserView || browserStatus !== "loaded");
 
+  const workspacePlaceholder = useMemo(() => {
+    if (!taskRuns?.length) {
+      return {
+        title: "Workspace becomes available once a run starts.",
+        description: "Run the task in a cloud workspace to launch VS Code.",
+      }
+    }
+
+    return null;
+  }, [selectedRun, taskRuns?.length]);
+
+  const browserPlaceholder = useMemo(() => {
+    if (!selectedRun) {
+      if (taskRuns?.length) {
+        return {
+          title: "Select a run to open the browser preview.",
+          description: "Pick a run with a workspace to inspect its live preview.",
+        }
+      }
+    }
+
+    return {
+      title: "Browser preview becomes available once a run starts.",
+      description: "Start a cloud workspace run to expose a live browser session.",
+    }
+  }, [selectedRun, taskRuns?.length]);
+
   const availablePanels = useMemo(() => getAvailablePanels(panelConfig), [panelConfig]);
 
   const panelProps = useMemo(
@@ -388,11 +415,13 @@ function TaskDetailPage() {
       editorLoadingFallback,
       editorErrorFallback,
       isEditorBusy,
+      workspacePlaceholder,
       rawWorkspaceUrl,
       browserUrl,
       browserPersistKey,
       browserStatus,
       setBrowserStatus: handleBrowserStatusChange,
+      browserPlaceholder,
       isMorphProvider,
       isBrowserBusy,
       TaskRunChatPane,
@@ -417,11 +446,13 @@ function TaskDetailPage() {
     editorLoadingFallback,
     editorErrorFallback,
     isEditorBusy,
+    workspacePlaceholder,
     rawWorkspaceUrl,
     browserUrl,
     browserPersistKey,
     browserStatus,
     handleBrowserStatusChange,
+    browserPlaceholder,
     isMorphProvider,
     isBrowserBusy,
     handlePanelClose,

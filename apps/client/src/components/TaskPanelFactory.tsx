@@ -11,20 +11,19 @@ import type { PersistentWebViewProps } from "./persistent-webview";
 import type { WorkspaceLoadingIndicatorProps } from "./workspace-loading-indicator";
 import type { TaskRunTerminalPaneProps } from "./TaskRunTerminalPane";
 import type { TaskRunGitDiffPanelProps } from "./TaskRunGitDiffPanel";
-import {
-  PANEL_DRAG_END_EVENT,
-  PANEL_DRAG_START_EVENT,
-  type PanelDragLifecycleEvent,
-} from "./panel-drag-events";
 
 type PanelPosition = "topLeft" | "topRight" | "bottomLeft" | "bottomRight";
 
-const dispatchPanelDragEvent = (event: PanelDragLifecycleEvent) => {
+const PANEL_DRAG_START_EVENT = "cmux:panel-drag-start";
+const PANEL_DRAG_END_EVENT = "cmux:panel-drag-end";
+
+const dispatchPanelDragEvent = (event: string) => {
   if (typeof window === "undefined") {
     return;
   }
   window.dispatchEvent(new Event(event));
 };
+
 
 interface PanelFactoryProps {
   type: PanelType | null;
@@ -50,6 +49,10 @@ interface PanelFactoryProps {
   editorLoadingFallback?: ReactNode;
   editorErrorFallback?: ReactNode;
   isEditorBusy?: boolean;
+  workspacePlaceholder?: {
+    title: string;
+    description?: string;
+  } | null;
   // Terminal panel props
   rawWorkspaceUrl?: string | null;
   // Browser panel props
@@ -57,7 +60,10 @@ interface PanelFactoryProps {
   browserPersistKey?: string | null;
   browserStatus?: PersistentIframeStatus;
   setBrowserStatus?: (status: PersistentIframeStatus) => void;
-  browserOverlayMessage?: string;
+  browserPlaceholder?: {
+    title: string;
+    description?: string;
+  } | null;
   isMorphProvider?: boolean;
   isBrowserBusy?: boolean;
   // Additional components
@@ -265,6 +271,7 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
         editorLoadingFallback,
         editorErrorFallback,
         isEditorBusy,
+        workspacePlaceholder,
         PersistentWebView,
         WorkspaceLoadingIndicator,
         TASK_RUN_IFRAME_ALLOW,
@@ -302,6 +309,18 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
             <div className="flex h-full items-center justify-center">
               <WorkspaceLoadingIndicator variant="vscode" status="loading" />
             </div>
+          ) : workspacePlaceholder ? (
+            <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-neutral-500 dark:text-neutral-400">
+              <Code2 className="size-4" aria-hidden />
+              <div className="text-sm font-medium text-neutral-600 dark:text-neutral-200">
+                {workspacePlaceholder.title}
+              </div>
+              {workspacePlaceholder.description ? (
+                <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                  {workspacePlaceholder.description}
+                </p>
+              ) : null}
+            </div>
           ) : null}
         </div>
       );
@@ -328,6 +347,7 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
         browserUrl,
         browserPersistKey,
         setBrowserStatus,
+        browserPlaceholder,
         selectedRun,
         isMorphProvider,
         isBrowserBusy,
@@ -369,6 +389,18 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
             <div className="flex h-full items-center justify-center">
               <WorkspaceLoadingIndicator variant="browser" status="loading" />
             </div>
+          ) : browserPlaceholder ? (
+            <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-neutral-500 dark:text-neutral-400">
+              <Globe2 className="size-4" aria-hidden />
+              <div className="text-sm font-medium text-neutral-600 dark:text-neutral-200">
+                {browserPlaceholder.title}
+              </div>
+              {browserPlaceholder.description ? (
+                <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                  {browserPlaceholder.description}
+                </p>
+              ) : null}
+            </div>
           ) : null}
         </div>
       );
@@ -408,7 +440,11 @@ export const RenderPanel = React.memo(RenderPanelComponent, (prevProps, nextProp
     if (prevProps.workspacePersistKey !== nextProps.workspacePersistKey ||
       prevProps.browserPersistKey !== nextProps.browserPersistKey ||
       prevProps.workspaceUrl !== nextProps.workspaceUrl ||
+      prevProps.workspacePlaceholder?.title !== nextProps.workspacePlaceholder?.title ||
+      prevProps.workspacePlaceholder?.description !== nextProps.workspacePlaceholder?.description ||
       prevProps.browserUrl !== nextProps.browserUrl ||
+      prevProps.browserPlaceholder?.title !== nextProps.browserPlaceholder?.title ||
+      prevProps.browserPlaceholder?.description !== nextProps.browserPlaceholder?.description ||
       prevProps.selectedRun?._id !== nextProps.selectedRun?._id) {
       return false;
     }

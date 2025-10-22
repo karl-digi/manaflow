@@ -7,7 +7,6 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import clsx from "clsx";
 import { useXTerm } from "./xterm/use-xterm";
-import { PANEL_DRAG_END_EVENT, PANEL_DRAG_START_EVENT } from "./panel-drag-events";
 
 const MIN_COLS = 20;
 const MAX_COLS = 320;
@@ -32,8 +31,6 @@ function clampDimension(value: number, min: number, max: number, fallback: numbe
   return Math.max(min, Math.min(max, next));
 }
 
-type Disposable = { dispose: () => void };
-
 export function TaskRunTerminalSession({
   baseUrl,
   terminalId,
@@ -57,7 +54,6 @@ export function TaskRunTerminalSession({
   } = useXTerm();
 
   const fitAddonRef = useRef<FitAddon | null>(null);
-  const panelDragActiveRef = useRef(false);
 
   useEffect(() => {
     if (!terminal) {
@@ -87,29 +83,6 @@ export function TaskRunTerminalSession({
   }, [terminal]);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
-      return undefined;
-    }
-
-    const handleDragStart = () => {
-      panelDragActiveRef.current = true;
-    };
-
-    const handleDragEnd = () => {
-      panelDragActiveRef.current = false;
-    };
-
-    window.addEventListener(PANEL_DRAG_START_EVENT, handleDragStart);
-    window.addEventListener(PANEL_DRAG_END_EVENT, handleDragEnd);
-
-    return () => {
-      window.removeEventListener(PANEL_DRAG_START_EVENT, handleDragStart);
-      window.removeEventListener(PANEL_DRAG_END_EVENT, handleDragEnd);
-      panelDragActiveRef.current = false;
-    };
-  }, []);
-
-  useEffect(() => {
     if (!terminal) {
       return;
     }
@@ -135,8 +108,6 @@ export function TaskRunTerminalSession({
 
   const socketRef = useRef<WebSocket | null>(null);
   const attachAddonRef = useRef<AttachAddon | null>(null);
-  const terminalDataDisposableRef = useRef<Disposable | null>(null);
-  const terminalBinaryDisposableRef = useRef<Disposable | null>(null);
   const pendingResizeRef = useRef<{ cols: number; rows: number } | null>(null);
   const lastSentResizeRef = useRef<{ cols: number; rows: number } | null>(null);
 
@@ -253,36 +224,9 @@ export function TaskRunTerminalSession({
     socket.binaryType = "arraybuffer";
     socketRef.current = socket;
 
-    const attachAddon = new AttachAddon(socket, { bidirectional: false });
+    const attachAddon = new AttachAddon(socket, { bidirectional: true });
     attachAddonRef.current = attachAddon;
     terminal.loadAddon(attachAddon);
-
-    const sendData = (data: string) => {
-      if (panelDragActiveRef.current) {
-        return;
-      }
-      if (socket.readyState !== WebSocket.OPEN) {
-        return;
-      }
-      socket.send(data);
-    };
-
-    const sendBinary = (data: string) => {
-      if (panelDragActiveRef.current) {
-        return;
-      }
-      if (socket.readyState !== WebSocket.OPEN) {
-        return;
-      }
-      const buffer = new Uint8Array(data.length);
-      for (let index = 0; index < data.length; index += 1) {
-        buffer[index] = data.charCodeAt(index) & 0xff;
-      }
-      socket.send(buffer);
-    };
-
-    terminalDataDisposableRef.current = terminal.onData(sendData);
-    terminalBinaryDisposableRef.current = terminal.onBinary(sendBinary);
 
     notifyConnectionState("connecting");
 
@@ -323,11 +267,6 @@ export function TaskRunTerminalSession({
       attachAddon.dispose();
       attachAddonRef.current = null;
 
-      terminalDataDisposableRef.current?.dispose();
-      terminalDataDisposableRef.current = null;
-      terminalBinaryDisposableRef.current?.dispose();
-      terminalBinaryDisposableRef.current = null;
-
       if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
         socket.close();
       }
@@ -345,7 +284,16 @@ export function TaskRunTerminalSession({
 
     if (isActive) {
       measureAndQueueResize();
-      terminal.focus();
+      // Defer focus to avoid triggering terminal queries during panel transitions
+      // Use double RAF to ensure resize operations are fully complete
+      // This prevents special characters from appearing when panels are swapped
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (terminal && isActive) {
+            terminal.focus();
+          }
+        });
+      });
     }
   }, [isActive, measureAndQueueResize, terminal]);
 
