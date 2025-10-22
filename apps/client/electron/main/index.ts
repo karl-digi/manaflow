@@ -83,6 +83,22 @@ let mainWindow: BrowserWindow | null = null;
 let previewReloadMenuItem: MenuItem | null = null;
 let previewReloadMenuVisible = false;
 
+const TEXT_CONTEXT_MENU_TEMPLATE: MenuItemConstructorOptions[] = [
+  { role: "undo" },
+  { role: "redo" },
+  { type: "separator" },
+  { role: "cut" },
+  { role: "copy" },
+  { role: "paste" },
+  { role: "delete" },
+  { type: "separator" },
+  { role: "selectAll" },
+];
+
+if (process.platform === "darwin") {
+  TEXT_CONTEXT_MENU_TEMPLATE.splice(6, 0, { role: "pasteAndMatchStyle" });
+}
+
 function getTimestamp(): string {
   return new Date().toISOString();
 }
@@ -249,6 +265,22 @@ ipcMain.handle(
     return { ok: true };
   }
 );
+
+ipcMain.handle("cmux:ui:show-text-context-menu", async (event) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window) {
+    return { ok: false, reason: "no-window" };
+  }
+
+  try {
+    const menu = Menu.buildFromTemplate(TEXT_CONTEXT_MENU_TEMPLATE);
+    await menu.popup({ window });
+    return { ok: true };
+  } catch (error) {
+    mainWarn("Failed to show text context menu", error);
+    return { ok: false, reason: "popup-failed" };
+  }
+});
 
 function emitAutoUpdateToastIfPossible(): void {
   if (!queuedAutoUpdateToast) return;

@@ -1,4 +1,5 @@
 import LexicalEditor from "@/components/lexical/LexicalEditor";
+import { isElectron } from "@/lib/electron";
 import clsx from "clsx";
 import {
   forwardRef,
@@ -71,6 +72,7 @@ export const DashboardInput = memo(
       altKey: false,
     });
     const pendingRefocusTimeoutRef = useRef<number | null>(null);
+    const lexicalRootSelector = ".dashboard-input-editor";
 
     useImperativeHandle(ref, () => ({
       getContent: () =>
@@ -81,7 +83,6 @@ export const DashboardInput = memo(
     }));
 
     useEffect(() => {
-      const lexicalRootSelector = ".dashboard-input-editor";
       // const isDev = import.meta.env.DEV;
       const isDev = false;
 
@@ -290,6 +291,38 @@ export const DashboardInput = memo(
         document.removeEventListener("keyup", handleKeyEvent, true);
       };
     }, []);
+
+    useEffect(() => {
+      if (!isElectron) {
+        return;
+      }
+
+      const handleContextMenu = (event: MouseEvent) => {
+        if (!(event.target instanceof Element)) {
+          return;
+        }
+
+        if (!event.target.closest(lexicalRootSelector)) {
+          return;
+        }
+
+        const showMenu = window.cmux?.ui?.showTextContextMenu;
+        if (!showMenu) {
+          return;
+        }
+
+        event.preventDefault();
+        void showMenu().catch((error: unknown) => {
+          console.warn("Failed to show text context menu", error);
+        });
+      };
+
+      document.addEventListener("contextmenu", handleContextMenu, true);
+
+      return () => {
+        document.removeEventListener("contextmenu", handleContextMenu, true);
+      };
+    }, [lexicalRootSelector]);
 
     const lexicalPlaceholder = useMemo(() => "Describe a task", []);
 
