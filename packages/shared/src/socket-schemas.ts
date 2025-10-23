@@ -121,6 +121,22 @@ export const GitRepoDiffRequestSchema = z.object({
   lastKnownMergeCommitSha: z.string().optional(),
 });
 
+export const GitSyncStatusSchema = z.object({
+  baseBranch: z.string(),
+  behindCount: z.number().int().nonnegative(),
+  aheadCount: z.number().int().nonnegative(),
+  isUpToDate: z.boolean(),
+});
+
+export const GitSyncStatusRequestSchema = z.object({
+  taskRunId: typedZid("taskRuns"),
+});
+
+export const GitSyncRunRequestSchema = z.object({
+  taskRunId: typedZid("taskRuns"),
+  baseBranch: z.string().optional(),
+});
+
 export const GitFileSchema = z.object({
   path: z.string(),
   status: z.enum(["added", "modified", "deleted", "renamed"]),
@@ -400,6 +416,9 @@ export type GitDiffResponse = z.infer<typeof GitDiffResponseSchema>;
 export type GitFileChanged = z.infer<typeof GitFileChangedSchema>;
 export type GitFullDiffRequest = z.infer<typeof GitFullDiffRequestSchema>;
 export type GitRepoDiffRequest = z.infer<typeof GitRepoDiffRequestSchema>;
+export type GitSyncStatus = z.infer<typeof GitSyncStatusSchema>;
+export type GitSyncStatusRequest = z.infer<typeof GitSyncStatusRequestSchema>;
+export type GitSyncRunRequest = z.infer<typeof GitSyncRunRequestSchema>;
 export type GitFullDiffResponse = z.infer<typeof GitFullDiffResponseSchema>;
 export type OpenInEditor = z.infer<typeof OpenInEditorSchema>;
 export type OpenInEditorError = z.infer<typeof OpenInEditorErrorSchema>;
@@ -430,6 +449,19 @@ export type ProviderStatusResponse = z.infer<
   typeof ProviderStatusResponseSchema
 >;
 export type DefaultRepo = z.infer<typeof DefaultRepoSchema>;
+export type GitSyncStatusResponse =
+  | { ok: true; status: GitSyncStatus }
+  | { ok: false; error: string };
+export type GitSyncRunResponse =
+  | { ok: true; status: GitSyncStatus }
+  | {
+      ok: false;
+      error: string;
+      conflict?: boolean;
+      agentName?: string;
+      taskRunId?: Id<"taskRuns">;
+      status?: GitSyncStatus;
+    };
 
 // Socket.io event map types
 export interface ClientToServerEvents {
@@ -446,6 +478,14 @@ export interface ClientToServerEvents {
         | { ok: true; diffs: import("./diff-types.js").ReplaceDiffEntry[] }
         | { ok: false; error: string; diffs: [] }
     ) => void
+  ) => void;
+  "git-sync-status": (
+    data: GitSyncStatusRequest,
+    callback: (response: GitSyncStatusResponse) => void
+  ) => void;
+  "git-sync-run": (
+    data: GitSyncRunRequest,
+    callback: (response: GitSyncRunResponse) => void
   ) => void;
   "git-full-diff": (data: GitFullDiffRequest) => void;
   "open-in-editor": (

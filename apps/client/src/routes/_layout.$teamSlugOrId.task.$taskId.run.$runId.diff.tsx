@@ -14,14 +14,25 @@ import { useSocket } from "@/contexts/socket/use-socket";
 import { normalizeGitRef } from "@/lib/refWithOrigin";
 import { cn } from "@/lib/utils";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
+import { gitSyncStatusQueryOptions, runGitSync } from "@/queries/git-sync";
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
-import type { TaskAcknowledged, TaskStarted, TaskError } from "@cmux/shared";
+import type {
+  GitSyncRunRequest,
+  GitSyncStatus,
+  TaskAcknowledged,
+  TaskStarted,
+  TaskError,
+} from "@cmux/shared";
 import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { convexQuery } from "@convex-dev/react-query";
 import { Switch } from "@heroui/react";
-import { useQuery as useRQ } from "@tanstack/react-query";
+import {
+  useMutation as useRQMutation,
+  useQuery as useRQ,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
 import { Command } from "lucide-react";
@@ -388,6 +399,81 @@ const RestartTaskForm = memo(function RestartTaskForm({
 
 RestartTaskForm.displayName = "RestartTaskForm";
 
+interface SyncStatusBannerProps {
+  status: GitSyncStatus | undefined;
+  isLoading: boolean;
+  error: unknown;
+  onSync: () => void;
+  isSyncing: boolean;
+}
+
+const SyncStatusBanner = memo(function SyncStatusBanner({
+  status,
+  isLoading,
+  error,
+  onSync,
+  isSyncing,
+}: SyncStatusBannerProps) {
+  const baseBranch = status?.baseBranch ?? "main";
+  const behindCount = status?.behindCount ?? 0;
+  const aheadCount = status?.aheadCount ?? 0;
+  const isBehind = Boolean(status && !status.isUpToDate);
+  const message = (() => {
+    if (isLoading) {
+      return `Checking sync status with origin/${baseBranch}...`;
+    }
+    if (error) {
+      return `Could not verify sync status with origin/${baseBranch}.`;
+    }
+    if (!status) {
+      return `Sync status unavailable.`;
+    }
+    if (!isBehind) {
+      return `Up to date with origin/${baseBranch}.`;
+    }
+    const suffix = behindCount === 1 ? "commit" : "commits";
+    return `Behind origin/${baseBranch} by ${behindCount} ${suffix}.`;
+  })();
+
+  const extraInfo = !isLoading && !error && status && aheadCount > 0
+    ? `Ahead by ${aheadCount} ${aheadCount === 1 ? "commit" : "commits"}.`
+    : undefined;
+  const messageClass = isBehind
+    ? "text-red-600 dark:text-red-400"
+    : "text-neutral-700 dark:text-neutral-200";
+
+  const showSyncButton = (status && !status.isUpToDate) || Boolean(error);
+
+  return (
+    <div className="px-3.5 pt-2">
+      <div className="flex flex-col gap-1.5 rounded-xl border border-neutral-500/15 bg-neutral-50 px-3 py-2 text-sm shadow-sm dark:border-neutral-700/40 dark:bg-neutral-900/60">
+        <div className="flex items-center gap-3">
+          <div className="flex-1">
+            <div className={messageClass}>{message}</div>
+            {extraInfo ? (
+              <div className="text-xs text-neutral-500 dark:text-neutral-400">
+                {extraInfo}
+              </div>
+            ) : null}
+          </div>
+          {showSyncButton ? (
+            <Button
+              size="sm"
+              variant="default"
+              disabled={isLoading || isSyncing}
+              onClick={onSync}
+            >
+              {isSyncing ? "Syncing..." : "Sync"}
+            </Button>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+});
+
+SyncStatusBanner.displayName = "SyncStatusBanner";
+
 function collectAgentNamesFromRuns(
   runs: TaskRunWithChildren[] | undefined,
 ): string[] {
@@ -707,6 +793,69 @@ function RunDiffPage() {
 
   const taskRunId = selectedRun?._id ?? runId;
   const restartTaskPersistenceKey = `restart-task-${taskId}-${runId}`;
+  const queryClient = useQueryClient();
+
+  const syncStatusQuery = useRQ({
+    ...gitSyncStatusQueryOptions(taskRunId),
+    enabled: Boolean(taskRunId),
+    refetchInterval: 120_000,
+  });
+
+  const syncMutation = useRQMutation({
+    mutationFn: async () => {
+      const request: GitSyncRunRequest = {
+        taskRunId: taskRunId as GitSyncRunRequest["taskRunId"],
+        baseBranch: task?.baseBranch ?? undefined,
+      };
+      return await runGitSync(request);
+    },
+    onSuccess: async (response) => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["git-sync-status", taskRunId],
+        }),
+        queryClient.invalidateQueries({ queryKey: ["git-diff"] }),
+      ]);
+
+      if (response.ok) {
+        const branchLabel = response.status.baseBranch;
+        toast.success(`Synced with origin/${branchLabel}`);
+        return;
+      }
+
+      const branchLabel =
+        response.status?.baseBranch ?? task?.baseBranch ?? "main";
+
+      if (response.conflict) {
+        if (response.agentName && response.taskRunId) {
+          toast.warning(
+            `${response.agentName} is resolving merge conflicts after syncing with origin/${branchLabel}.`,
+          );
+        } else {
+          toast.warning(
+            `Merge conflicts detected while syncing with origin/${branchLabel}.`,
+          );
+        }
+        return;
+      }
+
+      toast.error(response.error || "Failed to sync with origin/main");
+    },
+    onError: (error) => {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Failed to sync with origin/main";
+      toast.error(message);
+    },
+  });
+
+  const handleSyncClick = useCallback(() => {
+    if (syncMutation.isPending) {
+      return;
+    }
+    syncMutation.mutate();
+  }, [syncMutation]);
 
   // 404 if selected run is missing
   if (!selectedRun) {
@@ -749,11 +898,11 @@ function RunDiffPage() {
             </div>
           )}
           <div className="bg-white dark:bg-neutral-900 grow flex flex-col">
-            {pullRequests && pullRequests.length > 0 && (
-              <Suspense fallback={null}>
-                {pullRequests.map((pr) => (
-                  <WorkflowRunsWrapper
-                    key={pr.repoFullName}
+          {pullRequests && pullRequests.length > 0 && (
+            <Suspense fallback={null}>
+              {pullRequests.map((pr) => (
+                <WorkflowRunsWrapper
+                  key={pr.repoFullName}
                     teamSlugOrId={teamSlugOrId}
                     repoFullName={pr.repoFullName}
                     prNumber={pr.number}
@@ -773,6 +922,13 @@ function RunDiffPage() {
                 </div>
               }
             >
+              <SyncStatusBanner
+                status={syncStatusQuery.data}
+                isLoading={syncStatusQuery.isPending || syncStatusQuery.isFetching}
+                error={syncStatusQuery.error}
+                onSync={handleSyncClick}
+                isSyncing={syncMutation.isPending}
+              />
               {hasDiffSources ? (
                 <RunDiffSection
                   repoFullName={primaryRepo as string}

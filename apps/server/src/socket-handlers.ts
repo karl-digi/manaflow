@@ -1,4 +1,5 @@
 import { api } from "@cmux/convex/api";
+import type { Doc, Id } from "@cmux/convex/dataModel";
 import {
   ArchiveTaskSchema,
   GitFullDiffRequestSchema,
@@ -8,11 +9,14 @@ import {
   GitHubMergeBranchSchema,
   GitHubSyncPrStateSchema,
   ListFilesRequestSchema,
+  GitSyncRunRequestSchema,
+  GitSyncStatusRequestSchema,
   OpenInEditorSchema,
   SpawnFromCommentSchema,
   StartTaskSchema,
   type AvailableEditors,
   type FileInfo,
+  type GitSyncStatus,
   isLoopbackHostname,
   type IframePreflightResult,
 } from "@cmux/shared";
@@ -28,7 +32,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import z from "zod";
-import { spawnAllAgents } from "./agentSpawner";
+import { spawnAgent, spawnAllAgents } from "./agentSpawner";
+import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
 import { stopContainersForRuns } from "./archiveTask";
 import { execWithEnv } from "./execWithEnv";
 import { getGitDiff } from "./diffs/gitDiff";
@@ -39,7 +44,10 @@ import { RepositoryManager } from "./repositoryManager";
 import type { GitRepoInfo } from "./server";
 import { getPRTitleFromTaskDescription } from "./utils/branchNameGenerator";
 import { getConvex } from "./utils/convexClient";
-import { ensureRunWorktreeAndBranch } from "./utils/ensureRunWorktree";
+import {
+  ensureRunWorktreeAndBranch,
+  type EnsureWorktreeResult,
+} from "./utils/ensureRunWorktree";
 import { serverLogger } from "./utils/fileLogger";
 import { getGitHubTokenFromKeychain } from "./utils/getGitHubToken";
 import { createDraftPr, fetchPrDetail } from "./utils/githubPr";
@@ -75,6 +83,199 @@ const GitSocketDiffRequestSchema = z.object({
 const IframePreflightRequestSchema = z.object({
   url: z.string().url(),
 });
+
+const DEFAULT_BASE_BRANCH = "main";
+
+function sanitizeGitRef(ref?: string | null): string {
+  const value = ref?.trim();
+  if (!value) {
+    return DEFAULT_BASE_BRANCH;
+  }
+  const sanitized = value.replace(/[^0-9A-Za-z._/-]/g, "-");
+  return sanitized || DEFAULT_BASE_BRANCH;
+}
+
+function normalizeBaseBranch(ref?: string | null): string {
+  if (!ref) return DEFAULT_BASE_BRANCH;
+  let branch = ref.trim();
+  const prefixes = [
+    "refs/heads/",
+    "refs/remotes/origin/",
+    "refs/remotes/",
+    "origin/",
+  ];
+  for (const prefix of prefixes) {
+    if (branch.startsWith(prefix)) {
+      branch = branch.slice(prefix.length);
+      break;
+    }
+  }
+  branch = branch.trim();
+  if (!branch) {
+    return DEFAULT_BASE_BRANCH;
+  }
+  return sanitizeGitRef(branch);
+}
+
+async function revListCount(
+  repoMgr: RepositoryManager,
+  worktreePath: string,
+  command: string,
+): Promise<number> {
+  try {
+    const { stdout } = await repoMgr.executeGitCommand(command, {
+      cwd: worktreePath,
+    });
+    const value = Number.parseInt(stdout.trim(), 10);
+    if (Number.isFinite(value) && !Number.isNaN(value)) {
+      return value;
+    }
+    return 0;
+  } catch (error) {
+    serverLogger.warn(
+      `[git-sync] Failed to execute "${command}": ${String(error)}`,
+    );
+    return 0;
+  }
+}
+
+async function computeSyncStatusForWorktree(
+  repoMgr: RepositoryManager,
+  worktreePath: string,
+  baseBranch: string,
+): Promise<GitSyncStatus> {
+  const branch = normalizeBaseBranch(baseBranch);
+  try {
+    await repoMgr.updateRemoteBranchIfStale(worktreePath, branch);
+  } catch (error) {
+    serverLogger.warn(
+      `[git-sync] Failed to refresh origin/${branch}: ${String(error)}`,
+    );
+  }
+
+  const behindCount = await revListCount(
+    repoMgr,
+    worktreePath,
+    `git rev-list --count HEAD..origin/${branch}`,
+  );
+  const aheadCount = await revListCount(
+    repoMgr,
+    worktreePath,
+    `git rev-list --count origin/${branch}..HEAD`,
+  );
+
+  return {
+    baseBranch: branch,
+    behindCount: Math.max(behindCount, 0),
+    aheadCount: Math.max(aheadCount, 0),
+    isUpToDate: behindCount === 0,
+  };
+}
+
+function parseGitCommandError(error: unknown): {
+  message: string;
+  stdout: string;
+  stderr: string;
+} {
+  if (error && typeof error === "object") {
+    const maybe = error as {
+      stdout?: unknown;
+      stderr?: unknown;
+      message?: unknown;
+    };
+    const stdout = typeof maybe.stdout === "string" ? maybe.stdout : "";
+    const stderr = typeof maybe.stderr === "string" ? maybe.stderr : "";
+    const message =
+      typeof maybe.message === "string"
+        ? maybe.message
+        : stderr || stdout || String(error);
+    return { message, stdout, stderr };
+  }
+  return { message: String(error), stdout: "", stderr: "" };
+}
+
+function deriveIsCloudModeForRun(
+  run: Doc<"taskRuns">,
+  task: Doc<"tasks">,
+): boolean {
+  const provider = run.vscode?.provider;
+  if (provider === "docker") {
+    return false;
+  }
+  if (provider) {
+    return true;
+  }
+  if (run.environmentId || task.environmentId) {
+    return true;
+  }
+  return false;
+}
+
+async function deployAgentForMergeConflict(
+  ensureResult: EnsureWorktreeResult,
+  teamSlugOrId: string,
+  baseBranch: string,
+): Promise<{
+  success: boolean;
+  agentName?: string;
+  taskRunId?: Id<"taskRuns">;
+  error?: string;
+}> {
+  const { task, run, branchName } = ensureResult;
+  const repoFullName = task.projectFullName?.trim();
+  if (!repoFullName) {
+    return { success: false, error: "Missing project repository" };
+  }
+
+  const agentName = run.agentName?.trim();
+  const agentConfig =
+    (agentName && AGENT_CONFIGS.find((agent) => agent.name === agentName)) ??
+    AGENT_CONFIGS[0];
+  if (!agentConfig) {
+    return { success: false, error: "No agent configuration available" };
+  }
+
+  const prompt = [
+    `We attempted to run 'git pull origin ${baseBranch}' on branch '${branchName}', and Git reported merge conflicts.`,
+    `Resolve every conflict, integrate the latest upstream changes from ${baseBranch}, and leave the repository in a clean state with tests passing.`,
+    `Complete the merge (or rebase) so that the branch is up to date with ${baseBranch}.`,
+  ].join("\n\n");
+
+  try {
+    const result = await spawnAgent(
+      agentConfig,
+      task._id,
+      {
+        repoUrl: `https://github.com/${repoFullName}.git`,
+        branch: baseBranch,
+        taskDescription: prompt,
+        isCloudMode: deriveIsCloudModeForRun(run, task),
+        environmentId: run.environmentId ?? task.environmentId ?? undefined,
+        newBranch: branchName,
+      },
+      teamSlugOrId,
+    );
+
+    if (!result.success) {
+      return {
+        success: false,
+        agentName: result.agentName,
+        error: result.error ?? "Failed to spawn agent to resolve conflicts",
+      };
+    }
+
+    return {
+      success: true,
+      agentName: result.agentName,
+      taskRunId: result.taskRunId as Id<"taskRuns">,
+    };
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : String(error);
+    serverLogger.error("Failed to deploy agent for merge conflict:", error);
+    return { success: false, error: message };
+  }
+}
 
 export function setupSocketHandlers(
   rt: RealtimeServer,
@@ -318,6 +519,116 @@ export function setupSocketHandlers(
           ok: false,
           error: error instanceof Error ? error.message : "Unknown error",
           diffs: [],
+        });
+      }
+    });
+
+    socket.on("git-sync-status", async (rawData, callback) => {
+      try {
+        const parsed = GitSyncStatusRequestSchema.parse(rawData ?? {});
+        const ensureResult = await ensureRunWorktreeAndBranch(
+          parsed.taskRunId,
+          safeTeam,
+        );
+        const repoMgr = RepositoryManager.getInstance();
+        const status = await computeSyncStatusForWorktree(
+          repoMgr,
+          ensureResult.worktreePath,
+          ensureResult.baseBranch,
+        );
+        callback?.({ ok: true, status });
+      } catch (error) {
+        serverLogger.error("Error in git-sync-status:", error);
+        callback?.({
+          ok: false,
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
+      }
+    });
+
+    socket.on("git-sync-run", async (rawData, callback) => {
+      try {
+        const parsed = GitSyncRunRequestSchema.parse(rawData ?? {});
+        const ensureResult = await ensureRunWorktreeAndBranch(
+          parsed.taskRunId,
+          safeTeam,
+        );
+        const repoMgr = RepositoryManager.getInstance();
+        const baseBranch = normalizeBaseBranch(
+          parsed.baseBranch ?? ensureResult.baseBranch,
+        );
+
+        try {
+          await repoMgr.updateRemoteBranchIfStale(
+            ensureResult.worktreePath,
+            baseBranch,
+          );
+          await repoMgr.executeGitCommand(`git pull origin ${baseBranch}`, {
+            cwd: ensureResult.worktreePath,
+          });
+        } catch (error) {
+          const info = parseGitCommandError(error);
+          const conflict =
+            /CONFLICT/i.test(info.stdout) || /CONFLICT/i.test(info.stderr);
+
+          const status = await computeSyncStatusForWorktree(
+            repoMgr,
+            ensureResult.worktreePath,
+            baseBranch,
+          );
+
+          if (conflict) {
+            const agentResult = await deployAgentForMergeConflict(
+              ensureResult,
+              safeTeam,
+              baseBranch,
+            );
+
+            if (!agentResult.success && agentResult.error) {
+              serverLogger.warn(
+                `Failed to spawn merge-conflict agent: ${agentResult.error}`,
+              );
+            }
+
+            rt.emit("git-file-changed", {
+              workspacePath: ensureResult.worktreePath,
+              filePath: "",
+            });
+
+            const combinedError =
+              agentResult.success || !agentResult.error
+                ? info.message
+                : `${info.message} - ${agentResult.error}`;
+
+            callback?.({
+              ok: false,
+              error: combinedError,
+              conflict: true,
+              agentName: agentResult.agentName,
+              taskRunId: agentResult.taskRunId,
+              status,
+            });
+          } else {
+            callback?.({ ok: false, error: info.message, status });
+          }
+          return;
+        }
+
+        const status = await computeSyncStatusForWorktree(
+          repoMgr,
+          ensureResult.worktreePath,
+          baseBranch,
+        );
+        callback?.({ ok: true, status });
+        rt.emit("git-file-changed", {
+          workspacePath: ensureResult.worktreePath,
+          filePath: "",
+        });
+      } catch (error) {
+        serverLogger.error("Error in git-sync-run:", error);
+        callback?.({
+          ok: false,
+          error: error instanceof Error ? error.message : "Unknown error",
         });
       }
     });
