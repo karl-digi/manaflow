@@ -256,7 +256,11 @@ export class DockerVSCodeInstance extends VSCodeInstance {
       // Container doesn't exist, which is fine
     }
 
-    const envVars = ["NODE_ENV=production", "WORKER_PORT=39377"];
+    const envVars = [
+      "NODE_ENV=production",
+      "WORKER_PORT=39377",
+      "CMUX_VSCODE_SEED=/cmux/vscode",
+    ];
 
     // Add theme environment variable if provided
     if (this.config.theme) {
@@ -442,6 +446,29 @@ export class DockerVSCodeInstance extends VSCodeInstance {
 
         createOptions.HostConfig!.Binds = binds;
       }
+    }
+
+    const seedDir = path.join(os.homedir(), ".cmux", "vscode-seed");
+    try {
+      await fs.promises.mkdir(seedDir, { recursive: true });
+      const seedBindTarget =
+        createOptions.HostConfig?.Binds ??
+        ["/sys/fs/cgroup:/sys/fs/cgroup:rw"];
+      if (!createOptions.HostConfig?.Binds) {
+        createOptions.HostConfig!.Binds = seedBindTarget;
+      }
+      const seedMount = `${seedDir}:/cmux/vscode:ro`;
+      if (!seedBindTarget.includes(seedMount)) {
+        seedBindTarget.push(seedMount);
+      }
+      dockerLogger.info(
+        `  VSCode seed mount: ${seedDir} -> /cmux/vscode (read-only)`
+      );
+    } catch (error) {
+      dockerLogger.warn(
+        `  Failed to prepare VSCode seed directory at ${seedDir}:`,
+        error
+      );
     }
 
     dockerLogger.info(`Creating container...`);
