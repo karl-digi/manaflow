@@ -5,6 +5,8 @@ import { env } from "@/lib/utils/www-env";
 import { connectToWorkerManagement, type Socket } from "@cmux/shared/socket";
 import type { WorkerToServerEvents, ServerToWorkerEvents } from "@cmux/shared";
 
+const DEV_SERVER_TTL_SECONDS = 60 * 30;
+
 // Define the request schema based on StartTaskSchema
 const StartDevServerSchema = z.object({
   repoUrl: z.string().openapi({
@@ -59,8 +61,8 @@ const StartDevServerSchema = z.object({
     example: "snapshot_kco1jqb6",
     description: "Morph snapshot ID to use for the instance",
   }),
-  ttlSeconds: z.number().optional().default(1800).openapi({
-    example: 1800,
+  ttlSeconds: z.number().optional().default(DEV_SERVER_TTL_SECONDS).openapi({
+    example: DEV_SERVER_TTL_SECONDS,
     description: "Time to live in seconds (default 30 minutes)",
   }),
 });
@@ -160,7 +162,7 @@ devServerRouter.openapi(startDevServerRoute, async (c) => {
     // Start the instance with provided or default snapshot
     const instance = await client.instances.start({
       snapshotId: body.snapshotId || DEFAULT_MORPH_SNAPSHOT_ID,
-      ttlSeconds: body.ttlSeconds || 60 * 30, // Default 30 minutes
+      ttlSeconds: DEV_SERVER_TTL_SECONDS,
       ttlAction: "pause",
       metadata: {
         app: "cmux",
