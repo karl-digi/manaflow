@@ -18,13 +18,18 @@ import {
 } from "@/components/ui/tooltip";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { useSocket } from "@/contexts/socket/use-socket";
+import {
+  DEFAULT_AGENT_SELECTION,
+  filterKnownAgents,
+  parseStoredAgentSelection,
+  persistAgentSelection as persistAgentSelectionToStorage,
+} from "@/lib/agentSelection";
 import { createFakeConvexId } from "@/lib/fakeConvexId";
 import { attachTaskLifecycleListeners } from "@/lib/socket/taskLifecycleListeners";
 import { branchesQueryOptions } from "@/queries/branches";
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
 import type { ProviderStatusResponse, TaskAcknowledged, TaskError, TaskStarted } from "@cmux/shared";
-import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
 import { convexQuery } from "@convex-dev/react-query";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
@@ -32,47 +37,10 @@ import { useMutation } from "convex/react";
 import { Server as ServerIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { z } from "zod";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/dashboard")({
   component: DashboardComponent,
 });
-
-// Default agents (not persisted to localStorage)
-const DEFAULT_AGENTS = [
-  "claude/sonnet-4.5",
-  "claude/opus-4.1",
-  "codex/gpt-5-codex-high",
-];
-const KNOWN_AGENT_NAMES = new Set(AGENT_CONFIGS.map((agent) => agent.name));
-const DEFAULT_AGENT_SELECTION = DEFAULT_AGENTS.filter((agent) =>
-  KNOWN_AGENT_NAMES.has(agent),
-);
-
-const AGENT_SELECTION_SCHEMA = z.array(z.string());
-
-const filterKnownAgents = (agents: string[]): string[] =>
-  agents.filter((agent) => KNOWN_AGENT_NAMES.has(agent));
-
-const parseStoredAgentSelection = (stored: string | null): string[] => {
-  if (!stored) {
-    return [];
-  }
-
-  try {
-    const parsed = JSON.parse(stored);
-    const result = AGENT_SELECTION_SCHEMA.safeParse(parsed);
-    if (!result.success) {
-      console.warn("Invalid stored agent selection", result.error);
-      return [];
-    }
-
-    return filterKnownAgents(result.data);
-  } catch (error) {
-    console.warn("Failed to parse stored agent selection", error);
-    return [];
-  }
-};
 
 function DashboardComponent() {
   const { teamSlugOrId } = Route.useParams();
@@ -121,22 +89,7 @@ function DashboardComponent() {
   const editorApiRef = useRef<EditorApi | null>(null);
 
   const persistAgentSelection = useCallback((agents: string[]) => {
-    try {
-      const isDefaultSelection =
-        DEFAULT_AGENT_SELECTION.length > 0 &&
-        agents.length === DEFAULT_AGENT_SELECTION.length &&
-        agents.every(
-          (agent, index) => agent === DEFAULT_AGENT_SELECTION[index],
-        );
-
-      if (agents.length === 0 || isDefaultSelection) {
-        localStorage.removeItem("selectedAgents");
-      } else {
-        localStorage.setItem("selectedAgents", JSON.stringify(agents));
-      }
-    } catch (error) {
-      console.warn("Failed to persist agent selection", error);
-    }
+    persistAgentSelectionToStorage(agents);
   }, []);
 
   // Preselect environment if provided in URL search params

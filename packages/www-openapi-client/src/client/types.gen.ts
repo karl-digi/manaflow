@@ -338,6 +338,45 @@ export type SetupInstanceBody = {
     snapshotId?: string | ('snapshot_2nwm6jjm' | 'snapshot_a0wb2lw8');
 };
 
+export type PlanTaskSuggestion = {
+    title: string;
+    prompt: string;
+};
+
+export type PlanAssistantResponse = {
+    summary: string;
+    keyPoints?: Array<string>;
+    suggestedTasks?: Array<PlanTaskSuggestion>;
+    followUps?: Array<string>;
+    references?: Array<{
+        path: string;
+        description?: string;
+    }>;
+};
+
+export type PlanChatResponse = {
+    message: string;
+    parsed?: PlanAssistantResponse;
+};
+
+export type PlanMessage = {
+    role: 'system' | 'user' | 'assistant';
+    content: string;
+};
+
+export type PlanContextFile = {
+    path: string;
+    content: string;
+};
+
+export type PlanChatRequest = {
+    teamSlugOrId: string;
+    projectFullName: string;
+    branch?: string;
+    messages: Array<PlanMessage>;
+    contextFiles?: Array<PlanContextFile>;
+};
+
 export type CreateEnvironmentResponse = {
     id: string;
     snapshotId: string;
@@ -1463,6 +1502,49 @@ export type PostApiMorphSetupInstanceResponses = {
 };
 
 export type PostApiMorphSetupInstanceResponse = PostApiMorphSetupInstanceResponses[keyof PostApiMorphSetupInstanceResponses];
+
+export type PostApiPlanChatData = {
+    body: PlanChatRequest;
+    path?: never;
+    query?: never;
+    url: '/api/plan/chat';
+};
+
+export type PostApiPlanChatErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Forbidden
+     */
+    403: unknown;
+    /**
+     * Repository not found
+     */
+    404: unknown;
+    /**
+     * Missing OpenAI API key
+     */
+    424: unknown;
+    /**
+     * GitHub rate limited
+     */
+    429: unknown;
+    /**
+     * Unhandled error
+     */
+    500: unknown;
+};
+
+export type PostApiPlanChatResponses = {
+    /**
+     * Assistant response
+     */
+    200: PlanChatResponse;
+};
+
+export type PostApiPlanChatResponse = PostApiPlanChatResponses[keyof PostApiPlanChatResponses];
 
 export type GetApiIframePreflightData = {
     body?: never;
