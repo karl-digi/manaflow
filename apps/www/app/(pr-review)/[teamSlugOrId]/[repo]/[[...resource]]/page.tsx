@@ -1,7 +1,7 @@
 import { Suspense, use } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { waitUntil } from "@vercel/functions";
 import { ExternalLink, GitPullRequest } from "lucide-react";
 import { type Team } from "@stackframe/stack";
@@ -10,6 +10,7 @@ import { PullRequestDiffViewer } from "@/components/pr/pull-request-diff-viewer"
 import {
   fetchPullRequest,
   fetchPullRequestFiles,
+  findPullRequestNumberByBaseHead,
   type GithubPullRequest,
   type GithubPullRequestFile,
 } from "@/lib/github/fetch-pull-request";
@@ -24,7 +25,7 @@ import {
 type PageParams = {
   teamSlugOrId: string;
   repo: string;
-  pullNumber: string;
+  resource?: string[];
 };
 
 type PageProps = {
@@ -53,15 +54,33 @@ export async function generateMetadata({
   const {
     teamSlugOrId: githubOwner,
     repo,
-    pullNumber: pullNumberRaw,
+    resource: resourceSegments,
   } = await params;
-  const pullNumber = parsePullNumber(pullNumberRaw);
 
-  if (pullNumber === null) {
+  const parsedResource = parseResourceSegments(resourceSegments);
+  if (!parsedResource) {
     return {
-      title: `Invalid pull request • ${githubOwner}/${repo}`,
+      title: `Invalid pull request path • ${githubOwner}/${repo}`,
     };
   }
+
+  const resolution = await resolveResourceToPullNumber({
+    resource: parsedResource,
+    owner: githubOwner,
+    repo,
+  });
+
+  if (resolution.status !== "ok") {
+    const baseTitle =
+      resolution.status === "invalid"
+        ? "Invalid pull request"
+        : "Pull request not found";
+    return {
+      title: `${baseTitle} • ${githubOwner}/${repo}`,
+    };
+  }
+
+  const pullNumber = resolution.pullNumber;
 
   try {
     const pullRequest = await fetchPullRequest(
@@ -95,12 +114,33 @@ export default async function PullRequestPage({ params }: PageProps) {
   const {
     teamSlugOrId: githubOwner,
     repo,
-    pullNumber: pullNumberRaw,
+    resource: resourceSegments,
   } = await params;
-  const pullNumber = parsePullNumber(pullNumberRaw);
 
-  if (pullNumber === null) {
+  const parsedResource = parseResourceSegments(resourceSegments);
+
+  if (!parsedResource) {
     notFound();
+  }
+
+  if (parsedResource.kind === "pull" && parsedResource.extraSegments.length > 0) {
+    redirect(buildPullRequestPath(githubOwner, repo, parsedResource.pullNumberRaw));
+  }
+
+  const resolution = await resolveResourceToPullNumber({
+    resource: parsedResource,
+    owner: githubOwner,
+    repo,
+  });
+
+  if (resolution.status !== "ok") {
+    notFound();
+  }
+
+  const pullNumber = resolution.pullNumber;
+
+  if (parsedResource.kind === "compare") {
+    redirect(buildPullRequestPath(githubOwner, repo, pullNumber));
   }
 
   const pullRequestPromise = fetchPullRequest(githubOwner, repo, pullNumber);
@@ -705,6 +745,122 @@ function parsePullNumber(raw: string): number | null {
   }
 
   return numericValue;
+}
+
+type ParsedResource =
+  | {
+      kind: "pull";
+      pullNumberRaw: string;
+      extraSegments: string[];
+    }
+  | {
+      kind: "compare";
+      baseRef: string;
+      headRef: string;
+      headOwner: string | null;
+    };
+
+type ResourceResolution =
+  | { status: "ok"; pullNumber: number }
+  | { status: "invalid" }
+  | { status: "not-found" };
+
+function parseResourceSegments(resource?: string[]): ParsedResource | null {
+  if (!resource || resource.length === 0) {
+    return null;
+  }
+
+  const [first, second, ...rest] = resource;
+
+  if (first === "pull" && typeof second === "string") {
+    return {
+      kind: "pull",
+      pullNumberRaw: second,
+      extraSegments: rest,
+    };
+  }
+
+  if (first === "compare" && typeof second === "string") {
+    if (rest.length > 0) {
+      return null;
+    }
+
+    const parts = second.split("...");
+    if (parts.length !== 2) {
+      return null;
+    }
+
+    const [baseRef, headDescriptor] = parts;
+    if (!baseRef || !headDescriptor) {
+      return null;
+    }
+
+    const colonIndex = headDescriptor.indexOf(":");
+    let headOwner: string | null = null;
+    let headRef = headDescriptor;
+
+    if (colonIndex !== -1) {
+      const ownerPart = headDescriptor.slice(0, colonIndex);
+      headOwner = ownerPart.length > 0 ? ownerPart : null;
+      headRef = headDescriptor.slice(colonIndex + 1);
+    }
+
+    if (!headRef) {
+      return null;
+    }
+
+    return {
+      kind: "compare",
+      baseRef,
+      headRef,
+      headOwner,
+    };
+  }
+
+  return null;
+}
+
+function buildPullRequestPath(
+  teamSlugOrId: string,
+  repo: string,
+  pullIdentifier: string | number
+): string {
+  return `/${encodeURIComponent(teamSlugOrId)}/${encodeURIComponent(
+    repo
+  )}/pull/${encodeURIComponent(String(pullIdentifier))}`;
+}
+
+async function resolveResourceToPullNumber({
+  resource,
+  owner,
+  repo,
+}: {
+  resource: ParsedResource;
+  owner: string;
+  repo: string;
+}): Promise<ResourceResolution> {
+  if (resource.kind === "pull") {
+    const pullNumber = parsePullNumber(resource.pullNumberRaw);
+    if (pullNumber === null) {
+      return { status: "invalid" };
+    }
+    return { status: "ok", pullNumber };
+  }
+
+  const headOwner = resource.headOwner ?? owner;
+  const pullNumber = await findPullRequestNumberByBaseHead({
+    owner,
+    repo,
+    baseRef: resource.baseRef,
+    headRef: resource.headRef,
+    headOwner,
+  });
+
+  if (pullNumber === null) {
+    return { status: "not-found" };
+  }
+
+  return { status: "ok", pullNumber };
 }
 
 function formatRelativeTimeFromNow(date: Date): string {
