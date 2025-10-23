@@ -17,6 +17,8 @@ const rawEnvSchema = z.object({
   CMUX_TEAM_SLUG_OR_ID: z.string().trim().min(1).optional(),
   NEXT_PUBLIC_CONVEX_URL: z.string().trim().min(1).optional(),
   CMUX_CONVEX_URL: z.string().trim().min(1).optional(),
+  NEXT_PUBLIC_GITHUB_APP_SLUG: z.string().trim().min(1).optional(),
+  CMUX_GITHUB_APP_SLUG: z.string().trim().min(1).optional(),
 });
 
 const rawEnv = rawEnvSchema.parse(process.env);
@@ -85,6 +87,12 @@ if (!wwwOrigin) {
 
 const appUrl = coalesce(rawEnv.STACK_APP_URL, wwwOrigin) ?? wwwOrigin;
 
+const githubAppSlug =
+  coalesce(
+    rawEnv.NEXT_PUBLIC_GITHUB_APP_SLUG,
+    rawEnv.CMUX_GITHUB_APP_SLUG,
+  ) ?? null;
+
 export const cliConfig = {
   stack: {
     baseUrl: normalizeUrl(
@@ -99,6 +107,7 @@ export const cliConfig = {
   convexUrl: normalizeUrl(convexUrl, "NEXT_PUBLIC_CONVEX_URL"),
   defaultTeamSlugOrId:
     rawEnv.CMUX_TEAM_SLUG_OR_ID ?? rawEnv.STACK_CLI_TEAM_SLUG_OR_ID ?? null,
+  githubAppSlug,
 };
 
 export type CLIConfig = typeof cliConfig;

@@ -30,6 +30,14 @@ export interface AuthenticatedContext {
   user: StackUser;
 }
 
+export interface ProviderConnection {
+  installationId: number;
+  accountLogin: string | null;
+  accountType: "User" | "Organization" | null;
+  type: string | null;
+  isActive: boolean;
+}
+
 export async function fetchTeamMemberships(
   config: CLIConfig,
   accessToken: string,
@@ -62,6 +70,47 @@ export async function fetchTeamMemberships(
       name: membership.team?.name ?? null,
     },
   }));
+}
+
+export async function fetchProviderConnections(
+  config: CLIConfig,
+  accessToken: string,
+  teamSlugOrId: string,
+): Promise<ProviderConnection[]> {
+  const convex = new ConvexHttpClient(config.convexUrl);
+  convex.setAuth(accessToken);
+  const listProviderConnectionsRef = makeFunctionReference<
+    "query",
+    { teamSlugOrId: string },
+    unknown
+  >("github:listProviderConnections");
+  const raw = (await convex.query(listProviderConnectionsRef, {
+    teamSlugOrId,
+  })) as unknown;
+  const parsed = providerConnectionsSchema.parse(raw);
+  return parsed.map((connection) => {
+    const accountLogin =
+      connection.accountLogin === undefined ||
+      connection.accountLogin === null
+        ? null
+        : connection.accountLogin;
+    const accountType =
+      connection.accountType === undefined ||
+      connection.accountType === null
+        ? null
+        : connection.accountType;
+    const type =
+      connection.type === undefined || connection.type === null
+        ? null
+        : connection.type;
+    return {
+      installationId: connection.installationId,
+      accountLogin,
+      accountType,
+      type,
+      isActive: connection.isActive ?? true,
+    };
+  });
 }
 
 export async function fetchEnvironmentsForTeam(
@@ -97,7 +146,26 @@ export async function fetchEnvironmentsForTeam(
   return result.data;
 }
 
-function formatStackCookie(
+export async function mintGithubInstallState(
+  config: CLIConfig,
+  accessToken: string,
+  teamSlugOrId: string,
+): Promise<string> {
+  const convex = new ConvexHttpClient(config.convexUrl);
+  convex.setAuth(accessToken);
+  const mintInstallStateRef = makeFunctionReference<
+    "mutation",
+    { teamSlugOrId: string },
+    unknown
+  >("github_app:mintInstallState");
+  const raw = (await convex.mutation(mintInstallStateRef, {
+    teamSlugOrId,
+  })) as unknown;
+  const parsed = installStateSchema.parse(raw);
+  return parsed.state;
+}
+
+export function formatStackCookie(
   projectId: string,
   refreshToken: string,
   accessToken: string,
@@ -142,3 +210,24 @@ const membershipSchema = z
   .passthrough();
 
 const membershipsSchema = z.array(membershipSchema);
+
+const providerConnectionSchema = z
+  .object({
+    installationId: z.number(),
+    accountLogin: z.string().nullable().optional(),
+    accountType: z
+      .union([z.literal("User"), z.literal("Organization")])
+      .nullable()
+      .optional(),
+    type: z.string().nullable().optional(),
+    isActive: z.boolean().optional(),
+  })
+  .passthrough();
+
+const providerConnectionsSchema = z.array(providerConnectionSchema);
+
+const installStateSchema = z
+  .object({
+    state: z.string(),
+  })
+  .passthrough();

@@ -8,6 +8,8 @@ import {
   listTeams,
   login,
   logout,
+  showAuth,
+  createEnvironment,
 } from "./commands";
 
 async function runInteractive(): Promise<void> {
@@ -25,7 +27,7 @@ async function runProgram(): Promise<void> {
 
   program
     .name("cmux-cli")
-    .description("CMUX CLI for authenticating and listing environments");
+    .description("cmux CLI for authenticating and listing environments");
 
   program
     .command("login")
@@ -40,6 +42,18 @@ async function runProgram(): Promise<void> {
     .description("Clear persisted credentials")
     .action(async () => {
       await logout();
+    });
+
+  program
+    .command("auth")
+    .description("Show the current user and team memberships")
+    .option("--json", "Output JSON")
+    .option("--quiet", "Suppress status output", false)
+    .action(async (options: { quiet?: boolean; json?: boolean }) => {
+      await showAuth({
+        quiet: options.quiet,
+        json: options.json,
+      });
     });
 
   program
@@ -66,6 +80,31 @@ async function runProgram(): Promise<void> {
           quiet: options.quiet,
           team: options.team,
           json: options.json,
+        });
+      },
+    );
+
+  program
+    .command("create-environment")
+    .description(
+      "Provision a new environment using the current Git repository",
+    )
+    .requiredOption("-t, --team <slugOrId>", "Team slug or ID")
+    .option("--name <name>", "Environment name (defaults to repository name)")
+    .option("--env-file <path>", "Path to environment variables file")
+    .option("--quiet", "Suppress status output", false)
+    .action(
+      async (options: {
+        team: string;
+        name?: string;
+        envFile?: string;
+        quiet?: boolean;
+      }) => {
+        await createEnvironment({
+          team: options.team,
+          name: options.name,
+          envFile: options.envFile,
+          quiet: options.quiet,
         });
       },
     );
