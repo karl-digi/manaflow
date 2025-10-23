@@ -69,6 +69,7 @@
     "http-proxy-middleware": "^3.0.5",
     "httpxy": "^0.1.7",
     "ignore": "^7.0.5",
+    "jsonc-parser": "^3.3.1",
     "minimatch": "^10.0.3",
     "octokit": "^3.2.2",
     "socket.io": "^4.7.5",

@@ -4,6 +4,7 @@ import Docker from "dockerode";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { parse as parseJsonc, ParseError, printParseErrorCode } from "jsonc-parser";
 import { getDockerSocketCandidates } from "@cmux/shared/providers/common/check-docker";
 import { getConvex } from "../utils/convexClient";
 import { cleanupGitCredentials } from "../utils/dockerGitSetup";
@@ -53,6 +54,10 @@ export class DockerVSCodeInstance extends VSCodeInstance {
   private imageName: string;
   private container: Docker.Container | null = null;
   private authToken: string | undefined;
+  private vscodeUserDataMount: {
+    hostPath: string;
+    cleanup: () => Promise<void>;
+  } | null = null;
   private portCache: {
     ports: { [key: string]: string } | null;
     timestamp: number;
@@ -62,6 +67,8 @@ export class DockerVSCodeInstance extends VSCodeInstance {
   private static dockerInstance: Docker | null = null;
   private static eventStreamRetryTimer: NodeJS.Timeout | null = null;
   private static eventStreamBackoffMs = 1000;
+  private static readonly VSCODE_USER_DATA_MOUNT_PATH =
+    "/root/lifecycle/vscode-user-data";
 
   // Get or create the Docker singleton
   static getDocker(): Docker {
@@ -284,6 +291,20 @@ export class DockerVSCodeInstance extends VSCodeInstance {
       Binds: ["/sys/fs/cgroup:/sys/fs/cgroup:rw"],
     };
 
+    const vscodeUserDataMount = await this.prepareVSCodeUserData();
+    if (vscodeUserDataMount) {
+      hostConfig.Binds = hostConfig.Binds ?? [
+        "/sys/fs/cgroup:/sys/fs/cgroup:rw",
+      ];
+      hostConfig.Binds.push(
+        `${vscodeUserDataMount.hostPath}:${DockerVSCodeInstance.VSCODE_USER_DATA_MOUNT_PATH}:ro`
+      );
+      this.vscodeUserDataMount = vscodeUserDataMount;
+      dockerLogger.info(
+        `  VSCode user data mount: ${vscodeUserDataMount.hostPath} -> ${DockerVSCodeInstance.VSCODE_USER_DATA_MOUNT_PATH} (read-only)`
+      );
+    }
+
     const createOptions: Docker.ContainerCreateOptions = {
       name: this.containerName,
       Image: this.imageName,
@@ -446,12 +467,17 @@ export class DockerVSCodeInstance extends VSCodeInstance {
 
     dockerLogger.info(`Creating container...`);
 
-    // Create and start the container
-    this.container = await docker.createContainer(createOptions);
-    dockerLogger.info(`Container created: ${this.container.id}`);
+    try {
+      // Create and start the container
+      this.container = await docker.createContainer(createOptions);
+      dockerLogger.info(`Container created: ${this.container.id}`);
 
-    await this.container.start();
-    dockerLogger.info(`Container started`);
+      await this.container.start();
+      dockerLogger.info(`Container started`);
+    } catch (error) {
+      await this.cleanupVSCodeUserDataMount();
+      throw error;
+    }
 
     // Fire-and-forget: bootstrap GitHub auth and devcontainer in background
     // Do not block agent startup
@@ -727,6 +753,8 @@ export class DockerVSCodeInstance extends VSCodeInstance {
     // Clean up git credentials file if we created one
     await cleanupGitCredentials(this.instanceId);
 
+    await this.cleanupVSCodeUserDataMount();
+
     // Call base stop to disconnect from worker and remove from registry
     await this.baseStop();
   }
@@ -793,6 +821,343 @@ export class DockerVSCodeInstance extends VSCodeInstance {
     // Convert the stream to string
     const logs = stream.toString("utf8");
     return logs;
+  }
+
+  private async prepareVSCodeUserData(): Promise<
+    { hostPath: string; cleanup: () => Promise<void> } | null
+  > {
+    try {
+      const hostDir = await this.findHostVSCodeUserDir();
+      if (!hostDir) {
+        dockerLogger.info(
+          `[DockerVSCodeInstance ${this.containerName}] No VSCode user settings directory found on host; skipping sync.`
+        );
+        return null;
+      }
+
+      dockerLogger.info(
+        `[DockerVSCodeInstance ${this.containerName}] Syncing VSCode settings from ${hostDir}`
+      );
+
+      const tempRoot = path.join(
+        os.tmpdir(),
+        "cmux-vscode-user-data",
+        this.instanceId
+      );
+      await fs.promises.rm(tempRoot, { recursive: true, force: true });
+      await fs.promises.mkdir(tempRoot, { recursive: true });
+
+      let hasSyncedData = false;
+
+      const hostSettingsPath = path.join(hostDir, "settings.json");
+      const hostSettings = await this.readVSCodeSettingsFile(hostSettingsPath);
+      if (hostSettings !== null) {
+        const mergedSettings = this.buildVSCodeSettings(hostSettings);
+        const serialized = `${JSON.stringify(mergedSettings, null, 2)}\n`;
+        await fs.promises.writeFile(
+          path.join(tempRoot, "settings.json"),
+          serialized,
+          "utf8"
+        );
+        hasSyncedData = true;
+        dockerLogger.info(
+          `[DockerVSCodeInstance ${this.containerName}] Copied VSCode settings.json`
+        );
+      }
+
+      const filesToCopy = ["keybindings.json", "locale.json"];
+      for (const file of filesToCopy) {
+        const source = path.join(hostDir, file);
+        try {
+          await fs.promises.copyFile(source, path.join(tempRoot, file));
+          hasSyncedData = true;
+          dockerLogger.info(
+            `[DockerVSCodeInstance ${this.containerName}] Copied VSCode ${file}`
+          );
+        } catch (error) {
+          const err = error as NodeJS.ErrnoException;
+          if (err.code !== "ENOENT") {
+            dockerLogger.warn(
+              `[DockerVSCodeInstance ${this.containerName}] Failed to copy ${file} from ${source}:`,
+              error
+            );
+          }
+        }
+      }
+
+      const snippetsSource = path.join(hostDir, "snippets");
+      try {
+        const stats = await fs.promises.stat(snippetsSource);
+        if (stats.isDirectory()) {
+          await fs.promises.cp(
+            snippetsSource,
+            path.join(tempRoot, "snippets"),
+            { recursive: true }
+          );
+          hasSyncedData = true;
+          dockerLogger.info(
+            `[DockerVSCodeInstance ${this.containerName}] Copied VSCode snippets`
+          );
+        }
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        if (err && err.code !== "ENOENT") {
+          dockerLogger.warn(
+            `[DockerVSCodeInstance ${this.containerName}] Failed to copy snippets directory from ${snippetsSource}:`,
+            error
+          );
+        }
+      }
+
+      if (!hasSyncedData) {
+        await fs.promises.rm(tempRoot, { recursive: true, force: true });
+        dockerLogger.info(
+          `[DockerVSCodeInstance ${this.containerName}] Host VSCode directory did not contain settings to sync.`
+        );
+        return null;
+      }
+
+      return {
+        hostPath: tempRoot,
+        cleanup: async () => {
+          await fs.promises.rm(tempRoot, { recursive: true, force: true });
+        },
+      };
+    } catch (error) {
+      dockerLogger.warn(
+        `[DockerVSCodeInstance ${this.containerName}] Failed to prepare VSCode settings for sync:`,
+        error
+      );
+      return null;
+    }
+  }
+
+  private async cleanupVSCodeUserDataMount(): Promise<void> {
+    if (!this.vscodeUserDataMount) {
+      return;
+    }
+
+    try {
+      await this.vscodeUserDataMount.cleanup();
+      dockerLogger.info(
+        `[DockerVSCodeInstance ${this.containerName}] Cleaned up VSCode user data mount`
+      );
+    } catch (error) {
+      dockerLogger.warn(
+        `[DockerVSCodeInstance ${this.containerName}] Failed to clean up VSCode user data mount:`,
+        error
+      );
+    } finally {
+      this.vscodeUserDataMount = null;
+    }
+  }
+
+  private async findHostVSCodeUserDir(): Promise<string | null> {
+    const overridePath =
+      process.env.CMUX_VSCODE_USER_DIR ||
+      process.env.CMUX_VSCODE_USER_DATA_DIR;
+
+    const candidates = new Set<string>();
+    if (overridePath) {
+      candidates.add(overridePath);
+    }
+
+    const homeDir = os.homedir();
+    const platform = process.platform;
+
+    if (platform === "darwin") {
+      const libraryDir = path.join(homeDir, "Library", "Application Support");
+      candidates.add(path.join(libraryDir, "Code", "User"));
+      candidates.add(path.join(libraryDir, "Code - Insiders", "User"));
+    } else if (platform === "win32") {
+      const roamingDir = path.join(homeDir, "AppData", "Roaming");
+      candidates.add(path.join(roamingDir, "Code", "User"));
+      candidates.add(path.join(roamingDir, "Code - Insiders", "User"));
+    } else {
+      const configRoot =
+        process.env.XDG_CONFIG_HOME || path.join(homeDir, ".config");
+      candidates.add(path.join(configRoot, "Code", "User"));
+      candidates.add(path.join(configRoot, "Code - Insiders", "User"));
+      candidates.add(path.join(configRoot, "VSCodium", "User"));
+    }
+
+    for (const candidate of candidates) {
+      try {
+        const stats = await fs.promises.stat(candidate);
+        if (stats.isDirectory()) {
+          dockerLogger.info(
+            `[DockerVSCodeInstance ${this.containerName}] Using VSCode settings directory: ${candidate}`
+          );
+          return candidate;
+        }
+      } catch {
+        // Ignore missing candidates
+      }
+    }
+
+    return null;
+  }
+
+  private async readVSCodeSettingsFile(
+    filePath: string
+  ): Promise<Record<string, unknown> | null> {
+    try {
+      const content = await fs.promises.readFile(filePath, "utf8");
+      const errors: ParseError[] = [];
+      const parsed = parseJsonc(content, errors, {
+        allowTrailingComma: true,
+        disallowComments: false,
+      });
+
+      if (errors.length > 0) {
+        this.logParseErrors(filePath, errors);
+      }
+
+      if (this.isPlainObject(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+
+      dockerLogger.warn(
+        `[DockerVSCodeInstance ${this.containerName}] Parsed settings were not an object for file ${filePath}`
+      );
+      return {};
+    } catch (error) {
+      const err = error as NodeJS.ErrnoException;
+      if (err.code === "ENOENT") {
+        return null;
+      }
+
+      dockerLogger.warn(
+        `[DockerVSCodeInstance ${this.containerName}] Failed to read VSCode settings from ${filePath}:`,
+        error
+      );
+      return null;
+    }
+  }
+
+  private logParseErrors(filePath: string, errors: ParseError[]): void {
+    const details = errors
+      .map(
+        (error) =>
+          `${printParseErrorCode(error.error)} at offset ${error.offset}`
+      )
+      .join("; ");
+    dockerLogger.warn(
+      `[DockerVSCodeInstance ${this.containerName}] Minor issues parsing ${filePath}: ${details}`
+    );
+  }
+
+  private buildVSCodeSettings(
+    hostSettings: Record<string, unknown>
+  ): Record<string, unknown> {
+    const defaults = this.getDefaultVSCodeSettings();
+    const merged = this.deepMergeObjects(defaults, hostSettings);
+    this.applyRequiredTerminalSettings(merged);
+    return merged;
+  }
+
+  private getDefaultVSCodeSettings(): Record<string, unknown> {
+    const settings: Record<string, unknown> = {
+      "workbench.startupEditor": "none",
+      "terminal.integrated.shellIntegration.enabled": false,
+      "terminal.integrated.macOptionClickForcesSelection": true,
+      "terminal.integrated.shell.linux": "/usr/bin/zsh",
+      "terminal.integrated.shellArgs.linux": ["-l"],
+      "terminal.integrated.defaultProfile.linux": "zsh",
+      "terminal.integrated.profiles.linux": {
+        zsh: {
+          path: "/usr/bin/zsh",
+          args: ["-l"],
+        },
+      },
+      "python.languageServer": "Pylance",
+      "python.defaultInterpreterPath": "/usr/bin/python3",
+      "git.openDiffOnClick": true,
+      "scm.defaultViewMode": "tree",
+      "git.showPushSuccessNotification": true,
+      "git.autorefresh": true,
+      "git.branchCompareWith": "main",
+    };
+
+    const themeName = this.resolveThemeName();
+    if (themeName) {
+      settings["workbench.colorTheme"] = themeName;
+    }
+
+    return settings;
+  }
+
+  private resolveThemeName(): string | null {
+    switch (this.config.theme) {
+      case "dark":
+        return "Default Dark Modern";
+      case "light":
+        return "Default Light Modern";
+      case "system":
+        return "Default Dark Modern";
+      default:
+        return null;
+    }
+  }
+
+  private deepMergeObjects(
+    target: Record<string, unknown>,
+    source: Record<string, unknown>
+  ): Record<string, unknown> {
+    const result: Record<string, unknown> = { ...target };
+
+    for (const [key, value] of Object.entries(source)) {
+      if (this.isPlainObject(value) && this.isPlainObject(result[key])) {
+        result[key] = this.deepMergeObjects(
+          result[key] as Record<string, unknown>,
+          value as Record<string, unknown>
+        );
+      } else {
+        result[key] = value;
+      }
+    }
+
+    return result;
+  }
+
+  private isPlainObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+  }
+
+  private applyRequiredTerminalSettings(
+    settings: Record<string, unknown>
+  ): void {
+    settings["terminal.integrated.shell.linux"] = "/usr/bin/zsh";
+    settings["terminal.integrated.shellArgs.linux"] = ["-l"];
+    settings["terminal.integrated.defaultProfile.linux"] = "zsh";
+
+    const profilesKey = "terminal.integrated.profiles.linux";
+    const profileValue = settings[profilesKey];
+
+    if (!this.isPlainObject(profileValue)) {
+      settings[profilesKey] = {
+        zsh: {
+          path: "/usr/bin/zsh",
+          args: ["-l"],
+        },
+      };
+      return;
+    }
+
+    const profiles = profileValue as Record<string, unknown>;
+    const zshProfile = profiles.zsh;
+
+    if (!this.isPlainObject(zshProfile)) {
+      profiles.zsh = {
+        path: "/usr/bin/zsh",
+        args: ["-l"],
+      };
+      return;
+    }
+
+    const zshProfileObject = zshProfile as Record<string, unknown>;
+    zshProfileObject.path = "/usr/bin/zsh";
+    zshProfileObject.args = ["-l"];
   }
 
   // Bootstrap container environment including GitHub auth and devcontainer
