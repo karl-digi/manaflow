@@ -303,6 +303,26 @@ export class DockerVSCodeInstance extends VSCodeInstance {
       `Container create options: ${JSON.stringify(createOptions)}`
     );
 
+    // Mount VS Code seed directory if it exists
+    const homeDir = os.homedir();
+    const vscodeSeedDir = path.join(homeDir, ".cmux", "vscode-seed");
+    try {
+      await fs.promises.access(vscodeSeedDir);
+      const binds =
+        createOptions.HostConfig?.Binds ?? ["/sys/fs/cgroup:/sys/fs/cgroup:rw"];
+      if (!createOptions.HostConfig?.Binds) {
+        createOptions.HostConfig!.Binds = binds;
+      }
+      binds.push(`${vscodeSeedDir}:/cmux/vscode-seed:ro`);
+      dockerLogger.info(
+        `  VS Code seed mount: ${vscodeSeedDir} -> /cmux/vscode-seed (read-only)`
+      );
+    } catch {
+      dockerLogger.info(
+        `  No VS Code seed directory found at ${vscodeSeedDir} - using default settings`
+      );
+    }
+
     // Add volume mount if workspace path is provided
     if (this.config.workspacePath) {
       // Extract the origin path from the workspace path
@@ -318,8 +338,7 @@ export class DockerVSCodeInstance extends VSCodeInstance {
           "origin",
         ].join("/");
 
-        // Get the user's home directory for git config
-        const homeDir = os.homedir();
+        // Get git config path
         const gitConfigPath = path.join(homeDir, ".gitconfig");
 
         const binds =
@@ -378,7 +397,6 @@ export class DockerVSCodeInstance extends VSCodeInstance {
         );
       } else {
         // Fallback to just mounting the workspace
-        const homeDir = os.homedir();
         const gitConfigPath = path.join(homeDir, ".gitconfig");
 
         const binds =
