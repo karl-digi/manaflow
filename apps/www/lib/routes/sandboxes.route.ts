@@ -38,7 +38,7 @@ const StartSandboxBody = z
     ttlSeconds: z
       .number()
       .optional()
-      .default(60 * 60),
+      .default(60 * 30),
     metadata: z.record(z.string(), z.string()).optional(),
     taskRunId: z.string().optional(),
     taskRunJwt: z.string().optional(),
@@ -132,6 +132,7 @@ sandboxesRouter.openapi(
     })();
 
     const body = c.req.valid("json");
+    const ttlSeconds = 60 * 30;
     try {
       console.log("[sandboxes.start] incoming", {
         teamSlugOrId: body.teamSlugOrId,
@@ -190,7 +191,7 @@ sandboxesRouter.openapi(
 
       const instance = await client.instances.start({
         snapshotId: resolvedSnapshotId,
-        ttlSeconds: body.ttlSeconds ?? 60 * 60,
+        ttlSeconds,
         ttlAction: "pause",
         metadata: {
           app: "cmux",

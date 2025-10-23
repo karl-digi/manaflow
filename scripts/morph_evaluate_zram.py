@@ -186,8 +186,8 @@ def main() -> None:
     parser.add_argument(
         "--ttl",
         type=int,
-        default=3600,
-        help="TTL in seconds for the temporary instance (default: 3600).",
+        default=60 * 30,
+        help="TTL in seconds for the temporary instance (default: 1800).",
     )
     parser.add_argument(
         "--snapshot-metadata",
@@ -210,7 +210,7 @@ def main() -> None:
     instance = client.instances.start(
         snapshot_id=args.source_snapshot,
         ttl_seconds=args.ttl,
-        ttl_action="stop",
+        ttl_action="pause",
     )
     global current_instance
     current_instance = instance

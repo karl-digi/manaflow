@@ -86,9 +86,9 @@ morphRouter.openapi(
       teamSlugOrId,
       instanceId: existingInstanceId,
       selectedRepos,
-      ttlSeconds,
       snapshotId,
     } = c.req.valid("json");
+    const ttlSeconds = 60 * 30;
 
     const convex = getConvex({ accessToken });
 

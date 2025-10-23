@@ -152,6 +152,7 @@ const startDevServerRoute = createRoute({
 
 devServerRouter.openapi(startDevServerRoute, async (c) => {
   const body = c.req.valid("json");
+  const ttlSeconds = 60 * 30;
 
   try {
     // Initialize Morph client
@@ -160,7 +161,7 @@ devServerRouter.openapi(startDevServerRoute, async (c) => {
     // Start the instance with provided or default snapshot
     const instance = await client.instances.start({
       snapshotId: body.snapshotId || DEFAULT_MORPH_SNAPSHOT_ID,
-      ttlSeconds: body.ttlSeconds || 60 * 30, // Default 30 minutes
+      ttlSeconds,
       ttlAction: "pause",
       metadata: {
         app: "cmux",
