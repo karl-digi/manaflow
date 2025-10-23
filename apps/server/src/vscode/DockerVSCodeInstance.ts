@@ -10,6 +10,7 @@ import { cleanupGitCredentials } from "../utils/dockerGitSetup";
 import { dockerLogger } from "../utils/fileLogger";
 import { getGitHubTokenFromKeychain } from "../utils/getGitHubToken";
 import { getAuthToken, runWithAuthToken } from "../utils/requestContext";
+import { getVSCodeSettingsForContainer } from "../utils/vscodeSettingsSync";
 import {
   VSCodeInstance,
   type VSCodeInstanceConfig,
@@ -371,6 +372,23 @@ export class DockerVSCodeInstance extends VSCodeInstance {
           dockerLogger.info(`  No git config found at ${gitConfigPath}`);
         }
 
+        // Mount VSCode settings if available
+        try {
+          const vscodeSettingsDir = await getVSCodeSettingsForContainer(
+            this.instanceId
+          );
+          if (vscodeSettingsDir) {
+            binds.push(
+              `${vscodeSettingsDir}:/root/.openvscode-server/data/User:ro`
+            );
+            dockerLogger.info(
+              `  VSCode settings mount: ${vscodeSettingsDir} -> /root/.openvscode-server/data/User (read-only)`
+            );
+          }
+        } catch (error) {
+          dockerLogger.warn(`  Failed to mount VSCode settings:`, error);
+        }
+
         createOptions.HostConfig!.Binds = binds;
 
         dockerLogger.info(
@@ -438,6 +456,23 @@ export class DockerVSCodeInstance extends VSCodeInstance {
         } catch {
           // Git config doesn't exist, which is fine
           dockerLogger.info(`  No git config found at ${gitConfigPath}`);
+        }
+
+        // Mount VSCode settings if available
+        try {
+          const vscodeSettingsDir = await getVSCodeSettingsForContainer(
+            this.instanceId
+          );
+          if (vscodeSettingsDir) {
+            binds.push(
+              `${vscodeSettingsDir}:/root/.openvscode-server/data/User:ro`
+            );
+            dockerLogger.info(
+              `  VSCode settings mount: ${vscodeSettingsDir} -> /root/.openvscode-server/data/User (read-only)`
+            );
+          }
+        } catch (error) {
+          dockerLogger.warn(`  Failed to mount VSCode settings:`, error);
         }
 
         createOptions.HostConfig!.Binds = binds;
