@@ -34,6 +34,7 @@ from morph_common import write_remote_file
 dotenv.load_dotenv()
 
 client = MorphCloudClient()
+DEFAULT_TTL_SECONDS = 60 * 30
 current_instance: Optional[Instance] = None
 
 
@@ -186,8 +187,8 @@ def main() -> None:
     parser.add_argument(
         "--ttl",
         type=int,
-        default=3600,
-        help="TTL in seconds for the temporary instance (default: 3600).",
+        default=DEFAULT_TTL_SECONDS,
+        help="TTL in seconds for the temporary instance (default: 1800).",
     )
     parser.add_argument(
         "--snapshot-metadata",
@@ -207,10 +208,17 @@ def main() -> None:
     metadata.update(parse_metadata(args.snapshot_metadata))
 
     print(f"Starting instance from snapshot {args.source_snapshot}...")
+    requested_ttl = args.ttl
+    ttl_seconds = DEFAULT_TTL_SECONDS
+    if requested_ttl != ttl_seconds:
+        print(
+            f"Overriding requested TTL {requested_ttl} with {ttl_seconds} seconds "
+            "and pause-on-expiry behavior."
+        )
     instance = client.instances.start(
         snapshot_id=args.source_snapshot,
-        ttl_seconds=args.ttl,
-        ttl_action="stop",
+        ttl_seconds=ttl_seconds,
+        ttl_action="pause",
     )
     global current_instance
     current_instance = instance

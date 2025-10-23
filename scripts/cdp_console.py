@@ -25,6 +25,7 @@ CDP_PORT = 39381
 VNC_PORT = 39380
 VSCODE_PORT = 39378
 DEFAULT_SNAPSHOT_ID = "snapshot_lj5iqb09"
+DEFAULT_TTL_SECONDS = 60 * 30
 
 
 def parse_args() -> argparse.Namespace:
@@ -55,14 +56,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--ttl-seconds",
         type=int,
-        default=60 * 60 * 2,
-        help="TTL in seconds before the instance auto-pauses (default: %(default)s)",
+        default=DEFAULT_TTL_SECONDS,
+        help="TTL in seconds before the instance auto-pauses (forced to 1800).",
     )
     parser.add_argument(
         "--ttl-action",
-        choices=("pause", "stop"),
+        choices=("pause",),
         default="pause",
-        help="Action when TTL expires (default: %(default)s)",
+        help="Action when TTL expires (forced to pause).",
     )
     parser.add_argument(
         "--keep-instance",
@@ -238,8 +239,20 @@ async def run() -> None:
 
     try:
         print(f"Booting snapshot {args.snapshot_id}...")
+        ttl_seconds = DEFAULT_TTL_SECONDS
+        if args.ttl_seconds != ttl_seconds:
+            print(
+                f"Ignoring requested ttl_seconds={args.ttl_seconds}; forcing {ttl_seconds}s."
+            )
+        ttl_action = "pause"
+        if args.ttl_action != ttl_action:
+            print(
+                f"Ignoring requested ttl_action={args.ttl_action!r}; forcing '{ttl_action}'."
+            )
         instance = await client.instances.aboot(
             args.snapshot_id,
+            ttl_seconds=ttl_seconds,
+            ttl_action=ttl_action,
         )
         print(f"Instance {instance.id} is starting; waiting for readiness...")
         await instance.await_until_ready()

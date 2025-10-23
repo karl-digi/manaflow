@@ -65,6 +65,7 @@ VNC_HTTP_PORT = 39380
 CDP_HTTP_PORT = 39381
 XTERM_HTTP_PORT = 39383
 CDP_PROXY_BINARY_NAME = "cmux-cdp-proxy"
+DEFAULT_TTL_SECONDS = 60 * 30
 
 
 @dataclass(slots=True)
@@ -2308,13 +2309,24 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
 
     repo_root = Path(args.repo_root).resolve()
 
+    ttl_seconds = DEFAULT_TTL_SECONDS
+    if args.ttl_seconds != ttl_seconds:
+        console.always(
+            f"Ignoring requested ttl_seconds={args.ttl_seconds}; forcing {ttl_seconds}s."
+        )
+    ttl_action = "pause"
+    if args.ttl_action != ttl_action:
+        console.always(
+            f"Ignoring requested ttl_action={args.ttl_action!r}; forcing '{ttl_action}'."
+        )
+
     instance = await client.instances.aboot(
         args.snapshot_id,
         vcpus=args.vcpus,
         memory=args.memory,
         disk_size=args.disk_size,
-        ttl_seconds=args.ttl_seconds,
-        ttl_action=args.ttl_action,
+        ttl_seconds=ttl_seconds,
+        ttl_action=ttl_action,
     )
     started_instances.append(instance)
     await _await_instance_ready(instance, console=console)
@@ -2478,14 +2490,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--ttl-seconds",
         type=int,
-        default=3600,
-        help="TTL seconds for created instances",
+        default=DEFAULT_TTL_SECONDS,
+        help="TTL seconds for created instances (forced to 1800).",
     )
     parser.add_argument(
         "--ttl-action",
         default="pause",
-        choices=("pause", "stop"),
-        help="Action when TTL expires",
+        choices=("pause",),
+        help="Action when TTL expires (forced to pause).",
     )
     parser.add_argument(
         "--print-deps",
