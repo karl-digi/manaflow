@@ -1,17 +1,13 @@
 import { Suspense, use } from "react";
 import type { Metadata } from "next";
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { waitUntil } from "@vercel/functions";
-import { ExternalLink, GitPullRequest } from "lucide-react";
 import { type Team } from "@stackframe/stack";
 
-import { PullRequestDiffViewer } from "@/components/pr/pull-request-diff-viewer";
 import {
   fetchPullRequest,
   fetchPullRequestFiles,
   type GithubPullRequest,
-  type GithubPullRequestFile,
 } from "@/lib/github/fetch-pull-request";
 import { isGithubApiError } from "@/lib/github/errors";
 import { cn } from "@/lib/utils";
@@ -20,6 +16,15 @@ import {
   getConvexHttpActionBaseUrl,
   startCodeReviewJob,
 } from "@/lib/services/code-review/start-code-review";
+import {
+  DiffViewerSkeleton,
+  ErrorPanel,
+  GitHubLinkButton,
+  PullRequestChangeSummary,
+  PullRequestDiffContent,
+  summarizeFiles,
+  formatRelativeTimeFromNow,
+} from "@/lib/pr/pr-shared";
 
 type PageParams = {
   teamSlugOrId: string;
@@ -32,6 +37,7 @@ type PageProps = {
 };
 
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 async function getFirstTeam(): Promise<Team | null> {
   const teams = await stackServerApp.listTeams();
@@ -414,41 +420,6 @@ function PullRequestHeaderActions({
   );
 }
 
-function PullRequestChangeSummary({
-  changedFiles,
-  additions,
-  deletions,
-}: {
-  changedFiles: number;
-  additions: number;
-  deletions: number;
-}) {
-  return (
-    <div className="flex items-center gap-2">
-      <span className="text-neutral-600">
-        <GitPullRequest className="inline h-3 w-3" /> {changedFiles}
-      </span>
-      <span className="text-neutral-400">•</span>
-      <span className="text-emerald-700">+{additions}</span>
-      <span className="text-rose-700">-{deletions}</span>
-    </div>
-  );
-}
-
-function GitHubLinkButton({ href }: { href: string }) {
-  return (
-    <a
-      className="inline-flex items-center gap-1.5 rounded-md border border-neutral-300 bg-white px-3 py-1.5 font-medium text-neutral-700 transition hover:border-neutral-400 hover:text-neutral-900"
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-    >
-      GitHub
-      <ExternalLink className="h-3 w-3" />
-    </a>
-  );
-}
-
 type PullRequestFilesPromise = ReturnType<typeof fetchPullRequestFiles>;
 
 function PullRequestDiffSection({
@@ -508,107 +479,6 @@ function PullRequestDiffSection({
   }
 }
 
-function summarizeFiles(files: GithubPullRequestFile[]): {
-  fileCount: number;
-  additions: number;
-  deletions: number;
-} {
-  return files.reduce(
-    (acc, file) => {
-      acc.fileCount += 1;
-      acc.additions += file.additions;
-      acc.deletions += file.deletions;
-      return acc;
-    },
-    { fileCount: 0, additions: 0, deletions: 0 }
-  );
-}
-
-function PullRequestDiffContent({
-  files,
-  fileCount,
-  additions,
-  deletions,
-  teamSlugOrId,
-  repoFullName,
-  pullNumber,
-  commitRef,
-}: {
-  files: GithubPullRequestFile[];
-  fileCount: number;
-  additions: number;
-  deletions: number;
-  teamSlugOrId: string;
-  repoFullName: string;
-  pullNumber: number;
-  commitRef?: string;
-}) {
-  return (
-    <section className="flex flex-col gap-4">
-      <PullRequestDiffSummary
-        fileCount={fileCount}
-        additions={additions}
-        deletions={deletions}
-      />
-      <PullRequestDiffViewerWrapper
-        files={files}
-        teamSlugOrId={teamSlugOrId}
-        repoFullName={repoFullName}
-        pullNumber={pullNumber}
-        commitRef={commitRef}
-      />
-    </section>
-  );
-}
-
-function PullRequestDiffSummary({
-  fileCount,
-  additions,
-  deletions,
-}: {
-  fileCount: number;
-  additions: number;
-  deletions: number;
-}) {
-  return (
-    <header className="flex flex-wrap items-center justify-between gap-3">
-      <div>
-        <h2 className="text-lg font-semibold text-neutral-900">
-          Files changed
-        </h2>
-        <p className="text-sm text-neutral-600">
-          {fileCount} file{fileCount === 1 ? "" : "s"}, {additions} additions,{" "}
-          {deletions} deletions
-        </p>
-      </div>
-    </header>
-  );
-}
-
-function PullRequestDiffViewerWrapper({
-  files,
-  teamSlugOrId,
-  repoFullName,
-  pullNumber,
-  commitRef,
-}: {
-  files: GithubPullRequestFile[];
-  teamSlugOrId: string;
-  repoFullName: string;
-  pullNumber: number;
-  commitRef?: string;
-}) {
-  return (
-    <PullRequestDiffViewer
-      files={files}
-      teamSlugOrId={teamSlugOrId}
-      repoFullName={repoFullName}
-      prNumber={pullNumber}
-      commitRef={commitRef}
-    />
-  );
-}
-
 function getStatusBadge(pullRequest: GithubPullRequest): {
   label: string;
   className: string;
@@ -640,59 +510,6 @@ function getStatusBadge(pullRequest: GithubPullRequest): {
   };
 }
 
-function PullRequestHeaderSkeleton() {
-  return (
-    <div className="rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
-      <div className="animate-pulse space-y-4">
-        <div className="h-4 w-32 rounded bg-neutral-200" />
-        <div className="h-8 w-3/4 rounded bg-neutral-200" />
-        <div className="h-4 w-1/2 rounded bg-neutral-200" />
-        <div className="h-4 w-full rounded bg-neutral-200" />
-      </div>
-    </div>
-  );
-}
-
-function DiffViewerSkeleton() {
-  return (
-    <div className="space-y-4">
-      <div className="h-6 w-48 rounded bg-neutral-200" />
-      <div className="space-y-3">
-        {Array.from({ length: 3 }).map((_, index) => (
-          <div
-            key={index}
-            className="h-32 rounded-xl border border-neutral-200 bg-neutral-100"
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function ErrorPanel({
-  title,
-  message,
-  documentationUrl,
-}: {
-  title: string;
-  message: string;
-  documentationUrl?: string;
-}) {
-  return (
-    <div className="rounded-xl border border-rose-200 bg-rose-50 p-6 text-sm text-rose-700">
-      <p className="font-semibold">{title}</p>
-      <p className="mt-2 leading-relaxed">{message}</p>
-      {documentationUrl ? (
-        <p className="mt-3 text-xs text-rose-600 underline">
-          <Link href={documentationUrl} target="_blank" rel="noreferrer">
-            View GitHub documentation
-          </Link>
-        </p>
-      ) : null}
-    </div>
-  );
-}
-
 function parsePullNumber(raw: string): number | null {
   if (!/^\d+$/.test(raw)) {
     return null;
@@ -707,32 +524,15 @@ function parsePullNumber(raw: string): number | null {
   return numericValue;
 }
 
-function formatRelativeTimeFromNow(date: Date): string {
-  const now = Date.now();
-  const diffInSeconds = Math.round((now - date.getTime()) / 1000);
-
-  const segments: {
-    threshold: number;
-    divisor: number;
-    unit: Intl.RelativeTimeFormatUnit;
-  }[] = [
-    { threshold: 45, divisor: 1, unit: "second" },
-    { threshold: 2700, divisor: 60, unit: "minute" }, // 45 minutes
-    { threshold: 64_800, divisor: 3_600, unit: "hour" }, // 18 hours
-    { threshold: 561_600, divisor: 86_400, unit: "day" }, // 6.5 days
-    { threshold: 2_419_200, divisor: 604_800, unit: "week" }, // 4 weeks
-    { threshold: 28_512_000, divisor: 2_629_746, unit: "month" }, // 11 months
-  ];
-
-  const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
-
-  for (const segment of segments) {
-    if (Math.abs(diffInSeconds) < segment.threshold) {
-      const value = Math.round(diffInSeconds / segment.divisor);
-      return rtf.format(-value, segment.unit);
-    }
-  }
-
-  const years = Math.round(diffInSeconds / 31_556_952);
-  return rtf.format(-years, "year");
+function PullRequestHeaderSkeleton() {
+  return (
+    <div className="rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
+      <div className="animate-pulse space-y-4">
+        <div className="h-4 w-32 rounded bg-neutral-200" />
+        <div className="h-8 w-3/4 rounded bg-neutral-200" />
+        <div className="h-4 w-1/2 rounded bg-neutral-200" />
+        <div className="h-4 w-full rounded bg-neutral-200" />
+      </div>
+    </div>
+  );
 }

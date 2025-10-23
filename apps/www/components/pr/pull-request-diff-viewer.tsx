@@ -58,16 +58,25 @@ import {
   type ReviewHeatmapLine,
 } from "./heatmap";
 
+export type GithubDiffFile = {
+  filename: GithubPullRequestFile["filename"];
+  status: GithubPullRequestFile["status"];
+  additions: GithubPullRequestFile["additions"];
+  deletions: GithubPullRequestFile["deletions"];
+  previous_filename?: GithubPullRequestFile["previous_filename"];
+  patch?: GithubPullRequestFile["patch"];
+};
+
 type PullRequestDiffViewerProps = {
-  files: GithubPullRequestFile[];
+  files: GithubDiffFile[];
   teamSlugOrId: string;
   repoFullName: string;
-  prNumber: number;
+  prNumber?: number;
   commitRef?: string;
 };
 
 type ParsedFileDiff = {
-  file: GithubPullRequestFile;
+  file: GithubDiffFile;
   anchorId: string;
   diff: FileData | null;
   error?: string;
@@ -281,7 +290,7 @@ type FileTreeNode = {
   name: string;
   path: string;
   children: FileTreeNode[];
-  file?: GithubPullRequestFile;
+  file?: GithubDiffFile;
 };
 
 type FileStatusMeta = {
@@ -291,7 +300,7 @@ type FileStatusMeta = {
 };
 
 function getFileStatusMeta(
-  status: GithubPullRequestFile["status"] | undefined
+  status: GithubDiffFile["status"] | undefined
 ): FileStatusMeta {
   const iconClassName = "h-3.5 w-3.5";
 
@@ -343,14 +352,25 @@ export function PullRequestDiffViewer({
   prNumber,
   commitRef,
 }: PullRequestDiffViewerProps) {
+  const shouldFetchFileOutputs = typeof prNumber === "number";
+
   const fileOutputArgs = useMemo(
-    () => ({
+    () =>
+      shouldFetchFileOutputs
+        ? {
+            teamSlugOrId,
+            repoFullName,
+            prNumber,
+            ...(commitRef ? { commitRef } : {}),
+          }
+        : ("skip" as const),
+    [
+      shouldFetchFileOutputs,
       teamSlugOrId,
       repoFullName,
       prNumber,
-      ...(commitRef ? { commitRef } : {}),
-    }),
-    [teamSlugOrId, repoFullName, prNumber, commitRef]
+      commitRef,
+    ]
   );
 
   const fileOutputs = useConvexQuery(
@@ -373,7 +393,7 @@ export function PullRequestDiffViewer({
   const totalFileCount = files.length;
 
   const processedFileCount = useMemo(() => {
-    if (fileOutputs === undefined) {
+    if (!shouldFetchFileOutputs || fileOutputs === undefined) {
       return null;
     }
 
@@ -385,9 +405,10 @@ export function PullRequestDiffViewer({
     }
 
     return count;
-  }, [fileOutputs, fileOutputIndex, files]);
+  }, [shouldFetchFileOutputs, fileOutputs, fileOutputIndex, files]);
 
-  const isLoadingFileOutputs = fileOutputs === undefined;
+  const isLoadingFileOutputs =
+    shouldFetchFileOutputs && fileOutputs === undefined;
 
   const parsedDiffs = useMemo<ParsedFileDiff[]>(() => {
     return files.map((file) => {
@@ -1855,7 +1876,7 @@ function buildChangeKeyIndex(diff: FileData | null): Map<number, string> {
   return map;
 }
 
-function buildDiffText(file: GithubPullRequestFile): string {
+function buildDiffText(file: GithubDiffFile): string {
   const oldPath =
     file.status === "added"
       ? "/dev/null"
@@ -1876,7 +1897,7 @@ function buildDiffText(file: GithubPullRequestFile): string {
   ].join("\n");
 }
 
-function buildFileTree(files: GithubPullRequestFile[]): FileTreeNode[] {
+function buildFileTree(files: GithubDiffFile[]): FileTreeNode[] {
   const root: FileTreeNode = {
     name: "",
     path: "",
