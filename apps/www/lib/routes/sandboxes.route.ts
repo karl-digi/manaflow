@@ -37,8 +37,9 @@ const StartSandboxBody = z
     snapshotId: z.string().optional(),
     ttlSeconds: z
       .number()
+      .max(60 * 60 * 12)
       .optional()
-      .default(60 * 60),
+      .default(60 * 30),
     metadata: z.record(z.string(), z.string()).optional(),
     taskRunId: z.string().optional(),
     taskRunJwt: z.string().optional(),
@@ -187,10 +188,11 @@ sandboxesRouter.openapi(
       );
 
       const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
+      const instanceTtlSeconds = 60 * 30;
 
       const instance = await client.instances.start({
         snapshotId: resolvedSnapshotId,
-        ttlSeconds: body.ttlSeconds ?? 60 * 60,
+        ttlSeconds: instanceTtlSeconds,
         ttlAction: "pause",
         metadata: {
           app: "cmux",

@@ -31,7 +31,7 @@ const SetupInstanceBody = z
     teamSlugOrId: z.string(),
     instanceId: z.string().optional(), // Existing instance ID to reuse
     selectedRepos: z.array(z.string()).optional(), // Repositories to clone
-    ttlSeconds: z.number().default(60 * 30), // 30 minutes default
+    ttlSeconds: z.number().max(60 * 60 * 12).default(60 * 30), // 30 minutes default
     // TODO: This is a temporary solution to allow both string and enum values since client values are diff from backend values
     snapshotId: z.union([z.string(), SnapshotIdSchema]).optional(),
   })
@@ -86,11 +86,12 @@ morphRouter.openapi(
       teamSlugOrId,
       instanceId: existingInstanceId,
       selectedRepos,
-      ttlSeconds,
+      ttlSeconds: _requestedTtlSeconds,
       snapshotId,
     } = c.req.valid("json");
 
     const convex = getConvex({ accessToken });
+    const instanceTtlSeconds = 60 * 30;
 
     // Verify team access and get the team
     const team = await verifyTeamAccess({ req: c.req.raw, teamSlugOrId });
@@ -138,7 +139,7 @@ morphRouter.openapi(
         );
         instance = await client.instances.start({
           snapshotId: selectedSnapshotId,
-          ttlSeconds,
+          ttlSeconds: instanceTtlSeconds,
           ttlAction: "pause",
           metadata: {
             app: "cmux-dev",

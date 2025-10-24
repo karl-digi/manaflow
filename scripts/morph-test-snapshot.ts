@@ -17,7 +17,9 @@ async function main() {
     
     console.log(`Starting instance from snapshot ${snapshotId}...`);
     const instance = await client.instances.start({
-      snapshotId: snapshotId,
+      snapshotId,
+      ttlSeconds: 60 * 30,
+      ttlAction: "pause",
     });
 
     await instance.waitUntilReady();

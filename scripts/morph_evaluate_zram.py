@@ -186,8 +186,8 @@ def main() -> None:
     parser.add_argument(
         "--ttl",
         type=int,
-        default=3600,
-        help="TTL in seconds for the temporary instance (default: 3600).",
+        default=60 * 30,
+        help="TTL in seconds for the temporary instance (overridden to 30 minutes).",
     )
     parser.add_argument(
         "--snapshot-metadata",
@@ -207,10 +207,16 @@ def main() -> None:
     metadata.update(parse_metadata(args.snapshot_metadata))
 
     print(f"Starting instance from snapshot {args.source_snapshot}...")
+    requested_ttl = args.ttl
+    ttl_seconds = 60 * 30
+    if requested_ttl != ttl_seconds:
+        print(
+            f"Requested TTL {requested_ttl} seconds overridden to {ttl_seconds} seconds (30 minutes)."
+        )
     instance = client.instances.start(
         snapshot_id=args.source_snapshot,
-        ttl_seconds=args.ttl,
-        ttl_action="stop",
+        ttl_seconds=ttl_seconds,
+        ttl_action="pause",
     )
     global current_instance
     current_instance = instance
