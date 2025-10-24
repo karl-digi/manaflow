@@ -1,5 +1,5 @@
+import { DiffFile } from "@git-diff-view/react";
 import { describe, expect, it } from "vitest";
-import { computeNewLineNumber, parseDiff } from "react-diff-view";
 
 import { buildDiffHeatmap, parseReviewHeatmap } from "./heatmap";
 
@@ -16,6 +16,21 @@ index 1111111..2222222 100644
 +const message = "heatmap";
 +export const sum = a + b + Number(message.length);
 `;
+
+function createDiffFile(): DiffFile {
+  const diffFile = DiffFile.createInstance({
+    oldFile: { fileName: "example.ts", content: "", fileLang: "ts" },
+    newFile: { fileName: "example.ts", content: "", fileLang: "ts" },
+    hunks: [SAMPLE_DIFF],
+  });
+
+  diffFile.initTheme("light");
+  diffFile.initRaw();
+  diffFile.buildSplitDiffLines();
+  diffFile.buildUnifiedDiffLines();
+
+  return diffFile;
+}
 
 describe("parseReviewHeatmap", () => {
   it("parses nested codex payloads best-effort", () => {
@@ -62,10 +77,8 @@ describe("parseReviewHeatmap", () => {
 });
 
 describe("buildDiffHeatmap", () => {
-  it("produces tiered classes and character highlights", () => {
-    const files = parseDiff(SAMPLE_DIFF);
-    const file = files[0] ?? null;
-    expect(file).not.toBeNull();
+  it("produces tiered classes and highlight metadata", () => {
+    const diffFile = createDiffFile();
 
     const review = parseReviewHeatmap({
       response: JSON.stringify({
@@ -92,38 +105,27 @@ describe("buildDiffHeatmap", () => {
       }),
     });
 
-    const heatmap = buildDiffHeatmap(file, review);
+    const heatmap = buildDiffHeatmap(diffFile, review);
     expect(heatmap).not.toBeNull();
     if (!heatmap) {
       return;
     }
 
     expect(heatmap.entries.get(2)?.score).toBeCloseTo(0.7, 5);
-    expect(heatmap.lineClasses.get(2)).toBe("cmux-heatmap-tier-3");
-    expect(heatmap.lineClasses.get(4)).toBe("cmux-heatmap-tier-4");
+    expect(heatmap.tiers.get(2)).toBe(3);
+    expect(heatmap.tiers.get(4)).toBe(4);
 
-    const rangeForLine2 = heatmap.newRanges.find(
-      (range) => range.lineNumber === 2
-    );
-    expect(rangeForLine2?.start).toBe(6);
-    expect(rangeForLine2?.length).toBe(1);
+    const entryForLine2 = heatmap.entries.get(2);
+    expect(entryForLine2?.highlightRatio).toBeGreaterThan(0);
+    expect(entryForLine2?.highlightRatio).toBeLessThanOrEqual(1);
 
-    const rangeForLine4 = heatmap.newRanges.find(
-      (range) => range.lineNumber === 4
-    );
-    expect(rangeForLine4).toBeDefined();
-    if (!rangeForLine4) {
+    const entryForLine4 = heatmap.entries.get(4);
+    expect(entryForLine4).toBeDefined();
+    if (!entryForLine4) {
       return;
     }
 
-    const lineFourChange = file!.hunks[0]?.changes.find(
-      (change) => computeNewLineNumber(change) === 4
-    );
-    const expectedStart = Math.max(
-      (lineFourChange?.content.length ?? 1) - 1,
-      0
-    );
-    expect(rangeForLine4.start).toBe(expectedStart);
-    expect(rangeForLine4.length).toBe(1);
+    expect(entryForLine4.highlightRatio).toBe(1);
+    expect(entryForLine4.contentLength).toBeGreaterThan(0);
   });
 });

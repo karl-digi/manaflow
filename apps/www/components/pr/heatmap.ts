@@ -1,5 +1,4 @@
-import { computeNewLineNumber, isDelete, type FileData } from "react-diff-view";
-import type { RangeTokenNode } from "react-diff-view";
+import { DiffFile, getSplitContentLines } from "@git-diff-view/react";
 
 export type ReviewHeatmapLine = {
   lineNumber: number | null;
@@ -9,17 +8,21 @@ export type ReviewHeatmapLine = {
   mostImportantCharacterIndex: number | null;
 };
 
+export type ResolvedHeatmapLine = {
+  lineNumber: number;
+  score: number | null;
+  reason: string | null;
+  mostImportantCharacterIndex: number | null;
+  contentLength: number;
+  highlightRatio: number | null;
+};
+
 export type DiffHeatmap = {
-  lineClasses: Map<number, string>;
-  newRanges: HeatmapRangeNode[];
+  tiers: Map<number, number>;
   entries: Map<number, ResolvedHeatmapLine>;
 };
 
-export type HeatmapRangeNode = RangeTokenNode & {
-  className: string;
-};
-
-type ResolvedHeatmapLine = {
+type HeatmapCandidate = {
   lineNumber: number;
   score: number | null;
   reason: string | null;
@@ -93,7 +96,7 @@ export function parseReviewHeatmap(raw: unknown): ReviewHeatmapLine[] {
 }
 
 export function buildDiffHeatmap(
-  diff: FileData | null,
+  diff: DiffFile | null,
   reviewHeatmap: ReviewHeatmapLine[]
 ): DiffHeatmap | null {
   if (!diff || reviewHeatmap.length === 0) {
@@ -101,6 +104,9 @@ export function buildDiffHeatmap(
   }
 
   const newLineContent = collectNewLineContent(diff);
+  if (newLineContent.size === 0) {
+    return null;
+  }
 
   const resolvedEntries = resolveLineNumbers(reviewHeatmap, newLineContent);
   if (resolvedEntries.length === 0) {
@@ -112,8 +118,8 @@ export function buildDiffHeatmap(
     return null;
   }
 
-  const lineClasses = new Map<number, string>();
-  const characterRanges: HeatmapRangeNode[] = [];
+  const tiers = new Map<number, number>();
+  const entries = new Map<number, ResolvedHeatmapLine>();
 
   for (const [lineNumber, entry] of aggregated.entries()) {
     const normalizedScore =
@@ -121,52 +127,48 @@ export function buildDiffHeatmap(
         ? null
         : clamp(entry.score, SCORE_CLAMP_MIN, SCORE_CLAMP_MAX);
     const tier = computeHeatmapTier(normalizedScore);
-
     if (tier > 0) {
-      lineClasses.set(lineNumber, `cmux-heatmap-tier-${tier}`);
+      tiers.set(lineNumber, tier);
     }
 
-    if (entry.mostImportantCharacterIndex === null) {
-      continue;
-    }
+    const content = newLineContent.get(lineNumber) ?? "";
+    const highlightIndex =
+      entry.mostImportantCharacterIndex !== null
+        ? clamp(entry.mostImportantCharacterIndex, 0, Number.MAX_SAFE_INTEGER)
+        : null;
+    const highlightRatio =
+      highlightIndex !== null && content.length > 0
+        ? clamp(
+            highlightIndex / Math.max(content.length - 1, 1),
+            0,
+            1
+          )
+        : null;
 
-    const content = newLineContent.get(lineNumber);
-    if (!content || content.length === 0) {
-      continue;
-    }
-
-    const highlightIndex = clamp(
-      Math.floor(entry.mostImportantCharacterIndex),
-      0,
-      Math.max(content.length - 1, 0)
-    );
-
-    const charTier = tier > 0 ? tier : 1;
-    const range: HeatmapRangeNode = {
-      type: "span",
+    entries.set(lineNumber, {
       lineNumber,
-      start: highlightIndex,
-      length: Math.min(1, Math.max(content.length - highlightIndex, 1)),
-      className: `cmux-heatmap-char cmux-heatmap-char-tier-${charTier}`,
-    };
-    characterRanges.push(range);
+      score: entry.score,
+      reason: entry.reason,
+      mostImportantCharacterIndex: entry.mostImportantCharacterIndex,
+      contentLength: content.length,
+      highlightRatio,
+    });
   }
 
-  if (lineClasses.size === 0 && characterRanges.length === 0) {
+  if (tiers.size === 0 && entries.size === 0) {
     return null;
   }
 
   return {
-    lineClasses,
-    newRanges: characterRanges,
-    entries: aggregated,
+    tiers,
+    entries,
   };
 }
 
 function aggregateEntries(
-  entries: ResolvedHeatmapLine[]
-): Map<number, ResolvedHeatmapLine> {
-  const aggregated = new Map<number, ResolvedHeatmapLine>();
+  entries: HeatmapCandidate[]
+): Map<number, HeatmapCandidate> {
+  const aggregated = new Map<number, HeatmapCandidate>();
 
   for (const entry of entries) {
     const current = aggregated.get(entry.lineNumber);
@@ -195,8 +197,8 @@ function aggregateEntries(
 function resolveLineNumbers(
   entries: ReviewHeatmapLine[],
   lineContent: Map<number, string>
-): ResolvedHeatmapLine[] {
-  const resolved: ResolvedHeatmapLine[] = [];
+): HeatmapCandidate[] {
+  const resolved: HeatmapCandidate[] = [];
   const lineEntries = Array.from(lineContent.entries());
   const searchOffsets = new Map<string, number>();
 
@@ -282,22 +284,21 @@ function normalizeLineText(value: string | null | undefined): string | null {
   return value.replace(/\s+/g, " ").trim();
 }
 
-function collectNewLineContent(diff: FileData): Map<number, string> {
+function collectNewLineContent(diff: DiffFile): Map<number, string> {
   const map = new Map<number, string>();
 
-  for (const hunk of diff.hunks) {
-    for (const change of hunk.changes) {
-      const lineNumber = computeNewLineNumber(change);
-      if (lineNumber < 0) {
-        continue;
-      }
-
-      if (isDelete(change)) {
-        continue;
-      }
-
-      map.set(lineNumber, change.content ?? "");
+  const lines = getSplitContentLines(diff);
+  for (const item of lines) {
+    const right = item.splitLine.right;
+    const lineNumber = right?.lineNumber ?? null;
+    if (lineNumber === null || lineNumber <= 0) {
+      continue;
     }
+    // Skip placeholder rows that have no textual content
+    if (typeof right?.value !== "string") {
+      continue;
+    }
+    map.set(lineNumber, right.value);
   }
 
   return map;
