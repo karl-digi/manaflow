@@ -997,11 +997,18 @@ function ReviewProgressIndicator({
     processedFileCount === null ? "— done" : `${processedFileCount} done`;
   const pendingBadgeText =
     processedFileCount === null ? "— waiting" : `${pendingFileCount} waiting`;
+  const isInProgress =
+    processedFileCount !== null && pendingFileCount > 0;
+  const animateBadges = isLoading || isInProgress;
 
   return (
     <div
-      className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm transition"
+      className={cn(
+        "rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm transition",
+        isInProgress ? "ring-1 ring-sky-200/60 dark:ring-sky-800/60" : undefined
+      )}
       aria-live="polite"
+      aria-busy={isLoading || isInProgress}
     >
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
@@ -1014,7 +1021,7 @@ function ReviewProgressIndicator({
           <span
             className={cn(
               "rounded-md bg-emerald-100 px-2 py-0.5 text-emerald-700",
-              isLoading ? "animate-pulse" : undefined
+              animateBadges ? "animate-[pulse_1.8s_ease-in-out_infinite]" : undefined
             )}
           >
             {processedBadgeText}
@@ -1022,7 +1029,7 @@ function ReviewProgressIndicator({
           <span
             className={cn(
               "rounded-md bg-amber-100 px-2 py-0.5 text-amber-700",
-              isLoading ? "animate-pulse" : undefined
+              animateBadges ? "animate-[pulse_1.8s_ease-in-out_infinite]" : undefined
             )}
           >
             {pendingBadgeText}
@@ -1031,7 +1038,10 @@ function ReviewProgressIndicator({
       </div>
       <div className="mt-3 h-2 rounded-full bg-neutral-200">
         <div
-          className="h-full rounded-full bg-sky-500 transition-[width] duration-300 ease-out"
+          className={cn(
+            "h-full rounded-full bg-sky-500 transition-[width] duration-300 ease-out",
+            isInProgress ? "cmux-progress-bar-animated" : undefined
+          )}
           style={{ width: `${progressPercent}%` }}
           role="progressbar"
           aria-label="Automated review progress"

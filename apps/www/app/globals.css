@@ -200,6 +200,53 @@ body {
   box-shadow: inset 0 0 0 999px rgba(249, 115, 22, 0.24);
 }
 
+@keyframes cmux-progress-sheen {
+  0% {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  35% {
+    opacity: 0.28;
+  }
+  50% {
+    opacity: 0.4;
+  }
+  65% {
+    opacity: 0.28;
+  }
+  100% {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+
+.cmux-progress-bar-animated {
+  position: relative;
+  overflow: hidden;
+}
+
+.cmux-progress-bar-animated::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(
+    120deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.45) 45%,
+    rgba(255, 255, 255, 0.1) 60%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  transform: translateX(-100%);
+  animation: cmux-progress-sheen 1.8s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cmux-progress-bar-animated::after {
+    animation: none;
+  }
+}
+
 .diff-syntax {
   --diff-gutter-insert-background-color: rgb(226 252 237);
   --diff-gutter-insert-text-color: rgb(21 128 61);
