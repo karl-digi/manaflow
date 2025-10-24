@@ -436,6 +436,120 @@ function startSocketServer() {
         }
       });
 
+      // Open edited files after task completion
+      socket.on(
+        "vscode:open-edited-files",
+        async (data: { files: string[] }, callback) => {
+          try {
+            log("Opening edited files:", data.files);
+
+            // Get the Git extension
+            const gitExtension = vscode.extensions.getExtension("vscode.git");
+            if (!gitExtension) {
+              callback({ success: false, error: "Git extension not found" });
+              return;
+            }
+
+            const git = gitExtension.exports;
+            const api = git.getAPI(1);
+
+            // Get the first repository
+            const repository = api.repositories[0];
+            if (!repository) {
+              callback({ success: false, error: "No Git repository found" });
+              return;
+            }
+
+            const repoPath = repository.rootUri.fsPath;
+            const resolvedDefaultBase = await resolveDefaultBaseRef(repoPath);
+            const resolvedMergeBase = await resolveMergeBase(
+              repoPath,
+              resolvedDefaultBase
+            );
+            const effectiveBase = resolvedMergeBase || resolvedDefaultBase;
+
+            // Filter files to only include those that exist and have changes
+            const resources = data.files
+              .filter((file) => {
+                // Remove leading slash if present and ensure it's a relative path
+                const relativePath = file.startsWith("/root/workspace/")
+                  ? file.substring("/root/workspace/".length)
+                  : file.startsWith("/")
+                  ? file.substring(1)
+                  : file;
+                const fullPath = `${repoPath}/${relativePath}`;
+                try {
+                  // Check if file exists (for added/modified files)
+                  return require("node:fs").existsSync(fullPath);
+                } catch {
+                  // For deleted files, we still want to show them in the diff
+                  return true;
+                }
+              })
+              .map((file) => {
+                // Remove leading slash and /root/workspace/ prefix if present
+                const relativePath = file.startsWith("/root/workspace/")
+                  ? file.substring("/root/workspace/".length)
+                  : file.startsWith("/")
+                  ? file.substring(1)
+                  : file;
+
+                const fileUri = vscode.Uri.file(`${repoPath}/${relativePath}`);
+                const baseUri = api.toGitUri(fileUri, effectiveBase);
+
+                return {
+                  originalUri: baseUri,
+                  modifiedUri: fileUri,
+                };
+              });
+
+            if (resources.length === 0) {
+              callback({
+                success: true,
+                message: "No files to open",
+              });
+              return;
+            }
+
+            // Extract base branch name for title
+            const baseBranchName = resolvedDefaultBase
+              .replace(/^refs\/remotes\//, "")
+              .replace(/^origin\//, "");
+
+            const title = `Edited Files (${resources.length}) vs ${baseBranchName}`;
+
+            // Create a unique multiDiffSourceUri
+            const multiDiffSourceUri = vscode.Uri.from({
+              scheme: "cmux-edited-files",
+              path: `${repoPath}/edited-files-vs-base`,
+            });
+
+            // Open the multi-diff editor
+            await vscode.commands.executeCommand(
+              "_workbench.openMultiDiffEditor",
+              {
+                multiDiffSourceUri,
+                title,
+                resources,
+              }
+            );
+
+            log(`Opened ${resources.length} edited files in multi-diff view`);
+            callback({
+              success: true,
+              message: `Opened ${resources.length} edited files`,
+            });
+          } catch (error: unknown) {
+            log("Error opening edited files:", error);
+            if (error instanceof Error) {
+              callback({ success: false, error: error.message });
+            } else {
+              callback({ success: false, error: "Unknown error" });
+            }
+          }
+        }
+      );
+
       socket.on("disconnect", () => {
         log("Socket client disconnected:", socket.id);
       });

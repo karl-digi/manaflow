@@ -1,6 +1,7 @@
 import { Id } from "@cmux/convex/dataModel";
 import { connectToWorkerManagement } from "@cmux/shared/socket";
 import { EventEmitter } from "node:events";
+import { io, type Socket } from "socket.io-client";
 import { dockerLogger } from "../utils/fileLogger";
 
 export interface VSCodeInstanceConfig {
@@ -41,6 +42,7 @@ export abstract class VSCodeInstance extends EventEmitter {
     null;
   protected workerConnected: boolean = false;
   protected teamSlugOrId: string;
+  protected editedFiles: Set<string> = new Set();
 
   constructor(config: VSCodeInstanceConfig) {
     super();
@@ -166,6 +168,15 @@ export abstract class VSCodeInstance extends EventEmitter {
           `[VSCodeInstance ${this.instanceId}] File changes detected:`,
           { taskId: data.taskRunId, changeCount: data.changes.length }
         );
+        // Track edited files
+        data.changes.forEach((change) => {
+          if (change.type === "added" || change.type === "modified") {
+            this.editedFiles.add(change.path);
+          } else if (change.type === "deleted") {
+            // Keep deleted files in the list - users might want to see what was deleted
+            this.editedFiles.add(change.path);
+          }
+        });
         this.emit("file-changes", data);
       });
 
@@ -225,6 +236,87 @@ export abstract class VSCodeInstance extends EventEmitter {
 
   getTaskRunId(): Id<"taskRuns"> {
     return this.taskRunId;
+  }
+
+  getEditedFiles(): string[] {
+    return Array.from(this.editedFiles);
+  }
+
+  clearEditedFiles(): void {
+    this.editedFiles.clear();
+  }
+
+  /**
+   * Opens the edited files in the VSCode extension's multi-diff editor
+   * @param extensionUrl The URL to the extension socket (e.g., http://localhost:PORT)
+   * @returns Promise that resolves when files are opened or rejects on error
+   */
+  async openEditedFilesInExtension(extensionUrl: string): Promise<void> {
+    const files = this.getEditedFiles();
+    if (files.length === 0) {
+      dockerLogger.info(
+        `[VSCodeInstance ${this.instanceId}] No edited files to open`
+      );
+      return;
+    }
+
+    return new Promise((resolve, reject) => {
+      dockerLogger.info(
+        `[VSCodeInstance ${this.instanceId}] Connecting to extension at ${extensionUrl} to open ${files.length} edited files`
+      );
+
+      const extensionSocket: Socket = io(extensionUrl, {
+        reconnection: false,
+        timeout: 10000,
+      });
+
+      extensionSocket.on("connect", () => {
+        dockerLogger.info(
+          `[VSCodeInstance ${this.instanceId}] Connected to extension, sending file list`
+        );
+
+        extensionSocket.emit(
+          "vscode:open-edited-files",
+          { files },
+          (response: { success: boolean; message?: string; error?: string }) => {
+            extensionSocket.disconnect();
+
+            if (response.success) {
+              dockerLogger.info(
+                `[VSCodeInstance ${this.instanceId}] Successfully opened edited files: ${response.message}`
+              );
+              resolve();
+            } else {
+              const errorMsg =
+                response.error || "Failed to open edited files in extension";
+              dockerLogger.error(
+                `[VSCodeInstance ${this.instanceId}] ${errorMsg}`
+              );
+              reject(new Error(errorMsg));
+            }
+          }
+        );
+      });
+
+      extensionSocket.on("connect_error", (error) => {
+        dockerLogger.error(
+          `[VSCodeInstance ${this.instanceId}] Failed to connect to extension:`,
+          error.message
+        );
+        extensionSocket.disconnect();
+        reject(
+          new Error(`Failed to connect to extension: ${error.message}`)
+        );
+      });
+
+      extensionSocket.on("connect_timeout", () => {
+        dockerLogger.error(
+          `[VSCodeInstance ${this.instanceId}] Connection to extension timed out`
+        );
+        extensionSocket.disconnect();
+        reject(new Error("Connection to extension timed out"));
+      });
+    });
   }
 
   abstract getName(): string;

@@ -493,6 +493,58 @@ export async function spawnAgent(
       }
     });
 
+    // Set up task-complete event handler to open edited files
+    vscodeInstance.on("task-complete", async (data) => {
+      try {
+        serverLogger.info(
+          `[AgentSpawner] Task complete for ${agent.name}:`,
+          data
+        );
+        if (data.taskRunId !== taskRunId) {
+          serverLogger.warn(
+            `[AgentSpawner] Task complete event taskRunId mismatch; ignoring`
+          );
+          return;
+        }
+
+        // Get extension port for opening files
+        let extensionPort: string | undefined;
+        if (vscodeInstance instanceof DockerVSCodeInstance) {
+          const dockerPorts = vscodeInstance.getPorts();
+          extensionPort = dockerPorts?.extension;
+        }
+
+        if (extensionPort) {
+          const extensionUrl = `http://localhost:${extensionPort}`;
+          serverLogger.info(
+            `[AgentSpawner] Opening edited files in extension at ${extensionUrl}`
+          );
+
+          try {
+            await vscodeInstance.openEditedFilesInExtension(extensionUrl);
+            serverLogger.info(
+              `[AgentSpawner] Successfully opened edited files for ${agent.name}`
+            );
+          } catch (error) {
+            serverLogger.error(
+              `[AgentSpawner] Failed to open edited files in extension:`,
+              error
+            );
+            // Don't fail the task if we can't open the files in the editor
+          }
+        } else {
+          serverLogger.warn(
+            `[AgentSpawner] Extension port not available, skipping file opening`
+          );
+        }
+      } catch (error) {
+        serverLogger.error(
+          `[AgentSpawner] Error handling task-complete:`,
+          error
+        );
+      }
+    });
+
     // Get ports if it's a Docker instance
     let ports:
       | {
