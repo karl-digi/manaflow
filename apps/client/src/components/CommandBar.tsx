@@ -4,7 +4,7 @@ import { copyAllElectronLogs } from "@/lib/electron-logs/electron-logs";
 import { setLastTeamSlugOrId } from "@/lib/lastTeam";
 import { stackClientApp } from "@/lib/stack";
 import { api } from "@cmux/convex/api";
-import type { Id } from "@cmux/convex/dataModel";
+import type { Doc, Id } from "@cmux/convex/dataModel";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useUser, type Team } from "@stackframe/react";
 import { useNavigate, useRouter } from "@tanstack/react-router";
@@ -25,7 +25,14 @@ import {
   Users,
   PanelLeftClose,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { toast } from "sonner";
 import { ElectronLogsCommandItems } from "./command-bar/ElectronLogsCommandItems";
 
@@ -71,6 +78,94 @@ type TeamCommandItem = {
   teamSlugOrId: string;
   isCurrent: boolean;
   keywords: string[];
+};
+
+type TaskWithRun = Doc<"tasks"> & {
+  selectedTaskRun: Doc<"taskRuns"> | null;
+};
+
+const getTaskTitle = (task: TaskWithRun): string => {
+  const prTitle = extractString(task.pullRequestTitle);
+  if (prTitle) return prTitle;
+  const text = extractString(task.text);
+  if (text) return text;
+  return `Task ${task._id}`;
+};
+
+const normalizeKeywords = (values: ReadonlyArray<string>): string[] => {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const value of values) {
+    const lowered = value.toLowerCase().trim();
+    if (!lowered || seen.has(lowered)) continue;
+    seen.add(lowered);
+    normalized.push(lowered);
+  }
+  return normalized;
+};
+
+const expandKeywordSeeds = (
+  seeds: ReadonlyArray<string | undefined>,
+): string[] => {
+  const raw = compactStrings(seeds);
+  const expanded: string[] = [];
+  for (const value of raw) {
+    expanded.push(value);
+    const segments = value.split(/[\s:/\\._-]+/);
+    for (const segment of segments) {
+      if (segment && segment !== value) {
+        expanded.push(segment);
+      }
+    }
+  }
+  return normalizeKeywords(expanded);
+};
+
+const addKeywordExtras = (
+  base: ReadonlyArray<string>,
+  extras: ReadonlyArray<string>,
+): string[] => {
+  if (extras.length === 0) {
+    return [...base];
+  }
+
+  const merged = [...base];
+  const seen = new Set(base);
+  for (const extra of extras) {
+    const normalized = extra.toLowerCase().trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    merged.push(normalized);
+  }
+  return merged;
+};
+
+const getTaskBaseKeywords = (task: TaskWithRun, index: number): string[] => {
+  const run = task.selectedTaskRun;
+  const seeds: (string | undefined)[] = [
+    getTaskTitle(task),
+    task.text,
+    task.pullRequestTitle,
+    task.projectFullName,
+    task.baseBranch,
+    task.worktreePath,
+    task._id,
+    run?._id,
+    run?.agentName,
+    run?.newBranch,
+    run?.pullRequestUrl,
+    run?.pullRequestState,
+    task.isCompleted ? "completed" : "in progress",
+    index < 9 ? String(index + 1) : undefined,
+  ];
+
+  const prNumber = run?.pullRequestNumber;
+  if (typeof prNumber === "number") {
+    const asString = String(prNumber);
+    seeds.push(asString, `pr ${asString}`, `#${asString}`);
+  }
+
+  return expandKeywordSeeds(seeds);
 };
 
 function CommandHighlightListener({
@@ -195,6 +290,8 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     : "Sign in to view teams.";
 
   const allTasks = useQuery(api.tasks.getTasksWithTaskRuns, { teamSlugOrId });
+
+  const hasSearch = search.trim().length > 0;
 
   useEffect(() => {
     openRef.current = open;
@@ -625,7 +722,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
           } else if (
             e.key === "Backspace" &&
             activePage === "teams" &&
-            search.length === 0 &&
+            !hasSearch &&
             inputRef.current &&
             e.target === inputRef.current
           ) {
@@ -838,59 +935,32 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                     <div className="px-2 py-1.5 text-xs text-neutral-500 dark:text-neutral-400">
                       Tasks
                     </div>
-                    {allTasks.slice(0, 9).flatMap((task, index) => {
-                      const run = task.selectedTaskRun;
-                      const items = [
-                        <Command.Item
-                          key={task._id}
-                          value={`${index + 1}:task:${task._id}`}
-                          onSelect={() => handleSelect(`task:${task._id}`)}
-                          data-value={`task:${task._id}`}
-                          className="flex items-center gap-3 px-3 py-2.5 mx-1 rounded-md cursor-pointer                     hover:bg-neutral-100 dark:hover:bg-neutral-800
-                    data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
-                    data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100
-                    group"
-                        >
-                          <span
-                            className="flex h-5 w-5 items-center justify-center rounded text-xs font-semibold
-                    bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300
-                    group-data-[selected=true]:bg-neutral-300 dark:group-data-[selected=true]:bg-neutral-600"
-                          >
-                            {index + 1}
-                          </span>
-                          <span className="flex-1 truncate text-sm">
-                            {task.pullRequestTitle || task.text}
-                          </span>
-                          {task.isCompleted ? (
-                            <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
-                              completed
-                            </span>
-                          ) : (
-                            <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">
-                              in progress
-                            </span>
-                          )}
-                        </Command.Item>,
-                      ];
-
-                      if (run) {
-                        items.push(
+                    {allTasks
+                      .slice(0, hasSearch ? allTasks.length : 9)
+                      .flatMap((task, index) => {
+                        const run = task.selectedTaskRun;
+                        const baseKeywords = addKeywordExtras(
+                          getTaskBaseKeywords(task, index),
+                          ["task", "tasks"],
+                        );
+                        const items: ReactNode[] = [
                           <Command.Item
-                            key={`${task._id}-vs-${run._id}`}
-                            value={`${index + 1} vs:task:${task._id}`}
-                            onSelect={() => handleSelect(`task:${task._id}:vs`)}
-                            data-value={`task:${task._id}:vs`}
+                            key={task._id}
+                            value={`task:${task._id}`}
+                            keywords={baseKeywords}
+                            onSelect={() => handleSelect(`task:${task._id}`)}
+                            data-value={`task:${task._id}`}
                             className="flex items-center gap-3 px-3 py-2.5 mx-1 rounded-md cursor-pointer                     hover:bg-neutral-100 dark:hover:bg-neutral-800
                     data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
                     data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100
                     group"
                           >
                             <span
-                              className="flex h-5 w-8 items-center justify-center rounded text-xs font-semibold
+                              className="flex h-5 w-5 items-center justify-center rounded text-xs font-semibold
                     bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300
                     group-data-[selected=true]:bg-neutral-300 dark:group-data-[selected=true]:bg-neutral-600"
                             >
-                              {index + 1} VS
+                              {index + 1}
                             </span>
                             <span className="flex-1 truncate text-sm">
                               {task.pullRequestTitle || task.text}
@@ -905,46 +975,99 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                               </span>
                             )}
                           </Command.Item>,
-                        );
+                        ];
 
-                        items.push(
-                          <Command.Item
-                            key={`${task._id}-gitdiff-${run._id}`}
-                            value={`${index + 1} git diff:task:${task._id}`}
-                            onSelect={() =>
-                              handleSelect(`task:${task._id}:gitdiff`)
-                            }
-                            data-value={`task:${task._id}:gitdiff`}
-                            className="flex items-center gap-3 px-3 py-2.5 mx-1 rounded-md cursor-pointer                     hover:bg-neutral-100 dark:hover:bg-neutral-800
+                        if (run) {
+                          const vsKeywords = addKeywordExtras(baseKeywords, [
+                            "vs",
+                            "vs code",
+                            "vscode",
+                            "visual studio code",
+                            "workspace",
+                            "editor",
+                            "open",
+                          ]);
+                          items.push(
+                            <Command.Item
+                              key={`${task._id}-vs-${run._id}`}
+                              value={`task:${task._id}:vs`}
+                              keywords={vsKeywords}
+                              onSelect={() =>
+                                handleSelect(`task:${task._id}:vs`)
+                              }
+                              data-value={`task:${task._id}:vs`}
+                              className="flex items-center gap-3 px-3 py-2.5 mx-1 rounded-md cursor-pointer                     hover:bg-neutral-100 dark:hover:bg-neutral-800
                     data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
                     data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100
                     group"
-                          >
-                            <span
-                              className="flex h-5 px-2 items-center justify-center rounded text-xs font-semibold
+                            >
+                              <span
+                                className="flex h-5 w-8 items-center justify-center rounded text-xs font-semibold
                     bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300
                     group-data-[selected=true]:bg-neutral-300 dark:group-data-[selected=true]:bg-neutral-600"
-                            >
-                              {index + 1} git diff
-                            </span>
-                            <span className="flex-1 truncate text-sm">
-                              {task.pullRequestTitle || task.text}
-                            </span>
-                            {task.isCompleted ? (
-                              <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
-                                completed
+                              >
+                                {index + 1} VS
                               </span>
-                            ) : (
-                              <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">
-                                in progress
+                              <span className="flex-1 truncate text-sm">
+                                {task.pullRequestTitle || task.text}
                               </span>
-                            )}
-                          </Command.Item>,
-                        );
-                      }
+                              {task.isCompleted ? (
+                                <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
+                                  completed
+                                </span>
+                              ) : (
+                                <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">
+                                  in progress
+                                </span>
+                              )}
+                            </Command.Item>,
+                          );
 
-                      return items;
-                    })}
+                          const diffKeywords = addKeywordExtras(baseKeywords, [
+                            "diff",
+                            "git diff",
+                            "changes",
+                            "compare",
+                          ]);
+                          items.push(
+                            <Command.Item
+                              key={`${task._id}-gitdiff-${run._id}`}
+                              value={`task:${task._id}:gitdiff`}
+                              keywords={diffKeywords}
+                              onSelect={() =>
+                                handleSelect(`task:${task._id}:gitdiff`)
+                              }
+                              data-value={`task:${task._id}:gitdiff`}
+                              className="flex items-center gap-3 px-3 py-2.5 mx-1 rounded-md cursor-pointer                     hover:bg-neutral-100 dark:hover:bg-neutral-800
+                    data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
+                    data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100
+                    group"
+                            >
+                              <span
+                                className="flex h-5 px-2 items-center justify-center rounded text-xs font-semibold
+                    bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300
+                    group-data-[selected=true]:bg-neutral-300 dark:group-data-[selected=true]:bg-neutral-600"
+                              >
+                                {index + 1} git diff
+                              </span>
+                              <span className="flex-1 truncate text-sm">
+                                {task.pullRequestTitle || task.text}
+                              </span>
+                              {task.isCompleted ? (
+                                <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
+                                  completed
+                                </span>
+                              ) : (
+                                <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">
+                                  in progress
+                                </span>
+                              )}
+                            </Command.Item>,
+                          );
+                        }
+
+                        return items;
+                      })}
                   </Command.Group>
                 )}
 
