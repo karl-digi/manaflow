@@ -1059,9 +1059,9 @@ function SettingsComponent() {
       {/* Footer Save bar */}
       <div
         ref={saveButtonRef}
-        className="sticky bottom-0 border-t border-neutral-200 dark:border-neutral-800 bg-white/80 dark:bg-neutral-900/80 backdrop-blur supports-[backdrop-filter]:bg-white/60 supports-[backdrop-filter]:dark:bg-neutral-900/60"
+        className="sticky bottom-0 border-t border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-lg z-10"
       >
-        <div className="max-w-3xl mx-auto px-6 py-3 flex items-center justify-end gap-3">
+        <div className="max-w-3xl mx-auto px-6 py-3 flex items-center justify-between gap-3">
           <button
             onClick={saveApiKeys}
             disabled={!hasChanges() || isSaving}
@@ -1073,6 +1073,11 @@ function SettingsComponent() {
           >
             {isSaving ? "Saving..." : "Save Changes"}
           </button>
+          {hasChanges() && !isSaving && (
+            <span className="text-sm text-red-600 dark:text-red-500 font-medium">
+              Unsaved changes
+            </span>
+          )}
         </div>
       </div>
     </FloatingPane>
