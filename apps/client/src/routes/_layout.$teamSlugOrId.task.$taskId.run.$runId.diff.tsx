@@ -456,7 +456,8 @@ function WorkflowRunsWrapper({
     );
   }, [workflowData.allRuns]);
 
-  const isExpanded = checksExpandedByRepo[repoFullName] ?? hasAnyFailure;
+  const shouldDefaultExpandChecks = workflowData.isLoading || hasAnyFailure;
+  const isExpanded = checksExpandedByRepo[repoFullName] ?? shouldDefaultExpandChecks;
 
   return (
     <WorkflowRunsSection

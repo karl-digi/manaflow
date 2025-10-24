@@ -130,12 +130,17 @@ export function PullRequestDetailView({
 
   const hasAnyFailure = useMemo(() => {
     return workflowData.allRuns.some(
-      (run) => run.conclusion === "failure" || run.conclusion === "timed_out" || run.conclusion === "action_required"
+      (run) =>
+        run.conclusion === "failure" ||
+        run.conclusion === "timed_out" ||
+        run.conclusion === "action_required"
     );
   }, [workflowData.allRuns]);
 
+  const shouldDefaultExpandChecks = workflowData.isLoading || hasAnyFailure;
   const [checksExpandedOverride, setChecksExpandedOverride] = useState<boolean | null>(null);
-  const checksExpanded = checksExpandedOverride !== null ? checksExpandedOverride : hasAnyFailure;
+  const checksExpanded =
+    checksExpandedOverride !== null ? checksExpandedOverride : shouldDefaultExpandChecks;
 
   const handleToggleChecks = () => {
     setChecksExpandedOverride(!checksExpanded);
