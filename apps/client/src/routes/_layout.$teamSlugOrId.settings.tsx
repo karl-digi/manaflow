@@ -389,20 +389,21 @@ function SettingsComponent() {
 
   return (
     <FloatingPane header={<TitleBar title="Settings" />}>
-      <div
-        ref={scrollContainerRef}
-        className="flex flex-col grow overflow-auto select-none relative"
-      >
-        <div className="p-6 max-w-3xl">
-          {/* Header */}
-          <div className="mb-6">
-            <h1 className="text-xl font-semibold text-neutral-900 dark:text-neutral-100">
-              Settings
-            </h1>
-            <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-              Manage your workspace preferences and configuration
-            </p>
-          </div>
+      <div className="flex flex-col grow overflow-hidden relative">
+        <div
+          ref={scrollContainerRef}
+          className="flex-1 overflow-auto select-none"
+        >
+          <div className="p-6 max-w-3xl">
+            {/* Header */}
+            <div className="mb-6">
+              <h1 className="text-xl font-semibold text-neutral-900 dark:text-neutral-100">
+                Settings
+              </h1>
+              <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+                Manage your workspace preferences and configuration
+              </p>
+            </div>
 
           {/* Settings Sections */}
           <div className="space-y-4">
@@ -1054,25 +1055,25 @@ function SettingsComponent() {
             </div>
           </div>
         </div>
-      </div>
 
-      {/* Footer Save bar */}
-      <div
-        ref={saveButtonRef}
-        className="border-t border-neutral-200 dark:border-neutral-800 bg-white/80 dark:bg-neutral-900/80 backdrop-blur supports-[backdrop-filter]:bg-white/60 supports-[backdrop-filter]:dark:bg-neutral-900/60"
-      >
-        <div className="max-w-3xl mx-auto px-6 py-3 flex items-center justify-end gap-3">
-          <button
-            onClick={saveApiKeys}
-            disabled={!hasChanges() || isSaving}
-            className={`px-4 py-2 text-sm font-medium rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-neutral-900 transition-all ${
-              !hasChanges() || isSaving
-                ? "bg-neutral-200 dark:bg-neutral-800 text-neutral-400 dark:text-neutral-500 cursor-not-allowed opacity-50"
-                : "bg-blue-600 dark:bg-blue-500 text-white hover:bg-blue-700 dark:hover:bg-blue-600"
-            }`}
-          >
-            {isSaving ? "Saving..." : "Save Changes"}
-          </button>
+        {/* Footer Save bar - Sticky */}
+        <div
+          ref={saveButtonRef}
+          className="border-t border-neutral-200 dark:border-neutral-800 bg-white/80 dark:bg-neutral-900/80 backdrop-blur supports-[backdrop-filter]:bg-white/60 supports-[backdrop-filter]:dark:bg-neutral-900/60"
+        >
+          <div className="max-w-3xl mx-auto px-6 py-3 flex items-center justify-end gap-3">
+            <button
+              onClick={saveApiKeys}
+              disabled={!hasChanges() || isSaving}
+              className={`px-4 py-2 text-sm font-medium rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-neutral-900 transition-all ${
+                !hasChanges() || isSaving
+                  ? "bg-neutral-200 dark:bg-neutral-800 text-neutral-400 dark:text-neutral-500 cursor-not-allowed opacity-50"
+                  : "bg-blue-600 dark:bg-blue-500 text-white hover:bg-blue-700 dark:hover:bg-blue-600"
+              }`}
+            >
+              {isSaving ? "Saving..." : "Save Changes"}
+            </button>
+          </div>
         </div>
       </div>
     </FloatingPane>
