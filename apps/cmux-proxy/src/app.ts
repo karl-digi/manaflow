@@ -23,6 +23,50 @@ function isLoopbackHostname(hostname) {
   return /^127(?:\\.\\d{1,3}){3}$/.test(hostname);
 }
 
+function replaceLocalhostUrl(url) {
+  try {
+    const urlObj = new URL(url);
+    
+    // Handle GitHub PR URLs - redirect to cmux PR review interface
+    if (urlObj.hostname === 'github.com' && urlObj.pathname.includes('/pull/')) {
+      const pathMatch = urlObj.pathname.match(/\\/([^\\/]+)\\/([^\\/]+)\\/pull\\/(\\d+)/);
+      if (pathMatch) {
+        const [, owner, repo, pullNumber] = pathMatch;
+        const currentHost = self.location.hostname;
+        const morphIdMatch = currentHost.match(/port-\\\\d+-(.*)\\\\.(?:cmux\\\\.sh|cmux\\\\.app|autobuild\\\\.app)/);
+        
+        if (morphIdMatch) {
+          const morphId = morphIdMatch[1];
+          const domain = currentHost.match(/\\\\.(cmux\\\\.sh|cmux\\\\.app|autobuild\\\\.app)$/)?.[1] || 'cmux.sh';
+          // Redirect to cmux PR review interface, preserving query parameters and fragments
+          const redirectUrl = new URL(\`https://\${currentHost}/\${owner}/\${repo}/pull/\${pullNumber}\`);
+          redirectUrl.search = urlObj.search;
+          redirectUrl.hash = urlObj.hash;
+          return redirectUrl.toString();
+        }
+      }
+    }
+    
+    // Handle localhost URLs with cmux.sh proxy
+    if (isLoopbackHostname(urlObj.hostname) && urlObj.port) {
+      const currentHost = self.location.hostname;
+      const morphIdMatch = currentHost.match(/port-\\\\d+-(.*)\\\\.(?:cmux\\\\.sh|cmux\\\\.app|autobuild\\\\.app)/);
+
+      if (morphIdMatch) {
+        const morphId = morphIdMatch[1];
+        const domain = currentHost.match(/\\\\.(cmux\\\\.sh|cmux\\\\.app|autobuild\\\\.app)$/)?.[1] || 'cmux.sh';
+        urlObj.protocol = 'https:';
+        urlObj.hostname = \`port-\${urlObj.port}-\${morphId}.\${domain}\`;
+        urlObj.port = '';
+        return urlObj.toString();
+      }
+    }
+    return url;
+  } catch {
+    return url;
+  }
+}
+
 self.addEventListener('install', (event) => {
   self.skipWaiting();
 });
@@ -69,6 +113,49 @@ self.addEventListener('fetch', (event) => {
 
       event.respondWith(fetch(newRequest));
       return;
+    }
+  }
+
+  // Check if request is to GitHub PR URLs
+  if (url.hostname === 'github.com' && url.pathname.includes('/pull/')) {
+    const pathMatch = url.pathname.match(/\\/([^\\/]+)\\/([^\\/]+)\\/pull\\/(\\d+)/);
+    if (pathMatch) {
+      const [, owner, repo, pullNumber] = pathMatch;
+      const currentHost = self.location.hostname;
+      const morphIdMatch = currentHost.match(/port-\\\\d+-(.*)\\\\.(?:cmux\\\\.sh|cmux\\\\.app|autobuild\\\\.app)/);
+      
+      if (morphIdMatch) {
+        const morphId = morphIdMatch[1];
+        const domain = currentHost.match(/\\\\.(cmux\\\\.sh|cmux\\\\.app|autobuild\\\\.app)$/)?.[1] || 'cmux.sh';
+        // Redirect to cmux PR review interface, preserving query parameters and fragments
+        const redirectUrl = new URL(\`https://\${currentHost}/\${owner}/\${repo}/pull/\${pullNumber}\`);
+        redirectUrl.search = url.search;
+        redirectUrl.hash = url.hash;
+
+        // Create new headers, but let the browser handle Host header
+        const headers = new Headers(event.request.headers);
+        // Remove headers that might cause issues with proxying
+        headers.delete('Host'); // Browser will set this correctly
+        headers.set('Host', 'cmux.sh');
+        headers.delete('X-Forwarded-Host');
+        headers.delete('X-Forwarded-For');
+        headers.delete('X-Real-IP');
+
+        // Create a completely new request to avoid any caching or DNS issues
+        const newRequest = new Request(redirectUrl, {
+          method: event.request.method,
+          headers: headers,
+          body: event.request.method !== 'GET' && event.request.method !== 'HEAD'
+            ? event.request.body
+            : undefined,
+          mode: 'cors',
+          credentials: event.request.credentials,
+          redirect: 'follow',
+        });
+
+        event.respondWith(fetch(newRequest));
+        return;
+      }
     }
   }
 
@@ -279,10 +366,32 @@ function isLoopbackHostname(hostname) {
   return /^127(?:\\.\\d{1,3}){3}$/.test(hostname);
 }
 
-// Function to replace loopback URLs with cmux.sh proxy
+// Function to replace loopback URLs with cmux.sh proxy and GitHub PR URLs with cmux PR review
 function replaceLocalhostUrl(url) {
   try {
     const urlObj = new URL(url, __realLocation.href);
+    
+    // Handle GitHub PR URLs - redirect to cmux PR review interface
+    if (urlObj.hostname === 'github.com' && urlObj.pathname.includes('/pull/')) {
+      const pathMatch = urlObj.pathname.match(/\/([^\/]+)\/([^\/]+)\/pull\/(\d+)/);
+      if (pathMatch) {
+        const [, owner, repo, pullNumber] = pathMatch;
+        const currentHost = __realLocation.hostname;
+        const morphIdMatch = currentHost.match(/port-\\\\d+-(.*)\\\\.(?:cmux\\\\.sh|cmux\\\\.app|autobuild\\\\.app)/);
+        
+        if (morphIdMatch) {
+          const morphId = morphIdMatch[1];
+          const domain = currentHost.match(/\\\\.(cmux\\\\.sh|cmux\\\\.app|autobuild\\\\.app)$/)?.[1] || 'cmux.sh';
+          // Redirect to cmux PR review interface, preserving query parameters and fragments
+          const redirectUrl = new URL(\`https://\${currentHost}/\${owner}/\${repo}/pull/\${pullNumber}\`);
+          redirectUrl.search = urlObj.search;
+          redirectUrl.hash = urlObj.hash;
+          return redirectUrl.toString();
+        }
+      }
+    }
+    
+    // Handle localhost URLs with cmux.sh proxy
     if (isLoopbackHostname(urlObj.hostname) && urlObj.port) {
       const currentHost = __realLocation.hostname;
       const morphIdMatch = currentHost.match(/port-\\\\d+-(.*)\\\\.(?:cmux\\\\.sh|cmux\\\\.app|autobuild\\\\.app)/);

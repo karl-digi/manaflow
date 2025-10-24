@@ -17,7 +17,7 @@ function isLoopbackHostname(hostname) {
     return true;
   }
 
-  return /^127(?:\.\d{1,3}){3}$/.test(hostname);
+  return /^127(?:\\.\\d{1,3}){3}$/.test(hostname);
 }
 
 self.addEventListener('install', (event) => {
@@ -31,18 +31,46 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
+  // Handle GitHub PR URLs - redirect to cmux PR review interface
+  if (url.hostname === 'github.com' && url.pathname.includes('/pull/')) {
+    const pathMatch = url.pathname.match(/\\/([^\\/]+)\\/([^\\/]+)\\/pull\\/(\\d+)/);
+    if (pathMatch) {
+      const [, owner, repo, pullNumber] = pathMatch;
+      // Get the current host to maintain the same cmux instance
+      const currentHost = self.location.hostname;
+      const morphIdMatch = currentHost.match(/port-\\\\d+-(.*)\\\\.cmux\\\\.sh/);
+      
+      if (morphIdMatch) {
+        const redirectUrl = \`https://\${currentHost}/\${owner}/\${repo}/pull/\${pullNumber}\`;
+        
+        const newRequest = new Request(redirectUrl, {
+          method: 'GET',
+          headers: new Headers({
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+          }),
+          mode: 'navigate',
+          credentials: 'same-origin',
+          redirect: 'follow',
+        });
+
+        event.respondWith(fetch(newRequest));
+        return;
+      }
+    }
+  }
+
   // Check if request is to localhost or a loopback IP with a port
   if (isLoopbackHostname(url.hostname) && url.port) {
-    // Get the morph ID from the current page's subdomain
+    // Get morph ID from current page's subdomain
     const currentHost = self.location.hostname;
-    const morphIdMatch = currentHost.match(/port-\\d+-(.*)\\.cmux\\.sh/);
+    const morphIdMatch = currentHost.match(/port-\\\\d+-(.*)\\\\.cmux\\\\.sh/);
 
     if (morphIdMatch) {
       const morphId = morphIdMatch[1];
       // Redirect to port-PORT-[morphid].cmux.sh
       const redirectUrl = \`https://port-\${url.port}-\${morphId}.cmux.sh\${url.pathname}\${url.search}\`;
 
-      // Create new headers, but let the browser handle Host header
+      // Create new headers, but let's browser handle Host header
       const headers = new Headers(event.request.headers);
       // Remove headers that might cause issues with proxying
       headers.delete('Host'); // Browser will set this correctly
@@ -263,10 +291,28 @@ function isLoopbackHostname(hostname) {
   return /^127(?:\.\d{1,3}){3}$/.test(hostname);
 }
 
-// Function to replace loopback URLs with cmux.sh proxy
+// Function to replace loopback URLs with cmux.sh proxy and GitHub PR URLs with cmux PR review
 function replaceLocalhostUrl(url) {
   try {
     const urlObj = new URL(url, __realLocation.href);
+    
+    // Handle GitHub PR URLs - redirect to cmux PR review interface
+    if (urlObj.hostname === 'github.com' && urlObj.pathname.includes('/pull/')) {
+      const pathMatch = urlObj.pathname.match(/\/([^\/]+)\/([^\/]+)\/pull\/(\d+)/);
+      if (pathMatch) {
+        const [, owner, repo, pullNumber] = pathMatch;
+        const currentHost = __realLocation.hostname;
+        const morphIdMatch = currentHost.match(/port-\\d+-(.*)\\.cmux\\.sh/);
+        
+        if (morphIdMatch) {
+          const morphId = morphIdMatch[1];
+          // Redirect to cmux PR review interface
+          return `https://${currentHost}/${owner}/${repo}/pull/${pullNumber}`;
+        }
+      }
+    }
+    
+    // Handle localhost URLs with cmux.sh proxy
     if (isLoopbackHostname(urlObj.hostname) && urlObj.port) {
       const currentHost = __realLocation.hostname;
       const morphIdMatch = currentHost.match(/port-\\d+-(.*)\\.cmux\\.sh/);
@@ -274,10 +320,16 @@ function replaceLocalhostUrl(url) {
       if (morphIdMatch) {
         const morphId = morphIdMatch[1];
         urlObj.protocol = 'https:';
-        urlObj.hostname = \`port-\${urlObj.port}-\${morphId}.cmux.sh\`;
+        urlObj.hostname = `port-${urlObj.port}-${morphId}.cmux.sh`;
         urlObj.port = '';
         return urlObj.toString();
       }
+    }
+    return url;
+  } catch {
+    return url;
+  }
+}
     }
     return url;
   } catch {
