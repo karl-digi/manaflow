@@ -982,6 +982,8 @@ function ReviewProgressIndicator({
     processedFileCount === null
       ? Math.max(totalFileCount, 0)
       : Math.max(totalFileCount - processedFileCount, 0);
+  const hasPendingFiles = pendingFileCount > 0;
+  const isInProgress = !isLoading && hasPendingFiles;
   const progressPercent =
     processedFileCount === null || totalFileCount === 0
       ? 0
@@ -989,9 +991,12 @@ function ReviewProgressIndicator({
   const statusText =
     processedFileCount === null
       ? "Loading file progress..."
-      : pendingFileCount === 0
-        ? "All files processed"
-        : `${processedFileCount} processed • ${pendingFileCount} pending`;
+      : hasPendingFiles
+        ? `In progress • ${processedFileCount} processed • ${pendingFileCount} pending`
+        : "All files processed";
+  const shouldAnimateProcessedBadge = isLoading && processedFileCount === null;
+  const shouldAnimatePendingBadge = isLoading || isInProgress;
+  const shouldAnimateProgressBar = isLoading || isInProgress;
 
   const processedBadgeText =
     processedFileCount === null ? "— done" : `${processedFileCount} done`;
@@ -1014,7 +1019,7 @@ function ReviewProgressIndicator({
           <span
             className={cn(
               "rounded-md bg-emerald-100 px-2 py-0.5 text-emerald-700",
-              isLoading ? "animate-pulse" : undefined
+              shouldAnimateProcessedBadge ? "animate-pulse" : undefined
             )}
           >
             {processedBadgeText}
@@ -1022,7 +1027,7 @@ function ReviewProgressIndicator({
           <span
             className={cn(
               "rounded-md bg-amber-100 px-2 py-0.5 text-amber-700",
-              isLoading ? "animate-pulse" : undefined
+              shouldAnimatePendingBadge ? "animate-pulse" : undefined
             )}
           >
             {pendingBadgeText}
@@ -1031,7 +1036,10 @@ function ReviewProgressIndicator({
       </div>
       <div className="mt-3 h-2 rounded-full bg-neutral-200">
         <div
-          className="h-full rounded-full bg-sky-500 transition-[width] duration-300 ease-out"
+          className={cn(
+            "h-full rounded-full bg-sky-500 transition-[width] duration-300 ease-out",
+            shouldAnimateProgressBar ? "progress-fill--animated" : undefined
+          )}
           style={{ width: `${progressPercent}%` }}
           role="progressbar"
           aria-label="Automated review progress"
