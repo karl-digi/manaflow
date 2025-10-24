@@ -1061,7 +1061,19 @@ function SettingsComponent() {
         ref={saveButtonRef}
         className="sticky bottom-0 left-0 right-0 border-t border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-lg z-50"
       >
-        <div className="max-w-3xl mx-auto px-6 py-3 flex items-center justify-between gap-3">
+        <div className="max-w-3xl mx-auto px-6 py-3 flex items-center justify-start gap-3">
+          {hasChanges() && !isSaving && (
+            <span className="flex items-center gap-2 text-sm text-red-600 dark:text-red-400 font-medium">
+              <svg
+                className="w-2 h-2 fill-current"
+                viewBox="0 0 8 8"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <circle cx="4" cy="4" r="4" />
+              </svg>
+              Unsaved changes
+            </span>
+          )}
           <button
             onClick={saveApiKeys}
             disabled={!hasChanges() || isSaving}
@@ -1073,11 +1085,6 @@ function SettingsComponent() {
           >
             {isSaving ? "Saving..." : "Save Changes"}
           </button>
-          {hasChanges() && !isSaving && (
-            <span className="text-sm text-red-600 dark:text-red-400 font-medium">
-              Unsaved changes
-            </span>
-          )}
         </div>
       </div>
     </FloatingPane>
