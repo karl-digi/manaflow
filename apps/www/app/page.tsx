@@ -18,6 +18,22 @@ import cmuxDemo2 from "@/docs/assets/cmux2.png";
 import cmuxDemo3 from "@/docs/assets/cmux3.png";
 import { fetchLatestRelease } from "@/lib/fetch-latest-release";
 
+function YouTubeVideo() {
+  return (
+    <div className="relative overflow-hidden rounded-2xl bg-black shadow-2xl">
+      <div className="relative aspect-video w-full">
+        <iframe
+          className="absolute inset-0 h-full w-full"
+          src="https://www.youtube.com/embed/YtQTKSM_wsA"
+          title="cmux demo video"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          allowFullScreen
+        />
+      </div>
+    </div>
+  );
+}
+
 const heroHighlights = [
   {
     title: "Run multiple agent CLIs side-by-side",
@@ -259,29 +275,13 @@ export default async function LandingPage() {
                 <p className="text-xs text-neutral-400">
                   Having trouble with the macOS download? Use the fallback build on our release page.
                 </p>
-              )}
-            </div>
-            <div className="relative">
-              <div className="rounded-3xl border border-white/10 bg-white/5 p-6 shadow-[0_40px_120px_-40px_rgba(56,189,248,0.35)] backdrop-blur lg:ml-auto lg:max-w-lg">
-                <div className="space-y-6">
-                  {heroHighlights.map((highlight) => (
-                    <div key={highlight.title} className="flex gap-4">
-                      <div className="mt-0.5 h-8 w-8 flex-none rounded-full bg-gradient-to-br from-sky-500/80 to-indigo-500/80 text-center text-base font-semibold leading-8 text-white shadow-lg">
-                        •
-                      </div>
-                      <div className="space-y-1">
-                        <h3 className="text-sm font-semibold text-white">
-                          {highlight.title}
-                        </h3>
-                        <p className="text-sm text-neutral-300">{highlight.description}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-          <div className="mt-12 relative overflow-hidden rounded-2xl">
+               )}
+             </div>
+           </div>
+           <div className="mt-12">
+             <YouTubeVideo />
+           </div>
+           <div className="mt-12 relative overflow-hidden rounded-2xl">
             <Image
               src={cmuxDemo0}
               alt="cmux dashboard showing parallel AI agents"
