@@ -43,14 +43,12 @@ export function AgentCommandItem({
 
   const handleDecrement = (event: MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
-    event.stopPropagation();
     if (!canAdjustCount || opt.isUnavailable || currentCount <= 0) return;
     onDecrement?.();
   };
 
   const handleIncrement = (event: MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
-    event.stopPropagation();
     if (
       !canAdjustCount ||
       opt.isUnavailable ||
