@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { dirname, join as joinPath } from "node:path";
@@ -12,6 +12,13 @@ import {
 } from "@cmux/shared/codeReview/callback-schemas";
 import { getGithubToken } from "./github";
 import { formatUnifiedDiffWithLineNumbers } from "./diff-utils";
+import { loadOptionsFromEnv } from "./core/options";
+import { resolveStrategy } from "./strategies";
+import type {
+  StrategyPrepareContext,
+  StrategyProcessContext,
+  StrategyRunResult,
+} from "./core/types";
 
 interface CommandOptions {
   cwd?: string;
@@ -19,6 +26,9 @@ interface CommandOptions {
 }
 
 const execFileAsync = promisify(execFile);
+
+const reviewOptions = loadOptionsFromEnv(process.env);
+const reviewStrategy = resolveStrategy(reviewOptions.strategy);
 
 function formatDuration(ms: number): string {
   if (!Number.isFinite(ms)) {
@@ -143,30 +153,6 @@ function requireEnv(name: string): string {
   }
   return value;
 }
-
-function readBooleanEnv(name: string, defaultValue: boolean): boolean {
-  const raw = process.env[name];
-  if (!raw) {
-    return defaultValue;
-  }
-  const normalized = raw.trim().toLowerCase();
-  if (["1", "true", "yes", "y", "on"].includes(normalized)) {
-    return true;
-  }
-  if (["0", "false", "no", "n", "off"].includes(normalized)) {
-    return false;
-  }
-  return defaultValue;
-}
-
-const showDiffLineNumbers = readBooleanEnv(
-  "CMUX_PR_REVIEW_SHOW_DIFF_LINE_NUMBERS",
-  false
-);
-const showContextLineNumbers = readBooleanEnv(
-  "CMUX_PR_REVIEW_SHOW_CONTEXT_LINE_NUMBERS",
-  true
-);
 
 async function configureGitCredentials(token: string): Promise<void> {
   const homeDir =
@@ -375,11 +361,36 @@ async function runCodexReviews({
   console.log(
     `[inject] Launching Codex reviews for ${files.length} file(s)...`
   );
+  console.log(
+    `[inject] Strategy: ${reviewStrategy.displayName} (${reviewStrategy.id})`
+  );
 
   const { Codex } = await import("@openai/codex-sdk");
   const codex = new Codex({ apiKey: openAiApiKey });
 
   const reviewStart = performance.now();
+
+  await rm(reviewOptions.artifactsDir, { recursive: true, force: true });
+  await mkdir(reviewOptions.artifactsDir, { recursive: true });
+
+  const persistArtifact = async (
+    relativePath: string,
+    content: string,
+    options: { append?: boolean } = {}
+  ): Promise<string> => {
+    const targetPath = joinPath(reviewOptions.artifactsDir, relativePath);
+    await mkdir(dirname(targetPath), { recursive: true });
+    const finalContent = content.endsWith("\n") ? content : `${content}\n`;
+    const writeOptions = options.append
+      ? { flag: "a" as const }
+      : undefined;
+    await writeFile(targetPath, finalContent, writeOptions);
+    return relativePath;
+  };
+
+  const strategyLog = (header: string, body: string) => {
+    logIndentedBlock(`[inject] ${header}`, body);
+  };
 
   const reviewPromises = files.map(async (file) => {
     const fileStart = performance.now();
@@ -390,64 +401,30 @@ async function runCodexReviews({
         { cwd: workspaceDir }
       );
       const formattedDiff = formatUnifiedDiffWithLineNumbers(diff, {
-        showLineNumbers: showDiffLineNumbers,
-        includeContextLineNumbers: showContextLineNumbers,
+        showLineNumbers: reviewOptions.showDiffLineNumbers,
+        includeContextLineNumbers: reviewOptions.showContextLineNumbers,
       });
       logDiffWithLineNumbers(`[inject] Diff for ${file}`, formattedDiff);
       const thread = codex.startThread({
         workingDirectory: workspaceDir,
         model: "gpt-5-codex",
       });
-      const diffForPrompt =
-        formattedDiff.length > 0 ? formattedDiff.join("\n") : "(no diff output)";
-      const prompt = `\
-You are a senior engineer performing a focused pull request review, focusing only on the diffs in the file provided.
-File path: ${file}
-Return a JSON object of type { lines: { line: string, shouldBeReviewedScore: number | null, shouldReviewWhy: string | null, mostImportantCharacterIndex: number }[] }.
-You should only have the "post-diff" array of lines in the JSON object
-shouldBeReviewedScore is a number from 0 to 1 that indicates how careful the reviewer should be when reviewing this line of code.
-Anything that feels like it might be off or might warrant a comment should have a high score, even if it's technically correct.
-shouldReviewWhy should be a concise (4-10 words) hint on why the reviewer should maybe review this line of code, but it shouldn't state obvious things, instead it should only be a hint for the reviewer as to what exactly you meant when you flagged it.
-In most cases, the reason should follow a template like "<X> <verb> <Y>" (eg. "line is too long" or "code accesses sensitive data").
-It should be understandable by a human and make sense (break the "X is Y" rule if it helps you make it more understandable).
-mostImportantCharacterIndex should be the index of the character that you deem most important in the review; if you're not sure or there are multiple, just choose any one of them.
-Ugly code should be given a higher score.
-Code that may be hard to read for a human should also be given a higher score.
-Non-clean code too.
-Only return lines that are actually interesting to review. Do not return lines that a human would not care about. But you should still be thorough and cover all interesting/suspicious lines.
+      const prepareContext: StrategyPrepareContext = {
+        filePath: file,
+        diff,
+        formattedDiff,
+        options: reviewOptions,
+        artifactsDir: reviewOptions.artifactsDir,
+        workspaceDir,
+        log: strategyLog,
+        persistArtifact,
+      };
+      const prepareResult = await reviewStrategy.prepare(prepareContext);
 
-The diff:
-${diffForPrompt}`;
+      strategyLog(`Prompt for ${file}`, prepareResult.prompt);
 
-      logIndentedBlock(`[inject] Prompt for ${file}`, prompt);
-
-      const turn = await thread.runStreamed(prompt, {
-        outputSchema: {
-          type: "object",
-          properties: {
-            lines: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  line: { type: "string" },
-                  shouldBeReviewedScore: { type: ["number", "null"] as const },
-                  shouldReviewWhy: { type: ["string", "null"] as const },
-                  mostImportantCharacterIndex: { type: "number" },
-                },
-                required: [
-                  "line",
-                  "shouldBeReviewedScore",
-                  "shouldReviewWhy",
-                  "mostImportantCharacterIndex",
-                ],
-                additionalProperties: false,
-              },
-            },
-          },
-          required: ["lines"],
-          additionalProperties: false,
-        } as const,
+      const turn = await thread.runStreamed(prepareResult.prompt, {
+        outputSchema: prepareResult.outputSchema,
       });
       let response = "<no response>";
       for await (const event of turn.events) {
@@ -458,10 +435,35 @@ ${diffForPrompt}`;
           }
         }
       }
-      // const response = turn.finalResponse ?? "";
-      logIndentedBlock(`[inject] Codex review for ${file}`, response);
+      const processContext: StrategyProcessContext = {
+        filePath: file,
+        responseText: response,
+        events: null,
+        options: reviewOptions,
+        metadata: prepareResult.metadata,
+        log: strategyLog,
+        persistArtifact,
+      };
+      const strategyResult: StrategyRunResult =
+        await reviewStrategy.process(processContext);
 
-      const result: CodexReviewResult = { file, response };
+      strategyLog(`Codex review for ${file}`, strategyResult.rawResponse);
+
+      if (strategyResult.artifacts) {
+        strategyResult.artifacts.forEach((artifact) => {
+          console.log(
+            `[inject] Saved ${artifact.label} -> ${joinPath(
+              reviewOptions.artifactsDir,
+              artifact.relativePath
+            )}`
+          );
+        });
+      }
+
+      const result: CodexReviewResult = {
+        file,
+        response: strategyResult.rawResponse,
+      };
       const elapsedMs = performance.now() - fileStart;
       console.log(
         `[inject] Review completed for ${file} in ${formatDuration(elapsedMs)}`
@@ -807,20 +809,23 @@ async function main(): Promise<void> {
       )}`
     );
 
-    const reviewOutput: Record<string, unknown> = {
-      prUrl,
-      repoFullName: repoFullName ?? `${headRepo.owner}/${headRepo.name}`,
-      headRefName,
-      baseRefName,
-      mergeBaseRevision,
-      changedTextFiles: textChangedFiles,
-      modifiedTextFiles: textModifiedFiles,
-      logFilePath,
-      logSymlinkPath,
-      commitRef,
-      teamId,
-      codexReviews,
-    };
+  const reviewOutput: Record<string, unknown> = {
+    prUrl,
+    repoFullName: repoFullName ?? `${headRepo.owner}/${headRepo.name}`,
+    headRefName,
+    baseRefName,
+    mergeBaseRevision,
+    changedTextFiles: textChangedFiles,
+    modifiedTextFiles: textModifiedFiles,
+    logFilePath,
+    logSymlinkPath,
+    commitRef,
+    teamId,
+    codexReviews,
+    strategy: reviewStrategy.id,
+    artifactsDir: reviewOptions.artifactsDir,
+    diffArtifactMode: reviewOptions.diffArtifactMode,
+  };
 
     await persistCodeReviewOutput(reviewOutput);
 

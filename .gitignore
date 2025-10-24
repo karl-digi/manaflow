@@ -44,6 +44,7 @@ crates/**/target/
 # Python
 __pycache__
 
+tmp/
 
 cmux-proxy.tar.gz
 apps/www/scripts/pr-review/pr-review-inject.bundle.js

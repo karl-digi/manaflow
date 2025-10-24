@@ -14,11 +14,18 @@ import { parsePrUrl } from "./pr-review/github";
 const DEFAULT_PR_URL = "https://github.com/manaflow-ai/cmux/pull/653";
 const execFileAsync = promisify(execFile);
 
+import type {
+  DiffArtifactMode,
+  PrReviewStrategyId,
+} from "./pr-review/core/options";
+
 interface CliOptions {
   prUrl: string | null;
   isProduction: boolean;
   showDiffLineNumbers: boolean | null;
   showContextLineNumbers: boolean | null;
+  strategy: PrReviewStrategyId | null;
+  diffArtifactMode: DiffArtifactMode | null;
 }
 
 function parseCliArgs(argv: readonly string[]): CliOptions {
@@ -26,36 +33,67 @@ function parseCliArgs(argv: readonly string[]): CliOptions {
   let isProduction = false;
   let showDiffLineNumbers: boolean | null = null;
   let showContextLineNumbers: boolean | null = null;
+  let strategy: PrReviewStrategyId | null = null;
+  let diffArtifactMode: DiffArtifactMode | null = null;
 
-  argv.forEach((arg) => {
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
     if (arg === "--production") {
       isProduction = true;
-      return;
+      continue;
     }
     if (arg === "--diff-line-numbers") {
       showDiffLineNumbers = true;
-      return;
+      continue;
     }
     if (arg === "--no-diff-line-numbers") {
       showDiffLineNumbers = false;
-      return;
+      continue;
     }
     if (arg === "--diff-context-line-numbers") {
       showContextLineNumbers = true;
-      return;
+      continue;
     }
     if (arg === "--no-diff-context-line-numbers") {
       showContextLineNumbers = false;
-      return;
+      continue;
+    }
+    if (arg === "--strategy") {
+      const value = argv[index + 1];
+      if (typeof value !== "string") {
+        throw new Error("--strategy flag requires a value");
+      }
+      strategy = value as PrReviewStrategyId;
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--strategy=")) {
+      strategy = arg.slice("--strategy=".length) as PrReviewStrategyId;
+      continue;
+    }
+    if (arg === "--diff-artifact") {
+      const value = argv[index + 1];
+      if (typeof value !== "string") {
+        throw new Error("--diff-artifact flag requires a value");
+      }
+      diffArtifactMode = value as DiffArtifactMode;
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--diff-artifact=")) {
+      diffArtifactMode = arg.slice("--diff-artifact=".length) as DiffArtifactMode;
+      continue;
     }
     remainingArgs.push(arg);
-  });
+  }
 
   return {
     prUrl: remainingArgs[0] ?? null,
     isProduction,
     showDiffLineNumbers,
     showContextLineNumbers,
+    strategy,
+    diffArtifactMode,
   };
 }
 
@@ -98,6 +136,8 @@ async function main(): Promise<void> {
     isProduction,
     showDiffLineNumbers,
     showContextLineNumbers,
+    strategy,
+    diffArtifactMode,
   } = parseCliArgs(
     process.argv.slice(2)
   );
@@ -142,6 +182,12 @@ async function main(): Promise<void> {
   }
   if (showContextLineNumbers !== null) {
     config.showContextLineNumbers = showContextLineNumbers;
+  }
+  if (strategy !== null) {
+    config.strategy = strategy;
+  }
+  if (diffArtifactMode !== null) {
+    config.diffArtifactMode = diffArtifactMode;
   }
 
   try {

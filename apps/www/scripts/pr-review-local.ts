@@ -16,6 +16,10 @@ import {
   fetchPrMetadata,
   getGithubToken,
 } from "./pr-review/github";
+import type {
+  DiffArtifactMode,
+  PrReviewStrategyId,
+} from "./pr-review/core/options";
 
 const DEFAULT_PR_URL = "https://github.com/manaflow-ai/cmux/pull/653";
 const DEFAULT_IMAGE_TAG = "cmux-pr-review-local:latest";
@@ -32,6 +36,8 @@ interface CliOptions {
   teamId: string | null;
   showDiffLineNumbers: boolean | null;
   showContextLineNumbers: boolean | null;
+  strategy: PrReviewStrategyId | null;
+  diffArtifactMode: DiffArtifactMode | null;
 }
 
 interface JobContext {
@@ -55,6 +61,8 @@ function parseCliArgs(argv: readonly string[]): CliOptions {
     teamId: null,
     showDiffLineNumbers: null,
     showContextLineNumbers: null,
+    strategy: null,
+    diffArtifactMode: null,
   };
   const positional: string[] = [];
 
@@ -78,6 +86,32 @@ function parseCliArgs(argv: readonly string[]): CliOptions {
     }
     if (arg === "--no-diff-context-line-numbers") {
       options.showContextLineNumbers = false;
+      continue;
+    }
+    if (arg === "--strategy") {
+      const value = argv[index + 1];
+      if (typeof value !== "string") {
+        throw new Error("--strategy flag requires a value");
+      }
+      options.strategy = value as PrReviewStrategyId;
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--strategy=")) {
+      options.strategy = arg.slice("--strategy=".length) as PrReviewStrategyId;
+      continue;
+    }
+    if (arg === "--diff-artifact") {
+      const value = argv[index + 1];
+      if (typeof value !== "string") {
+        throw new Error("--diff-artifact flag requires a value");
+      }
+      options.diffArtifactMode = value as DiffArtifactMode;
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--diff-artifact=")) {
+      options.diffArtifactMode = arg.slice("--diff-artifact=".length) as DiffArtifactMode;
       continue;
     }
     if (arg === "--image") {
@@ -121,7 +155,7 @@ function parseCliArgs(argv: readonly string[]): CliOptions {
     }
     if (arg === "--help" || arg === "-h") {
       throw new Error(
-        "Usage: bun run apps/www/scripts/pr-review-local.ts <pr-url> [--rebuild-image] [--image <tag>] [--logs <dir>] [--team <id>] [--diff-line-numbers|--no-diff-line-numbers] [--diff-context-line-numbers|--no-diff-context-line-numbers]"
+        "Usage: bun run apps/www/scripts/pr-review-local.ts <pr-url> [--rebuild-image] [--image <tag>] [--logs <dir>] [--team <id>] [--diff-line-numbers|--no-diff-line-numbers] [--diff-context-line-numbers|--no-diff-context-line-numbers] [--diff-artifact <single|per-file>] [--strategy <json-lines|line-numbers|inline-comments>]"
       );
     }
     if (arg.startsWith("-")) {
@@ -287,6 +321,9 @@ async function main(): Promise<void> {
       "CMUX_PR_REVIEW_SHOW_CONTEXT_LINE_NUMBERS",
       options.showContextLineNumbers ? "true" : "false",
     ]);
+  }
+  if (options.strategy !== null) {
+    envPairs.push(["CMUX_PR_REVIEW_STRATEGY", options.strategy]);
   }
   if (options.showDiffLineNumbers !== null) {
     envPairs.push([

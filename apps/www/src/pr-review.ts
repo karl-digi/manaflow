@@ -112,6 +112,8 @@ export interface PrReviewJobContext {
   productionMode?: boolean;
   showDiffLineNumbers?: boolean;
   showContextLineNumbers?: boolean;
+  strategy?: string;
+  diffArtifactMode?: string;
 }
 
 export interface ComparisonReviewContext {
@@ -479,6 +481,18 @@ export async function startAutomatedPrReview(
       envPairs.push([
         "CMUX_PR_REVIEW_SHOW_CONTEXT_LINE_NUMBERS",
         config.showContextLineNumbers ? "true" : "false",
+      ]);
+    }
+    if (typeof config.strategy === "string" && config.strategy.length > 0) {
+      envPairs.push(["CMUX_PR_REVIEW_STRATEGY", config.strategy]);
+    }
+    if (
+      typeof config.diffArtifactMode === "string" &&
+      config.diffArtifactMode.length > 0
+    ) {
+      envPairs.push([
+        "CMUX_PR_REVIEW_DIFF_ARTIFACT_MODE",
+        config.diffArtifactMode,
       ]);
     }
 
