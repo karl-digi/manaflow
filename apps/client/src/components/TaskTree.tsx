@@ -712,7 +712,7 @@ function TaskRunTreeInner({
                 return;
               }
 
-              handleToggle(event);
+              handleToggle();
             }}
           >
             <SidebarListItem
