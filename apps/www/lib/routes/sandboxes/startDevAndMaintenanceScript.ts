@@ -71,135 +71,209 @@ if ! tmux has-session -t cmux 2>/dev/null; then
   exit 1
 fi`;
 
-  let maintenanceError: string | null = null;
-  let devError: string | null = null;
-
-  if (maintenanceScript && maintenanceScript.trim().length > 0) {
-    const maintenanceRunId = `maintenance_${Date.now().toString(36)}_${Math.random()
-      .toString(36)
-      .slice(2, 10)}`;
-    const maintenanceExitCodePath = `${ids.maintenance.scriptPath}.${maintenanceRunId}.exit-code`;
-
-    const maintenanceScriptContent = `#!/bin/zsh
+  // Create the maintenance script content
+  const maintenanceScriptContent = maintenanceScript && maintenanceScript.trim().length > 0
+    ? `#!/bin/zsh
 set -eux
 cd ${WORKSPACE_ROOT}
 
 echo "=== Maintenance Script Started at \$(date) ==="
 ${maintenanceScript}
 echo "=== Maintenance Script Completed at \$(date) ==="
-`;
+`
+    : "";
 
-    const maintenanceWindowCommand = `zsh "${ids.maintenance.scriptPath}"
-EXIT_CODE=$?
-echo "$EXIT_CODE" > "${maintenanceExitCodePath}"
-if [ "$EXIT_CODE" -ne 0 ]; then
-  echo "[MAINTENANCE] Script exited with code $EXIT_CODE" >&2
-else
-  echo "[MAINTENANCE] Script completed successfully"
-fi
-exec zsh`;
-
-    const maintenanceCommand = `set -eu
-mkdir -p ${CMUX_RUNTIME_DIR}
-cat > ${ids.maintenance.scriptPath} <<'SCRIPT_EOF'
-${maintenanceScriptContent}
-SCRIPT_EOF
-chmod +x ${ids.maintenance.scriptPath}
-rm -f ${maintenanceExitCodePath}
-${waitForTmuxSession}
-tmux new-window -t cmux: -n ${ids.maintenance.windowName} -d ${singleQuote(maintenanceWindowCommand)}
-sleep 2
-if tmux list-windows -t cmux | grep -q "${ids.maintenance.windowName}"; then
-  echo "[MAINTENANCE] Window is running"
-else
-  echo "[MAINTENANCE] Window may have exited (normal if script completed)"
-fi
-while [ ! -f ${maintenanceExitCodePath} ]; do
-  sleep 1
-done
-MAINTENANCE_EXIT_CODE=0
-if [ -f ${maintenanceExitCodePath} ]; then
-  MAINTENANCE_EXIT_CODE=$(cat ${maintenanceExitCodePath} || echo 0)
-else
-  echo "[MAINTENANCE] Missing exit code file; assuming failure" >&2
-  MAINTENANCE_EXIT_CODE=1
-fi
-rm -f ${maintenanceExitCodePath}
-echo "[MAINTENANCE] Wait complete with exit code $MAINTENANCE_EXIT_CODE"
-exit $MAINTENANCE_EXIT_CODE
-`;
-
-    try {
-      const result = await instance.exec(
-        `zsh -lc ${singleQuote(maintenanceCommand)}`,
-      );
-
-      if (result.exit_code !== 0) {
-        const stderr = result.stderr?.trim() || "";
-        const stdout = result.stdout?.trim() || "";
-        const messageParts = [
-          `Maintenance script finished with exit code ${result.exit_code}`,
-          stderr ? `stderr: ${stderr}` : null,
-          stdout ? `stdout: ${stdout}` : null,
-        ].filter((part): part is string => part !== null);
-        maintenanceError = messageParts.join(" | ");
-      } else {
-        console.log(`[MAINTENANCE SCRIPT VERIFICATION]\n${result.stdout || ""}`);
-      }
-    } catch (error) {
-      maintenanceError = `Maintenance script execution failed: ${error instanceof Error ? error.message : String(error)}`;
-    }
-  }
-
-  if (devScript && devScript.trim().length > 0) {
-    const devScriptContent = `#!/bin/zsh
+  // Create the dev script content
+  const devScriptContent = devScript && devScript.trim().length > 0
+    ? `#!/bin/zsh
 set -ux
 cd ${WORKSPACE_ROOT}
 
 echo "=== Dev Script Started at \$(date) ==="
 ${devScript}
+`
+    : "";
+
+  // Create a Bun orchestrator script that runs both scripts sequentially
+  // This script will handle maintenance first (ignoring errors), then dev
+  const orchestratorScriptPath = `${CMUX_RUNTIME_DIR}/orchestrator.ts`;
+  const maintenanceRunId = `maintenance_${Date.now().toString(36)}_${Math.random()
+    .toString(36)
+    .slice(2, 10)}`;
+  const maintenanceExitCodePath = `${ids.maintenance.scriptPath}.${maintenanceRunId}.exit-code`;
+
+  const orchestratorScript = `#!/usr/bin/env bun
+import { $ } from "bun";
+
+const MAINTENANCE_SCRIPT = "${ids.maintenance.scriptPath}";
+const DEV_SCRIPT = "${ids.dev.scriptPath}";
+const MAINTENANCE_EXIT_CODE_PATH = "${maintenanceExitCodePath}";
+const MAINTENANCE_WINDOW = "${ids.maintenance.windowName}";
+const DEV_WINDOW = "${ids.dev.windowName}";
+
+async function runMaintenance() {
+  console.log("[ORCHESTRATOR] Starting maintenance script...");
+
+  try {
+    // Start maintenance in tmux window
+    const maintenanceWindowCommand = \`zsh "\${MAINTENANCE_SCRIPT}"
+EXIT_CODE=$?
+echo "$EXIT_CODE" > "\${MAINTENANCE_EXIT_CODE_PATH}"
+if [ "$EXIT_CODE" -ne 0 ]; then
+  echo "[MAINTENANCE] Script exited with code $EXIT_CODE" >&2
+else
+  echo "[MAINTENANCE] Script completed successfully"
+fi
+exec zsh\`;
+
+    await $\`tmux new-window -t cmux: -n \${MAINTENANCE_WINDOW} -d \${maintenanceWindowCommand}\`;
+
+    await $\`sleep 2\`;
+
+    // Check if window exists
+    const windowCheck = await $\`tmux list-windows -t cmux | grep "\${MAINTENANCE_WINDOW}" || true\`.quiet();
+    if (windowCheck.stdout.toString().trim()) {
+      console.log("[ORCHESTRATOR] Maintenance window is running");
+    } else {
+      console.log("[ORCHESTRATOR] Maintenance window may have exited (normal if script completed)");
+    }
+
+    // Wait for exit code file
+    console.log("[ORCHESTRATOR] Waiting for maintenance to complete...");
+    while (!(await Bun.file(MAINTENANCE_EXIT_CODE_PATH).exists())) {
+      await $\`sleep 1\`;
+    }
+
+    const exitCodeContent = await Bun.file(MAINTENANCE_EXIT_CODE_PATH).text();
+    const exitCode = parseInt(exitCodeContent.trim(), 10) || 0;
+
+    await $\`rm -f \${MAINTENANCE_EXIT_CODE_PATH}\`;
+
+    console.log(\`[ORCHESTRATOR] Maintenance completed with exit code \${exitCode}\`);
+
+    // We don't throw or exit here - maintenance errors should not block dev script
+    if (exitCode !== 0) {
+      console.log("[ORCHESTRATOR] Maintenance had errors, but continuing to dev script...");
+    }
+  } catch (error) {
+    console.error("[ORCHESTRATOR] Error running maintenance:", error);
+    console.log("[ORCHESTRATOR] Continuing to dev script despite maintenance error...");
+  }
+}
+
+async function runDev() {
+  console.log("[ORCHESTRATOR] Starting dev script...");
+
+  try {
+    await $\`tmux new-window -t cmux: -n \${DEV_WINDOW} -d\`;
+    await $\`tmux send-keys -t cmux:\${DEV_WINDOW} "zsh \${DEV_SCRIPT}" C-m\`;
+    await $\`sleep 2\`;
+
+    const windowCheck = await $\`tmux list-windows -t cmux | grep "\${DEV_WINDOW}" || true\`.quiet();
+    if (windowCheck.stdout.toString().trim()) {
+      console.log("[ORCHESTRATOR] Dev window is running");
+    } else {
+      console.error("[ORCHESTRATOR] ERROR: Dev window not found");
+      process.exit(1);
+    }
+  } catch (error) {
+    console.error("[ORCHESTRATOR] Error running dev script:", error);
+    process.exit(1);
+  }
+}
+
+async function main() {
+  console.log("[ORCHESTRATOR] Starting orchestration of maintenance and dev scripts...");
+
+  ${maintenanceScript && maintenanceScript.trim().length > 0 ? "await runMaintenance();" : "console.log('[ORCHESTRATOR] Skipping maintenance (no script provided)');"}
+  ${devScript && devScript.trim().length > 0 ? "await runDev();" : "console.log('[ORCHESTRATOR] Skipping dev (no script provided)');"}
+
+  console.log("[ORCHESTRATOR] Orchestration complete");
+}
+
+main().catch((error) => {
+  console.error("[ORCHESTRATOR] Fatal error:", error);
+  process.exit(1);
+});
 `;
 
-    const devCommand = `set -eu
+  // Single command that sets up everything and runs the orchestrator
+  const setupAndRunCommand = `set -eu
 mkdir -p ${CMUX_RUNTIME_DIR}
-cat > ${ids.dev.scriptPath} <<'SCRIPT_EOF'
+
+# Write maintenance script if provided
+${maintenanceScriptContent ? `cat > ${ids.maintenance.scriptPath} <<'MAINTENANCE_SCRIPT_EOF'
+${maintenanceScriptContent}
+MAINTENANCE_SCRIPT_EOF
+chmod +x ${ids.maintenance.scriptPath}` : ""}
+
+# Write dev script if provided
+${devScriptContent ? `cat > ${ids.dev.scriptPath} <<'DEV_SCRIPT_EOF'
 ${devScriptContent}
-SCRIPT_EOF
-chmod +x ${ids.dev.scriptPath}
+DEV_SCRIPT_EOF
+chmod +x ${ids.dev.scriptPath}` : ""}
+
+# Write orchestrator script
+cat > ${orchestratorScriptPath} <<'ORCHESTRATOR_EOF'
+${orchestratorScript}
+ORCHESTRATOR_EOF
+chmod +x ${orchestratorScriptPath}
+
+# Clean up any previous exit code files
+rm -f ${maintenanceExitCodePath}
+
+# Wait for tmux session
 ${waitForTmuxSession}
-tmux new-window -t cmux: -n ${ids.dev.windowName} -d
-tmux send-keys -t cmux:${ids.dev.windowName} "zsh ${ids.dev.scriptPath}" C-m
-sleep 2
-if tmux list-windows -t cmux | grep -q "${ids.dev.windowName}"; then
-  echo "[DEV] Window is running"
+
+# Run the orchestrator in the background
+echo "[SETUP] Starting orchestrator..."
+nohup bun ${orchestratorScriptPath} > ${CMUX_RUNTIME_DIR}/orchestrator.log 2>&1 &
+ORCHESTRATOR_PID=$!
+echo "[SETUP] Orchestrator started with PID $ORCHESTRATOR_PID"
+
+# Give it a moment to start
+sleep 1
+
+# Check if orchestrator is still running
+if kill -0 $ORCHESTRATOR_PID 2>/dev/null; then
+  echo "[SETUP] Orchestrator is running"
 else
-  echo "[DEV] ERROR: Window not found" >&2
+  echo "[SETUP] ERROR: Orchestrator failed to start" >&2
+  cat ${CMUX_RUNTIME_DIR}/orchestrator.log >&2
   exit 1
 fi
 `;
 
-    try {
-      const result = await instance.exec(`zsh -lc ${singleQuote(devCommand)}`);
+  try {
+    const result = await instance.exec(
+      `zsh -lc ${singleQuote(setupAndRunCommand)}`,
+    );
 
-      if (result.exit_code !== 0) {
-        const stderr = result.stderr?.trim() || "";
-        const stdout = result.stdout?.trim() || "";
-        const messageParts = [
-          `Failed to start dev script with exit code ${result.exit_code}`,
-          stderr ? `stderr: ${stderr}` : null,
-          stdout ? `stdout: ${stdout}` : null,
-        ].filter((part): part is string => part !== null);
-        devError = messageParts.join(" | ");
-      } else {
-        console.log(`[DEV SCRIPT VERIFICATION]\n${result.stdout || ""}`);
-      }
-    } catch (error) {
-      devError = `Dev script execution failed: ${error instanceof Error ? error.message : String(error)}`;
+    if (result.exit_code !== 0) {
+      const stderr = result.stderr?.trim() || "";
+      const stdout = result.stdout?.trim() || "";
+      const messageParts = [
+        `Failed to start orchestrator with exit code ${result.exit_code}`,
+        stderr ? `stderr: ${stderr}` : null,
+        stdout ? `stdout: ${stdout}` : null,
+      ].filter((part): part is string => part !== null);
+      return {
+        maintenanceError: null,
+        devError: messageParts.join(" | "),
+      };
     }
-  }
 
-  return {
-    maintenanceError,
-    devError,
-  };
+    console.log(`[ORCHESTRATOR STARTUP]\n${result.stdout || ""}`);
+
+    // Return success - the orchestrator is now running in the background
+    return {
+      maintenanceError: null,
+      devError: null,
+    };
+  } catch (error) {
+    return {
+      maintenanceError: null,
+      devError: `Orchestrator execution failed: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
 }
