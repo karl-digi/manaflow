@@ -461,6 +461,10 @@ const convexSchema = defineSchema({
   workspaceSettings: defineTable({
     worktreePath: v.optional(v.string()), // Custom path for git worktrees
     autoPrEnabled: v.optional(v.boolean()), // Auto-create PR for crown winner (default: false)
+    // Theme synchronization settings
+    themeSyncEnabled: v.optional(v.boolean()), // Enable theme synchronization (default: false)
+    preferredTheme: v.optional(v.union(v.literal("light"), v.literal("dark"), v.literal("system"))), // User's preferred theme
+    preferredColorTheme: v.optional(v.string()), // VS Code color theme name (e.g., "Default Dark+")
     createdAt: v.number(),
     updatedAt: v.number(),
     userId: v.string(),

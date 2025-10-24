@@ -20,6 +20,7 @@ import {
   teamsRouter,
   usersRouter,
   iframePreflightRouter,
+  workspaceSettingsRouter,
 } from "@/lib/routes/index";
 import { stackServerApp } from "@/lib/utils/stack";
 import { swaggerUI } from "@hono/swagger-ui";
@@ -116,6 +117,7 @@ app.route("/", sandboxesRouter);
 app.route("/", teamsRouter);
 app.route("/", branchRouter);
 app.route("/", codeReviewRouter);
+app.route("/", workspaceSettingsRouter);
 
 // OpenAPI documentation
 app.doc("/doc", {

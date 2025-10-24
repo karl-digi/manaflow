@@ -31,6 +31,18 @@ export interface VSCodeServerToClientEvents {
     success: boolean;
     error?: string;
   }) => void;
+
+  // Theme synchronization events
+  "vscode:theme-changed": (data: {
+    theme: "light" | "dark" | "system";
+    colorTheme?: string;
+  }) => void;
+
+  "vscode:theme-sync-status": (data: {
+    enabled: boolean;
+    currentTheme: "light" | "dark" | "system";
+    currentColorTheme?: string;
+  }) => void;
 }
 
 export interface VSCodeClientToServerEvents {
@@ -53,6 +65,40 @@ export interface VSCodeClientToServerEvents {
       workspaceFolders?: string[];
       extensions?: string[];
     }) => void
+  ) => void;
+
+  // Theme synchronization
+  "vscode:set-theme": (
+    data: {
+      theme: "light" | "dark" | "system";
+      colorTheme?: string;
+    },
+    callback: (response: { success: boolean; error?: string }) => void
+  ) => void;
+
+  "vscode:get-theme": (
+    callback: (data: {
+      theme: "light" | "dark" | "system";
+      colorTheme?: string;
+      syncEnabled: boolean;
+    }) => void
+  ) => void;
+
+  "vscode:enable-theme-sync": (
+    data: {
+      enabled: boolean;
+      theme?: "light" | "dark" | "system";
+      colorTheme?: string;
+    },
+    callback: (response: { success: boolean; error?: string }) => void
+  ) => void;
+
+  // Theme change notification (client to server)
+  "vscode:theme-changed": (
+    data: {
+      theme: "light" | "dark" | "system";
+      colorTheme?: string;
+    }
   ) => void;
 }
 

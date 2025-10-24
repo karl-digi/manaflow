@@ -23,6 +23,9 @@ export const update = authMutation({
     teamSlugOrId: v.string(),
     worktreePath: v.optional(v.string()),
     autoPrEnabled: v.optional(v.boolean()),
+    themeSyncEnabled: v.optional(v.boolean()),
+    preferredTheme: v.optional(v.union(v.literal("light"), v.literal("dark"), v.literal("system"))),
+    preferredColorTheme: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
@@ -39,6 +42,9 @@ export const update = authMutation({
       await ctx.db.patch(existing._id, {
         worktreePath: args.worktreePath,
         autoPrEnabled: args.autoPrEnabled,
+        themeSyncEnabled: args.themeSyncEnabled,
+        preferredTheme: args.preferredTheme,
+        preferredColorTheme: args.preferredColorTheme,
         userId,
         teamId,
         updatedAt: now,
@@ -47,6 +53,9 @@ export const update = authMutation({
       await ctx.db.insert("workspaceSettings", {
         worktreePath: args.worktreePath,
         autoPrEnabled: args.autoPrEnabled,
+        themeSyncEnabled: args.themeSyncEnabled,
+        preferredTheme: args.preferredTheme,
+        preferredColorTheme: args.preferredColorTheme,
         createdAt: now,
         updatedAt: now,
         userId,

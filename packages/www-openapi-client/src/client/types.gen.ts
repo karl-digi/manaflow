@@ -581,6 +581,24 @@ export type CodeReviewStartBody = {
     };
 };
 
+export type WorkspaceSettingsResponse = {
+    worktreePath?: string;
+    autoPrEnabled?: boolean;
+    themeSyncEnabled?: boolean;
+    preferredTheme?: 'light' | 'dark' | 'system';
+    preferredColorTheme?: string;
+    createdAt: number;
+    updatedAt: number;
+};
+
+export type WorkspaceSettings = {
+    worktreePath?: string;
+    autoPrEnabled?: boolean;
+    themeSyncEnabled?: boolean;
+    preferredTheme?: 'light' | 'dark' | 'system';
+    preferredColorTheme?: string;
+};
+
 export type GetApiHealthData = {
     body?: never;
     path?: never;
@@ -2131,6 +2149,93 @@ export type PostApiCodeReviewStartResponses = {
 };
 
 export type PostApiCodeReviewStartResponse = PostApiCodeReviewStartResponses[keyof PostApiCodeReviewStartResponses];
+
+export type GetApiWorkspaceSettingsData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * Team slug or ID
+         */
+        teamSlugOrId: string;
+    };
+    url: '/api/workspace-settings';
+};
+
+export type GetApiWorkspaceSettingsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: ErrorResponse & {
+        code?: number;
+        message?: string;
+    };
+    /**
+     * Team not found
+     */
+    404: ErrorResponse & {
+        code?: number;
+        message?: string;
+    };
+};
+
+export type GetApiWorkspaceSettingsError = GetApiWorkspaceSettingsErrors[keyof GetApiWorkspaceSettingsErrors];
+
+export type GetApiWorkspaceSettingsResponses = {
+    /**
+     * Workspace settings
+     */
+    200: WorkspaceSettingsResponse;
+};
+
+export type GetApiWorkspaceSettingsResponse = GetApiWorkspaceSettingsResponses[keyof GetApiWorkspaceSettingsResponses];
+
+export type PatchApiWorkspaceSettingsData = {
+    body: WorkspaceSettings;
+    path?: never;
+    query: {
+        /**
+         * Team slug or ID
+         */
+        teamSlugOrId: string;
+    };
+    url: '/api/workspace-settings';
+};
+
+export type PatchApiWorkspaceSettingsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: ErrorResponse & {
+        code?: number;
+        message?: string;
+    };
+    /**
+     * Team not found
+     */
+    404: ErrorResponse & {
+        code?: number;
+        message?: string;
+    };
+    /**
+     * Validation error
+     */
+    422: ErrorResponse & {
+        code?: number;
+        message?: string;
+    };
+};
+
+export type PatchApiWorkspaceSettingsError = PatchApiWorkspaceSettingsErrors[keyof PatchApiWorkspaceSettingsErrors];
+
+export type PatchApiWorkspaceSettingsResponses = {
+    /**
+     * Workspace settings updated
+     */
+    200: WorkspaceSettingsResponse;
+};
+
+export type PatchApiWorkspaceSettingsResponse = PatchApiWorkspaceSettingsResponses[keyof PatchApiWorkspaceSettingsResponses];
 
 export type ClientOptions = {
     baseUrl: `${string}://${string}` | (string & {});

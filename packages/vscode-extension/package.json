@@ -43,6 +43,26 @@
       {
         "command": "cmux.git.openAllChangesAgainstBase",
         "title": "cmux: Open All Changes vs Base"
+      },
+      {
+        "command": "cmux.theme.enableSync",
+        "title": "cmux: Enable Theme Sync"
+      },
+      {
+        "command": "cmux.theme.disableSync",
+        "title": "cmux: Disable Theme Sync"
+      },
+      {
+        "command": "cmux.theme.setLight",
+        "title": "cmux: Set Light Theme"
+      },
+      {
+        "command": "cmux.theme.setDark",
+        "title": "cmux: Set Dark Theme"
+      },
+      {
+        "command": "cmux.theme.setSystem",
+        "title": "cmux: Set System Theme"
       }
     ]
   },
