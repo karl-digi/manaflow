@@ -712,9 +712,7 @@ function TaskRunTreeInner({
                 return;
               }
 
-              if (!isExpanded) {
-                setRunExpanded(run._id, true);
-              }
+              handleToggle(event);
             }}
           >
             <SidebarListItem
