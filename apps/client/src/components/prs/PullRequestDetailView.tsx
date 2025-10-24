@@ -145,6 +145,7 @@ export function PullRequestDetailView({
   const collapseAllChecks = () => setChecksExpandedOverride(false);
 
   const [diffControls, setDiffControls] = useState<DiffControls | null>(null);
+  const [mergeBlockedReason, setMergeBlockedReason] = useState<string | null>(null);
 
   const handleDiffControlsChange = (controls: DiffControls | null) => {
     setDiffControls(controls ? {
@@ -175,10 +176,15 @@ export function PullRequestDetailView({
   >({
     ...postApiIntegrationsGithubPrsMergeSimpleMutation(),
     onSuccess: (data) => {
+      setMergeBlockedReason(null);
       toast.success(data.message || `PR #${currentPR?.number} merged successfully`);
     },
     onError: (error) => {
-      toast.error(`Failed to merge PR: ${error instanceof Error ? error.message : String(error)}`);
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("This branch has conflicts that must be resolved")) {
+        setMergeBlockedReason(message);
+      }
+      toast.error(`Failed to merge PR: ${message}`);
     },
   });
 
@@ -232,10 +238,10 @@ export function PullRequestDetailView({
   const mergeDisabled =
     mergePrMutation.isPending ||
     closePrMutation.isPending ||
-    disabledBecauseOfChecks;
-  const mergeDisabledReason = disabledBecauseOfChecks
-    ? checksDisabledReason
-    : undefined;
+    disabledBecauseOfChecks ||
+    Boolean(mergeBlockedReason);
+  const mergeDisabledReason =
+    mergeBlockedReason ?? (disabledBecauseOfChecks ? checksDisabledReason : undefined);
 
   const handleClosePR = () => {
     if (!currentPR) return;
@@ -254,7 +260,8 @@ export function PullRequestDetailView({
       !currentPR ||
       mergePrMutation.isPending ||
       closePrMutation.isPending ||
-      disabledBecauseOfChecks
+      disabledBecauseOfChecks ||
+      mergeBlockedReason
     ) {
       return;
     }
@@ -268,6 +275,10 @@ export function PullRequestDetailView({
       },
     });
   };
+
+  useEffect(() => {
+    setMergeBlockedReason(null);
+  }, [currentPR?.headSha, currentPR?.merged, currentPR?.state]);
 
   if (!currentPR) {
     return (
