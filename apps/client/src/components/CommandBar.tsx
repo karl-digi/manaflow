@@ -1,8 +1,10 @@
 import { useTheme } from "@/components/theme/use-theme";
 import { isElectron } from "@/lib/electron";
 import { copyAllElectronLogs } from "@/lib/electron-logs/electron-logs";
+import { createEnhancedFilter } from "@/lib/enhanced-command-filter";
 import { setLastTeamSlugOrId } from "@/lib/lastTeam";
 import { stackClientApp } from "@/lib/stack";
+import { useCommandRecency } from "@/hooks/useCommandRecency";
 import { api } from "@cmux/convex/api";
 import type { Id } from "@cmux/convex/dataModel";
 import * as Dialog from "@radix-ui/react-dialog";
@@ -110,6 +112,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
   const navigate = useNavigate();
   const router = useRouter();
   const { setTheme } = useTheme();
+  const { recordSelection, getRecencyScores } = useCommandRecency();
   const preloadTeamDashboard = useCallback(
     async (targetTeamSlugOrId: string | undefined) => {
       if (!targetTeamSlugOrId) return;
@@ -195,6 +198,14 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     : "Sign in to view teams.";
 
   const allTasks = useQuery(api.tasks.getTasksWithTaskRuns, { teamSlugOrId });
+
+  // Create enhanced filter with recency scoring
+  const enhancedFilterFn = useMemo(() => {
+    return createEnhancedFilter({
+      recencyScores: getRecencyScores(),
+      recencyWeight: 0.15,
+    });
+  }, [getRecencyScores]);
 
   useEffect(() => {
     openRef.current = open;
@@ -392,6 +403,9 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
 
   const handleSelect = useCallback(
     async (value: string) => {
+      // Record selection for recency tracking
+      recordSelection(value);
+
       if (value === "teams:switch") {
         setActivePage("teams");
         setSearch("");
@@ -593,6 +607,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       stackUser,
       stackTeams,
       closeCommand,
+      recordSelection,
     ],
   );
 
@@ -617,6 +632,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         label="Command Menu"
         title="Command Menu"
         loop
+        filter={enhancedFilterFn}
         className="fixed inset-0 z-[var(--z-commandbar)] flex items-start justify-center pt-[20vh] pointer-events-none"
         onKeyDown={(e) => {
           if (e.key === "Escape") {
@@ -840,10 +856,20 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                     </div>
                     {allTasks.slice(0, 9).flatMap((task, index) => {
                       const run = task.selectedTaskRun;
+                      const taskTitle = task.pullRequestTitle || task.text;
+                      const taskKeywords = [
+                        taskTitle,
+                        task.pullRequestTitle,
+                        task.text,
+                        task.isCompleted ? "completed" : "in progress",
+                        String(index + 1),
+                      ].filter(Boolean) as string[];
+
                       const items = [
                         <Command.Item
                           key={task._id}
-                          value={`${index + 1}:task:${task._id}`}
+                          value={taskTitle}
+                          keywords={taskKeywords}
                           onSelect={() => handleSelect(`task:${task._id}`)}
                           data-value={`task:${task._id}`}
                           className="flex items-center gap-3 px-3 py-2.5 mx-1 rounded-md cursor-pointer                     hover:bg-neutral-100 dark:hover:bg-neutral-800
@@ -877,7 +903,8 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                         items.push(
                           <Command.Item
                             key={`${task._id}-vs-${run._id}`}
-                            value={`${index + 1} vs:task:${task._id}`}
+                            value={`${taskTitle} VS`}
+                            keywords={[...taskKeywords, "vscode", "code", "editor"]}
                             onSelect={() => handleSelect(`task:${task._id}:vs`)}
                             data-value={`task:${task._id}:vs`}
                             className="flex items-center gap-3 px-3 py-2.5 mx-1 rounded-md cursor-pointer                     hover:bg-neutral-100 dark:hover:bg-neutral-800
@@ -910,7 +937,8 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                         items.push(
                           <Command.Item
                             key={`${task._id}-gitdiff-${run._id}`}
-                            value={`${index + 1} git diff:task:${task._id}`}
+                            value={`${taskTitle} git diff`}
+                            keywords={[...taskKeywords, "git", "diff", "changes"]}
                             onSelect={() =>
                               handleSelect(`task:${task._id}:gitdiff`)
                             }
