@@ -71,16 +71,15 @@ if ! tmux has-session -t cmux 2>/dev/null; then
   exit 1
 fi`;
 
-  let maintenanceError: string | null = null;
-  let devError: string | null = null;
+  // Build combined script that starts both windows immediately
+  const hasMaintenanceScript = maintenanceScript && maintenanceScript.trim().length > 0;
+  const hasDevScript = devScript && devScript.trim().length > 0;
 
-  if (maintenanceScript && maintenanceScript.trim().length > 0) {
-    const maintenanceRunId = `maintenance_${Date.now().toString(36)}_${Math.random()
-      .toString(36)
-      .slice(2, 10)}`;
-    const maintenanceExitCodePath = `${ids.maintenance.scriptPath}.${maintenanceRunId}.exit-code`;
+  let maintenanceScriptContent = "";
+  let devScriptContent = "";
 
-    const maintenanceScriptContent = `#!/bin/zsh
+  if (hasMaintenanceScript) {
+    maintenanceScriptContent = `#!/bin/zsh
 set -eux
 cd ${WORKSPACE_ROOT}
 
@@ -88,113 +87,97 @@ echo "=== Maintenance Script Started at \$(date) ==="
 ${maintenanceScript}
 echo "=== Maintenance Script Completed at \$(date) ==="
 `;
-
-    const maintenanceWindowCommand = `zsh "${ids.maintenance.scriptPath}"
-EXIT_CODE=$?
-echo "$EXIT_CODE" > "${maintenanceExitCodePath}"
-if [ "$EXIT_CODE" -ne 0 ]; then
-  echo "[MAINTENANCE] Script exited with code $EXIT_CODE" >&2
-else
-  echo "[MAINTENANCE] Script completed successfully"
-fi
-exec zsh`;
-
-    const maintenanceCommand = `set -eu
-mkdir -p ${CMUX_RUNTIME_DIR}
-cat > ${ids.maintenance.scriptPath} <<'SCRIPT_EOF'
-${maintenanceScriptContent}
-SCRIPT_EOF
-chmod +x ${ids.maintenance.scriptPath}
-rm -f ${maintenanceExitCodePath}
-${waitForTmuxSession}
-tmux new-window -t cmux: -n ${ids.maintenance.windowName} -d ${singleQuote(maintenanceWindowCommand)}
-sleep 2
-if tmux list-windows -t cmux | grep -q "${ids.maintenance.windowName}"; then
-  echo "[MAINTENANCE] Window is running"
-else
-  echo "[MAINTENANCE] Window may have exited (normal if script completed)"
-fi
-while [ ! -f ${maintenanceExitCodePath} ]; do
-  sleep 1
-done
-MAINTENANCE_EXIT_CODE=0
-if [ -f ${maintenanceExitCodePath} ]; then
-  MAINTENANCE_EXIT_CODE=$(cat ${maintenanceExitCodePath} || echo 0)
-else
-  echo "[MAINTENANCE] Missing exit code file; assuming failure" >&2
-  MAINTENANCE_EXIT_CODE=1
-fi
-rm -f ${maintenanceExitCodePath}
-echo "[MAINTENANCE] Wait complete with exit code $MAINTENANCE_EXIT_CODE"
-exit $MAINTENANCE_EXIT_CODE
-`;
-
-    try {
-      const result = await instance.exec(
-        `zsh -lc ${singleQuote(maintenanceCommand)}`,
-      );
-
-      if (result.exit_code !== 0) {
-        const stderr = result.stderr?.trim() || "";
-        const stdout = result.stdout?.trim() || "";
-        const messageParts = [
-          `Maintenance script finished with exit code ${result.exit_code}`,
-          stderr ? `stderr: ${stderr}` : null,
-          stdout ? `stdout: ${stdout}` : null,
-        ].filter((part): part is string => part !== null);
-        maintenanceError = messageParts.join(" | ");
-      } else {
-        console.log(`[MAINTENANCE SCRIPT VERIFICATION]\n${result.stdout || ""}`);
-      }
-    } catch (error) {
-      maintenanceError = `Maintenance script execution failed: ${error instanceof Error ? error.message : String(error)}`;
-    }
   }
 
-  if (devScript && devScript.trim().length > 0) {
-    const devScriptContent = `#!/bin/zsh
+  if (hasDevScript) {
+    devScriptContent = `#!/bin/zsh
 set -ux
 cd ${WORKSPACE_ROOT}
 
 echo "=== Dev Script Started at \$(date) ==="
 ${devScript}
 `;
+  }
 
-    const devCommand = `set -eu
+  // Create a single command that writes both scripts and starts both windows
+  const combinedCommand = `set -eu
 mkdir -p ${CMUX_RUNTIME_DIR}
-cat > ${ids.dev.scriptPath} <<'SCRIPT_EOF'
+${hasMaintenanceScript ? `cat > ${ids.maintenance.scriptPath} <<'MAINTENANCE_SCRIPT_EOF'
+${maintenanceScriptContent}
+MAINTENANCE_SCRIPT_EOF
+chmod +x ${ids.maintenance.scriptPath}` : ""}
+${hasDevScript ? `cat > ${ids.dev.scriptPath} <<'DEV_SCRIPT_EOF'
 ${devScriptContent}
-SCRIPT_EOF
-chmod +x ${ids.dev.scriptPath}
+DEV_SCRIPT_EOF
+chmod +x ${ids.dev.scriptPath}` : ""}
 ${waitForTmuxSession}
-tmux new-window -t cmux: -n ${ids.dev.windowName} -d
+${hasMaintenanceScript ? `tmux new-window -t cmux: -n ${ids.maintenance.windowName} -d
+tmux send-keys -t cmux:${ids.maintenance.windowName} "zsh ${ids.maintenance.scriptPath}; exec zsh" C-m
+sleep 0.5` : ""}
+${hasDevScript ? `tmux new-window -t cmux: -n ${ids.dev.windowName} -d
 tmux send-keys -t cmux:${ids.dev.windowName} "zsh ${ids.dev.scriptPath}" C-m
-sleep 2
-if tmux list-windows -t cmux | grep -q "${ids.dev.windowName}"; then
+sleep 0.5` : ""}
+echo "=== Windows Started ==="
+${hasMaintenanceScript ? `if tmux list-windows -t cmux | grep -q "${ids.maintenance.windowName}"; then
+  echo "[MAINTENANCE] Window is running"
+else
+  echo "[MAINTENANCE] Window may have exited (normal if script completed quickly)"
+fi` : ""}
+${hasDevScript ? `if tmux list-windows -t cmux | grep -q "${ids.dev.windowName}"; then
   echo "[DEV] Window is running"
 else
-  echo "[DEV] ERROR: Window not found" >&2
-  exit 1
-fi
+  echo "[DEV] WARNING: Window not found" >&2
+fi` : ""}
+echo "=== All windows started successfully ==="
 `;
 
-    try {
-      const result = await instance.exec(`zsh -lc ${singleQuote(devCommand)}`);
+  let maintenanceError: string | null = null;
+  let devError: string | null = null;
 
-      if (result.exit_code !== 0) {
-        const stderr = result.stderr?.trim() || "";
-        const stdout = result.stdout?.trim() || "";
+  try {
+    const result = await instance.exec(
+      `zsh -lc ${singleQuote(combinedCommand)}`,
+    );
+
+    if (result.exit_code !== 0) {
+      const stderr = result.stderr?.trim() || "";
+      const stdout = result.stdout?.trim() || "";
+
+      // Determine which script(s) failed based on output
+      if (hasMaintenanceScript && (!stdout.includes("[MAINTENANCE] Window is running") && !stdout.includes("[MAINTENANCE] Window may have exited"))) {
+        maintenanceError = `Failed to start maintenance window: ${stderr || "Unknown error"}`;
+      }
+
+      if (hasDevScript && !stdout.includes("[DEV] Window is running")) {
+        devError = `Failed to start dev window: ${stderr || "Unknown error"}`;
+      }
+
+      // If we couldn't determine specific failures, treat as general error
+      if (!maintenanceError && !devError) {
         const messageParts = [
-          `Failed to start dev script with exit code ${result.exit_code}`,
+          `Script execution failed with exit code ${result.exit_code}`,
           stderr ? `stderr: ${stderr}` : null,
           stdout ? `stdout: ${stdout}` : null,
         ].filter((part): part is string => part !== null);
-        devError = messageParts.join(" | ");
-      } else {
-        console.log(`[DEV SCRIPT VERIFICATION]\n${result.stdout || ""}`);
+        const errorMessage = messageParts.join(" | ");
+
+        if (hasMaintenanceScript) {
+          maintenanceError = errorMessage;
+        }
+        if (hasDevScript) {
+          devError = errorMessage;
+        }
       }
-    } catch (error) {
-      devError = `Dev script execution failed: ${error instanceof Error ? error.message : String(error)}`;
+    } else {
+      console.log(`[SCRIPT VERIFICATION]\n${result.stdout || ""}`);
+    }
+  } catch (error) {
+    const errorMessage = `Script execution failed: ${error instanceof Error ? error.message : String(error)}`;
+    if (hasMaintenanceScript) {
+      maintenanceError = errorMessage;
+    }
+    if (hasDevScript) {
+      devError = errorMessage;
     }
   }
 
