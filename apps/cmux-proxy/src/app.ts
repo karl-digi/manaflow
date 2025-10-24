@@ -38,19 +38,19 @@ self.addEventListener('fetch', (event) => {
   if (isLoopbackHostname(url.hostname) && url.port) {
     // Get the morph ID from the current page's subdomain
     const currentHost = self.location.hostname;
-    const morphIdMatch = currentHost.match(/port-\\\\d+-(.*)\\\\.(?:cmux\\\\.sh|cmux\\\\.app|autobuild\\\\.app)/);
+    const morphIdMatch = currentHost.match(/port-\\\\d+-(.*)\\\\.(?:cmux\\\\.app|cmux\\\\.sh|autobuild\\\\.app)/);
 
     if (morphIdMatch) {
       const morphId = morphIdMatch[1];
       // Redirect to port-PORT-[morphid] on the same domain
-      const domain = currentHost.match(/\\\\.(cmux\\\\.sh|cmux\\\\.app|autobuild\\\\.app)$/)?.[1] || 'cmux.sh';
+      const domain = currentHost.match(/\\\\.(cmux\\\\.app|cmux\\\\.sh|autobuild\\\\.app)$/)?.[1] || 'cmux.app';
       const redirectUrl = \`https://port-\${url.port}-\${morphId}.\${domain}\${url.pathname}\${url.search}\`;
 
       // Create new headers, but let the browser handle Host header
       const headers = new Headers(event.request.headers);
       // Remove headers that might cause issues with proxying
       headers.delete('Host'); // Browser will set this correctly
-      headers.set('Host', 'cmux.sh');
+      headers.set('Host', 'cmux.app');
       headers.delete('X-Forwarded-Host');
       headers.delete('X-Forwarded-For');
       headers.delete('X-Real-IP');
@@ -698,18 +698,7 @@ function parseCmuxDomain(
 ): { subdomain: string; domain: string } | null {
   const normalized = host.toLowerCase();
 
-  // Check for cmux.sh
-  if (normalized === "cmux.sh") {
-    return { subdomain: "", domain: "cmux.sh" };
-  }
-  if (normalized.endsWith(".cmux.sh")) {
-    return {
-      subdomain: normalized.slice(0, -".cmux.sh".length),
-      domain: "cmux.sh",
-    };
-  }
-
-  // Check for cmux.app
+  // Check for cmux.app (primary domain)
   if (normalized === "cmux.app") {
     return { subdomain: "", domain: "cmux.app" };
   }
@@ -717,6 +706,17 @@ function parseCmuxDomain(
     return {
       subdomain: normalized.slice(0, -".cmux.app".length),
       domain: "cmux.app",
+    };
+  }
+
+  // Check for cmux.sh (legacy support)
+  if (normalized === "cmux.sh") {
+    return { subdomain: "", domain: "cmux.sh" };
+  }
+  if (normalized.endsWith(".cmux.sh")) {
+    return {
+      subdomain: normalized.slice(0, -".cmux.sh".length),
+      domain: "cmux.sh",
     };
   }
 
@@ -785,7 +785,7 @@ export function createApp() {
         }
 
         // Format: port-<port>-<vmSlug> -> port-<port>-morphvm-<vmSlug>
-        // Example: port-8101-j2z9smmu.cmux.sh -> port-8101-morphvm-j2z9smmu.http.cloud.morph.so
+        // Example: port-8101-j2z9smmu.cmux.app -> port-8101-morphvm-j2z9smmu.http.cloud.morph.so
         const parts = sub.split("-");
         if (parts.length >= 3) {
           // Insert "morphvm" after the port number

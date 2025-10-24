@@ -16,7 +16,7 @@ describe.skip("cmux-proxy", () => {
 
   describe("Root domain", () => {
     it("should return cmux greeting on apex domain", async () => {
-      const res = await app.request("http://cmux.sh/");
+      const res = await app.request("http://cmux.app/");
       expect(res.status).toBe(200);
       const text = await res.text();
       expect(text).toBe("cmux!");
@@ -25,7 +25,7 @@ describe.skip("cmux-proxy", () => {
 
   describe("Service worker", () => {
     it("should serve service worker file", async () => {
-      const res = await app.request("http://port-8080-test.cmux.sh/proxy-sw.js");
+      const res = await app.request("http://port-8080-test.cmux.app/proxy-sw.js");
       expect(res.status).toBe(200);
       expect(res.headers.get("content-type")).toBe("application/javascript");
       expect(res.headers.get("cache-control")).toBe("no-cache");
@@ -37,7 +37,7 @@ describe.skip("cmux-proxy", () => {
 
   describe("Port-based routing (Morph)", () => {
     it("should handle OPTIONS preflight for port-39378", async () => {
-      const res = await app.request("http://port-39378-test.cmux.sh/", {
+      const res = await app.request("http://port-39378-test.cmux.app/", {
         method: "OPTIONS",
       });
       expect(res.status).toBe(204);
@@ -46,7 +46,7 @@ describe.skip("cmux-proxy", () => {
     });
 
     it("should detect proxy loops", async () => {
-      const res = await app.request("http://port-8080-test.cmux.sh/", {
+      const res = await app.request("http://port-8080-test.cmux.app/", {
         headers: {
           "X-Cmux-Proxied": "true",
         },
@@ -57,7 +57,7 @@ describe.skip("cmux-proxy", () => {
     });
 
     it("should parse port- subdomain correctly", async () => {
-      const res = await app.request("http://port-8080-j2z9smmu.cmux.sh/test", {
+      const res = await app.request("http://port-8080-j2z9smmu.cmux.app/test", {
         method: "HEAD",
       });
       // We can't test the actual proxy without a real backend,
@@ -69,21 +69,21 @@ describe.skip("cmux-proxy", () => {
 
   describe("Cmux- prefix routing", () => {
     it("should reject invalid cmux proxy subdomain (too few segments)", async () => {
-      const res = await app.request("http://cmux-test.cmux.sh/");
+      const res = await app.request("http://cmux-test.cmux.app/");
       expect(res.status).toBe(400);
       const text = await res.text();
       expect(text).toBe("Invalid cmux proxy subdomain");
     });
 
     it("should reject invalid port in cmux proxy subdomain", async () => {
-      const res = await app.request("http://cmux-test-abc.cmux.sh/");
+      const res = await app.request("http://cmux-test-abc.cmux.app/");
       expect(res.status).toBe(400);
       const text = await res.text();
       expect(text).toBe("Invalid port in cmux proxy subdomain");
     });
 
     it("should parse cmux- subdomain correctly", async () => {
-      const res = await app.request("http://cmux-j2z9smmu-8080.cmux.sh/test", {
+      const res = await app.request("http://cmux-j2z9smmu-8080.cmux.app/test", {
         method: "HEAD",
       });
       // Can't test actual proxy, but check it passes validation
@@ -92,14 +92,14 @@ describe.skip("cmux-proxy", () => {
     });
 
     it("should handle base scope correctly", async () => {
-      const res = await app.request("http://cmux-test-base-8080.cmux.sh/", {
+      const res = await app.request("http://cmux-test-base-8080.cmux.app/", {
         method: "HEAD",
       });
       expect(res.status).not.toBe(400);
     });
 
     it("should detect proxy loops for cmux- prefix", async () => {
-      const res = await app.request("http://cmux-test-8080.cmux.sh/", {
+      const res = await app.request("http://cmux-test-8080.cmux.app/", {
         headers: {
           "X-Cmux-Proxied": "true",
         },
@@ -112,21 +112,21 @@ describe.skip("cmux-proxy", () => {
 
   describe("Original routing (workspace-port-vmSlug)", () => {
     it("should reject subdomain with too few parts", async () => {
-      const res = await app.request("http://test-8080.cmux.sh/");
+      const res = await app.request("http://test-8080.cmux.app/");
       expect(res.status).toBe(400);
       const text = await res.text();
       expect(text).toBe("Invalid cmux subdomain");
     });
 
     it("should reject missing workspace", async () => {
-      const res = await app.request("http://-8080-vmslug.cmux.sh/");
+      const res = await app.request("http://-8080-vmslug.cmux.app/");
       expect(res.status).toBe(400);
       const text = await res.text();
       expect(text).toBe("Invalid cmux subdomain");
     });
 
     it("should reject invalid port", async () => {
-      const res = await app.request("http://workspace-abc-vmslug.cmux.sh/");
+      const res = await app.request("http://workspace-abc-vmslug.cmux.app/");
       expect(res.status).toBe(400);
       const text = await res.text();
       expect(text).toBe("Invalid port in subdomain");
@@ -134,7 +134,7 @@ describe.skip("cmux-proxy", () => {
 
     it("should parse workspace-port-vmSlug correctly", async () => {
       const res = await app.request(
-        "http://my-workspace-8080-vmslug.cmux.sh/test",
+        "http://my-workspace-8080-vmslug.cmux.app/test",
         {
           method: "HEAD",
         }
@@ -144,7 +144,7 @@ describe.skip("cmux-proxy", () => {
     });
 
     it("should detect proxy loops", async () => {
-      const res = await app.request("http://workspace-8080-vmslug.cmux.sh/", {
+      const res = await app.request("http://workspace-8080-vmslug.cmux.app/", {
         headers: {
           "X-Cmux-Proxied": "true",
         },
@@ -160,7 +160,7 @@ describe.skip("cmux-proxy", () => {
     // with Hono's test client due to invalid upgrade header errors.
     // These tests are skipped but document the expected behavior.
     it("should pass through WebSocket upgrade requests for port- prefix", async () => {
-      const res = await app.request("http://port-8080-test.cmux.sh/ws", {
+      const res = await app.request("http://port-8080-test.cmux.app/ws", {
         method: "GET",
         headers: {
           Upgrade: "websocket",
@@ -172,7 +172,7 @@ describe.skip("cmux-proxy", () => {
     });
 
     it("should pass through WebSocket upgrade requests for cmux- prefix", async () => {
-      const res = await app.request("http://cmux-test-8080.cmux.sh/ws", {
+      const res = await app.request("http://cmux-test-8080.cmux.app/ws", {
         method: "GET",
         headers: {
           Upgrade: "websocket",
@@ -183,7 +183,7 @@ describe.skip("cmux-proxy", () => {
     });
 
     it("should pass through WebSocket upgrade requests for workspace routing", async () => {
-      const res = await app.request("http://workspace-8080-vmslug.cmux.sh/ws", {
+      const res = await app.request("http://workspace-8080-vmslug.cmux.app/ws", {
         method: "GET",
         headers: {
           Upgrade: "websocket",
@@ -197,7 +197,7 @@ describe.skip("cmux-proxy", () => {
   describe("Headers handling", () => {
     it("should set X-Cmux-Proxied header for port- prefix", async () => {
       // This test verifies the header would be set (can't easily test outbound request)
-      const res = await app.request("http://port-8080-test.cmux.sh/", {
+      const res = await app.request("http://port-8080-test.cmux.app/", {
         method: "HEAD",
       });
       // If we made it past loop detection, the header logic works
@@ -205,14 +205,14 @@ describe.skip("cmux-proxy", () => {
     });
 
     it("should set workspace and port headers for cmux- prefix", async () => {
-      const res = await app.request("http://cmux-test-workspace-8080.cmux.sh/", {
+      const res = await app.request("http://cmux-test-workspace-8080.cmux.app/", {
         method: "HEAD",
       });
       expect(res.status).not.toBe(400);
     });
 
     it("should set workspace and port headers for original routing", async () => {
-      const res = await app.request("http://workspace-8080-vmslug.cmux.sh/", {
+      const res = await app.request("http://workspace-8080-vmslug.cmux.app/", {
         method: "HEAD",
       });
       expect(res.status).not.toBe(400);
