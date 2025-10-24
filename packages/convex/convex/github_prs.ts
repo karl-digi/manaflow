@@ -337,49 +337,82 @@ export const upsertFromWebhookPayload = internalMutation({
         const n = Date.parse(s);
         return Number.isFinite(n) ? n : undefined;
       };
-      const baseRef = mapStr(pr.base?.ref);
-      const headRef = mapStr(pr.head?.ref);
-      const baseSha = mapStr(pr.base?.sha);
-      const headSha = mapStr(pr.head?.sha);
-      const mergeCommitSha = mapStr(pr.merge_commit_sha);
-      const baseActivityTs =
-        ts(pr.base?.repo?.pushed_at) ??
-        ts(pr.merged_at) ??
-        ts(pr.updated_at) ??
-        Date.now();
+       const baseRef = mapStr(pr.base?.ref);
+       const headRef = mapStr(pr.head?.ref);
+       const baseSha = mapStr(pr.base?.sha);
+       const headSha = mapStr(pr.head?.sha);
+       const mergeCommitSha = mapStr(pr.merge_commit_sha);
+       const baseActivityTs =
+         ts(pr.base?.repo?.pushed_at) ??
+         ts(pr.merged_at) ??
+         ts(pr.updated_at) ??
+         Date.now();
 
-      await upsertCore(ctx, {
-        teamId,
-        installationId,
-        repoFullName,
-        number,
-        record: {
-          providerPrId: mapNum(pr.id),
-          repositoryId: mapNum(pr.base?.repo?.id),
-          title: mapStr(pr.title) ?? "",
-          state: mapStr(pr.state) === "closed" ? "closed" : "open",
-          merged: Boolean(pr.merged),
-          draft: Boolean(pr.draft),
-          authorLogin: mapStr(pr.user?.login),
-          authorId: mapNum(pr.user?.id),
-          htmlUrl: mapStr(pr.html_url),
-          baseRef,
-          headRef,
-          baseSha,
-          headSha,
-          mergeCommitSha,
-          createdAt: ts(pr.created_at),
-          updatedAt: ts(pr.updated_at),
-          closedAt: ts(pr.closed_at),
-          mergedAt: ts(pr.merged_at),
-          commentsCount: mapNum(pr.comments),
-          reviewCommentsCount: mapNum(pr.review_comments),
-          commitsCount: mapNum(pr.commits),
-          additions: mapNum(pr.additions),
-          deletions: mapNum(pr.deletions),
-          changedFiles: mapNum(pr.changed_files),
-        },
-      });
+       // Determine state: keep open by default if checks are loading or errored
+       let state: "open" | "closed" = "open";
+       if (Boolean(pr.merged)) {
+         state = "closed";
+       } else {
+         const prState = mapStr(pr.state);
+         if (prState === "closed") {
+           // Check for pending checks
+           const checkRuns = await ctx.runQuery(internal.github_check_runs.getCheckRunsForPr, {
+             teamSlugOrId: teamId,
+             repoFullName,
+             prNumber: number,
+             headSha,
+           });
+           const workflowRuns = await ctx.runQuery(internal.github_workflows.getWorkflowRunsForPr, {
+             teamSlugOrId: teamId,
+             repoFullName,
+             prNumber: number,
+             headSha,
+           });
+           const hasPending = [...checkRuns, ...workflowRuns].some(run => {
+             const status = 'status' in run ? run.status : undefined;
+             const conclusion = 'conclusion' in run ? run.conclusion : undefined;
+             if (status && ['in_progress', 'queued', 'pending', 'waiting'].includes(status)) return true;
+             if (conclusion && ['failure', 'timed_out', 'action_required', 'cancelled'].includes(conclusion)) return true;
+             return false;
+           });
+           if (!hasPending) {
+             state = "closed";
+           }
+         }
+       }
+
+       await upsertCore(ctx, {
+         teamId,
+         installationId,
+         repoFullName,
+         number,
+         record: {
+           providerPrId: mapNum(pr.id),
+           repositoryId: mapNum(pr.base?.repo?.id),
+           title: mapStr(pr.title) ?? "",
+           state,
+           merged: Boolean(pr.merged),
+           draft: Boolean(pr.draft),
+           authorLogin: mapStr(pr.user?.login),
+           authorId: mapNum(pr.user?.id),
+           htmlUrl: mapStr(pr.html_url),
+           baseRef,
+           headRef,
+           baseSha,
+           headSha,
+           mergeCommitSha,
+           createdAt: ts(pr.created_at),
+           updatedAt: ts(pr.updated_at),
+           closedAt: ts(pr.closed_at),
+           mergedAt: ts(pr.merged_at),
+           commentsCount: mapNum(pr.comments),
+           reviewCommentsCount: mapNum(pr.review_comments),
+           commitsCount: mapNum(pr.commits),
+           additions: mapNum(pr.additions),
+           deletions: mapNum(pr.deletions),
+           changedFiles: mapNum(pr.changed_files),
+         },
+       });
 
       if (baseRef && (baseSha || mergeCommitSha)) {
         await upsertBranchMetadata(ctx, {
