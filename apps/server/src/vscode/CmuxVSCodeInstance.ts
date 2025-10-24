@@ -65,6 +65,7 @@ export class CmuxVSCodeInstance extends VSCodeInstance {
             depth: 1,
           }
           : {}),
+        ...(this.config.theme ? { theme: this.config.theme } : {}),
       },
     });
     const data = startRes.data;

@@ -47,6 +47,7 @@ const StartSandboxBody = z
     branch: z.string().optional(),
     newBranch: z.string().optional(),
     depth: z.number().optional().default(1),
+    theme: z.enum(["dark", "light", "system"]).optional(),
   })
   .openapi("StartSandboxBody");
 
@@ -220,6 +221,9 @@ sandboxesRouter.openapi(
       }
       if (body.taskRunJwt) {
         envVarsToApply += `\nCMUX_TASK_RUN_JWT="${body.taskRunJwt}"`;
+      }
+      if (body.theme) {
+        envVarsToApply += `\nVSCODE_THEME="${body.theme}"`;
       }
 
       // Apply all environment variables if any
