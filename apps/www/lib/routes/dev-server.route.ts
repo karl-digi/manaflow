@@ -59,9 +59,9 @@ const StartDevServerSchema = z.object({
     example: "snapshot_kco1jqb6",
     description: "Morph snapshot ID to use for the instance",
   }),
-  ttlSeconds: z.number().optional().default(1800).openapi({
+  ttlSeconds: z.number().optional().default(1800).max(60 * 60 * 12).openapi({
     example: 1800,
-    description: "Time to live in seconds (default 30 minutes)",
+    description: "Time to live in seconds (default 30 minutes, max 12 hours)",
   }),
 });
 
