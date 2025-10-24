@@ -24,6 +24,7 @@ import { registerGlobalContextMenu } from "./context-menu";
 // Auto-updater
 import electronUpdater, {
   type UpdateCheckResult,
+  type UpdateDownloadedEvent,
   type UpdateInfo,
 } from "electron-updater";
 import semver from "semver";
@@ -504,16 +505,16 @@ function setupAutoUpdates(): void {
       `${p.percent?.toFixed?.(1) ?? 0}% (${p.transferred}/${p.total})`
     )
   );
-  autoUpdater.on("update-downloaded", (_event, info?: UpdateInfo) => {
+  autoUpdater.on("update-downloaded", (event: UpdateDownloadedEvent) => {
     const version =
-      info &&
-      typeof info === "object" &&
-      "version" in info &&
-      typeof info.version === "string"
-        ? info.version
+      event &&
+      typeof event === "object" &&
+      "version" in event &&
+      typeof event.version === "string"
+        ? event.version
         : null;
 
-    if (!isUpdateNewerThanCurrent(info)) {
+    if (!isUpdateNewerThanCurrent(event)) {
       mainLog(
         "Ignoring downloaded update that is not newer than current build",
         {
