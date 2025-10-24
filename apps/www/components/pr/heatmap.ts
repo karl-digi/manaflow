@@ -1,6 +1,3 @@
-import { computeNewLineNumber, isDelete, type FileData } from "react-diff-view";
-import type { RangeTokenNode } from "react-diff-view";
-
 export type ReviewHeatmapLine = {
   lineNumber: number | null;
   lineText: string | null;
@@ -15,7 +12,11 @@ export type DiffHeatmap = {
   entries: Map<number, ResolvedHeatmapLine>;
 };
 
-export type HeatmapRangeNode = RangeTokenNode & {
+export type HeatmapRangeNode = {
+  type: string;
+  lineNumber: number;
+  start: number;
+  length: number;
   className: string;
 };
 
@@ -93,14 +94,19 @@ export function parseReviewHeatmap(raw: unknown): ReviewHeatmapLine[] {
 }
 
 export function buildDiffHeatmap(
-  diff: FileData | null,
   reviewHeatmap: ReviewHeatmapLine[]
 ): DiffHeatmap | null {
-  if (!diff || reviewHeatmap.length === 0) {
+  if (reviewHeatmap.length === 0) {
     return null;
   }
 
-  const newLineContent = collectNewLineContent(diff);
+  // Build a simple line number to content map from the review heatmap
+  const newLineContent = new Map<number, string>();
+  for (const entry of reviewHeatmap) {
+    if (entry.lineNumber && entry.lineText) {
+      newLineContent.set(entry.lineNumber, entry.lineText);
+    }
+  }
 
   const resolvedEntries = resolveLineNumbers(reviewHeatmap, newLineContent);
   if (resolvedEntries.length === 0) {
@@ -280,27 +286,6 @@ function normalizeLineText(value: string | null | undefined): string | null {
   }
 
   return value.replace(/\s+/g, " ").trim();
-}
-
-function collectNewLineContent(diff: FileData): Map<number, string> {
-  const map = new Map<number, string>();
-
-  for (const hunk of diff.hunks) {
-    for (const change of hunk.changes) {
-      const lineNumber = computeNewLineNumber(change);
-      if (lineNumber < 0) {
-        continue;
-      }
-
-      if (isDelete(change)) {
-        continue;
-      }
-
-      map.set(lineNumber, change.content ?? "");
-    }
-  }
-
-  return map;
 }
 
 function computeHeatmapTier(score: number | null): number {

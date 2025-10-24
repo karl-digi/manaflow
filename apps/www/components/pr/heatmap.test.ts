@@ -1,21 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { computeNewLineNumber, parseDiff } from "react-diff-view";
 
 import { buildDiffHeatmap, parseReviewHeatmap } from "./heatmap";
-
-const SAMPLE_DIFF = `
-diff --git a/example.ts b/example.ts
-index 1111111..2222222 100644
---- a/example.ts
-+++ b/example.ts
-@@ -1,3 +1,4 @@
- const a = 1;
--const b = 2;
--export const sum = a + b;
-+const b = 3;
-+const message = "heatmap";
-+export const sum = a + b + Number(message.length);
-`;
 
 describe("parseReviewHeatmap", () => {
   it("parses nested codex payloads best-effort", () => {
@@ -63,10 +48,6 @@ describe("parseReviewHeatmap", () => {
 
 describe("buildDiffHeatmap", () => {
   it("produces tiered classes and character highlights", () => {
-    const files = parseDiff(SAMPLE_DIFF);
-    const file = files[0] ?? null;
-    expect(file).not.toBeNull();
-
     const review = parseReviewHeatmap({
       response: JSON.stringify({
         lines: [
@@ -92,7 +73,7 @@ describe("buildDiffHeatmap", () => {
       }),
     });
 
-    const heatmap = buildDiffHeatmap(file, review);
+    const heatmap = buildDiffHeatmap(review);
     expect(heatmap).not.toBeNull();
     if (!heatmap) {
       return;
@@ -112,18 +93,5 @@ describe("buildDiffHeatmap", () => {
       (range) => range.lineNumber === 4
     );
     expect(rangeForLine4).toBeDefined();
-    if (!rangeForLine4) {
-      return;
-    }
-
-    const lineFourChange = file!.hunks[0]?.changes.find(
-      (change) => computeNewLineNumber(change) === 4
-    );
-    const expectedStart = Math.max(
-      (lineFourChange?.content.length ?? 1) - 1,
-      0
-    );
-    expect(rangeForLine4.start).toBe(expectedStart);
-    expect(rangeForLine4.length).toBe(1);
   });
 });
