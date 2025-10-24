@@ -65,8 +65,8 @@ app.use(
     origin: [
       "http://localhost:5173",
       "http://localhost:9779",
-      "https://cmux.sh",
-      "https://www.cmux.sh",
+      "https://cmux.app",
+      "https://www.cmux.app",
     ],
     credentials: true,
     allowHeaders: ["x-stack-auth", "content-type", "authorization"],

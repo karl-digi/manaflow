@@ -30,10 +30,10 @@ describe("extractMorphInstanceInfo", () => {
 
   it("detects port rewrite hosts", () => {
     const info = extractMorphInstanceInfo(
-      "https://port-9000-abc123.cmux.sh/path"
+      "https://port-9000-abc123.cmux.app/path"
     );
     expect(info).toEqual({
-      hostname: "port-9000-abc123.cmux.sh",
+      hostname: "port-9000-abc123.cmux.app",
       morphId: "abc123",
       instanceId: "morphvm_abc123",
       port: 9000,

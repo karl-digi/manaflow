@@ -46,7 +46,7 @@ gcloud run deploy global-proxy \
 
 - Cloud Run performs **zero-downtime** rollouts by spinning up the new revision before shifting traffic.
 - Use `--traffic` flags to do gradual rollouts if desired.
-- If routing custom domains (e.g. `*.cmux.sh`), configure Cloud Run domain mappings and SSL certificates.
+- If routing custom domains (e.g. `*.cmux.app`), configure Cloud Run domain mappings and SSL certificates.
 - For private deployments behind a load balancer, disable `--allow-unauthenticated` and front with Cloud CDN/Edge if needed.
 
 ## 4. Post-Deployment Checks
@@ -55,7 +55,7 @@ gcloud run deploy global-proxy \
    `curl "https://SERVICE_URL/health"`
 
 2. Smoke test a proxied path:  
-   `curl -H "Host: port-39378-uopbmezr.cmux.sh" "https://SERVICE_URL/"`
+   `curl -H "Host: port-39378-uopbmezr.cmux.app" "https://SERVICE_URL/"`
 
 3. Inspect logs:  
    `gcloud logs tail --project=PROJECT_ID --region=us-central1 --service=global-proxy`

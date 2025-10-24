@@ -816,7 +816,7 @@ app.whenReady().then(async () => {
   //   callback({
   //     responseHeaders: {
   //       ...details.responseHeaders,
-  //       // "Content-Security-Policy": ["script-src 'self' https://cmux.sh"],
+  //       // "Content-Security-Policy": ["script-src 'self' https://cmux.app"],
   //       "Content-Security-Policy": ["*"],
   //     },
   //   });

@@ -4,9 +4,9 @@ A Node.js/Bun-based HTTP proxy server for cmux, designed to run on GCP VMs as an
 
 ## Features
 
-- **Port-based routing**: Routes requests from `port-{port}-{morphId}.cmux.sh` to Morph VMs
-- **Cmux-prefixed routing**: Routes `cmux-{morphId}-{scope}-{port}.cmux.sh` with workspace headers
-- **Workspace routing**: Routes `{workspace}-{port}-{vmSlug}.cmux.sh` to Freestyle VMs
+- **Port-based routing**: Routes requests from `port-{port}-{morphId}.cmux.app` to Morph VMs
+- **Cmux-prefixed routing**: Routes `cmux-{morphId}-{scope}-{port}.cmux.app` with workspace headers
+- **Workspace routing**: Routes `{workspace}-{port}-{vmSlug}.cmux.app` to Freestyle VMs
 - **HTML rewriting**: Injects service workers and location API interceptors
 - **JavaScript rewriting**: Rewrites location references in external JS files
 - **WebSocket support**: Passes through WebSocket upgrade requests
@@ -85,7 +85,7 @@ export MAX_REPLICAS=10
 
 ### Routing Logic
 
-1. **Apex domain** (`cmux.sh`): Returns "cmux!" greeting
+1. **Apex domain** (`cmux.app`): Returns "cmux!" greeting
 2. **Service worker** (`/proxy-sw.js`): Serves service worker script
 3. **Port routing** (`port-{port}-{id}`): Proxies to Morph VMs with HTMLRewriter
 4. **Cmux routing** (`cmux-{id}-{scope}-{port}`): Adds workspace/port headers

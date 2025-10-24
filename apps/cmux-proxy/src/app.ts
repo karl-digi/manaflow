@@ -43,14 +43,14 @@ self.addEventListener('fetch', (event) => {
     if (morphIdMatch) {
       const morphId = morphIdMatch[1];
       // Redirect to port-PORT-[morphid] on the same domain
-      const domain = currentHost.match(/\\\\.(cmux\\\\.sh|cmux\\\\.app|autobuild\\\\.app)$/)?.[1] || 'cmux.sh';
+      const domain = currentHost.match(/\\\\.(cmux\\\\.sh|cmux\\\\.app|autobuild\\\\.app)$/)?.[1] || 'cmux.app';
       const redirectUrl = \`https://port-\${url.port}-\${morphId}.\${domain}\${url.pathname}\${url.search}\`;
 
       // Create new headers, but let the browser handle Host header
       const headers = new Headers(event.request.headers);
       // Remove headers that might cause issues with proxying
       headers.delete('Host'); // Browser will set this correctly
-      headers.set('Host', 'cmux.sh');
+      headers.set('Host', 'cmux.app');
       headers.delete('X-Forwarded-Host');
       headers.delete('X-Forwarded-For');
       headers.delete('X-Real-IP');
@@ -279,7 +279,7 @@ function isLoopbackHostname(hostname) {
   return /^127(?:\\.\\d{1,3}){3}$/.test(hostname);
 }
 
-// Function to replace loopback URLs with cmux.sh proxy
+// Function to replace loopback URLs with cmux.app proxy
 function replaceLocalhostUrl(url) {
   try {
     const urlObj = new URL(url, __realLocation.href);
@@ -289,7 +289,7 @@ function replaceLocalhostUrl(url) {
 
       if (morphIdMatch) {
         const morphId = morphIdMatch[1];
-        const domain = currentHost.match(/\\\\.(cmux\\\\.sh|cmux\\\\.app|autobuild\\\\.app)$/)?.[1] || 'cmux.sh';
+        const domain = currentHost.match(/\\\\.(cmux\\\\.sh|cmux\\\\.app|autobuild\\\\.app)$/)?.[1] || 'cmux.app';
         urlObj.protocol = 'https:';
         urlObj.hostname = \`port-\${urlObj.port}-\${morphId}.\${domain}\`;
         urlObj.port = '';

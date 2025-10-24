@@ -39,14 +39,14 @@ self.addEventListener('fetch', (event) => {
 
     if (morphIdMatch) {
       const morphId = morphIdMatch[1];
-      // Redirect to port-PORT-[morphid].cmux.sh
-      const redirectUrl = \`https://port-\${url.port}-\${morphId}.cmux.sh\${url.pathname}\${url.search}\`;
+      // Redirect to port-PORT-[morphid].cmux.app
+      const redirectUrl = \`https://port-\${url.port}-\${morphId}.cmux.app\${url.pathname}\${url.search}\`;
 
       // Create new headers, but let the browser handle Host header
       const headers = new Headers(event.request.headers);
       // Remove headers that might cause issues with proxying
       headers.delete('Host'); // Browser will set this correctly
-      headers.set('Host', 'cmux.sh');
+      headers.set('Host', 'cmux.app');
       headers.delete('X-Forwarded-Host');
       headers.delete('X-Forwarded-For');
       headers.delete('X-Real-IP');
@@ -263,7 +263,7 @@ function isLoopbackHostname(hostname) {
   return /^127(?:\.\d{1,3}){3}$/.test(hostname);
 }
 
-// Function to replace loopback URLs with cmux.sh proxy
+// Function to replace loopback URLs with cmux.app proxy
 function replaceLocalhostUrl(url) {
   try {
     const urlObj = new URL(url, __realLocation.href);
@@ -274,7 +274,7 @@ function replaceLocalhostUrl(url) {
       if (morphIdMatch) {
         const morphId = morphIdMatch[1];
         urlObj.protocol = 'https:';
-        urlObj.hostname = \`port-\${urlObj.port}-\${morphId}.cmux.sh\`;
+        urlObj.hostname = \`port-\${urlObj.port}-\${morphId}.cmux.app\`;
         urlObj.port = '';
         return urlObj.toString();
       }
@@ -643,14 +643,14 @@ export default {
     const host = url.hostname.toLowerCase();
 
     // Root apex: reply with greeting
-    if (host === "cmux.sh") {
+    if (host === "cmux.app") {
       return new Response("cmux!", {
         status: 200,
         headers: { "content-type": "text/plain; charset=utf-8" },
       });
     }
 
-    const suffix = ".cmux.sh";
+    const suffix = ".cmux.app";
     if (host.endsWith(suffix)) {
       const sub = host.slice(0, -suffix.length);
 
@@ -682,7 +682,7 @@ export default {
         }
 
         // Format: port-<port>-<vmSlug> -> port-<port>-morphvm-<vmSlug>
-        // Example: port-8101-j2z9smmu.cmux.sh -> port-8101-morphvm-j2z9smmu.http.cloud.morph.so
+        // Example: port-8101-j2z9smmu.cmux.app -> port-8101-morphvm-j2z9smmu.http.cloud.morph.so
         const parts = sub.split("-");
         if (parts.length >= 3) {
           // Insert "morphvm" after the port number
@@ -716,7 +716,7 @@ export default {
             if (!redirectPort || !/^\d+$/.test(redirectPort)) {
               return null;
             }
-            return `port-${redirectPort}-${morphId}.cmux.sh`;
+            return `port-${redirectPort}-${morphId}.cmux.app`;
           });
 
           const contentType = response.headers.get("content-type") || "";
@@ -846,7 +846,7 @@ export default {
             return null;
           }
           const scopeLabel = isBaseScope ? "base" : scopeRaw;
-          return `cmux-${morphId}-${scopeLabel}-${redirectPort}.cmux.sh`;
+          return `cmux-${morphId}-${scopeLabel}-${redirectPort}.cmux.app`;
         });
 
         const contentType = response.headers.get("content-type") || "";
@@ -962,7 +962,7 @@ export default {
           return null;
         }
 
-        return `${workspace}-${redirectPort}-${vmSlug}.cmux.sh`;
+        return `${workspace}-${redirectPort}-${vmSlug}.cmux.app`;
       });
 
       const contentType = response.headers.get("content-type") || "";

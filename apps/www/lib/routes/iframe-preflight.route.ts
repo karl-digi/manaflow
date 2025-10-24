@@ -13,24 +13,22 @@ import { streamSSE } from "hono/streaming";
 import { MorphCloudClient } from "morphcloud";
 
 const ALLOWED_HOST_SUFFIXES = [
-  ".cmux.sh",
+  ".cmux.app",
   ".cmux.dev",
   ".cmux.local",
   ".cmux.localhost",
-  ".cmux.app",
   ".autobuild.app",
   ".http.cloud.morph.so",
   ".vm.freestyle.sh",
 ] as const;
 
 const ALLOWED_EXACT_HOSTS = new Set<string>([
-  "cmux.sh",
-  "www.cmux.sh",
+  "cmux.app",
+  "www.cmux.app",
   "cmux.dev",
   "www.cmux.dev",
   "cmux.local",
   "cmux.localhost",
-  "cmux.app",
 ]);
 
 const DEV_ONLY_HOSTS = new Set<string>(["localhost", "127.0.0.1", "::1"]);

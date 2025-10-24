@@ -377,7 +377,7 @@ async fn version_path_with_cmux_subdomain_is_forwarded() {
     .await;
 
     let proxy = TestProxy::spawn().await;
-    let host = format!("cmux-demo-{}.cmux.sh", backend.port());
+    let host = format!("cmux-demo-{}.cmux.app", backend.port());
 
     let response = proxy.request(Method::GET, &host, "/version", &[]).await;
     assert_eq!(response.status(), StatusCode::IM_A_TEAPOT);
@@ -391,7 +391,7 @@ async fn version_path_with_cmux_subdomain_is_forwarded() {
 async fn apex_returns_greeting() {
     let proxy = TestProxy::spawn().await;
 
-    let response = proxy.request(Method::GET, "cmux.sh", "/", &[]).await;
+    let response = proxy.request(Method::GET, "cmux.app", "/", &[]).await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.text().await.expect("text"), "cmux!");
 
@@ -403,7 +403,7 @@ async fn service_worker_route() {
     let proxy = TestProxy::spawn().await;
 
     let response = proxy
-        .request(Method::GET, "port-8080-test.cmux.sh", "/proxy-sw.js", &[])
+        .request(Method::GET, "port-8080-test.cmux.app", "/proxy-sw.js", &[])
         .await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
@@ -425,7 +425,7 @@ async fn port_options_preflight() {
     let proxy = TestProxy::spawn().await;
 
     let response = proxy
-        .request(Method::OPTIONS, "port-39378-test.cmux.sh", "/", &[])
+        .request(Method::OPTIONS, "port-39378-test.cmux.app", "/", &[])
         .await;
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
     assert!(
@@ -436,7 +436,7 @@ async fn port_options_preflight() {
     );
 
     let cmux_response = proxy
-        .request(Method::OPTIONS, "cmux-test-base-39378.cmux.sh", "/", &[])
+        .request(Method::OPTIONS, "cmux-test-base-39378.cmux.app", "/", &[])
         .await;
     assert_eq!(cmux_response.status(), StatusCode::NO_CONTENT);
     assert!(
@@ -456,7 +456,7 @@ async fn port_loop_detection() {
     let response = proxy
         .request(
             Method::GET,
-            "port-8080-test.cmux.sh",
+            "port-8080-test.cmux.app",
             "/",
             &[("X-Cmux-Proxied", "true")],
         )
@@ -475,7 +475,7 @@ async fn port_head_request_passes_validation() {
     let proxy = TestProxy::spawn().await;
 
     let response = proxy
-        .request(Method::HEAD, "port-8080-j2z9smmu.cmux.sh", "/test", &[])
+        .request(Method::HEAD, "port-8080-j2z9smmu.cmux.app", "/test", &[])
         .await;
     assert_ne!(response.status(), StatusCode::BAD_REQUEST);
     assert_ne!(response.status(), StatusCode::LOOP_DETECTED);
@@ -488,7 +488,7 @@ async fn cmux_subdomain_validation() {
     let proxy = TestProxy::spawn().await;
 
     let invalid = proxy
-        .request(Method::GET, "cmux-test.cmux.sh", "/", &[])
+        .request(Method::GET, "cmux-test.cmux.app", "/", &[])
         .await;
     assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
     assert_eq!(
@@ -497,7 +497,7 @@ async fn cmux_subdomain_validation() {
     );
 
     let invalid_port = proxy
-        .request(Method::GET, "cmux-test-abc.cmux.sh", "/", &[])
+        .request(Method::GET, "cmux-test-abc.cmux.app", "/", &[])
         .await;
     assert_eq!(invalid_port.status(), StatusCode::BAD_REQUEST);
     assert_eq!(
@@ -513,7 +513,7 @@ async fn cmux_head_request_validation() {
     let proxy = TestProxy::spawn().await;
 
     let response = proxy
-        .request(Method::HEAD, "cmux-j2z9smmu-8080.cmux.sh", "/test", &[])
+        .request(Method::HEAD, "cmux-j2z9smmu-8080.cmux.app", "/test", &[])
         .await;
     assert_ne!(response.status(), StatusCode::BAD_REQUEST);
     assert_ne!(response.status(), StatusCode::LOOP_DETECTED);
@@ -544,7 +544,7 @@ async fn cmux_base_scope_validation() {
     let proxy = TestProxy::spawn().await;
 
     let response = proxy
-        .request(Method::HEAD, "cmux-test-base-8080.cmux.sh", "/", &[])
+        .request(Method::HEAD, "cmux-test-base-8080.cmux.app", "/", &[])
         .await;
     assert_ne!(response.status(), StatusCode::BAD_REQUEST);
 
@@ -558,7 +558,7 @@ async fn cmux_loop_detection() {
     let response = proxy
         .request(
             Method::GET,
-            "cmux-test-8080.cmux.sh",
+            "cmux-test-8080.cmux.app",
             "/",
             &[("X-Cmux-Proxied", "true")],
         )
@@ -577,7 +577,7 @@ async fn workspace_subdomain_validation() {
     let proxy = TestProxy::spawn().await;
 
     let invalid = proxy
-        .request(Method::GET, "test-8080.cmux.sh", "/", &[])
+        .request(Method::GET, "test-8080.cmux.app", "/", &[])
         .await;
     assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
     assert_eq!(
@@ -586,7 +586,7 @@ async fn workspace_subdomain_validation() {
     );
 
     let invalid_port = proxy
-        .request(Method::GET, "workspace-abc-vmslug.cmux.sh", "/", &[])
+        .request(Method::GET, "workspace-abc-vmslug.cmux.app", "/", &[])
         .await;
     assert_eq!(invalid_port.status(), StatusCode::BAD_REQUEST);
     assert_eq!(
@@ -604,7 +604,7 @@ async fn workspace_head_validation() {
     let response = proxy
         .request(
             Method::HEAD,
-            "my-workspace-8080-vmslug.cmux.sh",
+            "my-workspace-8080-vmslug.cmux.app",
             "/test",
             &[],
         )
@@ -622,7 +622,7 @@ async fn workspace_loop_detection() {
     let response = proxy
         .request(
             Method::GET,
-            "workspace-8080-vmslug.cmux.sh",
+            "workspace-8080-vmslug.cmux.app",
             "/",
             &[("X-Cmux-Proxied", "true")],
         )
@@ -650,7 +650,7 @@ async fn html_responses_inject_scripts() {
     .await;
 
     let proxy = TestProxy::spawn().await;
-    let host = format!("port-{}-test.cmux.sh", backend.port());
+    let host = format!("port-{}-test.cmux.app", backend.port());
 
     let response = proxy.request(Method::GET, &host, "/", &[]).await;
     assert_eq!(response.status(), StatusCode::OK);
@@ -682,7 +682,7 @@ async fn html_responses_skip_service_worker_for_cmux_route() {
     .await;
 
     let proxy = TestProxy::spawn().await;
-    let host = format!("cmux-demo-{}.cmux.sh", backend.port());
+    let host = format!("cmux-demo-{}.cmux.app", backend.port());
 
     let response = proxy.request(Method::GET, &host, "/", &[]).await;
     assert_eq!(response.status(), StatusCode::OK);
@@ -744,7 +744,7 @@ async fn port_39378_strips_cors_and_applies_csp() {
             .get("content-security-policy")
             .and_then(|v| v.to_str().ok()),
         Some(
-            "frame-ancestors 'self' https://cmux.local http://cmux.local https://www.cmux.sh https://cmux.sh https://www.cmux.dev https://cmux.dev http://localhost:5173;",
+            "frame-ancestors 'self' https://cmux.local http://cmux.local https://www.cmux.app https://cmux.app https://www.cmux.dev https://cmux.dev http://localhost:5173;",
         )
     );
     assert!(headers.get("x-frame-options").is_none());
@@ -752,7 +752,7 @@ async fn port_39378_strips_cors_and_applies_csp() {
     let cmux_response = proxy
         .request(
             Method::GET,
-            "cmux-test-base-39378.cmux.sh",
+            "cmux-test-base-39378.cmux.app",
             "/",
             &[("Origin", "https://cmux.dev")],
         )
@@ -801,7 +801,7 @@ async fn port_39378_strips_cors_and_applies_csp() {
     let cmux_local_response = proxy
         .request(
             Method::GET,
-            "cmux-test-base-39378.cmux.sh",
+            "cmux-test-base-39378.cmux.app",
             "/",
             &[("Origin", "http://localhost:5173")],
         )
@@ -851,14 +851,14 @@ async fn port_39378_strips_cors_and_applies_csp() {
             .get("content-security-policy")
             .and_then(|v| v.to_str().ok()),
         Some(
-            "frame-ancestors 'self' https://cmux.local http://cmux.local https://www.cmux.sh https://cmux.sh https://www.cmux.dev https://cmux.dev http://localhost:5173;"
+            "frame-ancestors 'self' https://cmux.local http://cmux.local https://www.cmux.app https://cmux.app https://www.cmux.dev https://cmux.dev http://localhost:5173;"
         )
     );
 
     let head_cmux_response = proxy
         .request(
             Method::HEAD,
-            "cmux-test-base-39378.cmux.sh",
+            "cmux-test-base-39378.cmux.app",
             "/",
             &[("Origin", "https://cmux.dev")],
         )
@@ -944,7 +944,7 @@ async fn websocket_proxy_for_cmux_route_forwards_workspace_header() {
     let (backend, header_rx) = TestWsBackend::spawn_capture_workspace_header().await;
     let proxy = TestProxy::spawn().await;
 
-    let host = format!("cmux-demo-feature-{}.cmux.sh", backend.port());
+    let host = format!("cmux-demo-feature-{}.cmux.app", backend.port());
 
     let url = format!("ws://{}{}", proxy.addr, "/ws");
     let mut request = url.into_client_request().expect("request");
@@ -972,7 +972,7 @@ async fn websocket_proxy_for_port_route() {
     let backend = TestWsBackend::spawn_echo().await;
     let proxy = TestProxy::spawn().await;
 
-    let host = format!("port-{}-test.cmux.sh", backend.port());
+    let host = format!("port-{}-test.cmux.app", backend.port());
 
     let url = format!("ws://{}{}", proxy.addr, "/ws");
     let mut request = url.into_client_request().expect("request");
@@ -998,7 +998,7 @@ async fn websocket_proxy_for_cmux_route() {
     let backend = TestWsBackend::spawn_echo().await;
     let proxy = TestProxy::spawn().await;
 
-    let host = format!("cmux-demo-feature-{}.cmux.sh", backend.port());
+    let host = format!("cmux-demo-feature-{}.cmux.app", backend.port());
 
     let url = format!("ws://{}{}", proxy.addr, "/ws");
     let mut request = url.into_client_request().expect("request");

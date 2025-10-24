@@ -31,7 +31,7 @@ const GIT_COMMIT: &str = match option_env!("GIT_COMMIT") {
     None => "unknown",
 };
 
-const CSP_FRAME_ANCESTORS_PORT_39378: &str = "frame-ancestors 'self' https://cmux.local http://cmux.local https://www.cmux.sh https://cmux.sh https://www.cmux.dev https://cmux.dev http://localhost:5173;";
+const CSP_FRAME_ANCESTORS_PORT_39378: &str = "frame-ancestors 'self' https://cmux.local http://cmux.local https://www.cmux.app https://cmux.app https://www.cmux.dev https://cmux.dev http://localhost:5173;";
 
 #[derive(Clone, Debug)]
 pub struct ProxyConfig {
@@ -1080,16 +1080,16 @@ fn normalize_host(value: &str) -> String {
 }
 
 fn parse_cmux_host(host: &str) -> Option<(Option<String>, String)> {
-    if host == "cmux.sh" {
-        return Some((None, "cmux.sh".to_string()));
+    if host == "cmux.app" {
+        return Some((None, "cmux.app".to_string()));
     }
-    if let Some(prefix) = host.strip_suffix(".cmux.sh") {
+    if let Some(prefix) = host.strip_suffix(".cmux.app") {
         let subdomain = if prefix.is_empty() {
             None
         } else {
             Some(prefix.to_string())
         };
-        return Some((subdomain, "cmux.sh".to_string()));
+        return Some((subdomain, "cmux.app".to_string()));
     }
 
     if host == "cmux.localhost" {

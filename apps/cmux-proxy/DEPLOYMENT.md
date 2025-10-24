@@ -5,9 +5,9 @@ This guide explains how to deploy the cmux-proxy server to a GCP VM in us-centra
 ## Overview
 
 cmux-proxy is a Node.js/Bun-based proxy server that provides the same functionality as the Cloudflare edge-router but runs on a GCP VM. It handles:
-- Port-based routing (port-{port}-{morphId}.cmux.sh)
-- Cmux-prefixed routing (cmux-{morphId}-{scope}-{port}.cmux.sh)
-- Workspace routing ({workspace}-{port}-{vmSlug}.cmux.sh)
+- Port-based routing (port-{port}-{morphId}.cmux.app)
+- Cmux-prefixed routing (cmux-{morphId}-{scope}-{port}.cmux.app)
+- Workspace routing ({workspace}-{port}-{vmSlug}.cmux.app)
 - HTML rewriting with service worker injection
 - JavaScript location API interception
 - WebSocket passthrough
@@ -140,7 +140,7 @@ gcloud compute addresses create cmux-proxy-ip --region=us-central1
 # Get the IP address
 gcloud compute addresses describe cmux-proxy-ip --region=us-central1 --format="get(address)"
 
-# Update DNS records for *.cmux.sh to point to this IP
+# Update DNS records for *.cmux.app to point to this IP
 ```
 
 ### Step 5: Setup Load Balancer with SSL (Production)
@@ -186,7 +186,7 @@ gcloud compute target-http-proxies create cmux-proxy-http-proxy \
 
 # Create HTTPS proxy (requires SSL certificate)
 gcloud compute ssl-certificates create cmux-proxy-ssl-cert \
-  --domains=*.cmux.sh,cmux.sh \
+  --domains=*.cmux.app,cmux.app \
   --global
 
 gcloud compute target-https-proxies create cmux-proxy-https-proxy \
@@ -349,7 +349,7 @@ Total estimated cost: **$50-100/month** depending on traffic.
 
 ## Next Steps
 
-1. Set up DNS records for *.cmux.sh to point to your GCP load balancer
+1. Set up DNS records for *.cmux.app to point to your GCP load balancer
 2. Configure SSL certificates for HTTPS
 3. Set up Cloud Monitoring and alerting
 4. Implement backup and disaster recovery plan
