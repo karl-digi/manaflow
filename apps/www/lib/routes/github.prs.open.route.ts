@@ -27,6 +27,7 @@ type GitHubPrBasic = {
 type GitHubPrDetail = GitHubPrBasic & {
   merged_at: string | null;
   node_id: string;
+  mergeable_state?: string | null;
 };
 
 type ConvexClient = ReturnType<typeof getConvex>;
@@ -594,9 +595,13 @@ githubPrsOpenRouter.openapi(
               repo,
               number: detail.number,
             });
-          }
+           }
 
-          await mergePullRequest({
+           if (detail.mergeable_state === 'conflicting') {
+             throw new Error('This branch has conflicts that must be resolved');
+           }
+
+           await mergePullRequest({
             octokit,
             owner,
             repo,
@@ -1139,6 +1144,7 @@ async function fetchPullRequestDetail({
     draft: data.draft ?? undefined,
     merged_at: data.merged_at,
     node_id: data.node_id,
+    mergeable_state: data.mergeable_state,
   };
 }
 
