@@ -617,6 +617,15 @@ export async function spawnAgent(
     const unsetCommand =
       unsetEnvVars.length > 0 ? `unset ${unsetEnvVars.join(" ")}; ` : "";
 
+    // Build export command for CMUX environment variables
+    // Tmux does not pass environment variables to new sessions by default,
+    // so we need to explicitly export them in the bash command
+    const cmuxEnvVars = Object.entries(envVars)
+      .filter(([key]) => key.startsWith("CMUX_"))
+      .map(([key, value]) => `${key}=${JSON.stringify(value)}`)
+      .join(" ");
+    const exportCommand = cmuxEnvVars ? `export ${cmuxEnvVars}; ` : "";
+
     // For Codex agents, use direct command execution to preserve notify argument
     // The notify command contains complex JSON that gets mangled through shell layers
     const tmuxArgs = agent.name.toLowerCase().includes("codex")
@@ -633,6 +642,11 @@ export async function spawnAgent(
             if (arg === "$CMUX_PROMPT") {
               return processedTaskDescription;
             }
+            // Replace $CMUX_TASK_RUN_ID with actual value for Codex
+            // since Codex doesn't go through bash shell expansion
+            if (arg.includes("$CMUX_TASK_RUN_ID")) {
+              return arg.replace(/\$CMUX_TASK_RUN_ID/g, taskRunId);
+            }
             return arg;
           }),
         ]
@@ -643,7 +657,7 @@ export async function spawnAgent(
           tmuxSessionName,
           "bash",
           "-lc",
-          `${unsetCommand}exec ${commandString}`,
+          `${exportCommand}${unsetCommand}exec ${commandString}`,
         ];
 
     const terminalCreationCommand: WorkerCreateTerminal = {
