@@ -28,6 +28,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ElectronLogsCommandItems } from "./command-bar/ElectronLogsCommandItems";
+import { enhancedFilter } from "./command-bar/filter";
 
 interface CommandBarProps {
   teamSlugOrId: string;
@@ -617,6 +618,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         label="Command Menu"
         title="Command Menu"
         loop
+        filter={enhancedFilter}
         className="fixed inset-0 z-[var(--z-commandbar)] flex items-start justify-center pt-[20vh] pointer-events-none"
         onKeyDown={(e) => {
           if (e.key === "Escape") {
@@ -661,6 +663,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                   </div>
                   <Command.Item
                     value="new-task"
+                    keywords={["new", "task", "create", "add", "start"]}
                     onSelect={() => handleSelect("new-task")}
                     className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer
                 hover:bg-neutral-100 dark:hover:bg-neutral-800
@@ -672,6 +675,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                   </Command.Item>
                   <Command.Item
                     value="pull-requests"
+                    keywords={["pull", "requests", "pr", "prs", "git"]}
                     onSelect={() => handleSelect("pull-requests")}
                     className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer
                 hover:bg-neutral-100 dark:hover:bg-neutral-800
@@ -709,6 +713,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                   </div>
                   <Command.Item
                     value="home"
+                    keywords={["home", "dashboard", "main"]}
                     onSelect={() => handleSelect("home")}
                     className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer
                 hover:bg-neutral-100 dark:hover:bg-neutral-800
@@ -720,6 +725,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                   </Command.Item>
                   <Command.Item
                     value="environments"
+                    keywords={["environments", "servers", "instances", "containers"]}
                     onSelect={() => handleSelect("environments")}
                     className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer
                 hover:bg-neutral-100 dark:hover:bg-neutral-800
@@ -731,6 +737,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                   </Command.Item>
                   <Command.Item
                     value="settings"
+                    keywords={["settings", "preferences", "config", "configuration"]}
                     onSelect={() => handleSelect("settings")}
                     className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer
                 hover:bg-neutral-100 dark:hover:bg-neutral-800
@@ -784,6 +791,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                   </div>
                   <Command.Item
                     value="theme-light"
+                    keywords={["theme", "light", "mode", "bright"]}
                     onSelect={() => handleSelect("theme-light")}
                     className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer                 hover:bg-neutral-100 dark:hover:bg-neutral-800
                 data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
@@ -794,6 +802,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                   </Command.Item>
                   <Command.Item
                     value="theme-dark"
+                    keywords={["theme", "dark", "mode", "night"]}
                     onSelect={() => handleSelect("theme-dark")}
                     className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer                 hover:bg-neutral-100 dark:hover:bg-neutral-800
                 data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
@@ -804,6 +813,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                   </Command.Item>
                   <Command.Item
                     value="theme-system"
+                    keywords={["theme", "system", "mode", "auto", "default"]}
                     onSelect={() => handleSelect("theme-system")}
                     className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer                 hover:bg-neutral-100 dark:hover:bg-neutral-800
                 data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
@@ -821,6 +831,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                     </div>
                     <Command.Item
                       value="sign-out"
+                      keywords={["sign", "out", "logout", "log", "exit"]}
                       onSelect={() => handleSelect("sign-out")}
                       className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer
                 hover:bg-neutral-100 dark:hover:bg-neutral-800
@@ -840,10 +851,12 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                     </div>
                     {allTasks.slice(0, 9).flatMap((task, index) => {
                       const run = task.selectedTaskRun;
+                      const taskTitle = task.pullRequestTitle || task.text;
                       const items = [
                         <Command.Item
                           key={task._id}
                           value={`${index + 1}:task:${task._id}`}
+                          keywords={[taskTitle, "task", String(index + 1)]}
                           onSelect={() => handleSelect(`task:${task._id}`)}
                           data-value={`task:${task._id}`}
                           className="flex items-center gap-3 px-3 py-2.5 mx-1 rounded-md cursor-pointer                     hover:bg-neutral-100 dark:hover:bg-neutral-800
@@ -859,7 +872,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                             {index + 1}
                           </span>
                           <span className="flex-1 truncate text-sm">
-                            {task.pullRequestTitle || task.text}
+                            {taskTitle}
                           </span>
                           {task.isCompleted ? (
                             <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
@@ -878,6 +891,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                           <Command.Item
                             key={`${task._id}-vs-${run._id}`}
                             value={`${index + 1} vs:task:${task._id}`}
+                            keywords={[taskTitle, "vs", "vscode", "task", String(index + 1)]}
                             onSelect={() => handleSelect(`task:${task._id}:vs`)}
                             data-value={`task:${task._id}:vs`}
                             className="flex items-center gap-3 px-3 py-2.5 mx-1 rounded-md cursor-pointer                     hover:bg-neutral-100 dark:hover:bg-neutral-800
@@ -893,7 +907,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                               {index + 1} VS
                             </span>
                             <span className="flex-1 truncate text-sm">
-                              {task.pullRequestTitle || task.text}
+                              {taskTitle}
                             </span>
                             {task.isCompleted ? (
                               <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
@@ -911,6 +925,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                           <Command.Item
                             key={`${task._id}-gitdiff-${run._id}`}
                             value={`${index + 1} git diff:task:${task._id}`}
+                            keywords={[taskTitle, "git", "diff", "changes", "task", String(index + 1)]}
                             onSelect={() =>
                               handleSelect(`task:${task._id}:gitdiff`)
                             }
@@ -928,7 +943,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                               {index + 1} git diff
                             </span>
                             <span className="flex-1 truncate text-sm">
-                              {task.pullRequestTitle || task.text}
+                              {taskTitle}
                             </span>
                             {task.isCompleted ? (
                               <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
@@ -956,6 +971,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                       </div>
                       <Command.Item
                         value="updates:check"
+                        keywords={["updates", "check", "upgrade", "version"]}
                         onSelect={() => handleSelect("updates:check")}
                         className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer
                 hover:bg-neutral-100 dark:hover:bg-neutral-800
