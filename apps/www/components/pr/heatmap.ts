@@ -1,5 +1,4 @@
-import { computeNewLineNumber, isDelete, type FileData } from "react-diff-view";
-import type { RangeTokenNode } from "react-diff-view";
+import { DiffFile, DiffLineType } from "@git-diff-view/core";
 
 export type ReviewHeatmapLine = {
   lineNumber: number | null;
@@ -15,7 +14,10 @@ export type DiffHeatmap = {
   entries: Map<number, ResolvedHeatmapLine>;
 };
 
-export type HeatmapRangeNode = RangeTokenNode & {
+export type HeatmapRangeNode = {
+  lineNumber: number;
+  start: number;
+  length: number;
   className: string;
 };
 
@@ -93,7 +95,7 @@ export function parseReviewHeatmap(raw: unknown): ReviewHeatmapLine[] {
 }
 
 export function buildDiffHeatmap(
-  diff: FileData | null,
+  diff: DiffFile | null,
   reviewHeatmap: ReviewHeatmapLine[]
 ): DiffHeatmap | null {
   if (!diff || reviewHeatmap.length === 0) {
@@ -143,7 +145,6 @@ export function buildDiffHeatmap(
 
     const charTier = tier > 0 ? tier : 1;
     const range: HeatmapRangeNode = {
-      type: "span",
       lineNumber,
       start: highlightIndex,
       length: Math.min(1, Math.max(content.length - highlightIndex, 1)),
@@ -282,22 +283,35 @@ function normalizeLineText(value: string | null | undefined): string | null {
   return value.replace(/\s+/g, " ").trim();
 }
 
-function collectNewLineContent(diff: FileData): Map<number, string> {
+function collectNewLineContent(diff: DiffFile): Map<number, string> {
   const map = new Map<number, string>();
+  const totalLines = diff.splitLineLength ?? 0;
 
-  for (const hunk of diff.hunks) {
-    for (const change of hunk.changes) {
-      const lineNumber = computeNewLineNumber(change);
-      if (lineNumber < 0) {
-        continue;
-      }
-
-      if (isDelete(change)) {
-        continue;
-      }
-
-      map.set(lineNumber, change.content ?? "");
+  for (let index = 0; index < totalLines; index += 1) {
+    const line = diff.getSplitRightLine(index);
+    if (!line) {
+      continue;
     }
+
+    const lineNumber =
+      typeof line.lineNumber === "number" ? line.lineNumber : null;
+    if (!lineNumber || lineNumber <= 0) {
+      continue;
+    }
+
+    const diffLine = line.diff;
+    if (diffLine && diffLine.type === DiffLineType.Delete) {
+      continue;
+    }
+
+    const value =
+      typeof line.value === "string"
+        ? line.value
+        : diffLine && typeof diffLine.text === "string"
+          ? diffLine.text
+          : "";
+
+    map.set(lineNumber, value);
   }
 
   return map;

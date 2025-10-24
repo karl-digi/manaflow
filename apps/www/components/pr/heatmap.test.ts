@@ -1,5 +1,5 @@
+import { DiffFile } from "@git-diff-view/core";
 import { describe, expect, it } from "vitest";
-import { computeNewLineNumber, parseDiff } from "react-diff-view";
 
 import { buildDiffHeatmap, parseReviewHeatmap } from "./heatmap";
 
@@ -63,9 +63,20 @@ describe("parseReviewHeatmap", () => {
 
 describe("buildDiffHeatmap", () => {
   it("produces tiered classes and character highlights", () => {
-    const files = parseDiff(SAMPLE_DIFF);
-    const file = files[0] ?? null;
-    expect(file).not.toBeNull();
+    const normalizedDiff = `${SAMPLE_DIFF.trimStart()}\n`;
+    const diffFile = new DiffFile(
+      "example.ts",
+      "",
+      "example.ts",
+      "",
+      [normalizedDiff],
+      "ts",
+      "ts"
+    );
+    diffFile.initTheme("light");
+    diffFile.initRaw();
+    diffFile.buildSplitDiffLines();
+    diffFile.buildUnifiedDiffLines();
 
     const review = parseReviewHeatmap({
       response: JSON.stringify({
@@ -92,7 +103,7 @@ describe("buildDiffHeatmap", () => {
       }),
     });
 
-    const heatmap = buildDiffHeatmap(file, review);
+    const heatmap = buildDiffHeatmap(diffFile, review);
     expect(heatmap).not.toBeNull();
     if (!heatmap) {
       return;
@@ -116,13 +127,17 @@ describe("buildDiffHeatmap", () => {
       return;
     }
 
-    const lineFourChange = file!.hunks[0]?.changes.find(
-      (change) => computeNewLineNumber(change) === 4
-    );
-    const expectedStart = Math.max(
-      (lineFourChange?.content.length ?? 1) - 1,
-      0
-    );
+    let lineFourContent = "";
+    const totalLines = diffFile.splitLineLength ?? 0;
+    for (let index = 0; index < totalLines; index += 1) {
+      const line = diffFile.getSplitRightLine(index);
+      if (line?.lineNumber === 4) {
+        lineFourContent = line.value ?? "";
+        break;
+      }
+    }
+
+    const expectedStart = Math.max(lineFourContent.length - 1, 0);
     expect(rangeForLine4.start).toBe(expectedStart);
     expect(rangeForLine4.length).toBe(1);
   });
