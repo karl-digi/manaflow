@@ -11,6 +11,7 @@ function inferVendor(agentName: string): string {
   if (lower.startsWith("codex/")) return "openai";
   if (lower.startsWith("claude/")) return "claude";
   if (lower.startsWith("gemini/")) return "gemini";
+  if (lower.startsWith("kimi/")) return "kimi";
   if (lower.startsWith("opencode/")) return "opencode";
   if (lower.startsWith("qwen/")) return "qwen";
   if (lower.startsWith("cursor/")) return "cursor";
@@ -23,6 +24,7 @@ function fallbackBadge(provider: string, className?: string) {
     amp: { bg: "#7C3AED", fg: "#ffffff", label: "A" },
     opencode: { bg: "#111827", fg: "#ffffff", label: "OC" },
     cursor: { bg: "#0F172A", fg: "#ffffff", label: "C" },
+    kimi: { bg: "#1F2A5A", fg: "#ffffff", label: "K" },
     other: {
       bg: "#6B7280",
       fg: "#ffffff",
@@ -218,21 +220,29 @@ export const AgentLogo = memo(function AgentLogo({
   //     </svg>
   //   );
   // }
-  // if (vendor === "kimi") {
-  //   return (
-  //     <svg viewBox="0 0 24 24" className={className} aria-hidden>
-  //       <path
-  //         d="M19.738 5.776c.163-.209.306-.4.457-.585.07-.087.064-.153-.004-.244-.655-.861-.717-1.817-.34-2.787.283-.73.909-1.072 1.674-1.145.477-.045.945.004 1.379.236.57.305.902.77 1.01 1.412.086.512.07 1.012-.075 1.508-.257.878-.888 1.333-1.753 1.448-.718.096-1.446.108-2.17.157-.056.004-.113 0-.178 0z"
-  //         fill="#027AFF"
-  //       />
-  //       <path
-  //         d="M17.962 1.844h-4.326l-3.425 7.81H5.369V1.878H1.5V22h3.87v-8.477h6.824a3.025 3.025 0 002.743-1.75V22h3.87v-8.477a3.87 3.87 0 00-3.588-3.86v-.01h-2.125a3.94 3.94 0 002.323-2.12l2.545-5.689z"
-  //         fill="currentColor"
-  //         fillRule="evenodd"
-  //       />
-  //     </svg>
-  //   );
-  // }
+  if (vendor === "kimi") {
+    return (
+      <svg viewBox="0 0 48 48" className={className} aria-hidden>
+        <defs>
+          <linearGradient
+            id="kimi_grad"
+            x1="0%"
+            x2="100%"
+            y1="0%"
+            y2="100%"
+          >
+            <stop offset="0%" stopColor="#0EA5E9" />
+            <stop offset="100%" stopColor="#1E3A8A" />
+          </linearGradient>
+        </defs>
+        <rect width="48" height="48" rx="12" fill="url(#kimi_grad)" />
+        <path
+          d="M15 12h6v9.6l7.6-9.6H35l-9.3 11.1L35 36h-6.4l-7.6-9.6V36h-6V12Z"
+          fill="#ffffff"
+        />
+      </svg>
+    );
+  }
   // if (vendor === "grok") {
   //   return (
   //     <svg
