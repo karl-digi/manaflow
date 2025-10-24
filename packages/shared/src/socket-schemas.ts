@@ -309,6 +309,31 @@ export const ArchiveTaskSchema = z.object({
   taskId: typedZid("tasks"),
 });
 
+// Workspace start schema
+export const WorkspaceStartSchema = z.object({
+  environmentId: typedZid("environments"),
+});
+
+// Workspace start response schema
+export const WorkspaceStartResponseSchema = z.object({
+  success: z.boolean(),
+  taskId: typedZid("tasks").optional(),
+  error: z.string().optional(),
+});
+
+// Workspace started schema (similar to TaskStartedSchema)
+export const WorkspaceStartedSchema = z.object({
+  taskId: typedZid("tasks"),
+  worktreePath: z.string(),
+  terminalId: z.string(),
+});
+
+// Workspace failed schema (similar to TaskErrorSchema)
+export const WorkspaceFailedSchema = z.object({
+  taskId: typedZid("tasks"),
+  error: z.string(),
+});
+
 export const SpawnFromCommentSchema = z.object({
   url: z.string(),
   page: z.string(),
@@ -420,6 +445,10 @@ export type GitHubCreateDraftPr = z.infer<typeof GitHubCreateDraftPrSchema>;
 export type GitHubSyncPrState = z.infer<typeof GitHubSyncPrStateSchema>;
 export type GitHubMergeBranch = z.infer<typeof GitHubMergeBranchSchema>;
 export type ArchiveTask = z.infer<typeof ArchiveTaskSchema>;
+export type WorkspaceStart = z.infer<typeof WorkspaceStartSchema>;
+export type WorkspaceStartResponse = z.infer<typeof WorkspaceStartResponseSchema>;
+export type WorkspaceStarted = z.infer<typeof WorkspaceStartedSchema>;
+export type WorkspaceFailed = z.infer<typeof WorkspaceFailedSchema>;
 export type SpawnFromComment = z.infer<typeof SpawnFromCommentSchema>;
 export type ProviderStatus = z.infer<typeof ProviderStatusSchema>;
 export type DockerStatus = z.infer<typeof DockerStatusSchema>;
@@ -524,6 +553,10 @@ export interface ClientToServerEvents {
       error?: string;
     }) => void
   ) => void;
+  "workspace-start": (
+    data: WorkspaceStart,
+    callback: (response: WorkspaceStartResponse) => void
+  ) => void;
 }
 
 export interface ServerToClientEvents {
@@ -537,6 +570,8 @@ export interface ServerToClientEvents {
   "available-editors": (data: AvailableEditors) => void;
   "task-started": (data: TaskStarted) => void;
   "task-failed": (data: TaskError) => void;
+  "workspace-started": (data: WorkspaceStarted) => void;
+  "workspace-failed": (data: WorkspaceFailed) => void;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type

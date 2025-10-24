@@ -56,7 +56,7 @@ export abstract class VSCodeInstance extends EventEmitter {
   }
 
   // Static methods to manage instances
-  static getInstances(): Map<string, VSCodeInstance> {
+  static getInstances(): Map<Id<"taskRuns">, VSCodeInstance> {
     return VSCodeInstance.instances;
   }
 
@@ -225,6 +225,10 @@ export abstract class VSCodeInstance extends EventEmitter {
 
   getTaskRunId(): Id<"taskRuns"> {
     return this.taskRunId;
+  }
+
+  getTaskId(): Id<"tasks"> {
+    return this.taskId;
   }
 
   abstract getName(): string;

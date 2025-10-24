@@ -658,6 +658,38 @@ export const checkAndEvaluateCrown = authMutation({
   },
 });
 
+export const createUntitledWorkspace = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    environmentId: v.id("environments"),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    
+    // Verify the environment exists and belongs to the team
+    const environment = await ctx.db.get(args.environmentId);
+    if (!environment || environment.teamId !== teamId) {
+      throw new Error("Environment not found");
+    }
+    
+    const now = Date.now();
+    const taskId = await ctx.db.insert("tasks", {
+      text: "Untitled Workspace",
+      description: "Workspace started without a specific task",
+      isCompleted: false,
+      createdAt: now,
+      updatedAt: now,
+      images: [],
+      userId,
+      teamId,
+      environmentId: args.environmentId,
+    });
+
+    return taskId;
+  },
+});
+
 export const getByIdInternal = internalQuery({
   args: { id: v.id("tasks") },
   handler: async (ctx, args) => {

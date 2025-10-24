@@ -40,6 +40,12 @@ import type { GitRepoInfo } from "./server";
 import { getPRTitleFromTaskDescription } from "./utils/branchNameGenerator";
 import { getConvex } from "./utils/convexClient";
 import { ensureRunWorktreeAndBranch } from "./utils/ensureRunWorktree";
+import { 
+  createUntitledWorkspace, 
+  validateEnvironmentForWorkspace, 
+  prepareWorkspaceConfig 
+} from "./utils/workspaceUtils";
+import { workerExec } from "./utils/workerExec";
 import { serverLogger } from "./utils/fileLogger";
 import { getGitHubTokenFromKeychain } from "./utils/getGitHubToken";
 import { createDraftPr, fetchPrDetail } from "./utils/githubPr";
@@ -47,6 +53,7 @@ import { getOctokit } from "./utils/octokit";
 import { checkAllProvidersStatus } from "./utils/providerStatus";
 import { refreshGitHubData } from "./utils/refreshGitHubData";
 import { runWithAuth, runWithAuthToken } from "./utils/requestContext";
+import { VSCodeInstance } from "./vscode/VSCodeInstance";
 import { DockerVSCodeInstance } from "./vscode/DockerVSCodeInstance";
 import { getProjectPaths } from "./workspace";
 import {
@@ -564,6 +571,193 @@ export function setupSocketHandlers(
         serverLogger.error("Error in start-task:", error);
         callback({
           taskId,
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
+      }
+    });
+
+    socket.on("workspace-start", async (data, callback) => {
+      try {
+        const { environmentId } = data;
+        
+        if (!environmentId) {
+          callback({
+            success: false,
+            error: "Environment ID is required",
+          });
+          return;
+        }
+
+        // Validate environment configuration
+        const validation = await validateEnvironmentForWorkspace(safeTeam, environmentId);
+        if (!validation.valid) {
+          callback({
+            success: false,
+            error: validation.error,
+          });
+          return;
+        }
+
+        // Create untitled workspace task using utility function
+        const workspaceResult = await createUntitledWorkspace({
+          teamSlugOrId: safeTeam,
+          environmentId,
+        });
+
+        const taskId = workspaceResult.taskId;
+        serverLogger.info("Created untitled workspace task:", { taskId });
+
+        callback({
+          success: true,
+          taskId,
+        });
+
+        // Get environment details for workspace setup
+        const environment = await getConvex().query(api.environments.get, {
+          teamSlugOrId: safeTeam,
+          id: environmentId,
+        });
+
+        if (!environment) {
+          rt.emit("workspace-failed", {
+            taskId,
+            error: "Environment not found",
+          });
+          return;
+        }
+
+        // Prepare workspace configuration using utility function
+        const workspaceConfig = prepareWorkspaceConfig(environment);
+
+        // For untitled workspace, we'll spawn a minimal agent setup
+        // This creates the workspace environment without running specific AI tasks
+        const agentResults = await spawnAllAgents(
+          taskId,
+          {
+            ...workspaceConfig,
+            environmentId,
+          },
+          safeTeam,
+        );
+
+        // Check if at least one agent spawned successfully
+        const successfulAgents = agentResults.filter(
+          (result) => result.success,
+        );
+        
+        if (successfulAgents.length === 0) {
+          const errors = agentResults
+            .filter((r) => !r.success)
+            .map((r) => `${r.agentName}: ${r.error || "Unknown error"}`)
+            .join("; ");
+          serverLogger.error(
+            `Failed to spawn workspace agents for task ${taskId}:`,
+            errors,
+          );
+          rt.emit("workspace-failed", {
+            taskId,
+            error: errors || "Failed to spawn workspace agents",
+          });
+          return;
+        }
+
+        const primaryAgent = successfulAgents[0];
+
+        // Execute environment start scripts if configured
+        if (environment.devScript || environment.maintenanceScript) {
+          try {
+            // Get the VSCodeInstance to access the worker socket
+            let vscodeInstance: any = null;
+            for (const [id, instance] of VSCodeInstance.getInstances()) {
+              if (String(id) === String(primaryAgent.taskRunId) || instance.getTaskId?.() === taskId) {
+                vscodeInstance = instance;
+                break;
+              }
+            }
+
+            if (vscodeInstance) {
+              const workerSocket = vscodeInstance.getWorkerSocket();
+              if (workerSocket) {
+                if (environment.devScript) {
+                  serverLogger.info(`Executing dev script for workspace ${taskId}: ${environment.devScript}`);
+                  await workerExec({
+                    workerSocket,
+                    command: "bash",
+                    args: ["-lc", `echo "Running development script..." && ${environment.devScript}`],
+                    cwd: primaryAgent.worktreePath || "/root/workspace",
+                    env: {}, // Empty environment object
+                    timeout: 300000, // 5 minute timeout for dev script
+                  });
+                  serverLogger.info(`Dev script completed for workspace ${taskId}`);
+                }
+
+                if (environment.maintenanceScript) {
+                  serverLogger.info(`Executing maintenance script for workspace ${taskId}: ${environment.maintenanceScript}`);
+                  await workerExec({
+                    workerSocket,
+                    command: "bash", 
+                    args: ["-lc", `echo "Running maintenance script..." && ${environment.maintenanceScript}`],
+                    cwd: primaryAgent.worktreePath || "/root/workspace",
+                    env: {}, // Empty environment object
+                    timeout: 300000, // 5 minute timeout for maintenance script
+                  });
+                  serverLogger.info(`Maintenance script completed for workspace ${taskId}`);
+                }
+              } else {
+                serverLogger.warn(`No worker socket available for script execution in workspace ${taskId}`);
+              }
+            } else {
+              serverLogger.warn(`No VSCode instance available for script execution in workspace ${taskId}`);
+            }
+          } catch (scriptError) {
+            serverLogger.error(`Error executing environment scripts for workspace ${taskId}:`, scriptError);
+            // Don't fail the workspace setup, just log the error
+          }
+        }
+
+        // Emit workspace-started event
+        const workspaceStartedPayload = {
+          taskId,
+          worktreePath: primaryAgent.worktreePath,
+          terminalId: primaryAgent.terminalId,
+        };
+        rt.emit("workspace-started", workspaceStartedPayload);
+
+        // Emit VSCode URL if available
+        if (primaryAgent.vscodeUrl) {
+          rt.emit("vscode-spawned", {
+            instanceId: primaryAgent.terminalId,
+            url: primaryAgent.vscodeUrl.replace(
+              "/?folder=/root/workspace",
+              "",
+            ),
+            workspaceUrl: primaryAgent.vscodeUrl,
+            provider: "docker", // Local mode for workspace
+          });
+        }
+
+        // Set up file watching for git changes
+        try {
+          void gitDiffManager.watchWorkspace(
+            primaryAgent.worktreePath,
+            (changedPath) => {
+              rt.emit("git-file-changed", {
+                workspacePath: primaryAgent.worktreePath,
+                filePath: changedPath,
+              });
+            },
+          );
+        } catch (error) {
+          serverLogger.warn(
+            "Could not set up file watching for workspace:",
+            error,
+          );
+        }
+
+      } catch (error) {
+        serverLogger.error("Error in workspace-start:", error);
+        callback({
+          success: false,
           error: error instanceof Error ? error.message : "Unknown error",
         });
       }

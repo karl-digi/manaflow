@@ -5,6 +5,7 @@ import {
 import { DashboardInputControls } from "@/components/dashboard/DashboardInputControls";
 import { DashboardInputFooter } from "@/components/dashboard/DashboardInputFooter";
 import { DashboardStartTaskButton } from "@/components/dashboard/DashboardStartTaskButton";
+import { DashboardStartWorkspaceButton } from "@/components/dashboard/DashboardStartWorkspaceButton";
 import { TaskList } from "@/components/dashboard/TaskList";
 import { FloatingPane } from "@/components/floating-pane";
 import { GitHubIcon } from "@/components/icons/github";
@@ -933,10 +934,16 @@ function DashboardMainCard({
           branchDisabled={branchDisabled}
           providerStatus={providerStatus}
         />
-        <DashboardStartTaskButton
-          canSubmit={canSubmit}
-          onStartTask={onStartTask}
-        />
+        <div className="flex gap-1">
+          <DashboardStartTaskButton
+            canSubmit={canSubmit}
+            onStartTask={onStartTask}
+          />
+          <DashboardStartWorkspaceButton
+            selectedEnvironment={lexicalEnvironmentId ? `env:${lexicalEnvironmentId}` : undefined}
+            disabledReason={!lexicalEnvironmentId ? "Select an environment to start workspace" : undefined}
+          />
+        </div>
       </DashboardInputFooter>
     </div>
   );
