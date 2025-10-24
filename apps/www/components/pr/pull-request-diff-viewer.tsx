@@ -7,8 +7,10 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import type { ReactElement, ReactNode } from "react";
+import { createPortal } from "react-dom";
 import {
   ChevronLeft,
   ChevronDown,
@@ -22,21 +24,13 @@ import {
   Sparkles,
 } from "lucide-react";
 import {
-  Decoration,
-  Diff,
-  Hunk,
   computeNewLineNumber,
   parseDiff,
-  pickRanges,
   getChangeKey,
-  tokenize,
-  type ChangeData,
   type FileData,
-  type HunkTokens,
-  type RenderGutter,
-  type RenderToken,
 } from "react-diff-view";
-import "react-diff-view/style/index.css";
+import { DiffFile, DiffModeEnum, DiffView } from "@git-diff-view/react";
+import "@git-diff-view/react/styles/diff-view.css";
 
 import { api } from "@cmux/convex/api";
 import { useConvexQuery } from "@convex-dev/react-query";
@@ -49,8 +43,6 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { refractor } from "refractor/all";
-
 import {
   buildDiffHeatmap,
   parseReviewHeatmap,
@@ -73,19 +65,10 @@ type ParsedFileDiff = {
   file: GithubFileChange;
   anchorId: string;
   diff: FileData | null;
+  diffFile: DiffFile | null;
+  diffText: string | null;
   error?: string;
 };
-
-type RefractorNode =
-  | {
-      type: "text";
-      value: string;
-    }
-  | {
-      type: string;
-      children?: RefractorNode[];
-      [key: string]: unknown;
-    };
 
 const extensionToLanguage: Record<string, string> = {
   bash: "bash",
@@ -168,46 +151,6 @@ const filenameLanguageMap: Record<string, string> = {
   "bun.lock": "toml",
 };
 
-type RefractorLike = {
-  highlight(code: string, language: string): unknown;
-};
-
-function createRefractorAdapter(base: RefractorLike) {
-  const isNodeWithChildren = (
-    value: unknown
-  ): value is { children: RefractorNode[] } => {
-    return (
-      typeof value === "object" &&
-      value !== null &&
-      "children" in value &&
-      Array.isArray((value as { children?: unknown }).children)
-    );
-  };
-
-  return {
-    highlight(code: string, language: string): RefractorNode[] {
-      const result = base.highlight(code, language);
-
-      if (Array.isArray(result)) {
-        return result;
-      }
-
-      if (isNodeWithChildren(result)) {
-        return result.children;
-      }
-
-      const fallbackNode: RefractorNode = {
-        type: "text",
-        value: code,
-      };
-
-      return [fallbackNode];
-    },
-  };
-}
-
-const refractorAdapter = createRefractorAdapter(refractor);
-
 type FileOutput =
   | FunctionReturnType<typeof api.codeReview.listFileOutputsForPr>[number]
   | FunctionReturnType<typeof api.codeReview.listFileOutputsForComparison>[number];
@@ -215,6 +158,11 @@ type FileOutput =
 type HeatmapTooltipMeta = {
   score: number;
   reason: string | null;
+};
+
+type GutterPortalTarget = {
+  target: HTMLSpanElement;
+  lineNumber: number;
 };
 
 type FileDiffViewModel = {
@@ -439,35 +387,50 @@ export function PullRequestDiffViewer({
 
   const parsedDiffs = useMemo<ParsedFileDiff[]>(() => {
     return files.map((file) => {
+      const anchorId = file.filename;
       if (!file.patch) {
         return {
           file,
-          anchorId: file.filename,
+          anchorId,
           diff: null,
+          diffFile: null,
+          diffText: null,
           error:
             "GitHub did not return a textual diff for this file. It may be binary or too large.",
         };
       }
 
+      const diffText = buildDiffText(file);
+      let parsedDiff: FileData | null = null;
+      let diffFile: DiffFile | null = null;
+      let errorMessage: string | undefined;
+
       try {
-        const [diff] = parseDiff(buildDiffText(file));
-        return {
-          file,
-          anchorId: file.filename,
-          diff: diff ?? null,
-        };
+        const [diff] = parseDiff(diffText);
+        parsedDiff = diff ?? null;
       } catch (error) {
-        const message =
+        errorMessage =
           error instanceof Error
             ? error.message
             : "Unable to parse GitHub patch payload.";
-        return {
-          file,
-          anchorId: file.filename,
-          diff: null,
-          error: message,
-        };
       }
+
+      if (!errorMessage) {
+        diffFile = createDiffFileInstance(file, diffText);
+        if (!diffFile) {
+          errorMessage =
+            "Unable to construct diff viewer for this file. The diff data may be too large or unsupported.";
+        }
+      }
+
+      return {
+        file,
+        anchorId,
+        diff: parsedDiff,
+        diffFile,
+        diffText,
+        error: errorMessage,
+      };
     });
   }, [files]);
 
@@ -1236,14 +1199,21 @@ function FileDiffCard({
   focusedChangeKey: string | null;
   autoTooltipLineNumber: number | null;
 }) {
-  const { file, diff, anchorId, error } = entry;
+  const { file, diffFile, anchorId, error } = entry;
   const cardRef = useRef<HTMLElement | null>(null);
+  const diffContainerRef = useRef<HTMLDivElement | null>(null);
+  const heatmapLineNodesRef = useRef<Set<Element>>(new Set());
+  const heatmapFocusNodesRef = useRef<Set<Element>>(new Set());
+  const gutterTargetsRef = useRef<GutterPortalTarget[]>([]);
+  const [gutterTargets, setGutterTargets] = useState<GutterPortalTarget[]>([]);
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const language = useMemo(() => inferLanguage(file.filename), [file.filename]);
+
   const statusMeta = useMemo(
     () => getFileStatusMeta(file.status),
     [file.status]
   );
+  const diffTheme = useSystemDiffTheme();
+  const diffVersion = useDiffFileVersion(diffFile);
 
   useEffect(() => {
     if (isActive) {
@@ -1252,38 +1222,38 @@ function FileDiffCard({
   }, [isActive]);
 
   useEffect(() => {
-    if (!focusedChangeKey) {
-      return;
+    if (focusedChangeKey) {
+      setIsCollapsed(false);
     }
-    setIsCollapsed(false);
   }, [focusedChangeKey]);
+
+  useEffect(() => {
+    if (focusedLineNumber !== null) {
+      setIsCollapsed(false);
+    }
+  }, [focusedLineNumber]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
     }
-    if (!focusedChangeKey) {
+    if (focusedLineNumber === null || isCollapsed) {
       return;
     }
-    const currentCard = cardRef.current;
-    if (!currentCard) {
+    const container = diffContainerRef.current;
+    if (!container) {
       return;
     }
-
-    const targetCell = currentCard.querySelector<HTMLElement>(
-      `[data-change-key="${focusedChangeKey}"]`
+    const targetRow = container.querySelector<HTMLElement>(
+      `[data-side="new"][data-line="${focusedLineNumber}"]`
     );
-    if (!targetCell) {
+    if (!targetRow) {
       return;
     }
-
-    const targetRow = targetCell.closest("tr");
-    const scrollTarget =
-      targetRow instanceof HTMLElement ? targetRow : targetCell;
     window.requestAnimationFrame(() => {
-      scrollElementToViewportCenter(scrollTarget);
+      scrollElementToViewportCenter(targetRow);
     });
-  }, [focusedChangeKey]);
+  }, [focusedLineNumber, diffVersion, isCollapsed]);
 
   const lineTooltips = useMemo(() => {
     if (!diffHeatmap) {
@@ -1306,143 +1276,141 @@ function FileDiffCard({
     return tooltipMap.size > 0 ? tooltipMap : null;
   }, [diffHeatmap]);
 
-  const renderHeatmapToken = useMemo<RenderToken | undefined>(() => {
-    if (!lineTooltips) {
-      return undefined;
+  useEffect(() => {
+    const container = diffContainerRef.current;
+    const trackedNodes = heatmapLineNodesRef.current;
+
+    trackedNodes.forEach((node) => {
+      HEATMAP_TIER_CLASSNAMES.forEach((className) => {
+        node.classList.remove(className);
+      });
+    });
+    trackedNodes.clear();
+
+    if (!container || !diffHeatmap || isCollapsed) {
+      return;
     }
 
-    const renderTokenWithTooltip: RenderToken = (
-      token,
-      renderDefault,
-      index
-    ) => {
-      if (token && typeof token === "object") {
-        const tokenRecord = token as Record<string, unknown>;
-        const className =
-          typeof tokenRecord.className === "string"
-            ? tokenRecord.className
-            : null;
-        const lineNumber =
-          typeof tokenRecord.lineNumber === "number"
-            ? tokenRecord.lineNumber
-            : null;
-
-        if (
-          className &&
-          lineNumber !== null &&
-          (className.includes("cmux-heatmap-char") ||
-            className.includes("cmux-heatmap-char-tier"))
-        ) {
-          const tooltipMeta = lineTooltips.get(lineNumber);
-          if (tooltipMeta) {
-            const rendered = renderDefault(token, index);
-            return (
-              <Tooltip
-                key={`heatmap-char-${lineNumber}-${index}`}
-                delayDuration={120}
-              >
-                <TooltipTrigger asChild>
-                  <span className="cmux-heatmap-char-wrapper">{rendered}</span>
-                </TooltipTrigger>
-                <TooltipContent
-                  side="top"
-                  align="start"
-                  className={cn(
-                    "max-w-xs space-y-1 text-left leading-relaxed border backdrop-blur",
-                    getHeatmapTooltipTheme(tooltipMeta.score).contentClass
-                  )}
-                >
-                  <HeatmapTooltipBody
-                    score={tooltipMeta.score}
-                    reason={tooltipMeta.reason}
-                  />
-                </TooltipContent>
-              </Tooltip>
-            );
-          }
-        }
-      }
-
-      return renderDefault(token, index);
-    };
-    return renderTokenWithTooltip;
-  }, [lineTooltips]);
-
-  const renderHeatmapGutter = useMemo<RenderGutter | undefined>(() => {
-    if (!lineTooltips) {
-      return undefined;
-    }
-
-    const renderGutterWithTooltip: RenderGutter = ({
-      change,
-      side,
-      renderDefault,
-      wrapInAnchor,
-    }) => {
-      const content = renderDefault();
-      if (side !== "new") {
-        return wrapInAnchor(content);
-      }
-
-      const lineNumber = computeNewLineNumber(change);
-      if (lineNumber <= 0) {
-        return wrapInAnchor(content);
-      }
-
-      const tooltipMeta = lineTooltips.get(lineNumber);
-      if (!tooltipMeta) {
-        return wrapInAnchor(content);
-      }
-
-      const isAutoTooltipOpen =
-        autoTooltipLineNumber !== null && lineNumber === autoTooltipLineNumber;
-
-      return wrapInAnchor(
-        <HeatmapGutterTooltip
-          key={`heatmap-gutter-${lineNumber}`}
-          isAutoOpen={isAutoTooltipOpen}
-          tooltipMeta={tooltipMeta}
-        >
-          {content}
-        </HeatmapGutterTooltip>
+    diffHeatmap.lineClasses.forEach((className, lineNumber) => {
+      const rows = container.querySelectorAll<HTMLElement>(
+        `[data-side="new"][data-line="${lineNumber}"]`
       );
+      rows.forEach((row) => {
+        row.classList.add(className);
+        trackedNodes.add(row);
+      });
+    });
+  }, [diffHeatmap, diffVersion, isCollapsed]);
+
+  useEffect(() => {
+    const container = diffContainerRef.current;
+    const trackedNodes = heatmapFocusNodesRef.current;
+
+    trackedNodes.forEach((node) => {
+      node.classList.remove("cmux-heatmap-focus");
+    });
+    trackedNodes.clear();
+
+    if (!container || focusedLineNumber === null || isCollapsed) {
+      return;
+    }
+
+    const rows = container.querySelectorAll<HTMLElement>(
+      `[data-side="new"][data-line="${focusedLineNumber}"]`
+    );
+    rows.forEach((row) => {
+      row.classList.add("cmux-heatmap-focus");
+      trackedNodes.add(row);
+    });
+  }, [focusedLineNumber, diffVersion, isCollapsed]);
+
+  useEffect(() => {
+    const previousTargets = gutterTargetsRef.current;
+    cleanupGutterTargets(previousTargets);
+    gutterTargetsRef.current = [];
+    setGutterTargets([]);
+
+    if (!lineTooltips || !diffFile || isCollapsed) {
+      return;
+    }
+
+    const container = diffContainerRef.current;
+    if (!container) {
+      return;
+    }
+
+    const spans = Array.from(
+      container.querySelectorAll<HTMLSpanElement>(
+        "td.diff-line-new-num span[data-line-num]"
+      )
+    );
+
+    const nextTargets: GutterPortalTarget[] = [];
+
+    spans.forEach((span) => {
+      const rawLine = span.dataset.lineNum;
+      if (!rawLine) {
+        return;
+      }
+      const numericLine = Number(rawLine);
+      if (!Number.isFinite(numericLine) || numericLine <= 0) {
+        return;
+      }
+      if (!lineTooltips.has(numericLine)) {
+        return;
+      }
+      span.dataset.cmuxOriginalText = span.textContent ?? "";
+      span.textContent = "";
+      span.dataset.cmuxHeatmapBound = "true";
+      nextTargets.push({ target: span, lineNumber: numericLine });
+    });
+
+    gutterTargetsRef.current = nextTargets;
+    setGutterTargets(nextTargets);
+
+    return () => {
+      cleanupGutterTargets(nextTargets);
     };
+  }, [lineTooltips, diffFile, diffVersion, isCollapsed]);
 
-    return renderGutterWithTooltip;
-  }, [lineTooltips, autoTooltipLineNumber]);
+  useEffect(() => {
+    return () => {
+      cleanupGutterTargets(gutterTargetsRef.current);
+      gutterTargetsRef.current = [];
+    };
+  }, []);
 
-  const tokens = useMemo<HunkTokens | null>(() => {
-    if (!diff) {
+  const gutterTooltipPortals = useMemo(() => {
+    if (!lineTooltips || gutterTargets.length === 0) {
       return null;
     }
 
-    const enhancers =
-      diffHeatmap && diffHeatmap.newRanges.length > 0
-        ? [pickRanges([], diffHeatmap.newRanges)]
-        : undefined;
+    const portals = gutterTargets
+      .map((entry) => {
+        if (!entry.target.isConnected) {
+          return null;
+        }
+        const tooltipMeta = lineTooltips.get(entry.lineNumber);
+        if (!tooltipMeta) {
+          return null;
+        }
+        return createPortal(
+          <HeatmapGutterTooltip
+            tooltipMeta={tooltipMeta}
+            isAutoOpen={autoTooltipLineNumber === entry.lineNumber}
+          >
+            <span className="cmux-heatmap-gutter inline-flex w-full justify-end tabular-nums text-[11px] font-medium leading-[1.3]">
+              {entry.lineNumber}
+            </span>
+          </HeatmapGutterTooltip>,
+          entry.target,
+          `heatmap-gutter-${anchorId}-${entry.lineNumber}`
+        );
+      })
+      .filter(Boolean);
 
-    if (language && refractor.registered(language)) {
-      try {
-        return tokenize(diff.hunks, {
-          highlight: true,
-          language,
-          refractor: refractorAdapter,
-          ...(enhancers ? { enhancers } : {}),
-        });
-      } catch {
-        // Ignore highlight errors; fall back to default tokenization.
-      }
-    }
-
-    return tokenize(
-      diff.hunks,
-      enhancers
-        ? {
-            enhancers,
-          }
-        : undefined
-    );
-  }, [diff, language, diffHeatmap]);
+    return portals.length > 0 ? portals : null;
+  }, [gutterTargets, lineTooltips, autoTooltipLineNumber, anchorId]);
 
   const reviewContent = useMemo(() => {
     if (!review) {
@@ -1452,7 +1420,6 @@ function FileDiffCard({
     return extractAutomatedReviewText(review.codexReviewOutput);
   }, [review]);
 
-  // const showReview = Boolean(reviewContent);
   const showReview = false;
 
   return (
@@ -1496,11 +1463,11 @@ function FileDiffCard({
           </span>
 
           <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-            <span className="font-mono text-xs text-neutral-700 truncate">
+            <span className="truncate font-mono text-xs text-neutral-700">
               {file.filename}
             </span>
             {file.previous_filename ? (
-              <span className="font-mono text-[11px] text-neutral-500 truncate">
+              <span className="truncate font-mono text-[11px] text-neutral-500">
                 Renamed from {file.previous_filename}
               </span>
             ) : null}
@@ -1525,81 +1492,23 @@ function FileDiffCard({
         ) : null}
 
         {!isCollapsed ? (
-          diff ? (
-            <Diff
-              diffType={diff.type}
-              hunks={diff.hunks}
-              viewType="split"
-              optimizeSelection
-              className="diff-syntax system-mono overflow-auto bg-white text-xs leading-5 text-neutral-800"
-              gutterClassName="system-mono bg-white text-xs text-neutral-500"
-              codeClassName="system-mono text-xs text-neutral-800"
-              tokens={tokens ?? undefined}
-              renderToken={renderHeatmapToken}
-              renderGutter={renderHeatmapGutter}
-              generateLineClassName={({ changes, defaultGenerate }) => {
-                const defaultClassName = defaultGenerate();
-                const classNames: string[] = ["system-mono text-xs py-1"];
-                const normalizedChanges = changes.filter(
-                  (change): change is ChangeData => Boolean(change)
-                );
-                const hasFocus =
-                  focusedLineNumber !== null &&
-                  normalizedChanges.some((change) => {
-                    const newLineNumber = computeNewLineNumber(change);
-                    return (
-                      newLineNumber > 0 && newLineNumber === focusedLineNumber
-                    );
-                  });
-                if (hasFocus) {
-                  classNames.push("cmux-heatmap-focus");
-                }
-                if (diffHeatmap && diffHeatmap.lineClasses.size > 0) {
-                  let bestHeatmapClass: string | null = null;
-                  for (const change of normalizedChanges) {
-                    const newLineNumber = computeNewLineNumber(change);
-                    if (newLineNumber <= 0) {
-                      continue;
-                    }
-                    const candidate =
-                      diffHeatmap.lineClasses.get(newLineNumber);
-                    if (!candidate) {
-                      continue;
-                    }
-                    if (!bestHeatmapClass) {
-                      bestHeatmapClass = candidate;
-                      continue;
-                    }
-                    const currentTier = extractHeatmapTier(bestHeatmapClass);
-                    const nextTier = extractHeatmapTier(candidate);
-                    if (nextTier > currentTier) {
-                      bestHeatmapClass = candidate;
-                    }
-                  }
-
-                  if (bestHeatmapClass) {
-                    classNames.push(bestHeatmapClass);
-                  }
-                }
-
-                classNames.push("text-neutral-800");
-
-                return cn(defaultClassName, classNames);
-              }}
-            >
-              {(hunks) =>
-                hunks.map((hunk) => (
-                  <Fragment key={hunk.content}>
-                    <Decoration>
-                      <div className="bg-sky-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-sky-700">
-                        {hunk.content}
-                      </div>
-                    </Decoration>
-                    <Hunk hunk={hunk} />
-                  </Fragment>
-                ))
-              }
-            </Diff>
+          diffFile ? (
+            <div className="bg-white">
+              <div
+                ref={diffContainerRef}
+                className="cmux-diff-container overflow-x-auto bg-white"
+              >
+                <DiffView
+                  diffFile={diffFile}
+                  diffViewMode={DiffModeEnum.SplitGitHub}
+                  diffViewTheme={diffTheme}
+                  diffViewHighlight
+                  diffViewWrap={false}
+                  diffViewFontSize={12}
+                  className="system-mono text-xs text-neutral-800"
+                />
+              </div>
+            </div>
           ) : (
             <div className="bg-neutral-50 px-4 py-6 text-sm text-neutral-600">
               {error ??
@@ -1607,10 +1516,90 @@ function FileDiffCard({
             </div>
           )
         ) : null}
+        {gutterTooltipPortals}
       </article>
     </TooltipProvider>
   );
 }
+
+
+function cleanupGutterTargets(targets: GutterPortalTarget[]) {
+  targets.forEach(({ target }) => {
+    const fallback = target.dataset.lineNum ?? "";
+    const original = target.dataset.cmuxOriginalText;
+    target.textContent = original ?? fallback;
+    if ("cmuxOriginalText" in target.dataset) {
+      delete target.dataset.cmuxOriginalText;
+    }
+    if ("cmuxHeatmapBound" in target.dataset) {
+      delete target.dataset.cmuxHeatmapBound;
+    }
+  });
+}
+
+function useDiffFileVersion(diffFile: DiffFile | null): number {
+  return useSyncExternalStore(
+    (callback) => {
+      if (!diffFile) {
+        return () => undefined;
+      }
+      const unsubscribe = diffFile.subscribe(() => {
+        callback();
+      });
+      return () => {
+        unsubscribe();
+      };
+    },
+    () => (diffFile ? diffFile.getUpdateCount() : 0),
+    () => 0
+  );
+}
+
+function useSystemDiffTheme(): "light" | "dark" {
+  const [theme, setTheme] = useState<"light" | "dark">("light");
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const resolveTheme = () => {
+      if (document.documentElement.classList.contains("dark")) {
+        return "dark";
+      }
+      if (document.body?.classList.contains("dark")) {
+        return "dark";
+      }
+      return window.matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light";
+    };
+
+    const updateTheme = () => {
+      setTheme(resolveTheme());
+    };
+
+    updateTheme();
+
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const mediaListener = () => updateTheme();
+    media.addEventListener("change", mediaListener);
+
+    const observer = new MutationObserver(updateTheme);
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class", "data-theme"],
+    });
+
+    return () => {
+      media.removeEventListener("change", mediaListener);
+      observer.disconnect();
+    };
+  }, []);
+
+  return theme;
+}
+
 
 function HeatmapGutterTooltip({
   children,
@@ -1696,6 +1685,13 @@ function HeatmapTooltipBody({
 
 const HEATMAP_SCORE_TIERS = [0.2, 0.4, 0.6, 0.8] as const;
 
+const HEATMAP_TIER_CLASSNAMES = [
+  "cmux-heatmap-tier-1",
+  "cmux-heatmap-tier-2",
+  "cmux-heatmap-tier-3",
+  "cmux-heatmap-tier-4",
+] as const;
+
 function getHeatmapTooltipTheme(score: number): HeatmapTooltipTheme {
   const tier = (() => {
     for (let index = HEATMAP_SCORE_TIERS.length - 1; index >= 0; index -= 1) {
@@ -1743,16 +1739,6 @@ function getHeatmapTooltipTheme(score: number): HeatmapTooltipTheme {
         reasonClass: "text-neutral-300",
       };
   }
-}
-
-function extractHeatmapTier(className: string): number {
-  const match = className.match(/cmux-heatmap-tier-(\d+)/);
-  if (!match) {
-    return 0;
-  }
-
-  const parsed = Number.parseInt(match[1] ?? "0", 10);
-  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function extractAutomatedReviewText(value: unknown): string | null {
@@ -1901,6 +1887,35 @@ function buildChangeKeyIndex(diff: FileData | null): Map<number, string> {
   }
 
   return map;
+}
+
+function createDiffFileInstance(
+  file: GithubFileChange,
+  diffText: string
+): DiffFile | null {
+  const oldPath =
+    file.status === "added"
+      ? "/dev/null"
+      : file.previous_filename ?? file.filename;
+  const newPath = file.status === "removed" ? "/dev/null" : file.filename;
+  const oldLang = inferLanguage(oldPath ?? "");
+  const newLang = inferLanguage(newPath);
+
+  try {
+    return DiffFile.createInstance({
+      oldFile: {
+        fileName: oldPath,
+        fileLang: oldLang ?? undefined,
+      },
+      newFile: {
+        fileName: newPath,
+        fileLang: newLang ?? undefined,
+      },
+      hunks: [diffText],
+    });
+  } catch {
+    return null;
+  }
 }
 
 function buildDiffText(file: GithubFileChange): string {
