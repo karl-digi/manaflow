@@ -686,9 +686,6 @@ function SocketActions({
       const actionable = response.results.filter(
         (result) => result.url && !result.error,
       );
-      if (actionable.length > 0) {
-        openUrls(actionable);
-      }
       toast.success(openedLabel, {
         id: context?.toastId,
         description: summarizeResults(response.results),
@@ -696,10 +693,13 @@ function SocketActions({
           actionable.length > 0
             ? {
               label: actionable.length === 1 ? "View PR" : "View PRs",
-              onClick: () => openUrls(actionable),
+              onClick: () => navigate({ to: "/$teamSlugOrId/prs", params: { teamSlugOrId } }),
             }
             : undefined,
       });
+      if (actionable.length > 0) {
+        navigate({ to: "/$teamSlugOrId/prs", params: { teamSlugOrId } });
+      }
     },
     onError: (error, _variables, context) => {
       toast.error(openErrorLabel, {
