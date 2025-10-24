@@ -635,7 +635,7 @@ function SocketActions({
       if (pr.repoFullName && pr.number) {
         const [owner = "", repo = ""] = pr.repoFullName.split("/", 2);
         navigate({
-          to: "/$teamSlugOrId/prs/$owner/$repo/$number",
+          to: "/$teamSlugOrId/prs-only/$owner/$repo/$number",
           params: {
             teamSlugOrId,
             owner,
@@ -925,7 +925,7 @@ function SocketActions({
                       const [owner = "", repo = ""] =
                         pr.repoFullName.split("/", 2);
                       navigate({
-                        to: "/$teamSlugOrId/prs/$owner/$repo/$number",
+                        to: "/$teamSlugOrId/prs-only/$owner/$repo/$number",
                         params: {
                           teamSlugOrId,
                           owner,
