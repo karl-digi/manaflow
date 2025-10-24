@@ -82,6 +82,10 @@ type EnvironmentSummary = Pick<
   "_id" | "name" | "selectedRepos"
 >;
 
+type PinnedTaskRun = Doc<"taskRuns"> & {
+  task: Doc<"tasks">;
+};
+
 type TaskRunWithChildren = Doc<"taskRuns"> & {
   children: TaskRunWithChildren[];
   environment: EnvironmentSummary | null;
@@ -211,6 +215,7 @@ export const create = authMutation({
       userId,
       teamId,
       environmentId: args.environmentId,
+      isPinned: false,
     });
     const generatedBranchName = deriveGeneratedBranchName(args.newBranch);
     if (
@@ -251,6 +256,94 @@ export const getByTask = authQuery({
       userId,
       args.taskId as Id<"tasks">,
     );
+  },
+});
+
+export const getPinned = authQuery({
+  args: { teamSlugOrId: v.string() },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const runs = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_team_user_pinned", (idx) =>
+        idx.eq("teamId", teamId).eq("userId", userId).eq("isPinned", true),
+      )
+      .collect();
+
+    if (runs.length === 0) {
+      return [];
+    }
+
+    const tasks = await Promise.all(runs.map((run) => ctx.db.get(run.taskId)));
+
+    const combined: PinnedTaskRun[] = [];
+    runs.forEach((run, index) => {
+      const task = tasks[index];
+      if (!task) {
+        return;
+      }
+      if (task.teamId !== teamId || task.userId !== userId) {
+        return;
+      }
+      if (task.isArchived) {
+        return;
+      }
+      combined.push({
+        ...run,
+        task,
+      });
+    });
+
+    return combined.sort(
+      (a, b) =>
+        (b.pinnedAt ?? b.updatedAt ?? 0) -
+        (a.pinnedAt ?? a.updatedAt ?? 0),
+    );
+  },
+});
+
+export const setPinned = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    id: v.id("taskRuns"),
+    taskId: v.id("tasks"),
+    isPinned: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const run = await ctx.db.get(args.id);
+    if (!run || run.teamId !== teamId || run.userId !== userId) {
+      throw new Error("Task run not found or unauthorized");
+    }
+    if (run.taskId !== args.taskId) {
+      throw new Error("Task run does not belong to provided task");
+    }
+    const task = await ctx.db.get(args.taskId);
+    if (!task || task.teamId !== teamId || task.userId !== userId) {
+      throw new Error("Task not found or unauthorized");
+    }
+
+    const now = Date.now();
+    const patch: Record<string, unknown> = {
+      isPinned: args.isPinned,
+      updatedAt: now,
+    };
+
+    if (args.isPinned) {
+      patch.pinnedAt = now;
+      if (task.isArchived) {
+        await ctx.db.patch(task._id, {
+          isArchived: false,
+          updatedAt: now,
+        });
+      }
+    } else {
+      patch.pinnedAt = undefined;
+    }
+
+    await ctx.db.patch(args.id, patch);
   },
 });
 

@@ -1,6 +1,7 @@
 import { OpenWithDropdown } from "@/components/OpenWithDropdown";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useArchiveTask } from "@/hooks/useArchiveTask";
+import { usePinTask } from "@/hooks/usePinTask";
 import { isFakeConvexId } from "@/lib/fakeConvexId";
 import { ContextMenu } from "@base-ui-components/react/context-menu";
 import { api } from "@cmux/convex/api";
@@ -9,7 +10,7 @@ import type { RunEnvironmentSummary } from "@/types/task";
 import { useClipboard } from "@mantine/hooks";
 import { useNavigate } from "@tanstack/react-router";
 import clsx from "clsx";
-import { useQuery as useConvexQuery, useMutation } from "convex/react";
+import { useQuery as useConvexQuery } from "convex/react";
 // Read team slug from path to avoid route type coupling
 import { Archive, ArchiveRestore, Check, Copy, Pin } from "lucide-react";
 import { memo, useCallback, useMemo } from "react";
@@ -26,15 +27,13 @@ export const TaskItem = memo(function TaskItem({
   const navigate = useNavigate();
   const clipboard = useClipboard({ timeout: 2000 });
   const { archiveWithUndo, unarchive } = useArchiveTask(teamSlugOrId);
+  const { setPinned } = usePinTask(teamSlugOrId);
 
   // Query for task runs to find VSCode instances
   const taskRunsQuery = useConvexQuery(
     api.taskRuns.getByTask,
     isFakeConvexId(task._id) ? "skip" : { teamSlugOrId, taskId: task._id }
   );
-
-  // Mutation for toggling keep-alive status
-  const toggleKeepAlive = useMutation(api.taskRuns.toggleKeepAlive);
 
   // Find the latest task run with a VSCode instance
   const getLatestVSCodeInstance = useCallback(() => {
@@ -104,20 +103,6 @@ export const TaskItem = memo(function TaskItem({
     clipboard.copy(task.text);
   }, [clipboard, task.text]);
 
-  const handleToggleKeepAlive = useCallback(
-    async (e: React.MouseEvent) => {
-      e.stopPropagation();
-      if (runWithVSCode) {
-        await toggleKeepAlive({
-          teamSlugOrId,
-          id: runWithVSCode._id,
-          keepAlive: !runWithVSCode.vscode?.keepAlive,
-        });
-      }
-    },
-    [runWithVSCode, teamSlugOrId, toggleKeepAlive]
-  );
-
   const handleArchive = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
@@ -141,6 +126,18 @@ export const TaskItem = memo(function TaskItem({
     },
     [unarchive, task._id]
   );
+
+  const handleTogglePinned = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      setPinned(task._id, !task.isPinned);
+    },
+    [setPinned, task._id, task.isPinned]
+  );
+
+  const handleTogglePinnedFromMenu = useCallback(() => {
+    setPinned(task._id, !task.isPinned);
+  }, [setPinned, task._id, task.isPinned]);
 
   const isOptimisticUpdate = task._id.includes("-") && task._id.length === 36;
 
@@ -167,6 +164,9 @@ export const TaskItem = memo(function TaskItem({
                     : "bg-blue-500 animate-pulse"
               )}
             />
+            {task.isPinned ? (
+              <Pin className="w-3 h-3 text-blue-500 dark:text-blue-400 flex-shrink-0" />
+            ) : null}
             <div className="flex-1 min-w-0 flex items-center gap-2">
               <span className="text-[14px] truncate min-w-0">{task.text}</span>
               {(task.projectFullName ||
@@ -198,6 +198,13 @@ export const TaskItem = memo(function TaskItem({
         <ContextMenu.Portal>
           <ContextMenu.Positioner className="outline-none z-[var(--z-context-menu)]">
             <ContextMenu.Popup className="origin-[var(--transform-origin)] rounded-md bg-white dark:bg-neutral-800 py-1 text-neutral-900 dark:text-neutral-100 shadow-lg shadow-gray-200 outline-1 outline-neutral-200 transition-[opacity] data-[ending-style]:opacity-0 dark:shadow-none dark:-outline-offset-1 dark:outline-neutral-700">
+              <ContextMenu.Item
+                className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                onClick={handleTogglePinnedFromMenu}
+              >
+                <Pin className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
+                <span>{task.isPinned ? "Unpin Task" : "Pin Task"}</span>
+              </ContextMenu.Item>
               <ContextMenu.Item
                 className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
                 onClick={handleCopyFromMenu}
@@ -262,33 +269,29 @@ export const TaskItem = memo(function TaskItem({
             className="group-hover:opacity-100 aria-expanded:opacity-100 opacity-0"
           />
 
-          {/* Keep-alive button */}
-          {runWithVSCode && hasActiveVSCode && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={handleToggleKeepAlive}
-                  className={clsx(
-                    "p-1 rounded",
-                    "bg-neutral-100 dark:bg-neutral-700",
-                    runWithVSCode.vscode?.keepAlive
-                      ? "text-blue-600 dark:text-blue-400"
-                      : "text-neutral-600 dark:text-neutral-400",
-                    "hover:bg-neutral-200 dark:hover:bg-neutral-600",
-                    "group-hover:opacity-100 opacity-0",
-                    "hidden" // TODO: show this button
-                  )}
-                >
-                  <Pin className="w-3.5 h-3.5" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="top">
-                {runWithVSCode.vscode?.keepAlive
-                  ? "Container will stay running"
-                  : "Keep container running"}
-              </TooltipContent>
-            </Tooltip>
-          )}
+          {/* Pin button */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={handleTogglePinned}
+                className={clsx(
+                  "p-1 rounded",
+                  "bg-neutral-100 dark:bg-neutral-700",
+                  task.isPinned
+                    ? "text-blue-600 dark:text-blue-400"
+                    : "text-neutral-600 dark:text-neutral-400",
+                  "hover:bg-neutral-200 dark:hover:bg-neutral-600",
+                  "group-hover:opacity-100 opacity-0"
+                )}
+                title={task.isPinned ? "Unpin task" : "Pin task"}
+              >
+                <Pin className="w-3.5 h-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              {task.isPinned ? "Unpin task" : "Pin task"}
+            </TooltipContent>
+          </Tooltip>
 
           {/* Archive / Unarchive button with tooltip */}
           <Tooltip>

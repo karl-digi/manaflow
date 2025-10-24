@@ -7,6 +7,7 @@ import {
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { useArchiveTask } from "@/hooks/useArchiveTask";
 import { useOpenWithActions } from "@/hooks/useOpenWithActions";
+import { usePinTaskRun } from "@/hooks/usePinTaskRun";
 import { isElectron } from "@/lib/electron";
 import { isFakeConvexId } from "@/lib/fakeConvexId";
 import type { AnnotatedTaskRun, TaskRunWithChildren } from "@/types/task";
@@ -37,6 +38,7 @@ import {
   Monitor,
   TerminalSquare,
   Loader2,
+  Pin,
   XCircle,
 } from "lucide-react";
 import {
@@ -556,6 +558,8 @@ function TaskRunTreeInner({
     [isDefaultSelected, isRunRoute, run._id, runIdFromSearch]
   );
 
+  const { setPinned } = usePinTaskRun(teamSlugOrId);
+
   const hasExpandedManually = useRef<Id<"taskRuns"> | null>(null);
 
   useEffect(() => {
@@ -584,6 +588,10 @@ function TaskRunTreeInner({
     },
     [isExpanded, run._id, setRunExpanded]
   );
+
+  const handleTogglePinned = useCallback(() => {
+    setPinned(run._id, taskId, !(run.isPinned ?? false));
+  }, [run._id, run.isPinned, setPinned, taskId]);
 
   const statusIcon = {
     pending: <Circle className="w-3 h-3 text-neutral-400" />,
@@ -633,6 +641,14 @@ function TaskRunTreeInner({
     <div className="flex items-center gap-1">
       {crownIcon}
       {runLeadingIcon}
+      {run.isPinned ? (
+        <Pin className="w-3 h-3 text-blue-500 dark:text-blue-400" />
+      ) : null}
+    </div>
+  ) : run.isPinned ? (
+    <div className="flex items-center gap-1">
+      {runLeadingIcon}
+      <Pin className="w-3 h-3 text-blue-500 dark:text-blue-400" />
     </div>
   ) : (
     runLeadingIcon
@@ -790,6 +806,13 @@ function TaskRunTreeInner({
                   <div className="my-1 h-px bg-neutral-200 dark:bg-neutral-700" />
                 </>
               ) : null}
+              <ContextMenu.Item
+                className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                onClick={handleTogglePinned}
+              >
+                <Pin className="w-3.5 h-3.5" />
+                {run.isPinned ? "Unpin run" : "Pin run"}
+              </ContextMenu.Item>
               <ContextMenu.Item
                 className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
                 onClick={() => setRunExpanded(run._id, !isExpanded)}

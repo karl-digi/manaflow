@@ -95,6 +95,8 @@ const convexSchema = defineSchema({
     text: v.string(),
     isCompleted: v.boolean(),
     isArchived: v.optional(v.boolean()),
+    isPinned: v.optional(v.boolean()),
+    pinnedAt: v.optional(v.number()),
     description: v.optional(v.string()),
     pullRequestTitle: v.optional(v.string()),
     pullRequestDescription: v.optional(v.string()),
@@ -139,7 +141,8 @@ const convexSchema = defineSchema({
   })
     .index("by_created", ["createdAt"])
     .index("by_user", ["userId", "createdAt"])
-    .index("by_team_user", ["teamId", "userId"]),
+    .index("by_team_user", ["teamId", "userId"])
+    .index("by_team_user_pinned", ["teamId", "userId", "isPinned", "pinnedAt"]),
 
   taskRuns: defineTable({
     taskId: v.id("tasks"),
@@ -173,6 +176,8 @@ const convexSchema = defineSchema({
     environmentId: v.optional(v.id("environments")),
     isCrowned: v.optional(v.boolean()), // Whether this run won the crown evaluation
     crownReason: v.optional(v.string()), // LLM's reasoning for why this run was crowned
+    isPinned: v.optional(v.boolean()),
+    pinnedAt: v.optional(v.number()),
     pullRequestUrl: v.optional(v.string()), // URL of the PR
     pullRequestIsDraft: v.optional(v.boolean()), // Whether the PR is a draft
     pullRequestState: v.optional(
@@ -258,7 +263,8 @@ const convexSchema = defineSchema({
     .index("by_vscode_status", ["vscode.status"])
     .index("by_vscode_container_name", ["vscode.containerName"])
     .index("by_user", ["userId", "createdAt"])
-    .index("by_team_user", ["teamId", "userId"]),
+    .index("by_team_user", ["teamId", "userId"])
+    .index("by_team_user_pinned", ["teamId", "userId", "isPinned", "pinnedAt"]),
   taskVersions: defineTable({
     taskId: v.id("tasks"),
     version: v.number(),
