@@ -329,18 +329,6 @@ function TaskTreeInner({
               className="group block"
               onMouseEnter={handlePrefetch}
               onFocus={handlePrefetch}
-              onClick={(event) => {
-                if (
-                  event.defaultPrevented ||
-                  event.metaKey ||
-                  event.ctrlKey ||
-                  event.shiftKey ||
-                  event.altKey
-                ) {
-                  return;
-                }
-                handleToggle(event);
-              }}
             >
               <SidebarListItem
                 paddingLeft={10 + level * 4}
@@ -700,22 +688,6 @@ function TaskRunTreeInner({
             })}
             className="group block"
             activeOptions={{ exact: false }}
-            onClick={(event) => {
-              if (
-                event.defaultPrevented ||
-                event.button !== 0 ||
-                event.metaKey ||
-                event.ctrlKey ||
-                event.shiftKey ||
-                event.altKey
-              ) {
-                return;
-              }
-
-              if (!isExpanded) {
-                setRunExpanded(run._id, true);
-              }
-            }}
           >
             <SidebarListItem
               containerClassName={clsx("mt-px", { active: isRunSelected })}

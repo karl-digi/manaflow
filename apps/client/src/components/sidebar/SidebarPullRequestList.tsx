@@ -118,18 +118,6 @@ function PullRequestListItem({ pr, teamSlugOrId, expanded, setExpanded }: PullRe
           number: String(pr.number),
         }}
         className="group block"
-        onClick={(event) => {
-          if (
-            event.defaultPrevented ||
-            event.metaKey ||
-            event.ctrlKey ||
-            event.shiftKey ||
-            event.altKey
-          ) {
-            return;
-          }
-          handleToggle(event);
-        }}
       >
         <SidebarListItem
           paddingLeft={10}
