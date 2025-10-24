@@ -63,6 +63,7 @@
       "dmg",
       "zip"
     ],
+    "x64ArchFiles": "Contents/Resources/native/core/*.node",
     "extendInfo": {
       "CFBundleIconFile": "icon"
     }
