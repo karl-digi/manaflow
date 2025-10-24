@@ -18,6 +18,7 @@ export function ElectronLogsCommandItems({
       </div>
       <Command.Item
         value="logs:view"
+        keywords={["logs", "view logs", "debug", "output", "console"]}
         onSelect={() => onSelect("logs:view")}
         className={itemClassName}
       >
@@ -26,6 +27,7 @@ export function ElectronLogsCommandItems({
       </Command.Item>
       <Command.Item
         value="logs:copy"
+        keywords={["logs", "copy logs", "debug", "export", "clipboard"]}
         onSelect={() => onSelect("logs:copy")}
         className={itemClassName}
       >

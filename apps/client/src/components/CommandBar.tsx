@@ -28,6 +28,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ElectronLogsCommandItems } from "./command-bar/ElectronLogsCommandItems";
+import { commandPaletteFilter } from "./command-bar/command-filter";
 
 interface CommandBarProps {
   teamSlugOrId: string;
@@ -71,6 +72,124 @@ type TeamCommandItem = {
   teamSlugOrId: string;
   isCurrent: boolean;
   keywords: string[];
+};
+
+type TasksQueryResult = Awaited<
+  typeof api.tasks.getTasksWithTaskRuns._returnType
+>;
+
+type CommandPaletteTask = TasksQueryResult extends Array<infer Item>
+  ? Item
+  : never;
+
+type CommandPaletteTaskRun = CommandPaletteTask extends {
+  selectedTaskRun: infer Run;
+}
+  ? NonNullable<Run>
+  : never;
+
+const MERGE_STATUS_KEYWORDS: Record<string, string[]> = {
+  pr_draft: ["draft", "draft pr", "draft pull request"],
+  pr_open: ["open pr", "pull request open", "ready for review"],
+  pr_approved: ["approved", "pr approved", "ready to merge"],
+  pr_changes_requested: [
+    "changes requested",
+    "needs changes",
+    "waiting on updates",
+  ],
+  pr_merged: ["merged", "merged pr", "pull request merged"],
+  pr_closed: ["closed", "closed pr", "pull request closed"],
+};
+
+const uniqueStrings = (values: readonly string[]): string[] => {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const lowered = value.toLowerCase();
+    if (seen.has(lowered)) continue;
+    seen.add(lowered);
+    out.push(value);
+  }
+  return out;
+};
+
+const appendKeyword = (target: string[], value: unknown) => {
+  const str = extractString(value);
+  if (str) target.push(str);
+};
+
+const createTaskKeywords = (task: CommandPaletteTask): string[] => {
+  const keywords: string[] = [];
+
+  appendKeyword(keywords, task.pullRequestTitle);
+  appendKeyword(keywords, task.pullRequestDescription);
+  appendKeyword(keywords, task.text);
+  appendKeyword(keywords, task.projectFullName);
+  appendKeyword(keywords, task.baseBranch);
+  appendKeyword(keywords, task.generatedBranchName);
+  appendKeyword(keywords, task.worktreePath);
+  appendKeyword(keywords, task._id);
+
+  if (task.isCompleted) {
+    appendKeyword(keywords, "completed");
+    appendKeyword(keywords, "done");
+    appendKeyword(keywords, "finished");
+  } else {
+    appendKeyword(keywords, "in progress");
+    appendKeyword(keywords, "active");
+    appendKeyword(keywords, "running");
+  }
+
+  if (task.isArchived) {
+    appendKeyword(keywords, "archived");
+  }
+
+  if (task.mergeStatus) {
+    appendKeyword(keywords, task.mergeStatus.replace(/_/g, " "));
+    const aliases = MERGE_STATUS_KEYWORDS[task.mergeStatus] ?? [];
+    for (const alias of aliases) {
+      appendKeyword(keywords, alias);
+    }
+  }
+
+  if (task.crownEvaluationStatus) {
+    appendKeyword(
+      keywords,
+      task.crownEvaluationStatus.replace(/_/g, " "),
+    );
+    if (task.crownEvaluationStatus === "in_progress") {
+      appendKeyword(keywords, "evaluation running");
+    } else if (task.crownEvaluationStatus === "succeeded") {
+      appendKeyword(keywords, "crowned");
+    }
+  }
+
+  const runCandidate = task.selectedTaskRun;
+  if (runCandidate) {
+    const run: CommandPaletteTaskRun = runCandidate;
+    appendKeyword(keywords, run.agentName);
+    appendKeyword(keywords, run.status);
+    appendKeyword(keywords, run.newBranch);
+    appendKeyword(keywords, run.pullRequestUrl);
+
+    if (typeof run.pullRequestNumber === "number") {
+      appendKeyword(keywords, `#${run.pullRequestNumber}`);
+      appendKeyword(keywords, `pr ${run.pullRequestNumber}`);
+    }
+
+    if (Array.isArray(run.pullRequests)) {
+      for (const pr of run.pullRequests) {
+        appendKeyword(keywords, pr.repoFullName);
+        appendKeyword(keywords, pr.url);
+        if (typeof pr.number === "number") {
+          appendKeyword(keywords, `#${pr.number}`);
+          appendKeyword(keywords, `pr ${pr.number}`);
+        }
+      }
+    }
+  }
+
+  return uniqueStrings(keywords);
 };
 
 function CommandHighlightListener({
@@ -194,7 +313,10 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     ? "No teams available yet."
     : "Sign in to view teams.";
 
-  const allTasks = useQuery(api.tasks.getTasksWithTaskRuns, { teamSlugOrId });
+  const allTasks: TasksQueryResult | undefined = useQuery(
+    api.tasks.getTasksWithTaskRuns,
+    { teamSlugOrId },
+  );
 
   useEffect(() => {
     openRef.current = open;
@@ -617,6 +739,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         label="Command Menu"
         title="Command Menu"
         loop
+        filter={commandPaletteFilter}
         className="fixed inset-0 z-[var(--z-commandbar)] flex items-start justify-center pt-[20vh] pointer-events-none"
         onKeyDown={(e) => {
           if (e.key === "Escape") {
@@ -661,6 +784,12 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                   </div>
                   <Command.Item
                     value="new-task"
+                    keywords={[
+                      "new task",
+                      "create task",
+                      "start task",
+                      "task",
+                    ]}
                     onSelect={() => handleSelect("new-task")}
                     className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer
                 hover:bg-neutral-100 dark:hover:bg-neutral-800
@@ -672,6 +801,13 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                   </Command.Item>
                   <Command.Item
                     value="pull-requests"
+                    keywords={[
+                      "pull requests",
+                      "prs",
+                      "pull request",
+                      "github",
+                      "code review",
+                    ]}
                     onSelect={() => handleSelect("pull-requests")}
                     className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer
                 hover:bg-neutral-100 dark:hover:bg-neutral-800
@@ -709,6 +845,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                   </div>
                   <Command.Item
                     value="home"
+                    keywords={["home", "dashboard", "overview", "main"]}
                     onSelect={() => handleSelect("home")}
                     className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer
                 hover:bg-neutral-100 dark:hover:bg-neutral-800
@@ -720,6 +857,12 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                   </Command.Item>
                   <Command.Item
                     value="environments"
+                    keywords={[
+                      "environments",
+                      "environment",
+                      "instances",
+                      "workspaces",
+                    ]}
                     onSelect={() => handleSelect("environments")}
                     className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer
                 hover:bg-neutral-100 dark:hover:bg-neutral-800
@@ -731,6 +874,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                   </Command.Item>
                   <Command.Item
                     value="settings"
+                    keywords={["settings", "preferences", "configuration"]}
                     onSelect={() => handleSelect("settings")}
                     className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer
                 hover:bg-neutral-100 dark:hover:bg-neutral-800
@@ -780,52 +924,62 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
 
                 <Command.Group>
                   <div className="px-2 py-1.5 text-xs text-neutral-500 dark:text-neutral-400">
-                    Theme
-                  </div>
-                  <Command.Item
-                    value="theme-light"
-                    onSelect={() => handleSelect("theme-light")}
-                    className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer                 hover:bg-neutral-100 dark:hover:bg-neutral-800
-                data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
-                data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100"
-                  >
+                Theme
+              </div>
+              <Command.Item
+                value="theme-light"
+                keywords={["theme", "appearance", "light mode", "light"]}
+                onSelect={() => handleSelect("theme-light")}
+                className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer                 hover:bg-neutral-100 dark:hover:bg-neutral-800
+            data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
+            data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100"
+              >
                     <Sun className="h-4 w-4 text-amber-500" />
                     <span className="text-sm">Light Mode</span>
                   </Command.Item>
-                  <Command.Item
-                    value="theme-dark"
-                    onSelect={() => handleSelect("theme-dark")}
-                    className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer                 hover:bg-neutral-100 dark:hover:bg-neutral-800
-                data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
-                data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100"
-                  >
+              <Command.Item
+                value="theme-dark"
+                keywords={["theme", "appearance", "dark mode", "dark"]}
+                onSelect={() => handleSelect("theme-dark")}
+                className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer                 hover:bg-neutral-100 dark:hover:bg-neutral-800
+            data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
+            data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100"
+              >
                     <Moon className="h-4 w-4 text-blue-500" />
                     <span className="text-sm">Dark Mode</span>
                   </Command.Item>
-                  <Command.Item
-                    value="theme-system"
-                    onSelect={() => handleSelect("theme-system")}
-                    className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer                 hover:bg-neutral-100 dark:hover:bg-neutral-800
-                data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
-                data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100"
-                  >
+              <Command.Item
+                value="theme-system"
+                keywords={[
+                  "theme",
+                  "appearance",
+                  "system theme",
+                  "auto",
+                  "default",
+                ]}
+                onSelect={() => handleSelect("theme-system")}
+                className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer                 hover:bg-neutral-100 dark:hover:bg-neutral-800
+            data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
+            data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100"
+              >
                     <Monitor className="h-4 w-4 text-neutral-500" />
                     <span className="text-sm">System Theme</span>
                   </Command.Item>
                 </Command.Group>
 
                 {stackUser ? (
-                  <Command.Group>
-                    <div className="px-2 py-1.5 text-xs text-neutral-500 dark:text-neutral-400">
-                      Account
-                    </div>
-                    <Command.Item
-                      value="sign-out"
-                      onSelect={() => handleSelect("sign-out")}
-                      className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer
-                hover:bg-neutral-100 dark:hover:bg-neutral-800
-                data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
-                data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100"
+              <Command.Group>
+                <div className="px-2 py-1.5 text-xs text-neutral-500 dark:text-neutral-400">
+                  Account
+                </div>
+                <Command.Item
+                  value="sign-out"
+                  keywords={["sign out", "logout", "log out", "account"]}
+                  onSelect={() => handleSelect("sign-out")}
+                  className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer
+            hover:bg-neutral-100 dark:hover:bg-neutral-800
+            data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
+            data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100"
                     >
                       <LogOut className="h-4 w-4 text-neutral-500" />
                       <span className="text-sm">Sign out</span>
@@ -840,12 +994,36 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                     </div>
                     {allTasks.slice(0, 9).flatMap((task, index) => {
                       const run = task.selectedTaskRun;
+                      const baseKeywords = uniqueStrings([
+                        ...createTaskKeywords(task),
+                        String(index + 1),
+                        "task",
+                      ]);
+                      const vsKeywords = uniqueStrings([
+                        ...baseKeywords,
+                        "vs",
+                        "vs code",
+                        "vscode",
+                        "visual studio code",
+                        "editor",
+                        "workspace",
+                        "ide",
+                      ]);
+                      const diffKeywords = uniqueStrings([
+                        ...baseKeywords,
+                        "diff",
+                        "changes",
+                        "git diff",
+                        "compare",
+                        "patch",
+                      ]);
                       const items = [
                         <Command.Item
                           key={task._id}
                           value={`${index + 1}:task:${task._id}`}
                           onSelect={() => handleSelect(`task:${task._id}`)}
                           data-value={`task:${task._id}`}
+                          keywords={baseKeywords}
                           className="flex items-center gap-3 px-3 py-2.5 mx-1 rounded-md cursor-pointer                     hover:bg-neutral-100 dark:hover:bg-neutral-800
                     data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
                     data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100
@@ -880,6 +1058,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                             value={`${index + 1} vs:task:${task._id}`}
                             onSelect={() => handleSelect(`task:${task._id}:vs`)}
                             data-value={`task:${task._id}:vs`}
+                            keywords={vsKeywords}
                             className="flex items-center gap-3 px-3 py-2.5 mx-1 rounded-md cursor-pointer                     hover:bg-neutral-100 dark:hover:bg-neutral-800
                     data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
                     data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100
@@ -915,6 +1094,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                               handleSelect(`task:${task._id}:gitdiff`)
                             }
                             data-value={`task:${task._id}:gitdiff`}
+                            keywords={diffKeywords}
                             className="flex items-center gap-3 px-3 py-2.5 mx-1 rounded-md cursor-pointer                     hover:bg-neutral-100 dark:hover:bg-neutral-800
                     data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
                     data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100
@@ -956,6 +1136,13 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                       </div>
                       <Command.Item
                         value="updates:check"
+                        keywords={[
+                          "updates",
+                          "update",
+                          "upgrade",
+                          "version",
+                          "check for updates",
+                        ]}
                         onSelect={() => handleSelect("updates:check")}
                         className="flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer
                 hover:bg-neutral-100 dark:hover:bg-neutral-800
