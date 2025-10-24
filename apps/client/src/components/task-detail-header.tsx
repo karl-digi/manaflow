@@ -3,7 +3,7 @@ import { Dropdown } from "@/components/ui/dropdown";
 import { MergeButton, type MergeMethod } from "@/components/ui/merge-button";
 import { useSocketSuspense } from "@/contexts/socket/use-socket";
 import { isElectron } from "@/lib/electron";
-import { cn } from "@/lib/utils";
+import { cn, parseGitHubPRUrl } from "@/lib/utils";
 import { normalizeGitRef } from "@/lib/refWithOrigin";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
 import type { Doc, Id } from "@cmux/convex/dataModel";
@@ -574,6 +574,7 @@ function SocketActions({
   teamSlugOrId: string;
 }) {
   const { socket } = useSocketSuspense();
+  const navigate = useNavigate();
   const pullRequests = useMemo(
     () => selectedRun?.pullRequests ?? [],
     [selectedRun?.pullRequests],
@@ -626,7 +627,21 @@ function SocketActions({
   const openUrls = (prs: Array<{ url?: string | null }>) => {
     prs.forEach((pr) => {
       if (pr.url) {
-        window.open(pr.url, "_blank", "noopener,noreferrer");
+        const prInfo = parseGitHubPRUrl(pr.url);
+        if (prInfo.isValid) {
+          navigate({
+            to: "/$teamSlugOrId/prs/$owner/$repo/$number",
+            params: {
+              teamSlugOrId,
+              owner: prInfo.owner,
+              repo: prInfo.repo,
+              number: prInfo.number,
+            },
+          });
+        } else {
+          // Fallback to external browser for non-GitHub PR URLs
+          window.open(pr.url, "_blank", "noopener,noreferrer");
+        }
       }
     });
   };
@@ -906,7 +921,21 @@ function SocketActions({
                   disabled={!hasUrl}
                   onClick={() => {
                     if (pr?.url) {
-                      window.open(pr.url, "_blank", "noopener,noreferrer");
+                      const prInfo = parseGitHubPRUrl(pr.url);
+                      if (prInfo.isValid) {
+                        navigate({
+                          to: "/$teamSlugOrId/prs/$owner/$repo/$number",
+                          params: {
+                            teamSlugOrId,
+                            owner: prInfo.owner,
+                            repo: prInfo.repo,
+                            number: prInfo.number,
+                          },
+                        });
+                      } else {
+                        // Fallback to external browser for non-GitHub PR URLs
+                        window.open(pr.url, "_blank", "noopener,noreferrer");
+                      }
                     }
                   }}
                 >

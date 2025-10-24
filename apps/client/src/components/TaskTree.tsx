@@ -53,6 +53,7 @@ import {
   type ReactNode,
 } from "react";
 import { VSCodeIcon } from "./icons/VSCodeIcon";
+import { PullRequestOverviewCard } from "./PullRequestOverviewCard";
 import { SidebarListItem } from "./sidebar/SidebarListItem";
 import { annotateAgentOrdinals } from "./task-tree/annotateAgentOrdinals";
 
@@ -984,13 +985,26 @@ function TaskRunDetails({
       ) : null}
 
       {shouldRenderPullRequestLink ? (
-        <TaskRunDetailLink
-          to="/$teamSlugOrId/task/$taskId/run/$runId/pr"
-          params={{ teamSlugOrId, taskId, runId: run._id }}
-          icon={<GitPullRequest className="w-3 h-3 mr-2 text-neutral-400" />}
-          label="Pull Request"
-          indentLevel={indentLevel}
-        />
+        <div className="mt-px px-2" style={{ paddingLeft: `${24 + indentLevel * 8}px` }}>
+          <PullRequestOverviewCard 
+            prInfo={{
+              state: run.pullRequestState || "unknown",
+              url: run.pullRequestUrl || run.pullRequests?.[0]?.url,
+              number: run.pullRequestNumber || run.pullRequests?.[0]?.number,
+              isDraft: run.pullRequestIsDraft || run.pullRequestState === "draft",
+              mergeStatus: (() => {
+                switch (run.pullRequestState) {
+                  case "draft": return "pr_draft";
+                  case "open": return "pr_open";
+                  case "merged": return "pr_merged";
+                  case "closed": return "pr_closed";
+                  default: return "none";
+                }
+              })()
+            }}
+            className="w-full"
+          />
+        </div>
       ) : null}
 
       {previewServices.map((service) => (
