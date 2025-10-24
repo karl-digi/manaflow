@@ -1,5 +1,5 @@
+import { DiffFile } from "@git-diff-view/react";
 import { describe, expect, it } from "vitest";
-import { computeNewLineNumber, parseDiff } from "react-diff-view";
 
 import { buildDiffHeatmap, parseReviewHeatmap } from "./heatmap";
 
@@ -63,9 +63,13 @@ describe("parseReviewHeatmap", () => {
 
 describe("buildDiffHeatmap", () => {
   it("produces tiered classes and character highlights", () => {
-    const files = parseDiff(SAMPLE_DIFF);
-    const file = files[0] ?? null;
-    expect(file).not.toBeNull();
+    const diffFile = DiffFile.createInstance({
+      hunks: [SAMPLE_DIFF.trimStart()],
+    });
+    diffFile.initTheme("dark");
+    diffFile.initRaw();
+    diffFile.buildSplitDiffLines();
+    diffFile.buildUnifiedDiffLines();
 
     const review = parseReviewHeatmap({
       response: JSON.stringify({
@@ -92,7 +96,7 @@ describe("buildDiffHeatmap", () => {
       }),
     });
 
-    const heatmap = buildDiffHeatmap(file, review);
+    const heatmap = buildDiffHeatmap(diffFile, review);
     expect(heatmap).not.toBeNull();
     if (!heatmap) {
       return;
@@ -116,13 +120,8 @@ describe("buildDiffHeatmap", () => {
       return;
     }
 
-    const lineFourChange = file!.hunks[0]?.changes.find(
-      (change) => computeNewLineNumber(change) === 4
-    );
-    const expectedStart = Math.max(
-      (lineFourChange?.content.length ?? 1) - 1,
-      0
-    );
+    const lineFour = diffFile.getNewPlainLine(4)?.value ?? "";
+    const expectedStart = Math.max(lineFour.length - 1, 0);
     expect(rangeForLine4.start).toBe(expectedStart);
     expect(rangeForLine4.length).toBe(1);
   });

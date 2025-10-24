@@ -20,7 +20,6 @@ const nextConfig: NextConfig = {
     "@cmux/server",
     "@cmux/shared",
     "@cmux/convex",
-    "refractor",
   ],
 };
 

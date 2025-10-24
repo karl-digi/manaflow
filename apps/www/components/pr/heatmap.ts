@@ -1,5 +1,4 @@
-import { computeNewLineNumber, isDelete, type FileData } from "react-diff-view";
-import type { RangeTokenNode } from "react-diff-view";
+import { DiffLineType, type DiffFile } from "@git-diff-view/react";
 
 export type ReviewHeatmapLine = {
   lineNumber: number | null;
@@ -15,7 +14,11 @@ export type DiffHeatmap = {
   entries: Map<number, ResolvedHeatmapLine>;
 };
 
-export type HeatmapRangeNode = RangeTokenNode & {
+export type HeatmapRangeNode = {
+  type: string;
+  lineNumber: number;
+  start: number;
+  length: number;
   className: string;
 };
 
@@ -93,7 +96,7 @@ export function parseReviewHeatmap(raw: unknown): ReviewHeatmapLine[] {
 }
 
 export function buildDiffHeatmap(
-  diff: FileData | null,
+  diff: DiffFile | null,
   reviewHeatmap: ReviewHeatmapLine[]
 ): DiffHeatmap | null {
   if (!diff || reviewHeatmap.length === 0) {
@@ -282,22 +285,41 @@ function normalizeLineText(value: string | null | undefined): string | null {
   return value.replace(/\s+/g, " ").trim();
 }
 
-function collectNewLineContent(diff: FileData): Map<number, string> {
+function collectNewLineContent(diff: DiffFile): Map<number, string> {
   const map = new Map<number, string>();
 
-  for (const hunk of diff.hunks) {
-    for (const change of hunk.changes) {
-      const lineNumber = computeNewLineNumber(change);
-      if (lineNumber < 0) {
-        continue;
-      }
+  const totalLines = diff.splitLineLength;
 
-      if (isDelete(change)) {
-        continue;
-      }
+  for (let index = 0; index < totalLines; index += 1) {
+    const line = diff.getSplitRightLine(index);
 
-      map.set(lineNumber, change.content ?? "");
+    if (!line?.lineNumber) {
+      continue;
     }
+
+    if (map.has(line.lineNumber)) {
+      continue;
+    }
+
+    const diffLine = line.diff;
+
+    if (diffLine?.type === DiffLineType.Delete) {
+      continue;
+    }
+
+    if (diffLine?.newLineNumber !== null && diffLine?.newLineNumber !== undefined && diffLine.newLineNumber <= 0) {
+      continue;
+    }
+
+    const plainLine = diff.getNewPlainLine(line.lineNumber);
+    const rawValue = plainLine?.value ?? line.value ?? diffLine?.text ?? "";
+
+    const normalized =
+      rawValue.length > 0 && (rawValue.startsWith("+") || rawValue.startsWith("-") || rawValue.startsWith(" "))
+        ? rawValue.slice(1)
+        : rawValue;
+
+    map.set(line.lineNumber, normalized);
   }
 
   return map;

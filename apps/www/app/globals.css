@@ -68,167 +68,43 @@ body {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace !important;
 }
 
-.diff-syntax {
-  --diff-token-comment: hsl(215 12% 48%);
-  --diff-token-punctuation: hsl(222 10% 32%);
-  --diff-token-operator: hsl(222 88% 48%);
-  --diff-token-string: hsl(148 46% 38%);
-  --diff-token-number: hsl(13 74% 46%);
-  --diff-token-keyword: hsl(265 67% 46%);
-  --diff-token-function: hsl(200 76% 40%);
-  --diff-token-variable: hsl(215 30% 40%);
-  --diff-token-attr: hsl(31 85% 42%);
-  --diff-token-boolean: hsl(14 70% 47%);
-  --diff-token-builtin: hsl(205 75% 38%);
-  --diff-token-inserted: hsl(150 55% 38%);
-  --diff-token-deleted: hsl(356 70% 48%);
-}
-
-.diff-syntax pre,
-.diff-syntax code {
-  background: transparent;
-}
-
-.diff-syntax .token.comment,
-.diff-syntax .token.prolog,
-.diff-syntax .token.doctype,
-.diff-syntax .token.cdata {
-  color: var(--diff-token-comment);
-  font-style: italic;
-}
-
-.diff-syntax .token.punctuation {
-  color: var(--diff-token-punctuation);
-}
-
-.diff-syntax .token.operator,
-.diff-syntax .token.entity,
-.diff-syntax .token.url,
-.diff-syntax .token.symbol {
-  color: var(--diff-token-operator);
-}
-
-.diff-syntax .token.string,
-.diff-syntax .token.char {
-  color: var(--diff-token-string);
-}
-
-.diff-syntax .token.inserted {
-  color: var(--diff-token-inserted);
-}
-
-.diff-syntax .token.number {
-  color: var(--diff-token-number);
-}
-
-.diff-syntax .token.keyword,
-.diff-syntax .token.atrule,
-.diff-syntax .token.tag,
-.diff-syntax .token.constant,
-.diff-syntax .token.important {
-  color: var(--diff-token-keyword);
-}
-
-.diff-syntax .token.function,
-.diff-syntax .token.class-name,
-.diff-syntax .token.method {
-  color: var(--diff-token-function);
-}
-
-.diff-syntax .token.attr-name,
-.diff-syntax .token.selector,
-.diff-syntax .token.property,
-.diff-syntax .token.variable {
-  color: var(--diff-token-variable);
-}
-
-.diff-syntax .token.attr-value,
-.diff-syntax .token.interpolation {
-  color: var(--diff-token-attr);
-}
-
-.diff-syntax .token.deleted {
-  color: var(--diff-token-deleted);
-}
-
-.diff-syntax .token.regex,
-.diff-syntax .token.bold,
-.diff-syntax .token.builtin {
-  color: var(--diff-token-builtin);
-}
-
-.diff-syntax .token.italic {
-  font-style: italic;
-}
-
-.diff-syntax .token.bold {
-  font-weight: 600;
-}
-
-.diff-syntax .token.constant,
-.diff-syntax .token.boolean {
-  color: var(--diff-token-boolean);
-}
-
-.cmux-heatmap-tier-1 .diff-gutter,
-.cmux-heatmap-tier-1 .diff-code {
+.cmux-heatmap-tier-1 td.diff-line-new-num,
+.cmux-heatmap-tier-1 td.diff-line-new-content {
   box-shadow: inset 0 0 0 999px rgba(249, 115, 22, 0.08);
 }
 
-.cmux-heatmap-tier-2 .diff-gutter,
-.cmux-heatmap-tier-2 .diff-code {
+.cmux-heatmap-tier-2 td.diff-line-new-num,
+.cmux-heatmap-tier-2 td.diff-line-new-content {
   box-shadow: inset 0 0 0 999px rgba(249, 115, 22, 0.16);
 }
 
-.cmux-heatmap-tier-3 .diff-gutter,
-.cmux-heatmap-tier-3 .diff-code {
+.cmux-heatmap-tier-3 td.diff-line-new-num,
+.cmux-heatmap-tier-3 td.diff-line-new-content {
   box-shadow: inset 0 0 0 999px rgba(239, 68, 68, 0.22);
 }
 
-.cmux-heatmap-tier-4 .diff-gutter,
-.cmux-heatmap-tier-4 .diff-code {
+.cmux-heatmap-tier-4 td.diff-line-new-num,
+.cmux-heatmap-tier-4 td.diff-line-new-content {
   box-shadow: inset 0 0 0 999px rgba(220, 38, 38, 0.32);
 }
 
-.dark .cmux-heatmap-tier-1 .diff-gutter,
-.dark .cmux-heatmap-tier-1 .diff-code {
+.dark .cmux-heatmap-tier-1 td.diff-line-new-num,
+.dark .cmux-heatmap-tier-1 td.diff-line-new-content {
   box-shadow: inset 0 0 0 999px rgba(249, 115, 22, 0.16);
 }
 
-.dark .cmux-heatmap-tier-2 .diff-gutter,
-.dark .cmux-heatmap-tier-2 .diff-code {
+.dark .cmux-heatmap-tier-2 td.diff-line-new-num,
+.dark .cmux-heatmap-tier-2 td.diff-line-new-content {
   box-shadow: inset 0 0 0 999px rgba(249, 115, 22, 0.24);
 }
 
-.diff-syntax {
-  --diff-gutter-insert-background-color: rgb(226 252 237);
-  --diff-gutter-insert-text-color: rgb(21 128 61);
-  --diff-code-insert-background-color: rgb(240 253 244);
-  --diff-code-insert-text-color: rgb(22 101 52);
-  --diff-gutter-delete-background-color: transparent;
-  --diff-gutter-delete-text-color: rgb(115 115 115);
-  --diff-code-delete-background-color: transparent;
-  --diff-code-delete-text-color: rgb(82 82 82);
-}
-
-.dark .diff-syntax {
-  --diff-gutter-insert-background-color: rgba(34, 197, 94, 0.22);
-  --diff-gutter-insert-text-color: rgb(134 239 172);
-  --diff-code-insert-background-color: rgba(34, 197, 94, 0.16);
-  --diff-code-insert-text-color: rgb(187 247 208);
-  --diff-gutter-delete-background-color: transparent;
-  --diff-gutter-delete-text-color: rgb(163 163 163);
-  --diff-code-delete-background-color: transparent;
-  --diff-code-delete-text-color: rgb(212 212 212);
-}
-
-.dark .cmux-heatmap-tier-3 .diff-gutter,
-.dark .cmux-heatmap-tier-3 .diff-code {
+.dark .cmux-heatmap-tier-3 td.diff-line-new-num,
+.dark .cmux-heatmap-tier-3 td.diff-line-new-content {
   box-shadow: inset 0 0 0 999px rgba(239, 68, 68, 0.32);
 }
 
-.dark .cmux-heatmap-tier-4 .diff-gutter,
-.dark .cmux-heatmap-tier-4 .diff-code {
+.dark .cmux-heatmap-tier-4 td.diff-line-new-num,
+.dark .cmux-heatmap-tier-4 td.diff-line-new-content {
   box-shadow: inset 0 0 0 999px rgba(220, 38, 38, 0.4);
 }
 
@@ -259,15 +135,15 @@ body {
   background-color: rgba(220, 38, 38, 0.6);
 }
 
-.cmux-heatmap-focus td.diff-gutter,
-.cmux-heatmap-focus td.diff-code {
+.cmux-heatmap-focus td.diff-line-new-num,
+.cmux-heatmap-focus td.diff-line-new-content {
   background-color: rgba(14, 165, 233, 0.12);
   outline: 2px solid rgba(14, 165, 233, 0.4);
   outline-offset: -1px;
 }
 
-.dark .cmux-heatmap-focus td.diff-gutter,
-.dark .cmux-heatmap-focus td.diff-code {
+.dark .cmux-heatmap-focus td.diff-line-new-num,
+.dark .cmux-heatmap-focus td.diff-line-new-content {
   background-color: rgba(2, 132, 199, 0.25);
   outline: 2px solid rgba(125, 211, 252, 0.55);
   outline-offset: -1px;
