@@ -1,5 +1,4 @@
-import { computeNewLineNumber, isDelete, type FileData } from "react-diff-view";
-import type { RangeTokenNode } from "react-diff-view";
+import { DiffFile, DiffLineType } from "@git-diff-view/react";
 
 export type ReviewHeatmapLine = {
   lineNumber: number | null;
@@ -15,7 +14,10 @@ export type DiffHeatmap = {
   entries: Map<number, ResolvedHeatmapLine>;
 };
 
-export type HeatmapRangeNode = RangeTokenNode & {
+export type HeatmapRangeNode = {
+  lineNumber: number;
+  start: number;
+  length: number;
   className: string;
 };
 
@@ -93,14 +95,14 @@ export function parseReviewHeatmap(raw: unknown): ReviewHeatmapLine[] {
 }
 
 export function buildDiffHeatmap(
-  diff: FileData | null,
+  diffFile: DiffFile | null,
   reviewHeatmap: ReviewHeatmapLine[]
 ): DiffHeatmap | null {
-  if (!diff || reviewHeatmap.length === 0) {
+  if (!diffFile || reviewHeatmap.length === 0) {
     return null;
   }
 
-  const newLineContent = collectNewLineContent(diff);
+  const newLineContent = collectNewLineContent(diffFile);
 
   const resolvedEntries = resolveLineNumbers(reviewHeatmap, newLineContent);
   if (resolvedEntries.length === 0) {
@@ -143,7 +145,6 @@ export function buildDiffHeatmap(
 
     const charTier = tier > 0 ? tier : 1;
     const range: HeatmapRangeNode = {
-      type: "span",
       lineNumber,
       start: highlightIndex,
       length: Math.min(1, Math.max(content.length - highlightIndex, 1)),
@@ -282,22 +283,26 @@ function normalizeLineText(value: string | null | undefined): string | null {
   return value.replace(/\s+/g, " ").trim();
 }
 
-function collectNewLineContent(diff: FileData): Map<number, string> {
+function collectNewLineContent(diffFile: DiffFile): Map<number, string> {
+  diffFile.initRaw();
+  diffFile.buildSplitDiffLines();
+
   const map = new Map<number, string>();
+  const totalLines = diffFile.splitLineLength;
 
-  for (const hunk of diff.hunks) {
-    for (const change of hunk.changes) {
-      const lineNumber = computeNewLineNumber(change);
-      if (lineNumber < 0) {
-        continue;
-      }
-
-      if (isDelete(change)) {
-        continue;
-      }
-
-      map.set(lineNumber, change.content ?? "");
+  for (let index = 0; index < totalLines; index += 1) {
+    const rightLine = diffFile.getSplitRightLine(index);
+    if (!rightLine || !rightLine.lineNumber) {
+      continue;
     }
+
+    if (rightLine.diff?.type === DiffLineType.Delete) {
+      continue;
+    }
+
+    const contentSource = rightLine.value ?? rightLine.diff?.text ?? "";
+    const content = contentSource.replace(/\r?\n$/, "");
+    map.set(rightLine.lineNumber, content);
   }
 
   return map;

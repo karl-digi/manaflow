@@ -20,7 +20,8 @@ const nextConfig: NextConfig = {
     "@cmux/server",
     "@cmux/shared",
     "@cmux/convex",
-    "refractor",
+    "@git-diff-view/react",
+    "@git-diff-view/core",
   ],
 };
 
