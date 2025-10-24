@@ -3,6 +3,7 @@ import { isElectron } from "@/lib/electron";
 import { copyAllElectronLogs } from "@/lib/electron-logs/electron-logs";
 import { setLastTeamSlugOrId } from "@/lib/lastTeam";
 import { stackClientApp } from "@/lib/stack";
+import { commandSearchFilter } from "@/lib/cmdk/filter";
 import { api } from "@cmux/convex/api";
 import type { Id } from "@cmux/convex/dataModel";
 import * as Dialog from "@radix-ui/react-dialog";
@@ -614,6 +615,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
             setOpen(true);
           }
         }}
+        filter={commandSearchFilter}
         label="Command Menu"
         title="Command Menu"
         loop
@@ -840,12 +842,85 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                     </div>
                     {allTasks.slice(0, 9).flatMap((task, index) => {
                       const run = task.selectedTaskRun;
+                      const ordinal = index + 1;
+                      const ordinalLabel = String(ordinal);
+
+                      const baseKeywordSet = new Set<string>();
+                      const addKeywords = (...values: ReadonlyArray<unknown>) => {
+                        for (const candidate of compactStrings(values)) {
+                          baseKeywordSet.add(candidate);
+                        }
+                      };
+
+                      addKeywords(
+                        task.pullRequestTitle,
+                        task.text,
+                        task.description,
+                        task.projectFullName,
+                        task.baseBranch,
+                        task.worktreePath,
+                        task.isCompleted ? "completed" : "in progress",
+                        "task",
+                        ordinalLabel,
+                        `task ${ordinalLabel}`,
+                      );
+
+                      if (run) {
+                        addKeywords(
+                          run.agentName,
+                          run.summary,
+                          run.newBranch,
+                          run.worktreePath,
+                          run.pullRequestUrl,
+                          run.pullRequestState,
+                          run.status,
+                          run.pullRequestNumber
+                            ? `pr ${run.pullRequestNumber}`
+                            : undefined,
+                        );
+
+                        if (run.pullRequests) {
+                          for (const pr of run.pullRequests) {
+                            addKeywords(
+                              pr.repoFullName,
+                              pr.url,
+                              pr.state,
+                              pr.number ? `pr ${pr.number}` : undefined,
+                            );
+                          }
+                        }
+                      }
+
+                      const baseTaskKeywords = Array.from(baseKeywordSet);
+                      const mainTaskKeywords = Array.from(
+                        new Set([...baseTaskKeywords, "open"]),
+                      );
+                      const vsKeywords = Array.from(
+                        new Set([
+                          ...baseTaskKeywords,
+                          "vs",
+                          "compare",
+                          "workspace",
+                          "vscode",
+                        ]),
+                      );
+                      const diffKeywords = Array.from(
+                        new Set([
+                          ...baseTaskKeywords,
+                          "diff",
+                          "git",
+                          "compare",
+                          "changes",
+                        ]),
+                      );
+
                       const items = [
                         <Command.Item
                           key={task._id}
                           value={`${index + 1}:task:${task._id}`}
                           onSelect={() => handleSelect(`task:${task._id}`)}
                           data-value={`task:${task._id}`}
+                          keywords={mainTaskKeywords}
                           className="flex items-center gap-3 px-3 py-2.5 mx-1 rounded-md cursor-pointer                     hover:bg-neutral-100 dark:hover:bg-neutral-800
                     data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
                     data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100
@@ -880,6 +955,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                             value={`${index + 1} vs:task:${task._id}`}
                             onSelect={() => handleSelect(`task:${task._id}:vs`)}
                             data-value={`task:${task._id}:vs`}
+                            keywords={vsKeywords}
                             className="flex items-center gap-3 px-3 py-2.5 mx-1 rounded-md cursor-pointer                     hover:bg-neutral-100 dark:hover:bg-neutral-800
                     data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
                     data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100
@@ -915,6 +991,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                               handleSelect(`task:${task._id}:gitdiff`)
                             }
                             data-value={`task:${task._id}:gitdiff`}
+                            keywords={diffKeywords}
                             className="flex items-center gap-3 px-3 py-2.5 mx-1 rounded-md cursor-pointer                     hover:bg-neutral-100 dark:hover:bg-neutral-800
                     data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
                     data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100
