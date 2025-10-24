@@ -1,4 +1,4 @@
-import { getAccessTokenFromRequest } from "@/lib/utils/auth";
+import { trackModelUsage } from "@/lib/analytics/events";
 import {
   generateBranchNamesFromBase,
   generateNewBranchName,
@@ -7,6 +7,7 @@ import {
   toKebabCase,
 } from "@/lib/utils/branch-name-generator";
 import { getConvex } from "@/lib/utils/get-convex";
+import { stackServerAppJs } from "@/lib/utils/stack";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { api } from "@cmux/convex/api";
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
@@ -40,6 +41,17 @@ const GenerateBranchesResponse = z
     providerName: z.string().nullable(),
   })
   .openapi("GenerateBranchesResponse");
+
+const MODEL_NAME_BY_PROVIDER: Record<string, string> = {
+  OpenAI: "gpt-5-nano",
+  Gemini: "gemini-2.5-flash",
+  Anthropic: "claude-3-5-haiku-20241022",
+};
+
+const resolveModelName = (providerName: string | null): string | null => {
+  if (!providerName) return null;
+  return MODEL_NAME_BY_PROVIDER[providerName] ?? null;
+};
 
 branchRouter.openapi(
   createRoute({
@@ -75,12 +87,16 @@ branchRouter.openapi(
     const body = c.req.valid("json");
     const req = c.req.raw;
 
-    const accessToken = await getAccessTokenFromRequest(req);
+    const user = await stackServerAppJs.getUser({ tokenStore: req });
+    if (!user) {
+      throw new HTTPException(401, { message: "Unauthorized" });
+    }
+    const { accessToken } = await user.getAuthJson();
     if (!accessToken) {
       throw new HTTPException(401, { message: "Unauthorized" });
     }
 
-    await verifyTeamAccess({ req, teamSlugOrId: body.teamSlugOrId });
+    const team = await verifyTeamAccess({ req, teamSlugOrId: body.teamSlugOrId });
 
     const convex = getConvex({ accessToken });
 
@@ -122,6 +138,19 @@ branchRouter.openapi(
           apiKeys,
           body.uniqueId,
         );
+
+        trackModelUsage({
+          userId: user.id ?? null,
+          teamId: team.uuid,
+          teamSlug: team.slug,
+          teamSlugOrId: body.teamSlugOrId,
+          providerName,
+          modelName: resolveModelName(providerName),
+          feature: "branch_generation",
+          usedFallback,
+          requestedCount: count,
+        });
+
         return c.json({
           branchNames: [branchName],
           baseBranchName,
@@ -143,6 +172,18 @@ branchRouter.openapi(
         apiKeys,
         body.uniqueId,
       );
+
+      trackModelUsage({
+        userId: user.id ?? null,
+        teamId: team.uuid,
+        teamSlug: team.slug,
+        teamSlugOrId: body.teamSlugOrId,
+        providerName,
+        modelName: resolveModelName(providerName),
+        feature: "branch_generation",
+        usedFallback,
+        requestedCount: count,
+      });
 
       return c.json({
         branchNames,

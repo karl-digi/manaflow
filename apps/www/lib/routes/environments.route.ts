@@ -1,3 +1,4 @@
+import { trackEnvironmentCreated } from "@/lib/analytics/events";
 import { getAccessTokenFromRequest } from "@/lib/utils/auth";
 import { getConvex } from "@/lib/utils/get-convex";
 import { stackServerAppJs } from "@/lib/utils/stack";
@@ -200,7 +201,9 @@ environmentsRouter.openapi(
   }),
   async (c) => {
     // Require authentication
-    const accessToken = await getAccessTokenFromRequest(c.req.raw);
+    const user = await stackServerAppJs.getUser({ tokenStore: c.req.raw });
+    if (!user) return c.text("Unauthorized", 401);
+    const { accessToken } = await user.getAuthJson();
     if (!accessToken) return c.text("Unauthorized", 401);
 
     const body = c.req.valid("json");
@@ -267,6 +270,20 @@ environmentsRouter.openapi(
           exposedPorts: sanitizedPorts.length > 0 ? sanitizedPorts : undefined,
         }
       );
+
+      trackEnvironmentCreated({
+        userId: user.id ?? null,
+        teamId: team.uuid,
+        teamSlug: team.slug,
+        teamSlugOrId: body.teamSlugOrId,
+        environmentId,
+        morphSnapshotId: snapshot.id,
+        selectedRepoCount: body.selectedRepos?.length ?? 0,
+        descriptionProvided: Boolean(body.description),
+        exposedPortsCount: sanitizedPorts.length,
+        maintenanceScriptConfigured: Boolean(body.maintenanceScript),
+        devScriptConfigured: Boolean(body.devScript),
+      });
 
       return c.json({
         id: environmentId,

@@ -1,3 +1,4 @@
+import { trackSandboxStarted } from "@/lib/analytics/events";
 import { getAccessTokenFromRequest } from "@/lib/utils/auth";
 import { getConvex } from "@/lib/utils/get-convex";
 import { selectGitIdentity } from "@/lib/utils/gitIdentity";
@@ -342,6 +343,25 @@ sandboxesRouter.openapi(
       }
 
       await configureGitIdentityTask;
+
+      trackSandboxStarted({
+        userId: user.id ?? null,
+        teamId: team.uuid,
+        teamSlug: team.slug,
+        teamSlugOrId: body.teamSlugOrId,
+        environmentId: body.environmentId ?? null,
+        instanceId: instance.id,
+        snapshotId: resolvedSnapshotId,
+        provider: "morph",
+        ttlSeconds: body.ttlSeconds,
+        metadata: body.metadata ?? null,
+        repoUrl: body.repoUrl ?? null,
+        branch: body.branch ?? null,
+        newBranch: body.newBranch ?? null,
+        taskRunId: body.taskRunId ?? null,
+        devScriptConfigured: Boolean(devScript),
+        maintenanceScriptConfigured: Boolean(maintenanceScript),
+      });
 
       return c.json({
         instanceId: instance.id,

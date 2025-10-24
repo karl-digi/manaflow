@@ -2,6 +2,7 @@ import { randomBytes, createHash } from "node:crypto";
 import { api } from "@cmux/convex/api";
 import type { Id } from "@cmux/convex/dataModel";
 
+import { trackModelUsage } from "@/lib/analytics/events";
 import { getConvex } from "@/lib/utils/get-convex";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { env } from "@/lib/utils/www-env";
@@ -193,6 +194,17 @@ export async function startCodeReviewJob({
     jobId: rawJob.jobId as Id<"automatedCodeReviewJobs">,
   });
   const runningJob = normalizeJob(runningJobRaw);
+
+  trackModelUsage({
+    userId: runningJob.requestedByUserId ?? null,
+    teamId: runningJob.teamId ?? undefined,
+    teamSlugOrId: payload.teamSlugOrId,
+    providerName: "OpenAI",
+    modelName: "gpt-5-codex",
+    feature: "code_review",
+    usedFallback: false,
+    requestedCount: 1,
+  });
 
   console.info("[code-review] Dispatching background review", {
     jobId: runningJob.jobId,
