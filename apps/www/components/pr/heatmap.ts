@@ -1,5 +1,6 @@
-import { computeNewLineNumber, isDelete, type FileData } from "react-diff-view";
-import type { RangeTokenNode } from "react-diff-view";
+// TODO: Adapt heatmap for git-diff-view
+// import { computeNewLineNumber, isDelete, type FileData } from "react-diff-view";
+// import type { RangeTokenNode } from "react-diff-view";
 
 export type ReviewHeatmapLine = {
   lineNumber: number | null;
@@ -15,7 +16,11 @@ export type DiffHeatmap = {
   entries: Map<number, ResolvedHeatmapLine>;
 };
 
-export type HeatmapRangeNode = RangeTokenNode & {
+export type HeatmapRangeNode = {
+  type: string;
+  lineNumber: number;
+  start: number;
+  length: number;
   className: string;
 };
 
@@ -92,10 +97,17 @@ export function parseReviewHeatmap(raw: unknown): ReviewHeatmapLine[] {
   return parsed;
 }
 
+// TODO: Adapt buildDiffHeatmap for git-diff-view
+// This function is temporarily stubbed out since we're migrating from react-diff-view
 export function buildDiffHeatmap(
-  diff: FileData | null,
-  reviewHeatmap: ReviewHeatmapLine[]
+  // diff: FileData | null,
+  _diff: unknown | null,
+  _reviewHeatmap: ReviewHeatmapLine[]
 ): DiffHeatmap | null {
+  // Temporarily return null until we implement heatmap for git-diff-view
+  return null;
+
+  /* Original implementation - to be adapted for git-diff-view
   if (!diff || reviewHeatmap.length === 0) {
     return null;
   }
@@ -161,8 +173,10 @@ export function buildDiffHeatmap(
     newRanges: characterRanges,
     entries: aggregated,
   };
+  */
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function aggregateEntries(
   entries: ResolvedHeatmapLine[]
 ): Map<number, ResolvedHeatmapLine> {
@@ -192,6 +206,7 @@ function aggregateEntries(
   return aggregated;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function resolveLineNumbers(
   entries: ReviewHeatmapLine[],
   lineContent: Map<number, string>
@@ -282,6 +297,7 @@ function normalizeLineText(value: string | null | undefined): string | null {
   return value.replace(/\s+/g, " ").trim();
 }
 
+/* TODO: Adapt for git-diff-view
 function collectNewLineContent(diff: FileData): Map<number, string> {
   const map = new Map<number, string>();
 
@@ -302,7 +318,9 @@ function collectNewLineContent(diff: FileData): Map<number, string> {
 
   return map;
 }
+*/
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function computeHeatmapTier(score: number | null): number {
   if (score === null) {
     return 0;
