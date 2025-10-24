@@ -810,7 +810,12 @@ def main():
     )
 
     print(f"Starting instance from snapshot {snapshot.id}...")
-    current_instance = client.instances.start(snapshot.id)
+    ttl_seconds = 60 * 30
+    current_instance = client.instances.start(
+        snapshot_id=snapshot.id,
+        ttl_seconds=ttl_seconds,
+        ttl_action="pause",
+    )
 
     try:
         # Install base dependencies

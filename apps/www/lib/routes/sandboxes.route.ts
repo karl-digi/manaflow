@@ -30,6 +30,9 @@ import {
 
 export const sandboxesRouter = new OpenAPIHono();
 
+const DEFAULT_INSTANCE_TTL_SECONDS = 60 * 30;
+const MAX_INSTANCE_TTL_SECONDS = 12 * 60 * 60;
+
 const StartSandboxBody = z
   .object({
     teamSlugOrId: z.string(),
@@ -37,8 +40,9 @@ const StartSandboxBody = z
     snapshotId: z.string().optional(),
     ttlSeconds: z
       .number()
-      .optional()
-      .default(60 * 60),
+      .int()
+      .max(MAX_INSTANCE_TTL_SECONDS)
+      .default(DEFAULT_INSTANCE_TTL_SECONDS),
     metadata: z.record(z.string(), z.string()).optional(),
     taskRunId: z.string().optional(),
     taskRunJwt: z.string().optional(),
@@ -190,7 +194,7 @@ sandboxesRouter.openapi(
 
       const instance = await client.instances.start({
         snapshotId: resolvedSnapshotId,
-        ttlSeconds: body.ttlSeconds ?? 60 * 60,
+        ttlSeconds: body.ttlSeconds ?? DEFAULT_INSTANCE_TTL_SECONDS,
         ttlAction: "pause",
         metadata: {
           app: "cmux",

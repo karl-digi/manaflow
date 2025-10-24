@@ -11,13 +11,16 @@ dotenv.config({ path: path.join(__dirname, ".env") });
 async function main() {
   try {
     const client = new MorphCloudClient();
-    
+
     // Replace with your actual snapshot ID
     const snapshotId = "snapshot_c16u3ggu"; // From the morph-final.ts output
+    const ttlSeconds = 60 * 30;
     
     console.log(`Starting instance from snapshot ${snapshotId}...`);
     const instance = await client.instances.start({
-      snapshotId: snapshotId,
+      snapshotId,
+      ttlSeconds,
+      ttlAction: "pause",
     });
 
     await instance.waitUntilReady();

@@ -5,6 +5,9 @@ import { env } from "@/lib/utils/www-env";
 import { connectToWorkerManagement, type Socket } from "@cmux/shared/socket";
 import type { WorkerToServerEvents, ServerToWorkerEvents } from "@cmux/shared";
 
+const DEFAULT_INSTANCE_TTL_SECONDS = 60 * 30;
+const MAX_INSTANCE_TTL_SECONDS = 12 * 60 * 60;
+
 // Define the request schema based on StartTaskSchema
 const StartDevServerSchema = z.object({
   repoUrl: z.string().openapi({
@@ -59,10 +62,15 @@ const StartDevServerSchema = z.object({
     example: "snapshot_kco1jqb6",
     description: "Morph snapshot ID to use for the instance",
   }),
-  ttlSeconds: z.number().optional().default(1800).openapi({
-    example: 1800,
-    description: "Time to live in seconds (default 30 minutes)",
-  }),
+  ttlSeconds: z
+    .number()
+    .int()
+    .max(MAX_INSTANCE_TTL_SECONDS)
+    .default(DEFAULT_INSTANCE_TTL_SECONDS)
+    .openapi({
+      example: 1800,
+      description: "Time to live in seconds (default 30 minutes)",
+    }),
 });
 
 // Response schema
@@ -157,10 +165,13 @@ devServerRouter.openapi(startDevServerRoute, async (c) => {
     // Initialize Morph client
     const client = new MorphCloudClient();
 
+    const ttlSeconds =
+      body.ttlSeconds ?? DEFAULT_INSTANCE_TTL_SECONDS;
+
     // Start the instance with provided or default snapshot
     const instance = await client.instances.start({
       snapshotId: body.snapshotId || DEFAULT_MORPH_SNAPSHOT_ID,
-      ttlSeconds: body.ttlSeconds || 60 * 30, // Default 30 minutes
+      ttlSeconds, // Default 30 minutes
       ttlAction: "pause",
       metadata: {
         app: "cmux",

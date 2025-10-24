@@ -18,6 +18,9 @@ import {
 
 export const morphRouter = new OpenAPIHono();
 
+const DEFAULT_INSTANCE_TTL_SECONDS = 60 * 30;
+const MAX_INSTANCE_TTL_SECONDS = 12 * 60 * 60;
+
 const morphSnapshotIds = MORPH_SNAPSHOT_PRESETS.map(
   (preset) => preset.id
 ) as MorphSnapshotId[];
@@ -31,7 +34,11 @@ const SetupInstanceBody = z
     teamSlugOrId: z.string(),
     instanceId: z.string().optional(), // Existing instance ID to reuse
     selectedRepos: z.array(z.string()).optional(), // Repositories to clone
-    ttlSeconds: z.number().default(60 * 30), // 30 minutes default
+    ttlSeconds: z
+      .number()
+      .int()
+      .max(MAX_INSTANCE_TTL_SECONDS)
+      .default(DEFAULT_INSTANCE_TTL_SECONDS), // 30 minutes default, allow extending up to 12 hours
     // TODO: This is a temporary solution to allow both string and enum values since client values are diff from backend values
     snapshotId: z.union([z.string(), SnapshotIdSchema]).optional(),
   })

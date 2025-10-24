@@ -3,8 +3,11 @@ import { MorphCloudClient } from "morphcloud";
 import { io, Socket } from "socket.io-client";
 
 const client = new MorphCloudClient();
+const ttlSeconds = 60 * 30;
 const instance = await client.instances.start({
   snapshotId: "snapshot_r9jerhal",
+  ttlSeconds,
+  ttlAction: "pause",
 });
 
 console.log(`Created instance: ${instance.id}`);
