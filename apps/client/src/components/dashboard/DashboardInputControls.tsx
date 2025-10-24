@@ -284,7 +284,14 @@ export const DashboardInputControls = memo(function DashboardInputControls({
   );
 
   const handleFocusAgentOption = useCallback((agent: string) => {
-    agentSelectRef.current?.open({ focusValue: agent });
+    // Add a small delay to ensure the component is ready to receive the open call
+    requestAnimationFrame(() => {
+      try {
+        agentSelectRef.current?.open({ focusValue: agent });
+      } catch (error) {
+        console.error("Failed to open agent selection:", error);
+      }
+    });
   }, []);
 
   const agentSelectionFooter = selectedAgents.length ? (
@@ -305,12 +312,14 @@ export const DashboardInputControls = memo(function DashboardInputControls({
               return (
                 <div
                   key={option.value}
-                  className="inline-flex cursor-default items-center rounded-full bg-neutral-200/70 dark:bg-neutral-800/80 pl-1.5 pr-2 py-1 text-[11px] text-neutral-700 dark:text-neutral-200 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400/60 hover:bg-neutral-200 dark:hover:bg-neutral-700/80"
+                  className="inline-flex cursor-pointer items-center rounded-full bg-neutral-200/70 dark:bg-neutral-800/80 pl-1.5 pr-2 py-1 text-[11px] text-neutral-700 dark:text-neutral-200 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400/60 hover:bg-neutral-200 dark:hover:bg-neutral-700/80"
                   role="button"
                   tabIndex={0}
-                  onClick={() =>
-                    handleFocusAgentOption(representativeInstance.agent)
-                  }
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    handleFocusAgentOption(representativeInstance.agent);
+                  }}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === " ") {
                       event.preventDefault();

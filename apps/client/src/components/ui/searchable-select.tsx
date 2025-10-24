@@ -472,23 +472,26 @@ const SearchableSelect = forwardRef<
         setSearch("");
         setOpen(true);
         requestAnimationFrame(() => {
-          if (focusValue && open) {
-            const index = filteredOptions.findIndex(
-              (opt) => opt.value === focusValue
-            );
-            pendingFocusRef.current = null;
-            if (index !== -1) {
-              try {
-                rowVirtualizer.scrollToIndex(index, {
-                  align: "center",
-                  behavior: "auto",
-                });
-              } catch {
-                /* noop */
+          // Add a small delay to ensure the open state has been applied
+          setTimeout(() => {
+            if (focusValue) {
+              const index = filteredOptions.findIndex(
+                (opt) => opt.value === focusValue
+              );
+              pendingFocusRef.current = null;
+              if (index !== -1) {
+                try {
+                  rowVirtualizer.scrollToIndex(index, {
+                    align: "center",
+                    behavior: "auto",
+                  });
+                } catch {
+                  /* noop */
+                }
               }
             }
-          }
-          triggerRef.current?.focus({ preventScroll: true });
+            triggerRef.current?.focus({ preventScroll: true });
+          }, 50);
         });
       },
       close: () => {
@@ -496,7 +499,7 @@ const SearchableSelect = forwardRef<
         setOpen(false);
       },
     }),
-    [filteredOptions, open, rowVirtualizer]
+    [filteredOptions, rowVirtualizer]
   );
 
   const updateValueCount = (val: string, nextCount: number) => {
