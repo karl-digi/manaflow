@@ -574,6 +574,7 @@ function SocketActions({
   teamSlugOrId: string;
 }) {
   const { socket } = useSocketSuspense();
+  const navigate = useNavigate();
   const pullRequests = useMemo(
     () => selectedRun?.pullRequests ?? [],
     [selectedRun?.pullRequests],
@@ -623,11 +624,32 @@ function SocketActions({
         return (query.data ?? []).length > 0;
       });
 
-  const openUrls = (prs: Array<{ url?: string | null }>) => {
-    prs.forEach((pr) => {
-      if (pr.url) {
-        window.open(pr.url, "_blank", "noopener,noreferrer");
+  const navigateToPRs = (
+    prs: Array<{ url?: string | null; repoFullName?: string; number?: number }>,
+  ) => {
+    // Navigate to the first PR in the cmux PR view
+    if (prs.length > 0) {
+      const firstPr = prs[0];
+      if (firstPr?.repoFullName && firstPr?.number) {
+        const [owner, repo] = firstPr.repoFullName.split("/", 2);
+        if (owner && repo) {
+          navigate({
+            to: "/$teamSlugOrId/prs/$owner/$repo/$number",
+            params: {
+              teamSlugOrId,
+              owner,
+              repo,
+              number: String(firstPr.number),
+            },
+          });
+          return;
+        }
       }
+    }
+    // Fallback: navigate to PR list
+    navigate({
+      to: "/$teamSlugOrId/prs",
+      params: { teamSlugOrId },
     });
   };
 
@@ -687,7 +709,7 @@ function SocketActions({
         (result) => result.url && !result.error,
       );
       if (actionable.length > 0) {
-        openUrls(actionable);
+        navigateToPRs(actionable);
       }
       toast.success(openedLabel, {
         id: context?.toastId,
@@ -696,7 +718,7 @@ function SocketActions({
           actionable.length > 0
             ? {
               label: actionable.length === 1 ? "View PR" : "View PRs",
-              onClick: () => openUrls(actionable),
+              onClick: () => navigateToPRs(actionable),
             }
             : undefined,
       });
@@ -749,7 +771,7 @@ function SocketActions({
         (result) => result.url && !result.error,
       );
       if (actionable.length > 0) {
-        openUrls(actionable);
+        navigateToPRs(actionable);
       }
       toast.success(openedDraftLabel, {
         id: context?.toastId,
@@ -758,7 +780,7 @@ function SocketActions({
           actionable.length > 0
             ? {
               label: actionable.length === 1 ? "View draft" : "View drafts",
-              onClick: () => openUrls(actionable),
+              onClick: () => navigateToPRs(actionable),
             }
             : undefined,
       });
@@ -849,7 +871,7 @@ function SocketActions({
   const handleViewPRs = () => {
     const existing = pullRequests.filter((pr) => pr.url);
     if (existing.length > 0) {
-      openUrls(existing);
+      navigateToPRs(existing);
       return;
     }
     handleOpenDraftPRs();
@@ -905,8 +927,8 @@ function SocketActions({
                   key={repoName}
                   disabled={!hasUrl}
                   onClick={() => {
-                    if (pr?.url) {
-                      window.open(pr.url, "_blank", "noopener,noreferrer");
+                    if (pr) {
+                      navigateToPRs([pr]);
                     }
                   }}
                 >
