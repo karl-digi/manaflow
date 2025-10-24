@@ -1,5 +1,4 @@
-import { computeNewLineNumber, isDelete, type FileData } from "react-diff-view";
-import type { RangeTokenNode } from "react-diff-view";
+import { DiffFile, DiffLineType } from "@git-diff-view/core";
 
 export type ReviewHeatmapLine = {
   lineNumber: number | null;
@@ -11,12 +10,7 @@ export type ReviewHeatmapLine = {
 
 export type DiffHeatmap = {
   lineClasses: Map<number, string>;
-  newRanges: HeatmapRangeNode[];
   entries: Map<number, ResolvedHeatmapLine>;
-};
-
-export type HeatmapRangeNode = RangeTokenNode & {
-  className: string;
 };
 
 type ResolvedHeatmapLine = {
@@ -93,7 +87,7 @@ export function parseReviewHeatmap(raw: unknown): ReviewHeatmapLine[] {
 }
 
 export function buildDiffHeatmap(
-  diff: FileData | null,
+  diff: DiffFile | null,
   reviewHeatmap: ReviewHeatmapLine[]
 ): DiffHeatmap | null {
   if (!diff || reviewHeatmap.length === 0) {
@@ -113,7 +107,6 @@ export function buildDiffHeatmap(
   }
 
   const lineClasses = new Map<number, string>();
-  const characterRanges: HeatmapRangeNode[] = [];
 
   for (const [lineNumber, entry] of aggregated.entries()) {
     const normalizedScore =
@@ -125,40 +118,14 @@ export function buildDiffHeatmap(
     if (tier > 0) {
       lineClasses.set(lineNumber, `cmux-heatmap-tier-${tier}`);
     }
-
-    if (entry.mostImportantCharacterIndex === null) {
-      continue;
-    }
-
-    const content = newLineContent.get(lineNumber);
-    if (!content || content.length === 0) {
-      continue;
-    }
-
-    const highlightIndex = clamp(
-      Math.floor(entry.mostImportantCharacterIndex),
-      0,
-      Math.max(content.length - 1, 0)
-    );
-
-    const charTier = tier > 0 ? tier : 1;
-    const range: HeatmapRangeNode = {
-      type: "span",
-      lineNumber,
-      start: highlightIndex,
-      length: Math.min(1, Math.max(content.length - highlightIndex, 1)),
-      className: `cmux-heatmap-char cmux-heatmap-char-tier-${charTier}`,
-    };
-    characterRanges.push(range);
   }
 
-  if (lineClasses.size === 0 && characterRanges.length === 0) {
+  if (lineClasses.size === 0) {
     return null;
   }
 
   return {
     lineClasses,
-    newRanges: characterRanges,
     entries: aggregated,
   };
 }
@@ -282,22 +249,28 @@ function normalizeLineText(value: string | null | undefined): string | null {
   return value.replace(/\s+/g, " ").trim();
 }
 
-function collectNewLineContent(diff: FileData): Map<number, string> {
+function collectNewLineContent(diff: DiffFile): Map<number, string> {
   const map = new Map<number, string>();
+  const total = diff.splitLineLength ?? 0;
 
-  for (const hunk of diff.hunks) {
-    for (const change of hunk.changes) {
-      const lineNumber = computeNewLineNumber(change);
-      if (lineNumber < 0) {
-        continue;
-      }
-
-      if (isDelete(change)) {
-        continue;
-      }
-
-      map.set(lineNumber, change.content ?? "");
+  for (let index = 0; index < total; index += 1) {
+    const newLine = diff.getSplitRightLine(index);
+    const lineNumber = newLine?.lineNumber;
+    if (!lineNumber || lineNumber < 0) {
+      continue;
     }
+
+    const lineType = newLine?.diff?.type;
+    if (lineType === DiffLineType.Delete) {
+      continue;
+    }
+
+    const value = newLine?.value ?? "";
+    if (!value) {
+      continue;
+    }
+
+    map.set(lineNumber, value.replace(/\r?\n$/, ""));
   }
 
   return map;
