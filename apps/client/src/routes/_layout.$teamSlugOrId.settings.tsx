@@ -1056,23 +1056,33 @@ function SettingsComponent() {
         </div>
       </div>
 
-      {/* Footer Save bar */}
+      {/* Sticky Footer Save bar */}
       <div
         ref={saveButtonRef}
-        className="border-t border-neutral-200 dark:border-neutral-800 bg-white/80 dark:bg-neutral-900/80 backdrop-blur supports-[backdrop-filter]:bg-white/60 supports-[backdrop-filter]:dark:bg-neutral-900/60"
+        className="sticky bottom-0 border-t border-neutral-200 dark:border-neutral-800 bg-white/90 dark:bg-neutral-900/90 backdrop-blur supports-[backdrop-filter]:bg-white/80 supports-[backdrop-filter]:dark:bg-neutral-900/80 z-10"
       >
-        <div className="max-w-3xl mx-auto px-6 py-3 flex items-center justify-end gap-3">
-          <button
-            onClick={saveApiKeys}
-            disabled={!hasChanges() || isSaving}
-            className={`px-4 py-2 text-sm font-medium rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-neutral-900 transition-all ${
-              !hasChanges() || isSaving
-                ? "bg-neutral-200 dark:bg-neutral-800 text-neutral-400 dark:text-neutral-500 cursor-not-allowed opacity-50"
-                : "bg-blue-600 dark:bg-blue-500 text-white hover:bg-blue-700 dark:hover:bg-blue-600"
-            }`}
-          >
-            {isSaving ? "Saving..." : "Save Changes"}
-          </button>
+        <div className="max-w-3xl mx-auto px-6 py-3 flex items-center justify-between gap-3">
+          {hasChanges() && (
+            <div className="flex items-center gap-2 text-sm text-amber-600 dark:text-amber-400">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              <span>Unsaved changes</span>
+            </div>
+          )}
+          <div className="flex items-center gap-3 ml-auto">
+            <button
+              onClick={saveApiKeys}
+              disabled={!hasChanges() || isSaving}
+              className={`px-4 py-2 text-sm font-medium rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-neutral-900 transition-all ${
+                !hasChanges() || isSaving
+                  ? "bg-neutral-200 dark:bg-neutral-800 text-neutral-400 dark:text-neutral-500 cursor-not-allowed opacity-50"
+                  : "bg-blue-600 dark:bg-blue-500 text-white hover:bg-blue-700 dark:hover:bg-blue-600"
+              }`}
+            >
+              {isSaving ? "Saving..." : "Save Changes"}
+            </button>
+          </div>
         </div>
       </div>
     </FloatingPane>
