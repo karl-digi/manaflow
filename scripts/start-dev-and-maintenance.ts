@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { $, ProcessOutput } from "bun";
+import { $ } from "bun";
 
 const WORKSPACE_ROOT = "/root/workspace";
 const CMUX_RUNTIME_DIR = "/var/tmp/cmux-scripts";
@@ -32,9 +32,9 @@ async function log(message: string, level: "INFO" | "ERROR" = "INFO") {
 
 async function executeCommand(command: string, description: string): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   await log(`Starting: ${description}`);
-  
+
   try {
-    const result = await $`${command}`.quiet();
+    const result = await $`sh -c ${command}`.quiet();
     await log(`Completed: ${description} (exit code: ${result.exitCode})`);
     return {
       exitCode: result.exitCode,
@@ -42,9 +42,9 @@ async function executeCommand(command: string, description: string): Promise<{ e
       stderr: result.stderr.toString()
     };
   } catch (error) {
-    const errorMessage = error instanceof ProcessOutput 
-      ? `Command failed with exit code ${error.exitCode}: ${error.stderr.toString()}`
-      : `Command failed: ${error}`;
+    const errorMessage = error instanceof Error
+      ? `Command failed: ${error.message}`
+      : `Command failed: ${String(error)}`;
     await log(`Failed: ${description} - ${errorMessage}`, "ERROR");
     throw error;
   }
@@ -77,6 +77,7 @@ async function runMaintenanceScript(maintenanceScript: string): Promise<string |
   const maintenanceRunId = `maintenance_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
   const maintenanceExitCodePath = `${CMUX_RUNTIME_DIR}/maintenance.${maintenanceRunId}.exit-code`;
   const maintenanceScriptPath = `${CMUX_RUNTIME_DIR}/maintenance.sh`;
+  const maintenanceWrapperPath = `${CMUX_RUNTIME_DIR}/maintenance-wrapper.sh`;
 
   const maintenanceScriptContent = `#!/bin/zsh
 set -eux
@@ -87,7 +88,8 @@ ${maintenanceScript}
 echo "=== Maintenance Script Completed at \$(date) ==="
 `;
 
-  const maintenanceWindowCommand = `zsh "${maintenanceScriptPath}"
+  const maintenanceWrapperContent = `#!/bin/zsh
+zsh "${maintenanceScriptPath}"
 EXIT_CODE=$?
 echo "$EXIT_CODE" > "${maintenanceExitCodePath}"
 if [ "$EXIT_CODE" -ne 0 ]; then
@@ -95,25 +97,31 @@ if [ "$EXIT_CODE" -ne 0 ]; then
 else
   echo "[MAINTENANCE] Script completed successfully"
 fi
-exec zsh`;
+exec zsh
+`;
 
   try {
     await log("Creating maintenance script");
     await executeCommand(`mkdir -p ${CMUX_RUNTIME_DIR}`, "Create runtime directory");
-    
-    await $`cat > ${maintenanceScriptPath} <<'SCRIPT_EOF'
-${maintenanceScriptContent}
-SCRIPT_EOF`;
-    
+
+    // Write script files using Bun's file writing
+    await Bun.write(maintenanceScriptPath, maintenanceScriptContent);
+    await Bun.write(maintenanceWrapperPath, maintenanceWrapperContent);
+
     await executeCommand(`chmod +x ${maintenanceScriptPath}`, "Make maintenance script executable");
+    await executeCommand(`chmod +x ${maintenanceWrapperPath}`, "Make maintenance wrapper executable");
     await executeCommand(`rm -f ${maintenanceExitCodePath}`, "Clean up old exit code file");
 
     await waitForTmuxSession();
 
     await log("Starting maintenance script in tmux window");
     await executeCommand(
-      `tmux new-window -t cmux: -n maintenance -d ${maintenanceWindowCommand}`,
+      `tmux new-window -t cmux: -n maintenance -d`,
       "Create maintenance tmux window"
+    );
+    await executeCommand(
+      `tmux send-keys -t cmux:maintenance "zsh ${maintenanceWrapperPath}" C-m`,
+      "Send maintenance wrapper script to tmux window"
     );
 
     await $`sleep 2`;
@@ -184,11 +192,10 @@ ${devScript}
   try {
     await log("Creating dev script");
     await executeCommand(`mkdir -p ${CMUX_RUNTIME_DIR}`, "Create runtime directory");
-    
-    await $`cat > ${devScriptPath} <<'SCRIPT_EOF'
-${devScriptContent}
-SCRIPT_EOF`;
-    
+
+    // Write script file using Bun's file writing
+    await Bun.write(devScriptPath, devScriptContent);
+
     await executeCommand(`chmod +x ${devScriptPath}`, "Make dev script executable");
 
     await waitForTmuxSession();

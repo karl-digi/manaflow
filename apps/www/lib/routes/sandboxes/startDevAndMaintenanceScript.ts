@@ -1,8 +1,16 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { MorphInstance } from "./git";
 import { singleQuote } from "./shell";
 
-const WORKSPACE_ROOT = "/root/workspace";
 const CMUX_RUNTIME_DIR = "/var/tmp/cmux-scripts";
+
+const getStartDevAndMaintenanceScript = (): string => {
+  const __dirname = dirname(fileURLToPath(import.meta.url));
+  const scriptPath = join(__dirname, "../../../../..", "scripts", "start-dev-and-maintenance.ts");
+  return readFileSync(scriptPath, "utf-8");
+};
 const MAINTENANCE_WINDOW_NAME = "maintenance";
 const MAINTENANCE_SCRIPT_FILENAME = "maintenance.sh";
 const DEV_WINDOW_NAME = "dev";
@@ -41,15 +49,12 @@ export async function runMaintenanceAndDevScripts({
   instance,
   maintenanceScript,
   devScript,
-  identifiers,
 }: {
   instance: MorphInstance;
   maintenanceScript?: string;
   devScript?: string;
   identifiers?: ScriptIdentifiers;
 }): Promise<ScriptResult> {
-  const ids = identifiers ?? allocateScriptIdentifiers();
-
   if (
     (!maintenanceScript || maintenanceScript.trim().length === 0) &&
     (!devScript || devScript.trim().length === 0)
@@ -60,21 +65,34 @@ export async function runMaintenanceAndDevScripts({
     };
   }
 
-  // Build the command to run the bun script
-  const scriptPath = "/root/workspace/cmux/scripts/start-dev-and-maintenance.ts";
-  let command = `bun ${scriptPath}`;
+  // Get the script content and write it to a temp location
+  const scriptContent = getStartDevAndMaintenanceScript();
+  const scriptPath = `/tmp/cmux-start-dev-and-maintenance-${Date.now()}.ts`;
+
+  // Build command to write script and execute it
+  const writeScriptCommand = `cat > ${scriptPath} << 'CMUX_SCRIPT_EOF'\n${scriptContent}\nCMUX_SCRIPT_EOF`;
+
+  let bunCommand = `bun ${scriptPath}`;
 
   if (maintenanceScript && maintenanceScript.trim().length > 0) {
-    command += ` --maintenance ${singleQuote(maintenanceScript)}`;
+    bunCommand += ` --maintenance ${singleQuote(maintenanceScript)}`;
   }
 
   if (devScript && devScript.trim().length > 0) {
-    command += ` --dev ${singleQuote(devScript)}`;
+    bunCommand += ` --dev ${singleQuote(devScript)}`;
   }
 
+  const command = `${writeScriptCommand} && ${bunCommand} ; EXIT_CODE=$? ; rm -f ${scriptPath} ; exit $EXIT_CODE`;
+
   try {
-    console.log(`[SCRIPT EXECUTION] Running unified script: ${command}`);
+    console.log(`[SCRIPT EXECUTION] Running unified script with maintenance='${maintenanceScript?.substring(0, 50)}...' dev='${devScript?.substring(0, 50)}...'`);
     const result = await instance.exec(command);
+
+    console.log(`[SCRIPT EXECUTION] Exit code: ${result.exit_code}`);
+    console.log(`[SCRIPT EXECUTION] Stdout length: ${result.stdout?.length || 0}`);
+    console.log(`[SCRIPT EXECUTION] Stderr length: ${result.stderr?.length || 0}`);
+    console.log(`[SCRIPT EXECUTION] Stdout: ${result.stdout}`);
+    console.log(`[SCRIPT EXECUTION] Stderr: ${result.stderr}`);
 
     if (result.exit_code !== 0) {
       const stderr = result.stderr?.trim() || "";
@@ -83,9 +101,20 @@ export async function runMaintenanceAndDevScripts({
       // Try to parse JSON result from stdout
       let scriptResult: ScriptResult | null = null;
       try {
-        const jsonMatch = stdout.match(/\{[^}]*\}/);
-        if (jsonMatch) {
-          scriptResult = JSON.parse(jsonMatch[0]);
+        // Look for JSON object - search for last complete JSON object in output
+        const lines = stdout.split('\n');
+        for (let i = lines.length - 1; i >= 0; i--) {
+          const line = lines[i].trim();
+          if (line.startsWith('{') && line.endsWith('}')) {
+            try {
+              scriptResult = JSON.parse(line);
+              if (scriptResult && typeof scriptResult === 'object') {
+                break;
+              }
+            } catch {
+              // Not valid JSON, continue searching
+            }
+          }
         }
       } catch {
         // If JSON parsing fails, use the raw output
@@ -109,12 +138,22 @@ export async function runMaintenanceAndDevScripts({
     } else {
       // Parse successful JSON result
       try {
-        const jsonMatch = result.stdout?.match(/\{[^}]*\}/);
-        if (jsonMatch) {
-          const scriptResult = JSON.parse(jsonMatch[0]);
-          console.log(`[SCRIPT EXECUTION] Maintenance: ${scriptResult.maintenanceError || 'success'}`);
-          console.log(`[SCRIPT EXECUTION] Dev: ${scriptResult.devError || 'success'}`);
-          return scriptResult;
+        // Look for JSON object - search for last complete JSON object in output
+        const lines = (result.stdout || '').split('\n');
+        for (let i = lines.length - 1; i >= 0; i--) {
+          const line = lines[i].trim();
+          if (line.startsWith('{') && line.endsWith('}')) {
+            try {
+              const scriptResult = JSON.parse(line);
+              if (scriptResult && typeof scriptResult === 'object') {
+                console.log(`[SCRIPT EXECUTION] Maintenance: ${scriptResult.maintenanceError || 'success'}`);
+                console.log(`[SCRIPT EXECUTION] Dev: ${scriptResult.devError || 'success'}`);
+                return scriptResult;
+              }
+            } catch {
+              // Not valid JSON, continue searching
+            }
+          }
         }
       } catch (error) {
         console.log(`[SCRIPT EXECUTION] Failed to parse JSON result: ${error}`);
