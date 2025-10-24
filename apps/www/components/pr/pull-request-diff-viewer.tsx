@@ -982,6 +982,9 @@ function ReviewProgressIndicator({
     processedFileCount === null
       ? Math.max(totalFileCount, 0)
       : Math.max(totalFileCount - processedFileCount, 0);
+  const isInProgress =
+    processedFileCount !== null && pendingFileCount > 0;
+  const shouldAnimateProgress = isLoading || isInProgress;
   const progressPercent =
     processedFileCount === null || totalFileCount === 0
       ? 0
@@ -1014,7 +1017,7 @@ function ReviewProgressIndicator({
           <span
             className={cn(
               "rounded-md bg-emerald-100 px-2 py-0.5 text-emerald-700",
-              isLoading ? "animate-pulse" : undefined
+              shouldAnimateProgress ? "animate-pulse" : undefined
             )}
           >
             {processedBadgeText}
@@ -1022,16 +1025,19 @@ function ReviewProgressIndicator({
           <span
             className={cn(
               "rounded-md bg-amber-100 px-2 py-0.5 text-amber-700",
-              isLoading ? "animate-pulse" : undefined
+              shouldAnimateProgress ? "animate-pulse" : undefined
             )}
           >
             {pendingBadgeText}
           </span>
         </div>
       </div>
-      <div className="mt-3 h-2 rounded-full bg-neutral-200">
+      <div className="mt-3 h-2 overflow-hidden rounded-full bg-neutral-200">
         <div
-          className="h-full rounded-full bg-sky-500 transition-[width] duration-300 ease-out"
+          className={cn(
+            "h-full rounded-full bg-sky-500 transition-[width] duration-300 ease-out",
+            shouldAnimateProgress ? "progress-sheen" : undefined
+          )}
           style={{ width: `${progressPercent}%` }}
           role="progressbar"
           aria-label="Automated review progress"
