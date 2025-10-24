@@ -626,7 +626,33 @@ function SocketActions({
   const openUrls = (prs: Array<{ url?: string | null }>) => {
     prs.forEach((pr) => {
       if (pr.url) {
-        window.open(pr.url, "_blank", "noopener,noreferrer");
+        // Extract PR info from URL and open in cmux interface via socket
+        const prMatch = pr.url.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
+        if (prMatch) {
+          const [, owner, repo, numberStr] = prMatch;
+          const repoFullName = `${owner}/${repo}`;
+          const prNumber = parseInt(numberStr, 10);
+          
+          // Use socket to open PR in cmux interface
+          socket?.emit("github-open-pr-in-cmux", {
+            prUrl: pr.url,
+            repoFullName,
+            prNumber
+          }, (response) => {
+            if (response.success) {
+              console.log("[Socket] PR open request sent successfully");
+            } else {
+              console.error("[Socket] Failed to open PR:", response.error);
+                          // Fallback to external browser on error
+                          if (pr.url) {
+                            window.open(pr.url, "_blank", "noopener,noreferrer");
+                          }
+            }
+          });
+        } else {
+          // Fallback to external browser for non-GitHub URLs
+          window.open(pr.url, "_blank", "noopener,noreferrer");
+        }
       }
     });
   };
@@ -906,7 +932,33 @@ function SocketActions({
                   disabled={!hasUrl}
                   onClick={() => {
                     if (pr?.url) {
-                      window.open(pr.url, "_blank", "noopener,noreferrer");
+                      // Extract PR info from URL and open in cmux interface via socket
+                      const prMatch = pr.url.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
+                      if (prMatch) {
+                        const [, owner, repo, numberStr] = prMatch;
+                        const repoFullName = `${owner}/${repo}`;
+                        const prNumber = parseInt(numberStr, 10);
+                        
+                        // Use socket to open PR in cmux interface
+                        socket?.emit("github-open-pr-in-cmux", {
+                          prUrl: pr.url,
+                          repoFullName,
+                          prNumber
+                        }, (response) => {
+                          if (response.success) {
+                            console.log("[Socket] PR open request sent successfully");
+                          } else {
+                            console.error("[Socket] Failed to open PR:", response.error);
+                            // Fallback to external browser on error
+                            if (pr.url) {
+                              window.open(pr.url, "_blank", "noopener,noreferrer");
+                            }
+                          }
+                        });
+                      } else {
+                        // Fallback to external browser for non-GitHub URLs
+                        window.open(pr.url, "_blank", "noopener,noreferrer");
+                      }
                     }
                   }}
                 >

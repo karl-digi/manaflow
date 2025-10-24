@@ -304,6 +304,13 @@ export const GitHubMergeBranchSchema = z.object({
   taskRunId: typedZid("taskRuns"),
 });
 
+// Open PR in cmux interface
+export const GitHubOpenPrInCmuxSchema = z.object({
+  prUrl: z.string().url(),
+  repoFullName: z.string(),
+  prNumber: z.number(),
+});
+
 // Archive task schema
 export const ArchiveTaskSchema = z.object({
   taskId: typedZid("tasks"),
@@ -419,6 +426,7 @@ export type GitHubAuthResponse = z.infer<typeof GitHubAuthResponseSchema>;
 export type GitHubCreateDraftPr = z.infer<typeof GitHubCreateDraftPrSchema>;
 export type GitHubSyncPrState = z.infer<typeof GitHubSyncPrStateSchema>;
 export type GitHubMergeBranch = z.infer<typeof GitHubMergeBranchSchema>;
+export type GitHubOpenPrInCmux = z.infer<typeof GitHubOpenPrInCmuxSchema>;
 export type ArchiveTask = z.infer<typeof ArchiveTaskSchema>;
 export type SpawnFromComment = z.infer<typeof SpawnFromCommentSchema>;
 export type ProviderStatus = z.infer<typeof ProviderStatusSchema>;
@@ -495,6 +503,11 @@ export interface ClientToServerEvents {
       error?: string;
     }) => void
   ) => void;
+  // Open PR in cmux interface
+  "github-open-pr-in-cmux": (
+    data: GitHubOpenPrInCmux,
+    callback: (response: { success: boolean; error?: string }) => void
+  ) => void;
   // Rust N-API test: returns current time
   "rust-get-time": (
     callback: (
@@ -531,6 +544,8 @@ export interface ServerToClientEvents {
   "git-file-changed": (data: GitFileChanged) => void;
   "git-full-diff-response": (data: GitFullDiffResponse) => void;
   "open-in-editor-error": (data: OpenInEditorError) => void;
+  "github-open-pr-in-cmux-error": (data: { error: string }) => void;
+  "github-open-pr-in-cmux-navigate": (data: { owner: string; repo: string; number: number; prUrl: string }) => void;
   "list-files-response": (data: ListFilesResponse) => void;
   "vscode-spawned": (data: VSCodeSpawned) => void;
   "default-repo": (data: DefaultRepo) => void;

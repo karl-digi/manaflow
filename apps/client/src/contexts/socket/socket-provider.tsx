@@ -4,7 +4,7 @@ import {
   type MainServerSocket,
 } from "@cmux/shared/socket";
 import { useQuery } from "@tanstack/react-query";
-import { useLocation } from "@tanstack/react-router";
+import { useLocation, useNavigate } from "@tanstack/react-router";
 import React, { useEffect, useMemo } from "react";
 import { cachedGetUser } from "../../lib/cachedGetUser";
 import { stackClientApp } from "../../lib/stack";
@@ -31,6 +31,7 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({
   const authJsonQuery = useQuery(authJsonQueryOptions());
   const authToken = authJsonQuery.data?.accessToken;
   const location = useLocation();
+  const navigate = useNavigate();
   const [socket, setSocket] = React.useState<
     SocketContextType["socket"] | null
   >(null);
@@ -104,6 +105,26 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({
       newSocket.on("available-editors", (data: AvailableEditors) => {
         setAvailableEditors(data);
       });
+
+      newSocket.on("github-open-pr-in-cmux-navigate", (data: { owner: string; repo: string; number: number; prUrl: string }) => {
+        const { owner, repo, number } = data;
+        console.log("[Socket] Navigating to PR:", { owner, repo, number });
+        
+        // Get current teamSlugOrId from URL
+        const pathname = location.pathname || "";
+        const seg = pathname.split("/").filter(Boolean)[0];
+        if (seg && seg !== "team-picker") {
+          navigate({
+            to: "/$teamSlugOrId/prs/$owner/$repo/$number",
+            params: {
+              teamSlugOrId: seg,
+              owner,
+              repo,
+              number: number.toString(),
+            },
+          });
+        }
+      });
     })();
 
     return () => {
@@ -113,7 +134,7 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({
       setGlobalSocket(null);
       socketBoot.reset();
     };
-  }, [url, authToken, teamSlugOrId]);
+  }, [url, authToken, teamSlugOrId, location, navigate]);
 
   const contextValue: SocketContextType = useMemo(
     () => ({

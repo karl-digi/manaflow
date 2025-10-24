@@ -6,6 +6,7 @@ import {
   GitHubFetchBranchesSchema,
   GitHubFetchReposSchema,
   GitHubMergeBranchSchema,
+  GitHubOpenPrInCmuxSchema,
   GitHubSyncPrStateSchema,
   ListFilesRequestSchema,
   OpenInEditorSchema,
@@ -1543,6 +1544,32 @@ ${title}`;
           success: false,
           error: error instanceof Error ? error.message : "Unknown error",
         });
+      }
+    });
+
+    socket.on("github-open-pr-in-cmux", async (data, callback) => {
+      try {
+        const { prUrl, repoFullName, prNumber } = GitHubOpenPrInCmuxSchema.parse(data);
+
+        serverLogger.info(`Opening PR in cmux interface: ${prUrl} for ${repoFullName}#${prNumber}`);
+
+        // Extract owner and repo from repoFullName
+        const [owner, repo] = repoFullName.split('/');
+
+        // Emit event back to client to navigate to PR view
+        socket.emit("github-open-pr-in-cmux-navigate", {
+          owner,
+          repo,
+          number: prNumber,
+          prUrl
+        });
+
+        callback({ success: true });
+      } catch (error) {
+        serverLogger.error("Error opening PR in cmux interface:", error);
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        socket.emit("github-open-pr-in-cmux-error", { error: errorMessage });
+        callback({ success: false, error: errorMessage });
       }
     });
 
