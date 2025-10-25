@@ -371,6 +371,13 @@ jobs:
           NEXT_PUBLIC_GITHUB_APP_SLUG=${{ secrets.NEXT_PUBLIC_GITHUB_APP_SLUG }}
           EOF
 
+      - name: Remove stale macOS native binaries
+        working-directory: apps/server/native/core
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f cmux_native_core.darwin-*.node
+
       # Prebuild the Rust N-API addon for both slices so electron-builder can pick them up.
       - name: Build native Rust addon (arm64 + x64)
         working-directory: apps/server/native/core
@@ -380,6 +387,25 @@ jobs:
           rustup target add x86_64-apple-darwin aarch64-apple-darwin || true
           bunx --bun @napi-rs/cli build --platform --release --target x86_64-apple-darwin
           bunx --bun @napi-rs/cli build --platform --release --target aarch64-apple-darwin
+
+      - name: Verify macOS native addon slices
+        working-directory: apps/server/native/core
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -f cmux_native_core.darwin-arm64.node ]]; then
+            echo "arm64 native binary missing" >&2
+            exit 1
+          fi
+          if compgen -G 'cmux_native_core.darwin-x64.node' >/dev/null; then
+            ls -l cmux_native_core.darwin-x64.node
+          elif compgen -G 'cmux_native_core.darwin-x86_64.node' >/dev/null; then
+            mv cmux_native_core.darwin-x86_64.node cmux_native_core.darwin-x64.node
+            ls -l cmux_native_core.darwin-x64.node
+          else
+            echo "x64 native binary missing" >&2
+            exit 1
+          fi
 
       - name: Prepare signing credentials
         env:
