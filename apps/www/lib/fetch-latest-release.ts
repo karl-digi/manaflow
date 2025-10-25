@@ -1,14 +1,13 @@
 import {
-  DMG_SUFFIXES,
+  DMG_SUFFIX,
   GITHUB_RELEASE_URL,
-  MacArchitecture,
-  MacDownloadUrls,
+  MacDownloadUrl,
   RELEASE_PAGE_URL,
 } from "@/lib/releases";
 
 export type ReleaseInfo = {
   latestVersion: string | null;
-  macDownloadUrls: MacDownloadUrls;
+  macDownloadUrl: MacDownloadUrl;
   fallbackUrl: string;
 };
 
@@ -20,11 +19,6 @@ type GithubRelease = {
   }>;
 };
 
-const emptyDownloads: MacDownloadUrls = {
-  arm64: null,
-  x64: null,
-};
-
 const normalizeVersion = (tag: string): string =>
   tag.startsWith("v") ? tag.slice(1) : tag;
 
@@ -32,7 +26,7 @@ const deriveReleaseInfo = (data: GithubRelease | null): ReleaseInfo => {
   if (!data) {
     return {
       latestVersion: null,
-      macDownloadUrls: { ...emptyDownloads },
+      macDownloadUrl: null,
       fallbackUrl: RELEASE_PAGE_URL,
     };
   }
@@ -42,7 +36,7 @@ const deriveReleaseInfo = (data: GithubRelease | null): ReleaseInfo => {
       ? normalizeVersion(data.tag_name)
       : null;
 
-  const macDownloadUrls: MacDownloadUrls = { ...emptyDownloads };
+  let macDownloadUrl: MacDownloadUrl = null;
 
   if (Array.isArray(data.assets)) {
     for (const asset of data.assets) {
@@ -52,15 +46,12 @@ const deriveReleaseInfo = (data: GithubRelease | null): ReleaseInfo => {
         continue;
       }
 
-      for (const architecture of Object.keys(DMG_SUFFIXES) as MacArchitecture[]) {
-        const suffix = DMG_SUFFIXES[architecture];
+      if (assetName.endsWith(DMG_SUFFIX)) {
+        const downloadUrl = asset.browser_download_url;
 
-        if (assetName.endsWith(suffix)) {
-          const downloadUrl = asset.browser_download_url;
-
-          if (typeof downloadUrl === "string" && downloadUrl.trim() !== "") {
-            macDownloadUrls[architecture] = downloadUrl;
-          }
+        if (typeof downloadUrl === "string" && downloadUrl.trim() !== "") {
+          macDownloadUrl = downloadUrl;
+          break;
         }
       }
     }
@@ -68,7 +59,7 @@ const deriveReleaseInfo = (data: GithubRelease | null): ReleaseInfo => {
 
   return {
     latestVersion,
-    macDownloadUrls,
+    macDownloadUrl,
     fallbackUrl: RELEASE_PAGE_URL,
   };
 };

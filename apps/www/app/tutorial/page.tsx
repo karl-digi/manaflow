@@ -545,7 +545,7 @@ function Placeholder({ label }: { label: string }) {
 }
 
 export default async function TutorialPage() {
-  const { fallbackUrl, latestVersion, macDownloadUrls } = await fetchLatestRelease();
+  const { fallbackUrl, latestVersion, macDownloadUrl } = await fetchLatestRelease();
 
   return (
     <div className="relative min-h-dvh overflow-hidden bg-[#030712] text-foreground">
@@ -558,7 +558,7 @@ export default async function TutorialPage() {
       <SiteHeader
         fallbackUrl={fallbackUrl}
         latestVersion={latestVersion}
-        macDownloadUrls={macDownloadUrls}
+        macDownloadUrl={macDownloadUrl}
         linkPrefix="/"
       />
 

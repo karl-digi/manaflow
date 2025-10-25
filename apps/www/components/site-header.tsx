@@ -2,7 +2,7 @@
 
 import CmuxLogo from "@/components/logo/cmux-logo";
 import { MacDownloadLink } from "@/components/mac-download-link";
-import type { MacDownloadUrls } from "@/lib/releases";
+import type { MacDownloadUrl } from "@/lib/releases";
 import clsx from "clsx";
 import { Download } from "lucide-react";
 import Link from "next/link";
@@ -20,13 +20,8 @@ type SiteHeaderProps = {
   showDownload?: boolean;
   fallbackUrl?: string;
   latestVersion?: string | null;
-  macDownloadUrls?: MacDownloadUrls;
+  macDownloadUrl?: MacDownloadUrl;
   extraEndContent?: ReactNode;
-};
-
-const DEFAULT_DOWNLOAD_URLS: MacDownloadUrls = {
-  arm64: null,
-  x64: null,
 };
 
 export function SiteHeader({
@@ -34,10 +29,9 @@ export function SiteHeader({
   showDownload = true,
   fallbackUrl = "https://github.com/manaflow-ai/cmux/releases",
   latestVersion,
-  macDownloadUrls,
+  macDownloadUrl = null,
   extraEndContent,
 }: SiteHeaderProps) {
-  const effectiveUrls = macDownloadUrls ?? DEFAULT_DOWNLOAD_URLS;
   const [isScrolled, setIsScrolled] = useState(false);
 
   useEffect(() => {
@@ -107,7 +101,6 @@ export function SiteHeader({
           {extraEndContent}
           {showDownload ? (
             <MacDownloadLink
-              autoDetect
               fallbackUrl={fallbackUrl}
               className="hidden md:inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-semibold text-black shadow-sm transition hover:bg-neutral-100"
               title={
@@ -115,7 +108,7 @@ export function SiteHeader({
                   ? `Download cmux ${latestVersion} for macOS`
                   : "Download cmux for macOS"
               }
-              urls={effectiveUrls}
+              url={macDownloadUrl}
             >
               <Download className="h-4 w-4" aria-hidden />
               <span>Download</span>

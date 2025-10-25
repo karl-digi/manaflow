@@ -147,7 +147,7 @@ const verificationHighlights = [
 ];
 
 export default async function LandingPage() {
-  const { fallbackUrl, latestVersion, macDownloadUrls } =
+  const { fallbackUrl, latestVersion, macDownloadUrl } =
     await fetchLatestRelease();
 
   return (
@@ -164,7 +164,7 @@ export default async function LandingPage() {
       <SiteHeader
         fallbackUrl={fallbackUrl}
         latestVersion={latestVersion}
-        macDownloadUrls={macDownloadUrls}
+        macDownloadUrl={macDownloadUrl}
       />
 
       <main className="relative z-10 flex-1">
@@ -214,7 +214,6 @@ export default async function LandingPage() {
               </div>
               <div className="flex flex-col gap-3 sm:flex-row">
                 <MacDownloadLink
-                  autoDetect
                   fallbackUrl={fallbackUrl}
                   className="inline-flex items-center justify-center gap-2 rounded-lg border border-white/20 bg-white px-4 py-3 text-sm font-semibold text-black shadow-xl transition hover:bg-neutral-100"
                   title={
@@ -222,7 +221,7 @@ export default async function LandingPage() {
                       ? `Download cmux ${latestVersion} for macOS`
                       : "Download cmux for macOS"
                   }
-                  urls={macDownloadUrls}
+                  url={macDownloadUrl}
                 >
                   <span className="flex items-center gap-2">
                     <svg
