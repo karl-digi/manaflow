@@ -245,6 +245,48 @@ function sanitizeTmuxSessionName(name: string): string {
   return name.replace(/[^a-zA-Z0-9_-]/g, "_");
 }
 
+/**
+ * Wait for a tmux session to be ready.
+ * This fixes the race condition where clients try to attach before the session exists.
+ */
+async function waitForTmuxSession(
+  sessionName: string,
+  maxAttempts = 50,
+  delayMs = 100
+): Promise<boolean> {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const { stdout, stderr } = await execAsync(
+        `tmux has-session -t ${sessionName} 2>&1`
+      );
+      // If has-session succeeds (exit code 0), the session exists
+      log("INFO", `Tmux session ${sessionName} is ready`, {
+        attempt,
+        sessionName,
+      });
+      return true;
+    } catch (error) {
+      // has-session returns non-zero if session doesn't exist yet
+      if (attempt < maxAttempts) {
+        log(
+          "DEBUG",
+          `Waiting for tmux session ${sessionName} (attempt ${attempt}/${maxAttempts})`,
+          { sessionName, attempt }
+        );
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      } else {
+        log("ERROR", `Tmux session ${sessionName} not ready after ${maxAttempts} attempts`, {
+          sessionName,
+          maxAttempts,
+          totalWaitMs: maxAttempts * delayMs,
+        });
+        return false;
+      }
+    }
+  }
+  return false;
+}
+
 // Worker statistics
 function getWorkerStats(): WorkerHeartbeat {
   const totalMem = totalmem();
@@ -1070,6 +1112,30 @@ async function createTerminal(
       pid: childProcess.pid,
       terminalId,
     });
+
+    // Wait for tmux session to be ready (fixes race condition)
+    // Only do this for tmux sessions (not direct tmux attach commands)
+    if (spawnCommand === "tmux" && spawnArgs.includes("new-session")) {
+      // Extract session name from args (it follows "-s")
+      const sessionNameIndex = spawnArgs.indexOf("-s");
+      if (sessionNameIndex !== -1 && sessionNameIndex + 1 < spawnArgs.length) {
+        const sessionName = spawnArgs[sessionNameIndex + 1];
+        if (sessionName) {
+          log("INFO", "Waiting for tmux session to be ready", {
+            sessionName,
+            terminalId,
+          });
+          const isReady = await waitForTmuxSession(sessionName);
+          if (!isReady) {
+            log("ERROR", "Tmux session failed to become ready", {
+              sessionName,
+              terminalId,
+            });
+            // Continue anyway - the process is spawned, just warn
+          }
+        }
+      }
+    }
   } catch (error) {
     log("ERROR", "Failed to spawn process", error);
     return;
