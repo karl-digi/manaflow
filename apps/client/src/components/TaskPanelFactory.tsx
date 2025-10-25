@@ -444,7 +444,7 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
       return panelWrapper(
         <TerminalSquare className="size-3" aria-hidden />,
         PANEL_LABELS.terminal,
-        <div className="flex-1 bg-black">
+        <div className="flex-1 overflow-hidden">
           <TaskRunTerminalPane
             key={rawWorkspaceUrl ?? "no-workspace"}
             workspaceUrl={rawWorkspaceUrl ?? null}
