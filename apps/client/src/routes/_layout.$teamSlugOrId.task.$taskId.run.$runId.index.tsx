@@ -15,6 +15,7 @@ import {
   TASK_RUN_IFRAME_SANDBOX,
   preloadTaskRunIframes,
 } from "../lib/preloadTaskRunIframes";
+import { shouldUseServerIframePreflight } from "@/hooks/useIframePreflight";
 
 export const Route = createFileRoute(
   "/_layout/$teamSlugOrId/task/$taskId/run/$runId/"
@@ -56,6 +57,9 @@ function TaskRunComponent() {
   const workspaceUrl = rawWorkspaceUrl
     ? toProxyWorkspaceUrl(rawWorkspaceUrl)
     : null;
+  const disablePreflight = rawWorkspaceUrl
+    ? shouldUseServerIframePreflight(rawWorkspaceUrl)
+    : false;
   const persistKey = getTaskRunPersistKey(taskRunId);
   const hasWorkspace = workspaceUrl !== null;
   const [iframeStatus, setIframeStatus] =
@@ -105,6 +109,7 @@ function TaskRunComponent() {
               iframeClassName="select-none"
               allow={TASK_RUN_IFRAME_ALLOW}
               sandbox={TASK_RUN_IFRAME_SANDBOX}
+              preflight={!disablePreflight}
               retainOnUnmount
               suspended={!hasWorkspace}
               onLoad={onLoad}

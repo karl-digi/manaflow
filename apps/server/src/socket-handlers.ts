@@ -24,7 +24,7 @@ import {
 } from "@cmux/shared/pull-request-state";
 import fuzzysort from "fuzzysort";
 import { minimatch } from "minimatch";
-import { exec, spawn } from "node:child_process";
+import { exec, execFile, spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -61,6 +61,7 @@ import {
 } from "./pullRequestState";
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 const GitSocketDiffRequestSchema = z.object({
   headRef: z.string(),
@@ -653,9 +654,9 @@ export function setupSocketHandlers(
             throw error;
           }
 
-          await execAsync("git init", { cwd: workspacePath });
+          await execFileAsync("git", ["init"], { cwd: workspacePath });
           if (repoUrl) {
-            await execAsync(`git remote add origin "${repoUrl}"`, {
+            await execFileAsync("git", ["remote", "add", "origin", repoUrl], {
               cwd: workspacePath,
             }).catch((error) => {
               serverLogger.warn(
