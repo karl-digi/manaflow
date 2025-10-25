@@ -1,19 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Plus, X } from "lucide-react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import clsx from "clsx";
-import {
-  TaskRunTerminalSession,
-  type TerminalConnectionState,
-} from "./task-run-terminal-session";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { MonitorUp } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { TaskRunTerminalSession } from "./task-run-terminal-session";
 import { toMorphXtermBaseUrl } from "@/lib/toProxyWorkspaceUrl";
 import {
   createTerminalTab,
-  deleteTerminalTab,
   terminalTabsQueryKey,
   terminalTabsQueryOptions,
-  type CreateTerminalTabRequest,
-  type CreateTerminalTabResponse,
   type TerminalTabId,
 } from "@/queries/terminals";
 
@@ -21,58 +14,9 @@ export interface TaskRunTerminalPaneProps {
   workspaceUrl: string | null;
 }
 
-const CONNECTION_STATE_COLORS: Record<TerminalConnectionState, string> = {
-  open: "bg-emerald-500",
-  connecting: "bg-amber-500",
-  closed: "bg-neutral-400 dark:bg-neutral-600",
-  error: "bg-red-500",
-};
-
-type DeleteTerminalMutationContext = {
-  previousTabs: TerminalTabId[];
-  previousActiveId: string | null;
-  previousConnectionState: TerminalConnectionState;
-};
-
-function getTabRemovalOutcome(
-  tabs: TerminalTabId[],
-  removedId: TerminalTabId,
-  currentActiveId: string | null
-): { nextTabs: TerminalTabId[]; nextActiveId: string | null } {
-  const nextTabs = tabs.filter((tabId) => tabId !== removedId);
-  if (nextTabs.length === 0) {
-    return { nextTabs, nextActiveId: null };
-  }
-
-  if (
-    currentActiveId &&
-    currentActiveId !== removedId &&
-    nextTabs.includes(currentActiveId)
-  ) {
-    return { nextTabs, nextActiveId: currentActiveId };
-  }
-
-  const removedIndex = tabs.findIndex((tabId) => tabId === removedId);
-  if (removedIndex !== -1) {
-    const rightCandidate = tabs
-      .slice(removedIndex + 1)
-      .find((tabId) => tabId !== removedId && nextTabs.includes(tabId));
-    if (rightCandidate) {
-      return { nextTabs, nextActiveId: rightCandidate };
-    }
-
-    for (let index = removedIndex - 1; index >= 0; index -= 1) {
-      const leftCandidate = tabs[index];
-      if (leftCandidate && leftCandidate !== removedId) {
-        if (nextTabs.includes(leftCandidate)) {
-          return { nextTabs, nextActiveId: leftCandidate };
-        }
-      }
-    }
-  }
-
-  return { nextTabs, nextActiveId: nextTabs[0] ?? null };
-}
+const INITIAL_AUTO_CREATE_DELAY_MS = 4_000;
+const MAX_AUTO_CREATE_ATTEMPTS = 3;
+const AUTO_RETRY_BASE_DELAY_MS = 4_000;
 
 export function TaskRunTerminalPane({ workspaceUrl }: TaskRunTerminalPaneProps) {
   const baseUrl = useMemo(() => {
@@ -82,368 +26,245 @@ export function TaskRunTerminalPane({ workspaceUrl }: TaskRunTerminalPaneProps) 
     return toMorphXtermBaseUrl(workspaceUrl);
   }, [workspaceUrl]);
 
-  const hasTerminalBackend = Boolean(baseUrl);
+  const queryClient = useQueryClient();
 
   const tabsQuery = useQuery(
     terminalTabsQueryOptions({
       baseUrl,
       contextKey: workspaceUrl,
-      enabled: hasTerminalBackend,
+      enabled: Boolean(baseUrl),
     })
   );
 
-  const terminalIds = useMemo(() => tabsQuery.data ?? [], [tabsQuery.data]);
+  const {
+    data: tabs,
+    isLoading: isTabsLoading,
+    isError: isTabsError,
+    error: tabsError,
+  } = tabsQuery;
 
-  const [activeTerminalId, setActiveTerminalId] = useState<string | null>(null);
-  const [connectionStates, setConnectionStates] = useState<
-    Record<string, TerminalConnectionState>
-  >({});
-
-  const queryClient = useQueryClient();
-
-  const createTerminalMutation = useMutation<
-    CreateTerminalTabResponse,
-    unknown,
-    CreateTerminalTabRequest | undefined,
-    void
-  >({
-    mutationKey: ["terminal-tabs", workspaceUrl, baseUrl, "create"],
-    mutationFn: async (request) =>
-      createTerminalTab({
-        baseUrl,
-        request,
-      }),
-    onSuccess: (payload) => {
-      const queryKey = terminalTabsQueryKey(baseUrl, workspaceUrl);
-      queryClient.setQueryData<TerminalTabId[] | undefined>(
-        queryKey,
-        (current) => {
-          if (!current) {
-            return [payload.id];
-          }
-          if (current.includes(payload.id)) {
-            return current;
-          }
-          return [...current, payload.id];
-        }
-      );
-      setActiveTerminalId(payload.id);
-      setConnectionStates((prev) => ({
-        ...prev,
-        [payload.id]: prev[payload.id] ?? "connecting",
-      }));
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({
-        queryKey: terminalTabsQueryKey(baseUrl, workspaceUrl),
-      });
-    },
-  });
-
-  const deleteTerminalMutation = useMutation<
-    void,
-    unknown,
-    TerminalTabId,
-    DeleteTerminalMutationContext
-  >({
-    mutationKey: ["terminal-tabs", workspaceUrl, baseUrl, "delete"],
-    mutationFn: async (tabId) =>
-      deleteTerminalTab({
-        baseUrl,
-        tabId,
-      }),
-    onMutate: async (tabId) => {
-      const queryKey = terminalTabsQueryKey(baseUrl, workspaceUrl);
-      await queryClient.cancelQueries({ queryKey });
-      const cachedTabs =
-        queryClient.getQueryData<TerminalTabId[]>(queryKey) ?? terminalIds;
-      const previousTabs = [...cachedTabs];
-      const previousActiveId = activeTerminalId;
-      const previousConnectionState = connectionStates[tabId] ?? "connecting";
-      const { nextTabs, nextActiveId } = getTabRemovalOutcome(
-        previousTabs,
-        tabId,
-        activeTerminalId
-      );
-      queryClient.setQueryData(queryKey, nextTabs);
-      setActiveTerminalId(nextActiveId);
-      setConnectionStates((prev) => {
-        const { [tabId]: _removed, ...rest } = prev;
-        return rest;
-      });
-      return {
-        previousTabs,
-        previousActiveId,
-        previousConnectionState,
-      };
-    },
-    onError: (_error, tabId, context) => {
-      if (!context) {
-        return;
-      }
-      const queryKey = terminalTabsQueryKey(baseUrl, workspaceUrl);
-      queryClient.setQueryData(queryKey, context.previousTabs);
-      setActiveTerminalId(() => {
-        const desired = context.previousActiveId;
-        if (desired && context.previousTabs.includes(desired)) {
-          return desired;
-        }
-        return context.previousTabs[0] ?? null;
-      });
-      setConnectionStates((prev) => ({
-        ...prev,
-        [tabId]: context.previousConnectionState,
-      }));
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({
-        queryKey: terminalTabsQueryKey(baseUrl, workspaceUrl),
-      });
-    },
-  });
-
-  const isCreatingTerminal = createTerminalMutation.isPending;
-  const deletingTerminalId = deleteTerminalMutation.variables ?? null;
-  const isDeletingTerminal = deleteTerminalMutation.isPending;
-  const createTerminalErrorMessage =
-    createTerminalMutation.error instanceof Error
-      ? createTerminalMutation.error.message
-      : createTerminalMutation.error
-        ? "Unable to create terminal."
-        : null;
-  const deleteTerminalErrorMessage =
-    deleteTerminalMutation.error instanceof Error
-      ? deleteTerminalMutation.error.message
-      : deleteTerminalMutation.error
-        ? "Unable to close terminal."
-        : null;
-
-  useEffect(() => {
-    if (!hasTerminalBackend || terminalIds.length === 0) {
-      setActiveTerminalId(null);
-    } else {
-      setActiveTerminalId((current) =>
-        current && terminalIds.includes(current) ? current : terminalIds[0]
-      );
-    }
-  }, [hasTerminalBackend, terminalIds]);
-
-  useEffect(() => {
-    if (!hasTerminalBackend) {
-      setConnectionStates({});
-      return;
-    }
-    setConnectionStates((prev) => {
-      const next: Record<string, TerminalConnectionState> = {};
-      for (const id of terminalIds) {
-        next[id] = prev[id] ?? "connecting";
-      }
-      const sameSize = Object.keys(prev).length === Object.keys(next).length;
-      if (sameSize) {
-        let unchanged = true;
-        for (const id of terminalIds) {
-          if (prev[id] !== next[id]) {
-            unchanged = false;
-            break;
-          }
-        }
-        if (unchanged) {
-          return prev;
-        }
-      }
-      return next;
-    });
-  }, [hasTerminalBackend, terminalIds]);
-
-  // Auto-create initial terminal when tabs are loaded and empty
-  useEffect(() => {
-    if (
-      !hasTerminalBackend ||
-      tabsQuery.isLoading ||
-      tabsQuery.isError ||
-      terminalIds.length > 0 ||
-      isCreatingTerminal
-    ) {
-      return;
-    }
-
-    // Auto-create tmux terminal
-    createTerminalMutation.mutate({
-      cmd: "tmux",
-      args: ["attach", "-t", "cmux"],
-    });
-  }, [
-    hasTerminalBackend,
-    tabsQuery.isLoading,
-    tabsQuery.isError,
-    terminalIds.length,
-    isCreatingTerminal,
-    createTerminalMutation,
-  ]);
-
-  const handleConnectionStateChange = useCallback(
-    (terminalId: string, state: TerminalConnectionState) => {
-      setConnectionStates((prev) => {
-        if (prev[terminalId] === state) {
-          return prev;
-        }
-        return {
-          ...prev,
-          [terminalId]: state,
-        };
-      });
-    },
-    []
+  const terminalIds = useMemo(() => tabs ?? [], [tabs]);
+  const tabsQueryKey = useMemo(
+    () => terminalTabsQueryKey(baseUrl, workspaceUrl),
+    [baseUrl, workspaceUrl]
   );
 
-  const renderMessage = useCallback((message: string) => {
-    return (
-      <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-neutral-500 dark:text-neutral-400">
-        {message}
-      </div>
-    );
+  const workspaceReadyAtRef = useRef<number | null>(null);
+  const retryTimeoutRef = useRef<number | null>(null);
+  const inFlightRef = useRef(false);
+  const attemptsRef = useRef(0);
+
+  const [autoCreateError, setAutoCreateError] = useState<string | null>(null);
+  const [autoCreateAttemptCount, setAutoCreateAttemptCount] = useState(0);
+
+  useEffect(() => {
+    if (!baseUrl) {
+      workspaceReadyAtRef.current = null;
+      return;
+    }
+    workspaceReadyAtRef.current = Date.now();
+  }, [baseUrl]);
+
+  useEffect(() => {
+    return () => {
+      if (retryTimeoutRef.current !== null) {
+        window.clearTimeout(retryTimeoutRef.current);
+        retryTimeoutRef.current = null;
+      }
+    };
   }, []);
 
-  if (!baseUrl) {
-    return renderMessage(
-      "Waiting for workspace to expose the terminal backend..."
+  const resetAutoCreate = useCallback(() => {
+    attemptsRef.current = 0;
+    inFlightRef.current = false;
+    setAutoCreateAttemptCount(0);
+    setAutoCreateError(null);
+    if (retryTimeoutRef.current !== null) {
+      window.clearTimeout(retryTimeoutRef.current);
+      retryTimeoutRef.current = null;
+    }
+  }, []);
+
+  const attemptAutoCreate = useCallback(
+    (options?: { manual?: boolean }) => {
+      if (!workspaceUrl || !baseUrl) {
+        return;
+      }
+
+      if (terminalIds.length > 0) {
+        resetAutoCreate();
+        return;
+      }
+
+      if (inFlightRef.current) {
+        return;
+      }
+
+      if (!options?.manual) {
+        const readyAt = workspaceReadyAtRef.current;
+        if (readyAt) {
+          const elapsed = Date.now() - readyAt;
+          if (elapsed < INITIAL_AUTO_CREATE_DELAY_MS) {
+            if (retryTimeoutRef.current !== null) {
+              window.clearTimeout(retryTimeoutRef.current);
+            }
+            retryTimeoutRef.current = window.setTimeout(() => {
+              retryTimeoutRef.current = null;
+              attemptAutoCreate();
+            }, INITIAL_AUTO_CREATE_DELAY_MS - elapsed);
+            return;
+          }
+        }
+
+        if (attemptsRef.current >= MAX_AUTO_CREATE_ATTEMPTS) {
+          return;
+        }
+      }
+
+      inFlightRef.current = true;
+      attemptsRef.current += 1;
+      setAutoCreateAttemptCount(attemptsRef.current);
+      setAutoCreateError(null);
+
+      (async () => {
+        try {
+          const created = await createTerminalTab({
+            baseUrl,
+            request: {
+              cmd: "tmux",
+              args: ["attach", "-t", "cmux"],
+            },
+          });
+
+          queryClient.setQueryData<TerminalTabId[]>(tabsQueryKey, (current) => {
+            if (!current || current.length === 0) {
+              return [created.id];
+            }
+            if (current.includes(created.id)) {
+              return current;
+            }
+            return [...current, created.id];
+          });
+
+          resetAutoCreate();
+        } catch (error) {
+          console.error("Failed to auto-create tmux terminal", error);
+          inFlightRef.current = false;
+
+          const shouldRetryAutomatically =
+            !options?.manual && attemptsRef.current < MAX_AUTO_CREATE_ATTEMPTS;
+          if (shouldRetryAutomatically) {
+            const delay = AUTO_RETRY_BASE_DELAY_MS * attemptsRef.current;
+            if (retryTimeoutRef.current !== null) {
+              window.clearTimeout(retryTimeoutRef.current);
+            }
+            retryTimeoutRef.current = window.setTimeout(() => {
+              retryTimeoutRef.current = null;
+              attemptAutoCreate();
+            }, delay);
+            return;
+          }
+
+          const message =
+            error instanceof Error ? error.message : "Unable to connect to tmux session.";
+          setAutoCreateError(message);
+        }
+      })();
+    },
+    [
+      baseUrl,
+      queryClient,
+      resetAutoCreate,
+      tabsQueryKey,
+      terminalIds.length,
+      workspaceUrl,
+    ]
+  );
+
+  useEffect(() => {
+    resetAutoCreate();
+  }, [baseUrl, resetAutoCreate, workspaceUrl]);
+
+  useEffect(() => {
+    if (isTabsLoading || isTabsError) {
+      return;
+    }
+    attemptAutoCreate();
+  }, [attemptAutoCreate, isTabsError, isTabsLoading]);
+
+  const handleManualRetry = useCallback(() => {
+    resetAutoCreate();
+    workspaceReadyAtRef.current = Date.now() - INITIAL_AUTO_CREATE_DELAY_MS;
+    attemptAutoCreate({ manual: true });
+  }, [attemptAutoCreate, resetAutoCreate]);
+
+  const activeTerminalId = terminalIds[0] ?? null;
+
+  if (!workspaceUrl || !baseUrl) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-neutral-500 dark:text-neutral-400">
+        <MonitorUp className="size-4 animate-pulse" aria-hidden />
+        <span>Terminal is starting...</span>
+      </div>
+    );
+  }
+
+  if (isTabsLoading) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-neutral-500 dark:text-neutral-400">
+        <MonitorUp className="size-4 animate-pulse" aria-hidden />
+        <span>Loading terminal...</span>
+      </div>
+    );
+  }
+
+  if (isTabsError) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-neutral-500 dark:text-neutral-400">
+        <MonitorUp className="size-4 text-red-500" aria-hidden />
+        <span className="text-red-500 dark:text-red-400">
+          {tabsError instanceof Error ? tabsError.message : "Failed to load terminal"}
+        </span>
+      </div>
+    );
+  }
+
+  if (terminalIds.length === 0) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-sm text-neutral-500 dark:text-neutral-400">
+        <MonitorUp className="size-4 animate-pulse" aria-hidden />
+        <div className="flex flex-col gap-1">
+          <span>
+            {autoCreateError
+              ? autoCreateError
+              : "Waiting for a terminal session..."}
+          </span>
+          {!autoCreateError && autoCreateAttemptCount > 0 ? (
+            <span className="text-xs text-neutral-400 dark:text-neutral-500">
+              {`Attempt ${Math.min(autoCreateAttemptCount, MAX_AUTO_CREATE_ATTEMPTS)} of ${MAX_AUTO_CREATE_ATTEMPTS}`}
+            </span>
+          ) : null}
+        </div>
+        {autoCreateError ? (
+          <button
+            type="button"
+            onClick={handleManualRetry}
+            className="inline-flex items-center justify-center rounded border border-neutral-300 px-3 py-1 text-xs font-medium text-neutral-600 transition hover:border-neutral-400 hover:text-neutral-800 dark:border-neutral-700 dark:text-neutral-300 dark:hover:border-neutral-500 dark:hover:text-neutral-100"
+          >
+            Retry terminal
+          </button>
+        ) : null}
+      </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-full min-h-0">
-      <div className="flex items-center justify-between gap-3 border-b border-neutral-200 bg-neutral-100/70 px-3 dark:border-neutral-800 dark:bg-neutral-900/40">
-        <div className="flex items-center overflow-x-auto py-0.5">
-          {terminalIds.length > 0 ? (
-            terminalIds.map((id, index) => {
-              const state = connectionStates[id] ?? "connecting";
-              const isActive = activeTerminalId === id;
-              const isDeletingThis =
-                isDeletingTerminal && deletingTerminalId === id;
-              return (
-                <div key={id} className="relative pr-2">
-                  <button
-                    type="button"
-                    onClick={() => setActiveTerminalId(id)}
-                    className={clsx(
-                      "flex items-center gap-2 rounded-md pl-3 pr-8 py-1.5 text-xs font-medium transition-colors",
-                      isActive
-                        ? "bg-neutral-900 text-neutral-50 dark:bg-neutral-100 dark:text-neutral-900"
-                        : "bg-transparent text-neutral-600 hover:bg-neutral-200/70 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800/60 dark:hover:text-neutral-100"
-                    )}
-                    title={id}
-                  >
-                    <span
-                      className={clsx(
-                        "h-2 w-2 rounded-full",
-                        CONNECTION_STATE_COLORS[state]
-                      )}
-                    />
-                    <span className="whitespace-nowrap">
-                      Terminal {index + 1}
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      event.preventDefault();
-                      if (isDeletingThis || !hasTerminalBackend) {
-                        return;
-                      }
-                      deleteTerminalMutation.mutate(id);
-                    }}
-                    disabled={isDeletingThis}
-                    className={clsx(
-                      "absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1 transition-colors disabled:cursor-not-allowed disabled:opacity-60",
-                      isActive
-                        ? "text-neutral-100 hover:text-neutral-50 hover:bg-neutral-900/80 dark:text-neutral-700 dark:hover:text-neutral-900 dark:hover:bg-neutral-200"
-                        : "text-neutral-500 hover:text-neutral-900 hover:bg-neutral-300 dark:text-neutral-400 dark:hover:text-neutral-100 dark:hover:bg-neutral-700"
-                    )}
-                    aria-label={`Close terminal ${index + 1}`}
-                    title="Close terminal"
-                  >
-                    {isDeletingThis ? (
-                      <span className="text-[10px] font-medium leading-none">
-                        …
-                      </span>
-                    ) : (
-                      <X className="h-3 w-3" />
-                    )}
-                  </button>
-                </div>
-              );
-            })
-          ) : (
-            <span className="text-xs text-neutral-500 dark:text-neutral-400">
-              No terminals detected yet.
-            </span>
-          )}
-        </div>
-        <div className="flex flex-col items-end gap-1 py-2">
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                if (!hasTerminalBackend || isCreatingTerminal) {
-                  return;
-                }
-                createTerminalMutation.mutate(undefined);
-              }}
-              disabled={!hasTerminalBackend || isCreatingTerminal}
-              className="flex items-center gap-1 rounded-md border border-neutral-200 px-2 py-1 text-xs font-medium text-neutral-600 transition hover:border-neutral-300 hover:text-neutral-900 disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:border-neutral-600 dark:hover:text-neutral-100"
-            >
-              {isCreatingTerminal ? (
-                "Creating…"
-              ) : (
-                <>
-                  <Plus className="h-3.5 w-3.5" />
-                  <span>New Terminal</span>
-                </>
-              )}
-            </button>
-          </div>
-        </div>
-      </div>
-      {createTerminalErrorMessage ? (
-        <div className="px-3 py-2 text-xs text-red-500 dark:text-red-400">
-          {createTerminalErrorMessage}
-        </div>
-      ) : null}
-      {deleteTerminalErrorMessage ? (
-        <div className="px-3 py-2 text-xs text-red-500 dark:text-red-400">
-          {deleteTerminalErrorMessage}
-        </div>
-      ) : null}
-      <div className="relative flex-1 min-h-0 bg-neutral-950">
-        {tabsQuery.isLoading ? (
-          <div className="absolute inset-0 flex items-center justify-center text-sm text-neutral-300">
-            Loading terminals…
-          </div>
-        ) : tabsQuery.isError ? (
-          renderMessage(
-            tabsQuery.error instanceof Error
-              ? tabsQuery.error.message
-              : "Unable to load terminals."
-          )
-        ) : terminalIds.length === 0 ? (
-          <div className="flex flex-1 items-center justify-center px-6 py-4 text-center text-sm text-neutral-400">
-            No terminal sessions are currently active.
-          </div>
-        ) : (
-          terminalIds.map((id) => (
-            <TaskRunTerminalSession
-              key={id}
-              baseUrl={baseUrl}
-              terminalId={id}
-              isActive={activeTerminalId === id}
-              onConnectionStateChange={(state) =>
-                handleConnectionStateChange(id, state)
-              }
-            />
-          ))
-        )}
-      </div>
+    <div className="h-full w-full bg-black">
+      <TaskRunTerminalSession
+        baseUrl={baseUrl}
+        terminalId={activeTerminalId}
+        isActive={true}
+      />
     </div>
   );
 }

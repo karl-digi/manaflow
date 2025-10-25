@@ -470,8 +470,7 @@ function setupAutoUpdates(): void {
     autoUpdater.allowPrerelease = false;
 
     if (process.platform === "darwin") {
-      const suffix = process.arch === "arm64" ? "arm64" : "x64";
-      const channel = `latest-${suffix}`;
+      const channel = "latest-universal";
       if (autoUpdater.channel !== channel) {
         autoUpdater.channel = channel;
         mainLog("Configured autoUpdater channel", {
