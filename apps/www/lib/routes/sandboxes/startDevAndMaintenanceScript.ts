@@ -63,9 +63,7 @@ const DEV_ERROR_LOG_PATH = "{{DEV_ERROR_LOG_PATH}}";
 const HAS_MAINTENANCE_SCRIPT = "{{HAS_MAINTENANCE_SCRIPT}}" === "true";
 const HAS_DEV_SCRIPT = "{{HAS_DEV_SCRIPT}}" === "true";
 const CONVEX_URL = "{{CONVEX_URL}}";
-const ACCESS_TOKEN = "{{ACCESS_TOKEN}}";
-const TASK_RUN_ID = "{{TASK_RUN_ID}}";
-const TEAM_SLUG_OR_ID = "{{TEAM_SLUG_OR_ID}}";
+const TASK_RUN_JWT = "{{TASK_RUN_JWT}}";
 
 async function waitForTmuxSession(): Promise<void> {
   for (let i = 0; i < 20; i++) {
@@ -191,7 +189,7 @@ async function runMaintenanceScript(): Promise<{ exitCode: number; error: string
 }
 
 async function reportErrorToConvex(maintenanceError: string | null, devError: string | null): Promise<void> {
-  if (!TASK_RUN_ID || !CONVEX_URL || !ACCESS_TOKEN || !TEAM_SLUG_OR_ID) {
+  if (!TASK_RUN_JWT || !CONVEX_URL) {
     console.log("[ORCHESTRATOR] Skipping Convex error reporting: missing configuration");
     return;
   }
@@ -204,9 +202,29 @@ async function reportErrorToConvex(maintenanceError: string | null, devError: st
   try {
     console.log("[ORCHESTRATOR] Reporting errors to Convex...");
 
+    // Decode JWT to get taskRunId and teamId
+    const jwtParts = TASK_RUN_JWT.split('.');
+    if (jwtParts.length !== 3) {
+      console.error("[ORCHESTRATOR] Invalid JWT format");
+      return;
+    }
+
+    // Decode base64url (Bun doesn't have atob, use Buffer)
+    const base64Payload = jwtParts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const payload = JSON.parse(Buffer.from(base64Payload, 'base64').toString('utf-8'));
+    const taskRunId = payload.taskRunId;
+    const teamId = payload.teamId;
+
+    console.log(\`[ORCHESTRATOR] Decoded JWT - taskRunId: \${taskRunId}, teamId: \${teamId}\`);
+
+    if (!taskRunId || !teamId) {
+      console.error("[ORCHESTRATOR] JWT missing required fields");
+      return;
+    }
+
     const args: { teamSlugOrId: string; id: string; maintenanceError?: string; devError?: string } = {
-      teamSlugOrId: TEAM_SLUG_OR_ID,
-      id: TASK_RUN_ID,
+      teamSlugOrId: teamId,
+      id: taskRunId,
     };
 
     if (maintenanceError) {
@@ -216,23 +234,31 @@ async function reportErrorToConvex(maintenanceError: string | null, devError: st
       args.devError = devError;
     }
 
+    const requestBody = {
+      path: "taskRuns:updateEnvironmentError",
+      args,
+    };
+
+    console.log(\`[ORCHESTRATOR] Calling Convex with body: \${JSON.stringify(requestBody, null, 2)}\`);
+
     const response = await fetch(\`\${CONVEX_URL}/api/mutation\`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": \`Bearer \${ACCESS_TOKEN}\`,
+        "Authorization": \`Bearer \${TASK_RUN_JWT}\`,
       },
-      body: JSON.stringify({
-        path: "taskRuns:updateEnvironmentError",
-        args,
-      }),
+      body: JSON.stringify(requestBody),
     });
+
+    console.log(\`[ORCHESTRATOR] Convex response status: \${response.status}\`);
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(\`[ORCHESTRATOR] Failed to report errors to Convex: \${response.status} \${errorText}\`);
+      console.error(\`[ORCHESTRATOR] Failed to report errors to Convex: \${response.status}\`);
+      console.error(\`[ORCHESTRATOR] Response body: \${errorText}\`);
     } else {
-      console.log("[ORCHESTRATOR] Successfully reported errors to Convex");
+      const responseData = await response.text();
+      console.log(\`[ORCHESTRATOR] Successfully reported errors to Convex: \${responseData}\`);
     }
   } catch (error) {
     console.error(\`[ORCHESTRATOR] Exception while reporting errors to Convex:\`, error);
@@ -311,6 +337,8 @@ async function startDevScript(): Promise<{ error: string | null }> {
 (async () => {
   try {
     console.log("[ORCHESTRATOR] Starting orchestrator...");
+    console.log(\`[ORCHESTRATOR] CONVEX_URL: \${CONVEX_URL}\`);
+    console.log(\`[ORCHESTRATOR] TASK_RUN_JWT present: \${!!TASK_RUN_JWT}\`);
 
     await createWindows();
 
@@ -329,8 +357,11 @@ async function startDevScript(): Promise<{ error: string | null }> {
     }
 
     // Report any errors to Convex
+    console.log(\`[ORCHESTRATOR] Checking if should report errors - maintenance: \${!!maintenanceResult.error}, dev: \${!!devResult.error}\`);
     if (maintenanceResult.error || devResult.error) {
       await reportErrorToConvex(maintenanceResult.error, devResult.error);
+    } else {
+      console.log("[ORCHESTRATOR] No errors to report");
     }
 
     if (devResult.error) {
@@ -352,18 +383,14 @@ export async function runMaintenanceAndDevScripts({
   devScript,
   identifiers,
   convexUrl,
-  accessToken,
-  taskRunId,
-  teamSlugOrId,
+  taskRunJwt,
 }: {
   instance: MorphInstance;
   maintenanceScript?: string;
   devScript?: string;
   identifiers?: ScriptIdentifiers;
   convexUrl?: string;
-  accessToken?: string;
-  taskRunId?: string;
-  teamSlugOrId?: string;
+  taskRunJwt?: string;
 }): Promise<ScriptResult> {
   const ids = identifiers ?? allocateScriptIdentifiers();
 
@@ -428,9 +455,7 @@ ${devScript}
     .replace(/{{HAS_MAINTENANCE_SCRIPT}}/g, String(maintenanceScriptContent !== null))
     .replace(/{{HAS_DEV_SCRIPT}}/g, String(devScriptContent !== null))
     .replace(/{{CONVEX_URL}}/g, convexUrl || '')
-    .replace(/{{ACCESS_TOKEN}}/g, accessToken || '')
-    .replace(/{{TASK_RUN_ID}}/g, taskRunId || '')
-    .replace(/{{TEAM_SLUG_OR_ID}}/g, teamSlugOrId || '');
+    .replace(/{{TASK_RUN_JWT}}/g, taskRunJwt || '');
 
   // Create the command that sets up all scripts and starts the orchestrator in background
   const setupAndRunCommand = `set -eu

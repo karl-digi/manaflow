@@ -317,10 +317,8 @@ sandboxesRouter.openapi(
             maintenanceScript: maintenanceScript || undefined,
             devScript: devScript || undefined,
             identifiers: scriptIdentifiers ?? undefined,
-            convexUrl: taskRunConvexId ? env.NEXT_PUBLIC_CONVEX_URL : undefined,
-            accessToken: taskRunConvexId ? accessToken : undefined,
-            taskRunId: taskRunConvexId || undefined,
-            teamSlugOrId: taskRunConvexId ? body.teamSlugOrId : undefined,
+            convexUrl: body.taskRunJwt ? env.NEXT_PUBLIC_CONVEX_URL : undefined,
+            taskRunJwt: body.taskRunJwt || undefined,
           });
           if (taskRunConvexId && (result.maintenanceError || result.devError)) {
             try {
