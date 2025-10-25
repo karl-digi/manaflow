@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { TaskRunTerminalSession } from "./task-run-terminal-session";
 import { toMorphXtermBaseUrl } from "@/lib/toProxyWorkspaceUrl";
 import {
+  buildTmuxAttachRequest,
   createTerminalTab,
   terminalTabsQueryKey,
   terminalTabsQueryOptions,
@@ -130,10 +131,7 @@ export function TaskRunTerminalPane({ workspaceUrl }: TaskRunTerminalPaneProps) 
         try {
           const created = await createTerminalTab({
             baseUrl,
-            request: {
-              cmd: "tmux",
-              args: ["attach", "-t", "cmux"],
-            },
+            request: buildTmuxAttachRequest("cmux"),
           });
 
           queryClient.setQueryData<TerminalTabId[]>(tabsQueryKey, (current) => {
