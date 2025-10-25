@@ -199,7 +199,7 @@ function TaskTreeInner({
 
   const handleCopyDescription = useCallback(() => {
     if (navigator?.clipboard?.writeText) {
-      navigator.clipboard.writeText(task.text).catch(() => {});
+      navigator.clipboard.writeText(task.text).catch(() => { });
     }
   }, [task.text]);
 
@@ -616,7 +616,7 @@ function TaskRunTreeInner({
         <TooltipContent
           side="right"
           sideOffset={6}
-          className="max-w-sm p-3 z-[var(--z-overlay)]"
+          className="max-w-sm p-3 z-[var(--z-global-blocking)]"
         >
           <div className="space-y-1.5">
             <p className="font-medium text-sm text-neutral-200">
@@ -669,7 +669,7 @@ function TaskRunTreeInner({
   const shouldRenderTerminalLink = shouldRenderBrowserLink;
   const shouldRenderPullRequestLink = Boolean(
     (run.pullRequestUrl && run.pullRequestUrl !== "pending") ||
-      run.pullRequests?.some((pr) => pr.url)
+    run.pullRequests?.some((pr) => pr.url)
   );
   const shouldRenderPreviewLink = previewServices.length > 0;
   const hasOpenWithActions = openWithActions.length > 0;
@@ -914,7 +914,7 @@ function TaskRunDetails({
       <TooltipContent
         side="right"
         sideOffset={6}
-        className="max-w-sm p-3 z-[var(--z-overlay)]"
+        className="max-w-sm p-3 z-[var(--z-global-blocking)]"
       >
         <div className="space-y-1.5">
           <p className="font-medium text-sm text-neutral-200">
