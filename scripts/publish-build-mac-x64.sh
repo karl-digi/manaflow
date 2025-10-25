@@ -343,9 +343,14 @@ if [[ -d "$DIST_DIR" ]]; then
   fi
 
   if [[ -f "latest-mac.yml" ]]; then
-    echo "Renaming update manifest to latest-x64-mac.yml"
-    rm -f "latest-x64-mac.yml"
-    mv "latest-mac.yml" "latest-x64-mac.yml"
+    echo "Renaming update manifest to latest-universal.yml"
+    rm -f "latest-universal.yml"
+    mv "latest-mac.yml" "latest-universal.yml"
+  fi
+
+  if [[ -f "latest-universal.yml" ]]; then
+    echo "Creating legacy manifest alias latest-x64-mac.yml"
+    cp "latest-universal.yml" "latest-x64-mac.yml"
   fi
 
   popd >/dev/null

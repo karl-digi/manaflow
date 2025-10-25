@@ -470,13 +470,34 @@ function setupAutoUpdates(): void {
     autoUpdater.allowPrerelease = false;
 
     if (process.platform === "darwin") {
-      const suffix = process.arch === "arm64" ? "arm64" : "x64";
-      const channel = `latest-${suffix}`;
+      const channel = "latest-universal";
       if (autoUpdater.channel !== channel) {
         autoUpdater.channel = channel;
         mainLog("Configured autoUpdater channel", {
           channel,
           arch: process.arch,
+        });
+      }
+
+      const macUpdater = autoUpdater as unknown as {
+        _testOnlyOptions?: {
+          platform?: string;
+          isUseDifferentialDownload?: boolean;
+        };
+      };
+      const currentOptions = macUpdater._testOnlyOptions ?? {};
+      const platformOverride = "generic";
+      if (
+        currentOptions.platform !== platformOverride ||
+        currentOptions.isUseDifferentialDownload !== true
+      ) {
+        macUpdater._testOnlyOptions = {
+          ...currentOptions,
+          platform: platformOverride,
+          isUseDifferentialDownload: true,
+        };
+        mainLog("Overriding autoUpdater platform prefix for universal channel", {
+          platformOverride,
         });
       }
     }
