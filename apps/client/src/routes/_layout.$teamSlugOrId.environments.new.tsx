@@ -3,6 +3,10 @@ import { FloatingPane } from "@/components/floating-pane";
 import { RepositoryPicker } from "@/components/RepositoryPicker";
 import { TitleBar } from "@/components/TitleBar";
 import { toMorphVncUrl } from "@/lib/toProxyWorkspaceUrl";
+import {
+  getEnvironmentDraft,
+  makeEnvironmentDraftKey,
+} from "@/stores/environmentDraftStore";
 import { DEFAULT_MORPH_SNAPSHOT_ID, MORPH_SNAPSHOT_PRESETS, type MorphSnapshotId } from "@cmux/shared";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
@@ -13,12 +17,12 @@ const morphSnapshotIds = MORPH_SNAPSHOT_PRESETS.map(
 ) as [MorphSnapshotId, ...MorphSnapshotId[]];
 
 const searchSchema = z.object({
-  step: z.enum(["select", "configure"]).default("select"),
-  selectedRepos: z.array(z.string()).default([]),
+  step: z.enum(["select", "configure"]).optional(),
+  selectedRepos: z.array(z.string()).optional(),
   instanceId: z.string().optional(),
   connectionLogin: z.string().optional(),
   repoSearch: z.string().optional(),
-  snapshotId: z.enum(morphSnapshotIds).default(DEFAULT_MORPH_SNAPSHOT_ID),
+  snapshotId: z.enum(morphSnapshotIds).optional(),
 });
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/environments/new")(
@@ -30,24 +34,37 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/environments/new")(
 
 function EnvironmentsPage() {
   const searchParams = Route.useSearch();
-  const step = searchParams.step ?? "select";
-  const urlSelectedRepos = searchParams.selectedRepos ?? [];
-  const urlInstanceId = searchParams.instanceId;
-  const selectedSnapshotId = searchParams.snapshotId ?? DEFAULT_MORPH_SNAPSHOT_ID;
   const { teamSlugOrId } = Route.useParams();
+  const draftKey = useMemo(
+    () => makeEnvironmentDraftKey({ teamSlugOrId, mode: "new" }),
+    [teamSlugOrId]
+  );
+  const persistedDraft = useMemo(
+    () => (draftKey ? getEnvironmentDraft(draftKey) : undefined),
+    [draftKey]
+  );
+  const step = searchParams.step ?? persistedDraft?.step ?? "select";
+  const selectedRepos =
+    searchParams.selectedRepos ?? persistedDraft?.selectedRepos ?? [];
+  const effectiveInstanceId =
+    searchParams.instanceId ?? persistedDraft?.instanceId;
+  const selectedSnapshotId =
+    searchParams.snapshotId ??
+    persistedDraft?.snapshotId ??
+    DEFAULT_MORPH_SNAPSHOT_ID;
   const [headerActions, setHeaderActions] = useState<ReactNode | null>(null);
   const derivedVscodeUrl = useMemo(() => {
-    if (!urlInstanceId) return undefined;
-    const hostId = urlInstanceId.replace(/_/g, "-");
+    if (!effectiveInstanceId) return undefined;
+    const hostId = effectiveInstanceId.replace(/_/g, "-");
     return `https://port-39378-${hostId}.http.cloud.morph.so/?folder=/root/workspace`;
-  }, [urlInstanceId]);
+  }, [effectiveInstanceId]);
 
   const derivedBrowserUrl = useMemo(() => {
-    if (!urlInstanceId) return undefined;
-    const hostId = urlInstanceId.replace(/_/g, "-");
+    if (!effectiveInstanceId) return undefined;
+    const hostId = effectiveInstanceId.replace(/_/g, "-");
     const workspaceUrl = `https://port-39378-${hostId}.http.cloud.morph.so/?folder=/root/workspace`;
     return toMorphVncUrl(workspaceUrl) ?? undefined;
-  }, [urlInstanceId]);
+  }, [effectiveInstanceId]);
 
   useEffect(() => {
     if (step !== "configure") {
@@ -62,22 +79,24 @@ function EnvironmentsPage() {
           <div className="p-6 max-w-3xl w-full mx-auto overflow-auto">
             <RepositoryPicker
               teamSlugOrId={teamSlugOrId}
-              instanceId={urlInstanceId}
-              initialSelectedRepos={urlSelectedRepos}
+              instanceId={effectiveInstanceId}
+              initialSelectedRepos={selectedRepos}
               initialSnapshotId={selectedSnapshotId}
               showHeader={true}
               showContinueButton={true}
               showManualConfigOption={true}
+              draftKey={draftKey}
             />
           </div>
         ) : (
           <EnvironmentConfiguration
-            selectedRepos={urlSelectedRepos}
+            selectedRepos={selectedRepos}
             teamSlugOrId={teamSlugOrId}
-            instanceId={urlInstanceId}
+            instanceId={effectiveInstanceId}
             vscodeUrl={derivedVscodeUrl}
             browserUrl={derivedBrowserUrl}
             isProvisioning={false}
+            draftKey={draftKey}
             onHeaderControlsChange={setHeaderActions}
           />
         )}

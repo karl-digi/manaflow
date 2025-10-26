@@ -30,6 +30,10 @@ import {
 } from "@tanstack/react-query";
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
+import {
+  updateEnvironmentDraft,
+  type EnvironmentDraftState,
+} from "@/stores/environmentDraftStore";
 import { Check, ChevronDown, Loader2, Settings, X } from "lucide-react";
 import {
   useCallback,
@@ -105,6 +109,7 @@ export interface RepositoryPickerProps {
   headerTitle?: string;
   headerDescription?: string;
   className?: string;
+  draftKey?: string;
 }
 
 export function RepositoryPicker({
@@ -120,6 +125,7 @@ export function RepositoryPicker({
   headerTitle = "Select Repositories",
   headerDescription = "Choose repositories to include in your environment.",
   className = "",
+  draftKey,
 }: RepositoryPickerProps) {
   const router = useRouter();
   const navigate = useNavigate();
@@ -146,14 +152,33 @@ export function RepositoryPicker({
   const setupManualInstanceMutation = useRQMutation(
     postApiMorphSetupInstanceMutation()
   );
+  const persistDraft = useCallback(
+    (patch: Partial<EnvironmentDraftState>) => {
+      if (!draftKey) {
+        return;
+      }
+      updateEnvironmentDraft(draftKey, patch);
+    },
+    [draftKey]
+  );
 
   useEffect(() => {
     if (initialSnapshotId) {
       setSelectedSnapshotId(initialSnapshotId);
-    } else {
-      setSelectedSnapshotId(DEFAULT_MORPH_SNAPSHOT_ID);
     }
   }, [initialSnapshotId]);
+  useEffect(() => {
+    persistDraft({ step: "select" });
+  }, [persistDraft]);
+  useEffect(() => {
+    persistDraft({ selectedRepos });
+  }, [persistDraft, selectedRepos]);
+  useEffect(() => {
+    persistDraft({ snapshotId: selectedSnapshotId });
+  }, [persistDraft, selectedSnapshotId]);
+  useEffect(() => {
+    persistDraft({ instanceId });
+  }, [instanceId, persistDraft]);
 
   const handleConnectionsInvalidated = useCallback((): void => {
     const qc = router.options.context?.queryClient;
@@ -226,6 +251,12 @@ export function RepositoryPicker({
         },
         {
           onSuccess: async (data) => {
+            persistDraft({
+              selectedRepos: repos,
+              snapshotId: selectedSnapshotId,
+              instanceId: data.instanceId ?? instanceId ?? undefined,
+              step: "configure",
+            });
             await goToConfigure(repos, data.instanceId);
             console.log("Cloned repos:", data.clonedRepos);
             console.log("Removed repos:", data.removedRepos);

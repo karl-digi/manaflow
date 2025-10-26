@@ -3,6 +3,7 @@ import { FloatingPane } from "@/components/floating-pane";
 import { TitleBar } from "@/components/TitleBar";
 import { parseEnvBlock } from "@/lib/parseEnvBlock";
 import { toMorphVncUrl } from "@/lib/toProxyWorkspaceUrl";
+import { makeEnvironmentDraftKey } from "@/stores/environmentDraftStore";
 import type { Id } from "@cmux/convex/dataModel";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import {
@@ -43,6 +44,15 @@ function NewSnapshotVersionPage() {
   const urlInstanceId = searchParams.instanceId;
   const urlVscodeUrl = searchParams.vscodeUrl;
   const [headerActions, setHeaderActions] = useState<ReactNode | null>(null);
+  const draftKey = useMemo(
+    () =>
+      makeEnvironmentDraftKey({
+        teamSlugOrId,
+        mode: "snapshot",
+        sourceEnvironmentId: String(sourceEnvironmentId),
+      }),
+    [sourceEnvironmentId, teamSlugOrId]
+  );
 
   const derivedVscodeUrl = useMemo(() => {
     if (!urlInstanceId) return undefined;
@@ -176,6 +186,7 @@ function NewSnapshotVersionPage() {
                 : ""
             }
             initialEnvVars={initialEnvVars}
+            draftKey={draftKey}
             onHeaderControlsChange={setHeaderActions}
           />
         )}

@@ -9,6 +9,13 @@ import {
   TASK_RUN_IFRAME_ALLOW,
   TASK_RUN_IFRAME_SANDBOX,
 } from "@/lib/preloadTaskRunIframes";
+import {
+  getEnvironmentDraft,
+  resetEnvironmentDraft,
+  updateEnvironmentDraft,
+  type EnvironmentDraftState,
+} from "@/stores/environmentDraftStore";
+import type { EnvironmentVariable } from "@/types/environments";
 import { formatEnvVarsContent } from "@cmux/shared/utils/format-env-vars-content";
 import type { MorphSnapshotId } from "@cmux/shared";
 import { validateExposedPorts } from "@cmux/shared/utils/validate-exposed-ports";
@@ -34,7 +41,7 @@ import {
 } from "react";
 import TextareaAutosize from "react-textarea-autosize";
 
-export type EnvVar = { name: string; value: string; isSecret: boolean };
+export type EnvVar = EnvironmentVariable;
 
 const ensureInitialEnvVars = (initial?: EnvVar[]): EnvVar[] => {
   const base = (initial ?? []).map((item) => ({
@@ -66,6 +73,7 @@ export function EnvironmentConfiguration({
   initialDevScript = "",
   initialExposedPorts = "",
   initialEnvVars,
+  draftKey,
   onHeaderControlsChange,
 }: {
   selectedRepos: string[];
@@ -81,6 +89,7 @@ export function EnvironmentConfiguration({
   initialDevScript?: string;
   initialExposedPorts?: string;
   initialEnvVars?: EnvVar[];
+  draftKey?: string;
   onHeaderControlsChange?: (controls: ReactNode | null) => void;
 }) {
   const navigate = useNavigate();
@@ -98,15 +107,34 @@ export function EnvironmentConfiguration({
     instanceId?: string;
     snapshotId?: MorphSnapshotId;
   };
-  const [envName, setEnvName] = useState(() => initialEnvName);
+  const persistedDraft = useMemo(
+    () => (draftKey ? getEnvironmentDraft(draftKey) : undefined),
+    [draftKey],
+  );
+  const persistDraft = useCallback(
+    (patch: Partial<EnvironmentDraftState>) => {
+      if (!draftKey) {
+        return;
+      }
+      updateEnvironmentDraft(draftKey, patch);
+    },
+    [draftKey],
+  );
+  const [envName, setEnvName] = useState(
+    () => persistedDraft?.envName ?? initialEnvName,
+  );
   const [envVars, setEnvVars] = useState<EnvVar[]>(() =>
-    ensureInitialEnvVars(initialEnvVars)
+    ensureInitialEnvVars(persistedDraft?.envVars ?? initialEnvVars),
   );
   const [maintenanceScript, setMaintenanceScript] = useState(
-    () => initialMaintenanceScript
+    () => persistedDraft?.maintenanceScript ?? initialMaintenanceScript,
   );
-  const [devScript, setDevScript] = useState(() => initialDevScript);
-  const [exposedPorts, setExposedPorts] = useState(() => initialExposedPorts);
+  const [devScript, setDevScript] = useState(
+    () => persistedDraft?.devScript ?? initialDevScript,
+  );
+  const [exposedPorts, setExposedPorts] = useState(
+    () => persistedDraft?.exposedPorts ?? initialExposedPorts,
+  );
   const [portsError, setPortsError] = useState<string | null>(null);
   const keyInputRefs = useRef<Array<HTMLInputElement | null>>([]);
   const [pendingFocusIndex, setPendingFocusIndex] = useState<number | null>(
@@ -130,6 +158,31 @@ export function EnvironmentConfiguration({
   }, [browserUrl, instanceId, vscodeUrl]);
   const vscodePersistKey = `${basePersistKey}:vscode`;
   const browserPersistKey = `${basePersistKey}:browser`;
+  useEffect(() => {
+    if (mode === "new") {
+      persistDraft({ step: "configure" });
+    }
+  }, [mode, persistDraft]);
+  useEffect(() => {
+    persistDraft({ envName });
+  }, [envName, persistDraft]);
+  useEffect(() => {
+    persistDraft({
+      envVars: envVars.map((variable) => ({ ...variable })),
+    });
+  }, [envVars, persistDraft]);
+  useEffect(() => {
+    persistDraft({ maintenanceScript });
+  }, [maintenanceScript, persistDraft]);
+  useEffect(() => {
+    persistDraft({ devScript });
+  }, [devScript, persistDraft]);
+  useEffect(() => {
+    persistDraft({ exposedPorts });
+  }, [exposedPorts, persistDraft]);
+  useEffect(() => {
+    persistDraft({ instanceId });
+  }, [instanceId, persistDraft]);
   useEffect(() => {
     if (!browserUrl && activePreview === "browser") {
       setActivePreview("vscode");
@@ -321,6 +374,9 @@ export function EnvironmentConfiguration({
         },
         {
           onSuccess: async () => {
+            if (draftKey) {
+              resetEnvironmentDraft(draftKey);
+            }
             await navigate({
               to: "/$teamSlugOrId/environments/$environmentId",
               params: {
@@ -360,6 +416,9 @@ export function EnvironmentConfiguration({
         },
         {
           onSuccess: async () => {
+            if (draftKey) {
+              resetEnvironmentDraft(draftKey);
+            }
             await navigate({
               to: "/$teamSlugOrId/environments",
               params: { teamSlugOrId },
@@ -585,6 +644,7 @@ export function EnvironmentConfiguration({
         {mode === "new" ? (
           <button
             onClick={async () => {
+              persistDraft({ step: "select" });
               await navigate({
                 to: "/$teamSlugOrId/environments/new",
                 params: { teamSlugOrId },
