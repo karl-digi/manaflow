@@ -470,8 +470,7 @@ function setupAutoUpdates(): void {
     autoUpdater.allowPrerelease = false;
 
     if (process.platform === "darwin") {
-      const suffix = process.arch === "arm64" ? "arm64" : "x64";
-      const channel = `latest-${suffix}`;
+      const channel = "latest-universal";
       if (autoUpdater.channel !== channel) {
         autoUpdater.channel = channel;
         mainLog("Configured autoUpdater channel", {
@@ -504,8 +503,7 @@ function setupAutoUpdates(): void {
       `${p.percent?.toFixed?.(1) ?? 0}% (${p.transferred}/${p.total})`
     )
   );
-  autoUpdater.on("update-downloaded", () => {
-    const info = autoUpdater.updateInfo;
+  autoUpdater.on("update-downloaded", (info: UpdateInfo) => {
     const version =
       info &&
       typeof info === "object" &&
