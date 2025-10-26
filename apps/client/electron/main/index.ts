@@ -506,9 +506,9 @@ function setupAutoUpdates(): void {
   autoUpdater.on("update-downloaded", (info: UpdateInfo) => {
     const version =
       info &&
-      typeof info === "object" &&
-      "version" in info &&
-      typeof info.version === "string"
+        typeof info === "object" &&
+        "version" in info &&
+        typeof info.version === "string"
         ? info.version
         : null;
 
