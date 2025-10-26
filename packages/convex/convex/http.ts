@@ -12,6 +12,7 @@ import {
 } from "./codeReview_http";
 import { githubSetup } from "./github_setup";
 import { githubWebhook } from "./github_webhook";
+import { updateEnvironmentErrorHttp } from "./taskRuns";
 import { stackWebhook } from "./stack_webhook";
 
 const http = httpRouter();
@@ -74,6 +75,12 @@ http.route({
   path: "/github_setup",
   method: "GET",
   handler: githubSetup,
+});
+
+http.route({
+  path: "/taskRuns/update-environment-error",
+  method: "POST",
+  handler: updateEnvironmentErrorHttp,
 });
 
 export default http;

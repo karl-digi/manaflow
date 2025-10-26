@@ -60,28 +60,39 @@ const HAS_DEV_SCRIPT = "{{HAS_DEV_SCRIPT}}" === "true";
 const CONVEX_URL = "{{CONVEX_URL}}";
 const TASK_RUN_JWT = "{{TASK_RUN_JWT}}";
 
-async function waitForTmuxSession(): Promise<void> {
-  for (let i = 0; i < 20; i++) {
-    try {
-      const result = await $\`tmux has-session -t cmux 2>/dev/null\`.quiet();
-      if (result.exitCode === 0) {
-        console.log("[ORCHESTRATOR] tmux session found");
-        return;
-      }
-    } catch (error) {
-      // Session not ready yet
+function getConvexHttpBaseUrl(url: string | null): string | null {
+  if (!url) {
+    return null;
+  }
+  const trimmed = url.replace(/\/$/, "");
+  return trimmed.replace(".convex.cloud", ".convex.site");
+}
+
+async function ensureTmuxSession(): Promise<void> {
+  // Check if session exists
+  try {
+    const result = await $\`tmux has-session -t cmux 2>/dev/null\`.quiet();
+    if (result.exitCode === 0) {
+      console.log("[ORCHESTRATOR] tmux session already exists");
+      return;
     }
-    await Bun.sleep(500);
+  } catch (error) {
+    // Session doesn't exist, will create below
   }
 
-  const result = await $\`tmux has-session -t cmux 2>/dev/null\`.quiet();
-  if (result.exitCode !== 0) {
-    throw new Error("Error: cmux session does not exist");
+  // Create the session
+  console.log("[ORCHESTRATOR] Creating tmux session 'cmux'");
+  try {
+    await $\`tmux new-session -d -s cmux\`;
+    console.log("[ORCHESTRATOR] tmux session created successfully");
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    throw new Error(\`Failed to create tmux session: \${errorMessage}\`);
   }
 }
 
 async function createWindows(): Promise<void> {
-  await waitForTmuxSession();
+  await ensureTmuxSession();
 
   if (HAS_MAINTENANCE_SCRIPT) {
     try {
@@ -200,9 +211,18 @@ async function runMaintenanceScript(): Promise<{ exitCode: number; error: string
   }
 }
 
-async function reportErrorToConvex(maintenanceError: string | null, devError: string | null): Promise<void> {
+async function reportErrorToConvex(
+  maintenanceError: string | null,
+  devError: string | null,
+): Promise<void> {
   if (!TASK_RUN_JWT || !CONVEX_URL) {
     console.log("[ORCHESTRATOR] Skipping Convex error reporting: missing configuration");
+    return;
+  }
+
+  const convexHttpBaseUrl = getConvexHttpBaseUrl(CONVEX_URL);
+  if (!convexHttpBaseUrl) {
+    console.log("[ORCHESTRATOR] Skipping Convex error reporting: invalid Convex URL");
     return;
   }
 
@@ -224,7 +244,7 @@ async function reportErrorToConvex(maintenanceError: string | null, devError: st
 
     console.log(\`[ORCHESTRATOR] Calling Convex HTTP action with body: \${JSON.stringify(requestBody, null, 2)}\`);
 
-    const response = await fetch(\`\${CONVEX_URL}/taskRuns/updateEnvironmentErrorHttp\`, {
+    const response = await fetch(\`\${convexHttpBaseUrl}/taskRuns/update-environment-error\`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -377,11 +397,70 @@ async function startDevScript(): Promise<{ error: string | null }> {
     console.log("[ORCHESTRATOR] Orchestrator completed successfully");
     process.exit(0);
   } catch (error) {
-    console.error(\`[ORCHESTRATOR] Fatal error: \${error}\`);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(\`[ORCHESTRATOR] Fatal error: \${errorMessage}\`);
+
+    // Report fatal errors to Convex (these are early setup failures, categorized as devError)
+    await reportErrorToConvex(null, \`Orchestrator fatal error: \${errorMessage}\`);
+
     process.exit(1);
   }
 })();
 `;
+
+// Helper to report errors to Convex from parent (outside orchestrator)
+async function reportErrorToConvexHttp({
+  convexUrl,
+  taskRunJwt,
+  maintenanceError,
+  devError,
+}: {
+  convexUrl?: string;
+  taskRunJwt?: string;
+  maintenanceError?: string | null;
+  devError?: string | null;
+}): Promise<void> {
+  if (!taskRunJwt || !convexUrl) {
+    console.log("[runMaintenanceAndDevScripts] Skipping Convex error reporting: missing configuration");
+    return;
+  }
+
+  const convexHttpBaseUrl = convexUrl
+    .replace(/\/$/, "")
+    .replace(".convex.cloud", ".convex.site");
+
+  if (!maintenanceError && !devError) {
+    return;
+  }
+
+  try {
+    const requestBody: { maintenanceError?: string; devError?: string } = {};
+    if (maintenanceError) {
+      requestBody.maintenanceError = maintenanceError;
+    }
+    if (devError) {
+      requestBody.devError = devError;
+    }
+
+    const response = await fetch(`${convexHttpBaseUrl}/taskRuns/update-environment-error`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${taskRunJwt}`,
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`[runMaintenanceAndDevScripts] Failed to report errors to Convex: ${response.status} ${errorText}`);
+    } else {
+      console.log(`[runMaintenanceAndDevScripts] Successfully reported errors to Convex`);
+    }
+  } catch (error) {
+    console.error(`[runMaintenanceAndDevScripts] Exception while reporting errors to Convex:`, error);
+  }
+}
 
 export async function runMaintenanceAndDevScripts({
   instance,
@@ -511,11 +590,48 @@ fi
   if (result.exit_code !== 0) {
     const base = `Failed to start orchestrator: exit code ${result.exit_code}`;
     const detailed = stderr ? `${base} | stderr: ${stderr}` : base;
-    throw new Error(detailed);
+
+    // Try to read the orchestrator log file to get more details
+    const orchestratorLogPath = `${CMUX_RUNTIME_DIR}/orchestrator_${runId}.log`;
+    let logContent = "";
+    try {
+      const logResult = await instance.exec(`cat ${orchestratorLogPath} 2>/dev/null || echo "Log file not found"`);
+      if (logResult.stdout) {
+        logContent = logResult.stdout.trim();
+        // Get last 100 lines
+        const lines = logContent.split("\n");
+        const relevantLines = lines.slice(-100);
+        logContent = relevantLines.join("\n");
+      }
+    } catch (logError) {
+      console.error(`[runMaintenanceAndDevScripts] Failed to read orchestrator log:`, logError);
+    }
+
+    const fullError = logContent
+      ? `${detailed}\n\nOrchestrator log:\n${logContent}`
+      : detailed;
+
+    // Report to Convex and return (don't throw - orchestrator is fire-and-forget)
+    console.error(`[runMaintenanceAndDevScripts] ${detailed}`);
+    await reportErrorToConvexHttp({
+      convexUrl,
+      taskRunJwt,
+      devError: fullError,
+    });
+    return;
   }
 
   if (!stdout.includes("[ORCHESTRATOR] Started successfully in background (PID:")) {
-    throw new Error("Orchestrator did not confirm successful start");
+    const errorMsg = "Orchestrator did not confirm successful start";
+
+    // Report to Convex and return (don't throw - orchestrator is fire-and-forget)
+    console.error(`[runMaintenanceAndDevScripts] ${errorMsg}`);
+    await reportErrorToConvexHttp({
+      convexUrl,
+      taskRunJwt,
+      devError: errorMsg,
+    });
+    return;
   }
 
   console.log(`[runMaintenanceAndDevScripts] Orchestrator started successfully`);
