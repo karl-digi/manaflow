@@ -160,12 +160,42 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("text/plain", position);
     setIsDraggingSelf(true);
+
+    // Disable pointer events on all iframes during drag
+    const iframes = Array.from(document.querySelectorAll("iframe"));
+    for (const el of iframes) {
+      if (el instanceof HTMLIFrameElement) {
+        const current = el.style.pointerEvents;
+        el.dataset.prevPointerEvents = current ? current : "__unset__";
+        el.style.pointerEvents = "none";
+      }
+    }
+
     dispatchPanelDragEvent(PANEL_DRAG_START_EVENT);
   }, [position]);
 
   const handleDragEnd = useCallback(() => {
     setIsDraggingSelf(false);
     setIsDragOver(false);
+
+    // Restore pointer events on all iframes
+    const iframes = Array.from(document.querySelectorAll("iframe"));
+    for (const el of iframes) {
+      if (el instanceof HTMLIFrameElement) {
+        const prev = el.dataset.prevPointerEvents;
+        if (prev !== undefined) {
+          if (prev === "__unset__") {
+            el.style.removeProperty("pointer-events");
+          } else {
+            el.style.pointerEvents = prev;
+          }
+          delete el.dataset.prevPointerEvents;
+        } else {
+          el.style.removeProperty("pointer-events");
+        }
+      }
+    }
+
     dispatchPanelDragEvent(PANEL_DRAG_END_EVENT);
   }, []);
 
@@ -194,6 +224,25 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
     if (fromPosition && fromPosition !== position && onSwap) {
       onSwap(fromPosition, position);
     }
+
+    // Restore pointer events on all iframes after drop
+    const iframes = Array.from(document.querySelectorAll("iframe"));
+    for (const el of iframes) {
+      if (el instanceof HTMLIFrameElement) {
+        const prev = el.dataset.prevPointerEvents;
+        if (prev !== undefined) {
+          if (prev === "__unset__") {
+            el.style.removeProperty("pointer-events");
+          } else {
+            el.style.pointerEvents = prev;
+          }
+          delete el.dataset.prevPointerEvents;
+        } else {
+          el.style.removeProperty("pointer-events");
+        }
+      }
+    }
+
     dispatchPanelDragEvent(PANEL_DRAG_END_EVENT);
   }, [onSwap, position]);
 
