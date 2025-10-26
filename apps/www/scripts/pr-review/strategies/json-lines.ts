@@ -17,7 +17,7 @@ File path: ${context.filePath}
 Return a JSON object of type { lines: { line: string, shouldBeReviewedScore: number, shouldReviewWhy: string | null, mostImportantCharacterIndex: number }[] }.
 You should only have the "post-diff" array of lines in the JSON object.
 The "line" property MUST contain the exact line of code you want a human to review (no truncation, no summaries).
-shouldBeReviewedScore is a number from 0 to 1 (always include it even if 0) that indicates how careful the reviewer should be when reviewing this line of code.
+shouldBeReviewedScore is a number between 0.0 and 1.0 (always include it even if 0.0) that indicates how careful the reviewer should be when reviewing this line of code.
 Anything that feels like it might be off or might warrant a comment should have a high score, even if it's technically correct.
 shouldReviewWhy should be a concise (4-10 words) hint on why the reviewer should maybe review this line of code, but it shouldn't state obvious things, instead it should only be a hint for the reviewer as to what exactly you meant when you flagged it.
 In most cases, the reason should follow a template like "<X> <verb> <Y>" (eg. "line is too long" or "code accesses sensitive data").

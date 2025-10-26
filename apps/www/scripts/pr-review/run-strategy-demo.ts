@@ -57,6 +57,18 @@ function extractFirstAddedLine(diffText: string): string | null {
   return null;
 }
 
+function extractFirstChangedDiffLine(diffText: string): string | null {
+  const lines = diffText.split("\n");
+  for (const line of lines) {
+    if (line.startsWith("+++")) continue;
+    if (line.startsWith("---")) continue;
+    if (line.startsWith("+") || line.startsWith("-")) {
+      return line;
+    }
+  }
+  return null;
+}
+
 function extractFirstAddedLineWithNumber(formattedDiff: string[]): {
   lineNumber: number;
   content: string;
@@ -220,6 +232,24 @@ async function runStrategyDemo(): Promise<void> {
           null,
           2
         );
+      } else if (strategy.id === "openai-responses") {
+        const sample = extractFirstChangedDiffLine(fileDiff.diffText);
+        syntheticResponse = JSON.stringify(
+          {
+            lines: sample
+              ? [
+                  {
+                    line: sample,
+                    shouldBeReviewedScore: sample.startsWith("-") ? 0.4 : 0.1,
+                    shouldReviewWhy: null,
+                    mostImportantCharacterIndex: 0,
+                  },
+                ]
+              : [],
+          },
+          null,
+          2
+        );
       } else if (strategy.id === "line-numbers") {
         const sample = extractFirstAddedLineWithNumber(formattedDiff);
         syntheticResponse = JSON.stringify(
@@ -282,6 +312,7 @@ async function runStrategyDemo(): Promise<void> {
         options,
         metadata: prepareResult.metadata,
         log,
+        workspaceDir: options.workspaceDir,
         persistArtifact,
       };
 

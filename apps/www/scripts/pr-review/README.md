@@ -10,14 +10,15 @@ without rewriting the harness.
 |-----------------|-----------------------------------------------------------------------------------------------|----------------------------------------------------------------------|
 | `json-lines`       | Original flow. The LLM returns JSON objects containing the literal line text plus metadata.   | `lines[].line`, `shouldBeReviewedScore`, `shouldReviewWhy`, `mostImportantCharacterIndex` |
 | `line-numbers`     | Similar to the original, but the model references diff line numbers instead of echoing code. | `lines[].lineNumber` (optional `line`), score/index required         |
-| `inline-phrase`    | Lines end with `// review <score> "verbatim_snippet" <optional comment>` (lowercase).         | Annotated diff plus parsed phrase annotations                        |
-| `inline-brackets`  | Highlights spans with `{| … |}` and appends `// review <score> <optional comment>`.           | Annotated diff plus parsed highlight spans                           |
-| `inline-json`      | Lines end with `// { "score": <0-1>, "phrase": "verbatim_snippet", "comment": "…" }`.         | Annotated diff plus parsed JSON review objects                       |
+| `openai-responses` | Bypasses the Codex CLI and calls OpenAI's Responses API directly with the `gpt-5-codex` model. | Matches `json-lines` output (`lines[]`, score/index metadata)        |
+| `inline-phrase`    | Lines end with `// review <float 0.0-1.0> "verbatim snippet" <optional comment>` (lowercase). | Annotated diff plus parsed phrase annotations                        |
+| `inline-brackets`  | Highlights spans with `{| … |}` and appends `// review <float 0.0-1.0> <optional comment>`.    | Annotated diff plus parsed highlight spans                           |
+| `inline-json`      | Lines end with `// { "score": <float 0.0-1.0>, "phrase": "verbatim snippet", "comment": "…" }`. | Annotated diff plus parsed JSON review objects                       |
 | `inline-files`     | Writes the diff to a workspace file that the agent must edit in place with inline review tags. | Annotated on-disk diff harvested after completion                     |
 
 All strategies implement the common interface in `core/types.ts`. The active
 strategy is selected via `CMUX_PR_REVIEW_STRATEGY` or the CLI flag
-`--strategy <json-lines|line-numbers|inline-phrase|inline-brackets|inline-json|inline-files>`.
+`--strategy <json-lines|line-numbers|openai-responses|inline-phrase|inline-brackets|inline-json|inline-files>`.
 
 ## Configuration
 
@@ -25,7 +26,7 @@ Environment variables (and matching CLI flags) understood by the inject script:
 
 | Env / Flag                                   | Purpose                                                                                 | Default      |
 |----------------------------------------------|-----------------------------------------------------------------------------------------|--------------|
-| `CMUX_PR_REVIEW_STRATEGY` / `--strategy`      | Strategy ID to use (`json-lines`, `line-numbers`, `inline-phrase`, `inline-brackets`, `inline-json`) | `json-lines` |
+| `CMUX_PR_REVIEW_STRATEGY` / `--strategy`      | Strategy ID to use (`json-lines`, `line-numbers`, `openai-responses`, `inline-phrase`, `inline-brackets`, `inline-json`, `inline-files`) | `json-lines` |
 | `CMUX_PR_REVIEW_SHOW_DIFF_LINE_NUMBERS` / `--diff-line-numbers` | Include formatted line numbers in prompts/logs                              | `false`      |
 | `CMUX_PR_REVIEW_SHOW_CONTEXT_LINE_NUMBERS` / `--diff-context-line-numbers` | Include numbers on unchanged diff lines               | `true`       |
 | `CMUX_PR_REVIEW_DIFF_ARTIFACT_MODE` / `--diff-artifact <single|per-file>` | How to persist diff artifacts (`inline-*` strategies often use `single`) | `per-file`   |
@@ -46,6 +47,14 @@ Each file review runs through the selected strategy concurrently (the inject
 script maps over files and awaits `Promise.all`). Switching strategies only
 changes how each file is evaluated, not the level of parallelism.
 
+### OpenAI responses strategy
+
+`openai-responses` mirrors the `json-lines` prompts and parsing logic, but it
+skips the Codex CLI sandbox and calls the OpenAI Responses API directly with
+the `gpt-5-codex` model. Provide an `OPENAI_API_KEY` in the environment before
+launching the script; request/response artifacts are still persisted alongside
+the other strategies for comparison.
+
 ## Inline-Comment Format
 
 ### Phrase strategy
@@ -53,10 +62,10 @@ changes how each file is evaluated, not the level of parallelism.
 Lines must end with:
 
 ```
-// review <score> "verbatim_snippet" <optional comment>
+// review <float 0.0-1.0> "verbatim snippet" <optional comment>
 ```
 
-Always include the score (0-1). Annotate only the changed rows (lines
+Always include the score (float between 0.0 and 1.0). Annotate only the changed rows (lines
 beginning with `+` or `-`) and skip diff metadata or context rows. Copy a short
 snippet (roughly 2-6 words) directly from the changed portion of the line and
 trim any leading or trailing whitespace—avoid reprinting the entire line.
@@ -68,7 +77,7 @@ how to choose snippets.
 Wrap the critical span inline using `{|` and `|}`, then append:
 
 ```
-// review <score> <optional comment>
+// review <float 0.0-1.0> <optional comment>
 ```
 
 Scores are mandatory; comments are optional. Parsed annotations capture either
@@ -77,7 +86,7 @@ the phrase or the bracketed highlight.
 ### Workspace file strategy
 
 The diff is saved to `${CMUX_PR_REVIEW_ARTIFACTS_DIR}/inline-files/*.diff`. The
-agent edits that file directly, appending `// review <score> "<verbatim_snippet>"` tags to
+agent edits that file directly, appending `// review <float 0.0-1.0> "verbatim snippet"` tags to
 each changed diff line (only those starting with `+` or `-`). Copy a concise
 snippet from that line, trim surrounding whitespace, and avoid echoing the full
 line. Once the run finishes, the inject script re-reads the file to collect
@@ -109,6 +118,11 @@ bun run apps/www/scripts/pr-review-local.ts \
 bun run apps/www/scripts/pr-review-local.ts \
   --strategy line-numbers \
   --diff-line-numbers \
+  <PR_URL>
+
+# OpenAI Responses (direct API)
+bun run apps/www/scripts/pr-review-local.ts \
+  --strategy openai-responses \
   <PR_URL>
 
 # Inline phrase tags (aggregated artifacts)
@@ -152,6 +166,9 @@ bun run apps/www/scripts/pr-review.ts --strategy json-lines <PR_URL>
 
 # JSON (line numbers)
 bun run apps/www/scripts/pr-review.ts --strategy line-numbers --diff-line-numbers <PR_URL>
+
+# OpenAI Responses (direct API)
+bun run apps/www/scripts/pr-review.ts --strategy openai-responses <PR_URL>
 
 # Inline phrase tags
 bun run apps/www/scripts/pr-review.ts \

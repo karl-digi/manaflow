@@ -155,7 +155,7 @@ function parseCliArgs(argv: readonly string[]): CliOptions {
     }
     if (arg === "--help" || arg === "-h") {
       throw new Error(
-        "Usage: bun run apps/www/scripts/pr-review-local.ts <pr-url> [--rebuild-image] [--image <tag>] [--logs <dir>] [--team <id>] [--diff-line-numbers|--no-diff-line-numbers] [--diff-context-line-numbers|--no-diff-context-line-numbers] [--diff-artifact <single|per-file>] [--strategy <json-lines|line-numbers|inline-phrase|inline-brackets|inline-files>]"
+        "Usage: bun run apps/www/scripts/pr-review-local.ts <pr-url> [--rebuild-image] [--image <tag>] [--logs <dir>] [--team <id>] [--diff-line-numbers|--no-diff-line-numbers] [--diff-context-line-numbers|--no-diff-context-line-numbers] [--diff-artifact <single|per-file>] [--strategy <json-lines|line-numbers|openai-responses|inline-phrase|inline-brackets|inline-files>]"
       );
     }
     if (arg.startsWith("-")) {

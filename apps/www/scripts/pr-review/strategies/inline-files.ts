@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import type {
   ReviewStrategy,
   StrategyPrepareContext,
@@ -11,6 +11,8 @@ import type {
 const REVIEW_MARKER = "// review";
 const RELATIVE_PATH_METADATA_KEY = "inlineFileRelativePath";
 const ABSOLUTE_PATH_METADATA_KEY = "inlineFileAbsolutePath";
+const WORKSPACE_RELATIVE_PATH_METADATA_KEY = "inlineFileWorkspaceRelativePath";
+const WORKSPACE_ABSOLUTE_PATH_METADATA_KEY = "inlineFileWorkspaceAbsolutePath";
 
 interface ParsedPhrase {
   content: string;
@@ -66,19 +68,21 @@ The diff for ${context.filePath} has been written to:
 - Absolute path: ${absolutePath}
 - Relative to repository root: ${relativePath}
 
-For every changed line (only lines beginning with \`+\` or \`-\`) append: // review <score:0-1> "<verbatim_snippet_from_line>" <optional comment>
-- Use lowercase "review".
-- Skip metadata/context rows (lines starting with space, diff --, index, ---/+++, @@, etc.).
-- Copy a concise snippet from the changed portion (no more than 6 words) without leading indentation or trailing padding. This is the phrase that will be highlighted for human reviewers.
-- Always include a score from 0 to 1.
-- Keep comments concise (or omit them when unnecessary).
-- Anything that feels like it might be off or might warrant a comment should have a high score, even if it's technically correct.
-- Ugly code should be given a higher score.
-- Code that may be hard to read for a human should also be given a higher score.
-- Non-clean code too.
-
-The host will read that file from disk; you do not need to paste the diff in chat.
-Remember, you have to annotate every changed/modified/deleted line in the .diff file using the apply_patch function.
+Instructions:
+1. Open that file in the workspace editor.
+2. For every changed line (only lines beginning with \`+\` or \`-\`) append: // review <float 0.0-1.0> "verbatim snippet from line" <optional comment>
+   - Use lowercase "review".
+   - Skip metadata/context rows (lines starting with space, diff --, index, ---/+++, @@, etc.).
+   - Copy a concise snippet from the changed portion (no more than 6 words) without leading indentation or trailing padding. This is the phrase that will be highlighted for human reviewers.
+   - Always include a score between 0.0 and 1.0.
+   - Keep comments concise (or omit them when unnecessary).
+   - Anything that feels like it might be off or might warrant a comment should have a high score, even if it's technically correct.
+   - Ugly code should be given a higher score.
+   - Code that may be hard to read for a human should also be given a higher score.
+   - Non-clean code too.
+3. Preserve all diff markers and ordering. Do not wrap the output in markdown fences.
+4. Save the file when you are done. The host will read that file from disk; you do not need to paste the diff in chat.
+5. Remember to use the apply_patch function when editing the file.
 
 Reference copy of the diff:
 \`\`\`diff
@@ -110,17 +114,24 @@ async function prepare(
     );
   }
   const relativePath = computeRelativePath(context.filePath, diffContent);
-  await context.persistArtifact(
-    relativePath,
-    buildInlineDiffPayload(context.filePath, diffContent)
-  );
+  const workspaceRelativePath = relativePath;
+  const workspaceAbsolutePath = join(context.workspaceDir, workspaceRelativePath);
+  const payload = buildInlineDiffPayload(context.filePath, diffContent);
+
+  await mkdir(dirname(workspaceAbsolutePath), { recursive: true });
+  await writeFile(workspaceAbsolutePath, payload);
+
+  await context.persistArtifact(relativePath, payload);
+
   const absolutePath = join(context.artifactsDir, relativePath);
-  const prompt = buildPrompt(context, absolutePath, relativePath);
+  const prompt = buildPrompt(context, workspaceAbsolutePath, workspaceRelativePath);
   return {
     prompt,
     metadata: {
       [RELATIVE_PATH_METADATA_KEY]: relativePath,
       [ABSOLUTE_PATH_METADATA_KEY]: absolutePath,
+      [WORKSPACE_RELATIVE_PATH_METADATA_KEY]: workspaceRelativePath,
+      [WORKSPACE_ABSOLUTE_PATH_METADATA_KEY]: workspaceAbsolutePath,
       filePath: context.filePath,
     },
   };
@@ -133,9 +144,13 @@ async function process(
     typeof context.metadata?.[RELATIVE_PATH_METADATA_KEY] === "string"
       ? (context.metadata?.[RELATIVE_PATH_METADATA_KEY] as string)
       : null;
-  const absolutePathMetadata =
-    typeof context.metadata?.[ABSOLUTE_PATH_METADATA_KEY] === "string"
-      ? (context.metadata?.[ABSOLUTE_PATH_METADATA_KEY] as string)
+  const workspaceRelativePathMetadata =
+    typeof context.metadata?.[WORKSPACE_RELATIVE_PATH_METADATA_KEY] === "string"
+      ? (context.metadata?.[WORKSPACE_RELATIVE_PATH_METADATA_KEY] as string)
+      : null;
+  const workspaceAbsolutePathMetadata =
+    typeof context.metadata?.[WORKSPACE_ABSOLUTE_PATH_METADATA_KEY] === "string"
+      ? (context.metadata?.[WORKSPACE_ABSOLUTE_PATH_METADATA_KEY] as string)
       : null;
 
   if (!relativePathMetadata) {
@@ -143,19 +158,21 @@ async function process(
       "inline-files strategy missing relative path metadata; ensure prepare() completed successfully."
     );
   }
-  const absolutePath =
-    absolutePathMetadata ??
-    join(context.options.artifactsDir, relativePathMetadata);
-
+  const workspaceAbsolutePath =
+    workspaceAbsolutePathMetadata ??
+    join(
+      context.workspaceDir,
+      workspaceRelativePathMetadata ?? relativePathMetadata
+    );
   const relativePath = relativePathMetadata;
   let fileContent: string;
   try {
-    fileContent = await readFile(absolutePath, "utf8");
+    fileContent = await readFile(workspaceAbsolutePath, "utf8");
   } catch (error) {
     const reason =
       error instanceof Error ? error.message : String(error ?? "unknown error");
     throw new Error(
-      `inline-files strategy failed to read annotations from ${absolutePath}: ${reason}`
+      `inline-files strategy failed to read annotations from ${workspaceAbsolutePath}: ${reason}`
     );
   }
 

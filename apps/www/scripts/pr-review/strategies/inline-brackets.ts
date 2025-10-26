@@ -29,9 +29,9 @@ function buildPrompt(context: StrategyPrepareContext, diffIdentifier: string): s
   return `You are assisting with a code review by highlighting important parts of every diff line.
 For each line (added, removed, or unchanged):
 1. Wrap the most important span with {| and |}. If nothing is noteworthy, wrap the smallest neutral token.
-2. Append a review marker at the end: // review <score:0-1> <optional short comment>
+2. Append a review marker at the end: // review <float 0.0-1.0> <optional short comment>
    - Use lowercase "review".
-   - Always include a score (even if 0).
+   - Always include a score (float between 0.0 and 1.0, even if the line is fine).
    - Keep comments concise; omit them if there's nothing to add.
 Do not remove or reorder diff lines; preserve +/- markers and context.
 Return the fully annotated diff wrapped in a markdown code block tagged as \`\`\`diff.

@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 export type PrReviewStrategyId =
   | "json-lines"
   | "line-numbers"
+  | "openai-responses"
   | "inline-phrase"
   | "inline-brackets"
   | "inline-json"
@@ -20,6 +21,7 @@ export interface PrReviewOptions {
 const STRATEGY_VALUES: PrReviewStrategyId[] = [
   "json-lines",
   "line-numbers",
+  "openai-responses",
   "inline-phrase",
   "inline-brackets",
   "inline-json",

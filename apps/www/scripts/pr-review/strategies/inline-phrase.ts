@@ -26,11 +26,11 @@ function buildPrompt(context: StrategyPrepareContext, diffIdentifier: string): s
   const diffText = context.diff || "(no diff output)";
   return `You are assisting with a code review by annotating every line of the diff shown below.
 For each changed line (only lines that begin with + or -), append a review tag in the format:
-<original line> // review <score:0-1> "<verbatim_snippet_from_line>" <optional comment>
+<original line> // review <float 0.0-1.0> "verbatim snippet from line" <optional comment>
 - Use lowercase "review".
 - Skip metadata/context lines (those that start with space, diff --, index, ---/+++, @@, etc.).
 - Copy a concise snippet directly from the changed portion (no more than 6 words) and avoid leading indentation or the entire line.
-- Always include a score (0-1) even if the line is fine.
+- Always include a score (float between 0.0 and 1.0) even if the line is fine.
 - Keep the phrase short (ideally 1-5 words).
 - Optional comment can be omitted if there's nothing noteworthy.
 Do not remove or reorder diff lines; preserve +/- markers and context.

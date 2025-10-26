@@ -26,9 +26,9 @@ function buildPrompt(context: StrategyPrepareContext, diffIdentifier: string): s
   const diffText = context.diff || "(no diff output)";
   return `You are assisting with a code review by appending JSON review data to every diff line.
 For each changed line (lines that begin with + or -), append a lowercase // followed by a compact JSON object with the shape:
-{ score: <0-1>, phrase: "<verbatim_snippet_or_empty>", comment: "<optional comment>" }
+{ score: <float 0.0-1.0>, phrase: "<verbatim snippet or empty>", comment: "<optional comment>" }
 Rules:
-- Include the score field in every object (0-1).
+- Include the score field in every object (float between 0.0 and 1.0).
 - Skip context and metadata lines (those starting with space, diff --, index, ---/+++, @@, etc.).
 - Copy a short snippet directly from the changed portion of the diff line (aim for 2-6 words). Do not echo the entire line or include leading indentation.
 - Trim leading/trailing whitespace from the snippet; use "" when nothing should be highlighted.

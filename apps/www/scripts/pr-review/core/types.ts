@@ -32,6 +32,7 @@ export interface StrategyProcessContext {
   options: PrReviewOptions;
   metadata?: Record<string, unknown>;
   log: (header: string, body: string) => void;
+  workspaceDir: string;
   persistArtifact: (
     relativePath: string,
     content: string,

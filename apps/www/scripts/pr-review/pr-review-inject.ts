@@ -20,6 +20,10 @@ import type {
   StrategyRunResult,
 } from "./core/types";
 
+type CodexClient = InstanceType<
+  (typeof import("@openai/codex-sdk"))["Codex"]
+>;
+
 interface CommandOptions {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
@@ -29,6 +33,9 @@ const execFileAsync = promisify(execFile);
 
 const reviewOptions = loadOptionsFromEnv(process.env);
 const reviewStrategy = resolveStrategy(reviewOptions.strategy);
+const isOpenAiResponsesStrategy = reviewStrategy.id === "openai-responses";
+type PersistArtifactFn = StrategyPrepareContext["persistArtifact"];
+type StrategyLogger = StrategyPrepareContext["log"];
 
 function formatDuration(ms: number): string {
   if (!Number.isFinite(ms)) {
@@ -339,6 +346,7 @@ interface CodexReviewResult {
   startedAt: string;
   completedAt: string;
   durationMs: number;
+  durationFormatted: string;
 }
 
 interface CodexReviewRunResult {
@@ -346,6 +354,7 @@ interface CodexReviewRunResult {
   startedAt: string;
   completedAt: string;
   durationMs: number;
+  durationFormatted: string;
 }
 
 interface CodexReviewContext {
@@ -367,28 +376,36 @@ async function runCodexReviews({
   commitRef,
   fileCallback,
 }: CodexReviewContext): Promise<CodexReviewRunResult> {
+  const runtimeLabel = isOpenAiResponsesStrategy ? "OpenAI responses" : "Codex";
+
   if (files.length === 0) {
-    console.log("[inject] No text files require Codex review.");
+    console.log(
+      `[inject] No text files require ${runtimeLabel} review.`
+    );
     const nowIso = new Date().toISOString();
     return {
       results: [],
       startedAt: nowIso,
       completedAt: nowIso,
       durationMs: 0,
+      durationFormatted: formatDuration(0),
     };
   }
 
   const openAiApiKey = requireEnv("OPENAI_API_KEY");
 
   console.log(
-    `[inject] Launching Codex reviews for ${files.length} file(s)...`
+    `[inject] Launching ${runtimeLabel} reviews for ${files.length} file(s)...`
   );
   console.log(
     `[inject] Strategy: ${reviewStrategy.displayName} (${reviewStrategy.id})`
   );
 
-  const { Codex } = await import("@openai/codex-sdk");
-  const codex = new Codex({ apiKey: openAiApiKey });
+  let codex: CodexClient | null = null;
+  if (!isOpenAiResponsesStrategy) {
+    const { Codex } = await import("@openai/codex-sdk");
+    codex = new Codex({ apiKey: openAiApiKey });
+  }
 
   const reviewStartedAtDate = new Date();
   const reviewStartedAt = reviewStartedAtDate.toISOString();
@@ -437,10 +454,6 @@ async function runCodexReviews({
         includeContextLineNumbers: reviewOptions.showContextLineNumbers,
       });
       logDiffWithLineNumbers(`[inject] Diff for ${file}`, formattedDiff);
-      const thread = codex.startThread({
-        workingDirectory: workspaceDir,
-        model: "gpt-5-codex",
-      });
       const prepareContext: StrategyPrepareContext = {
         filePath: file,
         diff,
@@ -455,18 +468,37 @@ async function runCodexReviews({
 
       strategyLog(`Prompt for ${file}`, prepareResult.prompt);
 
-      const turn = await thread.runStreamed(prepareResult.prompt, {
-        outputSchema: prepareResult.outputSchema,
-      });
       let response = "<no response>";
-      for await (const event of turn.events) {
-        console.log(`[inject] Codex event: ${JSON.stringify(event)}`);
-        if (event.type === "item.completed") {
-          if (event.item.type === "agent_message") {
-            response = event.item.text;
-          }
+      let conversationArtifact: CodexReviewResultArtifact;
+      if (isOpenAiResponsesStrategy) {
+        const invocationResult = await runOpenAiResponsesInvocation({
+          filePath: file,
+          prompt: prepareResult.prompt,
+          outputSchema: prepareResult.outputSchema,
+          persistArtifact,
+          sanitizeArtifactStem,
+          strategyLog,
+          openAiApiKey,
+        });
+        response = invocationResult.responseText;
+        conversationArtifact = invocationResult.conversationArtifact;
+      } else {
+        if (!codex) {
+          throw new Error("Codex client failed to initialize.");
         }
+        const invocationResult = await runCodexInvocation({
+          codex,
+          filePath: file,
+          workspaceDir,
+          prompt: prepareResult.prompt,
+          outputSchema: prepareResult.outputSchema,
+          persistArtifact,
+          sanitizeArtifactStem,
+        });
+        response = invocationResult.responseText;
+        conversationArtifact = invocationResult.conversationArtifact;
       }
+
       const processContext: StrategyProcessContext = {
         filePath: file,
         responseText: response,
@@ -474,12 +506,16 @@ async function runCodexReviews({
         options: reviewOptions,
         metadata: prepareResult.metadata,
         log: strategyLog,
+        workspaceDir,
         persistArtifact,
       };
       const strategyResult: StrategyRunResult =
         await reviewStrategy.process(processContext);
 
-      strategyLog(`Codex review for ${file}`, strategyResult.rawResponse);
+      strategyLog(
+        `${runtimeLabel} review for ${file}`,
+        strategyResult.rawResponse
+      );
 
       const perFileResponsePath = await persistArtifact(
         `responses/${sanitizeArtifactStem(file)}.md`,
@@ -492,6 +528,7 @@ async function runCodexReviews({
           label: "Review response",
           relativePath: perFileResponsePath,
         },
+        conversationArtifact,
       ];
 
       artifactEntries.forEach((artifact) => {
@@ -505,6 +542,7 @@ async function runCodexReviews({
 
       const fileCompletedAt = new Date().toISOString();
       const fileDurationMs = Math.round(performance.now() - fileStartClock);
+      const fileDurationFormatted = formatDuration(fileDurationMs);
 
       const result: CodexReviewResult = {
         file,
@@ -513,9 +551,10 @@ async function runCodexReviews({
         startedAt: fileStartedAt,
         completedAt: fileCompletedAt,
         durationMs: fileDurationMs,
+        durationFormatted: fileDurationFormatted,
       };
       console.log(
-        `[inject] Review completed for ${file} in ${formatDuration(fileDurationMs)}`
+        `[inject] Review completed for ${file} in ${fileDurationFormatted}`
       );
 
       if (fileCallback) {
@@ -546,7 +585,9 @@ async function runCodexReviews({
           ? error.message
           : String(error ?? "unknown error");
       const elapsedMs = performance.now() - fileStartClock;
-      console.error(`[inject] Codex review failed for ${file}: ${reason}`);
+      console.error(
+        `[inject] ${runtimeLabel} review failed for ${file}: ${reason}`
+      );
       console.error(
         `[inject] Review for ${file} failed after ${formatDuration(elapsedMs)}`
       );
@@ -564,7 +605,7 @@ async function runCodexReviews({
 
   if (failureCount > 0) {
     throw new Error(
-      `[inject] Codex review encountered ${failureCount} failure(s). See logs above.`
+      `[inject] ${runtimeLabel} review encountered ${failureCount} failure(s). See logs above.`
     );
   }
 
@@ -575,9 +616,10 @@ async function runCodexReviews({
   const reviewCompletedAtDate = new Date();
   const reviewCompletedAt = reviewCompletedAtDate.toISOString();
   const reviewDurationMs = Math.round(performance.now() - reviewStart);
+  const reviewDurationFormatted = formatDuration(reviewDurationMs);
 
   console.log(
-    `[inject] Codex reviews completed in ${formatDuration(
+    `[inject] ${runtimeLabel} reviews completed in ${formatDuration(
       reviewDurationMs
     )}.`
   );
@@ -586,6 +628,237 @@ async function runCodexReviews({
     startedAt: reviewStartedAt,
     completedAt: reviewCompletedAt,
     durationMs: reviewDurationMs,
+    durationFormatted: reviewDurationFormatted,
+  };
+}
+
+interface CodexInvocationContext {
+  codex: CodexClient;
+  filePath: string;
+  workspaceDir: string;
+  prompt: string;
+  outputSchema?: unknown;
+  persistArtifact: PersistArtifactFn;
+  sanitizeArtifactStem: (filePath: string) => string;
+}
+
+interface OpenAiResponsesInvocationContext {
+  filePath: string;
+  prompt: string;
+  outputSchema?: unknown;
+  persistArtifact: PersistArtifactFn;
+  sanitizeArtifactStem: (filePath: string) => string;
+  strategyLog: StrategyLogger;
+  openAiApiKey: string;
+}
+
+interface ModelInvocationResult {
+  responseText: string;
+  conversationArtifact: CodexReviewResultArtifact;
+}
+
+async function runCodexInvocation({
+  codex,
+  filePath,
+  workspaceDir,
+  prompt,
+  outputSchema,
+  persistArtifact,
+  sanitizeArtifactStem,
+}: CodexInvocationContext): Promise<ModelInvocationResult> {
+  const thread = codex.startThread({
+    workingDirectory: workspaceDir,
+    model: "gpt-5-codex",
+    sandboxMode: "danger-full-access",
+  });
+  const turn = await thread.runStreamed(prompt, {
+    outputSchema,
+  });
+  let response = "<no response>";
+  const eventTranscript: unknown[] = [];
+  for await (const event of turn.events) {
+    console.log(`[inject] Codex event: ${JSON.stringify(event)}`);
+    eventTranscript.push(event);
+    if (event.type === "item.completed" && event.item.type === "agent_message") {
+      response = event.item.text;
+    }
+  }
+  const conversationArtifactPath = await persistArtifact(
+    `conversations/${sanitizeArtifactStem(filePath)}.json`,
+    JSON.stringify(
+      {
+        prompt,
+        events: eventTranscript,
+      },
+      null,
+      2
+    )
+  );
+  return {
+    responseText: response,
+    conversationArtifact: {
+      label: "Codex conversation",
+      relativePath: conversationArtifactPath,
+    },
+  };
+}
+
+function buildResponsesRequestBody(
+  prompt: string,
+  outputSchema?: unknown
+): Record<string, unknown> {
+  const requestBody: Record<string, unknown> = {
+    model: "gpt-5-codex",
+    input: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: prompt,
+          },
+        ],
+      },
+    ],
+    modalities: ["text"],
+  };
+
+  if (outputSchema && typeof outputSchema === "object") {
+    requestBody.response_format = {
+      type: "json_schema",
+      json_schema: {
+        name: "pr_review_response",
+        schema: outputSchema,
+        strict: true,
+      },
+    };
+  }
+
+  return requestBody;
+}
+
+function extractOpenAiResponseText(
+  responseBody: unknown,
+  fallback: string
+): string {
+  if (responseBody && typeof responseBody === "object") {
+    const maybeResponse = responseBody as {
+      output?: unknown;
+      output_text?: unknown;
+    };
+    if (typeof maybeResponse.output_text === "string") {
+      return maybeResponse.output_text;
+    }
+    if (Array.isArray(maybeResponse.output)) {
+      for (const outputItem of maybeResponse.output) {
+        if (!outputItem || typeof outputItem !== "object") {
+          continue;
+        }
+        const { content } = outputItem as { content?: unknown };
+        if (!Array.isArray(content)) {
+          continue;
+        }
+        for (const block of content) {
+          if (!block || typeof block !== "object") {
+            continue;
+          }
+          const maybeTextBlock = block as { text?: unknown };
+          if (typeof maybeTextBlock.text === "string") {
+            return maybeTextBlock.text;
+          }
+        }
+      }
+    }
+  }
+  if (typeof responseBody === "string") {
+    return responseBody;
+  }
+  try {
+    return JSON.stringify(responseBody, null, 2);
+  } catch {
+    return fallback;
+  }
+}
+
+async function runOpenAiResponsesInvocation({
+  filePath,
+  prompt,
+  outputSchema,
+  persistArtifact,
+  sanitizeArtifactStem,
+  strategyLog,
+  openAiApiKey,
+}: OpenAiResponsesInvocationContext): Promise<ModelInvocationResult> {
+  const requestBody = buildResponsesRequestBody(prompt, outputSchema);
+  strategyLog(
+    `OpenAI request body for ${filePath}`,
+    JSON.stringify(requestBody, null, 2)
+  );
+
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${openAiApiKey}`,
+    },
+    body: JSON.stringify(requestBody),
+  });
+
+  const rawResponseText = await response.text();
+  if (!response.ok) {
+    throw new Error(
+      `OpenAI request failed with status ${response.status}: ${rawResponseText.slice(
+        0,
+        2048
+      )}`
+    );
+  }
+
+  let parsedResponse: unknown;
+  try {
+    parsedResponse = rawResponseText ? JSON.parse(rawResponseText) : {};
+  } catch (parseError) {
+    const message =
+      parseError instanceof Error ? parseError.message : String(parseError);
+    throw new Error(
+      `Unable to parse OpenAI response JSON: ${message}. Raw response: ${rawResponseText.slice(
+        0,
+        2048
+      )}`
+    );
+  }
+
+  const responseText = extractOpenAiResponseText(
+    parsedResponse,
+    rawResponseText
+  );
+
+  strategyLog(
+    `OpenAI response body for ${filePath}`,
+    typeof parsedResponse === "string"
+      ? parsedResponse
+      : JSON.stringify(parsedResponse, null, 2)
+  );
+
+  const conversationArtifactPath = await persistArtifact(
+    `conversations/${sanitizeArtifactStem(filePath)}.json`,
+    JSON.stringify(
+      {
+        prompt,
+        requestBody,
+        responseBody: parsedResponse,
+      },
+      null,
+      2
+    )
+  );
+
+  return {
+    responseText,
+    conversationArtifact: {
+      label: "OpenAI Responses payload",
+      relativePath: conversationArtifactPath,
+    },
   };
 }
 
@@ -871,6 +1144,7 @@ async function main(): Promise<void> {
 
     const jobCompletedAt = new Date().toISOString();
     const jobDurationMs = Math.round(performance.now() - jobStart);
+    const jobDurationFormatted = formatDuration(jobDurationMs);
 
     const reviewOutput: Record<string, unknown> = {
       prUrl,
@@ -891,9 +1165,11 @@ async function main(): Promise<void> {
       jobStartedAt,
       jobCompletedAt,
       jobDurationMs,
+      jobDurationFormatted,
       codexReviewStartedAt: codexReviewRun.startedAt,
       codexReviewCompletedAt: codexReviewRun.completedAt,
       codexReviewDurationMs: codexReviewRun.durationMs,
+      codexReviewDurationFormatted: codexReviewRun.durationFormatted,
     };
 
     await persistCodeReviewOutput(reviewOutput);
@@ -914,6 +1190,7 @@ async function main(): Promise<void> {
       error instanceof Error ? error.message : String(error ?? "unknown error");
     const jobCompletedAt = new Date().toISOString();
     const jobDurationMs = Math.round(performance.now() - jobStart);
+    const jobDurationFormatted = formatDuration(jobDurationMs);
     console.error(`[inject] Error during review: ${message}`);
     console.error(
       `[inject] Total runtime before failure ${formatDuration(
@@ -929,6 +1206,7 @@ async function main(): Promise<void> {
       jobStartedAt,
       jobCompletedAt,
       jobDurationMs,
+      jobDurationFormatted,
     });
     if (callbackContext) {
       try {
