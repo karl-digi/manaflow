@@ -261,6 +261,15 @@ export function initCmdK(opts: {
 
         if (!isCmdK && !isSidebarToggle) return;
 
+        if (input.isAutoRepeat) {
+          keyDebug("shortcut-auto-repeat-ignored", {
+            sourceId: contents.id,
+            type: contents.getType?.(),
+            key: input.key,
+          });
+          return;
+        }
+
         // Prevent default to avoid in-app conflicts and ensure single toggle
         e.preventDefault();
 
@@ -318,77 +327,86 @@ export function initCmdK(opts: {
           return;
         }
 
-        // Capture the currently focused element BEFORE emitting toggle
-        try {
-          const frame = contents.focusedFrame ?? contents.mainFrame;
-          frame
-            .executeJavaScript(
-              `(() => { try {
-                const el = document.activeElement;
-                // Store for restore + debugging
-                window.__cmuxLastFocused = el;
-                // @ts-ignore
-                window.__cmuxLastFocusedTag = el?.tagName ?? null;
-                return window.__cmuxLastFocusedTag || true;
-              } catch { return false } })()`,
-              true
-            )
-            .then((res) => {
-              keyDebug("capture-last-focused", {
-                id: contents.id,
-                res,
-                frameRoutingId: frame.routingId,
-                frameProcessId: frame.processId,
-                frameUrl: frame.url,
-                frameOrigin: frame.origin,
-              });
-              const targetWin = getTargetWindow();
-              if (targetWin && !targetWin.isDestroyed()) {
-                try {
-                  lastFocusByWindow.set(targetWin.webContents.id, {
-                    contentsId: contents.id,
-                    frameRoutingId: frame.routingId,
-                    frameProcessId: frame.processId,
-                  });
-                  keyDebug("remember-last-focus", {
-                    windowId: targetWin.webContents.id,
-                    contentsId: contents.id,
-                    frameRoutingId: frame.routingId,
-                    frameProcessId: frame.processId,
-                  });
-                } catch {
-                  // ignore
-                }
-                try {
-                  targetWin.webContents.send("cmux:event:shortcut:cmd-k", {
-                    sourceContentsId: contents.id,
-                    sourceFrameRoutingId: frame.routingId,
-                    sourceFrameProcessId: frame.processId,
-                  });
-                  keyDebug("emit-cmdk", {
-                    to: targetWin.webContents.id,
-                    from: contents.id,
-                    frameRoutingId: frame.routingId,
-                    frameProcessId: frame.processId,
-                  });
-                } catch (err) {
-                  opts.logger.warn(
-                    "Failed to emit Cmd+K from before-input-event",
-                    err
-                  );
-                  keyDebug("emit-cmdk-error", { err: String(err) });
-                }
-              }
-            })
-            .catch((err) =>
-              keyDebug("capture-last-focused-error", {
-                id: contents.id,
-                err: String(err),
-              })
-            );
-        } catch {
-          // ignore capture failures
+        const frame = contents.focusedFrame ?? contents.mainFrame;
+        const frameRoutingId = frame?.routingId;
+        const frameProcessId = frame?.processId;
+
+        const emitShortcut = (): void => {
+          const targetWin = getTargetWindow();
+          if (!targetWin || targetWin.isDestroyed()) {
+            return;
+          }
+          try {
+            targetWin.webContents.send("cmux:event:shortcut:cmd-k", {
+              sourceContentsId: contents.id,
+              sourceFrameRoutingId: frameRoutingId,
+              sourceFrameProcessId: frameProcessId,
+            });
+            keyDebug("emit-cmdk", {
+              to: targetWin.webContents.id,
+              from: contents.id,
+              frameRoutingId,
+              frameProcessId,
+            });
+          } catch (err) {
+            opts.logger.warn("Failed to emit Cmd+K from before-input-event", err);
+            keyDebug("emit-cmdk-error", { err: String(err) });
+          }
+        };
+
+        emitShortcut();
+
+        if (!frame) {
+          keyDebug("capture-last-focused-skip-frame", { id: contents.id });
+          return;
         }
+
+        void frame
+          .executeJavaScript(
+            `(() => { try {
+              const el = document.activeElement;
+              // Store for restore + debugging
+              window.__cmuxLastFocused = el;
+              // @ts-ignore
+              window.__cmuxLastFocusedTag = el?.tagName ?? null;
+              return window.__cmuxLastFocusedTag || true;
+            } catch { return false } })()`,
+            true
+          )
+          .then((res) => {
+            keyDebug("capture-last-focused", {
+              id: contents.id,
+              res,
+              frameRoutingId,
+              frameProcessId,
+              frameUrl: frame.url,
+              frameOrigin: frame.origin,
+            });
+            const targetWin = getTargetWindow();
+            if (targetWin && !targetWin.isDestroyed()) {
+              try {
+                lastFocusByWindow.set(targetWin.webContents.id, {
+                  contentsId: contents.id,
+                  frameRoutingId,
+                  frameProcessId,
+                });
+                keyDebug("remember-last-focus", {
+                  windowId: targetWin.webContents.id,
+                  contentsId: contents.id,
+                  frameRoutingId,
+                  frameProcessId,
+                });
+              } catch {
+                // ignore
+              }
+            }
+          })
+          .catch((err) =>
+            keyDebug("capture-last-focused-error", {
+              id: contents.id,
+              err: String(err),
+            })
+          );
       });
     } catch {
       // ignore

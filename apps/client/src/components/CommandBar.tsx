@@ -230,6 +230,10 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         !e.altKey &&
         !e.ctrlKey
       ) {
+        if (e.repeat) {
+          e.preventDefault();
+          return;
+        }
         e.preventDefault();
         setActivePage("root");
         if (openRef.current) {
