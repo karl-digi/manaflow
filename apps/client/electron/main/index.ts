@@ -516,19 +516,20 @@ function setupAutoUpdates(): void {
       `${p.percent?.toFixed?.(1) ?? 0}% (${p.transferred}/${p.total})`
     )
   );
-  autoUpdater.on("update-downloaded", () => {
-    const info = (
-      autoUpdater as unknown as { updateInfo?: UpdateInfo | null }
-    ).updateInfo ?? null;
+  autoUpdater.on("update-downloaded", (info: UpdateInfo) => {
+    const updateInfo: UpdateInfo | null =
+      info ??
+      ((autoUpdater as unknown as { updateInfo?: UpdateInfo | null })
+        .updateInfo ?? null);
     const version =
-      info &&
-      typeof info === "object" &&
-      "version" in info &&
-      typeof info.version === "string"
-        ? info.version
+      updateInfo &&
+      typeof updateInfo === "object" &&
+      "version" in updateInfo &&
+      typeof updateInfo.version === "string"
+        ? updateInfo.version
         : null;
 
-    if (!isUpdateNewerThanCurrent(info)) {
+    if (!isUpdateNewerThanCurrent(updateInfo)) {
       mainLog(
         "Ignoring downloaded update that is not newer than current build",
         {
