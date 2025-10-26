@@ -5,7 +5,7 @@ import { isElectron } from "@/lib/electron";
 import { type Doc } from "@cmux/convex/dataModel";
 import type { LinkProps } from "@tanstack/react-router";
 import { Link } from "@tanstack/react-router";
-import { Home, Plus, Server, Settings } from "lucide-react";
+import { Home, Plus, Server, Settings, PanelLeftClose, PanelLeft } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -210,17 +210,18 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
   const resetWidth = useCallback(() => setWidth(DEFAULT_WIDTH), []);
 
   return (
-    <div
-      ref={containerRef}
-      className="relative bg-neutral-50 dark:bg-black flex flex-col shrink-0 h-dvh grow pr-1"
-      style={{
-        display: isHidden ? "none" : "flex",
-        width: `${width}px`,
-        minWidth: `${width}px`,
-        maxWidth: `${width}px`,
-        userSelect: isResizing ? ("none" as const) : undefined,
-      }}
-    >
+    <>
+      <div
+        ref={containerRef}
+        className="relative bg-neutral-50 dark:bg-black flex flex-col shrink-0 h-dvh grow pr-1"
+        style={{
+          display: isHidden ? "none" : "flex",
+          width: `${width}px`,
+          minWidth: `${width}px`,
+          maxWidth: `${width}px`,
+          userSelect: isResizing ? ("none" as const) : undefined,
+        }}
+      >
       <div
         className={`h-[38px] flex items-center pr-1.5 shrink-0 ${isElectron ? "" : "pl-3"}`}
         style={{ WebkitAppRegion: "drag" } as CSSProperties}
@@ -335,5 +336,26 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
         }
       />
     </div>
+
+      {/* Sidebar toggle button - always visible */}
+      <button
+        onClick={() => setIsHidden((prev) => !prev)}
+        className="fixed z-50 p-1.5 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-black hover:bg-neutral-100 dark:hover:bg-neutral-900 transition-colors cursor-default"
+        title={isHidden ? "Show sidebar (Ctrl+Shift+S)" : "Hide sidebar (Ctrl+Shift+S)"}
+        aria-label={isHidden ? "Show sidebar" : "Hide sidebar"}
+        style={{
+          top: isElectron ? "44px" : "8px",
+          left: isHidden ? "8px" : `${width + 8}px`,
+          transition: "left 0.2s ease-in-out",
+          WebkitAppRegion: "no-drag"
+        } as CSSProperties}
+      >
+        {isHidden ? (
+          <PanelLeft className="w-4 h-4 text-neutral-700 dark:text-neutral-300" aria-hidden="true" />
+        ) : (
+          <PanelLeftClose className="w-4 h-4 text-neutral-700 dark:text-neutral-300" aria-hidden="true" />
+        )}
+      </button>
+    </>
   );
 }
