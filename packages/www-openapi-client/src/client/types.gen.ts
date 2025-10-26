@@ -458,6 +458,7 @@ export type StartSandboxBody = {
     branch?: string;
     newBranch?: string;
     depth?: number;
+    theme?: 'dark' | 'light' | 'system';
 };
 
 export type UpdateSandboxEnvResponse = {

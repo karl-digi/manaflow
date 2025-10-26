@@ -44,6 +44,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import { useTheme } from "@/components/theme/use-theme";
 
 export const Route = createFileRoute(
   "/_layout/$teamSlugOrId/environments/$environmentId",
@@ -78,6 +79,7 @@ export const Route = createFileRoute(
 
 function EnvironmentDetailsPage() {
   const { teamSlugOrId, environmentId } = Route.useParams();
+  const { theme } = useTheme();
   const navigate = useNavigate({ from: Route.fullPath });
   const [isDeleting, setIsDeleting] = useState(false);
   const environmentQuery = convexQuery(api.environments.get, {
@@ -502,6 +504,7 @@ function EnvironmentDetailsPage() {
           teamSlugOrId,
           environmentId: String(environmentId),
           snapshotId: environment.morphSnapshotId ?? undefined,
+          theme,
         },
       },
       {
@@ -523,6 +526,7 @@ function EnvironmentDetailsPage() {
           teamSlugOrId,
           environmentId: String(environmentId),
           snapshotId: environment.morphSnapshotId,
+          theme,
         },
       },
       {

@@ -220,6 +220,13 @@ const convexSchema = defineSchema({
           v.literal("running"),
           v.literal("stopped")
         ),
+        theme: v.optional(
+          v.union(
+            v.literal("dark"),
+            v.literal("light"),
+            v.literal("system")
+          )
+        ),
         ports: v.optional(
           v.object({
             vscode: v.string(),

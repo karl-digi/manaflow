@@ -579,6 +579,13 @@ export const updateVSCodeInstance = authMutation({
         v.literal("running"),
         v.literal("stopped"),
       ),
+      theme: v.optional(
+        v.union(
+          v.literal("dark"),
+          v.literal("light"),
+          v.literal("system"),
+        ),
+      ),
       ports: v.optional(
         v.object({
           vscode: v.string(),
@@ -601,8 +608,12 @@ export const updateVSCodeInstance = authMutation({
     if (!doc || doc.teamId !== teamId || doc.userId !== userId) {
       throw new Error("Task run not found or unauthorized");
     }
+    const nextVscode = {
+      ...(doc.vscode ?? {}),
+      ...args.vscode,
+    };
     await ctx.db.patch(args.id, {
-      vscode: args.vscode,
+      vscode: nextVscode,
       updatedAt: Date.now(),
     });
   },

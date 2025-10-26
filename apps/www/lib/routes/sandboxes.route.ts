@@ -27,6 +27,7 @@ import {
   encodeEnvContentForEnvctl,
   envctlLoadCommand,
 } from "./utils/ensure-env-vars";
+import { applyVSCodeTheme } from "./utils/vscode-theme";
 
 export const sandboxesRouter = new OpenAPIHono();
 
@@ -47,6 +48,7 @@ const StartSandboxBody = z
     branch: z.string().optional(),
     newBranch: z.string().optional(),
     depth: z.number().optional().default(1),
+    theme: z.enum(["dark", "light", "system"]).optional(),
   })
   .openapi("StartSandboxBody");
 
@@ -221,6 +223,9 @@ sandboxesRouter.openapi(
       if (body.taskRunJwt) {
         envVarsToApply += `\nCMUX_TASK_RUN_JWT="${body.taskRunJwt}"`;
       }
+      if (body.theme) {
+        envVarsToApply += `\nVSCODE_THEME="${body.theme}"`;
+      }
 
       // Apply all environment variables if any
       if (envVarsToApply.trim().length > 0) {
@@ -246,6 +251,14 @@ sandboxesRouter.openapi(
             "[sandboxes.start] Failed to apply environment variables",
             error,
           );
+        }
+      }
+
+      if (body.theme) {
+        try {
+          await applyVSCodeTheme(instance, body.theme);
+        } catch (error) {
+          console.error("[sandboxes.start] Failed to apply VSCode theme", error);
         }
       }
 

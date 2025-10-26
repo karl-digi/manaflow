@@ -530,6 +530,7 @@ export async function spawnAgent(
           url: vscodeInfo.url,
           workspaceUrl: vscodeInfo.workspaceUrl,
           startedAt: Date.now(),
+          ...(options.theme ? { theme: options.theme } : {}),
           ...(ports ? { ports } : {}),
         },
       })

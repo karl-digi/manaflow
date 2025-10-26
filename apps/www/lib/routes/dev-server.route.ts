@@ -4,6 +4,11 @@ import { DEFAULT_MORPH_SNAPSHOT_ID } from "@/lib/utils/morph-defaults";
 import { env } from "@/lib/utils/www-env";
 import { connectToWorkerManagement, type Socket } from "@cmux/shared/socket";
 import type { WorkerToServerEvents, ServerToWorkerEvents } from "@cmux/shared";
+import {
+  encodeEnvContentForEnvctl,
+  envctlLoadCommand,
+} from "./utils/ensure-env-vars";
+import { applyVSCodeTheme } from "./utils/vscode-theme";
 
 // Define the request schema based on StartTaskSchema
 const StartDevServerSchema = z.object({
@@ -186,6 +191,22 @@ devServerRouter.openapi(startDevServerRoute, async (c) => {
       // Stop the instance if services are not available
       await instance.stop();
       throw new Error("VSCode, worker, VNC, or DevTools service not found");
+    }
+
+    if (body.theme) {
+      try {
+        const encodedTheme = encodeEnvContentForEnvctl(
+          `VSCODE_THEME="${body.theme}"`,
+        );
+        await instance.exec(envctlLoadCommand(encodedTheme));
+      } catch (error) {
+        console.error("[dev-server.start] Failed to persist VSCode theme", error);
+      }
+      try {
+        await applyVSCodeTheme(instance, body.theme);
+      } catch (error) {
+        console.error("[dev-server.start] Failed to apply VSCode theme", error);
+      }
     }
 
     const vscodeUrl = `${vscodeService.url}/?folder=/root/workspace`;

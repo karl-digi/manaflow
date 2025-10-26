@@ -50,6 +50,7 @@ export class CmuxVSCodeInstance extends VSCodeInstance {
       body: {
         teamSlugOrId: this.teamSlugOrId,
         ttlSeconds: 60 * 60,
+        ...(this.config.theme ? { theme: this.config.theme } : {}),
         metadata: {
           instance: `cmux-${this.taskRunId}`,
           agentName: this.config.agentName || "",
