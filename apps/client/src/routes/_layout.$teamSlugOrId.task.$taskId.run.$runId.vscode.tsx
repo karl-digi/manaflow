@@ -10,6 +10,8 @@ import { PersistentWebView } from "@/components/persistent-webview";
 import { getTaskRunPersistKey } from "@/lib/persistent-webview-keys";
 import { WorkspaceLoadingIndicator } from "@/components/workspace-loading-indicator";
 import { toProxyWorkspaceUrl } from "@/lib/toProxyWorkspaceUrl";
+import { useTheme } from "@/components/theme/use-theme";
+import { persistentIframeManager } from "@/lib/persistentIframeManager";
 import {
   preloadTaskRunIframes,
   TASK_RUN_IFRAME_ALLOW,
@@ -55,6 +57,7 @@ export const Route = createFileRoute(
 
 function VSCodeComponent() {
   const { runId: taskRunId, teamSlugOrId } = Route.useParams();
+  const { resolvedTheme } = useTheme();
   const taskRun = useSuspenseQuery(
     convexQuery(api.taskRuns.get, {
       teamSlugOrId,
@@ -65,6 +68,7 @@ function VSCodeComponent() {
   const workspaceUrl = taskRun?.data?.vscode?.workspaceUrl
     ? toProxyWorkspaceUrl(taskRun.data.vscode.workspaceUrl)
     : null;
+
   const persistKey = getTaskRunPersistKey(taskRunId);
   const hasWorkspace = workspaceUrl !== null;
 
@@ -73,6 +77,32 @@ function VSCodeComponent() {
   useEffect(() => {
     setIframeStatus("loading");
   }, [workspaceUrl]);
+
+  // Send theme changes to VSCode iframe via postMessage
+  useEffect(() => {
+    if (!hasWorkspace || iframeStatus !== "loaded" || !workspaceUrl) {
+      return;
+    }
+
+    // Get iframe from the persistent iframe manager
+    const iframe = persistentIframeManager.getIframe(persistKey);
+    if (!iframe) {
+      return;
+    }
+
+    try {
+      const targetOrigin = new URL(workspaceUrl).origin;
+      iframe.contentWindow?.postMessage(
+        {
+          type: "cmux:set-theme",
+          theme: resolvedTheme,
+        },
+        targetOrigin
+      );
+    } catch (error) {
+      console.error("Failed to send theme message to VSCode iframe:", error);
+    }
+  }, [resolvedTheme, hasWorkspace, iframeStatus, workspaceUrl, persistKey]);
 
   const onLoad = useCallback(() => {
     console.log(`Workspace view loaded for task run ${taskRunId}`);

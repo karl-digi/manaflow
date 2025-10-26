@@ -309,6 +309,12 @@ export const ArchiveTaskSchema = z.object({
   taskId: typedZid("tasks"),
 });
 
+// Set theme schema
+export const SetThemeSchema = z.object({
+  taskRunId: typedZid("taskRuns"),
+  theme: z.enum(["dark", "light"]),
+});
+
 export const SpawnFromCommentSchema = z.object({
   url: z.string(),
   page: z.string(),
@@ -430,6 +436,7 @@ export type ProviderStatusResponse = z.infer<
   typeof ProviderStatusResponseSchema
 >;
 export type DefaultRepo = z.infer<typeof DefaultRepoSchema>;
+export type SetTheme = z.infer<typeof SetThemeSchema>;
 
 // Socket.io event map types
 export interface ClientToServerEvents {
@@ -523,6 +530,10 @@ export interface ClientToServerEvents {
       vscodeUrl?: string;
       error?: string;
     }) => void
+  ) => void;
+  "set-theme": (
+    data: SetTheme,
+    callback: (response: { success: boolean; error?: string }) => void
   ) => void;
 }
 

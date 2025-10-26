@@ -9,6 +9,7 @@ import {
   GitHubSyncPrStateSchema,
   ListFilesRequestSchema,
   OpenInEditorSchema,
+  SetThemeSchema,
   SpawnFromCommentSchema,
   StartTaskSchema,
   type AvailableEditors,
@@ -1575,6 +1576,37 @@ ${title}`;
           error: error instanceof Error ? error.message : "Unknown error",
         });
       }
+    });
+
+    socket.on("set-theme", async (data, callback) => {
+      await runWithAuth(async () => {
+        try {
+          const { taskRunId, theme } = SetThemeSchema.parse(data);
+
+          // Get the VSCode instance for this task run
+          const vscodeInstance = (await import("./vscode/VSCodeInstance"))
+            .VSCodeInstance.getInstance(taskRunId);
+
+          if (!vscodeInstance) {
+            callback({
+              success: false,
+              error: "VSCode instance not found",
+            });
+            return;
+          }
+
+          // Set the theme
+          vscodeInstance.setTheme(theme);
+
+          callback({ success: true });
+        } catch (error) {
+          serverLogger.error("Error setting theme:", error);
+          callback({
+            success: false,
+            error: error instanceof Error ? error.message : "Unknown error",
+          });
+        }
+      });
     });
   });
 }

@@ -4,6 +4,7 @@ import { Sidebar } from "@/components/Sidebar";
 import { SIDEBAR_PRS_DEFAULT_LIMIT } from "@/components/sidebar/const";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { ExpandTasksProvider } from "@/contexts/expand-tasks/ExpandTasksProvider";
+import { useThemeSync } from "@/hooks/use-theme-sync";
 import { cachedGetUser } from "@/lib/cachedGetUser";
 import { setLastTeamSlugOrId } from "@/lib/lastTeam";
 import { stackClientApp } from "@/lib/stack";
@@ -58,6 +59,9 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId")({
 function LayoutComponent() {
   const { teamSlugOrId } = Route.useParams();
   const tasks = useQuery(api.tasks.get, { teamSlugOrId });
+
+  // Sync theme changes to all active VSCode instances
+  useThemeSync();
 
   // Sort tasks by creation date (newest first) and take the latest 5
   const recentTasks = useMemo(() => {

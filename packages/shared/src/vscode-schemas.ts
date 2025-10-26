@@ -54,6 +54,14 @@ export interface VSCodeClientToServerEvents {
       extensions?: string[];
     }) => void
   ) => void;
+
+  // Set theme
+  "vscode:set-theme": (
+    data: {
+      theme: "dark" | "light";
+    },
+    callback?: (response: { success: boolean; error?: string }) => void
+  ) => void;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type

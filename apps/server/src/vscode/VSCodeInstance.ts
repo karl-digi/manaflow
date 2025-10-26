@@ -219,6 +219,19 @@ export abstract class VSCodeInstance extends EventEmitter {
     }
   }
 
+  setTheme(theme: "dark" | "light"): void {
+    if (this.workerSocket && this.workerConnected) {
+      dockerLogger.info(
+        `[VSCodeInstance ${this.instanceId}] Setting theme to ${theme}`
+      );
+      this.workerSocket.emit("vscode:set-theme", { theme });
+    } else {
+      dockerLogger.warn(
+        `[VSCodeInstance ${this.instanceId}] Cannot set theme - worker not connected`
+      );
+    }
+  }
+
   getInstanceId(): Id<"taskRuns"> {
     return this.instanceId;
   }
@@ -230,7 +243,16 @@ export abstract class VSCodeInstance extends EventEmitter {
   abstract getName(): string;
 
   protected getWorkspaceUrl(baseUrl: string): string {
-    return `${baseUrl}/?folder=/root/workspace`;
+    const url = new URL(`${baseUrl}/?folder=/root/workspace`);
+
+    // Add theme parameter if specified
+    if (this.config.theme) {
+      // Resolve "system" to either "dark" or "light" - default to "dark" for server-side
+      const resolvedTheme = this.config.theme === "system" ? "dark" : this.config.theme;
+      url.searchParams.set("theme", resolvedTheme);
+    }
+
+    return url.toString();
   }
 
   protected async disconnectFromWorker(): Promise<void> {
