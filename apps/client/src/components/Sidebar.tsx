@@ -5,7 +5,7 @@ import { isElectron } from "@/lib/electron";
 import { type Doc } from "@cmux/convex/dataModel";
 import type { LinkProps } from "@tanstack/react-router";
 import { Link } from "@tanstack/react-router";
-import { Home, Plus, Server, Settings } from "lucide-react";
+import { Home, Plus, Server, Settings, PanelLeftClose } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -80,6 +80,10 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
   });
 
   const { expandTaskIds } = useExpandTasks();
+
+  const toggleSidebar = useCallback(() => {
+    setIsHidden((prev) => !prev);
+  }, []);
 
   useEffect(() => {
     localStorage.setItem("sidebarWidth", String(width));
@@ -237,6 +241,18 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
           <CmuxLogo height={32} />
         </Link>
         <div className="grow"></div>
+        <button
+          onClick={toggleSidebar}
+          className="w-[25px] h-[25px] border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-900 rounded-lg flex items-center justify-center transition-colors cursor-pointer"
+          title="Hide sidebar (Ctrl+Shift+S)"
+          style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
+          type="button"
+        >
+          <PanelLeftClose
+            className="w-4 h-4 text-neutral-700 dark:text-neutral-300"
+            aria-hidden="true"
+          />
+        </button>
         <Link
           to="/$teamSlugOrId/dashboard"
           params={{ teamSlugOrId }}
