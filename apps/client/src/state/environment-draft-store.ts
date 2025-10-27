@@ -3,7 +3,6 @@ import {
   type EnvironmentConfigDraft,
   type EnvironmentDraftMetadata,
 } from "@/types/environment";
-import type { MorphSnapshotId } from "@cmux/shared";
 import { useSyncExternalStore } from "react";
 
 export interface EnvironmentDraft extends EnvironmentDraftMetadata {
@@ -83,10 +82,6 @@ export const useEnvironmentDraft = (
     () => null,
   );
 
-export const getEnvironmentDraft = (
-  teamSlugOrId: string,
-): EnvironmentDraft | null => store.get(teamSlugOrId);
-
 export const persistEnvironmentDraftMetadata = (
   teamSlugOrId: string,
   metadata: EnvironmentDraftMetadata,
@@ -101,8 +96,7 @@ export const persistEnvironmentDraftMetadata = (
         ? createEmptyEnvironmentConfig()
         : prev.config;
     const nextMetadata: EnvironmentDraftMetadata = {
-      selectedRepos:
-        metadata.selectedRepos ?? prev?.selectedRepos ?? [],
+      selectedRepos: metadata.selectedRepos,
       instanceId: metadata.instanceId ?? prev?.instanceId,
       snapshotId: metadata.snapshotId ?? prev?.snapshotId,
     };
@@ -148,11 +142,3 @@ export const updateEnvironmentDraftConfig = (
 export const clearEnvironmentDraft = (teamSlugOrId: string): void => {
   store.set(teamSlugOrId, null);
 };
-
-export const hasEnvironmentDraft = (teamSlugOrId: string): boolean =>
-  store.get(teamSlugOrId) !== null;
-
-export const getEnvironmentDraftSnapshotId = (
-  teamSlugOrId: string,
-): MorphSnapshotId | undefined =>
-  store.get(teamSlugOrId)?.snapshotId;
