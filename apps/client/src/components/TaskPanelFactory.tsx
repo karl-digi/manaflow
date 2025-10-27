@@ -21,11 +21,109 @@ import type { PersistentWebViewProps } from "./persistent-webview";
 import type { WorkspaceLoadingIndicatorProps } from "./workspace-loading-indicator";
 import type { TaskRunTerminalPaneProps } from "./TaskRunTerminalPane";
 import type { TaskRunGitDiffPanelProps } from "./TaskRunGitDiffPanel";
+import { shouldUseServerIframePreflight } from "@/hooks/useIframePreflight";
 
 type PanelPosition = "topLeft" | "topRight" | "bottomLeft" | "bottomRight";
 
 const PANEL_DRAG_START_EVENT = "cmux:panel-drag-start";
 const PANEL_DRAG_END_EVENT = "cmux:panel-drag-end";
+const PANEL_DRAGGING_CLASS = "cmux-panel-dragging";
+const PANEL_DRAGGING_STYLE_ID = "cmux-panel-dragging-style";
+const PANEL_DRAGGING_STYLE_CONTENT = `
+  body.${PANEL_DRAGGING_CLASS} iframe,
+  body.${PANEL_DRAGGING_CLASS} [data-iframe-key],
+  body.${PANEL_DRAGGING_CLASS} [data-persistent-iframe-overlay] {
+    pointer-events: none !important;
+  }
+`;
+
+declare global {
+  interface Window {
+    __cmuxPanelDragPointerHandlers?: {
+      start: EventListener;
+      end: EventListener;
+      nativeEnd: EventListener;
+      visibilityChange: EventListener;
+      windowBlur: EventListener;
+    };
+    __cmuxActivePanelDragCount?: number;
+  }
+}
+
+const ensurePanelDragPointerEventHandling = () => {
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    return;
+  }
+
+  const existingHandlers = window.__cmuxPanelDragPointerHandlers;
+  if (existingHandlers) {
+    window.removeEventListener(PANEL_DRAG_START_EVENT, existingHandlers.start);
+    window.removeEventListener(PANEL_DRAG_END_EVENT, existingHandlers.end);
+    window.removeEventListener("dragend", existingHandlers.nativeEnd);
+    document.removeEventListener("visibilitychange", existingHandlers.visibilityChange);
+    window.removeEventListener("blur", existingHandlers.windowBlur);
+  }
+
+  const ensureStyleElement = () => {
+    let styleElement = document.getElementById(PANEL_DRAGGING_STYLE_ID) as HTMLStyleElement | null;
+    if (!styleElement) {
+      styleElement = document.createElement("style");
+      styleElement.id = PANEL_DRAGGING_STYLE_ID;
+      document.head.appendChild(styleElement);
+    }
+    if (styleElement.textContent !== PANEL_DRAGGING_STYLE_CONTENT) {
+      styleElement.textContent = PANEL_DRAGGING_STYLE_CONTENT;
+    }
+  };
+
+  const handleDragStart: EventListener = () => {
+    if (!document.body) return;
+    ensureStyleElement();
+    const current = window.__cmuxActivePanelDragCount ?? 0;
+    if (current === 0) {
+      document.body.classList.add(PANEL_DRAGGING_CLASS);
+    }
+    window.__cmuxActivePanelDragCount = current + 1;
+  };
+
+  const handleDragEnd: EventListener = () => {
+    if (!document.body) return;
+    const current = window.__cmuxActivePanelDragCount ?? 0;
+    if (current <= 1) {
+      document.body.classList.remove(PANEL_DRAGGING_CLASS);
+      window.__cmuxActivePanelDragCount = 0;
+      return;
+    }
+    window.__cmuxActivePanelDragCount = current - 1;
+  };
+
+  const handleVisibilityChange: EventListener = () => {
+    if (document.visibilityState === "visible") {
+      return;
+    }
+    handleDragEnd(new Event("visibilitychange"));
+  };
+
+  const handleWindowBlur: EventListener = () => {
+    handleDragEnd(new Event("blur"));
+  };
+
+  ensureStyleElement();
+
+  window.addEventListener(PANEL_DRAG_START_EVENT, handleDragStart);
+  window.addEventListener(PANEL_DRAG_END_EVENT, handleDragEnd);
+  window.addEventListener("dragend", handleDragEnd);
+  document.addEventListener("visibilitychange", handleVisibilityChange);
+  window.addEventListener("blur", handleWindowBlur);
+
+  window.__cmuxPanelDragPointerHandlers = {
+    start: handleDragStart,
+    end: handleDragEnd,
+    nativeEnd: handleDragEnd,
+    visibilityChange: handleVisibilityChange,
+    windowBlur: handleWindowBlur,
+  };
+};
 
 const dispatchPanelDragEvent = (event: string) => {
   if (typeof window === "undefined") {
@@ -103,6 +201,10 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
   const [isDragOver, setIsDragOver] = useState(false);
   const [isDraggingSelf, setIsDraggingSelf] = useState(false);
   const [isPanelDragActive, setIsPanelDragActive] = useState(false);
+
+  useEffect(() => {
+    ensurePanelDragPointerEventHandling();
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -386,10 +488,15 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
         WorkspaceLoadingIndicator,
         TASK_RUN_IFRAME_ALLOW,
         TASK_RUN_IFRAME_SANDBOX,
+        rawWorkspaceUrl,
       } = props;
 
       if (!PersistentWebView || !WorkspaceLoadingIndicator) return null;
-      const shouldShowWorkspaceLoader = Boolean(selectedRun) && !workspaceUrl;
+      const isLocalWorkspace = selectedRun?.vscode?.provider === "other";
+      const shouldShowWorkspaceLoader = Boolean(selectedRun) && !workspaceUrl && !isLocalWorkspace;
+      const disablePreflight = rawWorkspaceUrl
+        ? shouldUseServerIframePreflight(rawWorkspaceUrl)
+        : false;
 
       return panelWrapper(
         <Code2 className="size-3" aria-hidden />,
@@ -404,6 +511,7 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
               iframeClassName="select-none"
               allow={TASK_RUN_IFRAME_ALLOW}
               sandbox={TASK_RUN_IFRAME_SANDBOX}
+              preflight={!disablePreflight}
               retainOnUnmount
               suspended={!selectedRun}
               onLoad={onEditorLoad}
