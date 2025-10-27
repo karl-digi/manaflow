@@ -200,54 +200,23 @@ async function reportErrorToConvex(maintenanceError: string | null, devError: st
   }
 
   try {
-    console.log("[ORCHESTRATOR] Reporting errors to Convex...");
+    console.log("[ORCHESTRATOR] Reporting errors to Convex HTTP action...");
 
-    // Decode JWT to get taskRunId and teamId
-    const jwtParts = TASK_RUN_JWT.split('.');
-    if (jwtParts.length !== 3) {
-      console.error("[ORCHESTRATOR] Invalid JWT format");
-      return;
-    }
-
-    // Decode base64url (Bun doesn't have atob, use Buffer)
-    const base64Payload = jwtParts[1].replace(/-/g, '+').replace(/_/g, '/');
-    const payload = JSON.parse(Buffer.from(base64Payload, 'base64').toString('utf-8'));
-    const taskRunId = payload.taskRunId;
-    const teamId = payload.teamId;
-
-    console.log(\`[ORCHESTRATOR] Decoded JWT - taskRunId: \${taskRunId}, teamId: \${teamId}\`);
-
-    if (!taskRunId || !teamId) {
-      console.error("[ORCHESTRATOR] JWT missing required fields");
-      return;
-    }
-
-    const args: { teamSlugOrId: string; id: string; maintenanceError?: string; devError?: string } = {
-      teamSlugOrId: teamId,
-      id: taskRunId,
-    };
-
+    const body: Record<string, string> = {};
     if (maintenanceError) {
-      args.maintenanceError = maintenanceError;
+      body.maintenanceError = maintenanceError;
     }
     if (devError) {
-      args.devError = devError;
+      body.devError = devError;
     }
 
-    const requestBody = {
-      path: "taskRuns:updateEnvironmentError",
-      args,
-    };
-
-    console.log(\`[ORCHESTRATOR] Calling Convex with body: \${JSON.stringify(requestBody, null, 2)}\`);
-
-    const response = await fetch(\`\${CONVEX_URL}/api/mutation\`, {
+    const response = await fetch(\`\${CONVEX_URL}/http/api/task-runs/report-environment-error\`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Authorization": \`Bearer \${TASK_RUN_JWT}\`,
       },
-      body: JSON.stringify(requestBody),
+      body: JSON.stringify(body),
     });
 
     console.log(\`[ORCHESTRATOR] Convex response status: \${response.status}\`);
