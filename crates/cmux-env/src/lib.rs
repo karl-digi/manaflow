@@ -267,9 +267,10 @@ impl State {
     }
 
     pub fn effective_for_pwd(&self, pwd: &Path) -> HashMap<String, String> {
+        let pwd_c = canon(pwd);
         let mut map = self.globals.clone();
-        if let Some((_, overlay)) = self.best_scope_for_pwd(pwd) {
-            for (k, v) in overlay.iter() {
+        for scope in self.scopes_for_pwd(&pwd_c) {
+            for (k, v) in scope.iter() {
                 map.insert(k.clone(), v.clone());
             }
         }
@@ -277,44 +278,47 @@ impl State {
     }
 
     pub fn get_effective(&self, key: &str, pwd: &Path) -> Option<String> {
-        if let Some((_, overlay)) = self.best_scope_for_pwd(pwd) {
-            if let Some(v) = overlay.get(key) {
-                return Some(v.clone());
-            }
-        }
-        self.globals.get(key).cloned()
+        let pwd_c = canon(pwd);
+        let scopes = self.scopes_for_pwd(&pwd_c);
+        self.resolve_with_scopes(key, &scopes)
     }
 
-    // Returns best matching directory scope (deepest ancestor) and its map
-    fn best_scope_for_pwd(&self, pwd: &Path) -> Option<(PathBuf, &HashMap<String, String>)> {
-        let pwd = canon(pwd);
-        let mut best: Option<(PathBuf, &HashMap<String, String>)> = None;
-        for (dir, vars) in &self.scoped {
-            if is_ancestor(dir, &pwd) {
-                match &best {
-                    None => best = Some((dir.clone(), vars)),
-                    Some((bdir, _)) => {
-                        if dir.components().count() > bdir.components().count() {
-                            best = Some((dir.clone(), vars));
-                        }
-                    }
-                }
+    fn resolve_with_scopes(
+        &self,
+        key: &str,
+        scopes: &[&HashMap<String, String>],
+    ) -> Option<String> {
+        let mut value = self.globals.get(key).cloned();
+        for scope in scopes {
+            if let Some(v) = scope.get(key) {
+                value = Some(v.clone());
             }
         }
-        best
+        value
+    }
+
+    fn scopes_for_pwd<'a>(&'a self, pwd: &Path) -> Vec<&'a HashMap<String, String>> {
+        let mut scopes: Vec<_> = self
+            .scoped
+            .iter()
+            .filter(|(dir, _)| pwd.starts_with(dir.as_path()))
+            .collect();
+        scopes.sort_by_key(|(dir, _)| dir.components().count());
+        scopes.into_iter().map(|(_, vars)| vars).collect()
     }
 
     pub fn export_since(&self, shell: ShellKind, since: u64, pwd: &Path) -> (String, u64) {
         let new_gen = self.generation;
         let mut changed_keys: HashSet<String> = HashSet::new();
         let pwd_c = canon(pwd);
+        let scope_chain = self.scopes_for_pwd(&pwd_c);
         for ev in self.history.iter().filter(|e| e.generation > since) {
             match &ev.scope {
                 Scope::Global => {
                     changed_keys.insert(ev.key.clone());
                 }
                 Scope::Dir(dir) => {
-                    if is_ancestor(dir, &pwd_c) {
+                    if pwd_c.starts_with(dir) {
                         changed_keys.insert(ev.key.clone());
                     }
                 }
@@ -324,19 +328,13 @@ impl State {
         // For each changed key, compute current effective value for pwd
         let mut actions: Vec<(String, Option<String>)> = Vec::new();
         for key in changed_keys.into_iter() {
-            let val = self.get_effective(&key, &pwd_c);
+            let val = self.resolve_with_scopes(&key, &scope_chain);
             actions.push((key, val));
         }
         actions.sort_by(|a, b| a.0.cmp(&b.0));
         let script = render_script(shell, &actions, new_gen);
         (script, new_gen)
     }
-}
-
-fn is_ancestor(a: &Path, b: &Path) -> bool {
-    let a = canon(a);
-    let b = canon(b);
-    b.starts_with(a)
 }
 
 fn canon<P: AsRef<Path>>(p: P) -> PathBuf {

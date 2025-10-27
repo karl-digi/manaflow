@@ -47,8 +47,14 @@ fn start_envd_with_runtime(tmp: &TempDir) -> std::process::Child {
     child
 }
 
-fn run_envctl(tmp: &TempDir, args: &[&str]) -> assert_cmd::assert::Assert {
+fn envctl_command() -> Command {
     let mut cmd = Command::cargo_bin("envctl").unwrap();
+    cmd.env("ENVCTL_GEN", "0");
+    cmd
+}
+
+fn run_envctl(tmp: &TempDir, args: &[&str]) -> assert_cmd::assert::Assert {
+    let mut cmd = envctl_command();
     cmd.env("XDG_RUNTIME_DIR", tmp.path());
     for a in args {
         cmd.arg(a);
@@ -170,6 +176,89 @@ fn dir_scoped_overlay() {
 }
 
 #[test]
+fn nested_scopes_merge_values() {
+    let tmp = TempDir::new().unwrap();
+    let mut child = start_envd_with_runtime(&tmp);
+
+    let base = tmp.path().join("proj");
+    let nested = base.join("pkg");
+    let deep = nested.join("feature");
+    std::fs::create_dir_all(&deep).unwrap();
+
+    run_envctl(&tmp, &["set", "GLOBAL_ONLY=1"]).success();
+    run_envctl(
+        &tmp,
+        &["set", "BASE_ONLY=base", "--dir", base.to_str().unwrap()],
+    )
+    .success();
+    run_envctl(
+        &tmp,
+        &["set", "SHARED=base", "--dir", base.to_str().unwrap()],
+    )
+    .success();
+    run_envctl(
+        &tmp,
+        &[
+            "set",
+            "NESTED_ONLY=nested",
+            "--dir",
+            nested.to_str().unwrap(),
+        ],
+    )
+    .success();
+    run_envctl(
+        &tmp,
+        &["set", "SHARED=nested", "--dir", nested.to_str().unwrap()],
+    )
+    .success();
+    run_envctl(
+        &tmp,
+        &[
+            "set",
+            "DEEPEST_ONLY=deep",
+            "--dir",
+            deep.to_str().unwrap(),
+        ],
+    )
+    .success();
+    run_envctl(
+        &tmp,
+        &["set", "SHARED=deep", "--dir", deep.to_str().unwrap()],
+    )
+    .success();
+
+    run_envctl(&tmp, &["list", "--pwd", nested.to_str().unwrap()])
+        .success()
+        .stdout(predicate::str::contains("GLOBAL_ONLY="))
+        .stdout(predicate::str::contains("BASE_ONLY="))
+        .stdout(predicate::str::contains("NESTED_ONLY="))
+        .stdout(predicate::str::contains("DEEPEST_ONLY").not());
+
+    run_envctl(&tmp, &["list", "--pwd", deep.to_str().unwrap()])
+        .success()
+        .stdout(predicate::str::contains("GLOBAL_ONLY="))
+        .stdout(predicate::str::contains("BASE_ONLY="))
+        .stdout(predicate::str::contains("NESTED_ONLY="))
+        .stdout(predicate::str::contains("DEEPEST_ONLY="));
+
+    run_envctl(&tmp, &["get", "SHARED", "--pwd", base.to_str().unwrap()])
+        .success()
+        .stdout(predicate::str::contains("base"));
+    run_envctl(
+        &tmp,
+        &["get", "SHARED", "--pwd", nested.to_str().unwrap()],
+    )
+    .success()
+    .stdout(predicate::str::contains("nested"));
+    run_envctl(&tmp, &["get", "SHARED", "--pwd", deep.to_str().unwrap()])
+        .success()
+        .stdout(predicate::str::contains("deep"));
+
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[test]
 fn get_and_list_default_to_client_pwd() {
     let tmp = TempDir::new().unwrap();
     let mut child = start_envd_with_runtime(&tmp);
@@ -186,7 +275,7 @@ fn get_and_list_default_to_client_pwd() {
     )
     .success();
 
-    let mut get_cmd = Command::cargo_bin("envctl").unwrap();
+    let mut get_cmd = envctl_command();
     get_cmd.env("XDG_RUNTIME_DIR", tmp.path());
     get_cmd.current_dir(&nested);
     get_cmd.arg("get").arg("VAR");
@@ -195,7 +284,7 @@ fn get_and_list_default_to_client_pwd() {
         .success()
         .stdout(predicate::str::contains("local"));
 
-    let mut list_cmd = Command::cargo_bin("envctl").unwrap();
+    let mut list_cmd = envctl_command();
     list_cmd.env("XDG_RUNTIME_DIR", tmp.path());
     list_cmd.current_dir(&nested);
     list_cmd.arg("list");
@@ -299,8 +388,7 @@ fn export_then_eval_in_bash_updates_env() {
     // Set a var and then eval the export in a bash subshell; verify env reflects it
     run_envctl(&tmp, &["set", "FOO=bar"]).success();
 
-    let script = Command::cargo_bin("envctl")
-        .unwrap()
+    let script = envctl_command()
         .env("XDG_RUNTIME_DIR", tmp.path())
         .arg("export")
         .arg("bash")
@@ -336,8 +424,7 @@ fn multi_line_value_round_trip_via_export() {
     let set_args = ["set", set_arg.as_str()];
     run_envctl(&tmp, &set_args).success();
 
-    let output = Command::cargo_bin("envctl")
-        .unwrap()
+    let output = envctl_command()
         .env("XDG_RUNTIME_DIR", tmp.path())
         .arg("get")
         .arg("MULTI_LINE_THING")
@@ -347,8 +434,7 @@ fn multi_line_value_round_trip_via_export() {
     let retrieved = String::from_utf8_lossy(&output.stdout).to_string();
     assert_eq!(retrieved, format!("{}\n", multi_line_val));
 
-    let script = Command::cargo_bin("envctl")
-        .unwrap()
+    let script = envctl_command()
         .env("XDG_RUNTIME_DIR", tmp.path())
         .arg("export")
         .arg("bash")
@@ -384,8 +470,7 @@ fn minimal_diff_with_generation() {
     let mut child = start_envd_with_runtime(&tmp);
 
     run_envctl(&tmp, &["set", "X=1"]).success();
-    let first = Command::cargo_bin("envctl")
-        .unwrap()
+    let first = envctl_command()
         .env("XDG_RUNTIME_DIR", tmp.path())
         .arg("export")
         .arg("bash")
@@ -409,8 +494,7 @@ fn minimal_diff_with_generation() {
         .unwrap();
 
     // No change; export again since current gen should not include X=1 again
-    let second = Command::cargo_bin("envctl")
-        .unwrap()
+    let second = envctl_command()
         .env("XDG_RUNTIME_DIR", tmp.path())
         .env("ENVCTL_GEN", gen.to_string())
         .arg("export")
@@ -530,8 +614,7 @@ fn install_hook_installs_bash_block() {
     let rc = home.join(".bashrc");
     fs::write(&rc, "export FOO=1\n").unwrap();
 
-    let hook_output = Command::cargo_bin("envctl")
-        .unwrap()
+    let hook_output = envctl_command()
         .arg("hook")
         .arg("bash")
         .output()
@@ -539,7 +622,7 @@ fn install_hook_installs_bash_block() {
     assert!(hook_output.status.success());
     let hook_text = String::from_utf8_lossy(&hook_output.stdout).to_string();
 
-    let mut cmd = Command::cargo_bin("envctl").unwrap();
+    let mut cmd = envctl_command();
     cmd.env("HOME", &home);
     cmd.env("XDG_RUNTIME_DIR", tmp.path());
     cmd.arg("install-hook").arg("bash");
@@ -553,7 +636,7 @@ fn install_hook_installs_bash_block() {
     assert_eq!(contents.matches("# <<< envctl hook <<<").count(), 1);
     assert!(contents.contains(hook_text.trim()));
 
-    let mut second = Command::cargo_bin("envctl").unwrap();
+    let mut second = envctl_command();
     second.env("HOME", &home);
     second.env("XDG_RUNTIME_DIR", tmp.path());
     second.arg("install-hook").arg("bash");
@@ -584,8 +667,7 @@ fn install_hook_multiple_shells_share_state() {
     )
     .unwrap();
 
-    let status = Command::cargo_bin("envctl")
-        .unwrap()
+    let status = envctl_command()
         .env("HOME", &home)
         .env("XDG_RUNTIME_DIR", tmp.path())
         .arg("install-hook")
@@ -725,7 +807,7 @@ fn load_from_stdin() {
     let mut child = start_envd_with_runtime(&tmp);
 
     let input = b"FOO=bar\n# comment\nBAZ=qux\n";
-    let mut cmd = Command::cargo_bin("envctl").unwrap();
+    let mut cmd = envctl_command();
     cmd.env("XDG_RUNTIME_DIR", tmp.path());
     cmd.arg("load").arg("-");
     cmd.stdin(Stdio::piped());
@@ -774,7 +856,7 @@ fn load_from_base64_stdin() {
     let content = "FOO=bar\nBAZ=qux\n";
     let encoded = BASE64_STANDARD.encode(content);
 
-    let mut cmd = Command::cargo_bin("envctl").unwrap();
+    let mut cmd = envctl_command();
     cmd.env("XDG_RUNTIME_DIR", tmp.path());
     cmd.arg("load").arg("--base64").arg("-");
     cmd.stdin(Stdio::piped());
