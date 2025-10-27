@@ -22,13 +22,27 @@ import {
   postApiSandboxesByIdEnvMutation,
   postApiEnvironmentsByIdSnapshotsMutation,
 } from "@cmux/www-openapi-client/react-query";
-import { Accordion, AccordionItem } from "@heroui/react";
+import {
+  Accordion,
+  AccordionItem,
+  type AccordionItemIndicatorProps,
+} from "@heroui/react";
 import { useMutation as useRQMutation } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import type { Id } from "@cmux/convex/dataModel";
 import clsx from "clsx";
 import type { PersistentIframeStatus } from "@/components/persistent-iframe";
-import { ArrowLeft, Code2, Loader2, Minus, Monitor, Plus, Settings, X } from "lucide-react";
+import {
+  ArrowLeft,
+  ChevronRight,
+  Code2,
+  Loader2,
+  Minus,
+  Monitor,
+  Plus,
+  Settings,
+  X,
+} from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -157,6 +171,19 @@ export function EnvironmentConfiguration({
     setBrowserStatus("loading");
     setBrowserError(null);
   }, [browserUrl]);
+
+  const renderAccordionIndicator = useCallback(
+    ({ isOpen }: AccordionItemIndicatorProps) => (
+      <ChevronRight
+        className={clsx(
+          "h-4 w-4 text-neutral-400 transition-transform dark:text-neutral-500",
+          isOpen ? "rotate-90" : "rotate-0"
+        )}
+        aria-hidden="true"
+      />
+    ),
+    []
+  );
 
   const createEnvironmentMutation = useRQMutation(
     postApiEnvironmentsMutation()
@@ -674,153 +701,35 @@ export function EnvironmentConfiguration({
 
         <Accordion
           selectionMode="multiple"
-          className="px-0"
+          className="px-0 border-t border-neutral-200 dark:border-neutral-800"
           defaultExpandedKeys={[
             "env-vars",
             "install-dependencies",
             "maintenance-script",
             "dev-script",
           ]}
+          dividerProps={{
+            className: "bg-neutral-200 dark:bg-neutral-800",
+          }}
           itemClasses={{
-            trigger: "text-sm cursor-pointer py-3",
-            content: "pt-0",
-            title: "text-sm font-medium",
+            base: "px-0",
+            heading: "px-0",
+            trigger:
+              "px-0 py-4 text-sm font-medium text-neutral-900 dark:text-neutral-100 cursor-pointer items-start gap-3",
+            titleWrapper: "flex-1 text-left",
+            indicator:
+              "text-neutral-400 dark:text-neutral-500 transition-transform",
+            title: "text-sm font-medium text-neutral-900 dark:text-neutral-100",
+            content: "px-0 pt-0",
           }}
         >
           <AccordionItem
             key="env-vars"
             aria-label="Environment variables"
             title="Environment variables"
+            indicator={renderAccordionIndicator}
           >
-            <div className="pb-2 space-y-4">
-              {/* Path Variables Section */}
-              {nestedEnvVars.paths.length > 0 && (
-                <div>
-                  <div className="mb-3">
-                    <h4 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                      Path Variables
-                    </h4>
-                    <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-                      Override global variables for specific paths
-                    </p>
-                  </div>
-                  <div className="space-y-3">
-                    {nestedEnvVars.paths.map((pathConfig, pathIdx) => (
-                      <div key={pathIdx}>
-                        <div className="mb-2 flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setNestedEnvVars((prev) => ({
-                                ...prev,
-                                paths: prev.paths.filter((_, i) => i !== pathIdx),
-                              }));
-                            }}
-                            className="text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200"
-                            aria-label="Remove path"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </button>
-                          <h5 className="text-xs font-medium text-neutral-700 dark:text-neutral-300 font-mono">
-                            {pathConfig.path}
-                          </h5>
-                          {pathConfig.description && (
-                            <span className="text-xs text-neutral-500 dark:text-neutral-400">
-                              {pathConfig.description}
-                            </span>
-                          )}
-                        </div>
-
-                        <div className="bg-neutral-50 dark:bg-neutral-900/50 rounded-lg border border-neutral-200 dark:border-neutral-800 p-3">
-                          <div className="space-y-2">
-                    {ensureEmptyRow(pathConfig.variables).map((row, idx) => (
-                      <div
-                        key={idx}
-                        className="grid gap-3 items-center"
-                        style={{
-                          gridTemplateColumns:
-                            "minmax(0, 1fr) minmax(0, 1.4fr) 44px",
-                        }}
-                      >
-                        <input
-                          type="text"
-                          value={row.name}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setNestedEnvVars((prev) => {
-                              const updatedPaths = [...prev.paths];
-                              const pathVars = [...updatedPaths[pathIdx]!.variables];
-                              if (idx < pathVars.length) {
-                                pathVars[idx] = { ...pathVars[idx]!, name: v };
-                              } else {
-                                pathVars.push({ name: v, value: "", isSecret: true });
-                              }
-                              updatedPaths[pathIdx] = {
-                                ...updatedPaths[pathIdx]!,
-                                variables: pathVars,
-                              };
-                              return { ...prev, paths: updatedPaths };
-                            });
-                          }}
-                          placeholder="VAR_NAME"
-                          className="w-full min-w-0 self-start rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700"
-                        />
-                        <TextareaAutosize
-                          value={row.value}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setNestedEnvVars((prev) => {
-                              const updatedPaths = [...prev.paths];
-                              const pathVars = [...updatedPaths[pathIdx]!.variables];
-                              if (idx < pathVars.length) {
-                                pathVars[idx] = { ...pathVars[idx]!, value: v };
-                              } else {
-                                pathVars.push({ name: "", value: v, isSecret: true });
-                              }
-                              updatedPaths[pathIdx] = {
-                                ...updatedPaths[pathIdx]!,
-                                variables: pathVars,
-                              };
-                              return { ...prev, paths: updatedPaths };
-                            });
-                          }}
-                          placeholder="value"
-                          minRows={1}
-                          maxRows={10}
-                          className="w-full min-w-0 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 resize-none"
-                        />
-                        <div className="self-start flex items-center justify-end w-[44px]">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setNestedEnvVars((prev) => {
-                                const updatedPaths = [...prev.paths];
-                                updatedPaths[pathIdx] = {
-                                  ...updatedPaths[pathIdx]!,
-                                  variables: updatedPaths[pathIdx]!.variables.filter(
-                                    (_, i) => i !== idx
-                                  ),
-                                };
-                                return { ...prev, paths: updatedPaths };
-                              });
-                            }}
-                            disabled={idx >= pathConfig.variables.length}
-                            className="h-10 w-[44px] rounded-md border border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300 grid place-items-center hover:bg-neutral-50 dark:hover:bg-neutral-900 disabled:opacity-30 disabled:cursor-not-allowed"
-                            aria-label="Remove variable"
-                          >
-                            <Minus className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
+            <div className="pb-2 space-y-6">
               {/* Global Variables Section */}
               <div>
                 <div className="mb-3">
@@ -909,30 +818,177 @@ export function EnvironmentConfiguration({
                   </div>
                 </div>
               </div>
-
-              {/* Add New Path Section */}
               <div>
                 <div className="mb-3">
                   <h4 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                    Add New Path
+                    Path Variables
                   </h4>
                   <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
                     Create path-specific variable configurations
                   </p>
                 </div>
-                <div className="bg-neutral-50 dark:bg-neutral-900/50 rounded-lg border border-neutral-200 dark:border-neutral-800 p-3">
+                {nestedEnvVars.paths.length > 0 && (
                   <div className="space-y-3">
-                  <div className="flex items-end gap-2">
-                    <div className="flex-1">
-                      <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1.5">
-                        Path name
-                      </label>
-                      <input
-                        type="text"
-                        value={newPathName}
-                        onChange={(e) => setNewPathName(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" && newPathName.trim()) {
+                    {nestedEnvVars.paths.map((pathConfig, pathIdx) => (
+                      <div key={pathIdx}>
+                        <div className="mb-2 flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setNestedEnvVars((prev) => ({
+                                ...prev,
+                                paths: prev.paths.filter((_, i) => i !== pathIdx),
+                              }));
+                            }}
+                            className="text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200"
+                            aria-label="Remove path"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                          <h5 className="text-xs font-medium text-neutral-700 dark:text-neutral-300 font-mono">
+                            {pathConfig.path}
+                          </h5>
+                          {pathConfig.description && (
+                            <span className="text-xs text-neutral-500 dark:text-neutral-400">
+                              {pathConfig.description}
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="bg-neutral-50 dark:bg-neutral-900/50 rounded-lg border border-neutral-200 dark:border-neutral-800 p-3">
+                          <div
+                            className="grid gap-3 text-xs text-neutral-500 dark:text-neutral-400 items-center pb-2"
+                            style={{
+                              gridTemplateColumns:
+                                "minmax(0, 1fr) minmax(0, 1.4fr) 44px",
+                            }}
+                          >
+                            <span>Key</span>
+                            <span>Value</span>
+                            <span className="w-[44px]" />
+                          </div>
+
+                          <div className="space-y-2">
+                            {ensureEmptyRow(pathConfig.variables).map((row, idx) => (
+                              <div
+                                key={idx}
+                                className="grid gap-3 items-center"
+                                style={{
+                                  gridTemplateColumns:
+                                    "minmax(0, 1fr) minmax(0, 1.4fr) 44px",
+                                }}
+                              >
+                                <input
+                                  type="text"
+                                  value={row.name}
+                                  onChange={(e) => {
+                                    const v = e.target.value;
+                                    setNestedEnvVars((prev) => {
+                                      const updatedPaths = [...prev.paths];
+                                      const pathVars = [...updatedPaths[pathIdx]!.variables];
+                                      if (idx < pathVars.length) {
+                                        pathVars[idx] = { ...pathVars[idx]!, name: v };
+                                      } else {
+                                        pathVars.push({ name: v, value: "", isSecret: true });
+                                      }
+                                      updatedPaths[pathIdx] = {
+                                        ...updatedPaths[pathIdx]!,
+                                        variables: pathVars,
+                                      };
+                                      return { ...prev, paths: updatedPaths };
+                                    });
+                                  }}
+                                  placeholder="VAR_NAME"
+                                  className="w-full min-w-0 self-start rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700"
+                                />
+                                <TextareaAutosize
+                                  value={row.value}
+                                  onChange={(e) => {
+                                    const v = e.target.value;
+                                    setNestedEnvVars((prev) => {
+                                      const updatedPaths = [...prev.paths];
+                                      const pathVars = [...updatedPaths[pathIdx]!.variables];
+                                      if (idx < pathVars.length) {
+                                        pathVars[idx] = { ...pathVars[idx]!, value: v };
+                                      } else {
+                                        pathVars.push({ name: "", value: v, isSecret: true });
+                                      }
+                                      updatedPaths[pathIdx] = {
+                                        ...updatedPaths[pathIdx]!,
+                                        variables: pathVars,
+                                      };
+                                      return { ...prev, paths: updatedPaths };
+                                    });
+                                  }}
+                                  placeholder="value"
+                                  minRows={1}
+                                  maxRows={10}
+                                  className="w-full min-w-0 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 resize-none"
+                                />
+                                <div className="self-start flex items-center justify-end w-[44px]">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setNestedEnvVars((prev) => {
+                                        const updatedPaths = [...prev.paths];
+                                        updatedPaths[pathIdx] = {
+                                          ...updatedPaths[pathIdx]!,
+                                          variables: updatedPaths[pathIdx]!.variables.filter(
+                                            (_, i) => i !== idx
+                                          ),
+                                        };
+                                        return { ...prev, paths: updatedPaths };
+                                      });
+                                    }}
+                                    disabled={idx >= pathConfig.variables.length}
+                                    className="h-10 w-[44px] rounded-md border border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300 grid place-items-center hover:bg-neutral-50 dark:hover:bg-neutral-900 disabled:opacity-30 disabled:cursor-not-allowed"
+                                    aria-label="Remove variable"
+                                  >
+                                    <Minus className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="bg-neutral-50 dark:bg-neutral-900/50 rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 mt-6">
+                  <div className="space-y-3">
+                    <div className="flex items-end gap-2">
+                      <div className="flex-1">
+                        <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1.5">
+                          Path name
+                        </label>
+                        <input
+                          type="text"
+                          value={newPathName}
+                          onChange={(e) => setNewPathName(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && newPathName.trim()) {
+                              setNestedEnvVars((prev) => ({
+                                ...prev,
+                                paths: [
+                                  ...prev.paths,
+                                  {
+                                    path: newPathName.trim(),
+                                    variables: [],
+                                  },
+                                ],
+                              }));
+                              setNewPathName("");
+                            }
+                          }}
+                          placeholder="apps/frontend"
+                          className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-xs font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (newPathName.trim()) {
                             setNestedEnvVars((prev) => ({
                               ...prev,
                               paths: [
@@ -946,37 +1002,16 @@ export function EnvironmentConfiguration({
                             setNewPathName("");
                           }
                         }}
-                        placeholder="apps/frontend"
-                        className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-xs font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700"
-                      />
+                        disabled={!newPathName.trim()}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2 text-xs text-neutral-800 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <Plus className="w-3.5 h-3.5" /> Add
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (newPathName.trim()) {
-                          setNestedEnvVars((prev) => ({
-                            ...prev,
-                            paths: [
-                              ...prev.paths,
-                              {
-                                path: newPathName.trim(),
-                                variables: [],
-                              },
-                            ],
-                          }));
-                          setNewPathName("");
-                        }
-                      }}
-                      disabled={!newPathName.trim()}
-                      className="inline-flex items-center gap-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2 text-xs text-neutral-800 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <Plus className="w-3.5 h-3.5" /> Add
-                    </button>
+                    <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-2">
+                      Examples: <code className="text-[11px] bg-neutral-100 dark:bg-neutral-800 px-1 py-0.5 rounded">apps/frontend</code>, <code className="text-[11px] bg-neutral-100 dark:bg-neutral-800 px-1 py-0.5 rounded">packages/shared</code>
+                    </p>
                   </div>
-                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-2">
-                    Examples: <code className="text-[11px] bg-neutral-100 dark:bg-neutral-800 px-1 py-0.5 rounded">apps/frontend</code>, <code className="text-[11px] bg-neutral-100 dark:bg-neutral-800 px-1 py-0.5 rounded">packages/shared</code>
-                  </p>
-                </div>
                 </div>
               </div>
 
@@ -990,6 +1025,7 @@ export function EnvironmentConfiguration({
             key="install-dependencies"
             aria-label="Install dependencies"
             title="Install dependencies"
+            indicator={renderAccordionIndicator}
           >
             <div className="space-y-2 pb-4">
               <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-3">
@@ -1007,6 +1043,7 @@ export function EnvironmentConfiguration({
             key="maintenance-script"
             aria-label="Maintenance script"
             title="Maintenance script"
+            indicator={renderAccordionIndicator}
           >
             <div className="pb-4">
               <ScriptTextareaField
@@ -1025,6 +1062,7 @@ export function EnvironmentConfiguration({
             key="dev-script"
             aria-label="Dev script"
             title="Dev script"
+            indicator={renderAccordionIndicator}
           >
             <div className="space-y-4 pb-4">
               <ScriptTextareaField
@@ -1071,8 +1109,8 @@ export function EnvironmentConfiguration({
             className="inline-flex items-center rounded-md bg-neutral-900 text-white disabled:bg-neutral-300 dark:disabled:bg-neutral-700 disabled:cursor-not-allowed px-4 py-2 text-sm hover:bg-neutral-800 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200"
           >
             {isProvisioning ||
-            createEnvironmentMutation.isPending ||
-            createSnapshotMutation.isPending ? (
+              createEnvironmentMutation.isPending ||
+              createSnapshotMutation.isPending ? (
               <>
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                 {mode === "snapshot"
@@ -1087,7 +1125,7 @@ export function EnvironmentConfiguration({
           </button>
         </div>
       </div>
-    </div>
+    </div >
   );
 
   const rightPane = (
