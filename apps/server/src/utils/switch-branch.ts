@@ -24,6 +24,48 @@ const formatError = (error: unknown) => {
   return String(error);
 };
 
+const textDecoder = new TextDecoder();
+
+const decodeShellOutput = (value: unknown): string | null => {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value instanceof Uint8Array) {
+    return textDecoder.decode(value);
+  }
+  return null;
+};
+
+type ShellErrorOutputs = { stderr?: unknown; stdout?: unknown };
+
+const hasShellOutputs = (value: unknown): value is ShellErrorOutputs =>
+  typeof value === "object" && value !== null;
+
+const extractShellOutputs = (
+  error: unknown,
+): { stderr: string | null; stdout: string | null } => {
+  if (!hasShellOutputs(error)) {
+    return { stderr: null, stdout: null };
+  }
+  return {
+    stderr: decodeShellOutput(error.stderr ?? null),
+    stdout: decodeShellOutput(error.stdout ?? null),
+  };
+};
+
+const getCurrentBranch = async (repoPath: string): Promise<string | null> => {
+  try {
+    const output = await $`git -C ${repoPath} rev-parse --abbrev-ref HEAD`.text();
+    const branch = output.trim();
+    if (branch.length === 0 || branch === "HEAD") {
+      return null;
+    }
+    return branch;
+  } catch {
+    return null;
+  }
+};
+
 if (!branchName) {
   log("missing branch name");
   process.exit(1);
@@ -90,16 +132,24 @@ let failureCount = 0;
 for (const repoPath of repoPaths) {
   log("repo=", repoPath, "-> switching to", branchName ?? "(missing)");
 
+  const currentBranch = await getCurrentBranch(repoPath);
+  if (currentBranch === branchName) {
+    log("repo=", repoPath, "-> already on branch", branchName ?? "(missing)");
+    continue;
+  }
+
   try {
     await $`git -C ${repoPath} switch ${branchName}`.quiet();
     log("repo=", repoPath, "-> switched to existing branch", branchName ?? "(missing)");
     continue;
   } catch (switchError) {
+    const { stderr } = extractShellOutputs(switchError);
+    const message = stderr?.trim() ?? formatError(switchError);
     log(
       "repo=",
       repoPath,
       "-> existing branch missing, attempting to create:",
-      formatError(switchError),
+      message,
     );
   }
 
@@ -107,13 +157,27 @@ for (const repoPath of repoPaths) {
     await $`git -C ${repoPath} switch -c ${branchName}`.quiet();
     log("repo=", repoPath, "-> created branch", branchName ?? "(missing)");
   } catch (createError) {
-    failureCount += 1;
+    const { stderr } = extractShellOutputs(createError);
+    const message = stderr?.trim() ?? formatError(createError);
     log(
       "repo=",
       repoPath,
       "-> failed to create branch:",
-      formatError(createError),
+      message,
     );
+
+    const branchAfterFailure = await getCurrentBranch(repoPath);
+    if (branchAfterFailure === branchName) {
+      log(
+        "repo=",
+        repoPath,
+        "-> branch already active despite creation error",
+        branchName ?? "(missing)",
+      );
+      continue;
+    }
+
+    failureCount += 1;
   }
 }
 

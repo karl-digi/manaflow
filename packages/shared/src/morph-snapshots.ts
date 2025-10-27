@@ -9,7 +9,7 @@ export interface MorphSnapshotPreset {
 
 export const MORPH_SNAPSHOT_PRESETS = [
   {
-    id: "snapshot_n2scyezr",
+    id: "snapshot_lqsy1igf",
     label: "Standard workspace",
     cpu: "4 vCPU",
     memory: "16 GB RAM",

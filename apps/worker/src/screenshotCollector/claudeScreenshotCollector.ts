@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { log } from "../logger";
 import { logToScreenshotCollector } from "./logger";
 import { formatClaudeMessage } from "./claudeMessageFormatter";
+import { ANTHROPIC_API_KEY } from "../../../../packages/shared/src/apiKeys";
 
 export type ClaudeCodeAuthConfig =
   | { auth: { taskRunJwt: string } }
@@ -81,7 +82,7 @@ Please:
 1. Start the development server if needed (check files like README.md, package.json or .devcontainer.json for dev script, explore the repository more if needed)
 2. Wait for the server to be ready
 3. Navigate to the pages/components that were modified in the PR
-4. Take full-page screenshots of each relevant UI view that was changed
+4. Take full-page screenshots as well as element-specific screenshots of each relevant UI view that was changed
 5. Save screenshots to ${outputDir} with descriptive names like "homepage-${branch}.png"
 
 Focus on capturing visual changes. If no UI changes are present, just let me know.
@@ -91,7 +92,7 @@ Do not create summary documents.
 Save all screenshots and provide a summary of what you captured.`;
 
   await logToScreenshotCollector(
-    `Starting Claude Agent with Playwright MCP for branch: ${branch}`
+    `Starting Claude Agent with browser MCP for branch: ${branch}`
   );
 
   const screenshotPaths: string[] = [];
@@ -104,9 +105,27 @@ Save all screenshots and provide a summary of what you captured.`;
     const originalApiKey = process.env.ANTHROPIC_API_KEY;
     if (useTaskRunJwt) {
       delete process.env.ANTHROPIC_API_KEY;
+      // Log JWT info for debugging
+      await logToScreenshotCollector(
+        `Using taskRun JWT auth. JWT present: ${!!auth.taskRunJwt}, JWT length: ${auth.taskRunJwt?.length ?? 0}, JWT first 20 chars: ${auth.taskRunJwt?.substring(0, 20) ?? "N/A"}`
+      );
+      await logToScreenshotCollector(
+        `ANTHROPIC_BASE_URL: https://www.cmux.dev/api/anthropic`
+      );
     } else if (providedApiKey) {
       process.env.ANTHROPIC_API_KEY = providedApiKey;
+      await logToScreenshotCollector(
+        `Using API key auth. Key present: ${!!providedApiKey}, Key length: ${providedApiKey?.length ?? 0}`
+      );
     }
+
+    await logToScreenshotCollector(
+      `Arguments to Claude Code: ${JSON.stringify({
+        prompt,
+        cwd: workspaceDir,
+        pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
+      })}`
+    );
 
     try {
       for await (const message of query({
@@ -114,10 +133,24 @@ Save all screenshots and provide a summary of what you captured.`;
         options: {
           // model: "claude-haiku-4-5",
           model: "claude-sonnet-4-5",
+          // mcpServers: {
+          //   "playwright": {
+          //     command: "bunx",
+          //     args: [
+          //       "@playwright/mcp",
+          //       "--cdp-endpoint",
+          //       "http://0.0.0.0:39382",
+          //     ],
+          //   },
+          // },
           mcpServers: {
-            "@playwright/mcp": {
+            chrome: {
               command: "bunx",
-              args: ["@playwright/mcp"],
+              args: [
+                "chrome-devtools-mcp",
+                "--browserUrl",
+                "http://0.0.0.0:39382",
+              ],
             },
           },
           allowDangerouslySkipPermissions: true,
@@ -125,14 +158,19 @@ Save all screenshots and provide a summary of what you captured.`;
           cwd: workspaceDir,
           pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
           env: {
+            IS_SANDBOX: "1",
             CLAUDE_CODE_ENABLE_TELEMETRY: "0",
+            CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
             ...(useTaskRunJwt
               ? {
+                  ANTHROPIC_API_KEY: "sk_placeholder_cmux_anthropic_api_key",
                   ANTHROPIC_BASE_URL: "https://www.cmux.dev/api/anthropic",
                   ANTHROPIC_CUSTOM_HEADERS: `x-cmux-token:${auth.taskRunJwt}`,
                 }
               : {}),
           },
+          stderr: (data) =>
+            logToScreenshotCollector(`[claude-code-stderr] ${data}`),
         },
       })) {
         // Format and log all message types
@@ -141,6 +179,14 @@ Save all screenshots and provide a summary of what you captured.`;
           await logToScreenshotCollector(formatted);
         }
       }
+    } catch (error) {
+      await logToScreenshotCollector(
+        `Failed to capture screenshots with Claude Agent: ${error instanceof Error ? error.message : String(error)}`
+      );
+      log("ERROR", "Failed to capture screenshots with Claude Agent", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
     } finally {
       if (hadOriginalApiKey) {
         if (originalApiKey !== undefined) {
@@ -178,6 +224,23 @@ Save all screenshots and provide a summary of what you captured.`;
     await logToScreenshotCollector(
       `Failed to capture screenshots with Claude Agent: ${message}`
     );
+
+    // Log full error details for debugging
+    if (error instanceof Error) {
+      if (error.stack) {
+        await logToScreenshotCollector(`Stack trace: ${error.stack}`);
+      }
+      // Log any additional error properties
+      const errorObj = error as Error & Record<string, unknown>;
+      const additionalProps = Object.keys(errorObj)
+        .filter((key) => !["message", "stack", "name"].includes(key))
+        .map((key) => `${key}: ${JSON.stringify(errorObj[key])}`)
+        .join(", ");
+      if (additionalProps) {
+        await logToScreenshotCollector(`Error details: ${additionalProps}`);
+      }
+    }
+
     throw error;
   }
 }
@@ -269,6 +332,7 @@ export async function claudeCodeCapturePRScreenshots(
             branch: headBranch,
             outputDir,
             auth: { taskRunJwt: auth.taskRunJwt },
+            pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
           }
         : {
             workspaceDir,
@@ -278,6 +342,7 @@ export async function claudeCodeCapturePRScreenshots(
             branch: headBranch,
             outputDir,
             auth: { anthropicApiKey: auth.anthropicApiKey },
+            pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
           }
     );
     allScreenshots.push(...afterScreenshots);

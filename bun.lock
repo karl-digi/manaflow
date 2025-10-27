@@ -278,6 +278,7 @@
         "@playwright/mcp": "^0.0.44",
         "@xterm/addon-serialize": "^0.13.0",
         "@xterm/headless": "^5.5.0",
+        "chrome-devtools-mcp": "^0.9.0",
         "chromium-bidi": "^10.6.0",
         "express": "^4.18.2",
         "magnitude-core": "^0.3.0",
@@ -2679,6 +2680,8 @@
     "chokidar": ["chokidar@4.0.3", "", { "dependencies": { "readdirp": "^4.0.1" } }, "sha512-Qgzu8kfBvo+cA4962jnP1KkS6Dop5NS6g7R5LFYJr4b8Ub94PPQXUksCw9PvXoeXPRRddRNC5C1JQUR2SMGtnA=="],
 
     "chownr": ["chownr@3.0.0", "", {}, "sha512-+IxzY9BZOQd/XuYPRmrvEVjF/nqj5kgT4kEq7VofrDoM1MxoRjEWkrCC3EtLi59TVawxTAn+orJwFQcrqEN1+g=="],
+
+    "chrome-devtools-mcp": ["chrome-devtools-mcp@0.9.0", "", { "bin": { "chrome-devtools-mcp": "build/src/index.js" } }, "sha512-7MzI/fdnwbKHzgnGWUmCyEYdKnSpfSIelDV9XNTz8wrjycoMB6cENryKLyZkLHXkZLlDdOLfYa9YtF+3lQoM2g=="],
 
     "chromium-bidi": ["chromium-bidi@10.6.0", "", { "dependencies": { "mitt": "^3.0.1", "zod": "^3.24.1" }, "peerDependencies": { "devtools-protocol": "*" } }, "sha512-y6F5dZ+KnIt5Xgl2fcOovjZHcHctxZRDaKfCXdHl/4jzRXw+KzBrV/+NgYxbLE22f1F+Xkslz2p9HahcMOCRGA=="],
 

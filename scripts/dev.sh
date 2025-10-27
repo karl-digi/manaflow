@@ -291,6 +291,17 @@ check_process $WWW_PID "WWW App"
   done
 ') &
 
+# Warm up frontend in background (non-blocking)
+(bash -c '
+  for i in {1..30}; do
+    if curl -s -f http://localhost:5173 > /dev/null 2>&1; then
+      echo -e "'"${GREEN}"'Frontend ready and warmed up'"${NC}"'"
+      break
+    fi
+    sleep 0.5
+  done
+') &
+
 # Start the openapi client generator
 echo -e "${GREEN}Starting openapi client generator...${NC}"
 (cd "$APP_DIR/apps/www" && exec bash -c 'trap "kill -9 0" EXIT; bun run generate-openapi-client:watch 2>&1 | tee "$LOG_DIR/openapi-client.log" | prefix_output "OPENAPI-CLIENT" "$MAGENTA"') &
