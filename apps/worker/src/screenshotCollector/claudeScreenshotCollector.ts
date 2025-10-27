@@ -5,7 +5,6 @@ import * as path from "node:path";
 import { log } from "../logger";
 import { logToScreenshotCollector } from "./logger";
 import { formatClaudeMessage } from "./claudeMessageFormatter";
-import { ANTHROPIC_API_KEY } from "../../../../packages/shared/src/apiKeys";
 
 export type ClaudeCodeAuthConfig =
   | { auth: { taskRunJwt: string } }
@@ -158,6 +157,7 @@ Save all screenshots and provide a summary of what you captured.`;
           cwd: workspaceDir,
           pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
           env: {
+            ...process.env,
             IS_SANDBOX: "1",
             CLAUDE_CODE_ENABLE_TELEMETRY: "0",
             CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
