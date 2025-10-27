@@ -77,6 +77,39 @@ function deriveGeneratedBranchName(branch?: string | null): string | undefined {
   return candidate || trimmed;
 }
 
+type EnvironmentErrorPayload = {
+  maintenanceError?: string;
+  devError?: string;
+};
+
+const MAX_ENVIRONMENT_ERROR_MESSAGE_CHARS = 2500;
+
+function normalizeEnvironmentErrorPayload(
+  maintenanceError?: string,
+  devError?: string,
+): EnvironmentErrorPayload {
+  const truncate = (msg?: string) => {
+    if (!msg) return undefined;
+    const trimmed = msg.trim();
+    if (!trimmed) return undefined;
+    return trimmed.length > MAX_ENVIRONMENT_ERROR_MESSAGE_CHARS
+      ? `${trimmed.slice(0, MAX_ENVIRONMENT_ERROR_MESSAGE_CHARS)}…`
+      : trimmed;
+  };
+
+  const normalizedMaintenance = truncate(maintenanceError);
+  const normalizedDev = truncate(devError);
+
+  const payload: EnvironmentErrorPayload = {};
+  if (normalizedMaintenance) {
+    payload.maintenanceError = normalizedMaintenance;
+  }
+  if (normalizedDev) {
+    payload.devError = normalizedDev;
+  }
+  return payload;
+}
+
 type EnvironmentSummary = Pick<
   Doc<"environments">,
   "_id" | "name" | "selectedRepos"
@@ -1113,43 +1146,29 @@ export const updateNetworking = authMutation({
   },
 });
 
-// Update environment error for a task run
-export const updateEnvironmentError = authMutation({
+export const updateEnvironmentErrorFromWorker = internalMutation({
   args: {
-    teamSlugOrId: v.string(),
     id: v.id("taskRuns"),
+    teamId: v.string(),
+    userId: v.string(),
     maintenanceError: v.optional(v.string()),
     devError: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const userId = ctx.identity.subject;
     const run = await ctx.db.get(args.id);
-    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
 
-    if (!run || run.teamId !== teamId || run.userId !== userId) {
-      throw new Error("Task run not found or unauthorized");
+    if (!run) {
+      throw new Error("Task run not found");
     }
 
-    const MAX_ERROR_MESSAGE_CHARS = 2500;
-    const truncate = (msg: string | undefined) => {
-      if (!msg) return undefined;
-      const trimmed = msg.trim();
-      if (!trimmed) return undefined;
-      return trimmed.length > MAX_ERROR_MESSAGE_CHARS
-        ? `${trimmed.slice(0, MAX_ERROR_MESSAGE_CHARS)}…`
-        : trimmed;
-    };
+    if (run.teamId !== args.teamId || run.userId !== args.userId) {
+      throw new Error("Task run mismatch for provided credentials");
+    }
 
-    const maintenanceError = truncate(args.maintenanceError);
-    const devError = truncate(args.devError);
-
-    const environmentError = {
-      ...(maintenanceError ? { maintenanceError } : {}),
-      ...(devError ? { devError } : {}),
-    } as {
-      maintenanceError?: string;
-      devError?: string;
-    };
+    const environmentError = normalizeEnvironmentErrorPayload(
+      args.maintenanceError,
+      args.devError,
+    );
 
     await ctx.db.patch(args.id, {
       environmentError,
