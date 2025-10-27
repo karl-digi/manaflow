@@ -7,7 +7,6 @@ import { api } from "@cmux/convex/api";
 import {
   legacyContentToNestedEnvVars,
   NestedEnvVarsSchema,
-  resolveNestedEnvVars,
 } from "@cmux/shared/environment-vars";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { validateExposedPorts } from "@cmux/shared/utils/validate-exposed-ports";

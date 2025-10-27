@@ -15,6 +15,7 @@
     "@cmux/shared": "workspace:*",
     "@xterm/addon-serialize": "^0.13.0",
     "@xterm/headless": "^5.5.0",
+    "dotenv": "^16.4.5",
     "express": "^4.18.2",
     "multer": "^1.4.5-lts.1",
     "socket.io": "^4.8.0",
