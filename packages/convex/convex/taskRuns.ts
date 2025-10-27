@@ -497,6 +497,7 @@ export const updateScreenshotMetadata = internalMutation({
     storageId: v.id("_storage"),
     mimeType: v.optional(v.string()),
     fileName: v.optional(v.string()),
+    commitSha: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     await ctx.db.patch(args.id, {
@@ -504,6 +505,7 @@ export const updateScreenshotMetadata = internalMutation({
       screenshotCapturedAt: Date.now(),
       screenshotMimeType: args.mimeType,
       screenshotFileName: args.fileName,
+      screenshotCommitSha: args.commitSha,
       updatedAt: Date.now(),
     });
   },
@@ -517,6 +519,7 @@ export const clearScreenshotMetadata = internalMutation({
       screenshotCapturedAt: undefined,
       screenshotMimeType: undefined,
       screenshotFileName: undefined,
+      screenshotCommitSha: undefined,
       updatedAt: Date.now(),
     });
   },

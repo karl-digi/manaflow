@@ -183,10 +183,7 @@ export const WorkerExecResultSchema = z.object({
 });
 
 export const WorkerStartScreenshotCollectionSchema = z.object({
-  openAiApiKey: z.string().min(1).optional(),
   anthropicApiKey: z.string().min(1).optional(),
-  anthropicBaseUrl: z.string().min(1).optional(),
-  anthropicHeaders: z.record(z.string(), z.string()).optional(),
   outputPath: z.string().optional(),
 });
 

@@ -63,17 +63,12 @@ cleanup_and_exit() {
 trap cleanup EXIT
 trap cleanup_and_exit INT TERM
 
-# Load environment variables (including OPENAI_API_KEY) if available
+# Load environment variables (including ANTHROPIC_API_KEY) if available
 if [ -f ".env" ]; then
   set -a
   # shellcheck disable=SC1091
   source .env
   set +a
-fi
-
-if [ -z "${OPENAI_API_KEY:-}" ]; then
-  echo "Error: OPENAI_API_KEY not set. Add it to your environment or .env before running." >&2
-  exit 1
 fi
 
 if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
@@ -106,7 +101,6 @@ docker run -d \
   -p 39381:39381 \
   -p 39382:39382 \
   -p 39383:39383 \
-  -e OPENAI_API_KEY="$OPENAI_API_KEY" \
   -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
   --name "$CONTAINER_NAME" \
   "$IMAGE_NAME"
@@ -240,13 +234,9 @@ curl -s \
 
 # Prepare screenshot collection payload
 SOCKET_PAYLOAD=$(node -e '
-const openAiKey = process.argv[1] ?? "";
-const anthropicKey = process.argv[2] ?? "";
+const anthropicKey = process.argv[1] ?? "";
 const payload = ["worker:start-screenshot-collection"];
 const config = {};
-if (openAiKey.length > 0) {
-  config.openAiApiKey = openAiKey;
-}
 if (anthropicKey.length > 0) {
   config.anthropicApiKey = anthropicKey;
 }
@@ -254,7 +244,7 @@ if (Object.keys(config).length > 0) {
   payload.push(config);
 }
 process.stdout.write(JSON.stringify(payload));
-' "$OPENAI_API_KEY" "$ANTHROPIC_API_KEY")
+' "$ANTHROPIC_API_KEY")
 
 echo "Triggering worker:start-screenshot-collection..."
 curl -s \

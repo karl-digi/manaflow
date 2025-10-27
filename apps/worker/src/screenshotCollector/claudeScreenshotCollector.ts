@@ -6,16 +6,31 @@ import { log } from "../logger";
 import { logToScreenshotCollector } from "./logger";
 import { formatClaudeMessage } from "./claudeMessageFormatter";
 
-export interface CaptureScreenshotsOptions {
+export type ClaudeCodeAuthConfig =
+  | { auth: { taskRunJwt: string } }
+  | { auth: { anthropicApiKey: string } };
+
+type BranchBaseOptions = {
   workspaceDir: string;
   changedFiles: string[];
   prTitle: string;
   prDescription: string;
+  outputDir: string;
+  pathToClaudeCodeExecutable?: string;
+};
+
+type BranchCaptureOptions =
+  | (BranchBaseOptions & { branch: string; auth: { taskRunJwt: string } })
+  | (BranchBaseOptions & { branch: string; auth: { anthropicApiKey: string } });
+
+type CaptureScreenshotsBaseOptions = BranchBaseOptions & {
   baseBranch: string;
   headBranch: string;
-  outputDir: string;
-  anthropicApiKey: string;
-}
+};
+
+export type CaptureScreenshotsOptions =
+  | (CaptureScreenshotsBaseOptions & { auth: { taskRunJwt: string } })
+  | (CaptureScreenshotsBaseOptions & { auth: { anthropicApiKey: string } });
 
 export interface ScreenshotResult {
   status: "completed" | "failed" | "skipped";
@@ -28,15 +43,15 @@ export interface ScreenshotResult {
  * Use Claude Agent SDK with Playwright MCP to capture screenshots
  * Assumes the workspace is already set up with the correct branch checked out
  */
-export async function captureScreenshotsForBranch(options: {
-  workspaceDir: string;
-  changedFiles: string[];
-  prTitle: string;
-  prDescription: string;
-  branch: string;
-  outputDir: string;
-  anthropicApiKey: string;
-}): Promise<string[]> {
+function isTaskRunJwtAuth(
+  auth: ClaudeCodeAuthConfig["auth"]
+): auth is { taskRunJwt: string } {
+  return "taskRunJwt" in auth;
+}
+
+export async function captureScreenshotsForBranch(
+  options: BranchCaptureOptions
+): Promise<string[]> {
   const {
     workspaceDir,
     changedFiles,
@@ -44,8 +59,10 @@ export async function captureScreenshotsForBranch(options: {
     prDescription,
     branch,
     outputDir,
-    anthropicApiKey,
+    auth,
   } = options;
+  const useTaskRunJwt = isTaskRunJwtAuth(auth);
+  const providedApiKey = !useTaskRunJwt ? auth.anthropicApiKey : undefined;
 
   const prompt = `I need you to take screenshots of the UI changes in this pull request.
 
@@ -60,7 +77,7 @@ Working directory: ${workspaceDir}
 Screenshot output directory: ${outputDir}
 
 Please:
-0. Read CLAUDE.md or AGENTS.md and install dependencies if needed
+0. Read CLAUDE.md or AGENTS.md (they may be one level deeper) and install dependencies if needed
 1. Start the development server if needed (check files like README.md, package.json or .devcontainer.json for dev script, explore the repository more if needed)
 2. Wait for the server to be ready
 3. Navigate to the pages/components that were modified in the PR
@@ -80,9 +97,16 @@ Save all screenshots and provide a summary of what you captured.`;
   const screenshotPaths: string[] = [];
 
   try {
-    // Set ANTHROPIC_API_KEY environment variable for the SDK
+    const hadOriginalApiKey = Object.prototype.hasOwnProperty.call(
+      process.env,
+      "ANTHROPIC_API_KEY"
+    );
     const originalApiKey = process.env.ANTHROPIC_API_KEY;
-    process.env.ANTHROPIC_API_KEY = anthropicApiKey;
+    if (useTaskRunJwt) {
+      delete process.env.ANTHROPIC_API_KEY;
+    } else if (providedApiKey) {
+      process.env.ANTHROPIC_API_KEY = providedApiKey;
+    }
 
     try {
       for await (const message of query({
@@ -99,6 +123,16 @@ Save all screenshots and provide a summary of what you captured.`;
           allowDangerouslySkipPermissions: true,
           permissionMode: "bypassPermissions",
           cwd: workspaceDir,
+          pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
+          env: {
+            CLAUDE_CODE_ENABLE_TELEMETRY: "0",
+            ...(useTaskRunJwt
+              ? {
+                  ANTHROPIC_BASE_URL: "https://www.cmux.dev/api/anthropic",
+                  ANTHROPIC_CUSTOM_HEADERS: `x-cmux-token:${auth.taskRunJwt}`,
+                }
+              : {}),
+          },
         },
       })) {
         // Format and log all message types
@@ -108,9 +142,12 @@ Save all screenshots and provide a summary of what you captured.`;
         }
       }
     } finally {
-      // Restore original API key
-      if (originalApiKey) {
-        process.env.ANTHROPIC_API_KEY = originalApiKey;
+      if (hadOriginalApiKey) {
+        if (originalApiKey !== undefined) {
+          process.env.ANTHROPIC_API_KEY = originalApiKey;
+        } else {
+          delete process.env.ANTHROPIC_API_KEY;
+        }
       } else {
         delete process.env.ANTHROPIC_API_KEY;
       }
@@ -149,7 +186,7 @@ Save all screenshots and provide a summary of what you captured.`;
  * Capture screenshots for a PR
  * Assumes the workspace directory is already set up with git repo cloned
  */
-export async function capturePRScreenshots(
+export async function claudeCodeCapturePRScreenshots(
   options: CaptureScreenshotsOptions
 ): Promise<ScreenshotResult> {
   const {
@@ -160,7 +197,7 @@ export async function capturePRScreenshots(
     baseBranch,
     headBranch,
     outputDir,
-    anthropicApiKey,
+    auth,
   } = options;
 
   try {
@@ -189,15 +226,29 @@ export async function capturePRScreenshots(
       await logToScreenshotCollector(
         `Capturing 'before' screenshots for base branch: ${baseBranch}`
       );
-      const beforeScreenshots = await captureScreenshotsForBranch({
-        workspaceDir,
-        changedFiles,
-        prTitle,
-        prDescription,
-        branch: baseBranch,
-        outputDir,
-        anthropicApiKey,
-      });
+      const beforeScreenshots = await captureScreenshotsForBranch(
+        isTaskRunJwtAuth(auth)
+          ? {
+              workspaceDir,
+              changedFiles,
+              prTitle,
+              prDescription,
+              branch: baseBranch,
+              outputDir,
+              auth: { taskRunJwt: auth.taskRunJwt },
+              pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
+            }
+          : {
+              workspaceDir,
+              changedFiles,
+              prTitle,
+              prDescription,
+              branch: baseBranch,
+              outputDir,
+              auth: { anthropicApiKey: auth.anthropicApiKey },
+              pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
+            }
+      );
       allScreenshots.push(...beforeScreenshots);
       await logToScreenshotCollector(
         `Captured ${beforeScreenshots.length} 'before' screenshots`
@@ -208,15 +259,27 @@ export async function capturePRScreenshots(
     await logToScreenshotCollector(
       `Capturing 'after' screenshots for head branch: ${headBranch}`
     );
-    const afterScreenshots = await captureScreenshotsForBranch({
-      workspaceDir,
-      changedFiles,
-      prTitle,
-      prDescription,
-      branch: headBranch,
-      outputDir,
-      anthropicApiKey,
-    });
+    const afterScreenshots = await captureScreenshotsForBranch(
+      isTaskRunJwtAuth(auth)
+        ? {
+            workspaceDir,
+            changedFiles,
+            prTitle,
+            prDescription,
+            branch: headBranch,
+            outputDir,
+            auth: { taskRunJwt: auth.taskRunJwt },
+          }
+        : {
+            workspaceDir,
+            changedFiles,
+            prTitle,
+            prDescription,
+            branch: headBranch,
+            outputDir,
+            auth: { anthropicApiKey: auth.anthropicApiKey },
+          }
+    );
     allScreenshots.push(...afterScreenshots);
     await logToScreenshotCollector(
       `Captured ${afterScreenshots.length} 'after' screenshots`

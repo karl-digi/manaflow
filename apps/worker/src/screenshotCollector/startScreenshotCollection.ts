@@ -1,9 +1,6 @@
-import { startBrowserAgent } from "magnitude-core";
-
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 
-import { ACTION_FORMAT_PROMPT } from "../agentActionPrompt";
 import { log } from "../logger";
 import { runCommandCapture } from "../crown/utils";
 import { filterTextFiles, parseFileList, resolveMergeBase } from "./git";
@@ -13,159 +10,205 @@ import {
   logToScreenshotCollector,
 } from "./logger";
 import { readPrDescription } from "./context";
-import { buildScreenshotPrompt, formatFileList } from "./prompt";
-import { runScreenshotAnalysis } from "./analysis";
+import {
+  claudeCodeCapturePRScreenshots,
+  type ClaudeCodeAuthConfig,
+} from "./claudeScreenshotCollector";
 
-const INTERNAL_CDP_ENDPOINT = "http://127.0.0.1:39382";
 const SCREENSHOT_OUTPUT_DIR = "/root/workspace/.cmux/screenshots";
 
 export interface StartScreenshotCollectionOptions {
-  openAiApiKey?: string | null;
   anthropicApiKey?: string | null;
-  anthropicBaseUrl?: string | null;
-  anthropicHeaders?: Record<string, string>;
+  taskRunJwt?: string | null;
   outputPath?: string;
+  prTitle?: string | null;
+  prDescription?: string | null;
+  headBranch?: string | null;
+  baseBranch?: string | null;
+  changedFiles?: string[] | null;
+}
+
+interface CapturedScreenshot {
+  path: string;
+  fileName: string;
 }
 
 export type ScreenshotCollectionResult =
-  | { status: "completed"; screenshotPath: string }
+  | {
+      status: "completed";
+      screenshots: CapturedScreenshot[];
+      commitSha: string;
+    }
   | { status: "skipped"; reason: string }
   | { status: "failed"; error: string };
 
-interface DevtoolsVersionResponse {
-  webSocketDebuggerUrl: string;
+function sanitizeSegment(segment: string | null | undefined): string {
+  if (!segment) {
+    return "current";
+  }
+  const normalized = segment.trim().replace(/[^A-Za-z0-9._-]/g, "-");
+  return normalized.length > 0 ? normalized : "current";
 }
 
-function installAnthropicProxy(
-  baseUrl: string,
-  headers: Record<string, string>
-): () => void {
-  const normalizedBase = baseUrl.replace(/\/$/, "");
-  const targetUrl = normalizedBase.endsWith("/v1/messages")
-    ? normalizedBase
-    : `${normalizedBase}/v1/messages`;
-
-  const originalFetch = globalThis.fetch.bind(globalThis);
-
-  globalThis.fetch = async (input, init) => {
-    const requestUrl =
-      typeof input === "string"
-        ? input
-        : input instanceof Request
-          ? input.url
-          : String(input);
-
-    if (requestUrl.startsWith("https://api.anthropic.com/v1/messages")) {
-      const mergedHeaders = new Headers(init?.headers ?? {});
-      Object.entries(headers).forEach(([key, value]) => {
-        mergedHeaders.set(key, value);
-      });
-
-      if (input instanceof Request) {
-        return originalFetch(
-          new Request(targetUrl, {
-            method: input.method,
-            headers: mergedHeaders,
-            body: input.body,
-          })
-        );
-      }
-
-      return originalFetch(targetUrl, {
-        ...init,
-        headers: mergedHeaders,
-      });
-    }
-
-    return originalFetch(input, init);
-  };
-
-  return () => {
-    globalThis.fetch = originalFetch;
-  };
-}
-
-async function fetchWebSocketUrl(endpoint: string): Promise<string> {
-  const versionUrl = new URL("/json/version", endpoint);
-  const response = await fetch(versionUrl);
-
-  if (!response.ok) {
-    throw new Error(
-      `Failed to load CDP version info (${response.status} ${response.statusText})`
+async function detectHeadBranch(workspaceDir: string): Promise<string | null> {
+  try {
+    const output = await runCommandCapture(
+      "git",
+      ["rev-parse", "--abbrev-ref", "HEAD"],
+      { cwd: workspaceDir }
     );
+    const branch = output.split("\n")[0]?.trim();
+    return branch && branch.length > 0 ? branch : null;
+  } catch (error) {
+    log("WARN", "Failed to detect current branch for screenshots", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
+async function resolveCommitSha(workspaceDir: string): Promise<string> {
+  const raw = await runCommandCapture("git", ["rev-parse", "HEAD"], {
+    cwd: workspaceDir,
+  });
+  const commit = raw.split("\n")[0]?.trim();
+  if (!commit) {
+    throw new Error("Unable to resolve HEAD commit for screenshots");
+  }
+  return commit;
+}
+
+function resolvePrTitle(params: {
+  explicitTitle?: string | null;
+  prDescription?: string | null;
+  headBranch: string;
+}): string {
+  if (params.explicitTitle && params.explicitTitle.trim().length > 0) {
+    return params.explicitTitle.trim();
   }
 
-  const payload = (await response.json()) as unknown;
-
-  if (
-    typeof payload !== "object" ||
-    payload === null ||
-    typeof (payload as Partial<DevtoolsVersionResponse>)
-      .webSocketDebuggerUrl !== "string"
-  ) {
-    throw new Error("Invalid CDP version response (missing websocket URL)");
+  if (params.prDescription) {
+    const firstLine = params.prDescription
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) => line.length > 0);
+    if (firstLine) {
+      return firstLine.slice(0, 120);
+    }
   }
 
-  return (payload as DevtoolsVersionResponse).webSocketDebuggerUrl;
+  return `UI screenshots for ${params.headBranch}`;
+}
+
+function resolveOutputDirectory(
+  headBranch: string,
+  requestedPath?: string
+): { outputDir: string; copyTarget?: string } {
+  if (requestedPath) {
+    const trimmed = requestedPath.trim();
+    if (trimmed.length > 0) {
+      if (trimmed.endsWith(".png")) {
+        return {
+          outputDir: path.dirname(trimmed),
+          copyTarget: trimmed,
+        };
+      }
+      return { outputDir: trimmed };
+    }
+  }
+
+  return {
+    outputDir: path.join(
+      SCREENSHOT_OUTPUT_DIR,
+      sanitizeSegment(headBranch),
+      Date.now().toString()
+    ),
+  };
 }
 
 export async function startScreenshotCollection(
   options: StartScreenshotCollectionOptions = {}
 ): Promise<ScreenshotCollectionResult> {
-  const restoreFetch =
-    options.anthropicBaseUrl && options.anthropicBaseUrl.trim().length > 0
-      ? installAnthropicProxy(
-          options.anthropicBaseUrl,
-          options.anthropicHeaders ?? {}
-        )
-      : null;
+  await logToScreenshotCollector("start-screenshot-collection triggered");
+  log("INFO", "Screenshot collection trigger recorded", {
+    path: SCREENSHOT_COLLECTOR_LOG_PATH,
+    openVSCodeUrl: SCREENSHOT_COLLECTOR_DIRECTORY_URL,
+  });
 
-  let agent: Awaited<ReturnType<typeof startBrowserAgent>> | null = null;
+  const workspaceDir = "/root/workspace";
 
-  try {
-    await logToScreenshotCollector("start-screenshot-collection triggered");
-    log("INFO", "Screenshot collection trigger recorded", {
-      path: SCREENSHOT_COLLECTOR_LOG_PATH,
-      openVSCodeUrl: SCREENSHOT_COLLECTOR_DIRECTORY_URL,
+  await logToScreenshotCollector(
+    "Determining merge base from origin HEAD branch..."
+  );
+  const { baseBranch: detectedBaseBranch, mergeBase } =
+    await resolveMergeBase(workspaceDir);
+  const baseBranch = options.baseBranch ?? detectedBaseBranch;
+  await logToScreenshotCollector(
+    `Using merge base ${mergeBase} from ${baseBranch}`
+  );
+
+  let changedFiles =
+    options.changedFiles && options.changedFiles.length > 0
+      ? options.changedFiles
+      : parseFileList(
+          await runCommandCapture(
+            "git",
+            ["diff", "--name-only", `${mergeBase}..HEAD`],
+            { cwd: workspaceDir }
+          )
+        );
+
+  let usedWorkingTreeFallback = false;
+
+  if (changedFiles.length === 0) {
+    await logToScreenshotCollector(
+      `No merge-base diff detected; falling back to working tree changes`
+    );
+    log("INFO", "Falling back to working tree diff for screenshots", {
+      baseBranch,
+      mergeBase,
     });
 
-    const workspaceDir = "/root/workspace";
-
-    await logToScreenshotCollector(
-      "Determining merge base from origin HEAD branch..."
-    );
-    const { baseBranch, mergeBase } = await resolveMergeBase(workspaceDir);
-    await logToScreenshotCollector(
-      `Using merge base ${mergeBase} from ${baseBranch}`
-    );
-
-    const changedFilesOutput = await runCommandCapture(
+    const trackedDiffOutput = await runCommandCapture(
       "git",
-      ["diff", "--name-only", `${mergeBase}..HEAD`],
+      ["diff", "--name-only", "HEAD"],
       { cwd: workspaceDir }
     );
-    const changedFiles = parseFileList(changedFilesOutput);
-
-    if (changedFiles.length === 0) {
-      const reason = `No changes detected relative to ${baseBranch}`;
-      await logToScreenshotCollector(reason);
-      log("INFO", "No diff files detected for screenshot collection", {
-        baseBranch,
-        mergeBase,
-      });
-      return { status: "skipped", reason };
-    }
-
-    const textFiles = await filterTextFiles(
-      workspaceDir,
-      mergeBase,
-      changedFiles
+    const untrackedOutput = await runCommandCapture(
+      "git",
+      ["ls-files", "--others", "--exclude-standard"],
+      { cwd: workspaceDir }
     );
 
+    const trackedFiles = parseFileList(trackedDiffOutput);
+    const untrackedFiles = parseFileList(untrackedOutput);
+    const combined = new Set<string>([...trackedFiles, ...untrackedFiles]);
+    changedFiles = Array.from(combined);
+    usedWorkingTreeFallback = true;
+  }
+
+  if (changedFiles.length === 0) {
+    const reason =
+      "No changes detected in branch commits or working tree; skipping screenshots";
+    await logToScreenshotCollector(reason);
+    log("INFO", reason, {
+      baseBranch,
+      mergeBase,
+    });
+    return { status: "skipped", reason };
+  }
+
+  let textFiles: string[];
+  if (usedWorkingTreeFallback) {
+    textFiles = changedFiles;
+    await logToScreenshotCollector(
+      `Working tree fallback in effect; using ${textFiles.length} file(s) from git diff HEAD`
+    );
+  } else {
+    textFiles = await filterTextFiles(workspaceDir, mergeBase, changedFiles);
     await logToScreenshotCollector(
       `Found ${textFiles.length} text file(s) with diffs out of ${changedFiles.length} total`
     );
-
     if (textFiles.length === 0) {
       const reason =
         "All changed files are binary; skipping screenshot collection";
@@ -177,22 +220,30 @@ export async function startScreenshotCollection(
       });
       return { status: "skipped", reason };
     }
+  }
 
-    await logToScreenshotCollector(
-      `Text files queued for screenshots: ${textFiles.join(", ")}`
-    );
-    const formattedFileList = formatFileList(textFiles);
-    await logToScreenshotCollector(
-      `Files included in screenshot prompt:\n${formattedFileList}`
-    );
-    log("INFO", "Changed text files identified for screenshot collection", {
-      baseBranch,
-      mergeBase,
-      changedFiles,
-      textFiles,
+  await logToScreenshotCollector(
+    `Text files queued for screenshots: ${textFiles.join(", ")}`
+  );
+
+  let commitSha: string;
+  try {
+    commitSha = await resolveCommitSha(workspaceDir);
+    await logToScreenshotCollector(`Resolved commit ${commitSha}`);
+  } catch (commitError) {
+    const message =
+      commitError instanceof Error
+        ? commitError.message
+        : String(commitError ?? "unknown commit error");
+    await logToScreenshotCollector(`Failed to resolve commit: ${message}`);
+    log("ERROR", "Failed to resolve commit for screenshots", {
+      error: message,
     });
+    return { status: "failed", error: message };
+  }
 
-    let prDescription: string | null = null;
+  let prDescription = options.prDescription ?? null;
+  if (!prDescription) {
     try {
       prDescription = await readPrDescription(workspaceDir);
       if (prDescription) {
@@ -216,214 +267,180 @@ export async function startScreenshotCollection(
         error: message,
       });
     }
+  }
 
-    const suppliedOpenAiKey = options.openAiApiKey?.trim();
-    const openAiApiKey =
-      suppliedOpenAiKey && suppliedOpenAiKey.length > 0
-        ? suppliedOpenAiKey
-        : process.env.OPENAI_API_KEY;
+  const trimmedTaskRunJwt = options.taskRunJwt?.trim();
+  const trimmedAnthropicKey =
+    options.anthropicApiKey?.trim() ?? process.env.ANTHROPIC_API_KEY;
 
+  let claudeAuth: ClaudeCodeAuthConfig | null = null;
+
+  if (trimmedTaskRunJwt) {
+    claudeAuth = { auth: { taskRunJwt: trimmedTaskRunJwt } };
     await logToScreenshotCollector(
-      `OPENAI_API_KEY source: ${suppliedOpenAiKey ? "payload" : "environment"}`
+      "Using taskRun JWT for Claude Code screenshot collection"
     );
-    await logToScreenshotCollector(
-      `OPENAI_API_KEY (first 8 chars): ${
-        openAiApiKey ? openAiApiKey.slice(0, 8) : "<none>"
-      }`
-    );
-
-    if (!openAiApiKey) {
-      const reason = "OPENAI_API_KEY is not configured for screenshot analysis";
-      await logToScreenshotCollector(
-        "OPENAI_API_KEY missing; skipping Codex screenshot instructions"
-      );
-      log("ERROR", reason, { baseBranch, mergeBase });
-      return { status: "skipped", reason };
-    }
-
-    const suppliedAnthropicKey = options.anthropicApiKey?.trim();
-    const anthropicApiKey =
-      suppliedAnthropicKey && suppliedAnthropicKey.length > 0
-        ? suppliedAnthropicKey
-        : process.env.ANTHROPIC_API_KEY;
-
+  } else if (trimmedAnthropicKey) {
+    claudeAuth = { auth: { anthropicApiKey: trimmedAnthropicKey } };
     await logToScreenshotCollector(
       `ANTHROPIC_API_KEY source: ${
-        suppliedAnthropicKey ? "payload" : "environment"
+        options.anthropicApiKey?.trim() ? "payload" : "environment"
       }`
     );
     await logToScreenshotCollector(
       `ANTHROPIC_API_KEY (first 8 chars): ${
-        anthropicApiKey ? anthropicApiKey.slice(0, 8) : "<none>"
+        trimmedAnthropicKey.slice(0, 8) ?? "<none>"
       }`
     );
+  } else {
+    const reason =
+      "Missing Claude auth (taskRunJwt or ANTHROPIC_API_KEY required for screenshot collection)";
+    await logToScreenshotCollector(reason);
+    log("ERROR", reason, { baseBranch, mergeBase });
+    return { status: "skipped", reason };
+  }
 
-    if (!anthropicApiKey && !options.anthropicBaseUrl) {
-      const reason =
-        "ANTHROPIC_API_KEY is not configured and no custom endpoint provided";
-      await logToScreenshotCollector(
-        "ANTHROPIC_API_KEY missing; cannot start Magnitude computer agent"
-      );
-      log("ERROR", reason, { baseBranch, mergeBase });
-      return { status: "skipped", reason };
-    }
+  const headBranch =
+    options.headBranch ?? (await detectHeadBranch(workspaceDir)) ?? "HEAD";
+  await logToScreenshotCollector(`Using head branch ${headBranch}`);
 
-    const prompt = buildScreenshotPrompt({
-      baseBranch,
-      mergeBase,
-      formattedFileList,
-      prDescription,
-    });
+  const prTitle = resolvePrTitle({
+    explicitTitle: options.prTitle,
+    prDescription,
+    headBranch,
+  });
 
-    await logToScreenshotCollector(`Codex prompt:\n${prompt}`);
+  const { outputDir, copyTarget } = resolveOutputDirectory(
+    headBranch,
+    options.outputPath
+  );
 
-    const analysis = await runScreenshotAnalysis({
-      apiKey: openAiApiKey,
+  await logToScreenshotCollector(`Claude collector output dir: ${outputDir}`);
+
+  try {
+    const claudeResult = await claudeCodeCapturePRScreenshots({
       workspaceDir,
-      prompt,
-      logEvent: logToScreenshotCollector,
-    });
-
-    await logToScreenshotCollector(
-      `Codex response: ${JSON.stringify(analysis)}`
-    );
-    log("INFO", "Codex screenshot analysis completed", {
-      response: analysis,
+      changedFiles: textFiles,
+      prTitle,
+      prDescription: prDescription ?? "",
       baseBranch,
-      mergeBase,
+      headBranch,
+      outputDir,
+      pathToClaudeCodeExecutable: "/root/.bun/bin/claude",
+      ...claudeAuth,
     });
 
-    if (!analysis.hasUiChanges) {
-      const reason = "Codex detected no UI changes";
-      await logToScreenshotCollector(
-        "Codex detected no UI changes; skipping computer agent workflow"
+    if (claudeResult.status === "completed") {
+      const screenshotPaths = claudeResult.screenshotPaths ?? [];
+      if (screenshotPaths.length === 0) {
+        const error = "Claude collector reported success but returned no files";
+        await logToScreenshotCollector(error);
+        log("ERROR", error, { headBranch, outputDir });
+        return { status: "failed", error };
+      }
+
+      const screenshotEntries: CapturedScreenshot[] = screenshotPaths.map(
+        (absolutePath) => ({
+          path: absolutePath,
+          fileName: path.basename(absolutePath),
+        })
       );
-      return { status: "skipped", reason };
+
+      if (screenshotEntries.length === 0) {
+        const error = "Claude collector produced no screenshot entries";
+        await logToScreenshotCollector(error);
+        log("ERROR", error, { headBranch, outputDir, screenshotPaths });
+        return { status: "failed", error };
+      }
+
+      const initialPrimary = screenshotEntries[0];
+      if (!initialPrimary) {
+        const error = "Unable to determine primary screenshot entry";
+        await logToScreenshotCollector(error);
+        log("ERROR", error, { headBranch, outputDir, screenshotPaths });
+        return { status: "failed", error };
+      }
+      let primaryScreenshot: CapturedScreenshot = initialPrimary;
+
+      if (typeof copyTarget === "string" && copyTarget.length > 0) {
+        try {
+          await fs.mkdir(path.dirname(copyTarget), { recursive: true });
+          await fs.copyFile(primaryScreenshot.path, copyTarget);
+          const updatedScreenshot: CapturedScreenshot = {
+            path: copyTarget,
+            fileName: path.basename(copyTarget),
+          };
+          screenshotEntries[0] = updatedScreenshot;
+          primaryScreenshot = updatedScreenshot;
+          await logToScreenshotCollector(
+            `Primary screenshot copied to requested path: ${copyTarget}`
+          );
+        } catch (copyError) {
+          const message =
+            copyError instanceof Error
+              ? copyError.message
+              : String(copyError ?? "unknown copy error");
+          await logToScreenshotCollector(
+            `Failed to copy screenshot to requested path: ${message}`
+          );
+          log("WARN", "Failed to copy screenshot to requested path", {
+            headBranch,
+            outputDir,
+            copyTarget,
+            error: message,
+          });
+        }
+      }
+
+      if (screenshotEntries.length > 1) {
+        await logToScreenshotCollector(
+          `Captured ${screenshotEntries.length} screenshots; using ${primaryScreenshot.path} as primary upload`
+        );
+      } else {
+        await logToScreenshotCollector(
+          `Captured 1 screenshot at ${primaryScreenshot.path}`
+        );
+      }
+
+      log("INFO", "Claude screenshot collector completed", {
+        headBranch,
+        baseBranch,
+        commitSha,
+        screenshotCount: screenshotEntries.length,
+      });
+
+      return {
+        status: "completed",
+        screenshots: screenshotEntries,
+        commitSha,
+      };
     }
 
-    const screenshotInstructions =
-      analysis.uiChangesToScreenshotInstructions.trim();
-
-    if (screenshotInstructions.length === 0) {
-      const reason =
-        "Codex response did not include UI change instructions; skipping";
+    if (claudeResult.status === "skipped") {
+      const reason = claudeResult.reason ?? "Claude collector skipped";
       await logToScreenshotCollector(reason);
       return { status: "skipped", reason };
     }
 
-    await logToScreenshotCollector(
-      `Launching Magnitude computer agent with claude-sonnet-4-5 via CDP at ${INTERNAL_CDP_ENDPOINT}`
-    );
-    await logToScreenshotCollector(
-      `Computer agent instructions:\n${screenshotInstructions}`
-    );
-
-    let cdpWebSocketUrl: string;
-    try {
-      await logToScreenshotCollector("Resolving CDP WebSocket endpoint...");
-      cdpWebSocketUrl = await fetchWebSocketUrl(INTERNAL_CDP_ENDPOINT);
-      await logToScreenshotCollector(
-        `CDP WebSocket endpoint resolved (${cdpWebSocketUrl})`
-      );
-    } catch (cdpError) {
-      const message =
-        cdpError instanceof Error
-          ? cdpError.message
-          : String(cdpError ?? "unknown CDP error");
-      await logToScreenshotCollector(
-        `Failed to resolve CDP WebSocket endpoint: ${message}`
-      );
-      log("ERROR", "Failed to resolve CDP WebSocket endpoint", {
-        error: message,
-      });
-      return { status: "failed", error: message };
-    }
-
-    agent = await startBrowserAgent({
-      llm: {
-        provider: "anthropic",
-        options: {
-          model: "claude-sonnet-4-5",
-          apiKey: anthropicApiKey ?? "cmux-internal",
-        },
-      },
-      browser: {
-        cdp: cdpWebSocketUrl,
-      },
-      prompt: ACTION_FORMAT_PROMPT,
+    const error = claudeResult.error ?? "Claude collector failed";
+    await logToScreenshotCollector(`Claude collector failed: ${error}`);
+    log("ERROR", "Claude screenshot collector failed", {
+      error,
+      headBranch,
+      baseBranch,
     });
-
-    try {
-      await agent.act(screenshotInstructions);
-      const outputPath =
-        options.outputPath && options.outputPath.trim().length > 0
-          ? options.outputPath
-          : path.join(
-              SCREENSHOT_OUTPUT_DIR,
-              `cmux-screenshot-${Date.now()}.png`
-            );
-      await fs.mkdir(path.dirname(outputPath), { recursive: true });
-      await agent.page.screenshot({
-        path: outputPath,
-        type: "png",
-        fullPage: true,
-      });
-      await logToScreenshotCollector(
-        `Magnitude computer agent completed the UI change instructions; screenshot saved to ${outputPath}`
-      );
-      log("INFO", "Magnitude computer agent completed instructions", {
-        baseBranch,
-        mergeBase,
-        outputPath,
-      });
-      return { status: "completed", screenshotPath: outputPath };
-    } catch (agentError) {
-      const message =
-        agentError instanceof Error
-          ? agentError.message
-          : String(agentError ?? "unknown agent error");
-      await logToScreenshotCollector(
-        `Magnitude computer agent failed: ${message}`
-      );
-      log(
-        "ERROR",
-        "Magnitude computer agent failed to run UI change instructions",
-        { error: message, baseBranch, mergeBase }
-      );
-      return { status: "failed", error: message };
-    }
+    return { status: "failed", error };
   } catch (error) {
     const reason =
       error instanceof Error ? error.message : String(error ?? "unknown error");
-    try {
-      await logToScreenshotCollector(
-        `start-screenshot-collection failed: ${reason}`
-      );
-    } catch (logError) {
-      log("ERROR", "Failed to write screenshot collector error log", {
-        error: logError instanceof Error ? logError.message : String(logError),
-      });
-    }
-    log("ERROR", "Failed to record screenshot collection trigger", {
+    await logToScreenshotCollector(
+      `start-screenshot-collection failed: ${reason}`
+    );
+    log("ERROR", "Failed to run Claude screenshot collector", {
       path: SCREENSHOT_COLLECTOR_LOG_PATH,
       openVSCodeUrl: SCREENSHOT_COLLECTOR_DIRECTORY_URL,
       error: reason,
     });
     return { status: "failed", error: reason };
-  } finally {
-    if (agent) {
-      try {
-        await agent.stop();
-      } catch (stopError) {
-        log("ERROR", "Failed to stop Magnitude agent", {
-          error:
-            stopError instanceof Error ? stopError.message : String(stopError),
-        });
-      }
-    }
-
-    if (restoreFetch) {
-      restoreFetch();
-    }
   }
 }

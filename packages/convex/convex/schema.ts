@@ -228,6 +228,7 @@ const convexSchema = defineSchema({
     screenshotCapturedAt: v.optional(v.number()),
     screenshotMimeType: v.optional(v.string()),
     screenshotFileName: v.optional(v.string()),
+    screenshotCommitSha: v.optional(v.string()),
     // VSCode instance information
     vscode: v.optional(
       v.object({
@@ -282,6 +283,20 @@ const convexSchema = defineSchema({
     .index("by_vscode_container_name", ["vscode.containerName"])
     .index("by_user", ["userId", "createdAt"])
     .index("by_team_user", ["teamId", "userId"]),
+  taskScreenshots: defineTable({
+    taskId: v.id("tasks"),
+    runId: v.id("taskRuns"),
+    storageId: v.id("_storage"),
+    mimeType: v.string(),
+    fileName: v.optional(v.string()),
+    commitSha: v.string(),
+    capturedAt: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_taskId", ["taskId", "capturedAt"])
+    .index("by_runId", ["runId", "capturedAt"])
+    .index("by_commitSha", ["commitSha", "capturedAt"]),
   taskVersions: defineTable({
     taskId: v.id("tasks"),
     version: v.number(),

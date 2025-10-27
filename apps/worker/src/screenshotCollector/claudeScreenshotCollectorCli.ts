@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import { execSync } from "node:child_process";
-import { capturePRScreenshots } from "./claudeScreenshotCollector";
+import { claudeCodeCapturePRScreenshots } from "./claudeScreenshotCollector";
 
 /**
  * Parse PR URL to extract owner, repo, and PR number
@@ -262,7 +262,7 @@ async function main() {
       console.log(`📸 Starting screenshot capture...`);
 
       // Capture screenshots
-      const result = await capturePRScreenshots({
+      const result = await claudeCodeCapturePRScreenshots({
         workspaceDir,
         changedFiles,
         prTitle: prInfo.title,
@@ -270,7 +270,7 @@ async function main() {
         baseBranch: prInfo.baseBranch,
         headBranch: prInfo.headBranch,
         outputDir,
-        anthropicApiKey: apiKey,
+        auth: { anthropicApiKey: apiKey },
       });
 
       if (result.status === "completed") {

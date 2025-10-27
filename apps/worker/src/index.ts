@@ -494,11 +494,7 @@ managementIO.on("connection", (socket) => {
       }
       try {
         const result = await startScreenshotCollection({
-          openAiApiKey: config?.openAiApiKey,
           anthropicApiKey: config?.anthropicApiKey,
-          anthropicBaseUrl:
-            config?.anthropicBaseUrl ?? process.env.ANTHROPIC_BASE_URL ?? null,
-          anthropicHeaders: config?.anthropicHeaders,
           outputPath: config?.outputPath,
         });
         log(

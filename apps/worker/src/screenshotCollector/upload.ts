@@ -1,7 +1,34 @@
-import type { ScreenshotUploadPayload, ScreenshotUploadResponse } from "@cmux/shared";
+import type {
+  ScreenshotUploadPayload,
+  ScreenshotUploadResponse,
+  ScreenshotUploadUrlResponse,
+} from "@cmux/shared";
 
 import { convexRequest } from "../crown/convex";
 import { log } from "../logger";
+
+interface CreateUploadUrlOptions {
+  token: string;
+  contentType: string;
+  baseUrlOverride?: string;
+}
+
+export async function createScreenshotUploadUrl(
+  options: CreateUploadUrlOptions,
+): Promise<string> {
+  const response = await convexRequest<ScreenshotUploadUrlResponse>(
+    "/api/screenshots/upload-url",
+    options.token,
+    { contentType: options.contentType },
+    options.baseUrlOverride,
+  );
+
+  if (!response?.ok || !response.uploadUrl) {
+    throw new Error("Failed to create screenshot upload URL");
+  }
+
+  return response.uploadUrl;
+}
 
 interface UploadScreenshotOptions {
   token: string;
@@ -28,7 +55,7 @@ export async function uploadScreenshot(
     log("INFO", "Screenshot metadata uploaded", {
       taskId: options.payload.taskId,
       taskRunId: options.payload.runId,
-      storageId: response.storageId,
+      storageIds: response.storageIds,
       status: options.payload.status,
     });
   }

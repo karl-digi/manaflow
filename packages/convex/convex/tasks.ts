@@ -546,9 +546,16 @@ export const recordScreenshotResult = internalMutation({
       v.literal("failed"),
       v.literal("skipped"),
     ),
-    storageId: v.optional(v.id("_storage")),
-    mimeType: v.optional(v.string()),
-    fileName: v.optional(v.string()),
+    screenshots: v.optional(
+      v.array(
+        v.object({
+          storageId: v.id("_storage"),
+          mimeType: v.string(),
+          fileName: v.optional(v.string()),
+          commitSha: v.string(),
+        }),
+      ),
+    ),
     error: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -571,16 +578,20 @@ export const recordScreenshotResult = internalMutation({
       updatedAt: now,
     };
 
-    if (args.status === "completed" && args.storageId) {
-      patch.screenshotStorageId = args.storageId;
-      patch.screenshotMimeType = args.mimeType;
-      patch.screenshotFileName = args.fileName;
+    const screenshots = args.screenshots ?? [];
+
+    if (args.status === "completed" && screenshots.length > 0) {
+      patch.screenshotStorageId = screenshots[0].storageId;
+      patch.screenshotMimeType = screenshots[0].mimeType;
+      patch.screenshotFileName = screenshots[0].fileName;
+      patch.screenshotCommitSha = screenshots[0].commitSha;
       patch.screenshotCompletedAt = now;
       patch.screenshotError = undefined;
     } else {
       patch.screenshotStorageId = undefined;
       patch.screenshotMimeType = undefined;
       patch.screenshotFileName = undefined;
+      patch.screenshotCommitSha = undefined;
       patch.screenshotCompletedAt = undefined;
       patch.screenshotError = args.error ?? undefined;
     }
@@ -590,6 +601,28 @@ export const recordScreenshotResult = internalMutation({
     }
 
     await ctx.db.patch(args.taskId, patch);
+
+    const existingScreenshots = await ctx.db
+      .query("taskScreenshots")
+      .withIndex("by_runId", (q) => q.eq("runId", args.runId))
+      .collect();
+    await Promise.all(existingScreenshots.map((doc) => ctx.db.delete(doc._id)));
+
+    if (args.status === "completed" && screenshots.length > 0) {
+      for (const screenshot of screenshots) {
+        await ctx.db.insert("taskScreenshots", {
+          taskId: args.taskId,
+          runId: args.runId,
+          storageId: screenshot.storageId,
+          mimeType: screenshot.mimeType,
+          fileName: screenshot.fileName,
+          commitSha: screenshot.commitSha,
+          capturedAt: now,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+    }
   },
 });
 

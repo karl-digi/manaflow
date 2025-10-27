@@ -11,6 +11,10 @@ The flow:
 4. Run in-instance sanity checks (cargo/node/bun/uv/envd/envctl + service curls)
 5. Snapshot the configured instance, start a new instance from that snapshot,
    and rerun sanity checks for validation
+
+Examples:
+uv run --env-file .env ./scripts/snapshot.py
+uv run --env-file .env ./scripts/snapshot.py --vcpus 8 --memory 32768
 """
 
 from __future__ import annotations
@@ -1322,8 +1326,8 @@ async def task_install_openvscode_extensions(ctx: TaskContext) -> None:
           [ -z "${publisher}" ] && continue
           download_extension "${publisher}" "${name}" "${version}" "${download_dir}/${publisher}.${name}.vsix" &
         done <<'EXTENSIONS'
-        anthropic|claude-code|2.0.13
-        openai|chatgpt|0.5.19
+        anthropic|claude-code|2.0.27
+        openai|chatgpt|0.5.27
         ms-vscode|vscode-typescript-next|5.9.20250531
         ms-python|python|2025.6.1
         ms-python|vscode-pylance|2025.8.100
@@ -1366,7 +1370,7 @@ async def task_install_cursor(ctx: TaskContext) -> None:
 async def task_install_global_cli(ctx: TaskContext) -> None:
     cmd = textwrap.dedent(
         """
-        bun add -g @openai/codex@0.42.0 @anthropic-ai/claude-code@2.0.13 \
+        bun add -g @openai/codex@0.50.0 @anthropic-ai/claude-code@2.0.27 \
           @google/gemini-cli@0.1.21 opencode-ai@0.6.4 codebuff \
           @devcontainers/cli @sourcegraph/amp
         """

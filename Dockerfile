@@ -683,7 +683,7 @@ RUN curl -fsSL https://bun.sh/install | bash && \
 ENV PATH="/usr/local/bin:$PATH"
 
 RUN --mount=type=cache,target=/root/.bun/install/cache \
-  bun add -g @openai/codex@0.42.0 @anthropic-ai/claude-code@2.0.13 @google/gemini-cli@0.1.21 opencode-ai@0.6.4 codebuff @devcontainers/cli @sourcegraph/amp
+  bun add -g @openai/codex@0.50.0 @anthropic-ai/claude-code@2.0.27 @google/gemini-cli@0.1.21 opencode-ai@0.6.4 codebuff @devcontainers/cli @sourcegraph/amp
 
 # Install cursor cli
 RUN curl https://cursor.com/install -fsS | bash
@@ -771,8 +771,8 @@ while IFS='|' read -r publisher name version; do
   [ -z "${publisher}" ] && continue
   download_extension "${publisher}" "${name}" "${version}" "${download_dir}/${publisher}.${name}.vsix" &
 done <<'EXTENSIONS'
-anthropic|claude-code|2.0.13
-openai|chatgpt|0.5.19
+anthropic|claude-code|2.0.27
+openai|chatgpt|0.5.27
 ms-vscode|vscode-typescript-next|5.9.20250531
 ms-python|python|2025.6.1
 ms-python|vscode-pylance|2025.8.100

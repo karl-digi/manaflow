@@ -1,5 +1,6 @@
 import {
   ScreenshotUploadPayloadSchema,
+  ScreenshotUploadUrlRequestSchema,
   verifyTaskRunToken,
 } from "../../shared/src/convex-safe";
 import { internal } from "./_generated/api";
@@ -110,28 +111,18 @@ export const uploadScreenshot = httpAction(async (ctx, req) => {
     return jsonResponse({ code: 404, message: "Task not found" }, 404);
   }
 
-  let storageId: Id<"_storage"> | undefined;
-  let mimeType: string | undefined;
-  let fileName: string | undefined;
+  const storedScreens = (payload.images ?? []).map((image) => ({
+    storageId: image.storageId as Id<"_storage">,
+    mimeType: image.mimeType,
+    fileName: image.fileName,
+    commitSha: image.commitSha,
+  }));
 
   if (payload.status === "completed") {
-    if (!payload.image) {
+    if (!payload.images || payload.images.length === 0) {
       return jsonResponse(
-        { code: 400, message: "Screenshot image payload required" },
+        { code: 400, message: "At least one screenshot image is required" },
         400,
-      );
-    }
-    try {
-      const buffer = Buffer.from(payload.image.data, "base64");
-      const blob = new Blob([buffer], { type: payload.image.contentType });
-      storageId = await ctx.storage.store(blob);
-      mimeType = payload.image.contentType;
-      fileName = payload.image.fileName;
-    } catch (error) {
-      console.error("[screenshots] Failed to store screenshot blob", error);
-      return jsonResponse(
-        { code: 500, message: "Failed to persist screenshot" },
-        500,
       );
     }
   }
@@ -140,18 +131,19 @@ export const uploadScreenshot = httpAction(async (ctx, req) => {
     taskId: run.taskId,
     runId: payload.runId,
     status: payload.status,
-    storageId,
-    mimeType,
-    fileName,
+    screenshots: storedScreens,
     error: payload.error,
   });
 
-  if (storageId) {
+  const primaryScreenshot = storedScreens[0];
+
+  if (primaryScreenshot) {
     await ctx.runMutation(internal.taskRuns.updateScreenshotMetadata, {
       id: payload.runId,
-      storageId,
-      mimeType,
-      fileName,
+      storageId: primaryScreenshot.storageId,
+      mimeType: primaryScreenshot.mimeType,
+      fileName: primaryScreenshot.fileName,
+      commitSha: primaryScreenshot.commitSha,
     });
   } else if (payload.status !== "completed") {
     await ctx.runMutation(internal.taskRuns.clearScreenshotMetadata, {
@@ -159,5 +151,30 @@ export const uploadScreenshot = httpAction(async (ctx, req) => {
     });
   }
 
-  return jsonResponse({ ok: true, storageId: storageId ?? undefined });
+  return jsonResponse({
+    ok: true,
+    storageIds: storedScreens.map((shot) => shot.storageId),
+  });
+});
+
+export const createScreenshotUploadUrl = httpAction(async (ctx, req) => {
+  const auth = await getWorkerAuth(req);
+  if (!auth) {
+    throw jsonResponse({ code: 401, message: "Unauthorized" }, 401);
+  }
+
+  const parsed = await ensureJsonRequest(req);
+  if (parsed instanceof Response) return parsed;
+
+  const validation = ScreenshotUploadUrlRequestSchema.safeParse(parsed.json);
+  if (!validation.success) {
+    console.warn(
+      "[screenshots] Invalid upload URL request payload",
+      validation.error,
+    );
+    return jsonResponse({ code: 400, message: "Invalid input" }, 400);
+  }
+
+  const uploadUrl = await ctx.storage.generateUploadUrl();
+  return jsonResponse({ ok: true, uploadUrl });
 });

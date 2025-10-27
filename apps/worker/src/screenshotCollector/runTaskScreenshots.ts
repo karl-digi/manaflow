@@ -5,104 +5,151 @@ import * as path from "node:path";
 
 import { log } from "../logger";
 import { startScreenshotCollection } from "./startScreenshotCollection";
-import { uploadScreenshot } from "./upload";
+import { createScreenshotUploadUrl, uploadScreenshot } from "./upload";
 
 export interface RunTaskScreenshotsOptions {
   taskId: Id<"tasks">;
   taskRunId: Id<"taskRuns">;
   token: string;
   convexUrl?: string;
-  openAiApiKey?: string | null;
   anthropicApiKey?: string | null;
-  anthropicBaseUrl?: string | null;
-  customHeaderSource?: string | null;
-  taskRunJwt?: string;
+  taskRunJwt?: string | null;
 }
 
-function parseCustomHeaders(
-  raw: string | null | undefined,
-  fallbackJwt?: string,
-): Record<string, string> {
-  const headers: Record<string, string> = {};
-  if (raw) {
-    const entries = raw
-      .split(/[;\n,]/)
-      .map((entry) => entry.trim())
-      .filter(Boolean);
-    for (const entry of entries) {
-      const separatorIndex = entry.indexOf(":");
-      if (separatorIndex === -1) continue;
-      const key = entry.slice(0, separatorIndex).trim();
-      const value = entry.slice(separatorIndex + 1).trim();
-      if (key && value) {
-        headers[key.toLowerCase()] = value;
-      }
-    }
+function resolveContentType(filePath: string): string {
+  const extension = path.extname(filePath).toLowerCase();
+  if (extension === ".jpg" || extension === ".jpeg") {
+    return "image/jpeg";
+  }
+  if (extension === ".webp") {
+    return "image/webp";
+  }
+  return "image/png";
+}
+
+async function uploadScreenshotFile(params: {
+  screenshotPath: string;
+  fileName?: string;
+  commitSha: string;
+  token: string;
+  convexUrl?: string;
+}): Promise<NonNullable<ScreenshotUploadPayload["images"]>[number]> {
+  const { screenshotPath, fileName, commitSha, token, convexUrl } = params;
+  const resolvedFileName = fileName ?? path.basename(screenshotPath);
+  const contentType = resolveContentType(screenshotPath);
+
+  const uploadUrl = await createScreenshotUploadUrl({
+    token,
+    baseUrlOverride: convexUrl,
+    contentType,
+  });
+
+  const fileBuffer = await fs.readFile(screenshotPath, { encoding: "binary" });
+  const uploadResponse = await fetch(uploadUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": contentType,
+    },
+    body: new Blob([fileBuffer]),
+  });
+
+  if (!uploadResponse.ok) {
+    const body = await uploadResponse.text();
+    throw new Error(
+      `Upload failed with status ${uploadResponse.status}: ${body}`
+    );
   }
 
-  if (fallbackJwt && !headers["x-cmux-token"]) {
-    headers["x-cmux-token"] = fallbackJwt;
+  const uploadResult = (await uploadResponse.json()) as {
+    storageId?: string;
+  };
+  if (!uploadResult.storageId) {
+    throw new Error("Upload response missing storageId");
   }
 
-  return headers;
+  return {
+    storageId: uploadResult.storageId,
+    mimeType: contentType,
+    fileName: resolvedFileName,
+    commitSha,
+  };
 }
 
 export async function runTaskScreenshots(
-  options: RunTaskScreenshotsOptions,
+  options: RunTaskScreenshotsOptions
 ): Promise<void> {
-  const {
-    taskId,
-    taskRunId,
-    token,
-    convexUrl,
-    openAiApiKey,
-    anthropicApiKey,
-    anthropicBaseUrl,
-    customHeaderSource,
-    taskRunJwt,
-  } = options;
-
-  const headers = parseCustomHeaders(customHeaderSource, taskRunJwt);
+  const { taskId, taskRunId, token, convexUrl, anthropicApiKey } = options;
+  const taskRunJwt = options.taskRunJwt ?? token;
 
   log("INFO", "Starting automated screenshot workflow", {
     taskId,
     taskRunId,
-    anthropicBaseUrl,
-    hasOpenAiKey: Boolean(openAiApiKey),
-    hasAnthropicKey: Boolean(anthropicApiKey),
+    hasAnthropicKey: Boolean(anthropicApiKey ?? process.env.ANTHROPIC_API_KEY),
   });
 
   const result = await startScreenshotCollection({
-    openAiApiKey: openAiApiKey ?? undefined,
     anthropicApiKey: anthropicApiKey ?? undefined,
-    anthropicBaseUrl: anthropicBaseUrl ?? undefined,
-    anthropicHeaders: headers,
+    taskRunJwt,
   });
 
-  let imagePayload: ScreenshotUploadPayload["image"] | undefined;
-  let status: ScreenshotUploadPayload["status"];
+  let images: ScreenshotUploadPayload["images"];
+  let status: ScreenshotUploadPayload["status"] = "failed";
   let error: string | undefined;
 
-  if (result.status === "completed" && result.screenshotPath) {
-    try {
-      const fileBuffer = await fs.readFile(result.screenshotPath);
-      const fileName = path.basename(result.screenshotPath);
-      imagePayload = {
-        contentType: "image/png",
-        data: fileBuffer.toString("base64"),
-        fileName,
-      };
-      status = "completed";
-      log("INFO", "Screenshot captured", {
-        taskRunId,
-        screenshotPath: result.screenshotPath,
-        fileName,
-      });
-    } catch (readError) {
+  if (result.status === "completed") {
+    const capturedScreens = result.screenshots ?? [];
+    if (capturedScreens.length === 0) {
       status = "failed";
-      error =
-        readError instanceof Error ? readError.message : String(readError);
-      log("ERROR", "Failed to read screenshot file", { taskRunId, error });
+      error = "Claude collector returned no screenshots";
+      log("ERROR", error, { taskRunId });
+    } else {
+      const uploadPromises = capturedScreens.map((screenshot) =>
+        uploadScreenshotFile({
+          screenshotPath: screenshot.path,
+          fileName: screenshot.fileName,
+          commitSha: result.commitSha,
+          token,
+          convexUrl,
+        })
+      );
+
+      const settledUploads = await Promise.allSettled(uploadPromises);
+      const successfulScreens: NonNullable<ScreenshotUploadPayload["images"]> =
+        [];
+      const failures: { index: number; reason: string }[] = [];
+
+      settledUploads.forEach((settled, index) => {
+        if (settled.status === "fulfilled") {
+          successfulScreens.push(settled.value);
+        } else {
+          const reason =
+            settled.reason instanceof Error
+              ? settled.reason.message
+              : String(settled.reason);
+          failures.push({ index, reason });
+          log("ERROR", "Failed to upload screenshot", {
+            taskRunId,
+            screenshotPath: capturedScreens[index]?.path,
+            error: reason,
+          });
+        }
+      });
+
+      if (failures.length === 0) {
+        images = successfulScreens;
+        status = "completed";
+        log("INFO", "Screenshots uploaded", {
+          taskRunId,
+          screenshotCount: successfulScreens.length,
+          commitSha: result.commitSha,
+        });
+      } else {
+        status = "failed";
+        error =
+          failures.length === 1
+            ? failures[0]?.reason
+            : `Failed to upload ${failures.length} screenshots`;
+      }
     }
   } else if (result.status === "skipped") {
     status = "skipped";
@@ -134,7 +181,7 @@ export async function runTaskScreenshots(
       taskId,
       runId: taskRunId,
       status,
-      image: imagePayload,
+      images,
       error,
     },
   });
