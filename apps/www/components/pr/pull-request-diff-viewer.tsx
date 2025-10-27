@@ -533,6 +533,9 @@ export function PullRequestDiffViewer({
   const [autoTooltipTarget, setAutoTooltipTarget] =
     useState<ActiveTooltipTarget | null>(null);
   const autoTooltipTimeoutRef = useRef<number | null>(null);
+  const lastUserScrollTimeRef = useRef<number>(0);
+  const isInitialLoadRef = useRef<boolean>(true);
+  const userScrollTimeoutRef = useRef<number | null>(null);
 
   const clearAutoTooltip = useCallback(() => {
     if (
@@ -581,6 +584,45 @@ export function PullRequestDiffViewer({
     },
     []
   );
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    let isUserScrolling = false;
+
+    const handleScroll = () => {
+      if (!isUserScrolling) {
+        isUserScrolling = true;
+        lastUserScrollTimeRef.current = Date.now();
+      }
+
+      if (userScrollTimeoutRef.current !== null) {
+        window.clearTimeout(userScrollTimeoutRef.current);
+      }
+
+      userScrollTimeoutRef.current = window.setTimeout(() => {
+        isUserScrolling = false;
+        userScrollTimeoutRef.current = null;
+      }, 150);
+    };
+
+    window.addEventListener("scroll", handleScroll, { passive: true });
+
+    return () => {
+      window.removeEventListener("scroll", handleScroll);
+      if (userScrollTimeoutRef.current !== null) {
+        window.clearTimeout(userScrollTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (fileOutputs !== undefined && isInitialLoadRef.current) {
+      isInitialLoadRef.current = false;
+    }
+  }, [fileOutputs]);
 
   useEffect(() => {
     if (targetCount === 0) {
@@ -748,6 +790,11 @@ export function PullRequestDiffViewer({
 
       const isKeyboard = options?.source === "keyboard";
 
+      // When user explicitly navigates, reset the scroll block
+      if (isKeyboard) {
+        lastUserScrollTimeRef.current = 0;
+      }
+
       setFocusedErrorIndex((previous) => {
         const nextIndex =
           previous === null
@@ -778,6 +825,11 @@ export function PullRequestDiffViewer({
       }
 
       const isKeyboard = options?.source === "keyboard";
+
+      // When user explicitly navigates, reset the scroll block
+      if (isKeyboard) {
+        lastUserScrollTimeRef.current = 0;
+      }
 
       setFocusedErrorIndex((previous) => {
         const nextIndex = previous === null ? 0 : (previous + 1) % targetCount;
@@ -883,6 +935,18 @@ export function PullRequestDiffViewer({
     handleNavigate(focusedError.filePath);
 
     if (focusedError.changeKey) {
+      return;
+    }
+
+    // Don't auto-scroll if we're still in initial load phase
+    if (isInitialLoadRef.current) {
+      return;
+    }
+
+    // Don't auto-scroll if user has scrolled within the last 2 seconds
+    const timeSinceUserScroll = Date.now() - lastUserScrollTimeRef.current;
+    const USER_SCROLL_BLOCK_DURATION = 2000; // 2 seconds
+    if (timeSinceUserScroll < USER_SCROLL_BLOCK_DURATION) {
       return;
     }
 
