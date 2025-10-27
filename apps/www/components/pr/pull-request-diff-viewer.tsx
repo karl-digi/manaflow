@@ -533,6 +533,9 @@ export function PullRequestDiffViewer({
   const [autoTooltipTarget, setAutoTooltipTarget] =
     useState<ActiveTooltipTarget | null>(null);
   const autoTooltipTimeoutRef = useRef<number | null>(null);
+  const focusScrollSequenceRef = useRef(0);
+  const [focusScrollSequence, setFocusScrollSequence] = useState(0);
+  const lastFileScrollSequenceRef = useRef<number | null>(null);
 
   const clearAutoTooltip = useCallback(() => {
     if (
@@ -590,9 +593,13 @@ export function PullRequestDiffViewer({
 
     setFocusedErrorIndex((previous) => {
       if (previous === null) {
+        focusScrollSequenceRef.current += 1;
+        setFocusScrollSequence(focusScrollSequenceRef.current);
         return 0;
       }
       if (previous >= targetCount) {
+        focusScrollSequenceRef.current += 1;
+        setFocusScrollSequence(focusScrollSequenceRef.current);
         return 0;
       }
       return previous;
@@ -737,7 +744,10 @@ export function PullRequestDiffViewer({
       return;
     }
 
-    window.location.hash = encodeURIComponent(path);
+    const encodedPath = encodeURIComponent(path);
+    if (window.location.hash !== `#${encodedPath}`) {
+      window.location.hash = encodedPath;
+    }
   }, []);
 
   const handleFocusPrevious = useCallback(
@@ -748,6 +758,8 @@ export function PullRequestDiffViewer({
 
       const isKeyboard = options?.source === "keyboard";
 
+      focusScrollSequenceRef.current += 1;
+      setFocusScrollSequence(focusScrollSequenceRef.current);
       setFocusedErrorIndex((previous) => {
         const nextIndex =
           previous === null
@@ -779,6 +791,8 @@ export function PullRequestDiffViewer({
 
       const isKeyboard = options?.source === "keyboard";
 
+      focusScrollSequenceRef.current += 1;
+      setFocusScrollSequence(focusScrollSequenceRef.current);
       setFocusedErrorIndex((previous) => {
         const nextIndex = previous === null ? 0 : (previous + 1) % targetCount;
         const target = errorTargets[nextIndex] ?? null;
@@ -877,14 +891,17 @@ export function PullRequestDiffViewer({
       return;
     }
     if (!focusedError) {
+      lastFileScrollSequenceRef.current = null;
       return;
     }
 
     handleNavigate(focusedError.filePath);
 
-    if (focusedError.changeKey) {
+    if (focusScrollSequence === lastFileScrollSequenceRef.current) {
       return;
     }
+
+    lastFileScrollSequenceRef.current = focusScrollSequence;
 
     const frame = window.requestAnimationFrame(() => {
       const article = document.getElementById(focusedError.anchorId);
@@ -896,7 +913,7 @@ export function PullRequestDiffViewer({
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [focusedError, handleNavigate]);
+  }, [focusedError, handleNavigate, focusScrollSequence]);
 
   if (totalFileCount === 0) {
     return (
@@ -964,6 +981,7 @@ export function PullRequestDiffViewer({
                 focusedLineNumber={focusedLineNumber}
                 focusedChangeKey={focusedChangeKey}
                 autoTooltipLineNumber={autoTooltipLineNumber}
+                focusScrollSequence={focusScrollSequence}
               />
             );
           })}
@@ -1231,6 +1249,7 @@ function FileDiffCard({
   focusedLineNumber,
   focusedChangeKey,
   autoTooltipLineNumber,
+  focusScrollSequence,
 }: {
   entry: ParsedFileDiff;
   isActive: boolean;
@@ -1239,9 +1258,11 @@ function FileDiffCard({
   focusedLineNumber: number | null;
   focusedChangeKey: string | null;
   autoTooltipLineNumber: number | null;
+  focusScrollSequence: number;
 }) {
   const { file, diff, anchorId, error } = entry;
   const cardRef = useRef<HTMLElement | null>(null);
+  const lastScrollSequenceRef = useRef<number | null>(null);
   const [isCollapsed, setIsCollapsed] = useState(false);
   const language = useMemo(() => inferLanguage(file.filename), [file.filename]);
   const statusMeta = useMemo(
@@ -1269,6 +1290,10 @@ function FileDiffCard({
     if (!focusedChangeKey) {
       return;
     }
+    if (focusScrollSequence === lastScrollSequenceRef.current) {
+      return;
+    }
+    lastScrollSequenceRef.current = focusScrollSequence;
     const currentCard = cardRef.current;
     if (!currentCard) {
       return;
@@ -1284,10 +1309,13 @@ function FileDiffCard({
     const targetRow = targetCell.closest("tr");
     const scrollTarget =
       targetRow instanceof HTMLElement ? targetRow : targetCell;
-    window.requestAnimationFrame(() => {
+    const frame = window.requestAnimationFrame(() => {
       scrollElementToViewportCenter(scrollTarget);
     });
-  }, [focusedChangeKey]);
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [focusedChangeKey, focusScrollSequence]);
 
   const lineTooltips = useMemo(() => {
     if (!diffHeatmap) {
