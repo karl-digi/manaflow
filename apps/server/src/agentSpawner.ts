@@ -18,6 +18,7 @@ import {
 } from "./utils/branchNameGenerator";
 import { getConvex } from "./utils/convexClient";
 import { retryOnOptimisticConcurrency } from "./utils/convexRetry";
+import { EnvResolver } from "./utils/envResolver";
 import { serverLogger } from "./utils/fileLogger";
 import {
   getAuthHeaderJson,
@@ -216,12 +217,8 @@ export async function spawnAgent(
       );
     }
 
-    let envVars: Record<string, string> = {
-      CMUX_PROMPT: processedTaskDescription,
-      CMUX_TASK_RUN_ID: taskRunId,
-      CMUX_TASK_RUN_JWT: taskRunJwt,
-      PROMPT: processedTaskDescription,
-    };
+    // Load global environment variables from environment configuration
+    let globalEnvVars: Record<string, string> = {};
 
     if (options.environmentId) {
       try {
@@ -234,18 +231,9 @@ export async function spawnAgent(
         if (envContent && envContent.trim().length > 0) {
           const parsed = parseDotenv(envContent);
           if (Object.keys(parsed).length > 0) {
-            const preserved = {
-              CMUX_PROMPT: envVars.CMUX_PROMPT,
-              CMUX_TASK_RUN_ID: envVars.CMUX_TASK_RUN_ID,
-              PROMPT: envVars.PROMPT,
-            };
-            envVars = {
-              ...envVars,
-              ...parsed,
-              ...preserved,
-            };
+            globalEnvVars = parsed;
             serverLogger.info(
-              `[AgentSpawner] Injected ${Object.keys(parsed).length} env vars from environment ${String(
+              `[AgentSpawner] Loaded ${Object.keys(parsed).length} global env vars from environment ${String(
                 options.environmentId
               )}`
             );
@@ -260,6 +248,25 @@ export async function spawnAgent(
         );
       }
     }
+
+    // Create EnvResolver to handle nested .env files in the workspace
+    // Note: In cloud mode, workspace resolution happens after container is ready
+    // For now, we'll use global vars and add workspace resolution later
+    const envResolver = new EnvResolver("/root/workspace", globalEnvVars);
+
+    // Start with CMUX-specific variables (these always take highest priority)
+    let envVars: Record<string, string> = {
+      CMUX_PROMPT: processedTaskDescription,
+      CMUX_TASK_RUN_ID: taskRunId,
+      CMUX_TASK_RUN_JWT: taskRunJwt,
+      PROMPT: processedTaskDescription,
+    };
+
+    // Merge with global vars from environment configuration
+    envVars = {
+      ...globalEnvVars,
+      ...envVars, // CMUX vars override
+    };
 
     let authFiles: EnvironmentResult["files"] = [];
     let startupCommands: string[] = [];

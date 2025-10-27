@@ -37,6 +37,7 @@ import { promisify } from "node:util";
 import { Server, type Namespace, type Socket } from "socket.io";
 import { checkDockerReadiness } from "./checkDockerReadiness";
 import { detectTerminalIdle } from "./detectTerminalIdle";
+import { initializeEnvResolver, resolveEnvForPath } from "./envResolver";
 import { runWorkerExec } from "./execRunner";
 import { FileWatcher, computeGitDiff, getFileWithDiff } from "./fileWatcher";
 import { log } from "./logger";
@@ -967,6 +968,14 @@ async function createTerminal(
     });
   }
 
+  // Initialize EnvResolver with the global env vars passed from the server
+  // This allows hierarchical resolution of .env files in the workspace
+  initializeEnvResolver(cwd, env);
+
+  // Resolve environment variables for the current working directory
+  // This will merge .env files from parent directories up to the workspace root
+  const resolvedEnv = resolveEnvForPath(cwd, env);
+
   const inheritedEnvEntries = Object.entries(process.env).filter(
     (entry): entry is [string, string] => typeof entry[1] === "string"
   );
@@ -979,7 +988,7 @@ async function createTerminal(
 
   const ptyEnv: Record<string, string> = {
     ...inheritedEnv,
-    ...env, // Override with provided env vars
+    ...resolvedEnv, // Use resolved env vars from nested .env files
     WORKER_ID,
     TERM: "xterm-256color",
     PS1: "\\u@\\h:\\w\\$ ", // Basic prompt
@@ -1002,6 +1011,8 @@ async function createTerminal(
     // Ensure tmux sessions do not inherit NODE_ENV unless explicitly provided
     delete ptyEnv.NODE_ENV;
   }
+
+  log("INFO", `[createTerminal] Resolved ${Object.keys(resolvedEnv).length} env vars for ${cwd}`);
 
   // Run optional startup commands prior to spawning the agent process
   if (startupCommands && startupCommands.length > 0) {
