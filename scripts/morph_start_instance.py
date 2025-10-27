@@ -38,7 +38,7 @@ signal.signal(signal.SIGINT, cleanup_instance)
 
 try:
     instance = client.instances.start(
-        snapshot_id="snapshot_hwmk73mg",
+        snapshot_id="snapshot_n2scyezr",
         ttl_seconds=3600,
         ttl_action="pause",
     )
