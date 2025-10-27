@@ -4,21 +4,17 @@ import { WorkspaceLoadingIndicator } from "@/components/workspace-loading-indica
 import { ScriptTextareaField } from "@/components/ScriptTextareaField";
 import { SCRIPT_COPY } from "@/components/scriptCopy";
 import { ResizableColumns } from "@/components/ResizableColumns";
-import { parseEnvBlock } from "@/lib/parseEnvBlock";
 import {
   TASK_RUN_IFRAME_ALLOW,
   TASK_RUN_IFRAME_SANDBOX,
 } from "@/lib/preloadTaskRunIframes";
-import { formatEnvVarsContent } from "@cmux/shared/utils/format-env-vars-content";
 import type { MorphSnapshotId } from "@cmux/shared";
 import { validateExposedPorts } from "@cmux/shared/utils/validate-exposed-ports";
 import type {
   EnvVarEntry,
   NestedEnvVars,
-  PathEnvVars,
 } from "@cmux/shared/environment-vars";
 import {
-  legacyContentToNestedEnvVars,
   nestedEnvVarsToLegacyContent,
 } from "@cmux/shared/environment-vars";
 import {
@@ -44,22 +40,6 @@ import {
 import TextareaAutosize from "react-textarea-autosize";
 
 export type EnvVar = { name: string; value: string; isSecret: boolean };
-
-const ensureInitialEnvVars = (initial?: EnvVar[]): EnvVar[] => {
-  const base = (initial ?? []).map((item) => ({
-    name: item.name,
-    value: item.value,
-    isSecret: item.isSecret ?? true,
-  }));
-  if (base.length === 0) {
-    return [{ name: "", value: "", isSecret: true }];
-  }
-  const last = base[base.length - 1];
-  if (!last || last.name.trim().length > 0 || last.value.trim().length > 0) {
-    base.push({ name: "", value: "", isSecret: true });
-  }
-  return base;
-};
 
 // Convert legacy EnvVar[] to NestedEnvVars for compatibility
 const convertLegacyToNested = (legacy?: EnvVar[]): NestedEnvVars => {
@@ -133,10 +113,7 @@ export function EnvironmentConfiguration({
     snapshotId?: MorphSnapshotId;
   };
   const [envName, setEnvName] = useState(() => initialEnvName);
-  const [envVars, setEnvVars] = useState<EnvVar[]>(() =>
-    ensureInitialEnvVars(initialEnvVars)
-  );
-  // New nested env vars state
+  // Nested env vars state
   const [nestedEnvVars, setNestedEnvVars] = useState<NestedEnvVars>(() =>
     convertLegacyToNested(initialEnvVars)
   );
@@ -147,10 +124,6 @@ export function EnvironmentConfiguration({
   const [devScript, setDevScript] = useState(() => initialDevScript);
   const [exposedPorts, setExposedPorts] = useState(() => initialExposedPorts);
   const [portsError, setPortsError] = useState<string | null>(null);
-  const keyInputRefs = useRef<Array<HTMLInputElement | null>>([]);
-  const [pendingFocusIndex, setPendingFocusIndex] = useState<number | null>(
-    null
-  );
   const lastSubmittedEnvContent = useRef<string | null>(null);
   const [activePreview, setActivePreview] = useState<"vscode" | "browser">(
     "vscode"
@@ -195,23 +168,6 @@ export function EnvironmentConfiguration({
     postApiSandboxesByIdEnvMutation()
   );
   const applySandboxEnv = applySandboxEnvMutation.mutate;
-
-  useEffect(() => {
-    if (pendingFocusIndex !== null) {
-      const el = keyInputRefs.current[pendingFocusIndex];
-      if (el) {
-        setTimeout(() => {
-          el.focus();
-          try {
-            el.scrollIntoView({ block: "nearest" });
-          } catch (_e) {
-            void 0;
-          }
-        }, 0);
-        setPendingFocusIndex(null);
-      }
-    }
-  }, [pendingFocusIndex, envVars]);
 
   const handlePreviewSelect = useCallback(
     (view: "vscode" | "browser") => {
@@ -260,11 +216,8 @@ export function EnvironmentConfiguration({
       return;
     }
 
-    const envVarsContent = formatEnvVarsContent(
-      envVars
-        .filter((r) => r.name.trim().length > 0)
-        .map((r) => ({ name: r.name, value: r.value }))
-    );
+    // Convert nested env vars to legacy format for sandbox env application
+    const envVarsContent = nestedEnvVarsToLegacyContent(nestedEnvVars);
 
     if (
       envVarsContent.length === 0 &&
@@ -297,7 +250,7 @@ export function EnvironmentConfiguration({
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [applySandboxEnv, envVars, instanceId, teamSlugOrId]);
+  }, [applySandboxEnv, nestedEnvVars, instanceId, teamSlugOrId]);
 
   const onSnapshot = async (): Promise<void> => {
     if (!instanceId) {
@@ -308,12 +261,6 @@ export function EnvironmentConfiguration({
       console.error("Environment name is required");
       return;
     }
-
-    const envVarsContent = formatEnvVarsContent(
-      envVars
-        .filter((r) => r.name.trim().length > 0)
-        .map((r) => ({ name: r.name, value: r.value }))
-    );
 
     const normalizedMaintenanceScript = maintenanceScript.trim();
     const normalizedDevScript = devScript.trim();
@@ -745,23 +692,21 @@ export function EnvironmentConfiguration({
             aria-label="Environment variables"
             title="Environment variables"
           >
-            <div className="pb-2 space-y-5">
+            <div className="pb-2 space-y-4">
               {/* Global Variables Section */}
-              <div className="bg-neutral-50 dark:bg-neutral-900/50 rounded-lg border border-neutral-200 dark:border-neutral-800 p-4">
-                <div className="mb-3 flex items-center justify-between">
-                  <div>
-                    <h4 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                      Global Variables
-                    </h4>
-                    <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-                      Applied to all paths in the workspace
-                    </p>
-                  </div>
+              <div>
+                <div className="mb-3">
+                  <h4 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                    Global Variables
+                  </h4>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+                    Applied to all paths in the workspace
+                  </p>
                 </div>
 
-                <div className="space-y-3">
+                <div className="bg-neutral-50 dark:bg-neutral-900/50 rounded-lg border border-neutral-200 dark:border-neutral-800 p-3">
                   <div
-                    className="grid gap-3 text-xs text-neutral-500 dark:text-neutral-500 items-center pb-1"
+                    className="grid gap-3 text-xs text-neutral-500 dark:text-neutral-400 items-center pb-2"
                     style={{
                       gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.4fr) 44px",
                     }}
@@ -840,43 +785,43 @@ export function EnvironmentConfiguration({
               {/* Path-Specific Variables Sections */}
               {nestedEnvVars.paths.length > 0 && (
                 <div>
-                  <h4 className="text-sm font-medium text-neutral-900 dark:text-neutral-100 mb-3">
-                    Path-Specific Variables
-                  </h4>
+                  <div className="mb-3">
+                    <h4 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                      Path-Specific Variables
+                    </h4>
+                    <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+                      Override global variables for specific paths
+                    </p>
+                  </div>
                   <div className="space-y-3">
                     {nestedEnvVars.paths.map((pathConfig, pathIdx) => (
-                      <div
-                        key={pathIdx}
-                        className="bg-neutral-50 dark:bg-neutral-900/50 rounded-md border border-neutral-200 dark:border-neutral-800 p-3"
-                      >
-                        <div className="mb-2 flex items-center justify-between">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2">
-                              <h5 className="text-xs font-semibold text-neutral-800 dark:text-neutral-200 font-mono">
-                                {pathConfig.path}
-                              </h5>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setNestedEnvVars((prev) => ({
-                                    ...prev,
-                                    paths: prev.paths.filter((_, i) => i !== pathIdx),
-                                  }));
-                                }}
-                                className="text-xs text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300"
-                              >
-                                <X className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                            {pathConfig.description && (
-                              <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-                                {pathConfig.description}
-                              </p>
-                            )}
-                          </div>
+                      <div key={pathIdx}>
+                        <div className="mb-2 flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setNestedEnvVars((prev) => ({
+                                ...prev,
+                                paths: prev.paths.filter((_, i) => i !== pathIdx),
+                              }));
+                            }}
+                            className="text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200"
+                            aria-label="Remove path"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                          <h5 className="text-xs font-medium text-neutral-700 dark:text-neutral-300 font-mono">
+                            {pathConfig.path}
+                          </h5>
+                          {pathConfig.description && (
+                            <span className="text-xs text-neutral-500 dark:text-neutral-400">
+                              {pathConfig.description}
+                            </span>
+                          )}
                         </div>
 
-                  <div className="space-y-2">
+                        <div className="bg-neutral-50 dark:bg-neutral-900/50 rounded-lg border border-neutral-200 dark:border-neutral-800 p-3">
+                          <div className="space-y-2">
                     {ensureEmptyRow(pathConfig.variables).map((row, idx) => (
                       <div
                         key={idx}
@@ -957,7 +902,8 @@ export function EnvironmentConfiguration({
                         </div>
                       </div>
                     ))}
-                  </div>
+                          </div>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -965,16 +911,17 @@ export function EnvironmentConfiguration({
               )}
 
               {/* Add New Path Section */}
-              <div className="bg-neutral-50 dark:bg-neutral-900/50 rounded-lg border border-neutral-200 dark:border-neutral-800 p-4">
+              <div>
                 <div className="mb-3">
                   <h4 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                    Add New Path
+                    Path Variables
                   </h4>
-                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-                    Path-specific variables override global ones
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+                    Create path-specific variable configurations
                   </p>
                 </div>
-                <div className="space-y-3">
+                <div className="bg-neutral-50 dark:bg-neutral-900/50 rounded-lg border border-neutral-200 dark:border-neutral-800 p-3">
+                  <div className="space-y-3">
                   <div className="flex items-end gap-2">
                     <div className="flex-1">
                       <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1.5">
@@ -1029,6 +976,7 @@ export function EnvironmentConfiguration({
                   <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-2">
                     Examples: <code className="text-[11px] bg-neutral-100 dark:bg-neutral-800 px-1 py-0.5 rounded">apps/frontend</code>, <code className="text-[11px] bg-neutral-100 dark:bg-neutral-800 px-1 py-0.5 rounded">packages/shared</code>
                   </p>
+                </div>
                 </div>
               </div>
 

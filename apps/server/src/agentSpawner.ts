@@ -9,7 +9,6 @@ import type {
   WorkerCreateTerminal,
   WorkerTerminalFailed,
 } from "@cmux/shared/worker-schemas";
-import { parse as parseDotenv } from "dotenv";
 import { resolveNestedEnvVars } from "@cmux/shared/environment-vars";
 import { sanitizeTmuxSessionName } from "./sanitizeTmuxSessionName";
 import {
@@ -19,7 +18,6 @@ import {
 } from "./utils/branchNameGenerator";
 import { getConvex } from "./utils/convexClient";
 import { retryOnOptimisticConcurrency } from "./utils/convexRetry";
-import { EnvResolver } from "./utils/envResolver";
 import { serverLogger } from "./utils/fileLogger";
 import {
   getAuthHeaderJson,
