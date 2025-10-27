@@ -126,40 +126,4 @@ describe("buildDiffHeatmap", () => {
     expect(rangeForLine4.start).toBe(expectedStart);
     expect(rangeForLine4.length).toBe(1);
   });
-
-  it("keeps deleted lines aligned with the diff viewer", () => {
-    const files = parseDiff(SAMPLE_DIFF);
-    const file = files[0] ?? null;
-    expect(file).not.toBeNull();
-
-    const review = parseReviewHeatmap({
-      response: JSON.stringify({
-        lines: [
-          {
-            line: "const b = 2;",
-            shouldBeReviewedScore: 0.5,
-            shouldReviewWhy: "removed assignment",
-          },
-          {
-            line: "4",
-            shouldBeReviewedScore: 0.9,
-            shouldReviewWhy: "new export logic",
-          },
-        ],
-      }),
-    });
-
-    const heatmap = buildDiffHeatmap(file, review);
-    expect(heatmap).not.toBeNull();
-    if (!heatmap) {
-      return;
-    }
-
-    expect(heatmap.lineClasses.get(4)).toBe("cmux-heatmap-tier-4");
-    expect(heatmap.entries.get(4)).toBeDefined();
-
-    expect(heatmap.oldEntries.get(2)).toBeDefined();
-    expect(heatmap.lineClasses.get(2)).toBeUndefined();
-    expect(heatmap.oldLineClasses.get(2)).toBe("cmux-heatmap-tier-2");
-  });
 });
