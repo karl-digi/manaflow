@@ -187,42 +187,57 @@ export function RepositoryPicker({
     return () => window.removeEventListener("message", onMessage);
   }, [handleConnectionsInvalidated]);
 
+  const resolveInstanceId = useCallback(
+    (routeInstanceId?: string, provisionedInstanceId?: string) => {
+      if (routeInstanceId) return routeInstanceId;
+      if (instanceId) return instanceId;
+      return provisionedInstanceId;
+    },
+    [instanceId]
+  );
+
   const goToConfigure = useCallback(
     async (
       repos: string[],
-      maybeInstanceId?: string
+      provisionedInstanceId?: string
     ): Promise<string | undefined> => {
-      await navigate({
-        to: "/$teamSlugOrId/environments/new",
-        params: { teamSlugOrId },
-        search: (prev) => ({
-          step: "configure",
-          selectedRepos: repos,
-          instanceId: prev.instanceId ?? instanceId ?? maybeInstanceId,
-          connectionLogin: prev.connectionLogin,
-          repoSearch: prev.repoSearch,
-          snapshotId: selectedSnapshotId,
-        }),
-      });
-      if (!instanceId && maybeInstanceId) {
+      let resolvedInstanceId: string | undefined;
+      const navigateToConfigure = async (options?: { replace?: boolean }) => {
         await navigate({
           to: "/$teamSlugOrId/environments/new",
           params: { teamSlugOrId },
-          search: (prev) => ({
-            step: "configure",
-            selectedRepos: repos,
-            instanceId: maybeInstanceId,
-            connectionLogin: prev.connectionLogin,
-            repoSearch: prev.repoSearch,
-            snapshotId: selectedSnapshotId,
-          }),
-          replace: true,
+          search: (prev) => {
+            resolvedInstanceId = resolveInstanceId(
+              prev.instanceId,
+              provisionedInstanceId
+            );
+            return {
+              step: "configure",
+              selectedRepos: repos,
+              instanceId: resolvedInstanceId,
+              connectionLogin: prev.connectionLogin,
+              repoSearch: prev.repoSearch,
+              snapshotId: selectedSnapshotId,
+            };
+          },
+          ...options,
         });
-        return maybeInstanceId;
+      };
+
+      await navigateToConfigure();
+      if (!instanceId && provisionedInstanceId) {
+        await navigateToConfigure({ replace: true });
       }
-      return instanceId ?? maybeInstanceId ?? undefined;
+
+      return resolvedInstanceId;
     },
-    [instanceId, navigate, selectedSnapshotId, teamSlugOrId]
+    [
+      instanceId,
+      navigate,
+      resolveInstanceId,
+      selectedSnapshotId,
+      teamSlugOrId,
+    ]
   );
 
   const handleContinue = useCallback(
@@ -240,10 +255,11 @@ export function RepositoryPicker({
         },
         {
           onSuccess: async (data) => {
-            const finalInstanceId = await goToConfigure(repos, data.instanceId);
+            const configuredInstanceId =
+              (await goToConfigure(repos, data.instanceId)) ?? data.instanceId;
             onStartConfigure?.({
               selectedRepos: repos,
-              instanceId: finalInstanceId ?? data.instanceId,
+              instanceId: configuredInstanceId,
               snapshotId: selectedSnapshotId,
             });
             console.log("Cloned repos:", data.clonedRepos);
