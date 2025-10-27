@@ -80,14 +80,14 @@ type ParsedFileDiff = {
 
 type RefractorNode =
   | {
-      type: "text";
-      value: string;
-    }
+    type: "text";
+    value: string;
+  }
   | {
-      type: string;
-      children?: RefractorNode[];
-      [key: string]: unknown;
-    };
+    type: string;
+    children?: RefractorNode[];
+    [key: string]: unknown;
+  };
 
 const extensionToLanguage: Record<string, string> = {
   bash: "bash",
@@ -370,12 +370,12 @@ export function PullRequestDiffViewer({
       normalizedJobType !== "pull_request" || prNumber === null || prNumber === undefined
         ? ("skip" as const)
         : {
-            teamSlugOrId,
-            repoFullName,
-            prNumber,
-            ...(commitRef ? { commitRef } : {}),
-            ...(baseCommitRef ? { baseCommitRef } : {}),
-          },
+          teamSlugOrId,
+          repoFullName,
+          prNumber,
+          ...(commitRef ? { commitRef } : {}),
+          ...(baseCommitRef ? { baseCommitRef } : {}),
+        },
     [
       normalizedJobType,
       teamSlugOrId,
@@ -391,12 +391,12 @@ export function PullRequestDiffViewer({
       normalizedJobType !== "comparison" || !comparisonSlug
         ? ("skip" as const)
         : {
-            teamSlugOrId,
-            repoFullName,
-            comparisonSlug,
-            ...(commitRef ? { commitRef } : {}),
-            ...(baseCommitRef ? { baseCommitRef } : {}),
-          },
+          teamSlugOrId,
+          repoFullName,
+          comparisonSlug,
+          ...(commitRef ? { commitRef } : {}),
+          ...(baseCommitRef ? { baseCommitRef } : {}),
+        },
     [
       normalizedJobType,
       teamSlugOrId,
@@ -467,7 +467,7 @@ export function PullRequestDiffViewer({
       }
 
       try {
-        const [diff] = parseDiff(buildDiffText(file));
+        const [diff] = parseDiff(buildDiffText(file), { nearbySequences: "zip" });
         return {
           file,
           anchorId: file.filename,
@@ -663,7 +663,7 @@ export function PullRequestDiffViewer({
   const firstPath = parsedDiffs[0]?.file.filename ?? "";
   const initialPath =
     hydratedInitialPath &&
-    sortedFiles.some((file) => file.filename === hydratedInitialPath)
+      sortedFiles.some((file) => file.filename === hydratedInitialPath)
       ? hydratedInitialPath
       : firstPath;
 
@@ -973,9 +973,9 @@ export function PullRequestDiffViewer({
             const focusedLine = isFocusedFile
               ? focusedError
                 ? {
-                    side: focusedError.side,
-                    lineNumber: focusedError.lineNumber,
-                  }
+                  side: focusedError.side,
+                  lineNumber: focusedError.lineNumber,
+                }
                 : null
               : null;
             const focusedChangeKey = isFocusedFile
@@ -983,12 +983,12 @@ export function PullRequestDiffViewer({
               : null;
             const autoTooltipLine =
               isFocusedFile &&
-              autoTooltipTarget &&
-              autoTooltipTarget.filePath === entry.file.filename
+                autoTooltipTarget &&
+                autoTooltipTarget.filePath === entry.file.filename
                 ? {
-                    side: autoTooltipTarget.side,
-                    lineNumber: autoTooltipTarget.lineNumber,
-                  }
+                  side: autoTooltipTarget.side,
+                  lineNumber: autoTooltipTarget.lineNumber,
+                }
                 : null;
 
             return (
@@ -1503,8 +1503,8 @@ function FileDiffCard({
       diff.hunks,
       enhancers
         ? {
-            enhancers,
-          }
+          enhancers,
+        }
         : undefined
     );
   }, [diff, language, diffHeatmap]);
@@ -1623,20 +1623,20 @@ function FileDiffCard({
                 ) {
                   let bestHeatmapClass: string | null = null;
 
-                   const considerClass = (candidate: string | undefined) => {
-                     if (!candidate) {
-                       return;
-                     }
-                     if (!bestHeatmapClass) {
-                       bestHeatmapClass = candidate;
-                       return;
-                     }
-                     const currentTier = extractHeatmapTier(bestHeatmapClass);
-                     const nextTier = extractHeatmapTier(candidate);
-                     if (nextTier > currentTier) {
-                       bestHeatmapClass = candidate;
-                     }
-                   };
+                  const considerClass = (candidate: string | undefined) => {
+                    if (!candidate) {
+                      return;
+                    }
+                    if (!bestHeatmapClass) {
+                      bestHeatmapClass = candidate;
+                      return;
+                    }
+                    const currentTier = extractHeatmapTier(bestHeatmapClass);
+                    const nextTier = extractHeatmapTier(candidate);
+                    if (nextTier > currentTier) {
+                      bestHeatmapClass = candidate;
+                    }
+                  };
 
                   for (const change of normalizedChanges) {
                     const newLineNumber = computeNewLineNumber(change);
