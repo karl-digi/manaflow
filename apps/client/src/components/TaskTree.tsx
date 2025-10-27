@@ -17,6 +17,7 @@ import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { Link, useLocation, type LinkProps } from "@tanstack/react-router";
 import clsx from "clsx";
 import { useMutation, useQuery as useConvexQuery } from "convex/react";
+import { toast } from "sonner";
 import {
   AlertTriangle,
   Archive as ArchiveIcon,
@@ -97,6 +98,12 @@ interface TaskTreeProps {
   defaultExpanded?: boolean;
   teamSlugOrId: string;
 }
+
+type TasksGetArgs = {
+  teamSlugOrId: string;
+  projectFullName?: string;
+  archived?: boolean;
+};
 
 // Extract the display text logic to avoid re-creating it on every render
 function getRunDisplayText(run: TaskRunWithChildren): string {
@@ -203,7 +210,46 @@ function TaskTreeInner({
   }, [prefetchTaskRuns]);
 
   const { archiveWithUndo, unarchive } = useArchiveTask(teamSlugOrId);
-  const updateTaskMutation = useMutation(api.tasks.update);
+  const updateTaskMutation = useMutation(api.tasks.update).withOptimisticUpdate(
+    (localStore, args) => {
+      const optimisticUpdatedAt = Date.now();
+      const applyUpdateToList = (keyArgs: TasksGetArgs) => {
+        const list = localStore.getQuery(api.tasks.get, keyArgs);
+        if (!list) {
+          return;
+        }
+        const index = list.findIndex((item) => item._id === args.id);
+        if (index === -1) {
+          return;
+        }
+        const next = list.slice();
+        next[index] = {
+          ...next[index],
+          text: args.text,
+          updatedAt: optimisticUpdatedAt,
+        };
+        localStore.setQuery(api.tasks.get, keyArgs, next);
+      };
+
+      const listVariants: TasksGetArgs[] = [
+        { teamSlugOrId: args.teamSlugOrId },
+        { teamSlugOrId: args.teamSlugOrId, archived: false },
+        { teamSlugOrId: args.teamSlugOrId, archived: true },
+      ];
+
+      listVariants.forEach(applyUpdateToList);
+
+      const detailArgs = { teamSlugOrId: args.teamSlugOrId, id: args.id };
+      const existingDetail = localStore.getQuery(api.tasks.getById, detailArgs);
+      if (existingDetail) {
+        localStore.setQuery(api.tasks.getById, detailArgs, {
+          ...existingDetail,
+          text: args.text,
+          updatedAt: optimisticUpdatedAt,
+        });
+      }
+    }
+  );
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(task.text ?? "");
   const [renameError, setRenameError] = useState<string | null>(null);
@@ -311,6 +357,7 @@ function TaskTreeInner({
       const message =
         error instanceof Error ? error.message : "Failed to rename task.";
       setRenameError(message);
+      toast.error(message);
       renameInputRef.current?.focus();
     } finally {
       setIsRenamePending(false);
@@ -366,6 +413,10 @@ function TaskTreeInner({
   }, [canRenameTask, focusRenameInput, task.text]);
 
   const inferredBranch = getTaskBranch(task);
+  const trimmedTaskText = (task.text ?? "").trim();
+  const trimmedPullRequestTitle = task.pullRequestTitle?.trim();
+  const taskTitleValue =
+    trimmedTaskText || trimmedPullRequestTitle || task.pullRequestTitle || task.text;
   const taskSecondaryParts: string[] = [];
   if (inferredBranch) {
     taskSecondaryParts.push(inferredBranch);
@@ -373,10 +424,18 @@ function TaskTreeInner({
   if (task.projectFullName) {
     taskSecondaryParts.push(task.projectFullName);
   }
+  if (
+    trimmedPullRequestTitle &&
+    trimmedPullRequestTitle.length > 0 &&
+    trimmedPullRequestTitle !== taskTitleValue
+  ) {
+    taskSecondaryParts.push(trimmedPullRequestTitle);
+  }
   const taskSecondary = taskSecondaryParts.join(" • ");
   const taskListPaddingLeft = 10 + level * 4;
   const taskTitleClassName = clsx(
-    "inline-flex items-center h-[18px] text-[13px] leading-[18px] text-neutral-900 dark:text-neutral-100",
+    "inline-flex flex-1 min-w-0 items-center h-[18px] text-[13px] leading-[18px] text-neutral-900 dark:text-neutral-100 transition-colors duration-200",
+    isRenamePending && "text-neutral-400 dark:text-neutral-500",
     isRenaming &&
       "!font-normal !overflow-visible !whitespace-normal [text-overflow:clip]"
   );
@@ -397,15 +456,14 @@ function TaskTreeInner({
       autoComplete="off"
       spellCheck={false}
       className={clsx(
-        "inline-flex w-full items-center bg-transparent text-[13px] font-medium text-neutral-900 caret-neutral-600",
+        "inline-flex w-full items-center bg-transparent text-[13px] font-medium text-neutral-900 caret-neutral-600 transition-colors duration-200",
         "leading-[18px] h-[18px] px-0 py-0 align-middle",
         "placeholder:text-neutral-400 outline-none border-none focus-visible:outline-none focus-visible:ring-0 appearance-none",
-        "disabled:opacity-70 disabled:cursor-wait",
-        "dark:text-neutral-100 dark:caret-neutral-200 dark:placeholder:text-neutral-500"
+        "dark:text-neutral-100 dark:caret-neutral-200 dark:placeholder:text-neutral-500",
+        isRenamePending && "text-neutral-400 dark:text-neutral-500 cursor-wait"
       )}
     />
   );
-  const taskTitleValue = task.pullRequestTitle || task.text;
   const taskTitleContent = isRenaming ? renameInputElement : taskTitleValue;
   const canExpand = true;
   const isCrownEvaluating = task.crownEvaluationStatus === "in_progress";
@@ -548,10 +606,7 @@ function TaskTreeInner({
                 titleClassName={taskTitleClassName}
                 secondary={taskSecondary || undefined}
                 meta={taskLeadingIcon || undefined}
-                className={clsx(
-                  isRenaming &&
-                    "bg-white dark:bg-neutral-900 pr-2"
-                )}
+                className={clsx(isRenaming && "pr-2")}
               />
             </Link>
           </ContextMenu.Trigger>
