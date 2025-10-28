@@ -303,6 +303,7 @@ type FileTreeNode = {
   path: string;
   children: FileTreeNode[];
   file?: GithubFileChange;
+  order: number;
 };
 
 type FileStatusMeta = {
@@ -2056,15 +2057,17 @@ function buildFileTree(files: GithubFileChange[]): FileTreeNode[] {
     name: "",
     path: "",
     children: [],
+    order: -1,
   };
 
-  for (const file of files) {
+  for (const [fileIndex, file] of files.entries()) {
     const segments = file.filename.split("/");
     let current = root;
 
-    segments.forEach((segment, index) => {
+    segments.forEach((segment, segmentIndex) => {
+      const isLastSegment = segmentIndex === segments.length - 1;
       const path =
-        index === 0
+        segmentIndex === 0
           ? segment
           : `${current.path ? `${current.path}/` : ""}${segment}`;
 
@@ -2075,12 +2078,16 @@ function buildFileTree(files: GithubFileChange[]): FileTreeNode[] {
           name: segment,
           path,
           children: [],
+          order: fileIndex,
         };
         current.children.push(child);
+      } else {
+        child.order = Math.min(child.order, fileIndex);
       }
 
-      if (index === segments.length - 1) {
+      if (isLastSegment) {
         child.file = file;
+        child.order = Math.min(child.order, fileIndex);
       }
 
       current = child;
@@ -2089,10 +2096,10 @@ function buildFileTree(files: GithubFileChange[]): FileTreeNode[] {
 
   const sortNodes = (nodes: FileTreeNode[]) => {
     nodes.sort((a, b) => {
-      const aIsDir = a.children.length > 0;
-      const bIsDir = b.children.length > 0;
-      if (aIsDir && !bIsDir) return -1;
-      if (!aIsDir && bIsDir) return 1;
+      const orderDelta = a.order - b.order;
+      if (orderDelta !== 0) {
+        return orderDelta;
+      }
       return a.name.localeCompare(b.name);
     });
     nodes.forEach((node) => {
@@ -2109,7 +2116,9 @@ function buildFileTree(files: GithubFileChange[]): FileTreeNode[] {
       return node;
     }
 
-    let current = node;
+    let current: FileTreeNode = {
+      ...node,
+    };
 
     while (
       current.file === undefined &&
@@ -2122,6 +2131,7 @@ function buildFileTree(files: GithubFileChange[]): FileTreeNode[] {
         path: child.path,
         children: child.children,
         file: child.file,
+        order: Math.min(current.order, child.order),
       };
     }
 
