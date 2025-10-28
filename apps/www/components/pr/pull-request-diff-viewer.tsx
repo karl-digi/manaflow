@@ -714,45 +714,114 @@ export function PullRequestDiffViewer({
       return;
     }
 
+    const collectElements = () =>
+      parsedDiffs
+        .map((entry) => document.getElementById(entry.anchorId))
+        .filter((element): element is HTMLElement => Boolean(element));
+
+    let elements = collectElements();
+    if (elements.length === 0) {
+      return;
+    }
+
+    let animationFrame: number | null = null;
+
+    const pickActiveAnchor = () => {
+      if (elements.length === 0) {
+        elements = collectElements();
+        if (elements.length === 0) {
+          return null;
+        }
+      }
+
+      const viewportHeight = window.innerHeight || 0;
+      const pivot = viewportHeight > 0 ? Math.min(viewportHeight * 0.3, viewportHeight - 1) : 0;
+
+      const visible = elements.filter((element) => {
+        const rect = element.getBoundingClientRect();
+        return rect.bottom >= 0 && rect.top <= viewportHeight;
+      });
+
+      const candidates = visible.length > 0 ? visible : elements;
+
+      let bestBelow: { id: string; top: number } | null = null;
+      let bestAbove: { id: string; bottom: number } | null = null;
+
+      for (const element of candidates) {
+        const rect = element.getBoundingClientRect();
+
+        if (rect.top <= pivot && rect.bottom >= pivot) {
+          return element.id;
+        }
+
+        if (rect.top > pivot) {
+          if (!bestBelow || rect.top < bestBelow.top) {
+            bestBelow = { id: element.id, top: rect.top };
+          }
+          continue;
+        }
+
+        if (rect.bottom < pivot) {
+          if (!bestAbove || rect.bottom > bestAbove.bottom) {
+            bestAbove = { id: element.id, bottom: rect.bottom };
+          }
+        }
+      }
+
+      if (bestBelow) {
+        return bestBelow.id;
+      }
+
+      if (bestAbove) {
+        return bestAbove.id;
+      }
+
+      return candidates[0]?.id ?? null;
+    };
+
+    const updateActiveAnchor = () => {
+      const nextAnchor = pickActiveAnchor();
+      if (!nextAnchor) {
+        return;
+      }
+      setActiveAnchor((current) => (current === nextAnchor ? current : nextAnchor));
+    };
+
+    const scheduleUpdate = () => {
+      if (animationFrame !== null) {
+        return;
+      }
+      animationFrame = window.requestAnimationFrame(() => {
+        animationFrame = null;
+        updateActiveAnchor();
+      });
+    };
+
     const observer = new IntersectionObserver(
-      (entries) => {
-        const visible = entries
-          .filter((entry) => entry.isIntersecting)
-          .sort(
-            (a, b) =>
-              a.target.getBoundingClientRect().top -
-              b.target.getBoundingClientRect().top
-          );
-
-        if (visible[0]?.target.id) {
-          setActiveAnchor(visible[0].target.id);
-          return;
-        }
-
-        const nearest = entries
-          .map((entry) => ({
-            id: entry.target.id,
-            top: entry.target.getBoundingClientRect().top,
-          }))
-          .sort((a, b) => Math.abs(a.top) - Math.abs(b.top))[0];
-
-        if (nearest?.id) {
-          setActiveAnchor(nearest.id);
-        }
+      () => {
+        scheduleUpdate();
       },
       {
         rootMargin: "-128px 0px -55% 0px",
-        threshold: [0, 0.2, 0.4, 0.6, 1],
+        threshold: [0, 0.25, 0.5, 0.75, 1],
       }
     );
 
-    const elements = parsedDiffs
-      .map((entry) => document.getElementById(entry.anchorId))
-      .filter((element): element is HTMLElement => Boolean(element));
-
     elements.forEach((element) => observer.observe(element));
+    scheduleUpdate();
+
+    const handleResize = () => {
+      elements = collectElements();
+      scheduleUpdate();
+    };
+
+    window.addEventListener("resize", handleResize);
 
     return () => {
+      if (animationFrame !== null) {
+        window.cancelAnimationFrame(animationFrame);
+      }
+      window.removeEventListener("resize", handleResize);
       elements.forEach((element) => observer.unobserve(element));
       observer.disconnect();
     };
