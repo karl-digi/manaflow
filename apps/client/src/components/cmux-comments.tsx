@@ -772,7 +772,7 @@ export function CmuxComments({ teamSlugOrId }: { teamSlugOrId: string }) {
             transform: `translate(${cursorPos.x + 10}px, ${cursorPos.y - 10}px)`,
           }}
         >
-          <div className="bg-blue-500 text-white px-3 py-1 rounded-full text-sm animate-pulse select-none">
+          <div className="bg-blue-500 text-white px-3 py-1 rounded-full text-sm shadow-lg animate-pulse select-none">
             Click to comment
           </div>
         </div>

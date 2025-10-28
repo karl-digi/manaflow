@@ -156,7 +156,7 @@ export default async function PullRequestPage({ params }: PageProps) {
 
   return (
     <div className="min-h-dvh bg-neutral-50 text-neutral-900">
-      <div className="flex w-full flex-col gap-8 pb-16 pt-10 px-4">
+      <div className="flex w-full flex-col gap-8 pb-4 pt-10 px-4">
         <Suspense fallback={<PullRequestHeaderSkeleton />}>
           <PullRequestHeader
             promise={pullRequestPromise}
@@ -379,7 +379,7 @@ function PullRequestHeaderContent({
   const authorLogin = pullRequest.user?.login ?? null;
 
   return (
-    <section className="rounded-xl border border-neutral-200 bg-white p-4">
+    <section className="border border-neutral-200 bg-white p-4">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <PullRequestHeaderSummary
           statusLabel={statusBadge.label}
@@ -461,7 +461,7 @@ function PullRequestStatusBadge({
   return (
     <span
       className={cn(
-        "rounded-md px-2 py-0.5 font-semibold uppercase tracking-wide",
+        "px-2 py-0.5 font-semibold uppercase tracking-wide",
         className
       )}
     >
@@ -611,12 +611,12 @@ function getStatusBadge(pullRequest: GithubPullRequest): {
 
 function PullRequestHeaderSkeleton() {
   return (
-    <div className="rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
+    <div className="border border-neutral-200 bg-white p-6">
       <div className="animate-pulse space-y-4">
-        <div className="h-4 w-32 rounded bg-neutral-200" />
-        <div className="h-8 w-3/4 rounded bg-neutral-200" />
-        <div className="h-4 w-1/2 rounded bg-neutral-200" />
-        <div className="h-4 w-full rounded bg-neutral-200" />
+        <div className="h-4 w-32 bg-neutral-200" />
+        <div className="h-8 w-3/4 bg-neutral-200" />
+        <div className="h-4 w-1/2 bg-neutral-200" />
+        <div className="h-4 w-full bg-neutral-200" />
       </div>
     </div>
   );

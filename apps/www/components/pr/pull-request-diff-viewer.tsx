@@ -990,7 +990,7 @@ export function PullRequestDiffViewer({
 
   if (totalFileCount === 0) {
     return (
-      <div className="rounded-2xl border border-neutral-200 bg-white p-8 text-sm text-neutral-600">
+      <div className="border border-neutral-200 bg-white p-8 text-sm text-neutral-600">
         This pull request does not introduce any file changes.
       </div>
     );
@@ -1005,7 +1005,7 @@ export function PullRequestDiffViewer({
       />
 
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:gap-3">
-        <aside className="lg:sticky lg:top-6 lg:h-[calc(100vh-96px)] lg:w-72 lg:overflow-y-auto">
+        <aside className="lg:sticky lg:top-2 lg:h-[calc(100vh-96px)] lg:w-72 lg:overflow-y-auto">
           {targetCount > 0 ? (
             <div className="mb-4 flex justify-center">
               <ErrorNavigator
@@ -1016,7 +1016,7 @@ export function PullRequestDiffViewer({
               />
             </div>
           ) : null}
-          <div className="rounded-xl border border-neutral-200 bg-white p-3">
+          <div className="">
             <FileTreeNavigator
               nodes={fileTree}
               activePath={activeAnchor}
@@ -1065,6 +1065,7 @@ export function PullRequestDiffViewer({
               />
             );
           })}
+          <div className="h-[70dvh] w-full" />
         </div>
       </div>
     </div>
@@ -1102,7 +1103,7 @@ function ReviewProgressIndicator({
 
   return (
     <div
-      className="rounded-2xl border border-neutral-200 bg-white p-5 transition"
+      className="border border-neutral-200 bg-white p-5 transition"
       aria-live="polite"
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1115,7 +1116,7 @@ function ReviewProgressIndicator({
         <div className="flex items-center gap-2 text-xs font-semibold">
           <span
             className={cn(
-              "rounded-md bg-emerald-100 px-2 py-0.5 text-emerald-700",
+              "bg-emerald-100 px-2 py-0.5 text-emerald-700",
               isLoading ? "animate-pulse" : undefined
             )}
           >
@@ -1123,7 +1124,7 @@ function ReviewProgressIndicator({
           </span>
           <span
             className={cn(
-              "rounded-md bg-amber-100 px-2 py-0.5 text-amber-700",
+              "bg-amber-100 px-2 py-0.5 text-amber-700",
               isLoading ? "animate-pulse" : undefined
             )}
           >
@@ -1131,9 +1132,9 @@ function ReviewProgressIndicator({
           </span>
         </div>
       </div>
-      <div className="mt-3 h-2 rounded-full bg-neutral-200">
+      <div className="mt-3 h-2 bg-neutral-200">
         <div
-          className="h-full rounded-full bg-sky-500 transition-[width] duration-300 ease-out"
+          className="h-full bg-sky-500 transition-[width] duration-300 ease-out"
           style={{ width: `${progressPercent}%` }}
           role="progressbar"
           aria-label="Automated review progress"
@@ -1193,7 +1194,7 @@ function ErrorNavigator({
               <button
                 type="button"
                 onClick={() => onPrevious()}
-                className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-neutral-200 bg-white text-neutral-600 transition hover:bg-neutral-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-neutral-200 bg-white text-neutral-600 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
                 aria-label="Go to previous error (Shift+K)"
                 disabled={totalCount === 0}
               >
@@ -1216,7 +1217,7 @@ function ErrorNavigator({
               <button
                 type="button"
                 onClick={() => onNext()}
-                className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-neutral-200 bg-white text-neutral-600 transition hover:bg-neutral-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-neutral-200 bg-white text-neutral-600 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
                 aria-label="Go to next error (Shift+J)"
                 disabled={totalCount === 0}
               >
@@ -1271,7 +1272,7 @@ function FileTreeNavigator({
                 type="button"
                 onClick={() => onToggleDirectory(node.path)}
                 className={cn(
-                  "flex w-full items-center gap-1.5 rounded-md px-2.5 py-1 text-left text-sm transition hover:bg-neutral-100",
+                  "flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-sm transition hover:bg-neutral-100",
                   isExpanded ? "text-neutral-900" : "text-neutral-700"
                 )}
                 style={{ paddingLeft: depth * 14 + 10 }}
@@ -1306,8 +1307,10 @@ function FileTreeNavigator({
             type="button"
             onClick={() => onSelectFile(node.path)}
             className={cn(
-              "flex w-full items-center gap-1 rounded-md px-2.5 py-1 text-left text-sm transition hover:bg-neutral-100",
-              isActive ? "bg-sky-100/80 text-sky-900" : "text-neutral-700"
+              "flex w-full items-center gap-1 px-2.5 py-1 text-left text-sm transition hover:bg-neutral-100",
+              isActive
+                ? "bg-sky-100/80 text-sky-900 font-semibold"
+                : "text-neutral-700"
             )}
             style={{ paddingLeft: depth * 14 + 32 }}
           >
@@ -1589,19 +1592,18 @@ function FileDiffCard({
         id={anchorId}
         ref={cardRef}
         className={cn(
-          "rounded-2xl border border-neutral-200 bg-white transition focus:outline-none",
+          "border border-neutral-200 bg-white transition focus:outline-none",
           isActive ? "" : ""
         )}
         tabIndex={-1}
         aria-current={isActive}
       >
-        <div className="flex flex-col rounded-2xl divide-y divide-neutral-200">
+        <div className="flex flex-col divide-y divide-neutral-200">
           <button
             type="button"
             onClick={() => setIsCollapsed((previous) => !previous)}
             className={clsx(
-              "sticky top-0 z-10 flex w-full items-center gap-0 rounded-t-2xl border-neutral-200 bg-neutral-50 px-3.5 py-2.5 text-left font-sans font-medium transition hover:bg-neutral-100 focus:outline-none focus-visible:outline-none",
-              isCollapsed ? "rounded-b-2xl" : "rounded-b-none"
+              "sticky top-0 z-10 flex w-full items-center gap-0 border-neutral-200 bg-neutral-50 px-3.5 py-2.5 text-left font-sans font-medium transition hover:bg-neutral-100 focus:outline-none focus-visible:outline-none"
             )}
             aria-expanded={!isCollapsed}
           >
@@ -1660,7 +1662,7 @@ function FileDiffCard({
                 viewType="split"
                 optimizeSelection
                 className="diff-syntax system-mono overflow-auto bg-white text-xs leading-5 text-neutral-800"
-                gutterClassName="system-mono bg-white text-xs text-neutral-500 rounded-b-2xl"
+                gutterClassName="system-mono bg-white text-xs text-neutral-500"
                 codeClassName="system-mono text-xs text-neutral-800"
                 tokens={tokens ?? undefined}
                 renderToken={renderHeatmapToken}
