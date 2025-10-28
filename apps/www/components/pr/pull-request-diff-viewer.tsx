@@ -61,6 +61,10 @@ import {
   type ReviewHeatmapLine,
   type ResolvedHeatmapLine,
 } from "./heatmap";
+import {
+  ReviewCompletionNotificationCard,
+  type ReviewCompletionNotificationCardState,
+} from "./review-completion-notification-card";
 import clsx from "clsx";
 
 type PullRequestDiffViewerProps = {
@@ -532,6 +536,156 @@ export function PullRequestDiffViewer({
   }, [fileOutputs, fileOutputIndex, sortedFiles]);
 
   const isLoadingFileOutputs = fileOutputs === undefined;
+
+  const pendingFileCount = useMemo(() => {
+    if (processedFileCount === null) {
+      return Math.max(totalFileCount, 0);
+    }
+    return Math.max(totalFileCount - processedFileCount, 0);
+  }, [processedFileCount, totalFileCount]);
+
+  const [isNotificationSupported, setIsNotificationSupported] = useState(false);
+  const [notificationPermission, setNotificationPermission] =
+    useState<NotificationPermission | null>(null);
+  const [shouldNotifyOnCompletion, setShouldNotifyOnCompletion] =
+    useState(false);
+  const [isRequestingNotification, setIsRequestingNotification] =
+    useState(false);
+  const previousPendingCountRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const supported = "Notification" in window;
+    setIsNotificationSupported(supported);
+
+    if (!supported) {
+      return;
+    }
+
+    setNotificationPermission(Notification.permission);
+  }, []);
+
+  useEffect(() => {
+    if (notificationPermission === "denied") {
+      setShouldNotifyOnCompletion(false);
+    }
+  }, [notificationPermission]);
+
+  useEffect(() => {
+    const previousPending = previousPendingCountRef.current;
+    previousPendingCountRef.current = pendingFileCount;
+
+    if (
+      !isNotificationSupported ||
+      notificationPermission !== "granted" ||
+      !shouldNotifyOnCompletion
+    ) {
+      return;
+    }
+
+    if (
+      pendingFileCount === 0 &&
+      (previousPending === null || previousPending > 0)
+    ) {
+      try {
+        const title = "Automated review complete";
+        const body =
+          totalFileCount === 1
+            ? "Finished reviewing the last file."
+            : "Finished reviewing all files in this review.";
+
+        new Notification(title, {
+          body,
+          tag: "cmux-review-complete",
+        });
+      } catch {
+        // Ignore notification errors (for example, blocked constructors)
+      } finally {
+        setShouldNotifyOnCompletion(false);
+      }
+    }
+  }, [
+    isNotificationSupported,
+    notificationPermission,
+    pendingFileCount,
+    shouldNotifyOnCompletion,
+    totalFileCount,
+  ]);
+
+  const handleEnableCompletionNotification = useCallback(async () => {
+    if (!isNotificationSupported) {
+      return;
+    }
+
+    if (notificationPermission === "granted") {
+      setShouldNotifyOnCompletion(true);
+      return;
+    }
+
+    if (notificationPermission === "denied") {
+      return;
+    }
+
+    setIsRequestingNotification(true);
+    try {
+      const permission = await Notification.requestPermission();
+      setNotificationPermission(permission);
+      if (permission === "granted") {
+        setShouldNotifyOnCompletion(true);
+      }
+    } catch {
+      // Ignore errors while requesting permission
+    } finally {
+      setIsRequestingNotification(false);
+    }
+  }, [isNotificationSupported, notificationPermission]);
+
+  const hasKnownPendingFiles =
+    processedFileCount !== null && pendingFileCount > 0;
+
+  const handleDisableCompletionNotification = useCallback(() => {
+    setShouldNotifyOnCompletion(false);
+  }, []);
+
+  const notificationCardState = useMemo<
+    ReviewCompletionNotificationCardState | null
+  >(() => {
+    if (
+      !isNotificationSupported ||
+      !hasKnownPendingFiles ||
+      notificationPermission === null
+    ) {
+      return null;
+    }
+
+    if (notificationPermission === "denied") {
+      return { kind: "blocked" };
+    }
+
+    if (shouldNotifyOnCompletion) {
+      return {
+        kind: "enabled",
+        onDisable: handleDisableCompletionNotification,
+      };
+    }
+
+    return {
+      kind: "prompt",
+      isRequesting: isRequestingNotification,
+      onEnable: handleEnableCompletionNotification,
+    };
+  }, [
+    handleDisableCompletionNotification,
+    handleEnableCompletionNotification,
+    hasKnownPendingFiles,
+    isNotificationSupported,
+    isRequestingNotification,
+    notificationPermission,
+    shouldNotifyOnCompletion,
+  ]);
 
   const parsedDiffs = useMemo<ParsedFileDiff[]>(() => {
     return sortedFiles.map((file) => {
@@ -1045,6 +1199,9 @@ export function PullRequestDiffViewer({
                 isLoading={isLoadingFileOutputs}
               />
             </div>
+            {notificationCardState ? (
+              <ReviewCompletionNotificationCard state={notificationCardState} />
+            ) : null}
             {targetCount > 0 ? (
               <div className="flex justify-center">
                 <ErrorNavigator
@@ -1147,7 +1304,7 @@ function ReviewProgressIndicator({
 
   return (
     <div
-      className="border border-neutral-200 bg-white p-5 transition"
+      className="border border-neutral-200 bg-white p-5 pt-4 transition"
       aria-live="polite"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
