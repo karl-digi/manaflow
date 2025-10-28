@@ -693,6 +693,21 @@ export function PullRequestDiffViewer({
     if (hash && sortedFiles.some((file) => file.filename === hash)) {
       setActivePath(hash);
       setActiveAnchor(hash);
+
+      // Scroll to the element after a short delay to ensure DOM is ready
+      setTimeout(() => {
+        const targetElement = document.getElementById(hash);
+        if (targetElement) {
+          const headerOffset = 128;
+          const elementPosition = targetElement.getBoundingClientRect().top;
+          const offsetPosition = elementPosition + window.scrollY - headerOffset;
+
+          window.scrollTo({
+            top: offsetPosition,
+            behavior: 'smooth'
+          });
+        }
+      }, 100);
     }
   }, [sortedFiles]);
 
@@ -716,33 +731,43 @@ export function PullRequestDiffViewer({
 
     const observer = new IntersectionObserver(
       (entries) => {
-        const visible = entries
-          .filter((entry) => entry.isIntersecting)
-          .sort(
-            (a, b) =>
-              a.target.getBoundingClientRect().top -
-              b.target.getBoundingClientRect().top
-          );
-
-        if (visible[0]?.target.id) {
-          setActiveAnchor(visible[0].target.id);
-          return;
-        }
-
-        const nearest = entries
+        // Find the topmost visible entry that's at least partially in view
+        const visibleEntries = entries
+          .filter((entry) => {
+            // Consider an entry visible if it's intersecting
+            // and its top edge is below the header area (128px)
+            const rect = entry.target.getBoundingClientRect();
+            return entry.isIntersecting || (rect.top > 0 && rect.top < window.innerHeight);
+          })
           .map((entry) => ({
             id: entry.target.id,
             top: entry.target.getBoundingClientRect().top,
+            intersectionRatio: entry.intersectionRatio,
           }))
-          .sort((a, b) => Math.abs(a.top) - Math.abs(b.top))[0];
+          .sort((a, b) => {
+            // First, prioritize entries that are actually visible in the viewport
+            const aInView = a.top >= 0 && a.top < window.innerHeight;
+            const bInView = b.top >= 0 && b.top < window.innerHeight;
 
-        if (nearest?.id) {
-          setActiveAnchor(nearest.id);
+            if (aInView && !bInView) return -1;
+            if (!aInView && bInView) return 1;
+
+            // Among visible entries, pick the one closest to the top of the viewport
+            return Math.abs(a.top - 128) - Math.abs(b.top - 128);
+          });
+
+        // Set the active anchor to the topmost visible file
+        if (visibleEntries.length > 0 && visibleEntries[0]?.id) {
+          setActiveAnchor(visibleEntries[0].id);
         }
       },
       {
-        rootMargin: "-128px 0px -55% 0px",
-        threshold: [0, 0.2, 0.4, 0.6, 1],
+        // More permissive root margin to trigger updates sooner
+        // Top margin accounts for sticky header (128px)
+        // Bottom margin is smaller to detect files entering from below
+        rootMargin: "-128px 0px -20% 0px",
+        // More granular thresholds for smoother transitions
+        threshold: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1],
       }
     );
 
@@ -766,7 +791,24 @@ export function PullRequestDiffViewer({
       return;
     }
 
-    window.location.hash = encodeURIComponent(path);
+    // Update the hash without causing a scroll jump
+    window.history.replaceState(null, "", `#${encodeURIComponent(path)}`);
+
+    // Smoothly scroll to the target element
+    requestAnimationFrame(() => {
+      const targetElement = document.getElementById(path);
+      if (targetElement) {
+        // Calculate scroll position accounting for sticky header
+        const headerOffset = 128; // Adjust based on your header height
+        const elementPosition = targetElement.getBoundingClientRect().top;
+        const offsetPosition = elementPosition + window.scrollY - headerOffset;
+
+        window.scrollTo({
+          top: offsetPosition,
+          behavior: 'smooth'
+        });
+      }
+    });
   }, []);
 
   const handleFocusPrevious = useCallback(
@@ -955,15 +997,13 @@ export function PullRequestDiffViewer({
               />
             </div>
           ) : null}
-          <div className="rounded-xl border border-neutral-200 bg-white p-3 shadow-sm">
-            <FileTreeNavigator
-              nodes={fileTree}
-              activePath={activeAnchor}
-              expandedPaths={expandedPaths}
-              onToggleDirectory={handleToggleDirectory}
-              onSelectFile={handleNavigate}
-            />
-          </div>
+          <FileTreeNavigatorWrapper
+            nodes={fileTree}
+            activePath={activeAnchor}
+            expandedPaths={expandedPaths}
+            onToggleDirectory={handleToggleDirectory}
+            onSelectFile={handleNavigate}
+          />
         </aside>
 
         <div className="flex-1 space-y-6">
@@ -1179,6 +1219,68 @@ function ErrorNavigator({
   );
 }
 
+type FileTreeNavigatorWrapperProps = {
+  nodes: FileTreeNode[];
+  activePath: string;
+  expandedPaths: Set<string>;
+  onToggleDirectory: (path: string) => void;
+  onSelectFile: (path: string) => void;
+};
+
+function FileTreeNavigatorWrapper({
+  nodes,
+  activePath,
+  expandedPaths,
+  onToggleDirectory,
+  onSelectFile,
+}: FileTreeNavigatorWrapperProps) {
+  const fileRefs = useRef(new Map<string, HTMLElement>());
+  const sidebarRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to active file when it changes
+  useEffect(() => {
+    if (!activePath) return;
+
+    // Use requestAnimationFrame to ensure DOM has updated
+    requestAnimationFrame(() => {
+      const activeElement = fileRefs.current.get(activePath);
+      const sidebar = sidebarRef.current;
+
+      if (activeElement && sidebar) {
+        // Get the position of the active element relative to the sidebar
+        const sidebarRect = sidebar.getBoundingClientRect();
+        const elementRect = activeElement.getBoundingClientRect();
+
+        // Calculate if the element is outside the visible area
+        const isAboveViewport = elementRect.top < sidebarRect.top;
+        const isBelowViewport = elementRect.bottom > sidebarRect.bottom;
+
+        if (isAboveViewport || isBelowViewport) {
+          // Scroll the element into view within the sidebar container
+          activeElement.scrollIntoView({
+            behavior: 'smooth',
+            block: 'nearest',
+            inline: 'nearest'
+          });
+        }
+      }
+    });
+  }, [activePath]);
+
+  return (
+    <div ref={sidebarRef} className="rounded-xl border border-neutral-200 bg-white p-3 shadow-sm">
+      <FileTreeNavigator
+        nodes={nodes}
+        activePath={activePath}
+        expandedPaths={expandedPaths}
+        onToggleDirectory={onToggleDirectory}
+        onSelectFile={onSelectFile}
+        fileRefs={fileRefs}
+      />
+    </div>
+  );
+}
+
 type FileTreeNavigatorProps = {
   nodes: FileTreeNode[];
   activePath: string;
@@ -1186,6 +1288,7 @@ type FileTreeNavigatorProps = {
   onToggleDirectory: (path: string) => void;
   onSelectFile: (path: string) => void;
   depth?: number;
+  fileRefs?: React.MutableRefObject<Map<string, HTMLElement>>;
 };
 
 function FileTreeNavigator({
@@ -1195,7 +1298,12 @@ function FileTreeNavigator({
   onToggleDirectory,
   onSelectFile,
   depth = 0,
+  fileRefs,
 }: FileTreeNavigatorProps) {
+  // Initialize refs map at the root level - avoid conditional hook
+  const defaultRefs = useRef(new Map<string, HTMLElement>());
+  const refs = fileRefs || defaultRefs;
+
   return (
     <div className="space-y-0.5">
       {nodes.map((node) => {
@@ -1232,6 +1340,7 @@ function FileTreeNavigator({
                     onToggleDirectory={onToggleDirectory}
                     onSelectFile={onSelectFile}
                     depth={depth + 1}
+                    fileRefs={refs}
                   />
                 </div>
               ) : null}
@@ -1242,6 +1351,13 @@ function FileTreeNavigator({
         return (
           <button
             key={node.path}
+            ref={(el) => {
+              if (el) {
+                refs.current.set(node.path, el);
+              } else {
+                refs.current.delete(node.path);
+              }
+            }}
             type="button"
             onClick={() => onSelectFile(node.path)}
             className={cn(
