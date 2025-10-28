@@ -105,7 +105,7 @@ export default function GitHubInstallCompletePage() {
                   <span className="font-semibold">Next steps:</span>
                 </p>
                 <ol className="mt-2 space-y-1 text-sm text-neutral-600">
-                  <li>1. Use your browser's back button to return to the pull request page</li>
+                  <li>1. Use your browser&apos;s back button to return to the pull request page</li>
                   <li>2. Or close this tab and navigate back to the PR you were viewing</li>
                   <li>3. Refresh the page to reload with your new permissions</li>
                   <li>4. You should now be able to view the pull request</li>

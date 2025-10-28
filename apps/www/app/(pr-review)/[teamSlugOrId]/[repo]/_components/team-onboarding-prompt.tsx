@@ -81,7 +81,7 @@ export function TeamOnboardingPrompt({
               <div className="mt-6 space-y-4">
                 <div className="rounded-lg bg-neutral-50 p-4 border border-neutral-200">
                   <h2 className="text-sm font-semibold text-neutral-900 mb-2">
-                    You're trying to access:
+                    You&apos;re trying to access:
                   </h2>
                   <p className="text-sm text-neutral-600 font-mono">
                     {githubOwner}/{repo} - Pull Request #{pullNumber}
@@ -97,21 +97,21 @@ export function TeamOnboardingPrompt({
                       <span className="flex-shrink-0 font-semibold text-neutral-900">
                         1.
                       </span>
-                      <span>We'll create a team for you</span>
+                      <span>We&apos;ll create a team for you</span>
                     </li>
                     <li className="flex items-start gap-2">
                       <span className="flex-shrink-0 font-semibold text-neutral-900">
                         2.
                       </span>
                       <span>
-                        You'll install the cmux-agent on your GitHub repositories
+                        You&apos;ll install the cmux-agent on your GitHub repositories
                       </span>
                     </li>
                     <li className="flex items-start gap-2">
                       <span className="flex-shrink-0 font-semibold text-neutral-900">
                         3.
                       </span>
-                      <span>You'll be able to view and review pull requests</span>
+                      <span>You&apos;ll be able to view and review pull requests</span>
                     </li>
                   </ol>
                 </div>
