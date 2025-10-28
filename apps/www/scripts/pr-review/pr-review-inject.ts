@@ -286,12 +286,12 @@ async function filterTextFiles(
   return files.filter((file) => textFiles.has(file));
 }
 
-interface CodexReviewResult {
+interface ReviewResult {
   file: string;
   response: string;
 }
 
-interface CodexReviewContext {
+interface ReviewContext {
   workspaceDir: string;
   baseRevision: string;
   files: readonly string[];
@@ -301,7 +301,7 @@ interface CodexReviewContext {
   fileCallback?: FileCallbackContext | null;
 }
 
-async function runCodexReviews({
+async function runAIReviews({
   workspaceDir,
   baseRevision,
   files,
@@ -309,20 +309,17 @@ async function runCodexReviews({
   sandboxInstanceId,
   commitRef,
   fileCallback,
-}: CodexReviewContext): Promise<CodexReviewResult[]> {
+}: ReviewContext): Promise<ReviewResult[]> {
   if (files.length === 0) {
-    console.log("[inject] No text files require Codex review.");
+    console.log("[inject] No text files require review.");
     return [];
   }
 
-  const openAiApiKey = requireEnv("OPENAI_API_KEY");
+  const openRouterApiKey = requireEnv("OPENROUTER_API_KEY");
 
   console.log(
-    `[inject] Launching Codex reviews for ${files.length} file(s)...`
+    `[inject] Launching GLM-4.6 reviews for ${files.length} file(s)...`
   );
-
-  const { Codex } = await import("@openai/codex-sdk");
-  const codex = new Codex({ apiKey: openAiApiKey });
 
   const reviewStart = performance.now();
 
@@ -334,72 +331,73 @@ async function runCodexReviews({
         ["diff", `${baseRevision}..HEAD`, "--", file],
         { cwd: workspaceDir }
       );
-      const thread = codex.startThread({
-        workingDirectory: workspaceDir,
-        model: "gpt-5-codex",
-      });
-      const prompt = `\
-You are a senior engineer performing a focused pull request review, focusing only on the diffs in the file provided.
-File path: ${file}
-Return a JSON object of type { lines: { line: string, shouldBeReviewedScore: number | null, shouldReviewWhy: string | null, mostImportantCharacterIndex: number }[] }.
-You should only have the "post-diff" array of lines in the JSON object
-shouldBeReviewedScore is a number from 0 to 1 that indicates how careful the reviewer should be when reviewing this line of code.
-Anything that feels like it might be off or might warrant a comment should have a high score, even if it's technically correct.
-shouldReviewWhy should be a concise (4-10 words) hint on why the reviewer should maybe review this line of code, but it shouldn't state obvious things, instead it should only be a hint for the reviewer as to what exactly you meant when you flagged it.
-In most cases, the reason should follow a template like "<X> <verb> <Y>" (eg. "line is too long" or "code accesses sensitive data").
-It should be understandable by a human and make sense (break the "X is Y" rule if it helps you make it more understandable).
-mostImportantCharacterIndex should be the index of the character that you deem most important in the review; if you're not sure or there are multiple, just choose any one of them.
-Ugly code should be given a higher score.
-Code that may be hard to read for a human should also be given a higher score.
-Non-clean code too.
-Only return lines that are actually interesting to review. Do not return lines that a human would not care about. But you should still be thorough and cover all interesting/suspicious lines.
 
-The diff:
-${diff || "(no diff output)"}`;
+      // Read the review prompt from the markdown file
+      const { readFile } = await import("node:fs/promises");
+      const { join, dirname } = await import("node:path");
+      const { fileURLToPath } = await import("node:url");
+
+      const scriptDir = dirname(fileURLToPath(import.meta.url));
+      const promptPath = join(scriptDir, "review_prompt.md");
+      const reviewPromptTemplate = await readFile(promptPath, "utf-8");
+
+      const prompt = `${reviewPromptTemplate}
+
+---
+
+You are reviewing the following file:
+**File path:** ${file}
+
+**Diff:**
+\`\`\`diff
+${diff || "(no diff output)"}
+\`\`\`
+
+Please analyze this diff and return your review as a JSON object matching the schema specified in the prompt above.`;
 
       logIndentedBlock(`[inject] Prompt for ${file}`, prompt);
 
-      const turn = await thread.runStreamed(prompt, {
-        outputSchema: {
-          type: "object",
-          properties: {
-            lines: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  line: { type: "string" },
-                  shouldBeReviewedScore: { type: ["number", "null"] as const },
-                  shouldReviewWhy: { type: ["string", "null"] as const },
-                  mostImportantCharacterIndex: { type: "number" },
-                },
-                required: [
-                  "line",
-                  "shouldBeReviewedScore",
-                  "shouldReviewWhy",
-                  "mostImportantCharacterIndex",
-                ],
-                additionalProperties: false,
-              },
-            },
-          },
-          required: ["lines"],
-          additionalProperties: false,
-        } as const,
-      });
-      let response = "<no response>";
-      for await (const event of turn.events) {
-        console.log(`[inject] Codex event: ${JSON.stringify(event)}`);
-        if (event.type === "item.completed") {
-          if (event.item.type === "agent_message") {
-            response = event.item.text;
+      // Call OpenRouter API with GLM-4.6
+      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${openRouterApiKey}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": "https://cmux.dev",
+          "X-Title": "CMUX PR Review"
+        },
+        body: JSON.stringify({
+          model: "zhipu-ai/glm-4.6",
+          messages: [
+            {
+              role: "user",
+              content: prompt
+            }
+          ],
+          temperature: 0.3,
+          response_format: {
+            type: "json_object"
           }
-        }
-      }
-      // const response = turn.finalResponse ?? "";
-      logIndentedBlock(`[inject] Codex review for ${file}`, response);
+        })
+      });
 
-      const result: CodexReviewResult = { file, response };
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`OpenRouter API request failed: ${response.status} ${errorText}`);
+      }
+
+      const responseData = await response.json() as {
+        choices?: Array<{
+          message?: {
+            content?: string;
+          };
+        }>;
+      };
+
+      const reviewContent = responseData.choices?.[0]?.message?.content || "<no response>";
+      logIndentedBlock(`[inject] GLM-4.6 review for ${file}`, reviewContent);
+
+      const result: ReviewResult = { file, response: reviewContent };
       const elapsedMs = performance.now() - fileStart;
       console.log(
         `[inject] Review completed for ${file} in ${formatDuration(elapsedMs)}`
@@ -412,7 +410,7 @@ ${diff || "(no diff output)"}`;
             sandboxInstanceId,
             filePath: file,
             commitRef: commitRef ?? undefined,
-            codexReviewOutput: result,
+            reviewOutput: result,
           });
           console.log(`[inject] File callback delivered for ${file}`);
         } catch (callbackError) {
@@ -433,7 +431,7 @@ ${diff || "(no diff output)"}`;
           ? error.message
           : String(error ?? "unknown error");
       const elapsedMs = performance.now() - fileStart;
-      console.error(`[inject] Codex review failed for ${file}: ${reason}`);
+      console.error(`[inject] GLM-4.6 review failed for ${file}: ${reason}`);
       console.error(
         `[inject] Review for ${file} failed after ${formatDuration(elapsedMs)}`
       );
@@ -451,7 +449,7 @@ ${diff || "(no diff output)"}`;
 
   if (failureCount > 0) {
     throw new Error(
-      `[inject] Codex review encountered ${failureCount} failure(s). See logs above.`
+      `[inject] GLM-4.6 review encountered ${failureCount} failure(s). See logs above.`
     );
   }
 
@@ -460,7 +458,7 @@ ${diff || "(no diff output)"}`;
     .map((result) => result.value);
 
   console.log(
-    `[inject] Codex reviews completed in ${formatDuration(
+    `[inject] GLM-4.6 reviews completed in ${formatDuration(
       performance.now() - reviewStart
     )}.`
   );
@@ -540,18 +538,7 @@ async function main(): Promise<void> {
       });
     })();
 
-    const installCodex = (async () => {
-      console.log("[inject] Installing runtime dependencies globally...");
-      await runCommand("bun", [
-        "add",
-        "-g",
-        "@openai/codex@latest",
-        "@openai/codex-sdk@latest",
-        "zod@latest",
-      ]);
-    })();
-
-    await Promise.all([cloneAndCheckout, installCodex]);
+    await cloneAndCheckout;
 
     if (logFilePath && logSymlinkPath) {
       try {
@@ -636,7 +623,7 @@ async function main(): Promise<void> {
     logFileSection("Changed text files", textChangedFiles);
     logFileSection("Modified text files", textModifiedFiles);
 
-    const codexReviews = await runCodexReviews({
+    const aiReviews = await runAIReviews({
       workspaceDir,
       baseRevision: mergeBaseRevision,
       files: textChangedFiles,
@@ -665,7 +652,7 @@ async function main(): Promise<void> {
       logSymlinkPath,
       commitRef,
       teamId,
-      codexReviews,
+      aiReviews,
     };
 
     if (callbackContext) {

@@ -789,7 +789,7 @@ export const upsertFileOutputFromCallback = mutation({
     jobId: v.id("automatedCodeReviewJobs"),
     callbackToken: v.string(),
     filePath: v.string(),
-    codexReviewOutput: v.any(),
+    reviewOutput: v.any(),
     sandboxInstanceId: v.optional(v.string()),
     commitRef: v.optional(v.string()),
   },
@@ -824,7 +824,7 @@ export const upsertFileOutputFromCallback = mutation({
 
     if (existing) {
       await ctx.db.patch(existing._id, {
-        codexReviewOutput: args.codexReviewOutput,
+        reviewOutput: args.reviewOutput,
         commitRef,
         headCommitRef: job.headCommitRef ?? job.commitRef,
         baseCommitRef: job.baseCommitRef,
@@ -854,7 +854,7 @@ export const upsertFileOutputFromCallback = mutation({
         comparisonHeadRef: job.comparisonHeadRef,
         sandboxInstanceId,
         filePath: args.filePath,
-        codexReviewOutput: args.codexReviewOutput,
+        reviewOutput: args.reviewOutput,
         createdAt: now,
         updatedAt: now,
       });
@@ -1037,7 +1037,7 @@ export const listFileOutputsForPr = authQuery({
       baseCommitRef: output.baseCommitRef ?? null,
       sandboxInstanceId: output.sandboxInstanceId ?? null,
       filePath: output.filePath,
-      codexReviewOutput: output.codexReviewOutput,
+      reviewOutput: output.reviewOutput,
       createdAt: output.createdAt,
       updatedAt: output.updatedAt,
     }));
@@ -1089,7 +1089,7 @@ export const listFileOutputsForComparison = authQuery({
       baseCommitRef: output.baseCommitRef ?? null,
       sandboxInstanceId: output.sandboxInstanceId ?? null,
       filePath: output.filePath,
-      codexReviewOutput: output.codexReviewOutput,
+      reviewOutput: output.reviewOutput,
       createdAt: output.createdAt,
       updatedAt: output.updatedAt,
     }));

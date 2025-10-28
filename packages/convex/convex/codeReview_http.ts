@@ -155,7 +155,7 @@ export const codeReviewFileCallback = httpAction(async (ctx, req) => {
       jobId: payload.jobId as Id<"automatedCodeReviewJobs">,
       callbackToken: token,
       filePath: payload.filePath,
-      codexReviewOutput: payload.codexReviewOutput,
+      reviewOutput: payload.reviewOutput,
       sandboxInstanceId: payload.sandboxInstanceId,
       commitRef: payload.commitRef,
     });

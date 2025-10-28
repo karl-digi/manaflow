@@ -27,7 +27,7 @@ export const codeReviewFileCallbackSchema = z.object({
   sandboxInstanceId: z.string().optional(),
   filePath: z.string(),
   commitRef: z.string().optional(),
-  codexReviewOutput: z.any(),
+  reviewOutput: z.any(),
 });
 
 export type CodeReviewFileCallbackPayload = z.infer<

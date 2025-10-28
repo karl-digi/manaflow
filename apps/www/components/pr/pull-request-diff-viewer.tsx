@@ -529,7 +529,7 @@ export function PullRequestDiffViewer({
     return parsedDiffs.map((entry) => {
       const review = fileOutputIndex.get(entry.file.filename) ?? null;
       const reviewHeatmap = review
-        ? parseReviewHeatmap(review.codexReviewOutput)
+        ? parseReviewHeatmap(review.reviewOutput)
         : [];
       const diffHeatmap =
         entry.diff && reviewHeatmap.length > 0
@@ -1568,7 +1568,7 @@ function FileDiffCard({
       return null;
     }
 
-    return extractAutomatedReviewText(review.codexReviewOutput);
+    return extractAutomatedReviewText(review.reviewOutput);
   }, [review]);
 
   // const showReview = Boolean(reviewContent);

@@ -427,7 +427,7 @@ const convexSchema = defineSchema({
     comparisonHeadRef: v.optional(v.string()),
     sandboxInstanceId: v.optional(v.string()),
     filePath: v.string(),
-    codexReviewOutput: v.any(),
+    reviewOutput: v.any(),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
