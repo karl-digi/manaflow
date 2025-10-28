@@ -52,6 +52,10 @@ import {
   QWEN_MODEL_STUDIO_CODER_PLUS_CONFIG,
   QWEN_OPENROUTER_CODER_FREE_CONFIG,
 } from "./providers/qwen/configs";
+import {
+  MINIMAX_M2_CONFIG,
+  MINIMAX_M2_EXTENDED_CONFIG,
+} from "./providers/minimax/configs";
 
 export { checkGitStatus } from "./providers/common/check-git";
 
@@ -128,4 +132,6 @@ export const AGENT_CONFIGS: AgentConfig[] = [
   CURSOR_GPT_5_CONFIG,
   CURSOR_SONNET_4_CONFIG,
   CURSOR_SONNET_4_THINKING_CONFIG,
+  MINIMAX_M2_CONFIG,
+  MINIMAX_M2_EXTENDED_CONFIG,
 ];
