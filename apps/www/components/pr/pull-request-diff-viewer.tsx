@@ -714,8 +714,12 @@ export function PullRequestDiffViewer({
       return;
     }
 
+    // Track the anchor IDs for fallback logic
+    const anchorIds = parsedDiffs.map((entry) => entry.anchorId);
+
     const observer = new IntersectionObserver(
       (entries) => {
+        // Filter for intersecting entries and sort by position
         const visible = entries
           .filter((entry) => entry.isIntersecting)
           .sort(
@@ -724,16 +728,29 @@ export function PullRequestDiffViewer({
               b.target.getBoundingClientRect().top
           );
 
-        if (visible[0]?.target.id) {
+        // If we have visible entries, use the first one (topmost in viewport)
+        if (visible.length > 0 && visible[0]?.target.id) {
           setActiveAnchor(visible[0].target.id);
           return;
         }
 
-        const nearest = entries
-          .map((entry) => ({
-            id: entry.target.id,
-            top: entry.target.getBoundingClientRect().top,
+        // Fallback: if nothing is intersecting, find the element closest to the top of viewport
+        // Query all file diff elements by their IDs
+        const allElements = anchorIds
+          .map((id) => document.getElementById(id))
+          .filter((el): el is HTMLElement => Boolean(el));
+
+        if (allElements.length === 0) {
+          return;
+        }
+
+        // Find the element with smallest absolute distance from the viewport top
+        const nearest = allElements
+          .map((el) => ({
+            id: el.id,
+            top: el.getBoundingClientRect().top,
           }))
+          .filter((item) => item.id) // Ensure we have a valid ID
           .sort((a, b) => Math.abs(a.top) - Math.abs(b.top))[0];
 
         if (nearest?.id) {
@@ -741,8 +758,9 @@ export function PullRequestDiffViewer({
         }
       },
       {
-        rootMargin: "-128px 0px -55% 0px",
-        threshold: [0, 0.2, 0.4, 0.6, 1],
+        // Adjusted root margin: less aggressive bottom margin for better tracking
+        rootMargin: "-128px 0px -40% 0px",
+        threshold: [0, 0.1, 0.25, 0.5, 0.75, 1],
       }
     );
 
@@ -766,7 +784,20 @@ export function PullRequestDiffViewer({
       return;
     }
 
+    // Update URL hash for shareable links
     window.location.hash = encodeURIComponent(path);
+
+    // Scroll to the target element
+    const targetElement = document.getElementById(path);
+    if (targetElement) {
+      // Use requestAnimationFrame to ensure DOM is updated
+      window.requestAnimationFrame(() => {
+        targetElement.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      });
+    }
   }, []);
 
   const handleFocusPrevious = useCallback(
