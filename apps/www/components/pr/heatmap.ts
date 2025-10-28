@@ -10,7 +10,7 @@ export type ReviewHeatmapLine = {
   lineText: string | null;
   score: number | null;
   reason: string | null;
-  mostImportantCharacterIndex: number | null;
+  mostImportantWord: string | null;
 };
 
 export type DiffHeatmap = {
@@ -31,7 +31,7 @@ export type ResolvedHeatmapLine = {
   lineNumber: number;
   score: number | null;
   reason: string | null;
-  mostImportantCharacterIndex: number | null;
+  mostImportantWord: string | null;
 };
 
 type DiffLineSide = "new" | "old";
@@ -83,16 +83,14 @@ export function parseReviewHeatmap(raw: unknown): ReviewHeatmapLine[] {
     }
 
     const reason = parseNullableString(record.shouldReviewWhy);
-    const mostImportantCharacterIndex = parseNullableInteger(
-      record.mostImportantCharacterIndex
-    );
+    const mostImportantWord = parseNullableString(record.mostImportantWord);
 
     parsed.push({
       lineNumber,
       lineText,
       score: normalizedScore,
       reason,
-      mostImportantCharacterIndex,
+      mostImportantWord,
     });
   }
 
@@ -149,10 +147,7 @@ export function buildDiffHeatmap(
       targetClassMap.set(entry.lineNumber, `cmux-heatmap-tier-${tier}`);
     }
 
-    if (
-      entry.side === "old" ||
-      entry.mostImportantCharacterIndex === null
-    ) {
+    if (entry.side === "old" || !entry.mostImportantWord) {
       continue;
     }
 
@@ -161,10 +156,22 @@ export function buildDiffHeatmap(
       continue;
     }
 
-    const highlightIndex = clamp(
-      Math.floor(entry.mostImportantCharacterIndex),
-      0,
-      Math.max(content.length - 1, 0)
+    // Find the word in the line content
+    const wordIndex = content.indexOf(entry.mostImportantWord);
+    const highlightIndex =
+      wordIndex !== -1
+        ? wordIndex
+        : (() => {
+            // Try case-insensitive search
+            const lowerContent = content.toLowerCase();
+            const lowerWord = entry.mostImportantWord.toLowerCase();
+            const caseInsensitiveIndex = lowerContent.indexOf(lowerWord);
+            return caseInsensitiveIndex !== -1 ? caseInsensitiveIndex : 0;
+          })();
+
+    const highlightLength = Math.min(
+      entry.mostImportantWord.length,
+      content.length - highlightIndex
     );
 
     const charTier = tier > 0 ? tier : 1;
@@ -172,7 +179,7 @@ export function buildDiffHeatmap(
       type: "span",
       lineNumber: entry.lineNumber,
       start: highlightIndex,
-      length: Math.min(1, Math.max(content.length - highlightIndex, 1)),
+      length: Math.max(highlightLength, 1),
       className: `cmux-heatmap-char cmux-heatmap-char-tier-${charTier}`,
     };
     characterRanges.push(range);
@@ -219,8 +226,7 @@ function aggregateEntries(
       side: entry.side,
       score: shouldReplaceScore ? entry.score : current.score,
       reason: entry.reason ?? current.reason,
-      mostImportantCharacterIndex:
-        entry.mostImportantCharacterIndex ?? current.mostImportantCharacterIndex,
+      mostImportantWord: entry.mostImportantWord ?? current.mostImportantWord,
     });
   }
 
@@ -258,7 +264,7 @@ function resolveLineNumbers(
         lineNumber: directMatch.lineNumber,
         score: entry.score,
         reason: entry.reason,
-        mostImportantCharacterIndex: entry.mostImportantCharacterIndex,
+        mostImportantWord: entry.mostImportantWord,
       });
       continue;
     }
@@ -279,7 +285,7 @@ function resolveLineNumbers(
         lineNumber: newCandidate,
         score: entry.score,
         reason: entry.reason,
-        mostImportantCharacterIndex: entry.mostImportantCharacterIndex,
+        mostImportantWord: entry.mostImportantWord,
       });
       continue;
     }
@@ -295,7 +301,7 @@ function resolveLineNumbers(
         lineNumber: oldCandidate,
         score: entry.score,
         reason: entry.reason,
-        mostImportantCharacterIndex: entry.mostImportantCharacterIndex,
+        mostImportantWord: entry.mostImportantWord,
       });
     }
   }
@@ -471,23 +477,6 @@ function parseNullableNumber(value: unknown): number | null {
       return null;
     }
     const parsed = Number.parseFloat(match[0] ?? "");
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-
-  return null;
-}
-
-function parseNullableInteger(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return Math.floor(value);
-  }
-
-  if (typeof value === "string") {
-    const match = value.match(/-?\d+/);
-    if (!match) {
-      return null;
-    }
-    const parsed = Number.parseInt(match[0] ?? "", 10);
     return Number.isFinite(parsed) ? parsed : null;
   }
 

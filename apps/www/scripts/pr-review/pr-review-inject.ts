@@ -337,29 +337,32 @@ async function runCodexReviews({
         { cwd: workspaceDir }
       );
 
-      const prompt = `\
-You are a senior engineer performing a focused pull request review, focusing only on the diffs in the file provided.
-File path: ${file}
-Return a JSON object of type { lines: { line: string, shouldBeReviewedScore: number | null, shouldReviewWhy: string | null, mostImportantCharacterIndex: number }[] }.
-You should only have the "post-diff" array of lines in the JSON object
-shouldBeReviewedScore is a number from 0 to 1 that indicates how careful the reviewer should be when reviewing this line of code.
+      const diffForPrompt = diff;
+      const context = { filePath: file };
+
+      const prompt = `You are a senior engineer performing a focused pull request review, focusing only on the diffs in the file provided.
+File path: ${context.filePath}
+Return a JSON object of type { lines: { line: string, shouldBeReviewedScore: number, shouldReviewWhy: string | null, mostImportantWord: string }[] }.
+You should only have the "post-diff" array of lines in the JSON object.
+The "line" property MUST contain the exact line of code you want a human to review (no truncation, no summaries).
+shouldBeReviewedScore is a number between 0.0 and 1.0 (always include it even if 0.0) that indicates how careful the reviewer should be when reviewing this line of code.
 Anything that feels like it might be off or might warrant a comment should have a high score, even if it's technically correct.
 shouldReviewWhy should be a concise (4-10 words) hint on why the reviewer should maybe review this line of code, but it shouldn't state obvious things, instead it should only be a hint for the reviewer as to what exactly you meant when you flagged it.
 In most cases, the reason should follow a template like "<X> <verb> <Y>" (eg. "line is too long" or "code accesses sensitive data").
 It should be understandable by a human and make sense (break the "X is Y" rule if it helps you make it more understandable).
-mostImportantCharacterIndex should be the index of the character that you deem most important in the review; if you're not sure or there are multiple, just choose any one of them.
+mostImportantWord must always be provided and should identify the most critical word or identifier in the line. If you're unsure, pick the earliest relevant word or token.
 Ugly code should be given a higher score.
 Code that may be hard to read for a human should also be given a higher score.
-Non-clean code too.
-Only return lines that are actually interesting to review. Do not return lines that a human would not care about. But you should still be thorough and cover all interesting/suspicious lines.
+Non-clean code too. Type casts, type assertions, type guards, "any" types, etc. should be given a higher score.
+Do not be lazy. Return all lines that are even slightly interesting to review. Be extremely thorough.
 
 The diff:
-${diff || "(no diff output)"}`;
+${diffForPrompt || "(no diff output)"}`;
 
       logIndentedBlock(`[inject] Prompt for ${file}`, prompt);
 
       const completion = await openai.chat.completions.create({
-        model: "z-ai/glm-4.6:exacto",
+        model: "z-ai/glm-4.6",
         messages: [
           {
             role: "user",
@@ -380,19 +383,17 @@ ${diff || "(no diff output)"}`;
                     type: "object",
                     properties: {
                       line: { type: "string" },
-                      shouldBeReviewedScore: {
-                        anyOf: [{ type: "number" }, { type: "null" }],
-                      },
+                      shouldBeReviewedScore: { type: "number" },
                       shouldReviewWhy: {
                         anyOf: [{ type: "string" }, { type: "null" }],
                       },
-                      mostImportantCharacterIndex: { type: "number" },
+                      mostImportantWord: { type: "string" },
                     },
                     required: [
                       "line",
                       "shouldBeReviewedScore",
                       "shouldReviewWhy",
-                      "mostImportantCharacterIndex",
+                      "mostImportantWord",
                     ],
                     additionalProperties: false,
                   },
