@@ -173,9 +173,9 @@ export default async function LandingPage() {
             <div className="space-y-8">
 
               <div className="space-y-6">
-                <h1 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl">
-                  Universal AI coding agent manager for 10x engineers
-                </h1>
+                 <h1 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl">
+                   Universal AI coding agent manager for 100x engineers
+                 </h1>
                 <div className="space-y-4 text-base text-neutral-300 sm:text-lg">
                   <p>
                     cmux is a universal AI coding agent manager that supports Claude Code, Codex, Gemini CLI, Amp, Opencode, and other coding CLIs.
