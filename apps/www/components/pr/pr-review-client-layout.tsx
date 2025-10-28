@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 
 import { ConvexClientProvider } from "@/components/providers/convex-client-provider";
-import { LightModeEnforcer } from "@/components/pr/light-mode-enforcer";
+import { PrReviewThemeProvider } from "@/components/pr/pr-review-theme-provider";
 
 export function PrReviewClientLayout({
   children,
@@ -12,11 +12,7 @@ export function PrReviewClientLayout({
 }) {
   return (
     <ConvexClientProvider>
-      <LightModeEnforcer>
-        <div className="min-h-dvh bg-white font-sans text-neutral-900 light">
-          {children}
-        </div>
-      </LightModeEnforcer>
+      <PrReviewThemeProvider>{children}</PrReviewThemeProvider>
     </ConvexClientProvider>
   );
 }
