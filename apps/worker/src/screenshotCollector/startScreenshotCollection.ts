@@ -400,7 +400,7 @@ export async function startScreenshotCollection(
 
       if (screenshotEntries.length > 1) {
         await logToScreenshotCollector(
-          `Captured ${screenshotEntries.length} screenshots; using ${primaryScreenshot.path} as primary upload`
+          `Captured ${screenshotEntries.length} screenshots; uploading all and marking ${primaryScreenshot.path} as primary`
         );
       } else {
         await logToScreenshotCollector(

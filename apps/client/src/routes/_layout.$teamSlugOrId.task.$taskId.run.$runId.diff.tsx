@@ -1,6 +1,7 @@
 import { FloatingPane } from "@/components/floating-pane";
 import { type GitDiffViewerProps } from "@/components/git-diff-viewer";
 import { RunDiffSection } from "@/components/RunDiffSection";
+import { RunScreenshotGallery } from "@/components/RunScreenshotGallery";
 import { TaskDetailHeader } from "@/components/task-detail-header";
 import { useTheme } from "@/components/theme/use-theme";
 import { Button } from "@/components/ui/button";
@@ -600,6 +601,19 @@ function RunDiffPage() {
     return taskRuns?.find((run) => run._id === runId);
   }, [runId, taskRuns]);
 
+  const runDiffContextQuery = useRQ({
+    ...convexQuery(api.taskRuns.getRunDiffContext, {
+      teamSlugOrId,
+      taskId,
+      runId,
+    }),
+    enabled: Boolean(teamSlugOrId && taskId && runId),
+  });
+
+  const screenshotSets = runDiffContextQuery.data?.screenshotSets ?? [];
+  const screenshotSetsLoading =
+    runDiffContextQuery.isLoading && screenshotSets.length === 0;
+
   // Get PR information from the selected run
   const pullRequests = useMemo(() => {
     return selectedRun?.pullRequests?.filter(
@@ -763,6 +777,16 @@ function RunDiffPage() {
                   />
                 ))}
               </Suspense>
+            )}
+            {screenshotSetsLoading ? (
+              <div className="border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50/60 dark:bg-neutral-950/40 px-3.5 py-3 text-sm text-neutral-500 dark:text-neutral-400">
+                Loading screenshots...
+              </div>
+            ) : (
+              <RunScreenshotGallery
+                screenshotSets={screenshotSets}
+                highlightedSetId={selectedRun?.latestScreenshotSetId ?? null}
+              />
             )}
             <Suspense
               fallback={

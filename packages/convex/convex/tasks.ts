@@ -570,15 +570,35 @@ export const recordScreenshotResult = internalMutation({
     }
 
     const now = Date.now();
+    const screenshots = args.screenshots ?? [];
+
+    const screenshotSetId = await ctx.db.insert("taskRunScreenshotSets", {
+      taskId: args.taskId,
+      runId: args.runId,
+      status: args.status,
+      commitSha: screenshots[0]?.commitSha,
+      capturedAt: now,
+      error: args.error ?? undefined,
+      images: screenshots.map((screenshot) => ({
+        storageId: screenshot.storageId,
+        mimeType: screenshot.mimeType,
+        fileName: screenshot.fileName,
+        commitSha: screenshot.commitSha,
+      })),
+      createdAt: now,
+      updatedAt: now,
+    });
 
     const patch: Record<string, unknown> = {
       screenshotStatus: args.status,
       screenshotRunId: args.runId,
       screenshotRequestedAt: now,
       updatedAt: now,
+      latestScreenshotSetId:
+        args.status === "completed" && screenshots.length > 0
+          ? screenshotSetId
+          : undefined,
     };
-
-    const screenshots = args.screenshots ?? [];
 
     if (args.status === "completed" && screenshots.length > 0) {
       patch.screenshotStorageId = screenshots[0].storageId;
@@ -602,27 +622,7 @@ export const recordScreenshotResult = internalMutation({
 
     await ctx.db.patch(args.taskId, patch);
 
-    const existingScreenshots = await ctx.db
-      .query("taskScreenshots")
-      .withIndex("by_runId", (q) => q.eq("runId", args.runId))
-      .collect();
-    await Promise.all(existingScreenshots.map((doc) => ctx.db.delete(doc._id)));
-
-    if (args.status === "completed" && screenshots.length > 0) {
-      for (const screenshot of screenshots) {
-        await ctx.db.insert("taskScreenshots", {
-          taskId: args.taskId,
-          runId: args.runId,
-          storageId: screenshot.storageId,
-          mimeType: screenshot.mimeType,
-          fileName: screenshot.fileName,
-          commitSha: screenshot.commitSha,
-          capturedAt: now,
-          createdAt: now,
-          updatedAt: now,
-        });
-      }
-    }
+    return screenshotSetId;
   },
 });
 

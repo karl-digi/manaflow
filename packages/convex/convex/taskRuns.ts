@@ -361,6 +361,7 @@ export const getRunDiffContext = authQuery({
         task: null,
         taskRuns,
         branchMetadataByRepo: {} as Record<string, Doc<"branches">[]>,
+        screenshotSets: [],
       };
     }
 
@@ -400,10 +401,38 @@ export const getRunDiffContext = authQuery({
       }
     }
 
+    const screenshotSetDocs = await ctx.db
+      .query("taskRunScreenshotSets")
+      .withIndex("by_run_capturedAt", (q) => q.eq("runId", args.runId))
+      .collect();
+
+    screenshotSetDocs.sort((a, b) => b.capturedAt - a.capturedAt);
+
+    const trimmedScreenshotSets = screenshotSetDocs.slice(0, 20);
+
+    const screenshotSets = await Promise.all(
+      trimmedScreenshotSets.map(async (set) => {
+        const imagesWithUrls = await Promise.all(
+          set.images.map(async (image) => {
+            const url = await ctx.storage.getUrl(image.storageId);
+            return {
+              ...image,
+              url: url ?? undefined,
+            };
+          }),
+        );
+        return {
+          ...set,
+          images: imagesWithUrls,
+        };
+      }),
+    );
+
     return {
       task: taskWithImages,
       taskRuns,
       branchMetadataByRepo,
+      screenshotSets,
     };
   },
 });
@@ -498,6 +527,7 @@ export const updateScreenshotMetadata = internalMutation({
     mimeType: v.optional(v.string()),
     fileName: v.optional(v.string()),
     commitSha: v.optional(v.string()),
+    screenshotSetId: v.optional(v.id("taskRunScreenshotSets")),
   },
   handler: async (ctx, args) => {
     await ctx.db.patch(args.id, {
@@ -506,6 +536,7 @@ export const updateScreenshotMetadata = internalMutation({
       screenshotMimeType: args.mimeType,
       screenshotFileName: args.fileName,
       screenshotCommitSha: args.commitSha,
+      latestScreenshotSetId: args.screenshotSetId,
       updatedAt: Date.now(),
     });
   },
@@ -520,6 +551,7 @@ export const clearScreenshotMetadata = internalMutation({
       screenshotMimeType: undefined,
       screenshotFileName: undefined,
       screenshotCommitSha: undefined,
+      latestScreenshotSetId: undefined,
       updatedAt: Date.now(),
     });
   },

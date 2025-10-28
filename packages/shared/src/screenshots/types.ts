@@ -36,6 +36,7 @@ export type ScreenshotUploadPayload = z.infer<
 export const ScreenshotUploadResponseSchema = z.object({
   ok: z.literal(true),
   storageIds: z.array(z.string()).optional(),
+  screenshotSetId: typedZid("taskRunScreenshotSets").optional(),
 });
 export type ScreenshotUploadResponse = z.infer<
   typeof ScreenshotUploadResponseSchema

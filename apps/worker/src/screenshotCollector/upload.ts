@@ -56,6 +56,7 @@ export async function uploadScreenshot(
       taskId: options.payload.taskId,
       taskRunId: options.payload.runId,
       storageIds: response.storageIds,
+      screenshotSetId: response.screenshotSetId,
       status: options.payload.status,
     });
   }

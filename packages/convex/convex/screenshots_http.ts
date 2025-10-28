@@ -127,13 +127,19 @@ export const uploadScreenshot = httpAction(async (ctx, req) => {
     }
   }
 
-  await ctx.runMutation(internal.tasks.recordScreenshotResult, {
-    taskId: run.taskId,
-    runId: payload.runId,
-    status: payload.status,
-    screenshots: storedScreens,
-    error: payload.error,
-  });
+  const screenshotSetId = await ctx.runMutation(
+    internal.tasks.recordScreenshotResult,
+    {
+      taskId: run.taskId,
+      runId: payload.runId,
+      status: payload.status,
+      screenshots: storedScreens,
+      error: payload.error,
+    },
+  );
+
+  const resolvedScreenshotSetId =
+    screenshotSetId === null ? undefined : screenshotSetId;
 
   const primaryScreenshot = storedScreens[0];
 
@@ -144,6 +150,7 @@ export const uploadScreenshot = httpAction(async (ctx, req) => {
       mimeType: primaryScreenshot.mimeType,
       fileName: primaryScreenshot.fileName,
       commitSha: primaryScreenshot.commitSha,
+      screenshotSetId: resolvedScreenshotSetId,
     });
   } else if (payload.status !== "completed") {
     await ctx.runMutation(internal.taskRuns.clearScreenshotMetadata, {
@@ -154,6 +161,7 @@ export const uploadScreenshot = httpAction(async (ctx, req) => {
   return jsonResponse({
     ok: true,
     storageIds: storedScreens.map((shot) => shot.storageId),
+    screenshotSetId: resolvedScreenshotSetId,
   });
 });
 
