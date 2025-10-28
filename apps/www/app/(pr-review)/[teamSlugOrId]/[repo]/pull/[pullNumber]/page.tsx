@@ -3,11 +3,13 @@ import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { waitUntil } from "@vercel/functions";
 import { type Team } from "@stackframe/stack";
+import { REQUIRE_SIGN_IN_FOR_PUBLIC_REPOS } from "@/lib/config/auth";
 import { env } from "@/lib/utils/www-env";
 
 import {
   fetchPullRequest,
   fetchPullRequestFiles,
+  fetchRepositoryVisibility,
   toGithubFileChange,
   type GithubPullRequest,
   type GithubFileChange,
@@ -88,13 +90,23 @@ async function getFirstTeam(): Promise<Team | null> {
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const resolvedParams = await params;
   const returnPath = buildPullRequestPath(resolvedParams);
-  const user = await requireSignedInUser(returnPath);
-  const selectedTeam = user.selectedTeam || (await getFirstTeam());
-  if (!selectedTeam) {
-    throw notFound();
-  }
   const { teamSlugOrId: githubOwner, repo, pullNumber: pullNumberRaw } = resolvedParams;
   const pullNumber = parsePullNumber(pullNumberRaw);
+
+  const repoVisibility = await fetchRepositoryVisibility(githubOwner, repo);
+  const authRequired = repoVisibility !== "public" || REQUIRE_SIGN_IN_FOR_PUBLIC_REPOS;
+  const user = authRequired
+    ? await requireSignedInUser(returnPath)
+    : await stackServerApp.getUser({ or: "return-null" });
+
+  if (authRequired && !user) {
+    redirectToSignIn(returnPath);
+  }
+
+  const selectedTeam = user?.selectedTeam || (user ? await getFirstTeam() : null);
+  if (authRequired && !selectedTeam) {
+    throw notFound();
+  }
 
   if (pullNumber === null) {
     return {
@@ -127,9 +139,6 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 export default async function PullRequestPage({ params }: PageProps) {
   const resolvedParams = await params;
   const returnPath = buildPullRequestPath(resolvedParams);
-  const user = await requireSignedInUser(returnPath);
-  const selectedTeam = user.selectedTeam || (await getFirstTeam());
-
   const { teamSlugOrId: githubOwner, repo, pullNumber: pullNumberRaw } = resolvedParams;
   const pullNumber = parsePullNumber(pullNumberRaw);
 
@@ -137,16 +146,34 @@ export default async function PullRequestPage({ params }: PageProps) {
     notFound();
   }
 
-  // If user doesn't have a team, show onboarding
-  if (!selectedTeam) {
-    return (
-      <TeamOnboardingPrompt
-        githubOwner={githubOwner}
-        repo={repo}
-        pullNumber={pullNumber}
-      />
-    );
+  const repoVisibility = await fetchRepositoryVisibility(githubOwner, repo);
+  const authRequired = repoVisibility !== "public" || REQUIRE_SIGN_IN_FOR_PUBLIC_REPOS;
+  const user = authRequired
+    ? await requireSignedInUser(returnPath)
+    : await stackServerApp.getUser({ or: "return-null" });
+
+  if (authRequired && !user) {
+    redirectToSignIn(returnPath);
   }
+
+  const selectedTeam = user?.selectedTeam || (user ? await getFirstTeam() : null);
+
+  if (!selectedTeam) {
+    if (authRequired) {
+      return (
+        <TeamOnboardingPrompt
+          githubOwner={githubOwner}
+          repo={repo}
+          pullNumber={pullNumber}
+        />
+      );
+    }
+
+    throw new Error("Public repository unauthenticated flow is not implemented yet.");
+  }
+
+  // If user doesn't have a team, show onboarding
+  // (handled above)
 
   // Check if the PR is accessible
   try {

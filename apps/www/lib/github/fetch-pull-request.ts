@@ -27,6 +27,8 @@ export type GithubPullRequest = PullRequestResponse["data"];
 export type GithubPullRequestFile =
   PullRequestFilesResponse["data"][number];
 
+export type RepoVisibility = "public" | "private" | "unknown";
+
 function toGithubApiError(error: unknown): GithubApiError {
   if (error instanceof GithubApiError) {
     return error;
@@ -190,6 +192,44 @@ export function toGithubFileChange(
     previous_filename: file.previous_filename,
     patch: file.patch,
   };
+}
+
+export async function fetchRepositoryVisibility(
+  owner: string,
+  repo: string,
+): Promise<RepoVisibility> {
+  try {
+    const octokit = createGitHubClient();
+    const response = await octokit.rest.repos.get({ owner, repo });
+    const repository = response.data;
+
+    if (repository.private) {
+      return "private";
+    }
+
+    if (repository.visibility === "private") {
+      return "private";
+    }
+
+    if (repository.visibility === "public") {
+      return "public";
+    }
+
+    return "public";
+  } catch (error) {
+    if (isRequestErrorShape(error)) {
+      if (error.status === 404) {
+        // GitHub returns 404 for private repositories when unauthenticated.
+        return "private";
+      }
+
+      if (error.status === 403) {
+        return "unknown";
+      }
+    }
+
+    return "unknown";
+  }
 }
 
 export async function fetchComparison(
