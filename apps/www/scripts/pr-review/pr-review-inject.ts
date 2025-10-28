@@ -352,6 +352,7 @@ In most cases, the reason should follow a template like "<X> <verb> <Y>" (eg. "l
 It should be understandable by a human and make sense (break the "X is Y" rule if it helps you make it more understandable).
 mostImportantWord must always be provided and should identify the most critical word or identifier in the line. If you're unsure, pick the earliest relevant word or token.
 Ugly code should be given a higher score.
+Check the logic, if you cannot follow the logic, give it a higher score.
 Code that may be hard to read for a human should also be given a higher score.
 Non-clean code too. Type casts, type assertions, type guards, "any" types, etc. should be given a higher score.
 Do not be lazy. Return all lines that are even slightly interesting to review. Be extremely thorough.
@@ -362,7 +363,7 @@ ${diffForPrompt || "(no diff output)"}`;
       logIndentedBlock(`[inject] Prompt for ${file}`, prompt);
 
       const completion = await openai.chat.completions.create({
-        model: "z-ai/glm-4.6",
+        model: "openai/gpt-oss-120b",
         messages: [
           {
             role: "user",
