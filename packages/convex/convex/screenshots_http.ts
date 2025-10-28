@@ -1,12 +1,11 @@
 import {
   ScreenshotUploadPayloadSchema,
   ScreenshotUploadUrlRequestSchema,
-  verifyTaskRunToken,
-} from "../../shared/src/convex-safe";
+} from "@cmux/shared/convex-safe";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { httpAction } from "./_generated/server";
-import { env } from "../_shared/convex-env";
+import { getWorkerAuth } from "./users/utils";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json",
@@ -17,13 +16,13 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 async function ensureJsonRequest(
-  req: Request,
+  req: Request
 ): Promise<{ json: unknown } | Response> {
   const contentType = req.headers.get("content-type") ?? "";
   if (!contentType.toLowerCase().includes("application/json")) {
     return jsonResponse(
       { code: 415, message: "Content-Type must be application/json" },
-      415,
+      415
     );
   }
 
@@ -35,42 +34,8 @@ async function ensureJsonRequest(
   }
 }
 
-type WorkerAuthContext = {
-  token: string;
-  payload: {
-    taskRunId: Id<"taskRuns">;
-    teamId: string;
-    userId: string;
-  };
-};
-
-async function getWorkerAuth(req: Request): Promise<WorkerAuthContext | null> {
-  const token = req.headers.get("x-cmux-token");
-  if (!token) {
-    return null;
-  }
-
-  try {
-    const payload = await verifyTaskRunToken(
-      token,
-      env.CMUX_TASK_RUN_JWT_SECRET,
-    );
-    return {
-      token,
-      payload: {
-        taskRunId: payload.taskRunId as Id<"taskRuns">,
-        teamId: payload.teamId,
-        userId: payload.userId,
-      },
-    } satisfies WorkerAuthContext;
-  } catch (error) {
-    console.error("[screenshots] Failed to verify worker token", error);
-    return null;
-  }
-}
-
 export const uploadScreenshot = httpAction(async (ctx, req) => {
-  const auth = await getWorkerAuth(req);
+  const auth = await getWorkerAuth(req, { loggerPrefix: "[screenshots]" });
   if (!auth) {
     throw jsonResponse({ code: 401, message: "Unauthorized" }, 401);
   }
@@ -82,7 +47,7 @@ export const uploadScreenshot = httpAction(async (ctx, req) => {
   if (!validation.success) {
     console.warn(
       "[screenshots] Invalid screenshot upload payload",
-      validation.error,
+      validation.error
     );
     return jsonResponse({ code: 400, message: "Invalid input" }, 400);
   }
@@ -122,7 +87,7 @@ export const uploadScreenshot = httpAction(async (ctx, req) => {
     if (!payload.images || payload.images.length === 0) {
       return jsonResponse(
         { code: 400, message: "At least one screenshot image is required" },
-        400,
+        400
       );
     }
   }
@@ -135,7 +100,7 @@ export const uploadScreenshot = httpAction(async (ctx, req) => {
       status: payload.status,
       screenshots: storedScreens,
       error: payload.error,
-    },
+    }
   );
 
   const resolvedScreenshotSetId =
@@ -166,7 +131,7 @@ export const uploadScreenshot = httpAction(async (ctx, req) => {
 });
 
 export const createScreenshotUploadUrl = httpAction(async (ctx, req) => {
-  const auth = await getWorkerAuth(req);
+  const auth = await getWorkerAuth(req, { loggerPrefix: "[screenshots]" });
   if (!auth) {
     throw jsonResponse({ code: 401, message: "Unauthorized" }, 401);
   }
@@ -178,7 +143,7 @@ export const createScreenshotUploadUrl = httpAction(async (ctx, req) => {
   if (!validation.success) {
     console.warn(
       "[screenshots] Invalid upload URL request payload",
-      validation.error,
+      validation.error
     );
     return jsonResponse({ code: 400, message: "Invalid input" }, 400);
   }

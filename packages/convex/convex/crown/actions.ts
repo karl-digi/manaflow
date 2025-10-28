@@ -10,7 +10,7 @@ import {
   type CrownEvaluationCandidate,
   type CrownEvaluationResponse,
   type CrownSummarizationResponse,
-} from "../../../shared/src/convex-safe";
+} from "@cmux/shared/convex-safe";
 import { env } from "../../_shared/convex-env";
 import { action } from "../_generated/server";
 
@@ -46,13 +46,13 @@ function resolveCrownModel(): {
   }
 
   throw new ConvexError(
-    "Crown evaluation is not configured (missing OpenAI or Anthropic API key)",
+    "Crown evaluation is not configured (missing OpenAI or Anthropic API key)"
   );
 }
 
 export async function performCrownEvaluation(
   prompt: string,
-  candidates: CrownEvaluationCandidate[],
+  candidates: CrownEvaluationCandidate[]
 ): Promise<CrownEvaluationResponse> {
   const { model, provider } = resolveCrownModel();
 
@@ -119,7 +119,7 @@ IMPORTANT: Respond ONLY with the JSON object, no other text.`;
 
 export async function performCrownSummarization(
   prompt: string,
-  gitDiff: string,
+  gitDiff: string
 ): Promise<CrownSummarizationResponse> {
   const { model, provider } = resolveCrownModel();
 

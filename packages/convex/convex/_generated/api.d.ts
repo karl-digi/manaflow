@@ -43,7 +43,8 @@ import type * as taskRunLogChunks from "../taskRunLogChunks.js";
 import type * as taskRuns from "../taskRuns.js";
 import type * as tasks from "../tasks.js";
 import type * as teams from "../teams.js";
-import type * as users_utils from "../users/utils.js";
+import type * as users_utils_getWorkerAuth from "../users/utils/getWorkerAuth.js";
+import type * as users_utils_index from "../users/utils/index.js";
 import type * as users from "../users.js";
 import type * as workspaceSettings from "../workspaceSettings.js";
 
@@ -97,7 +98,8 @@ declare const fullApi: ApiFromModules<{
   taskRuns: typeof taskRuns;
   tasks: typeof tasks;
   teams: typeof teams;
-  "users/utils": typeof users_utils;
+  "users/utils/getWorkerAuth": typeof users_utils_getWorkerAuth;
+  "users/utils/index": typeof users_utils_index;
   users: typeof users;
   workspaceSettings: typeof workspaceSettings;
 }>;

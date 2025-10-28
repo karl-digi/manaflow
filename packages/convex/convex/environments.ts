@@ -1,4 +1,4 @@
-import { validateExposedPorts } from "../../shared/src/convex-safe";
+import { validateExposedPorts } from "@cmux/shared/convex-safe";
 import { v } from "convex/values";
 import { resolveTeamIdLoose } from "../_shared/team";
 import { authMutation, authQuery } from "./users/utils";
@@ -17,9 +17,7 @@ const normalizeExposedPorts = (
     );
   }
   if (result.invalid.length > 0) {
-    throw new Error(
-      `Invalid ports provided: ${result.invalid.join(", ")}`
-    );
+    throw new Error(`Invalid ports provided: ${result.invalid.join(", ")}`);
   }
   return result.sanitized;
 };
@@ -44,11 +42,11 @@ export const get = authQuery({
   handler: async (ctx, args) => {
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
     const environment = await ctx.db.get(args.id);
-    
+
     if (!environment || environment.teamId !== teamId) {
       return null;
     }
-    
+
     return environment;
   },
 });
@@ -73,7 +71,9 @@ export const create = authMutation({
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
     const sanitizedPorts = normalizeExposedPorts(args.exposedPorts ?? []);
     const createdAt = Date.now();
-    const normalizeScript = (script: string | undefined): string | undefined => {
+    const normalizeScript = (
+      script: string | undefined
+    ): string | undefined => {
       if (script === undefined) {
         return undefined;
       }
@@ -93,8 +93,7 @@ export const create = authMutation({
       description: args.description,
       maintenanceScript,
       devScript,
-      exposedPorts:
-        sanitizedPorts.length > 0 ? sanitizedPorts : undefined,
+      exposedPorts: sanitizedPorts.length > 0 ? sanitizedPorts : undefined,
       createdAt,
       updatedAt: createdAt,
     });
@@ -126,11 +125,11 @@ export const update = authMutation({
   handler: async (ctx, args) => {
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
     const environment = await ctx.db.get(args.id);
-    
+
     if (!environment || environment.teamId !== teamId) {
       throw new Error("Environment not found");
     }
-    
+
     const updates: {
       name?: string;
       description?: string;
@@ -144,7 +143,7 @@ export const update = authMutation({
     if (args.name !== undefined) {
       updates.name = args.name;
     }
-    
+
     if (args.description !== undefined) {
       updates.description = args.description;
     }
@@ -157,7 +156,8 @@ export const update = authMutation({
 
     if (args.devScript !== undefined) {
       const trimmedDevScript = args.devScript.trim();
-      updates.devScript = trimmedDevScript.length > 0 ? trimmedDevScript : undefined;
+      updates.devScript =
+        trimmedDevScript.length > 0 ? trimmedDevScript : undefined;
     }
 
     await ctx.db.patch(args.id, updates);
@@ -208,11 +208,11 @@ export const remove = authMutation({
   handler: async (ctx, args) => {
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
     const environment = await ctx.db.get(args.id);
-    
+
     if (!environment || environment.teamId !== teamId) {
       throw new Error("Environment not found");
     }
-    
+
     await ctx.db.delete(args.id);
   },
 });
@@ -224,7 +224,9 @@ export const getByDataVaultKey = authQuery({
   handler: async (ctx, args) => {
     return await ctx.db
       .query("environments")
-      .withIndex("by_dataVaultKey", (q) => q.eq("dataVaultKey", args.dataVaultKey))
+      .withIndex("by_dataVaultKey", (q) =>
+        q.eq("dataVaultKey", args.dataVaultKey)
+      )
       .first();
   },
 });

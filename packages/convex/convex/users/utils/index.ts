@@ -1,13 +1,24 @@
-import { mutation, query, type ActionCtx, type MutationCtx, type QueryCtx } from "../_generated/server";
+import {
+  mutation,
+  query,
+  type ActionCtx,
+  type MutationCtx,
+  type QueryCtx,
+} from "../../_generated/server";
 import { ConvexError, v } from "convex/values";
-import { customCtx, customMutation, customQuery } from "convex-helpers/server/customFunctions";
+import {
+  customCtx,
+  customMutation,
+  customQuery,
+} from "convex-helpers/server/customFunctions";
+export { getWorkerAuth, type WorkerAuthContext } from "./getWorkerAuth";
 
 export const authQuery = customQuery(
   query,
   customCtx(async (ctx) => {
     const identity = await AuthenticationRequired({ ctx });
     return { identity };
-  }),
+  })
 );
 
 export const authMutation = customMutation(
@@ -15,10 +26,12 @@ export const authMutation = customMutation(
   customCtx(async (ctx) => {
     const identity = await AuthenticationRequired({ ctx });
     return { identity };
-  }),
+  })
 );
 
-type Identity = NonNullable<Awaited<ReturnType<QueryCtx["auth"]["getUserIdentity"]>>>;
+type Identity = NonNullable<
+  Awaited<ReturnType<QueryCtx["auth"]["getUserIdentity"]>>
+>;
 
 export async function AuthenticationRequired({
   ctx,
