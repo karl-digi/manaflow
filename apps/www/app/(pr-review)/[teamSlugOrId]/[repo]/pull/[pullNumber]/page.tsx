@@ -11,7 +11,7 @@ import {
   type GithubPullRequest,
   type GithubFileChange,
 } from "@/lib/github/fetch-pull-request";
-import { isGithubApiError } from "@/lib/github/errors";
+import { GithubApiError, isGithubApiError } from "@/lib/github/errors";
 import { cn } from "@/lib/utils";
 import { stackServerApp } from "@/lib/utils/stack";
 import {
@@ -26,6 +26,7 @@ import {
   ReviewGitHubLinkButton,
   summarizeFiles,
 } from "../../_components/review-diff-content";
+import { PrivateRepoInstallGate } from "../../_components/private-repo-gate";
 
 type PageParams = {
   teamSlugOrId: string;
@@ -148,6 +149,7 @@ export default async function PullRequestPage({ params }: PageProps) {
             promise={pullRequestPromise}
             githubOwner={githubOwner}
             repo={repo}
+            teamSlugOrIdForInstall={selectedTeam.id}
           />
         </Suspense>
 
@@ -285,10 +287,12 @@ function PullRequestHeader({
   promise,
   githubOwner,
   repo,
+  teamSlugOrIdForInstall,
 }: {
   promise: PullRequestPromise;
   githubOwner: string;
   repo: string;
+  teamSlugOrIdForInstall: string;
 }) {
   try {
     const pullRequest = use(promise);
@@ -301,15 +305,29 @@ function PullRequestHeader({
     );
   } catch (error) {
     if (isGithubApiError(error)) {
-      const message =
+      const fallbackMessage =
         error.status === 404
           ? "This pull request could not be found or you might not have access to view it."
           : error.message;
 
+      if (isLikelyPrivateRepoAccessError(error)) {
+        return (
+          <PrivateRepoInstallGate
+            teamSlugOrId={teamSlugOrIdForInstall}
+            repoFullName={`${githubOwner}/${repo}`}
+            fallback={{
+              title: "Unable to load pull request",
+              message: fallbackMessage,
+              documentationUrl: error.documentationUrl,
+            }}
+          />
+        );
+      }
+
       return (
         <ErrorPanel
           title="Unable to load pull request"
-          message={message}
+          message={fallbackMessage}
           documentationUrl={error.documentationUrl}
         />
       );
@@ -519,15 +537,29 @@ function PullRequestDiffSection({
     );
   } catch (error) {
     if (isGithubApiError(error)) {
-      const message =
+      const fallbackMessage =
         error.status === 404
           ? "File changes for this pull request could not be retrieved. The pull request may be private or missing."
           : error.message;
 
+      if (isLikelyPrivateRepoAccessError(error)) {
+        return (
+          <PrivateRepoInstallGate
+            teamSlugOrId={teamSlugOrId}
+            repoFullName={`${githubOwner}/${repo}`}
+            fallback={{
+              title: "Unable to load pull request files",
+              message: fallbackMessage,
+              documentationUrl: error.documentationUrl,
+            }}
+          />
+        );
+      }
+
       return (
         <ErrorPanel
           title="Unable to load pull request files"
-          message={message}
+          message={fallbackMessage}
           documentationUrl={error.documentationUrl}
         />
       );
@@ -535,6 +567,16 @@ function PullRequestDiffSection({
 
     throw error;
   }
+}
+
+function isLikelyPrivateRepoAccessError(error: GithubApiError): boolean {
+  if (error.status === 401 || error.status === 403) {
+    return true;
+  }
+  if (error.status === 404) {
+    return true;
+  }
+  return /resource not accessible/i.test(error.message ?? "");
 }
 
 function getStatusBadge(pullRequest: GithubPullRequest): {
