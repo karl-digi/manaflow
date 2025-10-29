@@ -1,0 +1,100 @@
+# .github/workflows/daily-release.yml
+name: Daily Release
+
+on:
+  schedule:
+    # Runs at 4:00 AM UTC every day
+    - cron: '0 4 * * *'
+  workflow_dispatch: # Allows manual triggering for testing
+
+permissions:
+  contents: write
+
+env:
+  NODE_VERSION: "24"
+
+jobs:
+  create-daily-release:
+    name: Create Daily Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.21
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump version and create tag
+        id: bump
+        run: |
+          set -euo pipefail
+
+          # Get current version from apps/client/package.json
+          current_version=$(node -p "require('./apps/client/package.json').version")
+          echo "Current version: $current_version"
+
+          # Parse version components
+          IFS='.' read -r major minor patch <<< "$current_version"
+
+          # Increment patch version
+          new_patch=$((patch + 1))
+          new_version="${major}.${minor}.${new_patch}"
+          echo "New version: $new_version"
+
+          # Update version in apps/client/package.json
+          node -e "
+            const fs = require('fs');
+            const path = './apps/client/package.json';
+            const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
+            pkg.version = '$new_version';
+            fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
+          "
+
+          # Commit version bump
+          git add apps/client/package.json
+          git commit -m "chore: bump version to v$new_version"
+
+          # Create and push tag
+          git tag -a "v$new_version" -m "Daily release v$new_version"
+          git push origin HEAD:main
+          git push origin "v$new_version"
+
+          echo "version=$new_version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$new_version" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.bump.outputs.version }}
+          TAG: ${{ steps.bump.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          # Create draft release
+          gh release create "$TAG" \
+            --draft \
+            --title "$TAG" \
+            --notes "Daily automated release $TAG"
+
+          echo "Created draft release $TAG"
+
+      - name: Trigger build workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The release-updates.yml workflow is triggered by pushes to main
+          # that modify package.json files, so it should trigger automatically
+          echo "Build workflow will be triggered by the package.json change on main"
