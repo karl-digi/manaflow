@@ -1,7 +1,5 @@
 import type { ReactNode } from "react";
 
-import { Bell } from "lucide-react";
-
 import { Button } from "@/components/ui/button";
 
 export type ReviewCompletionNotificationCardState =
@@ -35,7 +33,7 @@ export function ReviewCompletionNotificationCard({
         <Button
           variant="ghost"
           size="sm"
-          className="text-neutral-600"
+          className="rounded-none border border-neutral-200/70 text-neutral-600"
           onClick={state.onEnable}
           disabled={state.isRequesting}
         >
@@ -49,7 +47,7 @@ export function ReviewCompletionNotificationCard({
         <Button
           variant="ghost"
           size="sm"
-          className="text-neutral-600"
+          className="rounded-none border border-neutral-200/70 text-neutral-600"
           onClick={state.onDisable}
         >
           Turn off notification
@@ -65,8 +63,7 @@ export function ReviewCompletionNotificationCard({
   return (
     <div className="border border-neutral-200 bg-white px-4 py-3 text-xs text-neutral-600">
       <div className="flex w-full flex-wrap items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <Bell className="h-4 w-4 flex-shrink-0 text-neutral-500" />
+        <div className="flex min-w-0 items-center">
           <span className="leading-tight">{message}</span>
         </div>
         {action}
