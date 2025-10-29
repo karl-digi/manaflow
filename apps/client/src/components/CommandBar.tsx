@@ -333,6 +333,21 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     return items;
   }, [stackTeams, teamMemberships, selectedTeamId, getClientSlug]);
 
+  const teamCommandEntries = useMemo(
+    () =>
+      teamCommandItems.map((item) => ({
+        value: `team:${item.id}:${item.teamSlugOrId}`,
+        searchText: buildSearchText(item.label, item.keywords, [
+          item.slug,
+          item.teamSlugOrId,
+          item.id,
+          item.isCurrent ? "current" : undefined,
+        ]),
+        item,
+      })),
+    [teamCommandItems]
+  );
+
   const isTeamsLoading = Boolean(stackUser) && teamMemberships === undefined;
   const teamPageEmptyMessage = stackUser
     ? "No teams available yet."
@@ -1388,6 +1403,11 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     () => filterCommandItems(search, localWorkspaceEntries),
     [localWorkspaceEntries, search]
   );
+  const filteredTeamEntries = useMemo(
+    () => filterCommandItems(search, teamCommandEntries),
+    [search, teamCommandEntries]
+  );
+
   const hasSearchQuery = search.trim().length > 0;
 
   const rootSuggestedEntries = useMemo(
@@ -1475,11 +1495,9 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     [localWorkspaceCommandsToRender, localWorkspaceSuggestionsToRender]
   );
   const teamVisibleValues = useMemo(() => {
-    if (!teamCommandItems.length) return [];
-    return teamCommandItems.map(
-      (item) => `team:${item.id}:${item.teamSlugOrId}`
-    );
-  }, [teamCommandItems]);
+    if (!filteredTeamEntries.length) return [];
+    return filteredTeamEntries.map((entry) => entry.value);
+  }, [filteredTeamEntries]);
 
   const renderCommandItem = useCallback(
     (entry: CommandListEntry, recordUsage: (value: string) => void) => (
@@ -1749,16 +1767,14 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                     >
                       Loading teams…
                     </Command.Item>
-                  ) : teamCommandItems.length > 0 ? (
-                    teamCommandItems.map((item) => (
+                  ) : teamCommandEntries.length > 0 ? (
+                    filteredTeamEntries.map(({ value, item }) => (
                       <Command.Item
-                        key={item.id}
-                        value={`team:${item.id}:${item.teamSlugOrId}`}
-                        data-value={`team:${item.id}:${item.teamSlugOrId}`}
+                        key={value}
+                        value={value}
+                        data-value={value}
                         keywords={item.keywords}
-                        onSelect={() =>
-                          handleSelect(`team:${item.id}:${item.teamSlugOrId}`)
-                        }
+                        onSelect={() => handleSelect(value)}
                         className="flex items-center gap-3 px-3 py-2.5 mx-1 rounded-md cursor-pointer
                 hover:bg-neutral-100 dark:hover:bg-neutral-800
                 data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800
