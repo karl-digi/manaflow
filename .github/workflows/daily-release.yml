@@ -1,0 +1,52 @@
+name: Daily Release
+
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+jobs:
+  create-release:
+    name: Create Daily Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compute release metadata
+        id: metadata
+        run: |
+          today=$(date -u +"%Y-%m-%d")
+          echo "tag=daily-${today}" >> "$GITHUB_OUTPUT"
+          echo "name=Daily Release (${today})" >> "$GITHUB_OUTPUT"
+      - name: Create or skip release
+        uses: actions/github-script@v7
+        env:
+          TAG: ${{ steps.metadata.outputs.tag }}
+          RELEASE_NAME: ${{ steps.metadata.outputs.name }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { TAG, RELEASE_NAME } = process.env;
+            const { owner, repo } = context.repo;
+
+            core.info(`Preparing release ${TAG} for ${owner}/${repo}.`);
+
+            try {
+              await github.rest.repos.getReleaseByTag({ owner, repo, tag: TAG });
+              core.info(`Release ${TAG} already exists; skipping creation.`);
+              return;
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+
+            const { data: repository } = await github.rest.repos.get({ owner, repo });
+            const targetCommitish = repository.default_branch;
+
+            await github.rest.repos.createRelease({
+              owner,
+              repo,
+              tag_name: TAG,
+              name: RELEASE_NAME,
+              target_commitish: targetCommitish,
+              generate_release_notes: true,
+            });
+
+            core.info(`Release ${TAG} created on ${targetCommitish}.`)
