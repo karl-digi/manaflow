@@ -47,12 +47,12 @@ type GithubAccountAccessor = {
 
 type GithubConnectedUser = {
   getConnectedAccount: (
-    provider: "github",
+    provider: "github"
   ) => Promise<GithubAccountAccessor | null>;
 };
 
 async function resolveGithubAccessToken(
-  user: GithubConnectedUser | null,
+  user: GithubConnectedUser | null
 ): Promise<string | null> {
   if (!user) {
     return null;
@@ -220,7 +220,7 @@ export default async function PullRequestPage({ params }: PageProps) {
 
   return (
     <div className="min-h-dvh bg-neutral-50 text-neutral-900">
-      <div className="flex w-full flex-col gap-8 pb-4 pt-10 px-3">
+      <div className="flex w-full flex-col gap-3 pb-4 pt-10 px-3">
         <Suspense fallback={<PullRequestHeaderSkeleton />}>
           <PullRequestHeader
             promise={pullRequestPromise}
@@ -380,13 +380,13 @@ function scheduleCodeReviewStart({
         if (isGithubApiError(error) && error.status === 404) {
           console.warn(
             "[code-review] Skipping auto-start; GitHub app not installed or repository access missing",
-            context,
+            context
           );
         } else {
           console.error(
             "[code-review] Skipping auto-start due to PR fetch error",
             context,
-            error,
+            error
           );
         }
       }
