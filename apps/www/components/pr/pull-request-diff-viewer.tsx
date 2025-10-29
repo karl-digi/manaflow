@@ -1450,7 +1450,7 @@ export function PullRequestDiffViewer({
           <div className="h-[40px]" />
         </aside>
 
-        <div className="relative hidden lg:flex lg:flex-none lg:self-stretch lg:px-1 group/resize transform translate-x-[6px]">
+        <div className="relative hidden lg:flex lg:flex-none lg:self-stretch lg:px-1 group/resize">
           <div
             className={cn(
               "flex h-full w-full cursor-col-resize select-none items-center justify-center touch-none rounded",
@@ -1486,7 +1486,7 @@ export function PullRequestDiffViewer({
           </div>
         </div>
 
-        <div className="flex-1 min-w-0 space-y-3 lg:pl-3">
+        <div className="flex-1 min-w-0 space-y-3">
           {fileEntries.map(({ entry, review, diffHeatmap }) => {
             const isFocusedFile =
               focusedError?.filePath === entry.file.filename;

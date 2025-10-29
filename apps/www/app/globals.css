@@ -242,25 +242,33 @@ body {
   box-shadow: inset 0 0 0 999px rgba(253, 230, 138, 0.36);
 }
 
+.diff-code-insert {
+  background-color: transparent !important;
+}
+
+.diff-code-delete {
+  background-color: transparent !important;
+}
+
 .diff-syntax {
   --diff-gutter-insert-background-color: rgb(226 252 237);
   --diff-gutter-insert-text-color: rgb(21 128 61);
   --diff-code-insert-background-color: rgb(240 253 244);
   --diff-code-insert-text-color: rgb(22 101 52);
-  --diff-gutter-delete-background-color: #fadde0;
+  --diff-gutter-delete-background-color: rgba(0, 0, 0, 0.073);
   --diff-gutter-delete-text-color: rgb(115 115 115);
-  --diff-code-delete-background-color: rgb(252,236,234);
+  --diff-code-delete-background-color: transparent;
   --diff-code-delete-text-color: rgb(82 82 82);
 }
 
 .dark .diff-syntax {
   --diff-gutter-insert-background-color: rgba(34, 197, 94, 0.22);
   --diff-gutter-insert-text-color: rgb(134 239 172);
-  --diff-code-insert-background-color: rgba(34, 197, 94, 0.16);
+  --diff-code-insert-background-color: rgba(0, 0, 0, 0.073);
   --diff-code-insert-text-color: rgb(187 247 208);
-  --diff-gutter-delete-background-color: #fadde0;
+  --diff-gutter-delete-background-color: rgb(0 0 0);
   --diff-gutter-delete-text-color: rgb(163 163 163);
-  --diff-code-delete-background-color: rgb(252,236,234);
+  --diff-code-delete-background-color: transparent;
   --diff-code-delete-text-color: rgb(212 212 212);
 }
 
@@ -330,16 +338,17 @@ body {
 }
 
 .cmux-heatmap-char-tier-2 {
-  background-color: rgba(253, 230, 138, 0.75);
+  background-color: rgb(255, 180, 104, 0.75);
+  /* background-color: blue; */
 }
 
 .cmux-heatmap-char-tier-3 {
-  background-color: rgba(252, 211, 77, 0.8);
+  background-color: rgba(248, 174, 99, 0.8);
   color: #422006;
 }
 
 .cmux-heatmap-char-tier-4 {
-  background-color: rgba(245, 158, 11, 0.85);
+  background-color: rgba(255, 144, 88, 0.7);
   color: #431407;
 }
 
@@ -360,24 +369,6 @@ body {
 .cmux-heatmap-focus {
   scroll-margin-top: 96px;
   scroll-margin-bottom: 96px;
-}
-
-.dark .cmux-heatmap-char-tier-1 {
-  background-color: rgba(254, 249, 195, 0.5);
-}
-
-.dark .cmux-heatmap-char-tier-2 {
-  background-color: rgba(253, 230, 138, 0.58);
-}
-
-.dark .cmux-heatmap-char-tier-3 {
-  background-color: rgba(252, 211, 77, 0.64);
-  color: #fff7ed;
-}
-
-.dark .cmux-heatmap-char-tier-4 {
-  background-color: rgba(245, 158, 11, 0.7);
-  color: #ffedd5;
 }
 
 .cmux-heatmap-gutter {
