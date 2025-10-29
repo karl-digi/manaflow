@@ -18,7 +18,6 @@ import {
   FileMinus,
   FilePlus,
   FileText,
-  Folder,
   Sparkles,
   Copy,
   Check,
@@ -54,6 +53,10 @@ import {
 } from "@/components/ui/tooltip";
 import { refractor } from "refractor/all";
 
+import {
+  MaterialSymbolsFolderOpenSharp,
+  MaterialSymbolsFolderSharp,
+} from "../icons/material-symbols";
 import {
   buildDiffHeatmap,
   parseReviewHeatmap,
@@ -1494,11 +1497,27 @@ function FileTreeNavigator({
                 style={{ paddingLeft: depth * 14 + 10 }}
               >
                 {isExpanded ? (
-                  <ChevronDown className="h-4 w-4 text-neutral-500" />
+                  <ChevronDown
+                    className="h-4 w-4 text-neutral-500 flex-shrink-0"
+                    style={{ minWidth: "16px", minHeight: "16px" }}
+                  />
                 ) : (
-                  <ChevronRight className="h-4 w-4 text-neutral-500" />
+                  <ChevronRight
+                    className="h-4 w-4 text-neutral-500 flex-shrink-0"
+                    style={{ minWidth: "16px", minHeight: "16px" }}
+                  />
                 )}
-                <Folder className="h-4 w-4 text-neutral-500" />
+                {isExpanded ? (
+                  <MaterialSymbolsFolderOpenSharp
+                    className="h-4 w-4 text-neutral-500 flex-shrink-0 pr-0.5"
+                    style={{ minWidth: "14px", minHeight: "14px" }}
+                  />
+                ) : (
+                  <MaterialSymbolsFolderSharp
+                    className="h-4 w-4 text-neutral-500 flex-shrink-0 pr-0.5"
+                    style={{ minWidth: "14px", minHeight: "14px" }}
+                  />
+                )}
                 <span className="truncate">{node.name}</span>
               </button>
               {isExpanded ? (
