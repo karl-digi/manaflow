@@ -7,8 +7,14 @@ import {
   useMemo,
   useRef,
   useState,
+  useId,
 } from "react";
-import type { ReactElement, ReactNode } from "react";
+import type {
+  ReactElement,
+  ReactNode,
+  KeyboardEvent as ReactKeyboardEvent,
+  CSSProperties,
+} from "react";
 import {
   ChevronLeft,
   ChevronDown,
@@ -283,6 +289,18 @@ type DiffLineLocation = {
 };
 
 type LineTooltipMap = Record<DiffLineSide, Map<number, HeatmapTooltipMeta>>;
+
+const SIDEBAR_WIDTH_STORAGE_KEY = "cmux:pr-diff-viewer:file-tree-width";
+const SIDEBAR_DEFAULT_WIDTH = 330;
+const SIDEBAR_MIN_WIDTH = 240;
+const SIDEBAR_MAX_WIDTH = 520;
+
+function clampSidebarWidth(value: number): number {
+  if (Number.isNaN(value)) {
+    return SIDEBAR_DEFAULT_WIDTH;
+  }
+  return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, value));
+}
 
 function inferLanguage(filename: string): string | null {
   const lowerPath = filename.toLowerCase();
@@ -910,6 +928,20 @@ export function PullRequestDiffViewer({
       ? hydratedInitialPath
       : firstPath;
 
+  const sidebarPanelId = useId();
+  const [sidebarWidth, setSidebarWidth] = useState<number>(
+    SIDEBAR_DEFAULT_WIDTH
+  );
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false);
+  const pointerStartXRef = useRef(0);
+  const pointerStartWidthRef = useRef<number>(SIDEBAR_DEFAULT_WIDTH);
+  const sidebarPointerMoveHandlerRef = useRef<
+    ((event: PointerEvent) => void) | null
+  >(null);
+  const sidebarPointerUpHandlerRef = useRef<
+    ((event: PointerEvent) => void) | null
+  >(null);
+
   const [activePath, setActivePath] = useState<string>(initialPath);
   const [activeAnchor, setActiveAnchor] = useState<string>(initialPath);
 
@@ -920,6 +952,71 @@ export function PullRequestDiffViewer({
     }
     return defaults;
   });
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const storedWidth = window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY);
+    if (!storedWidth) {
+      return;
+    }
+    const parsedWidth = Number.parseInt(storedWidth, 10);
+    const clampedWidth = clampSidebarWidth(parsedWidth);
+    setSidebarWidth((previous) =>
+      previous === clampedWidth ? previous : clampedWidth
+    );
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.localStorage.setItem(
+      SIDEBAR_WIDTH_STORAGE_KEY,
+      String(Math.round(sidebarWidth))
+    );
+  }, [sidebarWidth]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+    if (!isResizingSidebar) {
+      return;
+    }
+    const previousCursor = document.body.style.cursor;
+    document.body.style.cursor = "col-resize";
+    return () => {
+      document.body.style.cursor = previousCursor;
+    };
+  }, [isResizingSidebar]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    return () => {
+      if (sidebarPointerMoveHandlerRef.current) {
+        window.removeEventListener(
+          "pointermove",
+          sidebarPointerMoveHandlerRef.current
+        );
+        sidebarPointerMoveHandlerRef.current = null;
+      }
+      if (sidebarPointerUpHandlerRef.current) {
+        window.removeEventListener(
+          "pointerup",
+          sidebarPointerUpHandlerRef.current
+        );
+        window.removeEventListener(
+          "pointercancel",
+          sidebarPointerUpHandlerRef.current
+        );
+        sidebarPointerUpHandlerRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     setExpandedPaths(() => {
@@ -991,6 +1088,116 @@ export function PullRequestDiffViewer({
       observer.disconnect();
     };
   }, [parsedDiffs]);
+
+  const handleSidebarResizePointerDown = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (event.pointerType === "mouse" && event.button !== 0) {
+        return;
+      }
+      if (typeof window === "undefined") {
+        return;
+      }
+      event.preventDefault();
+      const handleElement = event.currentTarget;
+      const pointerId = event.pointerId;
+      pointerStartXRef.current = event.clientX;
+      pointerStartWidthRef.current = sidebarWidth;
+      setIsResizingSidebar(true);
+
+      try {
+        handleElement.focus({ preventScroll: true });
+      } catch {
+        handleElement.focus();
+      }
+
+      const handlePointerMove = (moveEvent: PointerEvent) => {
+        const delta = moveEvent.clientX - pointerStartXRef.current;
+        const nextWidth = clampSidebarWidth(
+          pointerStartWidthRef.current + delta
+        );
+        setSidebarWidth((previous) =>
+          previous === nextWidth ? previous : nextWidth
+        );
+      };
+
+      const handlePointerTerminate = (upEvent: PointerEvent) => {
+        if (upEvent.pointerId !== pointerId) {
+          return;
+        }
+        if (handleElement.hasPointerCapture?.(pointerId)) {
+          try {
+            handleElement.releasePointerCapture(pointerId);
+          } catch {
+            // Ignore release failures.
+          }
+        }
+        setIsResizingSidebar(false);
+        if (sidebarPointerMoveHandlerRef.current) {
+          window.removeEventListener(
+            "pointermove",
+            sidebarPointerMoveHandlerRef.current
+          );
+          sidebarPointerMoveHandlerRef.current = null;
+        }
+        if (sidebarPointerUpHandlerRef.current) {
+          window.removeEventListener(
+            "pointerup",
+            sidebarPointerUpHandlerRef.current
+          );
+          window.removeEventListener(
+            "pointercancel",
+            sidebarPointerUpHandlerRef.current
+          );
+          sidebarPointerUpHandlerRef.current = null;
+        }
+      };
+
+      sidebarPointerMoveHandlerRef.current = handlePointerMove;
+      sidebarPointerUpHandlerRef.current = handlePointerTerminate;
+
+      window.addEventListener("pointermove", handlePointerMove);
+      window.addEventListener("pointerup", handlePointerTerminate);
+      window.addEventListener("pointercancel", handlePointerTerminate);
+
+      try {
+        handleElement.setPointerCapture(pointerId);
+      } catch {
+        // Ignore pointer capture failures (e.g., Safari).
+      }
+    },
+    [sidebarWidth, setIsResizingSidebar, setSidebarWidth]
+  );
+
+  const handleSidebarResizeKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      const key = event.key;
+      if (key === "ArrowLeft" || key === "ArrowRight") {
+        event.preventDefault();
+        const delta = key === "ArrowLeft" ? -16 : 16;
+        setSidebarWidth((previous) => clampSidebarWidth(previous + delta));
+        return;
+      }
+      if (key === "Home") {
+        event.preventDefault();
+        setSidebarWidth(SIDEBAR_MIN_WIDTH);
+        return;
+      }
+      if (key === "End") {
+        event.preventDefault();
+        setSidebarWidth(SIDEBAR_MAX_WIDTH);
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && key === "0") {
+        event.preventDefault();
+        setSidebarWidth(SIDEBAR_DEFAULT_WIDTH);
+      }
+    },
+    [setSidebarWidth]
+  );
+
+  const handleSidebarResizeDoubleClick = useCallback(() => {
+    setSidebarWidth(SIDEBAR_DEFAULT_WIDTH);
+  }, [setSidebarWidth]);
 
   const handleNavigate = useCallback(
     (path: string, options?: NavigateOptions) => {
@@ -1194,8 +1401,16 @@ export function PullRequestDiffViewer({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:gap-3">
-        <aside className="lg:sticky lg:top-2 lg:h-[calc(100vh)] lg:w-72 lg:overflow-y-auto">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-0">
+        <aside
+          id={sidebarPanelId}
+          className="relative w-full lg:sticky lg:top-2 lg:h-[calc(100vh)] lg:flex-none lg:overflow-y-auto lg:w-[var(--pr-diff-sidebar-width)] lg:min-w-[15rem] lg:max-w-[32.5rem]"
+          style={
+            {
+              "--pr-diff-sidebar-width": `${sidebarWidth}px`,
+            } as CSSProperties
+          }
+        >
           <div className="flex flex-col gap-3">
             <div className="lg:sticky lg:top-0 lg:z-10 lg:bg-white">
               <ReviewProgressIndicator
@@ -1227,10 +1442,46 @@ export function PullRequestDiffViewer({
               />
             </div>
           </div>
-          <div className="h-[40px]"></div>
+          <div className="h-[40px]" />
         </aside>
 
-        <div className="flex-1 space-y-3">
+        <div className="relative hidden lg:flex lg:flex-none lg:self-stretch lg:px-1 group/resize transform translate-x-[6px]">
+          <div
+            className={cn(
+              "flex h-full w-full cursor-col-resize select-none items-center justify-center touch-none rounded",
+              "focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-sky-500",
+              isResizingSidebar
+                ? "bg-sky-200/60 dark:bg-sky-900/40"
+                : "bg-transparent hover:bg-sky-100/60 dark:hover:bg-sky-900/40"
+            )}
+            role="separator"
+            aria-label="Resize file navigation panel"
+            aria-orientation="vertical"
+            aria-controls={sidebarPanelId}
+            aria-valuenow={Math.round(sidebarWidth)}
+            aria-valuemin={SIDEBAR_MIN_WIDTH}
+            aria-valuemax={SIDEBAR_MAX_WIDTH}
+            tabIndex={0}
+            onPointerDown={handleSidebarResizePointerDown}
+            onKeyDown={handleSidebarResizeKeyDown}
+            onDoubleClick={handleSidebarResizeDoubleClick}
+          >
+            <span className="sr-only">
+              Drag to adjust file navigation width
+            </span>
+            <div
+              className={cn(
+                "h-full w-[3px] rounded-full transition-opacity",
+                isResizingSidebar
+                  ? "bg-sky-500 dark:bg-sky-400 opacity-100"
+                  : "bg-neutral-400 opacity-0 group-hover/resize:opacity-100 dark:bg-neutral-500"
+              )}
+              aria-hidden
+            />
+          </div>
+        </div>
+
+        <div className="flex-1 min-w-0 space-y-3 lg:pl-3">
           {fileEntries.map(({ entry, review, diffHeatmap }) => {
             const isFocusedFile =
               focusedError?.filePath === entry.file.filename;
