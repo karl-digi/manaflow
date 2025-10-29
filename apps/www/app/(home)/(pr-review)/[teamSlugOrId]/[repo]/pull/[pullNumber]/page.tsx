@@ -11,6 +11,7 @@ import {
   type GithubPullRequest,
   type GithubFileChange,
 } from "@/lib/github/fetch-pull-request";
+import { fetchRepository } from "@/lib/github/fetch-repository";
 import { isGithubApiError } from "@/lib/github/errors";
 import { cn } from "@/lib/utils";
 import { stackServerApp } from "@/lib/utils/stack";
@@ -41,18 +42,11 @@ type PageProps = {
 
 export const dynamic = "force-dynamic";
 
-type GithubAccountAccessor = {
-  getAccessToken: () => Promise<{ accessToken?: string | null }>;
-};
-
-type GithubConnectedUser = {
-  getConnectedAccount: (
-    provider: "github"
-  ) => Promise<GithubAccountAccessor | null>;
-};
+type MaybeStackUser = Awaited<ReturnType<typeof stackServerApp.getUser>>;
+type StackUser = NonNullable<MaybeStackUser>;
 
 async function resolveGithubAccessToken(
-  user: GithubConnectedUser | null
+  user: MaybeStackUser
 ): Promise<string | null> {
   if (!user) {
     return null;
@@ -91,14 +85,58 @@ function redirectToSignIn(returnPath: string): never {
   redirect(signInUrl);
 }
 
-async function requireSignedInUser(returnPath: string) {
-  const user = await stackServerApp.getUser({ or: "return-null" });
+async function resolveOptionalUserForRepository({
+  githubOwner,
+  repo,
+}: {
+  githubOwner: string;
+  repo: string;
+}): Promise<StackUser | null> {
+  const existingUser = await stackServerApp.getUser({ or: "return-null" });
+  if (existingUser) {
+    return existingUser;
+  }
+
+  const repoIsPublic = await isRepositoryPublic(githubOwner, repo);
+  if (!repoIsPublic) {
+    return null;
+  }
+
+  const anonymousUser = await stackServerApp.getUser({ or: "anonymous" });
+  return anonymousUser;
+}
+
+async function ensureUserForRepository({
+  returnPath,
+  githubOwner,
+  repo,
+}: {
+  returnPath: string;
+  githubOwner: string;
+  repo: string;
+}): Promise<StackUser> {
+  const user = await resolveOptionalUserForRepository({
+    githubOwner,
+    repo,
+  });
 
   if (!user) {
     redirectToSignIn(returnPath);
   }
 
   return user;
+}
+
+async function isRepositoryPublic(owner: string, repo: string): Promise<boolean> {
+  try {
+    const repository = await fetchRepository(owner, repo);
+    return repository.private === false;
+  } catch (error) {
+    if (isGithubApiError(error) && error.status === 404) {
+      return false;
+    }
+    throw error;
+  }
 }
 
 async function getFirstTeam(): Promise<Team | null> {
@@ -114,18 +152,20 @@ export async function generateMetadata({
   params,
 }: PageProps): Promise<Metadata> {
   const resolvedParams = await params;
-  const returnPath = buildPullRequestPath(resolvedParams);
-  const user = await requireSignedInUser(returnPath);
-  const selectedTeam = user.selectedTeam || (await getFirstTeam());
-  if (!selectedTeam) {
-    throw notFound();
-  }
   const {
     teamSlugOrId: githubOwner,
     repo,
     pullNumber: pullNumberRaw,
   } = resolvedParams;
   const pullNumber = parsePullNumber(pullNumberRaw);
+
+  const user = await stackServerApp.getUser({ or: "return-null" });
+  if (user) {
+    const selectedTeam = user.selectedTeam || (await getFirstTeam());
+    if (!selectedTeam) {
+      throw notFound();
+    }
+  }
 
   if (pullNumber === null) {
     return {
@@ -158,18 +198,6 @@ export async function generateMetadata({
 export default async function PullRequestPage({ params }: PageProps) {
   const resolvedParams = await params;
   const returnPath = buildPullRequestPath(resolvedParams);
-  const user = await requireSignedInUser(returnPath);
-  const selectedTeam = user.selectedTeam || (await getFirstTeam());
-  if (!selectedTeam) {
-    return (
-      <TeamOnboardingPrompt
-        githubOwner={resolvedParams.teamSlugOrId}
-        repo={resolvedParams.repo}
-        pullNumber={parsePullNumber(resolvedParams.pullNumber) ?? 0}
-      />
-    );
-  }
-
   const {
     teamSlugOrId: githubOwner,
     repo,
@@ -179,6 +207,22 @@ export default async function PullRequestPage({ params }: PageProps) {
 
   if (pullNumber === null) {
     notFound();
+  }
+
+  const user = await ensureUserForRepository({
+    returnPath,
+    githubOwner,
+    repo,
+  });
+  const selectedTeam = user.selectedTeam || (await getFirstTeam());
+  if (!selectedTeam) {
+    return (
+      <TeamOnboardingPrompt
+        githubOwner={githubOwner}
+        repo={repo}
+        pullNumber={pullNumber}
+      />
+    );
   }
 
   const githubAccessToken = await resolveGithubAccessToken(user);
