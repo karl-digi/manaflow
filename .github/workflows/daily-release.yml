@@ -1,0 +1,59 @@
+name: Daily Automated Release
+
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  create-daily-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compute release metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="daily-$(date -u +%Y-%m-%d)"
+          title="Daily release $(date -u +%Y-%m-%d)"
+          notes="Automated daily release created at $(date -u '+%Y-%m-%d %H:%M:%S UTC')."
+
+          {
+            printf 'tag=%s\n' "$tag"
+            printf 'title=%s\n' "$title"
+            printf 'notes=%s\n' "$notes"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check for existing release
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub release
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          TITLE: ${{ steps.meta.outputs.title }}
+          NOTES: ${{ steps.meta.outputs.notes }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gh release create "$TAG" \
+            --title "$TITLE" \
+            --notes "$NOTES"
