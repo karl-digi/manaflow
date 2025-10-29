@@ -18,7 +18,7 @@ export const pauseMorphInstance = internalAction({
       return;
     }
 
-    const url = `${MORPH_API_BASE_URL}/api/instances/${encodeURIComponent(
+    const url = `${MORPH_API_BASE_URL}/api/instance/${encodeURIComponent(
       args.sandboxInstanceId
     )}/pause`;
     try {

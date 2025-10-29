@@ -14,6 +14,7 @@ import {
   codeReviewRouter,
   devServerRouter,
   environmentsRouter,
+  githubInstallStateRouter,
   healthRouter,
   morphRouter,
   sandboxesRouter,
@@ -109,6 +110,7 @@ app.route("/", githubPrsPatchRouter);
 app.route("/", githubPrsFilesRouter);
 app.route("/", githubPrsFileContentsRouter);
 app.route("/", githubPrsFileContentsBatchRouter);
+app.route("/", githubInstallStateRouter);
 app.route("/", morphRouter);
 app.route("/", iframePreflightRouter);
 app.route("/", environmentsRouter);

@@ -671,6 +671,7 @@ const convexSchema = defineSchema({
       v.literal("expired")
     ),
     createdAt: v.number(),
+    returnUrl: v.optional(v.string()),
   }).index("by_nonce", ["nonce"]),
 
   // Pull Requests ingested from GitHub (via webhook or backfill)
