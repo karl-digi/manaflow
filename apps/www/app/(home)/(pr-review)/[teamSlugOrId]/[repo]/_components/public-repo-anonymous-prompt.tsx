@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Eye } from "lucide-react";
-import { useRouter } from "next/navigation";
 
 interface PublicRepoAnonymousPromptProps {
   repo: string;
@@ -20,7 +19,6 @@ export function PublicRepoAnonymousPrompt({
 }: PublicRepoAnonymousPromptProps) {
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const router = useRouter();
   const hasAttempted = useRef(false);
 
   const handleAnonymousSignIn = useCallback(async () => {
@@ -54,7 +52,8 @@ export function PublicRepoAnonymousPrompt({
       }
       const targetUrl = `${targetPath}${currentUrl.search}${currentUrl.hash}`;
 
-      router.push(targetUrl);
+      // Use window.location.href for a full page reload to ensure cookies are properly sent
+      window.location.href = targetUrl;
     } catch (err) {
       console.error(
         "[PublicRepoAnonymousPrompt] Failed to create anonymous user",
@@ -63,7 +62,7 @@ export function PublicRepoAnonymousPrompt({
       setError("An unexpected error occurred. Please try again.");
       setIsSigningIn(false);
     }
-  }, [router]);
+  }, []);
 
   useEffect(() => {
     if (hasAttempted.current) {
