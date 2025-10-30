@@ -680,7 +680,7 @@ interface GhPrMetadata {
   title: string | null;
 }
 
-function resolveGithubToken(token?: string | null): string | null {
+function resolveGithubToken(token?: string | null, isPrivateRepo = false): string | null {
   // If a token is explicitly provided, use it
   if (token) {
     console.log("[heatmap] Using explicitly provided GitHub token");
@@ -699,10 +699,16 @@ function resolveGithubToken(token?: string | null): string | null {
     return envToken;
   }
 
-  // Fall back to hardcoded tokens with rotation
+  // For private repos, don't use hardcoded tokens
+  if (isPrivateRepo) {
+    console.warn("[heatmap] No token provided for private repository access");
+    return null;
+  }
+
+  // Fall back to hardcoded tokens with rotation (public repos only)
   const nextToken = getNextGitHubToken();
   const tokenPrefix = nextToken.substring(0, 20);
-  console.log(`[heatmap] Using hardcoded GitHub token (${tokenPrefix}...) [${currentTokenIndex}/${HARDCODED_GITHUB_TOKENS.length}]`);
+  console.log(`[heatmap] Using hardcoded GitHub token for public repo (${tokenPrefix}...) [${currentTokenIndex}/${HARDCODED_GITHUB_TOKENS.length}]`);
   return nextToken;
 }
 
