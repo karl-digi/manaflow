@@ -85,6 +85,15 @@ export default function HeatmapPage() {
               <span className="bg-yellow-300 px-1">0github.com</span>
               /simonw/datasette/pull/2548
             </a>
+            <a
+              href="https://0github.com/manaflow-ai/cmux/pull/666"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="break-all text-black underline"
+            >
+              https://<span className="bg-yellow-300 px-1">0github.com</span>
+              /manaflow-ai/cmux/pull/666
+            </a>
           </div>
         </div>
 
