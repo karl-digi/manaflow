@@ -20,7 +20,7 @@ export type ProxyRoutingResult = {
 };
 
 export function deriveMorphDetails(
-  rawUrl: string | null | undefined,
+  rawUrl: string | null | undefined
 ): ProxyRoutingResult {
   if (!rawUrl) {
     return {
@@ -59,6 +59,7 @@ export function deriveMorphDetails(
     const navigation = new URL(parsed.toString());
     navigation.hostname = "localhost";
     navigation.port = String(info.port);
+    // These downgrades are necessary since electron wrapper is in http
     if (navigation.protocol === "https:") {
       navigation.protocol = "http:";
     } else if (navigation.protocol === "wss:") {
@@ -88,4 +89,3 @@ export function deriveMorphDetails(
     };
   }
 }
-
