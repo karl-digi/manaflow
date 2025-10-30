@@ -1,5 +1,7 @@
 import Link from "next/link";
+import Image from "next/image";
 import type { Metadata } from "next";
+import heatmapDemo0 from "@/assets/heatmap-demo-0.png";
 
 export const metadata: Metadata = {
   title: "Heatmap diff viewer for code reviews",
@@ -9,7 +11,7 @@ export const metadata: Metadata = {
 
 export default function HeatmapPage() {
   return (
-    <div className="flex min-h-screen flex-col items-center bg-white p-4 text-black sm:p-8">
+    <div className="flex min-h-screen flex-col items-center bg-white p-4 pb-16 text-black sm:p-8 sm:pb-24">
       <div className="mx-auto mb-0 mt-8 max-w-3xl sm:mt-[70px]">
         <Link
           href="https://cmux.dev"
@@ -36,11 +38,12 @@ export default function HeatmapPage() {
           </p>
 
           <p className="mb-4">
-            Try it by changing any GitHub pull request url link to{" "}
-            <span className="bg-yellow-300 px-1">0github.com</span>. Under the
-            hood, we spin up{" "}
-            <span className="bg-yellow-200 px-1">gpt-5-codex</span> for every
-            diff and ask it to output a JSON data structure that we parse into a{" "}
+            To try it, replace github.com with{" "}
+            <span className="bg-yellow-300 px-1">0github.com</span> in any
+            GitHub pull request url. Under the hood, we clone the repo into a
+            VM, spin up <span className="bg-yellow-200 px-1">gpt-5-codex</span>{" "}
+            for every diff, and ask it to output a JSON data structure that we
+            parse into a{" "}
             <span className="bg-yellow-200 px-1">colored heatmap</span>.
           </p>
         </div>
@@ -89,6 +92,15 @@ export default function HeatmapPage() {
             </a>
           </div>
         </div>
+      </div>
+
+      <div className="mb-6 mt-6 w-full overflow-hidden rounded-xl sm:mb-8 sm:mt-8 xl:max-w-7xl xl:px-8 2xl:max-w-[1600px]">
+        <Image
+          src={heatmapDemo0}
+          alt="Heatmap diff viewer example showing color-coded code changes"
+          className="w-full"
+          priority
+        />
       </div>
     </div>
   );
