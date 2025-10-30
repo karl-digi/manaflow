@@ -71,7 +71,6 @@ export default async function AuthPage({ params }: PageProps) {
   if (repoIsPublic) {
     return (
       <PublicRepoAnonymousPrompt
-        teamSlugOrId={githubOwner}
         repo={repo}
         githubOwner={githubOwner}
         pullNumber={pullNumber}
