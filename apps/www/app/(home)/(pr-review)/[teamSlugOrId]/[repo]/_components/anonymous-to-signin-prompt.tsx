@@ -29,31 +29,32 @@ export function AnonymousToSignInPrompt({
   }, [app.urls.signIn, returnUrl]);
 
   return (
-    <div className="min-h-dvh bg-neutral-50 dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 flex items-center justify-center px-6">
-      <div className="max-w-2xl w-full">
-        <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 p-8 shadow-sm">
-          <div className="flex items-start gap-4">
+    <div className="min-h-dvh bg-gradient-to-br from-neutral-950 via-neutral-950 to-neutral-900 text-neutral-100 flex items-center justify-center px-6 py-12 sm:py-16">
+      <div className="max-w-3xl w-full">
+        <div className="rounded-2xl border border-neutral-800 bg-neutral-900/70 p-6 sm:p-10 shadow-[0_20px_60px_-35px_rgba(0,0,0,0.9)] backdrop-blur">
+          <div className="flex flex-col gap-6 sm:flex-row sm:items-start sm:gap-8">
             <div className="shrink-0">
-              <div className="h-12 w-12 rounded-full bg-blue-50 dark:bg-blue-950 flex items-center justify-center">
-                <LogIn className="h-6 w-6 text-blue-600 dark:text-blue-400" />
+              <div className="h-14 w-14 rounded-full bg-indigo-500/10 ring-1 ring-inset ring-indigo-400/30 flex items-center justify-center">
+                <LogIn className="h-7 w-7 text-indigo-300" />
               </div>
             </div>
-            <div className="flex-1 min-w-0">
-              <h1 className="text-2xl font-semibold text-neutral-900 dark:text-neutral-100">
+            <div className="flex-1 min-w-0 space-y-6">
+              <h1 className="text-2xl sm:text-3xl font-semibold text-white">
                 Sign In Required
               </h1>
-              <p className="mt-3 text-base text-neutral-600 dark:text-neutral-400 leading-relaxed">
+              <p className="text-base text-neutral-300 leading-relaxed">
                 This is a private repository. Please sign in with your account to
                 continue.
               </p>
 
-              <div className="mt-6">
-                <div className="flex items-center gap-3">
-                  <div className="h-5 w-5 animate-spin rounded-full border-2 border-blue-600 dark:border-blue-400 border-t-transparent" />
-                  <span className="text-sm text-neutral-600 dark:text-neutral-400">
-                    Redirecting to sign in...
-                  </span>
+              <div className="space-y-3">
+                <div className="flex items-center gap-3 text-sm text-neutral-400">
+                  <div className="h-5 w-5 animate-spin rounded-full border-2 border-indigo-300 border-t-transparent" />
+                  <span>Redirecting to sign in...</span>
                 </div>
+                <p className="text-xs text-neutral-500">
+                  If nothing happens, refresh the page to try again.
+                </p>
               </div>
             </div>
           </div>
