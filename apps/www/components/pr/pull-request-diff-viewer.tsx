@@ -480,6 +480,8 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
+const DEBUG_LOG = false;
+
 export function PullRequestDiffViewer({
   files,
   teamSlugOrId,
@@ -571,14 +573,23 @@ export function PullRequestDiffViewer({
                 const type =
                   typeof payload.type === "string" ? payload.type : "";
                 const filePath =
-                  typeof payload.filePath === "string" ? payload.filePath : null;
+                  typeof payload.filePath === "string"
+                    ? payload.filePath
+                    : null;
 
                 switch (type) {
                   case "status":
-                    console.info("[simple-review][frontend][status]", payload);
+                    if (DEBUG_LOG) {
+                      console.info(
+                        "[simple-review][frontend][status]",
+                        payload
+                      );
+                    }
                     break;
                   case "file":
-                    console.info("[simple-review][frontend][file]", payload);
+                    if (DEBUG_LOG) {
+                      console.info("[simple-review][frontend][file]", payload);
+                    }
                     if (filePath) {
                       setStreamStateByFile((previous) => {
                         const next = new Map(previous);
@@ -594,37 +605,40 @@ export function PullRequestDiffViewer({
                     }
                     break;
                   case "skip":
-                    console.info("[simple-review][frontend][skip]", payload);
+                    if (DEBUG_LOG) {
+                      console.info("[simple-review][frontend][skip]", payload);
+                    }
                     if (filePath) {
                       setStreamStateByFile((previous) => {
                         const next = new Map(previous);
-                        const current =
-                          next.get(filePath) ?? {
-                            lines: [],
-                            status: "pending",
-                            skipReason: null,
-                            summary: null,
-                          };
+                        const current = next.get(filePath) ?? {
+                          lines: [],
+                          status: "pending",
+                          skipReason: null,
+                          summary: null,
+                        };
                         next.set(filePath, {
                           ...current,
                           skipReason:
                             typeof payload.reason === "string"
                               ? payload.reason
-                              : current.skipReason ?? null,
+                              : (current.skipReason ?? null),
                           summary:
                             typeof payload.reason === "string"
                               ? payload.reason
-                              : current.summary ?? null,
+                              : (current.summary ?? null),
                         });
                         return next;
                       });
                     }
                     break;
                   case "file-complete":
-                    console.info(
-                      "[simple-review][frontend][file-complete]",
-                      payload
-                    );
+                    if (DEBUG_LOG) {
+                      console.info(
+                        "[simple-review][frontend][file-complete]",
+                        payload
+                      );
+                    }
                     if (filePath) {
                       const status =
                         payload.status === "skipped" ||
@@ -638,13 +652,12 @@ export function PullRequestDiffViewer({
                           : undefined;
                       setStreamStateByFile((previous) => {
                         const next = new Map(previous);
-                        const current =
-                          next.get(filePath) ?? {
-                            lines: [],
-                            status: "pending",
-                            skipReason: null,
-                            summary: null,
-                          };
+                        const current = next.get(filePath) ?? {
+                          lines: [],
+                          status: "pending",
+                          skipReason: null,
+                          summary: null,
+                        };
                         next.set(filePath, {
                           ...current,
                           status,
@@ -655,10 +668,14 @@ export function PullRequestDiffViewer({
                     }
                     break;
                   case "hunk":
-                    console.info("[simple-review][frontend][hunk]", payload);
+                    if (DEBUG_LOG) {
+                      console.info("[simple-review][frontend][hunk]", payload);
+                    }
                     break;
                   case "line": {
-                    console.info("[simple-review][frontend][line]", payload);
+                    if (DEBUG_LOG) {
+                      console.info("[simple-review][frontend][line]", payload);
+                    }
                     if (!filePath) {
                       break;
                     }
@@ -677,10 +694,7 @@ export function PullRequestDiffViewer({
                     if (rawScore === null || rawScore <= 0) {
                       break;
                     }
-                    const normalizedScore = Math.max(
-                      0,
-                      Math.min(rawScore, 1)
-                    );
+                    const normalizedScore = Math.max(0, Math.min(rawScore, 1));
                     const lineNumber =
                       typeof linePayload.newLineNumber === "number"
                         ? linePayload.newLineNumber
@@ -717,13 +731,12 @@ export function PullRequestDiffViewer({
 
                     setStreamStateByFile((previous) => {
                       const next = new Map(previous);
-                      const current =
-                        next.get(filePath) ?? {
-                          lines: [],
-                          status: "pending",
-                          skipReason: null,
-                          summary: null,
-                        };
+                      const current = next.get(filePath) ?? {
+                        lines: [],
+                        status: "pending",
+                        skipReason: null,
+                        summary: null,
+                      };
                       const lineKey = `${reviewLine.lineNumber ?? "unknown"}:${
                         reviewLine.lineText ?? ""
                       }`;
@@ -752,7 +765,12 @@ export function PullRequestDiffViewer({
                     break;
                   }
                   case "complete":
-                    console.info("[simple-review][frontend][complete]", payload);
+                    if (DEBUG_LOG) {
+                      console.info(
+                        "[simple-review][frontend][complete]",
+                        payload
+                      );
+                    }
                     setStreamStateByFile((previous) => {
                       let changed = false;
                       const next = new Map(previous);
@@ -1922,48 +1940,48 @@ export function PullRequestDiffViewer({
         <div className="flex-1 min-w-0 space-y-3">
           {thresholdedFileEntries.map(
             ({ entry, review, diffHeatmap, streamState }) => {
-            const isFocusedFile =
-              focusedError?.filePath === entry.file.filename;
-            const focusedLine = isFocusedFile
-              ? focusedError
-                ? {
-                    side: focusedError.side,
-                    lineNumber: focusedError.lineNumber,
-                  }
-                : null
-              : null;
-            const focusedChangeKey = isFocusedFile
-              ? (focusedError?.changeKey ?? null)
-              : null;
-            const autoTooltipLine =
-              isFocusedFile &&
-              autoTooltipTarget &&
-              autoTooltipTarget.filePath === entry.file.filename
-                ? {
-                    side: autoTooltipTarget.side,
-                    lineNumber: autoTooltipTarget.lineNumber,
-                  }
+              const isFocusedFile =
+                focusedError?.filePath === entry.file.filename;
+              const focusedLine = isFocusedFile
+                ? focusedError
+                  ? {
+                      side: focusedError.side,
+                      lineNumber: focusedError.lineNumber,
+                    }
+                  : null
                 : null;
+              const focusedChangeKey = isFocusedFile
+                ? (focusedError?.changeKey ?? null)
+                : null;
+              const autoTooltipLine =
+                isFocusedFile &&
+                autoTooltipTarget &&
+                autoTooltipTarget.filePath === entry.file.filename
+                  ? {
+                      side: autoTooltipTarget.side,
+                      lineNumber: autoTooltipTarget.lineNumber,
+                    }
+                  : null;
 
-            const isLoading =
-              !fileOutputIndex.has(entry.file.filename) &&
-              (!streamState || streamState.status === "pending");
+              const isLoading =
+                !fileOutputIndex.has(entry.file.filename) &&
+                (!streamState || streamState.status === "pending");
 
-            return (
-              <FileDiffCard
-                key={entry.anchorId}
-                entry={entry}
-                isActive={entry.anchorId === activeAnchor}
-                review={review}
-                diffHeatmap={diffHeatmap}
-                focusedLine={focusedLine}
-                focusedChangeKey={focusedChangeKey}
-                autoTooltipLine={autoTooltipLine}
-                isLoading={isLoading}
-                streamState={streamState}
-              />
-            );
-          }
+              return (
+                <FileDiffCard
+                  key={entry.anchorId}
+                  entry={entry}
+                  isActive={entry.anchorId === activeAnchor}
+                  review={review}
+                  diffHeatmap={diffHeatmap}
+                  focusedLine={focusedLine}
+                  focusedChangeKey={focusedChangeKey}
+                  autoTooltipLine={autoTooltipLine}
+                  isLoading={isLoading}
+                  streamState={streamState}
+                />
+              );
+            }
           )}
           <div className="h-[70dvh] w-full">
             <div className="px-3 py-6 text-center">
@@ -2100,10 +2118,7 @@ function HeatmapThresholdControl({
   return (
     <div className="rounded border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-700">
       <div className="flex items-center justify-between gap-3">
-        <label
-          htmlFor={sliderId}
-          className="font-medium text-neutral-700"
-        >
+        <label htmlFor={sliderId} className="font-medium text-neutral-700">
           &ldquo;Should review&rdquo; threshold
         </label>
         <span className="text-xs font-semibold text-neutral-600">
@@ -2125,10 +2140,7 @@ function HeatmapThresholdControl({
         aria-valuetext={`"Should review" threshold ${percent} percent`}
         aria-describedby={descriptionId}
       />
-      <p
-        id={descriptionId}
-        className="mt-2 text-xs text-neutral-500"
-      >
+      <p id={descriptionId} className="mt-2 text-xs text-neutral-500">
         Only show heatmap highlights with a score at or above this value.
       </p>
     </div>
@@ -2681,7 +2693,9 @@ function FileDiffCard({
                       align="start"
                       className="rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-xs text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
                     >
-                      {streamState.skipReason ?? streamState.summary ?? "AI skipped this file"}
+                      {streamState.skipReason ??
+                        streamState.summary ??
+                        "AI skipped this file"}
                     </TooltipContent>
                   </Tooltip>
                 ) : streamState?.status === "error" ? (

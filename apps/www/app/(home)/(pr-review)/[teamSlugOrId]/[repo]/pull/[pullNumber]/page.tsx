@@ -14,10 +14,6 @@ import {
 import { isGithubApiError } from "@/lib/github/errors";
 import { cn } from "@/lib/utils";
 import { stackServerApp } from "@/lib/utils/stack";
-import {
-  getConvexHttpActionBaseUrl,
-  startCodeReviewJob,
-} from "@/lib/services/code-review/start-code-review";
 import { runSimpleAnthropicReviewStream } from "@/lib/services/code-review/run-simple-anthropic-review";
 import {
   DiffViewerSkeleton,
@@ -297,37 +293,12 @@ function scheduleCodeReviewStart({
           return;
         }
 
-        const dedupeMetadata = {
-          teamSlugOrId,
-          repoFullName: fallbackRepoFullName,
-          prNumber: pullNumber,
-          commitRef,
-          baseCommitRef,
-          force: false,
-        };
-        console.info(
-          "[code-review] Scheduling automated review",
-          dedupeMetadata
-        );
-
-        const callbackBaseUrl = getConvexHttpActionBaseUrl();
-        if (!callbackBaseUrl) {
-          console.error("[code-review] Convex HTTP base URL is not configured");
-          return;
-        }
-
         const user = await stackServerApp.getUser({ or: "return-null" });
         if (!user) {
           return;
         }
 
-        const [{ accessToken }, githubAccount] = await Promise.all([
-          user.getAuthJson(),
-          user.getConnectedAccount("github"),
-        ]);
-        if (!accessToken) {
-          return;
-        }
+        const githubAccount = await user.getConnectedAccount("github");
         if (!githubAccount) {
           console.warn(
             "[code-review] Skipping auto-start: GitHub account not connected"
@@ -346,30 +317,9 @@ function scheduleCodeReviewStart({
         let simpleReviewPromise: Promise<unknown> | null = null;
 
         if (githubAccessToken) {
-          console.info("[simple-review][page] Starting background stream", {
-            githubLink,
-            pullNumber,
-          });
           simpleReviewPromise = runSimpleAnthropicReviewStream({
             prIdentifier: githubLink,
             githubToken: githubAccessToken,
-            onChunk: async (chunk) => {
-              const collapsed = chunk.replace(/\s+/g, " ").trim();
-              if (collapsed.length > 0) {
-                const snippet =
-                  collapsed.length > 160
-                    ? `${collapsed.slice(0, 157)}...`
-                    : collapsed;
-                console.info("[simple-review][page][chunk]", snippet);
-              }
-            },
-            onEvent: async (event) => {
-              if (event.type === "line") {
-                console.info("[simple-review][page][line]", event);
-              } else if (event.type === "file" || event.type === "hunk") {
-                console.info("[simple-review][page][event]", event);
-              }
-            },
           }).catch((error) => {
             const message =
               error instanceof Error ? error.message : String(error ?? "");
@@ -385,40 +335,16 @@ function scheduleCodeReviewStart({
           });
         }
 
-        const { job, deduplicated, backgroundTask } = await startCodeReviewJob({
-          accessToken,
-          githubAccessToken,
-          callbackBaseUrl,
-          payload: {
-            teamSlugOrId,
+        console.info(
+          "[code-review] Legacy automated review disabled; skipping automated job start",
+          {
             githubLink,
-            prNumber: pullNumber,
-            commitRef,
-            headCommitRef: commitRef,
-            baseCommitRef,
-            force: false,
-          },
-        });
-        console.info("[code-review] Reservation result", {
-          jobId: job.jobId,
-          deduplicated,
-          jobState: job.state,
-          repoFullName: job.repoFullName,
-          prNumber: job.prNumber,
-          commitRef: job.commitRef,
-          baseCommitRef: job.baseCommitRef,
-          teamId: job.teamId,
-        });
+            pullNumber,
+          }
+        );
 
-        const pending: Promise<unknown>[] = [];
-        if (backgroundTask) {
-          pending.push(backgroundTask);
-        }
         if (simpleReviewPromise) {
-          pending.push(simpleReviewPromise);
-        }
-        if (pending.length > 0) {
-          await Promise.allSettled(pending);
+          await simpleReviewPromise;
         }
       } catch (error) {
         const context = {

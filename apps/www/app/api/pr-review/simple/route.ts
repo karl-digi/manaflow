@@ -69,10 +69,6 @@ export async function GET(request: NextRequest) {
     }
 
     const prIdentifier = `https://github.com/${repoFullName.owner}/${repoFullName.repo}/pull/${prNumber}`;
-    console.info("[simple-review][api] Streaming review", {
-      prIdentifier,
-      userId: user.id,
-    });
 
     const encoder = new TextEncoder();
     const abortController = new AbortController();
@@ -92,30 +88,15 @@ export async function GET(request: NextRequest) {
             prIdentifier,
             githubToken,
             signal: abortController.signal,
-            onChunk: async (chunk) => {
-              const collapsed = chunk.replace(/\s+/g, " ").trim();
-              if (collapsed.length > 0) {
-                const snippet =
-                  collapsed.length > 160
-                    ? `${collapsed.slice(0, 157)}...`
-                    : collapsed;
-                console.info("[simple-review][api][chunk]", snippet);
-              }
-            },
             onEvent: async (event) => {
               switch (event.type) {
                 case "file":
-                  console.info("[simple-review][api][file]", event.filePath);
                   enqueue({
                     type: "file",
                     filePath: event.filePath,
                   });
                   break;
                 case "skip":
-                  console.info("[simple-review][api][skip]", {
-                    filePath: event.filePath,
-                    reason: event.reason,
-                  });
                   enqueue({
                     type: "skip",
                     filePath: event.filePath,
@@ -130,11 +111,6 @@ export async function GET(request: NextRequest) {
                   });
                   break;
                 case "file-complete":
-                  console.info("[simple-review][api][file-complete]", {
-                    filePath: event.filePath,
-                    status: event.status,
-                    summary: event.summary,
-                  });
                   enqueue({
                     type: "file-complete",
                     filePath: event.filePath,
@@ -191,9 +167,6 @@ export async function GET(request: NextRequest) {
         }
       },
       cancel() {
-        console.warn("[simple-review][api] Stream cancelled by client", {
-          prIdentifier,
-        });
         abortController.abort();
       },
     });
@@ -208,7 +181,10 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Unknown server error";
-    console.error("[simple-review][api] Unexpected failure", { message, error });
+    console.error("[simple-review][api] Unexpected failure", {
+      message,
+      error,
+    });
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

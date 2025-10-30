@@ -125,12 +125,7 @@ export async function runSimpleAnthropicReviewStream(
     await onEvent(event);
   };
 
-  console.info("[simple-review] Collecting PR diffs", { prIdentifier });
-
   if (signal?.aborted) {
-    console.warn("[simple-review] Aborted before diff collection", {
-      prIdentifier,
-    });
     throw new Error("Stream aborted before start");
   }
 
@@ -146,10 +141,6 @@ export async function runSimpleAnthropicReviewStream(
   for (const file of fileDiffs) {
     const skipReason = detectSkipReason(file.filePath, file.diffText);
     if (skipReason) {
-      console.info("[simple-review] Skipping file", {
-        filePath: file.filePath,
-        reason: skipReason,
-      });
       await emitEvent({
         type: "skip",
         filePath: file.filePath,
@@ -166,10 +157,6 @@ export async function runSimpleAnthropicReviewStream(
   );
 
   if (candidateFiles.length === 0) {
-    console.warn("[simple-review] No eligible text diffs found", {
-      prIdentifier,
-      totalFiles: fileDiffs.length,
-    });
     return {
       diffCharacterCount,
       finalText: "",
@@ -188,14 +175,8 @@ export async function runSimpleAnthropicReviewStream(
   const runWithSemaphore = createSemaphore(MAX_CONCURRENCY);
   const finalChunks: string[] = [];
 
-  console.info("[simple-review] Streaming files with concurrency", {
-    prIdentifier,
-    fileCount: candidateFiles.length,
-    concurrency: MAX_CONCURRENCY,
-  });
-
   const results = await Promise.allSettled(
-    candidateFiles.map((file, index) =>
+    candidateFiles.map((file) =>
       runWithSemaphore(async () => {
         if (signal?.aborted) {
           throw new Error("Stream aborted");
@@ -206,7 +187,7 @@ export async function runSimpleAnthropicReviewStream(
           filePath: file.filePath,
         });
 
-        const parser = new SimpleReviewParser();
+        const parser = new SimpleReviewParser(file.filePath);
         let aborted = false;
         let emittedLine = false;
         const fileChunks: string[] = [];
@@ -220,16 +201,10 @@ export async function runSimpleAnthropicReviewStream(
 
         const prompt = buildFilePrompt(prLabel, file.filePath, file.diffText);
 
-        console.info("[simple-review] Streaming file diff", {
-          prIdentifier,
-          filePath: file.filePath,
-          ordinal: index + 1,
-          total: candidateFiles.length,
-        });
-
         try {
           const stream = streamText({
             model: anthropic("claude-opus-4-1-20250805"),
+            // model: anthropic("claude-sonnet-4-5"),
             prompt,
             temperature: 0,
             maxRetries: 2,
@@ -248,8 +223,6 @@ export async function runSimpleAnthropicReviewStream(
 
             if (onChunk) {
               await onChunk(delta);
-            } else {
-              console.debug("[simple-review][chunk]", delta);
             }
 
             const events = parser.push(delta);
@@ -358,15 +331,11 @@ export async function runSimpleAnthropicReviewStream(
 function detectSkipReason(filePath: string, diffText: string): string | null {
   const lowerPath = filePath.toLowerCase();
 
-  if (
-    SKIPPED_PATH_SEGMENTS.some((segment) => lowerPath.includes(segment))
-  ) {
+  if (SKIPPED_PATH_SEGMENTS.some((segment) => lowerPath.includes(segment))) {
     return "skipped third-party directory";
   }
 
-  if (
-    LOCKFILE_SUFFIXES.some((suffix) => lowerPath.endsWith(suffix))
-  ) {
+  if (LOCKFILE_SUFFIXES.some((suffix) => lowerPath.endsWith(suffix))) {
     return "skipped lockfile";
   }
 
@@ -378,10 +347,7 @@ function detectSkipReason(filePath: string, diffText: string): string | null {
 }
 
 function isLikelyBinary(filePath: string, diffText: string): boolean {
-  if (
-    diffText.includes("Binary files") &&
-    diffText.includes("differ")
-  ) {
+  if (diffText.includes("Binary files") && diffText.includes("differ")) {
     return true;
   }
 
@@ -389,9 +355,7 @@ function isLikelyBinary(filePath: string, diffText: string): boolean {
     return true;
   }
 
-  return BINARY_EXTENSIONS.some((extension) =>
-    filePath.endsWith(extension)
-  );
+  return BINARY_EXTENSIONS.some((extension) => filePath.endsWith(extension));
 }
 
 function createSemaphore(limit: number) {
@@ -419,9 +383,7 @@ function createSemaphore(limit: number) {
     }
   };
 
-  return async function runWithLimit<T>(
-    task: () => Promise<T>
-  ): Promise<T> {
+  return async function runWithLimit<T>(task: () => Promise<T>): Promise<T> {
     await acquire();
     try {
       return await task();

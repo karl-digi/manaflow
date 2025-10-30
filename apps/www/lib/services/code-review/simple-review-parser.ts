@@ -77,6 +77,12 @@ export class SimpleReviewParser {
   private oldLine = 0;
   private newLine = 0;
 
+  constructor(initialFilePath?: string | null) {
+    if (initialFilePath) {
+      this.setFallbackFile(initialFilePath);
+    }
+  }
+
   push(chunk: string): SimpleReviewParsedEvent[] {
     if (chunk.length === 0) {
       return [];
@@ -92,6 +98,15 @@ export class SimpleReviewParser {
     const remaining = this.partial;
     this.partial = "";
     return this.processLine(remaining);
+  }
+
+  setFallbackFile(filePath: string): void {
+    if (this.currentFile) {
+      return;
+    }
+    this.currentFile = filePath;
+    this.oldLine = 0;
+    this.newLine = 0;
   }
 
   private consumeBuffer(): SimpleReviewParsedEvent[] {
@@ -177,8 +192,10 @@ export class SimpleReviewParser {
     const incrementOld = firstChar === "-" || firstChar === " ";
     const incrementNew = firstChar === "+" || firstChar === " ";
 
-    const currentOldLine = incrementOld ? this.oldLine : null;
-    const currentNewLine = incrementNew ? this.newLine : null;
+    const currentOldLine =
+      incrementOld && this.oldLine > 0 ? this.oldLine : null;
+    const currentNewLine =
+      incrementNew && this.newLine > 0 ? this.newLine : null;
 
     if (incrementOld) {
       this.oldLine += 1;
