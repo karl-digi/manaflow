@@ -644,8 +644,8 @@ export function PullRequestDiffViewer({
                     if (filePath) {
                       const status =
                         payload.status === "skipped" ||
-                        payload.status === "error" ||
-                        payload.status === "success"
+                          payload.status === "error" ||
+                          payload.status === "success"
                           ? (payload.status as StreamFileStatus)
                           : "success";
                       const summary =
@@ -739,13 +739,11 @@ export function PullRequestDiffViewer({
                         skipReason: null,
                         summary: null,
                       };
-                      const lineKey = `${reviewLine.lineNumber ?? "unknown"}:${
-                        reviewLine.lineText ?? ""
-                      }`;
-                      const filtered = current.lines.filter((line) => {
-                        const existingKey = `${line.lineNumber ?? "unknown"}:${
-                          line.lineText ?? ""
+                      const lineKey = `${reviewLine.lineNumber ?? "unknown"}:${reviewLine.lineText ?? ""
                         }`;
+                      const filtered = current.lines.filter((line) => {
+                        const existingKey = `${line.lineNumber ?? "unknown"}:${line.lineText ?? ""
+                          }`;
                         return existingKey !== lineKey;
                       });
                       const updated = [...filtered, reviewLine].sort((a, b) => {
@@ -1866,7 +1864,7 @@ export function PullRequestDiffViewer({
           }
         >
           <div className="flex flex-col gap-3">
-            <div className="lg:sticky lg:top-0 lg:z-10 lg:bg-white lg:pb-3">
+            <div className="lg:sticky lg:top-0 lg:z-10 lg:bg-white">
               <ReviewProgressIndicator
                 totalFileCount={totalFileCount}
                 processedFileCount={processedFileCount}
@@ -1948,9 +1946,9 @@ export function PullRequestDiffViewer({
               const focusedLine = isFocusedFile
                 ? focusedError
                   ? {
-                      side: focusedError.side,
-                      lineNumber: focusedError.lineNumber,
-                    }
+                    side: focusedError.side,
+                    lineNumber: focusedError.lineNumber,
+                  }
                   : null
                 : null;
               const focusedChangeKey = isFocusedFile
@@ -1958,12 +1956,12 @@ export function PullRequestDiffViewer({
                 : null;
               const autoTooltipLine =
                 isFocusedFile &&
-                autoTooltipTarget &&
-                autoTooltipTarget.filePath === entry.file.filename
+                  autoTooltipTarget &&
+                  autoTooltipTarget.filePath === entry.file.filename
                   ? {
-                      side: autoTooltipTarget.side,
-                      lineNumber: autoTooltipTarget.lineNumber,
-                    }
+                    side: autoTooltipTarget.side,
+                    lineNumber: autoTooltipTarget.lineNumber,
+                  }
                   : null;
 
               const isLoading =
@@ -2101,17 +2099,17 @@ function CmuxPromoCard() {
       <div className="flex flex-col gap-3">
         <div className="flex flex-row items-center justify-start gap-2 text-center">
           <p className="text-xs font-mono leading-relaxed text-neutral-900 font-bold">
-            From the creators of 
+            From the creators of
           </p>
           <a
             href="https://cmux.dev"
             target="_blank"
             rel="noopener noreferrer"
             aria-label="Visit cmux.dev"
-            className="inline-flex w-fit items-center justify-start"
+            className="inline-flex w-fit items-center justify-start transform translate-y-[-1px] translate-x-[-2.5px]"
           >
             <CmuxLogo
-              height={36}
+              height={28}
               label="cmux.dev"
               wordmarkText="cmux.dev"
               wordmarkFill="#0f172a"
@@ -2124,7 +2122,7 @@ function CmuxPromoCard() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2 pt-1">
-           <a
+          <a
             href="https://cmux.dev"
             target="_blank"
             rel="noopener noreferrer"
@@ -2132,7 +2130,7 @@ function CmuxPromoCard() {
           >
             Explore cmux
           </a>
-              <a
+          <a
             href="https://github.com/manaflow-ai/cmux"
             target="_blank"
             rel="noopener noreferrer"
@@ -2637,7 +2635,7 @@ function FileDiffCard({
 
     const enhancers =
       diffHeatmap &&
-      (diffHeatmap.newRanges.length > 0 || diffHeatmap.oldRanges.length > 0)
+        (diffHeatmap.newRanges.length > 0 || diffHeatmap.oldRanges.length > 0)
         ? [pickRanges(diffHeatmap.oldRanges, diffHeatmap.newRanges)]
         : undefined;
 
