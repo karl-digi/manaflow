@@ -7,7 +7,7 @@ import { OpenCmuxClient } from "./OpenCmuxClient";
 export const dynamic = "force-dynamic";
 
 type AfterSignInPageProps = {
-  searchParams?: Record<string, string | string[] | undefined>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
 const CMUX_SCHEME = "cmux://";
@@ -32,6 +32,25 @@ function isRelativePath(target: string): boolean {
   return target.startsWith("/");
 }
 
+/**
+ * Check if a URL is safe to redirect to.
+ * Only allows relative paths (starting with /).
+ * Returns the path if safe, null otherwise.
+ */
+function getSafeRedirectPath(target: string): string | null {
+  if (!target) {
+    return null;
+  }
+
+  // Only allow relative paths for security
+  if (isRelativePath(target)) {
+    return target;
+  }
+
+  // Reject absolute URLs
+  return null;
+}
+
 function buildCmuxHref(baseHref: string | null, stackRefreshToken: string | undefined, stackAccessToken: string | undefined): string | null {
   if (!stackRefreshToken || !stackAccessToken) {
     return baseHref;
@@ -49,11 +68,12 @@ function buildCmuxHref(baseHref: string | null, stackRefreshToken: string | unde
   }
 }
 
-export default async function AfterSignInPage({ searchParams }: AfterSignInPageProps) {
+export default async function AfterSignInPage({ searchParams: searchParamsPromise }: AfterSignInPageProps) {
   const stackCookies = await cookies();
   const stackRefreshToken = stackCookies.get(`stack-refresh-${env.NEXT_PUBLIC_STACK_PROJECT_ID}`)?.value;
   const stackAccessToken = stackCookies.get("stack-access")?.value;
 
+  const searchParams = await searchParamsPromise;
   const afterAuthReturnToRaw = getSingleValue(searchParams?.after_auth_return_to ?? undefined);
 
   console.log("[After Sign In] Processing redirect:", {
@@ -62,22 +82,33 @@ export default async function AfterSignInPage({ searchParams }: AfterSignInPageP
     hasAccessToken: !!stackAccessToken,
   });
 
+  // Handle Electron deep link redirects
   if (afterAuthReturnToRaw?.startsWith(CMUX_SCHEME)) {
     console.log("[After Sign In] Opening Electron app with deep link");
     const cmuxHref = buildCmuxHref(afterAuthReturnToRaw, stackRefreshToken, stackAccessToken);
     if (cmuxHref) {
       return <OpenCmuxClient href={cmuxHref} />;
     }
-  } else if (afterAuthReturnToRaw && isRelativePath(afterAuthReturnToRaw)) {
-    console.log("[After Sign In] Redirecting to web path:", afterAuthReturnToRaw);
-    redirect(afterAuthReturnToRaw || "/");
   }
 
+  // Handle web redirects (relative paths only)
+  if (afterAuthReturnToRaw) {
+    const safePath = getSafeRedirectPath(afterAuthReturnToRaw);
+    if (safePath) {
+      console.log("[After Sign In] Redirecting to web path:", safePath);
+      redirect(safePath);
+    } else {
+      console.warn("[After Sign In] Unsafe redirect URL blocked:", afterAuthReturnToRaw);
+    }
+  }
+
+  // Fallback: try to open Electron app
   console.log("[After Sign In] No return path, using fallback");
   const fallbackHref = buildCmuxHref(null, stackRefreshToken, stackAccessToken);
   if (fallbackHref) {
     return <OpenCmuxClient href={fallbackHref} />;
   }
 
+  // Final fallback: redirect to home
   redirect("/");
 }

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { stackServerApp } from "@/lib/utils/stack";
 import { runSimpleAnthropicReviewStream } from "@/lib/services/code-review/run-simple-anthropic-review";
+import { isRepoPublic } from "@/lib/github/check-repo-visibility";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -47,23 +48,37 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const user = await stackServerApp.getUser({ or: "return-null" });
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const user = await stackServerApp.getUser({ or: "anonymous" });
+
+    const repoIsPublic = await isRepoPublic(
+      repoFullName.owner,
+      repoFullName.repo
+    );
+
+    let githubToken: string | null = null;
+    try {
+      const githubAccount = await user.getConnectedAccount("github");
+      if (githubAccount) {
+        const tokenResult = await githubAccount.getAccessToken();
+        githubToken = tokenResult.accessToken ?? null;
+      }
+    } catch (error) {
+      console.warn("[simple-review][api] Failed to resolve GitHub account", {
+        error,
+      });
     }
 
-    const githubAccount = await user.getConnectedAccount("github");
-    if (!githubAccount) {
-      return NextResponse.json(
-        { error: "GitHub account is not connected" },
-        { status: 403 }
-      );
-    }
+    const normalizedGithubToken =
+      typeof githubToken === "string" && githubToken.trim().length > 0
+        ? githubToken.trim()
+        : null;
 
-    const { accessToken: githubToken } = await githubAccount.getAccessToken();
-    if (!githubToken) {
+    if (!repoIsPublic && !normalizedGithubToken) {
       return NextResponse.json(
-        { error: "GitHub access token unavailable" },
+        {
+          error:
+            "GitHub authentication is required to review private repositories.",
+        },
         { status: 403 }
       );
     }
@@ -86,7 +101,7 @@ export async function GET(request: NextRequest) {
         try {
           await runSimpleAnthropicReviewStream({
             prIdentifier,
-            githubToken,
+            githubToken: normalizedGithubToken,
             signal: abortController.signal,
             onEvent: async (event) => {
               switch (event.type) {

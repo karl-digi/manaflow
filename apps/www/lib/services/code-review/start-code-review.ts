@@ -30,7 +30,7 @@ type StartCodeReviewPayload = {
 
 type StartCodeReviewOptions = {
   accessToken: string;
-  githubAccessToken: string | null;
+  githubAccessToken?: string | null;
   callbackBaseUrl: string;
   payload: StartCodeReviewPayload;
   request?: Request;
@@ -100,6 +100,9 @@ export async function startCodeReviewJob({
     ? "comparison"
     : "pull_request";
 
+
+  console.warn("[code-review] starting startCodeReviewJob")
+
   if (jobType === "pull_request" && typeof payload.prNumber !== "number") {
     throw new Error("prNumber is required for pull request code review jobs");
   }
@@ -109,11 +112,36 @@ export async function startCodeReviewJob({
 
   if (payload.teamSlugOrId) {
     try {
-      await verifyTeamAccess({
-        accessToken,
-        req: request,
-        teamSlugOrId: payload.teamSlugOrId,
-      });
+      // public repo
+      if (!githubAccessToken) {
+        const teamVerification = await verifyTeamAccess({
+          accessToken,
+          req: request,
+          teamSlugOrId: payload.teamSlugOrId,
+        });
+
+        if (teamVerification) {
+          console.info("[code-review] Team access verified", {
+            teamSlugOrId: payload.teamSlugOrId,
+            teamName: teamVerification.name,
+          });
+        } else {
+          console.info("[code-review] Proceeding without team verification (anonymous access)", {
+            teamSlugOrId: payload.teamSlugOrId,
+          });
+        }
+      } else { // private repo
+        const teamVerification = await verifyTeamAccess({
+          accessToken,
+          req: request,
+          teamSlugOrId: payload.teamSlugOrId,
+        });
+
+        console.info("[code-review] Team access verified", {
+          teamSlugOrId: payload.teamSlugOrId,
+          teamName: teamVerification.name,
+        });
+      }
     } catch (error) {
       console.warn("[code-review] Failed to verify team access", {
         teamSlugOrId: payload.teamSlugOrId,
@@ -164,12 +192,12 @@ export async function startCodeReviewJob({
     force: payload.force,
     comparison: payload.comparison
       ? {
-          slug: payload.comparison.slug,
-          baseOwner: payload.comparison.base.owner,
-          baseRef: payload.comparison.base.ref,
-          headOwner: payload.comparison.head.owner,
-          headRef: payload.comparison.head.ref,
-        }
+        slug: payload.comparison.slug,
+        baseOwner: payload.comparison.base.owner,
+        baseRef: payload.comparison.base.ref,
+        headOwner: payload.comparison.head.owner,
+        headRef: payload.comparison.head.ref,
+      }
       : undefined,
   });
 

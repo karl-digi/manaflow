@@ -8,6 +8,10 @@ import {
   SimpleReviewParser,
   type SimpleReviewParsedEvent,
 } from "./simple-review-parser";
+import {
+  generateGitHubInstallationToken,
+  getInstallationForRepo,
+} from "@/lib/utils/github-app-token";
 
 const SIMPLE_REVIEW_INSTRUCTIONS = `Dannotate every modified/deleted/added line of this diff with a "fake" comment at the end of each line.
 
@@ -99,9 +103,16 @@ type FileDiff = {
   diffText: string;
 };
 
+type CollectPrDiffsResult = Awaited<ReturnType<typeof collectPrDiffs>>;
+
+type RepoSlug = {
+  owner: string;
+  repo: string;
+};
+
 export type SimpleReviewStreamOptions = {
   prIdentifier: string;
-  githubToken: string;
+  githubToken?: string | null;
   onChunk?: (chunk: string) => void | Promise<void>;
   onEvent?: (event: SimpleReviewParsedEvent) => void | Promise<void>;
   signal?: AbortSignal;
@@ -112,10 +123,138 @@ export type SimpleReviewStreamResult = {
   finalText: string;
 };
 
+function isAuthorizationError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const message = error.message ?? "";
+  if (typeof message !== "string") {
+    return false;
+  }
+  return /\bstatus\s+(401|403|404)\b/.test(message);
+}
+
+function parseRepoSlug(prIdentifier: string): RepoSlug | null {
+  try {
+    const url = new URL(prIdentifier);
+    const pathnameParts = url.pathname.split("/").filter(Boolean);
+
+    if (url.hostname === "api.github.com" && pathnameParts.length >= 4) {
+      const owner = pathnameParts[1];
+      const repo = pathnameParts[2];
+      if (owner && repo) {
+        return { owner, repo };
+      }
+      return null;
+    }
+
+    if (url.hostname.endsWith("github.com") && pathnameParts.length >= 2) {
+      const owner = pathnameParts[0];
+      const repo = pathnameParts[1];
+      if (owner && repo) {
+        return { owner, repo };
+      }
+      return null;
+    }
+  } catch {
+    // Not a URL, fall through to pattern checks.
+  }
+
+  const hashMatch = prIdentifier.match(
+    /^([\w.-]+)\/([\w.-]+)#\d+$/i
+  );
+  if (hashMatch) {
+    return { owner: hashMatch[1], repo: hashMatch[2] };
+  }
+
+  const apiMatch = prIdentifier.match(
+    /repos\/([\w.-]+)\/([\w.-]+)\/pulls\/\d+/i
+  );
+  if (apiMatch) {
+    return { owner: apiMatch[1], repo: apiMatch[2] };
+  }
+
+  return null;
+}
+
+async function collectDiffsWithFallback({
+  prIdentifier,
+  githubToken,
+}: {
+  prIdentifier: string;
+  githubToken: string | null;
+}): Promise<{
+  metadata: CollectPrDiffsResult["metadata"];
+  fileDiffs: CollectPrDiffsResult["fileDiffs"];
+}> {
+  const normalizedToken =
+    typeof githubToken === "string" && githubToken.trim().length > 0
+      ? githubToken.trim()
+      : null;
+
+  try {
+    return await collectPrDiffs({
+      prIdentifier,
+      includePaths: [],
+      maxFiles: null,
+      githubToken: normalizedToken ?? undefined,
+    });
+  } catch (error) {
+    if (!normalizedToken) {
+      if (!isAuthorizationError(error)) {
+        throw error;
+      }
+
+      const slug = parseRepoSlug(prIdentifier);
+      if (!slug) {
+        throw error;
+      }
+
+      const installationId = await getInstallationForRepo(
+        `${slug.owner}/${slug.repo}`
+      );
+      if (!installationId) {
+        throw error;
+      }
+
+      console.info(
+        "[simple-review] Falling back to GitHub App token for diff fetch",
+        {
+          owner: slug.owner,
+          repo: slug.repo,
+        }
+      );
+
+      const appToken = await generateGitHubInstallationToken({
+        installationId,
+        permissions: {
+          contents: "read",
+          metadata: "read",
+          pull_requests: "read",
+        },
+      });
+
+      return await collectPrDiffs({
+        prIdentifier,
+        includePaths: [],
+        maxFiles: null,
+        githubToken: appToken,
+      });
+    }
+
+    throw error;
+  }
+}
+
 export async function runSimpleAnthropicReviewStream(
   options: SimpleReviewStreamOptions
 ): Promise<SimpleReviewStreamResult> {
-  const { prIdentifier, githubToken, onChunk, signal } = options;
+  const {
+    prIdentifier,
+    githubToken: providedGithubToken = null,
+    onChunk,
+    signal,
+  } = options;
   const onEvent = options.onEvent ?? null;
 
   const emitEvent = async (event: SimpleReviewParsedEvent): Promise<void> => {
@@ -129,11 +268,9 @@ export async function runSimpleAnthropicReviewStream(
     throw new Error("Stream aborted before start");
   }
 
-  const { fileDiffs, metadata } = await collectPrDiffs({
+  const { fileDiffs, metadata } = await collectDiffsWithFallback({
     prIdentifier,
-    githubToken,
-    includePaths: [],
-    maxFiles: null,
+    githubToken: providedGithubToken,
   });
 
   const candidateFiles: FileDiff[] = [];

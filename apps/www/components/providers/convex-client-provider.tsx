@@ -18,7 +18,7 @@ export function ConvexClientProvider({ children }: { children: ReactNode }) {
   );
 
   const useAuth = useCallback(() => {
-    const user = stackApp.useUser({ or: "return-null" });
+    const user = stackApp.useUser({ or: "anonymous" });
 
     return {
       isLoading: false,

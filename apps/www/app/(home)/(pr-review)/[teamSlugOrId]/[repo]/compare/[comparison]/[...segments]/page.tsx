@@ -457,19 +457,20 @@ function scheduleComparisonCodeReviewStart({
         if (!accessToken) {
           return;
         }
+
+        let githubAccessToken: string | null = null;
         if (!githubAccount) {
           console.warn(
-            "[code-review] Skipping auto-start: GitHub account not connected"
+            "[code-review] GitHub account not connected, proceeding without token"
           );
-          return;
-        }
-        const { accessToken: githubAccessToken } =
-          await githubAccount.getAccessToken();
-        if (!githubAccessToken) {
-          console.warn(
-            "[code-review] Skipping auto-start: GitHub access token unavailable"
-          );
-          return;
+        } else {
+          const tokenResult = await githubAccount.getAccessToken();
+          githubAccessToken = tokenResult.accessToken ?? null;
+          if (!githubAccessToken) {
+            console.warn(
+              "[code-review] GitHub access token unavailable, proceeding without token"
+            );
+          }
         }
 
         const githubLink =

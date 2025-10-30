@@ -103,14 +103,14 @@ type ParsedFileDiff = {
 
 type RefractorNode =
   | {
-      type: "text";
-      value: string;
-    }
+    type: "text";
+    value: string;
+  }
   | {
-      type: string;
-      children?: RefractorNode[];
-      [key: string]: unknown;
-    };
+    type: string;
+    children?: RefractorNode[];
+    [key: string]: unknown;
+  };
 
 const extensionToLanguage: Record<string, string> = {
   bash: "bash",
@@ -236,8 +236,8 @@ const refractorAdapter = createRefractorAdapter(refractor);
 type FileOutput =
   | FunctionReturnType<typeof api.codeReview.listFileOutputsForPr>[number]
   | FunctionReturnType<
-      typeof api.codeReview.listFileOutputsForComparison
-    >[number];
+    typeof api.codeReview.listFileOutputsForComparison
+  >[number];
 
 type HeatmapTooltipMeta = {
   score: number;
@@ -821,16 +821,16 @@ export function PullRequestDiffViewer({
   const prQueryArgs = useMemo(
     () =>
       normalizedJobType !== "pull_request" ||
-      prNumber === null ||
-      prNumber === undefined
+        prNumber === null ||
+        prNumber === undefined
         ? ("skip" as const)
         : {
-            teamSlugOrId,
-            repoFullName,
-            prNumber,
-            ...(commitRef ? { commitRef } : {}),
-            ...(baseCommitRef ? { baseCommitRef } : {}),
-          },
+          teamSlugOrId,
+          repoFullName,
+          prNumber,
+          ...(commitRef ? { commitRef } : {}),
+          ...(baseCommitRef ? { baseCommitRef } : {}),
+        },
     [
       normalizedJobType,
       teamSlugOrId,
@@ -846,12 +846,12 @@ export function PullRequestDiffViewer({
       normalizedJobType !== "comparison" || !comparisonSlug
         ? ("skip" as const)
         : {
-            teamSlugOrId,
-            repoFullName,
-            comparisonSlug,
-            ...(commitRef ? { commitRef } : {}),
-            ...(baseCommitRef ? { baseCommitRef } : {}),
-          },
+          teamSlugOrId,
+          repoFullName,
+          comparisonSlug,
+          ...(commitRef ? { commitRef } : {}),
+          ...(baseCommitRef ? { baseCommitRef } : {}),
+        },
     [
       normalizedJobType,
       teamSlugOrId,
@@ -1182,9 +1182,9 @@ export function PullRequestDiffViewer({
         ...fileEntry,
         diffHeatmap: fileEntry.diffHeatmapArtifacts
           ? renderDiffHeatmapFromArtifacts(
-              fileEntry.diffHeatmapArtifacts,
-              heatmapThreshold
-            )
+            fileEntry.diffHeatmapArtifacts,
+            heatmapThreshold
+          )
           : null,
       })),
     [fileEntries, heatmapThreshold]
@@ -1372,7 +1372,7 @@ export function PullRequestDiffViewer({
   const firstPath = parsedDiffs[0]?.file.filename ?? "";
   const initialPath =
     hydratedInitialPath &&
-    sortedFiles.some((file) => file.filename === hydratedInitialPath)
+      sortedFiles.some((file) => file.filename === hydratedInitialPath)
       ? hydratedInitialPath
       : firstPath;
 
@@ -2603,8 +2603,8 @@ function FileDiffCard({
       diff.hunks,
       enhancers
         ? {
-            enhancers,
-          }
+          enhancers,
+        }
         : undefined
     );
   }, [diff, language, diffHeatmap]);
