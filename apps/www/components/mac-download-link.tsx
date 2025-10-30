@@ -16,7 +16,7 @@ import {
 
 type MacDownloadLinkProps = Omit<
   AnchorHTMLAttributes<HTMLAnchorElement>,
-  "href"
+  "href" | "popover"
 > & {
   urls: MacDownloadUrls;
   fallbackUrl: string;

@@ -5,7 +5,14 @@ import {
   type SimpleReviewParsedEvent,
 } from "./simple-review-parser";
 
-function collectLineEvents(chunks: readonly string[]): SimpleReviewParsedEvent[] {
+type SimpleReviewLineEvent = Extract<
+  SimpleReviewParsedEvent,
+  { type: "line" }
+>;
+
+function collectLineEvents(
+  chunks: readonly string[],
+): SimpleReviewLineEvent[] {
   const parser = new SimpleReviewParser("example/file.ts");
   const events: SimpleReviewParsedEvent[] = [];
 
@@ -16,8 +23,7 @@ function collectLineEvents(chunks: readonly string[]): SimpleReviewParsedEvent[]
   events.push(...parser.flush());
 
   return events.filter(
-    (event): event is SimpleReviewParsedEvent & { type: "line" } =>
-      event.type === "line"
+    (event): event is SimpleReviewLineEvent => event.type === "line",
   );
 }
 

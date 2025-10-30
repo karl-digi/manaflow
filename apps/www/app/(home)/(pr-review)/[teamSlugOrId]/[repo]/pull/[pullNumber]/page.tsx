@@ -32,6 +32,8 @@ import { PrivateRepoPrompt } from "../../_components/private-repo-prompt";
 import { TeamOnboardingPrompt } from "../../_components/team-onboarding-prompt";
 import { env } from "@/lib/utils/www-env";
 
+const ENABLE_IMMEDIATE_CODE_REVIEW = false;
+
 type PageParams = {
   teamSlugOrId: string;
   repo: string;
@@ -154,10 +156,15 @@ export default async function PullRequestPage({ params }: PageProps) {
 
   // Get user (including anonymous users) - middleware has already checked for cookies
   const user = await stackServerApp.getUser({
-    or: "anonymous"
+    or: "anonymous",
   });
 
-  console.log("[PullRequestPage] user:", user?.id, "repoIsPublic:", repoIsPublic);
+  console.log(
+    "[PullRequestPage] user:",
+    user?.id,
+    "repoIsPublic:",
+    repoIsPublic
+  );
 
   // For private repos, reject anonymous users and redirect to auth
   if (!repoIsPublic && user && !user.primaryEmail) {
@@ -229,7 +236,7 @@ export default async function PullRequestPage({ params }: PageProps) {
   ).then((files) => files.map(toGithubFileChange));
 
   // Schedule code review in background (non-blocking)
-  if (selectedTeam) {
+  if (ENABLE_IMMEDIATE_CODE_REVIEW) {
     scheduleCodeReviewStart({
       teamSlugOrId: selectedTeam.id,
       githubOwner,
@@ -383,7 +390,7 @@ function scheduleCodeReviewStart({
 
         const simpleReviewToken = repoIsPrivate
           ? githubAccessToken
-          : githubAccessToken ?? null;
+          : (githubAccessToken ?? null);
 
         let simpleReviewPromise: Promise<unknown> | null = null;
 
@@ -797,13 +804,13 @@ function formatRelativeTimeFromNow(date: Date): string {
     divisor: number;
     unit: Intl.RelativeTimeFormatUnit;
   }[] = [
-      { threshold: 45, divisor: 1, unit: "second" },
-      { threshold: 2700, divisor: 60, unit: "minute" }, // 45 minutes
-      { threshold: 64_800, divisor: 3_600, unit: "hour" }, // 18 hours
-      { threshold: 561_600, divisor: 86_400, unit: "day" }, // 6.5 days
-      { threshold: 2_419_200, divisor: 604_800, unit: "week" }, // 4 weeks
-      { threshold: 28_512_000, divisor: 2_629_746, unit: "month" }, // 11 months
-    ];
+    { threshold: 45, divisor: 1, unit: "second" },
+    { threshold: 2700, divisor: 60, unit: "minute" }, // 45 minutes
+    { threshold: 64_800, divisor: 3_600, unit: "hour" }, // 18 hours
+    { threshold: 561_600, divisor: 86_400, unit: "day" }, // 6.5 days
+    { threshold: 2_419_200, divisor: 604_800, unit: "week" }, // 4 weeks
+    { threshold: 28_512_000, divisor: 2_629_746, unit: "month" }, // 11 months
+  ];
 
   const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
 
