@@ -596,6 +596,57 @@ function TaskRunTreeInner({
 
   const isLocalWorkspaceRunEntry = run.isLocalWorkspace;
 
+  // Determine if this run has a PR and what icon to show
+  const hasPullRequest =
+    run.pullRequestState && run.pullRequestState !== "none";
+
+  const prIcon = (() => {
+    if (!hasPullRequest) {
+      return null;
+    }
+
+    switch (run.pullRequestState) {
+      case "draft":
+        return (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <GitPullRequestDraft className="w-3 h-3 text-neutral-500" />
+            </TooltipTrigger>
+            <TooltipContent side="right">Draft PR</TooltipContent>
+          </Tooltip>
+        );
+      case "open":
+        return (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <GitPullRequest className="w-3 h-3 text-[#1f883d] dark:text-[#238636]" />
+            </TooltipTrigger>
+            <TooltipContent side="right">PR Open</TooltipContent>
+          </Tooltip>
+        );
+      case "merged":
+        return (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <GitMerge className="w-3 h-3 text-purple-500" />
+            </TooltipTrigger>
+            <TooltipContent side="right">Merged</TooltipContent>
+          </Tooltip>
+        );
+      case "closed":
+        return (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <GitPullRequestClosed className="w-3 h-3 text-red-500" />
+            </TooltipTrigger>
+            <TooltipContent side="right">PR Closed</TooltipContent>
+          </Tooltip>
+        );
+      default:
+        return null;
+    }
+  })();
+
   const statusIcon = {
     pending: <Circle className="w-3 h-3 text-neutral-400" />,
     running: <Loader2 className="w-3 h-3 text-blue-500 animate-spin" />,
@@ -646,13 +697,17 @@ function TaskRunTreeInner({
     </Tooltip>
   ) : null;
 
+  // If there's a PR, show PR icon instead of status icon
+  // Otherwise, show status icon as normal
+  const primaryIcon = prIcon || runLeadingIcon;
+
   const leadingContent = crownIcon ? (
     <div className="flex items-center gap-1">
       {crownIcon}
-      {runLeadingIcon}
+      {primaryIcon}
     </div>
   ) : (
-    runLeadingIcon
+    primaryIcon
   );
 
   // Generate VSCode URL if available
