@@ -7,6 +7,7 @@ export function middleware(request: NextRequest) {
   const hostname = request.nextUrl.hostname;
 
   console.log("hostname:", hostname);
+  console.log("pathname:", pathname);
 
   if (hostname === "github0.com" && pathname === "/") {
     const url = request.nextUrl.clone();
