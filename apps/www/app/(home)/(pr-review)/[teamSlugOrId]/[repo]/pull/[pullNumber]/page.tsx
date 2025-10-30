@@ -164,6 +164,12 @@ export default async function PullRequestPage({ params }: PageProps) {
     redirect(`/${githubOwner}/${repo}/pull/${pullNumber}/auth`);
   }
 
+  // For public repos without a user, redirect to auth to auto-create anonymous user
+  if (repoIsPublic && !user) {
+    const { redirect } = await import("next/navigation");
+    redirect(`/${githubOwner}/${repo}/pull/${pullNumber}/auth`);
+  }
+
   // For private repos, require a team. For public repos, teams are optional.
   let selectedTeam: Team | null = null;
   if (!repoIsPublic) {

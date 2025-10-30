@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import { isRepoPublic } from "@/lib/github/check-repo-visibility";
 import { stackServerApp } from "@/lib/utils/stack";
-import { PublicRepoAnonymousPrompt } from "../../../_components/public-repo-anonymous-prompt";
 import { PrivateRepoPrompt } from "../../../_components/private-repo-prompt";
 import { AnonymousToSignInPrompt } from "../../../_components/anonymous-to-signin-prompt";
 import { env } from "@/lib/utils/www-env";
@@ -67,16 +67,57 @@ export default async function AuthPage({ params }: PageProps) {
     redirect(`/${githubOwner}/${repo}/pull/${pullNumber}`);
   }
 
-  // For public repos with anonymous users or no user, show anonymous auth prompt
+  // For public repos with anonymous users or no user, automatically create anonymous user
   if (repoIsPublic) {
-    return (
-      <PublicRepoAnonymousPrompt
-        teamSlugOrId={githubOwner}
-        repo={repo}
-        githubOwner={githubOwner}
-        pullNumber={pullNumber}
-      />
-    );
+    console.log("[AuthPage] Public repo detected, automatically creating anonymous user");
+
+    try {
+      // Create anonymous user using Stack Auth API
+      const response = await fetch("https://api.stack-auth.com/api/v1/auth/anonymous/sign-up", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-stack-project-id": env.NEXT_PUBLIC_STACK_PROJECT_ID,
+          "x-stack-publishable-client-key": env.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY,
+          "x-stack-secret-server-key": env.STACK_SECRET_SERVER_KEY,
+          "x-stack-access-type": "server",
+        },
+        body: JSON.stringify({}),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+
+        // Set Stack Auth cookies
+        if (data.access_token && data.refresh_token) {
+          const projectId = env.NEXT_PUBLIC_STACK_PROJECT_ID;
+          const cookieStore = await cookies();
+
+          const cookieOptions = {
+            path: "/",
+            maxAge: 31536000, // 1 year
+            sameSite: "lax" as const,
+            secure: process.env.NODE_ENV === "production",
+            httpOnly: false,
+          };
+
+          cookieStore.set("stack-access", data.access_token, cookieOptions);
+          cookieStore.set(`stack-refresh-${projectId}`, data.refresh_token, cookieOptions);
+          cookieStore.set("stack-is-https", "true", cookieOptions);
+
+          console.log("[AuthPage] Anonymous user created successfully, redirecting to PR page");
+          redirect(`/${githubOwner}/${repo}/pull/${pullNumber}`);
+        }
+      }
+
+      console.error("[AuthPage] Failed to create anonymous user, status:", response.status);
+    } catch (error) {
+      console.error("[AuthPage] Error creating anonymous user:", error);
+    }
+
+    // If we reach here, anonymous user creation failed - still redirect to PR page
+    // The main PR page will handle showing appropriate error messages
+    redirect(`/${githubOwner}/${repo}/pull/${pullNumber}`);
   }
 
   // Fallback: show GitHub app install prompt (shouldn't reach here normally)
