@@ -79,6 +79,7 @@ import {
   ReviewCompletionNotificationCard,
   type ReviewCompletionNotificationCardState,
 } from "./review-completion-notification-card";
+import { HeatmapScrollbarMinimap } from "./heatmap-scrollbar-minimap";
 import clsx from "clsx";
 import { kitties } from "./kitty";
 
@@ -1451,6 +1452,12 @@ export function PullRequestDiffViewer({
 
   return (
     <div className="flex flex-col gap-3">
+      <HeatmapScrollbarMinimap
+        fileEntries={thresholdedFileEntries}
+        onNavigateToLine={(anchorId, lineNumber, side) => {
+          handleNavigate(anchorId);
+        }}
+      />
       <div className="flex flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-0">
         <aside
           id={sidebarPanelId}
