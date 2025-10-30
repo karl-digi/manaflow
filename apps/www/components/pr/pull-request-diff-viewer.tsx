@@ -95,6 +95,8 @@ type PullRequestDiffViewerProps = {
   jobType?: "pull_request" | "comparison";
   commitRef?: string;
   baseCommitRef?: string;
+  pullRequestTitle?: string;
+  pullRequestUrl?: string;
 };
 
 type ParsedFileDiff = {
@@ -106,14 +108,14 @@ type ParsedFileDiff = {
 
 type RefractorNode =
   | {
-    type: "text";
-    value: string;
-  }
+      type: "text";
+      value: string;
+    }
   | {
-    type: string;
-    children?: RefractorNode[];
-    [key: string]: unknown;
-  };
+      type: string;
+      children?: RefractorNode[];
+      [key: string]: unknown;
+    };
 
 const extensionToLanguage: Record<string, string> = {
   bash: "bash",
@@ -239,8 +241,8 @@ const refractorAdapter = createRefractorAdapter(refractor);
 type FileOutput =
   | FunctionReturnType<typeof api.codeReview.listFileOutputsForPr>[number]
   | FunctionReturnType<
-    typeof api.codeReview.listFileOutputsForComparison
-  >[number];
+      typeof api.codeReview.listFileOutputsForComparison
+    >[number];
 
 type HeatmapTooltipMeta = {
   score: number;
@@ -494,6 +496,8 @@ export function PullRequestDiffViewer({
   jobType,
   commitRef,
   baseCommitRef,
+  pullRequestTitle,
+  pullRequestUrl,
 }: PullRequestDiffViewerProps) {
   const normalizedJobType: "pull_request" | "comparison" =
     jobType ?? (comparisonSlug ? "comparison" : "pull_request");
@@ -645,8 +649,8 @@ export function PullRequestDiffViewer({
                     if (filePath) {
                       const status =
                         payload.status === "skipped" ||
-                          payload.status === "error" ||
-                          payload.status === "success"
+                        payload.status === "error" ||
+                        payload.status === "success"
                           ? (payload.status as StreamFileStatus)
                           : "success";
                       const summary =
@@ -740,11 +744,13 @@ export function PullRequestDiffViewer({
                         skipReason: null,
                         summary: null,
                       };
-                      const lineKey = `${reviewLine.lineNumber ?? "unknown"}:${reviewLine.lineText ?? ""
-                        }`;
+                      const lineKey = `${reviewLine.lineNumber ?? "unknown"}:${
+                        reviewLine.lineText ?? ""
+                      }`;
                       const filtered = current.lines.filter((line) => {
-                        const existingKey = `${line.lineNumber ?? "unknown"}:${line.lineText ?? ""
-                          }`;
+                        const existingKey = `${line.lineNumber ?? "unknown"}:${
+                          line.lineText ?? ""
+                        }`;
                         return existingKey !== lineKey;
                       });
                       const updated = [...filtered, reviewLine].sort((a, b) => {
@@ -822,16 +828,16 @@ export function PullRequestDiffViewer({
   const prQueryArgs = useMemo(
     () =>
       normalizedJobType !== "pull_request" ||
-        prNumber === null ||
-        prNumber === undefined
+      prNumber === null ||
+      prNumber === undefined
         ? ("skip" as const)
         : {
-          teamSlugOrId,
-          repoFullName,
-          prNumber,
-          ...(commitRef ? { commitRef } : {}),
-          ...(baseCommitRef ? { baseCommitRef } : {}),
-        },
+            teamSlugOrId,
+            repoFullName,
+            prNumber,
+            ...(commitRef ? { commitRef } : {}),
+            ...(baseCommitRef ? { baseCommitRef } : {}),
+          },
     [
       normalizedJobType,
       teamSlugOrId,
@@ -847,12 +853,12 @@ export function PullRequestDiffViewer({
       normalizedJobType !== "comparison" || !comparisonSlug
         ? ("skip" as const)
         : {
-          teamSlugOrId,
-          repoFullName,
-          comparisonSlug,
-          ...(commitRef ? { commitRef } : {}),
-          ...(baseCommitRef ? { baseCommitRef } : {}),
-        },
+            teamSlugOrId,
+            repoFullName,
+            comparisonSlug,
+            ...(commitRef ? { commitRef } : {}),
+            ...(baseCommitRef ? { baseCommitRef } : {}),
+          },
     [
       normalizedJobType,
       teamSlugOrId,
@@ -1009,16 +1015,75 @@ export function PullRequestDiffViewer({
       (previousPending === null || previousPending > 0)
     ) {
       try {
-        const title = "Automated review complete";
-        const body =
+        const completionMessage =
           totalFileCount === 1
             ? "Finished reviewing the last file."
             : "Finished reviewing all files in this review.";
+        const isPullRequestReview = normalizedJobType === "pull_request";
+        const sanitizedTitle =
+          typeof pullRequestTitle === "string"
+            ? pullRequestTitle.replace(/\s+/g, " ").trim()
+            : "";
+        const effectiveTitle =
+          sanitizedTitle.length > 0 ? sanitizedTitle : null;
+        const sanitizedUrl =
+          typeof pullRequestUrl === "string" ? pullRequestUrl.trim() : "";
+        const hasValidPrNumber =
+          typeof prNumber === "number" && Number.isFinite(prNumber);
+        const trimmedRepoFullName =
+          repoFullName.trim().length > 0 ? repoFullName.trim() : null;
+        const fallbackUrl =
+          isPullRequestReview && hasValidPrNumber && trimmedRepoFullName
+            ? `https://github.com/${trimmedRepoFullName}/pull/${prNumber}`
+            : null;
+        const effectiveUrl =
+          sanitizedUrl.length > 0 ? sanitizedUrl : fallbackUrl;
+        const repoDescriptor =
+          trimmedRepoFullName && hasValidPrNumber
+            ? `${trimmedRepoFullName}#${prNumber}`
+            : trimmedRepoFullName;
 
-        new Notification(title, {
+        const detailLines: string[] = [];
+
+        if (isPullRequestReview) {
+          const descriptorParts: string[] = [];
+          if (effectiveTitle) {
+            descriptorParts.push(`“${effectiveTitle}”`);
+          }
+          if (repoDescriptor) {
+            descriptorParts.push(repoDescriptor);
+          }
+
+          if (descriptorParts.length > 0) {
+            detailLines.push(descriptorParts.join(" • "));
+          }
+
+          if (effectiveUrl) {
+            detailLines.push(effectiveUrl);
+          }
+        }
+
+        const bodyLines = [completionMessage, ...detailLines].filter(
+          (line) => line && line.length > 0
+        );
+        const body = bodyLines.join("\n");
+        const titleSubject =
+          isPullRequestReview && (effectiveTitle || repoDescriptor)
+            ? (effectiveTitle ?? repoDescriptor)
+            : null;
+        const notificationTitle =
+          titleSubject && titleSubject.length > 0
+            ? `Review complete • ${titleSubject}`
+            : "Automated review complete";
+
+        const notification = new Notification(notificationTitle, {
           body,
           tag: "cmux-review-complete",
         });
+        notification.onclick = () => {
+          window.focus();
+          notification.close();
+        };
       } catch {
         // Ignore notification errors (for example, blocked constructors)
       } finally {
@@ -1031,6 +1096,11 @@ export function PullRequestDiffViewer({
     pendingFileCount,
     shouldNotifyOnCompletion,
     totalFileCount,
+    normalizedJobType,
+    pullRequestTitle,
+    pullRequestUrl,
+    repoFullName,
+    prNumber,
   ]);
 
   const handleEnableCompletionNotification = useCallback(async () => {
@@ -1183,9 +1253,9 @@ export function PullRequestDiffViewer({
         ...fileEntry,
         diffHeatmap: fileEntry.diffHeatmapArtifacts
           ? renderDiffHeatmapFromArtifacts(
-            fileEntry.diffHeatmapArtifacts,
-            heatmapThreshold
-          )
+              fileEntry.diffHeatmapArtifacts,
+              heatmapThreshold
+            )
           : null,
       })),
     [fileEntries, heatmapThreshold]
@@ -1373,7 +1443,7 @@ export function PullRequestDiffViewer({
   const firstPath = parsedDiffs[0]?.file.filename ?? "";
   const initialPath =
     hydratedInitialPath &&
-      sortedFiles.some((file) => file.filename === hydratedInitialPath)
+    sortedFiles.some((file) => file.filename === hydratedInitialPath)
       ? hydratedInitialPath
       : firstPath;
 
@@ -1947,9 +2017,9 @@ export function PullRequestDiffViewer({
               const focusedLine = isFocusedFile
                 ? focusedError
                   ? {
-                    side: focusedError.side,
-                    lineNumber: focusedError.lineNumber,
-                  }
+                      side: focusedError.side,
+                      lineNumber: focusedError.lineNumber,
+                    }
                   : null
                 : null;
               const focusedChangeKey = isFocusedFile
@@ -1957,12 +2027,12 @@ export function PullRequestDiffViewer({
                 : null;
               const autoTooltipLine =
                 isFocusedFile &&
-                  autoTooltipTarget &&
-                  autoTooltipTarget.filePath === entry.file.filename
+                autoTooltipTarget &&
+                autoTooltipTarget.filePath === entry.file.filename
                   ? {
-                    side: autoTooltipTarget.side,
-                    lineNumber: autoTooltipTarget.lineNumber,
-                  }
+                      side: autoTooltipTarget.side,
+                      lineNumber: autoTooltipTarget.lineNumber,
+                    }
                   : null;
 
               const isLoading =
@@ -1987,14 +2057,23 @@ export function PullRequestDiffViewer({
           )}
           <div className="h-[70dvh] w-full">
             <div className="px-3 py-6 text-center">
-              <span className="select-none text-xs text-neutral-500 dark:text-neutral-400">
+              <span className="select-none text-xs text-neutral-500">
                 You&apos;ve reached the end of the diff!
               </span>
-              <div className="grid place-content-center">
-                <pre className="mt-2 pb-20 select-none text-left text-[8px] font-mono text-neutral-500 dark:text-neutral-400">
+              <div className="grid place-content-center pb-4">
+                <pre className="mt-2 select-none text-left text-[8px] font-mono text-neutral-500">
                   {kitty}
                 </pre>
               </div>
+              <a
+                href="https://github.com/manaflow-ai/cmux"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-500 transition hover:border-neutral-300 hover:bg-neutral-50 select-none"
+              >
+                <Star className="h-3.5 w-3.5" aria-hidden />
+                Star on GitHub
+              </a>
             </div>
           </div>
         </div>
@@ -2107,7 +2186,7 @@ function CmuxPromoCard() {
             target="_blank"
             rel="noopener noreferrer"
             aria-label="Visit cmux.dev"
-            className="inline-flex w-fit items-center justify-start transform translate-y-[-1px] translate-x-[-6.5px]"
+            className="inline-flex w-fit items-center justify-start transform translate-y-[-1px] translate-x-[-4.8px]"
           >
             <CmuxLogo
               height={30}
@@ -2119,7 +2198,8 @@ function CmuxPromoCard() {
         </div>
         <div className="mb-1 translate-y-[-1.5px]">
           <p className="text-xs font-sans leading-relaxed text-neutral-500">
-            We also made a open-source Claude Code/Codex manager! Check out cmux if you want heatmaps for your vibe coded diffs (coming soon)!
+            We also made an open-source Claude Code/Codex manager! Check out
+            cmux if you want heatmaps for your vibe coded diffs (coming soon)!
           </p>
         </div>
         <div className="flex flex-wrap gap-2 pt-1">
@@ -2142,7 +2222,6 @@ function CmuxPromoCard() {
             Explore cmux
           </a>
         </div>
-
       </div>
     </div>
   );
@@ -2172,7 +2251,7 @@ function HeatmapThresholdControl({
   );
 
   return (
-    <div className="rounded border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-700">
+    <div className="rounded border border-neutral-200 bg-white p-5 pt-4 text-sm text-neutral-700">
       <div className="flex items-center justify-between gap-3">
         <label htmlFor={sliderId} className="font-medium text-neutral-700">
           &ldquo;Should review&rdquo; threshold
@@ -2638,7 +2717,7 @@ function FileDiffCard({
 
     const enhancers =
       diffHeatmap &&
-        (diffHeatmap.newRanges.length > 0 || diffHeatmap.oldRanges.length > 0)
+      (diffHeatmap.newRanges.length > 0 || diffHeatmap.oldRanges.length > 0)
         ? [pickRanges(diffHeatmap.oldRanges, diffHeatmap.newRanges)]
         : undefined;
 
@@ -2659,8 +2738,8 @@ function FileDiffCard({
       diff.hunks,
       enhancers
         ? {
-          enhancers,
-        }
+            enhancers,
+          }
         : undefined
     );
   }, [diff, language, diffHeatmap]);

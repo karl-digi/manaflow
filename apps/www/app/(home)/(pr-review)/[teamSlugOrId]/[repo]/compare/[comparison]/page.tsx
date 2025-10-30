@@ -261,7 +261,7 @@ function ComparisonHeaderContent({
   const repoFullName = `${githubOwner}/${repo}`;
 
   return (
-    <section className="border border-neutral-200 bg-white p-4">
+    <section className="border border-neutral-200 bg-white px-5 p-4">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2 text-xs">

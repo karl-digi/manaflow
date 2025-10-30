@@ -542,7 +542,7 @@ function PullRequestHeaderContent({
   const authorLogin = pullRequest.user?.login ?? null;
 
   return (
-    <section className="border border-neutral-200 bg-white p-4">
+    <section className="border border-neutral-200 bg-white px-5 p-4">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <PullRequestHeaderSummary
           statusLabel={statusBadge.label}
@@ -706,6 +706,19 @@ function PullRequestDiffSection({
       `${githubOwner}/${repo}`;
     const commitRef = pullRequest.head?.sha ?? undefined;
     const baseCommitRef = pullRequest.base?.sha ?? undefined;
+    const pullRequestTitleRaw =
+      typeof pullRequest.title === "string" ? pullRequest.title : "";
+    const pullRequestTitle =
+      pullRequestTitleRaw.trim().length > 0 ? pullRequestTitleRaw.trim() : null;
+    const fallbackPullRequestUrl = `https://github.com/${fallbackRepoFullName}/pull/${pullNumber}`;
+    const pullRequestHtmlUrl =
+      typeof pullRequest.html_url === "string"
+        ? pullRequest.html_url.trim()
+        : "";
+    const pullRequestUrl =
+      pullRequestHtmlUrl.length > 0
+        ? pullRequestHtmlUrl
+        : fallbackPullRequestUrl;
 
     return (
       <ReviewDiffContent
@@ -715,6 +728,8 @@ function PullRequestDiffSection({
         reviewTarget={{ type: "pull_request", prNumber: pullNumber }}
         commitRef={commitRef}
         baseCommitRef={baseCommitRef}
+        pullRequestTitle={pullRequestTitle}
+        pullRequestUrl={pullRequestUrl}
       />
     );
   } catch (error) {
@@ -804,13 +819,13 @@ function formatRelativeTimeFromNow(date: Date): string {
     divisor: number;
     unit: Intl.RelativeTimeFormatUnit;
   }[] = [
-      { threshold: 45, divisor: 1, unit: "second" },
-      { threshold: 2700, divisor: 60, unit: "minute" }, // 45 minutes
-      { threshold: 64_800, divisor: 3_600, unit: "hour" }, // 18 hours
-      { threshold: 561_600, divisor: 86_400, unit: "day" }, // 6.5 days
-      { threshold: 2_419_200, divisor: 604_800, unit: "week" }, // 4 weeks
-      { threshold: 28_512_000, divisor: 2_629_746, unit: "month" }, // 11 months
-    ];
+    { threshold: 45, divisor: 1, unit: "second" },
+    { threshold: 2700, divisor: 60, unit: "minute" }, // 45 minutes
+    { threshold: 64_800, divisor: 3_600, unit: "hour" }, // 18 hours
+    { threshold: 561_600, divisor: 86_400, unit: "day" }, // 6.5 days
+    { threshold: 2_419_200, divisor: 604_800, unit: "week" }, // 4 weeks
+    { threshold: 28_512_000, divisor: 2_629_746, unit: "month" }, // 11 months
+  ];
 
   const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
 
