@@ -17,7 +17,7 @@ const AnonymousSignUpResponse = z
 
 authAnonymousRouter.openapi(
   createRoute({
-    method: "post" as const,
+    method: "post",
     path: "/auth/anonymous/sign-up",
     tags: ["Auth"],
     summary: "Create an anonymous user for public repo access",

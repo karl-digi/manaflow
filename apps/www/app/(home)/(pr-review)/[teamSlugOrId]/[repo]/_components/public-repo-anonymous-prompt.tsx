@@ -40,7 +40,7 @@ export function PublicRepoAnonymousPrompt({
         headers: {
           "Content-Type": "application/json",
         },
-        credentials: "include", // Important: include cookies
+        credentials: "include",
       });
 
       const data = await response.json();
@@ -53,8 +53,6 @@ export function PublicRepoAnonymousPrompt({
         return;
       }
 
-      // Successfully created anonymous user, redirect back to PR page
-      console.log("[PublicRepoAnonymousPrompt] Anonymous user created successfully");
       // Remove /auth from the path to go back to PR page
       const prPath = window.location.pathname.replace(/\/auth$/, "");
       window.location.href = prPath;
