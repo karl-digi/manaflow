@@ -4,6 +4,13 @@ import { env } from "@/lib/utils/www-env";
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  const hostname = request.nextUrl.hostname;
+
+  if (hostname === "github0.com" && pathname === "/") {
+    const url = request.nextUrl.clone();
+    url.pathname = "/heatmap";
+    return NextResponse.rewrite(url);
+  }
 
   // Check if this is a PR review page that requires authentication
   const isPRReviewPage =
