@@ -32,6 +32,7 @@ import {
   Loader2,
   Star,
   AlertTriangle,
+  Send,
 } from "lucide-react";
 import {
   Decoration,
@@ -1871,7 +1872,6 @@ export function PullRequestDiffViewer({
                 isLoading={isLoadingFileOutputs}
               />
             </div>
-            <CmuxPromoCard />
             {notificationCardState ? (
               <ReviewCompletionNotificationCard state={notificationCardState} />
             ) : null}
@@ -1879,6 +1879,7 @@ export function PullRequestDiffViewer({
               value={heatmapThresholdInput}
               onChange={setHeatmapThresholdInput}
             />
+            <CmuxPromoCard />
             {targetCount > 0 ? (
               <div className="flex justify-center">
                 <ErrorNavigator
@@ -2118,18 +2119,10 @@ function CmuxPromoCard() {
         </div>
         <div className="mb-1 translate-y-[-1.5px]">
           <p className="text-xs font-sans leading-relaxed text-neutral-500">
-            We also made a Claude Code/Codex manager! Check out cmux if you want heatmaps for your vibe coded diffs (coming soon)!
+            We also made a open-source Claude Code/Codex manager! Check out cmux if you want heatmaps for your vibe coded diffs (coming soon)!
           </p>
         </div>
         <div className="flex flex-wrap gap-2 pt-1">
-          <a
-            href="https://cmux.dev"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="font-sans inline-flex items-center justify-center bg-neutral-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-neutral-800"
-          >
-            Explore cmux
-          </a>
           <a
             href="https://github.com/manaflow-ai/cmux"
             target="_blank"
@@ -2139,7 +2132,17 @@ function CmuxPromoCard() {
             <Star className="h-3.5 w-3.5" aria-hidden />
             Star on GitHub
           </a>
+          <a
+            href="https://cmux.dev"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-sans inline-flex items-center gap-1 border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:border-neutral-300 hover:bg-neutral-50"
+          >
+            <Send className="h-3.5 w-3.5" aria-hidden />
+            Explore cmux
+          </a>
         </div>
+
       </div>
     </div>
   );
