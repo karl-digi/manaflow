@@ -11,7 +11,6 @@ import {
   customMutation,
   customQuery,
 } from "convex-helpers/server/customFunctions";
-export { getWorkerAuth, type WorkerAuthContext } from "./getWorkerAuth";
 
 export const authQuery = customQuery(
   query,

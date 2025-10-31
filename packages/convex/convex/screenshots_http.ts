@@ -5,7 +5,7 @@ import {
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { httpAction } from "./_generated/server";
-import { getWorkerAuth } from "./users/utils";
+import { getWorkerAuth } from "./users/utils/getWorkerAuth";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json",
