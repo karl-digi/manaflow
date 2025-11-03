@@ -181,7 +181,6 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
   const preloadTeamDashboard = useCallback(
     async (targetTeamSlugOrId: string | undefined) => {
       if (!targetTeamSlugOrId) return;
-      console.log("Preloading team dashboard for", targetTeamSlugOrId);
       await router.preloadRoute({
         to: "/$teamSlugOrId/dashboard",
         params: { teamSlugOrId: targetTeamSlugOrId },
@@ -191,7 +190,6 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
   );
 
   const closeCommand = useCallback(() => {
-    console.log("[CommandBar] closeCommand");
     skipNextCloseRef.current = false;
     setOpen(false);
     setSearch("");
@@ -201,10 +199,6 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
   }, [setOpen, setSearch, setOpenedWithShift, setActivePage, setCommandValue]);
 
   const handleEscape = useCallback(() => {
-    console.log("[CommandBar] handleEscape", {
-      activePage,
-      searchLength: search.length,
-    });
     skipNextCloseRef.current = false;
     if (search.length > 0) {
       skipNextCloseRef.current = true;
@@ -942,9 +936,11 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         value: "new-task",
         label: "New Task",
         keywords: ["task", "create", "new"],
-        searchText: buildSearchText("New Task", ["task", "create"], [
-          "new-task",
-        ]),
+        searchText: buildSearchText(
+          "New Task",
+          ["task", "create"],
+          ["new-task"]
+        ),
         className: baseCommandItemClassName,
         execute: () => handleSelect("new-task"),
         renderContent: () => (
@@ -1048,11 +1044,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         value: "settings",
         label: "Settings",
         keywords: ["preferences", "config"],
-        searchText: buildSearchText(
-          "Settings",
-          ["preferences"],
-          ["settings"]
-        ),
+        searchText: buildSearchText("Settings", ["preferences"], ["settings"]),
         className: baseCommandItemClassName,
         execute: () => handleSelect("settings"),
         renderContent: () => (
@@ -1246,11 +1238,10 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
                 value: `${index + 1} git diff:task:${task._id}`,
                 label: `${title} (git diff)`,
                 keywords: diffKeywords,
-                searchText: buildSearchText(
-                  `${title} git diff`,
-                  diffKeywords,
-                  [`${index + 1} git diff`, `task:${task._id}:gitdiff`]
-                ),
+                searchText: buildSearchText(`${title} git diff`, diffKeywords, [
+                  `${index + 1} git diff`,
+                  `task:${task._id}:gitdiff`,
+                ]),
                 className: taskCommandItemClassName,
                 execute: () => handleSelect(`task:${task._id}:gitdiff`),
                 renderContent: () => (
@@ -1630,10 +1621,8 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         value={commandValue}
         shouldFilter={false}
         onOpenChange={(nextOpen) => {
-          console.log("[CommandBar] onOpenChange", { nextOpen });
           if (!nextOpen) {
             if (skipNextCloseRef.current) {
-              console.log("[CommandBar] onOpenChange skip close");
               skipNextCloseRef.current = false;
               return;
             }
@@ -1651,15 +1640,9 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         loop
         className="fixed inset-0 z-[var(--z-commandbar)] flex items-start justify-center pt-[20vh] pointer-events-none"
         onKeyDownCapture={(e) => {
-          console.log("[CommandBar] onKeyDownCapture", {
-            key: e.key,
-            activePage,
-            searchLength: search.length,
-          });
           if (e.key === "Escape") {
             e.preventDefault();
             e.stopPropagation();
-            console.log("[CommandBar] Escape pressed via onKeyDownCapture");
             handleEscape();
           } else if (
             e.key === "Backspace" &&
@@ -1669,9 +1652,6 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
             e.target === inputRef.current
           ) {
             e.preventDefault();
-            console.log(
-              "[CommandBar] Backspace pressed, navigating back to root"
-            );
             setActivePage("root");
           }
         }}
