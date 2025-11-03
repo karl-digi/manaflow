@@ -57,9 +57,8 @@ async function getServiceAccessToken(): Promise<string> {
   }
 
   if (!config.stack) {
-    throw new Error(
-      "Stack credentials missing. Set CMUX_CHATGPT_ACCESS_TOKEN or provide Stack keys plus CMUX_CHATGPT_STACK_USER_ID.",
-    );
+    // Allow unauthenticated/anonymous access
+    return "";
   }
 
   const now = Date.now();
@@ -381,11 +380,8 @@ function resolveConfig(): Config {
         superSecretAdminKey,
         userId,
       };
-    } else {
-      throw new Error(
-        "Provide either CMUX_CHATGPT_ACCESS_TOKEN or the Stack credentials (NEXT_PUBLIC_STACK_PROJECT_ID, NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY, STACK_SECRET_SERVER_KEY, STACK_SUPER_SECRET_ADMIN_KEY, CMUX_CHATGPT_STACK_USER_ID) so the ChatGPT app can authenticate.",
-      );
     }
+    // If Stack credentials are incomplete, allow anonymous access
   }
 
   return {

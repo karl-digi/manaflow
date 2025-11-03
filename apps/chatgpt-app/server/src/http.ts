@@ -19,6 +19,19 @@ async function startHttpServer(): Promise<void> {
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const url = parse(req.url ?? "", true);
 
+    // Handle OAuth/OIDC well-known endpoints - redirect to /mcp prefix
+    if (url.pathname?.startsWith("/.well-known/")) {
+      const mcpPath = `/mcp${url.pathname}`;
+      res.writeHead(307, { Location: mcpPath }).end();
+      return;
+    }
+
+    // Handle root path - redirect to /mcp
+    if (url.pathname === "/" || url.pathname === "") {
+      res.writeHead(307, { Location: "/mcp" }).end();
+      return;
+    }
+
     if (!url.pathname || !url.pathname.startsWith("/mcp")) {
       res.writeHead(404).end("Not Found");
       return;
