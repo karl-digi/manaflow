@@ -9,7 +9,7 @@ import { FlexiblePanelLayout } from "@/components/FlexiblePanelLayout";
 import { TaskRunGitDiffPanel } from "@/components/TaskRunGitDiffPanel";
 import { RenderPanel } from "@/components/TaskPanelFactory";
 import { PanelConfigModal } from "@/components/PanelConfigModal";
-import { loadPanelConfig, savePanelConfig, getAvailablePanels, getActivePanelPositions, PANEL_LABELS } from "@/lib/panel-config";
+import { loadPanelConfig, savePanelConfig, getAvailablePanels, getActivePanelPositions, removePanelFromAllPositions, getCurrentLayoutPanels, PANEL_LABELS } from "@/lib/panel-config";
 import type { PanelConfig, PanelType, PanelPosition } from "@/lib/panel-config";
 import {
   getTaskRunBrowserPersistKey,
@@ -283,10 +283,19 @@ function TaskDetailPage() {
     // Use startTransition to mark this as a non-urgent update
     // This helps React keep the UI stable during the swap
     setPanelConfig(prev => {
-      const newConfig = { ...prev };
-      const temp = newConfig[fromPosition];
-      newConfig[fromPosition] = newConfig[toPosition];
-      newConfig[toPosition] = temp;
+      const currentLayout = getCurrentLayoutPanels(prev);
+      const temp = currentLayout[fromPosition];
+      const newConfig = {
+        ...prev,
+        layouts: {
+          ...prev.layouts,
+          [prev.layoutMode]: {
+            ...currentLayout,
+            [fromPosition]: currentLayout[toPosition],
+            [toPosition]: temp,
+          },
+        },
+      };
       savePanelConfig(newConfig);
       return newConfig;
     });
@@ -307,8 +316,17 @@ function TaskDetailPage() {
   const handlePanelClose = useCallback((position: PanelPosition) => {
     setExpandedPanel((current) => (current === position ? null : current));
     setPanelConfig(prev => {
-      const newConfig = { ...prev };
-      newConfig[position] = null;
+      const currentLayout = getCurrentLayoutPanels(prev);
+      const newConfig = {
+        ...prev,
+        layouts: {
+          ...prev.layouts,
+          [prev.layoutMode]: {
+            ...currentLayout,
+            [position]: null,
+          },
+        },
+      };
       savePanelConfig(newConfig);
       return newConfig;
     });
@@ -325,8 +343,10 @@ function TaskDetailPage() {
 
   const handleAddPanel = useCallback((position: PanelPosition, panelType: PanelType) => {
     setPanelConfig(prev => {
-      const newConfig = { ...prev };
-      newConfig[position] = panelType;
+      // First, remove the panel from all positions to prevent duplicates
+      const newConfigWithoutPanel = removePanelFromAllPositions(prev, panelType);
+      // Then add it to the target position
+      const newConfig = { ...newConfigWithoutPanel, [position]: panelType };
       savePanelConfig(newConfig);
       return newConfig;
     });
@@ -523,6 +543,7 @@ function TaskDetailPage() {
     }
   }, [selectedRun, taskRuns?.length]);
 
+  const currentLayout = useMemo(() => getCurrentLayoutPanels(panelConfig), [panelConfig]);
   const availablePanels = useMemo(() => getAvailablePanels(panelConfig), [panelConfig]);
   const activePanelPositions = useMemo(() => getActivePanelPositions(panelConfig.layoutMode), [panelConfig.layoutMode]);
 
@@ -618,11 +639,11 @@ function TaskDetailPage() {
             layoutMode={panelConfig.layoutMode}
             storageKey="taskDetailGrid"
             topLeft={
-              isPanelPositionActive("topLeft") && panelConfig.topLeft ? (
+              isPanelPositionActive("topLeft") && currentLayout.topLeft ? (
                 <RenderPanel
-                  key={panelConfig.topLeft}
+                  key={currentLayout.topLeft}
                   {...panelProps}
-                  type={panelConfig.topLeft}
+                  type={currentLayout.topLeft}
                   position="topLeft"
                   onSwap={handlePanelSwap}
                   onToggleExpand={handleToggleExpand}
@@ -636,11 +657,11 @@ function TaskDetailPage() {
               )
             }
             topRight={
-              isPanelPositionActive("topRight") && panelConfig.topRight ? (
+              isPanelPositionActive("topRight") && currentLayout.topRight ? (
                 <RenderPanel
-                  key={panelConfig.topRight}
+                  key={currentLayout.topRight}
                   {...panelProps}
-                  type={panelConfig.topRight}
+                  type={currentLayout.topRight}
                   position="topRight"
                   onSwap={handlePanelSwap}
                   onToggleExpand={handleToggleExpand}
@@ -654,11 +675,11 @@ function TaskDetailPage() {
               )
             }
             bottomLeft={
-              isPanelPositionActive("bottomLeft") && panelConfig.bottomLeft ? (
+              isPanelPositionActive("bottomLeft") && currentLayout.bottomLeft ? (
                 <RenderPanel
-                  key={panelConfig.bottomLeft}
+                  key={currentLayout.bottomLeft}
                   {...panelProps}
-                  type={panelConfig.bottomLeft}
+                  type={currentLayout.bottomLeft}
                   position="bottomLeft"
                   onSwap={handlePanelSwap}
                   onToggleExpand={handleToggleExpand}
@@ -672,11 +693,11 @@ function TaskDetailPage() {
               )
             }
             bottomRight={
-              isPanelPositionActive("bottomRight") && panelConfig.bottomRight ? (
+              isPanelPositionActive("bottomRight") && currentLayout.bottomRight ? (
                 <RenderPanel
-                  key={panelConfig.bottomRight}
+                  key={currentLayout.bottomRight}
                   {...panelProps}
-                  type={panelConfig.bottomRight}
+                  type={currentLayout.bottomRight}
                   position="bottomRight"
                   onSwap={handlePanelSwap}
                   onToggleExpand={handleToggleExpand}

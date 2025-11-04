@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import type { LucideIcon } from "lucide-react";
-import { X, RotateCcw, GripVertical, MessageSquare, Code2, TerminalSquare, Globe2, GitCompare, Plus, Grid2x2, Columns2, Rows2, PanelLeft, PanelRight, PanelTop, PanelBottom } from "lucide-react";
+import { X, RotateCcw, GripVertical, MessageSquare, Code2, TerminalSquare, Globe2, GitCompare, Plus, Grid2x2, Columns2, Rows2, PanelLeft, PanelRight, PanelTop, PanelBottom, Trash2 } from "lucide-react";
 import clsx from "clsx";
 import type { PanelConfig, PanelType, LayoutMode, PanelPosition } from "@/lib/panel-config";
-import { PANEL_LABELS, DEFAULT_PANEL_CONFIG, LAYOUT_LABELS, LAYOUT_DESCRIPTIONS, getActivePanelPositions } from "@/lib/panel-config";
+import { PANEL_LABELS, DEFAULT_PANEL_CONFIG, LAYOUT_LABELS, LAYOUT_DESCRIPTIONS, getActivePanelPositions, getAvailablePanels, removePanelFromAllPositions } from "@/lib/panel-config";
 
 interface PanelConfigModalProps {
   isOpen: boolean;
@@ -34,10 +34,13 @@ const LAYOUT_ICONS_MAP: Record<LayoutMode, LucideIcon> = {
 export function PanelConfigModal({ isOpen, onClose, config, onChange }: PanelConfigModalProps) {
   const [draggedType, setDraggedType] = useState<PanelType | null>(null);
   const [draggedFrom, setDraggedFrom] = useState<PanelPosition | null>(null);
+  const [showAddMenu, setShowAddMenu] = useState<PanelPosition | null>(null);
 
   if (!isOpen) return null;
 
   const activePanelPositions = getActivePanelPositions(config.layoutMode);
+  const availablePanels = getAvailablePanels(config);
+  const currentLayout = config.layouts[config.layoutMode];
 
   const handleDragStart = (type: PanelType, position: PanelPosition) => {
     setDraggedType(type);
@@ -51,11 +54,26 @@ export function PanelConfigModal({ isOpen, onClose, config, onChange }: PanelCon
   const handleDrop = (targetPosition: PanelPosition) => {
     if (!draggedType || !draggedFrom) return;
 
-    // Swap the panels
-    const newConfig = { ...config };
-    const targetType = config[targetPosition];
-    newConfig[targetPosition] = draggedType;
-    newConfig[draggedFrom] = targetType;
+    // If dropping on the same position, do nothing
+    if (draggedFrom === targetPosition) {
+      setDraggedType(null);
+      setDraggedFrom(null);
+      return;
+    }
+
+    // Swap the panels in current layout
+    const targetType = currentLayout[targetPosition];
+    const newConfig = {
+      ...config,
+      layouts: {
+        ...config.layouts,
+        [config.layoutMode]: {
+          ...currentLayout,
+          [targetPosition]: draggedType,
+          [draggedFrom]: targetType,
+        },
+      },
+    };
 
     onChange(newConfig);
     setDraggedType(null);
@@ -70,6 +88,39 @@ export function PanelConfigModal({ isOpen, onClose, config, onChange }: PanelCon
     onChange({ ...config, layoutMode });
   };
 
+  const handleRemovePanel = (position: PanelPosition) => {
+    const newConfig = {
+      ...config,
+      layouts: {
+        ...config.layouts,
+        [config.layoutMode]: {
+          ...currentLayout,
+          [position]: null,
+        },
+      },
+    };
+    onChange(newConfig);
+  };
+
+  const handleAddPanelToPosition = (position: PanelPosition, panelType: PanelType) => {
+    // Remove the panel from all positions first to prevent duplicates
+    const newConfigWithoutPanel = removePanelFromAllPositions(config, panelType);
+    // Then add it to the target position
+    const updatedLayout = newConfigWithoutPanel.layouts[config.layoutMode];
+    const newConfig = {
+      ...newConfigWithoutPanel,
+      layouts: {
+        ...newConfigWithoutPanel.layouts,
+        [config.layoutMode]: {
+          ...updatedLayout,
+          [position]: panelType,
+        },
+      },
+    };
+    onChange(newConfig);
+    setShowAddMenu(null);
+  };
+
   const renderPanel = (position: PanelPosition, label: string) => {
     const isActive = activePanelPositions.includes(position);
     if (!isActive) {
@@ -80,11 +131,12 @@ export function PanelConfigModal({ isOpen, onClose, config, onChange }: PanelCon
       );
     }
 
-    const panelType = config[position];
+    const panelType = currentLayout[position];
     const panelLabel = panelType ? PANEL_LABELS[panelType] : "Empty";
     const PanelIcon = panelType ? PANEL_ICONS_MAP[panelType] : Plus;
     const isDragging = draggedFrom === position;
     const isDraggable = Boolean(panelType);
+    const isAddMenuOpen = showAddMenu === position;
 
     const handlePanelDragStart = () => {
       if (!panelType) {
@@ -117,20 +169,74 @@ export function PanelConfigModal({ isOpen, onClose, config, onChange }: PanelCon
             isDraggable ? "opacity-100" : "opacity-0"
           )}
         />
+
+        {/* Remove button */}
+        {panelType && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleRemovePanel(position);
+            }}
+            className="absolute top-2 right-2 size-6 flex items-center justify-center rounded bg-neutral-200 text-neutral-600 opacity-0 group-hover:opacity-100 hover:bg-red-100 hover:text-red-600 dark:bg-neutral-700 dark:text-neutral-400 dark:hover:bg-red-900 dark:hover:text-red-400 transition-all"
+            aria-label="Remove panel"
+          >
+            <Trash2 className="size-3.5" />
+          </button>
+        )}
+
         <div className="text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
           {label}
         </div>
         <div className="flex flex-col items-center gap-1">
-          <div
-            className={clsx(
-              "flex size-10 items-center justify-center rounded-full",
-              panelType
-                ? "bg-neutral-200 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-200"
-                : "bg-neutral-200 text-neutral-400 dark:bg-neutral-800 dark:text-neutral-500"
-            )}
-          >
-            <PanelIcon className="size-5" />
-          </div>
+          {panelType ? (
+            <div
+              className="flex size-10 items-center justify-center rounded-full bg-neutral-200 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-200"
+            >
+              <PanelIcon className="size-5" />
+            </div>
+          ) : (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowAddMenu(isAddMenuOpen ? null : position);
+                }}
+                className="flex size-10 items-center justify-center rounded-full bg-neutral-200 text-neutral-400 hover:bg-neutral-300 hover:text-neutral-700 dark:bg-neutral-800 dark:text-neutral-500 dark:hover:bg-neutral-700 dark:hover:text-neutral-300 transition-colors"
+              >
+                <Plus className="size-5" />
+              </button>
+
+              {isAddMenuOpen && availablePanels.length > 0 && (
+                <>
+                  <div
+                    className="fixed inset-0 z-[100]"
+                    onClick={() => setShowAddMenu(null)}
+                  />
+                  <div className="absolute left-1/2 -translate-x-1/2 top-full z-[101] mt-2 w-40 rounded-lg border border-neutral-200 bg-white shadow-lg dark:border-neutral-700 dark:bg-neutral-800">
+                    {availablePanels.map((availablePanelType) => {
+                      const Icon = PANEL_ICONS_MAP[availablePanelType];
+                      return (
+                        <button
+                          key={availablePanelType}
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleAddPanelToPosition(position, availablePanelType);
+                          }}
+                          className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-700 first:rounded-t-lg last:rounded-b-lg transition-colors"
+                        >
+                          <Icon className="size-4" />
+                          {PANEL_LABELS[availablePanelType]}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
           <span
             className={clsx(
               "text-sm font-medium",

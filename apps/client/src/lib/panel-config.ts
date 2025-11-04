@@ -9,20 +9,38 @@ export type LayoutMode =
   | "three-top"       // One large panel on top, two side-by-side on bottom
   | "three-bottom";   // Two side-by-side on top, one large panel on bottom
 
-export interface PanelConfig {
-  layoutMode: LayoutMode;
+export interface LayoutPanels {
   topLeft: PanelType | null;
   topRight: PanelType | null;
   bottomLeft: PanelType | null;
   bottomRight: PanelType | null;
 }
 
-export const DEFAULT_PANEL_CONFIG: PanelConfig = {
-  layoutMode: "four-panel",
+export interface PanelConfig {
+  layoutMode: LayoutMode;
+  layouts: {
+    [key in LayoutMode]: LayoutPanels;
+  };
+}
+
+const DEFAULT_LAYOUT_PANELS: LayoutPanels = {
   topLeft: "chat",
   topRight: "workspace",
   bottomLeft: "terminal",
   bottomRight: "browser",
+};
+
+export const DEFAULT_PANEL_CONFIG: PanelConfig = {
+  layoutMode: "four-panel",
+  layouts: {
+    "four-panel": { ...DEFAULT_LAYOUT_PANELS },
+    "two-horizontal": { topLeft: "chat", topRight: "workspace", bottomLeft: null, bottomRight: null },
+    "two-vertical": { topLeft: "chat", topRight: null, bottomLeft: "workspace", bottomRight: null },
+    "three-left": { topLeft: "workspace", topRight: "chat", bottomLeft: null, bottomRight: "terminal" },
+    "three-right": { topLeft: "chat", topRight: null, bottomLeft: "terminal", bottomRight: "workspace" },
+    "three-top": { topLeft: "workspace", topRight: null, bottomLeft: "chat", bottomRight: "terminal" },
+    "three-bottom": { topLeft: "chat", topRight: "workspace", bottomLeft: null, bottomRight: "terminal" },
+  },
 };
 
 export const PANEL_LABELS: Record<PanelType, string> = {
@@ -68,13 +86,44 @@ export function loadPanelConfig(): PanelConfig {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
       const parsed = JSON.parse(stored);
-      return {
-        layoutMode: parsed.layoutMode ?? DEFAULT_PANEL_CONFIG.layoutMode,
-        topLeft: parsed.topLeft ?? DEFAULT_PANEL_CONFIG.topLeft,
-        topRight: parsed.topRight ?? DEFAULT_PANEL_CONFIG.topRight,
-        bottomLeft: parsed.bottomLeft ?? DEFAULT_PANEL_CONFIG.bottomLeft,
-        bottomRight: parsed.bottomRight ?? DEFAULT_PANEL_CONFIG.bottomRight,
-      };
+
+      // Migrate old config format to new format
+      if (parsed.topLeft !== undefined && !parsed.layouts) {
+        // Old format detected, migrate to new format
+        const layoutMode = parsed.layoutMode ?? "four-panel";
+        const config: PanelConfig = {
+          layoutMode,
+          layouts: { ...DEFAULT_PANEL_CONFIG.layouts },
+        };
+        // Set the current layout mode's panels from the old config
+        config.layouts[layoutMode] = {
+          topLeft: parsed.topLeft ?? null,
+          topRight: parsed.topRight ?? null,
+          bottomLeft: parsed.bottomLeft ?? null,
+          bottomRight: parsed.bottomRight ?? null,
+        };
+        return config;
+      }
+
+      // New format
+      const layoutMode = parsed.layoutMode ?? DEFAULT_PANEL_CONFIG.layoutMode;
+      const layouts = { ...DEFAULT_PANEL_CONFIG.layouts };
+
+      // Merge stored layouts with defaults
+      if (parsed.layouts) {
+        for (const mode of Object.keys(layouts) as LayoutMode[]) {
+          if (parsed.layouts[mode]) {
+            layouts[mode] = {
+              topLeft: parsed.layouts[mode].topLeft ?? layouts[mode].topLeft,
+              topRight: parsed.layouts[mode].topRight ?? layouts[mode].topRight,
+              bottomLeft: parsed.layouts[mode].bottomLeft ?? layouts[mode].bottomLeft,
+              bottomRight: parsed.layouts[mode].bottomRight ?? layouts[mode].bottomRight,
+            };
+          }
+        }
+      }
+
+      return { layoutMode, layouts };
     }
   } catch (error) {
     console.error("Failed to load panel config:", error);
@@ -98,16 +147,45 @@ export function resetPanelConfig(): void {
   }
 }
 
+/**
+ * Gets the current layout's panel configuration
+ */
+export function getCurrentLayoutPanels(config: PanelConfig): LayoutPanels {
+  return config.layouts[config.layoutMode];
+}
+
 export function getAvailablePanels(config: PanelConfig): PanelType[] {
   const allPanels: PanelType[] = ["chat", "workspace", "terminal", "browser", "gitDiff"];
+  const currentLayout = getCurrentLayoutPanels(config);
+
+  // Check all positions (including inactive) to prevent duplicates within current layout
   const usedPanels = new Set([
-    config.topLeft,
-    config.topRight,
-    config.bottomLeft,
-    config.bottomRight,
+    currentLayout.topLeft,
+    currentLayout.topRight,
+    currentLayout.bottomLeft,
+    currentLayout.bottomRight,
   ].filter((p): p is PanelType => p !== null));
 
   return allPanels.filter(panel => !usedPanels.has(panel));
+}
+
+/**
+ * Removes a panel type from all positions in the current layout
+ */
+export function removePanelFromAllPositions(config: PanelConfig, panelType: PanelType): PanelConfig {
+  const currentLayout = getCurrentLayoutPanels(config);
+  return {
+    ...config,
+    layouts: {
+      ...config.layouts,
+      [config.layoutMode]: {
+        topLeft: currentLayout.topLeft === panelType ? null : currentLayout.topLeft,
+        topRight: currentLayout.topRight === panelType ? null : currentLayout.topRight,
+        bottomLeft: currentLayout.bottomLeft === panelType ? null : currentLayout.bottomLeft,
+        bottomRight: currentLayout.bottomRight === panelType ? null : currentLayout.bottomRight,
+      },
+    },
+  };
 }
 
 export type PanelPosition = "topLeft" | "topRight" | "bottomLeft" | "bottomRight";
