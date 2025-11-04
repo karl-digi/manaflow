@@ -3,6 +3,7 @@ import { FloatingPane } from "@/components/floating-pane";
 import { TitleBar } from "@/components/TitleBar";
 import { parseEnvBlock } from "@/lib/parseEnvBlock";
 import { toMorphVncUrl } from "@/lib/toProxyWorkspaceUrl";
+import { clearEnvironmentDraft } from "@/state/environment-draft-store";
 import type { Id } from "@cmux/convex/dataModel";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import {
@@ -13,7 +14,7 @@ import {
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { z } from "zod";
 
 const searchSchema = z.object({
@@ -144,6 +145,10 @@ function NewSnapshotVersionPage() {
 
   const effectiveVscodeUrl = urlVscodeUrl ?? derivedVscodeUrl;
 
+  const handleSnapshotCreated = useCallback(() => {
+    clearEnvironmentDraft(teamSlugOrId);
+  }, [teamSlugOrId]);
+
   return (
     <FloatingPane
       header={<TitleBar title="New Snapshot Version" actions={headerActions} />}
@@ -177,6 +182,7 @@ function NewSnapshotVersionPage() {
             }
             initialEnvVars={initialEnvVars}
             onHeaderControlsChange={setHeaderActions}
+            onEnvironmentSaved={handleSnapshotCreated}
           />
         )}
       </div>
