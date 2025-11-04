@@ -377,19 +377,16 @@ export function EnvironmentConfiguration({
           onSuccess: async () => {
             onEnvironmentSaved?.();
             await navigate({
-              to: "/$teamSlugOrId/environments/$environmentId",
-              params: {
-                teamSlugOrId,
-                environmentId: sourceEnvironmentId,
-              },
-              search: () => ({
+              to: "/$teamSlugOrId/environments",
+              params: { teamSlugOrId },
+              search: {
                 step: undefined,
                 selectedRepos: undefined,
                 connectionLogin: undefined,
                 repoSearch: undefined,
                 instanceId: undefined,
                 snapshotId: undefined,
-              }),
+              },
             });
           },
           onError: (err) => {
