@@ -345,8 +345,18 @@ function TaskDetailPage() {
     setPanelConfig(prev => {
       // First, remove the panel from all positions to prevent duplicates
       const newConfigWithoutPanel = removePanelFromAllPositions(prev, panelType);
-      // Then add it to the target position
-      const newConfig = { ...newConfigWithoutPanel, [position]: panelType };
+      // Then add it to the target position in the current layout
+      const updatedLayout = newConfigWithoutPanel.layouts[prev.layoutMode];
+      const newConfig = {
+        ...newConfigWithoutPanel,
+        layouts: {
+          ...newConfigWithoutPanel.layouts,
+          [prev.layoutMode]: {
+            ...updatedLayout,
+            [position]: panelType,
+          },
+        },
+      };
       savePanelConfig(newConfig);
       return newConfig;
     });

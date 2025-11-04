@@ -90,7 +90,7 @@ export function loadPanelConfig(): PanelConfig {
       // Migrate old config format to new format
       if (parsed.topLeft !== undefined && !parsed.layouts) {
         // Old format detected, migrate to new format
-        const layoutMode = parsed.layoutMode ?? "four-panel";
+        const layoutMode: LayoutMode = parsed.layoutMode ?? "four-panel";
         const config: PanelConfig = {
           layoutMode,
           layouts: { ...DEFAULT_PANEL_CONFIG.layouts },
