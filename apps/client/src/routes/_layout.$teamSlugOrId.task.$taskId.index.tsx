@@ -8,6 +8,7 @@ import { WorkspaceLoadingIndicator } from "@/components/workspace-loading-indica
 import { FlexiblePanelLayout } from "@/components/FlexiblePanelLayout";
 import { TaskRunGitDiffPanel } from "@/components/TaskRunGitDiffPanel";
 import { RenderPanel } from "@/components/TaskPanelFactory";
+import { PanelConfigModal } from "@/components/PanelConfigModal";
 import { loadPanelConfig, savePanelConfig, getAvailablePanels, getActivePanelPositions, PANEL_LABELS } from "@/lib/panel-config";
 import type { PanelConfig, PanelType, PanelPosition } from "@/lib/panel-config";
 import {
@@ -270,6 +271,7 @@ function TaskDetailPage() {
 
   const [panelConfig, setPanelConfig] = useState<PanelConfig>(() => loadPanelConfig());
   const [expandedPanel, setExpandedPanel] = useState<PanelPosition | null>(null);
+  const [isPanelSettingsOpen, setIsPanelSettingsOpen] = useState(false);
   const [iframeStatusByKey, setIframeStatusByKey] = useState<Record<string, IframeStatusEntry>>({});
   const previousSelectedRunIdRef = useRef<string | null>(null);
 
@@ -337,6 +339,26 @@ function TaskDetailPage() {
         window.dispatchEvent(new Event('resize'));
       });
     });
+  }, []);
+
+  const handlePanelConfigChange = useCallback((newConfig: PanelConfig) => {
+    setPanelConfig(newConfig);
+    savePanelConfig(newConfig);
+    // Trigger resize event to help iframes reposition correctly
+    requestAnimationFrame(() => {
+      window.dispatchEvent(new Event('resize'));
+      requestAnimationFrame(() => {
+        window.dispatchEvent(new Event('resize'));
+      });
+    });
+  }, []);
+
+  const handleOpenPanelSettings = useCallback(() => {
+    setIsPanelSettingsOpen(true);
+  }, []);
+
+  const handleClosePanelSettings = useCallback(() => {
+    setIsPanelSettingsOpen(false);
   }, []);
 
   const taskRunIndex = useMemo(
@@ -576,6 +598,13 @@ function TaskDetailPage() {
           selectedRun={selectedRun}
           taskRunId={headerTaskRunId}
           teamSlugOrId={teamSlugOrId}
+          onPanelSettings={handleOpenPanelSettings}
+        />
+        <PanelConfigModal
+          isOpen={isPanelSettingsOpen}
+          onClose={handleClosePanelSettings}
+          config={panelConfig}
+          onChange={handlePanelConfigChange}
         />
         <div className="relative flex flex-1 min-h-0 px-1 py-1">
           {expandedPanel ? (
