@@ -82,6 +82,8 @@ function EnvironmentsPage() {
   const navigate = useNavigate({ from: Route.fullPath });
   const draft = useEnvironmentDraft(teamSlugOrId);
   const [headerActions, setHeaderActions] = useState<ReactNode | null>(null);
+  const [hasHydratedDraftFromSearch, setHasHydratedDraftFromSearch] =
+    useState(() => Boolean(draft));
 
   const activeStep = draft?.step ?? stepFromSearch;
   const activeSelectedRepos = draft?.selectedRepos ?? urlSelectedRepos;
@@ -108,7 +110,17 @@ function EnvironmentsPage() {
   }, [activeStep]);
 
   useEffect(() => {
-    if (activeStep !== "configure" || draft) {
+    if (draft) {
+      setHasHydratedDraftFromSearch(true);
+    }
+  }, [draft]);
+
+  useEffect(() => {
+    if (
+      hasHydratedDraftFromSearch ||
+      activeStep !== "configure" ||
+      draft
+    ) {
       return;
     }
     persistEnvironmentDraftMetadata(
@@ -120,12 +132,14 @@ function EnvironmentsPage() {
       },
       { resetConfig: false, step: "configure" },
     );
+    setHasHydratedDraftFromSearch(true);
   }, [
     activeInstanceId,
     activeSelectedRepos,
     activeSnapshotId,
     activeStep,
     draft,
+    hasHydratedDraftFromSearch,
     teamSlugOrId,
   ]);
 
