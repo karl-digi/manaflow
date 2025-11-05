@@ -1,19 +1,11 @@
 import { PostHog } from "posthog-node";
 
-let posthogClient: PostHog | null = null;
-
-function getPostHogClient(): PostHog | null {
-  if (!process.env.NEXT_PUBLIC_POSTHOG_KEY) {
-    return null;
-  }
-
-  if (!posthogClient) {
-    posthogClient = new PostHog(process.env.NEXT_PUBLIC_POSTHOG_KEY, {
-      host: "https://us.i.posthog.com",
-    });
-  }
-
-  return posthogClient;
+function PostHogClient() {
+  return new PostHog(process.env.NEXT_PUBLIC_POSTHOG_KEY!, {
+    host: "https://us.i.posthog.com",
+    flushAt: 1,
+    flushInterval: 0,
+  });
 }
 
 type RepoPageViewEvent = {
@@ -24,15 +16,18 @@ type RepoPageViewEvent = {
   userId?: string;
 };
 
-export function trackRepoPageView(event: RepoPageViewEvent): Promise<void> {
-  const client = getPostHogClient();
-  if (!client) {
+export async function trackRepoPageView(
+  event: RepoPageViewEvent
+): Promise<void> {
+  if (!process.env.NEXT_PUBLIC_POSTHOG_KEY) {
     console.warn("[analytics] PostHog client not initialized - missing API key");
-    return Promise.resolve();
+    return;
   }
 
+  const posthog = PostHogClient();
+
   try {
-    client.capture({
+    posthog.capture({
       distinctId: event.userId ?? "anonymous",
       event: "repo_page_viewed",
       properties: {
@@ -42,9 +37,9 @@ export function trackRepoPageView(event: RepoPageViewEvent): Promise<void> {
         comparison: event.comparison,
       },
     });
-    return Promise.resolve();
+
+    await posthog.shutdown();
   } catch (error) {
     console.error("[analytics] Failed to track repo page view", error);
-    return Promise.resolve();
   }
 }
