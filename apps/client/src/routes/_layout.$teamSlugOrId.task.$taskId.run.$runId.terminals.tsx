@@ -402,13 +402,13 @@ function TaskRunTerminals() {
   const renderTerminalArea = () => {
     if (!isMorphProvider) {
       return renderMessage(
-        "Terminals are only available for Morph-based runs."
+        "Terminals are only available for Cloud-based runs."
       );
     }
 
     if (!xtermBaseUrl) {
       return renderMessage(
-        "Waiting for Morph workspace to expose the terminal backend..."
+        "Waiting for Cloud workspace to expose the terminal backend..."
       );
     }
 
