@@ -20,7 +20,7 @@ import { Link, useRouter } from "@tanstack/react-router";
 import clsx from "clsx";
 import { useMutation } from "convex/react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { GitBranch, Image, Link as LinkIcon, Loader2, Mic, Server, X } from "lucide-react";
+import { GitBranch, Image, Loader2, Mic, Server, X } from "lucide-react";
 import {
   memo,
   useCallback,
@@ -504,177 +504,177 @@ export const DashboardInputControls = memo(function DashboardInputControls({
   return (
     <>
       <div className="flex items-end gap-1 grow">
-      <div className="flex items-end gap-1">
-        <SearchableSelect
-          options={projectOptions}
-          value={selectedProject}
-          onChange={onProjectChange}
-          onSearchPaste={onProjectSearchPaste}
-          placeholder="Select project"
-          singleSelect={true}
-          className="rounded-2xl"
-          loading={isLoadingProjects}
-          maxTagCount={1}
-          showSearch
-          footer={
-            <div className="p-1 space-y-1.5">
-              <Link
-                to="/$teamSlugOrId/environments/new"
-                params={{ teamSlugOrId }}
-                search={{
-                  step: undefined,
-                  selectedRepos: undefined,
-                  connectionLogin: undefined,
-                  repoSearch: undefined,
-                  instanceId: undefined,
-                  snapshotId: undefined,
-                }}
-                className="w-full px-2 h-8 flex items-center gap-2 text-[13.5px] text-neutral-800 dark:text-neutral-200 rounded-md hover:bg-neutral-50 dark:hover:bg-neutral-900 cursor-default"
-              >
-                <Server className="w-4 h-4 text-neutral-600 dark:text-neutral-300" />
-                <span className="select-none">Create environment</span>
-              </Link>
-              {env.NEXT_PUBLIC_GITHUB_APP_SLUG ? (
+        <div className="flex items-end gap-1">
+          <SearchableSelect
+            options={projectOptions}
+            value={selectedProject}
+            onChange={onProjectChange}
+            onSearchPaste={onProjectSearchPaste}
+            placeholder="Select project"
+            singleSelect={true}
+            className="rounded-2xl"
+            loading={isLoadingProjects}
+            maxTagCount={1}
+            showSearch
+            footer={
+              <div className="p-1 space-y-1.5">
+                <Link
+                  to="/$teamSlugOrId/environments/new"
+                  params={{ teamSlugOrId }}
+                  search={{
+                    step: undefined,
+                    selectedRepos: undefined,
+                    connectionLogin: undefined,
+                    repoSearch: undefined,
+                    instanceId: undefined,
+                    snapshotId: undefined,
+                  }}
+                  className="w-full px-2 h-8 flex items-center gap-2 text-[13.5px] text-neutral-800 dark:text-neutral-200 rounded-md hover:bg-neutral-50 dark:hover:bg-neutral-900 cursor-default"
+                >
+                  <Server className="w-4 h-4 text-neutral-600 dark:text-neutral-300" />
+                  <span className="select-none">Create environment</span>
+                </Link>
+                {env.NEXT_PUBLIC_GITHUB_APP_SLUG ? (
+                  <button
+                    type="button"
+                    onClick={async (e) => {
+                      e.preventDefault();
+                      try {
+                        const slug = env.NEXT_PUBLIC_GITHUB_APP_SLUG!;
+                        const baseUrl = `https://github.com/apps/${slug}/installations/new`;
+                        const { state } = await mintState({ teamSlugOrId });
+                        const sep = baseUrl.includes("?") ? "&" : "?";
+                        const url = `${baseUrl}${sep}state=${encodeURIComponent(
+                          state,
+                        )}`;
+                        const win = openCenteredPopup(
+                          url,
+                          { name: "github-install" },
+                          () => {
+                            router.options.context?.queryClient?.invalidateQueries();
+                          },
+                        );
+                        win?.focus?.();
+                      } catch (err) {
+                        console.error("Failed to start GitHub install:", err);
+                        alert("Failed to start installation. Please try again.");
+                      }
+                    }}
+                    className="w-full px-2 h-8 flex items-center gap-2 text-[13.5px] text-neutral-800 dark:text-neutral-200 rounded-md hover:bg-neutral-50 dark:hover:bg-neutral-900"
+                  >
+                    <GitHubIcon className="w-4 h-4 text-neutral-600 dark:text-neutral-300" />
+                    <span className="select-none">Add GitHub repos</span>
+                  </button>
+                ) : null}
                 <button
                   type="button"
-                  onClick={async (e) => {
-                    e.preventDefault();
-                    try {
-                      const slug = env.NEXT_PUBLIC_GITHUB_APP_SLUG!;
-                      const baseUrl = `https://github.com/apps/${slug}/installations/new`;
-                      const { state } = await mintState({ teamSlugOrId });
-                      const sep = baseUrl.includes("?") ? "&" : "?";
-                      const url = `${baseUrl}${sep}state=${encodeURIComponent(
-                        state,
-                      )}`;
-                      const win = openCenteredPopup(
-                        url,
-                        { name: "github-install" },
-                        () => {
-                          router.options.context?.queryClient?.invalidateQueries();
-                        },
-                      );
-                      win?.focus?.();
-                    } catch (err) {
-                      console.error("Failed to start GitHub install:", err);
-                      alert("Failed to start installation. Please try again.");
-                    }
+                  onClick={() => {
+                    setImportError(null);
+                    setImportValue("");
+                    setIsImportDialogOpen(true);
                   }}
-                  className="w-full px-2 h-8 flex items-center gap-2 text-[13.5px] text-neutral-800 dark:text-neutral-200 rounded-md hover:bg-neutral-50 dark:hover:bg-neutral-900"
+                  disabled={!onImportRepo}
+                  className={clsx(
+                    "w-full px-2 h-8 flex items-center gap-2 text-[13.5px] rounded-md",
+                    "text-neutral-800 dark:text-neutral-200",
+                    "hover:bg-neutral-50 dark:hover:bg-neutral-900",
+                    "disabled:opacity-50 disabled:cursor-not-allowed",
+                  )}
                 >
-                  <GitHubIcon className="w-4 h-4 text-neutral-600 dark:text-neutral-300" />
-                  <span className="select-none">Add GitHub repos</span>
+                  {isImportingRepo ? (
+                    <Loader2 className="w-4 h-4 animate-spin text-neutral-600 dark:text-neutral-300" />
+                  ) : (
+                    <GitHubIcon className="w-4 h-4 text-neutral-600 dark:text-neutral-300" />
+                  )}
+                  <span className="select-none">
+                    {isImportingRepo ? "Importing…" : "Add from link"}
+                  </span>
                 </button>
-              ) : null}
-              <button
-                type="button"
-                onClick={() => {
-                  setImportError(null);
-                  setImportValue("");
-                  setIsImportDialogOpen(true);
-                }}
-                disabled={!onImportRepo}
-                className={clsx(
-                  "w-full px-2 h-8 flex items-center gap-2 text-[13.5px] rounded-md",
-                  "text-neutral-800 dark:text-neutral-200",
-                  "hover:bg-neutral-50 dark:hover:bg-neutral-900",
-                  "disabled:opacity-50 disabled:cursor-not-allowed",
-                )}
-              >
-                {isImportingRepo ? (
-                  <Loader2 className="w-4 h-4 animate-spin text-neutral-600 dark:text-neutral-300" />
-                ) : (
-                  <LinkIcon className="w-4 h-4 text-neutral-600 dark:text-neutral-300" />
-                )}
-                <span className="select-none">
-                  {isImportingRepo ? "Importing…" : "Import GitHub link"}
-                </span>
-              </button>
-            </div>
-          }
-        />
-
-        {branchDisabled ? null : (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div>
-                <SearchableSelect
-                  options={branchOptions}
-                  value={selectedBranch}
-                  onChange={onBranchChange}
-                  placeholder="Branch"
-                  singleSelect={true}
-                  className="rounded-2xl"
-                  loading={isLoadingBranches}
-                  showSearch
-                  disabled={branchDisabled}
-                  leftIcon={
-                    <GitBranch className="w-4 h-4 text-neutral-500 dark:text-neutral-400" />
-                  }
-                />
               </div>
-            </TooltipTrigger>
-            <TooltipContent>Branch this task starts from</TooltipContent>
-          </Tooltip>
-        )}
+            }
+          />
 
-        <SearchableSelect
-          ref={agentSelectRef}
-          options={agentOptions}
-          value={selectedAgents}
-          onChange={onAgentChange}
-          placeholder="Select agents"
-          singleSelect={false}
-          maxTagCount={1}
-          className="rounded-2xl"
-          classNames={{
-            popover: "w-[315px]",
-          }}
-          showSearch
-          countLabel="agents"
-          footer={agentSelectionFooter}
-          itemVariant="agent"
-          optionItemComponent={AgentCommandItem}
-          maxCountPerValue={MAX_AGENT_COMMAND_COUNT}
-        />
-      </div>
-
-      <div className="flex items-center justify-end gap-2.5 ml-auto mr-0 pr-1">
-        {/* Cloud/Local Mode Toggle */}
-        <ModeToggleTooltip
-          isCloudMode={isCloudMode}
-          onToggle={onCloudModeToggle}
-          disabled={cloudToggleDisabled}
-        />
-
-        <button
-          className={clsx(
-            "p-1.5 rounded-full",
-            "bg-neutral-100 dark:bg-neutral-700",
-            "border border-neutral-200 dark:border-neutral-500/15",
-            "text-neutral-600 dark:text-neutral-400",
-            "hover:bg-neutral-200 dark:hover:bg-neutral-600",
-            "transition-colors",
+          {branchDisabled ? null : (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div>
+                  <SearchableSelect
+                    options={branchOptions}
+                    value={selectedBranch}
+                    onChange={onBranchChange}
+                    placeholder="Branch"
+                    singleSelect={true}
+                    className="rounded-2xl"
+                    loading={isLoadingBranches}
+                    showSearch
+                    disabled={branchDisabled}
+                    leftIcon={
+                      <GitBranch className="w-4 h-4 text-neutral-500 dark:text-neutral-400" />
+                    }
+                  />
+                </div>
+              </TooltipTrigger>
+              <TooltipContent>Branch this task starts from</TooltipContent>
+            </Tooltip>
           )}
-          onClick={handleImageClick}
-          title="Upload image"
-        >
-          <Image className="w-4 h-4" />
-        </button>
 
-        <button
-          className={clsx(
-            "p-1.5 rounded-full",
-            "bg-neutral-100 dark:bg-neutral-700",
-            "border border-neutral-200 dark:border-neutral-500/15",
-            "text-neutral-600 dark:text-neutral-400",
-            "hover:bg-neutral-200 dark:hover:bg-neutral-600",
-            "transition-colors",
-          )}
-        >
-          <Mic className="w-4 h-4" />
-        </button>
-      </div>
+          <SearchableSelect
+            ref={agentSelectRef}
+            options={agentOptions}
+            value={selectedAgents}
+            onChange={onAgentChange}
+            placeholder="Select agents"
+            singleSelect={false}
+            maxTagCount={1}
+            className="rounded-2xl"
+            classNames={{
+              popover: "w-[315px]",
+            }}
+            showSearch
+            countLabel="agents"
+            footer={agentSelectionFooter}
+            itemVariant="agent"
+            optionItemComponent={AgentCommandItem}
+            maxCountPerValue={MAX_AGENT_COMMAND_COUNT}
+          />
+        </div>
+
+        <div className="flex items-center justify-end gap-2.5 ml-auto mr-0 pr-1">
+          {/* Cloud/Local Mode Toggle */}
+          <ModeToggleTooltip
+            isCloudMode={isCloudMode}
+            onToggle={onCloudModeToggle}
+            disabled={cloudToggleDisabled}
+          />
+
+          <button
+            className={clsx(
+              "p-1.5 rounded-full",
+              "bg-neutral-100 dark:bg-neutral-700",
+              "border border-neutral-200 dark:border-neutral-500/15",
+              "text-neutral-600 dark:text-neutral-400",
+              "hover:bg-neutral-200 dark:hover:bg-neutral-600",
+              "transition-colors",
+            )}
+            onClick={handleImageClick}
+            title="Upload image"
+          >
+            <Image className="w-4 h-4" />
+          </button>
+
+          <button
+            className={clsx(
+              "p-1.5 rounded-full",
+              "bg-neutral-100 dark:bg-neutral-700",
+              "border border-neutral-200 dark:border-neutral-500/15",
+              "text-neutral-600 dark:text-neutral-400",
+              "hover:bg-neutral-200 dark:hover:bg-neutral-600",
+              "transition-colors",
+            )}
+          >
+            <Mic className="w-4 h-4" />
+          </button>
+        </div>
       </div>
       <Dialog.Root
         open={isImportDialogOpen}
@@ -686,10 +686,10 @@ export const DashboardInputControls = memo(function DashboardInputControls({
             <div className="flex items-start justify-between gap-4">
               <div>
                 <Dialog.Title className="text-lg font-semibold text-neutral-900 dark:text-neutral-50">
-                  Import a GitHub link
+                  Add from GitHub link
                 </Dialog.Title>
                 <Dialog.Description className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-                  Paste any GitHub repository URL and we&apos;ll start a workspace for you.
+                  Paste any public GitHub repository URL to add it to your repositories.
                 </Dialog.Description>
               </div>
               <Dialog.Close asChild disabled={isImportingRepo}>
@@ -746,10 +746,10 @@ export const DashboardInputControls = memo(function DashboardInputControls({
                   {isImportingRepo ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      Importing…
+                      Adding…
                     </>
                   ) : (
-                    "Import GitHub link"
+                    "Add repository"
                   )}
                 </button>
               </div>

@@ -41,7 +41,7 @@ import { convexQuery } from "@convex-dev/react-query";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation } from "convex/react";
-import { Link as LinkIcon, Server as ServerIcon } from "lucide-react";
+import { Server as ServerIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -580,7 +580,7 @@ function DashboardComponent() {
   );
 
   const projectOptions = useMemo(() => {
-    // Separate manual repos (added via link) from synced repos (GitHub App)
+    // Get all unique repos (no separation between manual and synced)
     const repoDocs = Object.values(reposByOrg || {}).flatMap((repos) => repos);
     const uniqueRepos = repoDocs.reduce((acc, repo) => {
       const existing = acc.get(repo.fullName);
@@ -598,39 +598,19 @@ function DashboardComponent() {
     }, new Map<string, Doc<"repos">>());
 
     const allRepos = Array.from(uniqueRepos.values());
-    console.log('[Dashboard] All repos:', allRepos.map(r => ({ fullName: r.fullName, manual: r.manual })));
-    const manualRepos = allRepos.filter((repo) => repo.manual === true);
-    console.log('[Dashboard] Manual repos:', manualRepos.length, manualRepos.map(r => r.fullName));
-    const syncedRepos = allRepos.filter((repo) => !repo.manual);
 
-    const sortedManualRepos = manualRepos.sort((a, b) => {
-      const aSynced = a.lastSyncedAt ?? Number.NEGATIVE_INFINITY;
-      const bSynced = b.lastSyncedAt ?? Number.NEGATIVE_INFINITY;
-      if (aSynced !== bSynced) {
-        return bSynced - aSynced;
-      }
-      return a.fullName.localeCompare(b.fullName);
-    });
-
-    const sortedSyncedRepos = syncedRepos.sort((a, b) => {
-      const aPushedAt = a.lastPushedAt ?? Number.NEGATIVE_INFINITY;
-      const bPushedAt = b.lastPushedAt ?? Number.NEGATIVE_INFINITY;
+    // Sort all repos by most recent activity
+    const sortedRepos = allRepos.sort((a, b) => {
+      const aPushedAt = a.lastPushedAt ?? a.lastSyncedAt ?? Number.NEGATIVE_INFINITY;
+      const bPushedAt = b.lastPushedAt ?? b.lastSyncedAt ?? Number.NEGATIVE_INFINITY;
       if (aPushedAt !== bPushedAt) {
         return bPushedAt - aPushedAt;
       }
       return a.fullName.localeCompare(b.fullName);
     });
 
-    const manualRepoOptions = sortedManualRepos.map((repo) => ({
-      label: repo.fullName,
-      value: repo.fullName,
-      icon: (
-        <LinkIcon className="w-4 h-4 text-neutral-600 dark:text-neutral-300" />
-      ),
-      iconKey: "manual",
-    }));
-
-    const repoOptions = sortedSyncedRepos.map((repo) => ({
+    // All repos use the same GitHub icon
+    const repoOptions = sortedRepos.map((repo) => ({
       label: repo.fullName,
       value: repo.fullName,
       icon: (
@@ -664,14 +644,6 @@ function DashboardComponent() {
         heading: true,
       });
       options.push(...envOptions);
-    }
-    if (manualRepoOptions.length > 0) {
-      options.push({
-        label: "Links",
-        value: "__heading-links",
-        heading: true,
-      });
-      options.push(...manualRepoOptions);
     }
     if (repoOptions.length > 0) {
       options.push({
