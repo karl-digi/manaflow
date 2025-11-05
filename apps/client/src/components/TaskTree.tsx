@@ -216,11 +216,7 @@ function TaskTreeInner({
     unarchive(task._id);
   }, [unarchive, task._id]);
 
-  const inferredBranch = getTaskBranch(task);
   const taskSecondaryParts: string[] = [];
-  if (inferredBranch) {
-    taskSecondaryParts.push(inferredBranch);
-  }
   if (task.projectFullName) {
     taskSecondaryParts.push(task.projectFullName);
   }
