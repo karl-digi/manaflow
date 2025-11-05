@@ -23,7 +23,7 @@ import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { convexQuery } from "@convex-dev/react-query";
 import { Switch } from "@heroui/react";
 import { useQuery as useRQ } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
 import { Command } from "lucide-react";
 import {
@@ -87,6 +87,7 @@ const RestartTaskForm = memo(function RestartTaskForm({
   const { socket } = useSocket();
   const { theme } = useTheme();
   const { addTaskToExpand } = useExpandTasks();
+  const navigate = useNavigate();
   const createTask = useMutation(api.tasks.create);
   const editorApiRef = useRef<EditorApi | null>(null);
   const [followUpText, setFollowUpText] = useState("");
@@ -213,7 +214,18 @@ const RestartTaskForm = memo(function RestartTaskForm({
         handleRestartAck,
       );
 
-      toast.success("Started follow-up task");
+      toast.success("Started follow-up task", {
+        action: {
+          label: "Focus task",
+          onClick: () => {
+            navigate({
+              to: "/$teamSlugOrId/task/$taskId",
+              params: { teamSlugOrId, taskId: newTaskId },
+              search: { runId: undefined },
+            });
+          },
+        },
+      });
     } catch (error) {
       console.error("Failed to restart task", error);
       toast.error("Failed to start follow-up task");
@@ -224,6 +236,7 @@ const RestartTaskForm = memo(function RestartTaskForm({
     addTaskToExpand,
     createTask,
     followUpText,
+    navigate,
     overridePrompt,
     restartAgents,
     restartIsCloudMode,
