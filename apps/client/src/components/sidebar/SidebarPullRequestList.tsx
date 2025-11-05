@@ -78,10 +78,7 @@ function PullRequestListItem({ pr, teamSlugOrId, expanded, setExpanded }: PullRe
   const [owner = "", repo = ""] = pr.repoFullName?.split("/", 2) ?? ["", ""];
   const key = `${pr.repoFullName}#${pr.number}`;
   const isExpanded = expanded[key] ?? false;
-  const branchLabel = pr.headRef;
-
   const secondaryParts = [
-    branchLabel,
     `${pr.repoFullName}#${pr.number}`,
     pr.authorLogin,
   ]
