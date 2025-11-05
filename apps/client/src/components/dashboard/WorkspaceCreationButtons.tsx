@@ -123,29 +123,45 @@ export function WorkspaceCreationButtons({
       return;
     }
 
-    if (!isEnvSelected) {
-      toast.error("Cloud workspaces require an environment, not a repository");
+    // Support both environment-only and environment + repo workspaces
+    // selectedProject can contain: ["env:id:name"] or ["env:id:name", "owner/repo"]
+    const firstProject = selectedProject[0];
+
+    // Check if first selection is an environment
+    if (!firstProject.startsWith("env:")) {
+      toast.error("Cloud workspaces require an environment to be selected first");
       return;
     }
 
-    const projectFullName = selectedProject[0];
-    const environmentId = projectFullName.replace(
+    const environmentId = firstProject.replace(
       /^env:/,
       ""
     ) as Id<"environments">;
 
     // Extract environment name from the selectedProject (format is "env:id:name")
-    const environmentName = projectFullName.split(":")[2] || "Unknown Environment";
+    const environmentName = firstProject.split(":")[2] || "Unknown Environment";
+
+    // Check if a repo is also selected (second item, not starting with "env:")
+    let repoFullName: string | undefined;
+    let repoUrl: string | undefined;
+    if (selectedProject.length > 1 && !selectedProject[1].startsWith("env:")) {
+      repoFullName = selectedProject[1];
+      repoUrl = `https://github.com/${repoFullName}.git`;
+    }
 
     setIsCreatingCloud(true);
 
     try {
-      // Create task in Convex with environment name
+      // Create task in Convex with environment and optional repo info
+      const taskText = repoFullName
+        ? `Cloud Workspace: ${environmentName} (${repoFullName})`
+        : `Cloud Workspace: ${environmentName}`;
+
       const taskId = await createTask({
         teamSlugOrId,
-        text: `Cloud Workspace: ${environmentName}`,
-        projectFullName: undefined, // No repo for cloud environment workspaces
-        baseBranch: undefined, // No branch for environments
+        text: taskText,
+        projectFullName: repoFullName,
+        baseBranch: undefined, // Branch could be added later if needed
         environmentId,
         isCloudWorkspace: true,
       });
@@ -161,6 +177,8 @@ export function WorkspaceCreationButtons({
             environmentId,
             taskId,
             theme,
+            repoUrl,
+            branch: undefined, // Could be made configurable later
           },
           async (response: CreateCloudWorkspaceResponse) => {
             if (response.success) {
@@ -185,7 +203,6 @@ export function WorkspaceCreationButtons({
   }, [
     socket,
     selectedProject,
-    isEnvSelected,
     teamSlugOrId,
     createTask,
     addTaskToExpand,
@@ -193,7 +210,8 @@ export function WorkspaceCreationButtons({
   ]);
 
   const canCreateLocal = selectedProject.length > 0 && !isEnvSelected;
-  const canCreateCloud = selectedProject.length > 0 && isEnvSelected;
+  // Cloud workspaces can be created with just an environment, or environment + repo
+  const canCreateCloud = selectedProject.length > 0 && selectedProject[0].startsWith("env:");
 
   const SHOW_WORKSPACE_BUTTONS = false;
 

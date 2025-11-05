@@ -1045,6 +1045,8 @@ export function setupSocketHandlers(
               taskRunId,
               taskRunJwt,
               environmentId,
+              repoUrl: parsed.data.repoUrl,
+              branch: parsed.data.branch,
             },
           });
 

@@ -558,7 +558,10 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
   );
 
   const createCloudWorkspace = useCallback(
-    async (environmentId: Id<"environments">) => {
+    async (
+      environmentId: Id<"environments">,
+      options?: { repoFullName?: string; repoUrl?: string; branch?: string }
+    ) => {
       if (isCreatingCloudWorkspace) {
         return;
       }
@@ -576,12 +579,17 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
         const environment = environments?.find((env) => env._id === environmentId);
         const environmentName = environment?.name ?? "Unknown Environment";
 
-        // Create task in Convex without task description (it's just a workspace)
+        // Create task text with optional repo info
+        const taskText = options?.repoFullName
+          ? `Cloud Workspace: ${environmentName} (${options.repoFullName})`
+          : `Cloud Workspace: ${environmentName}`;
+
+        // Create task in Convex with optional repo info
         const taskId = await createTask({
           teamSlugOrId,
-          text: `Cloud Workspace: ${environmentName}`,
-          projectFullName: undefined, // No repo for cloud environment workspaces
-          baseBranch: undefined, // No branch for environments
+          text: taskText,
+          projectFullName: options?.repoFullName,
+          baseBranch: options?.branch,
           environmentId,
           isCloudWorkspace: true,
         });
@@ -597,6 +605,8 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
               environmentId,
               taskId,
               theme,
+              repoUrl: options?.repoUrl,
+              branch: options?.branch,
             },
             async (response: CreateCloudWorkspaceResponse) => {
               try {

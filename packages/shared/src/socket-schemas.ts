@@ -79,6 +79,8 @@ export const CreateCloudWorkspaceSchema = z.object({
   taskId: typedZid("tasks").optional(),
   taskRunId: typedZid("taskRuns").optional(),
   theme: z.enum(["dark", "light", "system"]).optional(),
+  repoUrl: z.string().optional(),
+  branch: z.string().optional(),
 });
 
 export const CreateCloudWorkspaceResponseSchema = z.object({
