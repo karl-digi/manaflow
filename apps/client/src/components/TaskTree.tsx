@@ -204,7 +204,7 @@ function TaskTreeInner({
 
   const handleCopyDescription = useCallback(() => {
     if (navigator?.clipboard?.writeText) {
-      navigator.clipboard.writeText(task.text).catch(() => { });
+      navigator.clipboard.writeText(task.text);
     }
   }, [task.text]);
 

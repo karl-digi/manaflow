@@ -140,7 +140,7 @@ const config = {
   hasDevScript: envBoolean("CMUX_ORCH_HAS_DEV_SCRIPT"),
   convexUrl: requireEnv("CMUX_ORCH_CONVEX_URL"),
   taskRunJwt: requireEnv("CMUX_ORCH_TASK_RUN_JWT"),
-  agentName: process.env.CMUX_ORCH_AGENT_NAME || "",
+  isCloudWorkspace: envBoolean("CMUX_ORCH_IS_CLOUD_WORKSPACE"),
 };
 
 async function ensureTmuxSession(): Promise<void> {
@@ -156,10 +156,8 @@ async function ensureTmuxSession(): Promise<void> {
 
   // Only create the session for cloud workspaces (no agent)
   // For regular tasks with agents, the agent spawner creates the session
-  const isCloudWorkspace = config.agentName === "cloud-workspace";
-
-  if (!isCloudWorkspace) {
-    console.log("[ORCHESTRATOR] Not a cloud workspace (agentName: " + config.agentName + "), waiting for agent to create tmux session...");
+  if (!config.isCloudWorkspace) {
+    console.log("[ORCHESTRATOR] Not a cloud workspace, waiting for agent to create tmux session...");
 
     // Wait for the agent to create the session
     for (let attempt = 0; attempt < 30; attempt++) {

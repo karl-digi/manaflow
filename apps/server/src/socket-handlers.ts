@@ -808,11 +808,11 @@ export function setupSocketHandlers(
               }
               const message =
                 error &&
-                typeof error === "object" &&
-                "stderr" in error &&
-                typeof (error as { stderr?: unknown }).stderr === "string"
+                  typeof error === "object" &&
+                  "stderr" in error &&
+                  typeof (error as { stderr?: unknown }).stderr === "string"
                   ? (error as { stderr: string }).stderr.trim() ||
-                    (error instanceof Error ? error.message : "")
+                  (error instanceof Error ? error.message : "")
                   : error instanceof Error
                     ? error.message
                     : "Git clone failed";
@@ -841,7 +841,7 @@ export function setupSocketHandlers(
             }
           } else {
             try {
-            await fs.mkdir(resolvedWorkspacePath, { recursive: false });
+              await fs.mkdir(resolvedWorkspacePath, { recursive: false });
             } catch (error) {
               if (
                 error &&
@@ -976,7 +976,7 @@ export function setupSocketHandlers(
         const teamSlugOrId = requestedTeamSlugOrId || safeTeam;
 
         const convex = getConvex();
-        let taskId: Id<"tasks"> = providedTaskId!;
+        let taskId: Id<"tasks"> | undefined = providedTaskId;
         let taskRunId: Id<"taskRuns"> | null = null;
         let responded = false;
 
@@ -1319,26 +1319,26 @@ export function setupSocketHandlers(
           const updatedRecords: StoredPullRequestInfo[] =
             existingRecords.length > 0
               ? existingRecords.map((record) =>
-                  record.repoFullName === repoFullName
-                    ? {
-                        ...record,
-                        state: "merged",
-                        isDraft: false,
-                      }
-                    : record
-                )
-              : [
-                  {
-                    repoFullName,
-                    url:
-                      run.pullRequestUrl && run.pullRequestUrl !== "pending"
-                        ? run.pullRequestUrl
-                        : undefined,
-                    number: run.pullRequestNumber ?? undefined,
+                record.repoFullName === repoFullName
+                  ? {
+                    ...record,
                     state: "merged",
                     isDraft: false,
-                  },
-                ];
+                  }
+                  : record
+              )
+              : [
+                {
+                  repoFullName,
+                  url:
+                    run.pullRequestUrl && run.pullRequestUrl !== "pending"
+                      ? run.pullRequestUrl
+                      : undefined,
+                  number: run.pullRequestNumber ?? undefined,
+                  state: "merged",
+                  isDraft: false,
+                },
+              ];
 
           await getConvex().mutation(api.taskRuns.updatePullRequestState, {
             teamSlugOrId: safeTeam,
@@ -1787,9 +1787,8 @@ export function setupSocketHandlers(
         serverLogger.error("Error fetching repos:", error);
         callback({
           success: false,
-          error: `Failed to fetch GitHub repos: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
+          error: `Failed to fetch GitHub repos: ${error instanceof Error ? error.message : String(error)
+            }`,
         });
       }
     });
