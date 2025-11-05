@@ -67,29 +67,6 @@ type TaskWithGeneratedBranch = Doc<"tasks"> & {
   generatedBranchName?: string | null;
 };
 
-function sanitizeBranchName(input?: string | null): string | null {
-  if (!input) return null;
-  const trimmed = input.trim();
-  if (!trimmed) return null;
-  let normalized = trimmed;
-  if (normalized.startsWith("cmux/")) {
-    normalized = normalized.slice("cmux/".length).trim();
-    if (!normalized) return null;
-  }
-  const idx = normalized.lastIndexOf("-");
-  if (idx <= 0) return normalized;
-  const candidate = normalized.slice(0, idx);
-  return candidate || normalized;
-}
-
-function getTaskBranch(task: TaskWithGeneratedBranch): string | null {
-  const fromGenerated = sanitizeBranchName(task.generatedBranchName);
-  if (fromGenerated) {
-    return fromGenerated;
-  }
-  return sanitizeBranchName(task.baseBranch);
-}
-
 interface TaskTreeProps {
   task: TaskWithGeneratedBranch;
   level?: number;
@@ -216,11 +193,7 @@ function TaskTreeInner({
     unarchive(task._id);
   }, [unarchive, task._id]);
 
-  const inferredBranch = getTaskBranch(task);
   const taskSecondaryParts: string[] = [];
-  if (inferredBranch) {
-    taskSecondaryParts.push(inferredBranch);
-  }
   if (task.projectFullName) {
     taskSecondaryParts.push(task.projectFullName);
   }
