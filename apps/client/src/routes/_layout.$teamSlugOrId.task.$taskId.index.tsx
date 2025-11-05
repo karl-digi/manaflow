@@ -1,5 +1,5 @@
 import { TaskRunChatPane } from "@/components/TaskRunChatPane";
-import { TaskRunTerminalPane } from "@/components/TaskRunTerminalPane";
+import { TaskRunTerminalsPanel } from "@/components/TaskRunTerminalsPanel";
 import { FloatingPane } from "@/components/floating-pane";
 import { TaskDetailHeader } from "@/components/task-detail-header";
 import type { PersistentIframeStatus } from "@/components/persistent-iframe";
@@ -577,7 +577,8 @@ function TaskDetailPage() {
       editorErrorFallback,
       isEditorBusy,
       workspacePlaceholder,
-      rawWorkspaceUrl,
+      taskRunId: selectedRunId,
+      teamSlugOrId,
       browserUrl,
       browserPersistKey,
       browserStatus,
@@ -588,7 +589,7 @@ function TaskDetailPage() {
       TaskRunChatPane,
       PersistentWebView,
       WorkspaceLoadingIndicator,
-      TaskRunTerminalPane,
+      TaskRunTerminalsPanel,
       TaskRunGitDiffPanel,
       TASK_RUN_IFRAME_ALLOW,
       TASK_RUN_IFRAME_SANDBOX,
@@ -608,7 +609,8 @@ function TaskDetailPage() {
     editorErrorFallback,
     isEditorBusy,
     workspacePlaceholder,
-    rawWorkspaceUrl,
+    selectedRunId,
+    teamSlugOrId,
     browserUrl,
     browserPersistKey,
     browserStatus,
