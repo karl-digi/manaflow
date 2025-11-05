@@ -422,15 +422,28 @@ function DashboardComponent() {
             fileName?: string;
             altText: string;
           }) => {
-            // Convert base64 to blob
-            const base64Data = image.src.split(",")[1] || image.src;
-            const byteCharacters = atob(base64Data);
-            const byteNumbers = new Array(byteCharacters.length);
-            for (let i = 0; i < byteCharacters.length; i++) {
-              byteNumbers[i] = byteCharacters.charCodeAt(i);
+            let blob: Blob;
+
+            // Check if it's a data URL or a regular URL
+            if (image.src.startsWith("data:")) {
+              // Convert base64 data URL to blob
+              const base64Data = image.src.split(",")[1];
+              const byteCharacters = atob(base64Data);
+              const byteNumbers = new Array(byteCharacters.length);
+              for (let i = 0; i < byteCharacters.length; i++) {
+                byteNumbers[i] = byteCharacters.charCodeAt(i);
+              }
+              const byteArray = new Uint8Array(byteNumbers);
+              blob = new Blob([byteArray], { type: "image/png" });
+            } else {
+              // Fetch the image from URL and convert to blob
+              const response = await fetch(image.src);
+              if (!response.ok) {
+                throw new Error(`Failed to fetch image: ${response.statusText}`);
+              }
+              blob = await response.blob();
             }
-            const byteArray = new Uint8Array(byteNumbers);
-            const blob = new Blob([byteArray], { type: "image/png" });
+
             const uploadUrl = await generateUploadUrl({
               teamSlugOrId,
             });
