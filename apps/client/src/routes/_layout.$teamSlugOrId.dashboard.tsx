@@ -8,6 +8,7 @@ import { DashboardStartTaskButton } from "@/components/dashboard/DashboardStartT
 import { TaskList } from "@/components/dashboard/TaskList";
 import { WorkspaceCreationButtons } from "@/components/dashboard/WorkspaceCreationButtons";
 import { FloatingPane } from "@/components/floating-pane";
+import { OnboardingGuide } from "@/components/onboarding/OnboardingGuide";
 import { GitHubIcon } from "@/components/icons/github";
 import { useTheme } from "@/components/theme/use-theme";
 import { TitleBar } from "@/components/TitleBar";
@@ -232,6 +233,19 @@ function DashboardComponent() {
     () => reposByOrgQuery.data || {},
     [reposByOrgQuery.data]
   );
+
+  const providerConnectionsQuery = useQuery(
+    convexQuery(api.github.listProviderConnections, { teamSlugOrId })
+  );
+  const providerConnections = providerConnectionsQuery.data || [];
+  const hasGithubConnection = useMemo(
+    () => providerConnections.some((conn) => conn.isActive !== false),
+    [providerConnections]
+  );
+
+  const hasRepos = useMemo(() => {
+    return Object.values(reposByOrg).some((repos) => repos.length > 0);
+  }, [reposByOrg]);
 
   // Socket-based functions to fetch data from GitHub
   // Removed unused fetchRepos function - functionality is handled by Convex queries
@@ -563,6 +577,7 @@ function DashboardComponent() {
   const environmentsQuery = useQuery(
     convexQuery(api.environments.list, { teamSlugOrId })
   );
+  const hasEnvironments = (environmentsQuery.data?.length ?? 0) > 0;
 
   const projectOptions = useMemo(() => {
     // Repo options as objects with GitHub icon
@@ -813,6 +828,13 @@ function DashboardComponent() {
         {/* Main content area */}
         <div className="flex-1 flex justify-center px-4 pt-60 pb-4">
           <div className="w-full max-w-4xl min-w-0">
+            <OnboardingGuide
+              teamSlugOrId={teamSlugOrId}
+              hasGithubConnection={hasGithubConnection}
+              hasRepos={hasRepos}
+              hasEnvironments={hasEnvironments}
+            />
+
             {/* Workspace Creation Buttons */}
             <WorkspaceCreationButtons
               teamSlugOrId={teamSlugOrId}
