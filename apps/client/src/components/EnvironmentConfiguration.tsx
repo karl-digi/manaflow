@@ -47,6 +47,8 @@ import {
   type ReactNode,
 } from "react";
 import TextareaAutosize from "react-textarea-autosize";
+import { toast } from "sonner";
+import { clearEnvironmentDraft } from "@/state/environment-draft-store";
 
 export function EnvironmentConfiguration({
   selectedRepos,
@@ -375,25 +377,34 @@ export function EnvironmentConfiguration({
         },
         {
           onSuccess: async () => {
+            // Clear the pending environment draft
+            clearEnvironmentDraft(teamSlugOrId);
+
+            // Show success toast
+            toast.success("Snapshot created successfully");
+
+            // Call the callback if provided
             onEnvironmentSaved?.();
+
+            // Navigate to environments list page
             await navigate({
-              to: "/$teamSlugOrId/environments/$environmentId",
+              to: "/$teamSlugOrId/environments",
               params: {
                 teamSlugOrId,
-                environmentId: sourceEnvironmentId,
               },
-              search: () => ({
+              search: {
                 step: undefined,
                 selectedRepos: undefined,
                 connectionLogin: undefined,
                 repoSearch: undefined,
                 instanceId: undefined,
                 snapshotId: undefined,
-              }),
+              },
             });
           },
           onError: (err) => {
             console.error("Failed to create snapshot version:", err);
+            toast.error("Failed to create snapshot");
           },
         }
       );
@@ -415,7 +426,16 @@ export function EnvironmentConfiguration({
         },
         {
           onSuccess: async () => {
+            // Clear the pending environment draft
+            clearEnvironmentDraft(teamSlugOrId);
+
+            // Show success toast
+            toast.success("Environment created successfully");
+
+            // Call the callback if provided
             onEnvironmentSaved?.();
+
+            // Navigate to environments list page
             await navigate({
               to: "/$teamSlugOrId/environments",
               params: { teamSlugOrId },
@@ -431,6 +451,7 @@ export function EnvironmentConfiguration({
           },
           onError: (err) => {
             console.error("Failed to create environment:", err);
+            toast.error("Failed to create environment");
           },
         }
       );
