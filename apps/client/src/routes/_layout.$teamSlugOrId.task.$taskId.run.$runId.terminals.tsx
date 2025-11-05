@@ -114,6 +114,11 @@ type DeleteTerminalMutationContext = {
   previousConnectionState: TerminalConnectionState;
 };
 
+export interface TaskRunTerminalsPaneProps {
+  teamSlugOrId: string;
+  taskRunId: string;
+}
+
 function getTabRemovalOutcome(
   tabs: TerminalTabId[],
   removedId: TerminalTabId,
@@ -156,6 +161,18 @@ function getTabRemovalOutcome(
 
 function TaskRunTerminals() {
   const { runId: taskRunId, teamSlugOrId } = Route.useParams();
+  return (
+    <TaskRunTerminalsPane
+      teamSlugOrId={teamSlugOrId}
+      taskRunId={taskRunId}
+    />
+  );
+}
+
+export function TaskRunTerminalsPane({
+  teamSlugOrId,
+  taskRunId,
+}: TaskRunTerminalsPaneProps) {
   const taskRun = useSuspenseQuery(
     convexQuery(api.taskRuns.get, {
       teamSlugOrId,
