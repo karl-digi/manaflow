@@ -12,39 +12,13 @@ import {
 
 export interface TaskRunTerminalPaneProps {
   workspaceUrl: string | null;
-  isCloudWorkspace?: boolean;
 }
 
 const INITIAL_AUTO_CREATE_DELAY_MS = 4_000;
 const MAX_AUTO_CREATE_ATTEMPTS = 3;
 const AUTO_RETRY_BASE_DELAY_MS = 4_000;
 
-const CLOUD_TMUX_BOOTSTRAP_SCRIPT = `set -euo pipefail
-SESSION="cmux"
-WORKSPACE_ROOT="/root/workspace"
-ensure_session() {
-  if tmux has-session -t "$SESSION" 2>/dev/null; then
-    return
-  fi
-
-  tmux new-session -d -s "$SESSION" -c "$WORKSPACE_ROOT" -n "main"
-  tmux rename-window -t "$SESSION:1" "main" >/dev/null 2>&1 || true
-  tmux new-window -t "$SESSION:" -n "maintenance" -c "$WORKSPACE_ROOT"
-  tmux new-window -t "$SESSION:" -n "dev" -c "$WORKSPACE_ROOT"
-}
-ensure_session
-
-tmux select-window -t "$SESSION:main" >/dev/null 2>&1 || true
-exec tmux attach -t "$SESSION"`;
-
-const STANDARD_ATTACH_SCRIPT = `set -euo pipefail
-tmux select-window -t cmux:0 >/dev/null 2>&1 || true
-exec tmux attach -t cmux`;
-
-export function TaskRunTerminalPane({
-  workspaceUrl,
-  isCloudWorkspace = false,
-}: TaskRunTerminalPaneProps) {
+export function TaskRunTerminalPane({ workspaceUrl }: TaskRunTerminalPaneProps) {
   const baseUrl = useMemo(() => {
     if (!workspaceUrl) {
       return null;
@@ -154,19 +128,12 @@ export function TaskRunTerminalPane({
 
       (async () => {
         try {
-          const request = isCloudWorkspace
-            ? {
-                cmd: "bash",
-                args: ["-lc", CLOUD_TMUX_BOOTSTRAP_SCRIPT],
-              }
-            : {
-                cmd: "bash",
-                args: ["-lc", STANDARD_ATTACH_SCRIPT],
-              };
-
           const created = await createTerminalTab({
             baseUrl,
-            request,
+            request: {
+              cmd: "tmux",
+              args: ["attach", "-t", "cmux"],
+            },
           });
 
           queryClient.setQueryData<TerminalTabId[]>(tabsQueryKey, (current) => {
@@ -181,7 +148,7 @@ export function TaskRunTerminalPane({
 
           resetAutoCreate();
         } catch (error) {
-          console.error("Failed to auto-create terminal", error);
+          console.error("Failed to auto-create tmux terminal", error);
           inFlightRef.current = false;
 
           const shouldRetryAutomatically =
@@ -199,16 +166,13 @@ export function TaskRunTerminalPane({
           }
 
           const message =
-            error instanceof Error
-              ? error.message
-              : "Unable to connect to tmux session.";
+            error instanceof Error ? error.message : "Unable to connect to tmux session.";
           setAutoCreateError(message);
         }
       })();
     },
     [
       baseUrl,
-      isCloudWorkspace,
       queryClient,
       resetAutoCreate,
       tabsQueryKey,
@@ -219,7 +183,7 @@ export function TaskRunTerminalPane({
 
   useEffect(() => {
     resetAutoCreate();
-  }, [baseUrl, isCloudWorkspace, resetAutoCreate, workspaceUrl]);
+  }, [baseUrl, resetAutoCreate, workspaceUrl]);
 
   useEffect(() => {
     if (isTabsLoading || isTabsError) {

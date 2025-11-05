@@ -47,24 +47,6 @@ type IframeStatusEntry = {
   url: string | null;
 };
 
-const CLOUD_TMUX_BOOTSTRAP_SCRIPT = `set -euo pipefail
-SESSION="cmux"
-WORKSPACE_ROOT="/root/workspace"
-ensure_session() {
-  if tmux has-session -t "$SESSION" 2>/dev/null; then
-    return
-  fi
-
-  tmux new-session -d -s "$SESSION" -c "$WORKSPACE_ROOT" -n "main"
-  tmux rename-window -t "$SESSION:1" "main" >/dev/null 2>&1 || true
-  tmux new-window -t "$SESSION:" -n "maintenance" -c "$WORKSPACE_ROOT"
-  tmux new-window -t "$SESSION:" -n "dev" -c "$WORKSPACE_ROOT"
-}
-ensure_session
-
-tmux select-window -t "$SESSION:main" >/dev/null 2>&1 || true
-exec tmux attach -t "$SESSION"`;
-
 const paramsSchema = z.object({
   taskId: typedZid("tasks"),
 });
@@ -122,7 +104,6 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
       : taskRuns[0];
 
     const rawWorkspaceUrl = selectedRun?.vscode?.workspaceUrl ?? null;
-    const isCloudWorkspace = Boolean(selectedRun?.isCloudWorkspace);
     if (!rawWorkspaceUrl) {
       return;
     }
@@ -151,22 +132,16 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
 
     if (!tabs?.length) {
       try {
-        const request = isCloudWorkspace
-          ? {
-              cmd: "bash",
-              args: ["-lc", CLOUD_TMUX_BOOTSTRAP_SCRIPT],
-            }
-          : {
-              cmd: "tmux",
-              args: ["new-session", "-A", "cmux"],
-            };
         const created = await createTerminalTab({
           baseUrl,
-          request,
+          request: {
+            cmd: "tmux",
+            args: ["new-session", "-A", "cmux"],
+          },
         });
         tabs = [created.id];
       } catch (error) {
-        console.error("Failed to create default terminal", error);
+        console.error("Failed to create default tmux terminal", error);
         return;
       }
     }
