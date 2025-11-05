@@ -27,8 +27,8 @@ interface SidebarListItemProps {
 export function SidebarListItem({
   title,
   titleClassName,
-  secondary,
-  secondaryClassName,
+  secondary: _secondary,
+  secondaryClassName: _secondaryClassName,
   meta,
   leading,
   trailing,
@@ -87,16 +87,6 @@ export function SidebarListItem({
               <span className="ml-auto flex-shrink-0">{meta}</span>
             ) : null}
           </div>
-          {secondary ? (
-            <div
-              className={clsx(
-                "truncate text-[10px] text-neutral-600 dark:text-neutral-400",
-                secondaryClassName
-              )}
-            >
-              {secondary}
-            </div>
-          ) : null}
         </div>
       </div>
 
