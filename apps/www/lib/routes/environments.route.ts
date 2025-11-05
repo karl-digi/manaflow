@@ -4,6 +4,7 @@ import { stackServerAppJs } from "@/lib/utils/stack";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { env } from "@/lib/utils/www-env";
 import { api } from "@cmux/convex/api";
+import type { Id } from "@cmux/convex/dataModel";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { validateExposedPorts } from "@cmux/shared/utils/validate-exposed-ports";
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
@@ -11,6 +12,10 @@ import { HTTPException } from "hono/http-exception";
 import { MorphCloudClient } from "morphcloud";
 import { randomBytes } from "node:crypto";
 import { determineHttpServiceUpdates } from "./determine-http-service-updates";
+import { configureGithubAccess } from "./sandboxes/git";
+import { hydrateWorkspace } from "./sandboxes/hydration";
+import type { ConvexClient } from "./sandboxes/snapshot";
+import { singleQuote } from "./sandboxes/shell";
 
 export const environmentsRouter = new OpenAPIHono();
 
@@ -167,6 +172,29 @@ const ActivateSnapshotVersionResponse = z
     version: z.number(),
   })
   .openapi("ActivateSnapshotVersionResponse");
+
+const RunMaintenanceBody = z
+  .object({
+    teamSlugOrId: z.string(),
+    environmentIds: z.array(z.string()).optional(),
+  })
+  .openapi("RunMaintenanceBody");
+
+const RunMaintenanceResponse = z
+  .object({
+    queuedEnvironmentIds: z.array(z.string()),
+  })
+  .openapi("RunMaintenanceResponse");
+
+type EnvironmentRecord = {
+  _id: Id<"environments">;
+  name: string;
+  morphSnapshotId: string;
+  maintenanceScript?: string | null;
+  devScript?: string | null;
+};
+
+const WORKSPACE_ROOT = "/root/workspace";
 
 // Create a new environment
 environmentsRouter.openapi(
@@ -987,6 +1015,105 @@ environmentsRouter.openapi(
   }
 );
 
+// Trigger maintenance workflow for environments
+environmentsRouter.openapi(
+  createRoute({
+    method: "post" as const,
+    path: "/environments/run-maintenance",
+    tags: ["Environments"],
+    summary:
+      "Trigger git pull, maintenance script, and snapshot creation for each environment",
+    request: {
+      body: {
+        content: {
+          "application/json": {
+            schema: RunMaintenanceBody,
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      202: {
+        content: {
+          "application/json": {
+            schema: RunMaintenanceResponse,
+          },
+        },
+        description: "Maintenance workflow started",
+      },
+      400: { description: "Bad request" },
+      401: { description: "Unauthorized" },
+      500: { description: "Failed to start maintenance workflow" },
+    },
+  }),
+  async (c) => {
+    const accessToken = await getAccessTokenFromRequest(c.req.raw);
+    if (!accessToken) return c.text("Unauthorized", 401);
+
+    const user = await stackServerAppJs.getUser({ tokenStore: c.req.raw });
+    if (!user) return c.text("Unauthorized", 401);
+
+    const body = c.req.valid("json");
+
+    try {
+      const team = await verifyTeamAccess({
+        req: c.req.raw,
+        teamSlugOrId: body.teamSlugOrId,
+      });
+
+      const convexClient = getConvex({ accessToken });
+      const environments = await convexClient.query(api.environments.list, {
+        teamSlugOrId: body.teamSlugOrId,
+      });
+
+      const environmentFilter =
+        body.environmentIds && body.environmentIds.length > 0
+          ? new Set(
+              body.environmentIds.map((id) =>
+                typedZid("environments").parse(id)
+              )
+            )
+          : null;
+
+      const targets = environments.filter((env) =>
+        environmentFilter ? environmentFilter.has(env._id) : true
+      ) as EnvironmentRecord[];
+
+      if (targets.length === 0) {
+        return c.json({ queuedEnvironmentIds: [] }, 202);
+      }
+
+      const githubAccount = await user.getConnectedAccount("github");
+      const githubTokenResult = githubAccount
+        ? await githubAccount.getAccessToken()
+        : null;
+      const githubAccessToken = githubTokenResult?.accessToken ?? null;
+
+      void runMaintenanceInBackground({
+        accessToken,
+        teamSlugOrId: body.teamSlugOrId,
+        teamUuid: team.uuid,
+        environments: targets,
+        githubAccessToken,
+      });
+
+      return c.json(
+        {
+          queuedEnvironmentIds: targets.map((env) => String(env._id)),
+        },
+        202
+      );
+    } catch (error) {
+      console.error("Failed to start maintenance workflow:", error);
+      if (error instanceof HTTPException) {
+        throw error;
+      }
+      return c.text("Failed to start maintenance workflow", 500);
+    }
+  }
+);
+
 // Delete an environment
 environmentsRouter.openapi(
   createRoute({
@@ -1031,3 +1158,129 @@ environmentsRouter.openapi(
     }
   }
 );
+
+async function runMaintenanceInBackground({
+  accessToken,
+  teamSlugOrId,
+  teamUuid,
+  environments,
+  githubAccessToken,
+}: {
+  accessToken: string;
+  teamSlugOrId: string;
+  teamUuid: string;
+  environments: EnvironmentRecord[];
+  githubAccessToken: string | null;
+}): Promise<void> {
+  const convexClient = getConvex({ accessToken });
+  const morphClient = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
+
+  for (const environment of environments) {
+    await runEnvironmentMaintenance({
+      convexClient,
+      morphClient,
+      environment,
+      teamSlugOrId,
+      teamUuid,
+      githubAccessToken: githubAccessToken ?? undefined,
+    }).catch((error) => {
+      console.error(
+        `[environments.runMaintenance] Failed for ${environment._id}:`,
+        error
+      );
+    });
+  }
+}
+
+async function runEnvironmentMaintenance({
+  convexClient,
+  morphClient,
+  environment,
+  teamSlugOrId,
+  teamUuid,
+  githubAccessToken,
+}: {
+  convexClient: ConvexClient;
+  morphClient: MorphCloudClient;
+  environment: EnvironmentRecord;
+  teamSlugOrId: string;
+  teamUuid: string;
+  githubAccessToken?: string;
+}): Promise<void> {
+  if (!environment.morphSnapshotId) {
+    console.warn(
+      `[environments.runMaintenance] Environment ${environment._id} is missing a snapshot; skipping`
+    );
+    return;
+  }
+
+  const instance = await morphClient.instances.start({
+    snapshotId: environment.morphSnapshotId,
+    ttlSeconds: 60 * 15,
+    ttlAction: "pause",
+    metadata: {
+      app: "cmux",
+      automation: "environment-maintenance",
+      environmentId: String(environment._id),
+      teamId: teamUuid,
+    },
+  });
+
+  try {
+    if (githubAccessToken) {
+      await configureGithubAccess(instance, githubAccessToken);
+    } else {
+      console.warn(
+        `[environments.runMaintenance] No GitHub token available; git pull may fail for private repositories`
+      );
+    }
+
+    await hydrateWorkspace({ instance });
+
+    const maintenanceScript = environment.maintenanceScript?.trim();
+    if (maintenanceScript) {
+      await runMaintenanceScript(instance, maintenanceScript);
+    }
+
+    const snapshot = await instance.snapshot();
+    await convexClient.mutation(api.environmentSnapshots.create, {
+      teamSlugOrId,
+      environmentId: environment._id,
+      morphSnapshotId: snapshot.id,
+      label: `Automated snapshot ${new Date().toISOString()}`,
+      activate: true,
+      maintenanceScript: maintenanceScript ?? undefined,
+      devScript: environment.devScript ?? undefined,
+    });
+  } finally {
+    await instance.stop().catch((error) => {
+      console.error(
+        `[environments.runMaintenance] Failed to stop instance ${instance.id}:`,
+        error
+      );
+    });
+  }
+}
+
+async function runMaintenanceScript(
+  instance: Awaited<ReturnType<MorphCloudClient["instances"]["start"]>>,
+  script: string
+): Promise<void> {
+  const wrapped = `
+set -eux
+cd ${WORKSPACE_ROOT}
+${script}
+`;
+
+  const result = await instance.exec(`zsh -lc ${singleQuote(wrapped)}`);
+
+  if (result.exit_code !== 0) {
+    const stderr = result.stderr?.trim() ?? "";
+    const stdout = result.stdout?.trim() ?? "";
+    throw new Error(
+      `Maintenance script failed (exit ${result.exit_code}): ${
+        stderr || stdout || "no output"
+      }`
+    );
+  }
+}

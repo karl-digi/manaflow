@@ -3,12 +3,26 @@ import { TitleBar } from "@/components/TitleBar";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { useEnvironmentDraft } from "@/state/environment-draft-store";
 import { api } from "@cmux/convex/api";
+import { postApiEnvironmentsRunMaintenanceMutation } from "@cmux/www-openapi-client/react-query";
 import { convexQuery } from "@convex-dev/react-query";
-import { useSuspenseQuery } from "@tanstack/react-query";
+import {
+  useMutation as useRQMutation,
+  useSuspenseQuery,
+} from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { formatDistanceToNow } from "date-fns";
-import { Calendar, Eye, GitBranch, Play, Plus, Server } from "lucide-react";
+import {
+  Calendar,
+  Eye,
+  GitBranch,
+  Loader2,
+  Play,
+  Plus,
+  RefreshCw,
+  Server,
+} from "lucide-react";
 import { useEffect } from "react";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/environments/")({
   loader: async ({ params }) => {
@@ -25,6 +39,9 @@ function EnvironmentsListPage() {
   const { teamSlugOrId } = Route.useParams();
   const navigate = useNavigate({ from: Route.fullPath });
   const draft = useEnvironmentDraft(teamSlugOrId);
+  const runMaintenanceMutation = useRQMutation(
+    postApiEnvironmentsRunMaintenanceMutation(),
+  );
 
   const { data: environments } = useSuspenseQuery(
     convexQuery(api.environments.list, {
@@ -54,26 +71,68 @@ function EnvironmentsListPage() {
   return (
     <FloatingPane header={<TitleBar title="Environments" />}>
       <div className="p-6">
-        <div className="flex justify-between items-center mb-6">
+        <div className="flex justify-between items-center mb-6 gap-4">
           <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
             Your Environments
           </h2>
-          <Link
-            to="/$teamSlugOrId/environments/new"
-            params={{ teamSlugOrId }}
-            search={{
-              step: undefined,
-              selectedRepos: undefined,
-              connectionLogin: undefined,
-              repoSearch: undefined,
-              instanceId: undefined,
-              snapshotId: undefined,
-            }}
-            className="inline-flex items-center gap-2 rounded-md bg-neutral-900 text-white px-4 py-2 text-sm font-medium hover:bg-neutral-800 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200 transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            New Environment
-          </Link>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  const response = await runMaintenanceMutation.mutateAsync({
+                    body: { teamSlugOrId },
+                  });
+                  const count = response?.queuedEnvironmentIds?.length ?? 0;
+                  if (count === 0) {
+                    toast.info("No environments available for maintenance.");
+                  } else {
+                    toast.success(
+                      `Started maintenance for ${count} ${
+                        count === 1 ? "environment" : "environments"
+                      }.`,
+                    );
+                  }
+                } catch (error) {
+                  const message =
+                    error instanceof Error
+                      ? error.message
+                      : "Failed to start maintenance workflow";
+                  toast.error(message);
+                }
+              }}
+              disabled={runMaintenanceMutation.isPending}
+              className="inline-flex items-center gap-2 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white px-4 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-neutral-950 dark:text-neutral-200 dark:hover:bg-neutral-900 transition-colors"
+            >
+              {runMaintenanceMutation.isPending ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Running…
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="w-4 h-4" />
+                  Run maintenance
+                </>
+              )}
+            </button>
+            <Link
+              to="/$teamSlugOrId/environments/new"
+              params={{ teamSlugOrId }}
+              search={{
+                step: undefined,
+                selectedRepos: undefined,
+                connectionLogin: undefined,
+                repoSearch: undefined,
+                instanceId: undefined,
+                snapshotId: undefined,
+              }}
+              className="inline-flex items-center gap-2 rounded-md bg-neutral-900 text-white px-4 py-2 text-sm font-medium hover:bg-neutral-800 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200 transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              New Environment
+            </Link>
+          </div>
         </div>
         {environments && environments.length > 0 ? (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">

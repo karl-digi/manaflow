@@ -464,6 +464,15 @@ export type ActivateSnapshotVersionBody = {
     teamSlugOrId: string;
 };
 
+export type RunMaintenanceResponse = {
+    queuedEnvironmentIds: Array<string>;
+};
+
+export type RunMaintenanceBody = {
+    teamSlugOrId: string;
+    environmentIds?: Array<string>;
+};
+
 export type StartSandboxResponse = {
     instanceId: string;
     vscodeUrl: string;
@@ -1950,6 +1959,37 @@ export type PostApiEnvironmentsByIdSnapshotsBySnapshotVersionIdActivateResponses
 };
 
 export type PostApiEnvironmentsByIdSnapshotsBySnapshotVersionIdActivateResponse = PostApiEnvironmentsByIdSnapshotsBySnapshotVersionIdActivateResponses[keyof PostApiEnvironmentsByIdSnapshotsBySnapshotVersionIdActivateResponses];
+
+export type PostApiEnvironmentsRunMaintenanceData = {
+    body: RunMaintenanceBody;
+    path?: never;
+    query?: never;
+    url: '/api/environments/run-maintenance';
+};
+
+export type PostApiEnvironmentsRunMaintenanceErrors = {
+    /**
+     * Bad request
+     */
+    400: unknown;
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Failed to start maintenance workflow
+     */
+    500: unknown;
+};
+
+export type PostApiEnvironmentsRunMaintenanceResponses = {
+    /**
+     * Maintenance workflow started
+     */
+    202: RunMaintenanceResponse;
+};
+
+export type PostApiEnvironmentsRunMaintenanceResponse = PostApiEnvironmentsRunMaintenanceResponses[keyof PostApiEnvironmentsRunMaintenanceResponses];
 
 export type PostApiSandboxesStartData = {
     body: StartSandboxBody;
