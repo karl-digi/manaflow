@@ -52,6 +52,7 @@ const OPENVSCODE_MACHINE_DIR = "/root/.openvscode-server/data/Machine";
 const OPENVSCODE_SNIPPETS_DIR = posix.join(OPENVSCODE_USER_DIR, "snippets");
 const CMUX_INTERNAL_DIR = "/root/.cmux";
 const EXTENSION_LIST_PATH = posix.join(CMUX_INTERNAL_DIR, "user-extensions.txt");
+const OPENVSCODE_EXT_DIR = "/root/.openvscode-server/extensions";
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 let cachedResult:
@@ -302,22 +303,52 @@ function encode(content: string): string {
 }
 
 function buildExtensionInstallCommand(listPath: string): string {
-  return [
+  const scriptBody = [
     "set -euo pipefail",
     `EXT_LIST="${listPath}"`,
-    'if [ ! -f "$EXT_LIST" ]; then exit 0; fi',
-    'CLI_PATH="$(command -v openvscode-server || true)"',
+    `EXT_DIR="${OPENVSCODE_EXT_DIR}"`,
+    `USER_DIR="${OPENVSCODE_USER_DIR}"`,
+    "mkdir -p /root/.cmux",
+    'LOG_FILE="/root/.cmux/install-extensions.log"',
+    'touch "$LOG_FILE"',
+    'if [ ! -s "$EXT_LIST" ]; then echo "No extensions to install (list empty)" >>"$LOG_FILE"; exit 0; fi',
+    'CLI_PATH="${OPENVSCODE_CLI:-}"',
     'if [ -z "$CLI_PATH" ] && [ -x /app/openvscode-server/bin/openvscode-server ]; then',
     '  CLI_PATH="/app/openvscode-server/bin/openvscode-server"',
     "fi",
-    'if [ -z "$CLI_PATH" ]; then exit 0; fi',
-    "mkdir -p /root/.cmux",
-    'LOG_FILE="/root/.cmux/install-extensions.log"',
+    'if [ -z "$CLI_PATH" ] && [ -x /app/openvscode-server/bin/remote-cli/openvscode-server ]; then',
+      '  CLI_PATH="/app/openvscode-server/bin/remote-cli/openvscode-server"',
+    "fi",
+    'if [ -z "$CLI_PATH" ]; then CLI_PATH="$(command -v openvscode-server || true)"; fi',
+    'if [ -z "$CLI_PATH" ]; then echo "openvscode CLI not found in PATH or standard locations" >>"$LOG_FILE"; exit 0; fi',
+    'echo "Installing extensions with $CLI_PATH" >>"$LOG_FILE"',
+    'chmod +x "$CLI_PATH" || true',
+    'mkdir -p "$EXT_DIR" "$USER_DIR"',
     'ext=""',
+    'installed_any=0',
     'while IFS= read -r ext; do',
-    '  [ -z "$ext" ] && continue',
-    '  "$CLI_PATH" --install-extension "$ext" >>"$LOG_FILE" 2>&1 || true',
+      '  [ -z "$ext" ] && continue',
+      '  installed_any=1',
+      '  echo "-> Installing $ext" >>"$LOG_FILE"',
+    '  if "$CLI_PATH" --install-extension "$ext" --extensions-dir "$EXT_DIR" --user-data-dir "$USER_DIR" >>"$LOG_FILE" 2>&1; then',
+      '    echo "✓ Installed $ext" >>"$LOG_FILE"',
+      '  else',
+      '    echo "Failed to install $ext" >>"$LOG_FILE"',
+    '  fi',
     "done < \"$EXT_LIST\"",
+    'if [ "$installed_any" -eq 0 ]; then',
+    '  echo "No valid extension identifiers found" >>"$LOG_FILE"',
+    "fi",
+  ].join("\n");
+
+  return [
+    "set -euo pipefail",
+    'INSTALL_SCRIPT="$(mktemp /tmp/cmux-install-extensions-XXXXXX.sh)"',
+    'trap \'rm -f "$INSTALL_SCRIPT"\' EXIT',
+    'cat <<\'EOF\' >"$INSTALL_SCRIPT"',
+    scriptBody,
+    "EOF",
+    'bash "$INSTALL_SCRIPT"',
   ].join("\n");
 }
 
