@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import type { LucideIcon } from "lucide-react";
-import { X, RotateCcw, GripVertical, MessageSquare, Code2, TerminalSquare, Globe2, GitCompare, Plus, Grid2x2, Columns2, Rows2, PanelLeft, PanelRight, PanelTop, PanelBottom, Trash2 } from "lucide-react";
+import { X, RotateCcw, GripVertical, MessageSquare, Code2, TerminalSquare, Globe2, GitCompare, Plus, Grid2x2, Columns2, Rows2, Columns3, Rows3, Trash2 } from "lucide-react";
 import clsx from "clsx";
 import type { PanelConfig, PanelType, LayoutMode, PanelPosition } from "@/lib/panel-config";
 import { PANEL_LABELS, DEFAULT_PANEL_CONFIG, LAYOUT_LABELS, LAYOUT_DESCRIPTIONS, getActivePanelPositions, getAvailablePanels, removePanelFromAllPositions } from "@/lib/panel-config";
@@ -25,10 +25,10 @@ const LAYOUT_ICONS_MAP: Record<LayoutMode, LucideIcon> = {
   "four-panel": Grid2x2,
   "two-horizontal": Columns2,
   "two-vertical": Rows2,
-  "three-left": PanelLeft,
-  "three-right": PanelRight,
-  "three-top": PanelTop,
-  "three-bottom": PanelBottom,
+  "three-left": Columns3,
+  "three-right": Columns3,
+  "three-top": Rows3,
+  "three-bottom": Rows3,
 };
 
 export function PanelConfigModal({ isOpen, onClose, config, onChange }: PanelConfigModalProps) {
