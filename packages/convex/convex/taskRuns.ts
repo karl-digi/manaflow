@@ -244,8 +244,6 @@ export const create = authMutation({
       userId,
       teamId,
       environmentId: args.environmentId,
-      isLocalWorkspace: task.isLocalWorkspace,
-      isCloudWorkspace: task.isCloudWorkspace,
     });
     const generatedBranchName = deriveGeneratedBranchName(args.newBranch);
     if (

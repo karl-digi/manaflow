@@ -301,7 +301,7 @@ function TaskTreeInner({
 
   const handleCopyDescription = useCallback(() => {
     if (navigator?.clipboard?.writeText) {
-      navigator.clipboard.writeText(task.text);
+      navigator.clipboard.writeText(task.text).catch(() => {});
     }
   }, [task.text]);
 
@@ -469,7 +469,6 @@ function TaskTreeInner({
   const canExpand = true;
   const isCrownEvaluating = task.crownEvaluationStatus === "in_progress";
   const isLocalWorkspace = task.isLocalWorkspace;
-  const isCloudWorkspace = task.isCloudWorkspace;
 
   const taskLeadingIcon = (() => {
     if (isCrownEvaluating) {
@@ -556,7 +555,7 @@ function TaskTreeInner({
       }
     }
 
-    if (isLocalWorkspace || isCloudWorkspace) {
+    if (isLocalWorkspace) {
       return null;
     }
 
@@ -866,7 +865,6 @@ function TaskRunTreeInner({
   );
 
   const isLocalWorkspaceRunEntry = run.isLocalWorkspace;
-  const isCloudWorkspaceRunEntry = run.isCloudWorkspace;
 
   const statusIcon = {
     pending: <Circle className="w-3 h-3 text-neutral-400" />,
@@ -876,7 +874,7 @@ function TaskRunTreeInner({
   }[run.status];
 
   const shouldHideStatusIcon =
-    (isLocalWorkspaceRunEntry || isCloudWorkspaceRunEntry) && run.status !== "failed";
+    isLocalWorkspaceRunEntry && run.status !== "failed";
 
   const pullRequestState = useMemo<RunPullRequestState | null>(() => {
     if (run.pullRequests && run.pullRequests.length > 0) {
@@ -1028,7 +1026,7 @@ function TaskRunTreeInner({
   const shouldRenderTerminalLink = shouldRenderBrowserLink;
   const shouldRenderPullRequestLink = Boolean(
     (run.pullRequestUrl && run.pullRequestUrl !== "pending") ||
-    run.pullRequests?.some((pr) => pr.url)
+      run.pullRequests?.some((pr) => pr.url)
   );
   const shouldRenderPreviewLink = previewServices.length > 0;
   const hasOpenWithActions = openWithActions.length > 0;

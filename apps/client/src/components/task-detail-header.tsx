@@ -297,23 +297,20 @@ export function TaskDetailHeader({
           <h1 className="text-sm font-bold truncate min-w-0" title={taskTitle}>
             {taskTitle || "Loading..."}
           </h1>
-          {/* Hide git diff stats for cloud/local workspaces */}
-          {!task?.isCloudWorkspace && !task?.isLocalWorkspace && (
-            <Suspense
-              fallback={
-                <div className="flex items-center gap-2 text-[11px] ml-2 shrink-0">
-                  <Skeleton className="rounded min-w-[20px] h-[14px] fade-out" />
-                  <Skeleton className="rounded min-w-[20px] h-[14px] fade-out" />
-                </div>
-              }
-            >
-              <AdditionsAndDeletions
-                repos={repoDiffTargets}
-                defaultBaseRef={normalizedBaseBranch || undefined}
-                defaultHeadRef={normalizedHeadBranch || undefined}
-              />
-            </Suspense>
-          )}
+          <Suspense
+            fallback={
+              <div className="flex items-center gap-2 text-[11px] ml-2 shrink-0">
+                <Skeleton className="rounded min-w-[20px] h-[14px] fade-out" />
+                <Skeleton className="rounded min-w-[20px] h-[14px] fade-out" />
+              </div>
+            }
+          >
+            <AdditionsAndDeletions
+              repos={repoDiffTargets}
+              defaultBaseRef={normalizedBaseBranch || undefined}
+              defaultHeadRef={normalizedHeadBranch || undefined}
+            />
+          </Suspense>
         </div>
 
         <div

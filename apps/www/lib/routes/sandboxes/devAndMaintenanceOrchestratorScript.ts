@@ -140,65 +140,32 @@ const config = {
   hasDevScript: envBoolean("CMUX_ORCH_HAS_DEV_SCRIPT"),
   convexUrl: requireEnv("CMUX_ORCH_CONVEX_URL"),
   taskRunJwt: requireEnv("CMUX_ORCH_TASK_RUN_JWT"),
-  isCloudWorkspace: envBoolean("CMUX_ORCH_IS_CLOUD_WORKSPACE"),
 };
 
-async function ensureTmuxSession(): Promise<void> {
-  // Check if session already exists
-  const checkResult = await runCommand("tmux has-session -t cmux 2>/dev/null", {
-    throwOnError: false,
-  });
-
-  if (checkResult.exitCode === 0) {
-    console.log("[ORCHESTRATOR] tmux session 'cmux' already exists");
-    return;
-  }
-
-  // Only create the session for cloud workspaces (no agent)
-  // For regular tasks with agents, the agent spawner creates the session
-  if (!config.isCloudWorkspace) {
-    console.log("[ORCHESTRATOR] Not a cloud workspace, waiting for agent to create tmux session...");
-
-    // Wait for the agent to create the session
-    for (let attempt = 0; attempt < 30; attempt++) {
-      const result = await runCommand("tmux has-session -t cmux 2>/dev/null", {
-        throwOnError: false,
-      });
-      if (result.exitCode === 0) {
-        console.log("[ORCHESTRATOR] tmux session 'cmux' created by agent");
-        return;
-      }
-      await delay(1000);
+async function waitForTmuxSession(): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const result = await runCommand("tmux has-session -t cmux 2>/dev/null", {
+      throwOnError: false,
+    });
+    if (result.exitCode === 0) {
+      console.log("[ORCHESTRATOR] tmux session found");
+      return;
     }
 
-    throw new Error("Timed out waiting for agent to create tmux session 'cmux'");
+    await delay(500);
   }
 
-  console.log("[ORCHESTRATOR] Cloud workspace detected, creating tmux session...");
-
-  // Create a new tmux session
-  await runCommand(
-    "tmux new-session -d -s cmux -c /root/workspace -n main",
-    { throwOnError: true }
-  );
-
-  console.log("[ORCHESTRATOR] tmux session 'cmux' created successfully");
-
-  // Wait a moment for the session to be fully initialized
-  await delay(500);
-
-  // Verify the session exists
-  const verifyResult = await runCommand("tmux has-session -t cmux 2>/dev/null", {
+  const finalAttempt = await runCommand("tmux has-session -t cmux 2>/dev/null", {
     throwOnError: false,
   });
 
-  if (verifyResult.exitCode !== 0) {
-    throw new Error("Failed to create tmux session 'cmux'");
+  if (finalAttempt.exitCode !== 0) {
+    throw new Error("Error: cmux session does not exist");
   }
 }
 
 async function createWindows(): Promise<void> {
-  await ensureTmuxSession();
+  await waitForTmuxSession();
 
   if (config.hasMaintenanceScript) {
     console.log(`[ORCHESTRATOR] Creating ${config.maintenanceWindowName} window...`);

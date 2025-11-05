@@ -6,7 +6,6 @@ import { DashboardInputControls } from "@/components/dashboard/DashboardInputCon
 import { DashboardInputFooter } from "@/components/dashboard/DashboardInputFooter";
 import { DashboardStartTaskButton } from "@/components/dashboard/DashboardStartTaskButton";
 import { TaskList } from "@/components/dashboard/TaskList";
-import { WorkspaceCreationButtons } from "@/components/dashboard/WorkspaceCreationButtons";
 import { FloatingPane } from "@/components/floating-pane";
 import { GitHubIcon } from "@/components/icons/github";
 import { useTheme } from "@/components/theme/use-theme";
@@ -813,13 +812,6 @@ function DashboardComponent() {
         {/* Main content area */}
         <div className="flex-1 flex justify-center px-4 pt-60 pb-4">
           <div className="w-full max-w-4xl min-w-0">
-            {/* Workspace Creation Buttons */}
-            <WorkspaceCreationButtons
-              teamSlugOrId={teamSlugOrId}
-              selectedProject={selectedProject}
-              isEnvSelected={isEnvSelected}
-            />
-
             <DashboardMainCard
               editorApiRef={editorApiRef}
               onTaskDescriptionChange={handleTaskDescriptionChange}
