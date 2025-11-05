@@ -23,7 +23,9 @@
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "monaco-editor": "^0.53.0",
-    "convex": "1.27.1"
+    "convex": "1.27.1",
+    "ajv": "6.12.6",
+    "ajv-keywords": "3.5.2"
   },
   "private": true,
   "scripts": {
@@ -56,6 +58,8 @@
     "scripts"
   ],
   "dependencies": {
+    "ajv": "6.12.6",
+    "ajv-keywords": "3.5.2",
     "morphcloud": "^0.0.20"
   }
 }

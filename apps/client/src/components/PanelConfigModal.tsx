@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import type { LucideIcon } from "lucide-react";
-import { X, RotateCcw, GripVertical, MessageSquare, Code2, TerminalSquare, Globe2, GitCompare, Plus, Grid2x2, Columns2, Rows2, PanelLeft, PanelRight, PanelTop, PanelBottom, Trash2 } from "lucide-react";
+import { X, RotateCcw, GripVertical, MessageSquare, Code2, TerminalSquare, Globe2, GitCompare, Plus, Grid2x2, Columns2, Rows2, PanelsLeftBottom, PanelsRightBottom, PanelsTopLeft, Trash2 } from "lucide-react";
 import clsx from "clsx";
 import type { PanelConfig, PanelType, LayoutMode, PanelPosition } from "@/lib/panel-config";
 import { PANEL_LABELS, DEFAULT_PANEL_CONFIG, LAYOUT_LABELS, LAYOUT_DESCRIPTIONS, getActivePanelPositions, getAvailablePanels, removePanelFromAllPositions } from "@/lib/panel-config";
@@ -21,14 +21,19 @@ const PANEL_ICONS_MAP: Record<PanelType, LucideIcon> = {
   gitDiff: GitCompare,
 };
 
-const LAYOUT_ICONS_MAP: Record<LayoutMode, LucideIcon> = {
-  "four-panel": Grid2x2,
-  "two-horizontal": Columns2,
-  "two-vertical": Rows2,
-  "three-left": PanelLeft,
-  "three-right": PanelRight,
-  "three-top": PanelTop,
-  "three-bottom": PanelBottom,
+interface LayoutIconConfig {
+  Icon: LucideIcon;
+  className?: string;
+}
+
+const LAYOUT_ICON_CONFIGS: Record<LayoutMode, LayoutIconConfig> = {
+  "four-panel": { Icon: Grid2x2 },
+  "two-horizontal": { Icon: Columns2 },
+  "two-vertical": { Icon: Rows2 },
+  "three-left": { Icon: PanelsLeftBottom },
+  "three-right": { Icon: PanelsRightBottom },
+  "three-top": { Icon: PanelsTopLeft },
+  "three-bottom": { Icon: PanelsTopLeft, className: "rotate-180" },
 };
 
 export function PanelConfigModal({ isOpen, onClose, config, onChange }: PanelConfigModalProps) {
@@ -279,7 +284,7 @@ export function PanelConfigModal({ isOpen, onClose, config, onChange }: PanelCon
           </h3>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             {(Object.keys(LAYOUT_LABELS) as LayoutMode[]).map((layoutMode) => {
-              const LayoutIcon = LAYOUT_ICONS_MAP[layoutMode];
+              const { Icon: LayoutIcon, className: iconClassName } = LAYOUT_ICON_CONFIGS[layoutMode];
               const isSelected = config.layoutMode === layoutMode;
               return (
                 <button
@@ -294,7 +299,7 @@ export function PanelConfigModal({ isOpen, onClose, config, onChange }: PanelCon
                   )}
                   title={LAYOUT_DESCRIPTIONS[layoutMode]}
                 >
-                  <LayoutIcon className="size-5" />
+                  <LayoutIcon className={clsx("size-5", iconClassName)} />
                   <span className="text-xs font-medium text-center leading-tight">
                     {LAYOUT_LABELS[layoutMode].replace(/\s*\(.*?\)\s*/g, "")}
                   </span>
