@@ -3,12 +3,14 @@ import { TitleBar } from "@/components/TitleBar";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { useEnvironmentDraft } from "@/state/environment-draft-store";
 import { api } from "@cmux/convex/api";
+import { postApiEnvironmentsRefreshAllMutation } from "@cmux/www-openapi-client/react-query";
 import { convexQuery } from "@convex-dev/react-query";
-import { useSuspenseQuery } from "@tanstack/react-query";
+import { useMutation, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { formatDistanceToNow } from "date-fns";
-import { Calendar, Eye, GitBranch, Play, Plus, Server } from "lucide-react";
-import { useEffect } from "react";
+import { Calendar, Eye, GitBranch, Loader2, Play, Plus, RefreshCw, Server } from "lucide-react";
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/environments/")({
   loader: async ({ params }) => {
@@ -25,12 +27,41 @@ function EnvironmentsListPage() {
   const { teamSlugOrId } = Route.useParams();
   const navigate = useNavigate({ from: Route.fullPath });
   const draft = useEnvironmentDraft(teamSlugOrId);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const { data: environments } = useSuspenseQuery(
     convexQuery(api.environments.list, {
       teamSlugOrId,
     })
   );
+
+  const refreshAllMutation = useMutation(
+    postApiEnvironmentsRefreshAllMutation()
+  );
+
+  const handleRefreshAll = async () => {
+    if (!environments || environments.length === 0) {
+      toast.error("No environments to refresh");
+      return;
+    }
+
+    setIsRefreshing(true);
+    try {
+      const result = await refreshAllMutation.mutateAsync({
+        body: {
+          teamSlugOrId,
+        },
+      });
+      toast.success(
+        result.message || `Refreshing ${environments.length} environment(s) in the background`
+      );
+    } catch (error) {
+      console.error("Failed to refresh environments:", error);
+      toast.error("Failed to start refresh process");
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   useEffect(() => {
     if (!draft || draft.step !== "configure" || !draft.instanceId) {
@@ -58,22 +89,36 @@ function EnvironmentsListPage() {
           <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
             Your Environments
           </h2>
-          <Link
-            to="/$teamSlugOrId/environments/new"
-            params={{ teamSlugOrId }}
-            search={{
-              step: undefined,
-              selectedRepos: undefined,
-              connectionLogin: undefined,
-              repoSearch: undefined,
-              instanceId: undefined,
-              snapshotId: undefined,
-            }}
-            className="inline-flex items-center gap-2 rounded-md bg-neutral-900 text-white px-4 py-2 text-sm font-medium hover:bg-neutral-800 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200 transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            New Environment
-          </Link>
+          <div className="flex gap-2">
+            <button
+              onClick={handleRefreshAll}
+              disabled={isRefreshing || !environments || environments.length === 0}
+              className="inline-flex items-center gap-2 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-neutral-700 dark:text-neutral-300 px-4 py-2 text-sm font-medium hover:bg-neutral-50 dark:hover:bg-neutral-900 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isRefreshing ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4" />
+              )}
+              Refresh All
+            </button>
+            <Link
+              to="/$teamSlugOrId/environments/new"
+              params={{ teamSlugOrId }}
+              search={{
+                step: undefined,
+                selectedRepos: undefined,
+                connectionLogin: undefined,
+                repoSearch: undefined,
+                instanceId: undefined,
+                snapshotId: undefined,
+              }}
+              className="inline-flex items-center gap-2 rounded-md bg-neutral-900 text-white px-4 py-2 text-sm font-medium hover:bg-neutral-800 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200 transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              New Environment
+            </Link>
+          </div>
         </div>
         {environments && environments.length > 0 ? (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">

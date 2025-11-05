@@ -464,6 +464,15 @@ export type ActivateSnapshotVersionBody = {
     teamSlugOrId: string;
 };
 
+export type RefreshAllEnvironmentsResponse = {
+    jobId: string;
+    message: string;
+};
+
+export type RefreshAllEnvironmentsBody = {
+    teamSlugOrId: string;
+};
+
 export type StartSandboxResponse = {
     instanceId: string;
     vscodeUrl: string;
@@ -1950,6 +1959,33 @@ export type PostApiEnvironmentsByIdSnapshotsBySnapshotVersionIdActivateResponses
 };
 
 export type PostApiEnvironmentsByIdSnapshotsBySnapshotVersionIdActivateResponse = PostApiEnvironmentsByIdSnapshotsBySnapshotVersionIdActivateResponses[keyof PostApiEnvironmentsByIdSnapshotsBySnapshotVersionIdActivateResponses];
+
+export type PostApiEnvironmentsRefreshAllData = {
+    body: RefreshAllEnvironmentsBody;
+    path?: never;
+    query?: never;
+    url: '/api/environments/refresh-all';
+};
+
+export type PostApiEnvironmentsRefreshAllErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Failed to start refresh process
+     */
+    500: unknown;
+};
+
+export type PostApiEnvironmentsRefreshAllResponses = {
+    /**
+     * Refresh process started successfully
+     */
+    200: RefreshAllEnvironmentsResponse;
+};
+
+export type PostApiEnvironmentsRefreshAllResponse = PostApiEnvironmentsRefreshAllResponses[keyof PostApiEnvironmentsRefreshAllResponses];
 
 export type PostApiSandboxesStartData = {
     body: StartSandboxBody;

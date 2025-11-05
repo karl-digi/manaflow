@@ -1031,3 +1031,175 @@ environmentsRouter.openapi(
     }
   }
 );
+
+const RefreshAllEnvironmentsBody = z
+  .object({
+    teamSlugOrId: z.string(),
+  })
+  .openapi("RefreshAllEnvironmentsBody");
+
+const RefreshAllEnvironmentsResponse = z
+  .object({
+    jobId: z.string(),
+    message: z.string(),
+  })
+  .openapi("RefreshAllEnvironmentsResponse");
+
+// Refresh all environments (git pull + maintenance script + snapshot)
+environmentsRouter.openapi(
+  createRoute({
+    method: "post" as const,
+    path: "/environments/refresh-all",
+    tags: ["Environments"],
+    summary: "Refresh all environments with git pull, maintenance script, and new snapshot",
+    request: {
+      body: {
+        content: {
+          "application/json": {
+            schema: RefreshAllEnvironmentsBody,
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: RefreshAllEnvironmentsResponse,
+          },
+        },
+        description: "Refresh process started successfully",
+      },
+      401: { description: "Unauthorized" },
+      500: { description: "Failed to start refresh process" },
+    },
+  }),
+  async (c) => {
+    const accessToken = await getAccessTokenFromRequest(c.req.raw);
+    if (!accessToken) return c.text("Unauthorized", 401);
+
+    const body = c.req.valid("json");
+
+    try {
+      await verifyTeamAccess({
+        req: c.req.raw,
+        teamSlugOrId: body.teamSlugOrId,
+      });
+
+      const convexClient = getConvex({ accessToken });
+      const environments = await convexClient.query(api.environments.list, {
+        teamSlugOrId: body.teamSlugOrId,
+      });
+
+      if (!environments || environments.length === 0) {
+        return c.json({
+          jobId: "none",
+          message: "No environments to refresh",
+        });
+      }
+
+      // Start the background refresh process (don't await)
+      const jobId = randomBytes(16).toString("hex");
+
+      // Run the refresh process in the background
+      Promise.all(
+        environments.map(async (environment) => {
+          try {
+            console.log(`[refresh-all] Starting refresh for environment ${environment._id}`);
+
+            const morphClient = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
+
+            // Start instance from snapshot
+            const instance = await morphClient.instances.start({
+              snapshotId: environment.morphSnapshotId,
+              ttlSeconds: 60 * 30, // 30 minutes - enough time for refresh
+              ttlAction: "pause",
+              metadata: {
+                purpose: "environment-refresh",
+                environmentId: environment._id,
+                jobId,
+              },
+            });
+
+            console.log(`[refresh-all] Instance ${instance.id} launched for environment ${environment._id}`);
+
+            try {
+              // Get all repositories
+              const repos = environment.selectedRepos || [];
+
+              if (repos.length > 0) {
+                // Run git pull on all repositories
+                const gitPullCommands = repos.map(repoFull => {
+                  const repoName = repoFull.split("/")[1];
+                  return `cd /root/workspace/${repoName} && git pull --rebase || echo "Failed to pull ${repoName}"`;
+                }).join(" && ");
+
+                console.log(`[refresh-all] Running git pull for environment ${environment._id}`);
+                await instance.exec(`bash -c 'set -e; ${gitPullCommands}'`);
+              }
+
+              // Run maintenance script if it exists
+              if (environment.maintenanceScript && environment.maintenanceScript.trim()) {
+                console.log(`[refresh-all] Running maintenance script for environment ${environment._id}`);
+                await instance.exec(`bash -c 'cd /root/workspace && ${environment.maintenanceScript}'`);
+              }
+
+              // Create new snapshot
+              console.log(`[refresh-all] Creating snapshot for environment ${environment._id}`);
+
+              // Clear git credentials before snapshotting
+              await instance.exec(
+                [
+                  "git config --global --unset user.name 2>/dev/null || true",
+                  "git config --global --unset user.email 2>/dev/null || true",
+                  "git config --global --unset credential.helper 2>/dev/null || true",
+                  "git credential-cache exit 2>/dev/null || true",
+                  "gh auth logout 2>/dev/null || true",
+                ].join(" && ")
+              );
+
+              const snapshot = await instance.snapshot();
+
+              // Create a new snapshot version in the database
+              await convexClient.mutation(
+                api.environmentSnapshots.create,
+                {
+                  teamSlugOrId: body.teamSlugOrId,
+                  environmentId: environment._id,
+                  morphSnapshotId: snapshot.id,
+                  label: `Auto-refresh ${new Date().toISOString()}`,
+                  activate: true,
+                  maintenanceScript: environment.maintenanceScript,
+                  devScript: environment.devScript,
+                }
+              );
+
+              console.log(`[refresh-all] Successfully refreshed environment ${environment._id}`);
+            } finally {
+              // Cleanup: stop the instance
+              try {
+                await instance.stop();
+                console.log(`[refresh-all] Instance ${instance.id} stopped for environment ${environment._id}`);
+              } catch (cleanupError) {
+                console.error(`[refresh-all] Failed to stop instance ${instance.id}:`, cleanupError);
+              }
+            }
+          } catch (error) {
+            console.error(`[refresh-all] Failed to refresh environment ${environment._id}:`, error);
+          }
+        })
+      ).catch((error) => {
+        console.error("[refresh-all] Background refresh process encountered errors:", error);
+      });
+
+      return c.json({
+        jobId,
+        message: `Started refresh process for ${environments.length} environment(s)`,
+      });
+    } catch (error) {
+      console.error("Failed to start refresh process:", error);
+      return c.text("Failed to start refresh process", 500);
+    }
+  }
+);
