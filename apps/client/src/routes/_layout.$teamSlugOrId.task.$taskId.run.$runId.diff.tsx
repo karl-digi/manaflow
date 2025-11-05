@@ -270,10 +270,10 @@ const RestartTaskForm = memo(function RestartTaskForm({
   }, [isRestartingTask, overridePrompt, socket, task, trimmedFollowUp]);
 
   return (
-    <div className="sticky bottom-0 z-[var(--z-popover)] border-t border-transparent px-3.5 pb-3.5 pt-2">
+    <div className="fixed bottom-0 left-0 right-0 z-[var(--z-popover)] border-t border-transparent px-3.5 pb-3.5 pt-2 pointer-events-none">
       <form
         onSubmit={handleFormSubmit}
-        className="mx-auto w-full max-w-2xl overflow-hidden rounded-2xl border border-neutral-500/15 bg-white dark:border-neutral-500/15 dark:bg-neutral-950"
+        className="mx-auto w-full max-w-2xl overflow-hidden rounded-2xl border border-neutral-500/15 bg-white dark:border-neutral-500/15 dark:bg-neutral-950 pointer-events-auto"
       >
         <div className="px-3.5 pt-3.5">
           <LexicalEditor
