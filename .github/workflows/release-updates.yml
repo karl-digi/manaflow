@@ -240,27 +240,6 @@ jobs:
       - name: Install app deps in apps/client (bun)
         working-directory: apps/client
         run: bun install --frozen-lockfile
-      - name: Ensure local production node_modules (apps/client)
-        working-directory: apps/client
-        run: |
-          set -euo pipefail
-          echo "Ensuring local node_modules in $(pwd)..."
-          bun install --frozen-lockfile --production || true
-          if [ ! -d node_modules ]; then
-            echo "Local node_modules missing; copying production deps from workspace root..."
-            mkdir -p node_modules
-            rsync -aL --delete \
-              --exclude='electron' \
-              --exclude='electron-builder' \
-              --exclude='electron-vite' \
-              --exclude='@electron' \
-              --exclude='@electron-toolkit' \
-              ../../node_modules/ node_modules/ || true
-          fi
-          if [ ! -d node_modules ]; then
-            echo "ERROR: apps/client/node_modules still missing after attempts." >&2
-            exit 1
-          fi
       - name: Write .env for build
         shell: bash
         run: |
