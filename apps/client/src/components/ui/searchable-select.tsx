@@ -188,6 +188,10 @@ function DefaultOptionItem({
     }
     onSelectValue(opt.value);
   };
+
+  // Special handling for expandable rows (like "Show all")
+  const isExpandableRow = opt.value.startsWith("__show-all");
+
   return (
     <ItemComponent
       variant={itemVariant}
@@ -196,6 +200,9 @@ function DefaultOptionItem({
         "flex items-center justify-between gap-2 text-[13.5px] py-1.5 h-[32px]",
         opt.isUnavailable
           ? "cursor-not-allowed text-neutral-500 dark:text-neutral-500"
+          : null,
+        isExpandableRow
+          ? "text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100 italic"
           : null,
         itemClassName
       )}
@@ -217,7 +224,7 @@ function DefaultOptionItem({
           <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
         ) : null}
       </div>
-      {isSelected ? (
+      {isSelected && !isExpandableRow ? (
         <Check className="h-4 w-4 text-neutral-900 dark:text-neutral-100" />
       ) : null}
     </ItemComponent>

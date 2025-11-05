@@ -193,6 +193,12 @@ function DashboardComponent() {
   // Callback for project selection changes
   const handleProjectChange = useCallback(
     (newProjects: string[]) => {
+      // Handle "Show all" row click
+      if (newProjects[0] === "__show-all-envs") {
+        setShowAllEnvironments(true);
+        return;
+      }
+
       setSelectedProject(newProjects);
       localStorage.setItem("selectedProject", JSON.stringify(newProjects));
       if (newProjects[0] !== selectedProject[0]) {
@@ -564,6 +570,13 @@ function DashboardComponent() {
     convexQuery(api.environments.list, { teamSlugOrId })
   );
 
+  const [showAllEnvironments, setShowAllEnvironments] = useState(false);
+
+  // Reset showAllEnvironments when changing teams
+  useEffect(() => {
+    setShowAllEnvironments(false);
+  }, [teamSlugOrId]);
+
   const projectOptions = useMemo(() => {
     // Repo options as objects with GitHub icon
     const repoDocs = Object.values(reposByOrg || {}).flatMap((repos) => repos);
@@ -599,7 +612,9 @@ function DashboardComponent() {
     }));
 
     // Environment options as objects with an icon and stable key
-    const envOptions = (environmentsQuery.data || []).map((env) => ({
+    // Environments are already sorted by createdAt desc from the query
+    const allEnvs = environmentsQuery.data || [];
+    const envOptions = allEnvs.map((env) => ({
       label: `${env.name}`,
       value: `env:${env._id}`,
       icon: (
@@ -622,7 +637,23 @@ function DashboardComponent() {
         value: "__heading-env",
         heading: true,
       });
-      options.push(...envOptions);
+
+      // Show only the first 5 environments initially
+      const visibleEnvs = showAllEnvironments ? envOptions : envOptions.slice(0, 5);
+      options.push(...visibleEnvs);
+
+      // Add "Show all" row if there are more than 5 environments and not showing all
+      if (envOptions.length > 5 && !showAllEnvironments) {
+        options.push({
+          label: `Show all ${envOptions.length} environments`,
+          value: "__show-all-envs",
+          heading: false,
+          icon: (
+            <span className="text-neutral-500 dark:text-neutral-400">⋯</span>
+          ),
+          iconKey: "expand",
+        });
+      }
     }
     if (repoOptions.length > 0) {
       options.push({
@@ -634,7 +665,7 @@ function DashboardComponent() {
     }
 
     return options;
-  }, [reposByOrg, environmentsQuery.data]);
+  }, [reposByOrg, environmentsQuery.data, showAllEnvironments]);
 
   const branchOptions = branchNames;
 
