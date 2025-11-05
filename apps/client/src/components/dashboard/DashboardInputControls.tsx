@@ -19,9 +19,11 @@ import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
 import { Link, useRouter } from "@tanstack/react-router";
 import clsx from "clsx";
 import { useMutation } from "convex/react";
-import { GitBranch, Image, Mic, Server, X } from "lucide-react";
+import { Download, GitBranch, Image, Mic, Server, X } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import { AgentCommandItem, MAX_AGENT_COMMAND_COUNT } from "./AgentCommandItem";
+import { ImportRepoDialog } from "./ImportRepoDialog";
 
 interface DashboardInputControlsProps {
   projectOptions: SelectOption[];
@@ -70,6 +72,7 @@ export const DashboardInputControls = memo(function DashboardInputControls({
   const router = useRouter();
   const agentSelectRef = useRef<SearchableSelectHandle | null>(null);
   const mintState = useMutation(api.github_app.mintInstallState);
+  const [showImportDialog, setShowImportDialog] = useState(false);
   const providerStatusMap = useMemo(() => {
     const map = new Map<string, ProviderStatus>();
     providerStatus?.providers?.forEach((provider) => {
@@ -425,8 +428,56 @@ export const DashboardInputControls = memo(function DashboardInputControls({
     }, 600);
   }
 
+  // Extract GitHub repo info from URL
+  const extractGitHubRepoFromUrl = (url: string): string | null => {
+    try {
+      const trimmed = url.trim();
+      // Match various GitHub URL formats
+      // eslint-disable-next-line no-useless-escape
+      const patterns = [
+        /^https?:\/\/github\.com\/([^/]+\/[^/]+?)(?:\.git)?(?:\/.*)?$/i,
+        /^git@github\.com:([^/]+\/[^/]+?)(?:\.git)?$/i,
+        /^github\.com\/([^/]+\/[^/]+?)(?:\.git)?(?:\/.*)?$/i,
+      ];
+
+      for (const pattern of patterns) {
+        const match = trimmed.match(pattern);
+        if (match?.[1]) {
+          // Remove trailing .git if present
+          return match[1].replace(/\.git$/, "");
+        }
+      }
+
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
+  const handleGitHubUrlPaste = useCallback((repoFullName: string) => {
+    // Navigate to environment creation with the repo pre-selected
+    router.navigate({
+      to: "/$teamSlugOrId/environments/new",
+      params: { teamSlugOrId },
+      search: {
+        step: "select",
+        selectedRepos: [repoFullName],
+        connectionLogin: undefined,
+        repoSearch: undefined,
+        instanceId: undefined,
+        snapshotId: undefined,
+      },
+    });
+  }, [router, teamSlugOrId]);
+
   return (
     <div className="flex items-end gap-1 grow">
+      <ImportRepoDialog
+        open={showImportDialog}
+        onOpenChange={setShowImportDialog}
+        onImport={handleGitHubUrlPaste}
+        extractGitHubRepoFromUrl={extractGitHubRepoFromUrl}
+      />
       <div className="flex items-end gap-1">
         <SearchableSelect
           options={projectOptions}
@@ -438,6 +489,14 @@ export const DashboardInputControls = memo(function DashboardInputControls({
           loading={isLoadingProjects}
           maxTagCount={1}
           showSearch
+          onSearchChange={(searchValue) => {
+            // Detect GitHub URL paste in search input
+            const repoFullName = extractGitHubRepoFromUrl(searchValue);
+            if (repoFullName) {
+              toast.success(`Detected GitHub repo: ${repoFullName}`);
+              handleGitHubUrlPaste(repoFullName);
+            }
+          }}
           footer={
             <div className="p-1">
               <Link
@@ -456,6 +515,14 @@ export const DashboardInputControls = memo(function DashboardInputControls({
                 <Server className="w-4 h-4 text-neutral-600 dark:text-neutral-300" />
                 <span className="select-none">Create environment</span>
               </Link>
+              <button
+                type="button"
+                onClick={() => setShowImportDialog(true)}
+                className="w-full px-2 h-8 flex items-center gap-2 text-[13.5px] text-neutral-800 dark:text-neutral-200 rounded-md hover:bg-neutral-50 dark:hover:bg-neutral-900"
+              >
+                <Download className="w-4 h-4 text-neutral-600 dark:text-neutral-300" />
+                <span className="select-none">Import repo</span>
+              </button>
               {env.NEXT_PUBLIC_GITHUB_APP_SLUG ? (
                 <button
                   type="button"

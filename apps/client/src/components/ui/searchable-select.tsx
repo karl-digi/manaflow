@@ -96,6 +96,8 @@ export interface SearchableSelectProps {
   popoverSide?: PopoverContentProps["side"];
   popoverAlign?: PopoverContentProps["align"];
   popoverSideOffset?: number;
+  // Callback when search value changes
+  onSearchChange?: (value: string) => void;
 }
 
 interface WarningIndicatorProps {
@@ -249,6 +251,7 @@ const SearchableSelect = forwardRef<
     popoverSide = "bottom",
     popoverAlign = "start",
     popoverSideOffset = 2,
+    onSearchChange,
   },
   ref
 ) {
@@ -585,7 +588,10 @@ const SearchableSelect = forwardRef<
                 showIcon={false}
                 placeholder="Search..."
                 value={search}
-                onValueChange={setSearch}
+                onValueChange={(newValue) => {
+                  setSearch(newValue);
+                  onSearchChange?.(newValue);
+                }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     // Clear the search box when pressing Enter
