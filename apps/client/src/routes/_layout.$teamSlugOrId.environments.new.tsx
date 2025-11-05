@@ -21,6 +21,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -82,6 +83,7 @@ function EnvironmentsPage() {
   const navigate = useNavigate({ from: Route.fullPath });
   const draft = useEnvironmentDraft(teamSlugOrId);
   const [headerActions, setHeaderActions] = useState<ReactNode | null>(null);
+  const skipDraftHydrationRef = useRef(false);
 
   const activeStep = draft?.step ?? stepFromSearch;
   const activeSelectedRepos = draft?.selectedRepos ?? urlSelectedRepos;
@@ -108,7 +110,7 @@ function EnvironmentsPage() {
   }, [activeStep]);
 
   useEffect(() => {
-    if (activeStep !== "configure" || draft) {
+    if (activeStep !== "configure" || draft || skipDraftHydrationRef.current) {
       return;
     }
     persistEnvironmentDraftMetadata(
@@ -142,6 +144,7 @@ function EnvironmentsPage() {
       const shouldResetConfig =
         !draft || reposChanged || instanceChanged || snapshotChanged;
 
+      skipDraftHydrationRef.current = false;
       persistEnvironmentDraftMetadata(
         teamSlugOrId,
         {
@@ -179,6 +182,7 @@ function EnvironmentsPage() {
   }, [activeInstanceId, activeSelectedRepos, activeSnapshotId, teamSlugOrId]);
 
   const handleResetDraft = useCallback(() => {
+    skipDraftHydrationRef.current = true;
     clearEnvironmentDraft(teamSlugOrId);
     setHeaderActions(null);
   }, [teamSlugOrId]);
