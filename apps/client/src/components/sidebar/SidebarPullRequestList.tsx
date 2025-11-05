@@ -78,16 +78,6 @@ function PullRequestListItem({ pr, teamSlugOrId, expanded, setExpanded }: PullRe
   const [owner = "", repo = ""] = pr.repoFullName?.split("/", 2) ?? ["", ""];
   const key = `${pr.repoFullName}#${pr.number}`;
   const isExpanded = expanded[key] ?? false;
-  const branchLabel = pr.headRef;
-
-  const secondaryParts = [
-    branchLabel,
-    `${pr.repoFullName}#${pr.number}`,
-    pr.authorLogin,
-  ]
-    .filter(Boolean)
-    .map(String);
-  const secondary = secondaryParts.join(" • ");
   const leadingIcon = pr.merged ? (
     <GitMerge className="w-3 h-3 text-purple-500" />
   ) : pr.state === "closed" ? (
@@ -140,7 +130,6 @@ function PullRequestListItem({ pr, teamSlugOrId, expanded, setExpanded }: PullRe
           }}
           title={pr.title}
           titleClassName="text-[13px] text-neutral-950 dark:text-neutral-100"
-          secondary={secondary || undefined}
           meta={leadingIcon}
         />
       </Link>
