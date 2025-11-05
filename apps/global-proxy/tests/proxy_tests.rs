@@ -896,6 +896,43 @@ async fn port_39378_strips_cors_and_applies_csp() {
             name
         );
     }
+    assert!(
+        cmux_headers
+            .get("content-security-policy")
+            .is_none(),
+        "CSP should remain stripped for cmux host"
+    );
+
+    let cmux_localhost_response = proxy
+        .request(
+            Method::GET,
+            "cmux-test-base-39378.cmux.localhost",
+            "/",
+            &[],
+        )
+        .await;
+    assert_eq!(cmux_localhost_response.status(), StatusCode::OK);
+    for name in [
+        "access-control-allow-origin",
+        "access-control-allow-methods",
+        "access-control-allow-headers",
+        "access-control-allow-credentials",
+        "access-control-expose-headers",
+        "access-control-max-age",
+    ] {
+        assert!(
+            cmux_localhost_response.headers().get(name).is_none(),
+            "expected header {} to be stripped",
+            name
+        );
+    }
+    assert!(
+        cmux_localhost_response
+            .headers()
+            .get("content-security-policy")
+            .is_none(),
+        "CSP should remain stripped for cmux .localhost host"
+    );
 
     let response_localhost = proxy
         .request(
