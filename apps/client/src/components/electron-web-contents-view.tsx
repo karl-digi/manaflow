@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 
 interface ElectronWebContentsViewProps {
   src: string;
+  requestUrl?: string;
   className?: string;
   style?: CSSProperties;
   backgroundColor?: string;
@@ -141,6 +142,7 @@ const pendingCreates = new Map<string, Promise<void>>();
 
 export function ElectronWebContentsView({
   src,
+  requestUrl,
   className,
   style,
   backgroundColor,
@@ -161,6 +163,7 @@ export function ElectronWebContentsView({
   const lastSyncRef = useRef<SyncState | null>(null);
   const syncBoundsRef = useRef<() => void>(() => {});
   const latestSrcRef = useRef(src);
+  const latestRequestUrlRef = useRef(requestUrl);
   const lastLoadedSrcRef = useRef<string | null>(null);
   const latestStyleRef = useRef<{
     backgroundColor?: string;
@@ -178,6 +181,10 @@ export function ElectronWebContentsView({
   useEffect(() => {
     latestSrcRef.current = src;
   }, [src]);
+
+  useEffect(() => {
+    latestRequestUrlRef.current = requestUrl;
+  }, [requestUrl]);
 
   useEffect(() => {
     latestStyleRef.current = { backgroundColor, borderRadius };
@@ -422,6 +429,7 @@ export function ElectronWebContentsView({
           });
           const result = await bridge.create({
             url: latestSrcRef.current,
+            requestUrl: latestRequestUrlRef.current,
             bounds: initialBounds,
             backgroundColor: initialBackground,
             borderRadius: initialRadius,

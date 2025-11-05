@@ -233,6 +233,36 @@ check_process() {
     fi
 }
 
+wait_for_log_message() {
+    local log_file="$1"
+    local marker="$2"
+    local pid="$3"
+    local name="$4"
+    local timeout="${5:-120}"
+    local waited=0
+
+    echo -e "${BLUE}Waiting for ${name} to finish initial setup...${NC}"
+    while true; do
+        if [ -f "$log_file" ] && grep -Fq "$marker" "$log_file" 2>/dev/null; then
+            echo -e "${GREEN}${name} initial setup completed${NC}"
+            break
+        fi
+
+        if ! kill -0 "$pid" 2>/dev/null; then
+            echo -e "${RED}${name} exited before signaling readiness${NC}"
+            exit 1
+        fi
+
+        if [ $waited -ge $timeout ]; then
+            echo -e "${RED}Timed out waiting for ${name}${NC}"
+            exit 1
+        fi
+
+        sleep 1
+        waited=$((waited + 1))
+    done
+}
+
 # Start Convex backend (different for devcontainer vs host)
 if [ "$SKIP_CONVEX" = "true" ]; then
     echo -e "${YELLOW}Skipping Convex (SKIP_CONVEX=true)${NC}"
@@ -307,6 +337,9 @@ echo -e "${GREEN}Starting openapi client generator...${NC}"
 (cd "$APP_DIR/apps/www" && exec bash -c 'trap "kill -9 0" EXIT; bun run generate-openapi-client:watch 2>&1 | tee "$LOG_DIR/openapi-client.log" | prefix_output "OPENAPI-CLIENT" "$MAGENTA"') &
 OPENAPI_CLIENT_PID=$!
 check_process $OPENAPI_CLIENT_PID "OpenAPI Client Generator"
+OPENAPI_LOG_FILE="$LOG_DIR/openapi-client.log"
+OPENAPI_READY_MARKER="[watch-openapi] initial client generation complete"
+wait_for_log_message "$OPENAPI_LOG_FILE" "$OPENAPI_READY_MARKER" "$OPENAPI_CLIENT_PID" "OpenAPI Client Generator"
 
 # Start Electron if requested
 if [ "$RUN_ELECTRON" = "true" ]; then

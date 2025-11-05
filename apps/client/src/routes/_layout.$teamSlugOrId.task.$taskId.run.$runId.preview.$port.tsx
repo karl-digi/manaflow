@@ -8,9 +8,15 @@ import { useMemo, useState, useEffect, useRef } from "react";
 import z from "zod";
 import { TaskRunTerminalSession } from "@/components/task-run-terminal-session";
 import { toMorphXtermBaseUrl } from "@/lib/toProxyWorkspaceUrl";
-import { createTerminalTab, terminalTabsQueryKey, terminalTabsQueryOptions, type TerminalTabId } from "@/queries/terminals";
+import {
+  createTerminalTab,
+  terminalTabsQueryKey,
+  terminalTabsQueryOptions,
+  type TerminalTabId,
+} from "@/queries/terminals";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { convexQuery } from "@convex-dev/react-query";
+import { isElectron } from "@/lib/electron";
 
 const paramsSchema = z.object({
   taskId: typedZid("tasks"),
@@ -18,8 +24,30 @@ const paramsSchema = z.object({
   port: z.string(),
 });
 
+const CLOUD_TMUX_BOOTSTRAP_SCRIPT = `set -euo pipefail
+SESSION="cmux"
+WORKSPACE_ROOT="/root/workspace"
+ensure_session() {
+  if tmux has-session -t "$SESSION" 2>/dev/null; then
+    return
+  fi
+
+  tmux new-session -d -s "$SESSION" -c "$WORKSPACE_ROOT" -n "main"
+  tmux rename-window -t "$SESSION:1" "main" >/dev/null 2>&1 || true
+  tmux new-window -t "$SESSION:" -n "maintenance" -c "$WORKSPACE_ROOT"
+  tmux new-window -t "$SESSION:" -n "dev" -c "$WORKSPACE_ROOT"
+}
+ensure_session
+
+tmux select-window -t "$SESSION:main" >/dev/null 2>&1 || true
+exec tmux attach -t "$SESSION"`;
+
+const STANDARD_ATTACH_SCRIPT = `set -euo pipefail
+tmux select-window -t cmux:0 >/dev/null 2>&1 || true
+exec tmux attach -t cmux`;
+
 export const Route = createFileRoute(
-  "/_layout/$teamSlugOrId/task/$taskId/run/$runId/preview/$port",
+  "/_layout/$teamSlugOrId/task/$taskId/run/$runId/preview/$port"
 )({
   component: PreviewPage,
   params: {
@@ -37,45 +65,51 @@ export const Route = createFileRoute(
     const { teamSlugOrId, runId } = params;
     const { queryClient } = context;
 
-    const taskRun = await queryClient.ensureQueryData(
-      convexQuery(api.taskRuns.get, {
-        teamSlugOrId,
-        id: runId,
-      })
-    );
-
-    const vscodeInfo = taskRun?.vscode;
-    const rawMorphUrl = vscodeInfo?.url ?? vscodeInfo?.workspaceUrl ?? null;
-    const isMorphProvider = vscodeInfo?.provider === "morph";
-
-    if (!isMorphProvider || !rawMorphUrl) {
-      return;
-    }
-
-    const baseUrl = toMorphXtermBaseUrl(rawMorphUrl);
-    const tabsQueryKey = terminalTabsQueryKey(baseUrl, runId);
-
-    const tabs = await queryClient.ensureQueryData(
-      terminalTabsQueryOptions({
-        baseUrl,
-        contextKey: runId,
-      })
-    );
-
-    if (tabs.length > 0) {
-      return;
-    }
-
     // Create terminal in background without blocking
     (async () => {
+      const taskRun = await queryClient.ensureQueryData(
+        convexQuery(api.taskRuns.get, {
+          teamSlugOrId,
+          id: runId,
+        })
+      );
+
+      const vscodeInfo = taskRun?.vscode;
+      const rawMorphUrl = vscodeInfo?.url ?? vscodeInfo?.workspaceUrl ?? null;
+      const isMorphProvider = vscodeInfo?.provider === "morph";
+
+      if (!isMorphProvider || !rawMorphUrl) {
+        return;
+      }
+
+      const baseUrl = toMorphXtermBaseUrl(rawMorphUrl);
+      const tabsQueryKey = terminalTabsQueryKey(baseUrl, runId);
+
+      const tabs = await queryClient.ensureQueryData(
+        terminalTabsQueryOptions({
+          baseUrl,
+          contextKey: runId,
+        })
+      );
+
+      if (tabs.length > 0) {
+        return;
+      }
+
+      const request = taskRun?.isCloudWorkspace
+        ? {
+            cmd: "bash",
+            args: ["-lc", CLOUD_TMUX_BOOTSTRAP_SCRIPT],
+          }
+        : {
+            cmd: "bash",
+            args: ["-lc", STANDARD_ATTACH_SCRIPT],
+          };
+
       try {
-        // Attach to cmux session
         const created = await createTerminalTab({
           baseUrl,
-          request: {
-            cmd: "tmux",
-            args: ["attach", "-t", "cmux"],
-          },
+          request,
         });
 
         queryClient.setQueryData<TerminalTabId[]>(tabsQueryKey, (current) => {
@@ -88,7 +122,7 @@ export const Route = createFileRoute(
           return [...current, created.id];
         });
       } catch (error) {
-        console.error("Failed to auto-create tmux terminal", error);
+        console.error("Failed to auto-create terminal", error);
       }
     })();
   },
@@ -108,13 +142,27 @@ function PreviewPage() {
   }, [runId, taskRuns]);
 
   // Find the service URL for the requested port
-  const previewUrl = useMemo(() => {
-    if (!selectedRun?.networking) return null;
-    const portNum = parseInt(port, 10);
+  const { previewUrl, displayUrl } = useMemo(() => {
+    if (!selectedRun?.networking) {
+      return { previewUrl: null, displayUrl: null };
+    }
+    const portNum = Number.parseInt(port, 10);
+    if (Number.isNaN(portNum)) {
+      return { previewUrl: null, displayUrl: null };
+    }
     const service = selectedRun.networking.find(
-      (s) => s.port === portNum && s.status === "running",
+      (s) => s.port === portNum && s.status === "running"
     );
-    return service?.url;
+    if (!service?.url) {
+      return { previewUrl: null, displayUrl: null };
+    }
+
+    const electronDisplayUrl = `http://localhost:${service.port}`;
+
+    return {
+      previewUrl: service.url,
+      displayUrl: isElectron ? electronDisplayUrl : service.url,
+    };
   }, [selectedRun, port]);
 
   const persistKey = useMemo(() => {
@@ -177,12 +225,12 @@ function PreviewPage() {
       isResizingRef.current = false;
     };
 
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
 
     return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
     };
   }, []);
 
@@ -197,11 +245,12 @@ function PreviewPage() {
         <>
           <ElectronPreviewBrowser
             persistKey={persistKey}
-            src={previewUrl}
+            src={displayUrl}
+            requestUrl={previewUrl ?? undefined}
             borderRadius={paneBorderRadius}
             terminalVisible={isTerminalVisible}
             onToggleTerminal={toggleTerminal}
-            renderBelowAddressBar={() => (
+            renderBelowAddressBar={() =>
               isTerminalVisible && baseUrl && activeTerminalId ? (
                 <div
                   className="border-l border-neutral-200 dark:border-neutral-800 flex bg-white dark:bg-neutral-950 flex-shrink-0 relative"
@@ -221,7 +270,7 @@ function PreviewPage() {
                   </div>
                 </div>
               ) : null
-            )}
+            }
           />
         </>
       ) : (

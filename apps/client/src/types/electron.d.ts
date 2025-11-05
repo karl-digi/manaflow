@@ -42,6 +42,7 @@ interface CmuxRectangle {
 interface CmuxWebContentsViewAPI {
   create: (options: {
     url: string;
+    requestUrl?: string;
     bounds?: CmuxRectangle;
     backgroundColor?: string;
     borderRadius?: number;

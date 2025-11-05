@@ -16,6 +16,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { normalizeBrowserUrl } from "@cmux/shared";
+import { isElectron } from "@/lib/electron";
 import { cn } from "@/lib/utils";
 import type {
   ElectronDevToolsMode,
@@ -27,6 +29,7 @@ import clsx from "clsx";
 interface ElectronPreviewBrowserProps {
   persistKey: string;
   src: string;
+  requestUrl?: string;
   borderRadius?: number;
   terminalVisible?: boolean;
   onToggleTerminal?: () => void;
@@ -37,18 +40,6 @@ interface NativeViewHandle {
   id: number;
   webContentsId: number;
   restored: boolean;
-}
-
-function normalizeUrl(raw: string): string {
-  const trimmed = raw.trim();
-  if (trimmed.length === 0) return trimmed;
-  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) {
-    return trimmed;
-  }
-  if (trimmed.startsWith("//")) {
-    return `https:${trimmed}`;
-  }
-  return `https://${trimmed}`;
 }
 
 function useLoadingProgress(isLoading: boolean) {
@@ -97,10 +88,12 @@ function useLoadingProgress(isLoading: boolean) {
 export function ElectronPreviewBrowser({
   persistKey,
   src,
+  requestUrl,
   terminalVisible = false,
   onToggleTerminal,
   renderBelowAddressBar,
 }: ElectronPreviewBrowserProps) {
+  const resolvedSrc = isElectron ? src : requestUrl ?? src;
   const [viewHandle, setViewHandle] = useState<NativeViewHandle | null>(null);
   const [addressValue, setAddressValue] = useState(src);
   const [committedUrl, setCommittedUrl] = useState(src);
@@ -112,6 +105,9 @@ export function ElectronPreviewBrowser({
   const [canGoForward, setCanGoForward] = useState(false);
   const [isShowingErrorPage, setIsShowingErrorPage] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const committedUrlRef = useRef(src);
+  const pendingNavigationUrlRef = useRef<string | null>(null);
+  const pendingPreviousUrlRef = useRef<string | null>(null);
   const isNavigatingRef = useRef(false);
   const pendingRefocusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -125,9 +121,17 @@ export function ElectronPreviewBrowser({
   useEffect(() => {
     setAddressValue(src);
     setCommittedUrl(src);
+    committedUrlRef.current = src;
     setCanGoBack(false);
     setCanGoForward(false);
+    pendingNavigationUrlRef.current = null;
+    pendingPreviousUrlRef.current = null;
+    isNavigatingRef.current = false;
   }, [src]);
+
+  useEffect(() => {
+    committedUrlRef.current = committedUrl;
+  }, [committedUrl]);
 
   const applyState = useCallback(
     (state: ElectronWebContentsState, reason?: string) => {
@@ -152,12 +156,21 @@ export function ElectronPreviewBrowser({
       setIsShowingErrorPage(showingError);
 
       const hasDisplayUrl = displayUrl.trim().length > 0;
+      const pendingPreviousUrl = pendingPreviousUrlRef.current;
+      const pendingTargetUrl = pendingNavigationUrlRef.current;
+      const isStaleNavigationUpdate =
+        Boolean(pendingTargetUrl) &&
+        Boolean(pendingPreviousUrl) &&
+        displayUrl === pendingPreviousUrl;
 
-      if (hasDisplayUrl) {
+      if (hasDisplayUrl && !isStaleNavigationUpdate) {
         setCommittedUrl(displayUrl);
+        committedUrlRef.current = displayUrl;
         if (!isEditing) {
           setAddressValue(displayUrl);
         }
+        pendingNavigationUrlRef.current = null;
+        pendingPreviousUrlRef.current = null;
       }
       setIsLoading(state.isLoading);
       setDevtoolsOpen(state.isDevToolsOpened);
@@ -223,25 +236,40 @@ export function ElectronPreviewBrowser({
     setCanGoForward(false);
   }, []);
 
+  const navigateToAddress = useCallback(() => {
+    const raw = addressValue.trim();
+    if (!raw) {
+      return;
+    }
+    if (!viewHandle) {
+      console.warn("[ElectronPreviewBrowser] navigate skipped; view not ready", {
+        raw,
+      });
+      return;
+    }
+    const target = normalizeBrowserUrl(raw);
+    console.log("[ElectronPreviewBrowser] navigate", { raw, target });
+    pendingPreviousUrlRef.current = committedUrlRef.current;
+    pendingNavigationUrlRef.current = target;
+    setCommittedUrl(target);
+    committedUrlRef.current = target;
+    setAddressValue(target);
+    setIsEditing(false);
+    isNavigatingRef.current = true;
+    inputRef.current?.blur();
+    void window.cmux?.webContentsView
+      ?.loadURL(viewHandle.id, target)
+      .catch((error: unknown) => {
+        console.warn("Failed to navigate WebContentsView", error);
+      });
+  }, [addressValue, viewHandle]);
+
   const handleSubmit = useCallback(
     (event: React.FormEvent<HTMLFormElement>) => {
       event.preventDefault();
-      if (!viewHandle) return;
-      const raw = addressValue.trim();
-      if (!raw) return;
-      const target = normalizeUrl(raw);
-      setCommittedUrl(target);
-      setAddressValue(target);
-      setIsEditing(false);
-      isNavigatingRef.current = true;
-      inputRef.current?.blur();
-      void window.cmux?.webContentsView
-        ?.loadURL(viewHandle.id, target)
-        .catch((error: unknown) => {
-          console.warn("Failed to navigate WebContentsView", error);
-        });
+      navigateToAddress();
     },
-    [addressValue, viewHandle],
+    [navigateToAddress],
   );
 
   const initialSelectHandled = useRef(false);
@@ -359,10 +387,14 @@ export function ElectronPreviewBrowser({
         event.preventDefault();
         setAddressValue(committedUrl);
         event.currentTarget.blur();
-        // Blur will handle refocusing the WebContentsView
+        return;
+      }
+      if (event.key === "Enter") {
+        event.preventDefault();
+        navigateToAddress();
       }
     },
-    [committedUrl],
+    [committedUrl, navigateToAddress],
   );
 
   const handleToggleDevTools = useCallback(() => {
@@ -798,7 +830,8 @@ export function ElectronPreviewBrowser({
         <div className="flex-1 overflow-hidden bg-white dark:bg-neutral-950 border-l">
           <PersistentWebView
             persistKey={persistKey}
-            src={src}
+            src={resolvedSrc}
+            requestUrl={requestUrl}
             className="h-full w-full border-0"
             borderRadius={0}
             sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-modals allow-downloads"

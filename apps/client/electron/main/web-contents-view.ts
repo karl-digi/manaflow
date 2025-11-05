@@ -2,6 +2,7 @@ import {
   BrowserWindow,
   WebContentsView,
   ipcMain,
+  shell,
   type Rectangle,
   type Session,
   type WebContents,
@@ -16,6 +17,12 @@ import type {
 import type { WebContentsLayoutActualState } from "../../src/types/webcontents-debug";
 import { applyChromeCamouflage, type Logger } from "./chrome-camouflage";
 import { registerContextMenuForTarget } from "./context-menu";
+import {
+  configurePreviewProxyForView,
+  getPreviewPartitionForPersistKey,
+  isTaskRunPreviewPersistKey,
+} from "./task-run-preview-proxy";
+import { normalizeBrowserUrl } from "@cmux/shared";
 
 interface RegisterOptions {
   logger: Logger;
@@ -25,6 +32,7 @@ interface RegisterOptions {
 
 interface CreateOptions {
   url: string;
+  requestUrl?: string;
   bounds?: Rectangle;
   backgroundColor?: string;
   borderRadius?: number;
@@ -64,6 +72,8 @@ interface Entry {
   ownerWebContentsDestroyed: boolean;
   eventChannel: string;
   eventCleanup: Array<() => void>;
+  previewProxyCleanup?: () => void;
+  previewPartition?: string | null;
 }
 
 const viewEntries = new Map<number, Entry>();
@@ -148,7 +158,8 @@ function buildState(entry: Entry): ElectronWebContentsState | null {
       isLoading: contents.isLoading(),
       isDevToolsOpened: contents.isDevToolsOpened(),
     };
-  } catch {
+  } catch (error) {
+    console.error("Failed to build state", error);
     return null;
   }
 }
@@ -439,11 +450,21 @@ function destroyView(id: number): boolean {
   if (!entry) return false;
   entriesByWebContentsId.delete(entry.view.webContents.id);
   try {
+    if (entry.previewProxyCleanup) {
+      try {
+        entry.previewProxyCleanup();
+      } catch (error) {
+        console.error("Failed to cleanup preview proxy", error);
+      } finally {
+        entry.previewProxyCleanup = undefined;
+      }
+    }
     removeFromSuspended(entry);
     for (const cleanup of entry.eventCleanup) {
       try {
         cleanup();
-      } catch {
+      } catch (error) {
+        console.error("Failed to cleanup event listener", error);
         // ignore cleanup failures
       }
     }
@@ -453,14 +474,15 @@ function destroyView(id: number): boolean {
     if (win && !win.isDestroyed()) {
       try {
         win.contentView.removeChildView(entry.view);
-      } catch {
+      } catch (error) {
+        console.error("Failed to remove view from window", error);
         // ignore removal failures
       }
     }
     try {
       destroyWebContents(entry.view.webContents);
-    } catch {
-      // ignore destroy failures
+    } catch (error) {
+      console.error("Failed to destroy webContents", error);
     }
   } finally {
     viewEntries.delete(id);
@@ -514,8 +536,8 @@ function applyBackgroundColor(
   if (!color) return;
   try {
     view.setBackgroundColor(color);
-  } catch {
-    // ignore invalid colors
+  } catch (error) {
+    console.error("Failed to apply background color", error);
   }
 }
 
@@ -527,8 +549,8 @@ function applyBorderRadius(
   const safe = Math.max(0, Math.round(radius));
   try {
     view.setBorderRadius(safe);
-  } catch {
-    // ignore unsupported platforms
+  } catch (error) {
+    console.error("Failed to apply border radius", error);
   }
 }
 
@@ -668,7 +690,29 @@ export function registerWebContentsViewHandlers({
           destroyConflictingEntries(persistKey, win.id, logger);
         }
 
-        const view = new WebContentsView();
+        const previewPartition = getPreviewPartitionForPersistKey(persistKey);
+        const view = previewPartition
+          ? new WebContentsView({
+              webPreferences: { partition: previewPartition },
+            })
+          : new WebContentsView();
+
+        view.webContents.setWindowOpenHandler((details) => {
+          const normalized = normalizeBrowserUrl(details.url ?? "");
+          if (!normalized) {
+            return { action: "deny" };
+          }
+          try {
+            void shell.openExternal(normalized);
+          } catch (error) {
+            logger.warn("Failed to open external URL from WebContentsView", {
+              url: normalized,
+              error,
+            });
+          }
+          return { action: "deny" };
+        });
+
         const disposeContextMenu = registerContextMenuForTarget(view);
 
         applyChromeCamouflage(view, logger);
@@ -682,8 +726,8 @@ export function registerWebContentsViewHandlers({
           logger.error("Failed to add WebContentsView to window", error);
           try {
             destroyWebContents(view.webContents);
-          } catch {
-            // ignore
+          } catch (error) {
+            console.error("Failed to destroy webContents", error);
           }
           throw error;
         }
@@ -699,6 +743,27 @@ export function registerWebContentsViewHandlers({
         }
 
         const finalUrl = options.url ?? "about:blank";
+        const proxySourceUrl = options.requestUrl ?? finalUrl;
+        let previewProxyCleanup: (() => void) | undefined;
+        if (
+          isTaskRunPreviewPersistKey(persistKey) &&
+          typeof proxySourceUrl === "string" &&
+          proxySourceUrl.startsWith("http")
+        ) {
+          try {
+            previewProxyCleanup = await configurePreviewProxyForView({
+              webContents: view.webContents,
+              initialUrl: proxySourceUrl,
+              persistKey,
+              logger,
+            });
+          } catch (error) {
+            logger.warn("Failed to enable preview proxy", {
+              persistKey,
+              error,
+            });
+          }
+        }
         void view.webContents.loadURL(finalUrl).catch((error) =>
           logger.warn("WebContentsView initial load failed", {
             url: finalUrl,
@@ -718,6 +783,8 @@ export function registerWebContentsViewHandlers({
           ownerWebContentsDestroyed: false,
           eventChannel: eventChannelFor(id),
           eventCleanup: [],
+          previewProxyCleanup,
+          previewPartition,
         };
         viewEntries.set(id, entry);
         setupEventForwarders(entry, logger);
@@ -901,15 +968,15 @@ export function registerWebContentsViewHandlers({
       if (win && !win.isDestroyed()) {
         try {
           win.contentView.removeChildView(entry.view);
-        } catch {
-          // ignore
+        } catch (error) {
+          console.error("Failed to remove view from window", error);
         }
       }
 
       try {
         entry.view.setVisible(false);
-      } catch {
-        // ignore
+      } catch (error) {
+        console.error("Failed to set visible", error);
       }
 
       entry.ownerWebContentsDestroyed = false;
@@ -998,12 +1065,14 @@ export function registerWebContentsViewHandlers({
       let visible: ElectronWebContentsSnapshot["visible"] = null;
       try {
         bounds = toBounds(entry.view.getBounds());
-      } catch {
+      } catch (error) {
+        console.error("Failed to get bounds, setting bounds = null", error);
         bounds = null;
       }
       try {
         visible = entry.view.getVisible();
-      } catch {
+      } catch (error) {
+        console.error("Failed to get visible, setting visible = null", error);
         visible = null;
       }
 
@@ -1104,7 +1173,8 @@ export function getWebContentsLayoutSnapshot(
       destroyed: entry.view.webContents.isDestroyed(),
       visible: evaluateVisibility(normalized),
     };
-  } catch {
+  } catch (error) {
+    console.error("Failed to get webContents layout snapshot", error);
     return null;
   }
 }

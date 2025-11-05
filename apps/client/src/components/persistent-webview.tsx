@@ -12,6 +12,7 @@ import {
 export interface PersistentWebViewProps {
   persistKey: string;
   src: string;
+  requestUrl?: string;
   className?: string;
   style?: CSSProperties;
   preload?: boolean;
@@ -49,6 +50,7 @@ const DISABLE_WEBCONTENTSVIEW = true;
 export function PersistentWebView({
   persistKey,
   src,
+  requestUrl,
   className,
   style,
   preload,
@@ -85,6 +87,7 @@ export function PersistentWebView({
     return (
       <ElectronWebContentsView
         src={src}
+        requestUrl={requestUrl}
         className={className}
         style={style}
         backgroundColor={backgroundColor}
