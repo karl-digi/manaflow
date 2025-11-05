@@ -606,7 +606,9 @@ function TaskTreeInner({
                 }}
                 title={taskTitleContent}
                 titleClassName={taskTitleClassName}
-                secondary={taskSecondary || undefined}
+                secondary={
+                  isLocalWorkspace || isCloudWorkspace ? undefined : taskSecondary || undefined
+                }
                 meta={taskLeadingIcon || undefined}
                 className={clsx(isRenaming && "pr-2")}
               />
