@@ -7,26 +7,44 @@ import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { useTheme } from "@/components/theme/use-theme";
 import { api } from "@cmux/convex/api";
-import type { Id } from "@cmux/convex/dataModel";
+import type { Doc, Id } from "@cmux/convex/dataModel";
 import type {
   CreateLocalWorkspaceResponse,
   CreateCloudWorkspaceResponse,
+  CreateCloudWorkspace,
 } from "@cmux/shared";
 import { useMutation } from "convex/react";
 import { Server as ServerIcon, FolderOpen, Loader2 } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 type WorkspaceCreationButtonsProps = {
   teamSlugOrId: string;
   selectedProject: string[];
   isEnvSelected: boolean;
+  environments?: Doc<"environments">[] | null;
 };
+
+type SelectionMeta =
+  | { kind: "none"; workspaceLabel: string }
+  | {
+      kind: "environment";
+      environmentId: Id<"environments">;
+      environment?: Doc<"environments">;
+      workspaceLabel: string;
+    }
+  | {
+      kind: "repository";
+      projectFullName: string;
+      workspaceLabel: string;
+      repoUrl: string;
+    };
 
 export function WorkspaceCreationButtons({
   teamSlugOrId,
   selectedProject,
   isEnvSelected,
+  environments,
 }: WorkspaceCreationButtonsProps) {
   const { socket } = useSocket();
   const { addTaskToExpand } = useExpandTasks();
@@ -36,6 +54,42 @@ export function WorkspaceCreationButtons({
 
   const reserveLocalWorkspace = useMutation(api.localWorkspaces.reserve);
   const createTask = useMutation(api.tasks.create);
+
+  const environmentById = useMemo(() => {
+    const map = new Map<Id<"environments">, Doc<"environments">>();
+    (environments ?? []).forEach((environment) => {
+      map.set(environment._id, environment);
+    });
+    return map;
+  }, [environments]);
+
+  const selectionMeta = useMemo<SelectionMeta>(() => {
+    const selection = selectedProject[0] ?? null;
+    if (!selection) {
+      return {
+        kind: "none",
+        workspaceLabel: "Unknown Selection",
+      };
+    }
+
+    if (selection.startsWith("env:")) {
+      const environmentId = selection.replace(/^env:/, "") as Id<"environments">;
+      const environment = environmentById.get(environmentId);
+      return {
+        kind: "environment",
+        environmentId,
+        environment,
+        workspaceLabel: environment?.name ?? "Unknown Environment",
+      };
+    }
+
+    return {
+      kind: "repository",
+      projectFullName: selection,
+      workspaceLabel: selection,
+      repoUrl: `https://github.com/${selection}.git`,
+    };
+  }, [environmentById, selectedProject]);
 
   const handleCreateLocalWorkspace = useCallback(async () => {
     if (!socket) {
@@ -53,8 +107,21 @@ export function WorkspaceCreationButtons({
       return;
     }
 
-    const projectFullName = selectedProject[0];
-    const repoUrl = `https://github.com/${projectFullName}.git`;
+    const projectFullName = selectionMeta.kind === "repository"
+      ? selectionMeta.projectFullName
+      : undefined;
+
+    if (!projectFullName) {
+      toast.error("Local workspaces require a repository selection");
+      return;
+    }
+
+    const repoUrl =
+      selectionMeta.kind === "repository"
+        ? selectionMeta.repoUrl
+        : undefined;
+    const resolvedRepoUrl =
+      repoUrl ?? `https://github.com/${projectFullName}.git`;
 
     setIsCreatingLocal(true);
 
@@ -62,7 +129,7 @@ export function WorkspaceCreationButtons({
       const reservation = await reserveLocalWorkspace({
         teamSlugOrId,
         projectFullName,
-        repoUrl,
+        repoUrl: resolvedRepoUrl,
       });
 
       if (!reservation) {
@@ -77,7 +144,7 @@ export function WorkspaceCreationButtons({
           {
             teamSlugOrId,
             projectFullName,
-            repoUrl,
+            repoUrl: resolvedRepoUrl,
             taskId: reservation.taskId,
             taskRunId: reservation.taskRunId,
             workspaceName: reservation.workspaceName,
@@ -110,6 +177,7 @@ export function WorkspaceCreationButtons({
     teamSlugOrId,
     reserveLocalWorkspace,
     addTaskToExpand,
+    selectionMeta,
   ]);
 
   const handleCreateCloudWorkspace = useCallback(async () => {
@@ -119,49 +187,53 @@ export function WorkspaceCreationButtons({
     }
 
     if (selectedProject.length === 0) {
-      toast.error("Please select an environment first");
+      toast.error("Please select a repository or environment first");
       return;
     }
 
-    if (!isEnvSelected) {
-      toast.error("Cloud workspaces require an environment, not a repository");
-      return;
-    }
-
-    const projectFullName = selectedProject[0];
-    const environmentId = projectFullName.replace(
-      /^env:/,
-      ""
-    ) as Id<"environments">;
-
-    // Extract environment name from the selectedProject (format is "env:id:name")
-    const environmentName = projectFullName.split(":")[2] || "Unknown Environment";
+    const environmentId = selectionMeta.kind === "environment"
+      ? selectionMeta.environmentId
+      : undefined;
+    const projectFullName = selectionMeta.kind === "repository"
+      ? selectionMeta.projectFullName
+      : undefined;
+    const workspaceLabel = selectionMeta.workspaceLabel;
+    const repoUrl =
+      selectionMeta.kind === "repository"
+        ? selectionMeta.repoUrl
+        : undefined;
 
     setIsCreatingCloud(true);
 
     try {
-      // Create task in Convex with environment name
       const taskId = await createTask({
         teamSlugOrId,
-        text: `Cloud Workspace: ${environmentName}`,
-        projectFullName: undefined, // No repo for cloud environment workspaces
-        baseBranch: undefined, // No branch for environments
+        text: `Cloud Workspace: ${workspaceLabel}`,
+        projectFullName,
+        baseBranch: undefined,
         environmentId,
         isCloudWorkspace: true,
       });
 
-      // Hint the sidebar to auto-expand this task once it appears
       addTaskToExpand(taskId);
+
+      const payload: CreateCloudWorkspace = {
+        teamSlugOrId,
+        taskId,
+        theme,
+        ...(environmentId ? { environmentId } : {}),
+        ...(projectFullName
+          ? {
+              projectFullName,
+              repoUrl,
+            }
+          : {}),
+      };
 
       await new Promise<void>((resolve) => {
         socket.emit(
           "create-cloud-workspace",
-          {
-            teamSlugOrId,
-            environmentId,
-            taskId,
-            theme,
-          },
+          payload,
           async (response: CreateCloudWorkspaceResponse) => {
             if (response.success) {
               toast.success("Cloud workspace created successfully");
@@ -185,15 +257,15 @@ export function WorkspaceCreationButtons({
   }, [
     socket,
     selectedProject,
-    isEnvSelected,
     teamSlugOrId,
     createTask,
     addTaskToExpand,
     theme,
+    selectionMeta,
   ]);
 
   const canCreateLocal = selectedProject.length > 0 && !isEnvSelected;
-  const canCreateCloud = selectedProject.length > 0 && isEnvSelected;
+  const canCreateCloud = selectedProject.length > 0;
 
   const SHOW_WORKSPACE_BUTTONS = false;
 
@@ -244,10 +316,8 @@ export function WorkspaceCreationButtons({
         </TooltipTrigger>
         <TooltipContent>
           {!selectedProject.length
-            ? "Select an environment first"
-            : !isEnvSelected
-              ? "Switch to environment mode (not repository)"
-              : "Create workspace from selected environment"}
+            ? "Select a repository or environment first"
+            : "Create cloud workspace from the current selection"}
         </TooltipContent>
       </Tooltip>
     </div>

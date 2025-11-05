@@ -818,6 +818,7 @@ function DashboardComponent() {
               teamSlugOrId={teamSlugOrId}
               selectedProject={selectedProject}
               isEnvSelected={isEnvSelected}
+              environments={environmentsQuery.data || null}
             />
 
             <DashboardMainCard
