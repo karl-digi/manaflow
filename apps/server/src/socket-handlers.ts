@@ -971,9 +971,17 @@ export function setupSocketHandlers(
         const {
           teamSlugOrId: requestedTeamSlugOrId,
           environmentId,
+          projectFullName,
+          repoUrl,
+          branch,
           taskId: providedTaskId,
         } = parsed.data;
         const teamSlugOrId = requestedTeamSlugOrId || safeTeam;
+        const workspaceTargetLabel = environmentId
+          ? `environment ${environmentId}`
+          : projectFullName
+            ? `repository ${projectFullName}`
+            : "repository";
 
         const convex = getConvex();
         let taskId: Id<"tasks"> | undefined = providedTaskId;
@@ -1030,7 +1038,7 @@ export function setupSocketHandlers(
           const { postApiSandboxesStart } = await getWwwOpenApiModule();
 
           serverLogger.info(
-            `[create-cloud-workspace] Starting Morph sandbox for environment ${environmentId}`
+            `[create-cloud-workspace] Starting Morph sandbox for ${workspaceTargetLabel}`
           );
 
           const startRes = await postApiSandboxesStart({
@@ -1041,10 +1049,18 @@ export function setupSocketHandlers(
               metadata: {
                 instance: `cmux-workspace-${taskRunId}`,
                 agentName: "cloud-workspace",
+                ...(projectFullName ? { projectFullName } : {}),
               },
               taskRunId,
               taskRunJwt,
-              environmentId,
+              ...(environmentId ? { environmentId } : {}),
+              ...(repoUrl
+                ? {
+                    repoUrl,
+                    ...(branch ? { branch } : {}),
+                    depth: 1,
+                  }
+                : {}),
             },
           });
 
@@ -1101,7 +1117,7 @@ export function setupSocketHandlers(
           });
 
           serverLogger.info(
-            `Cloud workspace created successfully: ${taskId} for environment ${environmentId}`
+            `Cloud workspace created successfully: ${taskId} for ${workspaceTargetLabel}`
           );
         } catch (error) {
           serverLogger.error("Error creating cloud workspace:", error);
