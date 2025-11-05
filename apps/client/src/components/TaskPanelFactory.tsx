@@ -546,9 +546,8 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
     }
 
     case "terminal": {
-      const { rawWorkspaceUrl, TaskRunTerminalPane, selectedRun } = props;
+      const { rawWorkspaceUrl, TaskRunTerminalPane } = props;
       if (!TaskRunTerminalPane) return null;
-      const isCloudWorkspace = Boolean(selectedRun?.isCloudWorkspace);
 
       return panelWrapper(
         <TerminalSquare className="size-3" aria-hidden />,
@@ -557,7 +556,6 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
           <TaskRunTerminalPane
             key={rawWorkspaceUrl ?? "no-workspace"}
             workspaceUrl={rawWorkspaceUrl ?? null}
-            isCloudWorkspace={isCloudWorkspace}
           />
         </div>
       );
