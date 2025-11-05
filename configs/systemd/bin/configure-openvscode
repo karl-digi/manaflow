@@ -16,7 +16,8 @@ case "${VSCODE_THEME:-}" in
     ;;
 esac
 
-SETTINGS=$(jq -n \
+# Default settings that are essential for container functionality
+DEFAULT_SETTINGS=$(jq -n \
   --arg theme "$color" \
   '{
     "workbench.startupEditor": "none",
@@ -45,9 +46,42 @@ user_base="${home}/.openvscode-server"
 user_dir="${user_base}/data/User"
 default_profile_dir="${user_base}/data/User/profiles/default-profile"
 machine_dir="${user_base}/data/Machine"
+user_settings_mount="${home}/.openvscode-server/user-settings"
 
 mkdir -p "${user_dir}" "${default_profile_dir}" "${machine_dir}"
 
-printf '%s' "$SETTINGS" > "${user_dir}/settings.json"
-printf '%s' "$SETTINGS" > "${default_profile_dir}/settings.json"
-printf '%s' "$SETTINGS" > "${machine_dir}/settings.json"
+# Check if user settings were mounted from host
+if [ -f "${user_settings_mount}/settings.json" ]; then
+  echo "Found user VSCode settings, merging with defaults..."
+
+  # Merge user settings with default settings (defaults take precedence)
+  USER_SETTINGS=$(cat "${user_settings_mount}/settings.json")
+  MERGED_SETTINGS=$(echo "$USER_SETTINGS" "$DEFAULT_SETTINGS" | jq -s '.[0] * .[1]')
+
+  printf '%s' "$MERGED_SETTINGS" > "${user_dir}/settings.json"
+  printf '%s' "$MERGED_SETTINGS" > "${default_profile_dir}/settings.json"
+  printf '%s' "$MERGED_SETTINGS" > "${machine_dir}/settings.json"
+
+  # Copy keybindings if present
+  if [ -f "${user_settings_mount}/keybindings.json" ]; then
+    echo "Copying user keybindings..."
+    cp "${user_settings_mount}/keybindings.json" "${user_dir}/keybindings.json"
+    cp "${user_settings_mount}/keybindings.json" "${default_profile_dir}/keybindings.json"
+  fi
+
+  # Copy snippets if present
+  if [ -d "${user_settings_mount}/snippets" ]; then
+    echo "Copying user snippets..."
+    mkdir -p "${user_dir}/snippets"
+    mkdir -p "${default_profile_dir}/snippets"
+    cp -r "${user_settings_mount}/snippets/"* "${user_dir}/snippets/" 2>/dev/null || true
+    cp -r "${user_settings_mount}/snippets/"* "${default_profile_dir}/snippets/" 2>/dev/null || true
+  fi
+
+  echo "User VSCode settings applied successfully"
+else
+  echo "No user VSCode settings found, using defaults..."
+  printf '%s' "$DEFAULT_SETTINGS" > "${user_dir}/settings.json"
+  printf '%s' "$DEFAULT_SETTINGS" > "${default_profile_dir}/settings.json"
+  printf '%s' "$DEFAULT_SETTINGS" > "${machine_dir}/settings.json"
+fi

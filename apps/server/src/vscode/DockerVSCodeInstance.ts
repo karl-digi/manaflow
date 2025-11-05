@@ -11,6 +11,10 @@ import { dockerLogger } from "../utils/fileLogger";
 import { getGitHubTokenFromKeychain } from "../utils/getGitHubToken";
 import { getAuthToken, runWithAuthToken } from "../utils/requestContext";
 import {
+  discoverVSCodeSettings,
+  filterVSCodeSettings,
+} from "../utils/editorSettingsDiscovery";
+import {
   VSCodeInstance,
   type VSCodeInstanceConfig,
   type VSCodeInstanceInfo,
@@ -303,6 +307,65 @@ export class DockerVSCodeInstance extends VSCodeInstance {
       `Container create options: ${JSON.stringify(createOptions)}`
     );
 
+    // Prepare VSCode settings from host
+    let vscodeSettingsPrepared = false;
+    const homeDir = os.homedir();
+    const tempDir = path.join(os.tmpdir(), "cmux-vscode-settings");
+    const tempSettingsDir = path.join(tempDir, this.instanceId);
+
+    try {
+      dockerLogger.info("Discovering VSCode settings from host...");
+      const vscodeSettings = await discoverVSCodeSettings();
+
+      if (vscodeSettings.settingsJson) {
+        dockerLogger.info("Found VSCode settings, preparing for container...");
+        await fs.promises.mkdir(tempSettingsDir, { recursive: true });
+
+        // Filter and write settings.json
+        const filteredSettings = filterVSCodeSettings(
+          vscodeSettings.settingsJson
+        );
+        await fs.promises.writeFile(
+          path.join(tempSettingsDir, "settings.json"),
+          filteredSettings
+        );
+        dockerLogger.info("  Prepared settings.json");
+
+        // Copy keybindings.json if available
+        if (vscodeSettings.keybindingsJson) {
+          await fs.promises.writeFile(
+            path.join(tempSettingsDir, "keybindings.json"),
+            vscodeSettings.keybindingsJson
+          );
+          dockerLogger.info("  Prepared keybindings.json");
+        }
+
+        // Copy snippets if available
+        if (vscodeSettings.snippetsDir) {
+          const targetSnippetsDir = path.join(tempSettingsDir, "snippets");
+          await fs.promises.mkdir(targetSnippetsDir, { recursive: true });
+
+          const snippetFiles = await fs.promises.readdir(
+            vscodeSettings.snippetsDir
+          );
+          for (const file of snippetFiles) {
+            const sourcePath = path.join(vscodeSettings.snippetsDir, file);
+            const targetPath = path.join(targetSnippetsDir, file);
+            await fs.promises.copyFile(sourcePath, targetPath);
+          }
+          dockerLogger.info(
+            `  Prepared ${snippetFiles.length} snippet file(s)`
+          );
+        }
+
+        vscodeSettingsPrepared = true;
+      } else {
+        dockerLogger.info("No VSCode settings found on host, using defaults");
+      }
+    } catch (error) {
+      dockerLogger.warn("Failed to prepare VSCode settings:", error);
+    }
+
     // Add volume mount if workspace path is provided
     if (this.config.workspacePath) {
       // Extract the origin path from the workspace path
@@ -319,7 +382,6 @@ export class DockerVSCodeInstance extends VSCodeInstance {
         ].join("/");
 
         // Get the user's home directory for git config
-        const homeDir = os.homedir();
         const gitConfigPath = path.join(homeDir, ".gitconfig");
 
         const binds =
@@ -369,6 +431,16 @@ export class DockerVSCodeInstance extends VSCodeInstance {
         } catch {
           // Git config doesn't exist, which is fine
           dockerLogger.info(`  No git config found at ${gitConfigPath}`);
+        }
+
+        // Mount VSCode settings if prepared
+        if (vscodeSettingsPrepared) {
+          binds.push(
+            `${tempSettingsDir}:/root/.openvscode-server/user-settings:ro`
+          );
+          dockerLogger.info(
+            `  VSCode settings mount: ${tempSettingsDir} -> /root/.openvscode-server/user-settings (read-only)`
+          );
         }
 
         createOptions.HostConfig!.Binds = binds;
@@ -438,6 +510,16 @@ export class DockerVSCodeInstance extends VSCodeInstance {
         } catch {
           // Git config doesn't exist, which is fine
           dockerLogger.info(`  No git config found at ${gitConfigPath}`);
+        }
+
+        // Mount VSCode settings if prepared
+        if (vscodeSettingsPrepared) {
+          binds.push(
+            `${tempSettingsDir}:/root/.openvscode-server/user-settings:ro`
+          );
+          dockerLogger.info(
+            `  VSCode settings mount: ${tempSettingsDir} -> /root/.openvscode-server/user-settings (read-only)`
+          );
         }
 
         createOptions.HostConfig!.Binds = binds;
@@ -722,6 +804,19 @@ export class DockerVSCodeInstance extends VSCodeInstance {
       dockerLogger.info(`Cleaned up temporary git config file`);
     } catch {
       // File might not exist, which is fine
+    }
+
+    // Clean up VSCode settings temp directory
+    try {
+      const tempSettingsDir = path.join(
+        os.tmpdir(),
+        "cmux-vscode-settings",
+        this.instanceId
+      );
+      await fs.promises.rm(tempSettingsDir, { recursive: true, force: true });
+      dockerLogger.info(`Cleaned up temporary VSCode settings directory`);
+    } catch {
+      // Directory might not exist, which is fine
     }
 
     // Clean up git credentials file if we created one
