@@ -509,7 +509,7 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
               src={workspaceUrl}
               className="flex h-full"
               iframeClassName={clsx("select-none")}
-              persistentWrapperClassName={isExpanded ? "z-[var(----z-maximized-iframe)]" : undefined}
+              persistentWrapperClassName={isExpanded ? "z-[var(--z-maximized-iframe)]" : undefined}
               allow={TASK_RUN_IFRAME_ALLOW}
               sandbox={TASK_RUN_IFRAME_SANDBOX}
               preflight={!disablePreflight}
