@@ -20,6 +20,10 @@ type RectanglePayload = {
   height: number;
 };
 
+type QuitPromptPayload = {
+  reason?: string;
+};
+
 type LogListener = (entry: ElectronMainLogMessage) => void;
 const mainLogListeners = new Set<LogListener>();
 
@@ -158,6 +162,36 @@ const cmuxAPI = {
       ipcRenderer.invoke("cmux:auto-update:install") as Promise<{
         ok: boolean;
         reason?: string;
+      }>,
+  },
+  quit: {
+    onPromptRequest: (callback: (payload: QuitPromptPayload) => void) => {
+      const channel = "cmux:quit:prompt";
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        payload: QuitPromptPayload | undefined
+      ) => {
+        callback(payload ?? {});
+      };
+      ipcRenderer.on(channel, listener);
+      return () => {
+        ipcRenderer.removeListener(channel, listener);
+      };
+    },
+    respond: (payload: { confirmed: boolean; disablePrompt?: boolean }) => {
+      return ipcRenderer.invoke("cmux:quit:respond", payload) as Promise<{
+        ok: boolean;
+      }>;
+    },
+    getPromptEnabled: () =>
+      ipcRenderer.invoke("cmux:quit:get-prompt-enabled") as Promise<{
+        ok: boolean;
+        promptEnabled: boolean;
+      }>,
+    setPromptEnabled: (enabled: boolean) =>
+      ipcRenderer.invoke("cmux:quit:set-prompt-enabled", enabled) as Promise<{
+        ok: boolean;
+        promptEnabled: boolean;
       }>,
   },
   webContentsView: {

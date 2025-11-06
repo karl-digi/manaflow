@@ -77,6 +77,20 @@ let logsDir: string | null = null;
 let mainLogPath: string | null = null;
 let rendererLogPath: string | null = null;
 
+const UI_PREFERENCES_FILENAME = "ui-preferences.json";
+type UIPreferences = {
+  quitPromptEnabled?: boolean;
+};
+
+const isMac = process.platform === "darwin";
+const defaultQuitPromptEnabled = isMac;
+
+let uiPreferencesPath: string | null = null;
+let uiPreferences: UIPreferences = {};
+let quitPromptEnabled = defaultQuitPromptEnabled;
+let quitPromptInFlight = false;
+let quitConfirmedForThisQuit = false;
+
 const LOG_ROTATION: LogRotationOptions = {
   maxBytes: 5 * 1024 * 1024,
   maxBackups: 3,
@@ -223,6 +237,137 @@ export function mainError(...args: unknown[]) {
   emitToRenderer("error", `[MAIN] ${line}`);
 }
 
+function getUiPreferencesPath(): string | null {
+  if (uiPreferencesPath) return uiPreferencesPath;
+  try {
+    const base = app.getPath("userData");
+    uiPreferencesPath = join(base, UI_PREFERENCES_FILENAME);
+    return uiPreferencesPath;
+  } catch (error) {
+    mainWarn("Failed to resolve UI preferences path", error);
+    return null;
+  }
+}
+
+async function loadUiPreferences(): Promise<void> {
+  if (!isMac) return;
+  const prefsPath = getUiPreferencesPath();
+  if (!prefsPath) return;
+  try {
+    const raw = await fs.readFile(prefsPath, "utf8");
+    const parsed = JSON.parse(raw) as UIPreferences;
+    if (parsed && typeof parsed === "object") {
+      uiPreferences = parsed;
+      const stored = parsed.quitPromptEnabled;
+      if (typeof stored === "boolean") {
+        quitPromptEnabled = stored;
+      }
+    }
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code !== "ENOENT") {
+      mainWarn("Failed to load UI preferences", error);
+    }
+    uiPreferences = {};
+  }
+  if (typeof uiPreferences.quitPromptEnabled !== "boolean") {
+    uiPreferences.quitPromptEnabled = quitPromptEnabled;
+  }
+}
+
+async function persistUiPreferences(): Promise<void> {
+  if (!isMac) return;
+  const prefsPath = getUiPreferencesPath();
+  if (!prefsPath) return;
+  try {
+    await fs.writeFile(prefsPath, JSON.stringify(uiPreferences, null, 2), "utf8");
+  } catch (error) {
+    mainWarn("Failed to persist UI preferences", error);
+  }
+}
+
+async function updateQuitPromptPreference(enabled: boolean): Promise<void> {
+  if (!isMac) return;
+  const next = Boolean(enabled);
+  if (quitPromptEnabled === next) return;
+  quitPromptEnabled = next;
+  uiPreferences.quitPromptEnabled = next;
+  await persistUiPreferences();
+}
+
+function focusMainWindowForQuitPrompt(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  try {
+    if (isMac) app.show();
+  } catch {
+    // ignore inability to show app (e.g., not supported on platform)
+  }
+  try {
+    mainWindow.show();
+    mainWindow.focus();
+    mainWindow.webContents.focus();
+  } catch (error) {
+    mainWarn("Failed to focus main window for quit prompt", error);
+  }
+}
+
+async function showNativeQuitConfirmationDialog(): Promise<void> {
+  try {
+    const { response, checkboxChecked } = await dialog.showMessageBox({
+      type: "question",
+      buttons: ["Cancel", "Quit"],
+      defaultId: 0,
+      cancelId: 0,
+      message: "Quit cmux?",
+      detail: "Quitting will close all windows and stop active sessions.",
+      checkboxLabel: "Always quit without asking",
+      checkboxChecked: !quitPromptEnabled,
+    });
+
+    if (typeof checkboxChecked === "boolean") {
+      await updateQuitPromptPreference(!checkboxChecked);
+    }
+
+    quitPromptInFlight = false;
+
+    if (response === 1) {
+      quitConfirmedForThisQuit = true;
+      app.quit();
+    } else {
+      focusMainWindowForQuitPrompt();
+    }
+  } catch (error) {
+    quitPromptInFlight = false;
+    mainWarn("Failed to show native quit confirmation dialog", error);
+  }
+}
+
+function triggerQuitConfirmationPrompt(): void {
+  if (!isMac) {
+    quitPromptInFlight = false;
+    return;
+  }
+
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    void showNativeQuitConfirmationDialog();
+    return;
+  }
+
+  focusMainWindowForQuitPrompt();
+
+  if (!rendererLoaded) {
+    void showNativeQuitConfirmationDialog();
+    return;
+  }
+
+  try {
+    mainWindow.webContents.send("cmux:quit:prompt", { reason: "before-quit" });
+  } catch (error) {
+    mainWarn("Failed to send quit prompt to renderer", error);
+    void showNativeQuitConfirmationDialog();
+  }
+}
+
 function sendShortcutToFocusedWindow(
   eventName: string,
   payload?: unknown
@@ -254,6 +399,39 @@ function setPreviewReloadMenuVisibility(visible: boolean): void {
 ipcMain.on("cmux:get-current-webcontents-id", (event) => {
   event.returnValue = event.sender.id;
 });
+
+ipcMain.handle("cmux:quit:get-prompt-enabled", async () => {
+  return { ok: true as const, promptEnabled: quitPromptEnabled };
+});
+
+ipcMain.handle(
+  "cmux:quit:set-prompt-enabled",
+  async (_event, enabled: unknown) => {
+    await updateQuitPromptPreference(Boolean(enabled));
+    return { ok: true as const, promptEnabled: quitPromptEnabled };
+  }
+);
+
+ipcMain.handle(
+  "cmux:quit:respond",
+  async (
+    _event,
+    payload: { confirmed?: boolean; disablePrompt?: boolean } | undefined
+  ) => {
+    const confirmed = Boolean(payload?.confirmed);
+    if (typeof payload?.disablePrompt === "boolean") {
+      await updateQuitPromptPreference(!payload.disablePrompt);
+    }
+    quitPromptInFlight = false;
+    if (confirmed) {
+      quitConfirmedForThisQuit = true;
+      app.quit();
+    } else {
+      focusMainWindowForQuitPrompt();
+    }
+    return { ok: true as const };
+  }
+);
 
 ipcMain.handle(
   "cmux:ui:set-preview-reload-visible",
@@ -703,9 +881,30 @@ app.on("open-url", (_event, url) => {
   handleOrQueueProtocolUrl(url);
 });
 
+app.on("before-quit", (event) => {
+  if (!isMac) return;
+  if (quitConfirmedForThisQuit) return;
+  if (!quitPromptEnabled) return;
+
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  event.preventDefault();
+
+  if (quitPromptInFlight) {
+    focusMainWindowForQuitPrompt();
+    return;
+  }
+
+  quitPromptInFlight = true;
+  triggerQuitConfirmationPrompt();
+});
+
 app.whenReady().then(async () => {
   ensureLogFiles();
   setupConsoleFileMirrors();
+  await loadUiPreferences();
   const disposeContextMenu = registerGlobalContextMenu();
   app.once("will-quit", () => {
     try {

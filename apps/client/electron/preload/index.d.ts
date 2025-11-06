@@ -42,6 +42,12 @@ declare global {
           }>;
         install: () => Promise<{ ok: boolean; reason?: string }>;
       };
+      quit: {
+        onPromptRequest: (callback: (payload: { reason?: string }) => void) => () => void;
+        respond: (payload: { confirmed: boolean; disablePrompt?: boolean }) => Promise<{ ok: boolean }>;
+        getPromptEnabled: () => Promise<{ ok: boolean; promptEnabled: boolean }>;
+        setPromptEnabled: (enabled: boolean) => Promise<{ ok: boolean; promptEnabled: boolean }>;
+      };
     };
   }
 }
