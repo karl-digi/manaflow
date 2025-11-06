@@ -8,6 +8,7 @@ import {
   localVSCodeServeWebQueryOptions,
   useLocalVSCodeServeWebQuery,
 } from "@/queries/local-vscode-serve-web";
+import { QuitConfirmDialog } from "@/components/QuitConfirmDialog";
 
 export const Route = createFileRoute("/_layout")({
   component: Layout,
@@ -36,6 +37,7 @@ function Layout() {
   return (
     <ConvexClientProvider>
       <RealSocketProvider>
+        <QuitConfirmDialog />
         <Outlet />
       </RealSocketProvider>
     </ConvexClientProvider>

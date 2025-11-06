@@ -133,6 +133,11 @@ const cmuxAPI = {
         queued?: boolean;
       }>;
     },
+    confirmQuit: (confirmed: boolean) => {
+      return ipcRenderer.invoke("cmux:ui:confirm-quit", confirmed) as Promise<{
+        ok: boolean;
+      }>;
+    },
   },
   logs: {
     onMainLog: (callback: LogListener) => {

@@ -259,7 +259,18 @@ export function initCmdK(opts: {
           return Boolean(input.control);
         })();
 
-        if (!isCmdK && !isSidebarToggle) return;
+        const isQuitRequested = (() => {
+          if (input.key.toLowerCase() !== "q") return false;
+          if (input.alt || input.shift) return false;
+          if (isMac) {
+            // Require meta only on mac
+            return Boolean(input.meta) && !input.control;
+          }
+          // Non-mac: require ctrl
+          return Boolean(input.control) && !input.meta;
+        })();
+
+        if (!isCmdK && !isSidebarToggle && !isQuitRequested) return;
 
         // Prevent default to avoid in-app conflicts and ensure single toggle
         e.preventDefault();
@@ -272,6 +283,27 @@ export function initCmdK(opts: {
             null
           );
         };
+
+        if (isQuitRequested) {
+          keyDebug("quit-requested-detected", {
+            sourceId: contents.id,
+            type: contents.getType?.(),
+          });
+          const targetWin = getTargetWindow();
+          if (targetWin && !targetWin.isDestroyed()) {
+            try {
+              targetWin.webContents.send("cmux:event:shortcut:quit-requested");
+              keyDebug("emit-quit-requested", {
+                to: targetWin.webContents.id,
+                from: contents.id,
+              });
+            } catch (err) {
+              opts.logger.warn("Failed to emit quit requested shortcut", err);
+              keyDebug("emit-quit-requested-error", { err: String(err) });
+            }
+          }
+          return;
+        }
 
         if (isSidebarToggle) {
           keyDebug("sidebar-toggle-detected", {

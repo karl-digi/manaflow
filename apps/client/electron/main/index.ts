@@ -375,6 +375,24 @@ function registerLogIpcHandlers(): void {
   });
 }
 
+function registerQuitIpcHandlers(): void {
+  ipcMain.handle("cmux:ui:confirm-quit", async (_evt, confirmed: boolean) => {
+    try {
+      if (confirmed) {
+        mainLog("User confirmed quit, quitting application");
+        app.quit();
+        return { ok: true };
+      }
+      mainLog("User cancelled quit");
+      return { ok: false };
+    } catch (error) {
+      mainWarn("Failed to handle quit confirmation", error);
+      const err = error instanceof Error ? error : new Error(String(error));
+      throw err;
+    }
+  });
+}
+
 function registerAutoUpdateIpcHandlers(): void {
   ipcMain.handle("cmux:auto-update:check", async () => {
     if (!app.isPackaged) {
@@ -716,6 +734,7 @@ app.whenReady().then(async () => {
   });
   registerLogIpcHandlers();
   registerAutoUpdateIpcHandlers();
+  registerQuitIpcHandlers();
   initCmdK({
     getMainWindow: () => mainWindow,
     logger: {
