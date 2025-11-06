@@ -18,7 +18,7 @@ type QuitPromptPayload = {
 const overlayClass =
   "fixed inset-0 bg-neutral-950/50 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out data-[state=open]:fade-in";
 const contentClass = cn(
-  "fixed left-1/2 top-1/2 w-[min(90vw,380px)] -translate-x-1/2 -translate-y-1/2",
+  "fixed left-1/2 top-1/2 w-[min(90vw,440px)] -translate-x-1/2 -translate-y-1/2",
   "rounded-xl border border-neutral-200 bg-white p-6 shadow-xl focus-visible:outline-none dark:border-neutral-800 dark:bg-neutral-900",
   "data-[state=open]:animate-in data-[state=open]:fade-in data-[state=open]:zoom-in data-[state=closed]:animate-out data-[state=closed]:fade-out data-[state=closed]:zoom-out"
 );
@@ -118,42 +118,43 @@ export function QuitConfirmationDialog() {
             the cloud. Do you want to quit?
           </Dialog.Description>
 
-          <label
-            htmlFor={checkboxId}
-            className="mt-6 flex items-center gap-3 text-sm text-neutral-700 dark:text-neutral-300"
-          >
-            <input
-              id={checkboxId}
-              name="quit-preference"
-              type="checkbox"
-              checked={alwaysQuit}
-              onChange={handleCheckboxChange}
-              className="size-4 rounded border border-neutral-300 text-primary shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary dark:border-neutral-700 dark:bg-neutral-800"
-            />
-            <span>Always quit without asking</span>
-          </label>
+          <div className="mt-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <label
+              htmlFor={checkboxId}
+              className="flex items-center gap-3 text-sm text-neutral-700 dark:text-neutral-300"
+            >
+              <input
+                id={checkboxId}
+                name="quit-preference"
+                type="checkbox"
+                checked={alwaysQuit}
+                onChange={handleCheckboxChange}
+                className="size-4 rounded border border-neutral-300 text-primary shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary dark:border-neutral-700 dark:bg-neutral-800"
+              />
+              <span>Always quit without asking</span>
+            </label>
 
-          <div className="mt-8 flex justify-end gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={handleCancel}
-              disabled={isSubmitting}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              onClick={handleQuit}
-              disabled={isSubmitting}
-            >
-              Quit
-            </Button>
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleCancel}
+                disabled={isSubmitting}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                onClick={handleQuit}
+                disabled={isSubmitting}
+              >
+                Quit
+              </Button>
+            </div>
           </div>
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
   );
 }
-
