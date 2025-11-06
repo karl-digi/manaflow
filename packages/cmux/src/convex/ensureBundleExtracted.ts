@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { logger } from "../logger";
 import { spawn } from "node:child_process";
+import { fetchLatestGitHubRelease, normalizeVersion } from "../utils/githubReleaseUtils";
 
 // @ts-expect-error this is a real file bundled at build time
 import cmux_bundle_zip from "../assets/cmux-bundle.zip" with { type: "file" };
@@ -11,6 +12,7 @@ import cmux_bundle_zip from "../assets/cmux-bundle.zip" with { type: "file" };
 export interface EnsureResult {
   didExtract: boolean;
   bundleVersion: string;
+  githubVersion?: string;
 }
 
 export async function ensureBundleExtracted(convexDir: string): Promise<EnsureResult> {
@@ -38,8 +40,72 @@ export async function ensureBundleExtracted(convexDir: string): Promise<EnsureRe
     throw error;
   }
   const bundlePackageJson = JSON.parse(await fs.readFile(path.join(tempVersionCheckDir, "package.json"), "utf8"));
-  const bundleVersion: string = bundlePackageJson.version;
+  let bundleVersion: string = bundlePackageJson.version;
   await fs.rm(tempVersionCheckDir, { recursive: true, force: true });
+
+  // Check for GitHub updates if auto-update is enabled
+  let githubVersion: string | undefined;
+  let githubZipPath: string | undefined;
+  const autoUpdate = process.env.CMUX_AUTO_UPDATE === "true" || process.env.CMUX_AUTO_UPDATE === "1";
+
+  if (autoUpdate) {
+    await logger.info("Auto-update enabled, checking GitHub for latest release...");
+    const latestRelease = await fetchLatestGitHubRelease(true); // Include draft releases
+
+    if (latestRelease) {
+      githubVersion = normalizeVersion(latestRelease.tag_name);
+      await logger.info(`Latest GitHub release: ${githubVersion} (draft: ${latestRelease.draft})`);
+
+      // Find the cmux-bundle.zip asset
+      const bundleAsset = latestRelease.assets.find(asset =>
+        asset.name === "cmux-bundle.zip"
+      );
+
+      if (bundleAsset && githubVersion !== bundleVersion) {
+        await logger.info(`Newer version available on GitHub: ${githubVersion} (current bundle: ${bundleVersion})`);
+        // Download the new bundle
+        githubZipPath = path.join(os.tmpdir(), `cmux-github-bundle-${Date.now()}.zip`);
+
+        try {
+          await logger.info(`Downloading new version from GitHub: ${bundleAsset.browser_download_url}`);
+          const downloadHeaders: Record<string, string> = {
+            "Accept": "application/octet-stream",
+          };
+          if (process.env.GITHUB_TOKEN) {
+            downloadHeaders["Authorization"] = `Bearer ${process.env.GITHUB_TOKEN}`;
+          }
+
+          const downloadResponse = await fetch(bundleAsset.browser_download_url, {
+            headers: downloadHeaders,
+            redirect: "follow"
+          });
+
+          if (downloadResponse.ok) {
+            const buffer = await downloadResponse.arrayBuffer();
+            await fs.writeFile(githubZipPath, Buffer.from(buffer));
+            await logger.info(`Successfully downloaded GitHub release to ${githubZipPath}`);
+            // Update bundleVersion to the GitHub version for the upgrade process
+            bundleVersion = githubVersion;
+          } else {
+            await logger.error(`Failed to download GitHub release: ${downloadResponse.status}`);
+            githubZipPath = undefined;
+          }
+        } catch (error) {
+          await logger.error(`Error downloading GitHub release: ${error}`);
+          githubZipPath = undefined;
+        }
+      } else if (githubVersion === bundleVersion) {
+        await logger.info(`Already at latest GitHub version: ${githubVersion}`);
+      } else if (!bundleAsset) {
+        await logger.info(`No cmux-bundle.zip found in GitHub release ${githubVersion}`);
+      }
+    } else {
+      await logger.info("Could not fetch latest GitHub release");
+    }
+  }
+
+  // Use GitHub zip if available, otherwise use embedded bundle
+  const zipToUse = githubZipPath || tempZipPath;
 
   // Decide whether to extract
   let shouldExtract = false;
@@ -64,7 +130,7 @@ export async function ensureBundleExtracted(convexDir: string): Promise<EnsureRe
   if (shouldExtract) {
     await logger.info("Extracting cmux bundle...");
     const tempExtractDir = path.join(os.tmpdir(), `cmux-extract-${Date.now()}`);
-    await $`unzip -q -o ${tempZipPath} -d ${tempExtractDir}`.quiet();
+    await $`unzip -q -o ${zipToUse} -d ${tempExtractDir}`.quiet();
 
     if (isUpgrade) {
       await logger.info("Upgrading cmux, preserving user data...");
@@ -118,7 +184,15 @@ export async function ensureBundleExtracted(convexDir: string): Promise<EnsureRe
     await logger.info(`Saved version ${bundleVersion}`);
   }
 
+  // Cleanup temp files
   await fs.unlink(tempZipPath);
+  if (githubZipPath) {
+    try {
+      await fs.unlink(githubZipPath);
+    } catch (error) {
+      await logger.error(`Failed to cleanup GitHub zip: ${error}`);
+    }
+  }
 
-  return { didExtract: shouldExtract, bundleVersion };
+  return { didExtract: shouldExtract, bundleVersion, githubVersion };
 }

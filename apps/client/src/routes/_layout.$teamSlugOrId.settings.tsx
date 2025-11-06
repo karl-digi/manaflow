@@ -40,6 +40,9 @@ function SettingsComponent() {
   const [autoPrEnabled, setAutoPrEnabled] = useState<boolean>(false);
   const [originalAutoPrEnabled, setOriginalAutoPrEnabled] =
     useState<boolean>(false);
+  const [autoUpdateToLatest, setAutoUpdateToLatest] = useState<boolean>(false);
+  const [originalAutoUpdateToLatest, setOriginalAutoUpdateToLatest] =
+    useState<boolean>(false);
   // const [isSaveButtonVisible, setIsSaveButtonVisible] = useState(true);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const saveButtonRef = useRef<HTMLDivElement>(null);
@@ -145,6 +148,12 @@ function SettingsComponent() {
       const effective = enabled === undefined ? false : Boolean(enabled);
       setAutoPrEnabled(effective);
       setOriginalAutoPrEnabled(effective);
+      const autoUpdate = (
+        workspaceSettings as unknown as { autoUpdateToLatest?: boolean }
+      )?.autoUpdateToLatest;
+      const effectiveAutoUpdate = autoUpdate === undefined ? false : Boolean(autoUpdate);
+      setAutoUpdateToLatest(effectiveAutoUpdate);
+      setOriginalAutoUpdateToLatest(effectiveAutoUpdate);
     }
   }, [workspaceSettings]);
 
@@ -244,9 +253,13 @@ function SettingsComponent() {
     // Auto PR toggle changes
     const autoPrChanged = autoPrEnabled !== originalAutoPrEnabled;
 
+    // Auto update toggle changes
+    const autoUpdateChanged = autoUpdateToLatest !== originalAutoUpdateToLatest;
+
     return (
       worktreePathChanged ||
       autoPrChanged ||
+      autoUpdateChanged ||
       apiKeysChanged ||
       containerSettingsChanged
     );
@@ -259,18 +272,21 @@ function SettingsComponent() {
       let savedCount = 0;
       let deletedCount = 0;
 
-      // Save worktree path / auto PR if changed
+      // Save worktree path / auto PR / auto update if changed
       if (
         worktreePath !== originalWorktreePath ||
-        autoPrEnabled !== originalAutoPrEnabled
+        autoPrEnabled !== originalAutoPrEnabled ||
+        autoUpdateToLatest !== originalAutoUpdateToLatest
       ) {
         await convex.mutation(api.workspaceSettings.update, {
           teamSlugOrId,
           worktreePath: worktreePath || undefined,
           autoPrEnabled,
+          autoUpdateToLatest,
         });
         setOriginalWorktreePath(worktreePath);
         setOriginalAutoPrEnabled(autoPrEnabled);
+        setOriginalAutoUpdateToLatest(autoUpdateToLatest);
       }
 
       // Save container settings if changed
@@ -628,7 +644,7 @@ function SettingsComponent() {
                     </label>
                     <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
                       When enabled, cmux automatically creates a pull request
-                      for the winning model’s code diff.
+                      for the winning model's code diff.
                     </p>
                   </div>
                   <Switch
@@ -638,6 +654,73 @@ function SettingsComponent() {
                     isSelected={autoPrEnabled}
                     onValueChange={setAutoPrEnabled}
                   />
+                </div>
+              </div>
+            </div>
+
+            {/* Auto-Update Settings */}
+            <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
+              <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
+                <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                  Auto-Update
+                </h2>
+              </div>
+              <div className="p-4 space-y-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex-1">
+                    <label className="block text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                      Auto-update to latest GitHub release
+                    </label>
+                    <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                      When enabled, cmux automatically updates to the latest version
+                      from GitHub releases on startup, including draft releases that
+                      haven't been officially released yet.
+                    </p>
+                  </div>
+                  <Switch
+                    aria-label="Auto-update to latest GitHub release"
+                    size="sm"
+                    color="primary"
+                    isSelected={autoUpdateToLatest}
+                    onValueChange={setAutoUpdateToLatest}
+                  />
+                </div>
+                <div className="rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 p-3">
+                  <div className="flex gap-2">
+                    <svg
+                      className="w-4 h-4 text-blue-600 dark:text-blue-400 mt-0.5 flex-shrink-0"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                      />
+                    </svg>
+                    <div className="text-xs text-blue-700 dark:text-blue-300 space-y-2">
+                      <p className="font-medium">How to enable auto-update:</p>
+                      <ol className="list-decimal ml-4 space-y-1">
+                        <li>
+                          Save this setting, then set the environment variable:
+                          <code className="block mt-1 px-2 py-1 bg-blue-100 dark:bg-blue-900/50 rounded font-mono text-[11px]">
+                            export CMUX_AUTO_UPDATE=true
+                          </code>
+                        </li>
+                        <li>
+                          (Optional) For draft releases, set your GitHub token:
+                          <code className="block mt-1 px-2 py-1 bg-blue-100 dark:bg-blue-900/50 rounded font-mono text-[11px]">
+                            export GITHUB_TOKEN=your_token_here
+                          </code>
+                        </li>
+                        <li>
+                          Restart cmux. It will check for updates on every startup.
+                        </li>
+                      </ol>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
