@@ -28,7 +28,7 @@ import type { ProviderStatusResponse, TaskAcknowledged, TaskError, TaskStarted }
 import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
 import { convexQuery } from "@convex-dev/react-query";
 import { useQuery } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useMutation } from "convex/react";
 import { Server as ServerIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -51,6 +51,8 @@ const DEFAULT_AGENT_SELECTION = DEFAULT_AGENTS.filter((agent) =>
 );
 
 const AGENT_SELECTION_SCHEMA = z.array(z.string());
+
+const CLOUD_REPO_ENV_ONBOARDING_KEY = "hasSeenCloudRepoEnvironmentOnboarding";
 
 const filterKnownAgents = (agents: string[]): string[] =>
   agents.filter((agent) => KNOWN_AGENT_NAMES.has(agent));
@@ -78,6 +80,7 @@ const parseStoredAgentSelection = (stored: string | null): string[] => {
 function DashboardComponent() {
   const { teamSlugOrId } = Route.useParams();
   const searchParams = Route.useSearch() as { environmentId?: string };
+  const router = useRouter();
   const { socket } = useSocket();
   const { theme } = useTheme();
   const { addTaskToExpand } = useExpandTasks();
@@ -150,6 +153,37 @@ function DashboardComponent() {
       localStorage.setItem("isCloudMode", JSON.stringify(true));
     }
   }, [searchParams?.environmentId]);
+
+  useEffect(() => {
+    if (!isCloudMode) return;
+    const repoFullName = selectedProject[0];
+    if (!repoFullName || repoFullName.startsWith("env:")) return;
+    if (localStorage.getItem(CLOUD_REPO_ENV_ONBOARDING_KEY) === "true") return;
+
+    localStorage.setItem(CLOUD_REPO_ENV_ONBOARDING_KEY, "true");
+    toast("Environments turbocharge cloud repos", {
+      id: "cloud-repo-onboarding",
+      description:
+        "Set up env vars and startup scripts once so every cloud workspace is ready to go.",
+      action: {
+        label: "Create environment",
+        onClick: () => {
+          void router.navigate({
+            to: "/$teamSlugOrId/environments/new",
+            params: { teamSlugOrId },
+            search: {
+              step: undefined,
+              selectedRepos: undefined,
+              connectionLogin: undefined,
+              repoSearch: undefined,
+              instanceId: undefined,
+              snapshotId: undefined,
+            },
+          });
+        },
+      },
+    });
+  }, [isCloudMode, selectedProject, router, teamSlugOrId]);
 
   // Callback for task description changes
   const handleTaskDescriptionChange = useCallback((value: string) => {
