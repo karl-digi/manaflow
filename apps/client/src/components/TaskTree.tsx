@@ -6,6 +6,7 @@ import {
 } from "@/components/ui/tooltip";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { useArchiveTask } from "@/hooks/useArchiveTask";
+import { useArchiveTaskRun } from "@/hooks/useArchiveTaskRun";
 import { useOpenWithActions } from "@/hooks/useOpenWithActions";
 import { isElectron } from "@/lib/electron";
 import { isFakeConvexId } from "@/lib/fakeConvexId";
@@ -1023,6 +1024,8 @@ function TaskRunTreeInner({
     networking: run.networking,
   });
 
+  const { archive: archiveRun, unarchive: unarchiveRun } = useArchiveTaskRun(teamSlugOrId);
+
   const shouldRenderDiffLink = true;
   const shouldRenderBrowserLink = run.vscode?.provider === "morph";
   const shouldRenderTerminalLink = shouldRenderBrowserLink;
@@ -1155,6 +1158,24 @@ function TaskRunTreeInner({
               >
                 {isExpanded ? "Collapse details" : "Expand details"}
               </ContextMenu.Item>
+              <div className="my-1 h-px bg-neutral-200 dark:bg-neutral-700" />
+              {run.isArchived ? (
+                <ContextMenu.Item
+                  className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                  onClick={() => unarchiveRun(run._id)}
+                >
+                  <ArchiveRestoreIcon className="w-3.5 h-3.5" />
+                  Unarchive run
+                </ContextMenu.Item>
+              ) : (
+                <ContextMenu.Item
+                  className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                  onClick={() => archiveRun(run._id)}
+                >
+                  <ArchiveIcon className="w-3.5 h-3.5" />
+                  Archive run
+                </ContextMenu.Item>
+              )}
             </ContextMenu.Popup>
           </ContextMenu.Positioner>
         </ContextMenu.Portal>

@@ -196,6 +196,7 @@ const convexSchema = defineSchema({
     environmentId: v.optional(v.id("environments")),
     isCrowned: v.optional(v.boolean()), // Whether this run won the crown evaluation
     crownReason: v.optional(v.string()), // LLM's reasoning for why this run was crowned
+    isArchived: v.optional(v.boolean()), // Whether this run is archived
     pullRequestUrl: v.optional(v.string()), // URL of the PR
     pullRequestIsDraft: v.optional(v.boolean()), // Whether the PR is a draft
     pullRequestState: v.optional(
