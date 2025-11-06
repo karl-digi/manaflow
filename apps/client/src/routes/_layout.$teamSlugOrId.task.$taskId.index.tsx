@@ -198,8 +198,6 @@ function EmptyPanelSlot({
   availablePanels,
   onAddPanel,
 }: EmptyPanelSlotProps) {
-  const [isOpen, setIsOpen] = useState(false);
-
   const getPanelIcon = (panelType: PanelType) => {
     switch (panelType) {
       case "chat":
@@ -217,44 +215,29 @@ function EmptyPanelSlot({
 
   return (
     <div className="flex h-full flex-col overflow-hidden rounded-lg border border-dashed border-neutral-300 bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900">
-      <div className="flex h-full items-center justify-center p-4">
+      <div className="flex h-full flex-col items-center justify-center gap-4 p-4">
         {availablePanels.length > 0 ? (
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setIsOpen(!isOpen)}
-              className="flex items-center gap-2 rounded-lg border border-neutral-300 bg-white px-4 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50 dark:border-neutral-600 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700 transition-colors"
-            >
+          <>
+            <div className="flex items-center gap-2 text-sm font-medium text-neutral-700 dark:text-neutral-200">
               <Plus className="size-4" />
               Add Panel
-            </button>
-            {isOpen && (
-              <>
-                <div
-                  className="fixed inset-0 z-[var(--z-overlay)]"
-                  onClick={() => setIsOpen(false)}
-                />
-                <div className="absolute left-0 top-full z-[var(--z-popover)] mt-2 w-48 rounded-lg border border-neutral-200 bg-white shadow-lg dark:border-neutral-700 dark:bg-neutral-800">
-                  {availablePanels.map((panelType) => (
-                    <button
-                      key={panelType}
-                      type="button"
-                      onClick={() => {
-                        onAddPanel(position, panelType);
-                        setIsOpen(false);
-                      }}
-                      className="flex w-full items-center gap-3 px-4 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-700 first:rounded-t-lg last:rounded-b-lg transition-colors"
-                    >
-                      <div className="flex size-5 items-center justify-center rounded-full bg-neutral-200 text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200">
-                        {getPanelIcon(panelType)}
-                      </div>
-                      {PANEL_LABELS[panelType]}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
+            </div>
+            <div className="w-full max-w-xs rounded-lg border border-neutral-200 bg-white shadow-sm dark:border-neutral-700 dark:bg-neutral-800">
+              {availablePanels.map((panelType) => (
+                <button
+                  key={panelType}
+                  type="button"
+                  onClick={() => onAddPanel(position, panelType)}
+                  className="flex w-full items-center gap-3 px-4 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-100 first:rounded-t-lg last:rounded-b-lg transition-colors dark:text-neutral-200 dark:hover:bg-neutral-700"
+                >
+                  <div className="flex size-5 items-center justify-center rounded-full bg-neutral-200 text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200">
+                    {getPanelIcon(panelType)}
+                  </div>
+                  {PANEL_LABELS[panelType]}
+                </button>
+              ))}
+            </div>
+          </>
         ) : (
           <p className="text-sm text-neutral-500 dark:text-neutral-400">
             All panels are in use
