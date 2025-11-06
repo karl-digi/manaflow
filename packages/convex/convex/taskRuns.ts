@@ -130,7 +130,10 @@ async function fetchTaskRunsForTask(
     .query("taskRuns")
     .withIndex("by_task", (q) => q.eq("taskId", taskId))
     .filter(
-      (q) => q.eq(q.field("teamId"), teamId) && q.eq(q.field("userId"), userId),
+      (q) =>
+        q.eq(q.field("teamId"), teamId) &&
+        q.eq(q.field("userId"), userId) &&
+        q.neq(q.field("isArchived"), true),
     )
     .collect();
 
@@ -1429,5 +1432,47 @@ export const getRunningContainersByCleanupPriority = authQuery({
       ],
       protectedCount: containersToKeepIds.size,
     };
+  },
+});
+
+// Archive a task run
+export const archive = authMutation({
+  args: { teamSlugOrId: v.string(), id: v.id("taskRuns") },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const taskRun = await ctx.db.get(args.id);
+    if (
+      taskRun === null ||
+      taskRun.teamId !== teamId ||
+      taskRun.userId !== userId
+    ) {
+      throw new Error("Task run not found or unauthorized");
+    }
+    await ctx.db.patch(args.id, {
+      isArchived: true,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+// Unarchive a task run
+export const unarchive = authMutation({
+  args: { teamSlugOrId: v.string(), id: v.id("taskRuns") },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const taskRun = await ctx.db.get(args.id);
+    if (
+      taskRun === null ||
+      taskRun.teamId !== teamId ||
+      taskRun.userId !== userId
+    ) {
+      throw new Error("Task run not found or unauthorized");
+    }
+    await ctx.db.patch(args.id, {
+      isArchived: false,
+      updatedAt: Date.now(),
+    });
   },
 });
