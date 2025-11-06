@@ -1,8 +1,10 @@
 import { TaskTree } from "@/components/TaskTree";
 import { TaskTreeSkeleton } from "@/components/TaskTreeSkeleton";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
+import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { isElectron } from "@/lib/electron";
 import { type Doc } from "@cmux/convex/dataModel";
+import { matchesShortcut } from "@cmux/shared";
 import type { LinkProps } from "@tanstack/react-router";
 import { Link } from "@tanstack/react-router";
 import { Home, Plus, Server, Settings } from "lucide-react";
@@ -80,6 +82,7 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
   });
 
   const { expandTaskIds } = useExpandTasks();
+  const shortcuts = useKeyboardShortcuts();
 
   useEffect(() => {
     localStorage.setItem("sidebarWidth", String(width));
@@ -89,7 +92,7 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
     localStorage.setItem("sidebarHidden", String(isHidden));
   }, [isHidden]);
 
-  // Keyboard shortcut to toggle sidebar (Ctrl+Shift+S)
+  // Keyboard shortcut to toggle sidebar
   useEffect(() => {
     if (isElectron && window.cmux?.on) {
       const off = window.cmux.on("shortcut:sidebar-toggle", () => {
@@ -101,11 +104,7 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
     }
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (
-        e.ctrlKey &&
-        e.shiftKey &&
-        (e.code === "KeyS" || e.key.toLowerCase() === "s")
-      ) {
+      if (matchesShortcut(e, shortcuts.toggleSidebar)) {
         e.preventDefault();
         setIsHidden((prev) => !prev);
       }
@@ -113,7 +112,7 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [shortcuts.toggleSidebar]);
 
   // Listen for storage events from command bar (sidebar visibility sync)
   useEffect(() => {

@@ -31,6 +31,7 @@ import type * as github_setup from "../github_setup.js";
 import type * as github_webhook from "../github_webhook.js";
 import type * as github_workflows from "../github_workflows.js";
 import type * as http from "../http.js";
+import type * as keyboardShortcuts from "../keyboardShortcuts.js";
 import type * as localWorkspaces from "../localWorkspaces.js";
 import type * as migrations from "../migrations.js";
 import type * as screenshots_http from "../screenshots_http.js";
@@ -87,6 +88,7 @@ declare const fullApi: ApiFromModules<{
   github_webhook: typeof github_webhook;
   github_workflows: typeof github_workflows;
   http: typeof http;
+  keyboardShortcuts: typeof keyboardShortcuts;
   localWorkspaces: typeof localWorkspaces;
   migrations: typeof migrations;
   screenshots_http: typeof screenshots_http;

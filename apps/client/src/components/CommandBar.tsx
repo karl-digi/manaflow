@@ -2,6 +2,7 @@ import { GitHubIcon } from "@/components/icons/github";
 import { useTheme } from "@/components/theme/use-theme";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { useSocket } from "@/contexts/socket/use-socket";
+import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { isElectron } from "@/lib/electron";
 import { copyAllElectronLogs } from "@/lib/electron-logs/electron-logs";
 import { setLastTeamSlugOrId } from "@/lib/lastTeam";
@@ -18,7 +19,11 @@ import type {
   CreateLocalWorkspaceResponse,
   CreateCloudWorkspaceResponse,
 } from "@cmux/shared";
-import { deriveRepoBaseName, generateWorkspaceName } from "@cmux/shared";
+import {
+  deriveRepoBaseName,
+  generateWorkspaceName,
+  matchesShortcut,
+} from "@cmux/shared";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useUser, type Team } from "@stackframe/react";
 import { useNavigate, useRouter } from "@tanstack/react-router";
@@ -197,6 +202,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
   const { addTaskToExpand } = useExpandTasks();
   const { socket } = useSocket();
   const localServeWeb = useLocalVSCodeServeWebQuery();
+  const shortcuts = useKeyboardShortcuts();
   const preloadTeamDashboard = useCallback(
     async (targetTeamSlugOrId: string | undefined) => {
       if (!targetTeamSlugOrId) return;
@@ -776,16 +782,10 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       };
     }
 
-    // Web/non-Electron fallback: local keydown listener for Cmd+K
+    // Web/non-Electron fallback: local keydown listener for command palette shortcut
     const down = (e: KeyboardEvent) => {
-      // Only trigger on EXACT Cmd+K (no Shift/Alt/Ctrl)
-      if (
-        e.key.toLowerCase() === "k" &&
-        e.metaKey &&
-        !e.shiftKey &&
-        !e.altKey &&
-        !e.ctrlKey
-      ) {
+      // Check if the event matches the configured command palette shortcut
+      if (matchesShortcut(e, shortcuts.commandPalette)) {
         e.preventDefault();
         setActivePage("root");
         if (openRef.current) {
@@ -802,7 +802,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     };
     document.addEventListener("keydown", down);
     return () => document.removeEventListener("keydown", down);
-  }, []);
+  }, [shortcuts.commandPalette]);
 
   // Track and restore focus across open/close, including iframes/webviews.
   useEffect(() => {

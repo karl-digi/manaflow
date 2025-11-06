@@ -545,6 +545,19 @@ const convexSchema = defineSchema({
     userId: v.string(),
     teamId: v.string(),
   }).index("by_team_user", ["teamId", "userId"]),
+  keyboardShortcuts: defineTable({
+    // Keyboard shortcut configuration per user/team
+    commandPalette: v.optional(v.string()), // Default: "mod+k"
+    toggleSidebar: v.optional(v.string()), // Default: "ctrl+shift+s"
+    reloadPreview: v.optional(v.string()), // Default: "mod+r"
+    focusPreviewAddressBar: v.optional(v.string()), // Default: "mod+l"
+    previewBack: v.optional(v.string()), // Default: "mod+["
+    previewForward: v.optional(v.string()), // Default: "mod+]"
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    userId: v.string(),
+    teamId: v.string(),
+  }).index("by_team_user", ["teamId", "userId"]),
 
   // System and user comments attached to a task
   taskComments: defineTable({

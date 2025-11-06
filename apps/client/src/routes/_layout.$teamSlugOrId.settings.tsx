@@ -1,11 +1,13 @@
 import { ContainerSettings } from "@/components/ContainerSettings";
 import { FloatingPane } from "@/components/floating-pane";
+import { KeyboardShortcutsSettings } from "@/components/KeyboardShortcutsSettings";
 import { ProviderStatusSettings } from "@/components/provider-status-settings";
 import { useTheme } from "@/components/theme/use-theme";
 import { TitleBar } from "@/components/TitleBar";
 import { api } from "@cmux/convex/api";
 import type { Doc } from "@cmux/convex/dataModel";
 import { AGENT_CONFIGS, type AgentConfig } from "@cmux/shared/agentConfig";
+import { DEFAULT_SHORTCUTS } from "@cmux/shared";
 import { API_KEY_MODELS_BY_ENV } from "@cmux/shared/model-usage";
 import { convexQuery } from "@convex-dev/react-query";
 import { Switch } from "@heroui/react";
@@ -59,6 +61,12 @@ function SettingsComponent() {
   } | null>(null);
   const [originalContainerSettingsData, setOriginalContainerSettingsData] =
     useState<typeof containerSettingsData>(null);
+  const [keyboardShortcuts, setKeyboardShortcuts] = useState<
+    Record<string, string>
+  >({});
+  const [originalKeyboardShortcuts, setOriginalKeyboardShortcuts] = useState<
+    Record<string, string>
+  >({});
 
   // Get all required API keys from agent configs
   const apiKeys = Array.from(
@@ -85,6 +93,11 @@ function SettingsComponent() {
   // Query workspace settings
   const { data: workspaceSettings } = useQuery(
     convexQuery(api.workspaceSettings.get, { teamSlugOrId })
+  );
+
+  // Query keyboard shortcuts
+  const { data: keyboardShortcutsData } = useQuery(
+    convexQuery(api.keyboardShortcuts.get, { teamSlugOrId })
   );
 
   // Initialize form values when data loads
@@ -147,6 +160,28 @@ function SettingsComponent() {
       setOriginalAutoPrEnabled(effective);
     }
   }, [workspaceSettings]);
+
+  // Initialize keyboard shortcuts when data loads
+  useEffect(() => {
+    if (keyboardShortcutsData !== undefined) {
+      const shortcuts: Record<string, string> = {};
+      if (keyboardShortcutsData) {
+        Object.keys(DEFAULT_SHORTCUTS).forEach((key) => {
+          const value = keyboardShortcutsData[
+            key as keyof typeof keyboardShortcutsData
+          ];
+          shortcuts[key] =
+            typeof value === "string"
+              ? value
+              : DEFAULT_SHORTCUTS[key as keyof typeof DEFAULT_SHORTCUTS];
+        });
+      } else {
+        Object.assign(shortcuts, DEFAULT_SHORTCUTS);
+      }
+      setKeyboardShortcuts(shortcuts);
+      setOriginalKeyboardShortcuts(shortcuts);
+    }
+  }, [keyboardShortcutsData]);
 
   // Track save button visibility
   // Footer-based save button; no visibility tracking needed
@@ -222,6 +257,10 @@ function SettingsComponent() {
     [originalContainerSettingsData]
   );
 
+  const handleKeyboardShortcutChange = (key: string, value: string) => {
+    setKeyboardShortcuts((prev) => ({ ...prev, [key]: value }));
+  };
+
   // Check if there are any changes
   const hasChanges = () => {
     // Check worktree path changes
@@ -244,11 +283,18 @@ function SettingsComponent() {
     // Auto PR toggle changes
     const autoPrChanged = autoPrEnabled !== originalAutoPrEnabled;
 
+    // Check keyboard shortcuts changes
+    const keyboardShortcutsChanged = Object.keys(DEFAULT_SHORTCUTS).some(
+      (key) =>
+        keyboardShortcuts[key] !== originalKeyboardShortcuts[key]
+    );
+
     return (
       worktreePathChanged ||
       autoPrChanged ||
       apiKeysChanged ||
-      containerSettingsChanged
+      containerSettingsChanged ||
+      keyboardShortcutsChanged
     );
   };
 
@@ -285,6 +331,31 @@ function SettingsComponent() {
           ...containerSettingsData,
         });
         setOriginalContainerSettingsData(containerSettingsData);
+      }
+
+      // Save keyboard shortcuts if changed
+      const keyboardShortcutsChanged = Object.keys(DEFAULT_SHORTCUTS).some(
+        (key) =>
+          keyboardShortcuts[key] !== originalKeyboardShortcuts[key]
+      );
+      if (keyboardShortcutsChanged) {
+        await convex.mutation(api.keyboardShortcuts.update, {
+          teamSlugOrId,
+          ...keyboardShortcuts,
+        });
+        setOriginalKeyboardShortcuts(keyboardShortcuts);
+
+        // Notify Electron main process if running in Electron
+        if (
+          typeof window !== "undefined" &&
+          "electron" in window &&
+          window.electron &&
+          typeof window.electron === "object" &&
+          "ipcRenderer" in window.electron
+        ) {
+          const ipcRenderer = (window.electron as { ipcRenderer?: { send: (channel: string, data: unknown) => void } }).ipcRenderer;
+          ipcRenderer?.send("shortcuts:update", keyboardShortcuts);
+        }
       }
 
       for (const key of apiKeys) {
@@ -988,6 +1059,22 @@ function SettingsComponent() {
                 <ContainerSettings
                   teamSlugOrId={teamSlugOrId}
                   onDataChange={handleContainerSettingsChange}
+                />
+              </div>
+            </div>
+
+            {/* Keyboard Shortcuts */}
+            <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
+              <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
+                <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                  Keyboard Shortcuts
+                </h2>
+              </div>
+              <div className="p-4">
+                <KeyboardShortcutsSettings
+                  shortcuts={keyboardShortcuts}
+                  onChange={handleKeyboardShortcutChange}
+                  isElectron={typeof window !== "undefined" && "electron" in window}
                 />
               </div>
             </div>
