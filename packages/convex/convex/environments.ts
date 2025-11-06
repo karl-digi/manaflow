@@ -230,3 +230,35 @@ export const getByDataVaultKey = authQuery({
       .first();
   },
 });
+
+export const hasEnvironmentWithRepos = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    selectedRepos: v.array(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const userId = ctx.identity.subject;
+
+    if (!userId) {
+      return false;
+    }
+
+    // Get all environments for this user and team
+    const environments = await ctx.db
+      .query("environments")
+      .withIndex("by_team", (q) => q.eq("teamId", teamId))
+      .filter((q) => q.eq(q.field("userId"), userId))
+      .collect();
+
+    // Check if any environment has at least one of the selected repos
+    return environments.some((env) => {
+      if (!env.selectedRepos || env.selectedRepos.length === 0) {
+        return false;
+      }
+      return args.selectedRepos.some((repo) =>
+        env.selectedRepos?.includes(repo)
+      );
+    });
+  },
+});

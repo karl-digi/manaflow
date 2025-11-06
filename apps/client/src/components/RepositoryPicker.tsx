@@ -40,6 +40,7 @@ import {
   type ReactNode,
 } from "react";
 import { RepositoryAdvancedOptions } from "./RepositoryAdvancedOptions";
+import { CloudModeOnboardingModal } from "./CloudModeOnboardingModal";
 
 function ConnectionIcon({ type }: { type?: string }) {
   if (type && type.includes("gitlab")) {
@@ -148,12 +149,24 @@ export function RepositoryPicker({
       hasConnections: false,
     }
   );
+  const [showOnboardingModal, setShowOnboardingModal] = useState(false);
+  const [pendingReposForContinue, setPendingReposForContinue] = useState<
+    string[] | null
+  >(null);
 
   const setupInstanceMutation = useRQMutation(
     postApiMorphSetupInstanceMutation()
   );
   const setupManualInstanceMutation = useRQMutation(
     postApiMorphSetupInstanceMutation()
+  );
+
+  // Check if user has already created an environment with the repos they're selecting
+  const hasEnvironmentWithRepos = useQuery(
+    api.environments.hasEnvironmentWithRepos,
+    selectedRepos.length > 0
+      ? { teamSlugOrId, selectedRepos }
+      : "skip"
   );
 
   useEffect(() => {
@@ -240,7 +253,7 @@ export function RepositoryPicker({
     ]
   );
 
-  const handleContinue = useCallback(
+  const proceedWithContinue = useCallback(
     (repos: string[]): void => {
       const mutation =
         repos.length > 0 ? setupInstanceMutation : setupManualInstanceMutation;
@@ -281,6 +294,37 @@ export function RepositoryPicker({
       teamSlugOrId,
     ]
   );
+
+  const handleContinue = useCallback(
+    (repos: string[]): void => {
+      // If repos are selected and user hasn't created an environment with these repos before,
+      // show the onboarding modal
+      if (repos.length > 0 && hasEnvironmentWithRepos === false) {
+        setPendingReposForContinue(repos);
+        setShowOnboardingModal(true);
+      } else {
+        // User either has no repos selected, already has an env, or query is loading
+        proceedWithContinue(repos);
+      }
+    },
+    [hasEnvironmentWithRepos, proceedWithContinue]
+  );
+
+  const handleOnboardingContinue = useCallback(() => {
+    setShowOnboardingModal(false);
+    if (pendingReposForContinue) {
+      proceedWithContinue(pendingReposForContinue);
+      setPendingReposForContinue(null);
+    }
+  }, [pendingReposForContinue, proceedWithContinue]);
+
+  const handleOnboardingClose = useCallback(() => {
+    setShowOnboardingModal(false);
+    if (pendingReposForContinue) {
+      proceedWithContinue(pendingReposForContinue);
+      setPendingReposForContinue(null);
+    }
+  }, [pendingReposForContinue, proceedWithContinue]);
 
   const updateSnapshotSelection = useCallback(
     (nextSnapshotId: MorphSnapshotId) => {
@@ -333,109 +377,117 @@ export function RepositoryPicker({
   const isManualLoading = setupManualInstanceMutation.isPending;
 
   return (
-    <div className={className}>
-      {topAccessory ? <div className="mb-4">{topAccessory}</div> : null}
-      {showHeader && (
-        <>
-          <h1 className="text-xl font-semibold text-neutral-900 dark:text-neutral-100">
-            {headerTitle}
-          </h1>
-          <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-            {headerDescription}
-          </p>
-        </>
-      )}
-
-      <div className="space-y-6 mt-6">
-        <RepositoryConnectionsSection
-          teamSlugOrId={teamSlugOrId}
-          selectedLogin={selectedConnectionLogin}
-          onSelectedLoginChange={setSelectedConnectionLogin}
-          onContextChange={setConnectionContextSafe}
-          onConnectionsInvalidated={handleConnectionsInvalidated}
-        />
-
-        <RepositoryListSection
-          teamSlugOrId={teamSlugOrId}
-          installationId={connectionContext.installationId}
-          selectedRepos={selectedRepos}
-          onToggleRepo={toggleRepo}
-          hasConnections={connectionContext.hasConnections}
-        />
-
-        {selectedRepos.length > 0 ? (
-          <div className="flex flex-wrap gap-2">
-            {selectedRepos.map((fullName) => (
-              <span
-                key={fullName}
-                className="inline-flex items-center gap-1 rounded-full border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-neutral-800 dark:text-neutral-200 px-2 py-1 text-xs"
-              >
-                <button
-                  type="button"
-                  aria-label={`Remove ${fullName}`}
-                  onClick={() => removeRepo(fullName)}
-                  className="-ml-1 inline-flex h-4 w-4 items-center justify-center rounded-full hover:bg-neutral-100 dark:hover:bg-neutral-900"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-                <GitHubIcon className="h-3 w-3 shrink-0 text-neutral-700 dark:text-neutral-300" />
-                {fullName}
-              </span>
-            ))}
-          </div>
-        ) : null}
-
-        <RepositoryAdvancedOptions
-          selectedSnapshotId={selectedSnapshotId}
-          onSnapshotChange={updateSnapshotSelection}
-        />
-
-        {showContinueButton && (
+    <>
+      <div className={className}>
+        {topAccessory ? <div className="mb-4">{topAccessory}</div> : null}
+        {showHeader && (
           <>
-            <div className="flex items-center gap-3 pt-2">
-              <button
-                type="button"
-                disabled={
-                  selectedRepos.length === 0 ||
-                  isContinueLoading ||
-                  isManualLoading
-                }
-                onClick={() => handleContinue(selectedRepos)}
-                className={`inline-flex items-center gap-2 rounded-md bg-neutral-900 text-white disabled:bg-neutral-300 dark:disabled:bg-neutral-700 disabled:cursor-not-allowed px-3 py-2 text-sm hover:bg-neutral-800 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200 transition-opacity ${
-                  isManualLoading ? "opacity-50" : "opacity-100"
-                }`}
-              >
-                {isContinueLoading && (
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                )}
-                {continueButtonText}
-              </button>
-              {showManualConfigOption && (
-                <button
-                  type="button"
-                  disabled={isContinueLoading || isManualLoading}
-                  onClick={() => handleContinue([])}
-                  className={`inline-flex items-center gap-2 rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2 text-sm text-neutral-800 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-900 disabled:cursor-not-allowed transition-opacity ${
-                    isContinueLoading ? "opacity-50" : "opacity-100"
-                  }`}
-                >
-                  {isManualLoading && (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  )}
-                  {manualConfigButtonText}
-                </button>
-              )}
-            </div>
-            {showManualConfigOption && (
-              <p className="text-xs text-neutral-500 dark:text-neutral-500">
-                You can also manually configure an environment from a bare VM.
-                We'll capture your changes as a reusable base snapshot.
-              </p>
-            )}
+            <h1 className="text-xl font-semibold text-neutral-900 dark:text-neutral-100">
+              {headerTitle}
+            </h1>
+            <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+              {headerDescription}
+            </p>
           </>
         )}
+
+        <div className="space-y-6 mt-6">
+          <RepositoryConnectionsSection
+            teamSlugOrId={teamSlugOrId}
+            selectedLogin={selectedConnectionLogin}
+            onSelectedLoginChange={setSelectedConnectionLogin}
+            onContextChange={setConnectionContextSafe}
+            onConnectionsInvalidated={handleConnectionsInvalidated}
+          />
+
+          <RepositoryListSection
+            teamSlugOrId={teamSlugOrId}
+            installationId={connectionContext.installationId}
+            selectedRepos={selectedRepos}
+            onToggleRepo={toggleRepo}
+            hasConnections={connectionContext.hasConnections}
+          />
+
+          {selectedRepos.length > 0 ? (
+            <div className="flex flex-wrap gap-2">
+              {selectedRepos.map((fullName) => (
+                <span
+                  key={fullName}
+                  className="inline-flex items-center gap-1 rounded-full border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-neutral-800 dark:text-neutral-200 px-2 py-1 text-xs"
+                >
+                  <button
+                    type="button"
+                    aria-label={`Remove ${fullName}`}
+                    onClick={() => removeRepo(fullName)}
+                    className="-ml-1 inline-flex h-4 w-4 items-center justify-center rounded-full hover:bg-neutral-100 dark:hover:bg-neutral-900"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                  <GitHubIcon className="h-3 w-3 shrink-0 text-neutral-700 dark:text-neutral-300" />
+                  {fullName}
+                </span>
+              ))}
+            </div>
+          ) : null}
+
+          <RepositoryAdvancedOptions
+            selectedSnapshotId={selectedSnapshotId}
+            onSnapshotChange={updateSnapshotSelection}
+          />
+
+          {showContinueButton && (
+            <>
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  type="button"
+                  disabled={
+                    selectedRepos.length === 0 ||
+                    isContinueLoading ||
+                    isManualLoading
+                  }
+                  onClick={() => handleContinue(selectedRepos)}
+                  className={`inline-flex items-center gap-2 rounded-md bg-neutral-900 text-white disabled:bg-neutral-300 dark:disabled:bg-neutral-700 disabled:cursor-not-allowed px-3 py-2 text-sm hover:bg-neutral-800 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200 transition-opacity ${
+                    isManualLoading ? "opacity-50" : "opacity-100"
+                  }`}
+                >
+                  {isContinueLoading && (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  )}
+                  {continueButtonText}
+                </button>
+                {showManualConfigOption && (
+                  <button
+                    type="button"
+                    disabled={isContinueLoading || isManualLoading}
+                    onClick={() => handleContinue([])}
+                    className={`inline-flex items-center gap-2 rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2 text-sm text-neutral-800 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-900 disabled:cursor-not-allowed transition-opacity ${
+                      isContinueLoading ? "opacity-50" : "opacity-100"
+                    }`}
+                  >
+                    {isManualLoading && (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    )}
+                    {manualConfigButtonText}
+                  </button>
+                )}
+              </div>
+              {showManualConfigOption && (
+                <p className="text-xs text-neutral-500 dark:text-neutral-500">
+                  You can also manually configure an environment from a bare VM.
+                  We'll capture your changes as a reusable base snapshot.
+                </p>
+              )}
+            </>
+          )}
+        </div>
       </div>
-    </div>
+
+      <CloudModeOnboardingModal
+        isOpen={showOnboardingModal}
+        onClose={handleOnboardingClose}
+        onContinue={handleOnboardingContinue}
+      />
+    </>
   );
 }
 
