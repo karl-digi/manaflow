@@ -1,7 +1,9 @@
 import { TaskTree } from "@/components/TaskTree";
 import { TaskTreeSkeleton } from "@/components/TaskTreeSkeleton";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
+import { useWorkspaceShortcuts } from "@/contexts/shortcuts/WorkspaceShortcutsContext";
 import { isElectron } from "@/lib/electron";
+import { keyboardEventToNormalized } from "@/lib/shortcuts";
 import { type Doc } from "@cmux/convex/dataModel";
 import type { LinkProps } from "@tanstack/react-router";
 import { Link } from "@tanstack/react-router";
@@ -18,6 +20,7 @@ import CmuxLogo from "./logo/cmux-logo";
 import { SidebarNavLink } from "./sidebar/SidebarNavLink";
 import { SidebarPullRequestList } from "./sidebar/SidebarPullRequestList";
 import { SidebarSectionLink } from "./sidebar/SidebarSectionLink";
+import { matchesAccelerator } from "@cmux/shared";
 
 interface SidebarProps {
   tasks: Doc<"tasks">[] | undefined;
@@ -80,6 +83,8 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
   });
 
   const { expandTaskIds } = useExpandTasks();
+  const { shortcuts, environment } = useWorkspaceShortcuts();
+  const sidebarToggleShortcut = shortcuts.sidebarToggle;
 
   useEffect(() => {
     localStorage.setItem("sidebarWidth", String(width));
@@ -89,7 +94,7 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
     localStorage.setItem("sidebarHidden", String(isHidden));
   }, [isHidden]);
 
-  // Keyboard shortcut to toggle sidebar (Ctrl+Shift+S)
+  // Keyboard shortcut to toggle sidebar (configurable)
   useEffect(() => {
     if (isElectron && window.cmux?.on) {
       const off = window.cmux.on("shortcut:sidebar-toggle", () => {
@@ -102,9 +107,11 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (
-        e.ctrlKey &&
-        e.shiftKey &&
-        (e.code === "KeyS" || e.key.toLowerCase() === "s")
+        matchesAccelerator(
+          sidebarToggleShortcut,
+          keyboardEventToNormalized(e),
+          environment
+        )
       ) {
         e.preventDefault();
         setIsHidden((prev) => !prev);
@@ -113,7 +120,7 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [environment, sidebarToggleShortcut, isElectron]);
 
   // Listen for storage events from command bar (sidebar visibility sync)
   useEffect(() => {

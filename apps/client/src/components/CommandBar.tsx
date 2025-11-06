@@ -1,9 +1,11 @@
 import { GitHubIcon } from "@/components/icons/github";
 import { useTheme } from "@/components/theme/use-theme";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
+import { useWorkspaceShortcuts } from "@/contexts/shortcuts/WorkspaceShortcutsContext";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { isElectron } from "@/lib/electron";
 import { copyAllElectronLogs } from "@/lib/electron-logs/electron-logs";
+import { keyboardEventToNormalized } from "@/lib/shortcuts";
 import { setLastTeamSlugOrId } from "@/lib/lastTeam";
 import { stackClientApp } from "@/lib/stack";
 import { preloadTaskRunIframes } from "@/lib/preloadTaskRunIframes";
@@ -18,7 +20,11 @@ import type {
   CreateLocalWorkspaceResponse,
   CreateCloudWorkspaceResponse,
 } from "@cmux/shared";
-import { deriveRepoBaseName, generateWorkspaceName } from "@cmux/shared";
+import {
+  deriveRepoBaseName,
+  generateWorkspaceName,
+  matchesAccelerator,
+} from "@cmux/shared";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useUser, type Team } from "@stackframe/react";
 import { useNavigate, useRouter } from "@tanstack/react-router";
@@ -196,6 +202,8 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
   const { setTheme, theme } = useTheme();
   const { addTaskToExpand } = useExpandTasks();
   const { socket } = useSocket();
+  const { shortcuts, environment } = useWorkspaceShortcuts();
+  const commandPaletteShortcut = shortcuts.commandPalette;
   const localServeWeb = useLocalVSCodeServeWebQuery();
   const preloadTeamDashboard = useCallback(
     async (targetTeamSlugOrId: string | undefined) => {
@@ -756,19 +764,24 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     [closeCommand, createCloudWorkspaceFromEnvironment, createCloudWorkspaceFromRepo]
   );
 
+  const toggleCommandPalette = useCallback(() => {
+    setOpenedWithShift(false);
+    setActivePage("root");
+    if (openRef.current) {
+      setSearch("");
+    } else if (!isElectron) {
+      prevFocusedElRef.current =
+        document.activeElement as HTMLElement | null;
+    }
+    setOpen((cur) => !cur);
+  }, [isElectron]);
+
   useEffect(() => {
     // In Electron, prefer global shortcut from main via cmux event.
     if (isElectron) {
       const off = window.cmux.on("shortcut:cmd-k", () => {
         // Only handle Cmd+K (no shift/ctrl variations)
-        setOpenedWithShift(false);
-        setActivePage("root");
-        if (openRef.current) {
-          // About to CLOSE via toggle: normalize state like Esc path
-          setSearch("");
-          setOpenedWithShift(false);
-        }
-        setOpen((cur) => !cur);
+        toggleCommandPalette();
       });
       return () => {
         // Unsubscribe if available
@@ -778,31 +791,20 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
 
     // Web/non-Electron fallback: local keydown listener for Cmd+K
     const down = (e: KeyboardEvent) => {
-      // Only trigger on EXACT Cmd+K (no Shift/Alt/Ctrl)
       if (
-        e.key.toLowerCase() === "k" &&
-        e.metaKey &&
-        !e.shiftKey &&
-        !e.altKey &&
-        !e.ctrlKey
+        matchesAccelerator(
+          commandPaletteShortcut,
+          keyboardEventToNormalized(e),
+          environment
+        )
       ) {
         e.preventDefault();
-        setActivePage("root");
-        if (openRef.current) {
-          setOpenedWithShift(false);
-          setSearch("");
-        } else {
-          setOpenedWithShift(false);
-          // Capture the currently focused element before opening (web only)
-          prevFocusedElRef.current =
-            document.activeElement as HTMLElement | null;
-        }
-        setOpen((cur) => !cur);
+        toggleCommandPalette();
       }
     };
     document.addEventListener("keydown", down);
     return () => document.removeEventListener("keydown", down);
-  }, []);
+  }, [commandPaletteShortcut, environment, toggleCommandPalette, isElectron]);
 
   // Track and restore focus across open/close, including iframes/webviews.
   useEffect(() => {

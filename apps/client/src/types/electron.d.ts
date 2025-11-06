@@ -108,6 +108,12 @@ interface CmuxAPI {
   socket: CmuxSocketAPI;
   logs: CmuxLogsAPI;
   webContentsView: CmuxWebContentsViewAPI;
+  shortcuts?: {
+    configure: (
+      overrides: Record<string, string | null | undefined>
+    ) => Promise<{ ok: boolean }>;
+    getCurrent: () => Promise<Record<string, string>>;
+  };
   autoUpdate: {
     check: () =>
       Promise<{

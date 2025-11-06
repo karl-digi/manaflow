@@ -7,6 +7,14 @@ import {
   webContents,
   webFrameMain,
 } from "electron";
+import {
+  mergeShortcutOverrides,
+  matchesAccelerator,
+  type GlobalShortcutOverrides,
+  type GlobalShortcutId,
+  type NormalizedKeyEventLike,
+  type ShortcutEnvironment,
+} from "@cmux/shared";
 
 type Logger = {
   log: (...args: unknown[]) => void;
@@ -50,6 +58,42 @@ export function keyDebug(event: string, data?: unknown): void {
   } catch {
     // ignore
   }
+}
+
+const shortcutEnvironment: ShortcutEnvironment = {
+  isMac: process.platform === "darwin",
+};
+
+let currentShortcuts: Record<GlobalShortcutId, string> =
+  mergeShortcutOverrides();
+
+export function setGlobalShortcutOverrides(
+  overrides?: GlobalShortcutOverrides | null,
+): void {
+  const nextShortcuts = mergeShortcutOverrides(overrides ?? undefined);
+  const changed = JSON.stringify(nextShortcuts) !== JSON.stringify(currentShortcuts);
+  currentShortcuts = nextShortcuts;
+  if (changed) {
+    keyDebug("shortcut-overrides-applied", {
+      overrides,
+      effective: currentShortcuts,
+    });
+  }
+}
+
+export function getCurrentShortcutConfig(): Record<GlobalShortcutId, string> {
+  return { ...currentShortcuts };
+}
+
+function normalizeElectronInput(input: Electron.Input): NormalizedKeyEventLike {
+  return {
+    key: typeof input.key === "string" ? input.key : "",
+    code: input.code,
+    altKey: Boolean(input.alt),
+    ctrlKey: Boolean(input.control),
+    metaKey: Boolean(input.meta),
+    shiftKey: Boolean(input.shift),
+  };
 }
 
 // Track whether the Command Palette (Cmd+K) is currently open in any renderer
@@ -238,28 +282,31 @@ export function initCmdK(opts: {
           typeInput: input.type,
         });
         if (input.type !== "keyDown") return;
-        const isMac = process.platform === "darwin";
-        // Only trigger on EXACT Cmd+K (mac) or Ctrl+K (others)
-        const isCmdK = (() => {
-          if (input.key.toLowerCase() !== "k") return false;
-          if (input.alt || input.shift) return false;
-          if (isMac) {
-            // Require meta only; disallow ctrl on mac
-            return Boolean(input.meta) && !input.control;
-          }
-          // Non-mac: require ctrl only; disallow meta
-          return Boolean(input.control) && !input.meta;
-        })();
 
-        const isSidebarToggle = (() => {
-          if (input.key.toLowerCase() !== "s") return false;
-          if (!input.shift) return false;
-          if (input.alt || input.meta) return false;
-          // Require control to align with renderer shortcut (Ctrl+Shift+S)
-          return Boolean(input.control);
-        })();
+        const normalized = normalizeElectronInput(input);
+        const matchesCommandPaletteShortcut = matchesAccelerator(
+          currentShortcuts.commandPalette,
+          normalized,
+          shortcutEnvironment,
+        );
+        const matchesSidebarShortcut = matchesAccelerator(
+          currentShortcuts.sidebarToggle,
+          normalized,
+          shortcutEnvironment,
+        );
 
-        if (!isCmdK && !isSidebarToggle) return;
+        if (!matchesCommandPaletteShortcut && !matchesSidebarShortcut) {
+          return;
+        }
+
+        if (matchesCommandPaletteShortcut && matchesSidebarShortcut) {
+          keyDebug("shortcut-conflict", {
+            sourceId: contents.id,
+            type: contents.getType?.(),
+            commandPaletteAccelerator: currentShortcuts.commandPalette,
+            sidebarAccelerator: currentShortcuts.sidebarToggle,
+          });
+        }
 
         // Prevent default to avoid in-app conflicts and ensure single toggle
         e.preventDefault();
@@ -273,10 +320,11 @@ export function initCmdK(opts: {
           );
         };
 
-        if (isSidebarToggle) {
+        if (matchesSidebarShortcut && !matchesCommandPaletteShortcut) {
           keyDebug("sidebar-toggle-detected", {
             sourceId: contents.id,
             type: contents.getType?.(),
+            accelerator: currentShortcuts.sidebarToggle,
           });
           const targetWin = getTargetWindow();
           if (targetWin && !targetWin.isDestroyed()) {
@@ -294,9 +342,18 @@ export function initCmdK(opts: {
           return;
         }
 
+        if (matchesSidebarShortcut && matchesCommandPaletteShortcut) {
+          keyDebug("sidebar-and-command-palette-conflict", {
+            sourceId: contents.id,
+            type: contents.getType?.(),
+            accelerator: currentShortcuts.commandPalette,
+          });
+        }
+
         keyDebug("cmdk-detected", {
           sourceId: contents.id,
           type: contents.getType?.(),
+          accelerator: currentShortcuts.commandPalette,
         });
 
         // If already open, just toggle; do not overwrite previous capture

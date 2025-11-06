@@ -42,6 +42,12 @@ declare global {
           }>;
         install: () => Promise<{ ok: boolean; reason?: string }>;
       };
+      shortcuts: {
+        configure: (
+          overrides: Record<string, string | null | undefined>
+        ) => Promise<{ ok: boolean }>;
+        getCurrent: () => Promise<Record<string, string>>;
+      };
     };
   }
 }

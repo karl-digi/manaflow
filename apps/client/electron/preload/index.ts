@@ -134,6 +134,17 @@ const cmuxAPI = {
       }>;
     },
   },
+  shortcuts: {
+    configure: (
+      overrides: Record<string, string | null | undefined>
+    ): Promise<{ ok: boolean }> => {
+      return ipcRenderer.invoke("cmux:shortcuts:configure", overrides);
+    },
+    getCurrent: () =>
+      ipcRenderer.invoke("cmux:shortcuts:get-current") as Promise<
+        Record<string, string>
+      >,
+  },
   logs: {
     onMainLog: (callback: LogListener) => {
       mainLogListeners.add(callback);

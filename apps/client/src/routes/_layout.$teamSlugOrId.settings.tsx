@@ -3,8 +3,20 @@ import { FloatingPane } from "@/components/floating-pane";
 import { ProviderStatusSettings } from "@/components/provider-status-settings";
 import { useTheme } from "@/components/theme/use-theme";
 import { TitleBar } from "@/components/TitleBar";
+import { useWorkspaceShortcuts } from "@/contexts/shortcuts/WorkspaceShortcutsContext";
+import { keyboardEventToNormalized, normalizeShortcutOverridesInput } from "@/lib/shortcuts";
 import { api } from "@cmux/convex/api";
 import type { Doc } from "@cmux/convex/dataModel";
+import {
+  DEFAULT_GLOBAL_SHORTCUTS,
+  GLOBAL_SHORTCUT_DEFINITIONS,
+  formatAcceleratorForDisplay,
+  mergeShortcutOverrides,
+  serializeAcceleratorFromEvent,
+  type GlobalShortcutDefinition,
+  type GlobalShortcutId,
+  type GlobalShortcutOverrides,
+} from "@cmux/shared";
 import { AGENT_CONFIGS, type AgentConfig } from "@cmux/shared/agentConfig";
 import { API_KEY_MODELS_BY_ENV } from "@cmux/shared/model-usage";
 import { convexQuery } from "@convex-dev/react-query";
@@ -12,7 +24,7 @@ import { Switch } from "@heroui/react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useConvex } from "convex/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/settings")({
@@ -23,6 +35,7 @@ function SettingsComponent() {
   const { teamSlugOrId } = Route.useParams();
   const { resolvedTheme, setTheme } = useTheme();
   const convex = useConvex();
+  const { environment, syncElectronShortcuts } = useWorkspaceShortcuts();
   const [apiKeyValues, setApiKeyValues] = useState<Record<string, string>>({});
   const [originalApiKeyValues, setOriginalApiKeyValues] = useState<
     Record<string, string>
@@ -59,6 +72,245 @@ function SettingsComponent() {
   } | null>(null);
   const [originalContainerSettingsData, setOriginalContainerSettingsData] =
     useState<typeof containerSettingsData>(null);
+  const [shortcutOverrides, setShortcutOverrides] =
+    useState<GlobalShortcutOverrides | null>(null);
+  const [originalShortcutOverrides, setOriginalShortcutOverrides] =
+    useState<GlobalShortcutOverrides | null>(null);
+  const shortcutsInitializedRef = useRef(false);
+
+  const serializeOverridesForCompare = useCallback(
+    (value: GlobalShortcutOverrides | null) =>
+      JSON.stringify(
+        GLOBAL_SHORTCUT_DEFINITIONS.map(({ id }) =>
+          value && Object.prototype.hasOwnProperty.call(value, id)
+            ? value[id] ?? null
+            : null
+        )
+      ),
+    []
+  );
+
+  const buildShortcutsPayloadForSave = useCallback(
+    (
+      current: GlobalShortcutOverrides | null,
+      original: GlobalShortcutOverrides | null
+    ): Partial<Record<GlobalShortcutId, string | null>> | undefined => {
+      const payload: Partial<Record<GlobalShortcutId, string | null>> = {};
+      let changed = false;
+      for (const { id } of GLOBAL_SHORTCUT_DEFINITIONS) {
+        const currentValue =
+          current && Object.prototype.hasOwnProperty.call(current, id)
+            ? current[id]
+            : undefined;
+        const originalValue =
+          original && Object.prototype.hasOwnProperty.call(original, id)
+            ? original[id]
+            : undefined;
+        if (currentValue === originalValue) {
+          continue;
+        }
+        if (currentValue === undefined) {
+          payload[id] = null;
+        } else if (currentValue === null && originalValue === undefined) {
+          continue;
+        } else {
+          payload[id] = currentValue;
+        }
+        changed = true;
+      }
+      return changed ? payload : undefined;
+    },
+    []
+  );
+
+  const effectiveShortcuts = useMemo(
+    () => mergeShortcutOverrides(shortcutOverrides ?? undefined),
+    [shortcutOverrides]
+  );
+
+  const duplicateMap = useMemo(() => {
+    const map = new Map<string, GlobalShortcutId[]>();
+    for (const { id } of GLOBAL_SHORTCUT_DEFINITIONS) {
+      const accelerator = effectiveShortcuts[id];
+      if (!accelerator) continue;
+      const list = map.get(accelerator) ?? [];
+      list.push(id);
+      map.set(accelerator, list);
+    }
+    return map;
+  }, [effectiveShortcuts]);
+
+  const duplicateIds = useMemo(() => {
+    const set = new Set<GlobalShortcutId>();
+    for (const [, ids] of duplicateMap) {
+      if (ids.length > 1) {
+        ids.forEach((id) => set.add(id));
+      }
+    }
+    return set;
+  }, [duplicateMap]);
+
+  const hasShortcutConflicts = duplicateIds.size > 0;
+
+  const handleShortcutKeyDown = useCallback(
+    (id: GlobalShortcutId) =>
+      (event: React.KeyboardEvent<HTMLButtonElement>) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.key === "Tab") {
+          return;
+        }
+        if (event.key === "Escape") {
+          (event.currentTarget as HTMLButtonElement).blur();
+          return;
+        }
+        if (event.key === "Backspace" || event.key === "Delete") {
+          setShortcutOverrides((prev) => {
+            const next = { ...(prev ?? {}) };
+            next[id] = null;
+            return next;
+          });
+          return;
+        }
+        const normalized = keyboardEventToNormalized(
+          event.nativeEvent as KeyboardEvent
+        );
+        const serialized = serializeAcceleratorFromEvent(
+          normalized,
+          environment
+        );
+        if (!serialized) {
+          return;
+        }
+        const defaultDisplay = formatAcceleratorForDisplay(
+          DEFAULT_GLOBAL_SHORTCUTS[id],
+          environment
+        );
+        const incomingDisplay = formatAcceleratorForDisplay(
+          serialized,
+          environment
+        );
+        const nextValue =
+          serialized === DEFAULT_GLOBAL_SHORTCUTS[id] ||
+          incomingDisplay === defaultDisplay
+            ? null
+            : serialized;
+        setShortcutOverrides((prev) => {
+          const next = { ...(prev ?? {}) };
+          next[id] = nextValue;
+          return next;
+        });
+      },
+    [environment]
+  );
+
+  const workspaceShortcutDefs = useMemo(
+    () =>
+      GLOBAL_SHORTCUT_DEFINITIONS.filter(
+        (def) => def.category === "workspace"
+      ),
+    []
+  );
+  const previewShortcutDefs = useMemo(
+    () =>
+      GLOBAL_SHORTCUT_DEFINITIONS.filter((def) => def.category === "preview"),
+    []
+  );
+
+  const renderShortcutRow = (def: GlobalShortcutDefinition) => {
+    const effective = effectiveShortcuts[def.id];
+    const displayValue = formatAcceleratorForDisplay(
+      effective,
+      environment
+    );
+    const defaultDisplay = formatAcceleratorForDisplay(
+      DEFAULT_GLOBAL_SHORTCUTS[def.id],
+      environment
+    );
+    const overrideValue =
+      shortcutOverrides &&
+      Object.prototype.hasOwnProperty.call(shortcutOverrides, def.id)
+        ? shortcutOverrides[def.id]
+        : undefined;
+    const conflictIds =
+      effective && duplicateIds.has(def.id)
+        ? (duplicateMap.get(effective) ?? []).filter(
+            (otherId) => otherId !== def.id
+          )
+        : [];
+    const conflictLabels = conflictIds
+      .map((otherId) => {
+        const target = GLOBAL_SHORTCUT_DEFINITIONS.find(
+          (candidate) => candidate.id === otherId
+        );
+        return target?.label ?? otherId;
+      })
+      .join(", ");
+    const hasOverrideActive =
+      overrideValue !== undefined && overrideValue !== null;
+    const containerClasses = `rounded-md border px-3 py-3 ${
+      conflictIds.length > 0
+        ? "border-red-400 dark:border-red-500/70"
+        : "border-neutral-200 dark:border-neutral-800"
+    }`;
+
+    return (
+      <div key={def.id} className={containerClasses}>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+              {def.label}
+            </p>
+            <p className="text-xs text-neutral-500 dark:text-neutral-400">
+              {def.description}
+            </p>
+            <p className="text-xs text-neutral-400 dark:text-neutral-500 mt-1">
+              Default: {defaultDisplay}
+            </p>
+            {conflictIds.length > 0 && (
+              <p className="mt-1 text-xs text-red-600 dark:text-red-400">
+                Conflicts with {conflictLabels}
+              </p>
+            )}
+          </div>
+          <div className="flex flex-col items-stretch gap-2 sm:items-end sm:min-w-[160px]">
+            <button
+              type="button"
+              onKeyDown={handleShortcutKeyDown(def.id)}
+              aria-label={`Shortcut for ${def.label}`}
+              title="Press keys to record"
+              className="rounded-md border border-neutral-300 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-900 px-3 py-2 text-sm font-medium text-neutral-900 dark:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 dark:focus:ring-offset-neutral-900"
+            >
+              <span className="block">
+                {displayValue || effective || "—"}
+              </span>
+              <span className="block text-[11px] text-neutral-500 dark:text-neutral-400 font-mono">
+                {effective}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                setShortcutOverrides((prev) => {
+                  const next = { ...(prev ?? {}) };
+                  next[def.id] = null;
+                  return next;
+                })
+              }
+              disabled={!hasOverrideActive}
+              className={`text-xs ${
+                hasOverrideActive
+                  ? "text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
+                  : "text-neutral-400 dark:text-neutral-600 cursor-not-allowed"
+              }`}
+            >
+              Reset
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   // Get all required API keys from agent configs
   const apiKeys = Array.from(
@@ -147,6 +399,34 @@ function SettingsComponent() {
       setOriginalAutoPrEnabled(effective);
     }
   }, [workspaceSettings]);
+
+  useEffect(() => {
+    if (workspaceSettings === undefined) return;
+    const normalized = normalizeShortcutOverridesInput(
+      (workspaceSettings as { shortcuts?: unknown }).shortcuts
+    );
+    const nextOverrides = normalized
+      ? ({ ...normalized } as GlobalShortcutOverrides)
+      : null;
+    const incomingSerialized = serializeOverridesForCompare(nextOverrides);
+    const originalSerialized = serializeOverridesForCompare(
+      originalShortcutOverrides
+    );
+    if (!shortcutsInitializedRef.current) {
+      shortcutsInitializedRef.current = true;
+      setShortcutOverrides(nextOverrides);
+      setOriginalShortcutOverrides(nextOverrides);
+      return;
+    }
+    if (incomingSerialized !== originalSerialized) {
+      setShortcutOverrides(nextOverrides);
+      setOriginalShortcutOverrides(nextOverrides);
+    }
+  }, [
+    workspaceSettings,
+    originalShortcutOverrides,
+    serializeOverridesForCompare,
+  ]);
 
   // Track save button visibility
   // Footer-based save button; no visibility tracking needed
@@ -243,12 +523,16 @@ function SettingsComponent() {
 
     // Auto PR toggle changes
     const autoPrChanged = autoPrEnabled !== originalAutoPrEnabled;
+    const shortcutsChanged =
+      serializeOverridesForCompare(shortcutOverrides) !==
+      serializeOverridesForCompare(originalShortcutOverrides);
 
     return (
       worktreePathChanged ||
       autoPrChanged ||
       apiKeysChanged ||
-      containerSettingsChanged
+      containerSettingsChanged ||
+      shortcutsChanged
     );
   };
 
@@ -258,19 +542,36 @@ function SettingsComponent() {
     try {
       let savedCount = 0;
       let deletedCount = 0;
+      let shortcutsUpdated = false;
+      const shortcutsPayload = buildShortcutsPayloadForSave(
+        shortcutOverrides,
+        originalShortcutOverrides
+      );
 
       // Save worktree path / auto PR if changed
       if (
         worktreePath !== originalWorktreePath ||
-        autoPrEnabled !== originalAutoPrEnabled
+        autoPrEnabled !== originalAutoPrEnabled ||
+        shortcutsPayload
       ) {
         await convex.mutation(api.workspaceSettings.update, {
           teamSlugOrId,
           worktreePath: worktreePath || undefined,
           autoPrEnabled,
+          shortcuts: shortcutsPayload,
         });
         setOriginalWorktreePath(worktreePath);
         setOriginalAutoPrEnabled(autoPrEnabled);
+        if (shortcutsPayload) {
+          setOriginalShortcutOverrides(
+            shortcutOverrides
+              ? ({ ...shortcutOverrides } as GlobalShortcutOverrides)
+              : null
+          );
+          shortcutsInitializedRef.current = true;
+          await syncElectronShortcuts(shortcutOverrides);
+          shortcutsUpdated = true;
+        }
       }
 
       // Save container settings if changed
@@ -319,7 +620,7 @@ function SettingsComponent() {
       // After successful save, hide all API key inputs
       setShowKeys({});
 
-      if (savedCount > 0 || deletedCount > 0) {
+      if (savedCount > 0 || deletedCount > 0 || shortcutsUpdated) {
         const actions = [];
         if (savedCount > 0) {
           actions.push(`saved ${savedCount} key${savedCount > 1 ? "s" : ""}`);
@@ -328,6 +629,9 @@ function SettingsComponent() {
           actions.push(
             `removed ${deletedCount} key${deletedCount > 1 ? "s" : ""}`
           );
+        }
+        if (shortcutsUpdated) {
+          actions.push("updated shortcuts");
         }
         toast.success(`Successfully ${actions.join(" and ")}`);
       } else {
@@ -965,6 +1269,48 @@ function SettingsComponent() {
               </div>
             </div>
 
+            {/* Keyboard Shortcuts */}
+            <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
+              <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
+                <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                  Keyboard Shortcuts
+                </h2>
+                <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                  Customize the global shortcuts used across the workspace and preview windows.
+                </p>
+              </div>
+              <div className="p-4 space-y-5">
+                {hasShortcutConflicts && (
+                  <div className="rounded-md border border-red-500/60 bg-red-50 dark:bg-red-950/40 px-3 py-2 text-xs text-red-700 dark:text-red-300">
+                    Resolve the highlighted shortcut conflicts before saving.
+                  </div>
+                )}
+                <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                  Focus a shortcut and press the new key combination. Use Backspace or Delete to revert to the default.
+                </p>
+                {workspaceShortcutDefs.length > 0 && (
+                  <div className="space-y-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+                      Workspace
+                    </p>
+                    <div className="space-y-3">
+                      {workspaceShortcutDefs.map(renderShortcutRow)}
+                    </div>
+                  </div>
+                )}
+                {previewShortcutDefs.length > 0 && (
+                  <div className="space-y-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+                      Preview
+                    </p>
+                    <div className="space-y-3">
+                      {previewShortcutDefs.map(renderShortcutRow)}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
             {/* Provider Status */}
             <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
               <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
@@ -1064,9 +1410,9 @@ function SettingsComponent() {
         <div className="max-w-3xl mx-auto px-6 py-3 flex items-center justify-end gap-3">
           <button
             onClick={saveApiKeys}
-            disabled={!hasChanges() || isSaving}
+            disabled={!hasChanges() || isSaving || hasShortcutConflicts}
             className={`px-4 py-2 text-sm font-medium rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-neutral-900 transition-all ${
-              !hasChanges() || isSaving
+              !hasChanges() || isSaving || hasShortcutConflicts
                 ? "bg-neutral-200 dark:bg-neutral-800 text-neutral-400 dark:text-neutral-500 cursor-not-allowed opacity-50"
                 : "bg-blue-600 dark:bg-blue-500 text-white hover:bg-blue-700 dark:hover:bg-blue-600"
             }`}
