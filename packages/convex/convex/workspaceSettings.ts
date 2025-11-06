@@ -23,6 +23,7 @@ export const update = authMutation({
     teamSlugOrId: v.string(),
     worktreePath: v.optional(v.string()),
     autoPrEnabled: v.optional(v.boolean()),
+    autoUpdateIncludeDrafts: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
@@ -39,6 +40,7 @@ export const update = authMutation({
       const updates: {
         worktreePath?: string;
         autoPrEnabled?: boolean;
+        autoUpdateIncludeDrafts?: boolean;
         updatedAt: number;
       } = { updatedAt: now };
 
@@ -48,12 +50,16 @@ export const update = authMutation({
       if (args.autoPrEnabled !== undefined) {
         updates.autoPrEnabled = args.autoPrEnabled;
       }
+      if (args.autoUpdateIncludeDrafts !== undefined) {
+        updates.autoUpdateIncludeDrafts = args.autoUpdateIncludeDrafts;
+      }
 
       await ctx.db.patch(existing._id, updates);
     } else {
       await ctx.db.insert("workspaceSettings", {
         worktreePath: args.worktreePath,
         autoPrEnabled: args.autoPrEnabled,
+        autoUpdateIncludeDrafts: args.autoUpdateIncludeDrafts,
         nextLocalWorkspaceSequence: 0,
         createdAt: now,
         updatedAt: now,

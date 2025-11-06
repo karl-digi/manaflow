@@ -117,6 +117,10 @@ interface CmuxAPI {
         version?: string | null;
       }>;
     install: () => Promise<{ ok: boolean; reason?: string }>;
+    getPreference: () => Promise<{ includeDrafts: boolean }>;
+    setPreference: (options: {
+      includeDrafts: boolean;
+    }) => Promise<{ ok: boolean; unchanged?: boolean }>;
   };
 }
 

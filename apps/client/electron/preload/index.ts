@@ -159,6 +159,15 @@ const cmuxAPI = {
         ok: boolean;
         reason?: string;
       }>,
+    getPreference: () =>
+      ipcRenderer.invoke("cmux:auto-update:get-preference") as Promise<{
+        includeDrafts: boolean;
+      }>,
+    setPreference: (options: { includeDrafts: boolean }) =>
+      ipcRenderer.invoke("cmux:auto-update:set-preference", options) as Promise<{
+        ok: boolean;
+        unchanged?: boolean;
+      }>,
   },
   webContentsView: {
     create: (options: {

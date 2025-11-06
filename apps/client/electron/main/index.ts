@@ -39,6 +39,12 @@ import {
   appendLogWithRotation,
   type LogRotationOptions,
 } from "./log-management/log-rotation";
+import {
+  DEFAULT_AUTO_UPDATE_PREFERENCE,
+  readAutoUpdatePreference,
+  writeAutoUpdatePreference,
+  type AutoUpdatePreference,
+} from "./auto-update-preference";
 const { autoUpdater } = electronUpdater;
 
 import util from "node:util";
@@ -53,6 +59,16 @@ import { normalizeBrowserUrl } from "@cmux/shared";
 // Use a cookieable HTTPS origin intercepted locally instead of a custom scheme.
 const PARTITION = "persist:cmux";
 const APP_HOST = "cmux.local";
+
+const BASE_GITHUB_UPDATE_CONFIG = Object.freeze({
+  provider: "github",
+  owner: "manaflo-ai",
+  repo: "cmux",
+  releaseType: "release",
+  updaterCacheDirName: "cmux-updater",
+} as const);
+
+let cachedAutoUpdatePreference: AutoUpdatePreference | null = null;
 
 function resolveMaxSuspendedWebContents(): number | undefined {
   const raw =
@@ -221,6 +237,63 @@ export function mainError(...args: unknown[]) {
 
   console.error("[MAIN]", line);
   emitToRenderer("error", `[MAIN] ${line}`);
+}
+
+async function loadAutoUpdatePreferenceFromDisk(): Promise<AutoUpdatePreference> {
+  try {
+    const pref = await readAutoUpdatePreference();
+    cachedAutoUpdatePreference = pref;
+    return pref;
+  } catch (error) {
+    mainWarn("Failed to read auto-update preference from disk", error);
+    cachedAutoUpdatePreference = { ...DEFAULT_AUTO_UPDATE_PREFERENCE };
+    return cachedAutoUpdatePreference;
+  }
+}
+
+async function ensureAutoUpdatePreferenceLoaded(): Promise<AutoUpdatePreference> {
+  if (cachedAutoUpdatePreference) {
+    return cachedAutoUpdatePreference;
+  }
+  return loadAutoUpdatePreferenceFromDisk();
+}
+
+function getAutoUpdatePreference(): AutoUpdatePreference {
+  if (cachedAutoUpdatePreference) {
+    return cachedAutoUpdatePreference;
+  }
+  return { ...DEFAULT_AUTO_UPDATE_PREFERENCE };
+}
+
+function applyAutoUpdatePreference(pref: AutoUpdatePreference): void {
+  const baseConfig = { ...BASE_GITHUB_UPDATE_CONFIG };
+  const updateConfig = pref.includeDrafts
+    ? { ...baseConfig, private: true }
+    : baseConfig;
+
+  try {
+    autoUpdater.setFeedURL(updateConfig);
+  } catch (error) {
+    mainWarn("Failed to set auto-updater feed URL", error);
+  }
+
+  autoUpdater.allowPrerelease = pref.includeDrafts;
+
+  if (pref.includeDrafts) {
+    const token =
+      process.env["GH_TOKEN"] ?? process.env["GITHUB_TOKEN"] ?? null;
+    if (!token) {
+      mainWarn(
+        "Auto-update preference includes drafts but no GitHub token is configured; draft releases may be inaccessible"
+      );
+    }
+  }
+
+  mainLog("Applied auto-update preference", {
+    includeDrafts: pref.includeDrafts,
+    provider: updateConfig.provider,
+    private: Boolean((updateConfig as { private?: boolean }).private),
+  });
 }
 
 function sendShortcutToFocusedWindow(
@@ -425,6 +498,52 @@ function registerAutoUpdateIpcHandlers(): void {
       throw err;
     }
   });
+
+  ipcMain.handle("cmux:auto-update:get-preference", async () => {
+    const pref = await ensureAutoUpdatePreferenceLoaded();
+    return { includeDrafts: pref.includeDrafts };
+  });
+
+  ipcMain.handle(
+    "cmux:auto-update:set-preference",
+    async (_event, payload: { includeDrafts?: unknown } | undefined) => {
+      const includeDrafts = Boolean(payload?.includeDrafts);
+      const current = getAutoUpdatePreference();
+      if (current.includeDrafts === includeDrafts) {
+        return { ok: true, unchanged: true } as const;
+      }
+
+      const next: AutoUpdatePreference = { includeDrafts };
+      cachedAutoUpdatePreference = next;
+      await writeAutoUpdatePreference(next);
+
+      mainLog("Persisted auto-update preference", { includeDrafts });
+
+      if (app.isPackaged) {
+        try {
+          applyAutoUpdatePreference(next);
+          void autoUpdater
+            .checkForUpdates()
+            .then((result) =>
+              logUpdateCheckResult(
+                "Preference change trigger checkForUpdates",
+                result
+              )
+            )
+            .catch((error) =>
+              mainWarn(
+                "Failed re-checking for updates after preference change",
+                error
+              )
+            );
+        } catch (error) {
+          mainWarn("Failed to apply updated auto-update preference", error);
+        }
+      }
+
+      return { ok: true } as const;
+    }
+  );
 }
 
 // Write critical errors to a file to aid debugging packaged crashes
@@ -450,7 +569,7 @@ process.on("unhandledRejection", (reason) => {
   void writeFatalLog("unhandledRejection", reason);
 });
 
-function setupAutoUpdates(): void {
+async function setupAutoUpdates(): Promise<void> {
   if (!app.isPackaged) {
     mainLog("Skipping auto-updates in development");
     return;
@@ -472,7 +591,12 @@ function setupAutoUpdates(): void {
 
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
-    autoUpdater.allowPrerelease = false;
+
+    const pref = await ensureAutoUpdatePreferenceLoaded();
+    mainLog("Loaded auto-update preference", {
+      includeDrafts: pref.includeDrafts,
+    });
+    applyAutoUpdatePreference(pref);
 
     if (process.platform === "darwin") {
       const channel = "latest-universal";
@@ -490,6 +614,7 @@ function setupAutoUpdates(): void {
       autoInstallOnAppQuit: autoUpdater.autoInstallOnAppQuit,
       allowPrerelease: autoUpdater.allowPrerelease,
       channel: autoUpdater.channel ?? null,
+      includeDrafts: getAutoUpdatePreference().includeDrafts,
     });
   } catch (e) {
     mainWarn("Failed to initialize autoUpdater", e);
@@ -610,7 +735,7 @@ function createWindow(): void {
   // Socket bridge not required; renderer connects directly
 
   // Initialize auto-updates
-  setupAutoUpdates();
+  void setupAutoUpdates();
 
   // Once the renderer is loaded, process any queued deep-link
   mainWindow.webContents.on("did-finish-load", () => {

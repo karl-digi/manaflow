@@ -10,6 +10,7 @@ import { API_KEY_MODELS_BY_ENV } from "@cmux/shared/model-usage";
 import { convexQuery } from "@convex-dev/react-query";
 import { Switch } from "@heroui/react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { isElectron } from "@/lib/electron";
 import { createFileRoute } from "@tanstack/react-router";
 import { useConvex } from "convex/react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -39,6 +40,10 @@ function SettingsComponent() {
   const [originalWorktreePath, setOriginalWorktreePath] = useState<string>("");
   const [autoPrEnabled, setAutoPrEnabled] = useState<boolean>(false);
   const [originalAutoPrEnabled, setOriginalAutoPrEnabled] =
+    useState<boolean>(false);
+  const [autoUpdateIncludeDrafts, setAutoUpdateIncludeDrafts] =
+    useState<boolean>(false);
+  const [originalAutoUpdateIncludeDrafts, setOriginalAutoUpdateIncludeDrafts] =
     useState<boolean>(false);
   // const [isSaveButtonVisible, setIsSaveButtonVisible] = useState(true);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -145,6 +150,31 @@ function SettingsComponent() {
       const effective = enabled === undefined ? false : Boolean(enabled);
       setAutoPrEnabled(effective);
       setOriginalAutoPrEnabled(effective);
+      const draftsEnabled = (
+        workspaceSettings as unknown as { autoUpdateIncludeDrafts?: boolean }
+      )?.autoUpdateIncludeDrafts;
+      const draftsEffective =
+        draftsEnabled === undefined ? false : Boolean(draftsEnabled);
+      setAutoUpdateIncludeDrafts(draftsEffective);
+      setOriginalAutoUpdateIncludeDrafts(draftsEffective);
+      if (isElectron) {
+        void (async () => {
+          try {
+            const currentPref =
+              (await window.cmux?.autoUpdate?.getPreference?.()) ?? null;
+            if (currentPref?.includeDrafts !== draftsEffective) {
+              await window.cmux?.autoUpdate?.setPreference?.({
+                includeDrafts: draftsEffective,
+              });
+            }
+          } catch (error) {
+            console.error(
+              "[Settings] Failed to sync auto-update preference to main process",
+              error
+            );
+          }
+        })();
+      }
     }
   }, [workspaceSettings]);
 
@@ -243,10 +273,13 @@ function SettingsComponent() {
 
     // Auto PR toggle changes
     const autoPrChanged = autoPrEnabled !== originalAutoPrEnabled;
+    const autoUpdateModeChanged =
+      autoUpdateIncludeDrafts !== originalAutoUpdateIncludeDrafts;
 
     return (
       worktreePathChanged ||
       autoPrChanged ||
+      autoUpdateModeChanged ||
       apiKeysChanged ||
       containerSettingsChanged
     );
@@ -262,15 +295,33 @@ function SettingsComponent() {
       // Save worktree path / auto PR if changed
       if (
         worktreePath !== originalWorktreePath ||
-        autoPrEnabled !== originalAutoPrEnabled
+        autoPrEnabled !== originalAutoPrEnabled ||
+        autoUpdateIncludeDrafts !== originalAutoUpdateIncludeDrafts
       ) {
         await convex.mutation(api.workspaceSettings.update, {
           teamSlugOrId,
           worktreePath: worktreePath || undefined,
           autoPrEnabled,
+          autoUpdateIncludeDrafts,
         });
         setOriginalWorktreePath(worktreePath);
         setOriginalAutoPrEnabled(autoPrEnabled);
+        setOriginalAutoUpdateIncludeDrafts(autoUpdateIncludeDrafts);
+        if (
+          isElectron &&
+          autoUpdateIncludeDrafts !== originalAutoUpdateIncludeDrafts
+        ) {
+          try {
+            await window.cmux?.autoUpdate?.setPreference?.({
+              includeDrafts: autoUpdateIncludeDrafts,
+            });
+          } catch (error) {
+            console.error(
+              "[Settings] Failed to persist auto-update preference",
+              error
+            );
+          }
+        }
       }
 
       // Save container settings if changed
@@ -609,6 +660,36 @@ function SettingsComponent() {
                       System
                     </button>
                   </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Desktop App Updates */}
+            <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
+              <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
+                <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                  Desktop Updates
+                </h2>
+              </div>
+              <div className="p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                      Always pull the latest GitHub release
+                    </label>
+                    <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                      Enable this to have cmux auto-update from the most recent
+                      GitHub release, even if it is still a draft or
+                      prerelease.
+                    </p>
+                  </div>
+                  <Switch
+                    aria-label="Always pull the latest GitHub release"
+                    size="sm"
+                    color="primary"
+                    isSelected={autoUpdateIncludeDrafts}
+                    onValueChange={setAutoUpdateIncludeDrafts}
+                  />
                 </div>
               </div>
             </div>
