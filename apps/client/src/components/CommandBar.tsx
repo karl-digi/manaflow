@@ -760,7 +760,7 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
     // In Electron, prefer global shortcut from main via cmux event.
     if (isElectron) {
       const off = window.cmux.on("shortcut:cmd-k", () => {
-        // Only handle Cmd+K (no shift/ctrl variations)
+        // Handle command palette shortcut
         setOpenedWithShift(false);
         setActivePage("root");
         if (openRef.current) {
@@ -776,15 +776,19 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       };
     }
 
-    // Web/non-Electron fallback: local keydown listener for Cmd+K
+    // Web/non-Electron fallback: local keydown listener
+    // Note: Configurable shortcuts are loaded from localStorage in the main process
+    // For web, we use the default Cmd+K/Ctrl+K
     const down = (e: KeyboardEvent) => {
-      // Only trigger on EXACT Cmd+K (no Shift/Alt/Ctrl)
+      // Trigger on Cmd+K (Mac) or Ctrl+K (Windows/Linux)
+      const isMac = navigator.platform.toUpperCase().indexOf("MAC") >= 0;
+      const modifierPressed = isMac ? e.metaKey : e.ctrlKey;
+
       if (
         e.key.toLowerCase() === "k" &&
-        e.metaKey &&
+        modifierPressed &&
         !e.shiftKey &&
-        !e.altKey &&
-        !e.ctrlKey
+        !e.altKey
       ) {
         e.preventDefault();
         setActivePage("root");

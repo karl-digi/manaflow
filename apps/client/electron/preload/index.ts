@@ -146,6 +146,13 @@ const cmuxAPI = {
     copyAll: () =>
       ipcRenderer.invoke("cmux:logs:copy-all") as Promise<{ ok: boolean }>,
   },
+  shortcuts: {
+    update: (shortcuts: Record<string, unknown>) =>
+      ipcRenderer.invoke("cmux:shortcuts:update", shortcuts) as Promise<{
+        ok: boolean;
+        error?: string;
+      }>,
+  },
   autoUpdate: {
     check: () =>
       ipcRenderer.invoke("cmux:auto-update:check") as Promise<{

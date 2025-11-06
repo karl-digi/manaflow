@@ -716,6 +716,11 @@ app.whenReady().then(async () => {
   });
   registerLogIpcHandlers();
   registerAutoUpdateIpcHandlers();
+
+  // Initialize keyboard shortcuts
+  const { initShortcuts } = await import("./shortcuts");
+  initShortcuts();
+
   initCmdK({
     getMainWindow: () => mainWindow,
     logger: {

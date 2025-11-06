@@ -89,7 +89,8 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
     localStorage.setItem("sidebarHidden", String(isHidden));
   }, [isHidden]);
 
-  // Keyboard shortcut to toggle sidebar (Ctrl+Shift+S)
+  // Keyboard shortcut to toggle sidebar
+  // Note: Configurable shortcuts are loaded from localStorage in the main process
   useEffect(() => {
     if (isElectron && window.cmux?.on) {
       const off = window.cmux.on("shortcut:sidebar-toggle", () => {
@@ -100,11 +101,14 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
       };
     }
 
+    // Web fallback: default Ctrl+Shift+S
     const handleKeyDown = (e: KeyboardEvent) => {
       if (
         e.ctrlKey &&
         e.shiftKey &&
-        (e.code === "KeyS" || e.key.toLowerCase() === "s")
+        (e.code === "KeyS" || e.key.toLowerCase() === "s") &&
+        !e.metaKey &&
+        !e.altKey
       ) {
         e.preventDefault();
         setIsHidden((prev) => !prev);

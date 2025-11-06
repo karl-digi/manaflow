@@ -7,6 +7,7 @@ import {
   webContents,
   webFrameMain,
 } from "electron";
+import { getParsedShortcut, matchesShortcut } from "./shortcuts";
 
 type Logger = {
   log: (...args: unknown[]) => void;
@@ -238,26 +239,13 @@ export function initCmdK(opts: {
           typeInput: input.type,
         });
         if (input.type !== "keyDown") return;
-        const isMac = process.platform === "darwin";
-        // Only trigger on EXACT Cmd+K (mac) or Ctrl+K (others)
-        const isCmdK = (() => {
-          if (input.key.toLowerCase() !== "k") return false;
-          if (input.alt || input.shift) return false;
-          if (isMac) {
-            // Require meta only; disallow ctrl on mac
-            return Boolean(input.meta) && !input.control;
-          }
-          // Non-mac: require ctrl only; disallow meta
-          return Boolean(input.control) && !input.meta;
-        })();
 
-        const isSidebarToggle = (() => {
-          if (input.key.toLowerCase() !== "s") return false;
-          if (!input.shift) return false;
-          if (input.alt || input.meta) return false;
-          // Require control to align with renderer shortcut (Ctrl+Shift+S)
-          return Boolean(input.control);
-        })();
+        // Load configured shortcuts
+        const cmdKShortcut = getParsedShortcut("command_palette");
+        const sidebarShortcut = getParsedShortcut("sidebar_toggle");
+
+        const isCmdK = cmdKShortcut ? matchesShortcut(input, cmdKShortcut) : false;
+        const isSidebarToggle = sidebarShortcut ? matchesShortcut(input, sidebarShortcut) : false;
 
         if (!isCmdK && !isSidebarToggle) return;
 
@@ -877,6 +865,20 @@ export function initCmdK(opts: {
     } catch (err) {
       keyDebug("window-restore-last-focus.error", { err: String(err) });
       return { ok: false };
+    }
+  });
+
+  // Handle shortcuts updates from renderer
+  ipcMain.handle("cmux:shortcuts:update", async (_evt, shortcuts: Record<string, unknown>) => {
+    try {
+      const { updateShortcuts } = await import("./shortcuts");
+      updateShortcuts(shortcuts as Record<string, { shortcutId: string; displayName: string; description?: string; keybinding: string; defaultKeybinding: string }>);
+      keyDebug("shortcuts-updated", { count: Object.keys(shortcuts).length });
+      return { ok: true };
+    } catch (err) {
+      keyDebug("shortcuts-update-error", { err: String(err) });
+      opts.logger.warn("Failed to update shortcuts", err);
+      return { ok: false, error: String(err) };
     }
   });
 }

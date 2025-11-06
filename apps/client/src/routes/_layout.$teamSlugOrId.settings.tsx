@@ -14,6 +14,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useConvex } from "convex/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import type { Id } from "@cmux/convex/dataModel";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/settings")({
   component: SettingsComponent,
@@ -60,6 +61,11 @@ function SettingsComponent() {
   const [originalContainerSettingsData, setOriginalContainerSettingsData] =
     useState<typeof containerSettingsData>(null);
 
+  // Keyboard shortcuts state
+  const [shortcutValues, setShortcutValues] = useState<Record<string, string>>({});
+  const [originalShortcutValues, setOriginalShortcutValues] = useState<Record<string, string>>({});
+  const [editingShortcut, setEditingShortcut] = useState<string | null>(null);
+
   // Get all required API keys from agent configs
   const apiKeys = Array.from(
     new Map(
@@ -85,6 +91,11 @@ function SettingsComponent() {
   // Query workspace settings
   const { data: workspaceSettings } = useQuery(
     convexQuery(api.workspaceSettings.get, { teamSlugOrId })
+  );
+
+  // Query keyboard shortcuts
+  const { data: keyboardShortcuts } = useQuery(
+    convexQuery(api.keyboardShortcuts.getAll, { teamSlugOrId })
   );
 
   // Initialize form values when data loads
@@ -147,6 +158,18 @@ function SettingsComponent() {
       setOriginalAutoPrEnabled(effective);
     }
   }, [workspaceSettings]);
+
+  // Initialize keyboard shortcuts when data loads
+  useEffect(() => {
+    if (keyboardShortcuts) {
+      const values: Record<string, string> = {};
+      keyboardShortcuts.forEach((shortcut) => {
+        values[shortcut.shortcutId] = shortcut.keybinding;
+      });
+      setShortcutValues(values);
+      setOriginalShortcutValues(values);
+    }
+  }, [keyboardShortcuts]);
 
   // Track save button visibility
   // Footer-based save button; no visibility tracking needed
@@ -244,11 +267,19 @@ function SettingsComponent() {
     // Auto PR toggle changes
     const autoPrChanged = autoPrEnabled !== originalAutoPrEnabled;
 
+    // Check keyboard shortcuts changes
+    const shortcutsChanged = Object.keys(shortcutValues).some((shortcutId) => {
+      const currentValue = shortcutValues[shortcutId] || "";
+      const originalValue = originalShortcutValues[shortcutId] || "";
+      return currentValue !== originalValue;
+    });
+
     return (
       worktreePathChanged ||
       autoPrChanged ||
       apiKeysChanged ||
-      containerSettingsChanged
+      containerSettingsChanged ||
+      shortcutsChanged
     );
   };
 
@@ -313,8 +344,28 @@ function SettingsComponent() {
         }
       }
 
+      // Save keyboard shortcuts if changed
+      if (keyboardShortcuts) {
+        for (const shortcut of keyboardShortcuts) {
+          const currentValue = shortcutValues[shortcut.shortcutId] || "";
+          const originalValue = originalShortcutValues[shortcut.shortcutId] || "";
+
+          if (currentValue !== originalValue) {
+            await convex.mutation(api.keyboardShortcuts.upsert, {
+              teamSlugOrId,
+              shortcutId: shortcut.shortcutId,
+              displayName: shortcut.displayName,
+              keybinding: currentValue,
+              defaultKeybinding: shortcut.defaultKeybinding,
+              description: shortcut.description,
+            });
+          }
+        }
+      }
+
       // Update original values to reflect saved state
       setOriginalApiKeyValues(apiKeyValues);
+      setOriginalShortcutValues(shortcutValues);
 
       // After successful save, hide all API key inputs
       setShowKeys({});
@@ -989,6 +1040,119 @@ function SettingsComponent() {
                   teamSlugOrId={teamSlugOrId}
                   onDataChange={handleContainerSettingsChange}
                 />
+              </div>
+            </div>
+
+            {/* Keyboard Shortcuts */}
+            <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
+              <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
+                <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                  Keyboard Shortcuts
+                </h2>
+              </div>
+              <div className="p-4">
+                <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-4">
+                  Customize keyboard shortcuts for common actions. Click on a shortcut to edit it.
+                </p>
+                <div className="space-y-3">
+                  {keyboardShortcuts?.map((shortcut) => {
+                    const currentValue = shortcutValues[shortcut.shortcutId] || shortcut.keybinding;
+                    const isEditing = editingShortcut === shortcut.shortcutId;
+                    const isChanged = currentValue !== shortcut.defaultKeybinding;
+
+                    return (
+                      <div
+                        key={shortcut.shortcutId}
+                        className="flex items-center justify-between p-3 border border-neutral-200 dark:border-neutral-800 rounded-lg"
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <label className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                              {shortcut.displayName}
+                            </label>
+                            {isChanged && (
+                              <span className="text-xs text-blue-600 dark:text-blue-400">
+                                (Modified)
+                              </span>
+                            )}
+                          </div>
+                          {shortcut.description && (
+                            <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+                              {shortcut.description}
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {isEditing ? (
+                            <>
+                              <input
+                                type="text"
+                                value={currentValue}
+                                onChange={(e) => {
+                                  setShortcutValues((prev) => ({
+                                    ...prev,
+                                    [shortcut.shortcutId]: e.target.value,
+                                  }));
+                                }}
+                                onBlur={() => setEditingShortcut(null)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    setEditingShortcut(null);
+                                  } else if (e.key === "Escape") {
+                                    setShortcutValues((prev) => ({
+                                      ...prev,
+                                      [shortcut.shortcutId]: originalShortcutValues[shortcut.shortcutId] || shortcut.keybinding,
+                                    }));
+                                    setEditingShortcut(null);
+                                  }
+                                }}
+                                autoFocus
+                                className="px-3 py-1.5 text-sm border border-neutral-300 dark:border-neutral-700 rounded-md bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              />
+                              <button
+                                onClick={() => setEditingShortcut(null)}
+                                className="text-xs text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300"
+                              >
+                                Done
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                onClick={() => setEditingShortcut(shortcut.shortcutId)}
+                                className="px-3 py-1.5 text-sm border border-neutral-300 dark:border-neutral-700 rounded-md bg-neutral-50 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 font-mono hover:bg-neutral-100 dark:hover:bg-neutral-750 transition-colors"
+                              >
+                                {currentValue}
+                              </button>
+                              {isChanged && (
+                                <button
+                                  onClick={async () => {
+                                    await convex.mutation(api.keyboardShortcuts.resetToDefault, {
+                                      teamSlugOrId,
+                                      shortcutId: shortcut.shortcutId,
+                                    });
+                                    setShortcutValues((prev) => ({
+                                      ...prev,
+                                      [shortcut.shortcutId]: shortcut.defaultKeybinding,
+                                    }));
+                                    setOriginalShortcutValues((prev) => ({
+                                      ...prev,
+                                      [shortcut.shortcutId]: shortcut.defaultKeybinding,
+                                    }));
+                                    toast.success("Shortcut reset to default");
+                                  }}
+                                  className="text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                                >
+                                  Reset
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             </div>
 

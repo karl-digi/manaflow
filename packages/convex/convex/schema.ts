@@ -940,6 +940,21 @@ const convexSchema = defineSchema({
     .index("by_statusId", ["statusId"])
     .index("by_sha_context", ["sha", "context", "updatedAt"])
     .index("by_sha", ["sha", "updatedAt"]),
+
+  // Keyboard shortcuts configuration
+  keyboardShortcuts: defineTable({
+    shortcutId: v.string(), // Unique identifier (e.g., "command_palette", "sidebar_toggle")
+    displayName: v.string(), // Human-readable name
+    description: v.optional(v.string()), // Description of what the shortcut does
+    keybinding: v.string(), // The key combination (e.g., "Cmd+K", "Ctrl+Shift+S")
+    defaultKeybinding: v.string(), // Default key combination
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    userId: v.string(),
+    teamId: v.string(),
+  })
+    .index("by_team_user", ["teamId", "userId"])
+    .index("by_team_user_shortcutId", ["teamId", "userId", "shortcutId"]),
 });
 
 export default convexSchema;
