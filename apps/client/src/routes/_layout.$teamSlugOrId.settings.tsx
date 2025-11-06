@@ -1,8 +1,15 @@
 import { ContainerSettings } from "@/components/ContainerSettings";
 import { FloatingPane } from "@/components/floating-pane";
 import { ProviderStatusSettings } from "@/components/provider-status-settings";
+import { ShortcutRecorder } from "@/components/ShortcutRecorder";
 import { useTheme } from "@/components/theme/use-theme";
 import { TitleBar } from "@/components/TitleBar";
+import {
+  DEFAULT_SHORTCUTS,
+  loadShortcutSettings,
+  saveShortcutSettings,
+  type ShortcutSettings,
+} from "@/lib/shortcuts";
 import { api } from "@cmux/convex/api";
 import type { Doc } from "@cmux/convex/dataModel";
 import { AGENT_CONFIGS, type AgentConfig } from "@cmux/shared/agentConfig";
@@ -59,6 +66,12 @@ function SettingsComponent() {
   } | null>(null);
   const [originalContainerSettingsData, setOriginalContainerSettingsData] =
     useState<typeof containerSettingsData>(null);
+  const [shortcuts, setShortcuts] = useState<ShortcutSettings>(
+    () => loadShortcutSettings()
+  );
+  const [originalShortcuts, setOriginalShortcuts] = useState<ShortcutSettings>(
+    () => loadShortcutSettings()
+  );
 
   // Get all required API keys from agent configs
   const apiKeys = Array.from(
@@ -244,11 +257,16 @@ function SettingsComponent() {
     // Auto PR toggle changes
     const autoPrChanged = autoPrEnabled !== originalAutoPrEnabled;
 
+    // Check shortcut changes
+    const shortcutsChanged =
+      JSON.stringify(shortcuts) !== JSON.stringify(originalShortcuts);
+
     return (
       worktreePathChanged ||
       autoPrChanged ||
       apiKeysChanged ||
-      containerSettingsChanged
+      containerSettingsChanged ||
+      shortcutsChanged
     );
   };
 
@@ -285,6 +303,12 @@ function SettingsComponent() {
           ...containerSettingsData,
         });
         setOriginalContainerSettingsData(containerSettingsData);
+      }
+
+      // Save shortcuts if changed
+      if (JSON.stringify(shortcuts) !== JSON.stringify(originalShortcuts)) {
+        saveShortcutSettings(shortcuts);
+        setOriginalShortcuts(shortcuts);
       }
 
       for (const key of apiKeys) {
@@ -609,6 +633,44 @@ function SettingsComponent() {
                       System
                     </button>
                   </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Keyboard Shortcuts */}
+            <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
+              <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
+                <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                  Keyboard Shortcuts
+                </h2>
+              </div>
+              <div className="p-4 space-y-4">
+                <ShortcutRecorder
+                  value={shortcuts.commandPalette}
+                  onChange={(config) =>
+                    setShortcuts({ ...shortcuts, commandPalette: config })
+                  }
+                  label="Command Palette"
+                  description="Open the command palette to quickly navigate and access features"
+                />
+                <ShortcutRecorder
+                  value={shortcuts.sidebarToggle}
+                  onChange={(config) =>
+                    setShortcuts({ ...shortcuts, sidebarToggle: config })
+                  }
+                  label="Toggle Sidebar"
+                  description="Show or hide the sidebar"
+                />
+                <div className="pt-2 border-t border-neutral-200 dark:border-neutral-800">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShortcuts(DEFAULT_SHORTCUTS);
+                    }}
+                    className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
+                  >
+                    Reset to defaults
+                  </button>
                 </div>
               </div>
             </div>

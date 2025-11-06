@@ -63,9 +63,57 @@ const lastFocusByWindow = new Map<
 
 let browserWindowFocusListenerRegistered = false;
 
+// Store custom keyboard shortcuts (can be updated via IPC)
+interface ShortcutConfig {
+  key: string;
+  meta: boolean;
+  control: boolean;
+  shift: boolean;
+  alt: boolean;
+}
+
+interface ShortcutSettings {
+  commandPalette: ShortcutConfig;
+  sidebarToggle: ShortcutConfig;
+}
+
+// Default shortcuts
+let customShortcuts: ShortcutSettings = {
+  commandPalette: {
+    key: "k",
+    meta: true,
+    control: false,
+    shift: false,
+    alt: false,
+  },
+  sidebarToggle: {
+    key: "s",
+    meta: false,
+    control: true,
+    shift: true,
+    alt: false,
+  },
+};
+
 type QueuedWindowTask = () => Promise<void> | void;
 const pendingWindowTasks = new Map<number, QueuedWindowTask[]>();
 const windowsWithTaskListeners = new WeakSet<BrowserWindow>();
+
+/**
+ * Check if a keyboard input matches a shortcut config
+ */
+function matchesShortcut(
+  input: Electron.Input,
+  config: ShortcutConfig
+): boolean {
+  return (
+    input.key.toLowerCase() === config.key.toLowerCase() &&
+    Boolean(input.meta) === config.meta &&
+    Boolean(input.control) === config.control &&
+    Boolean(input.shift) === config.shift &&
+    Boolean(input.alt) === config.alt
+  );
+}
 
 function describeWindowFocus(win: BrowserWindow): {
   windowId: number;
@@ -238,26 +286,10 @@ export function initCmdK(opts: {
           typeInput: input.type,
         });
         if (input.type !== "keyDown") return;
-        const isMac = process.platform === "darwin";
-        // Only trigger on EXACT Cmd+K (mac) or Ctrl+K (others)
-        const isCmdK = (() => {
-          if (input.key.toLowerCase() !== "k") return false;
-          if (input.alt || input.shift) return false;
-          if (isMac) {
-            // Require meta only; disallow ctrl on mac
-            return Boolean(input.meta) && !input.control;
-          }
-          // Non-mac: require ctrl only; disallow meta
-          return Boolean(input.control) && !input.meta;
-        })();
 
-        const isSidebarToggle = (() => {
-          if (input.key.toLowerCase() !== "s") return false;
-          if (!input.shift) return false;
-          if (input.alt || input.meta) return false;
-          // Require control to align with renderer shortcut (Ctrl+Shift+S)
-          return Boolean(input.control);
-        })();
+        // Check if input matches configured shortcuts
+        const isCmdK = matchesShortcut(input, customShortcuts.commandPalette);
+        const isSidebarToggle = matchesShortcut(input, customShortcuts.sidebarToggle);
 
         if (!isCmdK && !isSidebarToggle) return;
 
@@ -738,6 +770,28 @@ export function initCmdK(opts: {
       return { ok: true };
     } catch (err) {
       keyDebug("cmdk-open-state-error", { err: String(err) });
+      return { ok: false };
+    }
+  });
+
+  // Update custom shortcuts (called from renderer when settings change)
+  ipcMain.handle("cmux:ui:update-shortcuts", (_evt, shortcuts: ShortcutSettings) => {
+    try {
+      customShortcuts = shortcuts;
+      keyDebug("shortcuts-updated", shortcuts);
+      return { ok: true };
+    } catch (err) {
+      keyDebug("shortcuts-update-error", { err: String(err) });
+      return { ok: false };
+    }
+  });
+
+  // Get current shortcuts (called from renderer on startup)
+  ipcMain.handle("cmux:ui:get-shortcuts", () => {
+    try {
+      return { ok: true, shortcuts: customShortcuts };
+    } catch (err) {
+      keyDebug("shortcuts-get-error", { err: String(err) });
       return { ok: false };
     }
   });

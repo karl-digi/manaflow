@@ -2,6 +2,7 @@ import { TaskTree } from "@/components/TaskTree";
 import { TaskTreeSkeleton } from "@/components/TaskTreeSkeleton";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { isElectron } from "@/lib/electron";
+import { loadShortcutSettings, matchesShortcut } from "@/lib/shortcuts";
 import { type Doc } from "@cmux/convex/dataModel";
 import type { LinkProps } from "@tanstack/react-router";
 import { Link } from "@tanstack/react-router";
@@ -89,7 +90,7 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
     localStorage.setItem("sidebarHidden", String(isHidden));
   }, [isHidden]);
 
-  // Keyboard shortcut to toggle sidebar (Ctrl+Shift+S)
+  // Keyboard shortcut to toggle sidebar (configurable)
   useEffect(() => {
     if (isElectron && window.cmux?.on) {
       const off = window.cmux.on("shortcut:sidebar-toggle", () => {
@@ -100,19 +101,36 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
       };
     }
 
+    const shortcuts = loadShortcutSettings();
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (
-        e.ctrlKey &&
-        e.shiftKey &&
-        (e.code === "KeyS" || e.key.toLowerCase() === "s")
-      ) {
+      if (matchesShortcut(e, shortcuts.sidebarToggle)) {
         e.preventDefault();
         setIsHidden((prev) => !prev);
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+
+    // Listen for shortcut settings changes
+    const handleShortcutsChanged = () => {
+      // Force re-mount by removing and re-adding listener
+      window.removeEventListener("keydown", handleKeyDown);
+      const newShortcuts = loadShortcutSettings();
+      const newHandler = (e: KeyboardEvent) => {
+        if (matchesShortcut(e, newShortcuts.sidebarToggle)) {
+          e.preventDefault();
+          setIsHidden((prev) => !prev);
+        }
+      };
+      window.addEventListener("keydown", newHandler);
+    };
+
+    window.addEventListener("cmux:shortcuts-changed", handleShortcutsChanged);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("cmux:shortcuts-changed", handleShortcutsChanged);
+    };
   }, []);
 
   // Listen for storage events from command bar (sidebar visibility sync)

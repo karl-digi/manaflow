@@ -133,6 +133,17 @@ const cmuxAPI = {
         queued?: boolean;
       }>;
     },
+    updateShortcuts: (shortcuts: unknown) => {
+      return ipcRenderer.invoke("cmux:ui:update-shortcuts", shortcuts) as Promise<{
+        ok: boolean;
+      }>;
+    },
+    getShortcuts: () => {
+      return ipcRenderer.invoke("cmux:ui:get-shortcuts") as Promise<{
+        ok: boolean;
+        shortcuts?: unknown;
+      }>;
+    },
   },
   logs: {
     onMainLog: (callback: LogListener) => {

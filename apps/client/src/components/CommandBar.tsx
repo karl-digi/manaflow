@@ -5,6 +5,7 @@ import { useSocket } from "@/contexts/socket/use-socket";
 import { isElectron } from "@/lib/electron";
 import { copyAllElectronLogs } from "@/lib/electron-logs/electron-logs";
 import { setLastTeamSlugOrId } from "@/lib/lastTeam";
+import { loadShortcutSettings, matchesShortcut } from "@/lib/shortcuts";
 import { stackClientApp } from "@/lib/stack";
 import { preloadTaskRunIframes } from "@/lib/preloadTaskRunIframes";
 import {
@@ -776,16 +777,10 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       };
     }
 
-    // Web/non-Electron fallback: local keydown listener for Cmd+K
+    // Web/non-Electron fallback: local keydown listener using custom shortcuts
+    const shortcuts = loadShortcutSettings();
     const down = (e: KeyboardEvent) => {
-      // Only trigger on EXACT Cmd+K (no Shift/Alt/Ctrl)
-      if (
-        e.key.toLowerCase() === "k" &&
-        e.metaKey &&
-        !e.shiftKey &&
-        !e.altKey &&
-        !e.ctrlKey
-      ) {
+      if (matchesShortcut(e, shortcuts.commandPalette)) {
         e.preventDefault();
         setActivePage("root");
         if (openRef.current) {
@@ -801,7 +796,36 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       }
     };
     document.addEventListener("keydown", down);
-    return () => document.removeEventListener("keydown", down);
+
+    // Listen for shortcut settings changes
+    const handleShortcutsChanged = () => {
+      // Force re-mount by removing and re-adding listener
+      document.removeEventListener("keydown", down);
+      const newShortcuts = loadShortcutSettings();
+      const newHandler = (e: KeyboardEvent) => {
+        if (matchesShortcut(e, newShortcuts.commandPalette)) {
+          e.preventDefault();
+          setActivePage("root");
+          if (openRef.current) {
+            setOpenedWithShift(false);
+            setSearch("");
+          } else {
+            setOpenedWithShift(false);
+            prevFocusedElRef.current =
+              document.activeElement as HTMLElement | null;
+          }
+          setOpen((cur) => !cur);
+        }
+      };
+      document.addEventListener("keydown", newHandler);
+    };
+
+    window.addEventListener("cmux:shortcuts-changed", handleShortcutsChanged);
+
+    return () => {
+      document.removeEventListener("keydown", down);
+      window.removeEventListener("cmux:shortcuts-changed", handleShortcutsChanged);
+    };
   }, []);
 
   // Track and restore focus across open/close, including iframes/webviews.
