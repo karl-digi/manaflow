@@ -91,6 +91,7 @@ import {
 } from "./review-completion-notification-card";
 import clsx from "clsx";
 import { kitties } from "./kitty";
+import { DiffMinimap } from "./diff-minimap";
 
 type PullRequestDiffViewerProps = {
   files: GithubFileChange[];
@@ -1349,6 +1350,37 @@ export function PullRequestDiffViewer({
     [fileEntries, heatmapThreshold]
   );
 
+  // Prepare minimap data
+  const minimapFiles = useMemo(() => {
+    return thresholdedFileEntries.map(({ entry, diffHeatmap }) => {
+      let lineCount = 0;
+      let addedLines = 0;
+      let deletedLines = 0;
+
+      if (entry.diff) {
+        for (const hunk of entry.diff.hunks) {
+          for (const change of hunk.changes) {
+            lineCount++;
+            if (change.type === "insert") {
+              addedLines++;
+            } else if (change.type === "delete") {
+              deletedLines++;
+            }
+          }
+        }
+      }
+
+      return {
+        filename: entry.file.filename,
+        anchorId: entry.anchorId,
+        lineCount: Math.max(lineCount, 1),
+        heatmap: diffHeatmap,
+        addedLines,
+        deletedLines,
+      };
+    });
+  }, [thresholdedFileEntries]);
+
   const errorTargets = useMemo<ReviewErrorTarget[]>(() => {
     const targets: ReviewErrorTarget[] = [];
 
@@ -2211,6 +2243,13 @@ export function PullRequestDiffViewer({
           </div>
         </div>
       </div>
+
+      {/* Minimap */}
+      <DiffMinimap
+        files={minimapFiles}
+        activeAnchor={activeAnchor}
+        onNavigate={handleNavigate}
+      />
     </div>
     </>
   );
