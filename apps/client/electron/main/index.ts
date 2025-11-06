@@ -41,6 +41,36 @@ import {
 } from "./log-management/log-rotation";
 const { autoUpdater } = electronUpdater;
 
+const AUTO_UPDATE_GITHUB_OWNER =
+  process.env.CMUX_AUTO_UPDATE_GITHUB_OWNER ?? "manaflow-ai";
+const AUTO_UPDATE_GITHUB_REPO =
+  process.env.CMUX_AUTO_UPDATE_GITHUB_REPO ?? "cmux";
+const AUTO_UPDATE_INCLUDE_DRAFTS = parseBooleanEnv(
+  process.env.CMUX_AUTO_UPDATE_INCLUDE_DRAFTS,
+  true
+);
+
+type GithubReleaseAsset = {
+  id: number;
+  name?: string;
+  browser_download_url?: string;
+};
+
+type GithubRelease = {
+  id: number;
+  draft?: boolean;
+  prerelease?: boolean;
+  tag_name?: string;
+  name?: string;
+  created_at?: string;
+  published_at?: string;
+  assets?: GithubReleaseAsset[];
+};
+
+let currentAutoUpdateReleaseTag: string | null = null;
+let currentAutoUpdateReleaseId: number | null = null;
+let pendingAutoUpdateFeedRefresh: Promise<void> | null = null;
+
 import util from "node:util";
 import { initCmdK, keyDebug } from "./cmdk";
 import { env } from "./electron-main-env";
@@ -386,6 +416,7 @@ function registerAutoUpdateIpcHandlers(): void {
 
     try {
       mainLog("Renderer requested manual checkForUpdates");
+      await refreshAutoUpdateFeedIfNecessary();
       const result = await autoUpdater.checkForUpdates();
       logUpdateCheckResult("Renderer checkForUpdates", result);
 
@@ -427,6 +458,183 @@ function registerAutoUpdateIpcHandlers(): void {
   });
 }
 
+function parseBooleanEnv(
+  value: string | undefined,
+  fallback: boolean
+): boolean {
+  if (value === undefined) return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return fallback;
+}
+
+function resolveGithubToken(): string | null {
+  const candidates = [
+    process.env.CMUX_AUTO_UPDATE_GITHUB_TOKEN,
+    process.env.CMUX_GITHUB_TOKEN,
+    process.env.GITHUB_TOKEN,
+    process.env.GH_TOKEN,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      return candidate.trim();
+    }
+  }
+  return null;
+}
+
+function normalizeGithubAuthHeader(token: string): string {
+  const trimmed = token.trim();
+  if (/^bearer\s+/i.test(trimmed) || /^token\s+/i.test(trimmed)) {
+    return trimmed;
+  }
+  return `token ${trimmed}`;
+}
+
+function getReleaseTimestamp(release: GithubRelease): number {
+  const candidates = [release.created_at, release.published_at];
+  for (const value of candidates) {
+    if (typeof value === "string") {
+      const parsed = Date.parse(value);
+      if (!Number.isNaN(parsed)) {
+        return parsed;
+      }
+    }
+  }
+  return 0;
+}
+
+function resolveGitHubReleaseTag(release: GithubRelease): string | null {
+  const candidates = [release.tag_name, release.name];
+  for (const value of candidates) {
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+  return null;
+}
+
+async function fetchLatestGitHubRelease(
+  token: string | null
+): Promise<GithubRelease | null> {
+  const url = new URL(
+    `https://api.github.com/repos/${AUTO_UPDATE_GITHUB_OWNER}/${AUTO_UPDATE_GITHUB_REPO}/releases`
+  );
+  url.searchParams.set("per_page", "20");
+
+  const headers: Record<string, string> = {
+    Accept: "application/vnd.github+json",
+    "User-Agent": `cmux-updater/${app.getVersion()}`,
+  };
+  if (token) {
+    headers.Authorization = normalizeGithubAuthHeader(token);
+  }
+
+  try {
+    const response = await net.fetch(url.toString(), { headers });
+    if (!response.ok) {
+      const body = await response.text();
+      mainWarn("GitHub releases request failed", {
+        status: response.status,
+        statusText: response.statusText,
+        body: body.slice(0, 256),
+      });
+      return null;
+    }
+
+    const parsed = (await response.json()) as unknown;
+    if (!Array.isArray(parsed)) {
+      mainWarn("Unexpected GitHub releases payload", { type: typeof parsed });
+      return null;
+    }
+
+    const releases = parsed as GithubRelease[];
+    if (releases.length === 0) {
+      mainLog("GitHub releases list empty; skipping auto-update feed refresh");
+      return null;
+    }
+
+    releases.sort(
+      (a, b) => getReleaseTimestamp(b) - getReleaseTimestamp(a)
+    );
+    return releases[0] ?? null;
+  } catch (error) {
+    mainWarn("Failed to fetch GitHub releases", error);
+    return null;
+  }
+}
+
+async function refreshAutoUpdateFeedIfNecessary(
+  options?: { force?: boolean }
+): Promise<void> {
+  if (!AUTO_UPDATE_INCLUDE_DRAFTS) return;
+  if (!app.isPackaged) return;
+  if (pendingAutoUpdateFeedRefresh) {
+    await pendingAutoUpdateFeedRefresh;
+    return;
+  }
+
+  const force = Boolean(options?.force);
+  const token = resolveGithubToken();
+  pendingAutoUpdateFeedRefresh = (async () => {
+    const latestRelease = await fetchLatestGitHubRelease(token);
+    if (!latestRelease) return;
+
+    const tag = resolveGitHubReleaseTag(latestRelease);
+    if (!tag) {
+      mainWarn("Latest GitHub release missing tag or name", {
+        releaseId: latestRelease.id,
+      });
+      return;
+    }
+
+    if (!force && currentAutoUpdateReleaseTag === tag) {
+      mainLog("Auto-update feed already targeting latest release", { tag });
+      return;
+    }
+
+    const baseUrl = `https://github.com/${AUTO_UPDATE_GITHUB_OWNER}/${AUTO_UPDATE_GITHUB_REPO}/releases/download/${tag}`;
+    const feedConfig: {
+      provider: "generic";
+      url: string;
+      channel?: string | null;
+      useMultipleRangeRequest?: boolean;
+    } = {
+      provider: "generic",
+      url: baseUrl,
+    };
+
+    if (autoUpdater.channel) {
+      feedConfig.channel = autoUpdater.channel;
+    }
+
+    autoUpdater.setFeedURL(feedConfig);
+    if (token) {
+      autoUpdater.addAuthHeader(normalizeGithubAuthHeader(token));
+    }
+
+    currentAutoUpdateReleaseTag = tag;
+    currentAutoUpdateReleaseId = latestRelease.id ?? null;
+
+    mainLog("Configured auto-update feed to GitHub release", {
+      tag,
+      releaseId: latestRelease.id ?? null,
+      draft: latestRelease.draft ?? false,
+      prerelease: latestRelease.prerelease ?? false,
+      channel: autoUpdater.channel ?? null,
+    });
+  })()
+    .catch((error) => {
+      mainWarn("Failed to refresh auto-update feed", error);
+    })
+    .finally(() => {
+      pendingAutoUpdateFeedRefresh = null;
+    });
+
+  await pendingAutoUpdateFeedRefresh;
+}
+
 // Write critical errors to a file to aid debugging packaged crashes
 async function writeFatalLog(...args: unknown[]) {
   try {
@@ -450,7 +658,7 @@ process.on("unhandledRejection", (reason) => {
   void writeFatalLog("unhandledRejection", reason);
 });
 
-function setupAutoUpdates(): void {
+async function setupAutoUpdates(): Promise<void> {
   if (!app.isPackaged) {
     mainLog("Skipping auto-updates in development");
     return;
@@ -472,7 +680,8 @@ function setupAutoUpdates(): void {
 
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
-    autoUpdater.allowPrerelease = false;
+    autoUpdater.allowPrerelease = AUTO_UPDATE_INCLUDE_DRAFTS;
+    autoUpdater.allowDowngrade = AUTO_UPDATE_INCLUDE_DRAFTS;
 
     if (process.platform === "darwin") {
       const channel = "latest-universal";
@@ -485,11 +694,17 @@ function setupAutoUpdates(): void {
       }
     }
 
+    await refreshAutoUpdateFeedIfNecessary({ force: true });
+
     mainLog("Auto-updater configuration complete", {
       autoDownload: autoUpdater.autoDownload,
       autoInstallOnAppQuit: autoUpdater.autoInstallOnAppQuit,
       allowPrerelease: autoUpdater.allowPrerelease,
+      allowDowngrade: autoUpdater.allowDowngrade,
+      includeDrafts: AUTO_UPDATE_INCLUDE_DRAFTS,
       channel: autoUpdater.channel ?? null,
+      releaseTag: currentAutoUpdateReleaseTag,
+      releaseId: currentAutoUpdateReleaseId,
     });
   } catch (e) {
     mainWarn("Failed to initialize autoUpdater", e);
@@ -534,8 +749,8 @@ function setupAutoUpdates(): void {
 
   // Initial check and periodic re-checks
   mainLog("Starting initial auto-update check");
-  autoUpdater
-    .checkForUpdatesAndNotify()
+  refreshAutoUpdateFeedIfNecessary()
+    .then(() => autoUpdater.checkForUpdatesAndNotify())
     .then((result) =>
       logUpdateCheckResult("Initial checkForUpdatesAndNotify", result)
     )
@@ -543,8 +758,8 @@ function setupAutoUpdates(): void {
   const CHECK_INTERVAL_MS = 30 * 60 * 1000;
   setInterval(() => {
     mainLog("Starting scheduled auto-update check");
-    autoUpdater
-      .checkForUpdates()
+    refreshAutoUpdateFeedIfNecessary()
+      .then(() => autoUpdater.checkForUpdates())
       .then((result) =>
         logUpdateCheckResult("Scheduled checkForUpdates", result)
       )
@@ -610,7 +825,7 @@ function createWindow(): void {
   // Socket bridge not required; renderer connects directly
 
   // Initialize auto-updates
-  setupAutoUpdates();
+  void setupAutoUpdates();
 
   // Once the renderer is loaded, process any queued deep-link
   mainWindow.webContents.on("did-finish-load", () => {
