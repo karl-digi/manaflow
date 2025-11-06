@@ -590,6 +590,8 @@ export interface ClientToServerEvents {
       error?: string;
     }) => void
   ) => void;
+  // Electron-specific: quit application
+  quit: (callback: (response: { ok: boolean }) => void) => void;
 }
 
 export interface ServerToClientEvents {

@@ -1,4 +1,6 @@
 import { useTheme } from "@/components/theme/use-theme";
+import { QuitConfirmDialog } from "@/components/QuitConfirmDialog";
+import { shouldShowQuitDialog } from "@/lib/quit-preferences";
 import type { StackClientApp } from "@stackframe/react";
 import type { QueryClient } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
@@ -118,12 +120,55 @@ function useAutoUpdateNotifications() {
   }, []);
 }
 
+function useQuitShortcut() {
+  const [quitDialogOpen, setQuitDialogOpen] = useState(false);
+
+  useEffect(() => {
+    const maybeWindow = typeof window === "undefined" ? undefined : window;
+    const cmux = maybeWindow?.cmux;
+
+    if (!cmux?.on) return;
+
+    const handler = () => {
+      if (shouldShowQuitDialog()) {
+        setQuitDialogOpen(true);
+      } else {
+        // Quit immediately if user has disabled the prompt
+        void cmux.rpc?.("quit");
+      }
+    };
+
+    const unsubscribe = cmux.on("shortcut:quit", handler);
+
+    return () => {
+      try {
+        unsubscribe?.();
+      } catch {
+        // ignore
+      }
+    };
+  }, []);
+
+  const handleQuit = () => {
+    const maybeWindow = typeof window === "undefined" ? undefined : window;
+    const cmux = maybeWindow?.cmux;
+    void cmux?.rpc?.("quit");
+  };
+
+  return {
+    quitDialogOpen,
+    setQuitDialogOpen,
+    handleQuit,
+  };
+}
+
 function RootComponent() {
   const location = useRouterState({
     select: (state) => state.location,
   });
 
   useAutoUpdateNotifications();
+  const { quitDialogOpen, setQuitDialogOpen, handleQuit } = useQuitShortcut();
 
   useEffect(() => {
     if (import.meta.env.DEV) {
@@ -141,6 +186,11 @@ function RootComponent() {
       <Outlet />
       <DevTools />
       <ToasterWithTheme />
+      <QuitConfirmDialog
+        open={quitDialogOpen}
+        onOpenChange={setQuitDialogOpen}
+        onConfirm={handleQuit}
+      />
     </>
   );
 }

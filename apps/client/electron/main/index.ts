@@ -736,11 +736,19 @@ app.whenReady().then(async () => {
     contents.on("before-input-event", (e, input) => {
       if (input.type !== "keyDown") return;
 
+      const isMac = process.platform === "darwin";
+      const modKey = isMac ? input.meta : input.control;
+
+      // cmd+q: quit application (macOS only)
+      if (isMac && input.meta && input.key === "q" && !input.shift && !input.alt && !input.control) {
+        e.preventDefault();
+        sendShortcutToFocusedWindow("quit");
+        return;
+      }
+
       // Only handle preview shortcuts when preview is visible
       if (!previewReloadMenuVisible) return;
 
-      const isMac = process.platform === "darwin";
-      const modKey = isMac ? input.meta : input.control;
       if (!modKey || input.alt || input.shift) return;
 
       const key = input.key.toLowerCase();

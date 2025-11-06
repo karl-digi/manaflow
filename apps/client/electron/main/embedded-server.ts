@@ -7,7 +7,7 @@ import {
   type VSCodeServeWebHandle,
 } from "@cmux/server/vscode/serveWeb";
 import { serverLogger } from "@cmux/server/utils/fileLogger";
-import { ipcMain } from "electron";
+import { app, ipcMain } from "electron";
 
 // This starts the full server functionality over IPC (no HTTP port needed)
 export async function startEmbeddedServer() {
@@ -21,6 +21,20 @@ export async function startEmbeddedServer() {
 
   // Setup the FULL server socket handlers - this gives us complete parity
   setupSocketHandlers(ipcRealtimeServer, gitDiffManager, null);
+
+  // Add Electron-specific RPC handlers
+  ipcRealtimeServer.onConnection((socket) => {
+    socket.on("quit", (ack) => {
+      console.log("[EmbeddedServer] Quit request received");
+      // Allow the renderer to close first, then quit
+      setImmediate(() => {
+        app.quit();
+      });
+      if (typeof ack === "function") {
+        ack({ ok: true });
+      }
+    });
+  });
 
   let vscodeServeHandle: VSCodeServeWebHandle | null = null;
   try {
