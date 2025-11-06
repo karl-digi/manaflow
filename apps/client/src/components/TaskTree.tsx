@@ -6,6 +6,7 @@ import {
 } from "@/components/ui/tooltip";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { useArchiveTask } from "@/hooks/useArchiveTask";
+import { useArchiveTaskRun } from "@/hooks/useArchiveTaskRun";
 import { useOpenWithActions } from "@/hooks/useOpenWithActions";
 import { isElectron } from "@/lib/electron";
 import { isFakeConvexId } from "@/lib/fakeConvexId";
@@ -26,6 +27,7 @@ import {
   AlertTriangle,
   Archive as ArchiveIcon,
   ArchiveRestore as ArchiveRestoreIcon,
+  ChevronRight,
   CheckCircle,
   Circle,
   Copy as CopyIcon,
@@ -109,6 +111,25 @@ type TasksGetArgs = {
   projectFullName?: string;
   archived?: boolean;
 };
+
+type RunMenuEntry = {
+  run: TaskRunWithChildren;
+  depth: number;
+};
+
+function flattenRunTreeForMenu(
+  runs: TaskRunWithChildren[],
+  depth = 0
+): RunMenuEntry[] {
+  const entries: RunMenuEntry[] = [];
+  for (const run of runs) {
+    entries.push({ run, depth });
+    if (run.children.length > 0) {
+      entries.push(...flattenRunTreeForMenu(run.children, depth + 1));
+    }
+  }
+  return entries;
+}
 
 // Extract the display text logic to avoid re-creating it on every render
 function getRunDisplayText(run: TaskRunWithChildren): string {
@@ -214,7 +235,70 @@ function TaskTreeInner({
     prefetchTaskRuns();
   }, [prefetchTaskRuns]);
 
+  const handleTaskContextMenuOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open) {
+        return;
+      }
+      prefetchTaskRuns();
+      if (!isOptimisticTask) {
+        setShouldLoadRunsForMenu(true);
+      }
+    },
+    [isOptimisticTask, prefetchTaskRuns]
+  );
+
+  const [shouldLoadRunsForMenu, setShouldLoadRunsForMenu] = useState(false);
+  const runsForMenu = useConvexQuery(
+    api.taskRuns.getByTask,
+    shouldLoadRunsForMenu && !isOptimisticTask
+      ? { teamSlugOrId, taskId: task._id, includeArchived: true }
+      : "skip"
+  );
+  const flattenedRunMenuEntries = useMemo(
+    () =>
+      runsForMenu && runsForMenu.length > 0
+        ? flattenRunTreeForMenu(runsForMenu)
+        : [],
+    [runsForMenu]
+  );
+  const activeRunMenuEntries = useMemo(
+    () => flattenedRunMenuEntries.filter(({ run }) => run.isArchived !== true),
+    [flattenedRunMenuEntries]
+  );
+  const archivedRunMenuEntries = useMemo(
+    () => flattenedRunMenuEntries.filter(({ run }) => run.isArchived === true),
+    [flattenedRunMenuEntries]
+  );
+  const isRunMenuLoading =
+    shouldLoadRunsForMenu && runsForMenu === undefined;
+
   const { archiveWithUndo, unarchive } = useArchiveTask(teamSlugOrId);
+  const { archiveRun, unarchiveRun } = useArchiveTaskRun(teamSlugOrId);
+  const archiveRunWithLabel = useCallback(
+    (run: TaskRunWithChildren) => {
+      void archiveRun(run._id, { label: getRunDisplayText(run) });
+    },
+    [archiveRun]
+  );
+  const unarchiveRunWithLabel = useCallback(
+    (run: TaskRunWithChildren) => {
+      void unarchiveRun(run._id, { label: getRunDisplayText(run) });
+    },
+    [unarchiveRun]
+  );
+  const handleArchiveMenuRun = useCallback(
+    (run: TaskRunWithChildren) => {
+      archiveRunWithLabel(run);
+    },
+    [archiveRunWithLabel]
+  );
+  const handleUnarchiveMenuRun = useCallback(
+    (run: TaskRunWithChildren) => {
+      unarchiveRunWithLabel(run);
+    },
+    [unarchiveRunWithLabel]
+  );
   const updateTaskMutation = useMutation(api.tasks.update).withOptimisticUpdate(
     (localStore, args) => {
       const optimisticUpdatedAt = Date.now();
@@ -570,7 +654,7 @@ function TaskTreeInner({
   return (
     <TaskRunExpansionContext.Provider value={expansionContextValue}>
       <div className="select-none flex flex-col">
-        <ContextMenu.Root>
+        <ContextMenu.Root onOpenChange={handleTaskContextMenuOpenChange}>
           <ContextMenu.Trigger>
             <Link
               to="/$teamSlugOrId/task/$taskId"
@@ -642,6 +726,97 @@ function TaskTreeInner({
                   <CopyIcon className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
                   <span>Copy Description</span>
                 </ContextMenu.Item>
+                {!isOptimisticTask ? (
+                  <>
+                    <ContextMenu.SubmenuRoot>
+                      <ContextMenu.SubmenuTrigger
+                        className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                      >
+                        <ArchiveIcon className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
+                        <span>Task Runs</span>
+                        <ChevronRight className="ml-auto w-3 h-3 text-neutral-400 dark:text-neutral-500" />
+                      </ContextMenu.SubmenuTrigger>
+                      <ContextMenu.Portal>
+                        <ContextMenu.Positioner className="outline-none z-[var(--z-context-menu)]">
+                          <ContextMenu.Popup className="origin-[var(--transform-origin)] min-w-[240px] rounded-md bg-white dark:bg-neutral-800 py-1 text-neutral-900 dark:text-neutral-100 shadow-lg shadow-gray-200 outline-1 outline-neutral-200 transition-[opacity] data-[ending-style]:opacity-0 dark:shadow-none dark:-outline-offset-1 dark:outline-neutral-700">
+                            <div className="max-h-64 overflow-y-auto">
+                              {isRunMenuLoading ? (
+                                <div className="px-3 py-2 text-xs text-neutral-500 dark:text-neutral-400 flex items-center gap-2">
+                                  <Loader2 className="w-3 h-3 animate-spin" />
+                                  <span>Loading task runs…</span>
+                                </div>
+                              ) : flattenedRunMenuEntries.length === 0 ? (
+                                <div className="px-3 py-2 text-xs text-neutral-500 dark:text-neutral-400">
+                                  No task runs yet
+                                </div>
+                              ) : (
+                                <>
+                                  {activeRunMenuEntries.length > 0 ? (
+                                    <>
+                                      <div className="px-3 py-1 text-[11px] font-medium text-neutral-500 dark:text-neutral-400 select-none">
+                                        Active runs
+                                      </div>
+                                      {activeRunMenuEntries.map(
+                                        ({ run, depth }) => (
+                                          <ContextMenu.Item
+                                            key={`run-active-${run._id}`}
+                                            className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                                            style={{
+                                              paddingLeft: `${12 + depth * 8}px`,
+                                            }}
+                                            onClick={() =>
+                                              handleArchiveMenuRun(run)
+                                            }
+                                          >
+                                            <ArchiveIcon className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300 shrink-0" />
+                                            <span className="truncate">
+                                              Archive "{getRunDisplayText(run)}"
+                                            </span>
+                                          </ContextMenu.Item>
+                                        )
+                                      )}
+                                    </>
+                                  ) : null}
+                                  {activeRunMenuEntries.length > 0 &&
+                                  archivedRunMenuEntries.length > 0 ? (
+                                    <div className="my-1 h-px bg-neutral-200 dark:bg-neutral-700" />
+                                  ) : null}
+                                  {archivedRunMenuEntries.length > 0 ? (
+                                    <>
+                                      <div className="px-3 py-1 text-[11px] font-medium text-neutral-500 dark:text-neutral-400 select-none">
+                                        Archived runs
+                                      </div>
+                                      {archivedRunMenuEntries.map(
+                                        ({ run, depth }) => (
+                                          <ContextMenu.Item
+                                            key={`run-archived-${run._id}`}
+                                            className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                                            style={{
+                                              paddingLeft: `${12 + depth * 8}px`,
+                                            }}
+                                            onClick={() =>
+                                              handleUnarchiveMenuRun(run)
+                                            }
+                                          >
+                                            <ArchiveRestoreIcon className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300 shrink-0" />
+                                            <span className="truncate">
+                                              Unarchive "{getRunDisplayText(run)}"
+                                            </span>
+                                          </ContextMenu.Item>
+                                        )
+                                      )}
+                                    </>
+                                  ) : null}
+                                </>
+                              )}
+                            </div>
+                          </ContextMenu.Popup>
+                        </ContextMenu.Positioner>
+                      </ContextMenu.Portal>
+                    </ContextMenu.SubmenuRoot>
+                    <div className="my-1 h-px bg-neutral-200 dark:bg-neutral-700" />
+                  </>
+                ) : null}
                 {task.isArchived ? (
                   <ContextMenu.Item
                     className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
@@ -669,6 +844,7 @@ function TaskTreeInner({
             taskId={task._id}
             teamSlugOrId={teamSlugOrId}
             level={level}
+            onArchiveRun={archiveRunWithLabel}
           />
         ) : null}
       </div>
@@ -680,12 +856,14 @@ interface TaskRunsContentProps {
   taskId: Id<"tasks">;
   teamSlugOrId: string;
   level: number;
+  onArchiveRun: (run: AnnotatedTaskRun) => void;
 }
 
 function TaskRunsContent({
   taskId,
   teamSlugOrId,
   level,
+  onArchiveRun,
 }: TaskRunsContentProps) {
   const location = useLocation();
   const optimisticTask = isFakeConvexId(taskId);
@@ -760,6 +938,7 @@ function TaskRunsContent({
           taskId={taskId}
           teamSlugOrId={teamSlugOrId}
           isDefaultSelected={shouldHighlightDefaultRun && index === 0}
+          onArchiveRun={onArchiveRun}
         />
       ))}
     </div>
@@ -790,15 +969,17 @@ interface TaskRunTreeProps {
   taskId: Id<"tasks">;
   teamSlugOrId: string;
   isDefaultSelected?: boolean;
+  onArchiveRun: (run: AnnotatedTaskRun) => void;
 }
 
-function TaskRunTreeInner({
-  run,
-  level,
-  taskId,
-  teamSlugOrId,
-  isDefaultSelected = false,
-}: TaskRunTreeProps) {
+function TaskRunTreeInner(props: TaskRunTreeProps) {
+  const {
+    run,
+    level,
+    taskId,
+    teamSlugOrId,
+    isDefaultSelected = false,
+  } = props;
   const location = useLocation();
   const { expandedRuns, setRunExpanded } = useTaskRunExpansionContext();
   const defaultExpanded = Boolean(run.isCrowned);
@@ -1151,6 +1332,15 @@ function TaskRunTreeInner({
               ) : null}
               <ContextMenu.Item
                 className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                onClick={() => props.onArchiveRun(run)}
+              >
+                <ArchiveIcon className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
+                <span className="truncate">
+                  Archive "{getRunDisplayText(run)}"
+                </span>
+              </ContextMenu.Item>
+              <ContextMenu.Item
+                className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
                 onClick={() => setRunExpanded(run._id, !isExpanded)}
               >
                 {isExpanded ? "Collapse details" : "Expand details"}
@@ -1173,6 +1363,7 @@ function TaskRunTreeInner({
         shouldRenderPullRequestLink={shouldRenderPullRequestLink}
         previewServices={previewServices}
         environmentError={run.environmentError}
+        onArchiveRun={props.onArchiveRun}
       />
     </Fragment>
   );
@@ -1240,6 +1431,7 @@ interface TaskRunDetailsProps {
     maintenanceError?: string;
     devError?: string;
   };
+  onArchiveRun: (run: AnnotatedTaskRun) => void;
 }
 
 function TaskRunDetails({
@@ -1255,6 +1447,7 @@ function TaskRunDetails({
   shouldRenderPullRequestLink,
   previewServices,
   environmentError,
+  onArchiveRun,
 }: TaskRunDetailsProps) {
   if (!isExpanded) {
     return null;
@@ -1419,6 +1612,7 @@ function TaskRunDetails({
               level={level + 1}
               taskId={taskId}
               teamSlugOrId={teamSlugOrId}
+              onArchiveRun={onArchiveRun}
             />
           ))}
         </div>

@@ -134,6 +134,7 @@ function PreviewPage() {
   const taskRuns = useQuery(api.taskRuns.getByTask, {
     teamSlugOrId,
     taskId,
+    includeArchived: true,
   });
 
   // Get the specific run

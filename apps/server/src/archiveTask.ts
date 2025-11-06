@@ -62,7 +62,11 @@ export async function stopContainersForRuns(
   teamSlugOrId: string,
   query: (
     ref: typeof api.taskRuns.getByTask,
-    args: { teamSlugOrId: string; taskId: Id<"tasks"> }
+    args: {
+      teamSlugOrId: string;
+      taskId: Id<"tasks">;
+      includeArchived?: boolean;
+    }
   ) => Promise<FunctionReturnType<typeof api.taskRuns.getByTask>> = (
     ref,
     args
@@ -71,6 +75,7 @@ export async function stopContainersForRuns(
   const tree = await query(api.taskRuns.getByTask, {
     teamSlugOrId,
     taskId,
+    includeArchived: true,
   });
   return stopContainersForRunsFromTree(tree, String(taskId));
 }

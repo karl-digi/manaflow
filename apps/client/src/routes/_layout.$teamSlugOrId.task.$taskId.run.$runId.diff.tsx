@@ -538,6 +538,7 @@ export const Route = createFileRoute(
             convexQuery(api.taskRuns.getByTask, {
               teamSlugOrId: opts.params.teamSlugOrId,
               taskId: opts.params.taskId,
+              includeArchived: true,
             }).queryKey,
             taskRuns,
           );
@@ -614,6 +615,7 @@ function RunDiffPage() {
   const taskRuns = useQuery(api.taskRuns.getByTask, {
     teamSlugOrId,
     taskId,
+    includeArchived: true,
   });
   const selectedRun = useMemo(() => {
     return taskRuns?.find((run) => run._id === runId);

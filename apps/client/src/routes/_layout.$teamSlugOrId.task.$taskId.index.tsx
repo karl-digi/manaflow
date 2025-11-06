@@ -88,6 +88,7 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
         convexQuery(api.taskRuns.getByTask, {
           teamSlugOrId: opts.params.teamSlugOrId,
           taskId: opts.params.taskId,
+          includeArchived: true,
         })
       ),
       queryClient.ensureQueryData(
@@ -279,6 +280,7 @@ function TaskDetailPage() {
     convexQuery(api.taskRuns.getByTask, {
       teamSlugOrId,
       taskId,
+      includeArchived: true,
     })
   );
   const { data: crownEvaluation } = useSuspenseQuery(

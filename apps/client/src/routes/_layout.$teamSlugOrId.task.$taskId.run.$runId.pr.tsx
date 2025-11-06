@@ -34,6 +34,7 @@ export const Route = createFileRoute(
         convexQuery(api.taskRuns.getByTask, {
           teamSlugOrId: opts.params.teamSlugOrId,
           taskId: opts.params.taskId,
+          includeArchived: true,
         })
       ),
       opts.context.queryClient.ensureQueryData(
@@ -54,10 +55,11 @@ function RunPullRequestPage() {
     id: taskId,
   });
 
-  const taskRuns = useQuery(api.taskRuns.getByTask, {
-    teamSlugOrId,
-    taskId,
-  });
+const taskRuns = useQuery(api.taskRuns.getByTask, {
+  teamSlugOrId,
+  taskId,
+  includeArchived: true,
+});
 
   // Get the specific run from the URL parameter
   const selectedRun = useMemo(() => {
