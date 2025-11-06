@@ -627,6 +627,31 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
               try {
                 if (response.success) {
                   toast.success("Cloud workspace created successfully");
+
+                  // Auto-navigate to the workspace VSCode view
+                  const effectiveTaskId = response.taskId ?? taskId;
+                  const effectiveTaskRunId = response.taskRunId;
+
+                  if (effectiveTaskId && effectiveTaskRunId) {
+                    void router
+                      .preloadRoute({
+                        to: "/$teamSlugOrId/task/$taskId/run/$runId/vscode",
+                        params: {
+                          teamSlugOrId,
+                          taskId: effectiveTaskId,
+                          runId: effectiveTaskRunId,
+                        },
+                      })
+                      .catch(() => undefined);
+                    void navigate({
+                      to: "/$teamSlugOrId/task/$taskId/run/$runId/vscode",
+                      params: {
+                        teamSlugOrId,
+                        taskId: effectiveTaskId,
+                        runId: effectiveTaskRunId,
+                      },
+                    });
+                  }
                 } else {
                   toast.error(
                     response.error || "Failed to create cloud workspace"
@@ -658,6 +683,8 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       createTask,
       environments,
       isCreatingCloudWorkspace,
+      navigate,
+      router,
       socket,
       teamSlugOrId,
       theme,
@@ -708,6 +735,31 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
               try {
                 if (response.success) {
                   toast.success("Cloud workspace created successfully");
+
+                  // Auto-navigate to the workspace VSCode view
+                  const effectiveTaskId = response.taskId ?? taskId;
+                  const effectiveTaskRunId = response.taskRunId;
+
+                  if (effectiveTaskId && effectiveTaskRunId) {
+                    void router
+                      .preloadRoute({
+                        to: "/$teamSlugOrId/task/$taskId/run/$runId/vscode",
+                        params: {
+                          teamSlugOrId,
+                          taskId: effectiveTaskId,
+                          runId: effectiveTaskRunId,
+                        },
+                      })
+                      .catch(() => undefined);
+                    void navigate({
+                      to: "/$teamSlugOrId/task/$taskId/run/$runId/vscode",
+                      params: {
+                        teamSlugOrId,
+                        taskId: effectiveTaskId,
+                        runId: effectiveTaskRunId,
+                      },
+                    });
+                  }
                 } else {
                   toast.error(
                     response.error || "Failed to create cloud workspace"
@@ -738,6 +790,8 @@ export function CommandBar({ teamSlugOrId }: CommandBarProps) {
       addTaskToExpand,
       createTask,
       isCreatingCloudWorkspace,
+      navigate,
+      router,
       socket,
       teamSlugOrId,
       theme,

@@ -12,6 +12,7 @@ import type {
   CreateLocalWorkspaceResponse,
   CreateCloudWorkspaceResponse,
 } from "@cmux/shared";
+import { useNavigate, useRouter } from "@tanstack/react-router";
 import { useMutation } from "convex/react";
 import { Server as ServerIcon, FolderOpen, Loader2 } from "lucide-react";
 import { useCallback, useState } from "react";
@@ -31,6 +32,8 @@ export function WorkspaceCreationButtons({
   const { socket } = useSocket();
   const { addTaskToExpand } = useExpandTasks();
   const { theme } = useTheme();
+  const navigate = useNavigate();
+  const router = useRouter();
   const [isCreatingLocal, setIsCreatingLocal] = useState(false);
   const [isCreatingCloud, setIsCreatingCloud] = useState(false);
 
@@ -165,6 +168,31 @@ export function WorkspaceCreationButtons({
           async (response: CreateCloudWorkspaceResponse) => {
             if (response.success) {
               toast.success("Cloud workspace created successfully");
+
+              // Auto-navigate to the workspace VSCode view
+              const effectiveTaskId = response.taskId ?? taskId;
+              const effectiveTaskRunId = response.taskRunId;
+
+              if (effectiveTaskId && effectiveTaskRunId) {
+                void router
+                  .preloadRoute({
+                    to: "/$teamSlugOrId/task/$taskId/run/$runId/vscode",
+                    params: {
+                      teamSlugOrId,
+                      taskId: effectiveTaskId,
+                      runId: effectiveTaskRunId,
+                    },
+                  })
+                  .catch(() => undefined);
+                void navigate({
+                  to: "/$teamSlugOrId/task/$taskId/run/$runId/vscode",
+                  params: {
+                    teamSlugOrId,
+                    taskId: effectiveTaskId,
+                    runId: effectiveTaskRunId,
+                  },
+                });
+              }
             } else {
               toast.error(
                 response.error || "Failed to create cloud workspace"
@@ -190,6 +218,8 @@ export function WorkspaceCreationButtons({
     createTask,
     addTaskToExpand,
     theme,
+    navigate,
+    router,
   ]);
 
   const canCreateLocal = selectedProject.length > 0 && !isEnvSelected;
