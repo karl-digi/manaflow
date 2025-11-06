@@ -1,4 +1,4 @@
-export type PanelType = "chat" | "workspace" | "terminal" | "browser" | "gitDiff";
+export type PanelType = "chat" | "workspace" | "browser" | "gitDiff";
 
 export type LayoutMode =
   | "four-panel"      // 2x2 grid
@@ -23,30 +23,22 @@ export interface PanelConfig {
   };
 }
 
-const DEFAULT_LAYOUT_PANELS: LayoutPanels = {
-  topLeft: "chat",
-  topRight: "workspace",
-  bottomLeft: "terminal",
-  bottomRight: "browser",
-};
-
 export const DEFAULT_PANEL_CONFIG: PanelConfig = {
-  layoutMode: "four-panel",
+  layoutMode: "three-top",
   layouts: {
-    "four-panel": { ...DEFAULT_LAYOUT_PANELS },
+    "four-panel": { topLeft: "chat", topRight: "workspace", bottomLeft: "browser", bottomRight: "gitDiff" },
     "two-horizontal": { topLeft: "chat", topRight: "workspace", bottomLeft: null, bottomRight: null },
     "two-vertical": { topLeft: "chat", topRight: null, bottomLeft: "workspace", bottomRight: null },
-    "three-left": { topLeft: "workspace", topRight: "chat", bottomLeft: null, bottomRight: "terminal" },
-    "three-right": { topLeft: "chat", topRight: null, bottomLeft: "terminal", bottomRight: "workspace" },
-    "three-top": { topLeft: "workspace", topRight: null, bottomLeft: "chat", bottomRight: "terminal" },
-    "three-bottom": { topLeft: "chat", topRight: "workspace", bottomLeft: null, bottomRight: "terminal" },
+    "three-left": { topLeft: "workspace", topRight: "chat", bottomLeft: null, bottomRight: "browser" },
+    "three-right": { topLeft: "chat", topRight: null, bottomLeft: "browser", bottomRight: "workspace" },
+    "three-top": { topLeft: "workspace", topRight: null, bottomLeft: "browser", bottomRight: "gitDiff" },
+    "three-bottom": { topLeft: "chat", topRight: "workspace", bottomLeft: null, bottomRight: "browser" },
   },
 };
 
 export const PANEL_LABELS: Record<PanelType, string> = {
   chat: "Activity",
   workspace: "Workspace",
-  terminal: "Terminal",
   browser: "Browser",
   gitDiff: "Git Diff",
 };
@@ -54,7 +46,6 @@ export const PANEL_LABELS: Record<PanelType, string> = {
 export const PANEL_ICONS: Record<PanelType, string> = {
   chat: "MessageSquare",
   workspace: "Code2",
-  terminal: "TerminalSquare",
   browser: "Globe2",
   gitDiff: "GitCompare",
 };
@@ -155,7 +146,7 @@ export function getCurrentLayoutPanels(config: PanelConfig): LayoutPanels {
 }
 
 export function getAvailablePanels(config: PanelConfig): PanelType[] {
-  const allPanels: PanelType[] = ["chat", "workspace", "terminal", "browser", "gitDiff"];
+  const allPanels: PanelType[] = ["chat", "workspace", "browser", "gitDiff"];
   const currentLayout = getCurrentLayoutPanels(config);
 
   // Check all positions (including inactive) to prevent duplicates within current layout

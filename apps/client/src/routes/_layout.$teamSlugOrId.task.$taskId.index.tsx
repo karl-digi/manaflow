@@ -1,5 +1,4 @@
 import { TaskRunChatPane } from "@/components/TaskRunChatPane";
-import { TaskRunTerminalPane } from "@/components/TaskRunTerminalPane";
 import { FloatingPane } from "@/components/floating-pane";
 import { TaskDetailHeader } from "@/components/task-detail-header";
 import type { PersistentIframeStatus } from "@/components/persistent-iframe";
@@ -17,7 +16,6 @@ import {
 } from "@/lib/persistent-webview-keys";
 import {
   toMorphVncUrl,
-  toMorphXtermBaseUrl,
   toProxyWorkspaceUrl,
 } from "@/lib/toProxyWorkspaceUrl";
 import {
@@ -25,19 +23,13 @@ import {
   TASK_RUN_IFRAME_SANDBOX,
   preloadTaskRunIframes,
 } from "../lib/preloadTaskRunIframes";
-import {
-  createTerminalTab,
-  terminalTabsQueryKey,
-  terminalTabsQueryOptions,
-  type TerminalTabId,
-} from "@/queries/terminals";
 import { api } from "@cmux/convex/api";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { convexQuery } from "@convex-dev/react-query";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Plus, Code2, Globe2, TerminalSquare, GitCompare, MessageCircle } from "lucide-react";
+import { Plus, Code2, Globe2, GitCompare, MessageCircle } from "lucide-react";
 import z from "zod";
 import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
 
@@ -68,7 +60,7 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
   loader: async (opts) => {
     const { queryClient } = opts.context;
 
-    const [taskRuns] = await Promise.all([
+    await Promise.all([
       queryClient.ensureQueryData(
         convexQuery(api.taskRuns.getByTask, {
           teamSlugOrId: opts.params.teamSlugOrId,
@@ -88,67 +80,6 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
         }),
       ),
     ]);
-
-    if (!taskRuns?.length) {
-      return;
-    }
-
-    const taskRunIndex = buildTaskRunIndex(taskRuns);
-    const searchParams = new URLSearchParams(opts.location.search);
-    const runIdParam = searchParams.get("runId");
-    const parsedRunId = runIdParam
-      ? typedZid("taskRuns").safeParse(runIdParam)
-      : null;
-    const selectedRun = parsedRunId?.success
-      ? taskRunIndex.get(parsedRunId.data) ?? taskRuns[0]
-      : taskRuns[0];
-
-    const rawWorkspaceUrl = selectedRun?.vscode?.workspaceUrl ?? null;
-    if (!rawWorkspaceUrl) {
-      return;
-    }
-
-    const baseUrl = toMorphXtermBaseUrl(rawWorkspaceUrl);
-    if (!baseUrl) {
-      return;
-    }
-
-    const tabsKey = terminalTabsQueryKey(baseUrl, rawWorkspaceUrl);
-    let tabs = queryClient.getQueryData<TerminalTabId[]>(tabsKey);
-
-    if (!tabs) {
-      try {
-        tabs = await queryClient.ensureQueryData(
-          terminalTabsQueryOptions({
-            baseUrl,
-            contextKey: rawWorkspaceUrl,
-            enabled: true,
-          }),
-        );
-      } catch (error) {
-        console.error("Failed to preload terminal tabs", error);
-      }
-    }
-
-    if (!tabs?.length) {
-      try {
-        const created = await createTerminalTab({
-          baseUrl,
-          request: {
-            cmd: "tmux",
-            args: ["new-session", "-A", "cmux"],
-          },
-        });
-        tabs = [created.id];
-      } catch (error) {
-        console.error("Failed to create default tmux terminal", error);
-        return;
-      }
-    }
-
-    if (tabs) {
-      queryClient.setQueryData<TerminalTabId[]>(tabsKey, tabs);
-    }
   },
 });
 
@@ -187,8 +118,6 @@ function EmptyPanelSlot({ position, availablePanels, onAddPanel }: EmptyPanelSlo
         return <MessageCircle className="size-4" />;
       case "workspace":
         return <Code2 className="size-4" />;
-      case "terminal":
-        return <TerminalSquare className="size-4" />;
       case "browser":
         return <Globe2 className="size-4" />;
       case "gitDiff":
@@ -577,7 +506,6 @@ function TaskDetailPage() {
       editorErrorFallback,
       isEditorBusy,
       workspacePlaceholder,
-      rawWorkspaceUrl,
       browserUrl,
       browserPersistKey,
       browserStatus,
@@ -588,7 +516,6 @@ function TaskDetailPage() {
       TaskRunChatPane,
       PersistentWebView,
       WorkspaceLoadingIndicator,
-      TaskRunTerminalPane,
       TaskRunGitDiffPanel,
       TASK_RUN_IFRAME_ALLOW,
       TASK_RUN_IFRAME_SANDBOX,
@@ -608,7 +535,6 @@ function TaskDetailPage() {
     editorErrorFallback,
     isEditorBusy,
     workspacePlaceholder,
-    rawWorkspaceUrl,
     browserUrl,
     browserPersistKey,
     browserStatus,

@@ -3,7 +3,6 @@ import type { CSSProperties } from "react";
 import {
   Code2,
   Globe2,
-  TerminalSquare,
   GitCompare,
   GripVertical,
   X,
@@ -19,7 +18,6 @@ import type { TaskRunWithChildren } from "@/types/task";
 import type { TaskRunChatPaneProps } from "./TaskRunChatPane";
 import type { PersistentWebViewProps } from "./persistent-webview";
 import type { WorkspaceLoadingIndicatorProps } from "./workspace-loading-indicator";
-import type { TaskRunTerminalPaneProps } from "./TaskRunTerminalPane";
 import type { TaskRunGitDiffPanelProps } from "./TaskRunGitDiffPanel";
 import { shouldUseServerIframePreflight } from "@/hooks/useIframePreflight";
 
@@ -164,8 +162,6 @@ interface PanelFactoryProps {
     title: string;
     description?: string;
   } | null;
-  // Terminal panel props
-  rawWorkspaceUrl?: string | null;
   // Browser panel props
   browserUrl?: string | null;
   browserPersistKey?: string | null;
@@ -181,7 +177,6 @@ interface PanelFactoryProps {
   TaskRunChatPane?: React.ComponentType<TaskRunChatPaneProps>;
   PersistentWebView?: React.ComponentType<PersistentWebViewProps>;
   WorkspaceLoadingIndicator?: React.ComponentType<WorkspaceLoadingIndicatorProps>;
-  TaskRunTerminalPane?: React.ComponentType<TaskRunTerminalPaneProps>;
   TaskRunGitDiffPanel?: React.ComponentType<TaskRunGitDiffPanelProps>;
   // Constants
   TASK_RUN_IFRAME_ALLOW?: string;
@@ -488,14 +483,13 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
         WorkspaceLoadingIndicator,
         TASK_RUN_IFRAME_ALLOW,
         TASK_RUN_IFRAME_SANDBOX,
-        rawWorkspaceUrl,
       } = props;
 
       if (!PersistentWebView || !WorkspaceLoadingIndicator) return null;
       const isLocalWorkspace = selectedRun?.vscode?.provider === "other";
       const shouldShowWorkspaceLoader = Boolean(selectedRun) && !workspaceUrl && !isLocalWorkspace;
-      const disablePreflight = rawWorkspaceUrl
-        ? shouldUseServerIframePreflight(rawWorkspaceUrl)
+      const disablePreflight = workspaceUrl
+        ? shouldUseServerIframePreflight(workspaceUrl)
         : false;
 
       return panelWrapper(
@@ -541,22 +535,6 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
               ) : null}
             </div>
           ) : null}
-        </div>
-      );
-    }
-
-    case "terminal": {
-      const { rawWorkspaceUrl, TaskRunTerminalPane } = props;
-      if (!TaskRunTerminalPane) return null;
-
-      return panelWrapper(
-        <TerminalSquare className="size-3" aria-hidden />,
-        PANEL_LABELS.terminal,
-        <div className="flex-1 bg-black">
-          <TaskRunTerminalPane
-            key={rawWorkspaceUrl ?? "no-workspace"}
-            workspaceUrl={rawWorkspaceUrl ?? null}
-          />
         </div>
       );
     }
@@ -666,13 +644,6 @@ export const RenderPanel = React.memo(RenderPanelComponent, (prevProps, nextProp
       prevProps.browserPlaceholder?.title !== nextProps.browserPlaceholder?.title ||
       prevProps.browserPlaceholder?.description !== nextProps.browserPlaceholder?.description ||
       prevProps.selectedRun?._id !== nextProps.selectedRun?._id) {
-      return false;
-    }
-  }
-
-  // For terminal panel, check workspace URL
-  if (prevProps.type === "terminal") {
-    if (prevProps.rawWorkspaceUrl !== nextProps.rawWorkspaceUrl) {
       return false;
     }
   }
