@@ -1,5 +1,5 @@
 provider: github
 owner: manaflow-ai
 repo: cmux
-releaseType: release
+releaseType: draft
 updaterCacheDirName: cmux-updater

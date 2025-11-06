@@ -54,3 +54,7 @@ cmux upgrade
 ```bash
 cmux uninstall
 ``` -->
+
+## Auto-update configuration
+
+The packaged Electron app now defaults to checking GitHub draft releases so cmux picks up the most recent build as soon as it is published. You can override this behaviour with the `CMUX_ELECTRON_AUTO_UPDATE_RELEASE_TYPE` environment variable (`draft`, `prerelease`, or `release`). A shorthand boolean toggle is also available via `CMUX_ELECTRON_AUTO_UPDATE_INCLUDE_DRAFTS` (set to `false` to stick with official releases only).

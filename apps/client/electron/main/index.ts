@@ -39,6 +39,7 @@ import {
   appendLogWithRotation,
   type LogRotationOptions,
 } from "./log-management/log-rotation";
+import type { GithubOptions } from "builder-util-runtime";
 const { autoUpdater } = electronUpdater;
 
 import util from "node:util";
@@ -81,6 +82,60 @@ const LOG_ROTATION: LogRotationOptions = {
   maxBytes: 5 * 1024 * 1024,
   maxBackups: 3,
 };
+
+type GitHubReleaseType = NonNullable<GithubOptions["releaseType"]>;
+
+const DEFAULT_UPDATE_RELEASE_TYPE: GitHubReleaseType = "draft";
+const VALID_RELEASE_TYPES = new Set<GitHubReleaseType>([
+  "draft",
+  "prerelease",
+  "release",
+]);
+
+function parseBoolish(value: string | undefined): boolean | null {
+  if (value === undefined) return null;
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "y", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "n", "off"].includes(normalized)) return false;
+  return null;
+}
+
+function resolveGitHubReleaseType(): {
+  releaseType: GitHubReleaseType;
+  source: "env-release-type" | "env-include-drafts" | "default";
+  invalidValue?: string;
+} {
+  const explicit = process.env.CMUX_ELECTRON_AUTO_UPDATE_RELEASE_TYPE;
+  if (explicit?.trim()) {
+    const normalized = explicit.trim().toLowerCase();
+    if (VALID_RELEASE_TYPES.has(normalized as GitHubReleaseType)) {
+      return {
+        releaseType: normalized as GitHubReleaseType,
+        source: "env-release-type",
+      };
+    }
+    return {
+      releaseType: DEFAULT_UPDATE_RELEASE_TYPE,
+      source: "default",
+      invalidValue: explicit,
+    };
+  }
+
+  const includeDrafts = parseBoolish(
+    process.env.CMUX_ELECTRON_AUTO_UPDATE_INCLUDE_DRAFTS
+  );
+  if (includeDrafts !== null) {
+    return {
+      releaseType: includeDrafts ? "draft" : "release",
+      source: "env-include-drafts",
+    };
+  }
+
+  return {
+    releaseType: DEFAULT_UPDATE_RELEASE_TYPE,
+    source: "default",
+  };
+}
 
 process.on("uncaughtException", (error) => {
   console.error("[ElectronMain] Uncaught exception", error);
@@ -472,7 +527,31 @@ function setupAutoUpdates(): void {
 
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
-    autoUpdater.allowPrerelease = false;
+
+    const {
+      releaseType,
+      source: releaseTypeSource,
+      invalidValue: invalidReleaseTypeValue,
+    } = resolveGitHubReleaseType();
+    if (invalidReleaseTypeValue) {
+      mainWarn("Ignoring invalid GitHub release type override", {
+        envVar: "CMUX_ELECTRON_AUTO_UPDATE_RELEASE_TYPE",
+        value: invalidReleaseTypeValue,
+      });
+    }
+
+    const feedConfig: GithubOptions = {
+      provider: "github",
+      owner: "manafow-ai",
+      repo: "cmux",
+      releaseType,
+      updaterCacheDirName: "cmux-updater",
+    };
+    autoUpdater.setFeedURL(feedConfig);
+    autoUpdater.allowPrerelease = releaseType !== "release";
+    if (releaseType === "release" && autoUpdater.allowDowngrade) {
+      autoUpdater.allowDowngrade = false;
+    }
 
     if (process.platform === "darwin") {
       const channel = "latest-universal";
@@ -489,6 +568,8 @@ function setupAutoUpdates(): void {
       autoDownload: autoUpdater.autoDownload,
       autoInstallOnAppQuit: autoUpdater.autoInstallOnAppQuit,
       allowPrerelease: autoUpdater.allowPrerelease,
+      releaseType,
+      releaseTypeSource,
       channel: autoUpdater.channel ?? null,
     });
   } catch (e) {
