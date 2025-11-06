@@ -26,6 +26,11 @@ cmux supports macOS. Linux and Windows support coming soon.
   <img src="./docs/assets/macos-badge.png" alt="Download cmux for macOS" width="180" />
 </a>
 
+## Auto updates
+
+- Set `CMUX_AUTO_UPDATE_ALWAYS_LATEST=true` to make the desktop app upgrade to the newest GitHub release, even when that release is still marked as draft or pre-release.
+- Draft builds require a GitHub token exposed via `CMUX_AUTO_UPDATE_GITHUB_TOKEN`, `GH_TOKEN`, or `GITHUB_TOKEN` so the updater can download private assets.
+
 <!-- ```bash
 # with bun
 bunx cmux@latest

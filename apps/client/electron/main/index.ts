@@ -66,6 +66,106 @@ function resolveMaxSuspendedWebContents(): number | undefined {
   return parsed;
 }
 
+const ALWAYS_LATEST_ENV = "CMUX_AUTO_UPDATE_ALWAYS_LATEST";
+const ALWAYS_LATEST_TOKEN_ENV = "CMUX_AUTO_UPDATE_GITHUB_TOKEN";
+
+function shouldAlwaysUpdateToLatest(): boolean {
+  const raw = process.env[ALWAYS_LATEST_ENV];
+  if (!raw) return false;
+  const normalized = raw.trim().toLowerCase();
+  if (normalized.length === 0) return false;
+  return [
+    "1",
+    "true",
+    "yes",
+    "on",
+    "always",
+    "latest",
+    "draft",
+    "bleeding-edge",
+    "bleeding",
+    "edge",
+  ].includes(normalized);
+}
+
+type GithubTokenInfo = {
+  value: string;
+  source: string;
+};
+
+function resolveAlwaysLatestGithubToken(): GithubTokenInfo | null {
+  const candidates = [
+    ALWAYS_LATEST_TOKEN_ENV,
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+  ] as const;
+
+  for (const key of candidates) {
+    const value = process.env[key];
+    if (typeof value === "string" && value.trim().length > 0) {
+      return { value: value.trim(), source: key };
+    }
+  }
+
+  return null;
+}
+
+async function writeFileIfChanged(filePath: string, content: string): Promise<void> {
+  try {
+    const existing = await fs.readFile(filePath, { encoding: "utf8" });
+    if (existing === content) {
+      return;
+    }
+  } catch (error) {
+    const err = error as unknown;
+    if (
+      !(
+        err &&
+        typeof err === "object" &&
+        "code" in err &&
+        typeof (err as { code?: unknown }).code === "string" &&
+        (err as { code: string }).code === "ENOENT"
+      )
+    ) {
+      throw error;
+    }
+  }
+  await fs.writeFile(filePath, content, { encoding: "utf8" });
+}
+
+async function ensureAlwaysLatestUpdateConfig(): Promise<string> {
+  const defaultConfigPath = path.join(process.resourcesPath, "app-update.yml");
+  let lines: string[] = [];
+
+  try {
+    const raw = await fs.readFile(defaultConfigPath, { encoding: "utf8" });
+    lines = raw.split(/\r?\n/);
+  } catch {
+    lines = [
+      "provider: github",
+      "owner: manaflow-ai",
+      "repo: cmux",
+      "releaseType: release",
+      "updaterCacheDirName: cmux-updater",
+    ];
+  }
+
+  const hasPrivateLine = lines.some((line) => line.trim().startsWith("private:"));
+  if (!hasPrivateLine) {
+    const repoIndex = lines.findIndex((line) => line.trim().startsWith("repo:"));
+    if (repoIndex >= 0) {
+      lines.splice(repoIndex + 1, 0, "private: true");
+    } else {
+      lines.push("private: true");
+    }
+  }
+
+  const sanitized = lines.join("\n").replace(/\n+$/u, "") + "\n";
+  const overridePath = path.join(app.getPath("userData"), "app-update-always-latest.yml");
+  await writeFileIfChanged(overridePath, sanitized);
+  return overridePath;
+}
+
 type AutoUpdateToastPayload = {
   version: string | null;
 };
@@ -450,16 +550,44 @@ process.on("unhandledRejection", (reason) => {
   void writeFatalLog("unhandledRejection", reason);
 });
 
-function setupAutoUpdates(): void {
+async function setupAutoUpdates(): Promise<void> {
   if (!app.isPackaged) {
     mainLog("Skipping auto-updates in development");
     return;
+  }
+
+  const alwaysLatest = shouldAlwaysUpdateToLatest();
+  const tokenInfo = alwaysLatest ? resolveAlwaysLatestGithubToken() : null;
+  let configOverridePath: string | null = null;
+
+  if (alwaysLatest) {
+    try {
+      configOverridePath = await ensureAlwaysLatestUpdateConfig();
+      autoUpdater.updateConfigPath = configOverridePath;
+      if (!tokenInfo && !process.env.GH_TOKEN && !process.env.GITHUB_TOKEN) {
+        mainWarn(
+          `${ALWAYS_LATEST_ENV} is enabled but no GitHub token was provided; draft releases require GH_TOKEN, GITHUB_TOKEN, or ${ALWAYS_LATEST_TOKEN_ENV}`
+        );
+      }
+      if (tokenInfo?.source === ALWAYS_LATEST_TOKEN_ENV) {
+        if (!process.env.GH_TOKEN && !process.env.GITHUB_TOKEN) {
+          process.env.GH_TOKEN = tokenInfo.value;
+        }
+      }
+    } catch (error) {
+      mainWarn(
+        "Failed to prepare always-latest auto-update configuration; continuing with bundled defaults",
+        error
+      );
+    }
   }
 
   mainLog("Setting up auto-updates", {
     appVersion: app.getVersion(),
     platform: process.platform,
     arch: process.arch,
+    alwaysLatest,
+    configOverridePath,
   });
 
   try {
@@ -472,7 +600,7 @@ function setupAutoUpdates(): void {
 
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
-    autoUpdater.allowPrerelease = false;
+    autoUpdater.allowPrerelease = alwaysLatest;
 
     if (process.platform === "darwin") {
       const channel = "latest-universal";
@@ -490,6 +618,8 @@ function setupAutoUpdates(): void {
       autoInstallOnAppQuit: autoUpdater.autoInstallOnAppQuit,
       allowPrerelease: autoUpdater.allowPrerelease,
       channel: autoUpdater.channel ?? null,
+      configOverridePath,
+      tokenSource: tokenInfo?.source ?? null,
     });
   } catch (e) {
     mainWarn("Failed to initialize autoUpdater", e);
@@ -610,7 +740,7 @@ function createWindow(): void {
   // Socket bridge not required; renderer connects directly
 
   // Initialize auto-updates
-  setupAutoUpdates();
+  void setupAutoUpdates();
 
   // Once the renderer is loaded, process any queued deep-link
   mainWindow.webContents.on("did-finish-load", () => {
