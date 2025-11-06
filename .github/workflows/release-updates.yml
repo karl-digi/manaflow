@@ -215,8 +215,6 @@ jobs:
     needs: prepare-release
     environment: electron
     runs-on: self-hosted
-    env:
-      BUN_INSTALL: ${{ runner.temp }}/bun-${{ github.run_id }}-${{ github.job }}
     defaults:
       run:
         working-directory: ./
@@ -227,6 +225,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+      - name: Configure Bun install dir
+        run: |
+          set -euo pipefail
+          temp_dir="${RUNNER_TEMP:-}"
+          if [[ -z "$temp_dir" ]]; then
+            temp_dir="$(mktemp -d)"
+          fi
+          bun_install="$temp_dir/bun-${GITHUB_RUN_ID}-${GITHUB_JOB}"
+          mkdir -p "$bun_install"
+          echo "BUN_INSTALL=$bun_install" >> "$GITHUB_ENV"
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -301,8 +309,6 @@ jobs:
     needs: prepare-release
     environment: electron
     runs-on: self-hosted
-    env:
-      BUN_INSTALL: ${{ runner.temp }}/bun-${{ github.run_id }}-${{ github.job }}
     defaults:
       run:
         working-directory: ./
@@ -315,6 +321,16 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      - name: Configure Bun install dir
+        run: |
+          set -euo pipefail
+          temp_dir="${RUNNER_TEMP:-}"
+          if [[ -z "$temp_dir" ]]; then
+            temp_dir="$(mktemp -d)"
+          fi
+          bun_install="$temp_dir/bun-${GITHUB_RUN_ID}-${GITHUB_JOB}"
+          mkdir -p "$bun_install"
+          echo "BUN_INSTALL=$bun_install" >> "$GITHUB_ENV"
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
