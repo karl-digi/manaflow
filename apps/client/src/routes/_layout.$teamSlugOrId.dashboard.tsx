@@ -28,9 +28,9 @@ import type { ProviderStatusResponse, TaskAcknowledged, TaskError, TaskStarted }
 import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
 import { convexQuery } from "@convex-dev/react-query";
 import { useQuery } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation } from "convex/react";
-import { Server as ServerIcon } from "lucide-react";
+import { Info, Server as ServerIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -113,6 +113,10 @@ function DashboardComponent() {
     const stored = localStorage.getItem("isCloudMode");
     return stored ? JSON.parse(stored) : true;
   });
+  const [showCloudRepoOnboarding, setShowCloudRepoOnboarding] =
+    useState(false);
+  const [cloudRepoOnboardingRepo, setCloudRepoOnboardingRepo] =
+    useState<string | null>(null);
 
   const [, setDockerReady] = useState<boolean | null>(null);
   const [providerStatus, setProviderStatus] =
@@ -636,6 +640,73 @@ function DashboardComponent() {
     return options;
   }, [reposByOrg, environmentsQuery.data]);
 
+  const selectedRepoFullName = selectedProject[0];
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (!isCloudMode || isEnvSelected) {
+      setShowCloudRepoOnboarding(false);
+      setCloudRepoOnboardingRepo(null);
+      return;
+    }
+
+    const repoFullName = selectedRepoFullName;
+    if (!repoFullName) {
+      setShowCloudRepoOnboarding(false);
+      setCloudRepoOnboardingRepo(null);
+      return;
+    }
+
+    if (environmentsQuery.isPending) {
+      return;
+    }
+
+    const hasEnvironment =
+      (environmentsQuery.data ?? []).some((env) =>
+        (env.selectedRepos ?? []).includes(repoFullName),
+      ) ?? false;
+
+    if (hasEnvironment) {
+      setShowCloudRepoOnboarding(false);
+      setCloudRepoOnboardingRepo(null);
+      return;
+    }
+
+    const storageKey = `cmux.cloudRepoOnboarding.${repoFullName}`;
+    const hasSeen = window.localStorage.getItem(storageKey) === "true";
+
+    if (!hasSeen) {
+      window.localStorage.setItem(storageKey, "true");
+      setShowCloudRepoOnboarding(true);
+      setCloudRepoOnboardingRepo(repoFullName);
+    } else {
+      setShowCloudRepoOnboarding(false);
+      setCloudRepoOnboardingRepo(null);
+    }
+  }, [
+    isCloudMode,
+    isEnvSelected,
+    selectedRepoFullName,
+    environmentsQuery.data,
+    environmentsQuery.isPending,
+  ]);
+
+  const handleDismissCloudRepoOnboarding = useCallback(() => {
+    setShowCloudRepoOnboarding(false);
+    setCloudRepoOnboardingRepo(null);
+  }, []);
+
+  const cloudRepoOnboarding =
+    showCloudRepoOnboarding && cloudRepoOnboardingRepo
+      ? {
+          repoFullName: cloudRepoOnboardingRepo,
+          onDismiss: handleDismissCloudRepoOnboarding,
+        }
+      : undefined;
+
   const branchOptions = branchNames;
 
   // Cloud mode toggle handler
@@ -843,6 +914,7 @@ function DashboardComponent() {
               cloudToggleDisabled={isEnvSelected}
               branchDisabled={isEnvSelected || !selectedProject[0]}
               providerStatus={providerStatus}
+              cloudRepoOnboarding={cloudRepoOnboarding}
               canSubmit={canSubmit}
               onStartTask={handleStartTask}
             />
@@ -879,6 +951,10 @@ type DashboardMainCardProps = {
   cloudToggleDisabled: boolean;
   branchDisabled: boolean;
   providerStatus: ProviderStatusResponse | null;
+  cloudRepoOnboarding?: {
+    repoFullName: string;
+    onDismiss: () => void;
+  };
   canSubmit: boolean;
   onStartTask: () => void;
 };
@@ -906,6 +982,7 @@ function DashboardMainCard({
   cloudToggleDisabled,
   branchDisabled,
   providerStatus,
+  cloudRepoOnboarding,
   canSubmit,
   onStartTask,
 }: DashboardMainCardProps) {
@@ -946,6 +1023,39 @@ function DashboardMainCard({
           onStartTask={onStartTask}
         />
       </DashboardInputFooter>
+      {cloudRepoOnboarding ? (
+        <div className="mx-3 mb-3 flex items-start gap-2 rounded-xl border border-blue-200/60 dark:border-blue-500/40 bg-blue-50/80 dark:bg-blue-500/10 px-3 py-2 text-sm text-blue-900 dark:text-blue-100">
+          <Info className="mt-0.5 h-4 w-4 flex-shrink-0 text-blue-500 dark:text-blue-300" />
+          <div className="flex flex-col gap-1">
+            <p className="font-medium text-blue-900 dark:text-blue-100">
+              Set up an environment for {cloudRepoOnboarding.repoFullName}
+            </p>
+            <p className="text-xs text-blue-900/80 dark:text-blue-200/80">
+              Environments let you preconfigure environment variables and setup scripts for cloud workspaces so everything is ready the moment they start.
+            </p>
+            <div className="flex gap-2">
+              <Link
+                to="/$teamSlugOrId/environments/new"
+                params={{ teamSlugOrId }}
+                search={{
+                  selectedRepos: [cloudRepoOnboarding.repoFullName],
+                  step: "configure",
+                }}
+                className="inline-flex items-center rounded-md border border-blue-500/60 bg-blue-500/10 px-2 py-1 text-xs font-medium text-blue-900 dark:text-blue-100 hover:bg-blue-500/20"
+              >
+                Create environment
+              </Link>
+              <button
+                type="button"
+                onClick={cloudRepoOnboarding.onDismiss}
+                className="inline-flex items-center rounded-md border border-transparent px-2 py-1 text-xs text-blue-900/70 dark:text-blue-200 hover:text-blue-900"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
