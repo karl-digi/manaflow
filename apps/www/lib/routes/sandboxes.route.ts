@@ -42,6 +42,7 @@ const StartSandboxBody = z
     metadata: z.record(z.string(), z.string()).optional(),
     taskRunId: z.string().optional(),
     taskRunJwt: z.string().optional(),
+    isCloudWorkspace: z.boolean().optional(),
     // Optional hydration parameters to clone a repo into the sandbox on start
     repoUrl: z.string().optional(),
     branch: z.string().optional(),
@@ -167,6 +168,11 @@ sandboxesRouter.openapi(
 
       const maintenanceScript = environmentMaintenanceScript ?? null;
       const devScript = environmentDevScript ?? null;
+
+      const isCloudWorkspace =
+        body.isCloudWorkspace !== undefined
+          ? body.isCloudWorkspace
+          : !body.taskRunId;
 
       const scriptIdentifiers =
         maintenanceScript || devScript

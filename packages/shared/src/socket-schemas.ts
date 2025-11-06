@@ -79,24 +79,13 @@ export const CreateCloudWorkspaceSchema = z
     environmentId: typedZid("environments").optional(),
     projectFullName: z.string().optional(),
     repoUrl: z.string().optional(),
-    branch: z.string().optional(),
     taskId: typedZid("tasks").optional(),
     taskRunId: typedZid("taskRuns").optional(),
     theme: z.enum(["dark", "light", "system"]).optional(),
   })
   .refine(
     (value) => Boolean(value.environmentId || value.projectFullName),
-    {
-      message: "environmentId or projectFullName is required",
-      path: ["environmentId"],
-    }
-  )
-  .refine(
-    (value) => !(value.environmentId && value.projectFullName),
-    {
-      message: "Provide environmentId or projectFullName, not both",
-      path: ["environmentId"],
-    }
+    "Either environmentId or projectFullName is required"
   );
 
 export const CreateCloudWorkspaceResponseSchema = z.object({
@@ -105,18 +94,6 @@ export const CreateCloudWorkspaceResponseSchema = z.object({
   taskRunId: typedZid("taskRuns").optional(),
   workspaceUrl: z.string().optional(),
   pending: z.boolean().optional(),
-  error: z.string().optional(),
-});
-
-export const AddManualRepoSchema = z.object({
-  teamSlugOrId: z.string(),
-  projectFullName: z.string(),
-});
-
-export const AddManualRepoResponseSchema = z.object({
-  success: z.boolean(),
-  repoId: z.string().optional(),
-  created: z.boolean().optional(),
   error: z.string().optional(),
 });
 
@@ -460,8 +437,6 @@ export type CreateCloudWorkspace = z.infer<typeof CreateCloudWorkspaceSchema>;
 export type CreateCloudWorkspaceResponse = z.infer<
   typeof CreateCloudWorkspaceResponseSchema
 >;
-export type AddManualRepo = z.infer<typeof AddManualRepoSchema>;
-export type AddManualRepoResponse = z.infer<typeof AddManualRepoResponseSchema>;
 export type TerminalCreated = z.infer<typeof TerminalCreatedSchema>;
 export type TerminalOutput = z.infer<typeof TerminalOutputSchema>;
 export type TerminalExit = z.infer<typeof TerminalExitSchema>;
@@ -525,10 +500,6 @@ export interface ClientToServerEvents {
   "create-cloud-workspace": (
     data: CreateCloudWorkspace,
     callback: (response: CreateCloudWorkspaceResponse) => void
-  ) => void;
-  "add-manual-repo": (
-    data: AddManualRepo,
-    callback: (response: AddManualRepoResponse) => void
   ) => void;
   "git-status": (data: GitStatusRequest) => void;
   "git-diff": (

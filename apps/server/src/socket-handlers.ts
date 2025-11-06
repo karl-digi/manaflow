@@ -16,8 +16,6 @@ import {
   type CreateLocalWorkspaceResponse,
   CreateCloudWorkspaceSchema,
   type CreateCloudWorkspaceResponse,
-  AddManualRepoSchema,
-  type AddManualRepoResponse,
   type AvailableEditors,
   type FileInfo,
   isLoopbackHostname,
@@ -72,7 +70,6 @@ import {
   splitRepoFullName,
   toPullRequestActionResult,
 } from "./pullRequestState";
-import { validateGithubRepo } from "./utils/validateGithubRepo";
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -953,85 +950,6 @@ export function setupSocketHandlers(
     );
 
     socket.on(
-      "add-manual-repo",
-      async (rawData, callback: (response: AddManualRepoResponse) => void) => {
-        const parsed = AddManualRepoSchema.safeParse(rawData);
-        if (!parsed.success) {
-          serverLogger.error(
-            "Invalid add-manual-repo payload:",
-            parsed.error
-          );
-          callback({
-            success: false,
-            error: "Invalid repo request",
-          });
-          return;
-        }
-
-        const { teamSlugOrId, projectFullName } = parsed.data;
-
-        // Validate repository format
-        if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(projectFullName)) {
-          callback({
-            success: false,
-            error: "Invalid repository name format. Expected: owner/repo",
-          });
-          return;
-        }
-
-        try {
-          serverLogger.info(
-            `[add-manual-repo] Validating GitHub repo: ${projectFullName}`
-          );
-
-          // Validate the repo exists and is accessible
-          const validatedRepo = await validateGithubRepo(projectFullName);
-
-          serverLogger.info(
-            `[add-manual-repo] GitHub repo validated: ${validatedRepo.fullName}`
-          );
-
-          // Insert or update the repo in the repos table
-          const result = await getConvex().mutation(api.github.upsertManualRepo, {
-            teamSlugOrId,
-            fullName: validatedRepo.fullName,
-            org: validatedRepo.org,
-            name: validatedRepo.name,
-            gitRemote: `https://github.com/${projectFullName}.git`,
-            provider: "github",
-            defaultBranch: validatedRepo.defaultBranch,
-            visibility: validatedRepo.visibility,
-            ownerLogin: validatedRepo.ownerLogin,
-            ownerType: validatedRepo.ownerType,
-          });
-
-          serverLogger.info(
-            `[add-manual-repo] ${result.created ? "Created" : "Updated"} manual repo: ${validatedRepo.fullName}`
-          );
-
-          callback({
-            success: true,
-            repoId: result.id,
-            created: result.created,
-          });
-        } catch (error) {
-          const message =
-            error instanceof Error
-              ? error.message
-              : "Failed to add repository";
-          serverLogger.error(
-            `[add-manual-repo] Repository validation failed:`,
-            error
-          );
-          callback({
-            success: false,
-            error: message,
-          });
-        }
-      }
-    );
-
-    socket.on(
       "create-cloud-workspace",
       async (
         rawData,
@@ -1053,123 +971,13 @@ export function setupSocketHandlers(
         const {
           teamSlugOrId: requestedTeamSlugOrId,
           environmentId,
-          projectFullName: rawProjectFullName,
-          repoUrl: explicitRepoUrl,
-          branch: requestedBranch,
+          projectFullName,
+          repoUrl,
           taskId: providedTaskId,
         } = parsed.data;
         const teamSlugOrId = requestedTeamSlugOrId || safeTeam;
-        const projectFullName = rawProjectFullName?.trim();
-        const branch = requestedBranch?.trim();
-
-        if (!environmentId && !projectFullName) {
-          callback({
-            success: false,
-            error: "Environment ID or repository is required",
-          });
-          return;
-        }
-
-        if (environmentId && projectFullName) {
-          callback({
-            success: false,
-            error: "Specify either an environment or a repository, not both",
-          });
-          return;
-        }
-
-        if (projectFullName && projectFullName.startsWith("env:")) {
-          callback({
-            success: false,
-            error: "Repositories cannot start with the env: prefix",
-          });
-          return;
-        }
-
-        if (
-          projectFullName &&
-          !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(projectFullName)
-        ) {
-          callback({
-            success: false,
-            error: "Invalid repository name.",
-          });
-          return;
-        }
-
-        let repoUrl = explicitRepoUrl?.trim();
-        if (projectFullName) {
-          repoUrl =
-            repoUrl ?? `https://github.com/${projectFullName}.git`;
-        }
-
-        if (projectFullName && !repoUrl) {
-          callback({
-            success: false,
-            error: "Repository URL is required",
-          });
-          return;
-        }
 
         const convex = getConvex();
-        if (projectFullName) {
-          const normalizedRequestedRepo = projectFullName.toLowerCase();
-          if (!providedTaskId) {
-            callback({
-              success: false,
-              error: "taskId is required when launching a repo workspace",
-            });
-            return;
-          }
-
-          const task = await convex.query(api.tasks.getById, {
-            teamSlugOrId,
-            id: providedTaskId,
-          });
-
-          const normalizedTaskRepo = task?.projectFullName?.trim();
-          if (!task || !normalizedTaskRepo) {
-            callback({
-              success: false,
-              error: "Task not found or missing repository metadata",
-            });
-            return;
-          }
-
-          if (normalizedTaskRepo.toLowerCase() !== normalizedRequestedRepo) {
-            callback({
-              success: false,
-              error: "Task repository does not match requested repository",
-            });
-            return;
-          }
-
-          if (repoUrl) {
-            const repoUrlMatch = repoUrl.match(
-              /github\.com\/?([^\s/]+)\/([^\s/.]+)(?:\.git)?/i
-            );
-            if (!repoUrlMatch) {
-              callback({
-                success: false,
-                error: "Repository URL must reference GitHub",
-              });
-              return;
-            }
-
-            const derivedProjectFullName = `${repoUrlMatch[1]}/${repoUrlMatch[2]}`.toLowerCase();
-            if (derivedProjectFullName !== normalizedRequestedRepo) {
-              callback({
-                success: false,
-                error: "Repository URL does not match the selected repository",
-              });
-              return;
-            }
-          }
-        }
-
-        const workspaceTargetLabel = environmentId
-          ? `environment ${environmentId}`
-          : `repository ${projectFullName}`;
         let taskId: Id<"tasks"> | undefined = providedTaskId;
         let taskRunId: Id<"taskRuns"> | null = null;
         let responded = false;
@@ -1224,7 +1032,9 @@ export function setupSocketHandlers(
           const { postApiSandboxesStart } = await getWwwOpenApiModule();
 
           serverLogger.info(
-            `[create-cloud-workspace] Starting Morph sandbox for ${workspaceTargetLabel}`
+            environmentId
+              ? `[create-cloud-workspace] Starting Morph sandbox for environment ${environmentId}`
+              : `[create-cloud-workspace] Starting Morph sandbox for repo ${projectFullName}`
           );
 
           const startRes = await postApiSandboxesStart({
@@ -1235,18 +1045,13 @@ export function setupSocketHandlers(
               metadata: {
                 instance: `cmux-workspace-${taskRunId}`,
                 agentName: "cloud-workspace",
-                ...(projectFullName ? { repoFullName: projectFullName } : {}),
               },
               taskRunId,
               taskRunJwt,
-              ...(environmentId ? { environmentId } : {}),
-              ...(repoUrl
-                ? {
-                    repoUrl,
-                    branch: branch || undefined,
-                    depth: 1,
-                  }
-                : {}),
+              isCloudWorkspace: true,
+              ...(environmentId
+                ? { environmentId }
+                : { projectFullName, repoUrl }),
             },
           });
 
@@ -1303,7 +1108,9 @@ export function setupSocketHandlers(
           });
 
           serverLogger.info(
-            `Cloud workspace created successfully: ${taskId} for ${workspaceTargetLabel}`
+            environmentId
+              ? `Cloud workspace created successfully: ${taskId} for environment ${environmentId}`
+              : `Cloud workspace created successfully: ${taskId} for repo ${projectFullName}`
           );
         } catch (error) {
           serverLogger.error("Error creating cloud workspace:", error);
