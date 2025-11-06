@@ -9,6 +9,7 @@
  */
 
 import type * as apiKeys from "../apiKeys.js";
+import type * as appSettings from "../appSettings.js";
 import type * as backfill from "../backfill.js";
 import type * as codeReview from "../codeReview.js";
 import type * as codeReviewActions from "../codeReviewActions.js";
@@ -65,6 +66,7 @@ import type {
  */
 declare const fullApi: ApiFromModules<{
   apiKeys: typeof apiKeys;
+  appSettings: typeof appSettings;
   backfill: typeof backfill;
   codeReview: typeof codeReview;
   codeReviewActions: typeof codeReviewActions;

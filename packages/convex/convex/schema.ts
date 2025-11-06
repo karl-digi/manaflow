@@ -546,6 +546,15 @@ const convexSchema = defineSchema({
     teamId: v.string(),
   }).index("by_team_user", ["teamId", "userId"]),
 
+  // App-level settings for Electron client
+  appSettings: defineTable({
+    autoUpdateToDraftReleases: v.optional(v.boolean()), // Auto-update to draft GitHub releases (default: false)
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    userId: v.string(),
+    teamId: v.string(),
+  }).index("by_team_user", ["teamId", "userId"]),
+
   // System and user comments attached to a task
   taskComments: defineTable({
     taskId: v.id("tasks"),

@@ -375,6 +375,9 @@ function registerLogIpcHandlers(): void {
   });
 }
 
+// Track whether to allow draft releases (stored in memory, synced from renderer)
+let allowDraftReleases = false;
+
 function registerAutoUpdateIpcHandlers(): void {
   ipcMain.handle("cmux:auto-update:check", async () => {
     if (!app.isPackaged) {
@@ -425,6 +428,22 @@ function registerAutoUpdateIpcHandlers(): void {
       throw err;
     }
   });
+
+  ipcMain.handle("cmux:auto-update:set-allow-draft-releases", async (_event, allow: boolean) => {
+    try {
+      allowDraftReleases = allow;
+      autoUpdater.allowPrerelease = allow;
+      mainLog("Updated allowPrerelease setting", { allowPrerelease: allow });
+      return { ok: true };
+    } catch (error) {
+      mainWarn("Failed to set allowPrerelease", error);
+      return { ok: false };
+    }
+  });
+
+  ipcMain.handle("cmux:auto-update:get-allow-draft-releases", async () => {
+    return { ok: true, value: allowDraftReleases };
+  });
 }
 
 // Write critical errors to a file to aid debugging packaged crashes
@@ -472,7 +491,7 @@ function setupAutoUpdates(): void {
 
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
-    autoUpdater.allowPrerelease = false;
+    autoUpdater.allowPrerelease = allowDraftReleases;
 
     if (process.platform === "darwin") {
       const channel = "latest-universal";

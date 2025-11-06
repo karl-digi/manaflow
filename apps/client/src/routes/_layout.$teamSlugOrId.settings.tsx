@@ -59,6 +59,10 @@ function SettingsComponent() {
   } | null>(null);
   const [originalContainerSettingsData, setOriginalContainerSettingsData] =
     useState<typeof containerSettingsData>(null);
+  const [autoUpdateToDraftReleases, setAutoUpdateToDraftReleases] =
+    useState<boolean>(false);
+  const [originalAutoUpdateToDraftReleases, setOriginalAutoUpdateToDraftReleases] =
+    useState<boolean>(false);
 
   // Get all required API keys from agent configs
   const apiKeys = Array.from(
@@ -85,6 +89,11 @@ function SettingsComponent() {
   // Query workspace settings
   const { data: workspaceSettings } = useQuery(
     convexQuery(api.workspaceSettings.get, { teamSlugOrId })
+  );
+
+  // Query app settings
+  const { data: appSettings } = useQuery(
+    convexQuery(api.appSettings.get, { teamSlugOrId })
   );
 
   // Initialize form values when data loads
@@ -147,6 +156,23 @@ function SettingsComponent() {
       setOriginalAutoPrEnabled(effective);
     }
   }, [workspaceSettings]);
+
+  // Initialize app settings when data loads
+  useEffect(() => {
+    if (appSettings !== undefined) {
+      const enabled = appSettings?.autoUpdateToDraftReleases;
+      const effective = enabled === undefined ? false : Boolean(enabled);
+      setAutoUpdateToDraftReleases(effective);
+      setOriginalAutoUpdateToDraftReleases(effective);
+    }
+  }, [appSettings]);
+
+  // Sync app settings to electron main process when they change
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.cmux?.autoUpdate?.setAllowDraftReleases) {
+      void window.cmux.autoUpdate.setAllowDraftReleases(autoUpdateToDraftReleases);
+    }
+  }, [autoUpdateToDraftReleases]);
 
   // Track save button visibility
   // Footer-based save button; no visibility tracking needed
@@ -244,11 +270,16 @@ function SettingsComponent() {
     // Auto PR toggle changes
     const autoPrChanged = autoPrEnabled !== originalAutoPrEnabled;
 
+    // Auto update to draft releases changes
+    const autoUpdateToDraftReleasesChanged =
+      autoUpdateToDraftReleases !== originalAutoUpdateToDraftReleases;
+
     return (
       worktreePathChanged ||
       autoPrChanged ||
       apiKeysChanged ||
-      containerSettingsChanged
+      containerSettingsChanged ||
+      autoUpdateToDraftReleasesChanged
     );
   };
 
@@ -285,6 +316,15 @@ function SettingsComponent() {
           ...containerSettingsData,
         });
         setOriginalContainerSettingsData(containerSettingsData);
+      }
+
+      // Save app settings if changed
+      if (autoUpdateToDraftReleases !== originalAutoUpdateToDraftReleases) {
+        await convex.mutation(api.appSettings.update, {
+          teamSlugOrId,
+          autoUpdateToDraftReleases,
+        });
+        setOriginalAutoUpdateToDraftReleases(autoUpdateToDraftReleases);
       }
 
       for (const key of apiKeys) {
@@ -609,6 +649,37 @@ function SettingsComponent() {
                       System
                     </button>
                   </div>
+                </div>
+              </div>
+            </div>
+
+            {/* App Updates */}
+            <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
+              <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
+                <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                  App Updates
+                </h2>
+              </div>
+              <div className="p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                      Auto-update to draft releases
+                    </label>
+                    <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                      When enabled, cmux will automatically update to the latest
+                      version from GitHub releases, including draft releases that
+                      haven't been officially published yet. This gives you access
+                      to the newest features and fixes as soon as they're available.
+                    </p>
+                  </div>
+                  <Switch
+                    aria-label="Auto-update to draft releases"
+                    size="sm"
+                    color="primary"
+                    isSelected={autoUpdateToDraftReleases}
+                    onValueChange={setAutoUpdateToDraftReleases}
+                  />
                 </div>
               </div>
             </div>
