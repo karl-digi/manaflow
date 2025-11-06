@@ -160,6 +160,17 @@ const cmuxAPI = {
         reason?: string;
       }>,
   },
+  quit: {
+    respond: (options: { confirmed: boolean; alwaysQuit: boolean }) =>
+      ipcRenderer.invoke("cmux:quit-confirmation:respond", options) as Promise<{
+        ok: boolean;
+      }>,
+    getPreference: () =>
+      ipcRenderer.invoke("cmux:quit-confirmation:get-preference") as Promise<{
+        alwaysQuit: boolean;
+        enabled: boolean;
+      }>,
+  },
   webContentsView: {
     create: (options: {
       url: string;

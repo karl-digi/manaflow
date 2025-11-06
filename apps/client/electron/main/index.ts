@@ -95,6 +95,11 @@ let pendingProtocolUrl: string | null = null;
 let mainWindow: BrowserWindow | null = null;
 let previewReloadMenuItem: MenuItem | null = null;
 let previewReloadMenuVisible = false;
+const isMac = process.platform === "darwin";
+let requireQuitConfirmation = isMac;
+let quitPromptActive = false;
+let bypassQuitConfirmation = false;
+let quitPreferencePath: string | null = null;
 
 function getTimestamp(): string {
   return new Date().toISOString();
@@ -251,6 +256,81 @@ function setPreviewReloadMenuVisibility(visible: boolean): void {
   }
 }
 
+async function loadQuitConfirmationPreference(): Promise<void> {
+  if (!quitPreferencePath) return;
+  try {
+    const raw = await fs.readFile(quitPreferencePath, "utf8");
+    const parsed = JSON.parse(raw) as {
+      alwaysQuit?: unknown;
+    };
+    if (parsed && typeof parsed.alwaysQuit === "boolean") {
+      requireQuitConfirmation = isMac && !parsed.alwaysQuit;
+    }
+  } catch (error) {
+    const code =
+      typeof error === "object" && error && "code" in error
+        ? (error as { code?: unknown }).code
+        : null;
+    if (code !== "ENOENT") {
+      mainWarn("Failed to read quit confirmation preference", error);
+    }
+  }
+}
+
+async function persistQuitConfirmationPreference(
+  alwaysQuit: boolean
+): Promise<void> {
+  if (!quitPreferencePath) return;
+  try {
+    await fs.mkdir(path.dirname(quitPreferencePath), { recursive: true });
+    const payload = JSON.stringify({ alwaysQuit }, null, 2);
+    await fs.writeFile(quitPreferencePath, payload, "utf8");
+  } catch (error) {
+    mainWarn("Failed to persist quit confirmation preference", error);
+  }
+}
+
+function finalizeQuitWithoutPrompt(): void {
+  quitPromptActive = false;
+  bypassQuitConfirmation = true;
+  setImmediate(() => {
+    try {
+      app.quit();
+    } catch (error) {
+      mainWarn("Failed to quit app after confirmation", error);
+    }
+  });
+}
+
+function showQuitConfirmationPrompt(): void {
+  if (!isMac) return;
+
+  const target =
+    BrowserWindow.getFocusedWindow() ??
+    mainWindow ??
+    BrowserWindow.getAllWindows()[0] ??
+    null;
+
+  if (!target || target.isDestroyed() || !rendererLoaded) {
+    finalizeQuitWithoutPrompt();
+    return;
+  }
+
+  quitPromptActive = true;
+
+  try {
+    if (target.isMinimized()) {
+      target.restore();
+    }
+    target.focus();
+    target.webContents.send("cmux:event:quit-confirmation:show");
+  } catch (error) {
+    quitPromptActive = false;
+    mainWarn("Failed to present quit confirmation prompt", error);
+    finalizeQuitWithoutPrompt();
+  }
+}
+
 ipcMain.on("cmux:get-current-webcontents-id", (event) => {
   event.returnValue = event.sender.id;
 });
@@ -259,6 +339,58 @@ ipcMain.handle(
   "cmux:ui:set-preview-reload-visible",
   async (_event, visible: unknown) => {
     setPreviewReloadMenuVisibility(Boolean(visible));
+    return { ok: true };
+  }
+);
+
+ipcMain.handle("cmux:quit-confirmation:get-preference", async () => {
+  return {
+    alwaysQuit: isMac ? !requireQuitConfirmation : true,
+    enabled: isMac && requireQuitConfirmation,
+  };
+});
+
+ipcMain.handle(
+  "cmux:quit-confirmation:respond",
+  async (_event, payload: unknown) => {
+    const data =
+      payload && typeof payload === "object"
+        ? (payload as { confirmed?: unknown; alwaysQuit?: unknown })
+        : {};
+    const confirmed =
+      typeof data.confirmed === "boolean"
+        ? data.confirmed
+        : Boolean(data.confirmed);
+    const alwaysQuit =
+      confirmed && typeof data.alwaysQuit === "boolean"
+        ? data.alwaysQuit
+        : false;
+
+    if (!confirmed) {
+      quitPromptActive = false;
+      const target =
+        BrowserWindow.getFocusedWindow() ??
+        mainWindow ??
+        BrowserWindow.getAllWindows()[0] ??
+        null;
+      if (target && !target.isDestroyed()) {
+        try {
+          target.focus();
+        } catch (error) {
+          mainWarn("Failed to refocus window after quit cancel", error);
+        }
+      }
+      return { ok: true };
+    }
+
+    quitPromptActive = false;
+
+    if (alwaysQuit && isMac) {
+      requireQuitConfirmation = false;
+      await persistQuitConfirmationPreference(true);
+    }
+
+    finalizeQuitWithoutPrompt();
     return { ok: true };
   }
 );
@@ -417,6 +549,7 @@ function registerAutoUpdateIpcHandlers(): void {
 
     try {
       queuedAutoUpdateToast = null;
+      bypassQuitConfirmation = true;
       autoUpdater.quitAndInstall();
       return { ok: true } as const;
     } catch (error) {
@@ -706,6 +839,15 @@ app.on("open-url", (_event, url) => {
 app.whenReady().then(async () => {
   ensureLogFiles();
   setupConsoleFileMirrors();
+  if (isMac) {
+    try {
+      const prefDir = path.join(app.getPath("userData"), "preferences");
+      quitPreferencePath = path.join(prefDir, "quit-confirmation.json");
+      await loadQuitConfirmationPreference();
+    } catch (error) {
+      mainWarn("Failed to initialize quit confirmation preference", error);
+    }
+  }
   const disposeContextMenu = registerGlobalContextMenu();
   app.once("will-quit", () => {
     try {
@@ -1031,6 +1173,25 @@ app.whenReady().then(async () => {
   app.on("activate", function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+});
+
+app.on("before-quit", (event) => {
+  if (!isMac) {
+    return;
+  }
+  if (bypassQuitConfirmation) {
+    return;
+  }
+  if (!requireQuitConfirmation) {
+    return;
+  }
+  if (quitPromptActive) {
+    event.preventDefault();
+    return;
+  }
+
+  event.preventDefault();
+  showQuitConfirmationPrompt();
 });
 
 app.on("window-all-closed", () => {

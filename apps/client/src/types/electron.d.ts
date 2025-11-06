@@ -118,6 +118,10 @@ interface CmuxAPI {
       }>;
     install: () => Promise<{ ok: boolean; reason?: string }>;
   };
+  quit?: {
+    respond: (options: { confirmed: boolean; alwaysQuit: boolean }) => Promise<{ ok: boolean }>;
+    getPreference?: () => Promise<{ alwaysQuit: boolean; enabled: boolean }>;
+  };
 }
 
 declare global {

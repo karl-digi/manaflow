@@ -8,6 +8,7 @@ import { AntdProvider } from "./components/antd-provider";
 import { isElectron } from "./lib/electron";
 import { stackClientApp } from "./lib/stack";
 import { queryClient } from "./query-client";
+import { ElectronQuitConfirmationDialog } from "./components/ElectronQuitConfirmationDialog";
 
 interface ProvidersProps {
   children: ReactNode;
@@ -26,15 +27,18 @@ export function Providers({ children }: ProvidersProps) {
         <Suspense fallback={<div>Loading stack...</div>}>
           <StackProvider app={stackClientApp}>
             <QueryClientProvider client={queryClient}>
-              <TooltipProvider delayDuration={700} skipDelayDuration={300}>
-                <HeroUIProvider>
-                  <RootErrorBoundary>
-                    <AntdProvider>{children}</AntdProvider>
-                  </RootErrorBoundary>
-                </HeroUIProvider>
-              </TooltipProvider>
-            </QueryClientProvider>
-          </StackProvider>
+                  <TooltipProvider delayDuration={700} skipDelayDuration={300}>
+                    <HeroUIProvider>
+                      <RootErrorBoundary>
+                        <AntdProvider>
+                          {children}
+                          <ElectronQuitConfirmationDialog />
+                        </AntdProvider>
+                      </RootErrorBoundary>
+                    </HeroUIProvider>
+                  </TooltipProvider>
+                </QueryClientProvider>
+              </StackProvider>
         </Suspense>
       </StackTheme>
     </ThemeProvider>
