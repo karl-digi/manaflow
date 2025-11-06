@@ -1,13 +1,18 @@
-export type PanelType = "chat" | "workspace" | "terminal" | "browser" | "gitDiff";
+const PANEL_TYPES = ["chat", "workspace", "browser", "gitDiff"] as const;
+export type PanelType = (typeof PANEL_TYPES)[number];
 
-export type LayoutMode =
-  | "four-panel"      // 2x2 grid
-  | "two-horizontal"  // Two panels side-by-side
-  | "two-vertical"    // Two panels stacked
-  | "three-left"      // One large panel on left, two stacked on right
-  | "three-right"     // Two stacked on left, one large panel on right
-  | "three-top"       // One large panel on top, two side-by-side on bottom
-  | "three-bottom";   // Two side-by-side on top, one large panel on bottom
+const LAYOUT_MODES = [
+  "four-panel",
+  "two-horizontal",
+  "two-vertical",
+  "three-left",
+  "three-right",
+  "three-top",
+  "three-bottom",
+] as const;
+type LayoutModeTuple = typeof LAYOUT_MODES;
+
+export type LayoutMode = LayoutModeTuple[number];
 
 export interface LayoutPanels {
   topLeft: PanelType | null;
@@ -23,30 +28,67 @@ export interface PanelConfig {
   };
 }
 
-const DEFAULT_LAYOUT_PANELS: LayoutPanels = {
-  topLeft: "chat",
-  topRight: "workspace",
-  bottomLeft: "terminal",
-  bottomRight: "browser",
+const BASE_LAYOUTS: PanelConfig["layouts"] = {
+  "four-panel": {
+    topLeft: "workspace",
+    topRight: "browser",
+    bottomLeft: "chat",
+    bottomRight: "gitDiff",
+  },
+  "two-horizontal": {
+    topLeft: "workspace",
+    topRight: "browser",
+    bottomLeft: null,
+    bottomRight: null,
+  },
+  "two-vertical": {
+    topLeft: "workspace",
+    topRight: null,
+    bottomLeft: "gitDiff",
+    bottomRight: null,
+  },
+  "three-left": {
+    topLeft: "workspace",
+    topRight: "chat",
+    bottomLeft: null,
+    bottomRight: "gitDiff",
+  },
+  "three-right": {
+    topLeft: "chat",
+    topRight: null,
+    bottomLeft: "browser",
+    bottomRight: "workspace",
+  },
+  "three-top": {
+    topLeft: "workspace",
+    topRight: null,
+    bottomLeft: "browser",
+    bottomRight: "gitDiff",
+  },
+  "three-bottom": {
+    topLeft: "workspace",
+    topRight: "browser",
+    bottomLeft: null,
+    bottomRight: "gitDiff",
+  },
 };
 
+function cloneBaseLayouts(): PanelConfig["layouts"] {
+  const cloned = {} as PanelConfig["layouts"];
+  for (const mode of LAYOUT_MODES) {
+    cloned[mode] = { ...BASE_LAYOUTS[mode] };
+  }
+  return cloned;
+}
+
 export const DEFAULT_PANEL_CONFIG: PanelConfig = {
-  layoutMode: "four-panel",
-  layouts: {
-    "four-panel": { ...DEFAULT_LAYOUT_PANELS },
-    "two-horizontal": { topLeft: "chat", topRight: "workspace", bottomLeft: null, bottomRight: null },
-    "two-vertical": { topLeft: "chat", topRight: null, bottomLeft: "workspace", bottomRight: null },
-    "three-left": { topLeft: "workspace", topRight: "chat", bottomLeft: null, bottomRight: "terminal" },
-    "three-right": { topLeft: "chat", topRight: null, bottomLeft: "terminal", bottomRight: "workspace" },
-    "three-top": { topLeft: "workspace", topRight: null, bottomLeft: "chat", bottomRight: "terminal" },
-    "three-bottom": { topLeft: "chat", topRight: "workspace", bottomLeft: null, bottomRight: "terminal" },
-  },
+  layoutMode: "three-top",
+  layouts: cloneBaseLayouts(),
 };
 
 export const PANEL_LABELS: Record<PanelType, string> = {
   chat: "Activity",
   workspace: "Workspace",
-  terminal: "Terminal",
   browser: "Browser",
   gitDiff: "Git Diff",
 };
@@ -54,7 +96,6 @@ export const PANEL_LABELS: Record<PanelType, string> = {
 export const PANEL_ICONS: Record<PanelType, string> = {
   chat: "MessageSquare",
   workspace: "Code2",
-  terminal: "TerminalSquare",
   browser: "Globe2",
   gitDiff: "GitCompare",
 };
@@ -81,6 +122,18 @@ export const LAYOUT_DESCRIPTIONS: Record<LayoutMode, string> = {
 
 const STORAGE_KEY = "taskPanelConfig";
 
+function isPanelType(value: unknown): value is PanelType {
+  return typeof value === "string" && PANEL_TYPES.includes(value as PanelType);
+}
+
+function sanitizePanelType(value: unknown, fallback: PanelType | null): PanelType | null {
+  return isPanelType(value) ? value : fallback;
+}
+
+function isLayoutMode(value: unknown): value is LayoutMode {
+  return typeof value === "string" && LAYOUT_MODES.includes(value as LayoutMode);
+}
+
 export function loadPanelConfig(): PanelConfig {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
@@ -90,34 +143,38 @@ export function loadPanelConfig(): PanelConfig {
       // Migrate old config format to new format
       if (parsed.topLeft !== undefined && !parsed.layouts) {
         // Old format detected, migrate to new format
-        const layoutMode: LayoutMode = parsed.layoutMode ?? "four-panel";
+        const layoutMode: LayoutMode = isLayoutMode(parsed.layoutMode)
+          ? parsed.layoutMode
+          : DEFAULT_PANEL_CONFIG.layoutMode;
         const config: PanelConfig = {
           layoutMode,
-          layouts: { ...DEFAULT_PANEL_CONFIG.layouts },
+          layouts: cloneBaseLayouts(),
         };
         // Set the current layout mode's panels from the old config
         config.layouts[layoutMode] = {
-          topLeft: parsed.topLeft ?? null,
-          topRight: parsed.topRight ?? null,
-          bottomLeft: parsed.bottomLeft ?? null,
-          bottomRight: parsed.bottomRight ?? null,
+          topLeft: sanitizePanelType(parsed.topLeft, null),
+          topRight: sanitizePanelType(parsed.topRight, null),
+          bottomLeft: sanitizePanelType(parsed.bottomLeft, null),
+          bottomRight: sanitizePanelType(parsed.bottomRight, null),
         };
         return config;
       }
 
       // New format
-      const layoutMode = parsed.layoutMode ?? DEFAULT_PANEL_CONFIG.layoutMode;
-      const layouts = { ...DEFAULT_PANEL_CONFIG.layouts };
+      const layoutMode = isLayoutMode(parsed.layoutMode)
+        ? parsed.layoutMode
+        : DEFAULT_PANEL_CONFIG.layoutMode;
+      const layouts = cloneBaseLayouts();
 
       // Merge stored layouts with defaults
       if (parsed.layouts) {
         for (const mode of Object.keys(layouts) as LayoutMode[]) {
           if (parsed.layouts[mode]) {
             layouts[mode] = {
-              topLeft: parsed.layouts[mode].topLeft ?? layouts[mode].topLeft,
-              topRight: parsed.layouts[mode].topRight ?? layouts[mode].topRight,
-              bottomLeft: parsed.layouts[mode].bottomLeft ?? layouts[mode].bottomLeft,
-              bottomRight: parsed.layouts[mode].bottomRight ?? layouts[mode].bottomRight,
+              topLeft: sanitizePanelType(parsed.layouts[mode].topLeft, layouts[mode].topLeft),
+              topRight: sanitizePanelType(parsed.layouts[mode].topRight, layouts[mode].topRight),
+              bottomLeft: sanitizePanelType(parsed.layouts[mode].bottomLeft, layouts[mode].bottomLeft),
+              bottomRight: sanitizePanelType(parsed.layouts[mode].bottomRight, layouts[mode].bottomRight),
             };
           }
         }
@@ -155,7 +212,7 @@ export function getCurrentLayoutPanels(config: PanelConfig): LayoutPanels {
 }
 
 export function getAvailablePanels(config: PanelConfig): PanelType[] {
-  const allPanels: PanelType[] = ["chat", "workspace", "terminal", "browser", "gitDiff"];
+  const allPanels: PanelType[] = [...PANEL_TYPES];
   const currentLayout = getCurrentLayoutPanels(config);
 
   // Check all positions (including inactive) to prevent duplicates within current layout
