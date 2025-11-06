@@ -26,6 +26,7 @@ import electronUpdater, {
   type UpdateInfo,
 } from "electron-updater";
 import semver from "semver";
+import type { GithubOptions } from "builder-util-runtime";
 import {
   createRemoteJWKSet,
   decodeJwt,
@@ -450,16 +451,95 @@ process.on("unhandledRejection", (reason) => {
   void writeFatalLog("unhandledRejection", reason);
 });
 
+const TRUE_ENV_VALUES = new Set(["1", "true", "yes", "on"]);
+const FALSE_ENV_VALUES = new Set(["0", "false", "no", "off"]);
+
+function parseEnvBoolean(value?: string | null): boolean | null {
+  if (value == null) return null;
+  const normalized = value.trim().toLowerCase();
+  if (normalized.length === 0) return null;
+  if (TRUE_ENV_VALUES.has(normalized)) return true;
+  if (FALSE_ENV_VALUES.has(normalized)) return false;
+  return null;
+}
+
+function shouldForceLatestGithubRelease(): boolean {
+  const candidates = [
+    process.env.CMUX_AUTO_UPDATE_USE_GITHUB_LATEST,
+    process.env.CMUX_ELECTRON_AUTO_UPDATE_USE_GITHUB_LATEST,
+    process.env.CMUX_AUTO_UPDATE_INCLUDE_DRAFTS,
+  ];
+  for (const candidate of candidates) {
+    const parsed = parseEnvBoolean(candidate);
+    if (parsed !== null) return parsed;
+  }
+  return false;
+}
+
+function resolveGithubToken(): string | null {
+  const candidates = [
+    process.env.CMUX_AUTO_UPDATE_GITHUB_TOKEN,
+    process.env.GH_TOKEN,
+    process.env.ELECTRON_BUILDER_GH_TOKEN,
+    process.env.BUILDER_GH_TOKEN,
+  ];
+  for (const candidate of candidates) {
+    if (candidate && candidate.trim().length > 0) {
+      return candidate.trim();
+    }
+  }
+  return null;
+}
+
+function configureGithubDraftAutoUpdateFeed(): boolean {
+  const token = resolveGithubToken();
+  if (!token) {
+    mainWarn(
+      "CMUX_AUTO_UPDATE_USE_GITHUB_LATEST is enabled but no GitHub token is available; draft releases cannot be accessed."
+    );
+    return false;
+  }
+
+  const channel = autoUpdater.channel ?? undefined;
+  const feedOptions: GithubOptions = {
+    provider: "github",
+    owner: "manaflow-ai",
+    repo: "cmux",
+    private: true,
+    token,
+    updaterCacheDirName: "cmux-updater",
+    ...(channel ? { channel } : {}),
+  };
+  const channelForLog = channel ?? null;
+
+  try {
+    autoUpdater.setFeedURL(feedOptions);
+    mainLog("Enabled GitHub latest-release auto-update feed", {
+      includeDrafts: true,
+      channel: channelForLog,
+      usesPrivateFeed: true,
+    });
+    return true;
+  } catch (error) {
+    mainWarn("Failed to configure GitHub latest-release auto-update feed", error);
+    return false;
+  }
+}
+
 function setupAutoUpdates(): void {
   if (!app.isPackaged) {
     mainLog("Skipping auto-updates in development");
     return;
   }
 
+  const forceLatestGithubRelease = shouldForceLatestGithubRelease();
+  let githubDraftFeedConfigured = false;
+
   mainLog("Setting up auto-updates", {
     appVersion: app.getVersion(),
     platform: process.platform,
     arch: process.arch,
+    forceLatestGithubRelease,
   });
 
   try {
@@ -472,7 +552,8 @@ function setupAutoUpdates(): void {
 
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
-    autoUpdater.allowPrerelease = false;
+    autoUpdater.allowPrerelease = forceLatestGithubRelease;
+    autoUpdater.allowDowngrade = forceLatestGithubRelease;
 
     if (process.platform === "darwin") {
       const channel = "latest-universal";
@@ -485,11 +566,22 @@ function setupAutoUpdates(): void {
       }
     }
 
+    if (forceLatestGithubRelease) {
+      githubDraftFeedConfigured = configureGithubDraftAutoUpdateFeed();
+      if (!githubDraftFeedConfigured) {
+        autoUpdater.allowPrerelease = false;
+        autoUpdater.allowDowngrade = false;
+      }
+    }
+
     mainLog("Auto-updater configuration complete", {
       autoDownload: autoUpdater.autoDownload,
       autoInstallOnAppQuit: autoUpdater.autoInstallOnAppQuit,
       allowPrerelease: autoUpdater.allowPrerelease,
+      allowDowngrade: autoUpdater.allowDowngrade,
       channel: autoUpdater.channel ?? null,
+      forceLatestGithubRelease,
+      githubDraftFeedConfigured,
     });
   } catch (e) {
     mainWarn("Failed to initialize autoUpdater", e);

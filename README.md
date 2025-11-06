@@ -43,6 +43,10 @@ npm install -g cmux@latest
 uvx cmux@latest
 ``` -->
 
+## Auto-update configuration
+
+- Set `CMUX_AUTO_UPDATE_USE_GITHUB_LATEST=true` to force packaged builds to pull the newest GitHub release, even when the release is still marked as a draft. Provide a GitHub token with download access via `CMUX_AUTO_UPDATE_GITHUB_TOKEN`, `GH_TOKEN`, `ELECTRON_BUILDER_GH_TOKEN`, or `BUILDER_GH_TOKEN` so draft assets can be downloaded.
+
 <!-- ## Upgrade
 
 ```bash
