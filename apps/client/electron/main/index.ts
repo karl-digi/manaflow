@@ -376,6 +376,39 @@ function registerLogIpcHandlers(): void {
 }
 
 function registerAutoUpdateIpcHandlers(): void {
+  ipcMain.handle(
+    "cmux:auto-update:configure",
+    async (_event, includeDrafts: unknown) => {
+      if (!app.isPackaged) {
+        mainLog(
+          "Auto-update configure requested while app is not packaged; ignoring request"
+        );
+        return { ok: false, reason: "not-packaged" as const };
+      }
+
+      if (typeof includeDrafts !== "boolean") {
+        mainWarn(
+          "Invalid includeDrafts value received in configure handler",
+          includeDrafts
+        );
+        throw new Error("includeDrafts must be a boolean");
+      }
+
+      try {
+        mainLog("Configuring auto-update settings", { includeDrafts });
+        autoUpdater.allowPrerelease = includeDrafts;
+        mainLog("Auto-update configuration updated", {
+          allowPrerelease: autoUpdater.allowPrerelease,
+        });
+        return { ok: true } as const;
+      } catch (error) {
+        mainWarn("Failed to configure auto-update settings", error);
+        const err = error instanceof Error ? error : new Error(String(error));
+        throw err;
+      }
+    }
+  );
+
   ipcMain.handle("cmux:auto-update:check", async () => {
     if (!app.isPackaged) {
       mainLog(
@@ -450,7 +483,7 @@ process.on("unhandledRejection", (reason) => {
   void writeFatalLog("unhandledRejection", reason);
 });
 
-function setupAutoUpdates(): void {
+function setupAutoUpdates(includeDrafts = false): void {
   if (!app.isPackaged) {
     mainLog("Skipping auto-updates in development");
     return;
@@ -460,6 +493,7 @@ function setupAutoUpdates(): void {
     appVersion: app.getVersion(),
     platform: process.platform,
     arch: process.arch,
+    includeDrafts,
   });
 
   try {
@@ -472,7 +506,7 @@ function setupAutoUpdates(): void {
 
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
-    autoUpdater.allowPrerelease = false;
+    autoUpdater.allowPrerelease = includeDrafts;
 
     if (process.platform === "darwin") {
       const channel = "latest-universal";

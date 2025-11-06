@@ -40,6 +40,10 @@ function SettingsComponent() {
   const [autoPrEnabled, setAutoPrEnabled] = useState<boolean>(false);
   const [originalAutoPrEnabled, setOriginalAutoPrEnabled] =
     useState<boolean>(false);
+  const [autoUpdateIncludeDrafts, setAutoUpdateIncludeDrafts] =
+    useState<boolean>(false);
+  const [originalAutoUpdateIncludeDrafts, setOriginalAutoUpdateIncludeDrafts] =
+    useState<boolean>(false);
   // const [isSaveButtonVisible, setIsSaveButtonVisible] = useState(true);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const saveButtonRef = useRef<HTMLDivElement>(null);
@@ -145,6 +149,25 @@ function SettingsComponent() {
       const effective = enabled === undefined ? false : Boolean(enabled);
       setAutoPrEnabled(effective);
       setOriginalAutoPrEnabled(effective);
+      const includeDrafts = (
+        workspaceSettings as unknown as { autoUpdateIncludeDrafts?: boolean }
+      )?.autoUpdateIncludeDrafts;
+      const effectiveIncludeDrafts =
+        includeDrafts === undefined ? false : Boolean(includeDrafts);
+      setAutoUpdateIncludeDrafts(effectiveIncludeDrafts);
+      setOriginalAutoUpdateIncludeDrafts(effectiveIncludeDrafts);
+
+      // Configure electron auto-updater on load
+      if (typeof window !== "undefined" && "cmux" in window) {
+        const cmux = (window as { cmux?: { autoUpdate?: { configure?: (includeDrafts: boolean) => Promise<{ ok: boolean; reason?: string }> } } }).cmux;
+        if (cmux?.autoUpdate?.configure) {
+          cmux.autoUpdate
+            .configure(effectiveIncludeDrafts)
+            .catch((error) => {
+              console.error("Failed to configure auto-update on load:", error);
+            });
+        }
+      }
     }
   }, [workspaceSettings]);
 
@@ -244,9 +267,14 @@ function SettingsComponent() {
     // Auto PR toggle changes
     const autoPrChanged = autoPrEnabled !== originalAutoPrEnabled;
 
+    // Auto update include drafts toggle changes
+    const autoUpdateChanged =
+      autoUpdateIncludeDrafts !== originalAutoUpdateIncludeDrafts;
+
     return (
       worktreePathChanged ||
       autoPrChanged ||
+      autoUpdateChanged ||
       apiKeysChanged ||
       containerSettingsChanged
     );
@@ -259,18 +287,36 @@ function SettingsComponent() {
       let savedCount = 0;
       let deletedCount = 0;
 
-      // Save worktree path / auto PR if changed
+      // Save worktree path / auto PR / auto update if changed
       if (
         worktreePath !== originalWorktreePath ||
-        autoPrEnabled !== originalAutoPrEnabled
+        autoPrEnabled !== originalAutoPrEnabled ||
+        autoUpdateIncludeDrafts !== originalAutoUpdateIncludeDrafts
       ) {
         await convex.mutation(api.workspaceSettings.update, {
           teamSlugOrId,
           worktreePath: worktreePath || undefined,
           autoPrEnabled,
+          autoUpdateIncludeDrafts,
         });
         setOriginalWorktreePath(worktreePath);
         setOriginalAutoPrEnabled(autoPrEnabled);
+        setOriginalAutoUpdateIncludeDrafts(autoUpdateIncludeDrafts);
+
+        // Configure electron auto-updater if the setting changed
+        if (autoUpdateIncludeDrafts !== originalAutoUpdateIncludeDrafts) {
+          try {
+            if (typeof window !== "undefined" && "cmux" in window) {
+              const cmux = (window as { cmux?: { autoUpdate?: { configure?: (includeDrafts: boolean) => Promise<{ ok: boolean; reason?: string }> } } }).cmux;
+              if (cmux?.autoUpdate?.configure) {
+                await cmux.autoUpdate.configure(autoUpdateIncludeDrafts);
+              }
+            }
+          } catch (error) {
+            console.error("Failed to configure auto-update:", error);
+            // Don't throw - this is not critical for settings save
+          }
+        }
       }
 
       // Save container settings if changed
@@ -637,6 +683,36 @@ function SettingsComponent() {
                     color="primary"
                     isSelected={autoPrEnabled}
                     onValueChange={setAutoPrEnabled}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Auto-Update Settings */}
+            <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
+              <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
+                <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                  Auto-Update
+                </h2>
+              </div>
+              <div className="p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                      Include draft releases
+                    </label>
+                    <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                      When enabled, cmux will auto-update to the latest GitHub
+                      release, including draft releases that aren't officially
+                      published yet.
+                    </p>
+                  </div>
+                  <Switch
+                    aria-label="Include draft releases for auto-update"
+                    size="sm"
+                    color="primary"
+                    isSelected={autoUpdateIncludeDrafts}
+                    onValueChange={setAutoUpdateIncludeDrafts}
                   />
                 </div>
               </div>

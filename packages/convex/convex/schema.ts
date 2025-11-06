@@ -514,6 +514,7 @@ const convexSchema = defineSchema({
   workspaceSettings: defineTable({
     worktreePath: v.optional(v.string()), // Custom path for git worktrees
     autoPrEnabled: v.optional(v.boolean()), // Auto-create PR for crown winner (default: false)
+    autoUpdateIncludeDrafts: v.optional(v.boolean()), // Include draft releases when auto-updating (default: false)
     nextLocalWorkspaceSequence: v.optional(v.number()), // Counter for local workspace naming
     createdAt: v.number(),
     updatedAt: v.number(),

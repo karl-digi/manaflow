@@ -147,6 +147,11 @@ const cmuxAPI = {
       ipcRenderer.invoke("cmux:logs:copy-all") as Promise<{ ok: boolean }>,
   },
   autoUpdate: {
+    configure: (includeDrafts: boolean) =>
+      ipcRenderer.invoke("cmux:auto-update:configure", includeDrafts) as Promise<{
+        ok: boolean;
+        reason?: string;
+      }>,
     check: () =>
       ipcRenderer.invoke("cmux:auto-update:check") as Promise<{
         ok: boolean;
