@@ -48,6 +48,12 @@ import {
   getProxyCredentialsForWebContents,
   startPreviewProxy,
 } from "./task-run-preview-proxy";
+import {
+  initializeSettings,
+  getSettings,
+  updateSettings,
+  type AppSettings,
+} from "./app-settings";
 import { normalizeBrowserUrl } from "@cmux/shared";
 
 // Use a cookieable HTTPS origin intercepted locally instead of a custom scheme.
@@ -427,6 +433,52 @@ function registerAutoUpdateIpcHandlers(): void {
   });
 }
 
+function registerSettingsIpcHandlers(): void {
+  ipcMain.handle("cmux:settings:get", async () => {
+    try {
+      const settings = getSettings();
+      mainLog("Retrieved settings", settings);
+      return { ok: true, settings };
+    } catch (error) {
+      mainWarn("Failed to get settings", error);
+      return { ok: false, reason: String(error) };
+    }
+  });
+
+  ipcMain.handle(
+    "cmux:settings:update",
+    async (_event, settings: Partial<AppSettings>) => {
+      try {
+        mainLog("Updating settings", settings);
+        updateSettings(settings);
+
+        // If allowDraftReleases changed, update the autoUpdater and check for updates
+        if ("allowDraftReleases" in settings) {
+          const allowDraftReleases = settings.allowDraftReleases ?? false;
+          autoUpdater.allowPrerelease = allowDraftReleases;
+          mainLog("Updated autoUpdater.allowPrerelease", { allowDraftReleases });
+
+          // Trigger update check to immediately apply the new setting
+          if (app.isPackaged) {
+            mainLog("Checking for updates with new allowPrerelease setting");
+            autoUpdater
+              .checkForUpdates()
+              .then((result) =>
+                logUpdateCheckResult("Settings update checkForUpdates", result)
+              )
+              .catch((e) => mainWarn("checkForUpdates after settings update failed", e));
+          }
+        }
+
+        return { ok: true };
+      } catch (error) {
+        mainWarn("Failed to update settings", error);
+        return { ok: false, reason: String(error) };
+      }
+    }
+  );
+}
+
 // Write critical errors to a file to aid debugging packaged crashes
 async function writeFatalLog(...args: unknown[]) {
   try {
@@ -472,7 +524,13 @@ function setupAutoUpdates(): void {
 
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
-    autoUpdater.allowPrerelease = false;
+
+    // Read allowDraftReleases setting from store
+    const settings = getSettings();
+    autoUpdater.allowPrerelease = settings.allowDraftReleases;
+    mainLog("Using allowDraftReleases from settings", {
+      allowDraftReleases: settings.allowDraftReleases,
+    });
 
     if (process.platform === "darwin") {
       const channel = "latest-universal";
@@ -706,6 +764,11 @@ app.on("open-url", (_event, url) => {
 app.whenReady().then(async () => {
   ensureLogFiles();
   setupConsoleFileMirrors();
+
+  // Initialize settings store
+  initializeSettings();
+  mainLog("Settings store initialized");
+
   const disposeContextMenu = registerGlobalContextMenu();
   app.once("will-quit", () => {
     try {
@@ -715,6 +778,7 @@ app.whenReady().then(async () => {
     }
   });
   registerLogIpcHandlers();
+  registerSettingsIpcHandlers();
   registerAutoUpdateIpcHandlers();
   initCmdK({
     getMainWindow: () => mainWindow,

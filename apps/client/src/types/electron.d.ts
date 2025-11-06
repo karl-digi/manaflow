@@ -118,6 +118,19 @@ interface CmuxAPI {
       }>;
     install: () => Promise<{ ok: boolean; reason?: string }>;
   };
+  settings: {
+    get: () =>
+      Promise<{
+        ok: boolean;
+        reason?: string;
+        settings?: {
+          allowDraftReleases: boolean;
+        };
+      }>;
+    update: (settings: {
+      allowDraftReleases?: boolean;
+    }) => Promise<{ ok: boolean; reason?: string }>;
+  };
 }
 
 declare global {

@@ -160,6 +160,21 @@ const cmuxAPI = {
         reason?: string;
       }>,
   },
+  settings: {
+    get: () =>
+      ipcRenderer.invoke("cmux:settings:get") as Promise<{
+        ok: boolean;
+        reason?: string;
+        settings?: {
+          allowDraftReleases: boolean;
+        };
+      }>,
+    update: (settings: { allowDraftReleases?: boolean }) =>
+      ipcRenderer.invoke("cmux:settings:update", settings) as Promise<{
+        ok: boolean;
+        reason?: string;
+      }>,
+  },
   webContentsView: {
     create: (options: {
       url: string;
