@@ -16,6 +16,7 @@ import { useMutation } from "convex/react";
 import { Server as ServerIcon, FolderOpen, Loader2 } from "lucide-react";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
+import { useNavigate } from "@tanstack/react-router";
 
 type WorkspaceCreationButtonsProps = {
   teamSlugOrId: string;
@@ -31,6 +32,7 @@ export function WorkspaceCreationButtons({
   const { socket } = useSocket();
   const { addTaskToExpand } = useExpandTasks();
   const { theme } = useTheme();
+  const navigate = useNavigate();
   const [isCreatingLocal, setIsCreatingLocal] = useState(false);
   const [isCreatingCloud, setIsCreatingCloud] = useState(false);
 
@@ -97,6 +99,13 @@ export function WorkspaceCreationButtons({
           }
         );
       });
+
+      // Navigate to the newly created workspace
+      await navigate({
+        to: "/$teamSlugOrId/task/$taskId",
+        params: { teamSlugOrId, taskId: reservation.taskId },
+        search: { runId: undefined },
+      });
     } catch (error) {
       console.error("Error creating local workspace:", error);
       toast.error("Failed to create local workspace");
@@ -110,6 +119,7 @@ export function WorkspaceCreationButtons({
     teamSlugOrId,
     reserveLocalWorkspace,
     addTaskToExpand,
+    navigate,
   ]);
 
   const handleCreateCloudWorkspace = useCallback(async () => {
@@ -176,6 +186,13 @@ export function WorkspaceCreationButtons({
       });
 
       console.log("Cloud workspace created:", taskId);
+
+      // Navigate to the newly created workspace
+      await navigate({
+        to: "/$teamSlugOrId/task/$taskId",
+        params: { teamSlugOrId, taskId },
+        search: { runId: undefined },
+      });
     } catch (error) {
       console.error("Error creating cloud workspace:", error);
       toast.error("Failed to create cloud workspace");
@@ -190,6 +207,7 @@ export function WorkspaceCreationButtons({
     createTask,
     addTaskToExpand,
     theme,
+    navigate,
   ]);
 
   const canCreateLocal = selectedProject.length > 0 && !isEnvSelected;
