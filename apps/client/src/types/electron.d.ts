@@ -117,6 +117,7 @@ interface CmuxAPI {
         version?: string | null;
       }>;
     install: () => Promise<{ ok: boolean; reason?: string }>;
+    setDraftReleases: (enabled: boolean) => Promise<{ ok: boolean; reason?: string }>;
   };
 }
 

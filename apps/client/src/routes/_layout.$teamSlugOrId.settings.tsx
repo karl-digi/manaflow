@@ -40,6 +40,10 @@ function SettingsComponent() {
   const [autoPrEnabled, setAutoPrEnabled] = useState<boolean>(false);
   const [originalAutoPrEnabled, setOriginalAutoPrEnabled] =
     useState<boolean>(false);
+  const [autoUpdateToDraftReleases, setAutoUpdateToDraftReleases] =
+    useState<boolean>(false);
+  const [originalAutoUpdateToDraftReleases, setOriginalAutoUpdateToDraftReleases] =
+    useState<boolean>(false);
   // const [isSaveButtonVisible, setIsSaveButtonVisible] = useState(true);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const saveButtonRef = useRef<HTMLDivElement>(null);
@@ -145,6 +149,20 @@ function SettingsComponent() {
       const effective = enabled === undefined ? false : Boolean(enabled);
       setAutoPrEnabled(effective);
       setOriginalAutoPrEnabled(effective);
+
+      const draftEnabled = (
+        workspaceSettings as unknown as { autoUpdateToDraftReleases?: boolean }
+      )?.autoUpdateToDraftReleases;
+      const draftEffective = draftEnabled === undefined ? false : Boolean(draftEnabled);
+      setAutoUpdateToDraftReleases(draftEffective);
+      setOriginalAutoUpdateToDraftReleases(draftEffective);
+
+      // Apply the setting to electron-updater when loaded
+      if (window.cmux?.autoUpdate?.setDraftReleases) {
+        window.cmux.autoUpdate.setDraftReleases(draftEffective).catch((error) => {
+          console.error("Failed to initialize electron-updater setting:", error);
+        });
+      }
     }
   }, [workspaceSettings]);
 
@@ -244,9 +262,13 @@ function SettingsComponent() {
     // Auto PR toggle changes
     const autoPrChanged = autoPrEnabled !== originalAutoPrEnabled;
 
+    // Auto-update to draft releases toggle changes
+    const autoUpdateToDraftReleasesChanged = autoUpdateToDraftReleases !== originalAutoUpdateToDraftReleases;
+
     return (
       worktreePathChanged ||
       autoPrChanged ||
+      autoUpdateToDraftReleasesChanged ||
       apiKeysChanged ||
       containerSettingsChanged
     );
@@ -259,18 +281,30 @@ function SettingsComponent() {
       let savedCount = 0;
       let deletedCount = 0;
 
-      // Save worktree path / auto PR if changed
+      // Save worktree path / auto PR / auto-update to draft releases if changed
       if (
         worktreePath !== originalWorktreePath ||
-        autoPrEnabled !== originalAutoPrEnabled
+        autoPrEnabled !== originalAutoPrEnabled ||
+        autoUpdateToDraftReleases !== originalAutoUpdateToDraftReleases
       ) {
         await convex.mutation(api.workspaceSettings.update, {
           teamSlugOrId,
           worktreePath: worktreePath || undefined,
           autoPrEnabled,
+          autoUpdateToDraftReleases,
         });
         setOriginalWorktreePath(worktreePath);
         setOriginalAutoPrEnabled(autoPrEnabled);
+        setOriginalAutoUpdateToDraftReleases(autoUpdateToDraftReleases);
+
+        // Update electron-updater allowPrerelease setting if in Electron
+        if (window.cmux?.autoUpdate?.setDraftReleases) {
+          try {
+            await window.cmux.autoUpdate.setDraftReleases(autoUpdateToDraftReleases);
+          } catch (error) {
+            console.error("Failed to update electron-updater setting:", error);
+          }
+        }
       }
 
       // Save container settings if changed
@@ -609,6 +643,36 @@ function SettingsComponent() {
                       System
                     </button>
                   </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Auto-Update Settings */}
+            <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
+              <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
+                <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                  Application Updates
+                </h2>
+              </div>
+              <div className="p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                      Auto-update to draft releases
+                    </label>
+                    <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                      When enabled, cmux will automatically update to the latest draft releases on GitHub,
+                      even if they haven't been officially published yet. This gives you early access to
+                      new features and fixes.
+                    </p>
+                  </div>
+                  <Switch
+                    aria-label="Auto-update to draft releases"
+                    size="sm"
+                    color="primary"
+                    isSelected={autoUpdateToDraftReleases}
+                    onValueChange={setAutoUpdateToDraftReleases}
+                  />
                 </div>
               </div>
             </div>

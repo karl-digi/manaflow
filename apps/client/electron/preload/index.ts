@@ -159,6 +159,11 @@ const cmuxAPI = {
         ok: boolean;
         reason?: string;
       }>,
+    setDraftReleases: (enabled: boolean) =>
+      ipcRenderer.invoke("cmux:auto-update:set-draft-releases", enabled) as Promise<{
+        ok: boolean;
+        reason?: string;
+      }>,
   },
   webContentsView: {
     create: (options: {
