@@ -42,6 +42,12 @@ declare global {
           }>;
         install: () => Promise<{ ok: boolean; reason?: string }>;
       };
+      quitDialog: {
+        setDontShowAgain: (dontShow: boolean) => Promise<{ ok: boolean }>;
+      };
+      app: {
+        quit: () => Promise<{ ok: boolean }>;
+      };
     };
   }
 }

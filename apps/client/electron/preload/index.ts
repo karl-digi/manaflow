@@ -160,6 +160,18 @@ const cmuxAPI = {
         reason?: string;
       }>,
   },
+  quitDialog: {
+    setDontShowAgain: (dontShow: boolean) =>
+      ipcRenderer.invoke("cmux:quit-dialog:set-dont-show", dontShow) as Promise<{
+        ok: boolean;
+      }>,
+  },
+  app: {
+    quit: () =>
+      ipcRenderer.invoke("cmux:app:quit") as Promise<{
+        ok: boolean;
+      }>,
+  },
   webContentsView: {
     create: (options: {
       url: string;

@@ -3,9 +3,11 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { HeroUIProvider } from "@heroui/react";
 import { StackProvider, StackTheme } from "@stackframe/react";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { Component, type ErrorInfo, type ReactNode, Suspense, useEffect } from "react";
+import { Component, type ErrorInfo, type ReactNode, Suspense, useEffect, useState } from "react";
 import { AntdProvider } from "./components/antd-provider";
+import { QuitConfirmDialog } from "./components/QuitConfirmDialog";
 import { isElectron } from "./lib/electron";
+import { shouldShowQuitDialog } from "./lib/quit-dialog-prefs";
 import { stackClientApp } from "./lib/stack";
 import { queryClient } from "./query-client";
 
@@ -14,11 +16,40 @@ interface ProvidersProps {
 }
 
 export function Providers({ children }: ProvidersProps) {
+  const [showQuitDialog, setShowQuitDialog] = useState(false);
+
   useEffect(() => {
     if (isElectron) {
       document.documentElement.classList.add("is-electron");
     }
   }, []);
+
+  useEffect(() => {
+    if (!isElectron) return;
+
+    const handleQuitShortcut = () => {
+      if (shouldShowQuitDialog()) {
+        setShowQuitDialog(true);
+      } else {
+        window.cmux?.app?.quit?.();
+      }
+    };
+
+    window.cmux?.on?.("cmux:event:shortcut:cmd-q", handleQuitShortcut);
+
+    return () => {
+      window.cmux?.off?.("cmux:event:shortcut:cmd-q", handleQuitShortcut);
+    };
+  }, []);
+
+  const handleQuitConfirm = () => {
+    setShowQuitDialog(false);
+    window.cmux?.app?.quit?.();
+  };
+
+  const handleQuitCancel = () => {
+    setShowQuitDialog(false);
+  };
 
   return (
     <ThemeProvider>
@@ -29,7 +60,14 @@ export function Providers({ children }: ProvidersProps) {
               <TooltipProvider delayDuration={700} skipDelayDuration={300}>
                 <HeroUIProvider>
                   <RootErrorBoundary>
-                    <AntdProvider>{children}</AntdProvider>
+                    <AntdProvider>
+                      {children}
+                      <QuitConfirmDialog
+                        isOpen={showQuitDialog}
+                        onClose={handleQuitCancel}
+                        onConfirm={handleQuitConfirm}
+                      />
+                    </AntdProvider>
                   </RootErrorBoundary>
                 </HeroUIProvider>
               </TooltipProvider>

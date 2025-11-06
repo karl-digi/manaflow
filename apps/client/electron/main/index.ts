@@ -427,6 +427,33 @@ function registerAutoUpdateIpcHandlers(): void {
   });
 }
 
+function registerQuitDialogIpcHandlers(): void {
+  ipcMain.handle("cmux:quit-dialog:set-dont-show", async (_event, dontShow: unknown) => {
+    try {
+      // Store preference in main process memory for now
+      // The renderer will store it in localStorage
+      mainLog("Quit dialog preference set:", { dontShow });
+      return { ok: true };
+    } catch (error) {
+      mainWarn("Failed to set quit dialog preference", error);
+      const err = error instanceof Error ? error : new Error(String(error));
+      throw err;
+    }
+  });
+
+  ipcMain.handle("cmux:app:quit", async () => {
+    try {
+      mainLog("Renderer requested app quit");
+      app.quit();
+      return { ok: true };
+    } catch (error) {
+      mainWarn("Failed to quit app", error);
+      const err = error instanceof Error ? error : new Error(String(error));
+      throw err;
+    }
+  });
+}
+
 // Write critical errors to a file to aid debugging packaged crashes
 async function writeFatalLog(...args: unknown[]) {
   try {
@@ -716,6 +743,7 @@ app.whenReady().then(async () => {
   });
   registerLogIpcHandlers();
   registerAutoUpdateIpcHandlers();
+  registerQuitDialogIpcHandlers();
   initCmdK({
     getMainWindow: () => mainWindow,
     logger: {
@@ -736,14 +764,21 @@ app.whenReady().then(async () => {
     contents.on("before-input-event", (e, input) => {
       if (input.type !== "keyDown") return;
 
+      const isMac = process.platform === "darwin";
+      const key = input.key.toLowerCase();
+
+      // cmd+q: quit app (macOS only)
+      if (isMac && key === "q" && input.meta && !input.alt && !input.shift && !input.control) {
+        e.preventDefault();
+        sendShortcutToFocusedWindow("cmd-q");
+        return;
+      }
+
       // Only handle preview shortcuts when preview is visible
       if (!previewReloadMenuVisible) return;
 
-      const isMac = process.platform === "darwin";
       const modKey = isMac ? input.meta : input.control;
       if (!modKey || input.alt || input.shift) return;
-
-      const key = input.key.toLowerCase();
 
       // cmd+l: focus address bar
       if (key === "l") {
