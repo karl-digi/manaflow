@@ -385,7 +385,7 @@ function TaskRunTerminals() {
 
     return (
       <div className="flex flex-col grow min-h-0">
-        <div className="flex items-center justify-between gap-3 border-b border-neutral-200 bg-neutral-100/70 px-3 dark:border-neutral-800 dark:bg-neutral-900/40">
+        <div className="flex items-center justify-between gap-3 border-b border-neutral-200 bg-neutral-700 px-3 dark:border-neutral-800 dark:bg-neutral-900">
           <div className="flex items-center overflow-x-auto py-0.5">
             {terminalIds.length > 0 ? (
               terminalIds.map((id, index) => {
@@ -401,8 +401,8 @@ function TaskRunTerminals() {
                       className={clsx(
                         "flex items-center gap-2 rounded-md pl-3 pr-8 py-1.5 text-xs font-medium transition-colors",
                         isActive
-                          ? "bg-neutral-900 text-neutral-50 dark:bg-neutral-100 dark:text-neutral-900"
-                          : "bg-transparent text-neutral-600 hover:bg-neutral-200/70 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800/60 dark:hover:text-neutral-100"
+                          ? "bg-neutral-700 text-white dark:bg-neutral-800 dark:text-white"
+                          : "bg-transparent text-white hover:bg-neutral-600 dark:text-white dark:hover:bg-neutral-800"
                       )}
                       title={id}
                     >
@@ -430,8 +430,8 @@ function TaskRunTerminals() {
                       className={clsx(
                         "absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1 transition-colors disabled:cursor-not-allowed disabled:opacity-60",
                         isActive
-                          ? "text-neutral-100 hover:text-neutral-50 hover:bg-neutral-900/80 dark:text-neutral-700 dark:hover:text-neutral-900 dark:hover:bg-neutral-200"
-                          : "text-neutral-500 hover:text-neutral-900 hover:bg-neutral-300 dark:text-neutral-400 dark:hover:text-neutral-100 dark:hover:bg-neutral-700"
+                          ? "text-white hover:text-neutral-200 hover:bg-neutral-600 dark:text-white dark:hover:text-neutral-200 dark:hover:bg-neutral-700"
+                          : "text-white hover:text-neutral-200 hover:bg-neutral-600 dark:text-white dark:hover:text-neutral-200 dark:hover:bg-neutral-700"
                       )}
                       aria-label={`Close terminal ${index + 1}`}
                       title="Close terminal"
@@ -448,7 +448,7 @@ function TaskRunTerminals() {
                 );
               })
             ) : (
-              <span className="text-xs text-neutral-500 dark:text-neutral-400">
+              <span className="text-xs text-white dark:text-white">
                 No terminals detected yet.
               </span>
             )}
@@ -464,7 +464,7 @@ function TaskRunTerminals() {
                   createTerminalMutation.mutate(undefined);
                 }}
                 disabled={!hasTerminalBackend || isCreatingTerminal}
-                className="flex items-center gap-1 rounded-md border border-neutral-200 px-2 py-1 text-xs font-medium text-neutral-600 transition hover:border-neutral-300 hover:text-neutral-900 disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:border-neutral-600 dark:hover:text-neutral-100"
+                className="flex items-center gap-1 rounded-md bg-neutral-700 border border-neutral-600 px-2 py-1 text-xs font-medium text-white transition hover:bg-neutral-600 hover:border-neutral-500 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-neutral-800 dark:border-neutral-700 dark:text-white dark:hover:bg-neutral-700 dark:hover:border-neutral-600"
               >
                 {isCreatingTerminal ? (
                   "Creating…"

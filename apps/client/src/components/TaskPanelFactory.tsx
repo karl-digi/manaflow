@@ -166,6 +166,8 @@ interface PanelFactoryProps {
   } | null;
   // Terminal panel props
   rawWorkspaceUrl?: string | null;
+  taskRunId?: Id<"taskRuns"> | null;
+  teamSlugOrId?: string;
   // Browser panel props
   browserUrl?: string | null;
   browserPersistKey?: string | null;
@@ -546,16 +548,17 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
     }
 
     case "terminal": {
-      const { rawWorkspaceUrl, TaskRunTerminalPane } = props;
-      if (!TaskRunTerminalPane) return null;
+      const { taskRunId, teamSlugOrId, TaskRunTerminalPane } = props;
+      if (!TaskRunTerminalPane || !taskRunId || !teamSlugOrId) return null;
 
       return panelWrapper(
         <TerminalSquare className="size-3" aria-hidden />,
         PANEL_LABELS.terminal,
         <div className="flex-1 bg-black">
           <TaskRunTerminalPane
-            key={rawWorkspaceUrl ?? "no-workspace"}
-            workspaceUrl={rawWorkspaceUrl ?? null}
+            key={taskRunId}
+            taskRunId={taskRunId}
+            teamSlugOrId={teamSlugOrId}
           />
         </div>
       );
@@ -670,9 +673,10 @@ export const RenderPanel = React.memo(RenderPanelComponent, (prevProps, nextProp
     }
   }
 
-  // For terminal panel, check workspace URL
+  // For terminal panel, check taskRunId and teamSlugOrId
   if (prevProps.type === "terminal") {
-    if (prevProps.rawWorkspaceUrl !== nextProps.rawWorkspaceUrl) {
+    if (prevProps.taskRunId !== nextProps.taskRunId ||
+      prevProps.teamSlugOrId !== nextProps.teamSlugOrId) {
       return false;
     }
   }
