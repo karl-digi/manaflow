@@ -330,7 +330,7 @@ function TaskTreeInner({
       annotateAgentOrdinals(flattenedRuns).map((run) => ({
         id: run._id,
         label: getRunDisplayText(run),
-        ordinal: run.agentOrdinal,
+        ordinal: run.hasDuplicateAgentName ? run.agentOrdinal : undefined,
         isArchived: Boolean(run.isArchived),
       })),
     [flattenedRuns]
@@ -889,7 +889,7 @@ function TaskTreeInner({
                                   <span className="truncate text-left">
                                     {run.label}
                                   </span>
-                                  {showRunNumbers ? (
+                                  {showRunNumbers && run.ordinal !== undefined ? (
                                     <span className="text-[11px] font-semibold text-neutral-500 dark:text-neutral-400 flex-shrink-0">
                                       {run.ordinal}
                                     </span>
@@ -1183,10 +1183,12 @@ function TaskRunTreeInner({
     // return ordinal ? `${base} (${ordinal})` : base;
     return base;
   }, [run]);
+  const runOrdinal =
+    showRunNumbers && run.hasDuplicateAgentName ? run.agentOrdinal : undefined;
   const runNumberSuffix =
-    showRunNumbers && run.agentOrdinal ? (
+    runOrdinal !== undefined ? (
       <span className="text-[11px] font-semibold text-neutral-500 dark:text-neutral-400 tabular-nums">
-        {run.agentOrdinal}
+        {runOrdinal}
       </span>
     ) : null;
 
