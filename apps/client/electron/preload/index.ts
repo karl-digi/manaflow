@@ -163,6 +163,7 @@ const cmuxAPI = {
   webContentsView: {
     create: (options: {
       url: string;
+      requestUrl?: string;
       bounds?: RectanglePayload;
       backgroundColor?: string;
       borderRadius?: number;

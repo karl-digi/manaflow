@@ -362,7 +362,7 @@ export type SetupInstanceBody = {
     instanceId?: string;
     selectedRepos?: Array<string>;
     ttlSeconds?: number;
-    snapshotId?: string | ('snapshot_hbmnt01r' | 'snapshot_wxrixtw7');
+    snapshotId?: string | ('snapshot_pmo7bxv7' | 'snapshot_qbpom27i');
 };
 
 export type CreateEnvironmentResponse = {
@@ -481,6 +481,7 @@ export type StartSandboxBody = {
     };
     taskRunId?: string;
     taskRunJwt?: string;
+    isCloudWorkspace?: boolean;
     repoUrl?: string;
     branch?: string;
     newBranch?: string;

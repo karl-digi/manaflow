@@ -458,9 +458,8 @@ managementIO.on("connection", (socket) => {
     } catch (error) {
       callback({
         ready: false,
-        message: `Error checking Docker: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`,
+        message: `Error checking Docker: ${error instanceof Error ? error.message : "Unknown error"
+          }`,
       });
     }
   });
@@ -1042,10 +1041,9 @@ async function createTerminal(
     SHELL: "/bin/zsh",
     USER: process.env.USER || "root",
     HOME: process.env.HOME || "/root",
-    PATH: `/root/.bun/bin:${
-      process.env.PATH ||
+    PATH: `/root/.bun/bin:${process.env.PATH ||
       "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-    }`,
+      }`,
     // Pass through git config if set
     ...(process.env.GIT_CONFIG_GLOBAL
       ? { GIT_CONFIG_GLOBAL: process.env.GIT_CONFIG_GLOBAL }
@@ -1060,41 +1058,65 @@ async function createTerminal(
   }
 
   // Run optional startup commands prior to spawning the agent process
+  // Commands execute SEQUENTIALLY in BACKGROUND to preserve dependencies without blocking spawn
   if (startupCommands && startupCommands.length > 0) {
     log(
       "INFO",
-      `Running ${startupCommands.length} startup command(s) before spawn`,
+      `Launching ${startupCommands.length} startup command(s) in background (sequential)`,
       { startupCommands }
     );
-    for (const cmd of startupCommands) {
-      try {
-        await new Promise<void>((resolve, reject) => {
-          const p = spawn("bash", ["-lc", cmd], {
-            cwd,
-            env: ptyEnv,
-            stdio: ["ignore", "pipe", "pipe"],
+
+    // Execute commands sequentially in background (don't await)
+    (async () => {
+      for (let i = 0; i < startupCommands.length; i++) {
+        const cmd = startupCommands[i]!;
+        try {
+          log("INFO", `[Startup ${i + 1}/${startupCommands.length}] Running: ${cmd}`);
+
+          await new Promise<void>((resolve, reject) => {
+            const p = spawn("bash", ["-lc", cmd], {
+              cwd,
+              env: ptyEnv,
+              stdio: ["ignore", "pipe", "pipe"],
+            });
+            let stderr = "";
+            p.stderr.on("data", (d) => {
+              stderr += d.toString();
+            });
+            p.on("exit", (code) => {
+              if (code === 0) {
+                log("INFO", `[Startup ${i + 1}/${startupCommands.length}] ✓ Completed: ${cmd}`);
+                resolve();
+              } else {
+                log(
+                  "ERROR",
+                  `[Startup ${i + 1}/${startupCommands.length}] ✗ Failed (${code}): ${cmd}`,
+                  new Error(stderr)
+                );
+                reject(new Error(`Command failed with exit code ${code}`));
+              }
+            });
+            p.on("error", (e) => {
+              log("ERROR", `[Startup ${i + 1}/${startupCommands.length}] ✗ Error: ${cmd}`, e);
+              reject(e);
+            });
           });
-          let stderr = "";
-          p.stderr.on("data", (d) => {
-            stderr += d.toString();
-          });
-          p.on("exit", (code) => {
-            if (code === 0) resolve();
-            else
-              reject(
-                new Error(`Startup command failed (${code}): ${cmd}\n${stderr}`)
-              );
-          });
-          p.on("error", (e) => reject(e));
-        });
-      } catch (e) {
-        log(
-          "ERROR",
-          `Startup command failed: ${cmd}`,
-          e instanceof Error ? e : new Error(String(e))
-        );
+        } catch (e) {
+          log(
+            "ERROR",
+            `[Startup ${i + 1}/${startupCommands.length}] Failed, stopping remaining commands`,
+            e instanceof Error ? e : new Error(String(e))
+          );
+          // Stop executing remaining commands on error
+          break;
+        }
       }
-    }
+      log("INFO", "All startup commands completed");
+    })().catch((e) => {
+      log("ERROR", "Unexpected error in background startup commands", e);
+    });
+
+    log("INFO", "Startup commands running in background, continuing with spawn...");
   }
 
   log("INFO", "Spawning process", {

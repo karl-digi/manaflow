@@ -5,7 +5,6 @@ import { stackServerAppJs } from "@/lib/utils/stack";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { env } from "@/lib/utils/www-env";
 import { api } from "@cmux/convex/api";
-import { Id } from "@cmux/convex/dataModel";
 import { RESERVED_CMUX_PORT_SET } from "@cmux/shared/utils/reserved-cmux-ports";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
@@ -42,6 +41,7 @@ const StartSandboxBody = z
     metadata: z.record(z.string(), z.string()).optional(),
     taskRunId: z.string().optional(),
     taskRunJwt: z.string().optional(),
+    isCloudWorkspace: z.boolean().optional(),
     // Optional hydration parameters to clone a repo into the sandbox on start
     repoUrl: z.string().optional(),
     branch: z.string().optional(),
@@ -168,24 +168,15 @@ sandboxesRouter.openapi(
       const maintenanceScript = environmentMaintenanceScript ?? null;
       const devScript = environmentDevScript ?? null;
 
+      const isCloudWorkspace =
+        body.isCloudWorkspace !== undefined
+          ? body.isCloudWorkspace
+          : !body.taskRunId;
+
       const scriptIdentifiers =
         maintenanceScript || devScript
           ? allocateScriptIdentifiers()
           : null;
-
-      // Check if this is a cloud workspace by querying the taskRun
-      let isCloudWorkspace = false;
-      if (body.taskRunId) {
-        try {
-          const taskRun = await convex.query(api.taskRuns.get, {
-            teamSlugOrId: body.teamSlugOrId,
-            id: body.taskRunId as Id<"taskRuns">,
-          });
-          isCloudWorkspace = taskRun?.isCloudWorkspace ?? false;
-        } catch (error) {
-          console.warn("[sandboxes.start] Failed to query taskRun for isCloudWorkspace", error);
-        }
-      }
 
       const gitIdentityPromise = githubAccessTokenPromise.then(
         ({ githubAccessToken }) => {

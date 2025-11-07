@@ -1,10 +1,13 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{
+    io::{self, Cursor, Read},
+    net::SocketAddr,
+    sync::Arc,
+};
 
 use bytes::Bytes;
-use futures_util::{SinkExt, StreamExt};
 use http::{
     HeaderMap, Method, Request, Response, StatusCode, Uri, Version,
-    header::{self, HeaderValue},
+    header::{self, HeaderValue, CONNECTION, UPGRADE},
     uri::Scheme,
 };
 use hyper::{
@@ -13,12 +16,18 @@ use hyper::{
     server::conn::AddrStream,
     service::{make_service_fn, service_fn},
 };
+use hyper::upgrade::Upgraded;
 use hyper_rustls::HttpsConnectorBuilder;
-use hyper_tungstenite::{HyperWebsocket, is_upgrade_request};
 use lol_html::{HtmlRewriter, Settings, element, html_content::ContentType};
-use tokio::{sync::oneshot, task::JoinHandle};
-use tokio_tungstenite::{connect_async, tungstenite::client::IntoClientRequest};
-use tracing::error;
+use flate2::read::{GzDecoder, ZlibDecoder};
+use brotli::Decompressor;
+use tokio::{
+    io::{copy_bidirectional, AsyncWriteExt},
+    sync::oneshot,
+    task::JoinHandle,
+};
+use tracing::{error, warn};
+use zstd::stream::read::Decoder as ZstdDecoder;
 
 use chrono::Utc;
 use serde_json::{Value, json};
@@ -32,6 +41,7 @@ const GIT_COMMIT: &str = match option_env!("GIT_COMMIT") {
 };
 
 const CSP_FRAME_ANCESTORS_PORT_39378: &str = "frame-ancestors 'self' https://cmux.local http://cmux.local https://www.cmux.sh https://cmux.sh https://www.cmux.dev https://cmux.dev http://localhost:5173;";
+const FORWARD_ALL_WEBSOCKET_HEADERS: bool = true;
 
 #[derive(Clone, Debug)]
 pub struct ProxyConfig {
@@ -543,38 +553,79 @@ async fn handle_websocket(
         .path_and_query()
         .map(|pq| pq.as_str())
         .unwrap_or("/");
-    let ws_scheme = match scheme.as_str() {
-        "https" | "wss" => "wss",
-        _ => "ws",
+
+    let backend_uri = match format!("{}://{}{}", scheme.as_str(), authority, path_and_query).parse::<Uri>() {
+        Ok(uri) => uri,
+        Err(_) => {
+            return text_response(
+                StatusCode::BAD_GATEWAY,
+                "Failed to build upstream websocket URI",
+            );
+        }
     };
-    let backend_url = format!("{}://{}{}", ws_scheme, authority, path_and_query);
 
     let headers_to_forward = collect_forward_headers(req.headers(), &behavior);
 
-    match hyper_tungstenite::upgrade(req, None) {
-        Ok((response, websocket)) => {
-            tokio::spawn(async move {
-                if let Err(err) = pump_websocket(websocket, backend_url, headers_to_forward).await {
-                    error!(%err, "websocket proxy error");
-                }
-            });
-            response
+    let mut backend_request = match Request::builder()
+        .method(req.method())
+        .uri(backend_uri)
+        .version(req.version())
+        .body(Body::empty())
+    {
+        Ok(request) => request,
+        Err(_) => {
+            return text_response(
+                StatusCode::BAD_GATEWAY,
+                "Failed to prepare upstream WebSocket request",
+            );
         }
-        Err(err) => {
-            error!(%err, "failed to upgrade connection");
-            text_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to upgrade WebSocket connection",
-            )
-        }
+    };
+
+    if let Ok(value) = HeaderValue::from_str(&authority) {
+        backend_request.headers_mut().insert(header::HOST, value);
     }
+    for (name, value) in headers_to_forward.iter() {
+        backend_request
+            .headers_mut()
+            .insert(name.clone(), value.clone());
+    }
+
+    let (backend_stream, backend_headers) = match connect_upstream_websocket(state.client.clone(), backend_request).await {
+        Ok(result) => result,
+        Err(response) => return response,
+    };
+
+    let client_upgrade = hyper::upgrade::on(req);
+    let response = build_websocket_response(&backend_headers);
+
+    tokio::spawn(async move {
+        match client_upgrade.await {
+            Ok(client_stream) => {
+                if let Err(err) = tunnel_upgraded(client_stream, backend_stream).await {
+                    warn!(%err, "websocket tunnel error");
+                }
+            }
+            Err(err) => {
+                warn!(%err, "client upgrade error");
+                let mut backend_stream = backend_stream;
+                let _ = backend_stream.shutdown().await;
+            }
+        }
+    });
+
+    response
 }
 
 fn collect_forward_headers(
     original: &http::HeaderMap,
     behavior: &ProxyBehavior,
 ) -> http::HeaderMap {
-    let mut headers = http::HeaderMap::new();
+    let mut headers = if FORWARD_ALL_WEBSOCKET_HEADERS {
+        original.clone()
+    } else {
+        http::HeaderMap::new()
+    };
+    headers.remove(header::HOST);
     if let Some(port) = &behavior.port_header {
         if let Ok(value) = HeaderValue::from_str(port) {
             headers.insert("X-Cmux-Port-Internal", value);
@@ -635,78 +686,95 @@ fn scope_from_cmux_subdomain(subdomain: &str) -> Option<String> {
     }
 }
 
-async fn pump_websocket(
-    websocket: HyperWebsocket,
-    backend_url: String,
-    headers: http::HeaderMap,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let client_ws = websocket.await?;
+fn is_upgrade_request(req: &Request<Body>) -> bool {
+    if req.method() == Method::CONNECT {
+        return true;
+    }
+    let has_conn_upgrade = req
+        .headers()
+        .get(CONNECTION)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.to_ascii_lowercase().contains("upgrade"))
+        .unwrap_or(false);
+    let has_upgrade_hdr = req.headers().get(UPGRADE).is_some();
+    has_conn_upgrade && has_upgrade_hdr
+}
 
-    let mut request = backend_url.into_client_request()?;
-    if let Some(host) = request.uri().host() {
-        let host_header = if let Some(port) = request.uri().port_u16() {
-            format!("{}:{}", host, port)
-        } else {
-            host.to_string()
-        };
-        request
-            .headers_mut()
-            .insert(header::HOST, HeaderValue::from_str(&host_header)?);
+async fn connect_upstream_websocket(
+    client: HttpClient,
+    request: Request<Body>,
+) -> Result<(Upgraded, HeaderMap), Response<Body>> {
+    let response = client.request(request).await.map_err(|err| {
+        error!(%err, "upstream websocket request error");
+        text_response(
+            StatusCode::BAD_GATEWAY,
+            "Failed to connect to websocket backend".into(),
+        )
+    })?;
+
+    if response.status() != StatusCode::SWITCHING_PROTOCOLS {
+        let status = response.status();
+        let body_bytes = body::to_bytes(response.into_body())
+            .await
+            .unwrap_or_else(|_| Bytes::new());
+        return Err(
+            Response::builder()
+                .status(status)
+                .body(Body::from(body_bytes))
+                .unwrap(),
+        );
     }
 
-    for (name, value) in headers.iter() {
-        request.headers_mut().insert(name.clone(), value.clone());
-    }
-
-    let (backend_ws, _) = connect_async(request).await?;
-
-    let (mut client_sink, mut client_stream) = client_ws.split();
-    let (mut backend_sink, mut backend_stream) = backend_ws.split();
-
-    let to_backend = async {
-        while let Some(msg) = client_stream.next().await {
-            match msg {
-                Ok(message) => {
-                    backend_sink.send(message).await?;
-                }
-                Err(err) => {
-                    backend_sink.close().await?;
-                    return Err(err);
-                }
-            }
+    let headers = response.headers().clone();
+    match hyper::upgrade::on(response).await {
+        Ok(upgraded) => Ok((upgraded, headers)),
+        Err(err) => {
+            error!(%err, "upstream websocket upgrade failed");
+            Err(text_response(
+                StatusCode::BAD_GATEWAY,
+                "Failed to upgrade websocket backend".into(),
+            ))
         }
-        backend_sink.close().await?;
-        Ok::<(), hyper_tungstenite::tungstenite::Error>(())
-    };
+    }
+}
 
-    let to_client = async {
-        while let Some(msg) = backend_stream.next().await {
-            match msg {
-                Ok(message) => {
-                    client_sink.send(message).await?;
-                }
-                Err(err) => {
-                    client_sink.close().await?;
-                    return Err(err);
-                }
-            }
+fn build_websocket_response(headers: &HeaderMap) -> Response<Body> {
+    let mut builder = Response::builder()
+        .status(StatusCode::SWITCHING_PROTOCOLS)
+        .header(CONNECTION, HeaderValue::from_static("upgrade"))
+        .header(UPGRADE, HeaderValue::from_static("websocket"));
+
+    for name in [
+        "sec-websocket-accept",
+        "sec-websocket-protocol",
+        "sec-websocket-extensions",
+    ] {
+        if let Some(value) = headers.get(name) {
+            builder = builder.header(name, value.clone());
         }
-        client_sink.close().await?;
-        Ok::<(), hyper_tungstenite::tungstenite::Error>(())
-    };
-
-    tokio::select! {
-        res = to_backend => { res?; }
-        res = to_client => { res?; }
     }
 
-    Ok(())
+    builder.body(Body::empty()).unwrap()
+}
+
+async fn tunnel_upgraded(
+    mut client: Upgraded,
+    mut backend: Upgraded,
+) -> io::Result<()> {
+    let result = copy_bidirectional(&mut client, &mut backend).await;
+    let _ = client.shutdown().await;
+    let _ = backend.shutdown().await;
+    result.map(|_| ())
 }
 
 async fn transform_response(response: Response<Body>, behavior: ProxyBehavior) -> Response<Body> {
     let status = response.status();
     let version = response.version();
     let headers = response.headers().clone();
+    let content_encoding = headers
+        .get(header::CONTENT_ENCODING)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
 
     let content_type = headers
         .get(header::CONTENT_TYPE)
@@ -715,55 +783,171 @@ async fn transform_response(response: Response<Body>, behavior: ProxyBehavior) -
 
     if content_type.contains("text/html") {
         match body::to_bytes(response.into_body()).await {
-            Ok(bytes) => match rewrite_html(bytes, behavior.skip_service_worker) {
-                Ok(body) => {
-                    let mut builder = Response::builder().status(status).version(version);
-                    let mut new_headers =
-                        sanitize_headers(&headers, /* strip_payload_headers */ true);
-                    strip_csp_headers(&mut new_headers);
-                    if behavior.strip_cors_headers {
-                        strip_cors_headers(&mut new_headers);
-                    } else if behavior.add_cors {
-                        add_cors_headers(&mut new_headers);
+            Ok(bytes) => {
+                let decoded = match decode_body_with_encoding(bytes.as_ref(), content_encoding.as_deref()) {
+                    Ok(body) => Bytes::from(body),
+                    Err(err) => {
+                        warn!(%err, "failed to decode upstream body; skipping rewrite");
+                        return forward_response_with_body(
+                            status,
+                            version,
+                            &headers,
+                            &behavior,
+                            Body::from(bytes),
+                            /* strip_payload_headers */ false,
+                        );
                     }
-                    if let Some(frame_ancestors) = behavior.frame_ancestors {
-                        if let Ok(value) = HeaderValue::from_str(frame_ancestors) {
-                            new_headers.insert("content-security-policy", value);
+                };
+                match rewrite_html(decoded, behavior.skip_service_worker) {
+                    Ok(body) => {
+                        let mut builder = Response::builder().status(status).version(version);
+                        let mut new_headers =
+                            sanitize_headers(&headers, /* strip_payload_headers */ true);
+                        strip_csp_headers(&mut new_headers);
+                        if behavior.strip_cors_headers {
+                            strip_cors_headers(&mut new_headers);
+                        } else if behavior.add_cors {
+                            add_cors_headers(&mut new_headers);
                         }
+                        if let Some(frame_ancestors) = behavior.frame_ancestors {
+                            if let Ok(value) = HeaderValue::from_str(frame_ancestors) {
+                                new_headers.insert("content-security-policy", value);
+                            }
+                        }
+                        new_headers.insert(
+                            header::CONTENT_LENGTH,
+                            HeaderValue::from_str(&body.len().to_string()).unwrap(),
+                        );
+                        let headers_mut = builder.headers_mut().unwrap();
+                        for (name, value) in new_headers.iter() {
+                            headers_mut.insert(name, value.clone());
+                        }
+                        builder.body(Body::from(body)).unwrap()
                     }
-                    new_headers.insert(
-                        header::CONTENT_LENGTH,
-                        HeaderValue::from_str(&body.len().to_string()).unwrap(),
-                    );
-                    let headers_mut = builder.headers_mut().unwrap();
-                    for (name, value) in new_headers.iter() {
-                        headers_mut.insert(name, value.clone());
-                    }
-                    builder.body(Body::from(body)).unwrap()
+                    Err(_) => text_response(StatusCode::INTERNAL_SERVER_ERROR, "HTML rewrite failed"),
                 }
-                Err(_) => text_response(StatusCode::INTERNAL_SERVER_ERROR, "HTML rewrite failed"),
-            },
+            }
             Err(_) => text_response(StatusCode::BAD_GATEWAY, "Failed to read upstream body"),
         }
     } else {
-        let mut builder = Response::builder().status(status).version(version);
-        let mut new_headers = sanitize_headers(&headers, /* strip_payload_headers */ false);
-        strip_csp_headers(&mut new_headers);
-        if behavior.strip_cors_headers {
-            strip_cors_headers(&mut new_headers);
-        } else if behavior.add_cors {
-            add_cors_headers(&mut new_headers);
+        forward_response_with_body(
+            status,
+            version,
+            &headers,
+            &behavior,
+            response.into_body(),
+            /* strip_payload_headers */ false,
+        )
+    }
+}
+
+fn forward_response_with_body(
+    status: StatusCode,
+    version: Version,
+    headers: &HeaderMap,
+    behavior: &ProxyBehavior,
+    body: Body,
+    strip_payload_headers: bool,
+) -> Response<Body> {
+    let mut builder = Response::builder().status(status).version(version);
+    let mut new_headers = sanitize_headers(headers, strip_payload_headers);
+    strip_csp_headers(&mut new_headers);
+    if behavior.strip_cors_headers {
+        strip_cors_headers(&mut new_headers);
+    } else if behavior.add_cors {
+        add_cors_headers(&mut new_headers);
+    }
+    if let Some(frame_ancestors) = behavior.frame_ancestors {
+        if let Ok(value) = HeaderValue::from_str(frame_ancestors) {
+            new_headers.insert("content-security-policy", value);
         }
-        if let Some(frame_ancestors) = behavior.frame_ancestors {
-            if let Ok(value) = HeaderValue::from_str(frame_ancestors) {
-                new_headers.insert("content-security-policy", value);
+    }
+    let headers_mut = builder.headers_mut().unwrap();
+    for (name, value) in new_headers.iter() {
+        headers_mut.insert(name, value.clone());
+    }
+    builder.body(body).unwrap()
+}
+
+fn decode_body_with_encoding(bytes: &[u8], encoding: Option<&str>) -> io::Result<Vec<u8>> {
+    match encoding.map(|enc| enc.trim().to_ascii_lowercase()) {
+        None => Ok(bytes.to_vec()),
+        Some(enc) => match enc.as_str() {
+            "" | "identity" => Ok(bytes.to_vec()),
+            "gzip" => {
+                let mut decoder = GzDecoder::new(Cursor::new(bytes));
+                let mut out = Vec::new();
+                decoder.read_to_end(&mut out)?;
+                Ok(out)
             }
-        }
-        let headers_mut = builder.headers_mut().unwrap();
-        for (name, value) in new_headers.iter() {
-            headers_mut.insert(name, value.clone());
-        }
-        builder.body(response.into_body()).unwrap()
+            "deflate" => {
+                let mut decoder = ZlibDecoder::new(Cursor::new(bytes));
+                let mut out = Vec::new();
+                decoder.read_to_end(&mut out)?;
+                Ok(out)
+            }
+            "br" => {
+                let mut decoder = Decompressor::new(Cursor::new(bytes), 4096);
+                let mut out = Vec::new();
+                decoder.read_to_end(&mut out)?;
+                Ok(out)
+            }
+            "zstd" => {
+                let mut decoder = ZstdDecoder::new(Cursor::new(bytes))?;
+                let mut out = Vec::new();
+                decoder.read_to_end(&mut out)?;
+                Ok(out)
+            }
+            other => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("unsupported content-encoding: {}", other),
+            )),
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_body_with_encoding;
+    use flate2::{write::GzEncoder, Compression};
+    use std::io::Write;
+
+    #[test]
+    fn decodes_identity_and_none_encodings() {
+        let payload = b"hello world";
+        assert_eq!(
+            decode_body_with_encoding(payload, None).unwrap(),
+            payload
+        );
+        assert_eq!(
+            decode_body_with_encoding(payload, Some("identity")).unwrap(),
+            payload
+        );
+        assert_eq!(
+            decode_body_with_encoding(payload, Some("")).unwrap(),
+            payload
+        );
+    }
+
+    #[test]
+    fn decodes_gzip_payloads() {
+        let payload = b"compressed content";
+        let compressed = gzip(payload);
+        let decoded = decode_body_with_encoding(&compressed, Some("gzip")).unwrap();
+        assert_eq!(decoded, payload);
+    }
+
+    #[test]
+    fn errors_on_unsupported_encoding() {
+        let payload = b"noop";
+        let err = decode_body_with_encoding(payload, Some("unknown-enc")).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    fn gzip(payload: &[u8]) -> Vec<u8> {
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(payload).unwrap();
+        encoder.finish().unwrap()
     }
 }
 

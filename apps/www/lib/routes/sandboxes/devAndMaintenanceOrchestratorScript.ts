@@ -155,7 +155,7 @@ async function ensureTmuxSession(): Promise<void> {
   }
 
   // Only create the session for cloud workspaces (no agent)
-  // For regular tasks with agents, the agent spawner creates the session
+  // For tasks with agents, the agent spawner creates the session
   if (!config.isCloudWorkspace) {
     console.log("[ORCHESTRATOR] Not a cloud workspace, waiting for agent to create tmux session...");
 
@@ -432,6 +432,16 @@ async function reportErrorToConvex(
       console.error(`[ORCHESTRATOR] Dev script failed: ${devResult.error}`);
     } else {
       console.log("[ORCHESTRATOR] Dev script started successfully");
+
+      // Focus on the dev window for cloud environment workspaces
+      if (config.hasDevScript && config.isCloudWorkspace) {
+        console.log(`[ORCHESTRATOR] Focusing on ${config.devWindowName} window...`);
+        await runCommand(
+          `tmux select-window -t cmux:${config.devWindowName}`,
+          { throwOnError: false }
+        );
+        console.log(`[ORCHESTRATOR] Focused on ${config.devWindowName} window`);
+      }
     }
 
     const hasError = Boolean(maintenanceResult.error || devResult.error);

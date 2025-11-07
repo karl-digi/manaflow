@@ -44,6 +44,11 @@ const { autoUpdater } = electronUpdater;
 import util from "node:util";
 import { initCmdK, keyDebug } from "./cmdk";
 import { env } from "./electron-main-env";
+import {
+  getProxyCredentialsForWebContents,
+  startPreviewProxy,
+} from "./task-run-preview-proxy";
+import { normalizeBrowserUrl } from "@cmux/shared";
 
 // Use a cookieable HTTPS origin intercepted locally instead of a custom scheme.
 const PARTITION = "persist:cmux";
@@ -182,8 +187,8 @@ function emitToRenderer(level: LogLevel, message: string) {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send("main-log", { level, message });
     }
-  } catch {
-    // ignore mirror failures
+  } catch (error) {
+    console.error("Failed to emit to renderer", error);
   }
 }
 
@@ -430,25 +435,18 @@ async function writeFatalLog(...args: unknown[]) {
     const file = path.join(base, `fatal-${ts}.log`);
     const msg = formatArgs(args);
     await fs.writeFile(file, msg + "\n", { encoding: "utf8" });
-  } catch {
+  } catch (error) {
+    console.error("Failed to write fatal log", error);
     // ignore
   }
 }
 
 process.on("uncaughtException", (err) => {
-  try {
-    console.error("[MAIN] uncaughtException", err);
-  } catch {
-    // ignore
-  }
+  console.error("[MAIN] uncaughtException", err);
   void writeFatalLog("uncaughtException", err);
 });
 process.on("unhandledRejection", (reason) => {
-  try {
-    console.error("[MAIN] unhandledRejection", reason);
-  } catch {
-    // ignore
-  }
+  console.error("[MAIN] unhandledRejection", reason);
   void writeFatalLog("unhandledRejection", reason);
 });
 
@@ -672,7 +670,8 @@ function createWindow(): void {
   });
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url);
+    const targetUrl = normalizeBrowserUrl(details.url);
+    shell.openExternal(targetUrl);
     return { action: "deny" };
   });
 
@@ -688,6 +687,18 @@ function createWindow(): void {
   }
 }
 
+app.on("login", (event, webContents, _request, authInfo, callback) => {
+  if (!authInfo.isProxy) {
+    return;
+  }
+  const creds = getProxyCredentialsForWebContents(webContents.id);
+  if (!creds) {
+    return;
+  }
+  event.preventDefault();
+  callback(creds.username, creds.password);
+});
+
 app.on("open-url", (_event, url) => {
   handleOrQueueProtocolUrl(url);
 });
@@ -699,8 +710,8 @@ app.whenReady().then(async () => {
   app.once("will-quit", () => {
     try {
       disposeContextMenu();
-    } catch {
-      // ignore cleanup failures
+    } catch (error) {
+      console.error("Failed to dispose context menu", error);
     }
   });
   registerLogIpcHandlers();
@@ -711,6 +722,12 @@ app.whenReady().then(async () => {
       log: mainLog,
       warn: mainWarn,
     },
+  });
+
+  await startPreviewProxy({
+    log: mainLog,
+    warn: mainWarn,
+    error: mainError,
   });
 
   // Register before-input-event handlers for preview browser shortcuts
@@ -777,8 +794,8 @@ app.whenReady().then(async () => {
     try {
       app.setName("cmux");
       app.setAboutPanelOptions({ applicationName: "cmux" });
-    } catch {
-      // ignore if not supported
+    } catch (error) {
+      console.error("Failed to set app name and about panel options", error);
     }
   }
 
@@ -1047,7 +1064,8 @@ async function verifyJwtAndGetPayload(
     const JWKS = jwksForIssuer(iss);
     const { payload } = await jwtVerify(token, JWKS, { issuer: iss });
     return payload;
-  } catch {
+  } catch (error) {
+    console.error("Failed to verify JWT and get payload", error);
     return null;
   }
 }

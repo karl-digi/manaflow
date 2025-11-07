@@ -414,7 +414,57 @@ function buildUpload(editor: EditorExport): EditorSettingsUpload | null {
       contentBase64: encode(extensionContent),
       mode: "644",
     });
-    startupCommands.push(buildExtensionInstallCommand(EXTENSION_LIST_PATH));
+
+    // Create background installation script that auto-executes on shell startup
+    const installScriptPath = "/root/.cmux/install-extensions-background.sh";
+    const installScript = buildExtensionInstallCommand(EXTENSION_LIST_PATH);
+
+    // Create self-contained background installer with lock mechanism
+    const backgroundWrapper = `#!/bin/bash
+# Background extension installer - runs once per container
+
+LOCK_FILE="/root/.cmux/extensions-install.lock"
+DONE_FILE="/root/.cmux/extensions-installed"
+
+# Skip if already done
+[ -f "$DONE_FILE" ] && exit 0
+
+# Skip if already running
+[ -f "$LOCK_FILE" ] && exit 0
+
+# Create lock file
+touch "$LOCK_FILE"
+
+# Run installation in detached background
+(
+  ${installScript}
+  touch "$DONE_FILE"
+  rm -f "$LOCK_FILE"
+) > /root/.cmux/install-extensions-background.log 2>&1 &
+`;
+
+    authFiles.push({
+      destinationPath: installScriptPath,
+      contentBase64: encode(backgroundWrapper),
+      mode: "755",
+    });
+
+    // Use /etc/profile.d/ for automatic execution on all shell sessions
+    // This is the standard Linux mechanism for global shell initialization
+    // Use subshell with disown to ensure it never blocks shell initialization
+    const profileHook = `# cmux: Auto-trigger extension installation in background (non-blocking)
+(
+  if [ -f "${installScriptPath}" ]; then
+    nohup "${installScriptPath}" >/dev/null 2>&1 &
+  fi
+) >/dev/null 2>&1 &
+`;
+
+    authFiles.push({
+      destinationPath: "/etc/profile.d/cmux-extensions.sh",
+      contentBase64: encode(profileHook),
+      mode: "644",
+    });
   }
 
   if (authFiles.length === 0 && startupCommands.length === 0) {

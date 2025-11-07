@@ -12,8 +12,11 @@ import {
 export interface PersistentWebViewProps {
   persistKey: string;
   src: string;
+  requestUrl?: string;
   className?: string;
   style?: CSSProperties;
+  persistentWrapperClassName?: string;
+  persistentWrapperStyle?: CSSProperties;
   preload?: boolean;
   allow?: string;
   sandbox?: string;
@@ -49,6 +52,7 @@ const DISABLE_WEBCONTENTSVIEW = true;
 export function PersistentWebView({
   persistKey,
   src,
+  requestUrl,
   className,
   style,
   preload,
@@ -56,6 +60,8 @@ export function PersistentWebView({
   sandbox,
   iframeClassName,
   iframeStyle,
+  persistentWrapperClassName,
+  persistentWrapperStyle,
   suspended,
   retainOnUnmount: _retainOnUnmount,
   backgroundColor,
@@ -85,6 +91,7 @@ export function PersistentWebView({
     return (
       <ElectronWebContentsView
         src={src}
+        requestUrl={requestUrl}
         className={className}
         style={style}
         backgroundColor={backgroundColor}
@@ -110,6 +117,8 @@ export function PersistentWebView({
       sandbox={sandbox}
       iframeClassName={iframeClassName}
       iframeStyle={iframeStyle}
+      persistentWrapperClassName={persistentWrapperClassName}
+      persistentWrapperStyle={persistentWrapperStyle}
       onLoad={onLoad}
       onError={onError}
       loadingFallback={fallback}

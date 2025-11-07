@@ -339,7 +339,7 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
       ? "border-blue-500 dark:border-blue-400 ring-2 ring-blue-500/30 dark:ring-blue-400/30"
       : "border-neutral-200 dark:border-neutral-800",
     isExpanded
-      ? "absolute inset-0 z-[999999] pointer-events-auto shadow-2xl ring-2 ring-blue-500/20 overflow-visible dark:ring-blue-400/20"
+      ? "absolute inset-0 z-[var(--z-maximized)] pointer-events-auto shadow-2xl overflow-visible dark:ring-blue-400/20"
       : "relative pointer-events-auto overflow-hidden",
     isAnyPanelExpanded && !isExpanded ? "pointer-events-none opacity-40" : undefined,
   );
@@ -508,7 +508,8 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
               persistKey={workspacePersistKey}
               src={workspaceUrl}
               className="flex h-full"
-              iframeClassName="select-none"
+              iframeClassName={clsx("select-none")}
+              persistentWrapperClassName={isExpanded ? "z-[var(--z-maximized-iframe)]" : undefined}
               allow={TASK_RUN_IFRAME_ALLOW}
               sandbox={TASK_RUN_IFRAME_SANDBOX}
               preflight={!disablePreflight}
@@ -546,9 +547,8 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
     }
 
     case "terminal": {
-      const { rawWorkspaceUrl, TaskRunTerminalPane, selectedRun } = props;
+      const { rawWorkspaceUrl, TaskRunTerminalPane } = props;
       if (!TaskRunTerminalPane) return null;
-      const isCloudWorkspace = Boolean(selectedRun?.isCloudWorkspace);
 
       return panelWrapper(
         <TerminalSquare className="size-3" aria-hidden />,
@@ -557,7 +557,6 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
           <TaskRunTerminalPane
             key={rawWorkspaceUrl ?? "no-workspace"}
             workspaceUrl={rawWorkspaceUrl ?? null}
-            isCloudWorkspace={isCloudWorkspace}
           />
         </div>
       );
@@ -591,7 +590,8 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
               persistKey={browserPersistKey}
               src={browserUrl}
               className="flex h-full"
-              iframeClassName="select-none"
+              iframeClassName={clsx("select-none")}
+              persistentWrapperClassName={isExpanded ? "z-[var(--z-maximized-iframe)]" : undefined}
               allow={TASK_RUN_IFRAME_ALLOW}
               sandbox={TASK_RUN_IFRAME_SANDBOX}
               retainOnUnmount
