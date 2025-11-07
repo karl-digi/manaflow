@@ -44,16 +44,17 @@ export function SidebarPullRequestList({
     );
   }
 
-  if (list.length === 0) {
-    return (
-      <p className="mt-1 pl-2 pr-3 py-2 text-xs text-neutral-500 dark:text-neutral-400 select-none">
-        No pull requests
-      </p>
-    );
-  }
+  const hasNoPullRequests = list.length === 0;
 
   return (
     <ul className="flex flex-col gap-px">
+      {hasNoPullRequests ? (
+        <li>
+          <p className="mt-1 pl-2 pr-3 py-2 text-xs text-neutral-500 dark:text-neutral-400 select-none">
+            No pull requests
+          </p>
+        </li>
+      ) : null}
       {list.map((pr) => (
         <PullRequestListItem
           key={`${pr.repoFullName}#${pr.number}`}
@@ -63,6 +64,10 @@ export function SidebarPullRequestList({
           setExpanded={setExpanded}
         />
       ))}
+      <ViewAllPullRequestsListItem
+        teamSlugOrId={teamSlugOrId}
+        hasPullRequests={!hasNoPullRequests}
+      />
     </ul>
   );
 }
@@ -166,6 +171,44 @@ function PullRequestListItem({ pr, teamSlugOrId, expanded, setExpanded }: PullRe
           </a>
         </div>
       ) : null}
+    </li>
+  );
+}
+
+type ViewAllPullRequestsListItemProps = {
+  teamSlugOrId: string;
+  hasPullRequests: boolean;
+};
+
+function ViewAllPullRequestsListItem({
+  teamSlugOrId,
+  hasPullRequests,
+}: ViewAllPullRequestsListItemProps) {
+  const baseLinkClassName = "group block";
+
+  return (
+    <li
+      className={
+        hasPullRequests
+          ? "pt-1 mt-1 border-t border-neutral-200/70 dark:border-neutral-800/70"
+          : "mt-1"
+      }
+    >
+      <Link
+        to="/$teamSlugOrId/prs"
+        params={{ teamSlugOrId }}
+        activeOptions={{ exact: false }}
+        className={baseLinkClassName}
+        activeProps={{
+          className: `${baseLinkClassName} active`,
+        }}
+      >
+        <SidebarListItem
+          paddingLeft={10}
+          title="View all PRs"
+          titleClassName="text-[13px] font-medium text-neutral-700 dark:text-neutral-200"
+        />
+      </Link>
     </li>
   );
 }
