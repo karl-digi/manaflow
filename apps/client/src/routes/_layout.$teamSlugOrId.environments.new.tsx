@@ -216,7 +216,9 @@ function EnvironmentsPage() {
               showHeader={true}
               showContinueButton={true}
               showManualConfigOption={true}
+              showDismissButton={true}
               onStartConfigure={handleStartConfigure}
+              onDismiss={handleDiscardAndExit}
               topAccessory={
                 <button
                   type="button"

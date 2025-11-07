@@ -101,8 +101,10 @@ export interface RepositoryPickerProps {
   showHeader?: boolean;
   showContinueButton?: boolean;
   showManualConfigOption?: boolean;
+  showDismissButton?: boolean;
   continueButtonText?: string;
   manualConfigButtonText?: string;
+  dismissButtonText?: string;
   headerTitle?: string;
   headerDescription?: string;
   className?: string;
@@ -111,6 +113,7 @@ export interface RepositoryPickerProps {
     instanceId?: string;
     snapshotId?: MorphSnapshotId;
   }) => void;
+  onDismiss?: () => void;
   topAccessory?: ReactNode;
 }
 
@@ -122,12 +125,15 @@ export function RepositoryPicker({
   showHeader = true,
   showContinueButton = true,
   showManualConfigOption = true,
+  showDismissButton = false,
   continueButtonText = "Continue",
   manualConfigButtonText = "Configure manually",
+  dismissButtonText = "Dismiss",
   headerTitle = "Select Repositories",
   headerDescription = "Choose repositories to include in your environment.",
   className = "",
   onStartConfigure,
+  onDismiss,
   topAccessory,
 }: RepositoryPickerProps) {
   const router = useRouter();
@@ -393,6 +399,16 @@ export function RepositoryPicker({
         {showContinueButton && (
           <>
             <div className="flex items-center gap-3 pt-2">
+              {showDismissButton && (
+                <button
+                  type="button"
+                  disabled={isContinueLoading || isManualLoading}
+                  onClick={onDismiss}
+                  className="inline-flex items-center gap-2 rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2 text-sm text-neutral-600 dark:text-neutral-400 hover:bg-neutral-50 dark:hover:bg-neutral-900 hover:text-neutral-900 dark:hover:text-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
+                >
+                  {dismissButtonText}
+                </button>
+              )}
               <button
                 type="button"
                 disabled={
