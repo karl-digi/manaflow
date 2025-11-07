@@ -13,6 +13,7 @@ type IframeEntry = {
   isVisible: boolean;
   allow?: string;
   sandbox?: string;
+  focusGuardCleanup?: () => void;
 };
 
 interface MountOptions {
@@ -214,6 +215,7 @@ class PersistentIframeManager {
     this.iframes.set(key, entry);
     this.moveIframeOffscreen(entry);
     this.cleanupOldIframes();
+    this.setupFocusGuard(key);
 
     return iframe;
   }
@@ -468,6 +470,11 @@ class PersistentIframeManager {
       this.syncTimeouts.delete(key);
     }
 
+    // Clean up focus guard
+    if (entry.focusGuardCleanup) {
+      entry.focusGuardCleanup();
+    }
+
     if (entry.wrapper.parentElement) {
       entry.wrapper.parentElement.removeChild(entry.wrapper);
     }
@@ -561,6 +568,104 @@ class PersistentIframeManager {
     entry.wrapper.style.width = `${viewportWidth}px`;
     entry.wrapper.style.height = `${viewportHeight}px`;
     entry.wrapper.style.transform = `translate(-${viewportWidth}px, -${viewportHeight}px)`;
+  }
+
+  /**
+   * Set up focus guard to prevent hidden iframes from stealing focus
+   */
+  private setupFocusGuard(key: string): void {
+    const entry = this.iframes.get(key);
+    if (!entry) return;
+
+    // Clean up any existing focus guard
+    if (entry.focusGuardCleanup) {
+      entry.focusGuardCleanup();
+    }
+
+    let previouslyFocusedElement: Element | null = null;
+
+    // Track focus changes in the main document to remember what was focused
+    const documentFocusHandler = () => {
+      const activeElement = document.activeElement;
+      // Only update if focus is not inside this iframe
+      if (activeElement && activeElement !== entry.iframe && !entry.iframe.contains(activeElement)) {
+        previouslyFocusedElement = activeElement;
+      }
+    };
+
+    // Listen for focus events on the iframe itself
+    const iframeFocusHandler = () => {
+      // If iframe is not visible, return focus to the previous element
+      if (!entry.isVisible && previouslyFocusedElement) {
+        if (this.debugMode) {
+          console.log(`[FocusGuard] Iframe ${key} tried to steal focus while hidden, returning focus`);
+        }
+
+        // Return focus to the previously focused element
+        if (previouslyFocusedElement instanceof HTMLElement) {
+          previouslyFocusedElement.focus();
+        }
+      }
+    };
+
+    // Listen for focus events inside the iframe's contentWindow
+    const contentWindowFocusHandler = () => {
+      // If iframe is not visible, blur the iframe and return focus
+      if (!entry.isVisible && previouslyFocusedElement) {
+        if (this.debugMode) {
+          console.log(`[FocusGuard] Content inside iframe ${key} tried to gain focus while hidden, returning focus`);
+        }
+
+        // Blur the iframe
+        if (entry.iframe.contentWindow) {
+          entry.iframe.contentWindow.blur();
+        }
+
+        // Return focus to the previously focused element
+        if (previouslyFocusedElement instanceof HTMLElement) {
+          previouslyFocusedElement.focus();
+        }
+      }
+    };
+
+    // Attach event listeners
+    document.addEventListener("focusin", documentFocusHandler, { capture: true });
+    entry.iframe.addEventListener("focus", iframeFocusHandler);
+
+    // Try to attach to contentWindow if available
+    const attachContentWindowListener = () => {
+      if (entry.iframe.contentWindow) {
+        try {
+          entry.iframe.contentWindow.addEventListener("focus", contentWindowFocusHandler, { capture: true });
+        } catch (e) {
+          // May fail due to cross-origin restrictions, which is fine
+          if (this.debugMode) {
+            console.warn(`[FocusGuard] Could not attach contentWindow listener for ${key}:`, e);
+          }
+        }
+      }
+    };
+
+    // Try immediately
+    attachContentWindowListener();
+
+    // Also try after iframe loads
+    entry.iframe.addEventListener("load", attachContentWindowListener);
+
+    // Store cleanup function
+    entry.focusGuardCleanup = () => {
+      document.removeEventListener("focusin", documentFocusHandler, { capture: true });
+      entry.iframe.removeEventListener("focus", iframeFocusHandler);
+      entry.iframe.removeEventListener("load", attachContentWindowListener);
+
+      if (entry.iframe.contentWindow) {
+        try {
+          entry.iframe.contentWindow.removeEventListener("focus", contentWindowFocusHandler, { capture: true });
+        } catch {
+          // Ignore errors on cleanup
+        }
+      }
+    };
   }
 }
 
