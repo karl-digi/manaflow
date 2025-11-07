@@ -297,6 +297,8 @@ export function CommandBar({
     useState(false);
   const [isCreatingCloudWorkspace, setIsCreatingCloudWorkspace] =
     useState(false);
+  const [isLinkingGithubAccount, setIsLinkingGithubAccount] =
+    useState(false);
   const [commandValue, setCommandValue] = useState<string | undefined>(
     undefined
   );
@@ -1028,6 +1030,50 @@ export function CommandBar({
       createCloudWorkspaceFromRepo,
     ]
   );
+
+  const handleNavigateToEnvironmentCreation = useCallback(() => {
+    clearCommandInput();
+    closeCommand();
+    navigate({
+      to: "/$teamSlugOrId/environments/new",
+      params: { teamSlugOrId },
+      search: environmentSearchDefaults,
+    });
+  }, [clearCommandInput, closeCommand, navigate, teamSlugOrId]);
+
+  const handleLinkGithubAccount = useCallback(async () => {
+    if (isLinkingGithubAccount) {
+      return;
+    }
+    clearCommandInput();
+    closeCommand();
+    setIsLinkingGithubAccount(true);
+    try {
+      const user = await stackClientApp.getUser();
+      if (!user) {
+        toast.error("Sign in to link your GitHub account.");
+        if (stackClientApp.redirectToSignIn) {
+          await stackClientApp.redirectToSignIn();
+        }
+        return;
+      }
+      const connection = await user.getConnectedAccount("github", {
+        or: "redirect",
+      });
+      if (connection) {
+        toast.success("GitHub account already linked.");
+      }
+    } catch (error) {
+      console.error("Failed to start GitHub OAuth flow", error);
+      toast.error("Unable to open the GitHub OAuth flow. Please try again.");
+    } finally {
+      setIsLinkingGithubAccount(false);
+    }
+  }, [
+    clearCommandInput,
+    closeCommand,
+    isLinkingGithubAccount,
+  ]);
 
   useEffect(() => {
     // In Electron, prefer global shortcut from main via cmux event.
@@ -2187,6 +2233,16 @@ export function CommandBar({
     [cloudWorkspaceCommandsToRender, cloudWorkspaceSuggestionsToRender]
   );
 
+  const showLocalWorkspaceEmptyActions =
+    !isLocalWorkspaceLoading &&
+    localWorkspaceSuggestionsToRender.length === 0 &&
+    localWorkspaceCommandsToRender.length === 0;
+
+  const showCloudWorkspaceEmptyActions =
+    !isCloudWorkspaceLoading &&
+    cloudWorkspaceSuggestionsToRender.length === 0 &&
+    cloudWorkspaceCommandsToRender.length === 0;
+
   const shouldVirtualizeRoot =
     rootCommandsToRender.length > COMMAND_LIST_VIRTUALIZATION_THRESHOLD;
   const shouldVirtualizeLocal =
@@ -2613,6 +2669,15 @@ export function CommandBar({
                           )}
                         </Command.Group>
                       ) : null}
+                      {showLocalWorkspaceEmptyActions ? (
+                        <WorkspaceEmptyActions
+                          onCreateEnvironment={
+                            handleNavigateToEnvironmentCreation
+                          }
+                          onLinkGithubAccount={handleLinkGithubAccount}
+                          isLinkingGithubAccount={isLinkingGithubAccount}
+                        />
+                      ) : null}
                     </>
                   )}
                 </>
@@ -2653,6 +2718,15 @@ export function CommandBar({
                             )
                           )}
                         </Command.Group>
+                      ) : null}
+                      {showCloudWorkspaceEmptyActions ? (
+                        <WorkspaceEmptyActions
+                          onCreateEnvironment={
+                            handleNavigateToEnvironmentCreation
+                          }
+                          onLinkGithubAccount={handleLinkGithubAccount}
+                          isLinkingGithubAccount={isLinkingGithubAccount}
+                        />
                       ) : null}
                     </>
                   )}
@@ -2716,6 +2790,61 @@ export function CommandBar({
     </>
   );
 }
+
+type WorkspaceEmptyActionsProps = {
+  onCreateEnvironment: () => void;
+  onLinkGithubAccount: () => void;
+  isLinkingGithubAccount: boolean;
+};
+
+function WorkspaceEmptyActions({
+  onCreateEnvironment,
+  onLinkGithubAccount,
+  isLinkingGithubAccount,
+}: WorkspaceEmptyActionsProps) {
+  return (
+    <Command.Group>
+      <Command.Item
+        value="workspace-empty:create-environment"
+        className={baseCommandItemClassName}
+        onSelect={() => {
+          onCreateEnvironment();
+        }}
+      >
+        <Server className="h-4 w-4 text-neutral-500" />
+        <div className="flex min-w-0 flex-col text-left">
+          <span className="text-sm">Create environment</span>
+          <span className="text-xs text-neutral-500 dark:text-neutral-400">
+            Configure a reusable cloud environment with your scripts.
+          </span>
+        </div>
+      </Command.Item>
+      <Command.Item
+        value="workspace-empty:link-github"
+        className={baseCommandItemClassName}
+        disabled={isLinkingGithubAccount}
+        onSelect={() => {
+          if (!isLinkingGithubAccount) {
+            onLinkGithubAccount();
+          }
+        }}
+      >
+        <GitHubIcon className="h-4 w-4 text-neutral-500" />
+        <div className="flex min-w-0 flex-col text-left">
+          <span className="text-sm">
+            {isLinkingGithubAccount
+              ? "Opening GitHub OAuth…"
+              : "Link GitHub account"}
+          </span>
+          <span className="text-xs text-neutral-500 dark:text-neutral-400">
+            Authorize cmux to access your repositories via GitHub OAuth.
+          </span>
+        </div>
+      </Command.Item>
+    </Command.Group>
+  );
+}
+
 const buildNodePath = (
   root: HTMLElement,
   target: Node | null
