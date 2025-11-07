@@ -551,7 +551,7 @@ export const DashboardInputControls = memo(function DashboardInputControls({
               >
                 <Link2 className="w-4 h-4 text-neutral-600 dark:text-neutral-300" />
                 <span className="select-none">
-                  {showCustomRepoInput ? "Hide GitHub link menu" : "Add repos from link"}
+                  {showCustomRepoInput ? "Hide repo link menu" : "Import repos from link"}
                 </span>
               </button>
               {showCustomRepoInput ? (
