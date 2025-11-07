@@ -46,6 +46,18 @@ const SetupInstanceResponse = z
   })
   .openapi("SetupInstanceResponse");
 
+type GithubAuthErrorReason = "missing_account" | "missing_token";
+
+const githubAuthErrorResponse = (reason: GithubAuthErrorReason) => ({
+  code: "github_auth_required" as const,
+  reason,
+  requiresGithubAuth: true,
+  message:
+    reason === "missing_account"
+      ? "Connect your GitHub account to start a workspace."
+      : "Reconnect your GitHub account to refresh permissions before continuing.",
+});
+
 morphRouter.openapi(
   createRoute({
     method: "post" as const,
@@ -94,11 +106,20 @@ morphRouter.openapi(
 
     // Verify team access and get the team
     const team = await verifyTeamAccess({ req: c.req.raw, teamSlugOrId });
-    const githubAccessTokenPromise = (async () => {
+    const githubAccessTokenPromise: Promise<
+      | {
+          githubAccessToken: string;
+          githubAccessTokenError: null;
+        }
+      | {
+          githubAccessToken: null;
+          githubAccessTokenError: GithubAuthErrorReason;
+        }
+    > = (async () => {
       const githubAccount = await user.getConnectedAccount("github");
       if (!githubAccount) {
         return {
-          githubAccessTokenError: "GitHub account not found",
+          githubAccessTokenError: "missing_account",
           githubAccessToken: null,
         } as const;
       }
@@ -106,7 +127,7 @@ morphRouter.openapi(
         await githubAccount.getAccessToken();
       if (!githubAccessToken) {
         return {
-          githubAccessTokenError: "GitHub access token not found",
+          githubAccessTokenError: "missing_token",
           githubAccessToken: null,
         } as const;
       }
@@ -185,11 +206,20 @@ morphRouter.openapi(
         throw new Error("VSCode URL not found");
       }
 
-      const { githubAccessToken, githubAccessTokenError } =
-        await githubAccessTokenPromise;
-      if (githubAccessTokenError) {
+      const githubAccess = await githubAccessTokenPromise;
+      if (githubAccess.githubAccessTokenError) {
         console.error(
-          `[sandboxes.start] GitHub access token error: ${githubAccessTokenError}`
+          `[morph.setup] GitHub access token error: ${githubAccess.githubAccessTokenError}`
+        );
+        return c.json(
+          githubAuthErrorResponse(githubAccess.githubAccessTokenError),
+          403
+        );
+      }
+      const githubAccessToken = githubAccess.githubAccessToken;
+      if (!githubAccessToken) {
+        console.error(
+          "[morph.setup] Missing GitHub access token without error state"
         );
         return c.text("Failed to resolve GitHub credentials", 401);
       }

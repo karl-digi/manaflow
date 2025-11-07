@@ -19,6 +19,7 @@ import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { api } from "@cmux/convex/api";
 import { DEFAULT_MORPH_SNAPSHOT_ID, type MorphSnapshotId } from "@cmux/shared";
 import { isElectron } from "@/lib/electron";
+import { stackClientApp } from "@/lib/stack";
 import {
   getApiIntegrationsGithubReposOptions,
   postApiMorphSetupInstanceMutation,
@@ -39,6 +40,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useStackApp } from "@stackframe/react";
 import { RepositoryAdvancedOptions } from "./RepositoryAdvancedOptions";
 
 function ConnectionIcon({ type }: { type?: string }) {
@@ -69,6 +71,107 @@ function formatTimeAgo(input?: string | number): string {
   if (mo < 12) return `${mo}mo ago`;
   const yr = Math.floor(mo / 12);
   return `${yr}y ago`;
+}
+
+type GithubAuthErrorReason = "missing_account" | "missing_token";
+
+type GithubAuthPromptState = {
+  reason: GithubAuthErrorReason;
+  message: string;
+};
+
+const GITHUB_AUTH_MESSAGES: Record<GithubAuthErrorReason, string> = {
+  missing_account: "Connect your GitHub account to start a workspace.",
+  missing_token: "Reconnect your GitHub account to refresh permissions before continuing.",
+};
+
+const UNKNOWN_WORKSPACE_ERROR =
+  "Failed to setup workspace. Please try again.";
+
+function parseGithubAuthError(error: unknown): GithubAuthPromptState | null {
+  const fromString = (value: string | null | undefined) => {
+    if (!value) return null;
+    const normalized = value.toLowerCase();
+    if (normalized.includes("github access token")) {
+      return {
+        reason: "missing_token",
+        message: GITHUB_AUTH_MESSAGES.missing_token,
+      };
+    }
+    if (
+      normalized.includes("github account") ||
+      normalized.includes("github credentials")
+    ) {
+      return {
+        reason: "missing_account",
+        message: GITHUB_AUTH_MESSAGES.missing_account,
+      };
+    }
+    return null;
+  };
+
+  if (typeof error === "string") {
+    return fromString(error);
+  }
+  if (error instanceof Error && typeof error.message === "string") {
+    const parsed = fromString(error.message);
+    if (parsed) return parsed;
+  }
+  if (error && typeof error === "object") {
+    const maybe = error as Record<string, unknown>;
+    if (
+      typeof maybe.code === "string" &&
+      maybe.code === "github_auth_required"
+    ) {
+      const reason =
+        typeof maybe.reason === "string" && maybe.reason === "missing_token"
+          ? "missing_token"
+          : "missing_account";
+      const message =
+        typeof maybe.message === "string"
+          ? maybe.message
+          : GITHUB_AUTH_MESSAGES[reason];
+      return { reason, message };
+    }
+    if (
+      maybe.requiresGithubAuth === true &&
+      typeof maybe.message === "string"
+    ) {
+      const reason =
+        typeof maybe.reason === "string" && maybe.reason === "missing_token"
+          ? "missing_token"
+          : "missing_account";
+      return { reason, message: maybe.message };
+    }
+    const fallback = fromString(
+      typeof maybe.message === "string" ? maybe.message : undefined
+    );
+    if (fallback) return fallback;
+  }
+
+  return null;
+}
+
+function extractErrorMessage(error: unknown): string {
+  if (typeof error === "string" && error.trim().length > 0) {
+    return error;
+  }
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  if (error && typeof error === "object") {
+    const maybe = error as Record<string, unknown>;
+    if (
+      typeof maybe.message === "string" &&
+      maybe.message.trim().length > 0
+    ) {
+      return maybe.message;
+    }
+    if (typeof maybe.error === "string" && maybe.error.trim().length > 0) {
+      return maybe.error;
+    }
+  }
+  return UNKNOWN_WORKSPACE_ERROR;
 }
 
 interface ConnectionContext {
@@ -132,6 +235,7 @@ export function RepositoryPicker({
 }: RepositoryPickerProps) {
   const router = useRouter();
   const navigate = useNavigate();
+  const stackApp = useStackApp();
   const [selectedRepos, setSelectedRepos] = useState<string[]>(() =>
     Array.from(new Set(initialSelectedRepos))
   );
@@ -148,6 +252,9 @@ export function RepositoryPicker({
       hasConnections: false,
     }
   );
+  const [githubAuthPrompt, setGithubAuthPrompt] =
+    useState<GithubAuthPromptState | null>(null);
+  const [generalError, setGeneralError] = useState<string | null>(null);
 
   const setupInstanceMutation = useRQMutation(
     postApiMorphSetupInstanceMutation()
@@ -171,6 +278,34 @@ export function RepositoryPicker({
     }
     window.focus?.();
   }, [router]);
+
+  const handleOpenGithubAccountSettings = useCallback(() => {
+    const fallbackUrl =
+      stackApp.urls.accountSettings || "/handler/after-sign-in";
+    const openFallback = () => {
+      try {
+        window.open(fallbackUrl, "_blank", "noopener,noreferrer");
+      } catch {
+        window.location.href = fallbackUrl;
+      }
+    };
+
+    try {
+      const redirectPromise = stackClientApp.redirectToAccountSettings?.();
+      if (
+        redirectPromise &&
+        typeof (redirectPromise as Promise<unknown>).then === "function"
+      ) {
+        redirectPromise.catch(() => {
+          openFallback();
+        });
+      } else {
+        openFallback();
+      }
+    } catch {
+      openFallback();
+    }
+  }, [stackApp.urls.accountSettings]);
 
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
@@ -244,6 +379,8 @@ export function RepositoryPicker({
     (repos: string[]): void => {
       const mutation =
         repos.length > 0 ? setupInstanceMutation : setupManualInstanceMutation;
+      setGeneralError(null);
+      setGithubAuthPrompt(null);
       mutation.mutate(
         {
           body: {
@@ -255,6 +392,8 @@ export function RepositoryPicker({
         },
         {
           onSuccess: async (data) => {
+            setGeneralError(null);
+            setGithubAuthPrompt(null);
             const configuredInstanceId =
               (await goToConfigure(repos, data.instanceId)) ?? data.instanceId;
             onStartConfigure?.({
@@ -266,6 +405,13 @@ export function RepositoryPicker({
             console.log("Removed repos:", data.removedRepos);
           },
           onError: (error) => {
+            const githubError = parseGithubAuthError(error);
+            if (githubError) {
+              setGithubAuthPrompt(githubError);
+              setGeneralError(null);
+            } else {
+              setGeneralError(extractErrorMessage(error));
+            }
             console.error("Failed to setup instance:", error);
           },
         }
@@ -279,6 +425,8 @@ export function RepositoryPicker({
       setupInstanceMutation,
       setupManualInstanceMutation,
       teamSlugOrId,
+      setGeneralError,
+      setGithubAuthPrompt,
     ]
   );
 
@@ -362,6 +510,37 @@ export function RepositoryPicker({
           onToggleRepo={toggleRepo}
           hasConnections={connectionContext.hasConnections}
         />
+
+        {githubAuthPrompt ? (
+          <div className="rounded-md border border-amber-200 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 text-sm text-amber-900 dark:text-amber-50">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="font-medium text-amber-900 dark:text-amber-100">
+                  GitHub access required
+                </p>
+                <p className="mt-1 text-xs text-amber-800/80 dark:text-amber-100/80">
+                  {githubAuthPrompt.message}{" "}
+                  After connecting, return to this tab and try again.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleOpenGithubAccountSettings}
+                className="inline-flex items-center justify-center rounded-md border border-amber-300/70 bg-white/80 px-3 py-1.5 text-sm font-medium text-amber-900 shadow-sm hover:bg-amber-100 dark:border-amber-500/60 dark:bg-transparent dark:text-amber-50 dark:hover:bg-amber-500/20"
+              >
+                {githubAuthPrompt.reason === "missing_token"
+                  ? "Reconnect GitHub"
+                  : "Connect GitHub"}
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {generalError ? (
+          <div className="rounded-md border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/40 px-4 py-3 text-sm text-red-800 dark:text-red-100">
+            {generalError}
+          </div>
+        ) : null}
 
         {selectedRepos.length > 0 ? (
           <div className="flex flex-wrap gap-2">
