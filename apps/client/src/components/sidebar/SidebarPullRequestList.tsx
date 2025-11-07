@@ -3,6 +3,7 @@ import { api } from "@cmux/convex/api";
 import { Link } from "@tanstack/react-router";
 import { useQuery as useConvexQuery } from "convex/react";
 import {
+  ArrowUpRight,
   GitMerge,
   GitPullRequest,
   GitPullRequestClosed,
@@ -44,25 +45,49 @@ export function SidebarPullRequestList({
     );
   }
 
-  if (list.length === 0) {
-    return (
-      <p className="mt-1 pl-2 pr-3 py-2 text-xs text-neutral-500 dark:text-neutral-400 select-none">
-        No pull requests
-      </p>
-    );
-  }
+  const viewAllItem = (
+    <li
+      key="view-all-prs"
+      className="pt-2 mt-2 border-t border-neutral-200/80 dark:border-neutral-800/80"
+    >
+      <Link
+        to="/$teamSlugOrId/prs"
+        params={{ teamSlugOrId }}
+        className="group block"
+      >
+        <SidebarListItem
+          paddingLeft={10}
+          leading={
+            <GitPullRequest className="w-3 h-3 text-neutral-500 dark:text-neutral-400" />
+          }
+          meta={<ArrowUpRight className="w-3 h-3 text-neutral-500" />}
+          title="View all PRs"
+          titleClassName="text-[13px] text-neutral-900 dark:text-neutral-100"
+        />
+      </Link>
+    </li>
+  );
 
   return (
     <ul className="flex flex-col gap-px">
-      {list.map((pr) => (
-        <PullRequestListItem
-          key={`${pr.repoFullName}#${pr.number}`}
-          pr={pr}
-          teamSlugOrId={teamSlugOrId}
-          expanded={expanded}
-          setExpanded={setExpanded}
-        />
-      ))}
+      {list.length > 0 ? (
+        list.map((pr) => (
+          <PullRequestListItem
+            key={`${pr.repoFullName}#${pr.number}`}
+            pr={pr}
+            teamSlugOrId={teamSlugOrId}
+            expanded={expanded}
+            setExpanded={setExpanded}
+          />
+        ))
+      ) : (
+        <li key="no-prs">
+          <p className="mt-1 pl-2 pr-3 py-2 text-xs text-neutral-500 dark:text-neutral-400 select-none">
+            No pull requests
+          </p>
+        </li>
+      )}
+      {viewAllItem}
     </ul>
   );
 }
