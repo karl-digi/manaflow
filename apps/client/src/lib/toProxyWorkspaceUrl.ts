@@ -26,9 +26,16 @@ export function normalizeWorkspaceOrigin(origin: string | null): string | null {
 
 export function rewriteLocalWorkspaceUrlIfNeeded(
   url: string,
-  preferredOrigin?: string | null
+  preferredOrigin?: string | null,
+  isLocalWorkspace?: boolean
 ): string {
   if (!shouldRewriteUrl(url)) {
+    return url;
+  }
+
+  // Only rewrite if this is explicitly a local workspace (provider: "other")
+  // Local tasks (provider: "docker") should keep their localhost URLs
+  if (!isLocalWorkspace) {
     return url;
   }
 
@@ -103,11 +110,13 @@ function createMorphPortUrl(
 
 export function toProxyWorkspaceUrl(
   workspaceUrl: string,
-  preferredOrigin?: string | null
+  preferredOrigin?: string | null,
+  isLocalWorkspace?: boolean
 ): string {
   const normalizedUrl = rewriteLocalWorkspaceUrlIfNeeded(
     workspaceUrl,
-    preferredOrigin
+    preferredOrigin,
+    isLocalWorkspace
   );
   const components = parseMorphUrl(normalizedUrl);
 

@@ -53,10 +53,11 @@ export const Route = createFileRoute(
       ]);
       if (result) {
         const workspaceUrl = result.vscode?.workspaceUrl;
+        const isLocalWorkspace = result.vscode?.provider === "other";
         void preloadTaskRunIframes([
           {
             url: workspaceUrl
-              ? toProxyWorkspaceUrl(workspaceUrl, localServeWeb.baseUrl)
+              ? toProxyWorkspaceUrl(workspaceUrl, localServeWeb.baseUrl, isLocalWorkspace)
               : "",
             taskRunId: opts.params.taskRunId,
           },
@@ -77,15 +78,15 @@ function TaskRunComponent() {
   );
 
   const rawWorkspaceUrl = taskRun?.data?.vscode?.workspaceUrl ?? null;
+  const isLocalWorkspace = taskRun?.data?.vscode?.provider === "other";
   const workspaceUrl = rawWorkspaceUrl
-    ? toProxyWorkspaceUrl(rawWorkspaceUrl, localServeWeb.data?.baseUrl)
+    ? toProxyWorkspaceUrl(rawWorkspaceUrl, localServeWeb.data?.baseUrl, isLocalWorkspace)
     : null;
   const disablePreflight = rawWorkspaceUrl
     ? shouldUseServerIframePreflight(rawWorkspaceUrl)
     : false;
   const persistKey = getTaskRunPersistKey(taskRunId);
   const hasWorkspace = workspaceUrl !== null;
-  const isLocalWorkspace = taskRun?.data?.vscode?.provider === "other";
   const [iframeStatus, setIframeStatus] =
     useState<PersistentIframeStatus>("loading");
 
