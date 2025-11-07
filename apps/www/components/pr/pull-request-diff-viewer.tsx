@@ -3250,8 +3250,10 @@ function HeatmapGutterTooltip({
   isAutoOpen: boolean;
 }) {
   const [isManuallyOpen, setIsManuallyOpen] = useState(false);
-  const [isHovering, setIsHovering] = useState(false);
+  const [isHoveringTrigger, setIsHoveringTrigger] = useState(false);
+  const [isHoveringTooltip, setIsHoveringTooltip] = useState(false);
   const wasAutoOpenRef = useRef(isAutoOpen);
+  const isHovering = isHoveringTrigger || isHoveringTooltip;
 
   const handleOpenChange = useCallback((nextOpen: boolean) => {
     setIsManuallyOpen(nextOpen);
@@ -3266,15 +3268,24 @@ function HeatmapGutterTooltip({
     wasAutoOpenRef.current = isAutoOpen;
   }, [isAutoOpen, isHovering]);
 
-  const handlePointerEnter = useCallback(() => {
-    setIsHovering(true);
+  const handleTriggerPointerEnter = useCallback(() => {
+    setIsHoveringTrigger(true);
   }, []);
 
-  const handlePointerLeave = useCallback(() => {
-    setIsHovering(false);
+  const handleTriggerPointerLeave = useCallback(() => {
+    setIsHoveringTrigger(false);
   }, []);
 
-  const isOpen = isAutoOpen || isManuallyOpen;
+  const handleTooltipPointerEnter = useCallback(() => {
+    setIsHoveringTooltip(true);
+  }, []);
+
+  const handleTooltipPointerLeave = useCallback(() => {
+    setIsHoveringTooltip(false);
+  }, []);
+
+  const isOpen =
+    isAutoOpen || isManuallyOpen || isHoveringTrigger || isHoveringTooltip;
   const theme = getHeatmapTooltipTheme(tooltipMeta.score);
 
   return (
@@ -3282,13 +3293,16 @@ function HeatmapGutterTooltip({
       <TooltipTrigger asChild>
         <span
           className="cmux-heatmap-gutter"
-          onPointerEnter={handlePointerEnter}
-          onPointerLeave={handlePointerLeave}
+          onPointerEnter={handleTriggerPointerEnter}
+          onPointerLeave={handleTriggerPointerLeave}
         >
           {children}
         </span>
       </TooltipTrigger>
       <TooltipContent
+        interactive
+        onPointerEnter={handleTooltipPointerEnter}
+        onPointerLeave={handleTooltipPointerLeave}
         side="left"
         align="start"
         className={cn(
@@ -3313,11 +3327,48 @@ function HeatmapTooltipBody({
   reason: string | null;
 }) {
   const theme = getHeatmapTooltipTheme(score);
+  const { copy, copied } = useClipboard({ timeout: 1500 });
+  const trimmedReason = reason?.trim() ?? "";
+  const canCopyReason = trimmedReason.length > 0;
+
+  const handleCopyReason = useCallback(() => {
+    if (!canCopyReason) {
+      return;
+    }
+    copy(trimmedReason);
+  }, [canCopyReason, copy, trimmedReason]);
+
   return (
-    <div className="text-left text-xs leading-relaxed">
-      {reason ? (
-        <p className={cn("text-xs", theme.reasonClass)}>{reason}</p>
-      ) : null}
+    <div className="flex items-start gap-3 text-left text-xs leading-relaxed">
+      <div className="min-w-0 flex-1 break-words text-left">
+        {reason ? (
+          <p className={cn("text-xs", theme.reasonClass)}>{reason}</p>
+        ) : (
+          <p className="text-xs text-neutral-500">No review reasoning yet.</p>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={handleCopyReason}
+        disabled={!canCopyReason}
+        aria-disabled={!canCopyReason}
+        aria-label={copied ? "Copied tooltip message" : "Copy tooltip message"}
+        className={cn(
+          "flex shrink-0 items-center gap-1 rounded border px-2 py-1 text-[11px] font-medium uppercase tracking-wide transition",
+          canCopyReason
+            ? copied
+              ? "border-emerald-300 bg-emerald-100 text-emerald-700"
+              : "border-neutral-300 bg-white/80 text-neutral-700 hover:bg-white"
+            : "cursor-not-allowed border-neutral-200 bg-neutral-100 text-neutral-400"
+        )}
+      >
+        {copied ? (
+          <Check className="h-3 w-3" aria-hidden />
+        ) : (
+          <Copy className="h-3 w-3" aria-hidden />
+        )}
+        <span>{copied ? "Copied" : "Copy"}</span>
+      </button>
     </div>
   );
 }
