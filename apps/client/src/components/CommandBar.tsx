@@ -1302,8 +1302,8 @@ export function CommandBar({
 
   const handleSelect = useCallback(
     async (value: string) => {
-      clearCommandInput();
       if (value === "teams:switch") {
+        clearCommandInput();
         setActivePage("teams");
         return;
       } else if (value === "new-task") {
@@ -1312,9 +1312,11 @@ export function CommandBar({
           params: { teamSlugOrId },
         });
       } else if (value === "local-workspaces") {
+        clearCommandInput();
         setActivePage("local-workspaces");
         return;
       } else if (value === "cloud-workspaces") {
+        clearCommandInput();
         setActivePage("cloud-workspaces");
         return;
       } else if (value === "pull-requests") {
@@ -1381,6 +1383,7 @@ export function CommandBar({
         } catch (error) {
           console.error("Sign out failed", error);
           toast.error("Unable to sign out");
+          clearCommandInput();
           return;
         }
       } else if (value === "theme-light") {
@@ -1424,6 +1427,7 @@ export function CommandBar({
         const targetTeamSlugOrId = slugPart || teamId;
         if (!teamId || !targetTeamSlugOrId) {
           toast.error("Unable to switch teams right now.");
+          clearCommandInput();
           return;
         }
 
@@ -1443,6 +1447,7 @@ export function CommandBar({
         } catch (error) {
           console.error("Failed to set selected team", error);
           toast.error("Unable to select that team");
+          clearCommandInput();
           return;
         }
 
@@ -1502,6 +1507,7 @@ export function CommandBar({
         }
       }
       closeCommand();
+      clearCommandInput();
     },
     [
       clearCommandInput,
