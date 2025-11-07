@@ -6,6 +6,9 @@
     <img src="./docs/assets/macos-badge.png" alt="Download cmux for macOS" width="180" />
   </a>
 </p>
+<p align="center">
+  <a href="https://discord.gg/7VY58tftMg">Join the cmux Discord to swap workflows, get help, and share feedback.</a>
+</p>
 
 cmux lets you spawn Claude Code, Codex CLI, Cursor CLI, Gemini CLI, Amp, Opencode, and other coding agent CLIs in parallel across multiple tasks.
 
