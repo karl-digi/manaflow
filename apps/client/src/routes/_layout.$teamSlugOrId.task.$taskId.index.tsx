@@ -669,6 +669,8 @@ function TaskDetailPage() {
       TASK_RUN_IFRAME_ALLOW,
       TASK_RUN_IFRAME_SANDBOX,
       onClose: handlePanelClose,
+      teamSlugOrId,
+      taskId,
     }),
     [
       task,
@@ -694,6 +696,8 @@ function TaskDetailPage() {
       isMorphProvider,
       isBrowserBusy,
       handlePanelClose,
+      teamSlugOrId,
+      taskId,
     ]
   );
 
