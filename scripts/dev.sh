@@ -37,6 +37,7 @@ SHOW_COMPOSE_LOGS=false
 # Default to skipping Convex unless explicitly disabled via env/flag
 SKIP_CONVEX="${SKIP_CONVEX:-true}"
 RUN_ELECTRON=false
+SKIP_DOCKER_BUILD="${SKIP_DOCKER_BUILD:-false}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -80,12 +81,41 @@ while [[ $# -gt 0 ]]; do
             fi
             shift
             ;;
+        --skip-docker)
+            # Support `--skip-docker true|false` and bare `--skip-docker` (defaults to true)
+            if [[ -n "${2:-}" && "${2}" != --* ]]; then
+                case "$2" in
+                    true|false)
+                        SKIP_DOCKER_BUILD="$2"
+                        shift 2
+                        ;;
+                    *)
+                        echo "Invalid value for --skip-docker: $2. Use true or false." >&2
+                        exit 1
+                        ;;
+                esac
+            else
+                SKIP_DOCKER_BUILD=true
+                shift
+            fi
+            ;;
+        --skip-docker=*)
+            val="${1#*=}"
+            if [[ "$val" = "true" || "$val" = "false" ]]; then
+                SKIP_DOCKER_BUILD="$val"
+            else
+                echo "Invalid value for --skip-docker: $val. Use true or false." >&2
+                exit 1
+            fi
+            shift
+            ;;
         *)
             # Unknown flag; ignore and shift
             shift
             ;;
     esac
 done
+export SKIP_DOCKER_BUILD
 
 # Only clean ports when not in devcontainer (devcontainer handles this)
 if [ "$IS_DEVCONTAINER" = "false" ]; then
