@@ -1,13 +1,17 @@
 import { Button } from "@/components/ui/button";
-import { ArrowRight, CheckCircle2, XCircle, Circle } from "lucide-react";
-import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
+import { ArrowRight, CheckCircle2, Circle, Eye, EyeOff, ExternalLink } from "lucide-react";
+import { AGENT_CONFIGS, type AgentConfig } from "@cmux/shared/agentConfig";
 import { useCallback, useEffect, useState } from "react";
-import { useSocket } from "@/contexts/socket/use-socket";
-import type { ProviderStatusResponse } from "@cmux/shared";
+import { api } from "@cmux/convex/api";
+import { useConvex } from "convex/react";
+import { useQuery } from "@tanstack/react-query";
+import { convexQuery } from "@convex-dev/react-query";
+import { toast } from "sonner";
 
 interface AgentConfigStepProps {
   onNext: () => void;
   onSkip: () => void;
+  teamSlugOrId: string;
 }
 
 const DEFAULT_AGENTS = [
@@ -16,172 +20,232 @@ const DEFAULT_AGENTS = [
   "codex/gpt-5-codex-high",
 ];
 
-export function AgentConfigStep({ onNext, onSkip }: AgentConfigStepProps) {
-  const [selectedAgents, setSelectedAgents] = useState<string[]>(
+export function AgentConfigStep({ onNext, onSkip, teamSlugOrId }: AgentConfigStepProps) {
+  const convex = useConvex();
+  const [selectedAgents] = useState<string[]>(
     DEFAULT_AGENTS.filter((agent) =>
       AGENT_CONFIGS.some((config) => config.name === agent)
     )
   );
-  const [providerStatus, setProviderStatus] =
-    useState<ProviderStatusResponse | null>(null);
-  const { socket } = useSocket();
+  const [apiKeyValues, setApiKeyValues] = useState<Record<string, string>>({});
+  const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
+  const [expandedKeys, setExpandedKeys] = useState<Record<string, boolean>>({});
+  const [isSaving, setIsSaving] = useState(false);
 
-  // Check provider status on mount
-  useEffect(() => {
-    if (!socket) return;
-
-    const checkStatus = () => {
-      socket.emit("check-provider-status", (response) => {
-        if (response) {
-          setProviderStatus(response);
-        }
-      });
-    };
-
-    checkStatus();
-    const interval = setInterval(checkStatus, 5000);
-
-    return () => clearInterval(interval);
-  }, [socket]);
-
-  const handleToggleAgent = useCallback(
-    (agentName: string) => {
-      if (selectedAgents.includes(agentName)) {
-        setSelectedAgents(selectedAgents.filter((a) => a !== agentName));
-      } else {
-        setSelectedAgents([...selectedAgents, agentName]);
-      }
-    },
-    [selectedAgents]
+  // Get all required API keys from agent configs
+  const apiKeys = Array.from(
+    new Map(
+      AGENT_CONFIGS.flatMap((config: AgentConfig) => config.apiKeys || []).map(
+        (key) => [key.envVar, key]
+      )
+    ).values()
   );
 
-  const handleContinue = useCallback(() => {
-    // Save selected agents to localStorage
-    if (selectedAgents.length > 0) {
-      localStorage.setItem("selectedAgents", JSON.stringify(selectedAgents));
-    }
-    onNext();
-  }, [selectedAgents, onNext]);
+  // Query existing API keys
+  const { data: existingKeys } = useQuery(
+    convexQuery(api.apiKeys.getAll, { teamSlugOrId })
+  );
 
-  // Get available providers
-  const availableProviders = providerStatus?.providers || [];
-  const providersByName = new Map(
-    availableProviders.map((p) => [p.name, p])
+  // Initialize API key values from existing keys
+  useEffect(() => {
+    if (existingKeys) {
+      const values: Record<string, string> = {};
+      existingKeys.forEach((key) => {
+        values[key.envVar] = key.value;
+      });
+      setApiKeyValues(values);
+    }
+  }, [existingKeys]);
+
+  const handleApiKeyChange = (envVar: string, value: string) => {
+    setApiKeyValues((prev) => ({ ...prev, [envVar]: value }));
+  };
+
+  const toggleShowKey = (envVar: string) => {
+    setShowKeys((prev) => ({ ...prev, [envVar]: !prev[envVar] }));
+  };
+
+  const toggleExpandKey = (envVar: string) => {
+    setExpandedKeys((prev) => ({ ...prev, [envVar]: !prev[envVar] }));
+  };
+
+  const handleContinue = useCallback(async () => {
+    // Save any changed API keys
+    setIsSaving(true);
+    try {
+      const savePromises = apiKeys.map(async (key) => {
+        const value = apiKeyValues[key.envVar] || "";
+        const existingValue = existingKeys?.find(k => k.envVar === key.envVar)?.value || "";
+
+        // Only save if the value has changed
+        if (value !== existingValue && value.trim()) {
+          // Save API key directly
+          await convex.mutation(api.apiKeys.upsert, {
+            teamSlugOrId,
+            envVar: key.envVar,
+            value: value.trim(),
+            displayName: key.displayName,
+            description: key.description,
+          });
+        }
+      });
+
+      await Promise.all(savePromises);
+
+      // Save selected agents to localStorage
+      if (selectedAgents.length > 0) {
+        localStorage.setItem("selectedAgents", JSON.stringify(selectedAgents));
+      }
+
+      toast.success("Configuration saved");
+    } catch (error) {
+      console.error("Error saving API keys:", error);
+      toast.error("Failed to save some API keys");
+    } finally {
+      setIsSaving(false);
+    }
+
+    onNext();
+  }, [selectedAgents, onNext, apiKeys, apiKeyValues, existingKeys, teamSlugOrId, convex]);
+
+  const getProviderUrl = (envVar: string) => {
+    switch (envVar) {
+      case "ANTHROPIC_API_KEY":
+        return "https://console.anthropic.com/settings/keys";
+      case "OPENAI_API_KEY":
+        return "https://platform.openai.com/api-keys";
+      case "OPENROUTER_API_KEY":
+        return "https://openrouter.ai/keys";
+      case "GEMINI_API_KEY":
+        return "https://console.cloud.google.com/apis/credentials";
+      case "MODEL_STUDIO_API_KEY":
+        return "https://modelstudio.console.alibabacloud.com/?tab=playground#/api-key";
+      case "AMP_API_KEY":
+        return "https://ampcode.com/settings";
+      case "CURSOR_API_KEY":
+        return "https://cursor.com/dashboard?tab=integrations";
+      default:
+        return null;
+    }
+  };
+
+  // Get top 3 most commonly used API keys for onboarding
+  const topApiKeys = apiKeys.filter(key =>
+    ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY"].includes(key.envVar)
   );
 
   return (
-    <div className="flex flex-col">
-      <div className="mb-4">
-        <h2 className="mb-1 text-xl font-semibold text-neutral-900 dark:text-neutral-50">
+    <div className="flex flex-col items-center text-center">
+      {/* Header */}
+      <div className="mb-12">
+        <h1 className="mb-4 text-4xl font-semibold text-neutral-900 dark:text-white">
           Configure Agents
-        </h2>
-        <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          Select agents and view their configuration status.
+        </h1>
+        <p className="text-lg text-neutral-600 dark:text-neutral-400 max-w-md mx-auto">
+          Add API keys to enable AI agents. You can skip this and configure later in settings.
         </p>
       </div>
 
-      {/* Provider Status Overview */}
-      <div className="mb-4 p-3 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900/50">
-        <h3 className="text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-2">
-          Provider Status
-        </h3>
-        <div className="space-y-1.5">
-          {AGENT_CONFIGS.slice(0, 8).map((agent) => {
-            const provider = providersByName.get(agent.name);
-            const isAvailable = provider?.isAvailable || false;
+      {/* API Keys Configuration */}
+      {topApiKeys.length > 0 && (
+        <div className="mb-12 w-full max-w-md space-y-3">
+          {topApiKeys.map((key) => {
+            const providerUrl = getProviderUrl(key.envVar);
+            const isExpanded = expandedKeys[key.envVar];
+            const hasValue = Boolean(apiKeyValues[key.envVar]);
 
             return (
-              <div
-                key={agent.name}
-                className="flex items-center gap-2 text-xs"
-              >
-                {isAvailable ? (
-                  <CheckCircle2 className="h-3.5 w-3.5 text-green-600 dark:text-green-500" />
-                ) : provider ? (
-                  <XCircle className="h-3.5 w-3.5 text-red-600 dark:text-red-500" />
-                ) : (
-                  <Circle className="h-3.5 w-3.5 text-neutral-400" />
+              <div key={key.envVar} className="space-y-2 text-left">
+                <button
+                  onClick={() => toggleExpandKey(key.envVar)}
+                  className="w-full flex items-center justify-between p-4 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900/50 hover:bg-neutral-100 dark:hover:bg-neutral-900 transition-colors"
+                >
+                  <div className="flex items-center gap-3">
+                    {hasValue ? (
+                      <CheckCircle2 className="h-5 w-5 text-green-500" />
+                    ) : (
+                      <Circle className="h-5 w-5 text-neutral-400 dark:text-neutral-500" />
+                    )}
+                    <span className="text-base font-medium text-neutral-900 dark:text-white">
+                      {key.displayName}
+                    </span>
+                  </div>
+                  <ArrowRight
+                    className={`h-5 w-5 text-neutral-500 dark:text-neutral-400 transition-transform ${
+                      isExpanded ? "rotate-90" : ""
+                    }`}
+                  />
+                </button>
+
+                {isExpanded && (
+                  <div className="pl-4 pr-4 pb-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                        {key.description || `Enter your ${key.displayName}`}
+                      </p>
+                      {providerUrl && (
+                        <a
+                          href={providerUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 flex items-center gap-1 whitespace-nowrap"
+                        >
+                          Get key
+                          <ExternalLink className="h-4 w-4" />
+                        </a>
+                      )}
+                    </div>
+                    <div className="relative">
+                      <input
+                        type={showKeys[key.envVar] ? "text" : "password"}
+                        value={apiKeyValues[key.envVar] || ""}
+                        onChange={(e) => handleApiKeyChange(key.envVar, e.target.value)}
+                        placeholder={
+                          key.envVar === "ANTHROPIC_API_KEY"
+                            ? "sk-ant-api03-..."
+                            : key.envVar === "OPENAI_API_KEY"
+                              ? "sk-proj-..."
+                              : `Enter your ${key.displayName}`
+                        }
+                        className="w-full px-4 py-3 pr-12 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-white font-mono text-sm placeholder:text-neutral-400 dark:placeholder:text-neutral-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => toggleShowKey(key.envVar)}
+                        className="absolute inset-y-0 right-0 pr-4 flex items-center text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-300"
+                      >
+                        {showKeys[key.envVar] ? (
+                          <EyeOff className="h-5 w-5" />
+                        ) : (
+                          <Eye className="h-5 w-5" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
                 )}
-                <span className={isAvailable ? "text-neutral-900 dark:text-neutral-100" : "text-neutral-500 dark:text-neutral-400"}>
-                  {agent.name}
-                </span>
               </div>
             );
           })}
         </div>
-        <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
-          Configure API keys in Settings to enable more agents.
-        </p>
-      </div>
+      )}
 
-      {/* Agent Selection */}
-      <div className="mb-4">
-        <h3 className="text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-2">
-          Default Agents (Optional)
-        </h3>
-        <div className="space-y-2">
-          {AGENT_CONFIGS.slice(0, 6).map((agent) => {
-            const provider = providersByName.get(agent.name);
-            const isAvailable = provider?.isAvailable || false;
-
-            return (
-              <button
-                key={agent.name}
-                onClick={() => handleToggleAgent(agent.name)}
-                disabled={!isAvailable}
-                className={`w-full rounded-lg border px-3 py-2 text-left transition-all ${
-                  selectedAgents.includes(agent.name)
-                    ? "border-primary bg-primary/5 dark:bg-primary/10"
-                    : "border-neutral-200 bg-white hover:border-neutral-300 dark:border-neutral-700 dark:bg-neutral-900 dark:hover:border-neutral-600"
-                } ${!isAvailable ? "opacity-50 cursor-not-allowed" : ""}`}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex-1">
-                    <div className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                      {agent.name}
-                    </div>
-                  </div>
-                  <div
-                    className={`h-4 w-4 rounded border-2 flex items-center justify-center ${
-                      selectedAgents.includes(agent.name)
-                        ? "border-primary bg-primary"
-                        : "border-neutral-300 dark:border-neutral-600"
-                    }`}
-                  >
-                    {selectedAgents.includes(agent.name) && (
-                      <svg
-                        className="h-3 w-3 text-white"
-                        viewBox="0 0 12 12"
-                        fill="none"
-                      >
-                        <path
-                          d="M10 3L4.5 8.5L2 6"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                    )}
-                  </div>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      <div className="flex items-center justify-between pt-2">
-        <Button variant="ghost" onClick={onSkip} size="sm">
-          Skip
+      {/* Navigation */}
+      <div className="flex items-center gap-4">
+        <Button
+          variant="ghost"
+          onClick={onSkip}
+          disabled={isSaving}
+          className="text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white"
+        >
+          Skip for now
         </Button>
         <Button
           onClick={handleContinue}
-          size="sm"
-          className="gap-1.5"
+          disabled={isSaving}
+          className="bg-blue-600 hover:bg-blue-700 text-white gap-2"
         >
-          Continue
-          <ArrowRight className="h-3.5 w-3.5" />
+          {isSaving ? "Saving..." : "Continue"}
+          {!isSaving && <ArrowRight className="h-4 w-4" />}
         </Button>
       </div>
     </div>

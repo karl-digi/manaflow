@@ -123,59 +123,74 @@ export function GitHubConnectStep({
   }, [teamSlugOrId, mintInstallState, onGitHubConnected]);
 
   return (
-    <div className="flex flex-col">
-      <div className="mb-4">
-        <h2 className="mb-1 text-xl font-semibold text-neutral-900 dark:text-neutral-50">
+    <div className="flex flex-col items-center text-center">
+      {/* Header */}
+      <div className="mb-12">
+        <h1 className="mb-4 text-4xl font-semibold text-neutral-900 dark:text-white">
           Connect GitHub
-        </h2>
-        <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          Connect your GitHub account to access repositories.
+        </h1>
+        <p className="text-lg text-neutral-600 dark:text-neutral-400 max-w-md mx-auto">
+          Connect your GitHub account to sync repositories and collaborate with your team.
         </p>
       </div>
 
+      {/* Connection Status / Button */}
       {localHasConnection ? (
-        <div className="mb-4 rounded-lg border border-neutral-200 bg-neutral-50 p-4 dark:border-neutral-700 dark:bg-neutral-800/50">
-          <div className="flex items-center gap-3 mb-2">
-            <Check className="h-4 w-4 text-green-600" />
-            <span className="font-medium text-neutral-900 dark:text-neutral-100">
-              Connected
-            </span>
-          </div>
-          {connections && connections.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {connections.map((conn) => (
-                <div
-                  key={conn.installationId}
-                  className="flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400"
-                >
-                  <GitHubIcon className="h-4 w-4" />
-                  <span>{conn.accountLogin}</span>
-                </div>
-              ))}
+        <div className="mb-8 w-full max-w-md">
+          <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900/50 p-6 backdrop-blur">
+            <div className="flex items-center justify-center gap-3 mb-4">
+              <Check className="h-5 w-5 text-green-500" />
+              <span className="text-lg font-medium text-neutral-900 dark:text-white">
+                Connected
+              </span>
             </div>
-          )}
+            {connections && connections.length > 0 && (
+              <div className="flex flex-wrap justify-center gap-3">
+                {connections.map((conn) => (
+                  <div
+                    key={conn.installationId}
+                    className="flex items-center gap-2 rounded-lg bg-neutral-200 dark:bg-neutral-800/50 px-3 py-2 text-sm text-neutral-700 dark:text-neutral-300"
+                  >
+                    <GitHubIcon className="h-4 w-4" />
+                    <span>{conn.accountLogin}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       ) : (
-        <Button
-          size="sm"
-          onClick={handleConnect}
-          disabled={isConnecting}
-          className="mb-4 gap-2"
-        >
-          <GitHubIcon className="h-4 w-4" />
-          {isConnecting ? "Connecting..." : "Connect GitHub"}
-          <ExternalLink className="h-4 w-4" />
-        </Button>
+        <div className="mb-12">
+          <Button
+            size="lg"
+            onClick={handleConnect}
+            disabled={isConnecting}
+            className="h-12 px-8 text-base gap-2 bg-blue-600 hover:bg-blue-700 text-white"
+          >
+            <GitHubIcon className="h-5 w-5" />
+            {isConnecting ? "Connecting..." : "Connect GitHub"}
+            <ExternalLink className="h-4 w-4" />
+          </Button>
+        </div>
       )}
 
-      <div className="flex items-center justify-between pt-2">
-        <Button variant="ghost" onClick={onSkip} disabled={isConnecting} size="sm">
-          Skip
+      {/* Navigation */}
+      <div className="flex items-center gap-4">
+        <Button
+          variant="ghost"
+          onClick={onSkip}
+          disabled={isConnecting}
+          className="text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white"
+        >
+          Skip for now
         </Button>
         {localHasConnection && (
-          <Button onClick={onNext} size="sm" className="gap-1.5">
+          <Button
+            onClick={onNext}
+            className="bg-blue-600 hover:bg-blue-700 text-white gap-2"
+          >
             Continue
-            <ArrowRight className="h-3.5 w-3.5" />
+            <ArrowRight className="h-4 w-4" />
           </Button>
         )}
       </div>
