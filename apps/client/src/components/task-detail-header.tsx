@@ -705,9 +705,6 @@ function SocketActions({
       const actionable = response.results.filter(
         (result) => result.url && !result.error,
       );
-      if (actionable.length > 0) {
-        navigateToPrs(actionable);
-      }
       toast.success(openedLabel, {
         id: context?.toastId,
         description: summarizeResults(response.results),
