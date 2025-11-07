@@ -20,6 +20,7 @@ import {
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { createFakeConvexId } from "@/lib/fakeConvexId";
+import { parseGithubRepo } from "@/lib/parseGithubRepo";
 import { attachTaskLifecycleListeners } from "@/lib/socket/taskLifecycleListeners";
 import { branchesQueryOptions } from "@/queries/branches";
 import { api } from "@cmux/convex/api";
@@ -29,7 +30,7 @@ import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
 import { convexQuery } from "@convex-dev/react-query";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { useMutation } from "convex/react";
+import { useAction, useMutation } from "convex/react";
 import { Server as ServerIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -344,6 +345,7 @@ function DashboardComponent() {
     }
   );
   const generateUploadUrl = useMutation(api.storage.generateUploadUrl);
+  const addManualRepo = useAction(api.github.addManualRepo);
 
   const effectiveSelectedBranch = useMemo(() => {
     if (selectedBranch.length > 0) {
@@ -646,6 +648,43 @@ function DashboardComponent() {
     localStorage.setItem("isCloudMode", JSON.stringify(newMode));
   }, [isCloudMode, isEnvSelected]);
 
+  // Handle paste of GitHub repo URL in the project search field
+  const handleProjectSearchPaste = useCallback(
+    async (input: string) => {
+      const parsed = parseGithubRepo(input);
+      if (!parsed) {
+        return false;
+      }
+
+      try {
+        const result = await addManualRepo({
+          teamSlugOrId,
+          repoUrl: input,
+        });
+
+        if (result.success) {
+          // Refetch repos to get the newly added one
+          await reposByOrgQuery.refetch();
+
+          // Select the newly added repo
+          setSelectedProject([result.fullName]);
+          localStorage.setItem("selectedProject", JSON.stringify([result.fullName]));
+
+          toast.success(`Added ${result.fullName} to repositories`);
+          return true;
+        }
+
+        return false;
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : "Failed to add repository";
+        toast.error(errorMessage);
+        return true; // Return true to close the dropdown even on error
+      }
+    },
+    [addManualRepo, teamSlugOrId, reposByOrgQuery]
+  );
+
   // Listen for VSCode spawned events
   useEffect(() => {
     if (!socket) return;
@@ -830,6 +869,7 @@ function DashboardComponent() {
               projectOptions={projectOptions}
               selectedProject={selectedProject}
               onProjectChange={handleProjectChange}
+              onProjectSearchPaste={handleProjectSearchPaste}
               branchOptions={branchOptions}
               selectedBranch={effectiveSelectedBranch}
               onBranchChange={handleBranchChange}
@@ -857,7 +897,7 @@ function DashboardComponent() {
 }
 
 type DashboardMainCardProps = {
-  editorApiRef: React.MutableRefObject<EditorApi | null>;
+  editorApiRef: React.RefObject<EditorApi | null>;
   onTaskDescriptionChange: (value: string) => void;
   onSubmit: () => void;
   lexicalRepoUrl?: string;
@@ -866,6 +906,7 @@ type DashboardMainCardProps = {
   projectOptions: SelectOption[];
   selectedProject: string[];
   onProjectChange: (newProjects: string[]) => void;
+  onProjectSearchPaste?: (value: string) => boolean | Promise<boolean>;
   branchOptions: string[];
   selectedBranch: string[];
   onBranchChange: (newBranches: string[]) => void;
@@ -893,6 +934,7 @@ function DashboardMainCard({
   projectOptions,
   selectedProject,
   onProjectChange,
+  onProjectSearchPaste,
   branchOptions,
   selectedBranch,
   onBranchChange,
@@ -927,6 +969,7 @@ function DashboardMainCard({
           projectOptions={projectOptions}
           selectedProject={selectedProject}
           onProjectChange={onProjectChange}
+          onProjectSearchPaste={onProjectSearchPaste}
           branchOptions={branchOptions}
           selectedBranch={selectedBranch}
           onBranchChange={onBranchChange}
