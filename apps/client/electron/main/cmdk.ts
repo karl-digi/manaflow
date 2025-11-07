@@ -239,6 +239,69 @@ export function initCmdK(opts: {
         });
         if (input.type !== "keyDown") return;
         const isMac = process.platform === "darwin";
+
+        const getTargetWindow = (): BrowserWindow | null => {
+          return (
+            BrowserWindow.getFocusedWindow() ??
+            opts.getMainWindow() ??
+            BrowserWindow.getAllWindows()[0] ??
+            null
+          );
+        };
+
+        const emitShortcutEvent = (
+          eventName: string,
+          debugName: string,
+          warnLabel?: string
+        ): boolean => {
+          const targetWin = getTargetWindow();
+          if (!targetWin || targetWin.isDestroyed()) {
+            return false;
+          }
+          try {
+            targetWin.webContents.send(`cmux:event:shortcut:${eventName}`);
+            keyDebug(`emit-${debugName}`, {
+              to: targetWin.webContents.id,
+              from: contents.id,
+            });
+            return true;
+          } catch (err) {
+            opts.logger.warn(
+              `Failed to emit ${warnLabel ?? debugName} shortcut`,
+              err
+            );
+            keyDebug(`emit-${debugName}-error`, { err: String(err) });
+            return false;
+          }
+        };
+
+        const hasCmdCtrlHistoryModifiers =
+          Boolean(input.meta) && Boolean(input.control) && !input.alt && !input.shift;
+
+        if (hasCmdCtrlHistoryModifiers) {
+          const key = input.key?.toLowerCase?.() ?? "";
+          let historyEvent: "history-back" | "history-forward" | "history-menu" | null =
+            null;
+
+          if (key === "[" || input.code === "BracketLeft") {
+            historyEvent = "history-back";
+          } else if (key === "]" || input.code === "BracketRight") {
+            historyEvent = "history-forward";
+          } else if (key === "y") {
+            historyEvent = "history-menu";
+          }
+
+          if (historyEvent) {
+            e.preventDefault();
+            keyDebug(`${historyEvent}-detected`, {
+              sourceId: contents.id,
+              type: contents.getType?.(),
+            });
+            emitShortcutEvent(historyEvent, historyEvent, historyEvent.replace("-", " "));
+            return;
+          }
+        }
+
         // Only trigger on EXACT Cmd+K (mac) or Ctrl+K (others)
         const isCmdK = (() => {
           if (input.key.toLowerCase() !== "k") return false;
@@ -264,33 +327,12 @@ export function initCmdK(opts: {
         // Prevent default to avoid in-app conflicts and ensure single toggle
         e.preventDefault();
 
-        const getTargetWindow = (): BrowserWindow | null => {
-          return (
-            BrowserWindow.getFocusedWindow() ??
-            opts.getMainWindow() ??
-            BrowserWindow.getAllWindows()[0] ??
-            null
-          );
-        };
-
         if (isSidebarToggle) {
           keyDebug("sidebar-toggle-detected", {
             sourceId: contents.id,
             type: contents.getType?.(),
           });
-          const targetWin = getTargetWindow();
-          if (targetWin && !targetWin.isDestroyed()) {
-            try {
-              targetWin.webContents.send("cmux:event:shortcut:sidebar-toggle");
-              keyDebug("emit-sidebar-toggle", {
-                to: targetWin.webContents.id,
-                from: contents.id,
-              });
-            } catch (err) {
-              opts.logger.warn("Failed to emit sidebar toggle shortcut", err);
-              keyDebug("emit-sidebar-toggle-error", { err: String(err) });
-            }
-          }
+          emitShortcutEvent("sidebar-toggle", "sidebar-toggle", "sidebar toggle");
           return;
         }
 
@@ -302,19 +344,7 @@ export function initCmdK(opts: {
         // If already open, just toggle; do not overwrite previous capture
         if (cmdkOpen) {
           keyDebug("skip-capture-already-open", { id: contents.id });
-          const targetWin = getTargetWindow();
-          if (targetWin && !targetWin.isDestroyed()) {
-            try {
-              targetWin.webContents.send("cmux:event:shortcut:cmd-k");
-              keyDebug("emit-cmdk", {
-                to: targetWin.webContents.id,
-                from: contents.id,
-              });
-            } catch (err) {
-              opts.logger.warn("Failed to emit Cmd+K (already open)", err);
-              keyDebug("emit-cmdk-error", { err: String(err) });
-            }
-          }
+          emitShortcutEvent("cmd-k", "cmdk", "Cmd+K");
           return;
         }
 

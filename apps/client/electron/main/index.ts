@@ -892,6 +892,47 @@ app.whenReady().then(async () => {
       mainWindow ??
       BrowserWindow.getAllWindows()[0] ??
       null;
+    const navigationMenu: MenuItemConstructorOptions = {
+      label: "Navigate",
+      submenu: [
+        {
+          label: "Back",
+          accelerator: "Cmd+Ctrl+[",
+          click: () => {
+            const dispatched = sendShortcutToFocusedWindow("history-back");
+            if (!dispatched) {
+              mainWarn(
+                "History Back shortcut triggered with no active renderer"
+              );
+            }
+          },
+        },
+        {
+          label: "Forward",
+          accelerator: "Cmd+Ctrl+]",
+          click: () => {
+            const dispatched = sendShortcutToFocusedWindow("history-forward");
+            if (!dispatched) {
+              mainWarn(
+                "History Forward shortcut triggered with no active renderer"
+              );
+            }
+          },
+        },
+        {
+          label: "History",
+          accelerator: "Cmd+Ctrl+Y",
+          click: () => {
+            const dispatched = sendShortcutToFocusedWindow("history-menu");
+            if (!dispatched) {
+              mainWarn(
+                "History menu shortcut triggered with no active renderer"
+              );
+            }
+          },
+        },
+      ],
+    };
     const viewMenu: MenuItemConstructorOptions = {
       label: "View",
       submenu: [
@@ -977,6 +1018,7 @@ app.whenReady().then(async () => {
           },
         ],
       },
+      navigationMenu,
       viewMenu,
       { role: "windowMenu" }
     );

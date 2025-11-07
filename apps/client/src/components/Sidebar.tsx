@@ -18,6 +18,7 @@ import CmuxLogo from "./logo/cmux-logo";
 import { SidebarNavLink } from "./sidebar/SidebarNavLink";
 import { SidebarPullRequestList } from "./sidebar/SidebarPullRequestList";
 import { SidebarSectionLink } from "./sidebar/SidebarSectionLink";
+import { SidebarHistoryControls } from "./sidebar/SidebarHistoryControls";
 
 interface SidebarProps {
   tasks: Doc<"tasks">[] | undefined;
@@ -251,6 +252,7 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
           />
         </Link>
       </div>
+      <SidebarHistoryControls />
       <nav className="grow flex flex-col overflow-hidden">
         <div className="flex-1 overflow-y-auto pb-8">
           <ul className="flex flex-col gap-px">
