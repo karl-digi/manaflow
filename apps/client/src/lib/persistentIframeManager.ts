@@ -80,6 +80,9 @@ class PersistentIframeManager {
   private resizeObserver: ResizeObserver;
   private debugMode = false;
   private syncTimeouts = new Map<string, number>();
+  private iframeToKey = new WeakMap<HTMLIFrameElement, string>();
+  private previousFocusedElement: Element | null = null;
+  private focusCatchInitialized = false;
 
   constructor() {
     // Create resize observer for syncing positions
@@ -96,6 +99,7 @@ class PersistentIframeManager {
     });
 
     this.initializeContainer();
+    this.setupFocusCatch();
   }
 
   private initializeContainer() {
@@ -122,6 +126,101 @@ class PersistentIframeManager {
     } else {
       document.addEventListener("DOMContentLoaded", init);
     }
+  }
+
+  private setupFocusCatch() {
+    if (typeof document === "undefined" || this.focusCatchInitialized) {
+      return;
+    }
+
+    this.focusCatchInitialized = true;
+    this.previousFocusedElement =
+      document.activeElement instanceof Element ? document.activeElement : null;
+
+    document.addEventListener("focusin", this.handleDocumentFocusIn, true);
+  }
+
+  private handleDocumentFocusIn = (event: FocusEvent) => {
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      this.previousFocusedElement = null;
+      return;
+    }
+
+    if (!(target instanceof HTMLIFrameElement)) {
+      this.previousFocusedElement = target;
+      return;
+    }
+
+    const key = this.iframeToKey.get(target);
+    if (!key) {
+      this.previousFocusedElement = target;
+      return;
+    }
+
+    const entry = this.iframes.get(key);
+    if (!entry) {
+      this.previousFocusedElement = target;
+      return;
+    }
+
+    if (entry.isVisible) {
+      this.previousFocusedElement = target;
+      return;
+    }
+
+    const elementToRestore = this.previousFocusedElement;
+
+    if (this.debugMode) {
+      console.log(
+        `[FocusCatch] Restoring focus to previous element because iframe ${key} is hidden`
+      );
+    }
+
+    queueMicrotask(() => {
+      if (
+        document.activeElement === target &&
+        typeof target.blur === "function"
+      ) {
+        try {
+          target.blur();
+        } catch {
+          // ignore
+        }
+      }
+
+      if (
+        elementToRestore &&
+        this.isFocusableElement(elementToRestore) &&
+        document.contains(elementToRestore)
+      ) {
+        try {
+          elementToRestore.focus({ preventScroll: true });
+          return;
+        } catch {
+          try {
+            elementToRestore.focus();
+            return;
+          } catch {
+            // ignore
+          }
+        }
+      }
+
+      if (document.body && this.isFocusableElement(document.body)) {
+        try {
+          document.body.focus({ preventScroll: true });
+        } catch {
+          document.body.focus();
+        }
+      }
+    });
+  };
+
+  private isFocusableElement(
+    element: Element
+  ): element is HTMLElement | SVGElement {
+    return element instanceof HTMLElement || element instanceof SVGElement;
   }
 
   /**
@@ -151,6 +250,7 @@ class PersistentIframeManager {
         existing.iframe.src = url;
         existing.url = url;
       }
+      this.iframeToKey.set(existing.iframe, key);
       return existing.iframe;
     }
 
@@ -195,6 +295,8 @@ class PersistentIframeManager {
     iframe.src = url;
 
     wrapper.appendChild(iframe);
+
+    this.iframeToKey.set(iframe, key);
 
     // Add to container
     if (this.container) {
@@ -471,6 +573,8 @@ class PersistentIframeManager {
     if (entry.wrapper.parentElement) {
       entry.wrapper.parentElement.removeChild(entry.wrapper);
     }
+
+    this.iframeToKey.delete(entry.iframe);
 
     this.iframes.delete(key);
   }
