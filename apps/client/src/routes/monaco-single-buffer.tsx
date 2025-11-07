@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { DiffEditor, type DiffOnMount } from "@monaco-editor/react";
 import { diffArrays } from "diff";
-import type { editor } from "monaco-editor";
+import type { editor, languages } from "monaco-editor";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 
@@ -25,12 +25,22 @@ type DiffHunk = {
 
 type FileDiff = {
   filePath: string;
+  language: MonacoLanguage;
   hunks: DiffHunk[];
+  originalContent: string;
+  modifiedContent: string;
 };
 
 type CombinedFileBoundary = {
   filePath: string;
   startLineNumber: number;
+  language: MonacoLanguage;
+};
+
+type CombinedLineMetadata = {
+  language: MonacoLanguage | null;
+  filePath: string | null;
+  fileLineNumber: number | null;
 };
 
 type CombinedDiffOutput = {
@@ -39,6 +49,8 @@ type CombinedDiffOutput = {
   originalLineNumbers: (number | null)[];
   modifiedLineNumbers: (number | null)[];
   fileBoundaries: CombinedFileBoundary[];
+  originalLineMetadata: CombinedLineMetadata[];
+  modifiedLineMetadata: CombinedLineMetadata[];
 };
 
 type MonacoLanguage =
@@ -47,7 +59,11 @@ type MonacoLanguage =
   | "json"
   | "markdown"
   | "yaml"
+  | "python"
+  | "sql"
   | "plaintext";
+
+type Monaco = typeof import("monaco-editor");
 
 type DiffSample = {
   id: string;
@@ -581,11 +597,90 @@ export function endTimer(label: string) {
 }
 `,
   },
+  {
+    id: "queue-workers",
+    filePath: "apps/worker/src/runtime/queue_worker.py",
+    language: "python",
+    original: `from collections.abc import Iterable
+
+
+def poll_work_queue(queue_name: str) -> list[str]:
+  jobs = fetch_jobs(queue_name)
+  return [job["id"] for job in jobs]
+
+
+def enqueue_job(job_id: str, priority: int) -> None:
+  payload = {"job_id": job_id, "priority": priority}
+  send_to_queue(payload)
+`,
+    modified: `from __future__ import annotations
+
+from collections.abc import Iterable
+from dataclasses import dataclass
+from typing import Final
+
+MAX_PRIORITY: Final = 9
+
+
+@dataclass(slots=True)
+class QueuedJob:
+  job_id: str
+  priority: int
+  attempts: int = 0
+
+
+def poll_work_queue(queue_name: str) -> list[QueuedJob]:
+  jobs = fetch_jobs(queue_name)
+  return [QueuedJob(job["id"], job["priority"]) for job in jobs]
+
+
+def enqueue_job(job_id: str, priority: int) -> None:
+  clamped_priority = max(0, min(priority, MAX_PRIORITY))
+  payload = {"job_id": job_id, "priority": clamped_priority}
+  send_to_queue(payload)
+  log_submission(job_id, clamped_priority)
+`,
+  },
+  {
+    id: "analytics-sql",
+    filePath: "packages/db/migrations/018-create-analytics.sql",
+    language: "sql",
+    original: `CREATE TABLE analytics_reports (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  status TEXT NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX analytics_reports_status_idx ON analytics_reports(status);
+`,
+    modified: `CREATE TABLE analytics_reports (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  status TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'adhoc',
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  finalized_at TIMESTAMP NULL,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+
+CREATE INDEX analytics_reports_status_idx ON analytics_reports(status);
+CREATE INDEX analytics_reports_category_idx ON analytics_reports(category);
+`,
+  },
 ];
 
 const multiFileDiffExample = diffSamples.map(createFileDiffFromSample);
 
 const FILE_LABEL_ZONE_HEIGHT = 32;
+const MULTI_FILE_LANGUAGE_IDS = {
+  original: "cmux-multifile-original",
+  modified: "cmux-multifile-modified",
+} as const;
+
+type BufferKind = keyof typeof MULTI_FILE_LANGUAGE_IDS;
+type MultiFileLanguageId = (typeof MULTI_FILE_LANGUAGE_IDS)[BufferKind];
+const loadedBaseLanguages = new Set<MonacoLanguage>();
 
 export const Route = createFileRoute("/monaco-single-buffer")({
   component: MonacoSingleBufferRoute,
@@ -617,7 +712,8 @@ function MonacoSingleBufferRoute() {
   }, []);
 
   const diffData = useMemo(() => multiFileDiffExample, []);
-  const combinedDiff = useMemo<CombinedDiffOutput>(() => buildCombinedDiff(diffData), [diffData]);
+  const groupedDiffData = useMemo(() => groupDiffsByFile(diffData), [diffData]);
+  const combinedDiff = useMemo<CombinedDiffOutput>(() => buildCombinedDiff(groupedDiffData), [groupedDiffData]);
 
   const editorTheme = theme === "dark" ? "vs-dark" : "vs";
 
@@ -649,7 +745,7 @@ function MonacoSingleBufferRoute() {
     [],
   );
 
-  const handleMount: DiffOnMount = (editorInstance, _monacoInstance) => {
+  const handleMount: DiffOnMount = (editorInstance, monacoInstance) => {
     const originalEditor = editorInstance.getOriginalEditor();
     const modifiedEditor = editorInstance.getModifiedEditor();
 
@@ -677,7 +773,57 @@ function MonacoSingleBufferRoute() {
       theme,
     });
 
+    let isDisposed = false;
+
+    const initializeLanguages = async () => {
+      try {
+        ensureMultiFileLanguages(monacoInstance);
+        await ensureBaseLanguagesReady(monacoInstance, groupedDiffData);
+
+        if (isDisposed) {
+          return;
+        }
+
+        const originalContext = prepareLanguageContext({
+          monaco: monacoInstance,
+          files: groupedDiffData,
+          kind: "original",
+          lineMetadata: combinedDiff.originalLineMetadata,
+        });
+        updateMultiFileLanguageContext(MULTI_FILE_LANGUAGE_IDS.original, originalContext);
+
+        const modifiedContext = prepareLanguageContext({
+          monaco: monacoInstance,
+          files: groupedDiffData,
+          kind: "modified",
+          lineMetadata: combinedDiff.modifiedLineMetadata,
+        });
+        updateMultiFileLanguageContext(MULTI_FILE_LANGUAGE_IDS.modified, modifiedContext);
+
+        if (isDisposed) {
+          return;
+        }
+
+        assignLanguageToModel({
+          monaco: monacoInstance,
+          model: originalEditor.getModel(),
+          languageId: MULTI_FILE_LANGUAGE_IDS.original,
+        });
+
+        assignLanguageToModel({
+          monaco: monacoInstance,
+          model: modifiedEditor.getModel(),
+          languageId: MULTI_FILE_LANGUAGE_IDS.modified,
+        });
+      } catch (error) {
+        console.error("Failed to initialize multi-file language tokenization", error);
+      }
+    };
+
+    void initializeLanguages();
+
     editorInstance.onDidDispose(() => {
+      isDisposed = true;
       disposeHeaderOverlay();
     });
   };
@@ -737,26 +883,57 @@ function formatLineNumber(map: (number | null)[], lineNumber: number): string {
 }
 
 function groupDiffsByFile(diffFiles: FileDiff[]): FileDiff[] {
-  const grouped = new Map<string, DiffHunk[]>();
+  const grouped = new Map<
+    string,
+    {
+      language: MonacoLanguage;
+      hunks: DiffHunk[];
+      originalContent: string;
+      modifiedContent: string;
+    }
+  >();
   const fileOrder: string[] = [];
 
-  diffFiles.forEach(({ filePath, hunks }) => {
-    if (!grouped.has(filePath)) {
-      grouped.set(filePath, []);
-      fileOrder.push(filePath);
+  diffFiles.forEach((fileDiff) => {
+    if (!grouped.has(fileDiff.filePath)) {
+      grouped.set(fileDiff.filePath, {
+        language: fileDiff.language,
+        hunks: [],
+        originalContent: fileDiff.originalContent,
+        modifiedContent: fileDiff.modifiedContent,
+      });
+      fileOrder.push(fileDiff.filePath);
     }
 
-    const stored = grouped.get(filePath);
+    const stored = grouped.get(fileDiff.filePath);
     if (!stored) {
       return;
     }
 
-    stored.push(...hunks);
+    stored.hunks.push(...fileDiff.hunks);
+
+    if (!stored.originalContent) {
+      stored.originalContent = fileDiff.originalContent;
+    }
+
+    if (!stored.modifiedContent) {
+      stored.modifiedContent = fileDiff.modifiedContent;
+    }
   });
 
   return fileOrder.map((filePath) => {
-    const hunks = grouped.get(filePath) ?? [];
-    const sortedHunks = [...hunks].sort((left, right) => {
+    const stored = grouped.get(filePath);
+    if (!stored) {
+      return {
+        filePath,
+        language: "plaintext",
+        hunks: [],
+        originalContent: "",
+        modifiedContent: "",
+      };
+    }
+
+    const sortedHunks = [...stored.hunks].sort((left, right) => {
       if (left.originalStartLine !== right.originalStartLine) {
         return left.originalStartLine - right.originalStartLine;
       }
@@ -764,23 +941,34 @@ function groupDiffsByFile(diffFiles: FileDiff[]): FileDiff[] {
       return left.modifiedStartLine - right.modifiedStartLine;
     });
 
-    return { filePath, hunks: sortedHunks };
+    return {
+      filePath,
+      language: stored.language,
+      hunks: sortedHunks,
+      originalContent: stored.originalContent,
+      modifiedContent: stored.modifiedContent,
+    };
   });
 }
 
-function buildCombinedDiff(diffFiles: FileDiff[]): CombinedDiffOutput {
-  const groupedDiffFiles = groupDiffsByFile(diffFiles);
+function buildCombinedDiff(groupedDiffFiles: FileDiff[]): CombinedDiffOutput {
   const originalLines: string[] = [];
   const modifiedLines: string[] = [];
   const originalNumbers: (number | null)[] = [];
   const modifiedNumbers: (number | null)[] = [];
   const fileBoundaries: CombinedFileBoundary[] = [];
+  const originalMetadata: CombinedLineMetadata[] = [];
+  const modifiedMetadata: CombinedLineMetadata[] = [];
 
   let totalLines = 0;
 
   groupedDiffFiles.forEach((fileDiff) => {
     const startLineNumber = totalLines + 1;
-    fileBoundaries.push({ filePath: fileDiff.filePath, startLineNumber });
+    fileBoundaries.push({
+      filePath: fileDiff.filePath,
+      startLineNumber,
+      language: fileDiff.language,
+    });
 
     fileDiff.hunks.forEach((hunk, hunkIndex) => {
       hunk.lines.forEach((line) => {
@@ -790,6 +978,16 @@ function buildCombinedDiff(diffFiles: FileDiff[]): CombinedDiffOutput {
             modifiedLines.push(line.content);
             originalNumbers.push(line.originalLineNumber ?? null);
             modifiedNumbers.push(line.modifiedLineNumber ?? null);
+            originalMetadata.push({
+              language: fileDiff.language,
+              filePath: fileDiff.filePath,
+              fileLineNumber: line.originalLineNumber ?? null,
+            });
+            modifiedMetadata.push({
+              language: fileDiff.language,
+              filePath: fileDiff.filePath,
+              fileLineNumber: line.modifiedLineNumber ?? null,
+            });
             totalLines += 1;
             break;
           }
@@ -798,6 +996,16 @@ function buildCombinedDiff(diffFiles: FileDiff[]): CombinedDiffOutput {
             modifiedLines.push("");
             originalNumbers.push(line.originalLineNumber ?? null);
             modifiedNumbers.push(null);
+            originalMetadata.push({
+              language: fileDiff.language,
+              filePath: fileDiff.filePath,
+              fileLineNumber: line.originalLineNumber ?? null,
+            });
+            modifiedMetadata.push({
+              language: null,
+              filePath: null,
+              fileLineNumber: null,
+            });
             totalLines += 1;
             break;
           }
@@ -806,6 +1014,16 @@ function buildCombinedDiff(diffFiles: FileDiff[]): CombinedDiffOutput {
             modifiedLines.push(line.content);
             originalNumbers.push(null);
             modifiedNumbers.push(line.modifiedLineNumber ?? null);
+            originalMetadata.push({
+              language: null,
+              filePath: null,
+              fileLineNumber: null,
+            });
+            modifiedMetadata.push({
+              language: fileDiff.language,
+              filePath: fileDiff.filePath,
+              fileLineNumber: line.modifiedLineNumber ?? null,
+            });
             totalLines += 1;
             break;
           }
@@ -817,6 +1035,16 @@ function buildCombinedDiff(diffFiles: FileDiff[]): CombinedDiffOutput {
         modifiedLines.push("");
         originalNumbers.push(null);
         modifiedNumbers.push(null);
+        originalMetadata.push({
+          language: fileDiff.language,
+          filePath: fileDiff.filePath,
+          fileLineNumber: null,
+        });
+        modifiedMetadata.push({
+          language: fileDiff.language,
+          filePath: fileDiff.filePath,
+          fileLineNumber: null,
+        });
         totalLines += 1;
       }
     });
@@ -829,7 +1057,211 @@ function buildCombinedDiff(diffFiles: FileDiff[]): CombinedDiffOutput {
     originalLineNumbers: originalNumbers,
     modifiedLineNumbers: modifiedNumbers,
     fileBoundaries,
+    originalLineMetadata: originalMetadata,
+    modifiedLineMetadata: modifiedMetadata,
   };
+}
+
+type TokenizedFileLines = ReturnType<Monaco["editor"]["tokenize"]>;
+
+type MultiFileLanguageContext = {
+  lineMetadata: CombinedLineMetadata[];
+  tokenCache: Map<string, TokenizedFileLines>;
+};
+
+const registeredMultiFileLanguages = new Set<string>();
+const multiFileLanguageContexts = new Map<string, MultiFileLanguageContext>();
+
+class MultiFileLineState implements languages.IState {
+  constructor(private readonly languageId: MultiFileLanguageId, private readonly lineIndex: number) {}
+
+  clone(): languages.IState {
+    return new MultiFileLineState(this.languageId, this.lineIndex);
+  }
+
+  equals(other: languages.IState): boolean {
+    return (
+      other instanceof MultiFileLineState &&
+      other.languageId === this.languageId &&
+      other.lineIndex === this.lineIndex
+    );
+  }
+
+  getLineIndex() {
+    return this.lineIndex;
+  }
+}
+
+function ensureMultiFileLanguages(monaco: Monaco) {
+  (Object.values(MULTI_FILE_LANGUAGE_IDS) as MultiFileLanguageId[]).forEach((languageId) => {
+    if (registeredMultiFileLanguages.has(languageId)) {
+      return;
+    }
+
+    monaco.languages.register({ id: languageId });
+    monaco.languages.registerTokensProviderFactory(languageId, {
+      create: () => createCombinedTokensProvider(monaco, languageId),
+    });
+    registeredMultiFileLanguages.add(languageId);
+  });
+}
+
+async function ensureBaseLanguagesReady(monaco: Monaco, files: FileDiff[]) {
+  const requiredLanguages = new Set<MonacoLanguage>();
+  files.forEach((file) => requiredLanguages.add(file.language));
+
+  for (const language of requiredLanguages) {
+    if (loadedBaseLanguages.has(language)) {
+      continue;
+    }
+
+    try {
+      await monaco.editor.colorize("", language, {});
+      loadedBaseLanguages.add(language);
+    } catch (error) {
+      console.error(`Failed to warm up Monaco language ${language}`, error);
+    }
+  }
+}
+
+function prepareLanguageContext({
+  monaco,
+  files,
+  kind,
+  lineMetadata,
+}: {
+  monaco: Monaco;
+  files: FileDiff[];
+  kind: BufferKind;
+  lineMetadata: CombinedLineMetadata[];
+}): MultiFileLanguageContext {
+  return {
+    lineMetadata,
+    tokenCache: buildTokenCache(monaco, files, kind),
+  };
+}
+
+function buildTokenCache(monaco: Monaco, files: FileDiff[], kind: BufferKind) {
+  const cache = new Map<string, TokenizedFileLines>();
+
+  files.forEach((file) => {
+    const content = kind === "original" ? file.originalContent : file.modifiedContent;
+    cache.set(file.filePath, monaco.editor.tokenize(content, file.language));
+  });
+
+  return cache;
+}
+
+function updateMultiFileLanguageContext(languageId: MultiFileLanguageId, context: MultiFileLanguageContext) {
+  multiFileLanguageContexts.set(languageId, context);
+}
+
+function createCombinedTokensProvider(monaco: Monaco, languageId: MultiFileLanguageId): languages.TokensProvider {
+  return {
+    getInitialState: () => new MultiFileLineState(languageId, 0),
+    tokenize: (lineContent, state) => {
+      const currentState =
+        state instanceof MultiFileLineState ? state : new MultiFileLineState(languageId, 0);
+      const lineIndex = currentState.getLineIndex();
+      const context = multiFileLanguageContexts.get(languageId);
+      const tokens = getTokensForLine({
+        monaco,
+        context,
+        lineIndex,
+        lineContent,
+      });
+
+      return {
+        tokens,
+        endState: new MultiFileLineState(languageId, lineIndex + 1),
+      };
+    },
+  };
+}
+
+function getTokensForLine({
+  monaco,
+  context,
+  lineIndex,
+  lineContent,
+}: {
+  monaco: Monaco;
+  context: MultiFileLanguageContext | undefined;
+  lineIndex: number;
+  lineContent: string;
+}): languages.IToken[] {
+  if (!context || lineIndex >= context.lineMetadata.length) {
+    return tokenizeInline(monaco, "plaintext", lineContent);
+  }
+
+  const metadata = context.lineMetadata[lineIndex];
+  if (!metadata || !metadata.language || !metadata.filePath || metadata.fileLineNumber === null) {
+    const fallbackLanguage = metadata?.language ?? "plaintext";
+    return tokenizeInline(monaco, fallbackLanguage, lineContent);
+  }
+
+  const cachedTokens = context.tokenCache.get(metadata.filePath);
+  if (!cachedTokens) {
+    return tokenizeInline(monaco, metadata.language, lineContent);
+  }
+
+  const tokenLine = cachedTokens[metadata.fileLineNumber - 1];
+  if (!tokenLine || tokenLine.length === 0) {
+    return tokenizeInline(monaco, metadata.language, lineContent);
+  }
+
+  return tokenLine.map((token) => ({
+    startIndex: token.offset,
+    scopes: token.type,
+  }));
+}
+
+function tokenizeInline(monaco: Monaco, language: MonacoLanguage, content: string): languages.IToken[] {
+  if (!content) {
+    return [];
+  }
+
+  const [lineTokens] = monaco.editor.tokenize(content, language);
+  if (!lineTokens || lineTokens.length === 0) {
+    if (language === "plaintext") {
+      return [];
+    }
+
+    const [fallbackTokens] = monaco.editor.tokenize(content, "plaintext");
+    if (!fallbackTokens) {
+      return [];
+    }
+
+    return fallbackTokens.map((token) => ({
+      startIndex: token.offset,
+      scopes: token.type,
+    }));
+  }
+
+  return lineTokens.map((token) => ({
+    startIndex: token.offset,
+    scopes: token.type,
+  }));
+}
+
+function assignLanguageToModel({
+  monaco,
+  model,
+  languageId,
+}: {
+  monaco: Monaco;
+  model: editor.ITextModel | null;
+  languageId: MultiFileLanguageId;
+}) {
+  if (!model) {
+    return;
+  }
+
+  if (model.getLanguageId() === languageId) {
+    monaco.editor.setModelLanguage(model, "plaintext");
+  }
+
+  monaco.editor.setModelLanguage(model, languageId);
 }
 
 type SetupHeaderOverlayParams = {
@@ -1124,6 +1556,9 @@ function createFileDiffFromSample(sample: DiffSample): FileDiff {
 
   return {
     filePath: sample.filePath,
+    language: sample.language,
+    originalContent: sample.original,
+    modifiedContent: sample.modified,
     hunks: [
       {
         originalStartLine: firstOriginalLine ?? 1,
