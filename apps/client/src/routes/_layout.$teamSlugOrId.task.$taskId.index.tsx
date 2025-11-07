@@ -640,6 +640,8 @@ function TaskDetailPage() {
   const panelProps = useMemo(
     () => ({
       task: task ?? null,
+      taskId,
+      teamSlugOrId,
       taskRuns: taskRuns ?? null,
       crownEvaluation,
       workspaceUrl,
@@ -672,6 +674,8 @@ function TaskDetailPage() {
     }),
     [
       task,
+      taskId,
+      teamSlugOrId,
       taskRuns,
       crownEvaluation,
       workspaceUrl,

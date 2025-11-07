@@ -143,6 +143,8 @@ interface PanelFactoryProps {
   isAnyPanelExpanded?: boolean;
   // Chat panel props
   task?: Doc<"tasks"> | null;
+  taskId?: Id<"tasks">;
+  teamSlugOrId?: string;
   taskRuns?: TaskRunWithChildren[] | null;
   crownEvaluation?: {
     evaluatedAt?: number;
@@ -629,14 +631,20 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
     }
 
     case "gitDiff": {
-      const { task, selectedRun, TaskRunGitDiffPanel } = props;
+      const { task, taskId, teamSlugOrId, selectedRun, TaskRunGitDiffPanel } = props;
       if (!TaskRunGitDiffPanel) return null;
 
       return panelWrapper(
         <GitCompare className="size-3" aria-hidden />,
         PANEL_LABELS.gitDiff,
         <div className="flex-1 overflow-auto">
-          <TaskRunGitDiffPanel key={selectedRun?._id} task={task} selectedRun={selectedRun} />
+          <TaskRunGitDiffPanel
+            key={selectedRun?._id}
+            task={task}
+            taskId={taskId}
+            teamSlugOrId={teamSlugOrId}
+            selectedRun={selectedRun}
+          />
         </div>
       );
     }
@@ -691,6 +699,8 @@ export const RenderPanel = React.memo(RenderPanelComponent, (prevProps, nextProp
   // For gitDiff panel, check task and selectedRun changes
   if (prevProps.type === "gitDiff") {
     if (prevProps.task?._id !== nextProps.task?._id ||
+      prevProps.taskId !== nextProps.taskId ||
+      prevProps.teamSlugOrId !== nextProps.teamSlugOrId ||
       prevProps.selectedRun?._id !== nextProps.selectedRun?._id) {
       return false;
     }
