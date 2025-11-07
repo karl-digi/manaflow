@@ -254,6 +254,27 @@ export type GithubMergePrSimpleRequest = {
     method: 'squash' | 'rebase' | 'merge';
 };
 
+export type GithubPrMergeabilityResponse = {
+    success: boolean;
+    statuses: Array<{
+        repoFullName: string;
+        number: number;
+        mergeable?: boolean | null;
+        mergeableState?: string | null;
+        hasConflicts?: boolean;
+        error?: string;
+    }>;
+    error?: string;
+};
+
+export type GithubPrMergeabilityRequest = {
+    teamSlugOrId: string;
+    pullRequests: Array<{
+        repoFullName: string;
+        number: number;
+    }>;
+};
+
 export type GithubPrsFilesResponse = {
     repoFullName: string;
     number: number;
@@ -1372,6 +1393,37 @@ export type PostApiIntegrationsGithubPrsMergeSimpleResponses = {
 };
 
 export type PostApiIntegrationsGithubPrsMergeSimpleResponse = PostApiIntegrationsGithubPrsMergeSimpleResponses[keyof PostApiIntegrationsGithubPrsMergeSimpleResponses];
+
+export type PostApiIntegrationsGithubPrsMergeabilityData = {
+    body: GithubPrMergeabilityRequest;
+    path?: never;
+    query?: never;
+    url: '/api/integrations/github/prs/mergeability';
+};
+
+export type PostApiIntegrationsGithubPrsMergeabilityErrors = {
+    /**
+     * Invalid request
+     */
+    400: unknown;
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Forbidden
+     */
+    403: unknown;
+};
+
+export type PostApiIntegrationsGithubPrsMergeabilityResponses = {
+    /**
+     * Mergeability information
+     */
+    200: GithubPrMergeabilityResponse;
+};
+
+export type PostApiIntegrationsGithubPrsMergeabilityResponse = PostApiIntegrationsGithubPrsMergeabilityResponses[keyof PostApiIntegrationsGithubPrsMergeabilityResponses];
 
 export type GetApiIntegrationsGithubPrsRawData = {
     body?: never;

@@ -27,6 +27,10 @@ type GitHubPrBasic = {
 type GitHubPrDetail = GitHubPrBasic & {
   merged_at: string | null;
   node_id: string;
+  mergeable_state?: string | null;
+  mergeable?: boolean | null;
+  base_ref?: string;
+  head_sha?: string;
 };
 
 type ConvexClient = ReturnType<typeof getConvex>;
@@ -68,6 +72,35 @@ const AggregatePullRequestSummarySchema = z.object({
   url: z.string().url().optional(),
   number: z.number().optional(),
 });
+
+const PullRequestMergeabilityRequestSchema = z
+  .object({
+    teamSlugOrId: z.string(),
+    pullRequests: z.array(
+      z.object({
+        repoFullName: z.string(),
+        number: z.number(),
+      }),
+    ),
+  })
+  .openapi("GithubPrMergeabilityRequest");
+
+const PullRequestMergeabilityResponseSchema = z
+  .object({
+    success: z.boolean(),
+    statuses: z.array(
+      z.object({
+        repoFullName: z.string(),
+        number: z.number(),
+        mergeable: z.boolean().nullable().optional(),
+        mergeableState: z.string().nullable().optional(),
+        hasConflicts: z.boolean().optional(),
+        error: z.string().optional(),
+      }),
+    ),
+    error: z.string().optional(),
+  })
+  .openapi("GithubPrMergeabilityResponse");
 
 const OpenPullRequestBody = z
   .object({
@@ -983,6 +1016,143 @@ githubPrsOpenRouter.openapi(
   },
 );
 
+githubPrsOpenRouter.openapi(
+  createRoute({
+    method: "post" as const,
+    path: "/integrations/github/prs/mergeability",
+    tags: ["Integrations"],
+    summary: "Check GitHub mergeability for one or more pull requests",
+    request: {
+      body: {
+        content: {
+          "application/json": {
+            schema: PullRequestMergeabilityRequestSchema,
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        description: "Mergeability information",
+        content: {
+          "application/json": {
+            schema: PullRequestMergeabilityResponseSchema,
+          },
+        },
+      },
+      400: { description: "Invalid request" },
+      401: { description: "Unauthorized" },
+      403: { description: "Forbidden" },
+    },
+  }),
+  async (c) => {
+    const user = await stackServerAppJs.getUser({ tokenStore: c.req.raw });
+    if (!user) {
+      return c.text("Unauthorized", 401);
+    }
+
+    const [{ accessToken }, githubAccount] = await Promise.all([
+      user.getAuthJson(),
+      user.getConnectedAccount("github"),
+    ]);
+
+    if (!accessToken) {
+      return c.text("Unauthorized", 401);
+    }
+
+    if (!githubAccount) {
+      return c.json(
+        {
+          success: false,
+          statuses: [],
+          error: "GitHub account is not connected",
+        },
+        401,
+      );
+    }
+
+    const { accessToken: githubAccessToken } = await githubAccount.getAccessToken();
+    if (!githubAccessToken) {
+      return c.json(
+        {
+          success: false,
+          statuses: [],
+          error: "GitHub access token unavailable",
+        },
+        401,
+      );
+    }
+
+    const body = c.req.valid("json");
+    const { teamSlugOrId, pullRequests } = body;
+
+    await verifyTeamAccess({ req: c.req.raw, teamSlugOrId });
+
+    if (!pullRequests || pullRequests.length === 0) {
+      return c.json({
+        success: true,
+        statuses: [],
+      });
+    }
+
+    const octokit = createOctokit(githubAccessToken);
+
+    const statuses = await Promise.all(
+      pullRequests.map(async ({ repoFullName, number }) => {
+        const split = splitRepoFullName(repoFullName);
+        if (!split) {
+          return {
+            repoFullName,
+            number,
+            error: "Invalid repository name",
+          };
+        }
+        try {
+          const detail = await fetchPullRequestDetail({
+            octokit,
+            owner: split.owner,
+            repo: split.repo,
+            number,
+          });
+          const mergeableState = detail.mergeable_state ?? null;
+          const mergeable = typeof detail.mergeable === "boolean" ? detail.mergeable : null;
+          const hasConflicts =
+            typeof mergeableState === "string" &&
+            mergeableState.toLowerCase() === "dirty";
+          return {
+            repoFullName,
+            number,
+            mergeable,
+            mergeableState,
+            hasConflicts,
+          };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return {
+            repoFullName,
+            number,
+            error: message,
+          };
+        }
+      }),
+    );
+
+    const errors = statuses.filter((status) => status.error);
+
+    return c.json({
+      success: errors.length === 0,
+      statuses,
+      error:
+        errors.length > 0
+          ? errors
+            .map((entry) => `${entry.repoFullName}#${entry.number}: ${entry.error}`)
+            .join("; ")
+          : undefined,
+    });
+  },
+);
+
 function createOctokit(token: string): Octokit {
   return new Octokit({
     auth: token,
@@ -1139,6 +1309,10 @@ async function fetchPullRequestDetail({
     draft: data.draft ?? undefined,
     merged_at: data.merged_at,
     node_id: data.node_id,
+    mergeable_state: (data as { mergeable_state?: string | null }).mergeable_state ?? null,
+    mergeable: (data as { mergeable?: boolean | null }).mergeable ?? null,
+    base_ref: data.base?.ref,
+    head_sha: data.head?.sha,
   };
 }
 

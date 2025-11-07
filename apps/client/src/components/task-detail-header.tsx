@@ -1,6 +1,7 @@
 import { OpenEditorSplitButton } from "@/components/OpenEditorSplitButton";
 import { Dropdown } from "@/components/ui/dropdown";
 import { MergeButton, type MergeMethod } from "@/components/ui/merge-button";
+import { usePullRequestMergeability } from "@/hooks/usePullRequestMergeability";
 import { useSocketSuspense } from "@/contexts/socket/use-socket";
 import { isElectron } from "@/lib/electron";
 import { cn } from "@/lib/utils";
@@ -605,6 +606,36 @@ function SocketActions({
     [pullRequests],
   );
 
+  const mergeabilityTargets = useMemo(
+    () =>
+      pullRequests
+        .filter(
+          (pr) =>
+            pr.state === "open" &&
+            typeof pr.number === "number" &&
+            typeof pr.repoFullName === "string",
+        )
+        .map((pr) => ({
+          repoFullName: pr.repoFullName,
+          number: pr.number,
+        })),
+    [pullRequests],
+  );
+
+  const mergeability = usePullRequestMergeability({
+    teamSlugOrId,
+    pullRequests: mergeabilityTargets,
+    enabled: prIsOpen,
+  });
+
+  const conflictedRepos = useMemo(
+    () =>
+      mergeability.statuses
+        .filter((status) => status.hasConflicts)
+        .map((status) => status.repoFullName),
+    [mergeability.statuses],
+  );
+
   const diffQueries = useQueries({
     queries: repoDiffTargets.map((target) => ({
       ...gitDiffQueryOptions({
@@ -875,6 +906,9 @@ function SocketActions({
   };
 
   const handleMerge = (method: MergeMethod) => {
+    if (mergeConflictsExist || mergeStatusLoading) {
+      return;
+    }
     mergePrMutation.mutate({
       body: {
         teamSlugOrId,
@@ -894,6 +928,22 @@ function SocketActions({
     mergePrMutation.isPending || mergeBranchMutation.isPending;
 
   const hasAnyRemotePr = pullRequests.some((pr) => pr.url);
+  const mergeConflictsExist = prIsOpen && conflictedRepos.length > 0;
+  const mergeStatusLoading = prIsOpen && mergeability.isChecking;
+  const conflictReason = useMemo(() => {
+    if (!mergeConflictsExist) {
+      return undefined;
+    }
+    if (conflictedRepos.length === 0) {
+      return "Resolve merge conflicts with main before merging.";
+    }
+    const preview = conflictedRepos.slice(0, 3).join(", ");
+    const remaining = conflictedRepos.length - 3;
+    const suffix = remaining > 0 ? `, and ${remaining} more` : "";
+    return `Resolve merge conflicts with main in ${preview}${suffix} before merging.`;
+  }, [conflictedRepos, mergeConflictsExist]);
+  const mergeDisabledReason =
+    conflictReason ?? (mergeStatusLoading ? "Checking for merge conflicts..." : undefined);
 
   const renderRepoDropdown = () => (
     <Dropdown.Root>
@@ -969,9 +1019,12 @@ function SocketActions({
             isOpeningPr ||
             isCreatingPr ||
             isMerging ||
-            (!prIsOpen && !hasChanges)
+            (!prIsOpen && !hasChanges) ||
+            mergeConflictsExist ||
+            mergeStatusLoading
           }
           prCount={repoFullNames.length}
+          disabledReason={mergeDisabledReason}
         />
       )}
       {!prIsOpen && !prIsMerged && ENABLE_MERGE_BUTTON && (

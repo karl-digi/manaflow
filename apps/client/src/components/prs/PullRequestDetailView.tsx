@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { useClipboard } from "@mantine/hooks";
 import clsx from "clsx";
 import { MergeButton, type MergeMethod } from "@/components/ui/merge-button";
+import { usePullRequestMergeability } from "@/hooks/usePullRequestMergeability";
 import { postApiIntegrationsGithubPrsCloseMutation, postApiIntegrationsGithubPrsMergeSimpleMutation } from "@cmux/www-openapi-client/react-query";
 import type { PostApiIntegrationsGithubPrsCloseData, PostApiIntegrationsGithubPrsCloseResponse, PostApiIntegrationsGithubPrsMergeSimpleData, PostApiIntegrationsGithubPrsMergeSimpleResponse, Options } from "@cmux/www-openapi-client";
 import { useCombinedWorkflowData, WorkflowRunsBadge, WorkflowRunsSection } from "@/components/WorkflowRunsSection";
@@ -138,6 +139,19 @@ export function PullRequestDetailView({
     teamSlugOrId,
     repoFullName: `${owner}/${repo}`,
     number: Number(number),
+  });
+
+  const mergeability = usePullRequestMergeability({
+    teamSlugOrId,
+    pullRequests: currentPR
+      ? [
+        {
+          repoFullName: currentPR.repoFullName,
+          number: currentPR.number,
+        },
+      ]
+      : [],
+    enabled: currentPR?.state === "open",
   });
 
   const fileOutputs = useConvexQuery(api.codeReview.listFileOutputsForPr, {
@@ -287,13 +301,28 @@ export function PullRequestDetailView({
   }, [workflowData.allRuns, workflowData.isLoading]);
 
   const disabledBecauseOfChecks = !checksAllowMerge;
+  const mergeConflictsExist =
+    currentPR?.state === "open" &&
+    mergeability.statuses.some((status) => status.hasConflicts);
+  const mergeStatusLoading = currentPR?.state === "open" && mergeability.isChecking;
   const mergeDisabled =
     mergePrMutation.isPending ||
     closePrMutation.isPending ||
-    disabledBecauseOfChecks;
-  const mergeDisabledReason = disabledBecauseOfChecks
-    ? checksDisabledReason
-    : undefined;
+    disabledBecauseOfChecks ||
+    mergeConflictsExist ||
+    mergeStatusLoading;
+  const mergeDisabledReason = (() => {
+    if (disabledBecauseOfChecks) {
+      return checksDisabledReason;
+    }
+    if (mergeConflictsExist) {
+      return "Resolve merge conflicts with main before merging.";
+    }
+    if (mergeStatusLoading) {
+      return "Checking for merge conflicts...";
+    }
+    return undefined;
+  })();
 
   const handleClosePR = () => {
     if (!currentPR) return;
@@ -312,7 +341,9 @@ export function PullRequestDetailView({
       !currentPR ||
       mergePrMutation.isPending ||
       closePrMutation.isPending ||
-      disabledBecauseOfChecks
+      disabledBecauseOfChecks ||
+      mergeConflictsExist ||
+      mergeStatusLoading
     ) {
       return;
     }
