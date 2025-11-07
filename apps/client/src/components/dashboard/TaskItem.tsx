@@ -84,6 +84,12 @@ export const TaskItem = memo(function TaskItem({
     return null;
   }, [hasActiveVSCode, runWithVSCode]);
 
+  const isLocalWorkspaceRun = Boolean(
+    runWithVSCode?.isLocalWorkspace ||
+      runWithVSCode?.vscode?.provider === "other" ||
+      task.isLocalWorkspace
+  );
+
   const handleClick = useCallback(() => {
     navigate({
       to: "/$teamSlugOrId/task/$taskId",
@@ -259,6 +265,7 @@ export const TaskItem = memo(function TaskItem({
             vscodeUrl={vscodeUrl}
             worktreePath={runWithVSCode?.worktreePath || task.worktreePath}
             branch={task.baseBranch}
+            isLocalWorkspace={isLocalWorkspaceRun}
             className="group-hover:opacity-100 aria-expanded:opacity-100 opacity-0"
           />
 

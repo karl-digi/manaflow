@@ -767,7 +767,8 @@ export function CommandBar({
                 if (response.workspaceUrl && effectiveTaskRunId) {
                   const proxiedUrl = toProxyWorkspaceUrl(
                     response.workspaceUrl,
-                    localServeWeb.data?.baseUrl
+                    localServeWeb.data?.baseUrl,
+                    { isLocalWorkspace: true }
                   );
                   if (proxiedUrl) {
                     void preloadTaskRunIframes([

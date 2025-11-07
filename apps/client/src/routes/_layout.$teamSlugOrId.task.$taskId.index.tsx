@@ -464,9 +464,12 @@ function TaskDetailPage() {
   }, [selectedRunId]);
   const headerTaskRunId = selectedRunId ?? taskRuns?.[0]?._id ?? null;
 
+  const isLocalWorkspace = selectedRun?.vscode?.provider === "other";
   const rawWorkspaceUrl = selectedRun?.vscode?.workspaceUrl ?? null;
   const workspaceUrl = rawWorkspaceUrl
-    ? toProxyWorkspaceUrl(rawWorkspaceUrl, localServeWeb.data?.baseUrl)
+    ? toProxyWorkspaceUrl(rawWorkspaceUrl, localServeWeb.data?.baseUrl, {
+        isLocalWorkspace,
+      })
     : null;
   const workspacePersistKey = selectedRunId
     ? getTaskRunPersistKey(selectedRunId)
@@ -541,9 +544,6 @@ function TaskDetailPage() {
     },
     [selectedRunId]
   );
-
-  const isLocalWorkspace = selectedRun?.vscode?.provider === "other";
-
   const editorLoadingFallback = useMemo(
     () =>
       isLocalWorkspace ? null : (

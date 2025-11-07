@@ -101,14 +101,31 @@ function createMorphPortUrl(
   return url;
 }
 
+function usesLocalWorkspacePlaceholderHost(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname.toLowerCase() === LOCAL_VSCODE_PLACEHOLDER_HOST;
+  } catch {
+    return false;
+  }
+}
+
+type ToProxyWorkspaceUrlOptions = {
+  isLocalWorkspace?: boolean;
+};
+
 export function toProxyWorkspaceUrl(
   workspaceUrl: string,
-  preferredOrigin?: string | null
+  preferredOrigin?: string | null,
+  options?: ToProxyWorkspaceUrlOptions
 ): string {
-  const normalizedUrl = rewriteLocalWorkspaceUrlIfNeeded(
-    workspaceUrl,
-    preferredOrigin
-  );
+  const shouldRewriteLocalWorkspaceUrl =
+    Boolean(options?.isLocalWorkspace) ||
+    usesLocalWorkspacePlaceholderHost(workspaceUrl);
+
+  const normalizedUrl = shouldRewriteLocalWorkspaceUrl
+    ? rewriteLocalWorkspaceUrlIfNeeded(workspaceUrl, preferredOrigin)
+    : workspaceUrl;
   const components = parseMorphUrl(normalizedUrl);
 
   if (!components) {

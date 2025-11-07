@@ -1348,6 +1348,9 @@ function TaskRunTreeInner({
     return run.networking.filter((service) => service.status === "running");
   }, [run.networking]);
 
+  const isLocalWorkspaceRun =
+    run.isLocalWorkspace === true || run.vscode?.provider === "other";
+
   const {
     actions: openWithActions,
     executeOpenAction,
@@ -1359,6 +1362,7 @@ function TaskRunTreeInner({
     worktreePath: run.worktreePath,
     branch: run.newBranch,
     networking: run.networking,
+    isLocalWorkspace: isLocalWorkspaceRun,
   });
 
   const shouldRenderDiffLink = true;
