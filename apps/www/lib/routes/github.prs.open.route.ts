@@ -27,6 +27,8 @@ type GitHubPrBasic = {
 type GitHubPrDetail = GitHubPrBasic & {
   merged_at: string | null;
   node_id: string;
+  mergeable: boolean | null;
+  mergeable_state: string;
 };
 
 type ConvexClient = ReturnType<typeof getConvex>;
@@ -58,6 +60,8 @@ const PullRequestActionResultSchema = z.object({
   number: z.number().optional(),
   state: z.enum(runPullRequestStates),
   isDraft: z.boolean().optional(),
+  mergeable: z.boolean().nullable().optional(),
+  mergeableState: z.string().optional(),
   error: z.string().optional(),
 });
 
@@ -67,6 +71,8 @@ const AggregatePullRequestSummarySchema = z.object({
   mergeStatus: z.enum(taskMergeStatuses),
   url: z.string().url().optional(),
   number: z.number().optional(),
+  mergeable: z.boolean().nullable().optional(),
+  mergeableState: z.string().optional(),
 });
 
 const OpenPullRequestBody = z
@@ -596,6 +602,20 @@ githubPrsOpenRouter.openapi(
             });
           }
 
+          // Check for merge conflicts
+          if (detail.mergeable === false) {
+            throw new Error(
+              `Pull request has conflicts with the base branch and cannot be merged`,
+            );
+          }
+
+          // GitHub may still be calculating mergeable status (null)
+          if (detail.mergeable === null) {
+            throw new Error(
+              `GitHub is still calculating merge status. Please try again in a few moments.`,
+            );
+          }
+
           await mergePullRequest({
             octokit,
             owner,
@@ -921,6 +941,36 @@ githubPrsOpenRouter.openapi(
     const octokit = createOctokit(githubAccessToken);
 
     try {
+      // Fetch PR details to check mergeable status
+      const prDetail = await fetchPullRequestDetail({
+        octokit,
+        owner,
+        repo,
+        number,
+      });
+
+      // Check for merge conflicts
+      if (prDetail.mergeable === false) {
+        return c.json(
+          {
+            success: false,
+            message: `PR #${number} has conflicts with the base branch and cannot be merged`,
+          },
+          400,
+        );
+      }
+
+      // GitHub may still be calculating mergeable status (null)
+      if (prDetail.mergeable === null) {
+        return c.json(
+          {
+            success: false,
+            message: `GitHub is still calculating merge status for PR #${number}. Please try again in a few moments.`,
+          },
+          400,
+        );
+      }
+
       await mergePullRequest({
         octokit,
         owner,
@@ -962,6 +1012,8 @@ githubPrsOpenRouter.openapi(
           closedAt: existingPR.closedAt,
           mergedAt: mergedPR.merged_at ? new Date(mergedPR.merged_at).getTime() : undefined,
           repositoryId: existingPR.repositoryId,
+          mergeable: mergedPR.mergeable,
+          mergeableState: mergedPR.mergeable_state,
         },
       });
 
@@ -1139,6 +1191,8 @@ async function fetchPullRequestDetail({
     draft: data.draft ?? undefined,
     merged_at: data.merged_at,
     node_id: data.node_id,
+    mergeable: data.mergeable,
+    mergeable_state: data.mergeable_state,
   };
 }
 
@@ -1390,6 +1444,8 @@ function toPullRequestActionResult(
       merged,
     }),
     isDraft: data.draft,
+    mergeable: data.mergeable,
+    mergeableState: data.mergeable_state,
   };
 }
 

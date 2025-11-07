@@ -287,13 +287,26 @@ export function PullRequestDetailView({
   }, [workflowData.allRuns, workflowData.isLoading]);
 
   const disabledBecauseOfChecks = !checksAllowMerge;
+
+  // Check for merge conflicts
+  const hasConflicts = currentPR?.mergeable === false;
+  const mergeableCalculating = currentPR?.mergeable === null;
+
   const mergeDisabled =
     mergePrMutation.isPending ||
     closePrMutation.isPending ||
-    disabledBecauseOfChecks;
-  const mergeDisabledReason = disabledBecauseOfChecks
-    ? checksDisabledReason
-    : undefined;
+    disabledBecauseOfChecks ||
+    hasConflicts ||
+    mergeableCalculating;
+
+  const mergeDisabledReason =
+    hasConflicts
+      ? "This pull request has conflicts with the base branch and cannot be merged"
+      : mergeableCalculating
+      ? "GitHub is still calculating merge status. Please try again in a few moments."
+      : disabledBecauseOfChecks
+      ? checksDisabledReason
+      : undefined;
 
   const handleClosePR = () => {
     if (!currentPR) return;

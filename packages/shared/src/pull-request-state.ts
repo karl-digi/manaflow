@@ -19,6 +19,8 @@ export interface StoredPullRequestInfo {
   number?: number;
   state: RunPullRequestState;
   isDraft?: boolean;
+  mergeable?: boolean | null;
+  mergeableState?: string;
 }
 
 export interface PullRequestActionResult extends StoredPullRequestInfo {
@@ -31,6 +33,8 @@ export interface AggregatePullRequestSummary {
   url?: string;
   number?: number;
   mergeStatus: TaskMergeStatus;
+  mergeable?: boolean | null;
+  mergeableState?: string;
 }
 
 const STATE_PRIORITY: RunPullRequestState[] = [
@@ -108,6 +112,7 @@ export function aggregatePullRequestState(
   const sorted = sortPullRequestInfos(records);
   const firstWithUrl = sorted.find((record) => Boolean(record.url));
   const firstWithNumber = sorted.find((record) => record.number !== undefined);
+  const firstWithMergeable = sorted.find((record) => record.mergeable !== undefined);
 
   return {
     state,
@@ -115,6 +120,8 @@ export function aggregatePullRequestState(
     url: firstWithUrl?.url,
     number: firstWithNumber?.number,
     mergeStatus,
+    mergeable: firstWithMergeable?.mergeable,
+    mergeableState: firstWithMergeable?.mergeableState,
   };
 }
 
@@ -166,6 +173,8 @@ export function reconcilePullRequestRecords({
         isDraft:
           update.isDraft ??
           (update.state ? update.state === "draft" : existingRecord?.isDraft),
+        mergeable: update.mergeable ?? existingRecord?.mergeable,
+        mergeableState: update.mergeableState ?? existingRecord?.mergeableState,
       });
       continue;
     }
@@ -182,6 +191,8 @@ export function reconcilePullRequestRecords({
       url: update?.url,
       number: update?.number,
       isDraft: update?.isDraft ?? (fallbackState === "draft" ? true : undefined),
+      mergeable: update?.mergeable,
+      mergeableState: update?.mergeableState,
     });
   }
 

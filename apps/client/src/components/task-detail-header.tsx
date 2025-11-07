@@ -895,6 +895,16 @@ function SocketActions({
 
   const hasAnyRemotePr = pullRequests.some((pr) => pr.url);
 
+  // Check for merge conflicts
+  const hasConflicts = pullRequests.some((pr) => pr.mergeable === false);
+  const mergeableCalculating = pullRequests.some((pr) => pr.mergeable === null);
+
+  const mergeDisabledReason = hasConflicts
+    ? "One or more pull requests have conflicts with the base branch and cannot be merged"
+    : mergeableCalculating
+    ? "GitHub is still calculating merge status. Please try again in a few moments."
+    : undefined;
+
   const renderRepoDropdown = () => (
     <Dropdown.Root>
       <Dropdown.Trigger
@@ -969,8 +979,10 @@ function SocketActions({
             isOpeningPr ||
             isCreatingPr ||
             isMerging ||
-            (!prIsOpen && !hasChanges)
+            (!prIsOpen && !hasChanges) ||
+            (prIsOpen && (hasConflicts || mergeableCalculating))
           }
+          disabledReason={prIsOpen ? mergeDisabledReason : undefined}
           prCount={repoFullNames.length}
         />
       )}
