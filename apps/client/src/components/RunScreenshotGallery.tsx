@@ -31,6 +31,14 @@ interface RunScreenshotGalleryProps {
   highlightedSetId?: Id<"taskRunScreenshotSets"> | null;
 }
 
+function makeImageKey(
+  setId: Id<"taskRunScreenshotSets">,
+  image: ScreenshotImage,
+  indexInSet: number,
+) {
+  return `${setId}:${image.storageId}:${indexInSet}`;
+}
+
 const STATUS_LABELS: Record<ScreenshotStatus, string> = {
   completed: "Completed",
   failed: "Failed",
@@ -58,23 +66,38 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
     [screenshotSets],
   );
 
-  const flattenedImages = useMemo(
-    () =>
-      sortedScreenshotSets.flatMap((set) =>
-        set.images.flatMap((image, indexInSet) =>
-          image.url
-            ? [
-                {
-                  set,
-                  image,
-                  indexInSet,
-                },
-              ]
-            : [],
-        ),
-      ),
-    [sortedScreenshotSets],
-  );
+  const flattenedImages = useMemo(() => {
+    const entries: Array<{
+      set: RunScreenshotSet;
+      image: ScreenshotImage;
+      indexInSet: number;
+      key: string;
+      globalIndex: number;
+    }> = [];
+    sortedScreenshotSets.forEach((set) => {
+      set.images.forEach((image, indexInSet) => {
+        if (!image.url) {
+          return;
+        }
+        entries.push({
+          set,
+          image,
+          indexInSet,
+          key: makeImageKey(set._id, image, indexInSet),
+          globalIndex: entries.length,
+        });
+      });
+    });
+    return entries;
+  }, [sortedScreenshotSets]);
+
+  const globalIndexByKey = useMemo(() => {
+    const indexMap = new Map<string, number>();
+    flattenedImages.forEach((entry) => {
+      indexMap.set(entry.key, entry.globalIndex);
+    });
+    return indexMap;
+  }, [flattenedImages]);
 
   const [activeImageIndex, setActiveImageIndex] = useState<number | null>(null);
 
@@ -86,8 +109,8 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
       : null;
 
   const activeOverallIndex =
-    activeImageIndex !== null && activeImageIndex >= 0
-      ? activeImageIndex + 1
+    currentEntry?.globalIndex !== undefined
+      ? currentEntry.globalIndex + 1
       : null;
 
   const effectiveHighlight =
@@ -159,8 +182,6 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
     };
   }, [goNext, goPrev, isSlideshowOpen]);
 
-  let runningImageIndex = -1;
-
   if (sortedScreenshotSets.length === 0) {
     return null;
   }
@@ -186,7 +207,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
             <Dialog.Portal>
               <Dialog.Overlay className="pointer-events-none fixed inset-0 bg-neutral-950/70 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in data-[state=closed]:fade-out" />
               <Dialog.Content className="pointer-events-none fixed inset-0 flex items-center justify-center p-6 focus:outline-none">
-                <div className="pointer-events-auto relative flex w-full max-w-5xl flex-col gap-4 rounded-2xl border border-neutral-200 bg-white/95 p-4 shadow-2xl backdrop-blur-md focus:outline-none dark:border-neutral-800 dark:bg-neutral-950/90 sm:p-6">
+                <div className="pointer-events-auto relative flex w-full max-w-5xl flex-col gap-3 rounded-2xl border border-neutral-200 bg-white/95 p-3 shadow-2xl backdrop-blur-md focus:outline-none dark:border-neutral-800 dark:bg-neutral-950/90 sm:p-5">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="space-y-1">
                       <Dialog.Title className="text-base font-semibold text-neutral-900 dark:text-neutral-100">
@@ -197,7 +218,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                       </Dialog.Title>
                       <Dialog.Description className="text-xs text-neutral-600 dark:text-neutral-400">
                         Image {currentEntry.indexInSet + 1} of {currentEntry.set.images.length}
-                        <span className="px-1 text-neutral-400 dark:text-neutral-600">-</span>
+                        <span className="px-1 text-neutral-400 dark:text-neutral-600">•</span>
                         {formatDistanceToNow(new Date(currentEntry.set.capturedAt), {
                           addSuffix: true,
                         })}
@@ -207,7 +228,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                       <button
                         type="button"
                         onClick={closeSlideshow}
-                        className="rounded-full border border-transparent bg-neutral-100/70 p-2 text-neutral-600 transition hover:bg-neutral-200 hover:text-neutral-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70 dark:bg-neutral-800/60 dark:text-neutral-300 dark:hover:bg-neutral-700"
+                        className="p-1 text-neutral-600 transition hover:text-neutral-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70 dark:text-neutral-300 dark:hover:text-neutral-100"
                         aria-label="Close slideshow"
                       >
                         <X className="h-4 w-4" />
@@ -225,11 +246,11 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                         <ChevronLeft className="h-5 w-5" />
                       </button>
                     ) : null}
-                    <div className="relative flex max-h-[70vh] flex-1 items-center justify-center border border-neutral-200 bg-neutral-50 p-4 dark:border-neutral-800 dark:bg-neutral-900">
+                    <div className="relative flex max-h-[70vh] flex-1 items-center justify-center border border-neutral-200 bg-neutral-50 p-3 dark:border-neutral-800 dark:bg-neutral-900">
                       <img
                         src={currentEntry.image.url ?? undefined}
                         alt={currentEntry.image.fileName ?? "Screenshot"}
-                        className="max-h-[calc(70vh-2rem)] max-w-full object-contain"
+                        className="max-h-[calc(70vh-1.5rem)] max-w-full object-contain"
                       />
                     </div>
                     {flattenedImages.length > 1 ? (
@@ -304,26 +325,25 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
               )}
                   {set.images.length > 0 ? (
                 <div className="mt-3 flex gap-3 overflow-x-auto pb-1">
-                  {set.images.map((image) => {
-                    const key = `${image.storageId}-${image.fileName ?? "unnamed"}`;
+                  {set.images.map((image, indexInSet) => {
+                    const imageKey = makeImageKey(set._id, image, indexInSet);
                     const displayName = image.fileName ?? "Screenshot";
                     if (!image.url) {
                       return (
                         <div
-                          key={key}
+                          key={imageKey}
                           className="flex h-48 min-w-[200px] items-center justify-center rounded-lg border border-dashed border-neutral-300 bg-neutral-100 text-xs text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-400"
                         >
                           URL expired
                         </div>
                       );
                     }
-                    runningImageIndex += 1;
-                    const flatIndex = runningImageIndex;
-                    const humanIndex = flatIndex + 1;
+                    const flatIndex = globalIndexByKey.get(imageKey) ?? -1;
+                    const humanIndex = flatIndex >= 0 ? flatIndex + 1 : null;
 
                     return (
                       <button
-                        key={key}
+                        key={imageKey}
                         type="button"
                         onClick={() => setActiveImageIndex(flatIndex)}
                         className={cn(
@@ -340,11 +360,12 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                           className="h-48 w-[220px] object-contain bg-neutral-100 dark:bg-neutral-950"
                           loading="lazy"
                         />
-                        <div className="absolute top-2 right-2 flex h-7 w-7 items-center justify-center rounded-full bg-white/80 text-neutral-600 opacity-0 shadow-sm transition group-hover:opacity-100 dark:bg-neutral-950/80 dark:text-neutral-300">
+                        <div className="absolute top-2 right-2 text-neutral-600 opacity-0 transition group-hover:opacity-100 dark:text-neutral-300">
                           <Maximize2 className="h-3.5 w-3.5" />
                         </div>
                         <div className="border-t border-neutral-200 px-2 py-1 text-xs text-neutral-600 dark:border-neutral-700 dark:text-neutral-300 truncate">
-                          {humanIndex}. {displayName}
+                          {humanIndex !== null ? `${humanIndex}. ` : ""}
+                          {displayName}
                         </div>
                       </button>
                     );
