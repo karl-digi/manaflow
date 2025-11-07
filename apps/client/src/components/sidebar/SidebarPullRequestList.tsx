@@ -46,9 +46,14 @@ export function SidebarPullRequestList({
 
   if (list.length === 0) {
     return (
-      <p className="mt-1 pl-2 pr-3 py-2 text-xs text-neutral-500 dark:text-neutral-400 select-none">
-        No pull requests
-      </p>
+      <ul className="flex flex-col gap-px">
+        <li>
+          <p className="pl-2 pr-3 py-2 text-xs text-neutral-500 dark:text-neutral-400 select-none">
+            No pull requests
+          </p>
+        </li>
+        <ViewAllPullRequestsListItem teamSlugOrId={teamSlugOrId} />
+      </ul>
     );
   }
 
@@ -63,6 +68,7 @@ export function SidebarPullRequestList({
           setExpanded={setExpanded}
         />
       ))}
+      <ViewAllPullRequestsListItem teamSlugOrId={teamSlugOrId} />
     </ul>
   );
 }
@@ -166,6 +172,31 @@ function PullRequestListItem({ pr, teamSlugOrId, expanded, setExpanded }: PullRe
           </a>
         </div>
       ) : null}
+    </li>
+  );
+}
+
+function ViewAllPullRequestsListItem({
+  teamSlugOrId,
+}: {
+  teamSlugOrId: string;
+}) {
+  return (
+    <li className="rounded-md select-none">
+      <Link
+        to="/$teamSlugOrId/prs"
+        params={{ teamSlugOrId }}
+        className="group block"
+      >
+        <SidebarListItem
+          paddingLeft={10}
+          title="View all PRs"
+          titleClassName="text-[13px] text-neutral-950 dark:text-neutral-100"
+          leading={
+            <GitPullRequest className="w-3 h-3 text-neutral-500 dark:text-neutral-400" />
+          }
+        />
+      </Link>
     </li>
   );
 }
