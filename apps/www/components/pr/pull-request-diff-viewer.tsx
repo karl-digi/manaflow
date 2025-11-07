@@ -2871,6 +2871,7 @@ const FileDiffCard = memo(function FileDiffCardComponent({
                   <span className="cmux-heatmap-char-wrapper">{rendered}</span>
                 </TooltipTrigger>
                 <TooltipContent
+                  interactive
                   side="bottom"
                   align="start"
                   sideOffset={0}
@@ -3301,6 +3302,7 @@ function HeatmapGutterTooltip({
       </TooltipTrigger>
       <TooltipContent
         interactive
+        sideOffset={0}
         onPointerEnter={handleTooltipPointerEnter}
         onPointerLeave={handleTooltipPointerLeave}
         side="left"
@@ -3339,7 +3341,7 @@ function HeatmapTooltipBody({
   }, [canCopyReason, copy, trimmedReason]);
 
   return (
-    <div className="flex items-start gap-3 text-left text-xs leading-relaxed">
+    <div className="flex items-start gap-2 text-left text-xs leading-relaxed">
       <div className="min-w-0 flex-1 break-words text-left">
         {reason ? (
           <p className={cn("text-xs", theme.reasonClass)}>{reason}</p>
@@ -3354,12 +3356,12 @@ function HeatmapTooltipBody({
         aria-disabled={!canCopyReason}
         aria-label={copied ? "Copied tooltip message" : "Copy tooltip message"}
         className={cn(
-          "flex shrink-0 items-center gap-1 rounded border px-2 py-1 text-[11px] font-medium uppercase tracking-wide transition",
+          "flex h-6 w-6 shrink-0 items-center justify-center rounded text-neutral-500 transition focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-primary",
           canCopyReason
             ? copied
-              ? "border-emerald-300 bg-emerald-100 text-emerald-700"
-              : "border-neutral-300 bg-white/80 text-neutral-700 hover:bg-white"
-            : "cursor-not-allowed border-neutral-200 bg-neutral-100 text-neutral-400"
+              ? "text-emerald-600"
+              : "hover:text-neutral-800"
+            : "cursor-not-allowed opacity-40"
         )}
       >
         {copied ? (
@@ -3367,7 +3369,6 @@ function HeatmapTooltipBody({
         ) : (
           <Copy className="h-3 w-3" aria-hidden />
         )}
-        <span>{copied ? "Copied" : "Copy"}</span>
       </button>
     </div>
   );
