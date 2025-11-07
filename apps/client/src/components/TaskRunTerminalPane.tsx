@@ -14,9 +14,9 @@ export interface TaskRunTerminalPaneProps {
   workspaceUrl: string | null;
 }
 
-const INITIAL_AUTO_CREATE_DELAY_MS = 4_000;
+const INITIAL_AUTO_CREATE_DELAY_MS = 0;
 const MAX_AUTO_CREATE_ATTEMPTS = 3;
-const AUTO_RETRY_BASE_DELAY_MS = 4_000;
+const AUTO_RETRY_BASE_DELAY_MS = 2_000;
 
 export function TaskRunTerminalPane({ workspaceUrl }: TaskRunTerminalPaneProps) {
   const baseUrl = useMemo(() => {
@@ -186,11 +186,11 @@ export function TaskRunTerminalPane({ workspaceUrl }: TaskRunTerminalPaneProps) 
   }, [baseUrl, resetAutoCreate, workspaceUrl]);
 
   useEffect(() => {
-    if (isTabsLoading || isTabsError) {
+    if (isTabsError) {
       return;
     }
     attemptAutoCreate();
-  }, [attemptAutoCreate, isTabsError, isTabsLoading]);
+  }, [attemptAutoCreate, isTabsError]);
 
   const handleManualRetry = useCallback(() => {
     resetAutoCreate();
@@ -205,15 +205,6 @@ export function TaskRunTerminalPane({ workspaceUrl }: TaskRunTerminalPaneProps) 
       <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-neutral-500 dark:text-neutral-400">
         <MonitorUp className="size-4 animate-pulse" aria-hidden />
         <span>Terminal is starting...</span>
-      </div>
-    );
-  }
-
-  if (isTabsLoading) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-neutral-500 dark:text-neutral-400">
-        <MonitorUp className="size-4 animate-pulse" aria-hidden />
-        <span>Loading terminal...</span>
       </div>
     );
   }
