@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { normalizeGitRef } from "@/lib/refWithOrigin";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
 import type { Doc, Id } from "@cmux/convex/dataModel";
+import { hasMergeConflicts as pullRequestHasConflicts } from "@cmux/shared/pull-request-state";
 import type { TaskRunWithChildren } from "@/types/task";
 import { Skeleton } from "@heroui/react";
 import { useClipboard } from "@mantine/hooks";
@@ -621,11 +622,21 @@ function SocketActions({
     repoDiffTargets.length === 0
       ? false
       : diffQueries.some((query, index) => {
-        if (!repoDiffTargets[index]?.headRef) {
-          return false;
-        }
-        return (query.data ?? []).length > 0;
-      });
+          if (!repoDiffTargets[index]?.headRef) {
+            return false;
+          }
+          return (query.data ?? []).length > 0;
+        });
+
+  const mergeConflictsDetected =
+    prIsOpen &&
+    repoFullNames.some((repoName) => {
+      const pr = pullRequestMap.get(repoName);
+      return pr ? pullRequestHasConflicts(pr.mergeableState) : false;
+    });
+  const mergeConflictsDisabledReason = mergeConflictsDetected
+    ? "Resolve merge conflicts with main before merging."
+    : undefined;
 
   const navigateToPrs = (
     prs: Array<{
@@ -961,24 +972,36 @@ function SocketActions({
         </div>
       ) : (
         <MergeButton
-          onMerge={prIsOpen ? handleMerge : () => {
-            void handleOpenPRs();
-          }}
+          onMerge={
+            prIsOpen
+              ? handleMerge
+              : () => {
+                  void handleOpenPRs();
+                }
+          }
           isOpen={prIsOpen}
           disabled={
             isOpeningPr ||
             isCreatingPr ||
             isMerging ||
-            (!prIsOpen && !hasChanges)
+            (!prIsOpen && !hasChanges) ||
+            mergeConflictsDetected
           }
           prCount={repoFullNames.length}
+          disabledReason={prIsOpen ? mergeConflictsDisabledReason : undefined}
         />
       )}
       {!prIsOpen && !prIsMerged && ENABLE_MERGE_BUTTON && (
         <button
           onClick={handleMergeBranch}
           className="flex items-center gap-1.5 px-3 py-1 bg-[#8250df] text-white rounded hover:bg-[#8250df]/90 dark:bg-[#8250df] dark:hover:bg-[#8250df]/90 border border-[#6e40cc] dark:border-[#6e40cc] font-medium text-xs select-none disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
-          disabled={isOpeningPr || isCreatingPr || isMerging || !hasChanges}
+          disabled={
+            isOpeningPr ||
+            isCreatingPr ||
+            isMerging ||
+            !hasChanges ||
+            mergeConflictsDetected
+          }
         >
           <GitMerge className="w-3.5 h-3.5" />
           Merge

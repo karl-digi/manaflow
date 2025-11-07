@@ -13,12 +13,28 @@ export type TaskMergeStatus =
   | "pr_merged"
   | "pr_closed";
 
+export type GitHubMergeableState =
+  | "behind"
+  | "blocked"
+  | "clean"
+  | "dirty"
+  | "draft"
+  | "has_hooks"
+  | "unknown"
+  | "unstable"
+  | "cannot_be_merged"
+  | (string & {});
+
+export const MERGE_CONFLICT_STATE: GitHubMergeableState = "dirty";
+
 export interface StoredPullRequestInfo {
   repoFullName: string;
   url?: string;
   number?: number;
   state: RunPullRequestState;
   isDraft?: boolean;
+  mergeable?: boolean;
+  mergeableState?: GitHubMergeableState;
 }
 
 export interface PullRequestActionResult extends StoredPullRequestInfo {
@@ -156,6 +172,11 @@ export function reconcilePullRequestRecords({
   ).map((item) => normalizeRepoName(item.repoFullName))) {
     const update = updateMap.get(repoName);
     const existingRecord = existingMap.get(repoName);
+    const updateMergeable =
+      update && typeof update.mergeable === "boolean"
+        ? update.mergeable
+        : undefined;
+    const updateMergeableState = update?.mergeableState;
 
     if (update && !update.error) {
       records.push({
@@ -166,6 +187,8 @@ export function reconcilePullRequestRecords({
         isDraft:
           update.isDraft ??
           (update.state ? update.state === "draft" : existingRecord?.isDraft),
+        mergeable: updateMergeable ?? existingRecord?.mergeable,
+        mergeableState: updateMergeableState ?? existingRecord?.mergeableState,
       });
       continue;
     }
@@ -182,6 +205,8 @@ export function reconcilePullRequestRecords({
       url: update?.url,
       number: update?.number,
       isDraft: update?.isDraft ?? (fallbackState === "draft" ? true : undefined),
+      mergeable: updateMergeable,
+      mergeableState: updateMergeableState,
     });
   }
 
@@ -208,4 +233,22 @@ export function isBetterState(
     return true;
   }
   return incomingPriority < currentPriority;
+}
+
+export function normalizeMergeableState(
+  state: unknown,
+): GitHubMergeableState | undefined {
+  if (!state || typeof state !== "string") {
+    return undefined;
+  }
+  return state.toLowerCase() as GitHubMergeableState;
+}
+
+export function hasMergeConflicts(
+  state?: GitHubMergeableState | null,
+): boolean {
+  if (!state) {
+    return false;
+  }
+  return state.toLowerCase() === MERGE_CONFLICT_STATE;
 }

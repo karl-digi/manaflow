@@ -1,5 +1,6 @@
 import { api } from "@cmux/convex/api";
 import {
+  normalizeMergeableState,
   reconcilePullRequestRecords,
   type AggregatePullRequestSummary,
   type PullRequestActionResult,
@@ -87,9 +88,14 @@ export function toPullRequestActionResult(
     state?: string;
     draft?: boolean;
     merged_at?: string | null;
+    mergeable?: boolean | null;
+    mergeable_state?: string | null;
   },
 ): PullRequestActionResult {
   const merged = Boolean(data.merged_at);
+  const mergeable =
+    typeof data.mergeable === "boolean" ? data.mergeable : undefined;
+  const mergeableState = normalizeMergeableState(data.mergeable_state);
   return {
     repoFullName,
     url: data.html_url,
@@ -100,6 +106,8 @@ export function toPullRequestActionResult(
       merged,
     }),
     isDraft: data.draft,
+    mergeable,
+    mergeableState,
   };
 }
 

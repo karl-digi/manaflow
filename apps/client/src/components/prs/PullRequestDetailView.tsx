@@ -3,6 +3,7 @@ import { Dropdown } from "@/components/ui/dropdown";
 import { normalizeGitRef } from "@/lib/refWithOrigin";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
 import { api } from "@cmux/convex/api";
+import { hasMergeConflicts as pullRequestHasConflicts } from "@cmux/shared/pull-request-state";
 import { useQuery as useRQ, useMutation } from "@tanstack/react-query";
 import { useQuery as useConvexQuery } from "convex/react";
 import { ExternalLink, X, Check, Copy, GitBranch, Loader2 } from "lucide-react";
@@ -212,6 +213,11 @@ export function PullRequestDetailView({
     setShouldShowDefinitiveMissingState(false);
   }, [currentPR]);
 
+  const mergeConflictsDetected = currentPR ? pullRequestHasConflicts(currentPR.mergeableState) : false;
+  const mergeConflictsDisabledReason = mergeConflictsDetected
+    ? "Resolve merge conflicts with main before merging."
+    : undefined;
+
   const closePrMutation = useMutation<
     PostApiIntegrationsGithubPrsCloseResponse,
     Error,
@@ -290,10 +296,13 @@ export function PullRequestDetailView({
   const mergeDisabled =
     mergePrMutation.isPending ||
     closePrMutation.isPending ||
-    disabledBecauseOfChecks;
-  const mergeDisabledReason = disabledBecauseOfChecks
-    ? checksDisabledReason
-    : undefined;
+    disabledBecauseOfChecks ||
+    mergeConflictsDetected;
+  const mergeDisabledReason = mergeConflictsDetected
+    ? mergeConflictsDisabledReason
+    : disabledBecauseOfChecks
+      ? checksDisabledReason
+      : undefined;
 
   const handleClosePR = () => {
     if (!currentPR) return;

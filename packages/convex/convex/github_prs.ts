@@ -1,3 +1,4 @@
+import { normalizeMergeableState } from "@cmux/shared/pull-request-state";
 import { v } from "convex/values";
 import { getTeamId } from "../_shared/team";
 import {
@@ -32,6 +33,8 @@ type WebhookPullRequest = {
   state?: string;
   merged?: boolean;
   draft?: boolean;
+   mergeable?: boolean;
+   mergeable_state?: string;
   html_url?: string;
   merge_commit_sha?: string;
   created_at?: string;
@@ -176,6 +179,8 @@ async function upsertCore(
       additions?: number;
       deletions?: number;
       changedFiles?: number;
+      mergeable?: boolean;
+      mergeableState?: string;
     };
   }
 ) {
@@ -238,6 +243,8 @@ export const upsertPullRequestInternal = internalMutation({
       additions: v.optional(v.number()),
       deletions: v.optional(v.number()),
       changedFiles: v.optional(v.number()),
+      mergeable: v.optional(v.boolean()),
+      mergeableState: v.optional(v.string()),
     }),
   },
   handler: async (ctx, { teamId, installationId, repoFullName, number, record }) =>
@@ -342,6 +349,9 @@ export const upsertFromWebhookPayload = internalMutation({
       const baseSha = mapStr(pr.base?.sha);
       const headSha = mapStr(pr.head?.sha);
       const mergeCommitSha = mapStr(pr.merge_commit_sha);
+      const mergeable =
+        typeof pr.mergeable === "boolean" ? pr.mergeable : undefined;
+      const mergeableState = normalizeMergeableState(pr.mergeable_state);
       const baseActivityTs =
         ts(pr.base?.repo?.pushed_at) ??
         ts(pr.merged_at) ??
@@ -360,6 +370,8 @@ export const upsertFromWebhookPayload = internalMutation({
           state: mapStr(pr.state) === "closed" ? "closed" : "open",
           merged: Boolean(pr.merged),
           draft: Boolean(pr.draft),
+          mergeable,
+          mergeableState,
           authorLogin: mapStr(pr.user?.login),
           authorId: mapNum(pr.user?.id),
           htmlUrl: mapStr(pr.html_url),
@@ -438,6 +450,8 @@ export const upsertFromServer = authMutation({
       additions: v.optional(v.number()),
       deletions: v.optional(v.number()),
       changedFiles: v.optional(v.number()),
+      mergeable: v.optional(v.boolean()),
+      mergeableState: v.optional(v.string()),
     }),
   },
   handler: async (ctx, { teamSlugOrId, installationId, repoFullName, number, record }) => {
