@@ -85,6 +85,37 @@ const parseStoredAgentSelection = (stored: string | null): string[] => {
   }
 };
 
+const describeStartTaskError = (error: unknown): string | null => {
+  if (error === undefined || error === null) {
+    return null;
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  if (error instanceof Error) {
+    return error.message || error.toString();
+  }
+  if (typeof error === "object") {
+    const maybeMessage = (error as { message?: unknown }).message;
+    if (typeof maybeMessage === "string" && maybeMessage.trim().length > 0) {
+      return maybeMessage;
+    }
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return String(error);
+    }
+  }
+  return String(error);
+};
+
+const notifyStartTaskError = (message: string, error?: unknown) => {
+  const detail = error ? describeStartTaskError(error) : null;
+  const composed = detail ? `${message}: ${detail}` : message;
+  console.error(`[Dashboard] ${composed}`, error);
+  toast.error(composed);
+};
+
 function DashboardComponent() {
   const { teamSlugOrId } = Route.useParams();
   const searchParams = Route.useSearch() as { environmentId?: string };
@@ -375,6 +406,9 @@ function DashboardComponent() {
   }, [selectedBranch, branchNames, remoteDefaultBranch]);
 
   const handleStartTask = useCallback(async () => {
+    const selectedValue = selectedProject[0];
+    const trimmedDescription = taskDescription.trim();
+
     // For local mode, perform a fresh docker check right before starting
     if (!isEnvSelected && !isCloudMode) {
       // Always check Docker status when in local mode, regardless of current state
@@ -402,18 +436,30 @@ function DashboardComponent() {
       }
     }
 
-    if (!selectedProject[0] || !taskDescription.trim()) {
-      console.error("Please select a project and enter a task description");
+    if (!selectedValue) {
+      notifyStartTaskError(
+        "Select a repository or environment before starting a task"
+      );
+      return;
+    }
+    if (!trimmedDescription) {
+      notifyStartTaskError("Enter a task description before starting a task");
+      return;
+    }
+    if (selectedAgents.length === 0) {
+      notifyStartTaskError("Choose at least one agent before starting a task");
       return;
     }
     if (!socket) {
-      console.error("Socket not connected");
+      notifyStartTaskError(
+        "Cannot reach the cmux server. Refresh the page and try again."
+      );
       return;
     }
 
     // Use the effective selected branch (respects available branches and sensible defaults)
     const branch = effectiveSelectedBranch[0];
-    const projectFullName = selectedProject[0];
+    const projectFullName = selectedValue;
     const envSelected = projectFullName.startsWith("env:");
     const environmentId = envSelected
       ? (projectFullName.replace(/^env:/, "") as Id<"environments">)
@@ -425,40 +471,65 @@ function DashboardComponent() {
       const images = content?.images || [];
 
       // Upload images to Convex storage first
-      const uploadedImages = await Promise.all(
-        images.map(
-          async (image: {
-            src: string;
-            fileName?: string;
-            altText: string;
-          }) => {
-            // Convert base64 to blob
-            const base64Data = image.src.split(",")[1] || image.src;
-            const byteCharacters = atob(base64Data);
-            const byteNumbers = new Array(byteCharacters.length);
-            for (let i = 0; i < byteCharacters.length; i++) {
-              byteNumbers[i] = byteCharacters.charCodeAt(i);
-            }
-            const byteArray = new Uint8Array(byteNumbers);
-            const blob = new Blob([byteArray], { type: "image/png" });
-            const uploadUrl = await generateUploadUrl({
-              teamSlugOrId,
-            });
-            const result = await fetch(uploadUrl, {
-              method: "POST",
-              headers: { "Content-Type": blob.type },
-              body: blob,
-            });
-            const { storageId } = await result.json();
+      const uploadedImages =
+        images.length > 0
+          ? await Promise.all(
+            images.map(
+              async (image: {
+                src: string;
+                fileName?: string;
+                altText: string;
+              }) => {
+                // Convert base64 to blob
+                const base64Data = image.src.split(",")[1] || image.src;
+                const byteCharacters = atob(base64Data);
+                const byteNumbers = new Array(byteCharacters.length);
+                for (let i = 0; i < byteCharacters.length; i++) {
+                  byteNumbers[i] = byteCharacters.charCodeAt(i);
+                }
+                const byteArray = new Uint8Array(byteNumbers);
+                const blob = new Blob([byteArray], { type: "image/png" });
+                const uploadUrl = await generateUploadUrl({
+                  teamSlugOrId,
+                });
+                const result = await fetch(uploadUrl, {
+                  method: "POST",
+                  headers: { "Content-Type": blob.type },
+                  body: blob,
+                });
 
-            return {
-              storageId,
-              fileName: image.fileName,
-              altText: image.altText,
-            };
-          }
-        )
-      );
+                if (!result.ok) {
+                  const errorText = await result.text().catch(() => null);
+                  throw new Error(
+                    errorText?.trim()
+                      ? errorText.trim()
+                      : `Image upload failed with status ${result.status}`
+                  );
+                }
+
+                const { storageId } = await result.json();
+
+                return {
+                  storageId,
+                  fileName: image.fileName,
+                  altText: image.altText,
+                };
+              }
+            )
+          )
+          : [];
+
+      const taskText = content?.text || trimmedDescription;
+
+      // Create task in Convex with storage IDs
+      const taskId = await createTask({
+        teamSlugOrId,
+        text: taskText, // Use content.text which includes image references
+        projectFullName: envSelected ? undefined : projectFullName,
+        baseBranch: envSelected ? undefined : branch,
+        images: uploadedImages.length > 0 ? uploadedImages : undefined,
+        environmentId,
+      });
 
       // Clear input after successful task creation
       setTaskDescription("");
@@ -468,16 +539,6 @@ function DashboardComponent() {
         editorApiRef.current.clear();
       }
 
-      // Create task in Convex with storage IDs
-      const taskId = await createTask({
-        teamSlugOrId,
-        text: content?.text || taskDescription, // Use content.text which includes image references
-        projectFullName: envSelected ? undefined : projectFullName,
-        baseBranch: envSelected ? undefined : branch,
-        images: uploadedImages.length > 0 ? uploadedImages : undefined,
-        environmentId,
-      });
-
       // Hint the sidebar to auto-expand this task once it appears
       addTaskToExpand(taskId);
 
@@ -486,10 +547,11 @@ function DashboardComponent() {
         : `https://github.com/${projectFullName}.git`;
 
       // For socket.io, we need to send the content text (which includes image references) and the images
-      const handleStartTaskAck = (response: TaskAcknowledged | TaskStarted | TaskError) => {
+      const handleStartTaskAck = (
+        response: TaskAcknowledged | TaskStarted | TaskError,
+      ) => {
         if ("error" in response) {
-          console.error("Task start error:", response.error);
-          toast.error(`Task start error: ${JSON.stringify(response.error)}`);
+          notifyStartTaskError("Task failed to start", response.error);
           return;
         }
 
@@ -498,7 +560,7 @@ function DashboardComponent() {
             console.log("Task started:", payload);
           },
           onFailed: (payload) => {
-            toast.error(`Task failed to start: ${payload.error}`);
+            notifyStartTaskError("Task failed to start", payload.error);
           },
         });
         console.log("Task acknowledged:", response);
@@ -509,7 +571,7 @@ function DashboardComponent() {
         {
           ...(repoUrl ? { repoUrl } : {}),
           ...(envSelected ? {} : { branch }),
-          taskDescription: content?.text || taskDescription, // Use content.text which includes image references
+          taskDescription: taskText, // Use content.text which includes image references
           projectFullName,
           taskId,
           selectedAgents:
@@ -523,7 +585,7 @@ function DashboardComponent() {
       );
       console.log("Task created:", taskId);
     } catch (error) {
-      console.error("Error starting task:", error);
+      notifyStartTaskError("Failed to start task", error);
     }
   }, [
     selectedProject,

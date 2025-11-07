@@ -68,11 +68,42 @@ export async function spawnAgent(
   },
   teamSlugOrId: string
 ): Promise<AgentSpawnResult> {
+  // Capture auth context for any asynchronous callbacks (including error handling)
+  const capturedAuthToken = getAuthToken();
+  const capturedAuthHeaderJson = getAuthHeaderJson();
+  let recordedTaskRunId: Id<"taskRuns"> | null = null;
+
+  const markTaskRunFailed = async (message: string) => {
+    if (!recordedTaskRunId) {
+      return;
+    }
+    const normalizedMessage =
+      message && message.trim().length > 0
+        ? message.trim()
+        : "Failed to start agent workspace";
+    try {
+      await runWithAuth(capturedAuthToken, capturedAuthHeaderJson, async () =>
+        retryOnOptimisticConcurrency(() =>
+          getConvex().mutation(api.taskRuns.fail, {
+            teamSlugOrId,
+            id: recordedTaskRunId!,
+            errorMessage: normalizedMessage,
+            exitCode: 1,
+          })
+        )
+      );
+      serverLogger.info(
+        `[AgentSpawner] Marked taskRun ${recordedTaskRunId} as failed`
+      );
+    } catch (markError) {
+      serverLogger.error(
+        `[AgentSpawner] Failed to mark taskRun ${recordedTaskRunId} as failed`,
+        markError
+      );
+    }
+  };
+
   try {
-    // Capture the current auth token and header JSON from AsyncLocalStorage so we can
-    // re-enter the auth context inside async event handlers later.
-    const capturedAuthToken = getAuthToken();
-    const capturedAuthHeaderJson = getAuthHeaderJson();
 
     const newBranch =
       options.newBranch ||
@@ -95,6 +126,7 @@ export async function spawnAgent(
         environmentId: options.environmentId,
       }
     );
+    recordedTaskRunId = taskRunId;
 
     // Fetch the task to get image storage IDs
     const task = await getConvex().query(api.tasks.getById, {
@@ -396,13 +428,16 @@ export async function spawnAgent(
       });
 
       if (!workspaceResult.success || !workspaceResult.worktreePath) {
+        const failureMessage =
+          workspaceResult.error || "Failed to setup workspace";
+        await markTaskRunFailed(failureMessage);
         return {
           agentName: agent.name,
           terminalId: "",
           taskRunId,
           worktreePath: "",
           success: false,
-          error: workspaceResult.error || "Failed to setup workspace",
+          error: failureMessage,
         };
       }
 
@@ -588,6 +623,7 @@ export async function spawnAgent(
       serverLogger.error(
         `[AgentSpawner] No worker socket available for ${agent.name}`
       );
+      await markTaskRunFailed("No worker connection available");
       return {
         agentName: agent.name,
         terminalId,
@@ -923,13 +959,16 @@ exit $EXIT_CODE
     };
   } catch (error) {
     serverLogger.error("Error spawning agent", error);
+    const failureMessage =
+      error instanceof Error ? error.message : "Unknown error";
+    await markTaskRunFailed(failureMessage);
     return {
       agentName: agent.name,
       terminalId: "",
-      taskRunId: "",
+      taskRunId: recordedTaskRunId ?? "",
       worktreePath: "",
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: failureMessage,
     };
   }
 }

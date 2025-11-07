@@ -723,13 +723,28 @@ export const checkAndEvaluateCrown = authMutation({
       `[CheckCrown] No existing evaluation, proceeding with crown evaluation`,
     );
 
-    // Only evaluate if we have at least 2 completed runs
+    // Determine how many runs actually completed successfully
     const completedRuns = taskRuns.filter((run) => run.status === "completed");
-    if (completedRuns.length < 2) {
+    if (completedRuns.length === 0) {
       console.log(
-        `[CheckCrown] Not enough completed runs (${completedRuns.length} < 2)`,
+        `[CheckCrown] All runs failed for task ${args.taskId} – marking complete without crown`,
       );
+      await ctx.db.patch(args.taskId, {
+        isCompleted: true,
+        updatedAt: Date.now(),
+        crownEvaluationStatus: "error",
+        crownEvaluationError: "All task runs failed to complete",
+      });
       return null;
+    }
+    if (completedRuns.length === 1) {
+      console.log(
+        `[CheckCrown] Single completed run (${completedRuns[0]._id}) – default crown winner`,
+      );
+    } else {
+      console.log(
+        `[CheckCrown] ${completedRuns.length} completed runs available for crown evaluation`,
+      );
     }
 
     // Trigger crown evaluation with error handling
