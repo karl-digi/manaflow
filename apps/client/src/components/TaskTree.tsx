@@ -1372,9 +1372,6 @@ function TaskRunTreeInner({
   const hasOpenWithActions = openWithActions.length > 0;
   const hasPortActions = portActions.length > 0;
   const canCopyBranch = Boolean(copyRunBranch);
-  const shouldShowCopyDivider =
-    canCopyBranch && (hasOpenWithActions || hasPortActions);
-  const shouldShowOpenWithDivider = hasOpenWithActions && hasPortActions;
   const hasCollapsibleContent =
     hasChildren ||
     hasActiveVSCode ||
@@ -1434,66 +1431,69 @@ function TaskRunTreeInner({
           <ContextMenu.Positioner className="outline-none z-[var(--z-context-menu)]">
             <ContextMenu.Popup className="origin-[var(--transform-origin)] rounded-md bg-white dark:bg-neutral-800 py-1 text-neutral-900 dark:text-neutral-100 shadow-lg shadow-gray-200 outline-1 outline-neutral-200 transition-[opacity] data-[ending-style]:opacity-0 dark:shadow-none dark:-outline-offset-1 dark:outline-neutral-700">
               {canCopyBranch ? (
-                <>
-                  <ContextMenu.Item
-                    className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
-                    onClick={copyRunBranch}
-                  >
-                    <GitBranch className="w-3.5 h-3.5" />
-                    Copy branch name
-                  </ContextMenu.Item>
-                  {shouldShowCopyDivider ? (
-                    <div className="my-1 h-px bg-neutral-200 dark:bg-neutral-700" />
-                  ) : null}
-                </>
+                <ContextMenu.Item
+                  className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                  onClick={copyRunBranch}
+                >
+                  <GitBranch className="w-3.5 h-3.5" />
+                  Copy branch name
+                </ContextMenu.Item>
               ) : null}
-              {hasOpenWithActions ? (
-                <>
-                  <div className="px-3 py-1 text-[11px] font-medium text-neutral-500 dark:text-neutral-400 select-none">
-                    Open with
-                  </div>
-                  {openWithActions.map((action) => {
-                    const Icon = action.Icon;
-                    return (
-                      <ContextMenu.Item
-                        key={action.id}
-                        className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
-                        onClick={() => executeOpenAction(action)}
-                      >
-                        {Icon ? <Icon className="w-3.5 h-3.5" /> : null}
-                        {action.name}
-                      </ContextMenu.Item>
-                    );
-                  })}
-                  {shouldShowOpenWithDivider ? (
-                    <div className="my-1 h-px bg-neutral-200 dark:bg-neutral-700" />
-                  ) : null}
-                </>
+              {hasOpenWithActions || hasPortActions ? (
+                <ContextMenu.SubmenuRoot>
+                  <ContextMenu.SubmenuTrigger className="flex items-center gap-2 cursor-default py-1.5 pr-4 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700">
+                    <ExternalLink className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
+                    <span>Open</span>
+                    <ChevronRight className="w-3 h-3 ml-auto text-neutral-400 dark:text-neutral-500" />
+                  </ContextMenu.SubmenuTrigger>
+                  <ContextMenu.Positioner className="outline-none z-[var(--z-context-menu)]">
+                    <ContextMenu.Popup className="origin-[var(--transform-origin)] rounded-md bg-white dark:bg-neutral-800 py-1 text-neutral-900 dark:text-neutral-100 shadow-lg shadow-gray-200 outline-1 outline-neutral-200 transition-[opacity] data-[ending-style]:opacity-0 dark:shadow-none dark:-outline-offset-1 dark:outline-neutral-700 max-w-xs">
+                      {hasOpenWithActions ? (
+                        <>
+                          <div className="px-3 py-1 text-[11px] font-medium text-neutral-500 dark:text-neutral-400 select-none">
+                            Open with
+                          </div>
+                          {openWithActions.map((action) => {
+                            const Icon = action.Icon;
+                            return (
+                              <ContextMenu.Item
+                                key={action.id}
+                                className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                                onClick={() => executeOpenAction(action)}
+                              >
+                                {Icon ? <Icon className="w-3.5 h-3.5" /> : null}
+                                {action.name}
+                              </ContextMenu.Item>
+                            );
+                          })}
+                        </>
+                      ) : null}
+                      {hasPortActions ? (
+                        <>
+                          <div
+                            className={clsx(
+                              "px-3 py-1 text-[11px] font-medium text-neutral-500 dark:text-neutral-400 select-none",
+                              hasOpenWithActions ? "mt-1" : undefined
+                            )}
+                          >
+                            Forwarded ports
+                          </div>
+                          {portActions.map((port) => (
+                            <ContextMenu.Item
+                              key={port.port}
+                              className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                              onClick={() => executePortAction(port)}
+                            >
+                              <Globe className="w-3 h-3" />
+                              Port {port.port}
+                            </ContextMenu.Item>
+                          ))}
+                        </>
+                      ) : null}
+                    </ContextMenu.Popup>
+                  </ContextMenu.Positioner>
+                </ContextMenu.SubmenuRoot>
               ) : null}
-              {hasPortActions ? (
-                <>
-                  <div className="px-3 py-1 text-[11px] font-medium text-neutral-500 dark:text-neutral-400 select-none">
-                    Forwarded ports
-                  </div>
-                  {portActions.map((port) => (
-                    <ContextMenu.Item
-                      key={port.port}
-                      className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
-                      onClick={() => executePortAction(port)}
-                    >
-                      <Globe className="w-3 h-3" />
-                      Port {port.port}
-                    </ContextMenu.Item>
-                  ))}
-                </>
-              ) : null}
-              <ContextMenu.Item
-                className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
-                onClick={() => setRunExpanded(run._id, !isExpanded)}
-              >
-                {isExpanded ? "Collapse details" : "Expand details"}
-              </ContextMenu.Item>
-              <div className="my-1 h-px bg-neutral-200 dark:bg-neutral-700" />
               <ContextMenu.Item
                 className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
                 onClick={handleArchiveRun}
