@@ -2996,7 +2996,7 @@ const FileDiffCard = memo(function FileDiffCardComponent({
     <TooltipProvider
       delayDuration={120}
       skipDelayDuration={100}
-      disableHoverableContent
+      disableHoverableContent={false}
     >
       <article
         id={anchorId}
@@ -3313,10 +3313,34 @@ function HeatmapTooltipBody({
   reason: string | null;
 }) {
   const theme = getHeatmapTooltipTheme(score);
+  const clipboard = useClipboard({ timeout: 2000 });
+
+  const handleCopy = useCallback(() => {
+    if (reason) {
+      clipboard.copy(reason);
+    }
+  }, [reason, clipboard]);
+
   return (
-    <div className="text-left text-xs leading-relaxed">
+    <div className="flex items-start gap-2 text-left text-xs leading-relaxed">
+      <div className="flex-1 min-w-0">
+        {reason ? (
+          <p className={cn("text-xs", theme.reasonClass)}>{reason}</p>
+        ) : null}
+      </div>
       {reason ? (
-        <p className={cn("text-xs", theme.reasonClass)}>{reason}</p>
+        <button
+          type="button"
+          onClick={handleCopy}
+          className="flex-shrink-0 inline-flex items-center justify-center h-5 w-5 rounded transition-colors hover:bg-black/10"
+          aria-label={clipboard.copied ? "Copied!" : "Copy to clipboard"}
+        >
+          {clipboard.copied ? (
+            <Check className="h-3 w-3" aria-hidden />
+          ) : (
+            <Copy className="h-3 w-3" aria-hidden />
+          )}
+        </button>
       ) : null}
     </div>
   );
