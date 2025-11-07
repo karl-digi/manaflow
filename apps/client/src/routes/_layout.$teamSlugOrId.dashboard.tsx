@@ -20,7 +20,6 @@ import {
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { createFakeConvexId } from "@/lib/fakeConvexId";
-import { parseGithubRepo } from "@/lib/parseGithubRepo";
 import { attachTaskLifecycleListeners } from "@/lib/socket/taskLifecycleListeners";
 import { branchesQueryOptions } from "@/queries/branches";
 import { api } from "@cmux/convex/api";
@@ -651,11 +650,6 @@ function DashboardComponent() {
   // Handle paste of GitHub repo URL in the project search field
   const handleProjectSearchPaste = useCallback(
     async (input: string) => {
-      const parsed = parseGithubRepo(input);
-      if (!parsed) {
-        return false;
-      }
-
       try {
         const result = await addManualRepo({
           teamSlugOrId,
@@ -676,10 +670,12 @@ function DashboardComponent() {
 
         return false;
       } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : "Failed to add repository";
-        toast.error(errorMessage);
-        return true; // Return true to close the dropdown even on error
+        // Only show error toast for non-validation errors
+        // Validation errors mean it's not a GitHub URL, so just return false
+        if (error instanceof Error && !error.message.includes("Invalid GitHub")) {
+          toast.error(error.message);
+        }
+        return false; // Don't close dropdown if it's not a valid GitHub URL
       }
     },
     [addManualRepo, teamSlugOrId, reposByOrgQuery]

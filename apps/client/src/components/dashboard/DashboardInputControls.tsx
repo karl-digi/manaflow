@@ -13,7 +13,6 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { isElectron } from "@/lib/electron";
-import { parseGithubRepo } from "@/lib/parseGithubRepo";
 import { api } from "@cmux/convex/api";
 import type { ProviderStatus, ProviderStatusResponse } from "@cmux/shared";
 import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
@@ -299,8 +298,7 @@ export const DashboardInputControls = memo(function DashboardInputControls({
   }, []);
 
   const handleCustomRepoSubmit = useCallback(async () => {
-    const parsed = parseGithubRepo(customRepoUrl);
-    if (!parsed) {
+    if (!customRepoUrl.trim()) {
       setCustomRepoError("Invalid GitHub repository URL");
       return;
     }
