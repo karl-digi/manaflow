@@ -437,6 +437,11 @@ export function CommandBar({
     scheduleCommandStateReset();
   }, [scheduleCommandStateReset, setOpen, setOpenedWithShift]);
 
+  const closeAndClear = useCallback(() => {
+    closeCommand();
+    clearCommandInput();
+  }, [clearCommandInput, closeCommand]);
+
   const handleEscape = useCallback(() => {
     skipNextCloseRef.current = false;
     if (search.length > 0) {
@@ -840,11 +845,10 @@ export function CommandBar({
 
   const handleLocalWorkspaceSelect = useCallback(
     (projectFullName: string) => {
-      clearCommandInput();
-      closeCommand();
+      closeAndClear();
       void createLocalWorkspace(projectFullName);
     },
-    [clearCommandInput, closeCommand, createLocalWorkspace]
+    [closeAndClear, createLocalWorkspace]
   );
 
   const createCloudWorkspaceFromEnvironment = useCallback(
@@ -1013,8 +1017,7 @@ export function CommandBar({
 
   const handleCloudWorkspaceSelect = useCallback(
     (option: CloudWorkspaceOption) => {
-      clearCommandInput();
-      closeCommand();
+      closeAndClear();
       if (option.type === "environment") {
         void createCloudWorkspaceFromEnvironment(option.environmentId);
       } else {
@@ -1022,8 +1025,7 @@ export function CommandBar({
       }
     },
     [
-      clearCommandInput,
-      closeCommand,
+      closeAndClear,
       createCloudWorkspaceFromEnvironment,
       createCloudWorkspaceFromRepo,
     ]
@@ -1302,21 +1304,29 @@ export function CommandBar({
 
   const handleSelect = useCallback(
     async (value: string) => {
-      clearCommandInput();
       if (value === "teams:switch") {
+        clearCommandInput();
         setActivePage("teams");
         return;
-      } else if (value === "new-task") {
+      }
+      if (value === "local-workspaces") {
+        clearCommandInput();
+        setActivePage("local-workspaces");
+        return;
+      }
+      if (value === "cloud-workspaces") {
+        clearCommandInput();
+        setActivePage("cloud-workspaces");
+        return;
+      }
+
+      closeAndClear();
+
+      if (value === "new-task") {
         navigate({
           to: "/$teamSlugOrId/dashboard",
           params: { teamSlugOrId },
         });
-      } else if (value === "local-workspaces") {
-        setActivePage("local-workspaces");
-        return;
-      } else if (value === "cloud-workspaces") {
-        setActivePage("cloud-workspaces");
-        return;
       } else if (value === "pull-requests") {
         navigate({
           to: "/$teamSlugOrId/prs",
@@ -1501,7 +1511,6 @@ export function CommandBar({
           }
         }
       }
-      closeCommand();
     },
     [
       clearCommandInput,
@@ -1511,7 +1520,7 @@ export function CommandBar({
       allTasks,
       stackUser,
       stackTeams,
-      closeCommand,
+      closeAndClear,
     ]
   );
 
