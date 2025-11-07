@@ -889,7 +889,7 @@ function TaskTreeInner({
                                   <span className="truncate text-left">
                                     {run.label}
                                   </span>
-                                  {showRunNumbers ? (
+                                  {showRunNumbers && run.ordinal ? (
                                     <span className="text-[11px] font-semibold text-neutral-500 dark:text-neutral-400 flex-shrink-0">
                                       {run.ordinal}
                                     </span>

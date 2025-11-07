@@ -40,7 +40,7 @@ export function annotateAgentOrdinals(
 
       return {
         ...item,
-        agentOrdinal: ordinal,
+        agentOrdinal: hasDuplicate ? ordinal : undefined,
         hasDuplicateAgentName: hasDuplicate,
         children:
           item.children.length > 0 ? annotate(item.children) : [],
