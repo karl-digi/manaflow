@@ -2875,7 +2875,7 @@ const FileDiffCard = memo(function FileDiffCardComponent({
                   align="start"
                   sideOffset={0}
                   className={cn(
-                    "max-w-xs space-y-1 text-left leading-relaxed border backdrop-blur",
+                    "!pointer-events-auto max-w-xs space-y-1 text-left leading-relaxed border backdrop-blur",
                     getHeatmapTooltipTheme(tooltipMeta.score).contentClass
                   )}
                 >
@@ -3292,7 +3292,7 @@ function HeatmapGutterTooltip({
         side="left"
         align="start"
         className={cn(
-          "max-w-xs space-y-1 text-left leading-relaxed border backdrop-blur",
+          "!pointer-events-auto max-w-xs space-y-1 text-left leading-relaxed border backdrop-blur",
           theme.contentClass
         )}
       >
@@ -3313,11 +3313,38 @@ function HeatmapTooltipBody({
   reason: string | null;
 }) {
   const theme = getHeatmapTooltipTheme(score);
+  const { copy, copied } = useClipboard({ timeout: 1500 });
+
+  const handleCopy = useCallback(() => {
+    if (!reason) {
+      return;
+    }
+    copy(reason);
+  }, [copy, reason]);
+
+  if (!reason) {
+    return null;
+  }
+
   return (
-    <div className="text-left text-xs leading-relaxed">
-      {reason ? (
-        <p className={cn("text-xs", theme.reasonClass)}>{reason}</p>
-      ) : null}
+    <div className="flex items-start gap-2 text-left text-xs leading-relaxed">
+      <p className={cn("flex-1 text-xs", theme.reasonClass)}>{reason}</p>
+      <button
+        type="button"
+        onClick={handleCopy}
+        className={cn(
+          "ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded border border-transparent text-neutral-500 transition",
+          "hover:border-neutral-300 hover:bg-white/60 hover:text-neutral-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-neutral-500",
+          copied ? "text-emerald-600" : null
+        )}
+        aria-label={copied ? "Copied" : "Copy tooltip text"}
+      >
+        {copied ? (
+          <Check className="h-3.5 w-3.5" aria-hidden />
+        ) : (
+          <Copy className="h-3.5 w-3.5" aria-hidden />
+        )}
+      </button>
     </div>
   );
 }
