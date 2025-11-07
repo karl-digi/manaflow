@@ -691,6 +691,7 @@ function MonacoSingleBufferRoute() {
   const [isReady, setIsReady] = useState(false);
   const overlayRootRef = useRef<HTMLDivElement | null>(null);
   const unifiedOverlayRef = useRef<HTMLDivElement | null>(null);
+  const isUnifiedLayout = useUnifiedDiffLayout();
 
   useEffect(() => {
     let cancelled = false;
@@ -719,8 +720,8 @@ function MonacoSingleBufferRoute() {
 
   const diffOptions = useMemo<editor.IDiffEditorConstructionOptions>(
     () => ({
-      renderSideBySide: true,
-      useInlineViewWhenSpaceIsLimited: false,
+      renderSideBySide: !isUnifiedLayout,
+      useInlineViewWhenSpaceIsLimited: isUnifiedLayout,
       readOnly: true,
       originalEditable: false,
       enableSplitViewResizing: true,
@@ -742,7 +743,7 @@ function MonacoSingleBufferRoute() {
       lineNumbers: "on",
       wordWrap: "on",
     }),
-    [],
+    [isUnifiedLayout],
   );
 
   const handleMount: DiffOnMount = (editorInstance, monacoInstance) => {
@@ -852,7 +853,7 @@ function MonacoSingleBufferRoute() {
           <div ref={overlayRootRef} className="relative h-[80vh]">
             <div ref={unifiedOverlayRef} className="pointer-events-none absolute inset-0 z-40" />
             <DiffEditor
-              key={theme}
+              key={`${theme}-${isUnifiedLayout ? "unified" : "split"}`}
               theme={editorTheme}
               options={diffOptions}
               height="100%"
@@ -1262,6 +1263,45 @@ function assignLanguageToModel({
   }
 
   monaco.editor.setModelLanguage(model, languageId);
+}
+
+function useUnifiedDiffLayout(breakpoint = 960) {
+  const [isUnified, setIsUnified] = useState(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+    return window.innerWidth < breakpoint;
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const mediaQuery = window.matchMedia(`(max-width: ${breakpoint}px)`);
+    const handleChange = () => {
+      setIsUnified(mediaQuery.matches);
+    };
+
+    handleChange();
+
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", handleChange);
+    } else {
+      // Safari < 14 fallback
+      mediaQuery.addListener(handleChange);
+    }
+
+    return () => {
+      if (typeof mediaQuery.removeEventListener === "function") {
+        mediaQuery.removeEventListener("change", handleChange);
+      } else {
+        mediaQuery.removeListener(handleChange);
+      }
+    };
+  }, [breakpoint]);
+
+  return isUnified;
 }
 
 type SetupHeaderOverlayParams = {
