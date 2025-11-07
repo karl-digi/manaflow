@@ -4,7 +4,10 @@ import type {
   DeploymentStatusEvent,
   InstallationEvent,
   InstallationRepositoriesEvent,
+  IssueCommentEvent,
   PullRequestEvent,
+  PullRequestReviewCommentEvent,
+  PullRequestReviewEvent,
   PushEvent,
   StatusEvent,
   WebhookEvent,
@@ -213,10 +216,126 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
       }
       case "repository":
       case "create":
-      case "delete":
-      case "pull_request_review":
-      case "pull_request_review_comment":
+      case "delete": {
+        break;
+      }
       case "issue_comment": {
+        try {
+          const issueCommentPayload = body as IssueCommentEvent;
+          const repoFullName = String(
+            issueCommentPayload.repository?.full_name ?? "",
+          );
+          const installation = Number(
+            issueCommentPayload.installation?.id ?? 0,
+          );
+          const isPr = Boolean(issueCommentPayload.issue?.pull_request);
+          if (!repoFullName || !installation || !isPr) {
+            break;
+          }
+          const conn = await _ctx.runQuery(
+            internal.github_app.getProviderConnectionByInstallationId,
+            { installationId: installation },
+          );
+          const teamId = conn?.teamId;
+          if (!teamId) {
+            console.warn("[issue_comment] Missing team binding for installation", {
+              installation,
+              delivery,
+            });
+            break;
+          }
+          await _ctx.runMutation(
+            internal.github_pr_comments.upsertIssueCommentFromWebhook,
+            {
+              installationId: installation,
+              repoFullName,
+              teamId,
+              payload: issueCommentPayload,
+            },
+          );
+        } catch (err) {
+          console.error("[issue_comment] Handler failed", { err, delivery });
+        }
+        break;
+      }
+      case "pull_request_review_comment": {
+        try {
+          const reviewCommentPayload = body as PullRequestReviewCommentEvent;
+          const repoFullName = String(
+            reviewCommentPayload.repository?.full_name ?? "",
+          );
+          const installation = Number(
+            reviewCommentPayload.installation?.id ?? 0,
+          );
+          if (!repoFullName || !installation) {
+            break;
+          }
+          const conn = await _ctx.runQuery(
+            internal.github_app.getProviderConnectionByInstallationId,
+            { installationId: installation },
+          );
+          const teamId = conn?.teamId;
+          if (!teamId) {
+            console.warn(
+              "[pull_request_review_comment] Missing team binding for installation",
+              { installation, delivery },
+            );
+            break;
+          }
+          await _ctx.runMutation(
+            internal.github_pr_comments.upsertReviewCommentFromWebhook,
+            {
+              installationId: installation,
+              repoFullName,
+              teamId,
+              payload: reviewCommentPayload,
+            },
+          );
+        } catch (err) {
+          console.error("[pull_request_review_comment] Handler failed", {
+            err,
+            delivery,
+          });
+        }
+        break;
+      }
+      case "pull_request_review": {
+        try {
+          const reviewPayload = body as PullRequestReviewEvent;
+          const repoFullName = String(reviewPayload.repository?.full_name ?? "");
+          const installation = Number(
+            reviewPayload.installation?.id ?? 0,
+          );
+          if (!repoFullName || !installation) {
+            break;
+          }
+          const conn = await _ctx.runQuery(
+            internal.github_app.getProviderConnectionByInstallationId,
+            { installationId: installation },
+          );
+          const teamId = conn?.teamId;
+          if (!teamId) {
+            console.warn("[pull_request_review] Missing team binding for installation", {
+              installation,
+              delivery,
+            });
+            break;
+          }
+          await _ctx.runMutation(
+            internal.github_pr_comments.upsertReviewFromWebhook,
+            {
+              installationId: installation,
+              repoFullName,
+              teamId,
+              payload: reviewPayload,
+            },
+          );
+        } catch (err) {
+          console.error("[pull_request_review] Handler failed", {
+            err,
+            delivery,
+          });
+        }
         break;
       }
       case "workflow_run": {

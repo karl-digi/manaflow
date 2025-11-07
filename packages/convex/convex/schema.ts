@@ -719,12 +719,70 @@ const convexSchema = defineSchema({
     additions: v.optional(v.number()),
     deletions: v.optional(v.number()),
     changedFiles: v.optional(v.number()),
+    commentsSyncedAt: v.optional(v.number()),
   })
     .index("by_team", ["teamId", "updatedAt"]) // list by team, recent first client-side
     .index("by_team_state", ["teamId", "state", "updatedAt"]) // filter by state
     .index("by_team_repo_number", ["teamId", "repoFullName", "number"]) // upsert key
     .index("by_installation", ["installationId", "updatedAt"]) // debug/ops
     .index("by_repo", ["repoFullName", "updatedAt"]),
+
+  pullRequestComments: defineTable({
+    provider: v.literal("github"),
+    installationId: v.number(),
+    teamId: v.string(),
+    pullRequestId: v.id("pullRequests"),
+    repoFullName: v.string(),
+    number: v.number(),
+    commentId: v.number(),
+    commentType: v.union(
+      v.literal("issue"),
+      v.literal("review"),
+      v.literal("review_comment"),
+    ),
+    body: v.optional(v.string()),
+    authorLogin: v.optional(v.string()),
+    authorId: v.optional(v.number()),
+    authorAvatarUrl: v.optional(v.string()),
+    authorAssociation: v.optional(v.string()),
+    htmlUrl: v.optional(v.string()),
+    createdAt: v.optional(v.number()),
+    updatedAt: v.optional(v.number()),
+    submittedAt: v.optional(v.number()),
+    state: v.optional(v.string()),
+    commitId: v.optional(v.string()),
+    path: v.optional(v.string()),
+    line: v.optional(v.number()),
+    originalLine: v.optional(v.number()),
+    diffHunk: v.optional(v.string()),
+    inReplyToId: v.optional(v.number()),
+    isMinimized: v.optional(v.boolean()),
+    minimizedReason: v.optional(v.string()),
+    isResolved: v.optional(v.boolean()),
+    isDeleted: v.optional(v.boolean()),
+    reactions: v.optional(
+      v.object({
+        totalCount: v.number(),
+        plusOne: v.optional(v.number()),
+        minusOne: v.optional(v.number()),
+        laugh: v.optional(v.number()),
+        confused: v.optional(v.number()),
+        heart: v.optional(v.number()),
+        hooray: v.optional(v.number()),
+        rocket: v.optional(v.number()),
+        eyes: v.optional(v.number()),
+      }),
+    ),
+    lastSyncedAt: v.optional(v.number()),
+  })
+    .index("by_pull_request", ["pullRequestId", "createdAt"])
+    .index("by_team_repo_number_createdAt", [
+      "teamId",
+      "repoFullName",
+      "number",
+      "createdAt",
+    ])
+    .index("by_repo_comment", ["repoFullName", "commentId"]),
 
   // GitHub Actions workflow runs
   githubWorkflowRuns: defineTable({
