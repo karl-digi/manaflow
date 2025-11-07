@@ -555,7 +555,7 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
       return panelWrapper(
         <TerminalSquare className="size-3" aria-hidden />,
         PANEL_LABELS.terminal,
-        <div className="flex-1 bg-black">
+        <div className="flex flex-1 min-h-0 w-full bg-black">
           <TaskRunTerminalPane
             key={taskRunId ?? "no-run"}
             teamSlugOrId={teamSlugOrId}

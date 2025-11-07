@@ -12,28 +12,26 @@ export function TaskRunTerminalPane({
   teamSlugOrId,
   taskRunId,
 }: TaskRunTerminalPaneProps) {
+  const renderPlaceholder = (message: string) => (
+    <div className="flex h-full w-full flex-col items-center justify-center gap-2 px-4 text-center text-sm text-neutral-500 dark:text-neutral-400">
+      <MonitorUp className="size-4 animate-pulse" aria-hidden />
+      <span>{message}</span>
+    </div>
+  );
+
   if (!taskRunId) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-sm text-neutral-500 dark:text-neutral-400">
-        <MonitorUp className="size-4 animate-pulse" aria-hidden />
-        <span>Select a run to connect a terminal session.</span>
-      </div>
-    );
+    return renderPlaceholder("Select a run to connect a terminal session.");
   }
 
   return (
-    <Suspense
-      fallback={
-        <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-neutral-500 dark:text-neutral-400">
-          <MonitorUp className="size-4 animate-pulse" aria-hidden />
-          <span>Loading terminal…</span>
-        </div>
-      }
-    >
-      <TaskRunTerminalsPane
-        teamSlugOrId={teamSlugOrId}
-        taskRunId={taskRunId}
-      />
-    </Suspense>
+    <div className="flex h-full w-full min-h-0 flex-col">
+      <Suspense fallback={renderPlaceholder("Loading terminal…")}>
+        <TaskRunTerminalsPane
+          teamSlugOrId={teamSlugOrId}
+          taskRunId={taskRunId}
+          variant="panel"
+        />
+      </Suspense>
+    </div>
   );
 }

@@ -36,6 +36,7 @@ const paramsSchema = z.object({
 export interface TaskRunTerminalsPaneProps {
   teamSlugOrId: string;
   taskRunId: Id<"taskRuns">;
+  variant?: "page" | "panel";
 }
 
 function TaskRunTerminalsRoute() {
@@ -173,6 +174,7 @@ function getTabRemovalOutcome(
 export function TaskRunTerminalsPane({
   taskRunId,
   teamSlugOrId,
+  variant = "page",
 }: TaskRunTerminalsPaneProps) {
   const taskRun = useSuspenseQuery(
     convexQuery(api.taskRuns.get, {
@@ -402,7 +404,7 @@ export function TaskRunTerminalsPane({
     }
 
     return (
-      <div className="flex flex-col grow min-h-0">
+      <div className="flex w-full flex-col grow min-h-0">
         <div className="flex items-center justify-between gap-3 border-b border-neutral-200 bg-neutral-100/70 px-3 dark:border-neutral-700 dark:bg-neutral-950/70">
           <div className="flex items-center overflow-x-auto py-0.5">
             {terminalIds.length > 0 ? (
@@ -506,7 +508,7 @@ export function TaskRunTerminalsPane({
             {deleteTerminalErrorMessage}
           </span>
         ) : null}
-        <div className="relative flex-1 min-h-0 bg-neutral-950">
+        <div className="relative flex-1 min-h-0 w-full bg-neutral-950">
           {tabsQuery.isLoading ? (
             <div className="absolute inset-0 flex items-center justify-center text-sm text-neutral-300">
               Loading terminals…
@@ -539,9 +541,17 @@ export function TaskRunTerminalsPane({
     );
   };
 
+  if (variant === "panel") {
+    return (
+      <div className="flex h-full w-full min-h-0 flex-col">
+        {renderTerminalArea()}
+      </div>
+    );
+  }
+
   return (
-    <div className="flex flex-col grow bg-neutral-50 dark:bg-black">
-      <div className="flex flex-col grow min-h-0 border-l border-neutral-200 dark:border-neutral-800">
+    <div className="flex h-full w-full min-h-0 flex-col bg-neutral-50 dark:bg-black">
+      <div className="flex h-full w-full min-h-0 flex-col border-l border-neutral-200 dark:border-neutral-800">
         {renderTerminalArea()}
       </div>
     </div>
