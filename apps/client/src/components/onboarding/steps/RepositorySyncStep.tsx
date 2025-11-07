@@ -6,13 +6,14 @@ import {
   Loader2,
   Search,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { api } from "@cmux/convex/api";
-import { useQuery } from "convex/react";
+import { useQuery, useMutation } from "convex/react";
 import { useQuery as useRQ } from "@tanstack/react-query";
 import { getApiIntegrationsGithubReposOptions } from "@cmux/www-openapi-client/react-query";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import type { GithubRepo } from "@cmux/www-openapi-client";
+import { toast } from "sonner";
 
 interface RepositorySyncStepProps {
   teamSlugOrId: string;
@@ -35,11 +36,14 @@ export function RepositorySyncStep({
   const [selectedConnection, setSelectedConnection] = useState<number | null>(
     null
   );
+  const [isSyncing, setIsSyncing] = useState(false);
   const debouncedSearch = useDebouncedValue(searchTerm, 300);
 
   const connections = useQuery(api.github.listProviderConnections, {
     teamSlugOrId,
   });
+
+  const bulkInsertRepos = useMutation(api.github.bulkInsertRepos);
 
   // Auto-select first connection
   useEffect(() => {
@@ -59,7 +63,10 @@ export function RepositorySyncStep({
     })
   );
 
-  const repos = reposQuery.data?.repos ?? [];
+  const repos = React.useMemo(
+    () => reposQuery.data?.repos ?? [],
+    [reposQuery.data?.repos]
+  );
 
   const handleToggleRepo = useCallback(
     (repoFullName: string) => {
@@ -72,9 +79,44 @@ export function RepositorySyncStep({
     [selectedRepos, onReposSelected]
   );
 
-  const handleContinue = useCallback(() => {
-    onNext();
-  }, [onNext]);
+  const handleContinue = useCallback(async () => {
+    if (selectedRepos.length === 0) {
+      onNext();
+      return;
+    }
+
+    setIsSyncing(true);
+    try {
+      // Get full repo objects for selected repos
+      const reposToSync = repos.filter((repo: GithubRepo) =>
+        selectedRepos.includes(repo.full_name)
+      );
+
+      // Bulk insert the selected repos
+      await bulkInsertRepos({
+        teamSlugOrId,
+        repos: reposToSync.map((repo: GithubRepo) => {
+          const [org] = repo.full_name.split("/");
+          return {
+            fullName: repo.full_name,
+            org: org,
+            name: repo.name,
+            gitRemote: `https://github.com/${repo.full_name}.git`,
+            provider: "github",
+            visibility: repo.private ? "private" : "public",
+          };
+        }),
+      });
+
+      toast.success(`Synced ${selectedRepos.length} ${selectedRepos.length === 1 ? "repository" : "repositories"}`);
+      onNext();
+    } catch (error) {
+      console.error("Error syncing repos:", error);
+      toast.error("Failed to sync repositories");
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [selectedRepos, repos, teamSlugOrId, bulkInsertRepos, onNext]);
 
   if (!hasGitHubConnection) {
     return (
@@ -195,12 +237,12 @@ export function RepositorySyncStep({
       )}
 
       <div className="flex items-center justify-between pt-2">
-        <Button variant="ghost" onClick={onSkip} size="sm">
+        <Button variant="ghost" onClick={onSkip} size="sm" disabled={isSyncing}>
           Skip
         </Button>
-        <Button onClick={handleContinue} size="sm" className="gap-1.5">
-          Continue
-          <ArrowRight className="h-3.5 w-3.5" />
+        <Button onClick={handleContinue} size="sm" className="gap-1.5" disabled={isSyncing}>
+          {isSyncing ? "Syncing..." : "Continue"}
+          {!isSyncing && <ArrowRight className="h-3.5 w-3.5" />}
         </Button>
       </div>
     </div>

@@ -219,7 +219,7 @@ export function OnboardingWizard({
           </div>
 
           {/* Step content */}
-          <div className="px-6 py-6">
+          <div className="px-6 py-6 max-h-[60vh] overflow-y-auto">
             {renderStep()}
           </div>
         </Dialog.Content>

@@ -36,12 +36,40 @@ export function GitHubConnectStep({
     }
   }, [connections, localHasConnection, onGitHubConnected]);
 
+  // Listen for Electron deep link callback
+  useEffect(() => {
+    if (typeof window === "undefined" || !("cmux" in window)) {
+      return; // Not in Electron
+    }
+
+    const handleElectronCallback = (...args: unknown[]) => {
+      const data = args[0] as { team?: string } | undefined;
+      console.log("GitHub connect complete (Electron deep link)", data);
+      setLocalHasConnection(true);
+      onGitHubConnected();
+      setIsConnecting(false);
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const unsubscribe = (window as any).cmux.on(
+      "github-connect-complete",
+      handleElectronCallback
+    );
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, [onGitHubConnected]);
+
   const handleConnect = useCallback(async () => {
     setIsConnecting(true);
     try {
+      // In Electron, don't pass returnUrl so it uses the deep link flow
+      const isElectron = typeof window !== "undefined" && "cmux" in window;
       const { state } = await mintInstallState({
         teamSlugOrId,
-        returnUrl: window.location.href,
+        // Only pass returnUrl for browser (not Electron)
+        ...(!isElectron ? { returnUrl: window.location.href } : {}),
       });
 
       const githubAppSlug = env.NEXT_PUBLIC_GITHUB_APP_SLUG ?? "cmux-dev";

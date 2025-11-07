@@ -473,6 +473,7 @@ const convexSchema = defineSchema({
     connectionId: v.optional(v.id("providerConnections")),
     lastSyncedAt: v.optional(v.number()),
     lastPushedAt: v.optional(v.number()),
+    manual: v.optional(v.boolean()), // True if manually added by user
   })
     .index("by_org", ["org"])
     .index("by_gitRemote", ["gitRemote"])
