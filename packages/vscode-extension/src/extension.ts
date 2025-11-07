@@ -21,10 +21,37 @@ let workerSocket: Socket<ServerToClientEvents, ClientToServerEvents> | null =
 // Track active terminals
 const activeTerminals = new Map<string, vscode.Terminal>();
 let isSetupComplete = false;
+let isTerminalSetupInProgress = false;
+let defaultTerminalRetryTimer: NodeJS.Timeout | null = null;
+const DEFAULT_TERMINAL_RETRY_DELAY_MS = 5000;
 
 // Track file watcher and debounce timer
 let fileWatcher: vscode.FileSystemWatcher | null = null;
 let refreshDebounceTimer: NodeJS.Timeout | null = null;
+
+function clearDefaultTerminalRetryTimer() {
+  if (defaultTerminalRetryTimer) {
+    clearTimeout(defaultTerminalRetryTimer);
+    defaultTerminalRetryTimer = null;
+  }
+}
+
+function scheduleDefaultTerminalRetry(reason?: string) {
+  if (defaultTerminalRetryTimer || isSetupComplete) {
+    if (defaultTerminalRetryTimer) {
+      log("Default terminal retry already scheduled");
+    }
+    return;
+  }
+  const reasonSuffix = reason ? ` (${reason})` : "";
+  log(
+    `Scheduling default terminal setup retry in ${DEFAULT_TERMINAL_RETRY_DELAY_MS}ms${reasonSuffix}`
+  );
+  defaultTerminalRetryTimer = setTimeout(() => {
+    defaultTerminalRetryTimer = null;
+    setupDefaultTerminal();
+  }, DEFAULT_TERMINAL_RETRY_DELAY_MS);
+}
 
 function log(message: string, ...args: unknown[]) {
   const safeStringify = (value: unknown): string => {
@@ -282,71 +309,89 @@ async function setupDefaultTerminal() {
     return;
   }
 
-  // Wait for tmux sessions to exist (they may be created by orchestrator for cloud workspaces)
-  const hasSessions = await waitForTmuxSessions(20, 1000);
-  if (!hasSessions) {
-    log("No tmux sessions found after waiting; skipping terminal setup and attach");
+  if (isTerminalSetupInProgress) {
+    log("Terminal setup already in progress, skipping");
     return;
   }
 
-  // if an existing editor is called "bash", early return
-  const activeEditors = vscode.window.visibleTextEditors;
-  for (const editor of activeEditors) {
-    if (editor.document.fileName === "bash") {
-      log("Bash editor already exists, skipping terminal setup");
+  isTerminalSetupInProgress = true;
+
+  // Wait for tmux sessions to exist (they may be created by orchestrator for cloud workspaces)
+  try {
+    const hasSessions = await waitForTmuxSessions(20, 1000);
+    if (!hasSessions) {
+      log(
+        "No tmux sessions found after waiting; scheduling retry until one exists"
+      );
+      scheduleDefaultTerminalRetry("tmux session not ready");
       return;
     }
-  }
 
-  isSetupComplete = true; // Set this BEFORE creating UI elements to prevent race conditions
+    // if an existing editor is called "bash", early return
+    const activeEditors = vscode.window.visibleTextEditors;
+    for (const editor of activeEditors) {
+      if (editor.document.fileName === "bash") {
+        log("Bash editor already exists, skipping default terminal creation");
+        return;
+      }
+    }
 
-  // Open Source Control view
-  log("Opening SCM view...");
-  await vscode.commands.executeCommand("workbench.view.scm");
+    clearDefaultTerminalRetryTimer();
+    isSetupComplete = true; // Set this BEFORE creating UI elements to prevent race conditions
 
-  // Open git changes view
-  log("Opening git changes view...");
-  await openMultiDiffEditor();
+    // Open Source Control view
+    log("Opening SCM view...");
+    await vscode.commands.executeCommand("workbench.view.scm");
 
-  // Create terminal for default tmux session
-  log("Creating terminal for default tmux session");
+    // Open git changes view
+    log("Opening git changes view...");
+    await openMultiDiffEditor();
 
-  const terminal = vscode.window.createTerminal({
-    name: `Default Session`,
-    location: vscode.TerminalLocation.Editor,
-    cwd: "/root/workspace",
-    env: process.env,
-  });
+    // Create terminal for default tmux session
+    log("Creating terminal for default tmux session");
 
-  terminal.show();
+    const terminal = vscode.window.createTerminal({
+      name: `Default Session`,
+      location: vscode.TerminalLocation.Editor,
+      cwd: "/root/workspace",
+      env: process.env,
+    });
 
-  // Store terminal reference
-  activeTerminals.set("default", terminal);
-
-  // Attach to default tmux session with a small delay to ensure it's ready
-  setTimeout(() => {
-    terminal.sendText(`tmux attach-session -t cmux`);
-    log("Attached to default tmux session");
-  }, 500); // 500ms delay to ensure tmux session is ready
-
-  log("Created terminal successfully");
-
-  // After terminal is created, ensure the terminal is active and move to right group
-  setTimeout(async () => {
-    // Focus on the terminal tab
     terminal.show();
 
-    // Move the active editor (terminal) to the right group
-    log("Moving terminal editor to right group");
-    await vscode.commands.executeCommand(
-      "workbench.action.moveEditorToRightGroup"
-    );
+    // Store terminal reference
+    activeTerminals.set("default", terminal);
 
-    // Ensure terminal has focus
-    // await vscode.commands.executeCommand("workbench.action.terminal.focus");
+    // Attach to default tmux session with a small delay to ensure it's ready
+    setTimeout(() => {
+      terminal.sendText(`tmux attach-session -t cmux`);
+      log("Attached to default tmux session");
+    }, 500); // 500ms delay to ensure tmux session is ready
 
-    log("Terminal setup complete");
-  }, 100);
+    log("Created terminal successfully");
+
+    // After terminal is created, ensure the terminal is active and move to right group
+    setTimeout(async () => {
+      // Focus on the terminal tab
+      terminal.show();
+
+      // Move the active editor (terminal) to the right group
+      log("Moving terminal editor to right group");
+      await vscode.commands.executeCommand(
+        "workbench.action.moveEditorToRightGroup"
+      );
+
+      // Ensure terminal has focus
+      // await vscode.commands.executeCommand("workbench.action.terminal.focus");
+
+      log("Terminal setup complete");
+    }, 100);
+  } catch (error) {
+    log("Error while setting up default terminal:", error);
+    scheduleDefaultTerminalRetry("setup error");
+  } finally {
+    isTerminalSetupInProgress = false;
+  }
 }
 
 function connectToWorker() {
@@ -510,6 +555,7 @@ export function activate(context: vscode.ExtensionContext) {
     if (workerSocket && workerSocket.connected) {
       log("Manually setting up default terminal...");
       isSetupComplete = false; // Allow setup to run again
+      clearDefaultTerminalRetryTimer();
       setupDefaultTerminal();
     } else {
       connectToWorker();
