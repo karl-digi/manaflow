@@ -11,7 +11,7 @@ import {
   ChevronRight,
   ChevronDown,
 } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 type WorkflowRunsProps = {
   teamSlugOrId: string;
@@ -482,6 +482,55 @@ export function WorkflowRunsSection({
         </div>
       )}
     </div>
+  );
+}
+
+interface WorkflowRunsForPullRequestProps extends WorkflowRunsProps {
+  /**
+   * When provided, overrides the expanded state. Use `null` to allow the component
+   * to fall back to automatic expansion (failures auto-expand).
+   */
+  isExpandedOverride?: boolean | null;
+  onExpandedChange?: (next: boolean) => void;
+}
+
+export function WorkflowRunsForPullRequest({
+  isExpandedOverride,
+  onExpandedChange,
+  ...props
+}: WorkflowRunsForPullRequestProps) {
+  const workflowData = useCombinedWorkflowData(props);
+  const [localExpanded, setLocalExpanded] = useState<boolean | null>(null);
+
+  const hasAnyFailure = useMemo(() => {
+    return workflowData.allRuns.some(
+      (run) =>
+        run.conclusion === "failure" ||
+        run.conclusion === "timed_out" ||
+        run.conclusion === "action_required",
+    );
+  }, [workflowData.allRuns]);
+
+  const effectiveOverride =
+    isExpandedOverride !== undefined ? isExpandedOverride : localExpanded;
+  const isExpanded = effectiveOverride ?? hasAnyFailure;
+
+  const handleToggle = () => {
+    const next = !isExpanded;
+    if (onExpandedChange) {
+      onExpandedChange(next);
+    } else {
+      setLocalExpanded(next);
+    }
+  };
+
+  return (
+    <WorkflowRunsSection
+      allRuns={workflowData.allRuns}
+      isLoading={workflowData.isLoading}
+      isExpanded={isExpanded}
+      onToggle={handleToggle}
+    />
   );
 }
 

@@ -40,7 +40,7 @@ import { attachTaskLifecycleListeners } from "@/lib/socket/taskLifecycleListener
 import z from "zod";
 import type { EditorApi } from "@/components/dashboard/DashboardInput";
 import LexicalEditor from "@/components/lexical/LexicalEditor";
-import { useCombinedWorkflowData, WorkflowRunsSection } from "@/components/WorkflowRunsSection";
+import { WorkflowRunsForPullRequest } from "@/components/WorkflowRunsSection";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 
 const paramsSchema = z.object({
@@ -444,55 +444,6 @@ function collectAgentNamesFromRuns(
   return ordered;
 }
 
-function WorkflowRunsWrapper({
-  teamSlugOrId,
-  repoFullName,
-  prNumber,
-  headSha,
-  checksExpandedByRepo,
-  setChecksExpandedByRepo,
-}: {
-  teamSlugOrId: string;
-  repoFullName: string;
-  prNumber: number;
-  headSha?: string;
-  checksExpandedByRepo: Record<string, boolean | null>;
-  setChecksExpandedByRepo: React.Dispatch<React.SetStateAction<Record<string, boolean | null>>>;
-}) {
-  const workflowData = useCombinedWorkflowData({
-    teamSlugOrId,
-    repoFullName,
-    prNumber,
-    headSha,
-  });
-
-  // Auto-expand if there are failures (only on initial load)
-  const hasAnyFailure = useMemo(() => {
-    return workflowData.allRuns.some(
-      (run) =>
-        run.conclusion === "failure" ||
-        run.conclusion === "timed_out" ||
-        run.conclusion === "action_required"
-    );
-  }, [workflowData.allRuns]);
-
-  const isExpanded = checksExpandedByRepo[repoFullName] ?? hasAnyFailure;
-
-  return (
-    <WorkflowRunsSection
-      allRuns={workflowData.allRuns}
-      isLoading={workflowData.isLoading}
-      isExpanded={isExpanded}
-      onToggle={() => {
-        setChecksExpandedByRepo((prev) => ({
-          ...prev,
-          [repoFullName]: !isExpanded,
-        }));
-      }}
-    />
-  );
-}
-
 export const Route = createFileRoute(
   "/_layout/$teamSlugOrId/task/$taskId/run/$runId/diff",
 )({
@@ -790,14 +741,19 @@ function RunDiffPage() {
             {pullRequests && pullRequests.length > 0 && (
               <Suspense fallback={null}>
                 {pullRequests.map((pr) => (
-                  <WorkflowRunsWrapper
+                  <WorkflowRunsForPullRequest
                     key={pr.repoFullName}
                     teamSlugOrId={teamSlugOrId}
                     repoFullName={pr.repoFullName}
                     prNumber={pr.number}
                     headSha={undefined}
-                    checksExpandedByRepo={checksExpandedByRepo}
-                    setChecksExpandedByRepo={setChecksExpandedByRepo}
+                    isExpandedOverride={checksExpandedByRepo[pr.repoFullName] ?? null}
+                    onExpandedChange={(next) => {
+                      setChecksExpandedByRepo((prev) => ({
+                        ...prev,
+                        [pr.repoFullName]: next,
+                      }));
+                    }}
                   />
                 ))}
               </Suspense>
