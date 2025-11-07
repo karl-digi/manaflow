@@ -340,7 +340,12 @@ export function WorkflowRunsSection({
         />
       );
     }
-    if (status === "in_progress" || status === "queued") {
+    if (
+      status === "in_progress" ||
+      status === "queued" ||
+      status === "waiting" ||
+      status === "pending"
+    ) {
       return (
         <Loader2
           className="w-3 h-3 text-yellow-600 dark:text-yellow-500 animate-spin"
