@@ -773,6 +773,34 @@ app.whenReady().then(async () => {
         return;
       }
     });
+
+    contents.on("before-input-event", (event, input) => {
+      if (input.type !== "keyDown") return;
+
+      const metaPressed = input.meta;
+      const ctrlPressed = input.control;
+      if (!metaPressed || !ctrlPressed || input.alt || input.shift) {
+        return;
+      }
+
+      const key = input.key.toLowerCase();
+      if (key === "[") {
+        event.preventDefault();
+        sendShortcutToFocusedWindow("navigate-back");
+        return;
+      }
+
+      if (key === "]") {
+        event.preventDefault();
+        sendShortcutToFocusedWindow("navigate-forward");
+        return;
+      }
+
+      if (key === "y") {
+        event.preventDefault();
+        sendShortcutToFocusedWindow("navigate-history");
+      }
+    });
   });
   const rendererBaseUrl =
     is.dev && process.env["ELECTRON_RENDERER_URL"]

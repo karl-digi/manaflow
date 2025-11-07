@@ -15,6 +15,7 @@ import {
   type CSSProperties,
 } from "react";
 import CmuxLogo from "./logo/cmux-logo";
+import { SidebarHistoryControls } from "./sidebar/SidebarHistoryControls";
 import { SidebarNavLink } from "./sidebar/SidebarNavLink";
 import { SidebarPullRequestList } from "./sidebar/SidebarPullRequestList";
 import { SidebarSectionLink } from "./sidebar/SidebarSectionLink";
@@ -250,6 +251,15 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
             aria-hidden="true"
           />
         </Link>
+      </div>
+      <div
+        className={`pb-2 pr-2 ${isElectron ? "" : "pl-3"}`}
+        style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
+      >
+        <div className="flex items-center">
+          {isElectron && <div className="w-[80px]" />}
+          <SidebarHistoryControls />
+        </div>
       </div>
       <nav className="grow flex flex-col overflow-hidden">
         <div className="flex-1 overflow-y-auto pb-8">
