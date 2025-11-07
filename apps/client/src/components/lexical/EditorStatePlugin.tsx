@@ -8,6 +8,7 @@ import {
   type LexicalNode,
   ElementNode,
   TextNode,
+  type SerializedEditorState,
 } from "lexical";
 import { useEffect } from "react";
 import { $isImageNode } from "./ImageNode";
@@ -33,6 +34,8 @@ interface EditorApi {
   clear: () => void;
   focus: () => void;
   insertText: (text: string) => void;
+  getSerializedState: () => SerializedEditorState;
+  restoreSerializedState: (state: SerializedEditorState) => void;
 }
 
 export function EditorStatePlugin({ onEditorReady }: { onEditorReady?: (api: EditorApi) => void }) {
@@ -134,7 +137,12 @@ export function EditorStatePlugin({ onEditorReady }: { onEditorReady?: (api: Edi
               textNode.select();
             }
           });
-        }
+        },
+        getSerializedState: () => editor.getEditorState().toJSON(),
+        restoreSerializedState: (state: SerializedEditorState) => {
+          const parsedState = editor.parseEditorState(state);
+          editor.setEditorState(parsedState);
+        },
       };
 
       onEditorReady(api);

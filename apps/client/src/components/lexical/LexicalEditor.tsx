@@ -538,6 +538,10 @@ interface LexicalEditorProps {
       }>;
     };
     clear: () => void;
+    focus?: () => void;
+    insertText?: (text: string) => void;
+    getSerializedState?: () => SerializedEditorState;
+    restoreSerializedState?: (state: SerializedEditorState) => void;
   }) => void;
 }
 

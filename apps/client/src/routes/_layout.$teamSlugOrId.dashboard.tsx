@@ -35,6 +35,7 @@ import { Info, Server as ServerIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
+import type { SerializedEditorState } from "lexical";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/dashboard")({
   component: DashboardComponent,
@@ -64,6 +65,19 @@ const AGENT_SELECTION_SCHEMA = z.array(z.string());
 
 const filterKnownAgents = (agents: string[]): string[] =>
   agents.filter((agent) => KNOWN_AGENT_NAMES.has(agent));
+
+type SubmissionSnapshot = {
+  serializedState: SerializedEditorState;
+  plainText: string;
+};
+
+const createSnapshotKey = (): string => {
+  const globalCrypto = globalThis.crypto;
+  if (globalCrypto?.randomUUID) {
+    return globalCrypto.randomUUID();
+  }
+  return `snapshot-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+};
 
 const parseStoredAgentSelection = (stored: string | null): string[] => {
   if (!stored) {
@@ -130,6 +144,9 @@ function DashboardComponent() {
 
   // Ref to access editor API
   const editorApiRef = useRef<EditorApi | null>(null);
+  const pendingSnapshotsRef = useRef<Map<string, SubmissionSnapshot>>(
+    new Map()
+  );
 
   const persistAgentSelection = useCallback((agents: string[]) => {
     try {
@@ -165,6 +182,62 @@ function DashboardComponent() {
   const handleTaskDescriptionChange = useCallback((value: string) => {
     setTaskDescription(value);
   }, []);
+
+  const restoreSnapshot = useCallback(
+    (key: string) => {
+      const snapshot = pendingSnapshotsRef.current.get(key);
+      if (!snapshot) {
+        return;
+      }
+      pendingSnapshotsRef.current.delete(key);
+      editorApiRef.current?.restoreSerializedState?.(snapshot.serializedState);
+      setTaskDescription(snapshot.plainText);
+      editorApiRef.current?.focus?.();
+    },
+    [setTaskDescription]
+  );
+
+  const registerSnapshot = useCallback(
+    (serializedState: SerializedEditorState, plainText: string) => {
+      const key = createSnapshotKey();
+      pendingSnapshotsRef.current.set(key, { serializedState, plainText });
+      return key;
+    },
+    []
+  );
+
+  const reassignSnapshotKey = useCallback(
+    (fromKey: string | null, toKey: string | null) => {
+      if (!fromKey || !toKey || fromKey === toKey) {
+        return toKey ?? fromKey ?? null;
+      }
+      const snapshot = pendingSnapshotsRef.current.get(fromKey);
+      if (!snapshot) {
+        return toKey;
+      }
+      pendingSnapshotsRef.current.delete(fromKey);
+      pendingSnapshotsRef.current.set(toKey, snapshot);
+      return toKey;
+    },
+    []
+  );
+
+  const showTaskStartError = useCallback(
+    (message: string, snapshotKey?: string | null) => {
+      toast.error(message, {
+        action:
+          snapshotKey && pendingSnapshotsRef.current.has(snapshotKey)
+            ? {
+                label: "Restore text",
+                onClick: () => {
+                  restoreSnapshot(snapshotKey);
+                },
+              }
+            : undefined,
+      });
+    },
+    [restoreSnapshot]
+  );
 
   // Fetch branches for selected repo from Convex
   const isEnvSelected = useMemo(
@@ -375,40 +448,39 @@ function DashboardComponent() {
   }, [selectedBranch, branchNames, remoteDefaultBranch]);
 
   const handleStartTask = useCallback(async () => {
+    if (!selectedProject[0]) {
+      toast.error("Select a repository or environment before starting a task.");
+      return;
+    }
+
+    if (!taskDescription.trim()) {
+      toast.error("Add a task description before starting a task.");
+      editorApiRef.current?.focus?.();
+      return;
+    }
+
+    if (!socket) {
+      toast.error("Socket disconnected. Refresh the app and try again.");
+      return;
+    }
+
     // For local mode, perform a fresh docker check right before starting
     if (!isEnvSelected && !isCloudMode) {
-      // Always check Docker status when in local mode, regardless of current state
-      if (socket) {
-        const ready = await new Promise<boolean>((resolve) => {
-          socket.emit("check-provider-status", (response) => {
-            const isRunning = !!response?.dockerStatus?.isRunning;
-            if (typeof isRunning === "boolean") {
-              setDockerReady(isRunning);
-            }
-            resolve(isRunning);
-          });
+      const ready = await new Promise<boolean>((resolve) => {
+        socket.emit("check-provider-status", (response) => {
+          const isRunning = !!response?.dockerStatus?.isRunning;
+          if (typeof isRunning === "boolean") {
+            setDockerReady(isRunning);
+          }
+          resolve(isRunning);
         });
+      });
 
-        // Only show the alert if Docker is actually not running after checking
-        if (!ready) {
-          toast.error("Docker is not running. Start Docker Desktop.");
-          return;
-        }
-      } else {
-        // If socket is not connected, we can't verify Docker status
-        console.error("Cannot verify Docker status: socket not connected");
-        toast.error("Cannot verify Docker status. Please ensure the server is running.");
+      // Only show the alert if Docker is actually not running after checking
+      if (!ready) {
+        toast.error("Docker is not running. Start Docker Desktop.");
         return;
       }
-    }
-
-    if (!selectedProject[0] || !taskDescription.trim()) {
-      console.error("Please select a project and enter a task description");
-      return;
-    }
-    if (!socket) {
-      console.error("Socket not connected");
-      return;
     }
 
     // Use the effective selected branch (respects available branches and sensible defaults)
@@ -419,9 +491,20 @@ function DashboardComponent() {
       ? (projectFullName.replace(/^env:/, "") as Id<"environments">)
       : undefined;
 
+    let snapshotKey: string | null = null;
+
     try {
       // Extract content including images from the editor
       const content = editorApiRef.current?.getContent();
+      const serializedState = editorApiRef.current?.getSerializedState?.();
+
+      if (serializedState) {
+        snapshotKey = registerSnapshot(
+          serializedState,
+          content?.text || taskDescription,
+        );
+      }
+
       const images = content?.images || [];
 
       // Upload images to Convex storage first
@@ -478,6 +561,10 @@ function DashboardComponent() {
         environmentId,
       });
 
+      if (snapshotKey) {
+        snapshotKey = reassignSnapshotKey(snapshotKey, taskId);
+      }
+
       // Hint the sidebar to auto-expand this task once it appears
       addTaskToExpand(taskId);
 
@@ -489,16 +576,23 @@ function DashboardComponent() {
       const handleStartTaskAck = (response: TaskAcknowledged | TaskStarted | TaskError) => {
         if ("error" in response) {
           console.error("Task start error:", response.error);
-          toast.error(`Task start error: ${JSON.stringify(response.error)}`);
+          showTaskStartError(
+            response.error || "Task failed to start.",
+            snapshotKey ?? taskId,
+          );
           return;
         }
 
         attachTaskLifecycleListeners(socket, response.taskId, {
           onStarted: (payload) => {
             console.log("Task started:", payload);
+            pendingSnapshotsRef.current.delete(response.taskId);
           },
           onFailed: (payload) => {
-            toast.error(`Task failed to start: ${payload.error}`);
+            showTaskStartError(
+              payload.error || "Task failed to start.",
+              response.taskId,
+            );
           },
         });
         console.log("Task acknowledged:", response);
@@ -524,6 +618,11 @@ function DashboardComponent() {
       console.log("Task created:", taskId);
     } catch (error) {
       console.error("Error starting task:", error);
+      const friendlyMessage =
+        error instanceof Error
+          ? error.message
+          : "Error starting task. Please try again.";
+      showTaskStartError(friendlyMessage, snapshotKey);
     }
   }, [
     selectedProject,
@@ -539,6 +638,9 @@ function DashboardComponent() {
     isEnvSelected,
     theme,
     generateUploadUrl,
+    registerSnapshot,
+    reassignSnapshotKey,
+    showTaskStartError,
   ]);
 
   // Fetch repos on mount if none exist

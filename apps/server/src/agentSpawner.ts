@@ -68,11 +68,41 @@ export async function spawnAgent(
   },
   teamSlugOrId: string
 ): Promise<AgentSpawnResult> {
+  const capturedAuthToken = getAuthToken();
+  const capturedAuthHeaderJson = getAuthHeaderJson();
+  let taskRunIdRef: Id<"taskRuns"> | null = null;
+  let hasRecordedFailure = false;
+
+  const recordTaskRunFailure = async (
+    message: string,
+    exitCode = 1
+  ): Promise<void> => {
+    if (!taskRunIdRef || hasRecordedFailure) {
+      return;
+    }
+    hasRecordedFailure = true;
+    try {
+      await runWithAuth(capturedAuthToken, capturedAuthHeaderJson, async () =>
+        retryOnOptimisticConcurrency(() =>
+          getConvex().mutation(api.taskRuns.fail, {
+            teamSlugOrId,
+            id: taskRunIdRef as Id<"taskRuns">,
+            errorMessage: message,
+            exitCode,
+          })
+        )
+      );
+    } catch (error) {
+      serverLogger.error(
+        `[AgentSpawner] Failed to mark taskRun ${taskRunIdRef} as failed`,
+        error
+      );
+    }
+  };
+
   try {
     // Capture the current auth token and header JSON from AsyncLocalStorage so we can
     // re-enter the auth context inside async event handlers later.
-    const capturedAuthToken = getAuthToken();
-    const capturedAuthHeaderJson = getAuthHeaderJson();
 
     const newBranch =
       options.newBranch ||
@@ -95,6 +125,7 @@ export async function spawnAgent(
         environmentId: options.environmentId,
       }
     );
+    taskRunIdRef = taskRunId;
 
     // Fetch the task to get image storage IDs
     const task = await getConvex().query(api.tasks.getById, {
@@ -396,6 +427,9 @@ export async function spawnAgent(
       });
 
       if (!workspaceResult.success || !workspaceResult.worktreePath) {
+        await recordTaskRunFailure(
+          workspaceResult.error || "Failed to setup workspace"
+        );
         return {
           agentName: agent.name,
           terminalId: "",
@@ -588,6 +622,7 @@ export async function spawnAgent(
       serverLogger.error(
         `[AgentSpawner] No worker socket available for ${agent.name}`
       );
+      await recordTaskRunFailure("No worker connection available");
       return {
         agentName: agent.name,
         terminalId,
@@ -923,6 +958,9 @@ exit $EXIT_CODE
     };
   } catch (error) {
     serverLogger.error("Error spawning agent", error);
+    await recordTaskRunFailure(
+      error instanceof Error ? error.message : "Unknown error"
+    );
     return {
       agentName: agent.name,
       terminalId: "",
