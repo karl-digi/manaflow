@@ -13,6 +13,7 @@ type IframeEntry = {
   isVisible: boolean;
   allow?: string;
   sandbox?: string;
+  focusListener?: (event: FocusEvent) => void;
 };
 
 interface MountOptions {
@@ -201,6 +202,54 @@ class PersistentIframeManager {
       this.container.appendChild(wrapper);
     }
 
+    // Create focus catch listener
+    const focusListener = (event: FocusEvent) => {
+      const entry = this.iframes.get(key);
+      if (!entry || entry.isVisible) {
+        // If iframe is visible, allow normal focus behavior
+        return;
+      }
+
+      // Iframe is trying to steal focus while hidden - restore focus
+      const activeElement = document.activeElement as HTMLElement;
+      if (
+        activeElement &&
+        (activeElement === iframe ||
+          iframe.contains(activeElement) ||
+          wrapper.contains(activeElement))
+      ) {
+        // The iframe or something inside it has focus, but it shouldn't
+        // Find the previously focused element (if we can)
+        const previouslyFocused = event.relatedTarget as HTMLElement | null;
+        if (previouslyFocused && typeof previouslyFocused.focus === "function") {
+          // Return focus to the element that had it before
+          previouslyFocused.focus();
+        } else {
+          // If we can't find the previous element, blur the iframe
+          if (typeof activeElement.blur === "function") {
+            activeElement.blur();
+          }
+        }
+      }
+    };
+
+    // Listen for focus events on the iframe's window (when it loads)
+    iframe.addEventListener("load", () => {
+      try {
+        // Try to add focus listener to iframe's content window
+        iframe.contentWindow?.addEventListener("focus", focusListener, true);
+      } catch (e) {
+        // Cross-origin iframe - can't access contentWindow
+        // The wrapper-level listener will still catch some cases
+        if (this.debugMode) {
+          console.log(`[FocusCatch] Cannot listen to cross-origin iframe ${key}`);
+        }
+      }
+    });
+
+    // Also listen on the wrapper itself as a fallback
+    wrapper.addEventListener("focusin", focusListener, true);
+
     const entry: IframeEntry = {
       iframe,
       wrapper,
@@ -209,6 +258,7 @@ class PersistentIframeManager {
       isVisible: false,
       allow: options?.allow,
       sandbox: options?.sandbox,
+      focusListener,
     };
 
     this.iframes.set(key, entry);
@@ -466,6 +516,20 @@ class PersistentIframeManager {
     if (syncTimeout !== undefined) {
       cancelAnimationFrame(syncTimeout);
       this.syncTimeouts.delete(key);
+    }
+
+    // Remove focus listener
+    if (entry.focusListener) {
+      entry.wrapper.removeEventListener("focusin", entry.focusListener, true);
+      try {
+        entry.iframe.contentWindow?.removeEventListener(
+          "focus",
+          entry.focusListener,
+          true
+        );
+      } catch (e) {
+        // Cross-origin iframe - couldn't access contentWindow
+      }
     }
 
     if (entry.wrapper.parentElement) {
