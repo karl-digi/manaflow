@@ -35,6 +35,7 @@ import { Info, Server as ServerIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
+import type { SerializedEditorState } from "lexical";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/dashboard")({
   component: DashboardComponent,
@@ -47,6 +48,20 @@ type EnvironmentNewSearchParams = {
   connectionLogin: string | undefined;
   repoSearch: string | undefined;
   snapshotId: MorphSnapshotId | undefined;
+};
+
+type PendingDraft = {
+  text: string;
+  serializedState: SerializedEditorState | null;
+};
+
+const generateDraftKey = () => {
+  const cryptoSource =
+    typeof globalThis !== "undefined" ? globalThis.crypto : undefined;
+  if (cryptoSource?.randomUUID) {
+    return cryptoSource.randomUUID();
+  }
+  return `draft-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 };
 
 // Default agents (not persisted to localStorage)
@@ -130,6 +145,94 @@ function DashboardComponent() {
 
   // Ref to access editor API
   const editorApiRef = useRef<EditorApi | null>(null);
+  const pendingDraftsRef = useRef<Map<string, PendingDraft>>(new Map());
+
+  const restoreDraft = useCallback(
+    (draft: PendingDraft) => {
+      if (draft.serializedState && editorApiRef.current?.setSerializedState) {
+        editorApiRef.current.setSerializedState(draft.serializedState);
+      } else {
+        editorApiRef.current?.clear();
+        if (draft.text) {
+          editorApiRef.current?.insertText?.(draft.text);
+        }
+      }
+      setTaskDescription(draft.text);
+      editorApiRef.current?.focus?.();
+    },
+    [setTaskDescription],
+  );
+
+  const showRestoreToast = useCallback(
+    (message: string, draft: PendingDraft) => {
+      const normalizedMessage =
+        message && message.trim().length > 0
+          ? message
+          : "Task failed to start.";
+      toast.error(normalizedMessage, {
+        action: {
+          label: "Restore text",
+          onClick: () => restoreDraft(draft),
+        },
+      });
+    },
+    [restoreDraft],
+  );
+
+  const setDraftForKey = useCallback((key: string, draft: PendingDraft) => {
+    pendingDraftsRef.current.set(key, draft);
+  }, []);
+
+  const moveDraftToKey = useCallback(
+    (fromKey: string, toKey: string) => {
+      const draft = pendingDraftsRef.current.get(fromKey);
+      if (!draft) {
+        return null;
+      }
+      pendingDraftsRef.current.delete(fromKey);
+      pendingDraftsRef.current.set(toKey, draft);
+      return draft;
+    },
+    [],
+  );
+
+  const takeDraftForKey = useCallback((key?: string | null) => {
+    if (!key) return null;
+    const draft = pendingDraftsRef.current.get(key);
+    if (!draft) return null;
+    pendingDraftsRef.current.delete(key);
+    return draft;
+  }, []);
+
+  const dropDraftForKey = useCallback((key?: string | null) => {
+    if (!key) return;
+    pendingDraftsRef.current.delete(key);
+  }, []);
+
+  const formatErrorMessage = useCallback((error: unknown, fallback: string) => {
+    if (!error) {
+      return fallback;
+    }
+    if (typeof error === "string") {
+      return error;
+    }
+    if (error instanceof Error) {
+      return error.message || fallback;
+    }
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "message" in error &&
+      typeof (error as { message?: unknown }).message === "string"
+    ) {
+      return (error as { message: string }).message;
+    }
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return fallback;
+    }
+  }, []);
 
   const persistAgentSelection = useCallback((agents: string[]) => {
     try {
@@ -375,9 +478,7 @@ function DashboardComponent() {
   }, [selectedBranch, branchNames, remoteDefaultBranch]);
 
   const handleStartTask = useCallback(async () => {
-    // For local mode, perform a fresh docker check right before starting
     if (!isEnvSelected && !isCloudMode) {
-      // Always check Docker status when in local mode, regardless of current state
       if (socket) {
         const ready = await new Promise<boolean>((resolve) => {
           socket.emit("check-provider-status", (response) => {
@@ -388,14 +489,11 @@ function DashboardComponent() {
             resolve(isRunning);
           });
         });
-
-        // Only show the alert if Docker is actually not running after checking
         if (!ready) {
           toast.error("Docker is not running. Start Docker Desktop.");
           return;
         }
       } else {
-        // If socket is not connected, we can't verify Docker status
         console.error("Cannot verify Docker status: socket not connected");
         toast.error("Cannot verify Docker status. Please ensure the server is running.");
         return;
@@ -403,15 +501,14 @@ function DashboardComponent() {
     }
 
     if (!selectedProject[0] || !taskDescription.trim()) {
-      console.error("Please select a project and enter a task description");
+      toast.error("Select a project or environment and describe the task before starting.");
       return;
     }
     if (!socket) {
-      console.error("Socket not connected");
+      toast.error("Socket not connected. Refresh or try again.");
       return;
     }
 
-    // Use the effective selected branch (respects available branches and sensible defaults)
     const branch = effectiveSelectedBranch[0];
     const projectFullName = selectedProject[0];
     const envSelected = projectFullName.startsWith("env:");
@@ -419,12 +516,17 @@ function DashboardComponent() {
       ? (projectFullName.replace(/^env:/, "") as Id<"environments">)
       : undefined;
 
-    try {
-      // Extract content including images from the editor
-      const content = editorApiRef.current?.getContent();
-      const images = content?.images || [];
+    const content = editorApiRef.current?.getContent();
+    const images = content?.images || [];
+    const draftPayload: PendingDraft = {
+      text: content?.text ?? taskDescription,
+      serializedState: editorApiRef.current?.getSerializedState?.() ?? null,
+    };
+    const temporaryDraftKey = generateDraftKey();
+    setDraftForKey(temporaryDraftKey, draftPayload);
+    let activeDraftKey: string | null = temporaryDraftKey;
 
-      // Upload images to Convex storage first
+    try {
       const uploadedImages = await Promise.all(
         images.map(
           async (image: {
@@ -432,7 +534,6 @@ function DashboardComponent() {
             fileName?: string;
             altText: string;
           }) => {
-            // Convert base64 to blob
             const base64Data = image.src.split(",")[1] || image.src;
             const byteCharacters = atob(base64Data);
             const byteNumbers = new Array(byteCharacters.length);
@@ -456,49 +557,73 @@ function DashboardComponent() {
               fileName: image.fileName,
               altText: image.altText,
             };
-          }
-        )
+          },
+        ),
       );
 
-      // Clear input after successful task creation
-      setTaskDescription("");
-      // Force editor to clear
       handleTaskDescriptionChange("");
       if (editorApiRef.current?.clear) {
         editorApiRef.current.clear();
       }
 
-      // Create task in Convex with storage IDs
       const taskId = await createTask({
         teamSlugOrId,
-        text: content?.text || taskDescription, // Use content.text which includes image references
+        text: content?.text || taskDescription,
         projectFullName: envSelected ? undefined : projectFullName,
         baseBranch: envSelected ? undefined : branch,
         images: uploadedImages.length > 0 ? uploadedImages : undefined,
         environmentId,
       });
 
-      // Hint the sidebar to auto-expand this task once it appears
+      if (!moveDraftToKey(temporaryDraftKey, taskId)) {
+        dropDraftForKey(temporaryDraftKey);
+      }
+      activeDraftKey = taskId;
+
       addTaskToExpand(taskId);
 
       const repoUrl = envSelected
         ? undefined
         : `https://github.com/${projectFullName}.git`;
 
-      // For socket.io, we need to send the content text (which includes image references) and the images
-      const handleStartTaskAck = (response: TaskAcknowledged | TaskStarted | TaskError) => {
+      const handleStartTaskAck = (
+        response: TaskAcknowledged | TaskStarted | TaskError,
+      ) => {
         if ("error" in response) {
           console.error("Task start error:", response.error);
-          toast.error(`Task start error: ${JSON.stringify(response.error)}`);
+          const message = formatErrorMessage(
+            response.error,
+            "Task failed to start.",
+          );
+          const draftForTask =
+            takeDraftForKey(response.taskId) ||
+            takeDraftForKey(activeDraftKey);
+          if (draftForTask) {
+            showRestoreToast(message, draftForTask);
+          } else {
+            toast.error(message);
+          }
           return;
         }
 
         attachTaskLifecycleListeners(socket, response.taskId, {
-          onStarted: (payload) => {
-            console.log("Task started:", payload);
+          onStarted: () => {
+            dropDraftForKey(response.taskId);
+            console.log("Task started:", response.taskId);
           },
           onFailed: (payload) => {
-            toast.error(`Task failed to start: ${payload.error}`);
+            const message = formatErrorMessage(
+              payload.error,
+              "Task failed to start.",
+            );
+            const draftForTask =
+              takeDraftForKey(response.taskId) ||
+              takeDraftForKey(activeDraftKey);
+            if (draftForTask) {
+              showRestoreToast(message, draftForTask);
+            } else {
+              toast.error(message);
+            }
           },
         });
         console.log("Task acknowledged:", response);
@@ -509,7 +634,7 @@ function DashboardComponent() {
         {
           ...(repoUrl ? { repoUrl } : {}),
           ...(envSelected ? {} : { branch }),
-          taskDescription: content?.text || taskDescription, // Use content.text which includes image references
+          taskDescription: content?.text || taskDescription,
           projectFullName,
           taskId,
           selectedAgents:
@@ -519,26 +644,39 @@ function DashboardComponent() {
           images: images.length > 0 ? images : undefined,
           theme,
         },
-        handleStartTaskAck
+        handleStartTaskAck,
       );
       console.log("Task created:", taskId);
     } catch (error) {
       console.error("Error starting task:", error);
+      const message = formatErrorMessage(error, "Failed to start task.");
+      const draftForTask = takeDraftForKey(activeDraftKey);
+      if (draftForTask) {
+        showRestoreToast(message, draftForTask);
+      } else {
+        toast.error(message);
+      }
     }
   }, [
-    selectedProject,
-    taskDescription,
-    socket,
-    effectiveSelectedBranch,
-    handleTaskDescriptionChange,
-    createTask,
-    teamSlugOrId,
     addTaskToExpand,
-    selectedAgents,
+    createTask,
+    dropDraftForKey,
+    effectiveSelectedBranch,
+    formatErrorMessage,
+    generateUploadUrl,
+    handleTaskDescriptionChange,
     isCloudMode,
     isEnvSelected,
+    moveDraftToKey,
+    selectedAgents,
+    selectedProject,
+    setDraftForKey,
+    socket,
+    takeDraftForKey,
+    taskDescription,
+    teamSlugOrId,
     theme,
-    generateUploadUrl,
+    showRestoreToast,
   ]);
 
   // Fetch repos on mount if none exist

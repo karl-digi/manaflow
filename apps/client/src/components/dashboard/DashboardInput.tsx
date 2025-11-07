@@ -9,6 +9,7 @@ import {
   useRef,
 } from "react";
 import type { Id } from "@cmux/convex/dataModel";
+import type { SerializedEditorState } from "lexical";
 
 export interface EditorApi {
   getContent: () => {
@@ -22,6 +23,8 @@ export interface EditorApi {
   clear: () => void;
   focus?: () => void;
   insertText?: (text: string) => void;
+  getSerializedState?: () => SerializedEditorState | undefined;
+  setSerializedState?: (state: SerializedEditorState) => void;
 }
 
 interface DashboardInputProps {
@@ -78,6 +81,10 @@ export const DashboardInput = memo(
       clear: () => internalApiRef.current?.clear(),
       focus: () => internalApiRef.current?.focus?.(),
       insertText: (text: string) => internalApiRef.current?.insertText?.(text),
+      getSerializedState: () =>
+        internalApiRef.current?.getSerializedState?.(),
+      setSerializedState: (state: SerializedEditorState) =>
+        internalApiRef.current?.setSerializedState?.(state),
     }));
 
     useEffect(() => {
