@@ -2874,6 +2874,7 @@ const FileDiffCard = memo(function FileDiffCardComponent({
                   side="bottom"
                   align="start"
                   sideOffset={0}
+                  allowHover={true}
                   className={cn(
                     "max-w-xs space-y-1 text-left leading-relaxed border backdrop-blur",
                     getHeatmapTooltipTheme(tooltipMeta.score).contentClass
@@ -3291,6 +3292,7 @@ function HeatmapGutterTooltip({
       <TooltipContent
         side="left"
         align="start"
+        allowHover={true}
         className={cn(
           "max-w-xs space-y-1 text-left leading-relaxed border backdrop-blur",
           theme.contentClass
@@ -3313,11 +3315,31 @@ function HeatmapTooltipBody({
   reason: string | null;
 }) {
   const theme = getHeatmapTooltipTheme(score);
+  const clipboard = useClipboard({ timeout: 2000 });
+
   return (
-    <div className="text-left text-xs leading-relaxed">
-      {reason ? (
-        <p className={cn("text-xs", theme.reasonClass)}>{reason}</p>
-      ) : null}
+    <div className="text-left text-xs leading-relaxed flex items-start gap-2">
+      <div className="flex-1">
+        {reason ? (
+          <p className={cn("text-xs", theme.reasonClass)}>{reason}</p>
+        ) : null}
+      </div>
+      {reason && (
+        <button
+          onClick={() => clipboard.copy(reason)}
+          className={cn(
+            "flex-shrink-0 p-1 rounded transition-colors",
+            "hover:bg-neutral-900/10 dark:hover:bg-neutral-100/10"
+          )}
+          title={clipboard.copied ? "Copied!" : "Copy"}
+        >
+          {clipboard.copied ? (
+            <Check className="w-3 h-3" />
+          ) : (
+            <Copy className="w-3 h-3" />
+          )}
+        </button>
+      )}
     </div>
   );
 }

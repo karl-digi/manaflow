@@ -22,8 +22,11 @@ function TooltipContent({
   className,
   sideOffset = 4,
   children,
+  allowHover = false,
   ...props
-}: ComponentProps<typeof TooltipPrimitive.Content>) {
+}: ComponentProps<typeof TooltipPrimitive.Content> & {
+  allowHover?: boolean
+}) {
   return (
     <TooltipPrimitive.Portal>
       <TooltipPrimitive.Content
@@ -31,7 +34,8 @@ function TooltipContent({
         sideOffset={sideOffset}
         style={{ "--primary": "black" } as CSSProperties}
         className={cn(
-          "z-[var(--z-tooltip,10020)] w-fit pointer-events-none select-none rounded-md bg-primary px-3 py-2 text-xs text-primary-foreground shadow-sm",
+          "z-[var(--z-tooltip,10020)] w-fit select-none rounded-md bg-primary px-3 py-2 text-xs text-primary-foreground shadow-sm",
+          allowHover ? "pointer-events-auto" : "pointer-events-none",
           "data-[state=delayed-open]:animate-in data-[state=delayed-open]:fade-in-0 data-[state=delayed-open]:zoom-in-95",
           "data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
           "data-[state=delayed-open]:data-[side=bottom]:slide-in-from-top-2 data-[state=delayed-open]:data-[side=top]:slide-in-from-bottom-2 data-[state=delayed-open]:data-[side=left]:slide-in-from-right-2 data-[state=delayed-open]:data-[side=right]:slide-in-from-left-2",
