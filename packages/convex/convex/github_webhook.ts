@@ -4,7 +4,9 @@ import type {
   DeploymentStatusEvent,
   InstallationEvent,
   InstallationRepositoriesEvent,
+  IssueCommentEvent,
   PullRequestEvent,
+  PullRequestReviewCommentEvent,
   PushEvent,
   StatusEvent,
   WebhookEvent,
@@ -214,9 +216,131 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
       case "repository":
       case "create":
       case "delete":
-      case "pull_request_review":
-      case "pull_request_review_comment":
+      case "pull_request_review": {
+        break;
+      }
+      case "pull_request_review_comment": {
+        try {
+          const reviewCommentPayload = body as PullRequestReviewCommentEvent;
+          const repoFullName = String(
+            reviewCommentPayload.repository?.full_name ?? "",
+          );
+          const installation = Number(
+            reviewCommentPayload.installation?.id ?? 0,
+          );
+          const pullRequestNumber = Number(
+            reviewCommentPayload.pull_request?.number ?? 0,
+          );
+          if (!repoFullName || !installation || !pullRequestNumber) break;
+          const conn = await _ctx.runQuery(
+            internal.github_app.getProviderConnectionByInstallationId,
+            { installationId: installation },
+          );
+          const teamId = conn?.teamId;
+          if (!teamId) break;
+
+          const providerCommentId = Number(
+            reviewCommentPayload.comment?.id ?? 0,
+          );
+          if (reviewCommentPayload.action === "deleted" && providerCommentId) {
+            await _ctx.runMutation(
+              internal.github_pr_comments.deleteGithubCommentFromWebhook,
+              {
+                teamId,
+                repoFullName,
+                pullRequestNumber,
+                commentType: "review",
+                providerCommentId,
+              },
+            );
+            break;
+          }
+
+          if (reviewCommentPayload.comment) {
+            await _ctx.runMutation(
+              internal.github_pr_comments.upsertGithubCommentFromWebhook,
+              {
+                teamId,
+                repoFullName,
+                pullRequestNumber,
+                installationId: installation,
+                commentType: "review",
+                comment: reviewCommentPayload.comment,
+              },
+            );
+          }
+        } catch (err) {
+          console.error(
+            "github_webhook pull_request_review_comment handler failed",
+            {
+              err,
+              delivery,
+            },
+          );
+        }
+        break;
+      }
       case "issue_comment": {
+        try {
+          const issueCommentPayload = body as IssueCommentEvent;
+          const repoFullName = String(
+            issueCommentPayload.repository?.full_name ?? "",
+          );
+          const installation = Number(
+            issueCommentPayload.installation?.id ?? 0,
+          );
+          const pullRequestNumber = Number(
+            issueCommentPayload.issue?.number ?? 0,
+          );
+          const targetsPullRequest =
+            Boolean(issueCommentPayload.issue?.pull_request) && pullRequestNumber > 0;
+          if (!repoFullName || !installation || !targetsPullRequest) break;
+          const conn = await _ctx.runQuery(
+            internal.github_app.getProviderConnectionByInstallationId,
+            { installationId: installation },
+          );
+          const teamId = conn?.teamId;
+          if (!teamId) break;
+
+          const providerCommentId = Number(
+            issueCommentPayload.comment?.id ?? 0,
+          );
+          if (issueCommentPayload.action === "deleted" && providerCommentId) {
+            await _ctx.runMutation(
+              internal.github_pr_comments.deleteGithubCommentFromWebhook,
+              {
+                teamId,
+                repoFullName,
+                pullRequestNumber,
+                commentType: "issue",
+                providerCommentId,
+              },
+            );
+            break;
+          }
+
+          if (issueCommentPayload.comment) {
+            await _ctx.runMutation(
+              internal.github_pr_comments.upsertGithubCommentFromWebhook,
+              {
+                teamId,
+                repoFullName,
+                pullRequestNumber,
+                installationId: installation,
+                commentType: "issue",
+                comment: issueCommentPayload.comment,
+              },
+            );
+          }
+        } catch (err) {
+          console.error(
+            "github_webhook issue_comment handler failed",
+            {
+              err,
+              delivery,
+            },
+          );
+        }
         break;
       }
       case "workflow_run": {

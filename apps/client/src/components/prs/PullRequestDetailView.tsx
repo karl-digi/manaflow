@@ -14,6 +14,7 @@ import { MergeButton, type MergeMethod } from "@/components/ui/merge-button";
 import { postApiIntegrationsGithubPrsCloseMutation, postApiIntegrationsGithubPrsMergeSimpleMutation } from "@cmux/www-openapi-client/react-query";
 import type { PostApiIntegrationsGithubPrsCloseData, PostApiIntegrationsGithubPrsCloseResponse, PostApiIntegrationsGithubPrsMergeSimpleData, PostApiIntegrationsGithubPrsMergeSimpleResponse, Options } from "@cmux/www-openapi-client";
 import { useCombinedWorkflowData, WorkflowRunsBadge, WorkflowRunsSection } from "@/components/WorkflowRunsSection";
+import { PullRequestCommentsSection } from "@/components/prs/PullRequestCommentsSection";
 
 const RUN_PENDING_STATUSES = new Set(["in_progress", "queued", "waiting", "pending"]);
 const RUN_PASSING_CONCLUSIONS = new Set(["success", "neutral", "skipped"]);
@@ -500,6 +501,13 @@ export function PullRequestDetailView({
                 onToggle={handleToggleChecks}
               />
             </Suspense>
+            {currentPR ? (
+              <PullRequestCommentsSection
+                teamSlugOrId={teamSlugOrId}
+                repoFullName={currentPR.repoFullName}
+                prNumber={currentPR.number}
+              />
+            ) : null}
             <Suspense
               fallback={
                 <div className="flex items-center justify-center h-full">

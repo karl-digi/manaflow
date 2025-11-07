@@ -1,6 +1,18 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
+const reactionSummarySchema = v.object({
+  plusOne: v.optional(v.number()),
+  minusOne: v.optional(v.number()),
+  laugh: v.optional(v.number()),
+  hooray: v.optional(v.number()),
+  confused: v.optional(v.number()),
+  heart: v.optional(v.number()),
+  rocket: v.optional(v.number()),
+  eyes: v.optional(v.number()),
+  totalCount: v.optional(v.number()),
+});
+
 const convexSchema = defineSchema({
   teams: defineTable({
     teamId: v.string(),
@@ -725,6 +737,60 @@ const convexSchema = defineSchema({
     .index("by_team_repo_number", ["teamId", "repoFullName", "number"]) // upsert key
     .index("by_installation", ["installationId", "updatedAt"]) // debug/ops
     .index("by_repo", ["repoFullName", "updatedAt"]),
+
+  // GitHub pull request comments (issue + review comments)
+  pullRequestComments: defineTable({
+    teamId: v.string(),
+    installationId: v.number(),
+    repoFullName: v.string(),
+    pullRequestNumber: v.number(),
+    pullRequestId: v.optional(v.id("pullRequests")),
+    commentKey: v.string(), // `${commentType}:${providerCommentId}`
+    providerCommentId: v.number(),
+    commentType: v.union(v.literal("issue"), v.literal("review")),
+    nodeId: v.optional(v.string()),
+    body: v.optional(v.string()),
+    authorLogin: v.optional(v.string()),
+    authorId: v.optional(v.number()),
+    authorAvatarUrl: v.optional(v.string()),
+    authorAssociation: v.optional(v.string()),
+    url: v.optional(v.string()),
+    permalinkUrl: v.optional(v.string()),
+    createdAt: v.optional(v.number()),
+    updatedAt: v.optional(v.number()),
+    lastSyncedAt: v.optional(v.number()),
+    inReplyToId: v.optional(v.number()),
+    path: v.optional(v.string()),
+    diffHunk: v.optional(v.string()),
+    position: v.optional(v.number()),
+    originalPosition: v.optional(v.number()),
+    commitId: v.optional(v.string()),
+    originalCommitId: v.optional(v.string()),
+    pullRequestReviewId: v.optional(v.number()),
+    startLine: v.optional(v.number()),
+    line: v.optional(v.number()),
+    originalLine: v.optional(v.number()),
+    side: v.optional(v.string()),
+    startSide: v.optional(v.string()),
+    subjectType: v.optional(v.string()),
+    state: v.optional(v.string()),
+    reactions: v.optional(reactionSummarySchema),
+    isMinimized: v.optional(v.boolean()),
+    minimizedReason: v.optional(v.string()),
+    isDeleted: v.optional(v.boolean()),
+  })
+    .index("by_pr", [
+      "teamId",
+      "repoFullName",
+      "pullRequestNumber",
+      "createdAt",
+    ])
+    .index("by_comment_key", [
+      "teamId",
+      "repoFullName",
+      "pullRequestNumber",
+      "commentKey",
+    ]),
 
   // GitHub Actions workflow runs
   githubWorkflowRuns: defineTable({
