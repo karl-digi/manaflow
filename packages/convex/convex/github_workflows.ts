@@ -60,9 +60,16 @@ export const upsertWorkflowRunFromWebhook = internalMutation({
       return;
     }
 
-    // Map GitHub status to our schema status (exclude 'requested')
+    // Map GitHub status to our schema status and normalize pending states
     const githubStatus = payload.workflow_run?.status;
-    const status = githubStatus === "requested" ? undefined : githubStatus;
+    const validStatuses = ["queued", "in_progress", "completed", "pending", "waiting"] as const;
+    type ValidStatus = (typeof validStatuses)[number];
+    const normalizedStatus =
+      githubStatus === "requested" ? "pending" : githubStatus;
+    const status =
+      normalizedStatus && validStatuses.includes(normalizedStatus as ValidStatus)
+        ? (normalizedStatus as ValidStatus)
+        : undefined;
 
     // Map GitHub conclusion to our schema conclusion (exclude 'stale' and handle null)
     const githubConclusion = payload.workflow_run?.conclusion;
