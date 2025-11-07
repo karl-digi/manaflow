@@ -53,6 +53,13 @@ function shouldRewriteUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
     const hostname = parsed.hostname;
+    const port = parsed.port ? parseInt(parsed.port, 10) : null;
+
+    // Don't rewrite Docker container URLs (ports 39375-39381)
+    if (isLoopbackHostname(hostname) && port && port >= 39375 && port <= 39381) {
+      return false;
+    }
+
     return (
       isLoopbackHostname(hostname) ||
       hostname.toLowerCase() === LOCAL_VSCODE_PLACEHOLDER_HOST
