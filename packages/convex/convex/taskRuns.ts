@@ -65,6 +65,9 @@ function normalizePullRequestRecords(
         : record.state === "draft"
           ? true
           : undefined,
+    mergeableState: record.mergeableState,
+    mergeable: record.mergeable,
+    hasConflicts: record.hasConflicts,
   }));
 }
 
@@ -1124,6 +1127,9 @@ export const updatePullRequestUrl = authMutation({
             v.literal("unknown"),
           ),
           isDraft: v.optional(v.boolean()),
+          mergeableState: v.optional(v.string()),
+          mergeable: v.optional(v.boolean()),
+          hasConflicts: v.optional(v.boolean()),
         }),
       ),
     ),

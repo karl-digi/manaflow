@@ -5,6 +5,7 @@ import { useSocketSuspense } from "@/contexts/socket/use-socket";
 import { isElectron } from "@/lib/electron";
 import { cn } from "@/lib/utils";
 import { normalizeGitRef } from "@/lib/refWithOrigin";
+import { hasMergeConflicts } from "@/lib/merge-conflicts";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
 import type { Doc, Id } from "@cmux/convex/dataModel";
 import type { TaskRunWithChildren } from "@/types/task";
@@ -352,6 +353,7 @@ export function TaskDetailHeader({
               prIsMerged={prIsMerged}
               repoDiffTargets={repoDiffTargets}
               teamSlugOrId={teamSlugOrId}
+              baseBranchLabel={normalizedBaseBranch || "main"}
             />
           </Suspense>
 
@@ -568,6 +570,7 @@ function SocketActions({
   prIsMerged,
   repoDiffTargets,
   teamSlugOrId,
+  baseBranchLabel,
 }: {
   selectedRun: TaskRunWithChildren | null;
   taskRunId: Id<"taskRuns">;
@@ -575,6 +578,7 @@ function SocketActions({
   prIsMerged: boolean;
   repoDiffTargets: RepoDiffTarget[];
   teamSlugOrId: string;
+  baseBranchLabel: string;
 }) {
   const { socket } = useSocketSuspense();
   const navigate = useNavigate();
@@ -604,6 +608,28 @@ function SocketActions({
     () => new Map(pullRequests.map((pr) => [pr.repoFullName, pr] as const)),
     [pullRequests],
   );
+
+  const mergeConflictInfo = useMemo(() => {
+    if (!prIsOpen) {
+      return { conflicts: [] as typeof pullRequests, message: undefined as string | undefined };
+    }
+    const conflicts = pullRequests.filter((pr) => hasMergeConflicts(pr));
+    if (conflicts.length === 0) {
+      return { conflicts, message: undefined };
+    }
+    const baseLabel = baseBranchLabel?.trim() || "main";
+    const primaryRepo =
+      conflicts[0]?.repoFullName?.trim() || "this repository";
+    const repoSummary =
+      conflicts.length === 1
+        ? primaryRepo
+        : `${primaryRepo} and ${conflicts.length - 1} more`;
+    const message = `Resolve merge conflicts with ${baseLabel} in ${repoSummary} before merging.`;
+    return { conflicts, message };
+  }, [pullRequests, prIsOpen, baseBranchLabel]);
+
+  const mergeBlockedByConflicts = mergeConflictInfo.conflicts.length > 0;
+  const mergeConflictReason = mergeConflictInfo.message;
 
   const diffQueries = useQueries({
     queries: repoDiffTargets.map((target) => ({
@@ -875,6 +901,12 @@ function SocketActions({
   };
 
   const handleMerge = (method: MergeMethod) => {
+    if (mergeBlockedByConflicts) {
+      toast.error(
+        mergeConflictReason || "Resolve merge conflicts before merging.",
+      );
+      return;
+    }
     mergePrMutation.mutate({
       body: {
         teamSlugOrId,
@@ -885,6 +917,12 @@ function SocketActions({
   };
 
   const handleMergeBranch = () => {
+    if (mergeBlockedByConflicts) {
+      toast.error(
+        mergeConflictReason || "Resolve merge conflicts before merging.",
+      );
+      return;
+    }
     mergeBranchMutation.mutate();
   };
 
@@ -969,16 +1007,27 @@ function SocketActions({
             isOpeningPr ||
             isCreatingPr ||
             isMerging ||
-            (!prIsOpen && !hasChanges)
+            (!prIsOpen && !hasChanges) ||
+            mergeBlockedByConflicts
           }
           prCount={repoFullNames.length}
+          disabledReason={
+            mergeBlockedByConflicts ? mergeConflictReason : undefined
+          }
         />
       )}
       {!prIsOpen && !prIsMerged && ENABLE_MERGE_BUTTON && (
         <button
           onClick={handleMergeBranch}
           className="flex items-center gap-1.5 px-3 py-1 bg-[#8250df] text-white rounded hover:bg-[#8250df]/90 dark:bg-[#8250df] dark:hover:bg-[#8250df]/90 border border-[#6e40cc] dark:border-[#6e40cc] font-medium text-xs select-none disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
-          disabled={isOpeningPr || isCreatingPr || isMerging || !hasChanges}
+          disabled={
+            isOpeningPr ||
+            isCreatingPr ||
+            isMerging ||
+            !hasChanges ||
+            mergeBlockedByConflicts
+          }
+          title={mergeBlockedByConflicts ? mergeConflictReason : undefined}
         >
           <GitMerge className="w-3.5 h-3.5" />
           Merge

@@ -79,6 +79,13 @@ export function mapGitHubStateToRunState({
   return "unknown";
 }
 
+function deriveHasConflicts(state?: string | null): boolean | undefined {
+  if (!state) {
+    return undefined;
+  }
+  return state.trim().toLowerCase() === "dirty" ? true : undefined;
+}
+
 export function toPullRequestActionResult(
   repoFullName: string,
   data: {
@@ -87,9 +94,15 @@ export function toPullRequestActionResult(
     state?: string;
     draft?: boolean;
     merged_at?: string | null;
+    mergeable?: boolean | null;
+    mergeable_state?: string | null;
   },
 ): PullRequestActionResult {
   const merged = Boolean(data.merged_at);
+  const mergeableState =
+    typeof data.mergeable_state === "string" ? data.mergeable_state : undefined;
+  const mergeable =
+    typeof data.mergeable === "boolean" ? data.mergeable : undefined;
   return {
     repoFullName,
     url: data.html_url,
@@ -100,6 +113,9 @@ export function toPullRequestActionResult(
       merged,
     }),
     isDraft: data.draft,
+    mergeableState,
+    mergeable,
+    hasConflicts: deriveHasConflicts(mergeableState),
   };
 }
 

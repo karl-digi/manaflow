@@ -225,6 +225,9 @@ const convexSchema = defineSchema({
             v.literal("unknown")
           ),
           isDraft: v.optional(v.boolean()),
+          mergeableState: v.optional(v.string()),
+          mergeable: v.optional(v.boolean()),
+          hasConflicts: v.optional(v.boolean()),
         })
       )
     ),
@@ -705,6 +708,9 @@ const convexSchema = defineSchema({
     baseSha: v.optional(v.string()),
     headSha: v.optional(v.string()),
     mergeCommitSha: v.optional(v.string()),
+    mergeableState: v.optional(v.string()),
+    mergeable: v.optional(v.boolean()),
+    hasConflicts: v.optional(v.boolean()),
 
     // Timestamps
     createdAt: v.optional(v.number()),

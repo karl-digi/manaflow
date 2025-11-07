@@ -44,27 +44,29 @@ async function main() {
     pull_number: number,
   });
 
-  type Pr = {
-    id: number;
-    title: string;
-    state: string;
-    merged?: boolean;
-    draft?: boolean;
-    user?: { login?: string; id?: number } | null;
-    html_url?: string;
-    base?: { ref?: string; sha?: string; repo?: { id?: number } };
-    head?: { ref?: string; sha?: string };
-    created_at?: string;
-    updated_at?: string;
-    closed_at?: string | null;
-    merged_at?: string | null;
-    comments?: number;
-    review_comments?: number;
-    commits?: number;
-    additions?: number;
-    deletions?: number;
-    changed_files?: number;
-  };
+type Pr = {
+  id: number;
+  title: string;
+  state: string;
+  merged?: boolean;
+  draft?: boolean;
+  user?: { login?: string; id?: number } | null;
+  html_url?: string;
+  base?: { ref?: string; sha?: string; repo?: { id?: number } };
+  head?: { ref?: string; sha?: string };
+  created_at?: string;
+  updated_at?: string;
+  closed_at?: string | null;
+  merged_at?: string | null;
+  comments?: number;
+  review_comments?: number;
+  commits?: number;
+  additions?: number;
+  deletions?: number;
+  changed_files?: number;
+  mergeable_state?: string | null;
+  mergeable?: boolean | null;
+};
   const pr = prRes.data as Pr;
   const ts = (s?: string | null) => (s ? Date.parse(s) : undefined);
   await convex.mutation(api.github_prs.upsertFromServer, {
@@ -86,6 +88,12 @@ async function main() {
       headRef: pr.head?.ref ?? undefined,
       baseSha: pr.base?.sha ?? undefined,
       headSha: pr.head?.sha ?? undefined,
+      mergeableState: pr.mergeable_state ?? undefined,
+      mergeable: typeof pr.mergeable === "boolean" ? pr.mergeable : undefined,
+      hasConflicts:
+        pr.mergeable_state && pr.mergeable_state.toLowerCase() === "dirty"
+          ? true
+          : undefined,
       createdAt: ts(pr.created_at),
       updatedAt: ts(pr.updated_at),
       closedAt: ts(pr.closed_at ?? undefined),

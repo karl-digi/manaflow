@@ -47,6 +47,8 @@ type WebhookPullRequest = {
   user?: WebhookUser;
   base?: WebhookBranchRef;
   head?: WebhookBranchRef;
+  mergeable_state?: string | null;
+  mergeable?: boolean | null;
 };
 
 type PullRequestWebhookEnvelope = {
@@ -176,6 +178,9 @@ async function upsertCore(
       additions?: number;
       deletions?: number;
       changedFiles?: number;
+      mergeableState?: string;
+      mergeable?: boolean;
+      hasConflicts?: boolean;
     };
   }
 ) {
@@ -238,6 +243,9 @@ export const upsertPullRequestInternal = internalMutation({
       additions: v.optional(v.number()),
       deletions: v.optional(v.number()),
       changedFiles: v.optional(v.number()),
+      mergeableState: v.optional(v.string()),
+      mergeable: v.optional(v.boolean()),
+      hasConflicts: v.optional(v.boolean()),
     }),
   },
   handler: async (ctx, { teamId, installationId, repoFullName, number, record }) =>
@@ -342,6 +350,9 @@ export const upsertFromWebhookPayload = internalMutation({
       const baseSha = mapStr(pr.base?.sha);
       const headSha = mapStr(pr.head?.sha);
       const mergeCommitSha = mapStr(pr.merge_commit_sha);
+      const mergeableState = mapStr(pr.mergeable_state);
+      const mergeable =
+        typeof pr.mergeable === "boolean" ? pr.mergeable : undefined;
       const baseActivityTs =
         ts(pr.base?.repo?.pushed_at) ??
         ts(pr.merged_at) ??
@@ -368,6 +379,12 @@ export const upsertFromWebhookPayload = internalMutation({
           baseSha,
           headSha,
           mergeCommitSha,
+          mergeableState,
+          mergeable,
+          hasConflicts:
+            mergeableState && mergeableState.toLowerCase() === "dirty"
+              ? true
+              : undefined,
           createdAt: ts(pr.created_at),
           updatedAt: ts(pr.updated_at),
           closedAt: ts(pr.closed_at),
@@ -438,6 +455,9 @@ export const upsertFromServer = authMutation({
       additions: v.optional(v.number()),
       deletions: v.optional(v.number()),
       changedFiles: v.optional(v.number()),
+      mergeableState: v.optional(v.string()),
+      mergeable: v.optional(v.boolean()),
+      hasConflicts: v.optional(v.boolean()),
     }),
   },
   handler: async (ctx, { teamSlugOrId, installationId, repoFullName, number, record }) => {

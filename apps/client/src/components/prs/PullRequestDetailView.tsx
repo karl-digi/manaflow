@@ -2,6 +2,7 @@ import { RunDiffSection } from "@/components/RunDiffSection";
 import { Dropdown } from "@/components/ui/dropdown";
 import { normalizeGitRef } from "@/lib/refWithOrigin";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
+import { hasMergeConflicts } from "@/lib/merge-conflicts";
 import { api } from "@cmux/convex/api";
 import { useQuery as useRQ, useMutation } from "@tanstack/react-query";
 import { useQuery as useConvexQuery } from "convex/react";
@@ -286,14 +287,22 @@ export function PullRequestDetailView({
     } as const;
   }, [workflowData.allRuns, workflowData.isLoading]);
 
+  const prHasConflicts = hasMergeConflicts(currentPR);
+  const mergeConflictReason = prHasConflicts
+    ? `Resolve merge conflicts with ${currentPR?.baseRef || "main"} in ${
+        currentPR?.repoFullName || `${owner}/${repo}`
+      } before merging.`
+    : undefined;
+
   const disabledBecauseOfChecks = !checksAllowMerge;
   const mergeDisabled =
     mergePrMutation.isPending ||
     closePrMutation.isPending ||
-    disabledBecauseOfChecks;
-  const mergeDisabledReason = disabledBecauseOfChecks
-    ? checksDisabledReason
-    : undefined;
+    disabledBecauseOfChecks ||
+    prHasConflicts;
+  const mergeDisabledReason =
+    mergeConflictReason ??
+    (disabledBecauseOfChecks ? checksDisabledReason : undefined);
 
   const handleClosePR = () => {
     if (!currentPR) return;
@@ -314,6 +323,10 @@ export function PullRequestDetailView({
       closePrMutation.isPending ||
       disabledBecauseOfChecks
     ) {
+      return;
+    }
+    if (prHasConflicts) {
+      toast.error(mergeConflictReason || "Resolve merge conflicts before merging.");
       return;
     }
     mergePrMutation.mutate({

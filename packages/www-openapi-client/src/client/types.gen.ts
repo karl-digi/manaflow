@@ -216,6 +216,9 @@ export type GithubOpenPrResponse = {
         number?: number;
         state: 'none' | 'draft' | 'open' | 'merged' | 'closed' | 'unknown';
         isDraft?: boolean;
+        mergeableState?: string;
+        mergeable?: boolean;
+        hasConflicts?: boolean;
         error?: string;
     }>;
     aggregate: {

@@ -107,6 +107,8 @@ githubPrsBackfillRepoRouter.openapi(
       additions?: number;
       deletions?: number;
       changed_files?: number;
+      mergeable_state?: string | null;
+      mergeable?: boolean | null;
     };
 
     const ts = (s?: string | null) => (s ? Date.parse(s) : undefined);
@@ -146,6 +148,12 @@ githubPrsBackfillRepoRouter.openapi(
             headRef: pr.head?.ref ?? undefined,
             baseSha: pr.base?.sha ?? undefined,
             headSha: pr.head?.sha ?? undefined,
+            mergeableState: pr.mergeable_state ?? undefined,
+            mergeable: typeof pr.mergeable === "boolean" ? pr.mergeable : undefined,
+            hasConflicts:
+              pr.mergeable_state && pr.mergeable_state.toLowerCase() === "dirty"
+                ? true
+                : undefined,
             createdAt: ts(pr.created_at),
             updatedAt: ts(pr.updated_at),
             closedAt: ts(pr.closed_at ?? undefined),
@@ -166,4 +174,3 @@ githubPrsBackfillRepoRouter.openapi(
     return c.json({ ok: true, count: total, pages: page - 1 });
   }
 );
-

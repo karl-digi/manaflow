@@ -27,6 +27,8 @@ type GitHubPrBasic = {
 type GitHubPrDetail = GitHubPrBasic & {
   merged_at: string | null;
   node_id: string;
+  mergeable?: boolean | null;
+  mergeable_state?: string | null;
 };
 
 type ConvexClient = ReturnType<typeof getConvex>;
@@ -58,6 +60,9 @@ const PullRequestActionResultSchema = z.object({
   number: z.number().optional(),
   state: z.enum(runPullRequestStates),
   isDraft: z.boolean().optional(),
+  mergeableState: z.string().optional(),
+  mergeable: z.boolean().optional(),
+  hasConflicts: z.boolean().optional(),
   error: z.string().optional(),
 });
 
@@ -798,6 +803,9 @@ githubPrsOpenRouter.openapi(
           baseSha: existingPR.baseSha,
           headSha: existingPR.headSha,
           mergeCommitSha: existingPR.mergeCommitSha,
+          mergeableState: closedPR.mergeable_state ?? undefined,
+          mergeable: typeof closedPR.mergeable === "boolean" ? closedPR.mergeable : undefined,
+          hasConflicts: deriveHasConflicts(closedPR.mergeable_state),
           createdAt: existingPR.createdAt,
           updatedAt: existingPR.updatedAt,
           closedAt: Date.now(),
@@ -957,6 +965,9 @@ githubPrsOpenRouter.openapi(
           baseSha: existingPR.baseSha,
           headSha: existingPR.headSha,
           mergeCommitSha: existingPR.mergeCommitSha,
+          mergeableState: mergedPR.mergeable_state ?? undefined,
+          mergeable: typeof mergedPR.mergeable === "boolean" ? mergedPR.mergeable : undefined,
+          hasConflicts: deriveHasConflicts(mergedPR.mergeable_state),
           createdAt: existingPR.createdAt,
           updatedAt: existingPR.updatedAt,
           closedAt: existingPR.closedAt,
@@ -1139,6 +1150,8 @@ async function fetchPullRequestDetail({
     draft: data.draft ?? undefined,
     merged_at: data.merged_at,
     node_id: data.node_id,
+    mergeable: typeof data.mergeable === "boolean" ? data.mergeable : undefined,
+    mergeable_state: data.mergeable_state ?? undefined,
   };
 }
 
@@ -1380,6 +1393,10 @@ function toPullRequestActionResult(
   data: GitHubPrDetail,
 ): PullRequestActionResult {
   const merged = Boolean(data.merged_at);
+  const mergeableState =
+    typeof data.mergeable_state === "string" ? data.mergeable_state : undefined;
+  const mergeable =
+    typeof data.mergeable === "boolean" ? data.mergeable : undefined;
   return {
     repoFullName,
     url: data.html_url,
@@ -1390,6 +1407,9 @@ function toPullRequestActionResult(
       merged,
     }),
     isDraft: data.draft,
+    mergeableState,
+    mergeable,
+    hasConflicts: deriveHasConflicts(mergeableState),
   };
 }
 
@@ -1419,6 +1439,13 @@ function mapGitHubStateToRunState({
     return "none";
   }
   return "unknown";
+}
+
+function deriveHasConflicts(state?: string | null): boolean | undefined {
+  if (!state) {
+    return undefined;
+  }
+  return state.trim().toLowerCase() === "dirty" ? true : undefined;
 }
 
 function emptyAggregate(): AggregatePullRequestSummary {

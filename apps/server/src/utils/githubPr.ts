@@ -15,6 +15,8 @@ export type PrDetail = {
   draft?: boolean;
   merged_at: string | null;
   node_id: string;
+  mergeable?: boolean | null;
+  mergeable_state?: string | null;
 };
 
 export function parseRepoFromUrl(url: string): {
@@ -76,6 +78,8 @@ export async function fetchPrDetail(
     draft: data.draft ?? undefined,
     merged_at: data.merged_at,
     node_id: data.node_id,
+    mergeable: typeof data.mergeable === "boolean" ? data.mergeable : undefined,
+    mergeable_state: data.mergeable_state ?? undefined,
   };
 }
 

@@ -19,6 +19,9 @@ export interface StoredPullRequestInfo {
   number?: number;
   state: RunPullRequestState;
   isDraft?: boolean;
+  mergeableState?: string;
+  mergeable?: boolean;
+  hasConflicts?: boolean;
 }
 
 export interface PullRequestActionResult extends StoredPullRequestInfo {
@@ -118,6 +121,13 @@ export function aggregatePullRequestState(
   };
 }
 
+function deriveHasConflicts(state?: string): boolean | undefined {
+  if (!state) {
+    return undefined;
+  }
+  return state.trim().toLowerCase() === "dirty" ? true : undefined;
+}
+
 export function reconcilePullRequestRecords({
   existing,
   updates,
@@ -158,6 +168,10 @@ export function reconcilePullRequestRecords({
     const existingRecord = existingMap.get(repoName);
 
     if (update && !update.error) {
+      const nextMergeableState =
+        update.mergeableState ?? existingRecord?.mergeableState;
+      const nextMergeable =
+        update.mergeable ?? existingRecord?.mergeable;
       records.push({
         repoFullName: repoName,
         url: update.url ?? existingRecord?.url,
@@ -166,6 +180,12 @@ export function reconcilePullRequestRecords({
         isDraft:
           update.isDraft ??
           (update.state ? update.state === "draft" : existingRecord?.isDraft),
+        mergeableState: nextMergeableState,
+        mergeable: nextMergeable,
+        hasConflicts:
+          update.hasConflicts ??
+          existingRecord?.hasConflicts ??
+          deriveHasConflicts(nextMergeableState),
       });
       continue;
     }
@@ -182,6 +202,11 @@ export function reconcilePullRequestRecords({
       url: update?.url,
       number: update?.number,
       isDraft: update?.isDraft ?? (fallbackState === "draft" ? true : undefined),
+      mergeableState: update?.mergeableState,
+      mergeable: update?.mergeable,
+      hasConflicts:
+        update?.hasConflicts ??
+        deriveHasConflicts(update?.mergeableState),
     });
   }
 
