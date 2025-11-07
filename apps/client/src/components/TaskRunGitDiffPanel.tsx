@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useQueries } from "@tanstack/react-query";
-import { MonacoGitDiffViewer } from "./monaco/monaco-git-diff-viewer";
+import { GitDiffViewer } from "./git-diff-viewer";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
 import { normalizeGitRef } from "@/lib/refWithOrigin";
 import type { TaskRunWithChildren } from "@/types/task";
@@ -97,7 +97,7 @@ export function TaskRunGitDiffPanel({ task, selectedRun }: TaskRunGitDiffPanelPr
 
   return (
     <div className="h-full overflow-auto">
-      <MonacoGitDiffViewer diffs={allDiffs} />
+      <GitDiffViewer diffs={allDiffs} />
     </div>
   );
 }
