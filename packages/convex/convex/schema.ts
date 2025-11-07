@@ -470,6 +470,7 @@ const convexSchema = defineSchema({
     connectionId: v.optional(v.id("providerConnections")),
     lastSyncedAt: v.optional(v.number()),
     lastPushedAt: v.optional(v.number()),
+    manual: v.optional(v.boolean()), // Whether this was manually added
   })
     .index("by_org", ["org"])
     .index("by_gitRemote", ["gitRemote"])
@@ -725,6 +726,103 @@ const convexSchema = defineSchema({
     .index("by_team_repo_number", ["teamId", "repoFullName", "number"]) // upsert key
     .index("by_installation", ["installationId", "updatedAt"]) // debug/ops
     .index("by_repo", ["repoFullName", "updatedAt"]),
+
+  // Pull Request comments (issue comments, review comments, and reviews)
+  pullRequestComments: defineTable({
+    // Identity within provider and repo context
+    provider: v.literal("github"),
+    installationId: v.number(),
+    repositoryId: v.optional(v.number()),
+    repoFullName: v.string(), // owner/repo
+    prNumber: v.number(), // PR number
+    pullRequestId: v.string(), // Reference to pullRequests table
+
+    // Comment identity
+    providerCommentId: v.number(), // GitHub comment/review ID
+    commentType: v.union(
+      v.literal("issue_comment"), // Regular PR comment
+      v.literal("review"), // PR review (top-level)
+      v.literal("review_comment") // Inline code review comment
+    ),
+
+    // Team scoping
+    teamId: v.string(),
+
+    // Author info
+    authorLogin: v.optional(v.string()),
+    authorId: v.optional(v.number()),
+    authorAvatarUrl: v.optional(v.string()),
+
+    // Content
+    body: v.optional(v.string()), // Comment text (markdown)
+    htmlUrl: v.optional(v.string()), // Link to comment on GitHub
+
+    // Review-specific fields
+    reviewState: v.optional(
+      v.union(
+        v.literal("approved"),
+        v.literal("changes_requested"),
+        v.literal("commented"),
+        v.literal("dismissed"),
+        v.literal("pending")
+      )
+    ), // Only for review type
+
+    // Review comment specific fields (for inline code comments)
+    path: v.optional(v.string()), // File path for review comments
+    line: v.optional(v.number()), // Line number for review comments
+    startLine: v.optional(v.number()), // Start line for multi-line comments
+    side: v.optional(v.union(v.literal("LEFT"), v.literal("RIGHT"))), // Side of diff
+    commitId: v.optional(v.string()), // Commit SHA for review comments
+    originalCommitId: v.optional(v.string()), // Original commit for outdated comments
+    diffHunk: v.optional(v.string()), // Diff context
+    inReplyToId: v.optional(v.number()), // Parent comment ID for threaded replies
+
+    // Timestamps
+    createdAt: v.optional(v.number()),
+    updatedAt: v.optional(v.number()),
+  })
+    .index("by_pr", ["pullRequestId", "createdAt"]) // List comments for a PR
+    .index("by_team_repo_pr", ["teamId", "repoFullName", "prNumber", "createdAt"]) // Upsert key
+    .index("by_provider_id", ["providerCommentId"]) // Lookup by GitHub ID
+    .index("by_installation", ["installationId", "updatedAt"]),
+
+  // Reactions on PR comments and PRs themselves
+  pullRequestReactions: defineTable({
+    // Identity within provider and repo context
+    provider: v.literal("github"),
+    installationId: v.number(),
+    repositoryId: v.optional(v.number()),
+    repoFullName: v.string(), // owner/repo
+    prNumber: v.number(), // PR number
+
+    // Team scoping
+    teamId: v.string(),
+
+    // What this reaction is on
+    subjectType: v.union(
+      v.literal("pull_request"), // Reaction on the PR itself
+      v.literal("issue_comment"), // Reaction on an issue comment
+      v.literal("review_comment") // Reaction on a review comment
+    ),
+    subjectId: v.optional(v.string()), // ID in our DB (pullRequestId or pullRequestCommentId)
+    providerSubjectId: v.number(), // GitHub ID of the subject (PR or comment)
+
+    // Reaction details
+    providerReactionId: v.number(), // GitHub reaction ID
+    content: v.string(), // Emoji: +1, -1, laugh, confused, heart, hooray, rocket, eyes
+
+    // User who reacted
+    userId: v.optional(v.number()), // GitHub user ID
+    userLogin: v.optional(v.string()),
+
+    // Timestamps
+    createdAt: v.optional(v.number()),
+  })
+    .index("by_subject", ["subjectType", "subjectId"]) // List reactions for a subject
+    .index("by_pr", ["teamId", "repoFullName", "prNumber"]) // List all reactions on a PR
+    .index("by_provider_id", ["providerReactionId"]) // Lookup by GitHub ID
+    .index("by_installation", ["installationId", "createdAt"]),
 
   // GitHub Actions workflow runs
   githubWorkflowRuns: defineTable({

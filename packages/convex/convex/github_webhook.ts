@@ -4,7 +4,10 @@ import type {
   DeploymentStatusEvent,
   InstallationEvent,
   InstallationRepositoriesEvent,
+  IssueCommentEvent,
   PullRequestEvent,
+  PullRequestReviewCommentEvent,
+  PullRequestReviewEvent,
   PushEvent,
   StatusEvent,
   WebhookEvent,
@@ -211,12 +214,319 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
         }
         break;
       }
+      case "issue_comment": {
+        try {
+          const commentPayload = body as IssueCommentEvent;
+
+          // Only process comments on pull requests (not issues)
+          if (!("pull_request" in commentPayload.issue)) {
+            break;
+          }
+
+          const repoFullName = String(commentPayload.repository?.full_name ?? "");
+          const installation = Number(commentPayload.installation?.id ?? 0);
+          const prNumber = Number(commentPayload.issue?.number ?? 0);
+
+          if (!repoFullName || !installation || !prNumber) {
+            console.warn("[issue_comment] Missing required fields", {
+              repoFullName,
+              installation,
+              prNumber,
+              delivery,
+            });
+            break;
+          }
+
+          const conn = await _ctx.runQuery(
+            internal.github_app.getProviderConnectionByInstallationId,
+            { installationId: installation },
+          );
+          const teamId = conn?.teamId;
+
+          if (!teamId) {
+            console.warn("[issue_comment] No teamId found for installation", {
+              installation,
+              delivery,
+            });
+            break;
+          }
+
+          // Get the PR ID
+          const pullRequestId = await _ctx.runQuery(
+            internal.github_pr_comment_sync.getPullRequestId,
+            {
+              teamId,
+              repoFullName,
+              prNumber,
+            },
+          );
+
+          if (!pullRequestId) {
+            console.warn("[issue_comment] PR not found in database", {
+              repoFullName,
+              prNumber,
+              teamId,
+              delivery,
+            });
+            break;
+          }
+
+          if (commentPayload.action === "deleted") {
+            await _ctx.runMutation(
+              internal.github_pr_comment_sync.deleteComment,
+              {
+                providerCommentId: commentPayload.comment.id,
+              },
+            );
+          } else {
+            // created or edited
+            await _ctx.runMutation(
+              internal.github_pr_comment_sync.upsertComment,
+              {
+                teamId,
+                installationId: installation,
+                repositoryId: commentPayload.repository?.id,
+                repoFullName,
+                prNumber,
+                pullRequestId,
+                providerCommentId: commentPayload.comment.id,
+                commentType: "issue_comment",
+                authorLogin: commentPayload.comment.user?.login,
+                authorId: commentPayload.comment.user?.id,
+                authorAvatarUrl: commentPayload.comment.user?.avatar_url,
+                body: commentPayload.comment.body ?? undefined,
+                htmlUrl: commentPayload.comment.html_url,
+                createdAt: normalizeTimestamp(commentPayload.comment.created_at),
+                updatedAt: normalizeTimestamp(commentPayload.comment.updated_at),
+              },
+            );
+          }
+        } catch (error) {
+          console.error("[github_webhook] Error handling issue_comment", {
+            error,
+            delivery,
+          });
+        }
+        break;
+      }
+      case "pull_request_review": {
+        try {
+          const reviewPayload = body as PullRequestReviewEvent;
+          const repoFullName = String(reviewPayload.repository?.full_name ?? "");
+          const installation = Number(reviewPayload.installation?.id ?? 0);
+          const prNumber = Number(reviewPayload.pull_request?.number ?? 0);
+
+          if (!repoFullName || !installation || !prNumber) {
+            console.warn("[pull_request_review] Missing required fields", {
+              repoFullName,
+              installation,
+              prNumber,
+              delivery,
+            });
+            break;
+          }
+
+          const conn = await _ctx.runQuery(
+            internal.github_app.getProviderConnectionByInstallationId,
+            { installationId: installation },
+          );
+          const teamId = conn?.teamId;
+
+          if (!teamId) {
+            console.warn("[pull_request_review] No teamId found for installation", {
+              installation,
+              delivery,
+            });
+            break;
+          }
+
+          // Get the PR ID
+          const pullRequestId = await _ctx.runQuery(
+            internal.github_pr_comment_sync.getPullRequestId,
+            {
+              teamId,
+              repoFullName,
+              prNumber,
+            },
+          );
+
+          if (!pullRequestId) {
+            console.warn("[pull_request_review] PR not found in database", {
+              repoFullName,
+              prNumber,
+              teamId,
+              delivery,
+            });
+            break;
+          }
+
+          if (reviewPayload.action === "dismissed") {
+            // Update review state to dismissed
+            await _ctx.runMutation(
+              internal.github_pr_comment_sync.upsertComment,
+              {
+                teamId,
+                installationId: installation,
+                repositoryId: reviewPayload.repository?.id,
+                repoFullName,
+                prNumber,
+                pullRequestId,
+                providerCommentId: reviewPayload.review.id,
+                commentType: "review",
+                authorLogin: reviewPayload.review.user?.login,
+                authorId: reviewPayload.review.user?.id,
+                authorAvatarUrl: reviewPayload.review.user?.avatar_url,
+                body: reviewPayload.review.body ?? undefined,
+                htmlUrl: reviewPayload.review.html_url,
+                reviewState: "dismissed",
+                createdAt: normalizeTimestamp(reviewPayload.review.submitted_at),
+                updatedAt: normalizeTimestamp(reviewPayload.review.submitted_at),
+              },
+            );
+          } else {
+            // submitted or edited
+            await _ctx.runMutation(
+              internal.github_pr_comment_sync.upsertComment,
+              {
+                teamId,
+                installationId: installation,
+                repositoryId: reviewPayload.repository?.id,
+                repoFullName,
+                prNumber,
+                pullRequestId,
+                providerCommentId: reviewPayload.review.id,
+                commentType: "review",
+                authorLogin: reviewPayload.review.user?.login,
+                authorId: reviewPayload.review.user?.id,
+                authorAvatarUrl: reviewPayload.review.user?.avatar_url,
+                body: reviewPayload.review.body ?? undefined,
+                htmlUrl: reviewPayload.review.html_url,
+                reviewState: reviewPayload.review.state as
+                  | "approved"
+                  | "changes_requested"
+                  | "commented"
+                  | "dismissed"
+                  | "pending"
+                  | undefined,
+                createdAt: normalizeTimestamp(reviewPayload.review.submitted_at),
+                updatedAt: normalizeTimestamp(reviewPayload.review.submitted_at),
+              },
+            );
+          }
+        } catch (error) {
+          console.error("[github_webhook] Error handling pull_request_review", {
+            error,
+            delivery,
+          });
+        }
+        break;
+      }
+      case "pull_request_review_comment": {
+        try {
+          const commentPayload = body as PullRequestReviewCommentEvent;
+          const repoFullName = String(commentPayload.repository?.full_name ?? "");
+          const installation = Number(commentPayload.installation?.id ?? 0);
+          const prNumber = Number(commentPayload.pull_request?.number ?? 0);
+
+          if (!repoFullName || !installation || !prNumber) {
+            console.warn("[pull_request_review_comment] Missing required fields", {
+              repoFullName,
+              installation,
+              prNumber,
+              delivery,
+            });
+            break;
+          }
+
+          const conn = await _ctx.runQuery(
+            internal.github_app.getProviderConnectionByInstallationId,
+            { installationId: installation },
+          );
+          const teamId = conn?.teamId;
+
+          if (!teamId) {
+            console.warn(
+              "[pull_request_review_comment] No teamId found for installation",
+              {
+                installation,
+                delivery,
+              },
+            );
+            break;
+          }
+
+          // Get the PR ID
+          const pullRequestId = await _ctx.runQuery(
+            internal.github_pr_comment_sync.getPullRequestId,
+            {
+              teamId,
+              repoFullName,
+              prNumber,
+            },
+          );
+
+          if (!pullRequestId) {
+            console.warn("[pull_request_review_comment] PR not found in database", {
+              repoFullName,
+              prNumber,
+              teamId,
+              delivery,
+            });
+            break;
+          }
+
+          if (commentPayload.action === "deleted") {
+            await _ctx.runMutation(
+              internal.github_pr_comment_sync.deleteComment,
+              {
+                providerCommentId: commentPayload.comment.id,
+              },
+            );
+          } else {
+            // created or edited
+            await _ctx.runMutation(
+              internal.github_pr_comment_sync.upsertComment,
+              {
+                teamId,
+                installationId: installation,
+                repositoryId: commentPayload.repository?.id,
+                repoFullName,
+                prNumber,
+                pullRequestId,
+                providerCommentId: commentPayload.comment.id,
+                commentType: "review_comment",
+                authorLogin: commentPayload.comment.user?.login,
+                authorId: commentPayload.comment.user?.id,
+                authorAvatarUrl: commentPayload.comment.user?.avatar_url,
+                body: commentPayload.comment.body ?? undefined,
+                htmlUrl: commentPayload.comment.html_url,
+                path: commentPayload.comment.path,
+                line: commentPayload.comment.line ?? undefined,
+                startLine: commentPayload.comment.start_line ?? undefined,
+                side: commentPayload.comment.side as "LEFT" | "RIGHT" | undefined,
+                commitId: commentPayload.comment.commit_id,
+                originalCommitId: commentPayload.comment.original_commit_id,
+                diffHunk: commentPayload.comment.diff_hunk,
+                inReplyToId: commentPayload.comment.in_reply_to_id ?? undefined,
+                createdAt: normalizeTimestamp(commentPayload.comment.created_at),
+                updatedAt: normalizeTimestamp(commentPayload.comment.updated_at),
+              },
+            );
+          }
+        } catch (error) {
+          console.error(
+            "[github_webhook] Error handling pull_request_review_comment",
+            {
+              error,
+              delivery,
+            },
+          );
+        }
+        break;
+      }
       case "repository":
       case "create":
-      case "delete":
-      case "pull_request_review":
-      case "pull_request_review_comment":
-      case "issue_comment": {
+      case "delete": {
         break;
       }
       case "workflow_run": {

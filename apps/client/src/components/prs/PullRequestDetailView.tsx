@@ -14,6 +14,7 @@ import { MergeButton, type MergeMethod } from "@/components/ui/merge-button";
 import { postApiIntegrationsGithubPrsCloseMutation, postApiIntegrationsGithubPrsMergeSimpleMutation } from "@cmux/www-openapi-client/react-query";
 import type { PostApiIntegrationsGithubPrsCloseData, PostApiIntegrationsGithubPrsCloseResponse, PostApiIntegrationsGithubPrsMergeSimpleData, PostApiIntegrationsGithubPrsMergeSimpleResponse, Options } from "@cmux/www-openapi-client";
 import { useCombinedWorkflowData, WorkflowRunsBadge, WorkflowRunsSection } from "@/components/WorkflowRunsSection";
+import { PullRequestComments } from "@/components/prs/PullRequestComments";
 
 const RUN_PENDING_STATUSES = new Set(["in_progress", "queued", "waiting", "pending"]);
 const RUN_PASSING_CONCLUSIONS = new Set(["success", "neutral", "skipped"]);
@@ -524,6 +525,9 @@ export function PullRequestDetailView({
                   Missing repo or branches to show diff.
                 </div>
               )}
+            </Suspense>
+            <Suspense fallback={null}>
+              <PullRequestComments pullRequestId={currentPR._id} />
             </Suspense>
           </div>
         </div>
