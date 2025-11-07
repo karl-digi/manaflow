@@ -34,6 +34,7 @@ import { Server as ServerIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
+import { OnboardingWizard } from "@/components/onboarding/OnboardingWizard";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/dashboard")({
   component: DashboardComponent,
@@ -81,6 +82,22 @@ function DashboardComponent() {
   const { socket } = useSocket();
   const { theme } = useTheme();
   const { addTaskToExpand } = useExpandTasks();
+
+  // Onboarding state
+  const onboardingStateQuery = useQuery(
+    convexQuery(api.onboarding.getOnboardingState, {})
+  );
+  const [showOnboarding, setShowOnboarding] = useState(false);
+
+  useEffect(() => {
+    if (onboardingStateQuery.data && !onboardingStateQuery.data.hasCompletedOnboarding) {
+      setShowOnboarding(true);
+    }
+  }, [onboardingStateQuery.data]);
+
+  const handleOnboardingComplete = useCallback(() => {
+    setShowOnboarding(false);
+  }, []);
 
   const [selectedProject, setSelectedProject] = useState<string[]>(() => {
     const stored = localStorage.getItem("selectedProject");
@@ -808,51 +825,60 @@ function DashboardComponent() {
   ]);
 
   return (
-    <FloatingPane header={<TitleBar title="cmux" />}>
-      <div className="flex flex-col grow overflow-y-auto">
-        {/* Main content area */}
-        <div className="flex-1 flex justify-center px-4 pt-60 pb-4">
-          <div className="w-full max-w-4xl min-w-0">
-            {/* Workspace Creation Buttons */}
-            <WorkspaceCreationButtons
-              teamSlugOrId={teamSlugOrId}
-              selectedProject={selectedProject}
-              isEnvSelected={isEnvSelected}
-            />
+    <>
+      <FloatingPane header={<TitleBar title="cmux" />}>
+        <div className="flex flex-col grow overflow-y-auto">
+          {/* Main content area */}
+          <div className="flex-1 flex justify-center px-4 pt-60 pb-4">
+            <div className="w-full max-w-4xl min-w-0">
+              {/* Workspace Creation Buttons */}
+              <WorkspaceCreationButtons
+                teamSlugOrId={teamSlugOrId}
+                selectedProject={selectedProject}
+                isEnvSelected={isEnvSelected}
+              />
 
-            <DashboardMainCard
-              editorApiRef={editorApiRef}
-              onTaskDescriptionChange={handleTaskDescriptionChange}
-              onSubmit={handleSubmit}
-              lexicalRepoUrl={lexicalRepoUrl}
-              lexicalEnvironmentId={lexicalEnvironmentId}
-              lexicalBranch={lexicalBranch}
-              projectOptions={projectOptions}
-              selectedProject={selectedProject}
-              onProjectChange={handleProjectChange}
-              branchOptions={branchOptions}
-              selectedBranch={effectiveSelectedBranch}
-              onBranchChange={handleBranchChange}
-              selectedAgents={selectedAgents}
-              onAgentChange={handleAgentChange}
-              isCloudMode={isCloudMode}
-              onCloudModeToggle={handleCloudModeToggle}
-              isLoadingProjects={reposByOrgQuery.isLoading}
-              isLoadingBranches={branchesQuery.isPending}
-              teamSlugOrId={teamSlugOrId}
-              cloudToggleDisabled={isEnvSelected}
-              branchDisabled={isEnvSelected || !selectedProject[0]}
-              providerStatus={providerStatus}
-              canSubmit={canSubmit}
-              onStartTask={handleStartTask}
-            />
+              <DashboardMainCard
+                editorApiRef={editorApiRef}
+                onTaskDescriptionChange={handleTaskDescriptionChange}
+                onSubmit={handleSubmit}
+                lexicalRepoUrl={lexicalRepoUrl}
+                lexicalEnvironmentId={lexicalEnvironmentId}
+                lexicalBranch={lexicalBranch}
+                projectOptions={projectOptions}
+                selectedProject={selectedProject}
+                onProjectChange={handleProjectChange}
+                branchOptions={branchOptions}
+                selectedBranch={effectiveSelectedBranch}
+                onBranchChange={handleBranchChange}
+                selectedAgents={selectedAgents}
+                onAgentChange={handleAgentChange}
+                isCloudMode={isCloudMode}
+                onCloudModeToggle={handleCloudModeToggle}
+                isLoadingProjects={reposByOrgQuery.isLoading}
+                isLoadingBranches={branchesQuery.isPending}
+                teamSlugOrId={teamSlugOrId}
+                cloudToggleDisabled={isEnvSelected}
+                branchDisabled={isEnvSelected || !selectedProject[0]}
+                providerStatus={providerStatus}
+                canSubmit={canSubmit}
+                onStartTask={handleStartTask}
+              />
 
-            {/* Task List */}
-            <TaskList teamSlugOrId={teamSlugOrId} />
+              {/* Task List */}
+              <TaskList teamSlugOrId={teamSlugOrId} />
+            </div>
           </div>
         </div>
-      </div>
-    </FloatingPane>
+      </FloatingPane>
+
+      {/* Onboarding Modal */}
+      <OnboardingWizard
+        open={showOnboarding}
+        onComplete={handleOnboardingComplete}
+        teamSlugOrId={teamSlugOrId}
+      />
+    </>
   );
 }
 

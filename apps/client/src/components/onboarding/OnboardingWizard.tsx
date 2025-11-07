@@ -1,15 +1,15 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { Check, Github, Sparkles, FolderGit2, Box } from "lucide-react";
+import { Check, Github, FolderGit2, Box, Cpu } from "lucide-react";
 import { useState, useCallback, useEffect } from "react";
 import { api } from "@cmux/convex/api";
 import { useMutation, useQuery } from "convex/react";
-import { WelcomeStep } from "./steps/WelcomeStep";
 import { GitHubConnectStep } from "./steps/GitHubConnectStep";
 import { RepositorySyncStep } from "./steps/RepositorySyncStep";
 import { EnvironmentsExplanationStep } from "./steps/EnvironmentsExplanationStep";
+import { AgentConfigStep } from "./steps/AgentConfigStep";
 import { CompleteStep } from "./steps/CompleteStep";
 
-export type OnboardingStep = "welcome" | "github" | "repos" | "environments" | "complete";
+export type OnboardingStep = "github" | "repos" | "agents" | "environments" | "complete";
 
 interface OnboardingWizardProps {
   open: boolean;
@@ -18,9 +18,9 @@ interface OnboardingWizardProps {
 }
 
 const STEP_ORDER: OnboardingStep[] = [
-  "welcome",
   "github",
   "repos",
+  "agents",
   "environments",
   "complete",
 ];
@@ -31,12 +31,12 @@ function getStepIndex(step: OnboardingStep): number {
 
 function getStepIcon(step: OnboardingStep) {
   switch (step) {
-    case "welcome":
-      return Sparkles;
     case "github":
       return Github;
     case "repos":
       return FolderGit2;
+    case "agents":
+      return Cpu;
     case "environments":
       return Box;
     case "complete":
@@ -46,16 +46,16 @@ function getStepIcon(step: OnboardingStep) {
 
 function getStepTitle(step: OnboardingStep): string {
   switch (step) {
-    case "welcome":
-      return "Welcome";
     case "github":
-      return "Connect GitHub";
+      return "GitHub";
     case "repos":
-      return "Sync Repositories";
+      return "Repos";
+    case "agents":
+      return "Agents";
     case "environments":
       return "Environments";
     case "complete":
-      return "All Set!";
+      return "Done";
   }
 }
 
@@ -64,7 +64,7 @@ export function OnboardingWizard({
   onComplete,
   teamSlugOrId,
 }: OnboardingWizardProps) {
-  const [currentStep, setCurrentStep] = useState<OnboardingStep>("welcome");
+  const [currentStep, setCurrentStep] = useState<OnboardingStep>("github");
   const [completedSteps, setCompletedSteps] = useState<Set<OnboardingStep>>(
     new Set()
   );
@@ -116,8 +116,6 @@ export function OnboardingWizard({
 
   const renderStep = () => {
     switch (currentStep) {
-      case "welcome":
-        return <WelcomeStep onNext={handleNext} />;
       case "github":
         return (
           <GitHubConnectStep
@@ -139,6 +137,8 @@ export function OnboardingWizard({
             hasGitHubConnection={hasGitHubConnection}
           />
         );
+      case "agents":
+        return <AgentConfigStep onNext={handleNext} onSkip={handleSkip} />;
       case "environments":
         return (
           <EnvironmentsExplanationStep
@@ -161,46 +161,43 @@ export function OnboardingWizard({
   return (
     <Dialog.Root open={open} onOpenChange={() => {}}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-neutral-950/80 backdrop-blur-sm" />
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-neutral-950/90 backdrop-blur-md" />
         <Dialog.Content
-          className="fixed left-1/2 top-1/2 z-50 w-full max-w-4xl -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-neutral-200 bg-white shadow-2xl focus:outline-none dark:border-neutral-800 dark:bg-neutral-900"
+          className="fixed left-1/2 top-1/2 z-50 w-full max-w-2xl -translate-x-1/2 -translate-y-1/2 rounded-lg border border-neutral-200 bg-white shadow-xl focus:outline-none dark:border-neutral-800 dark:bg-neutral-900"
           onEscapeKeyDown={(e) => e.preventDefault()}
           onPointerDownOutside={(e) => e.preventDefault()}
         >
           {/* Progress indicator */}
-          <div className="border-b border-neutral-200 px-8 py-6 dark:border-neutral-800">
+          <div className="border-b border-neutral-200 px-6 py-4 dark:border-neutral-800">
             <div className="flex items-center justify-between">
               {STEP_ORDER.map((step, index) => {
                 const StepIcon = getStepIcon(step);
                 const isActive = step === currentStep;
                 const isCompleted = completedSteps.has(step);
-                const isFuture = getStepIndex(step) > getStepIndex(currentStep);
 
                 return (
                   <div key={step} className="flex flex-1 items-center">
-                    <div className="flex flex-col items-center gap-2">
+                    <div className="flex flex-col items-center gap-1.5">
                       <div
-                        className={`flex h-10 w-10 items-center justify-center rounded-full border-2 transition-all ${
+                        className={`flex h-8 w-8 items-center justify-center rounded-full transition-all ${
                           isActive
-                            ? "border-primary bg-primary text-white shadow-lg shadow-primary/20"
+                            ? "bg-primary text-white"
                             : isCompleted
-                              ? "border-primary bg-primary/10 text-primary"
-                              : "border-neutral-300 bg-neutral-100 text-neutral-400 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-600"
+                              ? "bg-primary/20 text-primary"
+                              : "bg-neutral-100 text-neutral-400 dark:bg-neutral-800 dark:text-neutral-600"
                         }`}
                       >
                         {isCompleted ? (
-                          <Check className="h-5 w-5" />
+                          <Check className="h-4 w-4" />
                         ) : (
-                          <StepIcon className="h-5 w-5" />
+                          <StepIcon className="h-4 w-4" />
                         )}
                       </div>
                       <span
-                        className={`text-xs font-medium ${
-                          isActive
+                        className={`text-xs ${
+                          isActive || isCompleted
                             ? "text-neutral-900 dark:text-neutral-100"
-                            : isFuture
-                              ? "text-neutral-400 dark:text-neutral-600"
-                              : "text-neutral-600 dark:text-neutral-400"
+                            : "text-neutral-400 dark:text-neutral-600"
                         }`}
                       >
                         {getStepTitle(step)}
@@ -208,7 +205,7 @@ export function OnboardingWizard({
                     </div>
                     {index < STEP_ORDER.length - 1 && (
                       <div
-                        className={`mx-2 h-0.5 flex-1 transition-all ${
+                        className={`mx-2 h-px flex-1 ${
                           completedSteps.has(step)
                             ? "bg-primary"
                             : "bg-neutral-200 dark:bg-neutral-700"
@@ -222,7 +219,7 @@ export function OnboardingWizard({
           </div>
 
           {/* Step content */}
-          <div className="px-8 py-8">
+          <div className="px-6 py-6">
             {renderStep()}
           </div>
         </Dialog.Content>

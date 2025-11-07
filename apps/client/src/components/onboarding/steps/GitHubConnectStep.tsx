@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { GitHubIcon } from "@/components/icons/github";
-import { ArrowRight, Check, ExternalLink, Info } from "lucide-react";
+import { ArrowRight, Check, ExternalLink } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@cmux/convex/api";
 import { useMutation, useQuery } from "convex/react";
@@ -96,103 +96,58 @@ export function GitHubConnectStep({
 
   return (
     <div className="flex flex-col">
-      <div className="mb-6">
-        <h2 className="mb-2 text-2xl font-bold text-neutral-900 dark:text-neutral-50">
-          Connect Your GitHub Account
+      <div className="mb-4">
+        <h2 className="mb-1 text-xl font-semibold text-neutral-900 dark:text-neutral-50">
+          Connect GitHub
         </h2>
-        <p className="text-neutral-600 dark:text-neutral-400">
-          Connect your GitHub account to access your repositories and collaborate with your team.
+        <p className="text-sm text-neutral-600 dark:text-neutral-400">
+          Connect your GitHub account to access repositories.
         </p>
       </div>
 
       {localHasConnection ? (
-        <div className="mb-6 rounded-xl border border-green-200 bg-green-50 p-6 dark:border-green-900/50 dark:bg-green-900/20">
-          <div className="flex items-start gap-4">
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-green-500 text-white">
-              <Check className="h-5 w-5" />
-            </div>
-            <div className="flex-1">
-              <h3 className="mb-1 font-semibold text-green-900 dark:text-green-100">
-                GitHub Connected Successfully
-              </h3>
-              <p className="text-sm text-green-700 dark:text-green-300">
-                Your GitHub account is now connected. You can access your repositories and start syncing them.
-              </p>
-              {connections && connections.length > 0 && (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {connections.map((conn) => (
-                    <div
-                      key={conn.installationId}
-                      className="flex items-center gap-2 rounded-md bg-white px-3 py-1.5 text-sm shadow-sm dark:bg-neutral-900"
-                    >
-                      <GitHubIcon className="h-4 w-4" />
-                      <span className="font-medium text-neutral-900 dark:text-neutral-100">
-                        {conn.accountLogin}
-                      </span>
-                      <span className="text-neutral-500 dark:text-neutral-400">
-                        ({conn.accountType})
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+        <div className="mb-4 rounded-lg border border-neutral-200 bg-neutral-50 p-4 dark:border-neutral-700 dark:bg-neutral-800/50">
+          <div className="flex items-center gap-3 mb-2">
+            <Check className="h-4 w-4 text-green-600" />
+            <span className="font-medium text-neutral-900 dark:text-neutral-100">
+              Connected
+            </span>
           </div>
+          {connections && connections.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {connections.map((conn) => (
+                <div
+                  key={conn.installationId}
+                  className="flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400"
+                >
+                  <GitHubIcon className="h-4 w-4" />
+                  <span>{conn.accountLogin}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       ) : (
-        <>
-          <div className="mb-6 rounded-xl border border-neutral-200 bg-neutral-50 p-6 dark:border-neutral-800 dark:bg-neutral-900/50">
-            <div className="flex items-start gap-3">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-100 dark:bg-blue-900/30">
-                <Info className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-              </div>
-              <div className="flex-1">
-                <h3 className="mb-2 font-semibold text-neutral-900 dark:text-neutral-100">
-                  What You'll Get
-                </h3>
-                <ul className="space-y-2 text-sm text-neutral-600 dark:text-neutral-400">
-                  <li className="flex items-start gap-2">
-                    <Check className="mt-0.5 h-4 w-4 flex-shrink-0 text-green-600" />
-                    <span>Access to all your repositories</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <Check className="mt-0.5 h-4 w-4 flex-shrink-0 text-green-600" />
-                    <span>Automatic PR creation and management</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <Check className="mt-0.5 h-4 w-4 flex-shrink-0 text-green-600" />
-                    <span>Real-time synchronization with your codebase</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <Check className="mt-0.5 h-4 w-4 flex-shrink-0 text-green-600" />
-                    <span>Automated code reviews and insights</span>
-                  </li>
-                </ul>
-              </div>
-            </div>
-          </div>
-
-          <Button
-            size="lg"
-            onClick={handleConnect}
-            disabled={isConnecting}
-            className="mb-4 w-full gap-2"
-          >
-            <GitHubIcon className="h-5 w-5" />
-            {isConnecting ? "Connecting..." : "Connect GitHub Account"}
-            <ExternalLink className="h-4 w-4" />
-          </Button>
-        </>
+        <Button
+          size="sm"
+          onClick={handleConnect}
+          disabled={isConnecting}
+          className="mb-4 gap-2"
+        >
+          <GitHubIcon className="h-4 w-4" />
+          {isConnecting ? "Connecting..." : "Connect GitHub"}
+          <ExternalLink className="h-4 w-4" />
+        </Button>
       )}
 
-      <div className="flex items-center justify-between pt-4">
-        <Button variant="ghost" onClick={onSkip} disabled={isConnecting}>
-          Skip for Now
+      <div className="flex items-center justify-between pt-2">
+        <Button variant="ghost" onClick={onSkip} disabled={isConnecting} size="sm">
+          Skip
         </Button>
         {localHasConnection && (
-          <Button onClick={onNext} className="gap-2">
+          <Button onClick={onNext} size="sm" className="gap-1.5">
             Continue
-            <ArrowRight className="h-4 w-4" />
+            <ArrowRight className="h-3.5 w-3.5" />
           </Button>
         )}
       </div>
