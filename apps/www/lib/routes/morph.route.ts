@@ -113,13 +113,34 @@ morphRouter.openapi(
 
       return { githubAccessTokenError: null, githubAccessToken } as const;
     })();
-    const gitIdentityPromise = githubAccessTokenPromise.then(
-      ({ githubAccessToken }) => {
-        if (!githubAccessToken) {
-          throw new Error("GitHub access token not found");
-        }
-        return fetchGitIdentityInputs(convex, githubAccessToken);
-      }
+    const githubAuthResult = await githubAccessTokenPromise;
+    if (githubAuthResult.githubAccessTokenError) {
+      const isMissingAccount =
+        githubAuthResult.githubAccessTokenError === "GitHub account not found";
+      console.error(
+        `[morph.setup] GitHub access token error: ${githubAuthResult.githubAccessTokenError}`
+      );
+      return c.json(
+        {
+          error: isMissingAccount
+            ? "Connect GitHub to continue"
+            : "Refresh your GitHub connection and try again",
+          detail: isMissingAccount
+            ? "We need your GitHub account to configure git identity and access private repositories."
+            : "We couldn't read your GitHub token. Please reconnect GitHub from the Connection menu and try again.",
+          code: isMissingAccount
+            ? "GITHUB_ACCOUNT_REQUIRED"
+            : "GITHUB_TOKEN_MISSING",
+          requiresGithubAuth: true,
+        },
+        isMissingAccount ? 409 : 401
+      );
+    }
+
+    const githubAccessToken = githubAuthResult.githubAccessToken!;
+    const gitIdentityPromise = fetchGitIdentityInputs(
+      convex,
+      githubAccessToken
     );
 
     try {
@@ -185,14 +206,6 @@ morphRouter.openapi(
         throw new Error("VSCode URL not found");
       }
 
-      const { githubAccessToken, githubAccessTokenError } =
-        await githubAccessTokenPromise;
-      if (githubAccessTokenError) {
-        console.error(
-          `[sandboxes.start] GitHub access token error: ${githubAccessTokenError}`
-        );
-        return c.text("Failed to resolve GitHub credentials", 401);
-      }
       await configureGithubAccess(instance, githubAccessToken);
 
       const url = `${vscodeUrl}/?folder=/root/workspace`;

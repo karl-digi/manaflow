@@ -30,7 +30,7 @@ import {
 } from "@tanstack/react-query";
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
-import { Check, ChevronDown, Loader2, Settings, X } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, Loader2, Settings, X } from "lucide-react";
 import {
   useCallback,
   useDeferredValue,
@@ -39,6 +39,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { toast } from "sonner";
 import { RepositoryAdvancedOptions } from "./RepositoryAdvancedOptions";
 
 function ConnectionIcon({ type }: { type?: string }) {
@@ -114,6 +115,36 @@ export interface RepositoryPickerProps {
   topAccessory?: ReactNode;
 }
 
+type SetupInstanceApiError = {
+  code?: string;
+  error?: string;
+  message?: string;
+  detail?: string;
+  requiresGithubAuth?: boolean;
+};
+
+function normalizeSetupInstanceError(error: unknown): SetupInstanceApiError {
+  if (typeof error === "object" && error !== null) {
+    const candidate = error as SetupInstanceApiError;
+    if (
+      typeof candidate.error === "string" ||
+      typeof candidate.message === "string" ||
+      typeof candidate.detail === "string" ||
+      typeof candidate.code === "string" ||
+      typeof candidate.requiresGithubAuth === "boolean"
+    ) {
+      return candidate;
+    }
+  }
+  if (error instanceof Error) {
+    return { error: error.message };
+  }
+  if (typeof error === "string") {
+    return { error };
+  }
+  return { error: "Unknown error occurred" };
+}
+
 export function RepositoryPicker({
   teamSlugOrId,
   instanceId,
@@ -141,6 +172,7 @@ export function RepositoryPicker({
   const [selectedConnectionLogin, setSelectedConnectionLogin] = useState<
     string | null
   >(null);
+  const [githubAuthError, setGithubAuthError] = useState<string | null>(null);
   const [connectionContext, setConnectionContext] = useState<ConnectionContext>(
     {
       selectedLogin: null,
@@ -242,6 +274,7 @@ export function RepositoryPicker({
 
   const handleContinue = useCallback(
     (repos: string[]): void => {
+      setGithubAuthError(null);
       const mutation =
         repos.length > 0 ? setupInstanceMutation : setupManualInstanceMutation;
       mutation.mutate(
@@ -255,6 +288,7 @@ export function RepositoryPicker({
         },
         {
           onSuccess: async (data) => {
+            setGithubAuthError(null);
             const configuredInstanceId =
               (await goToConfigure(repos, data.instanceId)) ?? data.instanceId;
             onStartConfigure?.({
@@ -265,19 +299,19 @@ export function RepositoryPicker({
             console.log("Cloned repos:", data.clonedRepos);
             console.log("Removed repos:", data.removedRepos);
           },
-          onError: (error) => {
-            console.error("Failed to setup instance:", error);
-          },
+          onError: handleSetupError,
         }
       );
     },
     [
       goToConfigure,
+      handleSetupError,
       instanceId,
       onStartConfigure,
       selectedSnapshotId,
       setupInstanceMutation,
       setupManualInstanceMutation,
+      setGithubAuthError,
       teamSlugOrId,
     ]
   );
@@ -328,6 +362,43 @@ export function RepositoryPicker({
       return ctx;
     });
   }, []);
+
+  const handleSetupError = useCallback(
+    (error: unknown) => {
+      const parsed = normalizeSetupInstanceError(error);
+      const message =
+        parsed.error ||
+        parsed.message ||
+        parsed.detail ||
+        "Failed to set up workspace.";
+      const requiresGithubAuth =
+        parsed.requiresGithubAuth ||
+        (typeof parsed.code === "string" && parsed.code.startsWith("GITHUB_"));
+
+      console.error("Failed to setup instance:", error);
+
+      if (requiresGithubAuth) {
+        const fallbackMessage =
+          parsed.code === "GITHUB_ACCOUNT_REQUIRED"
+            ? "Connect GitHub to continue."
+            : "Refresh your GitHub connection and try again.";
+        const friendlyMessage =
+          parsed.error || parsed.message || parsed.detail || fallbackMessage;
+        setGithubAuthError(friendlyMessage);
+        toast.error(friendlyMessage, {
+          description:
+            parsed.code === "GITHUB_ACCOUNT_REQUIRED"
+              ? "Use the Connection menu above to install the GitHub App."
+              : "Reconnect GitHub from the Connection menu, then try again.",
+        });
+        return;
+      }
+
+      setGithubAuthError(null);
+      toast.error(message);
+    },
+    [setGithubAuthError]
+  );
 
   const isContinueLoading = setupInstanceMutation.isPending;
   const isManualLoading = setupManualInstanceMutation.isPending;
@@ -426,6 +497,15 @@ export function RepositoryPicker({
                 </button>
               )}
             </div>
+            {githubAuthError ? (
+              <p
+                role="alert"
+                className="mt-2 flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400"
+              >
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                <span>{githubAuthError}</span>
+              </p>
+            ) : null}
             {showManualConfigOption && (
               <p className="text-xs text-neutral-500 dark:text-neutral-500">
                 You can also manually configure an environment from a bare VM.
