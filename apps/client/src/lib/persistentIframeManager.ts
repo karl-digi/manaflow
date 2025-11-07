@@ -80,6 +80,37 @@ class PersistentIframeManager {
   private resizeObserver: ResizeObserver;
   private debugMode = false;
   private syncTimeouts = new Map<string, number>();
+  private lastFocusedElement: HTMLElement | null = null;
+
+  private handleFocusIn = (event: FocusEvent) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+
+    if (
+      target instanceof HTMLIFrameElement &&
+      target.dataset.persistentIframeKey
+    ) {
+      const entry = this.iframes.get(target.dataset.persistentIframeKey);
+      if (entry && !entry.isVisible) {
+        if (this.debugMode) {
+          console.log(
+            `[FocusCatch] Prevented hidden iframe ${target.dataset.persistentIframeKey} from taking focus`
+          );
+        }
+        try {
+          target.blur();
+        } catch {
+          // Ignored: blur may throw if iframe is already detached
+        }
+        this.restorePreviousFocus();
+        return;
+      }
+    }
+
+    this.lastFocusedElement = target;
+  };
 
   constructor() {
     // Create resize observer for syncing positions
@@ -96,6 +127,14 @@ class PersistentIframeManager {
     });
 
     this.initializeContainer();
+
+    if (typeof document !== "undefined") {
+      this.lastFocusedElement =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+      document.addEventListener("focusin", this.handleFocusIn, true);
+    }
   }
 
   private initializeContainer() {
@@ -174,6 +213,7 @@ class PersistentIframeManager {
 
     // Create iframe
     const iframe = document.createElement("iframe");
+    iframe.dataset.persistentIframeKey = key;
     iframe.style.cssText = `
       width: 100%;
       height: 100%;
@@ -561,6 +601,36 @@ class PersistentIframeManager {
     entry.wrapper.style.width = `${viewportWidth}px`;
     entry.wrapper.style.height = `${viewportHeight}px`;
     entry.wrapper.style.transform = `translate(-${viewportWidth}px, -${viewportHeight}px)`;
+  }
+
+  private restorePreviousFocus(): void {
+    if (
+      this.lastFocusedElement &&
+      typeof this.lastFocusedElement.focus === "function"
+    ) {
+      try {
+        this.lastFocusedElement.focus({ preventScroll: true });
+        return;
+      } catch (error) {
+        if (this.debugMode) {
+          console.warn("[FocusCatch] Failed to restore previous focus", error);
+        }
+      }
+    }
+
+    if (
+      typeof document !== "undefined" &&
+      document.body &&
+      typeof document.body.focus === "function"
+    ) {
+      try {
+        document.body.focus({ preventScroll: true });
+      } catch (error) {
+        if (this.debugMode) {
+          console.warn("[FocusCatch] Failed to focus document.body", error);
+        }
+      }
+    }
   }
 }
 
