@@ -30,6 +30,15 @@ function normalizeTimestamp(
   return Number.isNaN(parsed) ? undefined : parsed;
 }
 
+function getFreshnessTimestamp(doc: {
+  updatedAt?: number;
+  runCompletedAt?: number;
+  runStartedAt?: number;
+  createdAt?: number;
+}): number | undefined {
+  return doc.updatedAt ?? doc.runCompletedAt ?? doc.runStartedAt ?? doc.createdAt;
+}
+
 export const upsertWorkflowRunFromWebhook = internalMutation({
   args: {
     installationId: v.number(),
@@ -139,17 +148,52 @@ export const upsertWorkflowRunFromWebhook = internalMutation({
       .collect();
 
     if (existingRecords.length > 0) {
-      // Update the first record
-      await ctx.db.patch(existingRecords[0]._id, workflowRunDoc);
+      existingRecords.sort((a, b) => {
+        const bTs = getFreshnessTimestamp(b) ?? 0;
+        const aTs = getFreshnessTimestamp(a) ?? 0;
+        if (bTs !== aTs) {
+          return bTs - aTs;
+        }
+        return (b._creationTime ?? 0) - (a._creationTime ?? 0);
+      });
 
-      // Delete any duplicates
-      if (existingRecords.length > 1) {
+      const [primaryRecord, ...duplicates] = existingRecords;
+      const existingFreshness = getFreshnessTimestamp(primaryRecord);
+      const incomingFreshness = getFreshnessTimestamp({
+        updatedAt,
+        runCompletedAt,
+        runStartedAt,
+        createdAt,
+      });
+
+      const hasComparableTimestamps =
+        typeof existingFreshness === "number" &&
+        typeof incomingFreshness === "number";
+      const isStaleUpdate =
+        hasComparableTimestamps && incomingFreshness <= existingFreshness;
+      const wouldDowngradeCompleted =
+        primaryRecord.status === "completed" && status !== "completed";
+
+      if (isStaleUpdate || wouldDowngradeCompleted) {
+        console.debug?.("[upsertWorkflowRun] Skipping stale webhook", {
+          runId,
+          repoFullName,
+          incomingFreshness,
+          existingFreshness,
+          incomingStatus: status,
+          existingStatus: primaryRecord.status,
+        });
+      } else {
+        await ctx.db.patch(primaryRecord._id, workflowRunDoc);
+      }
+
+      if (duplicates.length > 0) {
         console.warn("[upsertWorkflowRun] Found duplicates, cleaning up", {
           runId,
           count: existingRecords.length,
-          duplicateIds: existingRecords.slice(1).map(r => r._id),
+          duplicateIds: duplicates.map((r) => r._id),
         });
-        for (const duplicate of existingRecords.slice(1)) {
+        for (const duplicate of duplicates) {
           await ctx.db.delete(duplicate._id);
         }
       }
