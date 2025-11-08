@@ -63,7 +63,6 @@ const DropdownPopup: React.FC<DropdownPopupProps> = ({
         "outline outline-neutral-200 dark:outline-neutral-800",
         "transition-[transform,scale,opacity]",
         "data-[ending-style]:scale-90 data-[ending-style]:opacity-0",
-        "data-[starting-style]:scale-90 data-[starting-style]:opacity-0",
         className
       )}
     />
