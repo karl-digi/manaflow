@@ -514,6 +514,63 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
               });
             }
           }
+
+          // Update taskRuns and tasks when PR state changes
+          const prNumber = Number(prPayload.pull_request?.number ?? 0);
+          const prUrl = String(prPayload.pull_request?.html_url ?? "");
+          const prState = String(prPayload.pull_request?.state ?? "");
+          const prMerged = Boolean(prPayload.pull_request?.merged);
+          const prDraft = Boolean(prPayload.pull_request?.draft);
+
+          if (prNumber && prUrl) {
+            // Determine the state for our database
+            let state: "open" | "draft" | "merged" | "closed";
+            if (prMerged) {
+              state = "merged";
+            } else if (prState === "closed") {
+              state = "closed";
+            } else if (prDraft) {
+              state = "draft";
+            } else {
+              state = "open";
+            }
+
+            // Update all matching taskRuns
+            const result = await _ctx.runMutation(
+              internal.taskRuns.updatePullRequestStateFromWebhook,
+              {
+                teamId,
+                repoFullName,
+                prNumber,
+                prUrl,
+                state,
+                isDraft: prDraft,
+              },
+            );
+
+            // If we updated any taskRuns, also update their parent tasks
+            if (result.updatedCount > 0 && result.taskIds.length > 0) {
+              // Update each task's mergeStatus
+              const mergeStatus =
+                state === "merged"
+                  ? "pr_merged"
+                  : state === "closed"
+                    ? "pr_closed"
+                    : state === "draft"
+                      ? "pr_draft"
+                      : "pr_open";
+
+              for (const taskId of result.taskIds) {
+                await _ctx.runMutation(
+                  internal.tasks.updateMergeStatusFromWebhook,
+                  {
+                    taskId,
+                    mergeStatus,
+                  },
+                );
+              }
+            }
+          }
         } catch (err) {
           console.error("github_webhook pull_request handler failed", {
             err,

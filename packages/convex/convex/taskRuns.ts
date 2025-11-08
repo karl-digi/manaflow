@@ -1511,3 +1511,89 @@ export const getRunningContainersByCleanupPriority = authQuery({
     };
   },
 });
+
+/**
+ * Internal mutation to update taskRun pull request state when a PR is merged/closed
+ * Called from GitHub webhook handler when PR state changes
+ */
+export const updatePullRequestStateFromWebhook = internalMutation({
+  args: {
+    teamId: v.string(),
+    repoFullName: v.string(),
+    prNumber: v.number(),
+    prUrl: v.string(),
+    state: v.union(
+      v.literal("open"),
+      v.literal("draft"),
+      v.literal("merged"),
+      v.literal("closed")
+    ),
+    isDraft: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    // Find all taskRuns for this team that reference this PR
+    // We need to scan because there's no index on pullRequestUrl
+    const allTaskRuns = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_team_user", (q) => q.eq("teamId", args.teamId))
+      .collect();
+
+    const matchingTaskRuns = allTaskRuns.filter((run) => {
+      // Match by PR URL
+      if (run.pullRequestUrl === args.prUrl) {
+        return true;
+      }
+      // Match by PR number and repo in pullRequests array
+      if (run.pullRequests) {
+        return run.pullRequests.some(
+          (pr) =>
+            pr.repoFullName === args.repoFullName &&
+            pr.number === args.prNumber
+        );
+      }
+      // Match by legacy pullRequestNumber field if repo matches
+      if (
+        run.pullRequestNumber === args.prNumber &&
+        run.pullRequestUrl?.includes(args.repoFullName)
+      ) {
+        return true;
+      }
+      return false;
+    });
+
+    // Update each matching taskRun and collect taskIds
+    const taskIds = new Set<Id<"tasks">>();
+    for (const run of matchingTaskRuns) {
+      const updates: Partial<Doc<"taskRuns">> = {
+        pullRequestState: args.state,
+        pullRequestIsDraft: args.isDraft,
+        updatedAt: Date.now(),
+      };
+
+      // Update pullRequests array if it exists
+      if (run.pullRequests) {
+        updates.pullRequests = run.pullRequests.map((pr) => {
+          if (
+            pr.repoFullName === args.repoFullName &&
+            pr.number === args.prNumber
+          ) {
+            return {
+              ...pr,
+              state: args.state,
+              isDraft: args.isDraft,
+            };
+          }
+          return pr;
+        });
+      }
+
+      await ctx.db.patch(run._id, updates);
+      taskIds.add(run.taskId);
+    }
+
+    return {
+      updatedCount: matchingTaskRuns.length,
+      taskIds: Array.from(taskIds) as Id<"tasks">[],
+    };
+  },
+});

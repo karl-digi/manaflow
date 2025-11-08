@@ -777,3 +777,25 @@ export const getByIdInternal = internalQuery({
     return await ctx.db.get(args.id);
   },
 });
+
+/**
+ * Internal mutation to update task merge status when a PR is merged/closed
+ * Called from GitHub webhook handler when PR state changes
+ */
+export const updateMergeStatusFromWebhook = internalMutation({
+  args: {
+    taskId: v.id("tasks"),
+    mergeStatus: v.union(
+      v.literal("pr_draft"),
+      v.literal("pr_open"),
+      v.literal("pr_merged"),
+      v.literal("pr_closed")
+    ),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.taskId, {
+      mergeStatus: args.mergeStatus,
+      updatedAt: Date.now(),
+    });
+  },
+});
