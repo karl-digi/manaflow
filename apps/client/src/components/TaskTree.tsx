@@ -167,6 +167,63 @@ function collectRunIds(
   }
 }
 
+interface SidebarArchiveHoverButtonProps {
+  children?: ReactNode;
+  tooltip: string;
+  ariaLabel: string;
+  onArchive?: () => void;
+  disabled?: boolean;
+}
+
+function SidebarArchiveHoverButton({
+  children,
+  tooltip,
+  ariaLabel,
+  onArchive,
+  disabled = false,
+}: SidebarArchiveHoverButtonProps) {
+  if (!onArchive || disabled) {
+    return children ?? null;
+  }
+
+  const content =
+    children ?? <span className="inline-block w-3 h-3" aria-hidden />;
+
+  return (
+    <div className="relative inline-flex items-center justify-center">
+      <span className="transition-none group-hover:opacity-0 group-focus-within:opacity-0">
+        {content}
+      </span>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            aria-label={ariaLabel}
+            className={clsx(
+              "absolute -inset-1 inline-flex items-center justify-center rounded-sm",
+              "bg-white text-neutral-700 shadow-sm ring-1 ring-inset ring-neutral-300",
+              "opacity-0 pointer-events-none transition-none",
+              "group-hover:opacity-100 group-hover:pointer-events-auto",
+              "group-focus-within:opacity-100 group-focus-within:pointer-events-auto",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-neutral-500",
+              "dark:bg-neutral-900 dark:text-neutral-100 dark:ring-neutral-700",
+              "dark:focus-visible:ring-neutral-300"
+            )}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onArchive();
+            }}
+          >
+            <ArchiveIcon className="w-3 h-3" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="right">{tooltip}</TooltipContent>
+      </Tooltip>
+    </div>
+  );
+}
+
 function applyArchiveStateToNode(
   run: TaskRunWithChildren,
   ids: Set<Id<"taskRuns">>,
@@ -600,6 +657,20 @@ function TaskTreeInner({
       <Circle className="w-3 h-3 text-neutral-400 animate-pulse" />
     );
   })();
+  const taskStatusMeta = useMemo(() => {
+    if (task.isArchived) {
+      return taskLeadingIcon || null;
+    }
+    return (
+      <SidebarArchiveHoverButton
+        tooltip="Archive task"
+        ariaLabel="Archive task"
+        onArchive={handleArchive}
+      >
+        {taskLeadingIcon}
+      </SidebarArchiveHoverButton>
+    );
+  }, [handleArchive, task.isArchived, taskLeadingIcon]);
 
   return (
     <TaskRunExpansionContext.Provider value={expansionContextValue}>
@@ -641,7 +712,7 @@ function TaskTreeInner({
                 title={taskTitleContent}
                 titleClassName={taskTitleClassName}
                 secondary={taskSecondary || undefined}
-                meta={taskLeadingIcon || undefined}
+                meta={taskStatusMeta ?? undefined}
                 className={clsx(isRenaming && "pr-2")}
               />
             </Link>
@@ -1153,6 +1224,20 @@ function TaskRunTreeInner({
   ) : (
     runLeadingIcon
   );
+  const runStatusMeta = useMemo(() => {
+    if (run.isArchived) {
+      return leadingContent;
+    }
+    return (
+      <SidebarArchiveHoverButton
+        tooltip="Archive task run"
+        ariaLabel="Archive task run"
+        onArchive={handleArchiveRun}
+      >
+        {leadingContent}
+      </SidebarArchiveHoverButton>
+    );
+  }, [handleArchiveRun, leadingContent, run.isArchived]);
 
   // Generate VSCode URL if available
   const hasActiveVSCode = run.vscode?.status === "running";
@@ -1242,7 +1327,7 @@ function TaskRunTreeInner({
               title={baseDisplayText}
               titleClassName="text-[13px] text-neutral-700 dark:text-neutral-300"
               titleSuffix={runNumberSuffix ?? undefined}
-              meta={leadingContent}
+              meta={runStatusMeta ?? undefined}
             />
           </Link>
         </ContextMenu.Trigger>
