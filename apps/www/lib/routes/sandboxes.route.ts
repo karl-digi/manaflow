@@ -6,9 +6,11 @@ import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { env } from "@/lib/utils/www-env";
 import { api } from "@cmux/convex/api";
 import { RESERVED_CMUX_PORT_SET } from "@cmux/shared/utils/reserved-cmux-ports";
+import { AuthFileSchema } from "@cmux/shared/worker-schemas";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { MorphCloudClient } from "morphcloud";
+import { applyEditorSettings } from "./sandboxes/applyEditorSettings";
 import { loadEnvironmentEnvVars } from "./sandboxes/environment";
 import {
   configureGithubAccess,
@@ -47,6 +49,8 @@ const StartSandboxBody = z
     branch: z.string().optional(),
     newBranch: z.string().optional(),
     depth: z.number().optional().default(1),
+    // Optional editor settings to apply (settings.json, keybindings, snippets, extensions)
+    editorSettings: z.array(AuthFileSchema).optional(),
   })
   .openapi("StartSandboxBody");
 
@@ -309,6 +313,20 @@ sandboxesRouter.openapi(
         console.error(`[sandboxes.start] Hydration failed:`, error);
         await instance.stop().catch(() => { });
         return c.text("Failed to hydrate sandbox", 500);
+      }
+
+      // Apply editor settings if provided
+      if (body.editorSettings && body.editorSettings.length > 0) {
+        try {
+          await applyEditorSettings({
+            instance,
+            authFiles: body.editorSettings,
+          });
+        } catch (error) {
+          console.error(`[sandboxes.start] Failed to apply editor settings:`, error);
+          // Don't fail the entire workspace creation if editor settings fail
+          // The workspace is still usable without custom settings
+        }
       }
 
       if (maintenanceScript || devScript) {

@@ -1028,6 +1028,12 @@ export function setupSocketHandlers(
           });
           responded = true;
 
+          // Gather editor settings from local machine
+          const { getEditorSettingsUpload } = await import(
+            "./utils/editorSettings"
+          );
+          const editorSettings = await getEditorSettingsUpload();
+
           // Spawn Morph instance via www API
           const { postApiSandboxesStart } = await getWwwOpenApiModule();
 
@@ -1036,6 +1042,12 @@ export function setupSocketHandlers(
               ? `[create-cloud-workspace] Starting Morph sandbox for environment ${environmentId}`
               : `[create-cloud-workspace] Starting Morph sandbox for repo ${projectFullName}`
           );
+
+          if (editorSettings) {
+            serverLogger.info(
+              `[create-cloud-workspace] Applying editor settings from ${editorSettings.sourceEditor}`
+            );
+          }
 
           const startRes = await postApiSandboxesStart({
             client: getWwwClient(),
@@ -1052,6 +1064,9 @@ export function setupSocketHandlers(
               ...(environmentId
                 ? { environmentId }
                 : { projectFullName, repoUrl }),
+              ...(editorSettings?.authFiles
+                ? { editorSettings: editorSettings.authFiles }
+                : {}),
             },
           });
 
