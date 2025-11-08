@@ -40,6 +40,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = request.nextUrl;
     const repoFullName = parseRepoFullName(searchParams.get("repoFullName"));
     const prNumber = parsePrNumber(searchParams.get("prNumber"));
+    const useFt0 = searchParams.get("ft0") !== null;
 
     if (!repoFullName || prNumber === null) {
       return NextResponse.json(
@@ -113,6 +114,7 @@ export async function GET(request: NextRequest) {
           await runSimpleAnthropicReviewStream({
             prIdentifier,
             githubToken: normalizedGithubToken,
+            model: useFt0 ? "ft0" : null,
             signal: abortController.signal,
             onEvent: async (event) => {
               switch (event.type) {
