@@ -29,6 +29,7 @@ export function ReviewDiffContent({
   baseCommitRef,
   pullRequestTitle,
   pullRequestUrl,
+  model,
 }: {
   files: GithubFileChange[];
   teamSlugOrId: string;
@@ -40,6 +41,7 @@ export function ReviewDiffContent({
   baseCommitRef?: string;
   pullRequestTitle?: string | null;
   pullRequestUrl?: string | null;
+  model?: string | null;
 }) {
   return (
     <section className="flex flex-col gap-1">
@@ -52,6 +54,7 @@ export function ReviewDiffContent({
         baseCommitRef={baseCommitRef}
         pullRequestTitle={pullRequestTitle}
         pullRequestUrl={pullRequestUrl}
+        model={model}
       />
     </section>
   );
@@ -125,6 +128,7 @@ export function ReviewDiffViewerWrapper({
   baseCommitRef,
   pullRequestTitle,
   pullRequestUrl,
+  model,
 }: {
   files: GithubFileChange[];
   teamSlugOrId: string;
@@ -136,6 +140,7 @@ export function ReviewDiffViewerWrapper({
   baseCommitRef?: string;
   pullRequestTitle?: string | null;
   pullRequestUrl?: string | null;
+  model?: string | null;
 }) {
   return (
     <PullRequestDiffViewer
@@ -153,6 +158,7 @@ export function ReviewDiffViewerWrapper({
       baseCommitRef={baseCommitRef}
       pullRequestTitle={pullRequestTitle ?? undefined}
       pullRequestUrl={pullRequestUrl ?? undefined}
+      model={model}
     />
   );
 }

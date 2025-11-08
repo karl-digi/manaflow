@@ -37,6 +37,7 @@ type PageParams = {
 
 type PageProps = {
   params: Promise<PageParams>;
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 };
 
 export const dynamic = "force-dynamic";
@@ -112,7 +113,7 @@ export async function generateMetadata({
   }
 }
 
-export default async function ComparisonPage({ params }: PageProps) {
+export default async function ComparisonPage({ params, searchParams }: PageProps) {
   const user = await stackServerApp.getUser({ or: "redirect" });
   const selectedTeam = user.selectedTeam || (await getFirstTeam());
   if (!selectedTeam) {
@@ -120,6 +121,8 @@ export default async function ComparisonPage({ params }: PageProps) {
   }
 
   const { teamSlugOrId: githubOwner, repo, comparison } = await params;
+  const resolvedSearchParams = await searchParams;
+  const model = typeof resolvedSearchParams.ft0 === "string" ? "ft0" : null;
 
   const refs = parseComparisonSlug(comparison);
   if (!refs) {
@@ -180,6 +183,7 @@ export default async function ComparisonPage({ params }: PageProps) {
             repo={repo}
             teamSlugOrId={selectedTeam.id}
             comparisonDetails={comparisonDetails}
+            model={model}
           />
         </Suspense>
       </div>
@@ -353,6 +357,7 @@ function ComparisonDiffSection({
   repo,
   teamSlugOrId,
   comparisonDetails,
+  model,
 }: {
   filesPromise: ComparisonFilesPromise;
   comparisonPromise: ComparisonPromise;
@@ -360,6 +365,7 @@ function ComparisonDiffSection({
   repo: string;
   teamSlugOrId: string;
   comparisonDetails: ComparisonJobDetails;
+  model: string | null;
 }) {
   try {
     const files = use(filesPromise);
@@ -381,6 +387,7 @@ function ComparisonDiffSection({
         reviewTarget={{ type: "comparison", slug: comparisonDetails.slug }}
         commitRef={commitRef}
         baseCommitRef={baseCommitRef}
+        model={model}
       />
     );
   } catch (error) {

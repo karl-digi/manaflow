@@ -43,6 +43,7 @@ type PageParams = {
 
 type PageProps = {
   params: Promise<PageParams>;
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 };
 
 export const dynamic = "force-dynamic";
@@ -138,7 +139,7 @@ export async function generateMetadata({
   }
 }
 
-export default async function PullRequestPage({ params }: PageProps) {
+export default async function PullRequestPage({ params, searchParams }: PageProps) {
   const resolvedParams = await params;
 
   const {
@@ -147,6 +148,9 @@ export default async function PullRequestPage({ params }: PageProps) {
     pullNumber: pullNumberRaw,
   } = resolvedParams;
   const pullNumber = parsePullNumber(pullNumberRaw);
+
+  const resolvedSearchParams = await searchParams;
+  const model = typeof resolvedSearchParams.ft0 === "string" ? "ft0" : null;
 
   if (pullNumber === null) {
     notFound();
@@ -275,6 +279,7 @@ export default async function PullRequestPage({ params }: PageProps) {
             githubOwner={githubOwner}
             repo={repo}
             pullNumber={pullNumber}
+            model={model}
           />
         </Suspense>
       </div>
@@ -699,6 +704,7 @@ function PullRequestDiffSection({
   teamSlugOrId,
   repo,
   pullNumber,
+  model,
 }: {
   filesPromise: PullRequestFilesPromise;
   pullRequestPromise: PullRequestPromise;
@@ -706,6 +712,7 @@ function PullRequestDiffSection({
   teamSlugOrId: string;
   repo: string;
   pullNumber: number;
+  model: string | null;
 }) {
   try {
     const files = use(filesPromise);
@@ -740,6 +747,7 @@ function PullRequestDiffSection({
         baseCommitRef={baseCommitRef}
         pullRequestTitle={pullRequestTitle}
         pullRequestUrl={pullRequestUrl}
+        model={model}
       />
     );
   } catch (error) {

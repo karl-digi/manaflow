@@ -1,4 +1,5 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
+import { createOpenAI } from "@ai-sdk/openai";
 import { streamText } from "ai";
 
 import { CLOUDFLARE_ANTHROPIC_BASE_URL } from "@cmux/shared";
@@ -114,6 +115,7 @@ type RepoSlug = {
 export type SimpleReviewStreamOptions = {
   prIdentifier: string;
   githubToken?: string | null;
+  model?: string | null;
   onChunk?: (chunk: string) => void | Promise<void>;
   onEvent?: (event: SimpleReviewParsedEvent) => void | Promise<void>;
   signal?: AbortSignal;
@@ -281,6 +283,7 @@ export async function runSimpleAnthropicReviewStream(
   const {
     prIdentifier,
     githubToken: providedGithubToken = null,
+    model: providedModel = null,
     onChunk,
     signal,
   } = options;
@@ -333,10 +336,26 @@ export async function runSimpleAnthropicReviewStream(
     metadata.prUrl ??
     `${metadata.owner}/${metadata.repo}#${metadata.number ?? "unknown"}`;
 
-  const anthropic = createAnthropic({
-    apiKey: env.ANTHROPIC_API_KEY,
-    baseURL: CLOUDFLARE_ANTHROPIC_BASE_URL,
-  });
+  // Determine which provider and model to use
+  const useOpenAI = providedModel === "ft0";
+  let aiProvider;
+  let modelId: string;
+
+  if (useOpenAI) {
+    if (!env.OPENAI_API_KEY) {
+      throw new Error("OPENAI_API_KEY is not configured");
+    }
+    aiProvider = createOpenAI({
+      apiKey: env.OPENAI_API_KEY,
+    });
+    modelId = "ft:gpt-4.1-mini-2025-04-14:lawrence:cmux-heatmap-sft:CZW6Lc77";
+  } else {
+    aiProvider = createAnthropic({
+      apiKey: env.ANTHROPIC_API_KEY,
+      baseURL: CLOUDFLARE_ANTHROPIC_BASE_URL,
+    });
+    modelId = "claude-opus-4-1-20250805";
+  }
 
   const runWithSemaphore = createSemaphore(MAX_CONCURRENCY);
   const finalChunks: string[] = [];
@@ -369,8 +388,7 @@ export async function runSimpleAnthropicReviewStream(
 
         try {
           const stream = streamText({
-            model: anthropic("claude-opus-4-1-20250805"),
-            // model: anthropic("claude-haiku-4-5"),
+            model: useOpenAI ? aiProvider(modelId) : aiProvider(modelId),
             prompt,
             temperature: 0,
             maxRetries: 2,

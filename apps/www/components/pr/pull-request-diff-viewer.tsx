@@ -103,6 +103,7 @@ type PullRequestDiffViewerProps = {
   baseCommitRef?: string;
   pullRequestTitle?: string;
   pullRequestUrl?: string;
+  model?: string | null;
 };
 
 type ParsedFileDiff = {
@@ -538,6 +539,7 @@ export function PullRequestDiffViewer({
   baseCommitRef,
   pullRequestTitle,
   pullRequestUrl,
+  model,
 }: PullRequestDiffViewerProps) {
   const normalizedJobType: "pull_request" | "comparison" =
     jobType ?? (comparisonSlug ? "comparison" : "pull_request");
@@ -563,6 +565,10 @@ export function PullRequestDiffViewer({
       repoFullName,
       prNumber: String(prNumber),
     });
+
+    if (model) {
+      params.set("model", model);
+    }
 
     (async () => {
       try {
