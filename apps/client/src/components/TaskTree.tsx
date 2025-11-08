@@ -71,6 +71,7 @@ type PreviewService = NonNullable<TaskRunWithChildren["networking"]>[number];
 
 type TaskWithGeneratedBranch = Doc<"tasks"> & {
   generatedBranchName?: string | null;
+  environmentName?: string;
 };
 
 function sanitizeBranchName(input?: string | null): string | null {
@@ -450,6 +451,7 @@ function TaskTreeInner({
   const inferredBranch = getTaskBranch(task);
   const trimmedTaskText = (task.text ?? "").trim();
   const trimmedPullRequestTitle = task.pullRequestTitle?.trim();
+  const trimmedEnvironmentName = task.environmentName?.trim();
   const taskTitleValue =
     trimmedTaskText ||
     trimmedPullRequestTitle ||
@@ -461,6 +463,9 @@ function TaskTreeInner({
   }
   if (task.projectFullName) {
     taskSecondaryParts.push(task.projectFullName);
+  }
+  if (trimmedEnvironmentName) {
+    taskSecondaryParts.push(trimmedEnvironmentName);
   }
   if (trimmedPullRequestTitle && trimmedPullRequestTitle !== taskTitleValue) {
     taskSecondaryParts.push(trimmedPullRequestTitle);

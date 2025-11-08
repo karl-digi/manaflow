@@ -2,18 +2,21 @@ import { TaskTree } from "@/components/TaskTree";
 import { TaskTreeSkeleton } from "@/components/TaskTreeSkeleton";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { isElectron } from "@/lib/electron";
-import { type Doc } from "@cmux/convex/dataModel";
+import { api } from "@cmux/convex/api";
+import { type Doc, type Id } from "@cmux/convex/dataModel";
 import type { LinkProps } from "@tanstack/react-router";
 import { Link } from "@tanstack/react-router";
 import { Home, Plus, Server, Settings } from "lucide-react";
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ComponentType,
   type CSSProperties,
 } from "react";
+import { useQuery } from "convex/react";
 import CmuxLogo from "./logo/cmux-logo";
 import { SidebarNavLink } from "./sidebar/SidebarNavLink";
 import { SidebarPullRequestList } from "./sidebar/SidebarPullRequestList";
@@ -80,6 +83,25 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
   });
 
   const { expandTaskIds } = useExpandTasks();
+  const environments = useQuery(api.environments.list, { teamSlugOrId });
+  const environmentNameById = useMemo(() => {
+    if (!environments) {
+      return new Map<Id<"environments">, string>();
+    }
+    return new Map(environments.map((env) => [env._id, env.name]));
+  }, [environments]);
+  const tasksWithEnvironmentNames = useMemo(() => {
+    if (tasks === undefined) {
+      return undefined;
+    }
+    return tasks.map((task) => ({
+      ...task,
+      environmentName:
+        task.environmentId !== undefined
+          ? environmentNameById.get(task.environmentId) ?? undefined
+          : undefined,
+    }));
+  }, [tasks, environmentNameById]);
 
   useEffect(() => {
     localStorage.setItem("sidebarWidth", String(width));
@@ -295,8 +317,8 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
             <div className="space-y-px">
               {tasks === undefined ? (
                 <TaskTreeSkeleton count={5} />
-              ) : tasks && tasks.length > 0 ? (
-                tasks.map((task) => (
+              ) : tasksWithEnvironmentNames && tasksWithEnvironmentNames.length > 0 ? (
+                tasksWithEnvironmentNames.map((task) => (
                   <TaskTree
                     key={task._id}
                     task={task}
