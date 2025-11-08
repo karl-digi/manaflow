@@ -1154,6 +1154,23 @@ function TaskRunTreeInner({
     runLeadingIcon
   );
 
+  // Build secondary text for task run subtitle
+  const runSecondaryParts: string[] = [];
+  if (run.environment?.name) {
+    runSecondaryParts.push(run.environment.name);
+  }
+  if (run.environment?.selectedRepos && run.environment.selectedRepos.length > 0) {
+    // Show the first repo if there's only one, otherwise show count
+    if (run.environment.selectedRepos.length === 1) {
+      runSecondaryParts.push(run.environment.selectedRepos[0]);
+    } else {
+      runSecondaryParts.push(`${run.environment.selectedRepos.length} repos`);
+    }
+  }
+  const runSecondary = runSecondaryParts.length > 0
+    ? runSecondaryParts.join(" • ")
+    : undefined;
+
   // Generate VSCode URL if available
   const hasActiveVSCode = run.vscode?.status === "running";
   const vscodeUrl = useMemo(
@@ -1242,6 +1259,7 @@ function TaskRunTreeInner({
               title={baseDisplayText}
               titleClassName="text-[13px] text-neutral-700 dark:text-neutral-300"
               titleSuffix={runNumberSuffix ?? undefined}
+              secondary={runSecondary}
               meta={leadingContent}
             />
           </Link>
