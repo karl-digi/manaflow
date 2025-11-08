@@ -9,7 +9,7 @@ import {
 } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import clsx from "clsx";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { MouseEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Plus, X } from "lucide-react";
 import z from "zod";
 import {
@@ -369,6 +369,25 @@ function TaskRunTerminals() {
     []
   );
 
+  const handleTabAuxClick = useCallback(
+    (
+      event: MouseEvent<HTMLButtonElement>,
+      tabId: string,
+      isDeletingThis: boolean
+    ) => {
+      if (event.button !== 1) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      if (isDeletingThis || !hasTerminalBackend) {
+        return;
+      }
+      deleteTerminalMutation.mutate(tabId);
+    },
+    [deleteTerminalMutation, hasTerminalBackend]
+  );
+
   const renderMessage = useCallback((message: string) => {
     return (
       <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-neutral-500 dark:text-neutral-400">
@@ -405,6 +424,9 @@ function TaskRunTerminals() {
                     <button
                       type="button"
                       onClick={() => setActiveTerminalId(id)}
+                      onAuxClick={(event) =>
+                        handleTabAuxClick(event, id, isDeletingThis)
+                      }
                       className={clsx(
                         "flex items-center gap-2 rounded-md pl-3 pr-8 py-1.5 text-xs font-medium transition-colors",
                         isActive
