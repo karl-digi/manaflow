@@ -1008,6 +1008,37 @@ function TaskRunTreeInner({
         {run.agentOrdinal}
       </span>
     ) : null;
+  const runSubtitle = useMemo(() => {
+    const environment = run.environment;
+    if (!environment) {
+      return null;
+    }
+
+    const subtitleParts: string[] = [];
+    const environmentName = environment.name?.trim();
+    if (environmentName) {
+      subtitleParts.push(environmentName);
+    }
+
+    const selectedRepos =
+      environment.selectedRepos?.map((repo) => repo.trim()).filter(
+        (repo): repo is string => repo.length > 0
+      ) ?? [];
+    if (selectedRepos.length > 0) {
+      const MAX_REPOS_TO_SHOW = 2;
+      const repoDisplay = selectedRepos.slice(0, MAX_REPOS_TO_SHOW).join(", ");
+      const remainingRepoCount = selectedRepos.length - MAX_REPOS_TO_SHOW;
+      const repoSuffix =
+        remainingRepoCount > 0 ? ` +${remainingRepoCount} more` : "";
+      subtitleParts.push(`${repoDisplay}${repoSuffix}`);
+    }
+
+    if (subtitleParts.length === 0) {
+      return null;
+    }
+
+    return subtitleParts.join(" • ");
+  }, [run.environment]);
 
   // Memoize the toggle handler
   const handleToggle = useCallback(
@@ -1242,6 +1273,7 @@ function TaskRunTreeInner({
               title={baseDisplayText}
               titleClassName="text-[13px] text-neutral-700 dark:text-neutral-300"
               titleSuffix={runNumberSuffix ?? undefined}
+              secondary={runSubtitle ?? undefined}
               meta={leadingContent}
             />
           </Link>
