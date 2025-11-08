@@ -300,6 +300,7 @@ export function CommandBar({
   const [commandValue, setCommandValue] = useState<string | undefined>(
     undefined
   );
+  const hasSearchQuery = search.trim().length > 0;
   const [commandListMaxHeight, setCommandListMaxHeight] = useState(
     COMMAND_PANEL_MAX_HEIGHT_PX
   );
@@ -1773,7 +1774,9 @@ export function CommandBar({
 
     const taskEntries =
       allTasks && allTasks.length > 0
-        ? allTasks.slice(0, 9).flatMap<CommandListEntry>((task, index) => {
+        ? (hasSearchQuery ? allTasks : allTasks.slice(0, 9)).flatMap<
+            CommandListEntry
+          >((task, index) => {
             const title =
               task.pullRequestTitle || task.text || `Task ${index + 1}`;
             const keywords = compactStrings([
@@ -1923,7 +1926,7 @@ export function CommandBar({
       : [];
 
     return [...baseEntries, ...taskEntries, ...electronEntries];
-  }, [allTasks, handleSelect, stackUser]);
+  }, [allTasks, handleSelect, hasSearchQuery, stackUser]);
 
   const localWorkspaceEntries = useMemo<CommandListEntry[]>(() => {
     return localWorkspaceOptions.map((option) => {
@@ -2053,8 +2056,6 @@ export function CommandBar({
     () => filterCommandItems(search, teamCommandEntries),
     [search, teamCommandEntries]
   );
-
-  const hasSearchQuery = search.trim().length > 0;
 
   const rootSuggestedEntries = useMemo(
     () => selectSuggestedItems(rootSuggestionHistory, filteredRootEntries, 5),
