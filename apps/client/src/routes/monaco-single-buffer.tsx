@@ -3,7 +3,6 @@ import { DiffEditor, type DiffOnMount } from "@monaco-editor/react";
 import { diffArrays } from "diff";
 import type { editor, languages } from "monaco-editor";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties } from "react";
 
 import { useTheme } from "@/components/theme/use-theme";
 import { loaderInitPromise } from "@/lib/monaco-environment";
@@ -35,6 +34,8 @@ type CombinedFileBoundary = {
   filePath: string;
   startLineNumber: number;
   language: MonacoLanguage;
+  additions: number;
+  deletions: number;
 };
 
 type CombinedLineMetadata = {
@@ -672,7 +673,7 @@ CREATE INDEX analytics_reports_category_idx ON analytics_reports(category);
 
 const multiFileDiffExample = diffSamples.map(createFileDiffFromSample);
 
-const FILE_LABEL_ZONE_HEIGHT = 32;
+const FILE_LABEL_ZONE_HEIGHT = 50;
 const MULTI_FILE_LANGUAGE_IDS = {
   original: "cmux-multifile-original",
   modified: "cmux-multifile-modified",
@@ -728,12 +729,14 @@ function MonacoSingleBufferRoute() {
       minimap: { enabled: false },
       renderOverviewRuler: false,
       smoothScrolling: true,
-      hideUnchangedRegions: {
-        enabled: true,
-        revealLineCount: 2,
-        minimumLineCount: 6,
-        contextLineCount: 3,
-      },
+      hideUnchangedRegions: isUnifiedLayout
+        ? { enabled: false }
+        : {
+            enabled: true,
+            revealLineCount: 2,
+            minimumLineCount: 6,
+            contextLineCount: 3,
+          },
       scrollbar: {
         useShadows: false,
         vertical: "auto",
@@ -963,12 +966,15 @@ function buildCombinedDiff(groupedDiffFiles: FileDiff[]): CombinedDiffOutput {
 
   let totalLines = 0;
 
-  groupedDiffFiles.forEach((fileDiff) => {
+  groupedDiffFiles.forEach((fileDiff, fileIndex) => {
     const startLineNumber = totalLines + 1;
+    const { additions, deletions } = summarizeFileDiffStats(fileDiff);
     fileBoundaries.push({
       filePath: fileDiff.filePath,
       startLineNumber,
       language: fileDiff.language,
+      additions,
+      deletions,
     });
 
     fileDiff.hunks.forEach((hunk, hunkIndex) => {
@@ -1050,6 +1056,23 @@ function buildCombinedDiff(groupedDiffFiles: FileDiff[]): CombinedDiffOutput {
       }
     });
 
+    if (fileIndex < groupedDiffFiles.length - 1) {
+      originalLines.push("");
+      modifiedLines.push("");
+      originalNumbers.push(null);
+      modifiedNumbers.push(null);
+      originalMetadata.push({
+        language: null,
+        filePath: null,
+        fileLineNumber: null,
+      });
+      modifiedMetadata.push({
+        language: null,
+        filePath: null,
+        fileLineNumber: null,
+      });
+      totalLines += 1;
+    }
   });
 
   return {
@@ -1061,6 +1084,26 @@ function buildCombinedDiff(groupedDiffFiles: FileDiff[]): CombinedDiffOutput {
     originalLineMetadata: originalMetadata,
     modifiedLineMetadata: modifiedMetadata,
   };
+}
+
+function summarizeFileDiffStats(fileDiff: FileDiff): { additions: number; deletions: number } {
+  let additions = 0;
+  let deletions = 0;
+
+  fileDiff.hunks.forEach((hunk) => {
+    hunk.lines.forEach((line) => {
+      if (line.kind === "add") {
+        additions += 1;
+        return;
+      }
+
+      if (line.kind === "remove") {
+        deletions += 1;
+      }
+    });
+  });
+
+  return { additions, deletions };
 }
 
 type TokenizedFileLines = ReturnType<Monaco["editor"]["tokenize"]>;
@@ -1314,52 +1357,46 @@ type SetupHeaderOverlayParams = {
 };
 
 function setupHeaderOverlay({
-  container,
+  container: _container,
   originalEditor,
   modifiedEditor,
   boundaries,
   overlayContainer,
   theme,
 }: SetupHeaderOverlayParams) {
-  if (!overlayContainer) {
-    return () => {};
-  }
-
-  const originalZones = registerBoundaryZones({ editor: originalEditor, boundaries });
-  const modifiedZones = registerBoundaryZones({ editor: modifiedEditor, boundaries });
-
-  const disposeOverlay = createUnifiedOverlay({
-    container,
-    overlayRoot: overlayContainer,
+  const originalZones = registerBoundaryZones({
+    editor: originalEditor,
     boundaries,
     theme,
-    referenceNodes: modifiedZones.zoneNodes,
-    editors: [originalEditor, modifiedEditor],
+  });
+  const modifiedZones = registerBoundaryZones({
+    editor: modifiedEditor,
+    boundaries,
+    theme,
   });
 
+  overlayContainer?.replaceChildren();
+
   return () => {
-    disposeOverlay();
     originalZones.dispose();
     modifiedZones.dispose();
-    overlayContainer.replaceChildren();
+    overlayContainer?.replaceChildren();
   };
 }
 type BoundaryZoneRegistration = {
   zoneIds: string[];
-  zoneNodes: HTMLElement[];
-  dispose: () => void;
-};
-
-type Disposable = {
+  zoneNodes: HTMLDivElement[];
   dispose: () => void;
 };
 
 function registerBoundaryZones({
   editor,
   boundaries,
+  theme,
 }: {
   editor: editor.ICodeEditor;
   boundaries: CombinedFileBoundary[];
+  theme: string;
 }): BoundaryZoneRegistration {
   if (boundaries.length === 0) {
     return {
@@ -1370,15 +1407,19 @@ function registerBoundaryZones({
   }
 
   const zoneIds: string[] = [];
-  const zoneNodes: HTMLElement[] = [];
+  const zoneNodes: HTMLDivElement[] = [];
+  const palette = getZonePalette(theme);
 
   editor.changeViewZones((accessor) => {
     boundaries.forEach((boundary, index) => {
       const domNode = document.createElement("div");
-      domNode.style.height = `${FILE_LABEL_ZONE_HEIGHT}px`;
-      domNode.style.width = "100%";
-      domNode.style.pointerEvents = "none";
-      domNode.style.background = "transparent";
+      styleZoneDomNode(domNode, palette);
+      domNode.appendChild(
+        createZoneHeaderElement({
+          boundary,
+          palette,
+        }),
+      );
 
       const zoneId = accessor.addZone({
         afterLineNumber: Math.max(boundary.startLineNumber - 1, 0),
@@ -1402,187 +1443,100 @@ function registerBoundaryZones({
   };
 }
 
-type UnifiedOverlayOptions = {
-  container: HTMLElement;
-  overlayRoot: HTMLElement;
-  boundaries: CombinedFileBoundary[];
-  theme: string;
-  referenceNodes: HTMLElement[];
-  editors: editor.ICodeEditor[];
+type ZonePalette = {
+  background: string;
+  border: string;
+  text: string;
+  mutedText: string;
+  additionText: string;
+  deletionText: string;
 };
 
-function createUnifiedOverlay({
-  container,
-  overlayRoot,
-  boundaries,
-  theme,
-  referenceNodes,
-  editors,
-}: UnifiedOverlayOptions): () => void {
-  if (boundaries.length === 0) {
-    overlayRoot.replaceChildren();
-    return () => {
-      overlayRoot.replaceChildren();
-    };
-  }
-
-  overlayRoot.replaceChildren();
-  overlayRoot.style.position = "absolute";
-  overlayRoot.style.top = "0";
-  overlayRoot.style.left = "0";
-  overlayRoot.style.width = "100%";
-  overlayRoot.style.height = "100%";
-  overlayRoot.style.pointerEvents = "none";
-  overlayRoot.style.zIndex = "46";
-
-  const labelStyle = getUnifiedLabelStyle(theme);
-  const labelNodes: HTMLElement[] = [];
-
-  boundaries.forEach((boundary, index) => {
-    const label = document.createElement("div");
-    applyStyles(label, labelStyle);
-    label.textContent = boundary.filePath;
-    label.style.position = "absolute";
-    label.style.left = "0";
-    label.style.right = "0";
-    label.style.zIndex = `${100 + index}`;
-    overlayRoot.appendChild(label);
-    labelNodes[index] = label;
-  });
-
-  let rafToken: number | null = null;
-
-  const compute = () => {
-    const containerRect = container.getBoundingClientRect();
-
-    labelNodes.forEach((label, index) => {
-      const node = referenceNodes[index];
-      if (!label || !node) {
-        return;
-      }
-
-      const rect = node.getBoundingClientRect();
-      if (!Number.isFinite(rect.top)) {
-        return;
-      }
-
-      let y = rect.top - containerRect.top;
-      if (y < 0) {
-        y = 0;
-      }
-
-      const nextNode = referenceNodes[index + 1];
-      if (nextNode) {
-        const nextRect = nextNode.getBoundingClientRect();
-        const maxY = nextRect.top - containerRect.top - FILE_LABEL_ZONE_HEIGHT;
-        if (Number.isFinite(maxY)) {
-          y = Math.min(y, Math.max(maxY, 0));
-        }
-      }
-
-      label.style.transform = `translateY(${y}px)`;
-      const boundary = boundaries[index];
-      if (boundary) {
-        console.debug("Unified overlay translateY", {
-          index,
-          filePath: boundary.filePath,
-          y,
-        });
-      }
-    });
-  };
-
-  const scheduleUpdate = () => {
-    if (rafToken !== null) {
-      cancelAnimationFrame(rafToken);
-    }
-    rafToken = requestAnimationFrame(() => {
-      rafToken = null;
-      compute();
-    });
-  };
-
-  const disposables: Disposable[] = [];
-  editors.forEach((currentEditor) => {
-    const handleScrollChange: Parameters<editor.ICodeEditor["onDidScrollChange"]>[0] = (
-      event,
-    ) => {
-      console.debug("Unified overlay scroll", {
-        editorId: currentEditor.getId(),
-        scrollTop: event.scrollTop,
-        scrollTopChanged: event.scrollTopChanged,
-        scrollLeft: event.scrollLeft,
-        scrollLeftChanged: event.scrollLeftChanged,
-      });
-      scheduleUpdate();
-    };
-
-    disposables.push(
-      currentEditor.onDidScrollChange(handleScrollChange),
-      currentEditor.onDidLayoutChange(scheduleUpdate),
-      currentEditor.onDidContentSizeChange(scheduleUpdate),
-    );
-  });
-
-  const resizeObserver = new ResizeObserver(scheduleUpdate);
-  resizeObserver.observe(container);
-  referenceNodes.forEach((node) => {
-    if (node) {
-      resizeObserver.observe(node);
-    }
-  });
-
-  scheduleUpdate();
-
-  return () => {
-    if (rafToken !== null) {
-      cancelAnimationFrame(rafToken);
-      rafToken = null;
-    }
-
-    resizeObserver.disconnect();
-    disposables.forEach((disposable) => disposable.dispose());
-    overlayRoot.replaceChildren();
-  };
-}
-
-function getUnifiedLabelStyle(theme: string): CSSProperties {
+function getZonePalette(theme: string): ZonePalette {
+  const isDark = theme === "dark";
   return {
-    height: `${FILE_LABEL_ZONE_HEIGHT}px`,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "flex-start",
-    padding: "0 24px",
-    fontFamily: '"JetBrains Mono", "Fira Code", "SFMono-Regular", monospace',
-    fontSize: "12px",
-    letterSpacing: "0.02em",
-    textTransform: "uppercase",
-    fontWeight: 600,
-    borderRadius: "8px",
-    border: theme === "dark" ? "1px solid #3f3f46" : "1px solid #d4d4d8",
-    background: theme === "dark" ? "rgba(32,32,36,0.92)" : "rgba(248,248,249,0.95)",
-    color: theme === "dark" ? "#e5e5e5" : "#1f2937",
-    boxSizing: "border-box",
-    boxShadow: "none",
-    pointerEvents: "none",
-    whiteSpace: "nowrap",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    width: "100%",
+    background: isDark ? "rgba(24,24,27,0.85)" : "rgba(250,250,250,0.92)",
+    border: isDark ? "rgba(82,82,91,0.8)" : "rgba(212,212,216,0.85)",
+    text: isDark ? "#f4f4f5" : "#27272a",
+    mutedText: isDark ? "#a1a1aa" : "#52525b",
+    additionText: isDark ? "#4ade80" : "#16a34a",
+    deletionText: isDark ? "#f87171" : "#dc2626",
   };
 }
 
+function styleZoneDomNode(domNode: HTMLDivElement, palette: ZonePalette) {
+  domNode.style.height = `${FILE_LABEL_ZONE_HEIGHT}px`;
+  domNode.style.width = "100%";
+  domNode.style.pointerEvents = "none";
+  domNode.style.background = palette.background;
+  domNode.style.borderBottom = `1px solid ${palette.border}`;
+  domNode.style.display = "flex";
+  domNode.style.alignItems = "center";
+  domNode.style.justifyContent = "center";
+  domNode.style.boxSizing = "border-box";
+  domNode.style.padding = "0 12px";
+  domNode.style.backdropFilter = "blur(4px)";
+}
 
-function applyStyles(element: HTMLElement, styles: CSSProperties) {
-  Object.entries(styles).forEach(([property, value]) => {
-    if (value === undefined || value === null) {
-      return;
-    }
+function createZoneHeaderElement({
+  boundary,
+  palette,
+}: {
+  boundary: CombinedFileBoundary;
+  palette: ZonePalette;
+}): HTMLElement {
+  const wrapper = document.createElement("div");
+  wrapper.style.display = "flex";
+  wrapper.style.flexDirection = "row";
+  wrapper.style.alignItems = "center";
+  wrapper.style.justifyContent = "space-between";
+  wrapper.style.width = "100%";
+  wrapper.style.height = "100%";
+  wrapper.style.gap = "12px";
+  wrapper.style.fontSize = "14px";
+  wrapper.style.fontWeight = "500";
+  wrapper.style.fontFamily =
+    'var(--font-sans, "Inter", "Segoe UI", "Helvetica Neue", -apple-system, BlinkMacSystemFont, system-ui, sans-serif)';
+  wrapper.style.color = palette.text;
+  wrapper.style.minWidth = "0";
+  wrapper.style.textAlign = "left";
 
-    const typedValue = typeof value === "number" ? `${value}` : value;
-    const style = element.style as unknown as Record<string, string>;
-    style[property] = typedValue;
-  });
+  const filePath = document.createElement("span");
+  filePath.textContent = boundary.filePath;
+  filePath.style.display = "block";
+  filePath.style.flex = "1";
+  filePath.style.fontSize = "14px";
+  filePath.style.fontWeight = "600";
+  filePath.style.maxWidth = "100%";
+  filePath.style.overflow = "hidden";
+  filePath.style.textOverflow = "ellipsis";
+  filePath.style.whiteSpace = "nowrap";
+  wrapper.appendChild(filePath);
+
+  const stats = document.createElement("div");
+  stats.style.display = "flex";
+  stats.style.alignItems = "center";
+  stats.style.justifyContent = "flex-end";
+  stats.style.gap = "12px";
+  stats.style.fontSize = "13px";
+  stats.style.fontWeight = "600";
+  stats.style.letterSpacing = "0.05em";
+  stats.style.textTransform = "uppercase";
+  stats.style.color = palette.mutedText;
+
+  const additions = document.createElement("span");
+  additions.textContent = `+${boundary.additions}`;
+  additions.style.color = palette.additionText;
+  stats.appendChild(additions);
+
+  const deletions = document.createElement("span");
+  deletions.textContent = `-${boundary.deletions}`;
+  deletions.style.color = palette.deletionText;
+  stats.appendChild(deletions);
+
+  wrapper.appendChild(stats);
+
+  return wrapper;
 }
 
 
