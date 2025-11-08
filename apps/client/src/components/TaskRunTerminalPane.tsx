@@ -10,10 +10,11 @@ import {
 import clsx from "clsx";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Plus, X } from "lucide-react";
+import { TaskRunTerminalSession } from "./task-run-terminal-session";
 import {
-  TaskRunTerminalSession,
+  CONNECTION_STATE_COLORS,
   type TerminalConnectionState,
-} from "./task-run-terminal-session";
+} from "./terminal-types";
 import { toMorphXtermBaseUrl } from "@/lib/toProxyWorkspaceUrl";
 import {
   createTerminalTab,
@@ -29,13 +30,6 @@ export interface TaskRunTerminalPaneProps {
   taskRunId: Id<"taskRuns">;
   teamSlugOrId: string;
 }
-
-const CONNECTION_STATE_COLORS: Record<TerminalConnectionState, string> = {
-  open: "bg-emerald-500",
-  connecting: "bg-amber-500",
-  closed: "bg-neutral-400 dark:bg-neutral-600",
-  error: "bg-red-500",
-};
 
 type DeleteTerminalMutationContext = {
   previousTabs: TerminalTabId[];

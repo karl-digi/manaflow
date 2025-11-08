@@ -12,10 +12,11 @@ import clsx from "clsx";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Plus, X } from "lucide-react";
 import z from "zod";
+import { TaskRunTerminalSession } from "@/components/task-run-terminal-session";
 import {
-  TaskRunTerminalSession,
+  CONNECTION_STATE_COLORS,
   type TerminalConnectionState,
-} from "@/components/task-run-terminal-session";
+} from "@/components/terminal-types";
 import { toMorphXtermBaseUrl } from "@/lib/toProxyWorkspaceUrl";
 import {
   createTerminalTab,
@@ -107,13 +108,6 @@ export const Route = createFileRoute(
     })();
   },
 });
-
-const CONNECTION_STATE_COLORS: Record<TerminalConnectionState, string> = {
-  open: "bg-emerald-500",
-  connecting: "bg-amber-500",
-  closed: "bg-neutral-400 dark:bg-neutral-600",
-  error: "bg-red-500",
-};
 
 type DeleteTerminalMutationContext = {
   previousTabs: TerminalTabId[];

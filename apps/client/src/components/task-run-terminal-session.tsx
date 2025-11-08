@@ -7,17 +7,12 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import clsx from "clsx";
 import { useXTerm } from "./xterm/use-xterm";
+import type { TerminalConnectionState } from "./terminal-types";
 
 const MIN_COLS = 20;
 const MAX_COLS = 320;
 const MIN_ROWS = 8;
 const MAX_ROWS = 120;
-
-export type TerminalConnectionState =
-  | "connecting"
-  | "open"
-  | "closed"
-  | "error";
 
 interface TaskRunTerminalSessionProps {
   baseUrl: string;
