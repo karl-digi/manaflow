@@ -24,12 +24,21 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/workspaces")({
 function WorkspacesRoute() {
   const { teamSlugOrId } = Route.useParams();
   const tasks = useQuery(api.tasks.get, { teamSlugOrId });
+  const environments = useQuery(api.environments.list, { teamSlugOrId });
   const { expandTaskIds } = useExpandTasks();
 
   const orderedTasks = useMemo(() => {
     if (!tasks) return [] as NonNullable<typeof tasks>;
     return [...tasks].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
   }, [tasks]);
+
+  const environmentNameById = useMemo(() => {
+    const map = new Map<Id<"environments">, string>();
+    environments?.forEach((env) => {
+      map.set(env._id, env.name);
+    });
+    return map;
+  }, [environments]);
 
   const taskRunQueries = useMemo(() => {
     return orderedTasks
@@ -93,6 +102,11 @@ function WorkspacesRoute() {
                   task={task}
                   defaultExpanded={expandTaskIds?.includes(task._id) ?? false}
                   teamSlugOrId={teamSlugOrId}
+                  environmentName={
+                    task.environmentId
+                      ? environmentNameById.get(task.environmentId) ?? undefined
+                      : undefined
+                  }
                 />
               ))}
             </div>

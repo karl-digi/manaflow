@@ -2,13 +2,16 @@ import { TaskTree } from "@/components/TaskTree";
 import { TaskTreeSkeleton } from "@/components/TaskTreeSkeleton";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { isElectron } from "@/lib/electron";
-import { type Doc } from "@cmux/convex/dataModel";
+import { api } from "@cmux/convex/api";
+import { type Doc, type Id } from "@cmux/convex/dataModel";
+import { useQuery } from "convex/react";
 import type { LinkProps } from "@tanstack/react-router";
 import { Link } from "@tanstack/react-router";
 import { Home, Plus, Server, Settings } from "lucide-react";
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ComponentType,
@@ -80,6 +83,14 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
   });
 
   const { expandTaskIds } = useExpandTasks();
+  const environments = useQuery(api.environments.list, { teamSlugOrId });
+  const environmentNameById = useMemo(() => {
+    const map = new Map<Id<"environments">, string>();
+    environments?.forEach((env) => {
+      map.set(env._id, env.name);
+    });
+    return map;
+  }, [environments]);
 
   useEffect(() => {
     localStorage.setItem("sidebarWidth", String(width));
@@ -302,6 +313,11 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
                     task={task}
                     defaultExpanded={expandTaskIds?.includes(task._id) ?? false}
                     teamSlugOrId={teamSlugOrId}
+                    environmentName={
+                      task.environmentId
+                        ? environmentNameById.get(task.environmentId) ?? undefined
+                        : undefined
+                    }
                   />
                 ))
               ) : (

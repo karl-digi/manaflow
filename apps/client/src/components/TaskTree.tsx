@@ -102,6 +102,7 @@ interface TaskTreeProps {
   // When true, expand the task node on initial mount
   defaultExpanded?: boolean;
   teamSlugOrId: string;
+  environmentName?: string;
 }
 
 // Extract the display text logic to avoid re-creating it on every render
@@ -269,6 +270,7 @@ function TaskTreeInner({
   level = 0,
   defaultExpanded = false,
   teamSlugOrId,
+  environmentName,
 }: TaskTreeProps) {
   // Get the current route to determine if this task is selected
   const location = useLocation();
@@ -456,6 +458,10 @@ function TaskTreeInner({
     task.pullRequestTitle ||
     task.text;
   const taskSecondaryParts: string[] = [];
+  const normalizedEnvironmentName = environmentName?.trim();
+  if (normalizedEnvironmentName) {
+    taskSecondaryParts.push(normalizedEnvironmentName);
+  }
   if (inferredBranch) {
     taskSecondaryParts.push(inferredBranch);
   }
