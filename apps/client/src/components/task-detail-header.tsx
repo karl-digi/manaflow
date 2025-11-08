@@ -703,11 +703,11 @@ function SocketActions({
     },
     onSuccess: (response, _variables, context) => {
       const actionable = response.results.filter(
-        (result) => result.url && !result.error,
+        (result) =>
+          !result.error &&
+          Boolean(result.repoFullName?.trim()) &&
+          Boolean(result.number),
       );
-      if (actionable.length > 0) {
-        navigateToPrs(actionable);
-      }
       toast.success(openedLabel, {
         id: context?.toastId,
         description: summarizeResults(response.results),

@@ -124,6 +124,8 @@ function DashboardComponent() {
     const stored = localStorage.getItem("isCloudMode");
     return stored ? JSON.parse(stored) : true;
   });
+  const [hasDismissedCloudRepoOnboarding, setHasDismissedCloudRepoOnboarding] =
+    useState(false);
 
   const [, setDockerReady] = useState<boolean | null>(null);
   const [providerStatus, setProviderStatus] =
@@ -652,6 +654,10 @@ function DashboardComponent() {
     return selectedProject[0];
   }, [selectedProject, isEnvSelected]);
 
+  useEffect(() => {
+    setHasDismissedCloudRepoOnboarding(false);
+  }, [selectedRepoFullName]);
+
   const selectedRepoInfo = useMemo(() => {
     if (!selectedRepoFullName) return null;
     for (const repos of Object.values(reposByOrg || {})) {
@@ -664,7 +670,10 @@ function DashboardComponent() {
   }, [selectedRepoFullName, reposByOrg]);
 
   const shouldShowCloudRepoOnboarding =
-    !!selectedRepoFullName && isCloudMode && !isEnvSelected;
+    !!selectedRepoFullName &&
+    isCloudMode &&
+    !isEnvSelected &&
+    !hasDismissedCloudRepoOnboarding;
   const shouldShowLocalWorkspaceSetup =
     !!selectedRepoFullName && !isCloudMode && !isEnvSelected;
 
@@ -674,14 +683,14 @@ function DashboardComponent() {
     () =>
       selectedRepoFullName
         ? {
-            step: "select",
-            selectedRepos: [selectedRepoFullName],
-            instanceId: undefined,
-            connectionLogin:
-              selectedRepoInfo?.org ?? selectedRepoInfo?.ownerLogin ?? undefined,
-            repoSearch: undefined,
-            snapshotId: undefined,
-          }
+          step: "select",
+          selectedRepos: [selectedRepoFullName],
+          instanceId: undefined,
+          connectionLogin:
+            selectedRepoInfo?.org ?? selectedRepoInfo?.ownerLogin ?? undefined,
+          repoSearch: undefined,
+          snapshotId: undefined,
+        }
         : undefined,
     [selectedRepoFullName, selectedRepoInfo],
   );
@@ -911,6 +920,13 @@ function DashboardComponent() {
                     Environments let you preconfigure development and maintenance scripts, pre-install packages, and environment variables so cloud workspaces are ready to go the moment they start.
                   </p>
                   <div className="flex gap-2 justify-end">
+                    <button
+                      type="button"
+                      onClick={() => setHasDismissedCloudRepoOnboarding(true)}
+                      className="inline-flex items-center rounded-md border border-blue-200/60 bg-white/80 px-2 py-1 text-xs font-medium text-blue-900/70 hover:bg-white dark:border-blue-500/30 dark:bg-blue-500/5 dark:text-blue-100/80 dark:hover:bg-blue-500/15"
+                    >
+                      Dismiss
+                    </button>
                     <Link
                       to="/$teamSlugOrId/environments/new"
                       params={{ teamSlugOrId }}

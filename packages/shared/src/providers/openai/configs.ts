@@ -165,6 +165,25 @@ export const CODEX_GPT_4_1_CONFIG: AgentConfig = {
   completionDetector: startCodexCompletionDetector,
 };
 
+export const CODEX_GPT_5_CODEX_MINI_CONFIG: AgentConfig = {
+  name: "codex/gpt-5-codex-mini",
+  command: "bunx",
+  args: [
+    "@openai/codex@latest",
+    "--model",
+    "gpt-5-codex-mini",
+    "--sandbox",
+    "danger-full-access",
+    "--ask-for-approval",
+    "never",
+    "$PROMPT",
+  ],
+  environment: getOpenAIEnvironment,
+  checkRequirements: checkOpenAIRequirements,
+  apiKeys: [OPENAI_API_KEY],
+  completionDetector: startCodexCompletionDetector,
+};
+
 export const CODEX_GPT_5_CODEX_LOW_REASONING_CONFIG: AgentConfig = {
   name: "codex/gpt-5-codex-low",
   command: "bunx",
