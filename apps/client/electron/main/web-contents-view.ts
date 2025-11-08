@@ -514,14 +514,31 @@ function destroyConflictingEntries(
   }
 }
 
-function toBounds(bounds: Rectangle | undefined): Rectangle {
+function toBounds(bounds: Rectangle | undefined, zoomFactor = 1): Rectangle {
+  const zoom =
+    typeof zoomFactor === "number" && Number.isFinite(zoomFactor) && zoomFactor > 0
+      ? zoomFactor
+      : 1;
   if (!bounds) return { x: 0, y: 0, width: 0, height: 0 };
   return {
-    x: Math.round(bounds.x ?? 0),
-    y: Math.round(bounds.y ?? 0),
-    width: Math.max(0, Math.round(bounds.width ?? 0)),
-    height: Math.max(0, Math.round(bounds.height ?? 0)),
+    x: Math.round((bounds.x ?? 0) * zoom),
+    y: Math.round((bounds.y ?? 0) * zoom),
+    width: Math.max(0, Math.round((bounds.width ?? 0) * zoom)),
+    height: Math.max(0, Math.round((bounds.height ?? 0) * zoom)),
   };
+}
+
+function getSenderZoomFactor(sender: WebContents | null | undefined): number {
+  if (!sender) return 1;
+  try {
+    const zoom = sender.getZoomFactor();
+    if (typeof zoom === "number" && Number.isFinite(zoom) && zoom > 0) {
+      return zoom;
+    }
+  } catch (error) {
+    console.warn("Failed to read sender zoom factor", error);
+  }
+  return 1;
 }
 
 function evaluateVisibility(bounds: Rectangle, explicit?: boolean): boolean {
@@ -592,7 +609,8 @@ export function registerWebContentsViewHandlers({
             ? options.persistKey.trim()
             : undefined;
 
-        const bounds = toBounds(options.bounds);
+        const zoomFactor = getSenderZoomFactor(sender);
+        const bounds = toBounds(options.bounds, zoomFactor);
         const desiredVisibility = evaluateVisibility(bounds);
 
         if (persistKey) {
@@ -833,7 +851,8 @@ export function registerWebContentsViewHandlers({
       }
       entry.ownerSender = event.sender;
 
-      const bounds = toBounds(rawBounds);
+      const zoomFactor = getSenderZoomFactor(event.sender);
+      const bounds = toBounds(rawBounds, zoomFactor);
       try {
         entry.view.setBounds(bounds);
         entry.view.setVisible(evaluateVisibility(bounds, visible));

@@ -82,7 +82,7 @@ bunx electron-vite build -c electron.vite.config.ts
 
 # Create a temporary directory for packaging
 TEMP_DIR=$(mktemp -d)
-APP_NAME="cmux"
+APP_NAME="${CMUX_APP_NAME:-cmux}"
 APP_DIR="$TEMP_DIR/$APP_NAME.app"
 APP_VERSION=$(node -e "const fs = require('node:fs'); const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')); if (!pkg.version) { process.exit(1); } process.stdout.write(String(pkg.version));")
 if [ -z "$APP_VERSION" ]; then
@@ -220,5 +220,19 @@ mv "$APP_DIR" "$OUTPUT_DIR/"
 # Clean up
 rm -rf "$TEMP_DIR"
 
-echo "Build complete! App is at $(pwd)/$OUTPUT_DIR/$APP_NAME.app"
-echo "You can run it with: open $(pwd)/$OUTPUT_DIR/$APP_NAME.app"
+APP_PATH="$(pwd)/$OUTPUT_DIR/$APP_NAME.app"
+echo "Build complete! App is at $APP_PATH"
+
+if [[ "$APP_NAME" == "cmux-staging" ]]; then
+  echo "Stopping any running cmux-staging instances before launching the new build..."
+  pkill -f "cmux-staging" >/dev/null 2>&1 || true
+fi
+
+if command -v open >/dev/null 2>&1; then
+  echo "Opening $APP_PATH"
+  if ! open "$APP_PATH"; then
+    echo "WARNING: Failed to open $APP_PATH" >&2
+  fi
+else
+  echo "Skipping automatic open: open command is unavailable."
+fi

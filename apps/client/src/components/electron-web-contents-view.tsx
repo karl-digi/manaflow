@@ -52,9 +52,11 @@ interface BoundsPayload {
 interface SyncState {
   bounds: BoundsPayload;
   visible: boolean;
+  devicePixelRatio: number;
 }
 
 const CONTINUOUS_IDLE_FRAME_LIMIT = 6;
+const PIXEL_RATIO_EPSILON = 1e-3;
 
 function roundToDevicePixels(value: number, scale: number): number {
   if (!Number.isFinite(scale) || scale <= 0) return Math.round(value);
@@ -254,9 +256,13 @@ export function ElectronWebContentsView({
 
     const visible = isVisible;
     const prev = lastSyncRef.current;
+    const pixelRatioUnchanged =
+      prev !== null &&
+      Math.abs(prev.devicePixelRatio - scale) < PIXEL_RATIO_EPSILON;
     const unchanged =
       prev !== null &&
       prev.visible === visible &&
+      pixelRatioUnchanged &&
       prev.bounds.x === bounds.x &&
       prev.bounds.y === bounds.y &&
       prev.bounds.width === bounds.width &&
@@ -282,7 +288,7 @@ export function ElectronWebContentsView({
       .catch((err) =>
         console.warn("Failed to sync WebContentsView bounds", err),
       );
-    lastSyncRef.current = { bounds, visible };
+    lastSyncRef.current = { bounds, visible, devicePixelRatio: scale };
   }, [suspended, startContinuousSync, stopContinuousSync]);
 
   syncBoundsRef.current = syncBounds;

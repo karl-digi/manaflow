@@ -104,6 +104,43 @@ interface TaskTreeProps {
   teamSlugOrId: string;
 }
 
+interface SidebarArchiveOverlayProps {
+  icon: ReactNode;
+  label: string;
+  onArchive: () => void;
+}
+
+function SidebarArchiveOverlay({
+  icon,
+  label,
+  onArchive,
+}: SidebarArchiveOverlayProps) {
+  return (
+    <div className="relative flex h-4 w-4 items-center justify-center">
+      <div className="flex items-center justify-center group-hover:pointer-events-none group-hover:opacity-0 group-focus-within:pointer-events-none group-focus-within:opacity-0">
+        {icon}
+      </div>
+      <Tooltip delayDuration={0}>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            aria-label={label}
+            className="absolute inset-0 flex items-center justify-center rounded-sm text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-50 opacity-0 focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 pointer-events-none group-hover:pointer-events-auto group-focus-within:pointer-events-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-400 dark:focus-visible:outline-neutral-500"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onArchive();
+            }}
+          >
+            <ArchiveIcon className="w-3 h-3" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="right">{label}</TooltipContent>
+      </Tooltip>
+    </div>
+  );
+}
+
 // Extract the display text logic to avoid re-creating it on every render
 function getRunDisplayText(run: TaskRunWithChildren): string {
   const fromRun = run.agentName?.trim();
@@ -601,6 +638,17 @@ function TaskTreeInner({
     );
   })();
 
+  const taskMetaIcon =
+    !task.isArchived && taskLeadingIcon ? (
+      <SidebarArchiveOverlay
+        icon={taskLeadingIcon}
+        label="Archive task"
+        onArchive={handleArchive}
+      />
+    ) : (
+      taskLeadingIcon
+    );
+
   return (
     <TaskRunExpansionContext.Provider value={expansionContextValue}>
       <div className="select-none flex flex-col">
@@ -637,14 +685,14 @@ function TaskTreeInner({
                   expanded: isExpanded,
                   onToggle: handleToggle,
                   visible: canExpand,
-                }}
-                title={taskTitleContent}
-                titleClassName={taskTitleClassName}
-                secondary={taskSecondary || undefined}
-                meta={taskLeadingIcon || undefined}
-                className={clsx(isRenaming && "pr-2")}
-              />
-            </Link>
+              }}
+              title={taskTitleContent}
+              titleClassName={taskTitleClassName}
+              secondary={taskSecondary || undefined}
+              meta={taskMetaIcon || undefined}
+              className={clsx(isRenaming && "pr-2")}
+            />
+          </Link>
           </ContextMenu.Trigger>
           {isRenaming && renameError ? (
             <div
@@ -683,7 +731,7 @@ function TaskTreeInner({
                     <ChevronRight className="w-3 h-3 ml-auto text-neutral-400 dark:text-neutral-500" />
                   </ContextMenu.SubmenuTrigger>
                   <ContextMenu.Positioner className="outline-none z-[var(--z-context-menu)]">
-                    <ContextMenu.Popup className="origin-[var(--transform-origin)] rounded-md bg-white dark:bg-neutral-800 py-1 text-neutral-900 dark:text-neutral-100 shadow-lg shadow-gray-200 outline-1 outline-neutral-200 transition-[opacity] data-[ending-style]:opacity-0 dark:shadow-none dark:-outline-offset-1 dark:outline-neutral-700 max-w-xs">
+                    <ContextMenu.Popup className="origin-[var(--transform-origin)] rounded-md bg-white dark:bg-neutral-800 py-1 text-neutral-900 dark:text-neutral-100 shadow-lg shadow-gray-200 outline-1 outline-neutral-200 data-[ending-style]:transition-[opacity] data-[ending-style]:duration-100 data-[ending-style]:ease-out data-[ending-style]:opacity-0 dark:shadow-none dark:-outline-offset-1 dark:outline-neutral-700 max-w-xs">
                       {runsLoading ? (
                         <div className="flex items-center gap-2 px-3 py-2 text-xs text-neutral-500 dark:text-neutral-400">
                           <Loader2 className="w-3 h-3 animate-spin text-neutral-400" />
@@ -1123,6 +1171,17 @@ function TaskRunTreeInner({
 
   const runLeadingIcon = pullRequestIcon ?? statusIconWithTooltip;
 
+  const runMetaIcon =
+    !run.isArchived && runLeadingIcon ? (
+      <SidebarArchiveOverlay
+        icon={runLeadingIcon}
+        label="Archive task run"
+        onArchive={handleArchiveRun}
+      />
+    ) : (
+      runLeadingIcon
+    );
+
   const crownIcon = run.isCrowned ? (
     <Tooltip delayDuration={0}>
       <TooltipTrigger asChild>
@@ -1148,10 +1207,10 @@ function TaskRunTreeInner({
   const leadingContent = crownIcon ? (
     <div className="flex items-center gap-1">
       {crownIcon}
-      {runLeadingIcon}
+      {runMetaIcon}
     </div>
   ) : (
-    runLeadingIcon
+    runMetaIcon
   );
 
   // Generate VSCode URL if available
@@ -1266,7 +1325,7 @@ function TaskRunTreeInner({
                     <ChevronRight className="w-3 h-3 ml-auto text-neutral-400 dark:text-neutral-500" />
                   </ContextMenu.SubmenuTrigger>
                   <ContextMenu.Positioner className="outline-none z-[var(--z-context-menu)]">
-                    <ContextMenu.Popup className="origin-[var(--transform-origin)] rounded-md bg-white dark:bg-neutral-800 py-1 text-neutral-900 dark:text-neutral-100 shadow-lg shadow-gray-200 outline-1 outline-neutral-200 transition-[opacity] data-[ending-style]:opacity-0 dark:shadow-none dark:-outline-offset-1 dark:outline-neutral-700 max-w-xs">
+                    <ContextMenu.Popup className="origin-[var(--transform-origin)] rounded-md bg-white dark:bg-neutral-800 py-1 text-neutral-900 dark:text-neutral-100 shadow-lg shadow-gray-200 outline-1 outline-neutral-200 data-[ending-style]:transition-[opacity] data-[ending-style]:duration-100 data-[ending-style]:ease-out data-[ending-style]:opacity-0 dark:shadow-none dark:-outline-offset-1 dark:outline-neutral-700 max-w-xs">
                       <div className="max-h-64 overflow-y-auto">
                         {openWithActions.map((action) => {
                           const Icon = action.Icon;
@@ -1294,7 +1353,7 @@ function TaskRunTreeInner({
                     <ChevronRight className="w-3 h-3 ml-auto text-neutral-400 dark:text-neutral-500" />
                   </ContextMenu.SubmenuTrigger>
                   <ContextMenu.Positioner className="outline-none z-[var(--z-context-menu)]">
-                    <ContextMenu.Popup className="origin-[var(--transform-origin)] rounded-md bg-white dark:bg-neutral-800 py-1 text-neutral-900 dark:text-neutral-100 shadow-lg shadow-gray-200 outline-1 outline-neutral-200 transition-[opacity] data-[ending-style]:opacity-0 dark:shadow-none dark:-outline-offset-1 dark:outline-neutral-700 max-w-xs">
+                    <ContextMenu.Popup className="origin-[var(--transform-origin)] rounded-md bg-white dark:bg-neutral-800 py-1 text-neutral-900 dark:text-neutral-100 shadow-lg shadow-gray-200 outline-1 outline-neutral-200 data-[ending-style]:transition-[opacity] data-[ending-style]:duration-100 data-[ending-style]:ease-out data-[ending-style]:opacity-0 dark:shadow-none dark:-outline-offset-1 dark:outline-neutral-700 max-w-xs">
                       <div className="max-h-64 overflow-y-auto">
                         {portActions.map((port) => (
                           <ContextMenu.Item
