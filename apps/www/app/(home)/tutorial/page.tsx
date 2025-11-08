@@ -1,5 +1,6 @@
 import { SiteHeader } from "@/components/site-header";
 import { fetchLatestRelease } from "@/lib/fetch-latest-release";
+import { fetchGithubRepoStats } from "@/lib/fetch-github-stars";
 import type { Metadata } from "next";
 import Link from "next/link";
 import {
@@ -528,7 +529,11 @@ function Placeholder({ label }: { label: string }) {
 }
 
 export default async function TutorialPage() {
-  const { fallbackUrl, latestVersion, macDownloadUrls } = await fetchLatestRelease();
+  const [releaseInfo, githubRepo] = await Promise.all([
+    fetchLatestRelease(),
+    fetchGithubRepoStats(),
+  ]);
+  const { fallbackUrl, latestVersion, macDownloadUrls } = releaseInfo;
 
   return (
     <div className="relative min-h-dvh overflow-hidden bg-[#030712] text-foreground">
@@ -543,6 +548,7 @@ export default async function TutorialPage() {
         latestVersion={latestVersion}
         macDownloadUrls={macDownloadUrls}
         linkPrefix="/"
+        githubRepo={githubRepo}
       />
 
       <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 pt-12 sm:px-6">

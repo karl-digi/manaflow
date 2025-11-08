@@ -4,7 +4,7 @@ import CmuxLogo from "@/components/logo/cmux-logo";
 import { MacDownloadLink } from "@/components/mac-download-link";
 import type { MacDownloadUrls } from "@/lib/releases";
 import clsx from "clsx";
-import { Download } from "lucide-react";
+import { Download, Github } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
@@ -22,6 +22,13 @@ type SiteHeaderProps = {
   latestVersion?: string | null;
   macDownloadUrls?: MacDownloadUrls;
   extraEndContent?: ReactNode;
+  githubRepo?: GithubRepoInfo;
+};
+
+type GithubRepoInfo = {
+  repoUrl: string;
+  name: string;
+  stars: number | null;
 };
 
 const DEFAULT_DOWNLOAD_URLS: MacDownloadUrls = {
@@ -30,6 +37,51 @@ const DEFAULT_DOWNLOAD_URLS: MacDownloadUrls = {
   x64: null,
 };
 
+const DEFAULT_GITHUB_REPO: GithubRepoInfo = {
+  repoUrl: "https://github.com/manaflow-ai/cmux",
+  name: "manaflow-ai/cmux",
+  stars: null,
+};
+
+const formatStarCount = (value: number | null): string | null => {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return null;
+  }
+
+  if (value >= 1_000_000) {
+    const millions = value / 1_000_000;
+    return `${millions.toFixed(millions >= 10 ? 0 : 1).replace(/\.0$/, "")}M`;
+  }
+
+  if (value >= 1_000) {
+    const thousands = value / 1_000;
+    return `${thousands.toFixed(thousands >= 10 ? 0 : 1).replace(/\.0$/, "")}K`;
+  }
+
+  return value.toLocaleString();
+};
+
+function GithubRepoStarLink({ repo }: { repo: GithubRepoInfo }) {
+  const formattedStars = formatStarCount(repo.stars);
+  const ariaLabel =
+    formattedStars !== null
+      ? `${repo.name} has ${formattedStars} GitHub stars`
+      : `View ${repo.name} on GitHub`;
+
+  return (
+    <a
+      className="hidden h-[26px] items-center gap-1 rounded-md border border-white/10 bg-white/5 px-2.5 text-[0.78rem] font-mono text-neutral-100 transition hover:border-white/40 hover:bg-white/10 md:inline-flex"
+      href={repo.repoUrl}
+      rel="noopener noreferrer"
+      target="_blank"
+      aria-label={ariaLabel}
+    >
+      <Github className="h-4 w-4" aria-hidden />
+      <span className="tabular-nums">{formattedStars ?? "GitHub"}</span>
+    </a>
+  );
+}
+
 export function SiteHeader({
   linkPrefix = "",
   showDownload = true,
@@ -37,8 +89,10 @@ export function SiteHeader({
   latestVersion,
   macDownloadUrls,
   extraEndContent,
+  githubRepo,
 }: SiteHeaderProps) {
   const effectiveUrls = macDownloadUrls ?? DEFAULT_DOWNLOAD_URLS;
+  const effectiveGithubRepo = githubRepo ?? DEFAULT_GITHUB_REPO;
   const [isScrolled, setIsScrolled] = useState(false);
 
   useEffect(() => {
@@ -106,6 +160,7 @@ export function SiteHeader({
         </nav>
         <div className="flex items-center gap-3">
           {extraEndContent}
+          <GithubRepoStarLink repo={effectiveGithubRepo} />
           {showDownload ? (
             <MacDownloadLink
               autoDetect
