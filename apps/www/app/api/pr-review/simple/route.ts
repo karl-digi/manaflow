@@ -40,6 +40,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = request.nextUrl;
     const repoFullName = parseRepoFullName(searchParams.get("repoFullName"));
     const prNumber = parsePrNumber(searchParams.get("prNumber"));
+    const useFt0Model = searchParams.has("ft0");
 
     if (!repoFullName || prNumber === null) {
       return NextResponse.json(
@@ -113,6 +114,7 @@ export async function GET(request: NextRequest) {
           await runSimpleAnthropicReviewStream({
             prIdentifier,
             githubToken: normalizedGithubToken,
+            model: useFt0Model ? "openai-ft0" : "anthropic",
             signal: abortController.signal,
             onEvent: async (event) => {
               switch (event.type) {

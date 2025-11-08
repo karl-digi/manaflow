@@ -1,4 +1,5 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
+import { createOpenAI } from "@ai-sdk/openai";
 import { streamText } from "ai";
 
 import { CLOUDFLARE_ANTHROPIC_BASE_URL } from "@cmux/shared";
@@ -114,6 +115,7 @@ type RepoSlug = {
 export type SimpleReviewStreamOptions = {
   prIdentifier: string;
   githubToken?: string | null;
+  model?: "anthropic" | "openai-ft0";
   onChunk?: (chunk: string) => void | Promise<void>;
   onEvent?: (event: SimpleReviewParsedEvent) => void | Promise<void>;
   signal?: AbortSignal;
@@ -281,6 +283,7 @@ export async function runSimpleAnthropicReviewStream(
   const {
     prIdentifier,
     githubToken: providedGithubToken = null,
+    model = "anthropic",
     onChunk,
     signal,
   } = options;
@@ -333,10 +336,21 @@ export async function runSimpleAnthropicReviewStream(
     metadata.prUrl ??
     `${metadata.owner}/${metadata.repo}#${metadata.number ?? "unknown"}`;
 
+  // Configure the appropriate AI provider based on model choice
   const anthropic = createAnthropic({
     apiKey: env.ANTHROPIC_API_KEY,
     baseURL: CLOUDFLARE_ANTHROPIC_BASE_URL,
   });
+
+  const openai = createOpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+  });
+
+  // Select the model based on configuration
+  const selectedModel =
+    model === "openai-ft0"
+      ? openai("ft:gpt-4.1-mini-2025-04-14:lawrence:cmux-heatmap-sft:CZW6Lc77")
+      : anthropic("claude-opus-4-1-20250805");
 
   const runWithSemaphore = createSemaphore(MAX_CONCURRENCY);
   const finalChunks: string[] = [];
@@ -369,8 +383,7 @@ export async function runSimpleAnthropicReviewStream(
 
         try {
           const stream = streamText({
-            model: anthropic("claude-opus-4-1-20250805"),
-            // model: anthropic("claude-haiku-4-5"),
+            model: selectedModel,
             prompt,
             temperature: 0,
             maxRetries: 2,
