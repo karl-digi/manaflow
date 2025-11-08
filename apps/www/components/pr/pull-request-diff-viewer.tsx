@@ -58,6 +58,11 @@ import { api } from "@cmux/convex/api";
 import { useConvexQuery } from "@convex-dev/react-query";
 import type { FunctionReturnType } from "convex/server";
 import type { GithubFileChange } from "@/lib/github/fetch-pull-request";
+import {
+  DEFAULT_SIMPLE_REVIEW_MODEL_VARIANT,
+  SIMPLE_REVIEW_MODEL_QUERY_FLAG,
+  type SimpleReviewModelVariant,
+} from "@/lib/services/code-review/simple-review-model";
 import { cn } from "@/lib/utils";
 import CmuxLogo from "@/components/logo/cmux-logo";
 import {
@@ -103,6 +108,7 @@ type PullRequestDiffViewerProps = {
   baseCommitRef?: string;
   pullRequestTitle?: string;
   pullRequestUrl?: string;
+  heatmapModelVariant?: SimpleReviewModelVariant;
 };
 
 type ParsedFileDiff = {
@@ -538,9 +544,12 @@ export function PullRequestDiffViewer({
   baseCommitRef,
   pullRequestTitle,
   pullRequestUrl,
+  heatmapModelVariant,
 }: PullRequestDiffViewerProps) {
   const normalizedJobType: "pull_request" | "comparison" =
     jobType ?? (comparisonSlug ? "comparison" : "pull_request");
+  const resolvedHeatmapModelVariant =
+    heatmapModelVariant ?? DEFAULT_SIMPLE_REVIEW_MODEL_VARIANT;
 
   const [streamStateByFile, setStreamStateByFile] = useState<
     Map<string, StreamFileState>
@@ -563,6 +572,9 @@ export function PullRequestDiffViewer({
       repoFullName,
       prNumber: String(prNumber),
     });
+    if (resolvedHeatmapModelVariant === "openai-ft0") {
+      params.set(SIMPLE_REVIEW_MODEL_QUERY_FLAG, "1");
+    }
 
     (async () => {
       try {
@@ -863,7 +875,13 @@ export function PullRequestDiffViewer({
     return () => {
       controller.abort();
     };
-  }, [normalizedJobType, prNumber, repoFullName, setStreamStateByFile]);
+  }, [
+    normalizedJobType,
+    prNumber,
+    repoFullName,
+    resolvedHeatmapModelVariant,
+    setStreamStateByFile,
+  ]);
 
   const prQueryArgs = useMemo(
     () =>

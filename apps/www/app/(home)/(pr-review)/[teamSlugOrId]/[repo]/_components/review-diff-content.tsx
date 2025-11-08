@@ -3,6 +3,7 @@ import { ExternalLink, GitPullRequest } from "lucide-react";
 
 import { PullRequestDiffViewer } from "@/components/pr/pull-request-diff-viewer";
 import type { GithubFileChange } from "@/lib/github/fetch-pull-request";
+import type { SimpleReviewModelVariant } from "@/lib/services/code-review/simple-review-model";
 
 export function summarizeFiles(files: GithubFileChange[]): {
   fileCount: number;
@@ -29,6 +30,7 @@ export function ReviewDiffContent({
   baseCommitRef,
   pullRequestTitle,
   pullRequestUrl,
+  heatmapModelVariant,
 }: {
   files: GithubFileChange[];
   teamSlugOrId: string;
@@ -40,6 +42,7 @@ export function ReviewDiffContent({
   baseCommitRef?: string;
   pullRequestTitle?: string | null;
   pullRequestUrl?: string | null;
+  heatmapModelVariant?: SimpleReviewModelVariant;
 }) {
   return (
     <section className="flex flex-col gap-1">
@@ -52,6 +55,7 @@ export function ReviewDiffContent({
         baseCommitRef={baseCommitRef}
         pullRequestTitle={pullRequestTitle}
         pullRequestUrl={pullRequestUrl}
+        heatmapModelVariant={heatmapModelVariant}
       />
     </section>
   );
@@ -125,6 +129,7 @@ export function ReviewDiffViewerWrapper({
   baseCommitRef,
   pullRequestTitle,
   pullRequestUrl,
+  heatmapModelVariant,
 }: {
   files: GithubFileChange[];
   teamSlugOrId: string;
@@ -136,6 +141,7 @@ export function ReviewDiffViewerWrapper({
   baseCommitRef?: string;
   pullRequestTitle?: string | null;
   pullRequestUrl?: string | null;
+  heatmapModelVariant?: SimpleReviewModelVariant;
 }) {
   return (
     <PullRequestDiffViewer
@@ -153,6 +159,7 @@ export function ReviewDiffViewerWrapper({
       baseCommitRef={baseCommitRef}
       pullRequestTitle={pullRequestTitle ?? undefined}
       pullRequestUrl={pullRequestUrl ?? undefined}
+      heatmapModelVariant={heatmapModelVariant}
     />
   );
 }

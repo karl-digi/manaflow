@@ -3,6 +3,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { stackServerApp } from "@/lib/utils/stack";
 import { runSimpleAnthropicReviewStream } from "@/lib/services/code-review/run-simple-anthropic-review";
 import { isRepoPublic } from "@/lib/github/check-repo-visibility";
+import {
+  DEFAULT_SIMPLE_REVIEW_MODEL_VARIANT,
+  SIMPLE_REVIEW_MODEL_QUERY_FLAG,
+  type SimpleReviewModelVariant,
+} from "@/lib/services/code-review/simple-review-model";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -49,6 +54,12 @@ export async function GET(request: NextRequest) {
     }
 
     const user = await stackServerApp.getUser({ or: "anonymous" });
+
+    const modelVariant: SimpleReviewModelVariant = searchParams.has(
+      SIMPLE_REVIEW_MODEL_QUERY_FLAG
+    )
+      ? "openai-ft0"
+      : DEFAULT_SIMPLE_REVIEW_MODEL_VARIANT;
 
     const repoIsPublic = await isRepoPublic(
       repoFullName.owner,
@@ -114,6 +125,7 @@ export async function GET(request: NextRequest) {
             prIdentifier,
             githubToken: normalizedGithubToken,
             signal: abortController.signal,
+            modelVariant,
             onEvent: async (event) => {
               switch (event.type) {
                 case "file":

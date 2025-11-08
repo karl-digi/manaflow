@@ -32,6 +32,10 @@ import { PrivateRepoPrompt } from "../../_components/private-repo-prompt";
 import { TeamOnboardingPrompt } from "../../_components/team-onboarding-prompt";
 import { env } from "@/lib/utils/www-env";
 import { trackRepoPageView } from "@/lib/analytics/track-repo-page-view";
+import {
+  parseSimpleReviewModelVariantFromRecord,
+  type SimpleReviewModelVariant,
+} from "@/lib/services/code-review/simple-review-model";
 
 const ENABLE_IMMEDIATE_CODE_REVIEW = false;
 
@@ -43,6 +47,7 @@ type PageParams = {
 
 type PageProps = {
   params: Promise<PageParams>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
 export const dynamic = "force-dynamic";
@@ -138,8 +143,16 @@ export async function generateMetadata({
   }
 }
 
-export default async function PullRequestPage({ params }: PageProps) {
+export default async function PullRequestPage({
+  params,
+  searchParams: searchParamsPromise,
+}: PageProps) {
   const resolvedParams = await params;
+  const searchParamsRecord = searchParamsPromise
+    ? await searchParamsPromise
+    : undefined;
+  const heatmapModelVariant =
+    parseSimpleReviewModelVariantFromRecord(searchParamsRecord);
 
   const {
     teamSlugOrId: githubOwner,
@@ -244,6 +257,7 @@ export default async function PullRequestPage({ params }: PageProps) {
       repo,
       pullNumber,
       pullRequestPromise,
+      heatmapModelVariant,
     });
   }
 
@@ -275,6 +289,7 @@ export default async function PullRequestPage({ params }: PageProps) {
             githubOwner={githubOwner}
             repo={repo}
             pullNumber={pullNumber}
+            heatmapModelVariant={heatmapModelVariant}
           />
         </Suspense>
       </div>
@@ -290,12 +305,14 @@ function scheduleCodeReviewStart({
   repo,
   pullNumber,
   pullRequestPromise,
+  heatmapModelVariant,
 }: {
   teamSlugOrId: string;
   githubOwner: string;
   repo: string;
   pullNumber: number;
   pullRequestPromise: Promise<GithubPullRequest>;
+  heatmapModelVariant: SimpleReviewModelVariant;
 }): void {
   waitUntil(
     (async () => {
@@ -408,6 +425,7 @@ function scheduleCodeReviewStart({
           simpleReviewPromise = runSimpleAnthropicReviewStream({
             prIdentifier: githubLink,
             githubToken: simpleReviewToken,
+            modelVariant: heatmapModelVariant,
           }).catch((error) => {
             const message =
               error instanceof Error ? error.message : String(error ?? "");
@@ -699,6 +717,7 @@ function PullRequestDiffSection({
   teamSlugOrId,
   repo,
   pullNumber,
+  heatmapModelVariant,
 }: {
   filesPromise: PullRequestFilesPromise;
   pullRequestPromise: PullRequestPromise;
@@ -706,6 +725,7 @@ function PullRequestDiffSection({
   teamSlugOrId: string;
   repo: string;
   pullNumber: number;
+  heatmapModelVariant: SimpleReviewModelVariant;
 }) {
   try {
     const files = use(filesPromise);
@@ -740,6 +760,7 @@ function PullRequestDiffSection({
         baseCommitRef={baseCommitRef}
         pullRequestTitle={pullRequestTitle}
         pullRequestUrl={pullRequestUrl}
+        heatmapModelVariant={heatmapModelVariant}
       />
     );
   } catch (error) {

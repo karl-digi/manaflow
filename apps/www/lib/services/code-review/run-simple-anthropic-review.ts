@@ -1,5 +1,6 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
-import { streamText } from "ai";
+import { createOpenAI } from "@ai-sdk/openai";
+import { streamText, type LanguageModel } from "ai";
 
 import { CLOUDFLARE_ANTHROPIC_BASE_URL } from "@cmux/shared";
 import { collectPrDiffs, collectPrDiffsViaGhCli } from "@/scripts/pr-review-heatmap";
@@ -8,6 +9,10 @@ import {
   SimpleReviewParser,
   type SimpleReviewParsedEvent,
 } from "./simple-review-parser";
+import {
+  DEFAULT_SIMPLE_REVIEW_MODEL_VARIANT,
+  type SimpleReviewModelVariant,
+} from "./simple-review-model";
 import {
   generateGitHubInstallationToken,
   getInstallationForRepo,
@@ -43,6 +48,32 @@ const SIMPLE_REVIEW_GUIDANCE = `You must respond strictly with the diff provided
 - Process the diff from top to bottom without skipping sections.`;
 
 const MAX_CONCURRENCY = 10;
+
+const ANTHROPIC_MODEL_ID = "claude-opus-4-1-20250805";
+const OPENAI_FT0_MODEL_ID =
+  "ft:gpt-4.1-mini-2025-04-14:lawrence:cmux-heatmap-sft:CZW6Lc77";
+
+type SimpleReviewModelConfig = {
+  provider: "anthropic" | "openai";
+  modelId: string;
+  label: string;
+};
+
+const SIMPLE_REVIEW_MODEL_CONFIGS: Record<
+  SimpleReviewModelVariant,
+  SimpleReviewModelConfig
+> = {
+  "anthropic-opus": {
+    provider: "anthropic",
+    modelId: ANTHROPIC_MODEL_ID,
+    label: "Claude Opus 4.1",
+  },
+  "openai-ft0": {
+    provider: "openai",
+    modelId: OPENAI_FT0_MODEL_ID,
+    label: "OpenAI gpt-4.1-mini FT0",
+  },
+};
 
 const BINARY_EXTENSIONS = [
   ".png",
@@ -114,6 +145,7 @@ type RepoSlug = {
 export type SimpleReviewStreamOptions = {
   prIdentifier: string;
   githubToken?: string | null;
+  modelVariant?: SimpleReviewModelVariant;
   onChunk?: (chunk: string) => void | Promise<void>;
   onEvent?: (event: SimpleReviewParsedEvent) => void | Promise<void>;
   signal?: AbortSignal;
@@ -283,6 +315,7 @@ export async function runSimpleAnthropicReviewStream(
     githubToken: providedGithubToken = null,
     onChunk,
     signal,
+    modelVariant = DEFAULT_SIMPLE_REVIEW_MODEL_VARIANT,
   } = options;
   const onEvent = options.onEvent ?? null;
 
@@ -338,6 +371,18 @@ export async function runSimpleAnthropicReviewStream(
     baseURL: CLOUDFLARE_ANTHROPIC_BASE_URL,
   });
 
+  const { model: selectedLanguageModel, config: selectedModelConfig } =
+    resolveSimpleReviewModel({
+      variant: modelVariant,
+      anthropicClient: anthropic,
+    });
+  console.info("[simple-review] Selected heatmap model", {
+    prIdentifier,
+    variant: modelVariant,
+    provider: selectedModelConfig.provider,
+    modelId: selectedModelConfig.modelId,
+  });
+
   const runWithSemaphore = createSemaphore(MAX_CONCURRENCY);
   const finalChunks: string[] = [];
 
@@ -369,8 +414,7 @@ export async function runSimpleAnthropicReviewStream(
 
         try {
           const stream = streamText({
-            model: anthropic("claude-opus-4-1-20250805"),
-            // model: anthropic("claude-haiku-4-5"),
+            model: selectedLanguageModel,
             prompt,
             temperature: 0,
             maxRetries: 2,
@@ -492,6 +536,9 @@ export async function runSimpleAnthropicReviewStream(
     prIdentifier,
     processedFiles: candidateFiles.length,
     finalLength: finalText.length,
+    modelVariant,
+    modelProvider: selectedModelConfig.provider,
+    modelId: selectedModelConfig.modelId,
   });
 
   return {
@@ -516,6 +563,39 @@ function detectSkipReason(filePath: string, diffText: string): string | null {
   }
 
   return null;
+}
+
+function resolveSimpleReviewModel({
+  variant,
+  anthropicClient,
+}: {
+  variant: SimpleReviewModelVariant;
+  anthropicClient: ReturnType<typeof createAnthropic>;
+}): { model: LanguageModel; config: SimpleReviewModelConfig } {
+  const config = SIMPLE_REVIEW_MODEL_CONFIGS[variant];
+  if (!config) {
+    throw new Error(`Unsupported simple review model variant: ${variant}`);
+  }
+
+  if (config.provider === "anthropic") {
+    return {
+      model: anthropicClient(config.modelId),
+      config,
+    };
+  }
+
+  const apiKey = env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "OpenAI API key is required to use the ft0 heatmap model (set OPENAI_API_KEY)."
+    );
+  }
+
+  const openai = createOpenAI({ apiKey });
+  return {
+    model: openai(config.modelId),
+    config,
+  };
 }
 
 function isLikelyBinary(filePath: string, diffText: string): boolean {
