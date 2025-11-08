@@ -132,30 +132,38 @@ export const upsertWorkflowRunFromWebhook = internalMutation({
     };
 
 
-    // Upsert the workflow run - fetch all matching records to handle duplicates
-    const existingRecords = await ctx.db
+    // Upsert the workflow run using .unique() for better concurrency handling
+    const existing = await ctx.db
       .query("githubWorkflowRuns")
       .withIndex("by_runId", (q) => q.eq("runId", runId))
-      .collect();
+      .unique();
 
-    if (existingRecords.length > 0) {
-      // Update the first record
-      await ctx.db.patch(existingRecords[0]._id, workflowRunDoc);
+    if (existing) {
+      // Update existing record
+      await ctx.db.patch(existing._id, workflowRunDoc);
+    } else {
+      // Insert new run - use try/catch to handle race condition where
+      // another concurrent call already inserted
+      try {
+        await ctx.db.insert("githubWorkflowRuns", workflowRunDoc);
+      } catch (error) {
+        // If insert fails due to concurrent insertion, try to update instead
+        const retryExisting = await ctx.db
+          .query("githubWorkflowRuns")
+          .withIndex("by_runId", (q) => q.eq("runId", runId))
+          .unique();
 
-      // Delete any duplicates
-      if (existingRecords.length > 1) {
-        console.warn("[upsertWorkflowRun] Found duplicates, cleaning up", {
-          runId,
-          count: existingRecords.length,
-          duplicateIds: existingRecords.slice(1).map(r => r._id),
-        });
-        for (const duplicate of existingRecords.slice(1)) {
-          await ctx.db.delete(duplicate._id);
+        if (retryExisting) {
+          await ctx.db.patch(retryExisting._id, workflowRunDoc);
+        } else {
+          // Re-throw if it's a different error
+          console.error("[upsertWorkflowRun] Failed to upsert", {
+            runId,
+            error,
+          });
+          throw error;
         }
       }
-    } else {
-      // Insert new run
-      await ctx.db.insert("githubWorkflowRuns", workflowRunDoc);
     }
   },
 });
