@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type SyntheticEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { formatDistanceToNow } from "date-fns";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
@@ -112,6 +119,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const panPointerIdRef = useRef<number | null>(null);
   const lastPanPositionRef = useRef<{ x: number; y: number } | null>(null);
+  const defaultZoomRef = useRef(1);
 
   const clampZoom = useCallback((value: number) => {
     return Math.min(4, Math.max(0.4, value));
@@ -142,13 +150,44 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
     [clampZoom],
   );
 
-  const resetZoomState = useCallback(() => {
-    setZoom(1);
-    setOffset({ x: 0, y: 0 });
-    setIsPanning(false);
-    panPointerIdRef.current = null;
-    lastPanPositionRef.current = null;
-  }, []);
+  const resetZoomState = useCallback(
+    (overrideZoom?: number) => {
+      const targetZoom =
+        overrideZoom !== undefined ? clampZoom(overrideZoom) : clampZoom(defaultZoomRef.current);
+      setZoom(targetZoom);
+      setOffset({ x: 0, y: 0 });
+      setIsPanning(false);
+      panPointerIdRef.current = null;
+      lastPanPositionRef.current = null;
+    },
+    [clampZoom],
+  );
+
+  const getSuggestedDefaultZoom = (width: number, height: number) => {
+    if (width <= 0 || height <= 0) {
+      return 1;
+    }
+    const aspectRatio = height / width;
+    // Start tall/portrait screenshots a bit zoomed out so it's clear there's more to explore.
+    if (aspectRatio >= 1.8) {
+      return 0.6;
+    }
+    if (aspectRatio >= 1.4) {
+      return 0.75;
+    }
+    if (aspectRatio >= 1.15) {
+      return 0.9;
+    }
+    return 1;
+  };
+
+  const handleImageLoad = (event: SyntheticEvent<HTMLImageElement>) => {
+    const { naturalWidth, naturalHeight } = event.currentTarget;
+    const suggestedZoom = getSuggestedDefaultZoom(naturalWidth, naturalHeight);
+    const clampedZoom = clampZoom(suggestedZoom);
+    defaultZoomRef.current = clampedZoom;
+    resetZoomState(clampedZoom);
+  };
 
   const activeImageIndex =
     activeImageKey !== null ? globalIndexByKey.get(activeImageKey) ?? null : null;
@@ -178,7 +217,8 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
   }, [activeImageKey, flattenedImages.length, globalIndexByKey]);
 
   useEffect(() => {
-    resetZoomState();
+    defaultZoomRef.current = 1;
+    resetZoomState(1);
   }, [currentEntry?.key, resetZoomState]);
 
   const closeSlideshow = useCallback(() => {
@@ -210,7 +250,8 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
   }, [activeImageIndex, flattenedImages]);
 
   const isSlideshowOpen = Boolean(currentEntry);
-  const showNavButtons = flattenedImages.length > 1;
+  const hasMultipleImages = flattenedImages.length > 1;
+  const showNavButtons = hasMultipleImages;
   const zoomPercent = Math.round(zoom * 100);
   const canZoomIn = zoom < 3.9;
   const canZoomOut = zoom > 0.45;
@@ -380,7 +421,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
             <Dialog.Portal>
               <Dialog.Overlay className="fixed inset-0 bg-neutral-950/60 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in data-[state=closed]:fade-out" />
               <Dialog.Content className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 focus:outline-none">
-                <div className="relative flex h-full max-h-[calc(100vh-2rem)] w-full max-w-6xl flex-col gap-4 rounded-3xl border border-neutral-200 bg-white/95 p-4 shadow-2xl focus:outline-none dark:border-neutral-800 dark:bg-neutral-950/95 sm:p-6">
+                <div className="relative flex h-full max-h-[calc(100vh-2rem)] w-full max-w-[min(1600px,95vw)] flex-col gap-4 rounded-3xl border border-neutral-200 bg-white/95 p-4 shadow-2xl focus:outline-none dark:border-neutral-800 dark:bg-neutral-950/95 sm:p-6">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="space-y-1">
                       <Dialog.Title className="text-base font-semibold text-neutral-900 dark:text-neutral-100">
@@ -477,6 +518,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                         alt={currentEntry.image.fileName ?? "Screenshot"}
                         className="select-none object-contain"
                         draggable={false}
+                        onLoad={handleImageLoad}
                         style={{
                           transform: `translate3d(${offset.x}px, ${offset.y}px, 0) scale(${zoom})`,
                           transition: isPanning
@@ -496,6 +538,49 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                       </button>
                     ) : null}
                   </div>
+                  {hasMultipleImages ? (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-xs font-medium text-neutral-500 dark:text-neutral-400">
+                        <span>All screenshots</span>
+                        <span className="tabular-nums text-neutral-600 dark:text-neutral-300">
+                          {activeOverallIndex ?? "–"} / {flattenedImages.length}
+                        </span>
+                      </div>
+                      <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+                        {flattenedImages.map((entry) => {
+                          const isActiveThumb = entry.key === currentEntry?.key;
+                          const label = entry.globalIndex + 1;
+                          const displayName = entry.image.fileName ?? "Screenshot";
+                          return (
+                            <button
+                              key={entry.key}
+                              type="button"
+                              onClick={() => setActiveImageKey(entry.key)}
+                              className={cn(
+                                "group relative flex h-24 w-40 flex-shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-50 p-1 transition hover:border-neutral-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70 dark:border-neutral-700 dark:bg-neutral-900/70 dark:hover:border-neutral-500",
+                                isActiveThumb &&
+                                  "border-emerald-400/70 shadow-[0_0_0_1px_rgba(16,185,129,0.25)] dark:border-emerald-400/60",
+                              )}
+                              aria-label={`View ${displayName}`}
+                              aria-current={isActiveThumb ? "true" : undefined}
+                              title={displayName}
+                            >
+                              <img
+                                src={entry.image.url ?? undefined}
+                                alt={displayName}
+                                className="h-full w-full object-contain"
+                                loading="lazy"
+                                decoding="async"
+                              />
+                              <span className="pointer-events-none absolute bottom-1 left-1 rounded-full bg-neutral-950/80 px-1 text-[10px] font-semibold text-white shadow-sm dark:bg-neutral-900/90">
+                                {label}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               </Dialog.Content>
             </Dialog.Portal>
