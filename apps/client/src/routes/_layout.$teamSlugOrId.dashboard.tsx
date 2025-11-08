@@ -5,6 +5,7 @@ import {
 import { DashboardInputControls } from "@/components/dashboard/DashboardInputControls";
 import { DashboardInputFooter } from "@/components/dashboard/DashboardInputFooter";
 import { DashboardStartTaskButton } from "@/components/dashboard/DashboardStartTaskButton";
+import { NewTaskDialog } from "@/components/dashboard/NewTaskDialog";
 import { TaskList } from "@/components/dashboard/TaskList";
 import { WorkspaceCreationButtons } from "@/components/dashboard/WorkspaceCreationButtons";
 import { FloatingPane } from "@/components/floating-pane";
@@ -130,8 +131,13 @@ function DashboardComponent() {
   const [providerStatus, setProviderStatus] =
     useState<ProviderStatusResponse | null>(null);
 
+  // Dialog state for new task modal
+  const [isNewTaskDialogOpen, setIsNewTaskDialogOpen] = useState(false);
+
   // Ref to access editor API
   const editorApiRef = useRef<EditorApi | null>(null);
+  // Separate ref for dialog editor
+  const dialogEditorApiRef = useRef<EditorApi | null>(null);
 
   const persistAgentSelection = useCallback((agents: string[]) => {
     try {
@@ -862,6 +868,51 @@ function DashboardComponent() {
     };
   }, []);
 
+  // Listen for Cmd+K shortcut from Electron to open dialog
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const w = window as Window & {
+      cmux?: {
+        on?: (event: string, callback: (...args: unknown[]) => void) => (() => void) | undefined;
+      };
+    };
+    const cmux = w.cmux;
+
+    if (!cmux?.on) return;
+
+    const unsubscribe = cmux.on("shortcut:cmd-k", () => {
+      setIsNewTaskDialogOpen((prev) => !prev);
+    });
+
+    return () => {
+      unsubscribe?.();
+    };
+  }, []);
+
+  // Notify Electron when dialog state changes (for command palette tracking)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const w = window as Window & {
+      cmux?: {
+        ui?: {
+          setCommandPaletteOpen?: (open: boolean) => Promise<{ ok: boolean }>;
+        };
+      };
+    };
+    const cmux = w.cmux;
+
+    if (!cmux?.ui?.setCommandPaletteOpen) return;
+
+    // Update the body dataset for DashboardInput to check
+    if (isNewTaskDialogOpen) {
+      document.body.dataset.cmuxCommandPaletteOpen = "true";
+    } else {
+      delete document.body.dataset.cmuxCommandPaletteOpen;
+    }
+
+    void cmux.ui.setCommandPaletteOpen(isNewTaskDialogOpen);
+  }, [isNewTaskDialogOpen]);
+
   // Do not pre-disable UI on Docker status; handle fresh check on submit
 
   // Handle Command+Enter keyboard shortcut
@@ -979,6 +1030,37 @@ function DashboardComponent() {
           </div>
         </div>
       </div>
+
+      {/* New Task Dialog */}
+      <NewTaskDialog
+        open={isNewTaskDialogOpen}
+        onOpenChange={setIsNewTaskDialogOpen}
+        editorApiRef={dialogEditorApiRef}
+        onTaskDescriptionChange={handleTaskDescriptionChange}
+        onSubmit={handleSubmit}
+        lexicalRepoUrl={lexicalRepoUrl}
+        lexicalEnvironmentId={lexicalEnvironmentId}
+        lexicalBranch={lexicalBranch}
+        projectOptions={projectOptions}
+        selectedProject={selectedProject}
+        onProjectChange={handleProjectChange}
+        onProjectSearchPaste={handleProjectSearchPaste}
+        branchOptions={branchOptions}
+        selectedBranch={effectiveSelectedBranch}
+        onBranchChange={handleBranchChange}
+        selectedAgents={selectedAgents}
+        onAgentChange={handleAgentChange}
+        isCloudMode={isCloudMode}
+        onCloudModeToggle={handleCloudModeToggle}
+        isLoadingProjects={reposByOrgQuery.isLoading}
+        isLoadingBranches={branchesQuery.isPending}
+        teamSlugOrId={teamSlugOrId}
+        cloudToggleDisabled={isEnvSelected}
+        branchDisabled={isEnvSelected || !selectedProject[0]}
+        providerStatus={providerStatus}
+        canSubmit={canSubmit}
+        onStartTask={handleStartTask}
+      />
     </FloatingPane>
   );
 }

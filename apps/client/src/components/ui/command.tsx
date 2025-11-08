@@ -138,8 +138,15 @@ const CommandDialog = ({
   return (
     <Popover.Root open={open} onOpenChange={onOpenChange}>
       <Popover.Portal>
+        {/* Backdrop overlay */}
+        {open ? (
+          <div
+            className="fixed inset-0 z-[var(--z-modal)] bg-black/50 dark:bg-black/70"
+            onClick={() => onOpenChange?.(false)}
+          />
+        ) : null}
         <Popover.Content
-          className="fixed left-1/2 top-1/2 z-[var(--z-modal)] w-full max-w-[450px] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 p-0 shadow-md outline-none"
+          className="fixed left-1/2 top-1/2 z-[calc(var(--z-modal)+1)] w-full max-w-4xl -translate-x-1/2 -translate-y-1/2 rounded-2xl p-0 shadow-2xl outline-none"
           onOpenAutoFocus={(e) => e.preventDefault()}
         >
           <Command {...props}>{children}</Command>
