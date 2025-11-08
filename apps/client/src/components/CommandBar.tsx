@@ -1,3 +1,4 @@
+import { NewTaskDialog } from "@/components/dashboard/NewTaskDialog";
 import { GitHubIcon } from "@/components/icons/github";
 import { useTheme } from "@/components/theme/use-theme";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
@@ -300,6 +301,7 @@ export function CommandBar({
   const [commandValue, setCommandValue] = useState<string | undefined>(
     undefined
   );
+  const [isNewTaskDialogOpen, setIsNewTaskDialogOpen] = useState(false);
   const [commandListMaxHeight, setCommandListMaxHeight] = useState(
     COMMAND_PANEL_MAX_HEIGHT_PX
   );
@@ -1307,10 +1309,9 @@ export function CommandBar({
         setActivePage("teams");
         return;
       } else if (value === "new-task") {
-        navigate({
-          to: "/$teamSlugOrId/dashboard",
-          params: { teamSlugOrId },
-        });
+        setIsNewTaskDialogOpen(true);
+        closeCommand();
+        return;
       } else if (value === "local-workspaces") {
         setActivePage("local-workspaces");
         return;
@@ -1512,6 +1513,7 @@ export function CommandBar({
       stackUser,
       stackTeams,
       closeCommand,
+      setIsNewTaskDialogOpen,
     ]
   );
 
@@ -2466,6 +2468,11 @@ export function CommandBar({
 
   return (
     <>
+      <NewTaskDialog
+        teamSlugOrId={teamSlugOrId}
+        open={isNewTaskDialogOpen}
+        onOpenChange={setIsNewTaskDialogOpen}
+      />
       <div
         className={clsx(
           "fixed inset-0 z-[var(--z-commandbar)]",
