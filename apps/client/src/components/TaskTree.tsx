@@ -991,6 +991,25 @@ function TaskRunTreeInner({
   }, [isExpanded, isRunSelected, run._id, setRunExpanded]);
 
   const hasChildren = run.children.length > 0;
+  const environmentName = run.environment?.name?.trim() || undefined;
+  const environmentRepoNames = Array.from(
+    new Set(
+      (run.environment?.selectedRepos ?? [])
+        .map((repo) => repo?.trim())
+        .filter((repo): repo is string => Boolean(repo && repo.length > 0))
+    )
+  );
+  const repoSubtitle: string | null =
+    environmentRepoNames.length === 0
+      ? null
+      : environmentRepoNames.length <= 2
+        ? environmentRepoNames.join(", ")
+        : `${environmentRepoNames[0]} +${environmentRepoNames.length - 1} more`;
+  const runSecondaryParts = [environmentName, repoSubtitle].filter(
+    (value): value is string => Boolean(value)
+  );
+  const runSecondary =
+    runSecondaryParts.length > 0 ? runSecondaryParts.join(" • ") : undefined;
 
   // Memoize the display text to avoid recalculating on every render
   const baseDisplayText = useMemo(() => {
@@ -1242,6 +1261,7 @@ function TaskRunTreeInner({
               title={baseDisplayText}
               titleClassName="text-[13px] text-neutral-700 dark:text-neutral-300"
               titleSuffix={runNumberSuffix ?? undefined}
+              secondary={runSecondary}
               meta={leadingContent}
             />
           </Link>
