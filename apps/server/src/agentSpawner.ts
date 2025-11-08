@@ -419,7 +419,6 @@ export async function spawnAgent(
         taskId,
         theme: options.theme,
         teamSlugOrId,
-        isLocalWorkspace: task?.isLocalWorkspace,
       });
     }
 

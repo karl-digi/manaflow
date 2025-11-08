@@ -82,8 +82,10 @@ export class DockerVSCodeInstance extends VSCodeInstance {
     return DockerVSCodeInstance.dockerInstance;
   }
 
-  constructor(config: DockerVSCodeInstanceConfig) {
+  constructor(config: VSCodeInstanceConfig) {
     super(config);
+    const dockerConfig = config as DockerVSCodeInstanceConfig;
+
     this.containerName = `cmux-${this.taskRunId}`;
     this.imageName = process.env.WORKER_IMAGE_NAME || "cmux-worker:0.0.1";
     dockerLogger.info(`WORKER_IMAGE_NAME: ${process.env.WORKER_IMAGE_NAME}`);
@@ -92,16 +94,13 @@ export class DockerVSCodeInstance extends VSCodeInstance {
     // Determine container workspace path based on isLocalWorkspace flag
     // Local workspaces: use /root/workspace
     // Local tasks: use actual worktree path (or fallback to /root/workspace)
-    this.containerWorkspacePath = !config.isLocalWorkspace && config.workspacePath
+    this.containerWorkspacePath = !dockerConfig.isLocalWorkspace && config.workspacePath
       ? config.workspacePath
       : CONTAINER_WORKSPACE_PATH;
 
     dockerLogger.info(
-      `[DockerVSCodeInstance] Container workspace path: ${this.containerWorkspacePath} (isLocalWorkspace: ${config.isLocalWorkspace})`
+      `[DockerVSCodeInstance] Container workspace path: ${this.containerWorkspacePath} (isLocalWorkspace: ${dockerConfig.isLocalWorkspace})`
     );
-
-    // Register this instance
-    VSCodeInstance.getInstances().set(this.instanceId, this);
   }
 
   private async ensureImageExists(docker: Docker): Promise<void> {
