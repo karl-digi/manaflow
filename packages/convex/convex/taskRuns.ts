@@ -78,6 +78,78 @@ function deriveGeneratedBranchName(branch?: string | null): string | undefined {
   return candidate || trimmed;
 }
 
+function normalizeRepoFullName(value?: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  return trimmed.toLowerCase();
+}
+
+function parsePullRequestUrl(
+  url?: string | null,
+): { repoFullName: string; number: number } | null {
+  if (!url) {
+    return null;
+  }
+  const match = url.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/i);
+  if (!match) {
+    return null;
+  }
+  const number = Number(match[2]);
+  if (!Number.isFinite(number)) {
+    return null;
+  }
+  return { repoFullName: match[1], number };
+}
+
+function runMatchesPullRequest(
+  run: Doc<"taskRuns">,
+  normalizedRepo: string,
+  prNumber: number,
+): boolean {
+  if (!normalizedRepo) {
+    return false;
+  }
+
+  for (const pr of run.pullRequests ?? []) {
+    if (typeof pr.number !== "number") {
+      continue;
+    }
+    const repo = normalizeRepoFullName(pr.repoFullName);
+    if (repo === normalizedRepo && pr.number === prNumber) {
+      return true;
+    }
+  }
+
+  const parsed = parsePullRequestUrl(run.pullRequestUrl);
+  if (
+    parsed &&
+    normalizeRepoFullName(parsed.repoFullName) === normalizedRepo &&
+    parsed.number === prNumber
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function findMatchingRun(
+  runs: Doc<"taskRuns">[],
+  normalizedRepo: string,
+  prNumber: number,
+): Doc<"taskRuns"> | null {
+  for (const run of runs) {
+    if (runMatchesPullRequest(run, normalizedRepo, prNumber)) {
+      return run;
+    }
+  }
+  return null;
+}
+
 type EnvironmentErrorPayload = {
   maintenanceError?: string;
   devError?: string;
@@ -875,6 +947,60 @@ export const getByContainerName = authQuery({
     }
 
     return run;
+  },
+});
+
+export const findByPullRequest = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    repoFullName: v.string(),
+    prNumber: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const normalizedRepo = normalizeRepoFullName(args.repoFullName);
+    if (!normalizedRepo) {
+      return null;
+    }
+
+    const indexedRuns = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_team_pullRequestNumber", (q) =>
+        q.eq("teamId", teamId).eq("pullRequestNumber", args.prNumber),
+      )
+      .filter((q) => q.eq(q.field("userId"), userId))
+      .order("desc")
+      .take(25);
+
+    let match = findMatchingRun(indexedRuns, normalizedRepo, args.prNumber);
+
+    if (!match) {
+      const fallbackRuns = await ctx.db
+        .query("taskRuns")
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .filter((q) => q.eq(q.field("teamId"), teamId))
+        .order("desc")
+        .take(200);
+      match = findMatchingRun(fallbackRuns, normalizedRepo, args.prNumber);
+    }
+
+    if (!match) {
+      return null;
+    }
+
+    const task = await ctx.db.get(match.taskId);
+    const taskText =
+      task && task.teamId === teamId && task.userId === userId
+        ? task.text
+        : null;
+
+    return {
+      taskRunId: match._id,
+      taskId: match.taskId,
+      taskText,
+      runSummary: match.summary ?? null,
+    };
   },
 });
 

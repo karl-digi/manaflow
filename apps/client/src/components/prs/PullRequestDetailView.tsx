@@ -4,6 +4,7 @@ import { normalizeGitRef } from "@/lib/refWithOrigin";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
 import { api } from "@cmux/convex/api";
 import { useQuery as useRQ, useMutation } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { useQuery as useConvexQuery } from "convex/react";
 import { ExternalLink, X, Check, Copy, GitBranch, Loader2 } from "lucide-react";
 import { Suspense, useEffect, useMemo, useState } from "react";
@@ -133,18 +134,26 @@ export function PullRequestDetailView({
   number,
 }: PullRequestDetailViewProps) {
   const clipboard = useClipboard({ timeout: 2000 });
+  const repoFullName = `${owner}/${repo}`;
+  const prNumber = Number.parseInt(number, 10);
 
   const currentPR = useConvexQuery(api.github_prs.getPullRequest, {
     teamSlugOrId,
-    repoFullName: `${owner}/${repo}`,
-    number: Number(number),
+    repoFullName,
+    number: prNumber,
   });
 
   const fileOutputs = useConvexQuery(api.codeReview.listFileOutputsForPr, {
     teamSlugOrId,
-    repoFullName: `${owner}/${repo}`,
-    prNumber: Number(number),
+    repoFullName,
+    prNumber,
     commitRef: currentPR?.headSha ?? undefined,
+  });
+
+  const linkedTaskRun = useConvexQuery(api.taskRuns.findByPullRequest, {
+    teamSlugOrId,
+    repoFullName,
+    prNumber,
   });
 
   const commitRefForLogging = currentPR?.headSha ?? null;
@@ -399,6 +408,22 @@ export function PullRequestDetailView({
                     </button>
                   </>
                 )}
+                {linkedTaskRun ? (
+                  <Link
+                    to="/$teamSlugOrId/task/$taskId/run/$runId"
+                    params={{
+                      teamSlugOrId,
+                      taskId: linkedTaskRun.taskId,
+                      runId: linkedTaskRun.taskRunId,
+                      taskRunId: linkedTaskRun.taskRunId,
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1 h-[26px] shrink-0 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-200 border border-blue-200 dark:border-blue-800 rounded font-medium text-xs select-none whitespace-nowrap hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors"
+                    title={linkedTaskRun.taskText ?? linkedTaskRun.runSummary ?? undefined}
+                  >
+                    <GitBranch className="w-3.5 h-3.5" aria-hidden />
+                    View task run
+                  </Link>
+                ) : null}
                 {currentPR.htmlUrl ? (
                   <a
                     className="flex items-center gap-1.5 px-3 py-1 bg-neutral-200 dark:bg-neutral-800 text-neutral-900 dark:text-white border border-neutral-300 dark:border-neutral-700 rounded hover:bg-neutral-300 dark:hover:bg-neutral-700 font-medium text-xs select-none whitespace-nowrap"
