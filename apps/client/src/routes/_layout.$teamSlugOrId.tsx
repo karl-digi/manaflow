@@ -4,6 +4,7 @@ import { Sidebar } from "@/components/Sidebar";
 import { SIDEBAR_PRS_DEFAULT_LIMIT } from "@/components/sidebar/const";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { ExpandTasksProvider } from "@/contexts/expand-tasks/ExpandTasksProvider";
+import { SidebarPinsProvider } from "@/contexts/sidebar-pins";
 import { cachedGetUser } from "@/lib/cachedGetUser";
 import { setLastTeamSlugOrId } from "@/lib/lastTeam";
 import { stackClientApp } from "@/lib/stack";
@@ -72,17 +73,19 @@ function LayoutComponent() {
 
   return (
     <ExpandTasksProvider>
-      <CommandBar teamSlugOrId={teamSlugOrId} />
+      <SidebarPinsProvider teamSlugOrId={teamSlugOrId}>
+        <CommandBar teamSlugOrId={teamSlugOrId} />
 
-      <div className="flex flex-row grow min-h-0 h-dvh bg-white dark:bg-black">
-        <Sidebar tasks={displayTasks} teamSlugOrId={teamSlugOrId} />
+        <div className="flex flex-row grow min-h-0 h-dvh bg-white dark:bg-black">
+          <Sidebar tasks={displayTasks} teamSlugOrId={teamSlugOrId} />
 
-        {/* <div className="flex flex-col grow overflow-hidden bg-white dark:bg-neutral-950"> */}
-        <Suspense fallback={<div>Loading...</div>}>
-          <Outlet />
-        </Suspense>
-        {/* </div> */}
-      </div>
+          {/* <div className="flex flex-col grow overflow-hidden bg-white dark:bg-neutral-950"> */}
+          <Suspense fallback={<div>Loading...</div>}>
+            <Outlet />
+          </Suspense>
+          {/* </div> */}
+        </div>
+      </SidebarPinsProvider>
 
       <button
         onClick={() => {

@@ -1,14 +1,16 @@
-import { TaskTree } from "@/components/TaskTree";
+import { PinnedTaskRunGroup, TaskTree } from "@/components/TaskTree";
 import { TaskTreeSkeleton } from "@/components/TaskTreeSkeleton";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
+import { useSidebarPins } from "@/contexts/sidebar-pins";
 import { isElectron } from "@/lib/electron";
-import { type Doc } from "@cmux/convex/dataModel";
+import { type Doc, type Id } from "@cmux/convex/dataModel";
 import type { LinkProps } from "@tanstack/react-router";
 import { Link } from "@tanstack/react-router";
 import { Home, Plus, Server, Settings } from "lucide-react";
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ComponentType,
@@ -80,6 +82,81 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
   });
 
   const { expandTaskIds } = useExpandTasks();
+  const {
+    pinnedTasks,
+    pinnedRuns,
+    isTaskPinned,
+    isTaskRunPinned,
+    pinTask,
+    unpinTask,
+    pinTaskRun,
+    unpinTaskRun,
+  } = useSidebarPins();
+  const tasksById = useMemo(() => {
+    if (!tasks) {
+      return new Map<Id<"tasks">, Doc<"tasks">>();
+    }
+    return new Map<Id<"tasks">, Doc<"tasks">>(
+      tasks.map((task) => [task._id, task])
+    );
+  }, [tasks]);
+  const pinnedTaskDocs = useMemo(() => {
+    if (!tasks) {
+      return [];
+    }
+    return pinnedTasks
+      .map((entry) => tasksById.get(entry.taskId))
+      .filter((task): task is Doc<"tasks"> => Boolean(task));
+  }, [pinnedTasks, tasks, tasksById]);
+  const pinnedTaskIdSet = useMemo(
+    () => new Set(pinnedTaskDocs.map((task) => task._id)),
+    [pinnedTaskDocs]
+  );
+  const filteredTasks = useMemo(() => {
+    if (tasks === undefined) {
+      return undefined;
+    }
+    return tasks.filter((task) => !pinnedTaskIdSet.has(task._id));
+  }, [pinnedTaskIdSet, tasks]);
+  const pinnedRunGroups = useMemo(() => {
+    if (!tasks) {
+      return [];
+    }
+    const groups: Array<{ task: Doc<"tasks">; runIds: Id<"taskRuns">[] }> = [];
+    const index = new Map<Id<"tasks">, number>();
+    for (const entry of pinnedRuns) {
+      const taskDoc = tasksById.get(entry.taskId);
+      if (!taskDoc) {
+        continue;
+      }
+      let groupIndex = index.get(taskDoc._id);
+      if (groupIndex === undefined) {
+        groupIndex = groups.length;
+        index.set(taskDoc._id, groupIndex);
+        groups.push({ task: taskDoc, runIds: [] });
+      }
+      groups[groupIndex].runIds.push(entry.runId);
+    }
+    return groups;
+  }, [pinnedRuns, tasks, tasksById]);
+  const hasPinnedItems =
+    pinnedTaskDocs.length > 0 || pinnedRunGroups.length > 0;
+  const buildTaskPinning = useCallback(
+    (taskId: Id<"tasks">) => ({
+      isPinned: isTaskPinned(taskId),
+      onPin: () => pinTask(taskId),
+      onUnpin: () => unpinTask(taskId),
+    }),
+    [isTaskPinned, pinTask, unpinTask]
+  );
+  const buildRunPinning = useCallback(
+    (taskId: Id<"tasks">) => ({
+      isPinned: (runId: Id<"taskRuns">) => isTaskRunPinned(runId),
+      pin: (runId: Id<"taskRuns">) => pinTaskRun(taskId, runId),
+      unpin: (runId: Id<"taskRuns">) => unpinTaskRun(runId),
+    }),
+    [isTaskRunPinned, pinTaskRun, unpinTaskRun]
+  );
 
   useEffect(() => {
     localStorage.setItem("sidebarWidth", String(width));
@@ -276,37 +353,75 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
             >
               Pull requests
             </SidebarSectionLink>
-            <div className="ml-2 pt-px">
-              <SidebarPullRequestList teamSlugOrId={teamSlugOrId} />
+          <div className="ml-2 pt-px">
+            <SidebarPullRequestList teamSlugOrId={teamSlugOrId} />
+          </div>
+        </div>
+
+        {hasPinnedItems ? (
+          <div className="mt-4 flex flex-col gap-0.5">
+            <div className="pointer-events-none cursor-default flex items-center rounded-sm pl-2 ml-2 pr-3 py-0.5 text-[12px] font-medium uppercase tracking-wide text-neutral-600 select-none dark:text-neutral-300">
+              Pinned
+            </div>
+            <div className="ml-2 pt-px space-y-px">
+              {pinnedTaskDocs.map((task) => (
+                <TaskTree
+                  key={`pinned-task-${task._id}`}
+                  task={task}
+                  defaultExpanded={expandTaskIds?.includes(task._id) ?? false}
+                  teamSlugOrId={teamSlugOrId}
+                  taskPinning={buildTaskPinning(task._id)}
+                  runPinning={buildRunPinning(task._id)}
+                />
+              ))}
+              {pinnedRunGroups.map((group) => (
+                <div key={`pinned-runs-${group.task._id}`} className="pt-1">
+                  <div
+                    className="pl-2 pr-3 text-[11px] font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400 select-none truncate"
+                    title={group.task.text ?? undefined}
+                  >
+                    {group.task.text || "Untitled task"}
+                  </div>
+                  <PinnedTaskRunGroup
+                    task={group.task}
+                    teamSlugOrId={teamSlugOrId}
+                    runIds={group.runIds}
+                    runPinning={buildRunPinning(group.task._id)}
+                  />
+                </div>
+              ))}
             </div>
           </div>
+        ) : null}
 
-          <div className="mt-2 flex flex-col gap-0.5">
-            <SidebarSectionLink
-              to="/$teamSlugOrId/workspaces"
-              params={{ teamSlugOrId }}
-              exact
-            >
-              Workspaces
-            </SidebarSectionLink>
-          </div>
+        <div className="mt-2 flex flex-col gap-0.5">
+          <SidebarSectionLink
+            to="/$teamSlugOrId/workspaces"
+            params={{ teamSlugOrId }}
+            exact
+          >
+            Workspaces
+          </SidebarSectionLink>
+        </div>
 
-          <div className="ml-2 pt-px">
-            <div className="space-y-px">
-              {tasks === undefined ? (
-                <TaskTreeSkeleton count={5} />
-              ) : tasks && tasks.length > 0 ? (
-                tasks.map((task) => (
-                  <TaskTree
-                    key={task._id}
-                    task={task}
-                    defaultExpanded={expandTaskIds?.includes(task._id) ?? false}
-                    teamSlugOrId={teamSlugOrId}
-                  />
-                ))
-              ) : (
-                <p className="pl-2 pr-3 py-1.5 text-xs text-neutral-500 dark:text-neutral-400 select-none">
-                  No recent tasks
+        <div className="ml-2 pt-px">
+          <div className="space-y-px">
+            {filteredTasks === undefined ? (
+              <TaskTreeSkeleton count={5} />
+            ) : filteredTasks && filteredTasks.length > 0 ? (
+              filteredTasks.map((task) => (
+                <TaskTree
+                  key={task._id}
+                  task={task}
+                  defaultExpanded={expandTaskIds?.includes(task._id) ?? false}
+                  teamSlugOrId={teamSlugOrId}
+                  taskPinning={buildTaskPinning(task._id)}
+                  runPinning={buildRunPinning(task._id)}
+                />
+              ))
+            ) : (
+              <p className="pl-2 pr-3 py-1.5 text-xs text-neutral-500 dark:text-neutral-400 select-none">
+                No recent tasks
                 </p>
               )}
             </div>
