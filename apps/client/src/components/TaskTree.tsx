@@ -302,6 +302,12 @@ function TaskTreeInner({
   );
   const isOptimisticTask = isFakeConvexId(task._id);
   const canRenameTask = !isOptimisticTask;
+  const taskEnvironment = useConvexQuery(
+    api.environments.get,
+    !isOptimisticTask && task.environmentId
+      ? { teamSlugOrId, id: task.environmentId }
+      : "skip"
+  );
   const taskRuns = useConvexQuery(
     api.taskRuns.getByTask,
     isOptimisticTask
@@ -450,6 +456,9 @@ function TaskTreeInner({
   const inferredBranch = getTaskBranch(task);
   const trimmedTaskText = (task.text ?? "").trim();
   const trimmedPullRequestTitle = task.pullRequestTitle?.trim();
+  const environmentName = taskEnvironment?.name
+    ? taskEnvironment.name.trim()
+    : "";
   const taskTitleValue =
     trimmedTaskText ||
     trimmedPullRequestTitle ||
@@ -461,6 +470,9 @@ function TaskTreeInner({
   }
   if (task.projectFullName) {
     taskSecondaryParts.push(task.projectFullName);
+  }
+  if (environmentName) {
+    taskSecondaryParts.push(environmentName);
   }
   if (trimmedPullRequestTitle && trimmedPullRequestTitle !== taskTitleValue) {
     taskSecondaryParts.push(trimmedPullRequestTitle);
