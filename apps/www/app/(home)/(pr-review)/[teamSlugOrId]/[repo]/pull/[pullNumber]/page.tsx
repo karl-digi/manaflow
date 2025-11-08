@@ -43,7 +43,22 @@ type PageParams = {
 
 type PageProps = {
   params: Promise<PageParams>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
+
+function searchParamFlag(
+  searchParams: Record<string, string | string[] | undefined> | undefined,
+  key: string
+): boolean {
+  if (!searchParams) {
+    return false;
+  }
+  const value = searchParams[key];
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+  return value !== undefined;
+}
 
 export const dynamic = "force-dynamic";
 
@@ -138,8 +153,12 @@ export async function generateMetadata({
   }
 }
 
-export default async function PullRequestPage({ params }: PageProps) {
+export default async function PullRequestPage({ params, searchParams: searchParamsPromise }: PageProps) {
   const resolvedParams = await params;
+  const searchParams = searchParamsPromise
+    ? await searchParamsPromise
+    : undefined;
+  const useFt0Model = searchParamFlag(searchParams, "ft0");
 
   const {
     teamSlugOrId: githubOwner,
@@ -408,6 +427,7 @@ function scheduleCodeReviewStart({
           simpleReviewPromise = runSimpleAnthropicReviewStream({
             prIdentifier: githubLink,
             githubToken: simpleReviewToken,
+            modelVariant: useFt0Model ? "openai-ft0" : undefined,
           }).catch((error) => {
             const message =
               error instanceof Error ? error.message : String(error ?? "");
@@ -740,6 +760,7 @@ function PullRequestDiffSection({
         baseCommitRef={baseCommitRef}
         pullRequestTitle={pullRequestTitle}
         pullRequestUrl={pullRequestUrl}
+        useFt0Model={useFt0Model}
       />
     );
   } catch (error) {

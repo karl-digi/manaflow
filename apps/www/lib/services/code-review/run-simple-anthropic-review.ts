@@ -1,4 +1,5 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
+import { createOpenAI } from "@ai-sdk/openai";
 import { streamText } from "ai";
 
 import { CLOUDFLARE_ANTHROPIC_BASE_URL } from "@cmux/shared";
@@ -111,12 +112,23 @@ type RepoSlug = {
   repo: string;
 };
 
+const SIMPLE_MODEL_VARIANTS = {
+  ANTHROPIC_OPUS_4_1: "anthropic-opus-4-1" as const,
+  OPENAI_FT0: "openai-ft0" as const,
+};
+
+type SimpleModelVariant = (typeof SIMPLE_MODEL_VARIANTS)[keyof typeof SIMPLE_MODEL_VARIANTS];
+
+const OPENAI_FT0_MODEL_ID =
+  "ft:gpt-4.1-mini-2025-04-14:lawrence:cmux-heatmap-sft:CZW6Lc77";
+
 export type SimpleReviewStreamOptions = {
   prIdentifier: string;
   githubToken?: string | null;
   onChunk?: (chunk: string) => void | Promise<void>;
   onEvent?: (event: SimpleReviewParsedEvent) => void | Promise<void>;
   signal?: AbortSignal;
+  modelVariant?: SimpleModelVariant;
 };
 
 export type SimpleReviewStreamResult = {
@@ -283,8 +295,11 @@ export async function runSimpleAnthropicReviewStream(
     githubToken: providedGithubToken = null,
     onChunk,
     signal,
+    modelVariant: requestedModelVariant,
   } = options;
   const onEvent = options.onEvent ?? null;
+  const modelVariant =
+    requestedModelVariant ?? SIMPLE_MODEL_VARIANTS.ANTHROPIC_OPUS_4_1;
 
   const emitEvent = async (event: SimpleReviewParsedEvent): Promise<void> => {
     if (!onEvent) {
@@ -338,6 +353,17 @@ export async function runSimpleAnthropicReviewStream(
     baseURL: CLOUDFLARE_ANTHROPIC_BASE_URL,
   });
 
+  let openai: ReturnType<typeof createOpenAI> | null = null;
+  if (modelVariant === SIMPLE_MODEL_VARIANTS.OPENAI_FT0) {
+    const apiKey = env.OPENAI_API_KEY;
+    if (!apiKey) {
+      throw new Error(
+        "OPENAI_API_KEY must be configured to use the ft0 simple review model"
+      );
+    }
+    openai = createOpenAI({ apiKey });
+  }
+
   const runWithSemaphore = createSemaphore(MAX_CONCURRENCY);
   const finalChunks: string[] = [];
 
@@ -368,9 +394,13 @@ export async function runSimpleAnthropicReviewStream(
         const prompt = buildFilePrompt(prLabel, file.filePath, file.diffText);
 
         try {
+          const model =
+            modelVariant === SIMPLE_MODEL_VARIANTS.OPENAI_FT0
+              ? openai!(OPENAI_FT0_MODEL_ID)
+              : anthropic("claude-opus-4-1-20250805");
+
           const stream = streamText({
-            model: anthropic("claude-opus-4-1-20250805"),
-            // model: anthropic("claude-haiku-4-5"),
+            model,
             prompt,
             temperature: 0,
             maxRetries: 2,
