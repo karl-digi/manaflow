@@ -3,7 +3,7 @@ import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { convexQuery } from "@convex-dev/react-query";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import z from "zod";
 import type { PersistentIframeStatus } from "@/components/persistent-iframe";
 import { PersistentWebView } from "@/components/persistent-webview";
@@ -129,6 +129,77 @@ function VSCodeComponent() {
   );
 
   const isEditorBusy = !hasWorkspace || iframeStatus !== "loaded";
+
+  const windowHasFocusRef = useRef(true);
+
+  // Focus the VSCode iframe when the window gains focus
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handleWindowFocus = () => {
+      // Wait a moment to ensure focus state has stabilized
+      setTimeout(() => {
+        if (typeof document === "undefined") return;
+
+        // Only update focus state if document is actually visible and focused
+        if (document.visibilityState === "visible" && document.hasFocus()) {
+          windowHasFocusRef.current = true;
+
+          // Double-check that we're still focused after delay
+          setTimeout(() => {
+            if (!windowHasFocusRef.current) return;
+
+            // Check if any interactive element has focus
+            const activeElement = document.activeElement;
+            const isInteractiveElementFocused =
+              activeElement instanceof HTMLInputElement ||
+              activeElement instanceof HTMLTextAreaElement ||
+              activeElement instanceof HTMLButtonElement ||
+              activeElement instanceof HTMLSelectElement ||
+              (activeElement instanceof HTMLElement &&
+                activeElement.isContentEditable);
+
+            // If VSCode is loaded and no UI element has focus, focus the iframe
+            if (!isInteractiveElementFocused && hasWorkspace && iframeStatus === "loaded") {
+              // For browser iframes
+              const iframe = document.querySelector<HTMLIFrameElement>(
+                `[data-iframe-key="${persistKey}"] iframe`
+              );
+              if (iframe?.contentWindow) {
+                try {
+                  iframe.contentWindow.focus();
+                } catch (error) {
+                  console.warn("Failed to focus VSCode iframe", error);
+                }
+              }
+
+              // For Electron WebContentsView
+              if (window.cmux?.ui?.focusWebContents) {
+                // Get the webContentsId from the iframe element
+                const webContentsId = iframe?.getAttribute("data-webcontents-id");
+                if (webContentsId) {
+                  void window.cmux.ui.focusWebContents(Number(webContentsId))
+                    .catch((error) => console.warn("Failed to focus VSCode WebContentsView", error));
+                }
+              }
+            }
+          }, 150);
+        }
+      }, 10);
+    };
+
+    const handleWindowBlur = () => {
+      windowHasFocusRef.current = false;
+    };
+
+    window.addEventListener("focus", handleWindowFocus);
+    window.addEventListener("blur", handleWindowBlur);
+
+    return () => {
+      window.removeEventListener("focus", handleWindowFocus);
+      window.removeEventListener("blur", handleWindowBlur);
+    };
+  }, [persistKey, hasWorkspace, iframeStatus]);
 
   return (
     <div className="flex flex-col grow bg-neutral-50 dark:bg-black">
