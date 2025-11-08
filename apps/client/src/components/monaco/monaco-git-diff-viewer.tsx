@@ -32,6 +32,7 @@ const MIN_EDITOR_LINE_FALLBACK = 4;
 const HIDDEN_REGION_BASE_PLACEHOLDER_HEIGHT = 20;
 const HIDDEN_REGION_PER_LINE_HEIGHT = 0.6;
 const INTERSECTION_VISIBILITY_MARGIN_PX = 96;
+const SCROLLABLE_OVERFLOW_VALUES = new Set(["auto", "scroll", "overlay"]);
 
 const HIDE_UNCHANGED_REGIONS_SETTINGS = {
   revealLineCount: 2,
@@ -487,7 +488,118 @@ function createDiffEditorMount({
       return;
     }
 
+    type ScrollSnapshotEntry =
+      | { kind: "window"; top: number; left: number }
+      | { kind: "element"; element: HTMLElement; top: number; left: number };
+
+    const isScrollableElement = (node: HTMLElement) => {
+      if (typeof window === "undefined") {
+        return false;
+      }
+      const style = window.getComputedStyle(node);
+      const canScrollY =
+        SCROLLABLE_OVERFLOW_VALUES.has(style.overflowY) &&
+        node.scrollHeight > node.clientHeight + 1;
+      const canScrollX =
+        SCROLLABLE_OVERFLOW_VALUES.has(style.overflowX) &&
+        node.scrollWidth > node.clientWidth + 1;
+      return canScrollX || canScrollY;
+    };
+
+    const captureScrollSnapshot = (): ScrollSnapshotEntry[] | null => {
+      if (typeof window === "undefined") {
+        return null;
+      }
+
+      const snapshot: ScrollSnapshotEntry[] = [];
+      const visited = new Set<HTMLElement>();
+      let current: HTMLElement | null = container;
+
+      while (current) {
+        if (!visited.has(current) && isScrollableElement(current)) {
+          visited.add(current);
+          snapshot.push({
+            kind: "element",
+            element: current,
+            top: current.scrollTop,
+            left: current.scrollLeft,
+          });
+        }
+        current = current.parentElement;
+      }
+
+      snapshot.push({
+        kind: "window",
+        top:
+          window.scrollY ??
+          window.pageYOffset ??
+          document.documentElement?.scrollTop ??
+          0,
+        left:
+          window.scrollX ??
+          window.pageXOffset ??
+          document.documentElement?.scrollLeft ??
+          0,
+      });
+
+      return snapshot;
+    };
+
+    const restoreScrollSnapshot = (snapshot: ScrollSnapshotEntry[]) => {
+      if (typeof window === "undefined") {
+        return;
+      }
+
+      for (const entry of snapshot) {
+        if (entry.kind === "window") {
+          window.scrollTo({ top: entry.top, left: entry.left });
+        } else if (entry.element.isConnected) {
+          entry.element.scrollTop = entry.top;
+          entry.element.scrollLeft = entry.left;
+        }
+      }
+    };
+
+    let pendingScrollSnapshot: ScrollSnapshotEntry[] | null = null;
+
+    const handlePointerDown = () => {
+      pendingScrollSnapshot = captureScrollSnapshot();
+    };
+
+    const handleFocusIn = (event: FocusEvent) => {
+      if (!pendingScrollSnapshot || pendingScrollSnapshot.length === 0) {
+        return;
+      }
+
+      if (!container.contains(event.target as Node)) {
+        pendingScrollSnapshot = null;
+        return;
+      }
+
+      if (typeof window === "undefined") {
+        pendingScrollSnapshot = null;
+        return;
+      }
+
+      const snapshot = pendingScrollSnapshot;
+      pendingScrollSnapshot = null;
+
+      window.requestAnimationFrame(() => {
+        restoreScrollSnapshot(snapshot);
+      });
+    };
+
+    container.addEventListener("pointerdown", handlePointerDown, true);
+    container.addEventListener("focusin", handleFocusIn);
+
     const disposables: Array<{ dispose: () => void }> = [];
+    disposables.push({
+      dispose: () => {
+        container.removeEventListener("pointerdown", handlePointerDown, true);
+        container.removeEventListener("focusin", handleFocusIn);
+        pendingScrollSnapshot = null;
+      },
+    });
     const originalVisibility = container.style.visibility;
     const originalTransform = container.style.transform;
     let isContainerVisible = container.style.visibility !== "hidden";
