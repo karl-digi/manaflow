@@ -49,22 +49,17 @@ export function WorkspaceSetupPanel({
     envContent: "",
   });
 
-  // Determine if we have content - if so, default to collapsed
-  const hasContent = useMemo(() => {
-    const hasScript = maintenanceScript.trim().length > 0;
-    const hasEnvVars = envVars.some(
-      (v) => v.name.trim().length > 0 || v.value.trim().length > 0
-    );
-    return hasScript || hasEnvVars;
-  }, [maintenanceScript, envVars]);
+  const hasInitializedFromServerRef = useRef(false);
 
-  const [isExpanded, setIsExpanded] = useState(!hasContent);
+  const [isExpanded, setIsExpanded] = useState(true);
 
   useEffect(() => {
     if (!projectFullName) return;
     setMaintenanceScript("");
     setEnvVars(ensureInitialEnvVars());
     originalConfigRef.current = { script: "", envContent: "" };
+    hasInitializedFromServerRef.current = false;
+    setIsExpanded(true);
   }, [projectFullName]);
 
   useEffect(() => {
@@ -98,10 +93,12 @@ export function WorkspaceSetupPanel({
       envContent: normalizedEnvContent,
     };
 
-    // Set initial expanded state based on content
-    const hasInitialContent =
-      nextScript.trim().length > 0 || parsedEnvVars.length > 0;
-    setIsExpanded(!hasInitialContent);
+    if (!hasInitializedFromServerRef.current) {
+      hasInitializedFromServerRef.current = true;
+      const hasInitialContent =
+        nextScript.trim().length > 0 || parsedEnvVars.length > 0;
+      setIsExpanded(!hasInitialContent);
+    }
   }, [configQuery.data, configQuery.isPending, configQuery.error]);
 
   const updateEnvVars = useCallback(

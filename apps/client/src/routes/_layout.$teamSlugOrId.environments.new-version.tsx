@@ -126,7 +126,6 @@ function NewSnapshotVersionPage() {
       return [];
     }
     return parseEnvBlock(content).map((entry) => ({
-      id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
       name: entry.name,
       value: entry.value,
       isSecret: true,
