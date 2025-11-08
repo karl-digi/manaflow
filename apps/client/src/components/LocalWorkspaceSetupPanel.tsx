@@ -210,15 +210,15 @@ export function LocalWorkspaceSetupPanel({
   }
 
   return (
-    <div className="mt-4 rounded-xl border border-amber-200/50 bg-amber-50/60 px-4 py-4 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
+    <div className="mt-4 rounded-xl border border-blue-200/50 bg-blue-50/60 px-4 py-4 text-sm text-blue-900 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-100">
       <div className="flex flex-col gap-1">
-        <div className="font-medium text-amber-900 dark:text-amber-100">
-          Prepare your local workspace
+        <div className="font-medium text-blue-900 dark:text-blue-100">
+          Configure local workspace
         </div>
-        <p className="text-xs text-amber-900/80 dark:text-amber-200/80">
-          Configure a setup script and environment variables for{" "}
-          <span className="font-semibold">{projectFullName}</span>. We’ll run
-          it automatically every time we create a local workspace.
+        <p className="text-xs text-blue-900/80 dark:text-blue-200/80">
+          Set up scripts and environment variables for{" "}
+          <span className="font-semibold">{projectFullName}</span>. We'll use
+          this configuration when creating local workspaces.
         </p>
       </div>
 
@@ -373,7 +373,7 @@ export function LocalWorkspaceSetupPanel({
             ) : null}
             <button
               type="button"
-              className="inline-flex items-center rounded-md bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-500 disabled:opacity-60"
+              className="inline-flex items-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-60"
               disabled={!hasChanges || saveMutation.isPending}
               onClick={handleSave}
             >

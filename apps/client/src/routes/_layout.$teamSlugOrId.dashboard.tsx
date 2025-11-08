@@ -120,6 +120,9 @@ function DashboardComponent() {
   const [providerStatus, setProviderStatus] =
     useState<ProviderStatusResponse | null>(null);
 
+  // const [hasDismissedCloudRepoOnboarding, setHasDismissedCloudRepoOnboarding] =
+  //   useState<boolean>(false);
+
   // Ref to access editor API
   const editorApiRef = useRef<EditorApi | null>(null);
 
@@ -649,6 +652,25 @@ function DashboardComponent() {
   const shouldShowLocalWorkspaceSetup =
     !!selectedRepoFullName && !isCloudMode && !isEnvSelected;
 
+  // const shouldShowCloudRepoOnboarding =
+  //   !!selectedRepoFullName && isCloudMode && !isEnvSelected && !hasDismissedCloudRepoOnboarding;
+
+  // const createEnvironmentSearch = useMemo(() => {
+  //   if (!selectedRepoFullName) return null;
+  //   return {
+  //     step: "select" as const,
+  //     selectedRepos: [selectedRepoFullName],
+  //     instanceId: undefined,
+  //     connectionLogin: undefined,
+  //     repoSearch: undefined,
+  //     snapshotId: undefined,
+  //   };
+  // }, [selectedRepoFullName]);
+
+  // const handleStartEnvironmentSetup = useCallback(() => {
+  //   setHasDismissedCloudRepoOnboarding(true);
+  // }, []);
+
   const branchOptions = branchNames;
 
   // Cloud mode toggle handler
@@ -907,6 +929,38 @@ function DashboardComponent() {
                 projectFullName={selectedRepoFullName}
               />
             ) : null}
+
+            {/* {shouldShowCloudRepoOnboarding && createEnvironmentSearch ? (
+              <div className="mt-4 mb-4 flex items-start gap-2 rounded-xl border border-green-200/60 dark:border-green-500/40 bg-green-50/80 dark:bg-green-500/10 px-3 py-2 text-sm text-green-900 dark:text-green-100">
+                <Info className="mt-0.5 h-4 w-4 flex-shrink-0 text-green-500 dark:text-green-300" />
+                <div className="flex flex-col gap-1">
+                  <p className="font-medium text-green-900 dark:text-green-100">
+                    Set up an environment for {selectedRepoFullName}
+                  </p>
+                  <p className="text-xs text-green-900/80 dark:text-green-200/80">
+                    Environments let you preconfigure development and maintenance scripts, pre-install packages, and environment variables so cloud workspaces are ready to go the moment they start.
+                  </p>
+                  <div className="flex gap-2 justify-end">
+                    <button
+                      type="button"
+                      onClick={() => setHasDismissedCloudRepoOnboarding(true)}
+                      className="inline-flex items-center rounded-md border border-green-200/60 bg-white/80 px-2 py-1 text-xs font-medium text-green-900/70 hover:bg-white dark:border-green-500/30 dark:bg-green-500/5 dark:text-green-100/80 dark:hover:bg-green-500/15"
+                    >
+                      Dismiss
+                    </button>
+                    <Link
+                      to="/$teamSlugOrId/environments/new"
+                      params={{ teamSlugOrId }}
+                      search={createEnvironmentSearch}
+                      onClick={handleStartEnvironmentSetup}
+                      className="inline-flex items-center rounded-md border border-green-500/60 bg-green-500/10 px-2 py-1 text-xs font-medium text-green-900 dark:text-green-100 hover:bg-green-500/20"
+                    >
+                      Create environment
+                    </Link>
+                  </div>
+                </div>
+              </div>
+            ) : null} */}
 
             {/* Task List */}
             <TaskList teamSlugOrId={teamSlugOrId} />
