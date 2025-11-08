@@ -1266,7 +1266,7 @@ function TaskRunTreeInner({
                     <ChevronRight className="w-3 h-3 ml-auto text-neutral-400 dark:text-neutral-500" />
                   </ContextMenu.SubmenuTrigger>
                   <ContextMenu.Positioner className="outline-none z-[var(--z-context-menu)]">
-                    <ContextMenu.Popup className="origin-[var(--transform-origin)] rounded-md bg-white dark:bg-neutral-800 py-1 text-neutral-900 dark:text-neutral-100 shadow-lg shadow-gray-200 outline-1 outline-neutral-200 transition-[opacity] data-[ending-style]:opacity-0 dark:shadow-none dark:-outline-offset-1 dark:outline-neutral-700 max-w-xs">
+                    <ContextMenu.Popup className="origin-[var(--transform-origin)] rounded-md bg-white dark:bg-neutral-800 py-1 text-neutral-900 dark:text-neutral-100 shadow-lg shadow-gray-200 outline-1 outline-neutral-200 data-[ending-style]:transition-[opacity] data-[ending-style]:opacity-0 dark:shadow-none dark:-outline-offset-1 dark:outline-neutral-700 max-w-xs">
                       <div className="max-h-64 overflow-y-auto">
                         {openWithActions.map((action) => {
                           const Icon = action.Icon;
@@ -1294,7 +1294,7 @@ function TaskRunTreeInner({
                     <ChevronRight className="w-3 h-3 ml-auto text-neutral-400 dark:text-neutral-500" />
                   </ContextMenu.SubmenuTrigger>
                   <ContextMenu.Positioner className="outline-none z-[var(--z-context-menu)]">
-                    <ContextMenu.Popup className="origin-[var(--transform-origin)] rounded-md bg-white dark:bg-neutral-800 py-1 text-neutral-900 dark:text-neutral-100 shadow-lg shadow-gray-200 outline-1 outline-neutral-200 transition-[opacity] data-[ending-style]:opacity-0 dark:shadow-none dark:-outline-offset-1 dark:outline-neutral-700 max-w-xs">
+                    <ContextMenu.Popup className="origin-[var(--transform-origin)] rounded-md bg-white dark:bg-neutral-800 py-1 text-neutral-900 dark:text-neutral-100 shadow-lg shadow-gray-200 outline-1 outline-neutral-200 data-[ending-style]:transition-[opacity] data-[ending-style]:opacity-0 dark:shadow-none dark:-outline-offset-1 dark:outline-neutral-700 max-w-xs">
                       <div className="max-h-64 overflow-y-auto">
                         {portActions.map((port) => (
                           <ContextMenu.Item
