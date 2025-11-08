@@ -74,6 +74,10 @@
       "import": "./src/utils/validate-exposed-ports.ts",
       "types": "./src/utils/validate-exposed-ports.ts"
     },
+    "./editor-settings/constants": {
+      "import": "./src/editor-settings/constants.ts",
+      "types": "./src/editor-settings/constants.ts"
+    },
     "./node/convex-cache": {
       "import": "./src/node/convex-cache.ts",
       "types": "./src/node/convex-cache.ts"

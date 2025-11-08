@@ -5,6 +5,7 @@ import { stackServerAppJs } from "@/lib/utils/stack";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { env } from "@/lib/utils/www-env";
 import { api } from "@cmux/convex/api";
+import { AuthFileSchema } from "@cmux/shared/worker-schemas";
 import { RESERVED_CMUX_PORT_SET } from "@cmux/shared/utils/reserved-cmux-ports";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
@@ -17,6 +18,7 @@ import {
 } from "./sandboxes/git";
 import type { HydrateRepoConfig } from "./sandboxes/hydration";
 import { hydrateWorkspace } from "./sandboxes/hydration";
+import { applyEditorSettingsFiles } from "./sandboxes/editorSettings";
 import { resolveTeamAndSnapshot } from "./sandboxes/snapshot";
 import {
   allocateScriptIdentifiers,
@@ -47,6 +49,8 @@ const StartSandboxBody = z
     branch: z.string().optional(),
     newBranch: z.string().optional(),
     depth: z.number().optional().default(1),
+    authFiles: AuthFileSchema.array().optional(),
+    startupCommands: z.array(z.string()).optional(),
   })
   .openapi("StartSandboxBody");
 
@@ -305,6 +309,13 @@ sandboxesRouter.openapi(
           instance,
           repo: repoConfig,
         });
+
+        if (body.authFiles && body.authFiles.length > 0) {
+          await applyEditorSettingsFiles({
+            instance,
+            files: body.authFiles,
+          });
+        }
       } catch (error) {
         console.error(`[sandboxes.start] Hydration failed:`, error);
         await instance.stop().catch(() => { });

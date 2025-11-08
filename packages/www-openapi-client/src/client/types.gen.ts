@@ -486,6 +486,12 @@ export type StartSandboxBody = {
     branch?: string;
     newBranch?: string;
     depth?: number;
+    authFiles?: Array<{
+        destinationPath: string;
+        contentBase64: string;
+        mode?: string;
+    }>;
+    startupCommands?: Array<string>;
 };
 
 export type UpdateSandboxEnvResponse = {

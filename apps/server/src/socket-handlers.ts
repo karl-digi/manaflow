@@ -47,6 +47,7 @@ import { getPRTitleFromTaskDescription } from "./utils/branchNameGenerator";
 import { getConvex } from "./utils/convexClient";
 import { ensureRunWorktreeAndBranch } from "./utils/ensureRunWorktree";
 import { serverLogger } from "./utils/fileLogger";
+import { getEditorSettingsUpload } from "./utils/editorSettings";
 import { getGitHubTokenFromKeychain } from "./utils/getGitHubToken";
 import { createDraftPr, fetchPrDetail } from "./utils/githubPr";
 import { getOctokit } from "./utils/octokit";
@@ -1030,6 +1031,17 @@ export function setupSocketHandlers(
 
           // Spawn Morph instance via www API
           const { postApiSandboxesStart } = await getWwwOpenApiModule();
+          const editorSettings = await getEditorSettingsUpload();
+
+          if (editorSettings) {
+            serverLogger.info(
+              `[create-cloud-workspace] Including ${editorSettings.authFiles.length} editor files and ${editorSettings.startupCommands.length} startup commands`
+            );
+          } else {
+            serverLogger.info(
+              "[create-cloud-workspace] No editor settings available for this workspace"
+            );
+          }
 
           serverLogger.info(
             environmentId
@@ -1052,6 +1064,12 @@ export function setupSocketHandlers(
               ...(environmentId
                 ? { environmentId }
                 : { projectFullName, repoUrl }),
+              ...(editorSettings
+                ? {
+                    authFiles: editorSettings.authFiles,
+                    startupCommands: editorSettings.startupCommands,
+                  }
+                : {}),
             },
           });
 

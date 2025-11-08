@@ -1,3 +1,13 @@
+import {
+  EXTENSION_INSTALL_SCRIPT_PATH,
+  EXTENSION_LIST_PATH,
+  EXTENSION_PROFILE_HOOK_PATH,
+  OPENVSCODE_EXT_DIR,
+  OPENVSCODE_MACHINE_DIR,
+  OPENVSCODE_PROFILE_DIR,
+  OPENVSCODE_SNIPPETS_DIR,
+  OPENVSCODE_USER_DIR,
+} from "@cmux/shared/editor-settings/constants";
 import type { AuthFile } from "@cmux/shared/worker-schemas";
 import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
@@ -42,17 +52,6 @@ export interface EditorSettingsUpload {
 
 const homeDir = os.homedir();
 const posix = path.posix;
-const OPENVSCODE_USER_DIR = "/root/.openvscode-server/data/User";
-const OPENVSCODE_PROFILE_DIR = posix.join(
-  OPENVSCODE_USER_DIR,
-  "profiles",
-  "default-profile"
-);
-const OPENVSCODE_MACHINE_DIR = "/root/.openvscode-server/data/Machine";
-const OPENVSCODE_SNIPPETS_DIR = posix.join(OPENVSCODE_USER_DIR, "snippets");
-const CMUX_INTERNAL_DIR = "/root/.cmux";
-const EXTENSION_LIST_PATH = posix.join(CMUX_INTERNAL_DIR, "user-extensions.txt");
-const OPENVSCODE_EXT_DIR = "/root/.openvscode-server/extensions";
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 let cachedResult:
@@ -416,7 +415,7 @@ function buildUpload(editor: EditorExport): EditorSettingsUpload | null {
     });
 
     // Create background installation script that auto-executes on shell startup
-    const installScriptPath = "/root/.cmux/install-extensions-background.sh";
+    const installScriptPath = EXTENSION_INSTALL_SCRIPT_PATH;
     const installScript = buildExtensionInstallCommand(EXTENSION_LIST_PATH);
 
     // Create self-contained background installer with lock mechanism
@@ -461,7 +460,7 @@ touch "$LOCK_FILE"
 `;
 
     authFiles.push({
-      destinationPath: "/etc/profile.d/cmux-extensions.sh",
+      destinationPath: EXTENSION_PROFILE_HOOK_PATH,
       contentBase64: encode(profileHook),
       mode: "644",
     });
