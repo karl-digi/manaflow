@@ -9,15 +9,46 @@
  * - deployment events (see github_deployments.ts) - deployment records
  * - status events (see github_commit_statuses.ts) - legacy commit statuses
  */
+import type { WorkflowRunEvent } from "@octokit/webhooks-types";
 import { v } from "convex/values";
 import { getTeamId } from "../_shared/team";
+import { internal } from "./_generated/api";
+import type { Doc } from "./_generated/dataModel";
 import { internalMutation } from "./_generated/server";
 import { authQuery } from "./users/utils";
-import type { WorkflowRunEvent } from "@octokit/webhooks-types";
 
 type WorkflowRunWithCompletedAt = NonNullable<WorkflowRunEvent["workflow_run"]> & {
   completed_at?: string | null;
 };
+
+type WorkflowRunDocInput = Omit<Doc<"githubWorkflowRuns">, "_id">;
+
+const WORKFLOW_RUN_COMPARISON_FIELDS: (keyof WorkflowRunDocInput)[] = [
+  "provider",
+  "installationId",
+  "repositoryId",
+  "repoFullName",
+  "runId",
+  "runNumber",
+  "teamId",
+  "workflowId",
+  "workflowName",
+  "name",
+  "event",
+  "status",
+  "conclusion",
+  "headBranch",
+  "headSha",
+  "htmlUrl",
+  "createdAt",
+  "updatedAt",
+  "runStartedAt",
+  "runCompletedAt",
+  "runDuration",
+  "actorLogin",
+  "actorId",
+  "triggeringPrNumber",
+];
 
 function normalizeTimestamp(
   value: string | number | null | undefined,
@@ -28,6 +59,31 @@ function normalizeTimestamp(
   }
   const parsed = Date.parse(value);
   return Number.isNaN(parsed) ? undefined : parsed;
+}
+
+function comparableTimestamp(
+  doc: WorkflowRunDocInput | Doc<"githubWorkflowRuns">,
+): number {
+  return (
+    doc.runCompletedAt ??
+    doc.updatedAt ??
+    doc.runStartedAt ??
+    doc.createdAt ??
+    0
+  );
+}
+
+function needsWorkflowRunUpdate(
+  existing: Doc<"githubWorkflowRuns">,
+  incoming: WorkflowRunDocInput,
+): boolean {
+  if (comparableTimestamp(incoming) > comparableTimestamp(existing)) {
+    return true;
+  }
+
+  return WORKFLOW_RUN_COMPARISON_FIELDS.some(
+    (field) => existing[field] !== incoming[field],
+  );
 }
 
 export const upsertWorkflowRunFromWebhook = internalMutation({
@@ -104,7 +160,7 @@ export const upsertWorkflowRunFromWebhook = internalMutation({
     }
 
     // Prepare the document
-    const workflowRunDoc = {
+    const workflowRunDoc: WorkflowRunDocInput = {
       provider: "github" as const,
       installationId,
       repositoryId: payload.repository?.id,
@@ -132,30 +188,34 @@ export const upsertWorkflowRunFromWebhook = internalMutation({
     };
 
 
-    // Upsert the workflow run - fetch all matching records to handle duplicates
     const existingRecords = await ctx.db
       .query("githubWorkflowRuns")
       .withIndex("by_runId", (q) => q.eq("runId", runId))
       .collect();
 
-    if (existingRecords.length > 0) {
-      // Update the first record
-      await ctx.db.patch(existingRecords[0]._id, workflowRunDoc);
+    const [primaryRecord, ...duplicateRecords] = existingRecords;
+    const duplicateIds = duplicateRecords.map((record) => record._id);
 
-      // Delete any duplicates
-      if (existingRecords.length > 1) {
-        console.warn("[upsertWorkflowRun] Found duplicates, cleaning up", {
-          runId,
-          count: existingRecords.length,
-          duplicateIds: existingRecords.slice(1).map(r => r._id),
-        });
-        for (const duplicate of existingRecords.slice(1)) {
-          await ctx.db.delete(duplicate._id);
-        }
-      }
-    } else {
-      // Insert new run
+    if (!primaryRecord) {
       await ctx.db.insert("githubWorkflowRuns", workflowRunDoc);
+    } else if (needsWorkflowRunUpdate(primaryRecord, workflowRunDoc)) {
+      await ctx.db.patch(primaryRecord._id, workflowRunDoc);
+    }
+
+    if (duplicateIds.length > 0) {
+      console.warn("[upsertWorkflowRun] Found duplicates, scheduling cleanup", {
+        runId,
+        count: existingRecords.length,
+        duplicateIds,
+      });
+      await ctx.scheduler.runAfter(
+        200,
+        internal.github_workflows.cleanupWorkflowRunDuplicates,
+        {
+          duplicateIds,
+          runId,
+        },
+      );
     }
   },
 });
@@ -197,6 +257,22 @@ export const getWorkflowRuns = authQuery({
 
     const runs = await query.take(limit);
     return runs;
+  },
+});
+
+export const cleanupWorkflowRunDuplicates = internalMutation({
+  args: {
+    runId: v.number(),
+    duplicateIds: v.array(v.id("githubWorkflowRuns")),
+  },
+  handler: async (ctx, args) => {
+    for (const duplicateId of args.duplicateIds) {
+      const duplicate = await ctx.db.get(duplicateId);
+      if (!duplicate) {
+        continue;
+      }
+      await ctx.db.delete(duplicateId);
+    }
   },
 });
 
