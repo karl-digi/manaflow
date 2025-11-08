@@ -1316,7 +1316,7 @@ function TaskRunTreeInner({
                 onClick={handleArchiveRun}
               >
                 <ArchiveIcon className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
-                <span>Archive run</span>
+                <span>Hide run</span>
               </ContextMenu.Item>
             </ContextMenu.Popup>
           </ContextMenu.Positioner>
