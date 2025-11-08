@@ -45,6 +45,7 @@ import { RepositoryManager } from "./repositoryManager";
 import type { GitRepoInfo } from "./server";
 import { getPRTitleFromTaskDescription } from "./utils/branchNameGenerator";
 import { getConvex } from "./utils/convexClient";
+import { getEditorSettingsUpload } from "./utils/editorSettings";
 import { ensureRunWorktreeAndBranch } from "./utils/ensureRunWorktree";
 import { serverLogger } from "./utils/fileLogger";
 import { getGitHubTokenFromKeychain } from "./utils/getGitHubToken";
@@ -1037,6 +1038,8 @@ export function setupSocketHandlers(
               : `[create-cloud-workspace] Starting Morph sandbox for repo ${projectFullName}`
           );
 
+          const editorSettings = await getEditorSettingsUpload();
+
           const startRes = await postApiSandboxesStart({
             client: getWwwClient(),
             body: {
@@ -1049,6 +1052,7 @@ export function setupSocketHandlers(
               taskRunId,
               taskRunJwt,
               isCloudWorkspace: true,
+              ...(editorSettings ? { editorSettings } : {}),
               ...(environmentId
                 ? { environmentId }
                 : { projectFullName, repoUrl }),

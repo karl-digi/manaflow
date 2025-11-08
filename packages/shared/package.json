@@ -34,6 +34,10 @@
       "import": "./src/agentConfig.ts",
       "types": "./src/agentConfig.ts"
     },
+    "./editor-settings": {
+      "import": "./src/editor-settings.ts",
+      "types": "./src/editor-settings.ts"
+    },
     "./terminal-config": {
       "import": "./src/terminal-config.ts",
       "types": "./src/terminal-config.ts"
