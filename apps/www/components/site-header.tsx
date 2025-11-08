@@ -4,7 +4,7 @@ import CmuxLogo from "@/components/logo/cmux-logo";
 import { MacDownloadLink } from "@/components/mac-download-link";
 import type { MacDownloadUrls } from "@/lib/releases";
 import clsx from "clsx";
-import { Download } from "lucide-react";
+import { Download, Github } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
@@ -22,12 +22,41 @@ type SiteHeaderProps = {
   latestVersion?: string | null;
   macDownloadUrls?: MacDownloadUrls;
   extraEndContent?: ReactNode;
+  githubStars?: number | null;
 };
 
 const DEFAULT_DOWNLOAD_URLS: MacDownloadUrls = {
   universal: null,
   arm64: null,
   x64: null,
+};
+
+const CMUX_GITHUB_URL = "https://github.com/manaflow-ai/cmux";
+
+const formatStarCount = (stars?: number | null): string | null => {
+  if (typeof stars !== "number" || !Number.isFinite(stars) || stars < 0) {
+    return null;
+  }
+
+  if (stars < 1000) {
+    return Math.round(stars).toString();
+  }
+
+  const thresholds = [
+    { value: 1_000_000, suffix: "M" },
+    { value: 1_000, suffix: "K" },
+  ] as const;
+
+  for (const { value, suffix } of thresholds) {
+    if (stars >= value) {
+      const compact = (stars / value)
+        .toFixed((stars / value) >= 10 ? 0 : 1)
+        .replace(/\.0$/, "");
+      return `${compact}${suffix}`;
+    }
+  }
+
+  return Math.round(stars).toString();
 };
 
 export function SiteHeader({
@@ -37,9 +66,11 @@ export function SiteHeader({
   latestVersion,
   macDownloadUrls,
   extraEndContent,
+  githubStars,
 }: SiteHeaderProps) {
   const effectiveUrls = macDownloadUrls ?? DEFAULT_DOWNLOAD_URLS;
   const [isScrolled, setIsScrolled] = useState(false);
+  const formattedStars = formatStarCount(githubStars);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -89,7 +120,7 @@ export function SiteHeader({
           </Link> */}
           <a
             className="text-neutral-300 transition hover:text-white"
-            href="https://github.com/manaflow-ai/cmux"
+            href={CMUX_GITHUB_URL}
             rel="noopener noreferrer"
             target="_blank"
           >
@@ -106,6 +137,24 @@ export function SiteHeader({
         </nav>
         <div className="flex items-center gap-3">
           {extraEndContent}
+          <a
+            className="hidden items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-mono text-neutral-100 transition hover:border-white/30 hover:bg-white/10 md:inline-flex"
+            href={CMUX_GITHUB_URL}
+            rel="noopener noreferrer"
+            target="_blank"
+            aria-label={
+              formattedStars
+                ? `View cmux on GitHub (${formattedStars} stars)`
+                : "View cmux on GitHub"
+            }
+          >
+            <Github className="h-4 w-4" aria-hidden />
+            <span className="flex items-center gap-1 tabular-nums">
+              <span>GitHub</span>
+              <span className="text-neutral-500">|</span>
+              <span>{formattedStars ?? "Star us"}</span>
+            </span>
+          </a>
           {showDownload ? (
             <MacDownloadLink
               autoDetect
