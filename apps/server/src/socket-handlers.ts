@@ -53,6 +53,7 @@ import { getOctokit } from "./utils/octokit";
 import { checkAllProvidersStatus } from "./utils/providerStatus";
 import { refreshGitHubData } from "./utils/refreshGitHubData";
 import { runWithAuth, runWithAuthToken } from "./utils/requestContext";
+import { syncEditorSettingsToWorker } from "./utils/editorSettingsSync";
 import { getWwwClient } from "./utils/wwwClient";
 import { getWwwOpenApiModule } from "./utils/wwwOpenApiModule";
 import { DockerVSCodeInstance } from "./vscode/DockerVSCodeInstance";
@@ -1062,11 +1063,31 @@ export function setupSocketHandlers(
 
           const sandboxId = data.instanceId;
           const vscodeBaseUrl = data.vscodeUrl;
+          const workerUrl = data.workerUrl;
           const workspaceUrl = `${vscodeBaseUrl}?folder=/root/workspace`;
 
           serverLogger.info(
             `[create-cloud-workspace] Sandbox started: ${sandboxId}, VSCode URL: ${workspaceUrl}`
           );
+
+          if (workerUrl) {
+            syncEditorSettingsToWorker({
+              workerUrl,
+              taskRunId,
+              taskRunJwt,
+              context: "cloud-workspace",
+              prompt: "Sync VSCode settings and extensions",
+            }).catch((error) => {
+              serverLogger.warn(
+                `[create-cloud-workspace] Failed to sync VSCode settings for ${taskRunId}`,
+                error
+              );
+            });
+          } else {
+            serverLogger.warn(
+              "[create-cloud-workspace] Missing worker URL; skipping VSCode settings sync"
+            );
+          }
 
           // For cloud workspaces, update VSCode instance immediately with the URL
           // No need to wait for VSCode readiness - the frontend will handle loading states
