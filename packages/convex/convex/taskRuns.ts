@@ -68,6 +68,100 @@ function normalizePullRequestRecords(
   }));
 }
 
+function sanitizeRepoFullName(repoFullName: string): string {
+  return repoFullName.trim();
+}
+
+function normalizeRepoKey(repoFullName: string): string {
+  return sanitizeRepoFullName(repoFullName).toLowerCase();
+}
+
+function upsertPullRequestRecord(
+  existing: readonly StoredPullRequestInfo[] | undefined,
+  repoFullName: string,
+  update: {
+    state?: StoredPullRequestInfo["state"];
+    url?: string;
+    number?: number;
+    isDraft?: boolean;
+  },
+): StoredPullRequestInfo[] {
+  const sanitizedName = sanitizeRepoFullName(repoFullName);
+  const targetKey = normalizeRepoKey(repoFullName);
+  let seen = false;
+  const nextRecords = (existing ?? []).map((record) => {
+    if (normalizeRepoKey(record.repoFullName) !== targetKey) {
+      return record;
+    }
+    seen = true;
+    return {
+      ...record,
+      repoFullName: sanitizedName,
+      ...(update.state ? { state: update.state } : {}),
+      ...(update.url !== undefined ? { url: update.url } : {}),
+      ...(update.number !== undefined ? { number: update.number } : {}),
+      ...(update.isDraft !== undefined ? { isDraft: update.isDraft } : {}),
+    };
+  });
+  if (!seen) {
+    nextRecords.push({
+      repoFullName: sanitizedName,
+      state: update.state ?? "unknown",
+      url: update.url,
+      number: update.number,
+      isDraft:
+        update.isDraft ??
+        (update.state ? update.state === "draft" : undefined),
+    });
+  }
+  return nextRecords;
+}
+
+function extractRepoFullNameFromUrl(
+  url?: string | null,
+): string | undefined {
+  if (!url) return undefined;
+  try {
+    const parsed = new URL(url);
+    const segments = parsed.pathname.split("/").filter(Boolean);
+    if (segments.length >= 2) {
+      return `${segments[0]}/${segments[1]}`;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+function runMatchesRepo(
+  run: Doc<"taskRuns">,
+  task: Doc<"tasks"> | null,
+  repoKey: string,
+): boolean {
+  if (!repoKey) return false;
+  const records = run.pullRequests ?? [];
+  if (
+    records.some(
+      (record) =>
+        record.repoFullName &&
+        normalizeRepoKey(record.repoFullName) === repoKey,
+    )
+  ) {
+    return true;
+  }
+  if (
+    task?.projectFullName &&
+    normalizeRepoKey(task.projectFullName) === repoKey
+  ) {
+    return true;
+  }
+  const derived = extractRepoFullNameFromUrl(run.pullRequestUrl);
+  if (derived && normalizeRepoKey(derived) === repoKey) {
+    return true;
+  }
+  return false;
+}
+
 function deriveGeneratedBranchName(branch?: string | null): string | undefined {
   if (!branch) return undefined;
   const trimmed = branch.trim();
@@ -955,6 +1049,20 @@ export const listByTaskAndTeamInternal = internalQuery({
   },
 });
 
+export const listByTeamAndPullRequestNumberInternal = internalQuery({
+  args: { teamId: v.string(), pullRequestNumber: v.number() },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("taskRuns")
+      .withIndex("by_team_pull_request", (q) =>
+        q
+          .eq("teamId", args.teamId)
+          .eq("pullRequestNumber", args.pullRequestNumber),
+      )
+      .collect();
+  },
+});
+
 export const workerComplete = internalMutation({
   args: {
     taskRunId: v.id("taskRuns"),
@@ -1237,6 +1345,73 @@ export const updatePullRequestState = authMutation({
           : updates.pullRequestNumber;
     }
     await ctx.db.patch(args.id, updates);
+  },
+});
+
+export const updatePullRequestStateInternal = internalMutation({
+  args: {
+    taskRunId: v.id("taskRuns"),
+    repoFullName: v.string(),
+    state: v.union(
+      v.literal("none"),
+      v.literal("draft"),
+      v.literal("open"),
+      v.literal("merged"),
+      v.literal("closed"),
+      v.literal("unknown"),
+    ),
+    isDraft: v.optional(v.boolean()),
+    number: v.optional(v.number()),
+    url: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.taskRunId);
+    if (!run) {
+      return { updated: false as const };
+    }
+    const task = await ctx.db.get(run.taskId);
+    const repoKey = normalizeRepoKey(args.repoFullName);
+    if (!runMatchesRepo(run, task, repoKey)) {
+      return { updated: false as const };
+    }
+    const nextRecords = upsertPullRequestRecord(
+      run.pullRequests,
+      args.repoFullName,
+      {
+        state: args.state,
+        url: args.url ?? run.pullRequestUrl,
+        number: args.number ?? run.pullRequestNumber,
+        isDraft: args.isDraft,
+      },
+    );
+    const aggregate = aggregatePullRequestState(nextRecords);
+    const now = Date.now();
+    const updates: Partial<Doc<"taskRuns">> = {
+      pullRequests: nextRecords,
+      pullRequestState: aggregate.state,
+      pullRequestIsDraft: aggregate.isDraft,
+      updatedAt: now,
+    };
+    if (aggregate.url !== undefined) {
+      updates.pullRequestUrl = aggregate.url;
+    }
+    if (aggregate.number !== undefined) {
+      updates.pullRequestNumber = aggregate.number;
+    }
+    await ctx.db.patch(args.taskRunId, updates);
+    if (task) {
+      await ctx.db.patch(task._id, {
+        mergeStatus: aggregate.mergeStatus,
+        updatedAt: now,
+      });
+    }
+    return {
+      updated: true as const,
+      taskRunId: args.taskRunId,
+      taskId: task?._id ?? null,
+      mergeStatus: aggregate.mergeStatus,
+      pullRequestState: aggregate.state,
+    };
   },
 });
 

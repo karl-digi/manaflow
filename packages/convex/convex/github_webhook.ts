@@ -15,7 +15,7 @@ import { hmacSha256, safeEqualHex, sha256Hex } from "../_shared/crypto";
 import { bytesToHex } from "../_shared/encoding";
 import { streamInstallationRepositories } from "../_shared/githubApp";
 import { internal } from "./_generated/api";
-import { httpAction } from "./_generated/server";
+import { httpAction, type ActionCtx } from "./_generated/server";
 
 const DEBUG_FLAGS = {
   githubWebhook: false, // set true to emit verbose push diagnostics
@@ -58,6 +58,66 @@ function normalizeTimestamp(
     return parsed;
   }
   return undefined;
+}
+
+async function syncMergedPullRequestState(
+  ctx: ActionCtx,
+  params: {
+    teamId: string;
+    repoFullName: string;
+    prNumber: number;
+    prUrl?: string;
+  },
+) {
+  const { teamId, repoFullName, prNumber, prUrl } = params;
+  if (!teamId || !repoFullName || !prNumber) {
+    return;
+  }
+  try {
+    const runs = await ctx.runQuery(
+      internal.taskRuns.listByTeamAndPullRequestNumberInternal,
+      {
+        teamId,
+        pullRequestNumber: prNumber,
+      },
+    );
+    if (runs.length === 0) {
+      return;
+    }
+    for (const run of runs) {
+      try {
+        await ctx.runMutation(internal.taskRuns.updatePullRequestStateInternal, {
+          taskRunId: run._id,
+          repoFullName,
+          state: "merged",
+          number: prNumber,
+          url: prUrl,
+          isDraft: false,
+        });
+      } catch (error) {
+        console.error(
+          "[github_webhook] Failed to apply merged PR state to task run",
+          {
+            teamId,
+            repoFullName,
+            prNumber,
+            taskRunId: run._id,
+            error,
+          },
+        );
+      }
+    }
+  } catch (error) {
+    console.error(
+      "[github_webhook] Failed to enumerate task runs for merged PR",
+      {
+        teamId,
+        repoFullName,
+        prNumber,
+        error,
+      },
+    );
+  }
 }
 
 export const githubWebhook = httpAction(async (_ctx, req) => {
@@ -498,6 +558,25 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
             teamId,
             payload: prPayload,
           });
+
+          if (
+            prPayload.action === "closed" &&
+            prPayload.pull_request?.merged
+          ) {
+            const prNumber = Number(prPayload.pull_request?.number ?? 0);
+            const prUrl =
+              typeof prPayload.pull_request?.html_url === "string"
+                ? prPayload.pull_request.html_url
+                : undefined;
+            if (prNumber > 0) {
+              await syncMergedPullRequestState(_ctx, {
+                teamId,
+                repoFullName,
+                prNumber,
+                prUrl,
+              });
+            }
+          }
 
           // Add eyes emoji reaction when a new PR is opened
           if (

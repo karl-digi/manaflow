@@ -283,6 +283,7 @@ const convexSchema = defineSchema({
     ),
   })
     .index("by_task", ["taskId", "createdAt"])
+    .index("by_team_pull_request", ["teamId", "pullRequestNumber"])
     .index("by_parent", ["parentRunId"])
     .index("by_status", ["status"])
     .index("by_vscode_status", ["vscode.status"])
