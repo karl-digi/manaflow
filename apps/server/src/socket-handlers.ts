@@ -763,9 +763,12 @@ export function setupSocketHandlers(
               .catch(() => undefined);
           };
 
-          const applyLocalWorkspaceConfigIfPresent = async () => {
+          // Write env variables synchronously (fast, doesn't block)
+          const writeEnvVariablesIfPresent = async (): Promise<
+            Record<string, string>
+          > => {
             if (!workspaceConfig || !taskRunId) {
-              return;
+              return {};
             }
 
             const envVarsContent = workspaceConfig.envVarsContent ?? "";
@@ -792,6 +795,9 @@ export function setupSocketHandlers(
                   encoding: "utf8",
                   mode: 0o600,
                 });
+                serverLogger.info(
+                  `[create-local-workspace] Wrote env vars to ${envFile}`
+                );
               } catch (error) {
                 serverLogger.warn(
                   "[create-local-workspace] Failed to write saved env vars to disk",
@@ -803,67 +809,87 @@ export function setupSocketHandlers(
               }
             }
 
+            return parsedEnvVars;
+          };
+
+          // Run maintenance script asynchronously in background (doesn't block VSCode loading)
+          const runMaintenanceScriptAsync = (
+            parsedEnvVars: Record<string, string>
+          ) => {
+            if (!workspaceConfig || !taskRunId) {
+              return;
+            }
+
             const maintenanceScript =
               workspaceConfig.maintenanceScript?.trim() ?? "";
             if (!maintenanceScript) {
               return;
             }
 
-            serverLogger.info(
-              `[create-local-workspace] Running local maintenance script for ${workspaceName}`
-            );
+            // Fire and forget - run in background without blocking
+            void (async () => {
+              serverLogger.info(
+                `[create-local-workspace] Running local maintenance script for ${workspaceName} in background`
+              );
 
-            const scriptPreamble = "set -euo pipefail";
-            const maintenancePayload = `${scriptPreamble}\n${maintenanceScript}`;
+              const scriptPreamble = "set -euo pipefail";
+              const maintenancePayload = `${scriptPreamble}\n${maintenanceScript}`;
 
-            try {
-              await execFileAsync("zsh", ["-lc", maintenancePayload], {
-                cwd: resolvedWorkspacePath,
-                env: {
-                  ...process.env,
-                  ...parsedEnvVars,
-                },
-                maxBuffer: 10 * 1024 * 1024,
-              });
-              await convex.mutation(api.taskRuns.updateEnvironmentError, {
-                teamSlugOrId,
-                id: taskRunId,
-                maintenanceError: undefined,
-                devError: undefined,
-              });
-            } catch (error) {
-              const stderr =
-                error &&
-                typeof error === "object" &&
-                "stderr" in error &&
-                typeof (error as { stderr?: unknown }).stderr === "string"
-                  ? (error as { stderr?: string }).stderr?.trim() ?? ""
-                  : "";
-              const stdout =
-                error &&
-                typeof error === "object" &&
-                "stdout" in error &&
-                typeof (error as { stdout?: unknown }).stdout === "string"
-                  ? (error as { stdout?: string }).stdout?.trim() ?? ""
-                  : "";
-              const baseMessage =
-                stderr ||
-                stdout ||
-                (error instanceof Error ? error.message : String(error));
+              try {
+                await execFileAsync("zsh", ["-lc", maintenancePayload], {
+                  cwd: resolvedWorkspacePath,
+                  env: {
+                    ...process.env,
+                    ...parsedEnvVars,
+                  },
+                  maxBuffer: 10 * 1024 * 1024,
+                });
+                await convex.mutation(api.taskRuns.updateEnvironmentError, {
+                  teamSlugOrId,
+                  id: taskRunId,
+                  maintenanceError: undefined,
+                  devError: undefined,
+                });
+                serverLogger.info(
+                  `[create-local-workspace] Maintenance script completed successfully for ${workspaceName}`
+                );
+              } catch (error) {
+                const stderr =
+                  error &&
+                  typeof error === "object" &&
+                  "stderr" in error &&
+                  typeof (error as { stderr?: unknown }).stderr === "string"
+                    ? (error as { stderr?: string }).stderr?.trim() ?? ""
+                    : "";
+                const stdout =
+                  error &&
+                  typeof error === "object" &&
+                  "stdout" in error &&
+                  typeof (error as { stdout?: unknown }).stdout === "string"
+                    ? (error as { stdout?: string }).stdout?.trim() ?? ""
+                    : "";
+                const baseMessage =
+                  stderr ||
+                  stdout ||
+                  (error instanceof Error ? error.message : String(error));
 
-              const maintenanceErrorMessage = baseMessage
-                ? `Maintenance script failed: ${baseMessage}`
-                : "Maintenance script failed";
+                const maintenanceErrorMessage = baseMessage
+                  ? `Maintenance script failed: ${baseMessage}`
+                  : "Maintenance script failed";
 
-              await convex.mutation(api.taskRuns.updateEnvironmentError, {
-                teamSlugOrId,
-                id: taskRunId,
-                maintenanceError: maintenanceErrorMessage,
-                devError: undefined,
-              });
+                serverLogger.error(
+                  `[create-local-workspace] ${maintenanceErrorMessage}`,
+                  error
+                );
 
-              throw new Error(maintenanceErrorMessage);
-            }
+                await convex.mutation(api.taskRuns.updateEnvironmentError, {
+                  teamSlugOrId,
+                  id: taskRunId,
+                  maintenanceError: maintenanceErrorMessage,
+                  devError: undefined,
+                });
+              }
+            })();
           };
 
           const baseServeWebUrl =
@@ -990,7 +1016,8 @@ export function setupSocketHandlers(
             });
           }
 
-          await applyLocalWorkspaceConfigIfPresent();
+          // Write env variables immediately (fast, doesn't block)
+          const parsedEnvVars = await writeEnvVariablesIfPresent();
 
           await convex.mutation(api.taskRuns.updateWorktreePath, {
             teamSlugOrId,
@@ -1009,6 +1036,9 @@ export function setupSocketHandlers(
             id: taskRunId,
             status: "running",
           });
+
+          // Run maintenance script in background after status updates (doesn't block)
+          runMaintenanceScriptAsync(parsedEnvVars);
 
           try {
             void gitDiffManager.watchWorkspace(
