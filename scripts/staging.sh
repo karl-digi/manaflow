@@ -7,6 +7,72 @@ CLIENT_DIR="$ROOT_DIR/apps/client"
 APP_PROCESS_PATTERN="cmux-staging"
 APP_BUNDLE_ID="com.cmux.app"
 
+get_current_branch_name() {
+  local branch
+  if branch=$(git -C "$ROOT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null) && [[ "$branch" != "HEAD" ]]; then
+    echo "$branch"
+    return
+  fi
+
+  if branch=$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null); then
+    echo "$branch"
+    return
+  fi
+
+  echo "unknown"
+}
+
+sanitize_branch_name() {
+  local name="${1:-unknown}"
+  local normalized
+  normalized="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | tr -c '[:alnum:]-' '-')"
+  normalized="$(printf '%s\n' "$normalized" | sed -E 's/-+/-/g; s/^-//; s/-$//')"
+  if [[ -z "$normalized" ]]; then
+    normalized="unknown"
+  fi
+  echo "$normalized"
+}
+
+get_app_name_limit() {
+  # Desktop filesystems (APFS, ext4, NTFS) cap individual path components at 255 bytes.
+  case "$(uname -s)" in
+    Darwin|Linux) echo 255 ;;
+    CYGWIN*|MINGW*|MSYS*|Windows_NT) echo 255 ;;
+    *) echo 255 ;;
+  esac
+}
+
+build_app_name() {
+  local base="$1"
+  local branch_suffix="$2"
+  local limit
+  limit="$(get_app_name_limit)"
+
+  local candidate="$base"
+  if [[ -n "$branch_suffix" ]]; then
+    candidate="$base-$branch_suffix"
+  fi
+
+  if (( ${#candidate} <= limit )); then
+    echo "$candidate"
+    return
+  fi
+
+  if [[ -n "$branch_suffix" ]]; then
+    local available=$((limit - ${#base} - 1))
+    if (( available > 0 )); then
+      local trimmed_branch="${branch_suffix:0:available}"
+      trimmed_branch="$(printf '%s\n' "$trimmed_branch" | sed -E 's/-+$//')"
+      if [[ -n "$trimmed_branch" ]]; then
+        echo "${base}-${trimmed_branch}"
+        return
+      fi
+    fi
+  fi
+
+  echo "${base:0:limit}"
+}
+
 wait_for_process_exit() {
   local pattern="$1"
   local timeout="${2:-10}"
@@ -73,7 +139,11 @@ else
   exit 1
 fi
 
+CURRENT_BRANCH="$(get_current_branch_name)"
+SANITIZED_BRANCH="$(sanitize_branch_name "$CURRENT_BRANCH")"
+APP_NAME="$(build_app_name "cmux-staging" "$SANITIZED_BRANCH")"
+
 stop_staging_app_instances "$APP_PROCESS_PATTERN" "$APP_BUNDLE_ID"
 
-echo "==> Building cmux-staging with env file: $ENV_FILE"
-(cd "$CLIENT_DIR" && CMUX_APP_NAME="cmux-staging" bun run --env-file "$ENV_FILE" build:mac:workaround)
+echo "==> Building $APP_NAME with env file: $ENV_FILE"
+(cd "$CLIENT_DIR" && CMUX_APP_NAME="$APP_NAME" bun run --env-file "$ENV_FILE" build:mac:workaround)
