@@ -82,7 +82,8 @@ bunx electron-vite build -c electron.vite.config.ts
 
 # Create a temporary directory for packaging
 TEMP_DIR=$(mktemp -d)
-APP_NAME="cmux"
+# Allow staging scripts to tweak the final .app name without editing this file.
+APP_NAME="${CMUX_APP_NAME:-cmux}"
 APP_DIR="$TEMP_DIR/$APP_NAME.app"
 APP_VERSION=$(node -e "const fs = require('node:fs'); const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')); if (!pkg.version) { process.exit(1); } process.stdout.write(String(pkg.version));")
 if [ -z "$APP_VERSION" ]; then
