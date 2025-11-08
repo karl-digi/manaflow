@@ -21,6 +21,7 @@ import {
   useLocalVSCodeServeWebQuery,
 } from "@/queries/local-vscode-serve-web";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
+import { isElectron } from "@/lib/electron";
 
 const paramsSchema = z.object({
   taskId: typedZid("tasks"),
@@ -129,6 +130,42 @@ function VSCodeComponent() {
   );
 
   const isEditorBusy = !hasWorkspace || iframeStatus !== "loaded";
+  const focusWorkspaceIframe = useCallback(() => {
+    if (!isElectron || typeof document === "undefined") {
+      return;
+    }
+    const wrapper = document.querySelector<HTMLDivElement>(
+      `[data-iframe-key="${persistKey}"]`
+    );
+    const iframe = wrapper?.querySelector<HTMLIFrameElement>("iframe");
+    iframe?.contentWindow?.focus();
+    iframe?.focus();
+  }, [persistKey]);
+
+  useEffect(() => {
+    if (!isElectron || typeof window === "undefined") {
+      return;
+    }
+    const handleFocus = () => {
+      focusWorkspaceIframe();
+    };
+    window.addEventListener("focus", handleFocus);
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, [focusWorkspaceIframe]);
+
+  useEffect(() => {
+    if (
+      !isElectron ||
+      typeof document === "undefined" ||
+      iframeStatus !== "loaded" ||
+      !document.hasFocus()
+    ) {
+      return;
+    }
+    focusWorkspaceIframe();
+  }, [focusWorkspaceIframe, iframeStatus]);
 
   return (
     <div className="flex flex-col grow bg-neutral-50 dark:bg-black">
