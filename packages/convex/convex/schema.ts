@@ -97,6 +97,8 @@ const convexSchema = defineSchema({
     isArchived: v.optional(v.boolean()),
     isLocalWorkspace: v.optional(v.boolean()),
     isCloudWorkspace: v.optional(v.boolean()),
+    isPinned: v.optional(v.boolean()),
+    pinnedAt: v.optional(v.number()),
     description: v.optional(v.string()),
     pullRequestTitle: v.optional(v.string()),
     pullRequestDescription: v.optional(v.string()),
@@ -175,6 +177,8 @@ const convexSchema = defineSchema({
       v.literal("failed")
     ),
     isArchived: v.optional(v.boolean()), // Whether this run is hidden from default views
+    isPinned: v.optional(v.boolean()),
+    pinnedAt: v.optional(v.number()),
     isLocalWorkspace: v.optional(v.boolean()),
     isCloudWorkspace: v.optional(v.boolean()),
     // Optional log retained for backward compatibility; no longer written to.

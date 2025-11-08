@@ -235,7 +235,19 @@ async function fetchTaskRunsForTask(
 
   const sortRuns = (items: TaskRunWithChildren[]) => {
     items.sort((a, b) => {
-      // Sort crowned runs first, then by creation time
+      const aIsPinned = a.isPinned ?? false;
+      const bIsPinned = b.isPinned ?? false;
+
+      // Pinned items come first
+      if (aIsPinned && !bIsPinned) return -1;
+      if (!aIsPinned && bIsPinned) return 1;
+
+      // Both pinned: sort by pinnedAt desc (most recently pinned first)
+      if (aIsPinned && bIsPinned) {
+        return (b.pinnedAt ?? 0) - (a.pinnedAt ?? 0);
+      }
+
+      // Both unpinned: sort crowned runs first, then by creation time
       if (a.isCrowned && !b.isCrowned) return -1;
       if (!a.isCrowned && b.isCrowned) return 1;
       return a.createdAt - b.createdAt;
@@ -1509,5 +1521,27 @@ export const getRunningContainersByCleanupPriority = authQuery({
       ],
       protectedCount: containersToKeepIds.size,
     };
+  },
+});
+
+export const togglePin = authMutation({
+  args: { teamSlugOrId: v.string(), id: v.id("taskRuns") },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const taskRun = await ctx.db.get(args.id);
+    if (
+      taskRun === null ||
+      taskRun.teamId !== teamId ||
+      taskRun.userId !== userId
+    ) {
+      throw new Error("Task run not found or unauthorized");
+    }
+    const isPinned = !taskRun.isPinned;
+    await ctx.db.patch(args.id, {
+      isPinned,
+      pinnedAt: isPinned ? Date.now() : undefined,
+      updatedAt: Date.now(),
+    });
   },
 });

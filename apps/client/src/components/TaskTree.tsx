@@ -45,6 +45,8 @@ import {
   Globe,
   Monitor,
   Pencil,
+  Pin,
+  PinOff,
   TerminalSquare,
   Loader2,
   XCircle,
@@ -447,6 +449,20 @@ function TaskTreeInner({
     unarchive(task._id);
   }, [unarchive, task._id]);
 
+  const toggleTaskPin = useMutation(api.tasks.togglePin);
+
+  const handleTogglePin = useCallback(async () => {
+    try {
+      await toggleTaskPin({
+        teamSlugOrId,
+        id: task._id,
+      });
+    } catch (error) {
+      console.error(error);
+      toast.error("Failed to pin/unpin task");
+    }
+  }, [toggleTaskPin, teamSlugOrId, task._id]);
+
   const inferredBranch = getTaskBranch(task);
   const trimmedTaskText = (task.text ?? "").trim();
   const trimmedPullRequestTitle = task.pullRequestTitle?.trim();
@@ -506,6 +522,17 @@ function TaskTreeInner({
   const isCloudWorkspace = task.isCloudWorkspace;
 
   const taskLeadingIcon = (() => {
+    if (task.isPinned) {
+      return (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Pin className="w-3 h-3 text-blue-500 fill-blue-500" />
+          </TooltipTrigger>
+          <TooltipContent side="right">Pinned</TooltipContent>
+        </Tooltip>
+      );
+    }
+
     if (isCrownEvaluating) {
       return (
         <Tooltip delayDuration={0}>
@@ -675,6 +702,23 @@ function TaskTreeInner({
                 >
                   <CopyIcon className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
                   <span>Copy Description</span>
+                </ContextMenu.Item>
+                <div className="my-1 h-px bg-neutral-200 dark:bg-neutral-700" />
+                <ContextMenu.Item
+                  className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                  onClick={handleTogglePin}
+                >
+                  {task.isPinned ? (
+                    <>
+                      <PinOff className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
+                      <span>Unpin Task</span>
+                    </>
+                  ) : (
+                    <>
+                      <Pin className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
+                      <span>Pin Task</span>
+                    </>
+                  )}
                 </ContextMenu.Item>
                 <ContextMenu.SubmenuRoot>
                   <ContextMenu.SubmenuTrigger className="flex items-center gap-2 cursor-default py-1.5 pr-4 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700">
@@ -1021,6 +1065,20 @@ function TaskRunTreeInner({
     onArchiveToggle(run._id, true);
   }, [onArchiveToggle, run._id]);
 
+  const toggleRunPin = useMutation(api.taskRuns.togglePin);
+
+  const handleToggleRunPin = useCallback(async () => {
+    try {
+      await toggleRunPin({
+        teamSlugOrId,
+        id: run._id,
+      });
+    } catch (error) {
+      console.error(error);
+      toast.error("Failed to pin/unpin task run");
+    }
+  }, [toggleRunPin, teamSlugOrId, run._id]);
+
   const isLocalWorkspaceRunEntry = run.isLocalWorkspace;
   const isCloudWorkspaceRunEntry = run.isCloudWorkspace;
 
@@ -1123,6 +1181,15 @@ function TaskRunTreeInner({
 
   const runLeadingIcon = pullRequestIcon ?? statusIconWithTooltip;
 
+  const pinIcon = run.isPinned ? (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Pin className="w-3 h-3 text-blue-500 fill-blue-500" />
+      </TooltipTrigger>
+      <TooltipContent side="right">Pinned</TooltipContent>
+    </Tooltip>
+  ) : null;
+
   const crownIcon = run.isCrowned ? (
     <Tooltip delayDuration={0}>
       <TooltipTrigger asChild>
@@ -1145,14 +1212,18 @@ function TaskRunTreeInner({
     </Tooltip>
   ) : null;
 
-  const leadingContent = crownIcon ? (
-    <div className="flex items-center gap-1">
-      {crownIcon}
-      {runLeadingIcon}
-    </div>
-  ) : (
-    runLeadingIcon
-  );
+  const leadingContent = (() => {
+    const icons = [pinIcon, crownIcon, runLeadingIcon].filter(Boolean);
+    if (icons.length === 0) return null;
+    if (icons.length === 1) return icons[0];
+    return (
+      <div className="flex items-center gap-1">
+        {icons.map((icon, idx) => (
+          <Fragment key={idx}>{icon}</Fragment>
+        ))}
+      </div>
+    );
+  })();
 
   // Generate VSCode URL if available
   const hasActiveVSCode = run.vscode?.status === "running";
@@ -1311,12 +1382,41 @@ function TaskRunTreeInner({
                   </ContextMenu.Positioner>
                 </ContextMenu.SubmenuRoot>
               ) : null}
+              <div className="my-1 h-px bg-neutral-200 dark:bg-neutral-700" />
+              <ContextMenu.Item
+                className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                onClick={handleToggleRunPin}
+              >
+                {run.isPinned ? (
+                  <>
+                    <PinOff className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
+                    <span>Unpin run</span>
+                  </>
+                ) : (
+                  <>
+                    <Pin className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
+                    <span>Pin run</span>
+                  </>
+                )}
+              </ContextMenu.Item>
               <ContextMenu.Item
                 className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
                 onClick={handleArchiveRun}
               >
                 <ArchiveIcon className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
                 <span>Archive run</span>
+              </ContextMenu.Item>
+              <div className="my-1 h-px bg-neutral-200 dark:bg-neutral-700" />
+              <ContextMenu.Item asChild>
+                <Link
+                  to="/$teamSlugOrId/task/$taskId"
+                  params={{ teamSlugOrId, taskId }}
+                  search={{ runId: undefined }}
+                  className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                >
+                  <ChevronRight className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300 rotate-180" />
+                  <span>Jump to Task</span>
+                </Link>
               </ContextMenu.Item>
             </ContextMenu.Popup>
           </ContextMenu.Positioner>

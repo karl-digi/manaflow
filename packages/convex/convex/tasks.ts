@@ -33,8 +33,24 @@ export const get = authQuery({
     }
 
     // Note: order by createdAt desc, fallback to insertion order if not present
+    // Pinned tasks should always appear at the top, sorted by pinnedAt desc
     const results = await q.collect();
-    return results.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+    return results.sort((a, b) => {
+      const aIsPinned = a.isPinned ?? false;
+      const bIsPinned = b.isPinned ?? false;
+
+      // Pinned items come first
+      if (aIsPinned && !bIsPinned) return -1;
+      if (!aIsPinned && bIsPinned) return 1;
+
+      // Both pinned: sort by pinnedAt desc (most recently pinned first)
+      if (aIsPinned && bIsPinned) {
+        return (b.pinnedAt ?? 0) - (a.pinnedAt ?? 0);
+      }
+
+      // Both unpinned: sort by createdAt desc
+      return (b.createdAt ?? 0) - (a.createdAt ?? 0);
+    });
   },
 });
 
@@ -775,5 +791,23 @@ export const getByIdInternal = internalQuery({
   args: { id: v.id("tasks") },
   handler: async (ctx, args) => {
     return await ctx.db.get(args.id);
+  },
+});
+
+export const togglePin = authMutation({
+  args: { teamSlugOrId: v.string(), id: v.id("tasks") },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const task = await ctx.db.get(args.id);
+    if (task === null || task.teamId !== teamId || task.userId !== userId) {
+      throw new Error("Task not found or unauthorized");
+    }
+    const isPinned = !task.isPinned;
+    await ctx.db.patch(args.id, {
+      isPinned,
+      pinnedAt: isPinned ? Date.now() : undefined,
+      updatedAt: Date.now(),
+    });
   },
 });
