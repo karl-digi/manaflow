@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
 import * as Dialog from "@radix-ui/react-dialog";
 import { ChevronLeft, ChevronRight, Maximize2, X } from "lucide-react";
@@ -98,6 +98,11 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
   }, [flattenedImages]);
 
   const [activeImageKey, setActiveImageKey] = useState<string | null>(null);
+  const [zoomLevel, setZoomLevel] = useState(1);
+  const [isPanning, setIsPanning] = useState(false);
+  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+  const [startPanPoint, setStartPanPoint] = useState({ x: 0, y: 0 });
+  const imageContainerRef = useRef<HTMLDivElement>(null);
 
   const activeImageIndex =
     activeImageKey !== null ? globalIndexByKey.get(activeImageKey) ?? null : null;
@@ -128,6 +133,8 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
 
   const closeSlideshow = useCallback(() => {
     setActiveImageKey(null);
+    setZoomLevel(1);
+    setPanOffset({ x: 0, y: 0 });
   }, []);
 
   const goNext = useCallback(() => {
@@ -140,6 +147,8 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
     }
     const nextIndex = (activeImageIndex + 1) % len;
     setActiveImageKey(flattenedImages[nextIndex]?.key ?? null);
+    setZoomLevel(1);
+    setPanOffset({ x: 0, y: 0 });
   }, [activeImageIndex, flattenedImages]);
 
   const goPrev = useCallback(() => {
@@ -152,6 +161,8 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
     }
     const prevIndex = (activeImageIndex - 1 + len) % len;
     setActiveImageKey(flattenedImages[prevIndex]?.key ?? null);
+    setZoomLevel(1);
+    setPanOffset({ x: 0, y: 0 });
   }, [activeImageIndex, flattenedImages]);
 
   const isSlideshowOpen = Boolean(currentEntry);
@@ -175,6 +186,60 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
     };
   }, [goNext, goPrev, isSlideshowOpen]);
 
+  useEffect(() => {
+    if (!isSlideshowOpen || !imageContainerRef.current) {
+      return;
+    }
+
+    const handleWheel = (event: WheelEvent) => {
+      event.preventDefault();
+
+      const delta = event.deltaY;
+      const zoomFactor = 0.001;
+      const newZoom = Math.max(0.5, Math.min(10, zoomLevel - delta * zoomFactor));
+
+      setZoomLevel(newZoom);
+
+      if (newZoom === 1) {
+        setPanOffset({ x: 0, y: 0 });
+      }
+    };
+
+    const container = imageContainerRef.current;
+    container.addEventListener("wheel", handleWheel, { passive: false });
+
+    return () => {
+      container.removeEventListener("wheel", handleWheel);
+    };
+  }, [isSlideshowOpen, zoomLevel]);
+
+  const handleMouseDown = useCallback((event: React.MouseEvent) => {
+    if (zoomLevel > 1) {
+      setIsPanning(true);
+      setStartPanPoint({
+        x: event.clientX - panOffset.x,
+        y: event.clientY - panOffset.y,
+      });
+    }
+  }, [zoomLevel, panOffset]);
+
+  const handleMouseMove = useCallback((event: React.MouseEvent) => {
+    if (isPanning && zoomLevel > 1) {
+      setPanOffset({
+        x: event.clientX - startPanPoint.x,
+        y: event.clientY - startPanPoint.y,
+      });
+    }
+  }, [isPanning, startPanPoint, zoomLevel]);
+
+  const handleMouseUp = useCallback(() => {
+    setIsPanning(false);
+  }, []);
+
+  const handleMouseLeave = useCallback(() => {
+    setIsPanning(false);
+  }, []);
+
   if (sortedScreenshotSets.length === 0) {
     return null;
   }
@@ -197,9 +262,18 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
             onOpenChange={(open) => !open && closeSlideshow()}
           >
             <Dialog.Portal>
-              <Dialog.Overlay className="fixed inset-0 bg-neutral-950/70 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in data-[state=closed]:fade-out" />
-              <Dialog.Content className="fixed inset-0 flex items-center justify-center p-6 focus:outline-none">
-                <div className="relative flex w-full max-w-5xl flex-col gap-3 rounded-2xl border border-neutral-200 bg-white/95 p-3 shadow-2xl backdrop-blur-md focus:outline-none dark:border-neutral-800 dark:bg-neutral-950/90 sm:p-5">
+              <Dialog.Overlay
+                className="fixed inset-0 bg-neutral-950/90 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in data-[state=closed]:fade-out"
+                onClick={closeSlideshow}
+              />
+              <Dialog.Content
+                className="fixed inset-0 flex items-center justify-center p-4 focus:outline-none"
+                onPointerDownOutside={closeSlideshow}
+              >
+                <div
+                  className="relative flex w-full h-[95vh] max-w-[98vw] flex-col gap-3 rounded-2xl border border-neutral-200 bg-white/95 p-3 shadow-2xl focus:outline-none dark:border-neutral-800 dark:bg-neutral-950/90 sm:p-5"
+                  onClick={(e) => e.stopPropagation()}
+                >
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="space-y-1">
                       <Dialog.Title className="text-base font-semibold text-neutral-900 dark:text-neutral-100">
@@ -238,11 +312,24 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                         <ChevronLeft className="h-5 w-5" />
                       </button>
                     ) : null}
-                    <div className="relative flex max-h-[70vh] flex-1 items-center justify-center border border-neutral-200 bg-neutral-50 p-3 dark:border-neutral-800 dark:bg-neutral-900">
+                    <div
+                      ref={imageContainerRef}
+                      className="relative flex flex-1 items-center justify-center border border-neutral-200 bg-neutral-50 p-3 dark:border-neutral-800 dark:bg-neutral-900 overflow-hidden"
+                      onMouseDown={handleMouseDown}
+                      onMouseMove={handleMouseMove}
+                      onMouseUp={handleMouseUp}
+                      onMouseLeave={handleMouseLeave}
+                      style={{ cursor: zoomLevel > 1 ? (isPanning ? 'grabbing' : 'grab') : 'default' }}
+                    >
                       <img
                         src={currentEntry.image.url ?? undefined}
                         alt={currentEntry.image.fileName ?? "Screenshot"}
-                        className="max-h-[calc(70vh-1.5rem)] max-w-full object-contain"
+                        className="max-h-full max-w-full object-contain select-none"
+                        draggable={false}
+                        style={{
+                          transform: `scale(${zoomLevel}) translate(${panOffset.x / zoomLevel}px, ${panOffset.y / zoomLevel}px)`,
+                          transition: isPanning ? 'none' : 'transform 0.1s ease-out',
+                        }}
                       />
                     </div>
                     {flattenedImages.length > 1 ? (
