@@ -2,6 +2,7 @@ import { TaskTree } from "@/components/TaskTree";
 import { TaskTreeSkeleton } from "@/components/TaskTreeSkeleton";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { isElectron } from "@/lib/electron";
+import { api } from "@cmux/convex/api";
 import { type Doc } from "@cmux/convex/dataModel";
 import type { LinkProps } from "@tanstack/react-router";
 import { Link } from "@tanstack/react-router";
@@ -9,11 +10,13 @@ import { Home, Plus, Server, Settings } from "lucide-react";
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ComponentType,
   type CSSProperties,
 } from "react";
+import { useQuery } from "convex/react";
 import CmuxLogo from "./logo/cmux-logo";
 import { SidebarNavLink } from "./sidebar/SidebarNavLink";
 import { SidebarPullRequestList } from "./sidebar/SidebarPullRequestList";
@@ -74,6 +77,17 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
     return Math.min(Math.max(parsed, MIN_WIDTH), MAX_WIDTH);
   });
   const [isResizing, setIsResizing] = useState(false);
+  const environments = useQuery(api.environments.list, { teamSlugOrId });
+  const environmentNamesById = useMemo<Record<string, string>>(() => {
+    if (!environments) {
+      return {};
+    }
+    return environments.reduce<Record<string, string>>((acc, env) => {
+      acc[env._id] = env.name;
+      return acc;
+    }, {});
+  }, [environments]);
+
   const [isHidden, setIsHidden] = useState(() => {
     const stored = localStorage.getItem("sidebarHidden");
     return stored === "true";
@@ -302,6 +316,7 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
                     task={task}
                     defaultExpanded={expandTaskIds?.includes(task._id) ?? false}
                     teamSlugOrId={teamSlugOrId}
+                    environmentNamesById={environmentNamesById}
                   />
                 ))
               ) : (
