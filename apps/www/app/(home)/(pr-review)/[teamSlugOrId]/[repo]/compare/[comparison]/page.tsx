@@ -28,6 +28,11 @@ import {
 import { buildComparisonJobDetails } from "@/lib/services/code-review/comparison";
 import type { ComparisonJobDetails } from "@/lib/services/code-review/comparison";
 import { trackRepoPageView } from "@/lib/analytics/track-repo-page-view";
+import {
+  resolveSimpleReviewModelPresetFromRecord,
+  type SearchParamsRecord,
+  type SimpleReviewModelPreset,
+} from "@/lib/services/code-review/simple-review-model-presets";
 
 type PageParams = {
   teamSlugOrId: string;
@@ -37,6 +42,7 @@ type PageParams = {
 
 type PageProps = {
   params: Promise<PageParams>;
+  searchParams?: Promise<SearchParamsRecord>;
 };
 
 export const dynamic = "force-dynamic";
@@ -112,7 +118,10 @@ export async function generateMetadata({
   }
 }
 
-export default async function ComparisonPage({ params }: PageProps) {
+export default async function ComparisonPage({
+  params,
+  searchParams: searchParamsPromise,
+}: PageProps) {
   const user = await stackServerApp.getUser({ or: "redirect" });
   const selectedTeam = user.selectedTeam || (await getFirstTeam());
   if (!selectedTeam) {
@@ -120,6 +129,11 @@ export default async function ComparisonPage({ params }: PageProps) {
   }
 
   const { teamSlugOrId: githubOwner, repo, comparison } = await params;
+  const searchParams = searchParamsPromise
+    ? await searchParamsPromise
+    : undefined;
+  const simpleReviewModelPreset =
+    resolveSimpleReviewModelPresetFromRecord(searchParams);
 
   const refs = parseComparisonSlug(comparison);
   if (!refs) {
@@ -180,6 +194,7 @@ export default async function ComparisonPage({ params }: PageProps) {
             repo={repo}
             teamSlugOrId={selectedTeam.id}
             comparisonDetails={comparisonDetails}
+            simpleReviewModelPreset={simpleReviewModelPreset}
           />
         </Suspense>
       </div>
@@ -353,6 +368,7 @@ function ComparisonDiffSection({
   repo,
   teamSlugOrId,
   comparisonDetails,
+  simpleReviewModelPreset,
 }: {
   filesPromise: ComparisonFilesPromise;
   comparisonPromise: ComparisonPromise;
@@ -360,6 +376,7 @@ function ComparisonDiffSection({
   repo: string;
   teamSlugOrId: string;
   comparisonDetails: ComparisonJobDetails;
+  simpleReviewModelPreset?: SimpleReviewModelPreset | null;
 }) {
   try {
     const files = use(filesPromise);
@@ -381,6 +398,7 @@ function ComparisonDiffSection({
         reviewTarget={{ type: "comparison", slug: comparisonDetails.slug }}
         commitRef={commitRef}
         baseCommitRef={baseCommitRef}
+        simpleReviewModelPreset={simpleReviewModelPreset}
       />
     );
   } catch (error) {

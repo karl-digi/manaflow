@@ -59,6 +59,10 @@ import { useConvexQuery } from "@convex-dev/react-query";
 import type { FunctionReturnType } from "convex/server";
 import type { GithubFileChange } from "@/lib/github/fetch-pull-request";
 import { cn } from "@/lib/utils";
+import {
+  SIMPLE_REVIEW_MODEL_PRESETS,
+  type SimpleReviewModelPreset,
+} from "@/lib/services/code-review/simple-review-model-presets";
 import CmuxLogo from "@/components/logo/cmux-logo";
 import {
   Tooltip,
@@ -103,6 +107,7 @@ type PullRequestDiffViewerProps = {
   baseCommitRef?: string;
   pullRequestTitle?: string;
   pullRequestUrl?: string;
+  simpleReviewModelPreset?: SimpleReviewModelPreset | null;
 };
 
 type ParsedFileDiff = {
@@ -538,6 +543,7 @@ export function PullRequestDiffViewer({
   baseCommitRef,
   pullRequestTitle,
   pullRequestUrl,
+  simpleReviewModelPreset,
 }: PullRequestDiffViewerProps) {
   const normalizedJobType: "pull_request" | "comparison" =
     jobType ?? (comparisonSlug ? "comparison" : "pull_request");
@@ -563,6 +569,13 @@ export function PullRequestDiffViewer({
       repoFullName,
       prNumber: String(prNumber),
     });
+    if (simpleReviewModelPreset) {
+      const config =
+        SIMPLE_REVIEW_MODEL_PRESETS[simpleReviewModelPreset] ?? null;
+      if (config?.queryFlag) {
+        params.set(config.queryFlag, "1");
+      }
+    }
 
     (async () => {
       try {
@@ -863,7 +876,13 @@ export function PullRequestDiffViewer({
     return () => {
       controller.abort();
     };
-  }, [normalizedJobType, prNumber, repoFullName, setStreamStateByFile]);
+  }, [
+    normalizedJobType,
+    prNumber,
+    repoFullName,
+    setStreamStateByFile,
+    simpleReviewModelPreset,
+  ]);
 
   const prQueryArgs = useMemo(
     () =>

@@ -1,4 +1,5 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
+import { createOpenAI } from "@ai-sdk/openai";
 import { streamText } from "ai";
 
 import { CLOUDFLARE_ANTHROPIC_BASE_URL } from "@cmux/shared";
@@ -8,6 +9,10 @@ import {
   SimpleReviewParser,
   type SimpleReviewParsedEvent,
 } from "./simple-review-parser";
+import {
+  SIMPLE_REVIEW_MODEL_PRESETS,
+  type SimpleReviewModelPreset,
+} from "./simple-review-model-presets";
 import {
   generateGitHubInstallationToken,
   getInstallationForRepo,
@@ -99,6 +104,11 @@ const SKIPPED_PATH_SEGMENTS = [
   "__pycache__/",
 ];
 
+const DEFAULT_SIMPLE_REVIEW_MODEL = {
+  provider: "anthropic" as const,
+  modelId: "claude-opus-4-1-20250805",
+};
+
 type FileDiff = {
   filePath: string;
   diffText: string;
@@ -117,6 +127,7 @@ export type SimpleReviewStreamOptions = {
   onChunk?: (chunk: string) => void | Promise<void>;
   onEvent?: (event: SimpleReviewParsedEvent) => void | Promise<void>;
   signal?: AbortSignal;
+  modelPreset?: SimpleReviewModelPreset | null;
 };
 
 export type SimpleReviewStreamResult = {
@@ -283,6 +294,7 @@ export async function runSimpleAnthropicReviewStream(
     githubToken: providedGithubToken = null,
     onChunk,
     signal,
+    modelPreset = null,
   } = options;
   const onEvent = options.onEvent ?? null;
 
@@ -338,6 +350,42 @@ export async function runSimpleAnthropicReviewStream(
     baseURL: CLOUDFLARE_ANTHROPIC_BASE_URL,
   });
 
+  const presetConfig = modelPreset
+    ? SIMPLE_REVIEW_MODEL_PRESETS[modelPreset]
+    : null;
+  const selectedModelConfig = presetConfig ?? DEFAULT_SIMPLE_REVIEW_MODEL;
+  const openaiClient =
+    selectedModelConfig.provider === "openai"
+      ? (() => {
+          const apiKey = env.OPENAI_API_KEY;
+          if (!apiKey) {
+            throw new Error(
+              `[simple-review] OPENAI_API_KEY is required to use model preset "${modelPreset ?? "unknown"}"`
+            );
+          }
+          return createOpenAI({ apiKey });
+        })()
+      : null;
+
+  const getSelectedModel = () => {
+    if (selectedModelConfig.provider === "openai") {
+      if (!openaiClient) {
+        throw new Error(
+          "[simple-review] OpenAI client not initialized for heatmap review"
+        );
+      }
+      return openaiClient(selectedModelConfig.modelId);
+    }
+    return anthropic(selectedModelConfig.modelId);
+  };
+
+  console.info("[simple-review] Selected heatmap model", {
+    preset: modelPreset ?? "default",
+    provider: selectedModelConfig.provider,
+    modelId: selectedModelConfig.modelId,
+    prIdentifier,
+  });
+
   const runWithSemaphore = createSemaphore(MAX_CONCURRENCY);
   const finalChunks: string[] = [];
 
@@ -369,8 +417,7 @@ export async function runSimpleAnthropicReviewStream(
 
         try {
           const stream = streamText({
-            model: anthropic("claude-opus-4-1-20250805"),
-            // model: anthropic("claude-haiku-4-5"),
+            model: getSelectedModel(),
             prompt,
             temperature: 0,
             maxRetries: 2,
