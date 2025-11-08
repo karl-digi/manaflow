@@ -18,6 +18,7 @@ import {
   type TerminalConnectionState,
 } from "@/components/task-run-terminal-session";
 import { toMorphXtermBaseUrl } from "@/lib/toProxyWorkspaceUrl";
+import { buildTmuxAttachRequest } from "@/lib/tmux-terminal";
 import {
   createTerminalTab,
   deleteTerminalTab,
@@ -100,13 +101,12 @@ export const Route = createFileRoute(
         return;
       }
 
+      const attachRequest = buildTmuxAttachRequest(taskRun?.isCloudWorkspace);
+
       try {
         const created = await createTerminalTab({
           baseUrl,
-          request: {
-            cmd: "tmux",
-            args: ["attach", "-t", "cmux"],
-          },
+          request: attachRequest,
         });
 
         queryClient.setQueryData<TerminalTabId[]>(tabsQueryKey, (current) => {
@@ -190,9 +190,14 @@ export function TaskRunTerminalsPane({
     })
   );
 
-  const vscodeInfo = taskRun?.data?.vscode;
+  const taskRunData = taskRun?.data;
+  const vscodeInfo = taskRunData?.vscode;
   const rawMorphUrl = vscodeInfo?.url ?? vscodeInfo?.workspaceUrl ?? null;
   const isMorphProvider = vscodeInfo?.provider === "morph";
+  const defaultTerminalRequest = useMemo(
+    () => buildTmuxAttachRequest(taskRunData?.isCloudWorkspace),
+    [taskRunData?.isCloudWorkspace]
+  );
 
   const xtermBaseUrl = useMemo(() => {
     if (!rawMorphUrl) {
@@ -230,7 +235,7 @@ export function TaskRunTerminalsPane({
     mutationFn: async (request) =>
       createTerminalTab({
         baseUrl: xtermBaseUrl,
-        request,
+        request: request ?? defaultTerminalRequest,
       }),
     onSuccess: (payload) => {
       const queryKey = terminalTabsQueryKey(xtermBaseUrl, taskRunId);
@@ -488,7 +493,7 @@ export function TaskRunTerminalsPane({
                   if (!hasTerminalBackend || isCreatingTerminal) {
                     return;
                   }
-                  createTerminalMutation.mutate(undefined);
+                  createTerminalMutation.mutate(defaultTerminalRequest);
                 }}
                 disabled={!hasTerminalBackend || isCreatingTerminal}
                 className="flex items-center gap-1 rounded-md border border-neutral-200 px-2 py-1 text-xs font-medium text-neutral-600 transition hover:border-neutral-300 hover:text-neutral-900 disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-600 dark:bg-neutral-800 dark:text-white dark:hover:border-neutral-500 dark:hover:bg-neutral-700 dark:hover:text-white"

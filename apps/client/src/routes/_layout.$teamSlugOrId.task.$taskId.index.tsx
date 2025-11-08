@@ -23,6 +23,7 @@ import {
   getTaskRunBrowserPersistKey,
   getTaskRunPersistKey,
 } from "@/lib/persistent-webview-keys";
+import { buildTmuxAttachRequest } from "@/lib/tmux-terminal";
 import {
   toMorphVncUrl,
   toMorphXtermBaseUrl,
@@ -155,13 +156,13 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
       }
 
       if (!tabs?.length) {
+        const attachRequest = buildTmuxAttachRequest(
+          selectedRun?.isCloudWorkspace
+        );
         try {
           const created = await createTerminalTab({
             baseUrl,
-            request: {
-              cmd: "tmux",
-              args: ["new-session", "-A", "cmux"],
-            },
+            request: attachRequest,
           });
           tabs = [created.id];
         } catch (error) {
