@@ -4,7 +4,7 @@ import CmuxLogo from "@/components/logo/cmux-logo";
 import { MacDownloadLink } from "@/components/mac-download-link";
 import type { MacDownloadUrls } from "@/lib/releases";
 import clsx from "clsx";
-import { Download } from "lucide-react";
+import { Download, Star } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
@@ -40,6 +40,7 @@ export function SiteHeader({
 }: SiteHeaderProps) {
   const effectiveUrls = macDownloadUrls ?? DEFAULT_DOWNLOAD_URLS;
   const [isScrolled, setIsScrolled] = useState(false);
+  const [starCount, setStarCount] = useState<number | null>(null);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -53,6 +54,38 @@ export function SiteHeader({
       window.removeEventListener("scroll", handleScroll);
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const fetchStarCount = async () => {
+      try {
+        const response = await fetch("https://api.github.com/repos/manaflow-ai/cmux");
+        if (!response.ok) {
+          return;
+        }
+        const data = (await response.json()) as { stargazers_count?: number };
+        if (!cancelled && typeof data?.stargazers_count === "number") {
+          setStarCount(data.stargazers_count);
+        }
+      } catch {
+        // Ignore network errors so the header remains functional offline
+      }
+    };
+
+    fetchStarCount();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const formattedStarCount =
+    starCount === null
+      ? null
+      : starCount >= 1000
+        ? `${(starCount / 1000).toFixed(1).replace(/\.0$/, "")}k`
+        : starCount.toLocaleString();
 
   return (
     <header
@@ -93,7 +126,13 @@ export function SiteHeader({
             rel="noopener noreferrer"
             target="_blank"
           >
-            GitHub
+            <span>GitHub</span>
+            {formattedStarCount ? (
+              <span className="ml-2 inline-flex items-center gap-1 rounded-full border border-white/15 px-2 py-0.5 text-xs text-white/80">
+                <Star aria-hidden className="h-3 w-3" />
+                {formattedStarCount}
+              </span>
+            ) : null}
           </a>
           <a
             className="text-neutral-300 transition hover:text-white"
