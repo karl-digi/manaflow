@@ -148,6 +148,17 @@ export const DashboardInput = memo(
           return false;
         }
 
+        // Don't restore focus if user is interacting with form elements
+        if (
+          candidateActiveElement &&
+          (candidateActiveElement instanceof HTMLInputElement ||
+            candidateActiveElement instanceof HTMLTextAreaElement ||
+            candidateActiveElement instanceof HTMLSelectElement ||
+            candidateActiveElement.getAttribute("contenteditable") === "true")
+        ) {
+          return false;
+        }
+
         const now = Date.now();
         const recentPointer = lastPointerEventRef.current;
         if (
