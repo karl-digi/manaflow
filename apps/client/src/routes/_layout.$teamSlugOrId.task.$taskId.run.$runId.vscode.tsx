@@ -21,6 +21,7 @@ import {
   useLocalVSCodeServeWebQuery,
 } from "@/queries/local-vscode-serve-web";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
+import { isElectron } from "@/lib/electron";
 
 const paramsSchema = z.object({
   taskId: typedZid("tasks"),
@@ -129,6 +130,65 @@ function VSCodeComponent() {
   );
 
   const isEditorBusy = !hasWorkspace || iframeStatus !== "loaded";
+
+  const focusWorkspaceIframe = useCallback(() => {
+    if (!isElectron || !hasWorkspace) {
+      return;
+    }
+    if (iframeStatus !== "loaded") {
+      return;
+    }
+    if (typeof document === "undefined") {
+      return;
+    }
+    if (document.visibilityState !== "visible" || !document.hasFocus()) {
+      return;
+    }
+
+    const escapedKey =
+      typeof CSS !== "undefined" && typeof CSS.escape === "function"
+        ? CSS.escape(persistKey)
+        : persistKey.replace(/"/g, '\\"');
+    const iframe = document.querySelector<HTMLIFrameElement>(
+      `[data-iframe-key="${escapedKey}"] iframe`
+    );
+    if (!iframe) {
+      return;
+    }
+    try {
+      iframe.focus?.();
+      iframe.contentWindow?.focus?.();
+    } catch (error) {
+      console.warn("Failed to focus VSCode iframe", error);
+    }
+  }, [hasWorkspace, iframeStatus, persistKey]);
+
+  useEffect(() => {
+    if (!isElectron || !hasWorkspace) {
+      return;
+    }
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const handleWindowFocus = () => {
+      focusWorkspaceIframe();
+    };
+
+    window.addEventListener("focus", handleWindowFocus);
+
+    if (
+      typeof document !== "undefined" &&
+      document.visibilityState === "visible" &&
+      document.hasFocus()
+    ) {
+      focusWorkspaceIframe();
+    }
+
+    return () => {
+      window.removeEventListener("focus", handleWindowFocus);
+    };
+  }, [focusWorkspaceIframe, hasWorkspace]);
 
   return (
     <div className="flex flex-col grow bg-neutral-50 dark:bg-black">
