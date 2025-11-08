@@ -405,6 +405,17 @@ function TaskRunTerminals() {
                     <button
                       type="button"
                       onClick={() => setActiveTerminalId(id)}
+                      onMouseUp={(event) => {
+                        if (event.button !== 1) {
+                          return;
+                        }
+                        event.preventDefault();
+                        event.stopPropagation();
+                        if (isDeletingThis || !hasTerminalBackend) {
+                          return;
+                        }
+                        deleteTerminalMutation.mutate(id);
+                      }}
                       className={clsx(
                         "flex items-center gap-2 rounded-md pl-3 pr-8 py-1.5 text-xs font-medium transition-colors",
                         isActive
