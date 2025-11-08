@@ -5,6 +5,7 @@ import {
   internalQuery,
   type MutationCtx,
 } from "./_generated/server";
+import { internal } from "./_generated/api";
 import { authMutation, authQuery } from "./users/utils";
 
 const SYSTEM_BRANCH_USER_ID = "__system__";
@@ -400,6 +401,20 @@ export const upsertFromWebhookPayload = internalMutation({
           activityTimestamp: ts(pr.updated_at) ?? Date.now(),
         });
       }
+
+      // If the PR is merged, update related taskruns and tasks
+      const isMerged = Boolean(pr.merged) && mapStr(pr.state) === "closed";
+      if (isMerged && headRef && ts(pr.merged_at)) {
+        await ctx.runMutation(internal.taskRuns.updateTaskRunsOnPrMerge, {
+          teamId,
+          repoFullName,
+          prNumber: number,
+          headRef,
+          mergedAt: ts(pr.merged_at)!,
+          mergeCommitSha,
+        });
+      }
+
       return { ok: true as const };
     } catch (_e) {
       return { ok: false as const };

@@ -1511,3 +1511,96 @@ export const getRunningContainersByCleanupPriority = authQuery({
     };
   },
 });
+
+/**
+ * Internal mutation to update taskruns when a PR is merged.
+ * Called from github webhook handlers when a PR merge event is detected.
+ */
+export const updateTaskRunsOnPrMerge = internalMutation({
+  args: {
+    teamId: v.string(),
+    repoFullName: v.string(),
+    prNumber: v.number(),
+    headRef: v.string(),
+    mergedAt: v.number(),
+    mergeCommitSha: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const { teamId, repoFullName, prNumber, headRef, mergedAt, mergeCommitSha } = args;
+
+    // Find all taskRuns that match this PR
+    // Match by: teamId, PR number, or branch name
+    // Note: We query by teamId only (without userId filter) to get all runs in the team
+    const allTaskRuns = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_team_user", (q) => q.eq("teamId", teamId))
+      .collect();
+
+    const matchingTaskRuns = allTaskRuns.filter((run) => {
+      // Match by PR number if available
+      if (run.pullRequestNumber === prNumber) {
+        return true;
+      }
+
+      // Match by branch name
+      if (run.newBranch === headRef) {
+        return true;
+      }
+
+      // Match by PR in pullRequests array
+      if (run.pullRequests) {
+        return run.pullRequests.some(
+          (pr) => pr.repoFullName === repoFullName && pr.number === prNumber
+        );
+      }
+
+      return false;
+    });
+
+    // Update each matching taskRun
+    for (const run of matchingTaskRuns) {
+      const updates: Partial<Doc<"taskRuns">> = {
+        pullRequestState: "merged",
+        updatedAt: Date.now(),
+      };
+
+      // Update pullRequests array if it exists
+      if (run.pullRequests) {
+        updates.pullRequests = run.pullRequests.map((pr) => {
+          if (pr.repoFullName === repoFullName && pr.number === prNumber) {
+            return {
+              ...pr,
+              state: "merged" as const,
+              isDraft: false,
+            };
+          }
+          return pr;
+        });
+
+        // Recalculate aggregate state
+        const aggregate = aggregatePullRequestState(updates.pullRequests);
+        updates.pullRequestState = aggregate.state;
+        updates.pullRequestIsDraft = aggregate.isDraft;
+      }
+
+      await ctx.db.patch(run._id, updates);
+
+      // Update the parent task if it exists
+      if (run.taskId) {
+        const task = await ctx.db.get(run.taskId);
+        if (task && task.teamId === teamId) {
+          // Determine the new merge status for the task
+          // If any of the task's runs are merged, mark task as merged
+          const taskMergeStatus: Doc<"tasks">["mergeStatus"] = "pr_merged";
+
+          await ctx.db.patch(run.taskId, {
+            mergeStatus: taskMergeStatus,
+            updatedAt: Date.now(),
+          });
+        }
+      }
+    }
+
+    return { updatedTaskRuns: matchingTaskRuns.length };
+  },
+});
