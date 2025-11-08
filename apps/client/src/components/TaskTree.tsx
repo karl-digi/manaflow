@@ -5,6 +5,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
+import { usePinnedSidebar } from "@/contexts/pinned-sidebar/PinnedSidebarContext";
 import { useArchiveTask } from "@/hooks/useArchiveTask";
 import { useOpenWithActions } from "@/hooks/useOpenWithActions";
 import { useTaskRename } from "@/hooks/useTaskRename";
@@ -19,11 +20,17 @@ import {
   aggregatePullRequestState,
   type RunPullRequestState,
 } from "@cmux/shared/pull-request-state";
-import { Link, useLocation, type LinkProps } from "@tanstack/react-router";
+import {
+  Link,
+  useLocation,
+  useNavigate,
+  type LinkProps,
+} from "@tanstack/react-router";
 import clsx from "clsx";
 import { useMutation, useQuery as useConvexQuery } from "convex/react";
 import { toast } from "sonner";
 import {
+  ArrowUpRightSquare,
   AlertTriangle,
   Archive as ArchiveIcon,
   ArchiveRestore as ArchiveRestoreIcon,
@@ -43,10 +50,12 @@ import {
   GitPullRequestClosed,
   GitPullRequestDraft,
   Globe,
+  Loader2,
   Monitor,
+  Pin,
+  PinOff,
   Pencil,
   TerminalSquare,
-  Loader2,
   XCircle,
 } from "lucide-react";
 import {
@@ -135,10 +144,10 @@ function flattenRuns(
   return acc;
 }
 
-function findRunInTree(
-  runs: TaskRunWithChildren[],
+function findRunInTree<T extends TaskRunWithChildren>(
+  runs: T[],
   targetId: Id<"taskRuns">
-): TaskRunWithChildren | null {
+): T | null {
   for (const run of runs) {
     if (run._id === targetId) {
       return run;
@@ -264,6 +273,68 @@ function useTaskRunExpansionContext(): TaskRunExpansionContextValue {
   return context;
 }
 
+function useRunArchiveToggle(
+  teamSlugOrId: string,
+  taskId: Id<"tasks">
+): (runId: Id<"taskRuns">, archive: boolean) => Promise<void> {
+  const archiveTaskRun = useMutation(api.taskRuns.archive).withOptimisticUpdate(
+    (localStore, args) => {
+      if (!args.taskId) {
+        return;
+      }
+      const variants: Array<{
+        teamSlugOrId: string;
+        taskId: Id<"tasks">;
+        includeArchived?: boolean;
+      }> = [
+        { teamSlugOrId: args.teamSlugOrId, taskId: args.taskId },
+        {
+          teamSlugOrId: args.teamSlugOrId,
+          taskId: args.taskId,
+          includeArchived: true,
+        },
+      ];
+
+      for (const variant of variants) {
+        const current = localStore.getQuery(api.taskRuns.getByTask, variant);
+        if (!current) {
+          continue;
+        }
+        const updated = updateRunArchiveStateLocal(
+          current,
+          args.id,
+          args.archive,
+          args.includeChildren ?? false
+        );
+        if (updated !== current) {
+          localStore.setQuery(api.taskRuns.getByTask, variant, updated);
+        }
+      }
+    }
+  );
+
+  return useCallback(
+    async (runId: Id<"taskRuns">, shouldArchive: boolean) => {
+      try {
+        await archiveTaskRun({
+          teamSlugOrId,
+          id: runId,
+          archive: shouldArchive,
+          taskId,
+        });
+      } catch (error) {
+        console.error(error);
+        toast.error(
+          shouldArchive
+            ? "Failed to archive task run"
+            : "Failed to restore task run"
+        );
+      }
+    },
+    [archiveTaskRun, taskId, teamSlugOrId]
+  );
+}
+
 function TaskTreeInner({
   task,
   level = 0,
@@ -338,61 +409,9 @@ function TaskTreeInner({
     });
   }, [isOptimisticTask, task._id, teamSlugOrId]);
 
-  const archiveTaskRun = useMutation(api.taskRuns.archive).withOptimisticUpdate(
-    (localStore, args) => {
-      if (!args.taskId) {
-        return;
-      }
-      const variants: Array<{
-        teamSlugOrId: string;
-        taskId: Id<"tasks">;
-        includeArchived?: boolean;
-      }> = [
-        { teamSlugOrId: args.teamSlugOrId, taskId: args.taskId },
-        {
-          teamSlugOrId: args.teamSlugOrId,
-          taskId: args.taskId,
-          includeArchived: true,
-        },
-      ];
-
-      for (const variant of variants) {
-        const current = localStore.getQuery(api.taskRuns.getByTask, variant);
-        if (!current) {
-          continue;
-        }
-        const updated = updateRunArchiveStateLocal(
-          current,
-          args.id,
-          args.archive,
-          args.includeChildren ?? false
-        );
-        if (updated !== current) {
-          localStore.setQuery(api.taskRuns.getByTask, variant, updated);
-        }
-      }
-    }
-  );
-
-  const handleRunArchiveToggle = useCallback(
-    async (runId: Id<"taskRuns">, shouldArchive: boolean) => {
-      try {
-        await archiveTaskRun({
-          teamSlugOrId,
-          id: runId,
-          archive: shouldArchive,
-          taskId: task._id,
-        });
-      } catch (error) {
-        console.error(error);
-        toast.error(
-          shouldArchive
-            ? "Failed to archive task run"
-            : "Failed to restore task run"
-        );
-      }
-    },
-    [archiveTaskRun, task._id, teamSlugOrId]
+  const handleRunArchiveToggle = useRunArchiveToggle(
+    teamSlugOrId,
+    task._id
   );
 
   // Memoize the toggle handler
@@ -504,6 +523,22 @@ function TaskTreeInner({
   const isCrownEvaluating = task.crownEvaluationStatus === "in_progress";
   const isLocalWorkspace = task.isLocalWorkspace;
   const isCloudWorkspace = task.isCloudWorkspace;
+
+  const {
+    isTaskPinned,
+    pinTask,
+    unpinTask,
+  } = usePinnedSidebar();
+
+  const taskIsPinned = isTaskPinned(task._id);
+
+  const handleToggleTaskPin = useCallback(() => {
+    if (taskIsPinned) {
+      unpinTask(task._id);
+    } else {
+      pinTask(task._id);
+    }
+  }, [pinTask, task._id, taskIsPinned, unpinTask]);
 
   const taskLeadingIcon = (() => {
     if (isCrownEvaluating) {
@@ -657,18 +692,27 @@ function TaskTreeInner({
           <ContextMenu.Portal>
             <ContextMenu.Positioner className="outline-none z-[var(--z-context-menu)]">
               <ContextMenu.Popup className="origin-[var(--transform-origin)] rounded-md bg-white dark:bg-neutral-800 py-1 text-neutral-900 dark:text-neutral-100 shadow-lg shadow-gray-200 outline-1 outline-neutral-200 transition-[opacity] data-[ending-style]:opacity-0 dark:shadow-none dark:-outline-offset-1 dark:outline-neutral-700">
+                <ContextMenu.Item
+                  className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                  onClick={handleToggleTaskPin}
+                >
+                  {taskIsPinned ? (
+                    <PinOff className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
+                  ) : (
+                    <Pin className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
+                  )}
+                  <span>{taskIsPinned ? "Unpin Task" : "Pin Task"}</span>
+                </ContextMenu.Item>
                 {canRenameTask ? (
-                  <>
-                    <ContextMenu.Item
-                      className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
-                      onClick={handleStartRenaming}
-                    >
-                      <Pencil className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
-                      <span>Rename Task</span>
-                    </ContextMenu.Item>
-                    <div className="my-1 h-px bg-neutral-200 dark:bg-neutral-700" />
-                  </>
+                  <ContextMenu.Item
+                    className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                    onClick={handleStartRenaming}
+                  >
+                    <Pencil className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
+                    <span>Rename Task</span>
+                  </ContextMenu.Item>
                 ) : null}
+                <div className="my-1 h-px bg-neutral-200 dark:bg-neutral-700" />
                 <ContextMenu.Item
                   className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
                   onClick={handleCopyDescription}
@@ -934,6 +978,7 @@ interface TaskRunTreeProps {
   isDefaultSelected?: boolean;
   onArchiveToggle: (runId: Id<"taskRuns">, archive: boolean) => void;
   showRunNumbers: boolean;
+  forceShowArchived?: boolean;
 }
 
 function TaskRunTreeInner({
@@ -944,8 +989,10 @@ function TaskRunTreeInner({
   isDefaultSelected = false,
   onArchiveToggle,
   showRunNumbers,
+  forceShowArchived = false,
 }: TaskRunTreeProps) {
   const location = useLocation();
+  const navigate = useNavigate();
   const { expandedRuns, setRunExpanded } = useTaskRunExpansionContext();
   const defaultExpanded = Boolean(run.isCrowned);
   const isExpanded = expandedRuns[run._id] ?? defaultExpanded;
@@ -1020,6 +1067,25 @@ function TaskRunTreeInner({
   const handleArchiveRun = useCallback(() => {
     onArchiveToggle(run._id, true);
   }, [onArchiveToggle, run._id]);
+
+  const { isRunPinned, pinRun, unpinRun } = usePinnedSidebar();
+  const isPinnedRun = isRunPinned(run._id);
+
+  const handleToggleRunPin = useCallback(() => {
+    if (isPinnedRun) {
+      unpinRun(run._id);
+    } else {
+      pinRun(taskId, run._id);
+    }
+  }, [isPinnedRun, pinRun, run._id, taskId, unpinRun]);
+
+  const handleJumpToTask = useCallback(() => {
+    navigate({
+      to: "/$teamSlugOrId/task/$taskId",
+      params: { teamSlugOrId, taskId },
+      search: (prev) => ({ ...(prev ?? {}), runId: undefined }),
+    });
+  }, [navigate, taskId, teamSlugOrId]);
 
   const isLocalWorkspaceRunEntry = run.isLocalWorkspace;
   const isCloudWorkspaceRunEntry = run.isCloudWorkspace;
@@ -1199,9 +1265,10 @@ function TaskRunTreeInner({
     shouldRenderTerminalLink ||
     shouldRenderPullRequestLink ||
     shouldRenderPreviewLink;
+  const shouldHideRun = run.isArchived && !forceShowArchived;
 
   return (
-    <div className={clsx({ hidden: run.isArchived })}>
+    <div className={clsx({ hidden: shouldHideRun })}>
       <ContextMenu.Root>
         <ContextMenu.Trigger>
           <Link
@@ -1249,6 +1316,27 @@ function TaskRunTreeInner({
         <ContextMenu.Portal>
           <ContextMenu.Positioner className="outline-none z-[var(--z-context-menu)]">
             <ContextMenu.Popup className="origin-[var(--transform-origin)] rounded-md bg-white dark:bg-neutral-800 py-1 text-neutral-900 dark:text-neutral-100 shadow-lg shadow-gray-200 outline-1 outline-neutral-200 transition-[opacity] data-[ending-style]:opacity-0 dark:shadow-none dark:-outline-offset-1 dark:outline-neutral-700">
+              <ContextMenu.Item
+                className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                onClick={handleToggleRunPin}
+              >
+                {isPinnedRun ? (
+                  <PinOff className="w-3.5 h-3.5" />
+                ) : (
+                  <Pin className="w-3.5 h-3.5" />
+                )}
+                <span>{isPinnedRun ? "Unpin run" : "Pin run"}</span>
+              </ContextMenu.Item>
+              {isPinnedRun ? (
+                <ContextMenu.Item
+                  className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                  onClick={handleJumpToTask}
+                >
+                  <ArrowUpRightSquare className="w-3.5 h-3.5" />
+                  <span>Jump to task</span>
+                </ContextMenu.Item>
+              ) : null}
+              <div className="my-1 h-px bg-neutral-200 dark:bg-neutral-700" />
               {canCopyBranch ? (
                 <ContextMenu.Item
                   className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
@@ -1605,5 +1693,97 @@ export interface VSCodeIconProps {
 // Prevent unnecessary re-renders of large trees during unrelated state changes
 export const TaskTree = memo(TaskTreeInner);
 const TaskRunTree = memo(TaskRunTreeInner);
+
+interface PinnedTaskRunProps {
+  taskId: Id<"tasks">;
+  runId: Id<"taskRuns">;
+  teamSlugOrId: string;
+}
+
+function PinnedTaskRunInner({
+  taskId,
+  runId,
+  teamSlugOrId,
+}: PinnedTaskRunProps) {
+  const runs = useConvexQuery(api.taskRuns.getByTask, {
+    teamSlugOrId,
+    taskId,
+    includeArchived: true,
+  });
+  const isLoading = runs === undefined;
+  const annotatedRuns = useMemo(
+    () => annotateAgentOrdinals(runs ?? []),
+    [runs]
+  );
+  const flattenedRuns = useMemo(
+    () => flattenRuns(runs ?? []),
+    [runs]
+  );
+  const showRunNumbers = flattenedRuns.length > 1;
+  const targetRun = useMemo(
+    () => (annotatedRuns.length ? findRunInTree(annotatedRuns, runId) : null),
+    [annotatedRuns, runId]
+  );
+
+  const [expandedRuns, setExpandedRuns] = useState<TaskRunExpansionState>({});
+  const setRunExpanded = useCallback(
+    (id: Id<"taskRuns">, expanded: boolean) => {
+      setExpandedRuns((prev) => {
+        if (prev[id] === expanded) {
+          return prev;
+        }
+        return { ...prev, [id]: expanded };
+      });
+    },
+    []
+  );
+  const expansionContextValue = useMemo(
+    () => ({ expandedRuns, setRunExpanded }),
+    [expandedRuns, setRunExpanded]
+  );
+
+  const onArchiveToggle = useRunArchiveToggle(teamSlugOrId, taskId);
+  const { unpinRun } = usePinnedSidebar();
+
+  if (isLoading) {
+    return (
+      <div className="pl-2 pr-3 py-1.5 text-xs text-neutral-500 dark:text-neutral-400">
+        Loading pinned run…
+      </div>
+    );
+  }
+
+  if (!targetRun) {
+    return (
+      <div className="flex items-center justify-between rounded-md px-2 py-1.5 text-xs text-neutral-600 dark:text-neutral-400 bg-neutral-100/70 dark:bg-neutral-900/60">
+        <span>Pinned run unavailable</span>
+        <button
+          type="button"
+          onClick={() => unpinRun(runId)}
+          className="text-[11px] font-medium text-neutral-600 hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-white"
+        >
+          Unpin
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <TaskRunExpansionContext.Provider value={expansionContextValue}>
+      <TaskRunTree
+        run={targetRun}
+        level={0}
+        taskId={taskId}
+        teamSlugOrId={teamSlugOrId}
+        onArchiveToggle={onArchiveToggle}
+        isDefaultSelected={false}
+        showRunNumbers={showRunNumbers}
+        forceShowArchived
+      />
+    </TaskRunExpansionContext.Provider>
+  );
+}
+
+export const PinnedTaskRun = memo(PinnedTaskRunInner);
 
 export type { AnnotatedTaskRun, TaskRunWithChildren } from "./task-tree/types";
