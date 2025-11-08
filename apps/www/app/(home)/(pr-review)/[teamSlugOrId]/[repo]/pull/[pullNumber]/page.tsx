@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { waitUntil } from "@vercel/functions";
 import { type Team } from "@stackframe/stack";
+import { ExternalLink } from "lucide-react";
 
 import {
   fetchPullRequest,
@@ -21,6 +22,7 @@ import {
   startCodeReviewJob,
 } from "@/lib/services/code-review/start-code-review";
 import { getInstallationForRepo } from "@/lib/utils/github-app-token";
+import { api } from "@cmux/convex/api";
 import {
   DiffViewerSkeleton,
   ErrorPanel,
@@ -32,8 +34,19 @@ import { PrivateRepoPrompt } from "../../_components/private-repo-prompt";
 import { TeamOnboardingPrompt } from "../../_components/team-onboarding-prompt";
 import { env } from "@/lib/utils/www-env";
 import { trackRepoPageView } from "@/lib/analytics/track-repo-page-view";
+import { getConvex } from "@/lib/utils/get-convex";
 
 const ENABLE_IMMEDIATE_CODE_REVIEW = false;
+
+type TaskRunLink = {
+  taskRunId: string;
+  taskId: string;
+  taskText: string;
+};
+
+const CMUX_APP_BASE_URL =
+  process.env.NEXT_PUBLIC_CMUX_APP_BASE_URL?.replace(/\/$/, "") ??
+  "https://cmux.dev";
 
 type PageParams = {
   teamSlugOrId: string;
@@ -193,6 +206,15 @@ export default async function PullRequestPage({ params }: PageProps) {
   }
 
   const githubAccessToken = await resolveGithubAccessToken(user!);
+  let convexAccessToken: string | null = null;
+  if (user && typeof user.getAuthJson === "function") {
+    try {
+      const authJson = await user.getAuthJson();
+      convexAccessToken = authJson.accessToken ?? null;
+    } catch (error) {
+      console.debug("[PullRequestPage] Convex auth token unavailable", error);
+    }
+  }
 
   let initialPullRequest: GithubPullRequest;
   try {
@@ -236,6 +258,18 @@ export default async function PullRequestPage({ params }: PageProps) {
     { authToken: githubAccessToken }
   ).then((files) => files.map(toGithubFileChange));
 
+  const taskRunLinkPromise =
+    selectedTeam && convexAccessToken
+      ? createTaskRunLinkPromise({
+          pullRequestPromise,
+          convexAccessToken,
+          teamSlugOrId: selectedTeam.id,
+          fallbackOwner: githubOwner,
+          fallbackRepo: repo,
+          pullNumber,
+        })
+      : null;
+
   // Schedule code review in background (non-blocking)
   if (selectedTeam && ENABLE_IMMEDIATE_CODE_REVIEW) {
     scheduleCodeReviewStart({
@@ -264,6 +298,8 @@ export default async function PullRequestPage({ params }: PageProps) {
             promise={pullRequestPromise}
             githubOwner={githubOwner}
             repo={repo}
+            teamSlugOrIdForLink={selectedTeam?.id ?? null}
+            taskRunLinkPromise={taskRunLinkPromise}
           />
         </Suspense>
 
@@ -301,10 +337,11 @@ function scheduleCodeReviewStart({
     (async () => {
       try {
         const pullRequest = await pullRequestPromise;
-        const fallbackRepoFullName =
-          pullRequest.base?.repo?.full_name ??
-          pullRequest.head?.repo?.full_name ??
-          `${githubOwner}/${repo}`;
+        const fallbackRepoFullName = resolveRepoFullName(
+          pullRequest,
+          githubOwner,
+          repo
+        );
         const githubLink =
           pullRequest.html_url ??
           `https://github.com/${fallbackRepoFullName}/pull/${pullNumber}`;
@@ -499,10 +536,14 @@ function PullRequestHeader({
   promise,
   githubOwner,
   repo,
+  teamSlugOrIdForLink,
+  taskRunLinkPromise,
 }: {
   promise: PullRequestPromise;
   githubOwner: string;
   repo: string;
+  teamSlugOrIdForLink: string | null;
+  taskRunLinkPromise: Promise<TaskRunLink | null> | null;
 }) {
   try {
     const pullRequest = use(promise);
@@ -511,6 +552,8 @@ function PullRequestHeader({
         pullRequest={pullRequest}
         githubOwner={githubOwner}
         repo={repo}
+        teamSlugOrIdForLink={teamSlugOrIdForLink}
+        taskRunLinkPromise={taskRunLinkPromise}
       />
     );
   } catch (error) {
@@ -537,10 +580,14 @@ function PullRequestHeaderContent({
   pullRequest,
   githubOwner,
   repo,
+  teamSlugOrIdForLink,
+  taskRunLinkPromise,
 }: {
   pullRequest: GithubPullRequest;
   githubOwner: string;
   repo: string;
+  teamSlugOrIdForLink: string | null;
+  taskRunLinkPromise: Promise<TaskRunLink | null> | null;
 }) {
   const statusBadge = getStatusBadge(pullRequest);
   const createdAtLabel = formatRelativeTimeFromNow(
@@ -550,6 +597,7 @@ function PullRequestHeaderContent({
     new Date(pullRequest.updated_at)
   );
   const authorLogin = pullRequest.user?.login ?? null;
+  const taskRunLink = taskRunLinkPromise ? use(taskRunLinkPromise) : null;
 
   return (
     <section className="border border-neutral-200 bg-white px-5 p-4">
@@ -571,6 +619,8 @@ function PullRequestHeaderContent({
           additions={pullRequest.additions}
           deletions={pullRequest.deletions}
           githubUrl={pullRequest.html_url}
+          taskRunLink={taskRunLink}
+          teamSlugOrId={teamSlugOrIdForLink}
         />
       </div>
     </section>
@@ -672,12 +722,26 @@ function PullRequestHeaderActions({
   additions,
   deletions,
   githubUrl,
+  taskRunLink,
+  teamSlugOrId,
 }: {
   changedFiles: number;
   additions: number;
   deletions: number;
   githubUrl?: string | null;
+  taskRunLink?: TaskRunLink | null;
+  teamSlugOrId?: string | null;
 }) {
+  let taskRunUrl: string | null = null;
+  let taskRunTitle: string | undefined;
+  if (teamSlugOrId && taskRunLink) {
+    taskRunUrl = buildTaskRunUrl(
+      teamSlugOrId,
+      taskRunLink.taskId,
+      taskRunLink.taskRunId
+    );
+    taskRunTitle = taskRunLink.taskText;
+  }
   return (
     <aside className="flex flex-wrap items-center gap-3 text-xs">
       <ReviewChangeSummary
@@ -685,8 +749,32 @@ function PullRequestHeaderActions({
         additions={additions}
         deletions={deletions}
       />
+      {taskRunUrl ? (
+        <TaskRunLinkButton href={taskRunUrl} taskTitle={taskRunTitle} />
+      ) : null}
       {githubUrl ? <ReviewGitHubLinkButton href={githubUrl} /> : null}
     </aside>
+  );
+}
+
+function TaskRunLinkButton({
+  href,
+  taskTitle,
+}: {
+  href: string;
+  taskTitle?: string;
+}) {
+  return (
+    <a
+      className="inline-flex items-center gap-1.5 rounded border border-neutral-200 bg-neutral-900 px-3 py-1.5 font-medium text-white transition hover:bg-neutral-800"
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      title={taskTitle}
+    >
+      Task Run
+      <ExternalLink className="h-3 w-3" />
+    </a>
   );
 }
 
@@ -710,10 +798,11 @@ function PullRequestDiffSection({
   try {
     const files = use(filesPromise);
     const pullRequest = use(pullRequestPromise);
-    const fallbackRepoFullName =
-      pullRequest.base?.repo?.full_name ??
-      pullRequest.head?.repo?.full_name ??
-      `${githubOwner}/${repo}`;
+    const fallbackRepoFullName = resolveRepoFullName(
+      pullRequest,
+      githubOwner,
+      repo
+    );
     const commitRef = pullRequest.head?.sha ?? undefined;
     const baseCommitRef = pullRequest.base?.sha ?? undefined;
     const pullRequestTitleRaw =
@@ -791,6 +880,68 @@ function getStatusBadge(pullRequest: GithubPullRequest): {
     label: "Open",
     className: "bg-emerald-100 text-emerald-700",
   };
+}
+
+function resolveRepoFullName(
+  pullRequest: GithubPullRequest,
+  fallbackOwner: string,
+  fallbackRepo: string
+): string {
+  return (
+    pullRequest.base?.repo?.full_name ??
+    pullRequest.head?.repo?.full_name ??
+    `${fallbackOwner}/${fallbackRepo}`
+  );
+}
+
+function createTaskRunLinkPromise({
+  pullRequestPromise,
+  convexAccessToken,
+  teamSlugOrId,
+  fallbackOwner,
+  fallbackRepo,
+  pullNumber,
+}: {
+  pullRequestPromise: PullRequestPromise;
+  convexAccessToken: string;
+  teamSlugOrId: string;
+  fallbackOwner: string;
+  fallbackRepo: string;
+  pullNumber: number;
+}): Promise<TaskRunLink | null> {
+  return (async () => {
+    try {
+      const pullRequest = await pullRequestPromise;
+      const repoFullName = resolveRepoFullName(
+        pullRequest,
+        fallbackOwner,
+        fallbackRepo
+      );
+      const convex = getConvex({ accessToken: convexAccessToken });
+      return await convex.query(api.taskRuns.getByPullRequest, {
+        teamSlugOrId,
+        repoFullName,
+        pullNumber,
+      });
+    } catch (error) {
+      console.warn(
+        "[PullRequestPage] Failed to resolve task run link for PR",
+        error
+      );
+      return null;
+    }
+  })();
+}
+
+function buildTaskRunUrl(
+  teamSlugOrId: string,
+  taskId: string,
+  taskRunId: string
+): string {
+  const team = encodeURIComponent(teamSlugOrId);
+  const task = encodeURIComponent(taskId);
+  const run = encodeURIComponent(taskRunId);
+  return `${CMUX_APP_BASE_URL}/${team}/task/${task}/run/${run}`;
 }
 
 function PullRequestHeaderSkeleton() {
