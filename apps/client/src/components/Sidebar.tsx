@@ -1,6 +1,7 @@
 import { TaskTree } from "@/components/TaskTree";
 import { TaskTreeSkeleton } from "@/components/TaskTreeSkeleton";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
+import { usePinnedItems } from "@/contexts/pinned-items/PinnedItemsContext";
 import { isElectron } from "@/lib/electron";
 import { type Doc } from "@cmux/convex/dataModel";
 import type { LinkProps } from "@tanstack/react-router";
@@ -9,6 +10,7 @@ import { Home, Plus, Server, Settings } from "lucide-react";
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ComponentType,
@@ -80,6 +82,25 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
   });
 
   const { expandTaskIds } = useExpandTasks();
+  const { pinnedItems } = usePinnedItems();
+
+  // Sort tasks: pinned items first, then unpinned items
+  const sortedTasks = useMemo(() => {
+    if (!tasks) return undefined;
+
+    const pinned: Doc<"tasks">[] = [];
+    const unpinned: Doc<"tasks">[] = [];
+
+    for (const task of tasks) {
+      if (pinnedItems.tasks.includes(task._id)) {
+        pinned.push(task);
+      } else {
+        unpinned.push(task);
+      }
+    }
+
+    return [...pinned, ...unpinned];
+  }, [tasks, pinnedItems.tasks]);
 
   useEffect(() => {
     localStorage.setItem("sidebarWidth", String(width));
@@ -293,10 +314,10 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
 
           <div className="ml-2 pt-px">
             <div className="space-y-px">
-              {tasks === undefined ? (
+              {sortedTasks === undefined ? (
                 <TaskTreeSkeleton count={5} />
-              ) : tasks && tasks.length > 0 ? (
-                tasks.map((task) => (
+              ) : sortedTasks && sortedTasks.length > 0 ? (
+                sortedTasks.map((task) => (
                   <TaskTree
                     key={task._id}
                     task={task}

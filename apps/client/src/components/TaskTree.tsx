@@ -5,6 +5,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
+import { usePinnedItems } from "@/contexts/pinned-items/PinnedItemsContext";
 import { useArchiveTask } from "@/hooks/useArchiveTask";
 import { useOpenWithActions } from "@/hooks/useOpenWithActions";
 import { useTaskRename } from "@/hooks/useTaskRename";
@@ -45,6 +46,7 @@ import {
   Globe,
   Monitor,
   Pencil,
+  Pin,
   TerminalSquare,
   Loader2,
   XCircle,
@@ -414,6 +416,7 @@ function TaskTreeInner({
   }, [prefetchTaskRuns]);
 
   const { archiveWithUndo, unarchive } = useArchiveTask(teamSlugOrId);
+  const { pinTask, unpinTask, isTaskPinned } = usePinnedItems();
 
   const {
     isRenaming,
@@ -433,11 +436,21 @@ function TaskTreeInner({
     canRename: canRenameTask,
   });
 
+  const taskIsPinned = isTaskPinned(task._id);
+
   const handleCopyDescription = useCallback(() => {
     if (navigator?.clipboard?.writeText) {
       navigator.clipboard.writeText(task.text);
     }
   }, [task.text]);
+
+  const handlePinTask = useCallback(() => {
+    pinTask(task._id);
+  }, [pinTask, task._id]);
+
+  const handleUnpinTask = useCallback(() => {
+    unpinTask(task._id);
+  }, [unpinTask, task._id]);
 
   const handleArchive = useCallback(() => {
     archiveWithUndo(task);
@@ -676,6 +689,23 @@ function TaskTreeInner({
                   <CopyIcon className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
                   <span>Copy Description</span>
                 </ContextMenu.Item>
+                {taskIsPinned ? (
+                  <ContextMenu.Item
+                    className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                    onClick={handleUnpinTask}
+                  >
+                    <Pin className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
+                    <span>Unpin Task</span>
+                  </ContextMenu.Item>
+                ) : (
+                  <ContextMenu.Item
+                    className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                    onClick={handlePinTask}
+                  >
+                    <Pin className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
+                    <span>Pin Task</span>
+                  </ContextMenu.Item>
+                )}
                 <ContextMenu.SubmenuRoot>
                   <ContextMenu.SubmenuTrigger className="flex items-center gap-2 cursor-default py-1.5 pr-4 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700">
                     <ArchiveIcon className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
@@ -795,11 +825,30 @@ function TaskRunsContent({
 }: TaskRunsContentProps) {
   const location = useLocation();
   const optimisticTask = isFakeConvexId(taskId);
+  const { pinnedItems } = usePinnedItems();
 
   const annotatedRuns = useMemo(
     () => (runs && runs.length > 0 ? annotateAgentOrdinals(runs) : []),
     [runs]
   );
+
+  // Sort runs: pinned runs first, then unpinned runs
+  const sortedRuns = useMemo(() => {
+    if (annotatedRuns.length === 0) return annotatedRuns;
+
+    const pinned: AnnotatedTaskRun[] = [];
+    const unpinned: AnnotatedTaskRun[] = [];
+
+    for (const run of annotatedRuns) {
+      if (pinnedItems.taskRuns.includes(run._id)) {
+        pinned.push(run);
+      } else {
+        unpinned.push(run);
+      }
+    }
+
+    return [...pinned, ...unpinned];
+  }, [annotatedRuns, pinnedItems.taskRuns]);
 
   const runIdFromSearch = useMemo(() => {
     if (
@@ -818,16 +867,16 @@ function TaskRunsContent({
   }, [location.search]);
 
   const firstVisibleRunId = useMemo(() => {
-    for (const run of annotatedRuns) {
+    for (const run of sortedRuns) {
       if (!run.isArchived) {
         return run._id;
       }
     }
     return null;
-  }, [annotatedRuns]);
+  }, [sortedRuns]);
 
   const shouldHighlightDefaultRun = useMemo(() => {
-    if (!annotatedRuns.length || !hasVisibleRuns) {
+    if (!sortedRuns.length || !hasVisibleRuns) {
       return false;
     }
     const isTaskRoute = location.pathname.includes(`/task/${taskId}`);
@@ -835,7 +884,7 @@ function TaskRunsContent({
     const hasExplicitRunSelection = Boolean(runIdFromSearch);
     return isTaskRoute && !hasRunSegment && !hasExplicitRunSelection;
   }, [
-    annotatedRuns.length,
+    sortedRuns.length,
     hasVisibleRuns,
     location.pathname,
     runIdFromSearch,
@@ -877,7 +926,7 @@ function TaskRunsContent({
 
   return (
     <div className="flex flex-col">
-      {annotatedRuns.map((run) => (
+      {sortedRuns.map((run) => (
         <TaskRunTree
           key={run._id}
           run={run}
@@ -1017,9 +1066,27 @@ function TaskRunTreeInner({
     },
     [isExpanded, run._id, setRunExpanded]
   );
+  const { pinTaskRun, unpinTaskRun, isTaskRunPinned } = usePinnedItems();
+
   const handleArchiveRun = useCallback(() => {
     onArchiveToggle(run._id, true);
   }, [onArchiveToggle, run._id]);
+
+  const runIsPinned = isTaskRunPinned(run._id);
+
+  const handlePinRun = useCallback(() => {
+    pinTaskRun(run._id);
+  }, [pinTaskRun, run._id]);
+
+  const handleUnpinRun = useCallback(() => {
+    unpinTaskRun(run._id);
+  }, [unpinTaskRun, run._id]);
+
+  const handleJumpToTask = useCallback(() => {
+    // Navigate to the parent task
+    const newPath = `/${teamSlugOrId}/task/${taskId}`;
+    window.location.href = newPath;
+  }, [teamSlugOrId, taskId]);
 
   const isLocalWorkspaceRunEntry = run.isLocalWorkspace;
   const isCloudWorkspaceRunEntry = run.isCloudWorkspace;
@@ -1311,6 +1378,32 @@ function TaskRunTreeInner({
                   </ContextMenu.Positioner>
                 </ContextMenu.SubmenuRoot>
               ) : null}
+              {runIsPinned ? (
+                <>
+                  <ContextMenu.Item
+                    className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                    onClick={handleUnpinRun}
+                  >
+                    <Pin className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
+                    <span>Unpin Run</span>
+                  </ContextMenu.Item>
+                  <ContextMenu.Item
+                    className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                    onClick={handleJumpToTask}
+                  >
+                    <ExternalLink className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
+                    <span>Jump to Task</span>
+                  </ContextMenu.Item>
+                </>
+              ) : (
+                <ContextMenu.Item
+                  className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                  onClick={handlePinRun}
+                >
+                  <Pin className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
+                  <span>Pin Run</span>
+                </ContextMenu.Item>
+              )}
               <ContextMenu.Item
                 className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
                 onClick={handleArchiveRun}
