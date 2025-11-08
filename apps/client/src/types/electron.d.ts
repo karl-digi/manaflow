@@ -123,6 +123,11 @@ interface CmuxAPI {
 declare global {
   interface Window {
     cmux: CmuxAPI;
+    electron?: {
+      webFrame?: {
+        getZoomFactor?: () => number;
+      };
+    };
   }
 }
 

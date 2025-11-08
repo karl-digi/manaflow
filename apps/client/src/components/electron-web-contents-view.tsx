@@ -61,12 +61,74 @@ function roundToDevicePixels(value: number, scale: number): number {
   return Math.round(value * scale) / scale;
 }
 
-function rectToBounds(rect: DOMRect, scale: number): BoundsPayload {
+function getZoomFactor(): number {
+  if (typeof window === "undefined") {
+    return 1;
+  }
+
+  const electronZoom = window.electron?.webFrame?.getZoomFactor?.();
+  if (
+    typeof electronZoom === "number" &&
+    Number.isFinite(electronZoom) &&
+    electronZoom > 0
+  ) {
+    return electronZoom;
+  }
+
+  const viewportScale = window.visualViewport?.scale;
+  if (
+    typeof viewportScale === "number" &&
+    Number.isFinite(viewportScale) &&
+    viewportScale > 0
+  ) {
+    return viewportScale;
+  }
+
+  return 1;
+}
+
+function getDevicePixelScale(
+  devicePixelRatio: number | undefined,
+  zoomFactor: number,
+): number {
+  if (!Number.isFinite(devicePixelRatio) || (devicePixelRatio ?? 0) <= 0) {
+    return 1;
+  }
+  if (!Number.isFinite(zoomFactor) || zoomFactor <= 0) {
+    return devicePixelRatio ?? 1;
+  }
+  return (devicePixelRatio ?? 1) / zoomFactor;
+}
+
+function resolveMeasurementScales(): {
+  zoomFactor: number;
+  roundingScale: number;
+} {
+  if (typeof window === "undefined") {
+    return { zoomFactor: 1, roundingScale: 1 };
+  }
+  const zoomFactor = getZoomFactor();
+  const roundingScale = getDevicePixelScale(
+    window.devicePixelRatio ?? 1,
+    zoomFactor,
+  );
+  return { zoomFactor, roundingScale };
+}
+
+function rectToBounds(
+  rect: DOMRect,
+  roundingScale: number,
+  zoomFactor: number,
+): BoundsPayload {
+  const zoom = Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
+  const scale =
+    Number.isFinite(roundingScale) && roundingScale > 0 ? roundingScale : 1;
+  const convert = (value: number) => roundToDevicePixels(value * zoom, scale);
   return {
-    x: roundToDevicePixels(rect.left, scale),
-    y: roundToDevicePixels(rect.top, scale),
-    width: Math.max(0, roundToDevicePixels(rect.width, scale)),
-    height: Math.max(0, roundToDevicePixels(rect.height, scale)),
+    x: convert(rect.left),
+    y: convert(rect.top),
+    width: Math.max(0, convert(rect.width)),
+    height: Math.max(0, convert(rect.height)),
   };
 }
 
@@ -230,9 +292,9 @@ export function ElectronWebContentsView({
     const container = containerRef.current;
     if (!bridge || id === null || !container) return;
 
-    const scale = window.devicePixelRatio ?? 1;
+    const { zoomFactor, roundingScale } = resolveMeasurementScales();
     const rect = container.getBoundingClientRect();
-    const bounds = rectToBounds(rect, scale);
+    const bounds = rectToBounds(rect, roundingScale, zoomFactor);
     const sizeMissing = bounds.width <= 0 || bounds.height <= 0;
     const hiddenByStyle = isEffectivelyHidden(container);
     const isVisible =
@@ -389,10 +451,12 @@ export function ElectronWebContentsView({
     let disposed = false;
     setErrorMessage(null);
 
-    const initialScale = window.devicePixelRatio ?? 1;
+    const { zoomFactor: initialZoomFactor, roundingScale: initialScale } =
+      resolveMeasurementScales();
     const initialBounds = rectToBounds(
       container.getBoundingClientRect(),
       initialScale,
+      initialZoomFactor,
     );
     const { backgroundColor: initialBackground, borderRadius: initialRadius } =
       latestStyleRef.current;
