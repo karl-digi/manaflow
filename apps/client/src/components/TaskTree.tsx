@@ -1496,7 +1496,7 @@ function TaskRunDetails({
   const environmentErrorIndicator = hasEnvironmentError ? (
     <Tooltip delayDuration={0}>
       <TooltipTrigger asChild>
-        <AlertTriangle className="w-3 h-3 text-neutral-700" />
+        <AlertTriangle className="w-3 h-3 text-amber-600 dark:text-amber-300" />
       </TooltipTrigger>
       <TooltipContent
         side="right"
@@ -1508,12 +1508,12 @@ function TaskRunDetails({
             Environment Issue
           </p>
           {environmentError?.maintenanceError && (
-            <p className="text-xs text-neutral-400">
+            <p className="text-xs text-neutral-400 dark:text-neutral-100">
               Maintenance: {environmentError.maintenanceError}
             </p>
           )}
           {environmentError?.devError && (
-            <p className="text-xs text-neutral-400">
+            <p className="text-xs text-neutral-400 dark:text-neutral-100">
               Dev: {environmentError.devError}
             </p>
           )}
