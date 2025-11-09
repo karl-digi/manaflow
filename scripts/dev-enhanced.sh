@@ -21,10 +21,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Colors for output
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-RED='\033[0;31m'
-YELLOW='\033[0;33m'
+GREEN='\033[92m'
+BLUE='\033[94m'
+RED='\033[91m'
+YELLOW='\033[93m'
 NC='\033[0m' # No Color
 
 if [ "$USE_DEVCONTAINER" = true ]; then
