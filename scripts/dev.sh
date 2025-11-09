@@ -167,14 +167,60 @@ fi
 
 # APP_DIR is already set above based on environment"
 
-# Colors for output - export them for subshells
-export GREEN='\033[0;32m'
-export BLUE='\033[0;34m'
-export RED='\033[0;31m'
-export YELLOW='\033[0;33m'
-export MAGENTA='\033[0;35m'
-export CYAN='\033[0;36m'
-export NC='\033[0m' # No Color
+# Colors for output — prefer high-contrast palettes for dark terminals.
+# We detect the best available color space (truecolor > 256-color > basic ANSI)
+# while still honoring NO_COLOR/TERM=dumb to avoid noisy escape codes.
+set_color_palette() {
+    if [[ -n "${NO_COLOR:-}" || "${TERM:-}" == "dumb" ]]; then
+        export GREEN='' BLUE='' RED='' YELLOW='' MAGENTA='' CYAN='' BOLD='' NC=''
+        return
+    fi
+
+    local color_mode="basic"
+    if [[ "${COLORTERM:-}" == *truecolor* || "${COLORTERM:-}" == *24bit* ]]; then
+        color_mode="truecolor"
+    else
+        local color_count=0
+        if command -v tput >/dev/null 2>&1; then
+            color_count="$(tput colors 2>/dev/null || echo 0)"
+        fi
+        if [ "${color_count:-0}" -ge 256 ]; then
+            color_mode="extended"
+        fi
+    fi
+
+    case "$color_mode" in
+        truecolor)
+            export GREEN='\033[38;2;34;197;94m'
+            export BLUE='\033[38;2;93;163;255m'
+            export RED='\033[38;2;255;105;97m'
+            export YELLOW='\033[38;2;255;214;102m'
+            export MAGENTA='\033[38;2;220;140;255m'
+            export CYAN='\033[38;2;94;234;212m'
+            ;;
+        extended)
+            export GREEN='\033[38;5;48m'
+            export BLUE='\033[38;5;75m'
+            export RED='\033[38;5;203m'
+            export YELLOW='\033[38;5;221m'
+            export MAGENTA='\033[38;5;201m'
+            export CYAN='\033[38;5;44m'
+            ;;
+        *)
+            export GREEN='\033[1;32m'
+            export BLUE='\033[1;34m'
+            export RED='\033[1;31m'
+            export YELLOW='\033[1;33m'
+            export MAGENTA='\033[1;35m'
+            export CYAN='\033[1;36m'
+            ;;
+    esac
+
+    export BOLD='\033[1m'
+    export NC='\033[0m' # No Color
+}
+
+set_color_palette
 
 echo -e "${BLUE}Starting Terminal App Development Environment...${NC}"
 
@@ -224,8 +270,9 @@ echo -e "${GREEN}Building native Rust addon...${NC}"
 prefix_output() {
     local label="$1"
     local color="$2"
+    local bold="${BOLD:-}"
     while IFS= read -r line; do
-        echo -e "${color}[${label}]${NC} $line"
+        echo -e "${color}${bold}[${label}]${NC} $line"
     done
 }
 # Export the function so it's available in subshells
