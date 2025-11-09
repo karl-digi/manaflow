@@ -1,6 +1,7 @@
 import { verifyTaskRunToken, type TaskRunTokenPayload } from "@cmux/shared";
 import { env } from "@/lib/utils/www-env";
 import { NextRequest, NextResponse } from "next/server";
+import { captureServerPosthogEvent } from "@/lib/analytics/posthog-server";
 
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 const TEMPORARY_DISABLE_AUTH = true;
@@ -20,6 +21,44 @@ async function requireTaskRunToken(
 
 function getIsOAuthToken(token: string) {
   return token.includes("sk-ant-oat");
+}
+
+async function getUserIdFromRequest(request: NextRequest): Promise<string> {
+  // Try to get user ID from token first
+  const token = request.headers.get("x-cmux-token");
+  if (token && !TEMPORARY_DISABLE_AUTH) {
+    try {
+      const payload = await verifyTaskRunToken(token, env.CMUX_TASK_RUN_JWT_SECRET);
+      return payload.userId || "anonymous";
+    } catch {
+      // Token verification failed, fall back to anonymous
+    }
+  }
+
+  // Fall back to IP address or anonymous
+  const ip = request.headers.get("x-forwarded-for") ||
+             request.headers.get("x-real-ip") ||
+             "anonymous";
+  return ip.split(",")[0].trim();
+}
+
+async function trackAnthropicUsage(
+  userId: string,
+  inputTokens: number,
+  outputTokens: number,
+  model?: string
+): Promise<void> {
+  await captureServerPosthogEvent({
+    distinctId: userId,
+    event: "anthropic_message_sent",
+    properties: {
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      total_tokens: inputTokens + outputTokens,
+      model: model || "unknown",
+      timestamp: new Date().toISOString(),
+    },
+  });
 }
 
 export async function POST(request: NextRequest) {
@@ -81,7 +120,13 @@ export async function POST(request: NextRequest) {
 
     // Handle streaming responses
     if (body.stream && response.ok) {
-      // Create a TransformStream to pass through the SSE data
+      const userId = await getUserIdFromRequest(request);
+      let inputTokens = 0;
+      let outputTokens = 0;
+      let modelName: string | undefined;
+      const decoder = new TextDecoder();
+
+      // Create a TransformStream to pass through the SSE data and extract usage
       const stream = new ReadableStream({
         async start(controller) {
           const reader = response.body?.getReader();
@@ -95,8 +140,53 @@ export async function POST(request: NextRequest) {
               const { done, value } = await reader.read();
               if (done) {
                 controller.close();
+
+                // Track usage after stream completes
+                if (inputTokens > 0 || outputTokens > 0) {
+                  await trackAnthropicUsage(
+                    userId,
+                    inputTokens,
+                    outputTokens,
+                    modelName
+                  ).catch((error) => {
+                    console.error("[anthropic proxy] Failed to track streaming usage:", error);
+                  });
+                }
                 break;
               }
+
+              // Parse the SSE data to extract usage information
+              const chunk = decoder.decode(value, { stream: true });
+              const lines = chunk.split("\n");
+
+              for (const line of lines) {
+                if (line.startsWith("data: ")) {
+                  const data = line.slice(6);
+                  if (data === "[DONE]") continue;
+
+                  try {
+                    const parsed = JSON.parse(data);
+
+                    // Extract model name
+                    if (parsed.model) {
+                      modelName = parsed.model;
+                    }
+
+                    // Extract usage from message_start event
+                    if (parsed.type === "message_start" && parsed.message?.usage) {
+                      inputTokens = parsed.message.usage.input_tokens || 0;
+                    }
+
+                    // Extract usage from message_delta event (final token counts)
+                    if (parsed.type === "message_delta" && parsed.usage) {
+                      outputTokens = parsed.usage.output_tokens || 0;
+                    }
+                  } catch {
+                    // Not valid JSON, skip
+                  }
+                }
+              }
+
               controller.enqueue(value);
             }
           } catch (error) {
@@ -121,6 +211,19 @@ export async function POST(request: NextRequest) {
     if (!response.ok) {
       console.error("[anthropic proxy] Anthropic error:", data);
       return NextResponse.json(data, { status: response.status });
+    }
+
+    // Track usage for successful non-streaming responses
+    if (data.usage) {
+      const userId = await getUserIdFromRequest(request);
+      await trackAnthropicUsage(
+        userId,
+        data.usage.input_tokens || 0,
+        data.usage.output_tokens || 0,
+        data.model
+      ).catch((error) => {
+        console.error("[anthropic proxy] Failed to track usage:", error);
+      });
     }
 
     return NextResponse.json(data);
