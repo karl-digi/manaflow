@@ -44,6 +44,7 @@ import {
 } from "lucide-react";
 import {
   useCallback,
+  useDeferredValue,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -115,6 +116,7 @@ const COMMAND_LIST_SCROLL_PADDING_TOP_PX = 4;
 const COMMAND_LIST_SCROLL_PADDING_BOTTOM_PX =
   COMMAND_LIST_SCROLL_PADDING_TOP_PX;
 const TASK_SHORTCUT_LIMIT = 9;
+const COMMAND_LIST_FILTER_LIMIT = 400;
 const adjustContainerScrollForChild = (
   container: HTMLElement,
   target: HTMLElement
@@ -288,6 +290,7 @@ export function CommandBar({
 }: CommandBarProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const deferredSearch = useDeferredValue(search);
   const [openedWithShift, setOpenedWithShift] = useState(false);
   const clearCommandInput = useCallback(() => {
     setSearch("");
@@ -331,6 +334,10 @@ export function CommandBar({
     },
     [router]
   );
+
+  const filterQuery = deferredSearch;
+  const trimmedFilterQuery = filterQuery.trim();
+  const hasSearchQuery = trimmedFilterQuery.length > 0;
   const updateCommandListMaxHeight = useCallback(() => {
     const inputHeight = inputRef.current?.offsetHeight ?? 0;
     const availableHeight =
@@ -2156,27 +2163,42 @@ export function CommandBar({
   }, [cloudWorkspaceEntries, pruneCloudWorkspaceHistory]);
 
   const filteredRootEntries = useMemo(() => {
-    const filtered = filterCommandItems(search, rootCommandEntries);
-    if (search.trim().length === 0) {
+    const filtered = filterCommandItems(filterQuery, rootCommandEntries, {
+      limit: COMMAND_LIST_FILTER_LIMIT,
+    });
+    if (!hasSearchQuery) {
       return filtered.filter((entry) => !entry.searchOnly);
     }
     return filtered;
-  }, [rootCommandEntries, search]);
+  }, [filterQuery, hasSearchQuery, rootCommandEntries]);
+  const isLocalWorkspacePage = activePage === "local-workspaces";
+  const isCloudWorkspacePage = activePage === "cloud-workspaces";
+  const isTeamsPage = activePage === "teams";
 
-  const filteredLocalWorkspaceEntries = useMemo(
-    () => filterCommandItems(search, localWorkspaceEntries),
-    [localWorkspaceEntries, search]
-  );
-  const filteredCloudWorkspaceEntries = useMemo(
-    () => filterCommandItems(search, cloudWorkspaceEntries),
-    [cloudWorkspaceEntries, search]
-  );
-  const filteredTeamEntries = useMemo(
-    () => filterCommandItems(search, teamCommandEntries),
-    [search, teamCommandEntries]
-  );
-
-  const hasSearchQuery = search.trim().length > 0;
+  const filteredLocalWorkspaceEntries = useMemo(() => {
+    if (!isLocalWorkspacePage) {
+      return [];
+    }
+    return filterCommandItems(filterQuery, localWorkspaceEntries, {
+      limit: COMMAND_LIST_FILTER_LIMIT,
+    });
+  }, [filterQuery, isLocalWorkspacePage, localWorkspaceEntries]);
+  const filteredCloudWorkspaceEntries = useMemo(() => {
+    if (!isCloudWorkspacePage) {
+      return [];
+    }
+    return filterCommandItems(filterQuery, cloudWorkspaceEntries, {
+      limit: COMMAND_LIST_FILTER_LIMIT,
+    });
+  }, [cloudWorkspaceEntries, filterQuery, isCloudWorkspacePage]);
+  const filteredTeamEntries = useMemo(() => {
+    if (!isTeamsPage) {
+      return [];
+    }
+    return filterCommandItems(filterQuery, teamCommandEntries, {
+      limit: COMMAND_LIST_FILTER_LIMIT,
+    });
+  }, [filterQuery, isTeamsPage, teamCommandEntries]);
 
   const rootSuggestedEntries = useMemo(
     () => selectSuggestedItems(rootSuggestionHistory, filteredRootEntries, 5),
@@ -2194,26 +2216,38 @@ export function CommandBar({
     [filteredRootEntries, rootSuggestedValueSet]
   );
 
-  const localWorkspaceSuggestedEntries = useMemo(
-    () =>
-      selectSuggestedItems(
-        localWorkspaceSuggestionHistory,
-        filteredLocalWorkspaceEntries,
-        5
-      ),
-    [filteredLocalWorkspaceEntries, localWorkspaceSuggestionHistory]
-  );
-  const localWorkspaceSuggestedValueSet = useMemo(
-    () => new Set(localWorkspaceSuggestedEntries.map((entry) => entry.value)),
-    [localWorkspaceSuggestedEntries]
-  );
-  const localWorkspaceRemainingEntries = useMemo(
-    () =>
-      filteredLocalWorkspaceEntries.filter(
-        (entry) => !localWorkspaceSuggestedValueSet.has(entry.value)
-      ),
-    [filteredLocalWorkspaceEntries, localWorkspaceSuggestedValueSet]
-  );
+  const localWorkspaceSuggestedEntries = useMemo(() => {
+    if (!isLocalWorkspacePage) {
+      return [];
+    }
+    return selectSuggestedItems(
+      localWorkspaceSuggestionHistory,
+      filteredLocalWorkspaceEntries,
+      5
+    );
+  }, [
+    filteredLocalWorkspaceEntries,
+    isLocalWorkspacePage,
+    localWorkspaceSuggestionHistory,
+  ]);
+  const localWorkspaceSuggestedValueSet = useMemo(() => {
+    if (!isLocalWorkspacePage) {
+      return new Set<string>();
+    }
+    return new Set(localWorkspaceSuggestedEntries.map((entry) => entry.value));
+  }, [isLocalWorkspacePage, localWorkspaceSuggestedEntries]);
+  const localWorkspaceRemainingEntries = useMemo(() => {
+    if (!isLocalWorkspacePage) {
+      return [];
+    }
+    return filteredLocalWorkspaceEntries.filter(
+      (entry) => !localWorkspaceSuggestedValueSet.has(entry.value)
+    );
+  }, [
+    filteredLocalWorkspaceEntries,
+    isLocalWorkspacePage,
+    localWorkspaceSuggestedValueSet,
+  ]);
 
   const rootSuggestionsToRender = useMemo(
     () => (!hasSearchQuery ? rootSuggestedEntries : []),
@@ -2238,76 +2272,108 @@ export function CommandBar({
       ),
     [rootCommandsToRender, rootSuggestionsToRender]
   );
-  const localWorkspaceSuggestionsToRender = useMemo(
-    () => (!hasSearchQuery ? localWorkspaceSuggestedEntries : []),
-    [hasSearchQuery, localWorkspaceSuggestedEntries]
-  );
-  const localWorkspaceCommandsToRender = useMemo(
-    () =>
-      hasSearchQuery || localWorkspaceSuggestionsToRender.length === 0
-        ? filteredLocalWorkspaceEntries
-        : localWorkspaceRemainingEntries,
-    [
-      filteredLocalWorkspaceEntries,
-      hasSearchQuery,
-      localWorkspaceRemainingEntries,
-      localWorkspaceSuggestionsToRender.length,
-    ]
-  );
-  const localWorkspaceVisibleValues = useMemo(
-    () =>
-      [
-        ...localWorkspaceSuggestionsToRender,
-        ...localWorkspaceCommandsToRender,
-      ].map((entry) => entry.value),
-    [localWorkspaceCommandsToRender, localWorkspaceSuggestionsToRender]
-  );
+  const localWorkspaceSuggestionsToRender = useMemo(() => {
+    if (!isLocalWorkspacePage) {
+      return [];
+    }
+    return !hasSearchQuery ? localWorkspaceSuggestedEntries : [];
+  }, [hasSearchQuery, isLocalWorkspacePage, localWorkspaceSuggestedEntries]);
+  const localWorkspaceCommandsToRender = useMemo(() => {
+    if (!isLocalWorkspacePage) {
+      return [];
+    }
+    if (hasSearchQuery || localWorkspaceSuggestionsToRender.length === 0) {
+      return filteredLocalWorkspaceEntries;
+    }
+    return localWorkspaceRemainingEntries;
+  }, [
+    filteredLocalWorkspaceEntries,
+    hasSearchQuery,
+    isLocalWorkspacePage,
+    localWorkspaceRemainingEntries,
+    localWorkspaceSuggestionsToRender.length,
+  ]);
+  const localWorkspaceVisibleValues = useMemo(() => {
+    if (!isLocalWorkspacePage) {
+      return [];
+    }
+    return [
+      ...localWorkspaceSuggestionsToRender,
+      ...localWorkspaceCommandsToRender,
+    ].map((entry) => entry.value);
+  }, [
+    isLocalWorkspacePage,
+    localWorkspaceCommandsToRender,
+    localWorkspaceSuggestionsToRender,
+  ]);
 
-  const cloudWorkspaceSuggestedEntries = useMemo(
-    () =>
-      selectSuggestedItems(
-        cloudWorkspaceSuggestionHistory,
-        filteredCloudWorkspaceEntries,
-        5
-      ),
-    [filteredCloudWorkspaceEntries, cloudWorkspaceSuggestionHistory]
-  );
-  const cloudWorkspaceSuggestedValueSet = useMemo(
-    () => new Set(cloudWorkspaceSuggestedEntries.map((entry) => entry.value)),
-    [cloudWorkspaceSuggestedEntries]
-  );
-  const cloudWorkspaceRemainingEntries = useMemo(
-    () =>
-      filteredCloudWorkspaceEntries.filter(
-        (entry) => !cloudWorkspaceSuggestedValueSet.has(entry.value)
-      ),
-    [filteredCloudWorkspaceEntries, cloudWorkspaceSuggestedValueSet]
-  );
-
-  const cloudWorkspaceSuggestionsToRender = useMemo(
-    () => (!hasSearchQuery ? cloudWorkspaceSuggestedEntries : []),
-    [hasSearchQuery, cloudWorkspaceSuggestedEntries]
-  );
-  const cloudWorkspaceCommandsToRender = useMemo(
-    () =>
-      hasSearchQuery || cloudWorkspaceSuggestionsToRender.length === 0
-        ? filteredCloudWorkspaceEntries
-        : cloudWorkspaceRemainingEntries,
-    [
+  const cloudWorkspaceSuggestedEntries = useMemo(() => {
+    if (!isCloudWorkspacePage) {
+      return [];
+    }
+    return selectSuggestedItems(
+      cloudWorkspaceSuggestionHistory,
       filteredCloudWorkspaceEntries,
-      hasSearchQuery,
-      cloudWorkspaceRemainingEntries,
-      cloudWorkspaceSuggestionsToRender.length,
-    ]
-  );
-  const cloudWorkspaceVisibleValues = useMemo(
-    () =>
-      [
-        ...cloudWorkspaceSuggestionsToRender,
-        ...cloudWorkspaceCommandsToRender,
-      ].map((entry) => entry.value),
-    [cloudWorkspaceCommandsToRender, cloudWorkspaceSuggestionsToRender]
-  );
+      5
+    );
+  }, [
+    cloudWorkspaceSuggestionHistory,
+    filteredCloudWorkspaceEntries,
+    isCloudWorkspacePage,
+  ]);
+  const cloudWorkspaceSuggestedValueSet = useMemo(() => {
+    if (!isCloudWorkspacePage) {
+      return new Set<string>();
+    }
+    return new Set(cloudWorkspaceSuggestedEntries.map((entry) => entry.value));
+  }, [cloudWorkspaceSuggestedEntries, isCloudWorkspacePage]);
+  const cloudWorkspaceRemainingEntries = useMemo(() => {
+    if (!isCloudWorkspacePage) {
+      return [];
+    }
+    return filteredCloudWorkspaceEntries.filter(
+      (entry) => !cloudWorkspaceSuggestedValueSet.has(entry.value)
+    );
+  }, [
+    cloudWorkspaceSuggestedValueSet,
+    filteredCloudWorkspaceEntries,
+    isCloudWorkspacePage,
+  ]);
+
+  const cloudWorkspaceSuggestionsToRender = useMemo(() => {
+    if (!isCloudWorkspacePage) {
+      return [];
+    }
+    return !hasSearchQuery ? cloudWorkspaceSuggestedEntries : [];
+  }, [cloudWorkspaceSuggestedEntries, hasSearchQuery, isCloudWorkspacePage]);
+  const cloudWorkspaceCommandsToRender = useMemo(() => {
+    if (!isCloudWorkspacePage) {
+      return [];
+    }
+    if (hasSearchQuery || cloudWorkspaceSuggestionsToRender.length === 0) {
+      return filteredCloudWorkspaceEntries;
+    }
+    return cloudWorkspaceRemainingEntries;
+  }, [
+    cloudWorkspaceRemainingEntries,
+    cloudWorkspaceSuggestionsToRender.length,
+    filteredCloudWorkspaceEntries,
+    hasSearchQuery,
+    isCloudWorkspacePage,
+  ]);
+  const cloudWorkspaceVisibleValues = useMemo(() => {
+    if (!isCloudWorkspacePage) {
+      return [];
+    }
+    return [
+      ...cloudWorkspaceSuggestionsToRender,
+      ...cloudWorkspaceCommandsToRender,
+    ].map((entry) => entry.value);
+  }, [
+    cloudWorkspaceCommandsToRender,
+    cloudWorkspaceSuggestionsToRender,
+    isCloudWorkspacePage,
+  ]);
 
   const shouldVirtualizeRoot =
     rootCommandsToRender.length > COMMAND_LIST_VIRTUALIZATION_THRESHOLD;
