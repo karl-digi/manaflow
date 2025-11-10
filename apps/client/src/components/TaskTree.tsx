@@ -19,9 +19,11 @@ import {
   aggregatePullRequestState,
   type RunPullRequestState,
 } from "@cmux/shared/pull-request-state";
+import { postApiTaskRunsForceWakeMutation } from "@cmux/www-openapi-client/react-query";
 import { Link, useLocation, type LinkProps } from "@tanstack/react-router";
+import { useMutation as useRQMutation } from "@tanstack/react-query";
 import clsx from "clsx";
-import { useMutation, useQuery as useConvexQuery } from "convex/react";
+import { useMutation as useConvexMutation, useQuery as useConvexQuery } from "convex/react";
 import { toast } from "sonner";
 import {
   AlertTriangle,
@@ -44,6 +46,7 @@ import {
   GitPullRequestDraft,
   Globe,
   Monitor,
+  Power,
   Pencil,
   TerminalSquare,
   Loader2,
@@ -375,7 +378,7 @@ function TaskTreeInner({
     });
   }, [isOptimisticTask, task._id, teamSlugOrId]);
 
-  const archiveTaskRun = useMutation(api.taskRuns.archive).withOptimisticUpdate(
+  const archiveTaskRun = useConvexMutation(api.taskRuns.archive).withOptimisticUpdate(
     (localStore, args) => {
       if (!args.taskId) {
         return;
@@ -1068,6 +1071,41 @@ function TaskRunTreeInner({
   const handleArchiveRun = useCallback(() => {
     onArchiveToggle(run._id, true);
   }, [onArchiveToggle, run._id]);
+  const forceWakeVmMutation = useRQMutation(
+    postApiTaskRunsForceWakeMutation()
+  );
+  const canForceWakeVm =
+    run.vscode?.provider === "morph" &&
+    Boolean(run.vscode?.workspaceUrl ?? run.vscode?.url);
+  const handleForceWakeVm = useCallback(() => {
+    if (!canForceWakeVm || forceWakeVmMutation.isPending) {
+      return;
+    }
+    void toast.promise(
+      forceWakeVmMutation.mutateAsync({
+        body: {
+          teamSlugOrId,
+          taskRunId: run._id,
+        },
+      }),
+      {
+        loading: "Waking Morph VM…",
+        success: (result) =>
+          result?.outcome === "already_ready"
+            ? "Workspace is already awake."
+            : "Workspace is ready.",
+        error: (error) =>
+          error instanceof Error
+            ? error.message
+            : "Failed to wake the workspace.",
+      }
+    );
+  }, [
+    canForceWakeVm,
+    forceWakeVmMutation,
+    run._id,
+    teamSlugOrId,
+  ]);
 
   const isLocalWorkspaceRunEntry = run.isLocalWorkspace;
   const isCloudWorkspaceRunEntry = run.isCloudWorkspace;
@@ -1369,6 +1407,19 @@ function TaskRunTreeInner({
                     </ContextMenu.Popup>
                   </ContextMenu.Positioner>
                 </ContextMenu.SubmenuRoot>
+              ) : null}
+              {canForceWakeVm ? (
+                <ContextMenu.Item
+                  className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                  onClick={handleForceWakeVm}
+                >
+                  <Power className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
+                  <span>
+                    {forceWakeVmMutation.isPending
+                      ? "Waking VM…"
+                      : "Force wake VM"}
+                  </span>
+                </ContextMenu.Item>
               ) : null}
               <ContextMenu.Item
                 className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"

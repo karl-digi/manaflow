@@ -21,6 +21,7 @@ import {
   teamsRouter,
   usersRouter,
   iframePreflightRouter,
+  taskRunsRouter,
 } from "@/lib/routes/index";
 import { authAnonymousRouter } from "@/lib/routes/auth.anonymous.route";
 import { stackServerApp } from "@/lib/utils/stack";
@@ -115,6 +116,7 @@ app.route("/", githubPrsFileContentsBatchRouter);
 app.route("/", githubInstallStateRouter);
 app.route("/", morphRouter);
 app.route("/", iframePreflightRouter);
+app.route("/", taskRunsRouter);
 app.route("/", environmentsRouter);
 app.route("/", sandboxesRouter);
 app.route("/", teamsRouter);
