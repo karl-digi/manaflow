@@ -553,6 +553,11 @@ function TaskTreeInner({
   const isCrownEvaluating = task.crownEvaluationStatus === "in_progress";
   const isLocalWorkspace = task.isLocalWorkspace;
   const isCloudWorkspace = task.isCloudWorkspace;
+  const workspaceTaskIcon = isLocalWorkspace ? (
+    <TerminalSquare className="w-3 h-3 text-neutral-500 dark:text-neutral-400" />
+  ) : isCloudWorkspace ? (
+    <Globe className="w-3 h-3 text-neutral-500 dark:text-neutral-400" />
+  ) : null;
 
   const taskLeadingIcon = (() => {
     if (isCrownEvaluating) {
@@ -639,8 +644,8 @@ function TaskTreeInner({
       }
     }
 
-    if (isLocalWorkspace || isCloudWorkspace) {
-      return null;
+    if (workspaceTaskIcon) {
+      return workspaceTaskIcon;
     }
 
     return task.isCompleted ? (
@@ -1082,6 +1087,11 @@ function TaskRunTreeInner({
 
   const isLocalWorkspaceRunEntry = run.isLocalWorkspace;
   const isCloudWorkspaceRunEntry = run.isCloudWorkspace;
+  const workspaceRunIcon = isLocalWorkspaceRunEntry ? (
+    <TerminalSquare className="w-3 h-3 text-neutral-500 dark:text-neutral-400" />
+  ) : isCloudWorkspaceRunEntry ? (
+    <Globe className="w-3 h-3 text-neutral-500 dark:text-neutral-400" />
+  ) : null;
 
   const statusIcon = {
     pending: <Circle className="w-3 h-3 text-neutral-400" />,
@@ -1161,13 +1171,15 @@ function TaskRunTreeInner({
   }, [pullRequestState, run.status]);
 
   const hideStatusIcon = shouldHideStatusIcon && !pullRequestIcon;
-  const resolvedStatusIcon = hideStatusIcon ? null : statusIcon;
+  const resolvedStatusIcon = hideStatusIcon
+    ? workspaceRunIcon ?? null
+    : statusIcon;
 
   const statusIconWithTooltip =
     run.status === "failed" && run.errorMessage ? (
       <Tooltip>
         <TooltipTrigger asChild>
-          {resolvedStatusIcon ?? statusIcon}
+          {resolvedStatusIcon ?? workspaceRunIcon ?? statusIcon}
         </TooltipTrigger>
         <TooltipContent
           side="right"
@@ -1177,10 +1189,11 @@ function TaskRunTreeInner({
         </TooltipContent>
       </Tooltip>
     ) : (
-      resolvedStatusIcon
+      resolvedStatusIcon ?? workspaceRunIcon ?? statusIcon
     );
 
-  const runLeadingIcon = pullRequestIcon ?? statusIconWithTooltip;
+  const runLeadingIcon =
+    pullRequestIcon ?? statusIconWithTooltip ?? workspaceRunIcon;
 
   const runMetaIcon =
     !run.isArchived && runLeadingIcon ? (
