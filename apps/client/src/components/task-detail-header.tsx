@@ -650,6 +650,57 @@ function SocketActions({
     });
   };
 
+  const buildPrUrl = (
+    pr: {
+      url?: string | null;
+      repoFullName?: string;
+      number?: number;
+    },
+  ) => {
+    const trimmedUrl = pr.url?.trim();
+    if (trimmedUrl) {
+      return trimmedUrl;
+    }
+    const repoFullName = pr.repoFullName?.trim();
+    if (repoFullName && pr.number) {
+      return `https://github.com/${repoFullName}/pull/${pr.number}`;
+    }
+    return null;
+  };
+
+  const copyPrUrls = async (
+    prs: Array<{
+      url?: string | null;
+      repoFullName?: string;
+      number?: number;
+    }>,
+  ) => {
+    const urls = prs
+      .map((pr) => buildPrUrl(pr))
+      .filter((url): url is string => Boolean(url));
+
+    if (urls.length === 0) {
+      toast.error("No PR URLs available to copy");
+      return;
+    }
+
+    if (
+      typeof navigator === "undefined" ||
+      !navigator.clipboard?.writeText
+    ) {
+      toast.error("Clipboard is not available in this environment.");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(urls.join("\n"));
+      toast.success(urls.length === 1 ? "Copied PR URL" : "Copied PR URLs");
+    } catch (error) {
+      console.error("Failed to copy PR URLs", error);
+      toast.error("Couldn't copy PR URL");
+    }
+  };
+
   const summarizeResults = (
     results: Array<{ repoFullName: string; error?: string | undefined }>,
   ) => {
@@ -708,6 +759,9 @@ function SocketActions({
           Boolean(result.repoFullName?.trim()) &&
           Boolean(result.number),
       );
+      const copyable = response.results.filter(
+        (result) => Boolean(buildPrUrl(result)),
+      );
       toast.success(openedLabel, {
         id: context?.toastId,
         description: summarizeResults(response.results),
@@ -716,6 +770,16 @@ function SocketActions({
             ? {
               label: actionable.length === 1 ? "View PR" : "View PRs",
               onClick: () => navigateToPrs(actionable),
+            }
+            : undefined,
+        cancel:
+          copyable.length > 0
+            ? {
+              label:
+                copyable.length === 1 ? "Copy PR URL" : "Copy PR URLs",
+              onClick: () => {
+                void copyPrUrls(copyable);
+              },
             }
             : undefined,
       });
