@@ -19,7 +19,9 @@ import {
   aggregatePullRequestState,
   type RunPullRequestState,
 } from "@cmux/shared/pull-request-state";
+import { postApiMorphTaskRunsByTaskRunIdForceWakeMutation } from "@cmux/www-openapi-client/react-query";
 import { Link, useLocation, type LinkProps } from "@tanstack/react-router";
+import { useMutation as useRQMutation } from "@tanstack/react-query";
 import clsx from "clsx";
 import { useMutation, useQuery as useConvexQuery } from "convex/react";
 import { toast } from "sonner";
@@ -47,6 +49,7 @@ import {
   Pencil,
   TerminalSquare,
   Loader2,
+  Power,
   XCircle,
 } from "lucide-react";
 import {
@@ -1239,9 +1242,55 @@ function TaskRunTreeInner({
     networking: run.networking,
   });
 
+  const forceWakeMutation = useRQMutation(
+    postApiMorphTaskRunsByTaskRunIdForceWakeMutation()
+  );
+
+  const handleForceWakeVm = useCallback(async () => {
+    if (forceWakeMutation.isPending) {
+      return;
+    }
+    const toastId = toast.loading("Waking Morph VM…");
+    try {
+      const data = await forceWakeMutation.mutateAsync({
+        body: { teamSlugOrId },
+        path: { taskRunId: run._id },
+      });
+      const instanceLabel = data?.instanceId
+        ? `Instance ${data.instanceId}`
+        : "Morph VM";
+      const vmStatus = data?.vmStatus ?? "ready";
+      const statusDetail =
+        data?.previousStatus && data.previousStatus !== vmStatus
+          ? `${vmStatus} (was ${data.previousStatus})`
+          : vmStatus;
+      toast.success("Morph VM awake", {
+        id: toastId,
+        description: `${instanceLabel} is ${statusDetail}.`,
+      });
+    } catch (error) {
+      const description =
+        typeof error === "object" &&
+        error !== null &&
+        "error" in error &&
+        typeof (error as { error?: string }).error === "string"
+          ? (error as { error?: string }).error ??
+            "Unable to wake Morph VM."
+          : error instanceof Error
+            ? error.message
+            : "Unable to wake Morph VM.";
+      toast.error("Failed to wake VM", {
+        id: toastId,
+        description,
+      });
+    }
+  }, [forceWakeMutation, run._id, teamSlugOrId]);
+
+  const isMorphWorkspace = run.vscode?.provider === "morph";
+  const canForceWakeVm = isMorphWorkspace;
   const shouldRenderDiffLink = true;
-  const shouldRenderBrowserLink = run.vscode?.provider === "morph";
-  const shouldRenderTerminalLink = shouldRenderBrowserLink;
+  const shouldRenderBrowserLink = isMorphWorkspace;
+  const shouldRenderTerminalLink = isMorphWorkspace;
   const shouldRenderPullRequestLink = Boolean(
     (run.pullRequestUrl && run.pullRequestUrl !== "pending") ||
       run.pullRequests?.some((pr) => pr.url)
@@ -1369,6 +1418,19 @@ function TaskRunTreeInner({
                     </ContextMenu.Popup>
                   </ContextMenu.Positioner>
                 </ContextMenu.SubmenuRoot>
+              ) : null}
+              {canForceWakeVm ? (
+                <ContextMenu.Item
+                  className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                  onClick={handleForceWakeVm}
+                >
+                  <Power className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
+                  <span>
+                    {forceWakeMutation.isPending
+                      ? "Waking VM…"
+                      : "Force wake VM"}
+                  </span>
+                </ContextMenu.Item>
               ) : null}
               <ContextMenu.Item
                 className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"

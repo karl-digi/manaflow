@@ -365,6 +365,27 @@ export type SetupInstanceBody = {
     snapshotId?: string | ('snapshot_pmo7bxv7' | 'snapshot_qbpom27i');
 };
 
+export type MorphForceWakeResponse = {
+    action: 'already_ready' | 'resumed';
+    instanceId: string;
+    morphId: string;
+    vmStatus: string;
+    resumeAttempts: number;
+    readyChecks: number;
+    previousStatus?: string;
+};
+
+export type MorphForceWakeError = {
+    error: string;
+};
+
+export type MorphForceWakeBody = {
+    /**
+     * Team slug or UUID
+     */
+    teamSlugOrId: string;
+};
+
 export type CreateEnvironmentResponse = {
     id: string;
     snapshotId: string;
@@ -1574,6 +1595,52 @@ export type PostApiMorphSetupInstanceResponses = {
 };
 
 export type PostApiMorphSetupInstanceResponse = PostApiMorphSetupInstanceResponses[keyof PostApiMorphSetupInstanceResponses];
+
+export type PostApiMorphTaskRunsByTaskRunIdForceWakeData = {
+    body: MorphForceWakeBody;
+    path: {
+        /**
+         * Convex task run identifier
+         */
+        taskRunId: string;
+    };
+    query?: never;
+    url: '/api/morph/task-runs/{taskRunId}/force-wake';
+};
+
+export type PostApiMorphTaskRunsByTaskRunIdForceWakeErrors = {
+    /**
+     * The task run is not backed by Morph
+     */
+    400: MorphForceWakeError;
+    /**
+     * Unauthorized
+     */
+    401: MorphForceWakeError;
+    /**
+     * The Morph VM belongs to another team
+     */
+    403: MorphForceWakeError;
+    /**
+     * Task run or Morph VM not found
+     */
+    404: MorphForceWakeError;
+    /**
+     * Failed to resume the Morph VM
+     */
+    500: MorphForceWakeError;
+};
+
+export type PostApiMorphTaskRunsByTaskRunIdForceWakeError = PostApiMorphTaskRunsByTaskRunIdForceWakeErrors[keyof PostApiMorphTaskRunsByTaskRunIdForceWakeErrors];
+
+export type PostApiMorphTaskRunsByTaskRunIdForceWakeResponses = {
+    /**
+     * The Morph VM is running
+     */
+    200: MorphForceWakeResponse;
+};
+
+export type PostApiMorphTaskRunsByTaskRunIdForceWakeResponse = PostApiMorphTaskRunsByTaskRunIdForceWakeResponses[keyof PostApiMorphTaskRunsByTaskRunIdForceWakeResponses];
 
 export type GetApiIframePreflightData = {
     body?: never;
