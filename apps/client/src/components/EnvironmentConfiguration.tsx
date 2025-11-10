@@ -4,6 +4,7 @@ import { WorkspaceLoadingIndicator } from "@/components/workspace-loading-indica
 import { ScriptTextareaField } from "@/components/ScriptTextareaField";
 import { SCRIPT_COPY } from "@/components/scriptCopy";
 import { ResizableColumns } from "@/components/ResizableColumns";
+import { ResizableRows } from "@/components/ResizableRows";
 import { parseEnvBlock } from "@/lib/parseEnvBlock";
 import {
   TASK_RUN_IFRAME_ALLOW,
@@ -31,6 +32,7 @@ import type { PersistentIframeStatus } from "@/components/persistent-iframe";
 import {
   ArrowLeft,
   Code2,
+  Columns2,
   Loader2,
   Minus,
   Monitor,
@@ -168,9 +170,9 @@ export function EnvironmentConfiguration({
     null
   );
   const lastSubmittedEnvContent = useRef<string | null>(null);
-  const [activePreview, setActivePreview] = useState<"vscode" | "browser">(
-    "vscode"
-  );
+  const [viewMode, setViewMode] = useState<
+    "split" | "vscode-only" | "browser-only"
+  >("split");
   const [vscodeStatus, setVscodeStatus] =
     useState<PersistentIframeStatus>("loading");
   const [vscodeError, setVscodeError] = useState<string | null>(null);
@@ -185,11 +187,17 @@ export function EnvironmentConfiguration({
   }, [browserUrl, instanceId, vscodeUrl]);
   const vscodePersistKey = `${basePersistKey}:vscode`;
   const browserPersistKey = `${basePersistKey}:browser`;
+
   useEffect(() => {
-    if (!browserUrl && activePreview === "browser") {
-      setActivePreview("vscode");
+    // Auto-switch to split view when browser becomes available
+    if (browserUrl && viewMode === "vscode-only") {
+      setViewMode("split");
     }
-  }, [activePreview, browserUrl]);
+    // Switch away from browser-only if browser is unavailable
+    if (!browserUrl && viewMode === "browser-only") {
+      setViewMode("vscode-only");
+    }
+  }, [browserUrl, viewMode]);
 
   useEffect(() => {
     setVscodeStatus("loading");
@@ -228,16 +236,6 @@ export function EnvironmentConfiguration({
       }
     }
   }, [pendingFocusIndex, envVars]);
-
-  const handlePreviewSelect = useCallback(
-    (view: "vscode" | "browser") => {
-      if (view === "browser" && !browserUrl) {
-        return;
-      }
-      setActivePreview(view);
-    },
-    [browserUrl]
-  );
 
   const handleVscodeLoad = useCallback(() => {
     setVscodeError(null);
@@ -572,57 +570,59 @@ export function EnvironmentConfiguration({
     );
   };
 
-  const previewButtonClass = useCallback(
-    (view: "vscode" | "browser", disabled: boolean) =>
-      clsx(
-        "inline-flex h-7 w-7 items-center justify-center focus:outline-none text-neutral-600 dark:text-neutral-300",
-        disabled
-          ? "opacity-50 cursor-not-allowed"
-          : "cursor-pointer hover:text-neutral-900 dark:hover:text-neutral-100",
-        view === activePreview && !disabled
-          ? "text-neutral-900 dark:text-neutral-100"
-          : undefined
-      ),
-    [activePreview]
-  );
-
   const headerControls = useMemo(() => {
     if (isProvisioning) {
       return null;
     }
 
+    const viewModeButtonClass = (mode: typeof viewMode) =>
+      clsx(
+        "inline-flex h-7 w-7 items-center justify-center focus:outline-none text-neutral-600 dark:text-neutral-300",
+        mode === "browser-only" && !isBrowserAvailable
+          ? "opacity-50 cursor-not-allowed"
+          : "cursor-pointer hover:text-neutral-900 dark:hover:text-neutral-100",
+        viewMode === mode && !(mode === "browser-only" && !isBrowserAvailable)
+          ? "text-neutral-900 dark:text-neutral-100"
+          : undefined
+      );
+
     return (
       <div className="flex items-center gap-1.5">
         <button
           type="button"
-          onClick={() => handlePreviewSelect("vscode")}
-          className={previewButtonClass("vscode", false)}
-          aria-pressed={activePreview === "vscode"}
-          aria-label="Show VS Code workspace"
-          title="Show VS Code workspace"
+          onClick={() => setViewMode("split")}
+          className={viewModeButtonClass("split")}
+          aria-pressed={viewMode === "split"}
+          aria-label="Split view"
+          title="Split view (VS Code top, Browser bottom)"
+          disabled={!isBrowserAvailable}
+        >
+          <Columns2 className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          onClick={() => setViewMode("vscode-only")}
+          className={viewModeButtonClass("vscode-only")}
+          aria-pressed={viewMode === "vscode-only"}
+          aria-label="Show VS Code only"
+          title="Show VS Code only (fullscreen)"
         >
           <Code2 className="h-3.5 w-3.5" />
         </button>
         <button
           type="button"
-          onClick={() => handlePreviewSelect("browser")}
-          className={previewButtonClass("browser", !isBrowserAvailable)}
-          aria-pressed={activePreview === "browser"}
-          aria-label="Show browser preview"
-          title="Show browser preview"
+          onClick={() => setViewMode("browser-only")}
+          className={viewModeButtonClass("browser-only")}
+          aria-pressed={viewMode === "browser-only"}
+          aria-label="Show browser only"
+          title="Show browser only (fullscreen)"
           disabled={!isBrowserAvailable}
         >
           <Monitor className="h-3.5 w-3.5" />
         </button>
       </div>
     );
-  }, [
-    activePreview,
-    handlePreviewSelect,
-    isBrowserAvailable,
-    isProvisioning,
-    previewButtonClass,
-  ]);
+  }, [viewMode, isBrowserAvailable, isProvisioning]);
 
   useEffect(() => {
     if (!onHeaderControlsChange) {
@@ -905,6 +905,49 @@ export function EnvironmentConfiguration({
           </AccordionItem>
 
           <AccordionItem
+            key="browser-vnc-setup"
+            aria-label="Browser VNC Setup"
+            title="Browser VNC Setup"
+          >
+            <div className="space-y-3 pb-4">
+              <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                The browser preview uses VNC to show a live desktop environment.
+                Configure your browser settings for browser agent functionality.
+              </p>
+              <div className="bg-neutral-100 dark:bg-neutral-900 rounded-md p-3 space-y-2">
+                <h4 className="text-xs font-medium text-neutral-700 dark:text-neutral-300">
+                  Initial Setup Instructions:
+                </h4>
+                <ul className="text-xs text-neutral-600 dark:text-neutral-400 space-y-1.5 list-disc list-inside">
+                  <li>
+                    Click the{" "}
+                    <span className="font-mono bg-neutral-200 dark:bg-neutral-800 px-1 py-0.5 rounded">
+                      Split view
+                    </span>{" "}
+                    icon above to see both VS Code and Browser VNC
+                  </li>
+                  <li>
+                    In the browser VNC view (bottom panel), configure browser
+                    settings for authentication
+                  </li>
+                  <li>
+                    Set up any required browser extensions or preferences for
+                    agent automation
+                  </li>
+                  <li>
+                    Take screenshots and verify agent can interact with the
+                    browser properly
+                  </li>
+                </ul>
+              </div>
+              <p className="text-xs text-neutral-500 dark:text-neutral-500">
+                Tip: Use the split view to work in VS Code while monitoring
+                browser agent actions in real-time.
+              </p>
+            </div>
+          </AccordionItem>
+
+          <AccordionItem
             key="install-dependencies"
             aria-label="Install dependencies"
             title="Install dependencies"
@@ -1029,9 +1072,20 @@ export function EnvironmentConfiguration({
       ) : (
         <div className="flex h-full flex-col">
           <div className="flex-1 min-h-0">
-            {activePreview === "browser"
-              ? renderBrowserPreview()
-              : renderVscodePreview()}
+            {viewMode === "split" && isBrowserAvailable ? (
+              <ResizableRows
+                storageKey="env-config-split-view"
+                defaultTopHeight={50}
+                minTop={20}
+                maxTop={80}
+                top={renderVscodePreview()}
+                bottom={renderBrowserPreview()}
+              />
+            ) : viewMode === "browser-only" && isBrowserAvailable ? (
+              renderBrowserPreview()
+            ) : (
+              renderVscodePreview()
+            )}
           </div>
         </div>
       )}
