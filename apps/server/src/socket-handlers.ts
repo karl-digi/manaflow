@@ -1067,7 +1067,7 @@ export function setupSocketHandlers(
               await convex.mutation(api.taskRuns.fail, {
                 teamSlugOrId,
                 id: taskRunId,
-                errorMessage: message,
+                errorMessage: userFriendlyMessage,
               });
             } catch (failError) {
               serverLogger.error(
@@ -1212,6 +1212,14 @@ export function setupSocketHandlers(
 
           const data = startRes.data;
           if (!data) {
+            // Check if this is a GitHub auth error
+            const errorData = startRes.error as any;
+            if (errorData?.requiresGithubConnection) {
+              throw new Error(JSON.stringify({
+                requiresGithubConnection: true,
+                message: errorData.message || "GitHub connection required",
+              }));
+            }
             throw new Error("Failed to start sandbox");
           }
 
@@ -1274,17 +1282,31 @@ export function setupSocketHandlers(
               ? error.message
               : "Failed to create cloud workspace";
 
+          // Check if this is a GitHub auth error
+          let requiresGithubConnection = false;
+          let userFriendlyMessage = message;
+          try {
+            const parsed = JSON.parse(message);
+            if (parsed.requiresGithubConnection) {
+              requiresGithubConnection = true;
+              userFriendlyMessage = parsed.message || "GitHub connection required";
+            }
+          } catch {
+            // Not a JSON error, use the original message
+          }
+
           if (!responded) {
             callback({
               success: false,
-              error: message,
+              error: userFriendlyMessage,
+              requiresGithubConnection,
             });
           } else if (taskRunId) {
             try {
               await convex.mutation(api.taskRuns.fail, {
                 teamSlugOrId,
                 id: taskRunId,
-                errorMessage: message,
+                errorMessage: userFriendlyMessage,
               });
             } catch (failError) {
               serverLogger.error(

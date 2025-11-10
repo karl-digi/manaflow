@@ -95,6 +95,7 @@ export const CreateCloudWorkspaceResponseSchema = z.object({
   workspaceUrl: z.string().optional(),
   pending: z.boolean().optional(),
   error: z.string().optional(),
+  requiresGithubConnection: z.boolean().optional(),
 });
 
 // Server to Client Events
@@ -139,6 +140,7 @@ export const TaskAcknowledgedSchema = z.object({
 export const TaskErrorSchema = z.object({
   taskId: typedZid("tasks"),
   error: z.string(),
+  requiresGithubConnection: z.boolean().optional(),
 });
 
 // Git diff events

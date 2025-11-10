@@ -1,3 +1,4 @@
+import { env } from "@/client-env";
 import {
   DashboardInput,
   type EditorApi,
@@ -12,6 +13,7 @@ import { WorkspaceSetupPanel } from "@/components/WorkspaceSetupPanel";
 import { GitHubIcon } from "@/components/icons/github";
 import { useTheme } from "@/components/theme/use-theme";
 import { TitleBar } from "@/components/TitleBar";
+import { stackClientApp } from "@/lib/stack";
 import type { SelectOption } from "@/components/ui/searchable-select";
 import {
   Tooltip,
@@ -455,13 +457,9 @@ function DashboardComponent() {
         )
       );
 
-      // Clear input after successful task creation
-      setTaskDescription("");
-      // Force editor to clear
-      handleTaskDescriptionChange("");
-      if (editorApiRef.current?.clear) {
-        editorApiRef.current.clear();
-      }
+      // Save the content for potential restoration
+      const savedContent = content?.text || taskDescription;
+      const savedImages = images;
 
       // Create task in Convex with storage IDs
       const taskId = await createTask({
@@ -484,8 +482,52 @@ function DashboardComponent() {
       const handleStartTaskAck = (response: TaskAcknowledged | TaskStarted | TaskError) => {
         if ("error" in response) {
           console.error("Task start error:", response.error);
-          toast.error(`Task start error: ${JSON.stringify(response.error)}`);
+
+          // Check if this is a GitHub connection error
+          if (response.requiresGithubConnection) {
+            // Restore the task description
+            setTaskDescription(savedContent);
+
+            // Show a toast with a button to connect GitHub
+            toast.error(
+              response.error,
+              {
+                duration: 10000,
+                action: {
+                  label: "Connect GitHub",
+                  onClick: async () => {
+                    try {
+                      const slug = env.NEXT_PUBLIC_GITHUB_APP_SLUG;
+                      if (!slug) {
+                        toast.error("GitHub app not configured");
+                        return;
+                      }
+                      const baseUrl = `https://github.com/apps/${slug}/installations/new`;
+                      // Use Stack OAuth for GitHub connection
+                      const connectUrl = stackClientApp.urls.getOAuthUrl({ provider: "github" });
+                      window.open(connectUrl, "_blank");
+                    } catch (err) {
+                      console.error("Failed to start GitHub connection:", err);
+                      toast.error("Failed to open GitHub connection. Please try again.");
+                    }
+                  },
+                },
+              }
+            );
+            return;
+          }
+
+          // For other errors, also restore the content
+          setTaskDescription(savedContent);
+          toast.error(`Task start error: ${response.error}`);
           return;
+        }
+
+        // Only clear the input on successful task acknowledgment
+        setTaskDescription("");
+        handleTaskDescriptionChange("");
+        if (editorApiRef.current?.clear) {
+          editorApiRef.current.clear();
         }
 
         attachTaskLifecycleListeners(socket, response.taskId, {
