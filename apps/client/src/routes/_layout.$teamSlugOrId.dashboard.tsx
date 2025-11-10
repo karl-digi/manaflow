@@ -1,3 +1,4 @@
+import { env } from "@/client-env";
 import {
   DashboardInput,
   type EditorApi,
@@ -76,6 +77,41 @@ const parseStoredAgentSelection = (stored: string | null): string[] => {
   }
 };
 
+const GITHUB_ERROR_PATTERNS = [
+  "github access token",
+  "github credentials",
+  "github account",
+  "github token",
+];
+
+function formatErrorMessage(error: unknown): string {
+  if (!error) {
+    return "Unknown error";
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  try {
+    const serialized = JSON.stringify(error);
+    return serialized && serialized !== "{}" ? serialized : "Unknown error";
+  } catch {
+    return "Unknown error";
+  }
+}
+
+function isGithubCredentialError(message: string | undefined): boolean {
+  if (!message) {
+    return false;
+  }
+  const normalized = message.toLowerCase();
+  return GITHUB_ERROR_PATTERNS.some((pattern) =>
+    normalized.includes(pattern)
+  );
+}
+
 function DashboardComponent() {
   const { teamSlugOrId } = Route.useParams();
   const searchParams = Route.useSearch() as { environmentId?: string };
@@ -124,6 +160,7 @@ function DashboardComponent() {
 
   // Ref to access editor API
   const editorApiRef = useRef<EditorApi | null>(null);
+  const promptBackupRef = useRef<{ text: string } | null>(null);
 
   const persistAgentSelection = useCallback((agents: string[]) => {
     try {
@@ -158,6 +195,24 @@ function DashboardComponent() {
   // Callback for task description changes
   const handleTaskDescriptionChange = useCallback((value: string) => {
     setTaskDescription(value);
+  }, []);
+
+  const restorePromptBackup = useCallback(() => {
+    const backup = promptBackupRef.current;
+    if (!backup) {
+      return;
+    }
+    promptBackupRef.current = null;
+    handleTaskDescriptionChange(backup.text);
+    setTimeout(() => {
+      editorApiRef.current?.clear();
+      editorApiRef.current?.insertText?.(backup.text);
+      editorApiRef.current?.focus?.();
+    }, 0);
+  }, [handleTaskDescriptionChange]);
+
+  const clearPromptBackup = useCallback(() => {
+    promptBackupRef.current = null;
   }, []);
 
   // Fetch branches for selected repo from Convex
@@ -349,6 +404,56 @@ function DashboardComponent() {
   );
   const generateUploadUrl = useMutation(api.storage.generateUploadUrl);
   const addManualRepo = useAction(api.github_http.addManualRepo);
+  const mintGithubInstallState = useMutation(api.github_app.mintInstallState);
+
+  const startGithubConnection = useCallback(async () => {
+    if (!env.NEXT_PUBLIC_GITHUB_APP_SLUG) {
+      toast.error(
+        "GitHub app is not configured. Open Settings > Integrations to connect."
+      );
+      return;
+    }
+    try {
+      const slug = env.NEXT_PUBLIC_GITHUB_APP_SLUG;
+      const baseUrl = `https://github.com/apps/${slug}/installations/new`;
+      const { state } = await mintGithubInstallState({ teamSlugOrId });
+      const separator = baseUrl.includes("?") ? "&" : "?";
+      const url = `${baseUrl}${separator}state=${encodeURIComponent(state)}`;
+      if (typeof window !== "undefined") {
+        window.open(url, "_blank", "noopener,noreferrer");
+      }
+    } catch (error) {
+      console.error("Failed to open GitHub install flow", error);
+      toast.error("Failed to open GitHub connection. Try again from Settings.");
+    }
+  }, [mintGithubInstallState, teamSlugOrId]);
+
+  const handleTaskStartFailure = useCallback(
+    (rawMessage?: string) => {
+      const message =
+        rawMessage && rawMessage.trim().length > 0
+          ? rawMessage.trim()
+          : "Unknown error";
+      restorePromptBackup();
+      if (isGithubCredentialError(message)) {
+        toast.error("Connect GitHub to start a cloud workspace", {
+          description:
+            "We couldn't access your GitHub credentials. Connect GitHub and try again.",
+          action: env.NEXT_PUBLIC_GITHUB_APP_SLUG
+            ? {
+                label: "Connect GitHub",
+                onClick: () => {
+                  void startGithubConnection();
+                },
+              }
+            : undefined,
+        });
+        return;
+      }
+      toast.error(`Task failed to start: ${message}`);
+    },
+    [restorePromptBackup, startGithubConnection]
+  );
 
   const effectiveSelectedBranch = useMemo(() => {
     if (selectedBranch.length > 0) {
@@ -418,6 +523,7 @@ function DashboardComponent() {
       // Extract content including images from the editor
       const content = editorApiRef.current?.getContent();
       const images = content?.images || [];
+      promptBackupRef.current = { text: taskDescription };
 
       // Upload images to Convex storage first
       const uploadedImages = await Promise.all(
@@ -484,16 +590,17 @@ function DashboardComponent() {
       const handleStartTaskAck = (response: TaskAcknowledged | TaskStarted | TaskError) => {
         if ("error" in response) {
           console.error("Task start error:", response.error);
-          toast.error(`Task start error: ${JSON.stringify(response.error)}`);
+          handleTaskStartFailure(formatErrorMessage(response.error));
           return;
         }
 
         attachTaskLifecycleListeners(socket, response.taskId, {
           onStarted: (payload) => {
             console.log("Task started:", payload);
+            clearPromptBackup();
           },
           onFailed: (payload) => {
-            toast.error(`Task failed to start: ${payload.error}`);
+            handleTaskStartFailure(payload.error);
           },
         });
         console.log("Task acknowledged:", response);
@@ -519,6 +626,7 @@ function DashboardComponent() {
       console.log("Task created:", taskId);
     } catch (error) {
       console.error("Error starting task:", error);
+      handleTaskStartFailure(formatErrorMessage(error));
     }
   }, [
     selectedProject,
@@ -534,6 +642,8 @@ function DashboardComponent() {
     isEnvSelected,
     theme,
     generateUploadUrl,
+    handleTaskStartFailure,
+    clearPromptBackup,
   ]);
 
   // Fetch repos on mount if none exist

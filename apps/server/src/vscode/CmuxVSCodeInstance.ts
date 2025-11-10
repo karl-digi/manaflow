@@ -70,7 +70,36 @@ export class CmuxVSCodeInstance extends VSCodeInstance {
     });
     const data = startRes.data;
     if (!data) {
-      throw new Error("Failed to start sandbox");
+      const errorPayload = startRes.error;
+      const status = startRes.response?.status;
+      let extractedMessage: string | null = null;
+      if (
+        errorPayload &&
+        typeof errorPayload === "object" &&
+        "message" in errorPayload &&
+        typeof (errorPayload as { message?: unknown }).message === "string"
+      ) {
+        extractedMessage = (errorPayload as { message: string }).message;
+      } else if (
+        errorPayload &&
+        typeof errorPayload === "object" &&
+        !Array.isArray(errorPayload)
+      ) {
+        try {
+          extractedMessage = JSON.stringify(errorPayload);
+        } catch {
+          extractedMessage = null;
+        }
+      }
+
+      const formattedError =
+        typeof errorPayload === "string" ? errorPayload : extractedMessage;
+      const fallbackMessage =
+        formattedError ??
+        (status
+          ? `Failed to start sandbox (status ${status})`
+          : "Failed to start sandbox");
+      throw new Error(fallbackMessage);
     }
 
     this.sandboxId = data.instanceId;
