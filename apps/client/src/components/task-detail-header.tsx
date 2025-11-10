@@ -1,5 +1,6 @@
 import { OpenEditorSplitButton } from "@/components/OpenEditorSplitButton";
 import { Dropdown } from "@/components/ui/dropdown";
+import { Button } from "@/components/ui/button";
 import { MergeButton, type MergeMethod } from "@/components/ui/merge-button";
 import { useSocketSuspense } from "@/contexts/socket/use-socket";
 import { isElectron } from "@/lib/electron";
@@ -80,6 +81,10 @@ type RepoDiffTarget = {
   baseRef?: string;
   headRef?: string;
 };
+
+type ToastablePullRequest =
+  | PostApiIntegrationsGithubPrsOpenResponse["results"][number]
+  | PullRequestActionResponse["results"][number];
 
 function AdditionsAndDeletions({
   repos,
@@ -561,6 +566,77 @@ export function TaskDetailHeader({
   );
 }
 
+function PrToastActions({
+  prs,
+  onView,
+  viewLabelOverride,
+}: {
+  prs: ToastablePullRequest[];
+  onView: () => void;
+  viewLabelOverride?: string;
+}) {
+  const prUrls = useMemo(
+    () =>
+      prs
+        .map((pr) => pr.url?.trim())
+        .filter((url): url is string => Boolean(url)),
+    [prs],
+  );
+
+  const handleCopy = useCallback(async () => {
+    if (prUrls.length === 0) {
+      toast.error("PR URL unavailable");
+      return;
+    }
+    if (
+      typeof navigator === "undefined" ||
+      !navigator.clipboard?.writeText
+    ) {
+      toast.error("Clipboard is not available");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(prUrls.join("\n"));
+      toast.success(
+        prUrls.length === 1 ? "Copied PR URL" : "Copied PR URLs",
+      );
+    } catch (error) {
+      console.error("Failed to copy PR URL", error);
+      toast.error("Failed to copy PR URL");
+    }
+  }, [prUrls]);
+
+  const copyLabel = prUrls.length === 1 ? "Copy PR URL" : "Copy PR URLs";
+  const defaultViewLabel = prs.length === 1 ? "View PR" : "View PRs";
+  const viewLabel = viewLabelOverride ?? defaultViewLabel;
+
+  return (
+    <div className="flex items-center gap-2">
+      <Button
+        size="sm"
+        variant="secondary"
+        type="button"
+        onClick={onView}
+        className="cursor-pointer"
+      >
+        {viewLabel}
+      </Button>
+      <Button
+        size="sm"
+        variant="outline"
+        type="button"
+        className="cursor-pointer"
+        disabled={prUrls.length === 0}
+        onClick={() => {
+          void handleCopy();
+        }}
+      >
+        {copyLabel}
+      </Button>
+    </div>
+  );
+}
+
 function SocketActions({
   selectedRun,
   taskRunId,
@@ -713,10 +789,12 @@ function SocketActions({
         description: summarizeResults(response.results),
         action:
           actionable.length > 0
-            ? {
-              label: actionable.length === 1 ? "View PR" : "View PRs",
-              onClick: () => navigateToPrs(actionable),
-            }
+            ? (
+              <PrToastActions
+                prs={actionable}
+                onView={() => navigateToPrs(actionable)}
+              />
+            )
             : undefined,
       });
     },
@@ -775,10 +853,15 @@ function SocketActions({
         description: summarizeResults(response.results),
         action:
           actionable.length > 0
-            ? {
-              label: actionable.length === 1 ? "View draft" : "View drafts",
-              onClick: () => navigateToPrs(actionable),
-            }
+            ? (
+              <PrToastActions
+                prs={actionable}
+                onView={() => navigateToPrs(actionable)}
+                viewLabelOverride={
+                  actionable.length === 1 ? "View draft" : "View drafts"
+                }
+              />
+            )
             : undefined,
       });
     },
