@@ -19,9 +19,14 @@ import {
   aggregatePullRequestState,
   type RunPullRequestState,
 } from "@cmux/shared/pull-request-state";
+import { postApiMorphTaskRunsForceWakeMutation } from "@cmux/www-openapi-client/react-query";
 import { Link, useLocation, type LinkProps } from "@tanstack/react-router";
+import { useMutation as useRQMutation } from "@tanstack/react-query";
 import clsx from "clsx";
-import { useMutation, useQuery as useConvexQuery } from "convex/react";
+import {
+  useMutation as useConvexMutation,
+  useQuery as useConvexQuery,
+} from "convex/react";
 import { toast } from "sonner";
 import {
   AlertTriangle,
@@ -48,6 +53,7 @@ import {
   TerminalSquare,
   Loader2,
   XCircle,
+  Zap,
 } from "lucide-react";
 import {
   Fragment,
@@ -375,7 +381,7 @@ function TaskTreeInner({
     });
   }, [isOptimisticTask, task._id, teamSlugOrId]);
 
-  const archiveTaskRun = useMutation(api.taskRuns.archive).withOptimisticUpdate(
+  const archiveTaskRun = useConvexMutation(api.taskRuns.archive).withOptimisticUpdate(
     (localStore, args) => {
       if (!args.taskId) {
         return;
@@ -1246,6 +1252,10 @@ function TaskRunTreeInner({
     (run.pullRequestUrl && run.pullRequestUrl !== "pending") ||
       run.pullRequests?.some((pr) => pr.url)
   );
+  const canForceWakeVm = Boolean(
+    run.vscode?.provider === "morph" &&
+      (run.vscode?.workspaceUrl || run.vscode?.url)
+  );
   const shouldRenderPreviewLink = previewServices.length > 0;
   const hasOpenWithActions = openWithActions.length > 0;
   const hasPortActions = portActions.length > 0;
@@ -1257,7 +1267,8 @@ function TaskRunTreeInner({
     shouldRenderBrowserLink ||
     shouldRenderTerminalLink ||
     shouldRenderPullRequestLink ||
-    shouldRenderPreviewLink;
+    shouldRenderPreviewLink ||
+    canForceWakeVm;
 
   return (
     <div className={clsx({ hidden: run.isArchived })}>
@@ -1393,6 +1404,7 @@ function TaskRunTreeInner({
         shouldRenderBrowserLink={shouldRenderBrowserLink}
         shouldRenderTerminalLink={shouldRenderTerminalLink}
         shouldRenderPullRequestLink={shouldRenderPullRequestLink}
+        canForceWakeVm={canForceWakeVm}
         previewServices={previewServices}
         environmentError={run.environmentError}
         onArchiveToggle={onArchiveToggle}
@@ -1459,6 +1471,7 @@ interface TaskRunDetailsProps {
   shouldRenderBrowserLink: boolean;
   shouldRenderTerminalLink: boolean;
   shouldRenderPullRequestLink: boolean;
+  canForceWakeVm: boolean;
   previewServices: PreviewService[];
   environmentError?: {
     maintenanceError?: string;
@@ -1479,11 +1492,59 @@ function TaskRunDetails({
   shouldRenderBrowserLink,
   shouldRenderTerminalLink,
   shouldRenderPullRequestLink,
+  canForceWakeVm,
   previewServices,
   environmentError,
   onArchiveToggle,
   showRunNumbers,
 }: TaskRunDetailsProps) {
+  const forceWakeMutation = useRQMutation(
+    postApiMorphTaskRunsForceWakeMutation()
+  );
+
+  const handleForceWakeClick = useCallback(
+    async (event: MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!canForceWakeVm || forceWakeMutation.isPending) {
+        return;
+      }
+      const toastId = toast.loading("Waking workspace…");
+      try {
+        const result = await forceWakeMutation.mutateAsync({
+          body: {
+            teamSlugOrId,
+            taskRunId: run._id,
+          },
+        });
+        toast.success(result?.message ?? "Workspace is ready.", {
+          id: toastId,
+          description:
+            result?.state === "already_ready"
+              ? "Workspace was already running."
+              : "Morph VM resumed successfully.",
+        });
+      } catch (error) {
+        const fallback =
+          typeof (error as { error?: unknown })?.error === "string"
+            ? (error as { error: string }).error
+            : error instanceof Error
+              ? error.message
+              : "Unable to wake the Morph VM.";
+        toast.error("Failed to wake workspace", {
+          id: toastId,
+          description: fallback,
+        });
+      }
+    },
+    [
+      canForceWakeVm,
+      forceWakeMutation,
+      run._id,
+      teamSlugOrId,
+    ]
+  );
+
   if (!isExpanded) {
     return null;
   }
@@ -1540,6 +1601,30 @@ function TaskRunDetails({
           indentLevel={indentLevel}
           trailing={environmentErrorIndicator}
         />
+      ) : null}
+
+      {canForceWakeVm ? (
+        <button
+          type="button"
+          className={clsx(
+            "mt-px flex w-full items-center justify-between gap-2 rounded-md px-2 py-1 text-left text-xs",
+            "text-neutral-600 dark:text-neutral-400",
+            "hover:bg-neutral-200/45 dark:hover:bg-neutral-800/45",
+            "focus:outline-none focus:ring-1 focus:ring-neutral-400/60 dark:focus:ring-neutral-600/60",
+            "[&:disabled]:cursor-not-allowed [&:disabled]:opacity-60"
+          )}
+          style={{ paddingLeft: `${24 + indentLevel * 8}px` }}
+          onClick={handleForceWakeClick}
+          disabled={forceWakeMutation.isPending}
+        >
+          <span className="flex min-w-0 items-center">
+            <Zap className="mr-2 h-3 w-3 text-neutral-400" />
+            <span>Force wake VM</span>
+          </span>
+          {forceWakeMutation.isPending ? (
+            <Loader2 className="h-3 w-3 animate-spin text-neutral-400" />
+          ) : null}
+        </button>
       ) : null}
 
       <TaskRunDetailLink

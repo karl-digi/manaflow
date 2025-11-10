@@ -365,6 +365,26 @@ export type SetupInstanceBody = {
     snapshotId?: string | ('snapshot_pmo7bxv7' | 'snapshot_qbpom27i');
 };
 
+export type MorphForceWakeState = 'already_ready' | 'resumed';
+
+export type MorphForceWakeResponse = {
+    taskRunId: string;
+    instanceId: string;
+    state: MorphForceWakeState;
+    readyAt: number;
+    status: string;
+    message: string;
+};
+
+export type MorphForceWakeError = {
+    error: string;
+};
+
+export type MorphForceWakeBody = {
+    teamSlugOrId: string;
+    taskRunId: string;
+};
+
 export type CreateEnvironmentResponse = {
     id: string;
     snapshotId: string;
@@ -1588,6 +1608,51 @@ export type PostApiMorphSetupInstanceResponses = {
 };
 
 export type PostApiMorphSetupInstanceResponse = PostApiMorphSetupInstanceResponses[keyof PostApiMorphSetupInstanceResponses];
+
+export type PostApiMorphTaskRunsForceWakeData = {
+    body: MorphForceWakeBody;
+    path?: never;
+    query?: never;
+    url: '/api/morph/task-runs/force-wake';
+};
+
+export type PostApiMorphTaskRunsForceWakeErrors = {
+    /**
+     * Task run is invalid or not backed by Morph
+     */
+    400: MorphForceWakeError;
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * User does not own this Morph instance
+     */
+    403: MorphForceWakeError;
+    /**
+     * Task run or Morph instance not found
+     */
+    404: MorphForceWakeError;
+    /**
+     * Morph API failed to resume the instance
+     */
+    502: MorphForceWakeError;
+    /**
+     * Instance is still waking after the timeout window
+     */
+    504: MorphForceWakeError;
+};
+
+export type PostApiMorphTaskRunsForceWakeError = PostApiMorphTaskRunsForceWakeErrors[keyof PostApiMorphTaskRunsForceWakeErrors];
+
+export type PostApiMorphTaskRunsForceWakeResponses = {
+    /**
+     * Workspace is ready for use
+     */
+    200: MorphForceWakeResponse;
+};
+
+export type PostApiMorphTaskRunsForceWakeResponse = PostApiMorphTaskRunsForceWakeResponses[keyof PostApiMorphTaskRunsForceWakeResponses];
 
 export type GetApiIframePreflightData = {
     body?: never;
