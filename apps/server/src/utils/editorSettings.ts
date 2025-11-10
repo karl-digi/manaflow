@@ -31,6 +31,7 @@ interface EditorExport {
   snippets: FileExport[];
   extensions?: string[];
   settingsMtimeMs?: number;
+  extensionDir?: string;
 }
 
 export interface EditorSettingsUpload {
@@ -38,6 +39,13 @@ export interface EditorSettingsUpload {
   startupCommands: string[];
   sourceEditor: EditorId;
   settingsPath?: string;
+}
+
+export interface EditorUserDataInfo {
+  sourceEditor: EditorId;
+  userDir: string;
+  userDataDir: string;
+  extensionDir?: string;
 }
 
 const homeDir = os.homedir();
@@ -55,13 +63,6 @@ const EXTENSION_LIST_PATH = posix.join(CMUX_INTERNAL_DIR, "user-extensions.txt")
 const OPENVSCODE_EXT_DIR = "/root/.openvscode-server/extensions";
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
-let cachedResult:
-  | {
-      timestamp: number;
-      value: EditorSettingsUpload | null;
-    }
-  | null = null;
-let inflightPromise: Promise<EditorSettingsUpload | null> | null = null;
 
 const editors: EditorDef[] = [
   {
@@ -222,6 +223,18 @@ async function listExtensionsFromDirs(
   return Array.from(identifiers).sort();
 }
 
+async function findExistingExtensionDir(
+  dirs: string[]
+): Promise<string | undefined> {
+  for (const dir of dirs) {
+    if (!dir) continue;
+    if (await pathExists(dir)) {
+      return dir;
+    }
+  }
+  return undefined;
+}
+
 async function exportEditor(def: EditorDef): Promise<EditorExport | null> {
   let userDir: string | undefined;
   for (const label of def.labels) {
@@ -284,6 +297,11 @@ async function exportEditor(def: EditorDef): Promise<EditorExport | null> {
   }
   if (extensions && extensions.length > 0) {
     result.extensions = extensions;
+  }
+
+  const extDir = await findExistingExtensionDir(def.extDirs);
+  if (extDir) {
+    result.extensionDir = extDir;
   }
 
   if (
@@ -479,7 +497,15 @@ touch "$LOCK_FILE"
   };
 }
 
-async function collectEditorSettings(): Promise<EditorSettingsUpload | null> {
+type CachedSelection<T> = {
+  timestamp: number;
+  value: T;
+};
+
+let cachedSelection: CachedSelection<EditorExport | null> | null = null;
+let inflightSelection: Promise<EditorExport | null> | null = null;
+
+async function chooseEditorExport(): Promise<EditorExport | null> {
   const results = await Promise.all(editors.map((def) => exportEditor(def)));
   const available = results.filter(
     (result): result is EditorExport => result !== null
@@ -499,40 +525,62 @@ async function collectEditorSettings(): Promise<EditorSettingsUpload | null> {
     return null;
   }
 
-  const upload = buildUpload(selected);
-  if (!upload) {
-    return null;
-  }
-
   serverLogger.info(
-    `[EditorSettings] Selected ${upload.sourceEditor} settings${
-      upload.settingsPath ? ` from ${upload.settingsPath}` : ""
+    `[EditorSettings] Selected ${selected.id} settings${
+      selected.settings?.path ? ` from ${selected.settings.path}` : ""
     }`
   );
 
-  return upload;
+  return selected;
 }
 
-export async function getEditorSettingsUpload(): Promise<EditorSettingsUpload | null> {
-  if (cachedResult && Date.now() - cachedResult.timestamp < CACHE_TTL_MS) {
-    return cachedResult.value;
+async function getEditorExport(): Promise<EditorExport | null> {
+  if (cachedSelection && Date.now() - cachedSelection.timestamp < CACHE_TTL_MS) {
+    return cachedSelection.value;
   }
-  if (!inflightPromise) {
-    inflightPromise = collectEditorSettings()
+
+  if (!inflightSelection) {
+    inflightSelection = chooseEditorExport()
       .then((value) => {
-        cachedResult = { timestamp: Date.now(), value };
-        inflightPromise = null;
+        cachedSelection = { timestamp: Date.now(), value };
+        inflightSelection = null;
         return value;
       })
       .catch((error) => {
-        inflightPromise = null;
+        inflightSelection = null;
         serverLogger.warn(
           "[EditorSettings] Failed to collect editor settings",
           error
         );
-        cachedResult = { timestamp: Date.now(), value: null };
+        cachedSelection = { timestamp: Date.now(), value: null };
         return null;
       });
   }
-  return inflightPromise;
+
+  return inflightSelection;
+}
+
+export async function getEditorUserDataInfo(): Promise<EditorUserDataInfo | null> {
+  const editor = await getEditorExport();
+  if (!editor) {
+    return null;
+  }
+
+  const userDir = editor.userDir;
+  const userDataDir = path.dirname(userDir);
+
+  return {
+    sourceEditor: editor.id,
+    userDir,
+    userDataDir,
+    extensionDir: editor.extensionDir,
+  };
+}
+
+export async function getEditorSettingsUpload(): Promise<EditorSettingsUpload | null> {
+  const editor = await getEditorExport();
+  if (!editor) {
+    return null;
+  }
+  return buildUpload(editor) ?? null;
 }

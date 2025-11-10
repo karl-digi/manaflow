@@ -5,6 +5,7 @@ import { access } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { createServer } from "node:net";
 import { promisify } from "node:util";
+import { getEditorUserDataInfo } from "../utils/editorSettings";
 
 type Logger = {
   info: (message: string, ...args: unknown[]) => void;
@@ -76,17 +77,40 @@ export async function ensureVSCodeServeWeb(
       `Starting VS Code serve-web using executable ${executable} on port ${port}...`
     );
 
+    const editorUserData = await getEditorUserDataInfo();
+    const serveWebArgs = [
+      "serve-web",
+      "--accept-server-license-terms",
+      "--without-connection-token",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      String(port),
+      "--disable-workspace-trust",
+    ];
+
+    if (editorUserData) {
+      serveWebArgs.push("--user-data-dir", editorUserData.userDataDir);
+      if (editorUserData.extensionDir) {
+        serveWebArgs.push("--extensions-dir", editorUserData.extensionDir);
+      }
+      logger.info(
+        `[serve-web] Using ${editorUserData.sourceEditor} data dir: ${editorUserData.userDataDir}`
+      );
+      if (editorUserData.extensionDir) {
+        logger.info(
+          `[serve-web] Using extensions from ${editorUserData.extensionDir}`
+        );
+      }
+    } else {
+      logger.info(
+        "[serve-web] No local editor settings detected; falling back to default profile."
+      );
+    }
+
     child = spawn(
       executable,
-      [
-        "serve-web",
-        "--accept-server-license-terms",
-        "--without-connection-token",
-        "--host",
-        "127.0.0.1",
-        "--port",
-        String(port),
-      ],
+      serveWebArgs,
       {
         detached: false,
         stdio: ["ignore", "pipe", "pipe"],
