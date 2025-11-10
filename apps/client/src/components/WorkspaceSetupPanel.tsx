@@ -6,7 +6,7 @@ import {
   postApiWorkspaceConfigsMutation,
 } from "@cmux/www-openapi-client/react-query";
 import { useQuery, useMutation as useRQMutation } from "@tanstack/react-query";
-import { AlertTriangle, Check, ChevronDown, ChevronRight, Minus, Plus } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, Minus, Plus } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -17,6 +17,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { Button } from "./ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 type WorkspaceSetupPanelProps = {
   teamSlugOrId: string;
@@ -252,11 +253,21 @@ export function WorkspaceSetupPanel({
             Configure workspace for{" "}
             <span className="font-semibold">{projectFullName}</span>
           </span>
-          {isConfigured ? (
-            <Check className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-400" />
-          ) : (
-            <AlertTriangle className="w-3.5 h-3.5 text-orange-600 dark:text-orange-500" />
-          )}
+          {!isConfigured ? (
+            <Tooltip delayDuration={0}>
+              <TooltipTrigger asChild>
+                <span className="inline-flex">
+                  <AlertTriangle
+                    className="w-3.5 h-3.5 text-orange-600 dark:text-orange-500"
+                    aria-label="Workspace setup incomplete"
+                  />
+                </span>
+              </TooltipTrigger>
+              <TooltipContent sideOffset={6}>
+                Configure maintenance scripts and environment variables for this workspace.
+              </TooltipContent>
+            </Tooltip>
+          ) : null}
         </div>
       </button>
 
