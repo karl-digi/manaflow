@@ -847,8 +847,11 @@ export function setupSocketHandlers(
               const scriptPreamble = "set -euo pipefail";
               const maintenancePayload = `${scriptPreamble}\n${maintenanceScript}`;
 
+              // Use user's login shell to get the right paths to executables
+              const shell = process.env.SHELL || "/bin/zsh";
+
               try {
-                await execFileAsync("zsh", ["-lc", maintenancePayload], {
+                await execFileAsync(shell, ["-lc", maintenancePayload], {
                   cwd: resolvedWorkspacePath,
                   env: {
                     ...process.env,
