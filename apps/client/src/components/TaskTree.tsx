@@ -1496,7 +1496,7 @@ function TaskRunDetails({
   const environmentErrorIndicator = hasEnvironmentError ? (
     <Tooltip delayDuration={0}>
       <TooltipTrigger asChild>
-        <AlertTriangle className="w-3 h-3 text-neutral-700" />
+        <AlertTriangle className="w-3 h-3 text-amber-500 dark:text-amber-400" />
       </TooltipTrigger>
       <TooltipContent
         side="right"
