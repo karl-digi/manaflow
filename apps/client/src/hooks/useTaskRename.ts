@@ -22,64 +22,64 @@ type TasksGetArgs = {
 interface UseTaskRenameOptions {
   taskId: Id<"tasks">;
   teamSlugOrId: string;
-  currentText: string;
+  currentTitle: string;
   canRename: boolean;
 }
 
 export function useTaskRename({
   taskId,
   teamSlugOrId,
-  currentText,
+  currentTitle,
   canRename,
 }: UseTaskRenameOptions) {
   const [isRenaming, setIsRenaming] = useState(false);
-  const [renameValue, setRenameValue] = useState(currentText);
+  const [renameValue, setRenameValue] = useState(currentTitle);
   const [renameError, setRenameError] = useState<string | null>(null);
   const [isRenamePending, setIsRenamePending] = useState(false);
   const renameInputRef = useRef<HTMLInputElement | null>(null);
   const pendingRenameFocusFrame = useRef<number | null>(null);
   const renameInputHasFocusedRef = useRef(false);
 
-  const updateTaskMutation = useMutation(api.tasks.update).withOptimisticUpdate(
-    (localStore, args) => {
-      const optimisticUpdatedAt = Date.now();
-      const applyUpdateToList = (keyArgs: TasksGetArgs) => {
-        const list = localStore.getQuery(api.tasks.get, keyArgs);
-        if (!list) {
-          return;
-        }
-        const index = list.findIndex((item) => item._id === args.id);
-        if (index === -1) {
-          return;
-        }
-        const next = list.slice();
-        next[index] = {
-          ...next[index],
-          text: args.text,
-          updatedAt: optimisticUpdatedAt,
-        };
-        localStore.setQuery(api.tasks.get, keyArgs, next);
-      };
-
-      const listVariants: TasksGetArgs[] = [
-        { teamSlugOrId: args.teamSlugOrId },
-        { teamSlugOrId: args.teamSlugOrId, archived: false },
-        { teamSlugOrId: args.teamSlugOrId, archived: true },
-      ];
-
-      listVariants.forEach(applyUpdateToList);
-
-      const detailArgs = { teamSlugOrId: args.teamSlugOrId, id: args.id };
-      const existingDetail = localStore.getQuery(api.tasks.getById, detailArgs);
-      if (existingDetail) {
-        localStore.setQuery(api.tasks.getById, detailArgs, {
-          ...existingDetail,
-          text: args.text,
-          updatedAt: optimisticUpdatedAt,
-        });
+  const setPullRequestTitleMutation = useMutation(
+    api.tasks.setPullRequestTitle
+  ).withOptimisticUpdate((localStore, args) => {
+    const optimisticUpdatedAt = Date.now();
+    const applyUpdateToList = (keyArgs: TasksGetArgs) => {
+      const list = localStore.getQuery(api.tasks.get, keyArgs);
+      if (!list) {
+        return;
       }
+      const index = list.findIndex((item) => item._id === args.id);
+      if (index === -1) {
+        return;
+      }
+      const next = list.slice();
+      next[index] = {
+        ...next[index],
+        pullRequestTitle: args.pullRequestTitle,
+        updatedAt: optimisticUpdatedAt,
+      };
+      localStore.setQuery(api.tasks.get, keyArgs, next);
+    };
+
+    const listVariants: TasksGetArgs[] = [
+      { teamSlugOrId: args.teamSlugOrId },
+      { teamSlugOrId: args.teamSlugOrId, archived: false },
+      { teamSlugOrId: args.teamSlugOrId, archived: true },
+    ];
+
+    listVariants.forEach(applyUpdateToList);
+
+    const detailArgs = { teamSlugOrId: args.teamSlugOrId, id: args.id };
+    const existingDetail = localStore.getQuery(api.tasks.getById, detailArgs);
+    if (existingDetail) {
+      localStore.setQuery(api.tasks.getById, detailArgs, {
+        ...existingDetail,
+        pullRequestTitle: args.pullRequestTitle,
+        updatedAt: optimisticUpdatedAt,
+      });
     }
-  );
+  });
 
   const focusRenameInput = useCallback(() => {
     if (typeof window === "undefined") {
@@ -113,9 +113,9 @@ export function useTaskRename({
 
   useEffect(() => {
     if (!isRenaming) {
-      setRenameValue(currentText);
+      setRenameValue(currentTitle);
     }
-  }, [isRenaming, currentText]);
+  }, [isRenaming, currentTitle]);
 
   const handleRenameChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
@@ -128,10 +128,10 @@ export function useTaskRename({
   );
 
   const handleRenameCancel = useCallback(() => {
-    setRenameValue(currentText);
+    setRenameValue(currentTitle);
     setRenameError(null);
     setIsRenaming(false);
-  }, [currentText]);
+  }, [currentTitle]);
 
   const handleRenameSubmit = useCallback(async () => {
     if (!canRename) {
@@ -147,7 +147,7 @@ export function useTaskRename({
       renameInputRef.current?.focus();
       return;
     }
-    const current = currentText.trim();
+    const current = currentTitle.trim();
     if (trimmed === current) {
       setIsRenaming(false);
       setRenameError(null);
@@ -155,10 +155,10 @@ export function useTaskRename({
     }
     setIsRenamePending(true);
     try {
-      await updateTaskMutation({
+      await setPullRequestTitleMutation({
         teamSlugOrId,
         id: taskId,
-        text: trimmed,
+        pullRequestTitle: trimmed,
       });
       setIsRenaming(false);
       setRenameError(null);
@@ -176,9 +176,9 @@ export function useTaskRename({
     isRenamePending,
     renameValue,
     taskId,
-    currentText,
+    currentTitle,
     teamSlugOrId,
-    updateTaskMutation,
+    setPullRequestTitleMutation,
   ]);
 
   const handleRenameKeyDown = useCallback(
@@ -216,13 +216,13 @@ export function useTaskRename({
       return;
     }
     flushSync(() => {
-      setRenameValue(currentText);
+      setRenameValue(currentTitle);
       setRenameError(null);
       setIsRenaming(true);
     });
     renameInputHasFocusedRef.current = false;
     focusRenameInput();
-  }, [canRename, focusRenameInput, currentText]);
+  }, [canRename, focusRenameInput, currentTitle]);
 
   return {
     isRenaming,

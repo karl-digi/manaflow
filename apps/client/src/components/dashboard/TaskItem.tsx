@@ -29,6 +29,11 @@ export const TaskItem = memo(function TaskItem({
   const { archiveWithUndo, unarchive } = useArchiveTask(teamSlugOrId);
   const isOptimisticUpdate = task._id.includes("-") && task._id.length === 36;
   const canRename = !isOptimisticUpdate;
+  const trimmedPullRequestTitle = (task.pullRequestTitle ?? "").trim();
+  const taskTitle =
+    trimmedPullRequestTitle ||
+    task.pullRequestTitle ||
+    task.text;
 
   const {
     isRenaming,
@@ -44,7 +49,7 @@ export const TaskItem = memo(function TaskItem({
   } = useTaskRename({
     taskId: task._id,
     teamSlugOrId,
-    currentText: task.text,
+    currentTitle: taskTitle,
     canRename,
   });
 
@@ -218,7 +223,9 @@ export const TaskItem = memo(function TaskItem({
                   )}
                 />
               ) : (
-                <span className="text-[14px] truncate min-w-0">{task.text}</span>
+                <span className="text-[14px] truncate min-w-0">
+                  {taskTitle}
+                </span>
               )}
               {(task.projectFullName ||
                 (task.baseBranch && task.baseBranch !== "main")) && (
