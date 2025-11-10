@@ -43,8 +43,10 @@ import {
   GitPullRequestClosed,
   GitPullRequestDraft,
   Globe,
+  Laptop,
   Monitor,
   Pencil,
+  Server,
   TerminalSquare,
   Loader2,
   XCircle,
@@ -639,8 +641,26 @@ function TaskTreeInner({
       }
     }
 
-    if (isLocalWorkspace || isCloudWorkspace) {
-      return null;
+    if (isLocalWorkspace) {
+      return (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Laptop className="w-3 h-3 text-neutral-500 dark:text-neutral-400" />
+          </TooltipTrigger>
+          <TooltipContent side="right">Local workspace</TooltipContent>
+        </Tooltip>
+      );
+    }
+
+    if (isCloudWorkspace) {
+      return (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Server className="w-3 h-3 text-neutral-500 dark:text-neutral-400" />
+          </TooltipTrigger>
+          <TooltipContent side="right">Cloud workspace</TooltipContent>
+        </Tooltip>
+      );
     }
 
     return task.isCompleted ? (
@@ -1094,6 +1114,33 @@ function TaskRunTreeInner({
     (isLocalWorkspaceRunEntry || isCloudWorkspaceRunEntry) &&
     run.status !== "failed";
 
+  const workspaceIndicatorIcon = useMemo(() => {
+    if (!shouldHideStatusIcon) {
+      return null;
+    }
+    if (isLocalWorkspaceRunEntry) {
+      return (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Laptop className="w-3 h-3 text-neutral-500 dark:text-neutral-400" />
+          </TooltipTrigger>
+          <TooltipContent side="right">Local workspace</TooltipContent>
+        </Tooltip>
+      );
+    }
+    if (isCloudWorkspaceRunEntry) {
+      return (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Server className="w-3 h-3 text-neutral-500 dark:text-neutral-400" />
+          </TooltipTrigger>
+          <TooltipContent side="right">Cloud workspace</TooltipContent>
+        </Tooltip>
+      );
+    }
+    return null;
+  }, [isCloudWorkspaceRunEntry, isLocalWorkspaceRunEntry, shouldHideStatusIcon]);
+
   const pullRequestState = useMemo<RunPullRequestState | null>(() => {
     if (run.pullRequests && run.pullRequests.length > 0) {
       const summary = aggregatePullRequestState(run.pullRequests);
@@ -1161,7 +1208,9 @@ function TaskRunTreeInner({
   }, [pullRequestState, run.status]);
 
   const hideStatusIcon = shouldHideStatusIcon && !pullRequestIcon;
-  const resolvedStatusIcon = hideStatusIcon ? null : statusIcon;
+  const resolvedStatusIcon = hideStatusIcon
+    ? workspaceIndicatorIcon ?? statusIcon
+    : statusIcon;
 
   const statusIconWithTooltip =
     run.status === "failed" && run.errorMessage ? (
