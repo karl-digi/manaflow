@@ -20,6 +20,7 @@ export * from "./utils/validate-exposed-ports";
 export * from "./utils/generate-workspace-name";
 export * from "./utils/derive-repo-base-name";
 export * from "./utils/parse-github-repo-url";
+export * from "./utils/parse-github-pr-url";
 export * from "./vscode-schemas";
 export * from "./worker-schemas";
 export * from "./pull-request-state";

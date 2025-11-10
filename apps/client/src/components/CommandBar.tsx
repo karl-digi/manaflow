@@ -18,7 +18,7 @@ import type {
   CreateLocalWorkspaceResponse,
   CreateCloudWorkspaceResponse,
 } from "@cmux/shared";
-import { deriveRepoBaseName } from "@cmux/shared";
+import { deriveRepoBaseName, parseGithubPrUrl, isGithubPrUrl } from "@cmux/shared";
 import { useUser, type Team } from "@stackframe/react";
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import { useVirtualizer, type Virtualizer } from "@tanstack/react-virtual";
@@ -291,7 +291,7 @@ export function CommandBar({
     setSearch("");
   }, [setSearch]);
   const [activePage, setActivePage] = useState<
-    "root" | "teams" | "local-workspaces" | "cloud-workspaces"
+    "root" | "teams" | "local-workspaces" | "cloud-workspaces" | "open-pr-workspace"
   >("root");
   const [isCreatingLocalWorkspace, setIsCreatingLocalWorkspace] =
     useState(false);
@@ -1317,6 +1317,9 @@ export function CommandBar({
       } else if (value === "cloud-workspaces") {
         setActivePage("cloud-workspaces");
         return;
+      } else if (value === "open-pr-workspace") {
+        setActivePage("open-pr-workspace");
+        return;
       } else if (value === "pull-requests") {
         navigate({
           to: "/$teamSlugOrId/prs",
@@ -1568,6 +1571,24 @@ export function CommandBar({
           <>
             <Server className="h-4 w-4 text-neutral-500" />
             <span className="text-sm">New Cloud Workspace</span>
+          </>
+        ),
+      },
+      {
+        value: "open-pr-workspace",
+        label: "Open PR in Workspace",
+        keywords: ["pull request", "pr", "github", "workspace"],
+        searchText: buildSearchText(
+          "Open PR in Workspace",
+          ["pull request", "pr", "github", "workspace"],
+          ["open-pr-workspace"]
+        ),
+        className: baseCommandItemClassName,
+        execute: () => handleSelect("open-pr-workspace"),
+        renderContent: () => (
+          <>
+            <GitPullRequest className="h-4 w-4 text-neutral-500" />
+            <span className="text-sm">Open PR in Workspace</span>
           </>
         ),
       },
@@ -2002,6 +2023,206 @@ export function CommandBar({
     cloudWorkspaceOptions,
     handleCloudWorkspaceSelect,
     isCreatingCloudWorkspace,
+  ]);
+
+  // PR Workspace entries - detects PR URLs in search input
+  const prWorkspaceEntries = useMemo<CommandListEntry[]>(() => {
+    const trimmedSearch = search.trim();
+    if (!trimmedSearch || !isGithubPrUrl(trimmedSearch)) {
+      return [];
+    }
+
+    const prInfo = parseGithubPrUrl(trimmedSearch);
+    if (!prInfo) {
+      return [];
+    }
+
+    return [
+      {
+        value: `pr-workspace:${prInfo.url}`,
+        label: `Open PR #${prInfo.prNumber} in ${prInfo.fullName}`,
+        keywords: ["pull request", "pr", "workspace"],
+        searchText: buildSearchText(
+          `Open PR #${prInfo.prNumber} in ${prInfo.fullName}`,
+          ["pull request", "pr"],
+          [prInfo.fullName]
+        ),
+        className: baseCommandItemClassName,
+        disabled: isCreatingLocalWorkspace,
+        execute: async () => {
+          clearCommandInput();
+          closeCommand();
+
+          if (isCreatingLocalWorkspace) {
+            return;
+          }
+          if (!socket) {
+            console.warn(
+              "Socket is not connected yet. Please try again momentarily."
+            );
+            return;
+          }
+
+          setIsCreatingLocalWorkspace(true);
+          let reservedTaskId: Id<"tasks"> | null = null;
+          let reservedTaskRunId: Id<"taskRuns"> | null = null;
+
+          try {
+            const repoUrl = `https://github.com/${prInfo.fullName}.git`;
+            const reservation = await reserveLocalWorkspace({
+              teamSlugOrId,
+              projectFullName: prInfo.fullName,
+              repoUrl,
+            });
+            if (!reservation) {
+              throw new Error("Unable to reserve workspace name");
+            }
+
+            reservedTaskId = reservation.taskId;
+            reservedTaskRunId = reservation.taskRunId;
+
+            addTaskToExpand(reservation.taskId);
+
+            await new Promise<void>((resolve) => {
+              socket.emit(
+                "create-local-workspace",
+                {
+                  teamSlugOrId,
+                  prUrl: prInfo.url,
+                  taskId: reservation.taskId,
+                  taskRunId: reservation.taskRunId,
+                  workspaceName: reservation.workspaceName,
+                  descriptor: `PR #${prInfo.prNumber} in ${prInfo.fullName}`,
+                },
+                async (response: CreateLocalWorkspaceResponse) => {
+                  try {
+                    if (!response?.success) {
+                      const message =
+                        response?.error ??
+                        `Unable to create workspace for PR #${prInfo.prNumber}`;
+                      if (reservedTaskRunId) {
+                        await failTaskRun({
+                          teamSlugOrId,
+                          id: reservedTaskRunId,
+                          errorMessage: message,
+                        }).catch(() => undefined);
+                      }
+                      console.error(message);
+                      return;
+                    }
+
+                    const effectiveTaskId = response.taskId ?? reservedTaskId;
+                    const effectiveTaskRunId =
+                      response.taskRunId ?? reservedTaskRunId;
+                    const effectiveWorkspaceName =
+                      response.workspaceName ??
+                      reservation.workspaceName ??
+                      prInfo.fullName;
+
+                    console.log(
+                      response.pending
+                        ? `${effectiveWorkspaceName} is provisioning…`
+                        : `${effectiveWorkspaceName} is ready`
+                    );
+
+                    const normalizedWorkspaceUrl = response.workspaceUrl
+                      ? rewriteLocalWorkspaceUrlIfNeeded(
+                          response.workspaceUrl,
+                          localServeWeb.data?.baseUrl
+                        )
+                      : null;
+
+                    if (response.workspaceUrl && effectiveTaskRunId) {
+                      const proxiedUrl = toProxyWorkspaceUrl(
+                        response.workspaceUrl,
+                        localServeWeb.data?.baseUrl
+                      );
+                      if (proxiedUrl) {
+                        void preloadTaskRunIframes([
+                          { url: proxiedUrl, taskRunId: effectiveTaskRunId },
+                        ]).catch(() => undefined);
+                      }
+                    }
+
+                    if (effectiveTaskId && effectiveTaskRunId) {
+                      void router
+                        .preloadRoute({
+                          to: "/$teamSlugOrId/task/$taskId/run/$runId/vscode",
+                          params: {
+                            teamSlugOrId,
+                            taskId: effectiveTaskId,
+                            runId: effectiveTaskRunId,
+                          },
+                        })
+                        .catch(() => undefined);
+                      void navigate({
+                        to: "/$teamSlugOrId/task/$taskId/run/$runId/vscode",
+                        params: {
+                          teamSlugOrId,
+                          taskId: effectiveTaskId,
+                          runId: effectiveTaskRunId,
+                        },
+                      });
+                    } else if (normalizedWorkspaceUrl) {
+                      window.location.assign(normalizedWorkspaceUrl);
+                    }
+                  } catch (callbackError) {
+                    const message =
+                      callbackError instanceof Error
+                        ? callbackError.message
+                        : String(callbackError ?? "Unknown");
+                    console.error("Failed to create workspace", message);
+                  } finally {
+                    resolve();
+                  }
+                }
+              );
+            });
+          } catch (error) {
+            const message =
+              error instanceof Error
+                ? error.message
+                : String(error ?? "Unknown");
+            if (reservedTaskRunId) {
+              await failTaskRun({
+                teamSlugOrId,
+                id: reservedTaskRunId,
+                errorMessage: message,
+              }).catch(() => undefined);
+            }
+            console.error("Failed to create workspace", message);
+          } finally {
+            setIsCreatingLocalWorkspace(false);
+          }
+        },
+        renderContent: () => (
+          <>
+            <GitPullRequest className="h-4 w-4 text-neutral-500" />
+            <div className="flex min-w-0 flex-1 flex-col">
+              <span className="truncate text-sm">
+                Open PR #{prInfo.prNumber} in {prInfo.fullName}
+              </span>
+              <span className="truncate text-xs text-neutral-500">
+                {prInfo.url}
+              </span>
+            </div>
+          </>
+        ),
+      },
+    ];
+  }, [
+    search,
+    isCreatingLocalWorkspace,
+    socket,
+    teamSlugOrId,
+    reserveLocalWorkspace,
+    addTaskToExpand,
+    failTaskRun,
+    localServeWeb.data?.baseUrl,
+    router,
+    navigate,
+    clearCommandInput,
+    closeCommand,
   ]);
 
   const {
@@ -2655,6 +2876,32 @@ export function CommandBar({
                         </Command.Group>
                       ) : null}
                     </>
+                  )}
+                </>
+              ) : null}
+
+              {activePage === "open-pr-workspace" ? (
+                <>
+                  {prWorkspaceEntries.length > 0 ? (
+                    <Command.Group>
+                      {prWorkspaceEntries.map((entry) => (
+                        <Command.Item
+                          key={entry.value}
+                          value={entry.value}
+                          data-value={entry.value}
+                          keywords={entry.keywords}
+                          onSelect={() => entry.execute?.()}
+                          disabled={entry.disabled}
+                          className={entry.className}
+                        >
+                          {entry.renderContent()}
+                        </Command.Item>
+                      ))}
+                    </Command.Group>
+                  ) : (
+                    <div className={placeholderClassName}>
+                      Paste a GitHub PR URL (e.g., https://github.com/owner/repo/pull/123)
+                    </div>
                   )}
                 </>
               ) : null}

@@ -27,6 +27,7 @@ import {
   type PullRequestActionResult,
   type StoredPullRequestInfo,
 } from "@cmux/shared/pull-request-state";
+import { parseGithubPrUrl } from "@cmux/shared";
 import fuzzysort from "fuzzysort";
 import { parse as parseDotenv } from "dotenv";
 import { minimatch } from "minimatch";
@@ -657,15 +658,36 @@ export function setupSocketHandlers(
 
         const {
           teamSlugOrId: requestedTeamSlugOrId,
-          projectFullName,
+          projectFullName: rawProjectFullName,
           repoUrl: explicitRepoUrl,
           branch: requestedBranch,
+          prUrl,
           taskId: providedTaskId,
           taskRunId: providedTaskRunId,
           workspaceName: providedWorkspaceName,
           descriptor: providedDescriptor,
         } = parsed.data;
         const teamSlugOrId = requestedTeamSlugOrId || safeTeam;
+
+        // Handle GitHub PR URL if provided
+        let projectFullName = rawProjectFullName;
+        let branch = requestedBranch?.trim();
+        let prNumber: number | undefined = undefined;
+
+        if (prUrl) {
+          const prInfo = parseGithubPrUrl(prUrl);
+          if (!prInfo) {
+            callback({
+              success: false,
+              error: "Invalid GitHub PR URL format",
+            });
+            return;
+          }
+          // Override with PR info
+          projectFullName = prInfo.fullName;
+          prNumber = prInfo.prNumber;
+          // We'll fetch the branch name from GitHub API later
+        }
 
         if (projectFullName && projectFullName.startsWith("env:")) {
           callback({
@@ -686,12 +708,50 @@ export function setupSocketHandlers(
           return;
         }
 
+        // Fetch PR branch info if needed
+        if (prUrl && prNumber && projectFullName && !branch) {
+          try {
+            const [owner, repo] = projectFullName.split("/");
+            const token = await getGitHubTokenFromKeychain();
+            if (!token) {
+              callback({
+                success: false,
+                error: "GitHub token not found. Please configure GitHub authentication.",
+              });
+              return;
+            }
+            const octokit = getOctokit(token);
+            const prData = await octokit.rest.pulls.get({
+              owner,
+              repo,
+              pull_number: prNumber,
+            });
+            branch = prData.data.head.ref;
+            serverLogger.info(
+              `[create-local-workspace] Fetched PR #${prNumber} branch: ${branch}`
+            );
+          } catch (error) {
+            serverLogger.error(
+              "[create-local-workspace] Failed to fetch PR branch info",
+              {
+                prUrl,
+                prNumber,
+                error,
+              }
+            );
+            callback({
+              success: false,
+              error: "Failed to fetch PR information from GitHub",
+            });
+            return;
+          }
+        }
+
         const repoUrl =
           explicitRepoUrl ??
           (projectFullName
             ? `https://github.com/${projectFullName}.git`
             : undefined);
-        const branch = requestedBranch?.trim();
 
         let workspaceConfig: WorkspaceConfigResponse | null = null;
         if (projectFullName) {
@@ -1126,11 +1186,30 @@ export function setupSocketHandlers(
         const {
           teamSlugOrId: requestedTeamSlugOrId,
           environmentId,
-          projectFullName,
+          projectFullName: rawProjectFullName,
           repoUrl,
+          prUrl,
           taskId: providedTaskId,
         } = parsed.data;
         const teamSlugOrId = requestedTeamSlugOrId || safeTeam;
+
+        // Handle GitHub PR URL if provided
+        let projectFullName = rawProjectFullName;
+        let prNumber: number | undefined = undefined;
+
+        if (prUrl) {
+          const prInfo = parseGithubPrUrl(prUrl);
+          if (!prInfo) {
+            callback({
+              success: false,
+              error: "Invalid GitHub PR URL format",
+            });
+            return;
+          }
+          // Override with PR info
+          projectFullName = prInfo.fullName;
+          prNumber = prInfo.prNumber;
+        }
 
         const convex = getConvex();
         let taskId: Id<"tasks"> | undefined = providedTaskId;
