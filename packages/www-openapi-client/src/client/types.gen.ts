@@ -609,6 +609,13 @@ export type CodeReviewStartBody = {
     };
 };
 
+export type TaskRunForceWakeBody = {
+    /**
+     * The ID of the task run to wake
+     */
+    runId: string;
+};
+
 export type GetApiHealthData = {
     body?: never;
     path?: never;
@@ -2217,6 +2224,37 @@ export type PostApiCodeReviewStartResponses = {
 };
 
 export type PostApiCodeReviewStartResponse = PostApiCodeReviewStartResponses[keyof PostApiCodeReviewStartResponses];
+
+export type PostApiTaskrunForceWakeData = {
+    body: TaskRunForceWakeBody;
+    path?: never;
+    query?: never;
+    url: '/api/taskrun/force-wake';
+};
+
+export type PostApiTaskrunForceWakeErrors = {
+    /**
+     * Invalid request (task run not found or missing VSCode URL)
+     */
+    400: unknown;
+    /**
+     * Request is missing valid authentication.
+     */
+    401: unknown;
+    /**
+     * User does not have permission to wake this VM.
+     */
+    403: unknown;
+};
+
+export type PostApiTaskrunForceWakeResponses = {
+    /**
+     * Text/event-stream payload where each event contains JSON encoded status updates.
+     */
+    200: string;
+};
+
+export type PostApiTaskrunForceWakeResponse = PostApiTaskrunForceWakeResponses[keyof PostApiTaskrunForceWakeResponses];
 
 export type ClientOptions = {
     baseUrl: `${string}://${string}` | (string & {});

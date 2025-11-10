@@ -8,6 +8,7 @@ import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { useArchiveTask } from "@/hooks/useArchiveTask";
 import { useOpenWithActions } from "@/hooks/useOpenWithActions";
 import { useTaskRename } from "@/hooks/useTaskRename";
+import { useForceWakeVM } from "@/hooks/useForceWakeVM";
 import { isElectron } from "@/lib/electron";
 import { isFakeConvexId } from "@/lib/fakeConvexId";
 import type { AnnotatedTaskRun, TaskRunWithChildren } from "@/types/task";
@@ -45,6 +46,7 @@ import {
   Globe,
   Monitor,
   Pencil,
+  Power,
   TerminalSquare,
   Loader2,
   XCircle,
@@ -1239,6 +1241,19 @@ function TaskRunTreeInner({
     networking: run.networking,
   });
 
+  const { forceWakeVM, isWaking } = useForceWakeVM();
+
+  const canForceWakeVM = Boolean(
+    run.vscode?.provider === "morph" &&
+    run.vscode?.status === "stopped" &&
+    run.vscode?.url
+  );
+
+  const handleForceWakeVM = useCallback(() => {
+    if (!canForceWakeVM) return;
+    forceWakeVM({ runId: run._id });
+  }, [canForceWakeVM, forceWakeVM, run._id]);
+
   const shouldRenderDiffLink = true;
   const shouldRenderBrowserLink = run.vscode?.provider === "morph";
   const shouldRenderTerminalLink = shouldRenderBrowserLink;
@@ -1370,6 +1385,24 @@ function TaskRunTreeInner({
                   </ContextMenu.Positioner>
                 </ContextMenu.SubmenuRoot>
               ) : null}
+              {canForceWakeVM ? (
+                <>
+                  <div className="my-1 h-px bg-neutral-200 dark:bg-neutral-700" />
+                  <ContextMenu.Item
+                    className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700 data-[disabled]:opacity-50 data-[disabled]:pointer-events-none"
+                    onClick={handleForceWakeVM}
+                    disabled={isWaking}
+                  >
+                    {isWaking ? (
+                      <Loader2 className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300 animate-spin" />
+                    ) : (
+                      <Power className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
+                    )}
+                    <span>Force wake VM</span>
+                  </ContextMenu.Item>
+                </>
+              ) : null}
+              <div className="my-1 h-px bg-neutral-200 dark:bg-neutral-700" />
               <ContextMenu.Item
                 className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
                 onClick={handleArchiveRun}

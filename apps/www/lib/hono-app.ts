@@ -21,6 +21,7 @@ import {
   teamsRouter,
   usersRouter,
   iframePreflightRouter,
+  taskRunForceWakeRouter,
 } from "@/lib/routes/index";
 import { authAnonymousRouter } from "@/lib/routes/auth.anonymous.route";
 import { stackServerApp } from "@/lib/utils/stack";
@@ -120,6 +121,7 @@ app.route("/", sandboxesRouter);
 app.route("/", teamsRouter);
 app.route("/", branchRouter);
 app.route("/", codeReviewRouter);
+app.route("/", taskRunForceWakeRouter);
 
 // OpenAPI documentation
 app.doc("/doc", {
