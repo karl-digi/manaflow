@@ -106,7 +106,7 @@ interface TaskTreeProps {
 }
 
 interface SidebarArchiveOverlayProps {
-  icon: ReactNode;
+  icon?: ReactNode;
   label: string;
   onArchive: () => void;
 }
@@ -116,6 +116,15 @@ function SidebarArchiveOverlay({
   label,
   onArchive,
 }: SidebarArchiveOverlayProps) {
+  const displayIcon =
+    icon ??
+    ((
+      <span
+        aria-hidden
+        className="inline-block h-3 w-3"
+      />
+    ) as ReactNode);
+
   return (
     <div className="relative flex h-4 w-4 items-center justify-center">
       <Tooltip delayDuration={0}>
@@ -136,7 +145,7 @@ function SidebarArchiveOverlay({
         <TooltipContent side="right">{label}</TooltipContent>
       </Tooltip>
       <div className="flex items-center justify-center group-hover:pointer-events-none group-hover:opacity-0 group-data-[focus-visible=true]:pointer-events-none group-data-[focus-visible=true]:opacity-0 peer-focus-visible:pointer-events-none peer-focus-visible:opacity-0">
-        {icon}
+        {displayIcon}
       </div>
     </div>
   );
@@ -650,16 +659,15 @@ function TaskTreeInner({
     );
   })();
 
-  const taskMetaIcon =
-    !task.isArchived && taskLeadingIcon ? (
-      <SidebarArchiveOverlay
-        icon={taskLeadingIcon}
-        label="Archive task"
-        onArchive={handleArchive}
-      />
-    ) : (
-      taskLeadingIcon
-    );
+  const taskMetaIcon = !task.isArchived ? (
+    <SidebarArchiveOverlay
+      icon={taskLeadingIcon}
+      label="Archive task"
+      onArchive={handleArchive}
+    />
+  ) : (
+    taskLeadingIcon
+  );
 
   return (
     <TaskRunExpansionContext.Provider value={expansionContextValue}>
@@ -1182,16 +1190,15 @@ function TaskRunTreeInner({
 
   const runLeadingIcon = pullRequestIcon ?? statusIconWithTooltip;
 
-  const runMetaIcon =
-    !run.isArchived && runLeadingIcon ? (
-      <SidebarArchiveOverlay
-        icon={runLeadingIcon}
-        label="Archive task run"
-        onArchive={handleArchiveRun}
-      />
-    ) : (
-      runLeadingIcon
-    );
+  const runMetaIcon = !run.isArchived ? (
+    <SidebarArchiveOverlay
+      icon={runLeadingIcon}
+      label="Archive task run"
+      onArchive={handleArchiveRun}
+    />
+  ) : (
+    runLeadingIcon
+  );
 
   const crownIcon = run.isCrowned ? (
     <Tooltip delayDuration={0}>
