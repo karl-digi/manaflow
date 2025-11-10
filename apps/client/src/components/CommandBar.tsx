@@ -18,7 +18,7 @@ import type {
   CreateLocalWorkspaceResponse,
   CreateCloudWorkspaceResponse,
 } from "@cmux/shared";
-import { deriveRepoBaseName } from "@cmux/shared";
+import { deriveRepoBaseName, parseGithubPrUrl } from "@cmux/shared";
 import { useUser, type Team } from "@stackframe/react";
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import { useVirtualizer, type Virtualizer } from "@tanstack/react-virtual";
@@ -286,6 +286,10 @@ export function CommandBar({
 }: CommandBarProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const parsedPullRequestFromSearch = useMemo(
+    () => parseGithubPrUrl(search),
+    [search]
+  );
   const [openedWithShift, setOpenedWithShift] = useState(false);
   const clearCommandInput = useCallback(() => {
     setSearch("");
@@ -683,7 +687,10 @@ export function CommandBar({
   }, [open]);
 
   const createLocalWorkspace = useCallback(
-    async (projectFullName: string) => {
+    async (
+      projectFullName: string,
+      options?: { pullRequestUrl?: string }
+    ) => {
       if (isCreatingLocalWorkspace) {
         return;
       }
@@ -725,6 +732,7 @@ export function CommandBar({
               taskRunId: reservation.taskRunId,
               workspaceName: reservation.workspaceName,
               descriptor: reservation.descriptor,
+              pullRequestUrl: options?.pullRequestUrl,
             },
             async (response: CreateLocalWorkspaceResponse) => {
               try {
@@ -847,6 +855,17 @@ export function CommandBar({
     [clearCommandInput, closeCommand, createLocalWorkspace]
   );
 
+  const handleLocalPullRequestSelect = useCallback(
+    (pullRequest: NonNullable<ReturnType<typeof parseGithubPrUrl>>) => {
+      clearCommandInput();
+      closeCommand();
+      void createLocalWorkspace(pullRequest.fullName, {
+        pullRequestUrl: pullRequest.url,
+      });
+    },
+    [clearCommandInput, closeCommand, createLocalWorkspace]
+  );
+
   const createCloudWorkspaceFromEnvironment = useCallback(
     async (environmentId: Id<"environments">) => {
       if (isCreatingCloudWorkspace) {
@@ -932,7 +951,10 @@ export function CommandBar({
   );
 
   const createCloudWorkspaceFromRepo = useCallback(
-    async (projectFullName: string) => {
+    async (
+      projectFullName: string,
+      options?: { pullRequestUrl?: string }
+    ) => {
       if (isCreatingCloudWorkspace) {
         return;
       }
@@ -969,6 +991,7 @@ export function CommandBar({
               projectFullName,
               repoUrl,
               taskId,
+              pullRequestUrl: options?.pullRequestUrl,
               theme,
             },
             async (response: CreateCloudWorkspaceResponse) => {
@@ -1028,6 +1051,105 @@ export function CommandBar({
       createCloudWorkspaceFromRepo,
     ]
   );
+
+  const handleCloudPullRequestSelect = useCallback(
+    (pullRequest: NonNullable<ReturnType<typeof parseGithubPrUrl>>) => {
+      clearCommandInput();
+      closeCommand();
+      void createCloudWorkspaceFromRepo(pullRequest.fullName, {
+        pullRequestUrl: pullRequest.url,
+      });
+    },
+    [clearCommandInput, closeCommand, createCloudWorkspaceFromRepo]
+  );
+
+  const localPullRequestEntry = useMemo<CommandListEntry | null>(() => {
+    if (
+      activePage !== "local-workspaces" ||
+      !parsedPullRequestFromSearch ||
+      search.trim().length === 0
+    ) {
+      return null;
+    }
+    const pr = parsedPullRequestFromSearch;
+    const value = `local-workspace-pr:${pr.fullName}#${pr.number}`;
+    return {
+      value,
+      label: pr.shortRef,
+      searchText: buildSearchText(`Checkout PR ${pr.shortRef}`, [
+        pr.fullName,
+        pr.url,
+        "pull",
+        "pr",
+      ]),
+      className: baseCommandItemClassName,
+      disabled: isCreatingLocalWorkspace,
+      execute: () => handleLocalPullRequestSelect(pr),
+      renderContent: () => (
+        <>
+          <GitPullRequest className="h-4 w-4 text-neutral-500" />
+          <div className="flex min-w-0 flex-1 flex-col">
+            <span className="truncate text-sm">
+              Checkout PR {pr.shortRef}
+            </span>
+            <span className="truncate text-xs text-neutral-500">
+              New local workspace from GitHub PR
+            </span>
+          </div>
+        </>
+      ),
+    };
+  }, [
+    activePage,
+    handleLocalPullRequestSelect,
+    isCreatingLocalWorkspace,
+    parsedPullRequestFromSearch,
+    search,
+  ]);
+
+  const cloudPullRequestEntry = useMemo<CommandListEntry | null>(() => {
+    if (
+      activePage !== "cloud-workspaces" ||
+      !parsedPullRequestFromSearch ||
+      search.trim().length === 0
+    ) {
+      return null;
+    }
+    const pr = parsedPullRequestFromSearch;
+    const value = `cloud-workspace-pr:${pr.fullName}#${pr.number}`;
+    return {
+      value,
+      label: pr.shortRef,
+      searchText: buildSearchText(`Cloud PR ${pr.shortRef}`, [
+        pr.fullName,
+        pr.url,
+        "pull",
+        "pr",
+      ]),
+      className: baseCommandItemClassName,
+      disabled: isCreatingCloudWorkspace,
+      execute: () => handleCloudPullRequestSelect(pr),
+      renderContent: () => (
+        <>
+          <GitPullRequest className="h-4 w-4 text-neutral-500" />
+          <div className="flex min-w-0 flex-1 flex-col">
+            <span className="truncate text-sm">
+              Checkout PR {pr.shortRef}
+            </span>
+            <span className="truncate text-xs text-neutral-500">
+              New cloud workspace from GitHub PR
+            </span>
+          </div>
+        </>
+      ),
+    };
+  }, [
+    activePage,
+    handleCloudPullRequestSelect,
+    isCreatingCloudWorkspace,
+    parsedPullRequestFromSearch,
+    search,
+  ]);
 
   useEffect(() => {
     // In Electron, prefer global shortcut from main via cmux event.
@@ -2041,14 +2163,18 @@ export function CommandBar({
     [rootCommandEntries, search]
   );
 
-  const filteredLocalWorkspaceEntries = useMemo(
-    () => filterCommandItems(search, localWorkspaceEntries),
-    [localWorkspaceEntries, search]
-  );
-  const filteredCloudWorkspaceEntries = useMemo(
-    () => filterCommandItems(search, cloudWorkspaceEntries),
-    [cloudWorkspaceEntries, search]
-  );
+  const filteredLocalWorkspaceEntries = useMemo(() => {
+    const filtered = filterCommandItems(search, localWorkspaceEntries);
+    return localPullRequestEntry
+      ? [localPullRequestEntry, ...filtered]
+      : filtered;
+  }, [localPullRequestEntry, localWorkspaceEntries, search]);
+  const filteredCloudWorkspaceEntries = useMemo(() => {
+    const filtered = filterCommandItems(search, cloudWorkspaceEntries);
+    return cloudPullRequestEntry
+      ? [cloudPullRequestEntry, ...filtered]
+      : filtered;
+  }, [cloudPullRequestEntry, cloudWorkspaceEntries, search]);
   const filteredTeamEntries = useMemo(
     () => filterCommandItems(search, teamCommandEntries),
     [search, teamCommandEntries]

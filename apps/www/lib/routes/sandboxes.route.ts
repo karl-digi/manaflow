@@ -6,6 +6,7 @@ import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { env } from "@/lib/utils/www-env";
 import { api } from "@cmux/convex/api";
 import { RESERVED_CMUX_PORT_SET } from "@cmux/shared/utils/reserved-cmux-ports";
+import { parseGithubPrUrl } from "@cmux/shared";
 import { parseGithubRepoUrl } from "@cmux/shared/utils/parse-github-repo-url";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
@@ -133,6 +134,10 @@ sandboxesRouter.openapi(
     })();
 
     const body = c.req.valid("json");
+    const metadataPullRequestUrl = body.metadata?.pullRequestUrl;
+    const parsedMetadataPullRequest = metadataPullRequestUrl
+      ? parseGithubPrUrl(metadataPullRequestUrl)
+      : null;
     try {
       console.log("[sandboxes.start] incoming", {
         teamSlugOrId: body.teamSlugOrId,
@@ -314,6 +319,24 @@ sandboxesRouter.openapi(
         }
         console.log(`[sandboxes.start] Parsed owner/repo: ${parsedRepoUrl.fullName}`);
 
+        let pullRequestUrl: string | undefined;
+        if (parsedMetadataPullRequest) {
+          if (
+            parsedMetadataPullRequest.fullName.toLowerCase() ===
+            parsedRepoUrl.fullName.toLowerCase()
+          ) {
+            pullRequestUrl = parsedMetadataPullRequest.url;
+          } else {
+            console.warn(
+              `[sandboxes.start] Ignoring pullRequestUrl=${parsedMetadataPullRequest.url} (repo mismatch with ${parsedRepoUrl.fullName})`
+            );
+          }
+        } else if (metadataPullRequestUrl) {
+          console.warn(
+            "[sandboxes.start] Failed to parse pullRequestUrl metadata, ignoring"
+          );
+        }
+
         repoConfig = {
           owner: parsedRepoUrl.owner,
           name: parsedRepoUrl.repo,
@@ -323,6 +346,7 @@ sandboxesRouter.openapi(
           depth: Math.max(1, Math.floor(body.depth ?? 1)),
           baseBranch: body.branch || "main",
           newBranch: body.newBranch ?? "",
+          pullRequestUrl,
         };
       }
 

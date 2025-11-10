@@ -22,6 +22,7 @@ import {
   isLoopbackHostname,
   LOCAL_VSCODE_PLACEHOLDER_ORIGIN,
   type IframePreflightResult,
+  parseGithubPrUrl,
 } from "@cmux/shared";
 import {
   type PullRequestActionResult,
@@ -657,15 +658,51 @@ export function setupSocketHandlers(
 
         const {
           teamSlugOrId: requestedTeamSlugOrId,
-          projectFullName,
+          projectFullName: rawProjectFullName,
           repoUrl: explicitRepoUrl,
           branch: requestedBranch,
           taskId: providedTaskId,
           taskRunId: providedTaskRunId,
           workspaceName: providedWorkspaceName,
           descriptor: providedDescriptor,
+          pullRequestUrl: rawPullRequestUrl,
         } = parsed.data;
         const teamSlugOrId = requestedTeamSlugOrId || safeTeam;
+        let projectFullName = rawProjectFullName;
+
+        const normalizedPullRequest = rawPullRequestUrl
+          ? parseGithubPrUrl(rawPullRequestUrl)
+          : null;
+        if (rawPullRequestUrl && !normalizedPullRequest) {
+          callback({
+            success: false,
+            error: "Invalid pull request URL.",
+          });
+          return;
+        }
+        if (!projectFullName && normalizedPullRequest) {
+          projectFullName = normalizedPullRequest.fullName;
+        } else if (
+          normalizedPullRequest &&
+          projectFullName &&
+          normalizedPullRequest.fullName.toLowerCase() !==
+            projectFullName.toLowerCase()
+        ) {
+          callback({
+            success: false,
+            error: "Pull request does not belong to the selected repository.",
+          });
+          return;
+        }
+        const canonicalPullRequestUrl = normalizedPullRequest?.url;
+
+        if (!projectFullName) {
+          callback({
+            success: false,
+            error: "Repository name is required for workspace creation.",
+          });
+          return;
+        }
 
         if (projectFullName && projectFullName.startsWith("env:")) {
           callback({
@@ -989,6 +1026,47 @@ export function setupSocketHandlers(
                   : "Git clone failed to produce a checkout"
               );
             }
+
+            if (canonicalPullRequestUrl) {
+              try {
+                await execFileAsync(
+                  "gh",
+                  ["pr", "checkout", canonicalPullRequestUrl],
+                  {
+                    cwd: resolvedWorkspacePath,
+                  }
+                );
+                if (taskRunId) {
+                  try {
+                    await convex.mutation(api.taskRuns.updatePullRequestUrl, {
+                      teamSlugOrId,
+                      id: taskRunId,
+                      pullRequestUrl: canonicalPullRequestUrl,
+                      number: normalizedPullRequest?.number,
+                    });
+                  } catch (error) {
+                    serverLogger.warn(
+                      "[create-local-workspace] Failed to record pull request metadata",
+                      error
+                    );
+                  }
+                }
+              } catch (error) {
+                if (cleanupWorkspace) {
+                  await cleanupWorkspace();
+                }
+                const execErr = isExecError(error) ? error : null;
+                const message =
+                  execErr?.stderr?.trim() ||
+                  execErr?.stdout?.trim() ||
+                  (error instanceof Error ? error.message : "");
+                throw new Error(
+                  message
+                    ? `gh pr checkout failed: ${message}`
+                    : "gh pr checkout failed"
+                );
+              }
+            }
           } else {
             try {
               await fs.mkdir(resolvedWorkspacePath, { recursive: false });
@@ -1126,11 +1204,48 @@ export function setupSocketHandlers(
         const {
           teamSlugOrId: requestedTeamSlugOrId,
           environmentId,
-          projectFullName,
+          projectFullName: rawProjectFullName,
           repoUrl,
           taskId: providedTaskId,
+          pullRequestUrl: rawPullRequestUrl,
         } = parsed.data;
         const teamSlugOrId = requestedTeamSlugOrId || safeTeam;
+        let projectFullName = rawProjectFullName;
+
+        const normalizedPullRequest = rawPullRequestUrl
+          ? parseGithubPrUrl(rawPullRequestUrl)
+          : null;
+        if (rawPullRequestUrl && !normalizedPullRequest) {
+          callback({
+            success: false,
+            error: "Invalid pull request URL.",
+          });
+          return;
+        }
+        if (!environmentId) {
+          if (!projectFullName && normalizedPullRequest) {
+            projectFullName = normalizedPullRequest.fullName;
+          } else if (
+            normalizedPullRequest &&
+            projectFullName &&
+            normalizedPullRequest.fullName.toLowerCase() !==
+              projectFullName.toLowerCase()
+          ) {
+            callback({
+              success: false,
+              error:
+                "Pull request does not belong to the selected repository.",
+            });
+            return;
+          }
+        } else if (normalizedPullRequest) {
+          callback({
+            success: false,
+            error: "Pull requests are only supported for repository workspaces.",
+          });
+          return;
+        }
+        const canonicalPullRequestUrl = normalizedPullRequest?.url;
 
         const convex = getConvex();
         let taskId: Id<"tasks"> | undefined = providedTaskId;
@@ -1153,6 +1268,22 @@ export function setupSocketHandlers(
           });
           taskRunId = taskRunResult.taskRunId;
           const taskRunJwt = taskRunResult.jwt;
+
+          if (canonicalPullRequestUrl && taskRunId) {
+            try {
+              await convex.mutation(api.taskRuns.updatePullRequestUrl, {
+                teamSlugOrId,
+                id: taskRunId,
+                pullRequestUrl: canonicalPullRequestUrl,
+                number: normalizedPullRequest?.number,
+              });
+            } catch (error) {
+              serverLogger.warn(
+                "[create-cloud-workspace] Failed to record pull request metadata",
+                error
+              );
+            }
+          }
 
           serverLogger.info(
             `[create-cloud-workspace] Created taskRun ${taskRunId} for task ${taskId}`
@@ -1192,15 +1323,20 @@ export function setupSocketHandlers(
               : `[create-cloud-workspace] Starting Morph sandbox for repo ${projectFullName}`
           );
 
+          const metadata: Record<string, string> = {
+            instance: `cmux-workspace-${taskRunId}`,
+            agentName: "cloud-workspace",
+          };
+          if (canonicalPullRequestUrl) {
+            metadata.pullRequestUrl = canonicalPullRequestUrl;
+          }
+
           const startRes = await postApiSandboxesStart({
             client: getWwwClient(),
             body: {
               teamSlugOrId,
               ttlSeconds: 60 * 60,
-              metadata: {
-                instance: `cmux-workspace-${taskRunId}`,
-                agentName: "cloud-workspace",
-              },
+              metadata,
               taskRunId,
               taskRunJwt,
               isCloudWorkspace: true,
