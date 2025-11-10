@@ -22,6 +22,7 @@ import {
   isLoopbackHostname,
   LOCAL_VSCODE_PLACEHOLDER_ORIGIN,
   type IframePreflightResult,
+  parseGithubPullRequestUrl,
 } from "@cmux/shared";
 import {
   type PullRequestActionResult,
@@ -657,15 +658,46 @@ export function setupSocketHandlers(
 
         const {
           teamSlugOrId: requestedTeamSlugOrId,
-          projectFullName,
+          projectFullName: initialProjectFullName,
           repoUrl: explicitRepoUrl,
           branch: requestedBranch,
+          pullRequestUrl: rawPullRequestUrl,
           taskId: providedTaskId,
           taskRunId: providedTaskRunId,
           workspaceName: providedWorkspaceName,
           descriptor: providedDescriptor,
         } = parsed.data;
         const teamSlugOrId = requestedTeamSlugOrId || safeTeam;
+        let projectFullName = initialProjectFullName;
+        const trimmedPullRequestUrl = rawPullRequestUrl?.trim() || null;
+        const pullRequest = trimmedPullRequestUrl
+          ? parseGithubPullRequestUrl(trimmedPullRequestUrl)
+          : null;
+
+        if (trimmedPullRequestUrl && !pullRequest) {
+          callback({
+            success: false,
+            error: "Invalid GitHub pull request URL.",
+          });
+          return;
+        }
+
+        if (
+          pullRequest &&
+          projectFullName &&
+          projectFullName.toLowerCase() !== pullRequest.fullName.toLowerCase()
+        ) {
+          callback({
+            success: false,
+            error:
+              "Pull request does not belong to the selected repository.",
+          });
+          return;
+        }
+
+        if (!projectFullName && pullRequest) {
+          projectFullName = pullRequest.fullName;
+        }
 
         if (projectFullName && projectFullName.startsWith("env:")) {
           callback({
@@ -691,7 +723,11 @@ export function setupSocketHandlers(
           (projectFullName
             ? `https://github.com/${projectFullName}.git`
             : undefined);
-        const branch = requestedBranch?.trim();
+        const trimmedBranch = requestedBranch?.trim() || undefined;
+        const descriptorBranch = pullRequest
+          ? `PR #${pullRequest.number}`
+          : trimmedBranch;
+        const cloneBranch = pullRequest ? undefined : trimmedBranch;
 
         let workspaceConfig: WorkspaceConfigResponse | null = null;
         if (projectFullName) {
@@ -737,7 +773,7 @@ export function setupSocketHandlers(
                 teamSlugOrId,
                 projectFullName: projectFullName ?? undefined,
                 repoUrl,
-                branch,
+                branch: descriptorBranch,
               }
             );
             taskId = reservation.taskId;
@@ -755,8 +791,8 @@ export function setupSocketHandlers(
               ? `Local workspace ${workspaceName} (${projectFullName})`
               : `Local workspace ${workspaceName}`;
             descriptor =
-              branch && branch.length > 0
-                ? `${descriptorBase} [${branch}]`
+              descriptorBranch && descriptorBranch.length > 0
+                ? `${descriptorBase} [${descriptorBranch}]`
                 : descriptorBase;
           }
 
@@ -952,8 +988,8 @@ export function setupSocketHandlers(
               await cleanupWorkspace();
             }
             const cloneArgs = ["clone"];
-            if (branch) {
-              cloneArgs.push("--branch", branch, "--single-branch");
+            if (cloneBranch) {
+              cloneArgs.push("--branch", cloneBranch, "--single-branch");
             }
             cloneArgs.push(repoUrl, resolvedWorkspacePath);
             try {
@@ -988,6 +1024,34 @@ export function setupSocketHandlers(
                   ? `Git clone failed to produce a checkout: ${error.message}`
                   : "Git clone failed to produce a checkout"
               );
+            }
+
+            if (pullRequest) {
+              try {
+                serverLogger.info(
+                  `[create-local-workspace] Checking out PR ${pullRequest.fullName}#${pullRequest.number}`
+                );
+                await execFileAsync(
+                  "gh",
+                  ["pr", "checkout", pullRequest.url],
+                  {
+                    cwd: resolvedWorkspacePath,
+                  }
+                );
+              } catch (error) {
+                if (cleanupWorkspace) {
+                  await cleanupWorkspace();
+                }
+                const execErr = isExecError(error) ? error : null;
+                const message =
+                  execErr?.stderr?.trim() ||
+                  (error instanceof Error ? error.message : undefined);
+                throw new Error(
+                  message
+                    ? `GitHub PR checkout failed: ${message}`
+                    : "GitHub PR checkout failed"
+                );
+              }
             }
           } else {
             try {
@@ -1126,11 +1190,64 @@ export function setupSocketHandlers(
         const {
           teamSlugOrId: requestedTeamSlugOrId,
           environmentId,
-          projectFullName,
+          projectFullName: initialProjectFullName,
           repoUrl,
+          pullRequestUrl: rawPullRequestUrl,
           taskId: providedTaskId,
         } = parsed.data;
         const teamSlugOrId = requestedTeamSlugOrId || safeTeam;
+        let projectFullName = initialProjectFullName;
+        const trimmedPullRequestUrl = rawPullRequestUrl?.trim() || null;
+        const pullRequest = trimmedPullRequestUrl
+          ? parseGithubPullRequestUrl(trimmedPullRequestUrl)
+          : null;
+
+        if (trimmedPullRequestUrl && !pullRequest) {
+          callback({
+            success: false,
+            error: "Invalid GitHub pull request URL.",
+          });
+          return;
+        }
+
+        if (pullRequest && environmentId) {
+          callback({
+            success: false,
+            error: "Pull requests are only supported for repository workspaces.",
+          });
+          return;
+        }
+
+        if (
+          pullRequest &&
+          projectFullName &&
+          projectFullName.toLowerCase() !== pullRequest.fullName.toLowerCase()
+        ) {
+          callback({
+            success: false,
+            error:
+              "Pull request does not belong to the selected repository.",
+          });
+          return;
+        }
+
+        if (!projectFullName && pullRequest) {
+          projectFullName = pullRequest.fullName;
+        }
+
+        const resolvedRepoUrl =
+          repoUrl ??
+          (projectFullName
+            ? `https://github.com/${projectFullName}.git`
+            : undefined);
+
+        if (!environmentId && !projectFullName) {
+          callback({
+            success: false,
+            error: "Repository name is required for cloud workspaces.",
+          });
+          return;
+        }
 
         const convex = getConvex();
         let taskId: Id<"tasks"> | undefined = providedTaskId;
@@ -1206,7 +1323,11 @@ export function setupSocketHandlers(
               isCloudWorkspace: true,
               ...(environmentId
                 ? { environmentId }
-                : { projectFullName, repoUrl }),
+                : {
+                    projectFullName,
+                    repoUrl: resolvedRepoUrl,
+                    pullRequestUrl: pullRequest?.url,
+                  }),
             },
           });
 
