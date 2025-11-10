@@ -1567,7 +1567,7 @@ export function setupSocketHandlers(
         let command: string[];
         switch (editor) {
           case "vscode":
-            command = ["code", path];
+            command = ["code", "--disable-workspace-trust", path];
             break;
           case "cursor":
             command = ["cursor", path];
