@@ -582,13 +582,13 @@ export function EnvironmentConfiguration({
 
     const viewModeButtonClass = (mode: typeof viewMode) =>
       clsx(
-        "inline-flex h-7 w-7 items-center justify-center focus:outline-none text-neutral-600 dark:text-neutral-300",
+        "inline-flex h-7 w-7 items-center justify-center focus:outline-none",
         mode === "browser-only" && !isBrowserAvailable
-          ? "opacity-50 cursor-not-allowed"
+          ? "opacity-50 cursor-not-allowed text-neutral-400 dark:text-neutral-600"
           : "cursor-pointer hover:text-neutral-900 dark:hover:text-neutral-100",
         viewMode === mode && !(mode === "browser-only" && !isBrowserAvailable)
           ? "text-neutral-900 dark:text-neutral-100"
-          : undefined
+          : "text-neutral-400 dark:text-neutral-600"
       );
 
     return (
@@ -986,7 +986,7 @@ export function EnvironmentConfiguration({
             aria-label="Browser VNC Setup"
             title="Browser VNC Setup"
           >
-            <div className="space-y-2">
+            <div className="space-y-2 pb-4">
               <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-3">
                 Use the split view to access the browser VNC environment. Configure browser settings and extensions for agent automation.
               </p>
