@@ -660,6 +660,7 @@ export function setupSocketHandlers(
           projectFullName,
           repoUrl: explicitRepoUrl,
           branch: requestedBranch,
+          prUrl,
           taskId: providedTaskId,
           taskRunId: providedTaskRunId,
           workspaceName: providedWorkspaceName,
@@ -754,10 +755,19 @@ export function setupSocketHandlers(
             const descriptorBase = projectFullName
               ? `Local workspace ${workspaceName} (${projectFullName})`
               : `Local workspace ${workspaceName}`;
-            descriptor =
-              branch && branch.length > 0
-                ? `${descriptorBase} [${branch}]`
-                : descriptorBase;
+
+            let descriptorSuffix = "";
+            if (prUrl) {
+              // Extract PR number from URL for display
+              const prMatch = prUrl.match(/\/pull\/(\d+)/);
+              if (prMatch) {
+                descriptorSuffix = ` [PR #${prMatch[1]}]`;
+              }
+            } else if (branch && branch.length > 0) {
+              descriptorSuffix = ` [${branch}]`;
+            }
+
+            descriptor = descriptorBase + descriptorSuffix;
           }
 
           const workspaceRoot = process.env.CMUX_WORKSPACE_DIR
@@ -988,6 +998,36 @@ export function setupSocketHandlers(
                   ? `Git clone failed to produce a checkout: ${error.message}`
                   : "Git clone failed to produce a checkout"
               );
+            }
+
+            // If a PR URL was provided, checkout the PR using gh CLI
+            if (prUrl) {
+              try {
+                serverLogger.info(
+                  `[create-local-workspace] Checking out PR from ${prUrl}`
+                );
+                await execFileAsync("gh", ["pr", "checkout", prUrl], {
+                  cwd: resolvedWorkspacePath,
+                });
+                serverLogger.info(
+                  `[create-local-workspace] Successfully checked out PR from ${prUrl}`
+                );
+              } catch (error) {
+                if (cleanupWorkspace) {
+                  await cleanupWorkspace();
+                }
+                const execErr = isExecError(error) ? error : null;
+                const message =
+                  execErr?.stderr?.trim() ||
+                  (error instanceof Error
+                    ? error.message
+                    : "gh pr checkout failed");
+                throw new Error(
+                  message
+                    ? `Failed to checkout PR: ${message}`
+                    : "Failed to checkout PR"
+                );
+              }
             }
           } else {
             try {

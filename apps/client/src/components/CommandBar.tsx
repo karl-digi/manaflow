@@ -62,6 +62,7 @@ import {
   useSuggestionHistory,
 } from "./command-bar/useSuggestionHistory";
 import clsx from "clsx";
+import { parseGithubPrUrl } from "@cmux/shared";
 
 interface CommandBarProps {
   teamSlugOrId: string;
@@ -683,7 +684,7 @@ export function CommandBar({
   }, [open]);
 
   const createLocalWorkspace = useCallback(
-    async (projectFullName: string) => {
+    async (projectFullName: string, prUrl?: string) => {
       if (isCreatingLocalWorkspace) {
         return;
       }
@@ -721,6 +722,7 @@ export function CommandBar({
               teamSlugOrId,
               projectFullName,
               repoUrl,
+              prUrl,
               taskId: reservation.taskId,
               taskRunId: reservation.taskRunId,
               workspaceName: reservation.workspaceName,
@@ -839,10 +841,10 @@ export function CommandBar({
   );
 
   const handleLocalWorkspaceSelect = useCallback(
-    (projectFullName: string) => {
+    (projectFullName: string, prUrl?: string) => {
       clearCommandInput();
       closeCommand();
-      void createLocalWorkspace(projectFullName);
+      void createLocalWorkspace(projectFullName, prUrl);
     },
     [clearCommandInput, closeCommand, createLocalWorkspace]
   );
@@ -2431,6 +2433,14 @@ export function CommandBar({
 
     previousSearchRef.current = search;
 
+    // Check if the search input is a GitHub PR URL
+    const prInfo = parseGithubPrUrl(search);
+    if (prInfo && (activePage === "root" || activePage === "local-workspaces")) {
+      // Automatically create workspace from PR URL
+      handleLocalWorkspaceSelect(prInfo.fullName, prInfo.url);
+      return;
+    }
+
     let availableValues: string[] = [];
     if (activePage === "root") {
       availableValues = rootVisibleValues;
@@ -2456,6 +2466,7 @@ export function CommandBar({
     activePage,
     cloudWorkspaceVisibleValues,
     commandValue,
+    handleLocalWorkspaceSelect,
     localWorkspaceVisibleValues,
     open,
     rootVisibleValues,
