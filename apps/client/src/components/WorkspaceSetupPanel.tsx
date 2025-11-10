@@ -17,6 +17,11 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { Button } from "./ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "./ui/tooltip";
 
 type WorkspaceSetupPanelProps = {
   teamSlugOrId: string;
@@ -252,11 +257,16 @@ export function WorkspaceSetupPanel({
             Configure workspace for{" "}
             <span className="font-semibold">{projectFullName}</span>
           </span>
-          {isConfigured ? (
-            <Check className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-400" />
-          ) : (
-            <AlertTriangle className="w-3.5 h-3.5 text-orange-600 dark:text-orange-500" />
-          )}
+          {!isConfigured ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <AlertTriangle className="w-3.5 h-3.5 text-orange-600 dark:text-orange-500" />
+              </TooltipTrigger>
+              <TooltipContent>
+                Workspace not configured. Set up maintenance scripts and environment variables to prepare workspaces automatically.
+              </TooltipContent>
+            </Tooltip>
+          ) : null}
         </div>
       </button>
 
