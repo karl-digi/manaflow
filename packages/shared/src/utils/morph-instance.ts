@@ -86,8 +86,8 @@ function parseCmuxProxyHost(hostname: string): MorphInstanceInfo | null {
         return null;
       }
 
-      const portSegment = segments.at(-1);
-      const rawMorphId = segments.at(0);
+      const portSegment = segments[segments.length - 1];
+      const rawMorphId = segments[0];
       if (!portSegment || !rawMorphId) {
         return null;
       }
