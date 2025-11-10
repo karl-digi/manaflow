@@ -6,7 +6,7 @@ import {
   postApiWorkspaceConfigsMutation,
 } from "@cmux/www-openapi-client/react-query";
 import { useQuery, useMutation as useRQMutation } from "@tanstack/react-query";
-import { AlertTriangle, Check, ChevronDown, ChevronRight, Minus, Plus } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, ChevronRight, Eye, EyeOff, Minus, Plus } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -43,6 +43,7 @@ export function WorkspaceSetupPanel({
   const [envVars, setEnvVars] = useState<EnvVar[]>(() =>
     ensureInitialEnvVars(),
   );
+  const [showEnvValues, setShowEnvValues] = useState(false);
 
   const originalConfigRef = useRef<{ script: string; envContent: string }>({
     script: "",
@@ -317,10 +318,11 @@ export function WorkspaceSetupPanel({
                   <div className="space-y-1.5">
                     <div
                       className="grid gap-2 text-[11px] font-medium text-neutral-600 dark:text-neutral-400 items-center"
-                      style={{ gridTemplateColumns: "3fr 7fr 36px" }}
+                      style={{ gridTemplateColumns: "3fr 7fr 36px 36px" }}
                     >
                       <span>Key</span>
                       <span>Value</span>
+                      <span />
                       <span />
                     </div>
 
@@ -330,7 +332,7 @@ export function WorkspaceSetupPanel({
                           key={idx}
                           className="grid gap-2 items-center"
                           style={{
-                            gridTemplateColumns: "3fr 7fr 36px",
+                            gridTemplateColumns: "3fr 7fr 36px 36px",
                           }}
                         >
                           <input
@@ -347,20 +349,38 @@ export function WorkspaceSetupPanel({
                             placeholder="EXAMPLE_KEY"
                             className="w-full rounded-md border border-neutral-200 bg-white px-2 py-1.5 text-[11px] font-mono text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100 dark:placeholder:text-neutral-600 dark:focus:border-neutral-600"
                           />
-                          <input
-                            type="text"
-                            value={row.value}
-                            onChange={(event) => {
-                              const value = event.target.value;
-                              updateEnvVars((prev) => {
-                                const next = [...prev];
-                                next[idx] = { ...next[idx]!, value };
-                                return next;
-                              });
-                            }}
-                            placeholder="secret-value"
-                            className="w-full rounded-md border border-neutral-200 bg-white px-2 py-1.5 text-[11px] font-mono text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100 dark:placeholder:text-neutral-600 dark:focus:border-neutral-600"
-                          />
+                          <div className="relative">
+                            <input
+                              type={showEnvValues ? "text" : "password"}
+                              value={row.value}
+                              onChange={(event) => {
+                                const value = event.target.value;
+                                updateEnvVars((prev) => {
+                                  const next = [...prev];
+                                  next[idx] = { ...next[idx]!, value };
+                                  return next;
+                                });
+                              }}
+                              placeholder="secret-value"
+                              className="w-full rounded-md border border-neutral-200 bg-white px-2 py-1.5 text-[11px] font-mono text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100 dark:placeholder:text-neutral-600 dark:focus:border-neutral-600"
+                              style={{
+                                filter: showEnvValues ? "none" : "blur(4px)",
+                                transition: "filter 0.2s ease",
+                              }}
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            className="inline-flex h-6 w-6 items-center justify-center text-neutral-400 transition-colors hover:text-neutral-600 dark:text-neutral-500 dark:hover:text-neutral-300"
+                            onClick={() => setShowEnvValues(!showEnvValues)}
+                            aria-label={showEnvValues ? "Hide values" : "Show values"}
+                          >
+                            {showEnvValues ? (
+                              <EyeOff className="h-3.5 w-3.5" />
+                            ) : (
+                              <Eye className="h-3.5 w-3.5" />
+                            )}
+                          </button>
                           <button
                             type="button"
                             className="inline-flex h-6 w-6 items-center justify-center text-neutral-400 transition-colors hover:text-neutral-600 dark:text-neutral-500 dark:hover:text-neutral-300"
