@@ -369,7 +369,7 @@ export const TaskItem = memo(function TaskItem({
                     "bg-neutral-100 dark:bg-neutral-700",
                     "text-neutral-600 dark:text-neutral-400",
                     "hover:bg-neutral-200 dark:hover:bg-neutral-600",
-                    "group-hover:opacity-100 opacity-0"
+                    "group-hover:opacity-100 focus-visible:opacity-100 opacity-0"
                   )}
                   title="Unarchive task"
                 >
@@ -383,7 +383,7 @@ export const TaskItem = memo(function TaskItem({
                     "bg-neutral-100 dark:bg-neutral-700",
                     "text-neutral-600 dark:text-neutral-400",
                     "hover:bg-neutral-200 dark:hover:bg-neutral-600",
-                    "group-hover:opacity-100 opacity-0"
+                    "group-hover:opacity-100 focus-visible:opacity-100 opacity-0"
                   )}
                   title="Archive task"
                 >
