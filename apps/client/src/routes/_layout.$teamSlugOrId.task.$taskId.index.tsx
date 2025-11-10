@@ -127,7 +127,28 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
         ? (taskRunIndex.get(parsedRunId.data) ?? taskRuns[0])
         : taskRuns[0];
 
+      const selectedRunId = selectedRun?._id ?? null;
       const rawWorkspaceUrl = selectedRun?.vscode?.workspaceUrl ?? null;
+      const rawBrowserUrl =
+        selectedRun?.vscode?.url ?? selectedRun?.vscode?.workspaceUrl ?? null;
+
+      if (selectedRunId && rawBrowserUrl) {
+        const browserUrl = toMorphVncUrl(rawBrowserUrl);
+        if (browserUrl) {
+          try {
+            await preloadTaskRunIframes([
+              {
+                url: browserUrl,
+                taskRunId: selectedRunId,
+                target: "browser",
+              },
+            ]);
+          } catch (error) {
+            console.error("Failed to preload browser iframe", error);
+          }
+        }
+      }
+
       if (!rawWorkspaceUrl) {
         return;
       }
@@ -567,6 +588,19 @@ function TaskDetailPage() {
   const browserPersistKey = selectedRunId
     ? getTaskRunBrowserPersistKey(selectedRunId)
     : null;
+
+  useEffect(() => {
+    if (selectedRunId && browserUrl) {
+      void preloadTaskRunIframes([
+        {
+          url: browserUrl,
+          taskRunId: selectedRunId,
+          target: "browser",
+        },
+      ]);
+    }
+  }, [selectedRunId, browserUrl]);
+
   const hasBrowserView = Boolean(browserUrl);
   const isMorphProvider = selectedRun?.vscode?.provider === "morph";
 
