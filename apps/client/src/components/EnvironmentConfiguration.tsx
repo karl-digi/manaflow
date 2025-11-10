@@ -34,6 +34,7 @@ import {
   Loader2,
   Minus,
   Monitor,
+  PanelsTopBottom,
   Plus,
   Settings,
   X,
@@ -48,6 +49,59 @@ import {
 } from "react";
 import TextareaAutosize from "react-textarea-autosize";
 import { toast } from "sonner";
+
+type PreviewLayout = "split" | "vscode" | "browser";
+
+const MIN_PREVIEW_SPLIT = 0.3;
+const MAX_PREVIEW_SPLIT = 0.7;
+const PREVIEW_SPLIT_HANDLE_HEIGHT = 12;
+const clampSplitRatio = (value: number): number =>
+  Math.min(Math.max(value, MIN_PREVIEW_SPLIT), MAX_PREVIEW_SPLIT);
+
+const readStoredSplitRatio = (storageKey: string | null): number => {
+  if (typeof window === "undefined" || !storageKey) {
+    return 0.5;
+  }
+  const stored = localStorage.getItem(storageKey);
+  const parsed = stored ? Number.parseFloat(stored) : NaN;
+  return Number.isFinite(parsed) ? clampSplitRatio(parsed) : 0.5;
+};
+
+const forEachIframe = (callback: (iframe: HTMLIFrameElement) => void) => {
+  if (typeof document === "undefined") {
+    return;
+  }
+  const iframes = Array.from(document.querySelectorAll("iframe"));
+  for (const el of iframes) {
+    if (el instanceof HTMLIFrameElement) {
+      callback(el);
+    }
+  }
+};
+
+const disableIframePointerEvents = () => {
+  forEachIframe((iframe) => {
+    const current = iframe.style.pointerEvents;
+    iframe.dataset.prevPointerEvents = current ? current : "__unset__";
+    iframe.style.pointerEvents = "none";
+  });
+};
+
+const restoreIframePointerEvents = () => {
+  forEachIframe((iframe) => {
+    const prev = iframe.dataset.prevPointerEvents;
+    if (prev !== undefined) {
+      if (prev === "__unset__") {
+        iframe.style.removeProperty("pointer-events");
+      } else {
+        iframe.style.pointerEvents = prev;
+      }
+      delete iframe.dataset.prevPointerEvents;
+    } else {
+      iframe.style.removeProperty("pointer-events");
+    }
+  });
+};
 
 export function EnvironmentConfiguration({
   selectedRepos,
@@ -168,9 +222,11 @@ export function EnvironmentConfiguration({
     null
   );
   const lastSubmittedEnvContent = useRef<string | null>(null);
-  const [activePreview, setActivePreview] = useState<"vscode" | "browser">(
-    "vscode"
+  const [previewLayout, setPreviewLayout] = useState<PreviewLayout>(() =>
+    browserUrl ? "split" : "vscode"
   );
+  const userSelectedPreviewRef = useRef(false);
+  const previousBrowserAvailabilityRef = useRef(Boolean(browserUrl));
   const [vscodeStatus, setVscodeStatus] =
     useState<PersistentIframeStatus>("loading");
   const [vscodeError, setVscodeError] = useState<string | null>(null);
@@ -183,13 +239,55 @@ export function EnvironmentConfiguration({
     if (browserUrl) return `env-config:${browserUrl}`;
     return "env-config";
   }, [browserUrl, instanceId, vscodeUrl]);
+  const splitPersistKey = basePersistKey ? `${basePersistKey}:split` : null;
+  const [splitRatio, setSplitRatio] = useState<number>(() =>
+    readStoredSplitRatio(splitPersistKey)
+  );
+  const splitContainerRef = useRef<HTMLDivElement | null>(null);
+  const splitBoundsRef = useRef<{ top: number; height: number }>({
+    top: 0,
+    height: 1,
+  });
+  const splitDragRafRef = useRef<number | null>(null);
   const vscodePersistKey = `${basePersistKey}:vscode`;
   const browserPersistKey = `${basePersistKey}:browser`;
+  const isBrowserAvailable = Boolean(browserUrl);
+
   useEffect(() => {
-    if (!browserUrl && activePreview === "browser") {
-      setActivePreview("vscode");
+    if (
+      !isBrowserAvailable &&
+      (previewLayout === "browser" || previewLayout === "split")
+    ) {
+      setPreviewLayout("vscode");
     }
-  }, [activePreview, browserUrl]);
+  }, [isBrowserAvailable, previewLayout]);
+
+  useEffect(() => {
+    const wasAvailable = previousBrowserAvailabilityRef.current;
+    if (isBrowserAvailable && !wasAvailable && !userSelectedPreviewRef.current) {
+      setPreviewLayout("split");
+    }
+    previousBrowserAvailabilityRef.current = isBrowserAvailable;
+  }, [isBrowserAvailable]);
+
+  useEffect(() => {
+    if (!splitPersistKey || !isBrowserAvailable) {
+      return;
+    }
+    const next = readStoredSplitRatio(splitPersistKey);
+    setSplitRatio((prev) => (Math.abs(prev - next) < 0.001 ? prev : next));
+  }, [isBrowserAvailable, splitPersistKey]);
+
+  useEffect(() => {
+    if (
+      typeof window === "undefined" ||
+      !splitPersistKey ||
+      !isBrowserAvailable
+    ) {
+      return;
+    }
+    localStorage.setItem(splitPersistKey, String(splitRatio));
+  }, [isBrowserAvailable, splitPersistKey, splitRatio]);
 
   useEffect(() => {
     setVscodeStatus("loading");
@@ -230,13 +328,14 @@ export function EnvironmentConfiguration({
   }, [pendingFocusIndex, envVars]);
 
   const handlePreviewSelect = useCallback(
-    (view: "vscode" | "browser") => {
-      if (view === "browser" && !browserUrl) {
+    (view: PreviewLayout) => {
+      if (!isBrowserAvailable && (view === "browser" || view === "split")) {
         return;
       }
-      setActivePreview(view);
+      userSelectedPreviewRef.current = true;
+      setPreviewLayout(view);
     },
-    [browserUrl]
+    [isBrowserAvailable]
   );
 
   const handleVscodeLoad = useCallback(() => {
@@ -264,6 +363,73 @@ export function EnvironmentConfiguration({
     );
     setBrowserStatus("error");
   }, []);
+
+  const handleSplitMouseMove = useCallback(
+    (event: MouseEvent) => {
+      if (splitDragRafRef.current != null) {
+        return;
+      }
+      splitDragRafRef.current = window.requestAnimationFrame(() => {
+        splitDragRafRef.current = null;
+        const { top, height } = splitBoundsRef.current;
+        if (!height) {
+          return;
+        }
+        const relative = (event.clientY - top) / height;
+        setSplitRatio(clampSplitRatio(relative));
+      });
+    },
+    []
+  );
+
+  const stopSplitResizing = useCallback(() => {
+    if (typeof document !== "undefined") {
+      document.body.style.cursor = "";
+      document.body.classList.remove("select-none");
+    }
+    restoreIframePointerEvents();
+    if (splitDragRafRef.current != null) {
+      cancelAnimationFrame(splitDragRafRef.current);
+      splitDragRafRef.current = null;
+    }
+    window.removeEventListener("mousemove", handleSplitMouseMove);
+    window.removeEventListener("mouseup", stopSplitResizing);
+  }, [handleSplitMouseMove]);
+
+  const startSplitResizing = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      if (previewLayout !== "split") {
+        return;
+      }
+      event.preventDefault();
+      const container = splitContainerRef.current;
+      if (!container) {
+        return;
+      }
+      if (typeof document !== "undefined") {
+        document.body.style.cursor = "row-resize";
+        document.body.classList.add("select-none");
+      }
+      const rect = container.getBoundingClientRect();
+      splitBoundsRef.current = { top: rect.top, height: rect.height };
+      disableIframePointerEvents();
+      window.addEventListener("mousemove", handleSplitMouseMove);
+      window.addEventListener("mouseup", stopSplitResizing);
+    },
+    [handleSplitMouseMove, previewLayout, stopSplitResizing]
+  );
+
+  useEffect(() => {
+    return () => {
+      if (splitDragRafRef.current != null) {
+        cancelAnimationFrame(splitDragRafRef.current);
+        splitDragRafRef.current = null;
+      }
+      window.removeEventListener("mousemove", handleSplitMouseMove);
+      window.removeEventListener("mouseup", stopSplitResizing);
+      restoreIframePointerEvents();
+    };
+  }, [handleSplitMouseMove, stopSplitResizing]);
 
   // no-op placeholder removed; using onSnapshot instead
 
@@ -439,7 +605,6 @@ export function EnvironmentConfiguration({
     }
   };
 
-  const isBrowserAvailable = Boolean(browserUrl);
   const showVscodeOverlay =
     vscodeStatus !== "loaded" || vscodeError !== null;
   const showBrowserOverlay =
@@ -572,18 +737,55 @@ export function EnvironmentConfiguration({
     );
   };
 
+  const renderSplitPreview = () => {
+    if (!isBrowserAvailable) {
+      return renderVscodePreview();
+    }
+    return (
+      <div
+        ref={splitContainerRef}
+        className="relative flex h-full flex-col"
+        aria-label="VS Code and browser split view"
+      >
+        <div
+          className="relative min-h-0"
+          style={{ flex: `${splitRatio} 1 0%` }}
+        >
+          {renderVscodePreview()}
+        </div>
+        <div
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="Resize split view"
+          onMouseDown={startSplitResizing}
+          className="group relative flex items-center justify-center cursor-row-resize"
+          style={{ height: `${PREVIEW_SPLIT_HANDLE_HEIGHT}px` }}
+        >
+          <div className="absolute left-4 right-4 h-px bg-neutral-200 transition-colors group-hover:bg-neutral-300 dark:bg-neutral-800 dark:group-hover:bg-neutral-700" />
+          <div className="z-10 h-3 w-8 rounded-full border border-neutral-200 bg-white/80 dark:border-neutral-700 dark:bg-neutral-900/80" />
+        </div>
+        <div
+          className="relative min-h-0"
+          style={{ flex: `${1 - splitRatio} 1 0%` }}
+        >
+          {renderBrowserPreview()}
+        </div>
+      </div>
+    );
+  };
+
   const previewButtonClass = useCallback(
-    (view: "vscode" | "browser", disabled: boolean) =>
+    (view: PreviewLayout, disabled: boolean) =>
       clsx(
         "inline-flex h-7 w-7 items-center justify-center focus:outline-none text-neutral-600 dark:text-neutral-300",
         disabled
           ? "opacity-50 cursor-not-allowed"
           : "cursor-pointer hover:text-neutral-900 dark:hover:text-neutral-100",
-        view === activePreview && !disabled
+        view === previewLayout && !disabled
           ? "text-neutral-900 dark:text-neutral-100"
           : undefined
       ),
-    [activePreview]
+    [previewLayout]
   );
 
   const headerControls = useMemo(() => {
@@ -595,9 +797,20 @@ export function EnvironmentConfiguration({
       <div className="flex items-center gap-1.5">
         <button
           type="button"
+          onClick={() => handlePreviewSelect("split")}
+          className={previewButtonClass("split", !isBrowserAvailable)}
+          aria-pressed={previewLayout === "split"}
+          aria-label="Show split view"
+          title="Show split view"
+          disabled={!isBrowserAvailable}
+        >
+          <PanelsTopBottom className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
           onClick={() => handlePreviewSelect("vscode")}
           className={previewButtonClass("vscode", false)}
-          aria-pressed={activePreview === "vscode"}
+          aria-pressed={previewLayout === "vscode"}
           aria-label="Show VS Code workspace"
           title="Show VS Code workspace"
         >
@@ -607,7 +820,7 @@ export function EnvironmentConfiguration({
           type="button"
           onClick={() => handlePreviewSelect("browser")}
           className={previewButtonClass("browser", !isBrowserAvailable)}
-          aria-pressed={activePreview === "browser"}
+          aria-pressed={previewLayout === "browser"}
           aria-label="Show browser preview"
           title="Show browser preview"
           disabled={!isBrowserAvailable}
@@ -617,11 +830,11 @@ export function EnvironmentConfiguration({
       </div>
     );
   }, [
-    activePreview,
     handlePreviewSelect,
     isBrowserAvailable,
     isProvisioning,
     previewButtonClass,
+    previewLayout,
   ]);
 
   useEffect(() => {
@@ -751,6 +964,7 @@ export function EnvironmentConfiguration({
           defaultExpandedKeys={[
             "env-vars",
             "install-dependencies",
+            "browser-setup",
             "maintenance-script",
             "dev-script",
           ]}
@@ -922,6 +1136,39 @@ export function EnvironmentConfiguration({
           </AccordionItem>
 
           <AccordionItem
+            key="browser-setup"
+            aria-label="Browser VNC setup"
+            title="Browser VNC setup"
+          >
+            <div className="space-y-3 pb-4 text-sm text-neutral-600 dark:text-neutral-400">
+              <p>
+                Configure the embedded browser so the Browser agent can reuse your
+                authenticated session for screenshots, visual verification, and
+                cross-app navigation.
+              </p>
+              <ul className="list-disc space-y-2 pl-5 text-sm text-neutral-600 dark:text-neutral-400">
+                <li>
+                  Complete SSO, MFA, or product logins now so session cookies are
+                  ready when the agent opens the workspace.
+                </li>
+                <li>
+                  Leave the browser on the page you want captured (dashboards,
+                  feature flags, admin panels) so screenshots start in the right
+                  context.
+                </li>
+                <li>
+                  Pin important tabs and store any temporary access tokens in the
+                  browser password manager if the run needs to refresh auth later.
+                </li>
+              </ul>
+              <p className="text-xs text-neutral-500 dark:text-neutral-500">
+                Tip: switch to the browser panel above if you need to finish the
+                setup before saving the environment.
+              </p>
+            </div>
+          </AccordionItem>
+
+          <AccordionItem
             key="maintenance-script"
             aria-label="Maintenance script"
             title="Maintenance script"
@@ -1029,9 +1276,11 @@ export function EnvironmentConfiguration({
       ) : (
         <div className="flex h-full flex-col">
           <div className="flex-1 min-h-0">
-            {activePreview === "browser"
+            {previewLayout === "browser"
               ? renderBrowserPreview()
-              : renderVscodePreview()}
+              : previewLayout === "split" && isBrowserAvailable
+                ? renderSplitPreview()
+                : renderVscodePreview()}
           </div>
         </div>
       )}
