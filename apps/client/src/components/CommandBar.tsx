@@ -1,3 +1,4 @@
+import { TaskCreationPanel } from "@/components/dashboard/TaskCreationPanel";
 import { GitHubIcon } from "@/components/icons/github";
 import { useTheme } from "@/components/theme/use-theme";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
@@ -23,6 +24,7 @@ import { useUser, type Team } from "@stackframe/react";
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import { useVirtualizer, type Virtualizer } from "@tanstack/react-virtual";
 import { Command, useCommandState } from "cmdk";
+import * as Dialog from "@radix-ui/react-dialog";
 import { useMutation, useQuery } from "convex/react";
 import {
   Bug,
@@ -41,6 +43,7 @@ import {
   Settings,
   Sun,
   Users,
+  X,
 } from "lucide-react";
 import {
   useCallback,
@@ -287,6 +290,7 @@ export function CommandBar({
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [openedWithShift, setOpenedWithShift] = useState(false);
+  const [isNewTaskDialogOpen, setIsNewTaskDialogOpen] = useState(false);
   const clearCommandInput = useCallback(() => {
     setSearch("");
   }, [setSearch]);
@@ -1307,10 +1311,9 @@ export function CommandBar({
         setActivePage("teams");
         return;
       } else if (value === "new-task") {
-        navigate({
-          to: "/$teamSlugOrId/dashboard",
-          params: { teamSlugOrId },
-        });
+        setIsNewTaskDialogOpen(true);
+        closeCommand();
+        return;
       } else if (value === "local-workspaces") {
         setActivePage("local-workspaces");
         return;
@@ -1511,6 +1514,7 @@ export function CommandBar({
       allTasks,
       stackUser,
       stackTeams,
+      setIsNewTaskDialogOpen,
       closeCommand,
     ]
   );
@@ -2711,9 +2715,53 @@ export function CommandBar({
               ) : null}
             </Command.List>
           </Command>
-        </div>
       </div>
-    </>
+    </div>
+    <Dialog.Root
+      open={isNewTaskDialogOpen}
+      onOpenChange={(nextOpen) => {
+        setIsNewTaskDialogOpen(nextOpen);
+      }}
+    >
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-[1200] bg-neutral-950/40 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in data-[state=closed]:fade-out" />
+        {isNewTaskDialogOpen ? (
+          <Dialog.Content className="fixed left-1/2 top-1/2 z-[1201] w-full max-w-3xl -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-neutral-200 bg-white p-6 shadow-2xl focus:outline-none dark:border-neutral-800 dark:bg-neutral-900">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <Dialog.Title className="text-lg font-semibold text-neutral-900 dark:text-neutral-50">
+                  Start a task
+                </Dialog.Title>
+                <Dialog.Description className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
+                  Describe what you need and pick a repo or environment without leaving your current page.
+                </Dialog.Description>
+              </div>
+              <Dialog.Close asChild>
+                <button
+                  type="button"
+                  className="rounded-full p-2 text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-200"
+                  aria-label="Close task dialog"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </Dialog.Close>
+            </div>
+            <div className="mt-6">
+              <TaskCreationPanel
+                teamSlugOrId={teamSlugOrId}
+                className="space-y-6"
+                showWorkspaceCreationButtons={false}
+                showWorkspaceSetupPanel={false}
+                editorPersistenceKey="command-palette-task-description"
+                maxEditorHeight="240px"
+                onTaskStarted={() => setIsNewTaskDialogOpen(false)}
+              />
+            </div>
+          </Dialog.Content>
+        ) : null}
+      </Dialog.Portal>
+    </Dialog.Root>
+  </>
   );
 }
 const buildNodePath = (
