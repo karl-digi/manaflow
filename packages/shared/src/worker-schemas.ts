@@ -185,6 +185,7 @@ export const WorkerExecResultSchema = z.object({
 export const WorkerStartScreenshotCollectionSchema = z.object({
   anthropicApiKey: z.string().min(1).optional(),
   outputPath: z.string().optional(),
+  changedFiles: z.array(z.string()).optional(),
 });
 
 // Server to Worker Events

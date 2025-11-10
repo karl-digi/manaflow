@@ -264,6 +264,12 @@ export async function startScreenshotCollection(
           )
         );
 
+  if (options.changedFiles && options.changedFiles.length > 0) {
+    await logToScreenshotCollector(
+      `Using ${options.changedFiles.length} changed file(s) provided by caller`
+    );
+  }
+
   let usedWorkingTreeFallback = false;
 
   if (changedFiles.length === 0) {

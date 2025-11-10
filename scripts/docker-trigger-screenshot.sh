@@ -9,6 +9,7 @@ POLLING_BASE="http://localhost:${WORKER_PORT}/socket.io/?EIO=4&transport=polling
 PR_URL=""
 EXEC_COMMAND=""
 NON_INTERACTIVE=false
+PAYLOAD_CHANGED_FILES_PATH=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -137,9 +138,11 @@ if [ -n "$PR_URL" ]; then
     exit 1
   fi
 
-  tmp_pr_description="$(mktemp)"
+  tmp_pr_metadata="$(mktemp)"
+  tmp_pr_files="$(mktemp)"
   clone_status=0
-  description_status=0
+  metadata_status=0
+  files_status=0
 
   docker exec \
     -e PR_URL="$PR_URL" \
@@ -177,30 +180,58 @@ echo "Repository ready at $WORKTREE"
 ' &
   clone_pid=$!
 
-  gh pr view "$PR_URL" --json body --jq '.body // ""' >"$tmp_pr_description" &
-  description_pid=$!
+  gh pr view "$PR_URL" --json baseRefName,headRefName,title,body >"$tmp_pr_metadata" &
+  metadata_pid=$!
+
+  gh pr view "$PR_URL" --json files --jq '.files[].path' >"$tmp_pr_files" &
+  files_pid=$!
 
   set +e
   wait "$clone_pid"
   clone_status=$?
-  wait "$description_pid"
-  description_status=$?
+  wait "$metadata_pid"
+  metadata_status=$?
+  wait "$files_pid"
+  files_status=$?
   set -e
 
   if [ "$clone_status" -ne 0 ]; then
     echo "Error: Failed to clone PR into worker container" >&2
-    rm -f "$tmp_pr_description"
+    rm -f "$tmp_pr_metadata" "$tmp_pr_files"
     cleanup
     exit 1
   fi
 
   pr_description=""
-  if [ "$description_status" -ne 0 ]; then
-    echo "Warning: Unable to retrieve PR description; continuing without it" >&2
+  if [ "$metadata_status" -ne 0 ]; then
+    echo "Warning: Unable to retrieve PR metadata; continuing without it" >&2
   else
-    pr_description=$(cat "$tmp_pr_description")
+    pr_description=$(node -e '
+const fs = require("fs");
+const filePath = process.argv[1];
+try {
+  const data = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  process.stdout.write(data.body ?? "");
+} catch (error) {
+  process.stderr.write(
+    `Failed to parse PR metadata for description: ${error.message}\n`
+  );
+  process.exit(1);
+}
+' "$tmp_pr_metadata" 2>/dev/null || true)
   fi
-  rm -f "$tmp_pr_description"
+  rm -f "$tmp_pr_metadata"
+
+  if [ "$files_status" -ne 0 ]; then
+    echo "Warning: Unable to retrieve PR changed files; relying on local git diff" >&2
+    rm -f "$tmp_pr_files"
+  elif [ ! -s "$tmp_pr_files" ]; then
+    rm -f "$tmp_pr_files"
+  else
+    PAYLOAD_CHANGED_FILES_PATH="$tmp_pr_files"
+    changed_file_count=$(wc -l <"$tmp_pr_files" | tr -d "[:space:]")
+    echo "Detected $changed_file_count changed file(s) from PR metadata."
+  fi
 
   if [ -n "$pr_description" ]; then
     docker exec "$CONTAINER_NAME" bash -lc 'mkdir -p /root/workspace/.cmux'
@@ -233,18 +264,46 @@ curl -s \
   "${POLLING_BASE}&sid=${SID}&t=$(date +%s%3N)" >/dev/null
 
 # Prepare screenshot collection payload
-SOCKET_PAYLOAD=$(node -e '
+CHANGED_FILES_ARG="${PAYLOAD_CHANGED_FILES_PATH:-}"
+if [ -z "$CHANGED_FILES_ARG" ]; then
+  CHANGED_FILES_ARG="-"
+fi
+
+SOCKET_PAYLOAD=$(node - "$ANTHROPIC_API_KEY" "$CHANGED_FILES_ARG" <<'NODE'
+const fs = require("fs");
 const anthropicKey = process.argv[1] ?? "";
+const changedFilesPath = process.argv[2];
 const payload = ["worker:start-screenshot-collection"];
 const config = {};
-if (anthropicKey.length > 0) {
-  config.anthropicApiKey = anthropicKey;
+if (anthropicKey.trim().length > 0) {
+  config.anthropicApiKey = anthropicKey.trim();
+}
+if (changedFilesPath && changedFilesPath !== "-") {
+  try {
+    const raw = fs.readFileSync(changedFilesPath, "utf8");
+    const files = raw
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+    if (files.length > 0) {
+      config.changedFiles = files;
+    }
+  } catch (error) {
+    console.error(
+      `Failed to read changed files from ${changedFilesPath}: ${error.message}`
+    );
+  }
 }
 if (Object.keys(config).length > 0) {
   payload.push(config);
 }
 process.stdout.write(JSON.stringify(payload));
-' "$ANTHROPIC_API_KEY")
+NODE
+)
+
+if [ -n "$PAYLOAD_CHANGED_FILES_PATH" ]; then
+  rm -f "$PAYLOAD_CHANGED_FILES_PATH"
+fi
 
 echo "Triggering worker:start-screenshot-collection..."
 curl -s \

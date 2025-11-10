@@ -495,6 +495,7 @@ managementIO.on("connection", (socket) => {
         const result = await startScreenshotCollection({
           anthropicApiKey: config?.anthropicApiKey,
           outputPath: config?.outputPath,
+          changedFiles: config?.changedFiles ?? undefined,
         });
         log(
           "INFO",
