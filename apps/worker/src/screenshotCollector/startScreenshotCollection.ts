@@ -127,6 +127,40 @@ function resolveOutputDirectory(
   };
 }
 
+async function collectChangedFiles(params: {
+  workspaceDir: string;
+  mergeBase: string;
+}): Promise<{ changedFiles: string[]; usedWorkingTreeFallback: boolean }> {
+  const { workspaceDir, mergeBase } = params;
+  const mergeDiffOutput = await runCommandCapture(
+    "git",
+    ["diff", "--name-only", `${mergeBase}..HEAD`],
+    { cwd: workspaceDir }
+  );
+  let changedFiles = parseFileList(mergeDiffOutput);
+  let usedWorkingTreeFallback = false;
+
+  if (changedFiles.length === 0) {
+    usedWorkingTreeFallback = true;
+    const trackedDiffOutput = await runCommandCapture(
+      "git",
+      ["diff", "--name-only", "HEAD"],
+      { cwd: workspaceDir }
+    );
+    const untrackedOutput = await runCommandCapture(
+      "git",
+      ["ls-files", "--others", "--exclude-standard"],
+      { cwd: workspaceDir }
+    );
+    const trackedFiles = parseFileList(trackedDiffOutput);
+    const untrackedFiles = parseFileList(untrackedOutput);
+    const combined = new Set<string>([...trackedFiles, ...untrackedFiles]);
+    changedFiles = Array.from(combined);
+  }
+
+  return { changedFiles, usedWorkingTreeFallback };
+}
+
 export async function startScreenshotCollection(
   options: StartScreenshotCollectionOptions = {}
 ): Promise<ScreenshotCollectionResult> {
@@ -185,8 +219,16 @@ export async function startScreenshotCollection(
   );
 
   const repoSelectionErrors: { path: string; error: string }[] = [];
+  const reposWithoutChanges: string[] = [];
   let workspaceDir = "";
   let mergeBaseInfo: { baseBranch: string; mergeBase: string } | null = null;
+  let changedFiles: string[] = [];
+  let usedWorkingTreeFallback = false;
+
+  const changedFilesOverride =
+    options.changedFiles && options.changedFiles.length > 0
+      ? [...options.changedFiles]
+      : null;
 
   for (const candidate of repoCandidates) {
     try {
@@ -194,8 +236,32 @@ export async function startScreenshotCollection(
         candidate,
         options.baseBranch ?? null
       );
+
+      if (changedFilesOverride) {
+        workspaceDir = candidate;
+        mergeBaseInfo = info;
+        changedFiles = changedFilesOverride;
+        usedWorkingTreeFallback = false;
+        break;
+      }
+
+      const diffResult = await collectChangedFiles({
+        workspaceDir: candidate,
+        mergeBase: info.mergeBase,
+      });
+
+      if (diffResult.changedFiles.length === 0) {
+        reposWithoutChanges.push(candidate);
+        await logToScreenshotCollector(
+          `No changes detected in ${candidate}; checking next repository if available`
+        );
+        continue;
+      }
+
       workspaceDir = candidate;
       mergeBaseInfo = info;
+      changedFiles = diffResult.changedFiles;
+      usedWorkingTreeFallback = diffResult.usedWorkingTreeFallback;
       break;
     } catch (error) {
       const message =
@@ -208,6 +274,21 @@ export async function startScreenshotCollection(
   }
 
   if (!workspaceDir || !mergeBaseInfo) {
+    if (reposWithoutChanges.length > 0) {
+      const reason =
+        "No changes detected in branch commits or working tree; skipping screenshots";
+      await logToScreenshotCollector(reason);
+      await logToScreenshotCollector(
+        `Repositories without changes: ${reposWithoutChanges.join(", ")}`
+      );
+      log("INFO", reason, {
+        workspaceRoot,
+        repoCandidates,
+        repositoriesWithoutChanges: reposWithoutChanges,
+      });
+      return { status: "skipped", reason };
+    }
+
     const reason =
       repoSelectionErrors.length > 0
         ? `Unable to determine a merge base for any repository candidate: ${repoSelectionErrors
@@ -253,20 +334,7 @@ export async function startScreenshotCollection(
     mergeBase,
   });
 
-  let changedFiles =
-    options.changedFiles && options.changedFiles.length > 0
-      ? options.changedFiles
-      : parseFileList(
-          await runCommandCapture(
-            "git",
-            ["diff", "--name-only", `${mergeBase}..HEAD`],
-            { cwd: workspaceDir }
-          )
-        );
-
-  let usedWorkingTreeFallback = false;
-
-  if (changedFiles.length === 0) {
+  if (usedWorkingTreeFallback) {
     await logToScreenshotCollector(
       `No merge-base diff detected; falling back to working tree changes`
     );
@@ -274,23 +342,6 @@ export async function startScreenshotCollection(
       baseBranch,
       mergeBase,
     });
-
-    const trackedDiffOutput = await runCommandCapture(
-      "git",
-      ["diff", "--name-only", "HEAD"],
-      { cwd: workspaceDir }
-    );
-    const untrackedOutput = await runCommandCapture(
-      "git",
-      ["ls-files", "--others", "--exclude-standard"],
-      { cwd: workspaceDir }
-    );
-
-    const trackedFiles = parseFileList(trackedDiffOutput);
-    const untrackedFiles = parseFileList(untrackedOutput);
-    const combined = new Set<string>([...trackedFiles, ...untrackedFiles]);
-    changedFiles = Array.from(combined);
-    usedWorkingTreeFallback = true;
   }
 
   if (changedFiles.length === 0) {
