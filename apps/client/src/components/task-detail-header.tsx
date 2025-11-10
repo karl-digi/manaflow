@@ -1,4 +1,5 @@
 import { OpenEditorSplitButton } from "@/components/OpenEditorSplitButton";
+import { Button } from "@/components/ui/button";
 import { Dropdown } from "@/components/ui/dropdown";
 import { MergeButton, type MergeMethod } from "@/components/ui/merge-button";
 import { useSocketSuspense } from "@/contexts/socket/use-socket";
@@ -209,7 +210,7 @@ export function TaskDetailHeader({
 }: TaskDetailHeaderProps) {
   const navigate = useNavigate();
   const location = useLocation();
-  const clipboard = useClipboard({ timeout: 2000 });
+  const branchClipboard = useClipboard({ timeout: 2000 });
   const prIsOpen = selectedRun?.pullRequestState === "open";
   const prIsMerged = selectedRun?.pullRequestState === "merged";
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
@@ -219,7 +220,7 @@ export function TaskDetailHeader({
   const taskTitle = task?.pullRequestTitle || task?.text;
   const handleCopyBranch = () => {
     if (selectedRun?.newBranch) {
-      clipboard.copy(selectedRun.newBranch);
+      branchClipboard.copy(selectedRun.newBranch);
     }
   };
   const worktreePath = useMemo(
@@ -421,23 +422,23 @@ export function TaskDetailHeader({
               <GitBranch
                 className={clsx(
                   "w-3 h-3 absolute inset-0 z-0",
-                  clipboard.copied ? "hidden" : "block group-hover:hidden",
+                  branchClipboard.copied ? "hidden" : "block group-hover:hidden",
                 )}
-                aria-hidden={clipboard.copied}
+                aria-hidden={branchClipboard.copied}
               />
               <Copy
                 className={clsx(
                   "w-3 h-3 absolute inset-0 z-[var(--z-low)]",
-                  clipboard.copied ? "hidden" : "hidden group-hover:block",
+                  branchClipboard.copied ? "hidden" : "hidden group-hover:block",
                 )}
-                aria-hidden={clipboard.copied}
+                aria-hidden={branchClipboard.copied}
               />
               <Check
                 className={clsx(
                   "w-3 h-3 text-green-400 absolute inset-0 z-[var(--z-sticky)]",
-                  clipboard.copied ? "block" : "hidden",
+                  branchClipboard.copied ? "block" : "hidden",
                 )}
-                aria-hidden={!clipboard.copied}
+                aria-hidden={!branchClipboard.copied}
               />
             </div>
             {selectedRun?.newBranch ? (
@@ -708,16 +709,73 @@ function SocketActions({
           Boolean(result.repoFullName?.trim()) &&
           Boolean(result.number),
       );
+      const actionableUrls = actionable
+        .map((result) => buildPullRequestUrl(result))
+        .filter((url): url is string => Boolean(url));
+      const aggregateUrlRaw = response.aggregate?.url;
+      const aggregateUrl = aggregateUrlRaw?.trim()
+        ? aggregateUrlRaw.trim()
+        : undefined;
+      const copyText =
+        actionableUrls.length > 0
+          ? actionableUrls.join("\n")
+          : aggregateUrl;
+      const copyCount =
+        actionableUrls.length > 0
+          ? actionableUrls.length
+          : copyText
+            ? 1
+            : 0;
+      const viewButton =
+        actionable.length > 0 ? (
+          <Button
+            size="sm"
+            type="button"
+            onClick={() => navigateToPrs(actionable)}
+          >
+            {actionable.length === 1 ? "View PR" : "View PRs"}
+          </Button>
+        ) : null;
+      const copyButton =
+        copyText && copyCount > 0 ? (
+          <Button
+            size="sm"
+            variant="outline"
+            type="button"
+            onClick={() => {
+              void copyTextToClipboard(copyText)
+                .then(() => {
+                  toast.success(
+                    copyCount > 1
+                      ? "PR URLs copied to clipboard"
+                      : "PR URL copied to clipboard",
+                    { duration: 2000 },
+                  );
+                })
+                .catch((error) => {
+                  console.error("Failed to copy PR URL(s)", error);
+                  toast.error(
+                    copyCount > 1
+                      ? "Unable to copy PR URLs"
+                      : "Unable to copy PR URL",
+                  );
+                });
+            }}
+          >
+            {copyCount > 1 ? "Copy PR URLs" : "Copy PR URL"}
+          </Button>
+        ) : null;
+      const toastAction =
+        viewButton || copyButton ? (
+          <div className="flex flex-wrap gap-2">
+            {viewButton}
+            {copyButton}
+          </div>
+        ) : undefined;
       toast.success(openedLabel, {
         id: context?.toastId,
         description: summarizeResults(response.results),
-        action:
-          actionable.length > 0
-            ? {
-              label: actionable.length === 1 ? "View PR" : "View PRs",
-              onClick: () => navigateToPrs(actionable),
-            }
-            : undefined,
+        action: toastAction,
       });
     },
     onError: (error, _variables, context) => {
@@ -1023,4 +1081,58 @@ function SocketActions({
       )}
     </>
   );
+}
+
+type PullRequestIdentifier = {
+  url?: string | null;
+  repoFullName?: string | null;
+  number?: number | null;
+};
+
+function buildPullRequestUrl(pr?: PullRequestIdentifier) {
+  if (!pr) {
+    return undefined;
+  }
+  const normalizedUrl = pr.url?.trim();
+  if (normalizedUrl) {
+    return normalizedUrl;
+  }
+  const repoFullName = pr.repoFullName?.trim();
+  if (repoFullName && pr.number) {
+    return `https://github.com/${repoFullName}/pull/${pr.number}`;
+  }
+  return undefined;
+}
+
+async function copyTextToClipboard(text: string) {
+  if (!text) {
+    throw new Error("Nothing to copy");
+  }
+  const maybeNavigator = typeof navigator === "undefined" ? undefined : navigator;
+  if (maybeNavigator?.clipboard?.writeText) {
+    await maybeNavigator.clipboard.writeText(text);
+    return;
+  }
+  const maybeDocument = typeof document === "undefined" ? undefined : document;
+  if (!maybeDocument?.body) {
+    throw new Error("Clipboard is unavailable");
+  }
+  const textarea = maybeDocument.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.opacity = "0";
+  maybeDocument.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  let successful = false;
+  try {
+    successful = maybeDocument.execCommand("copy");
+  } finally {
+    maybeDocument.body.removeChild(textarea);
+  }
+  if (!successful) {
+    throw new Error("Copy command failed");
+  }
 }
