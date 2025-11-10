@@ -106,7 +106,7 @@ interface TaskTreeProps {
 }
 
 interface SidebarArchiveOverlayProps {
-  icon: ReactNode;
+  icon?: ReactNode;
   label: string;
   onArchive: () => void;
 }
@@ -650,16 +650,15 @@ function TaskTreeInner({
     );
   })();
 
-  const taskMetaIcon =
-    !task.isArchived && taskLeadingIcon ? (
-      <SidebarArchiveOverlay
-        icon={taskLeadingIcon}
-        label="Archive task"
-        onArchive={handleArchive}
-      />
-    ) : (
-      taskLeadingIcon
-    );
+  const taskMetaIcon = !task.isArchived ? (
+    <SidebarArchiveOverlay
+      icon={taskLeadingIcon}
+      label="Archive task"
+      onArchive={handleArchive}
+    />
+  ) : (
+    taskLeadingIcon
+  );
 
   return (
     <TaskRunExpansionContext.Provider value={expansionContextValue}>
@@ -1182,16 +1181,15 @@ function TaskRunTreeInner({
 
   const runLeadingIcon = pullRequestIcon ?? statusIconWithTooltip;
 
-  const runMetaIcon =
-    !run.isArchived && runLeadingIcon ? (
-      <SidebarArchiveOverlay
-        icon={runLeadingIcon}
-        label="Archive task run"
-        onArchive={handleArchiveRun}
-      />
-    ) : (
-      runLeadingIcon
-    );
+  const runMetaIcon = !run.isArchived ? (
+    <SidebarArchiveOverlay
+      icon={runLeadingIcon}
+      label="Archive task run"
+      onArchive={handleArchiveRun}
+    />
+  ) : (
+    runLeadingIcon
+  );
 
   const crownIcon = run.isCrowned ? (
     <Tooltip delayDuration={0}>
