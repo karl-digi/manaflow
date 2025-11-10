@@ -13,6 +13,7 @@ export interface HydrateRepoConfig {
   depth: number;
   baseBranch: string;
   newBranch: string;
+  prUrl?: string;
 }
 
 const MORPH_WORKSPACE_PATH = "/root/workspace";
@@ -49,6 +50,9 @@ export const hydrateWorkspace = async ({
     envVars.CMUX_MASKED_CLONE_URL = repo.maskedCloneUrl;
     envVars.CMUX_BASE_BRANCH = repo.baseBranch;
     envVars.CMUX_NEW_BRANCH = repo.newBranch;
+    if (repo.prUrl) {
+      envVars.CMUX_PR_URL = repo.prUrl;
+    }
   }
 
   // Build the command to write and execute the script

@@ -486,6 +486,7 @@ export type StartSandboxBody = {
     branch?: string;
     newBranch?: string;
     depth?: number;
+    prUrl?: string;
 };
 
 export type UpdateSandboxEnvResponse = {

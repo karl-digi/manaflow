@@ -22,6 +22,7 @@ import {
   isLoopbackHostname,
   LOCAL_VSCODE_PLACEHOLDER_ORIGIN,
   type IframePreflightResult,
+  parseGithubPrUrl,
 } from "@cmux/shared";
 import {
   type PullRequestActionResult,
@@ -116,6 +117,34 @@ function buildServeWebWorkspaceUrl(
 
 function buildPlaceholderWorkspaceUrl(folderPath: string): string {
   return buildServeWebWorkspaceUrl(LOCAL_VSCODE_PLACEHOLDER_ORIGIN, folderPath);
+}
+
+async function checkoutPullRequestInRepo(options: {
+  workspacePath: string;
+  prUrl: string;
+  context: string;
+}): Promise<void> {
+  const { workspacePath, prUrl, context } = options;
+  try {
+    await execFileAsync("gh", ["pr", "checkout", prUrl], {
+      cwd: workspacePath,
+    });
+    serverLogger.info(`[${context}] Checked out PR via gh: ${prUrl}`);
+  } catch (error) {
+    const execErr = isExecError(error) ? error : null;
+    const enoent =
+      error && typeof error === "object" && "code" in error
+        ? (error as NodeJS.ErrnoException).code === "ENOENT"
+        : false;
+    const stderr = execErr?.stderr?.trim() ?? "";
+    const stdout = execErr?.stdout?.trim() ?? "";
+    const message = enoent
+      ? "GitHub CLI (gh) not found. Please install gh to checkout pull requests."
+      : stderr || stdout || (error instanceof Error ? error.message : "");
+    throw new Error(
+      message ? `gh pr checkout failed: ${message}` : "gh pr checkout failed"
+    );
+  }
 }
 
 export function setupSocketHandlers(
@@ -657,15 +686,42 @@ export function setupSocketHandlers(
 
         const {
           teamSlugOrId: requestedTeamSlugOrId,
-          projectFullName,
+          projectFullName: initialProjectFullName,
           repoUrl: explicitRepoUrl,
           branch: requestedBranch,
+          prUrl: requestedPrUrl,
           taskId: providedTaskId,
           taskRunId: providedTaskRunId,
           workspaceName: providedWorkspaceName,
           descriptor: providedDescriptor,
         } = parsed.data;
         const teamSlugOrId = requestedTeamSlugOrId || safeTeam;
+        const trimmedPrUrl = requestedPrUrl?.trim();
+        const parsedPr = trimmedPrUrl ? parseGithubPrUrl(trimmedPrUrl) : null;
+
+        if (trimmedPrUrl && !parsedPr) {
+          callback({
+            success: false,
+            error: "Invalid GitHub pull request URL.",
+          });
+          return;
+        }
+
+        const projectFullName =
+          initialProjectFullName ?? parsedPr?.fullName ?? undefined;
+        const normalizedPrUrl = parsedPr?.prUrl ?? null;
+
+        if (
+          initialProjectFullName &&
+          parsedPr &&
+          parsedPr.fullName !== initialProjectFullName
+        ) {
+          callback({
+            success: false,
+            error: "Pull request does not belong to the selected repository.",
+          });
+          return;
+        }
 
         if (projectFullName && projectFullName.startsWith("env:")) {
           callback({
@@ -750,15 +806,20 @@ export function setupSocketHandlers(
             throw new Error("Failed to prepare workspace metadata");
           }
 
-          if (!descriptor) {
-            const descriptorBase = projectFullName
-              ? `Local workspace ${workspaceName} (${projectFullName})`
-              : `Local workspace ${workspaceName}`;
-            descriptor =
-              branch && branch.length > 0
-                ? `${descriptorBase} [${branch}]`
-                : descriptorBase;
-          }
+        if (!descriptor) {
+          const descriptorBase = projectFullName
+            ? `Local workspace ${workspaceName} (${projectFullName})`
+            : `Local workspace ${workspaceName}`;
+          const prLabel = parsedPr ? `PR #${parsedPr.number}` : null;
+          const descriptorSuffix = prLabel
+            ? prLabel
+            : branch && branch.length > 0
+              ? branch
+              : null;
+          descriptor = descriptorSuffix
+            ? `${descriptorBase} [${descriptorSuffix}]`
+            : descriptorBase;
+        }
 
           const workspaceRoot = process.env.CMUX_WORKSPACE_DIR
             ? path.resolve(process.env.CMUX_WORKSPACE_DIR)
@@ -989,6 +1050,21 @@ export function setupSocketHandlers(
                   : "Git clone failed to produce a checkout"
               );
             }
+
+            if (normalizedPrUrl) {
+              try {
+                await checkoutPullRequestInRepo({
+                  workspacePath: resolvedWorkspacePath,
+                  prUrl: normalizedPrUrl,
+                  context: "create-local-workspace",
+                });
+              } catch (error) {
+                if (cleanupWorkspace) {
+                  await cleanupWorkspace();
+                }
+                throw error;
+              }
+            }
           } else {
             try {
               await fs.mkdir(resolvedWorkspacePath, { recursive: false });
@@ -1128,9 +1204,41 @@ export function setupSocketHandlers(
           environmentId,
           projectFullName,
           repoUrl,
+          prUrl,
           taskId: providedTaskId,
         } = parsed.data;
         const teamSlugOrId = requestedTeamSlugOrId || safeTeam;
+        const trimmedPrUrl = prUrl?.trim();
+        const parsedPr = trimmedPrUrl ? parseGithubPrUrl(trimmedPrUrl) : null;
+
+        if (environmentId && trimmedPrUrl) {
+          callback({
+            success: false,
+            error: "Pull request URLs are only supported for repo workspaces.",
+          });
+          return;
+        }
+
+        if (trimmedPrUrl && !parsedPr) {
+          callback({
+            success: false,
+            error: "Invalid GitHub pull request URL.",
+          });
+          return;
+        }
+
+        if (
+          parsedPr &&
+          projectFullName &&
+          parsedPr.fullName !== projectFullName
+        ) {
+          callback({
+            success: false,
+            error: "Pull request does not belong to the selected repository.",
+          });
+          return;
+        }
+        const normalizedPrUrl = parsedPr?.prUrl ?? null;
 
         const convex = getConvex();
         let taskId: Id<"tasks"> | undefined = providedTaskId;
@@ -1206,7 +1314,11 @@ export function setupSocketHandlers(
               isCloudWorkspace: true,
               ...(environmentId
                 ? { environmentId }
-                : { projectFullName, repoUrl }),
+                : {
+                    projectFullName,
+                    repoUrl,
+                    prUrl: normalizedPrUrl ?? undefined,
+                  }),
             },
           });
 
