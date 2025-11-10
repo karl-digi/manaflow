@@ -14,6 +14,7 @@ interface HydrateConfig {
   depth: number;
   baseBranch?: string;
   newBranch?: string;
+  pullRequestUrl?: string;
 }
 
 function log(message: string, level: "info" | "error" | "debug" = "info") {
@@ -74,6 +75,7 @@ function getConfig(): HydrateConfig {
   const maskedCloneUrl = process.env.CMUX_MASKED_CLONE_URL;
   const baseBranch = process.env.CMUX_BASE_BRANCH;
   const newBranch = process.env.CMUX_NEW_BRANCH;
+  const pullRequestUrl = process.env.CMUX_PR_URL;
 
   return {
     workspacePath,
@@ -85,6 +87,7 @@ function getConfig(): HydrateConfig {
     depth,
     baseBranch,
     newBranch,
+    pullRequestUrl,
   };
 }
 
@@ -220,6 +223,23 @@ function checkoutBranch(workspacePath: string, baseBranch: string, newBranch?: s
   }
 }
 
+function checkoutPullRequest(workspacePath: string, prUrl: string) {
+  log(`Checking out pull request via gh: ${prUrl}`);
+  const { exitCode, stderr } = exec(`gh pr checkout "${prUrl}"`, {
+    cwd: workspacePath,
+    throwOnError: false,
+  });
+
+  if (exitCode !== 0) {
+    log(`gh pr checkout failed: ${stderr}`, "error");
+    throw new Error(
+      stderr ? `gh pr checkout failed: ${stderr}` : "gh pr checkout failed"
+    );
+  }
+
+  log("Pull request checked out successfully");
+}
+
 function hydrateSubdirectories(workspacePath: string) {
   log("Checking for subdirectory git repositories");
 
@@ -274,6 +294,10 @@ async function main() {
       // Checkout branch
       if (config.baseBranch) {
         checkoutBranch(config.workspacePath, config.baseBranch, config.newBranch);
+      }
+
+      if (config.pullRequestUrl) {
+        checkoutPullRequest(config.workspacePath, config.pullRequestUrl);
       }
 
       // List files for verification

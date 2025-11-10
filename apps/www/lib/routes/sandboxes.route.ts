@@ -7,6 +7,7 @@ import { env } from "@/lib/utils/www-env";
 import { api } from "@cmux/convex/api";
 import { RESERVED_CMUX_PORT_SET } from "@cmux/shared/utils/reserved-cmux-ports";
 import { parseGithubRepoUrl } from "@cmux/shared/utils/parse-github-repo-url";
+import { parseGithubPrUrl } from "@cmux/shared/utils/parse-github-pr-url";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { MorphCloudClient } from "morphcloud";
@@ -47,6 +48,7 @@ const StartSandboxBody = z
     repoUrl: z.string().optional(),
     branch: z.string().optional(),
     newBranch: z.string().optional(),
+    pullRequestUrl: z.string().url().optional(),
     depth: z.number().optional().default(1),
   })
   .openapi("StartSandboxBody");
@@ -166,8 +168,42 @@ sandboxesRouter.openapi(
         ? loadEnvironmentEnvVars(environmentDataVaultKey)
         : Promise.resolve<string | null>(null);
 
-      // Parse repo URL once if provided
-      const parsedRepoUrl = body.repoUrl ? parseGithubRepoUrl(body.repoUrl) : null;
+      // Parse repo URL / PR URL once if provided
+      let parsedRepoUrl = body.repoUrl ? parseGithubRepoUrl(body.repoUrl) : null;
+      if (body.repoUrl && !parsedRepoUrl) {
+        return c.text("Unsupported repo URL; expected GitHub URL", 400);
+      }
+      const parsedPrUrl = body.pullRequestUrl
+        ? parseGithubPrUrl(body.pullRequestUrl)
+        : null;
+
+      if (body.pullRequestUrl && !parsedPrUrl) {
+        return c.text("Invalid pull request URL", 400);
+      }
+
+      if (parsedPrUrl && parsedRepoUrl) {
+        if (parsedRepoUrl.fullName !== parsedPrUrl.fullName) {
+          return c.text(
+            "Pull request URL does not match the requested repository.",
+            400
+          );
+        }
+      }
+
+      if (parsedPrUrl && body.environmentId) {
+        return c.text(
+          "Pull request URL is only supported for repository workspaces.",
+          400
+        );
+      }
+
+      if (parsedPrUrl && !parsedRepoUrl) {
+        parsedRepoUrl = parseGithubRepoUrl(parsedPrUrl.fullName);
+      }
+
+      if (parsedPrUrl && !parsedRepoUrl) {
+        return c.text("Unable to derive repository from pull request", 400);
+      }
 
       // Load workspace config if we're in cloud mode with a repository (not an environment)
       let workspaceConfig: { maintenanceScript?: string; envVarsContent?: string } | null = null;
@@ -307,11 +343,8 @@ sandboxesRouter.openapi(
       await configureGithubAccess(instance, githubAccessToken);
 
       let repoConfig: HydrateRepoConfig | undefined;
-      if (body.repoUrl) {
+      if (parsedRepoUrl) {
         console.log(`[sandboxes.start] Hydrating repo for ${instance.id}`);
-        if (!parsedRepoUrl) {
-          return c.text("Unsupported repo URL; expected GitHub URL", 400);
-        }
         console.log(`[sandboxes.start] Parsed owner/repo: ${parsedRepoUrl.fullName}`);
 
         repoConfig = {
@@ -323,6 +356,7 @@ sandboxesRouter.openapi(
           depth: Math.max(1, Math.floor(body.depth ?? 1)),
           baseBranch: body.branch || "main",
           newBranch: body.newBranch ?? "",
+          pullRequestUrl: parsedPrUrl?.url,
         };
       }
 

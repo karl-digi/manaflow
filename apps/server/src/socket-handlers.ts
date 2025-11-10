@@ -22,6 +22,7 @@ import {
   isLoopbackHostname,
   LOCAL_VSCODE_PLACEHOLDER_ORIGIN,
   type IframePreflightResult,
+  parseGithubPrUrl,
 } from "@cmux/shared";
 import {
   type PullRequestActionResult,
@@ -657,14 +658,38 @@ export function setupSocketHandlers(
 
         const {
           teamSlugOrId: requestedTeamSlugOrId,
-          projectFullName,
+          projectFullName: initialProjectFullName,
           repoUrl: explicitRepoUrl,
           branch: requestedBranch,
+          pullRequestUrl,
           taskId: providedTaskId,
           taskRunId: providedTaskRunId,
           workspaceName: providedWorkspaceName,
           descriptor: providedDescriptor,
         } = parsed.data;
+        let projectFullName = initialProjectFullName;
+        const prUrl = pullRequestUrl?.trim();
+        const parsedPr = prUrl ? parseGithubPrUrl(prUrl) : null;
+        if (prUrl && !parsedPr) {
+          callback({
+            success: false,
+            error: "Invalid GitHub pull request URL.",
+          });
+          return;
+        }
+        if (parsedPr) {
+          if (
+            projectFullName &&
+            parsedPr.fullName.toLowerCase() !== projectFullName.toLowerCase()
+          ) {
+            callback({
+              success: false,
+              error: "Pull request URL does not match the selected repository.",
+            });
+            return;
+          }
+          projectFullName = parsedPr.fullName;
+        }
         const teamSlugOrId = requestedTeamSlugOrId || safeTeam;
 
         if (projectFullName && projectFullName.startsWith("env:")) {
@@ -989,6 +1014,30 @@ export function setupSocketHandlers(
                   : "Git clone failed to produce a checkout"
               );
             }
+
+            if (prUrl) {
+              serverLogger.info(
+                `[create-local-workspace] Checking out PR via gh: ${prUrl}`
+              );
+              try {
+                await execFileAsync("gh", ["pr", "checkout", prUrl], {
+                  cwd: resolvedWorkspacePath,
+                });
+              } catch (error) {
+                if (cleanupWorkspace) {
+                  await cleanupWorkspace();
+                }
+                const execErr = isExecError(error) ? error : null;
+                const message =
+                  execErr?.stderr?.trim() ||
+                  (error instanceof Error ? error.message : "");
+                throw new Error(
+                  message
+                    ? `gh pr checkout failed: ${message}`
+                    : "gh pr checkout failed"
+                );
+              }
+            }
           } else {
             try {
               await fs.mkdir(resolvedWorkspacePath, { recursive: false });
@@ -1126,10 +1175,34 @@ export function setupSocketHandlers(
         const {
           teamSlugOrId: requestedTeamSlugOrId,
           environmentId,
-          projectFullName,
+          projectFullName: initialProjectFullName,
           repoUrl,
+          pullRequestUrl,
           taskId: providedTaskId,
         } = parsed.data;
+        let projectFullName = initialProjectFullName;
+        const prUrl = pullRequestUrl?.trim();
+        const parsedPr = prUrl ? parseGithubPrUrl(prUrl) : null;
+        if (prUrl && !parsedPr) {
+          callback({
+            success: false,
+            error: "Invalid GitHub pull request URL.",
+          });
+          return;
+        }
+        if (parsedPr) {
+          if (
+            projectFullName &&
+            parsedPr.fullName.toLowerCase() !== projectFullName.toLowerCase()
+          ) {
+            callback({
+              success: false,
+              error: "Pull request URL does not match the selected repository.",
+            });
+            return;
+          }
+          projectFullName = parsedPr.fullName;
+        }
         const teamSlugOrId = requestedTeamSlugOrId || safeTeam;
 
         const convex = getConvex();
@@ -1206,7 +1279,7 @@ export function setupSocketHandlers(
               isCloudWorkspace: true,
               ...(environmentId
                 ? { environmentId }
-                : { projectFullName, repoUrl }),
+                : { projectFullName, repoUrl, pullRequestUrl: prUrl }),
             },
           });
 
