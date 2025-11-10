@@ -27,6 +27,7 @@ import {
   encodeEnvContentForEnvctl,
   envctlLoadCommand,
 } from "./utils/ensure-env-vars";
+import { buildGithubCredentialErrorResponse } from "./utils/githubCredentials";
 
 export const sandboxesRouter = new OpenAPIHono();
 
@@ -300,7 +301,10 @@ sandboxesRouter.openapi(
         console.error(
           `[sandboxes.start] GitHub access token error: ${githubAccessTokenError}`,
         );
-        return c.text("Failed to resolve GitHub credentials", 401);
+        const githubError = buildGithubCredentialErrorResponse(
+          githubAccessTokenError,
+        );
+        return c.json(githubError, 401);
       }
 
       // Sandboxes run as the requesting user, so prefer their OAuth scope over GitHub App installation tokens.

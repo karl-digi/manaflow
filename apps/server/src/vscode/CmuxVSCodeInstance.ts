@@ -1,3 +1,8 @@
+import {
+  CONNECT_GITHUB_ACTION,
+  DEFAULT_GITHUB_CONNECT_MESSAGE,
+  GITHUB_CREDENTIALS_REQUIRED_MARKER,
+} from "@cmux/shared";
 import { dockerLogger } from "../utils/fileLogger";
 import { getWwwClient } from "../utils/wwwClient";
 import { getWwwOpenApiModule } from "../utils/wwwOpenApiModule";
@@ -13,6 +18,34 @@ const {
   postApiSandboxesByIdStop,
   postApiSandboxesStart,
 } = await getWwwOpenApiModule();
+
+function extractGithubCredentialError(error: unknown): string | null {
+  if (!error) return null;
+  if (typeof error === "object" && error !== null) {
+    const action = (error as { action?: string }).action;
+    const code = (error as { code?: string }).code;
+    const message = (error as { message?: string }).message;
+    if (
+      (typeof action === "string" && action === CONNECT_GITHUB_ACTION) ||
+      (typeof code === "string" && code.startsWith("GITHUB_"))
+    ) {
+      return typeof message === "string"
+        ? message
+        : DEFAULT_GITHUB_CONNECT_MESSAGE;
+    }
+  }
+  if (typeof error === "string") {
+    const normalized = error.toLowerCase();
+    if (
+      normalized.includes("github access token not found") ||
+      normalized.includes("github account not found") ||
+      normalized.includes("resolve github credentials")
+    ) {
+      return error;
+    }
+  }
+  return null;
+}
 
 export class CmuxVSCodeInstance extends VSCodeInstance {
   private sandboxId: string | null = null;
@@ -70,7 +103,18 @@ export class CmuxVSCodeInstance extends VSCodeInstance {
     });
     const data = startRes.data;
     if (!data) {
-      throw new Error("Failed to start sandbox");
+      const maybeError = (startRes as { error?: unknown }).error;
+      const githubErrorMessage = extractGithubCredentialError(maybeError);
+      if (githubErrorMessage) {
+        throw new Error(
+          `${GITHUB_CREDENTIALS_REQUIRED_MARKER} ${githubErrorMessage}`.trim()
+        );
+      }
+      const fallbackMessage =
+        typeof maybeError === "string" && maybeError.length > 0
+          ? maybeError
+          : "Failed to start sandbox";
+      throw new Error(fallbackMessage);
     }
 
     this.sandboxId = data.instanceId;

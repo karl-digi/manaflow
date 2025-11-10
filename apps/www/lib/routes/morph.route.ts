@@ -15,6 +15,7 @@ import {
   configureGitIdentity,
   fetchGitIdentityInputs,
 } from "./sandboxes/git";
+import { buildGithubCredentialErrorResponse } from "./utils/githubCredentials";
 
 export const morphRouter = new OpenAPIHono();
 
@@ -191,7 +192,10 @@ morphRouter.openapi(
         console.error(
           `[sandboxes.start] GitHub access token error: ${githubAccessTokenError}`
         );
-        return c.text("Failed to resolve GitHub credentials", 401);
+        const githubError = buildGithubCredentialErrorResponse(
+          githubAccessTokenError
+        );
+        return c.json(githubError, 401);
       }
       await configureGithubAccess(instance, githubAccessToken);
 

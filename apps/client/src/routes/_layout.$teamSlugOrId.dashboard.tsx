@@ -1,3 +1,4 @@
+import { env } from "@/client-env";
 import {
   DashboardInput,
   type EditorApi,
@@ -20,12 +21,19 @@ import {
 } from "@/components/ui/tooltip";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { useSocket } from "@/contexts/socket/use-socket";
+import { useGithubInstallLauncher } from "@/hooks/useGithubInstallLauncher";
 import { createFakeConvexId } from "@/lib/fakeConvexId";
 import { attachTaskLifecycleListeners } from "@/lib/socket/taskLifecycleListeners";
 import { branchesQueryOptions } from "@/queries/branches";
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
-import type { ProviderStatusResponse, TaskAcknowledged, TaskError, TaskStarted } from "@cmux/shared";
+import {
+  GITHUB_CREDENTIALS_REQUIRED_MARKER,
+  type ProviderStatusResponse,
+  type TaskAcknowledged,
+  type TaskError,
+  type TaskStarted,
+} from "@cmux/shared";
 import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
 import { convexQuery } from "@convex-dev/react-query";
 import { useQuery } from "@tanstack/react-query";
@@ -76,12 +84,22 @@ const parseStoredAgentSelection = (stored: string | null): string[] => {
   }
 };
 
+type PendingPrompt = {
+  text: string;
+  images: Array<{
+    src: string;
+    fileName?: string;
+    altText: string;
+  }>;
+};
+
 function DashboardComponent() {
   const { teamSlugOrId } = Route.useParams();
   const searchParams = Route.useSearch() as { environmentId?: string };
   const { socket } = useSocket();
   const { theme } = useTheme();
   const { addTaskToExpand } = useExpandTasks();
+  const { launchGithubInstall } = useGithubInstallLauncher({ teamSlugOrId });
 
   const [selectedProject, setSelectedProject] = useState<string[]>(() => {
     const stored = localStorage.getItem(`selectedProject-${teamSlugOrId}`);
@@ -124,6 +142,7 @@ function DashboardComponent() {
 
   // Ref to access editor API
   const editorApiRef = useRef<EditorApi | null>(null);
+  const pendingTaskInputsRef = useRef<Map<Id<"tasks">, PendingPrompt>>(new Map());
 
   const persistAgentSelection = useCallback((agents: string[]) => {
     try {
@@ -159,6 +178,82 @@ function DashboardComponent() {
   const handleTaskDescriptionChange = useCallback((value: string) => {
     setTaskDescription(value);
   }, []);
+
+  const restorePromptForTask = useCallback(
+    (taskId: Id<"tasks">) => {
+      const pending = pendingTaskInputsRef.current.get(taskId);
+      if (!pending) {
+        return false;
+      }
+      pendingTaskInputsRef.current.delete(taskId);
+      handleTaskDescriptionChange(pending.text);
+      if (editorApiRef.current?.clear) {
+        editorApiRef.current.clear();
+      }
+      if (pending.text) {
+        editorApiRef.current?.insertText?.(pending.text);
+      }
+      editorApiRef.current?.focus?.();
+      return true;
+    },
+    [handleTaskDescriptionChange],
+  );
+
+  const handleGithubCredentialFailure = useCallback(
+    (taskId: Id<"tasks">, rawMessage: string) => {
+      if (
+        !rawMessage ||
+        !rawMessage.includes(GITHUB_CREDENTIALS_REQUIRED_MARKER)
+      ) {
+        return false;
+      }
+
+      const markerIndex = rawMessage.indexOf(
+        GITHUB_CREDENTIALS_REQUIRED_MARKER,
+      );
+      const afterMarker = markerIndex >= 0
+        ? rawMessage
+            .slice(markerIndex + GITHUB_CREDENTIALS_REQUIRED_MARKER.length)
+            .trim()
+        : rawMessage;
+      const separatorIndex = afterMarker.indexOf(";");
+      const description =
+        (separatorIndex >= 0
+          ? afterMarker.slice(0, separatorIndex)
+          : afterMarker).trim() ||
+        "Connect your GitHub account so cmux can access your repository.";
+
+      const restored = restorePromptForTask(taskId);
+      toast.error("GitHub connection required", {
+        description,
+        action:
+          env.NEXT_PUBLIC_GITHUB_APP_SLUG && launchGithubInstall
+            ? {
+                label: "Connect GitHub",
+                onClick: () => {
+                  void launchGithubInstall();
+                },
+              }
+            : undefined,
+      });
+      if (!restored) {
+        pendingTaskInputsRef.current.delete(taskId);
+      }
+      return true;
+    },
+    [launchGithubInstall, restorePromptForTask],
+  );
+
+  const handleTaskStartError = useCallback(
+    (taskId: Id<"tasks">, message: string) => {
+      if (handleGithubCredentialFailure(taskId, message)) {
+        return;
+      }
+      pendingTaskInputsRef.current.delete(taskId);
+      toast.error(`Task failed to start: ${message}`);
+    },
+    [handleGithubCredentialFailure],
+  );
 
   // Fetch branches for selected repo from Convex
   const isEnvSelected = useMemo(
@@ -418,6 +513,10 @@ function DashboardComponent() {
       // Extract content including images from the editor
       const content = editorApiRef.current?.getContent();
       const images = content?.images || [];
+      const submittedPrompt: PendingPrompt = {
+        text: content?.text || taskDescription,
+        images,
+      };
 
       // Upload images to Convex storage first
       const uploadedImages = await Promise.all(
@@ -472,6 +571,7 @@ function DashboardComponent() {
         images: uploadedImages.length > 0 ? uploadedImages : undefined,
         environmentId,
       });
+      pendingTaskInputsRef.current.set(taskId, submittedPrompt);
 
       // Hint the sidebar to auto-expand this task once it appears
       addTaskToExpand(taskId);
@@ -481,19 +581,22 @@ function DashboardComponent() {
         : `https://github.com/${projectFullName}.git`;
 
       // For socket.io, we need to send the content text (which includes image references) and the images
-      const handleStartTaskAck = (response: TaskAcknowledged | TaskStarted | TaskError) => {
+      const handleStartTaskAck = (
+        response: TaskAcknowledged | TaskStarted | TaskError,
+      ) => {
         if ("error" in response) {
           console.error("Task start error:", response.error);
-          toast.error(`Task start error: ${JSON.stringify(response.error)}`);
+          handleTaskStartError(response.taskId, response.error);
           return;
         }
 
         attachTaskLifecycleListeners(socket, response.taskId, {
           onStarted: (payload) => {
+            pendingTaskInputsRef.current.delete(payload.taskId);
             console.log("Task started:", payload);
           },
           onFailed: (payload) => {
-            toast.error(`Task failed to start: ${payload.error}`);
+            handleTaskStartError(payload.taskId, payload.error);
           },
         });
         console.log("Task acknowledged:", response);
@@ -534,6 +637,7 @@ function DashboardComponent() {
     isEnvSelected,
     theme,
     generateUploadUrl,
+    handleTaskStartError,
   ]);
 
   // Fetch repos on mount if none exist

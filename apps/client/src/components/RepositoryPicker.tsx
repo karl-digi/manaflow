@@ -16,9 +16,13 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { useGithubInstallLauncher } from "@/hooks/useGithubInstallLauncher";
 import { api } from "@cmux/convex/api";
-import { DEFAULT_MORPH_SNAPSHOT_ID, type MorphSnapshotId } from "@cmux/shared";
-import { isElectron } from "@/lib/electron";
+import {
+  CONNECT_GITHUB_ACTION,
+  DEFAULT_MORPH_SNAPSHOT_ID,
+  type MorphSnapshotId,
+} from "@cmux/shared";
 import {
   getApiIntegrationsGithubReposOptions,
   postApiMorphSetupInstanceMutation,
@@ -29,7 +33,7 @@ import {
   useMutation as useRQMutation,
 } from "@tanstack/react-query";
 import { useNavigate, useRouter } from "@tanstack/react-router";
-import { useMutation, useQuery } from "convex/react";
+import { useQuery } from "convex/react";
 import { Check, ChevronDown, Loader2, Settings, X } from "lucide-react";
 import {
   useCallback,
@@ -39,6 +43,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { toast } from "sonner";
 import { RepositoryAdvancedOptions } from "./RepositoryAdvancedOptions";
 
 function ConnectionIcon({ type }: { type?: string }) {
@@ -82,7 +87,7 @@ interface RepositoryConnectionsSectionProps {
   selectedLogin: string | null;
   onSelectedLoginChange: (login: string | null) => void;
   onContextChange: (context: ConnectionContext) => void;
-  onConnectionsInvalidated: () => void;
+  onInstallGithub?: () => void | Promise<void>;
 }
 
 interface RepositoryListSectionProps {
@@ -112,6 +117,79 @@ export interface RepositoryPickerProps {
     snapshotId?: MorphSnapshotId;
   }) => void;
   topAccessory?: ReactNode;
+}
+
+type NormalizedErrorDetails = {
+  message?: string;
+  code?: string;
+  action?: string;
+};
+
+function normalizeErrorDetails(error: unknown): NormalizedErrorDetails {
+  if (!error) {
+    return {};
+  }
+
+  if (typeof error === "string") {
+    try {
+      const parsed = JSON.parse(error);
+      return typeof parsed === "object" && parsed !== null
+        ? normalizeErrorDetails(parsed)
+        : { message: error };
+    } catch {
+      return { message: error };
+    }
+  }
+
+  if (error instanceof Error) {
+    if ("cause" in error && error.cause) {
+      const nested = normalizeErrorDetails(error.cause);
+      if (nested.message || nested.code || nested.action) {
+        return nested;
+      }
+    }
+    try {
+      const parsed = JSON.parse(error.message);
+      if (typeof parsed === "object" && parsed !== null) {
+        return normalizeErrorDetails(parsed);
+      }
+    } catch {
+      /* noop */
+    }
+    return { message: error.message };
+  }
+
+  if (typeof error === "object") {
+    const obj = error as Record<string, unknown>;
+    return {
+      message: typeof obj.message === "string" ? obj.message : undefined,
+      code: typeof obj.code === "string" ? obj.code : undefined,
+      action: typeof obj.action === "string" ? obj.action : undefined,
+    };
+  }
+
+  return {};
+}
+
+function looksLikeGithubCredentialError(details: NormalizedErrorDetails): boolean {
+  if (!details) {
+    return false;
+  }
+  if (details.action === CONNECT_GITHUB_ACTION) {
+    return true;
+  }
+  if (details.code && details.code.startsWith("GITHUB_")) {
+    return true;
+  }
+  if (details.message) {
+    const normalized = details.message.toLowerCase();
+    return (
+      normalized.includes("github access token") ||
+      normalized.includes("github account not found") ||
+      normalized.includes("github credentials")
+    );
+  }
+  return false;
 }
 
 export function RepositoryPicker({
@@ -171,6 +249,11 @@ export function RepositoryPicker({
     }
     window.focus?.();
   }, [router]);
+
+  const { launchGithubInstall } = useGithubInstallLauncher({
+    teamSlugOrId,
+    onAfterClose: handleConnectionsInvalidated,
+  });
 
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
@@ -267,6 +350,30 @@ export function RepositoryPicker({
           },
           onError: (error) => {
             console.error("Failed to setup instance:", error);
+            const details = normalizeErrorDetails(error);
+            if (looksLikeGithubCredentialError(details)) {
+              const description =
+                details.message ??
+                "Connect your GitHub account so cmux can hydrate this workspace.";
+              toast.error("GitHub connection required", {
+                description,
+                action:
+                  env.NEXT_PUBLIC_GITHUB_APP_SLUG && launchGithubInstall
+                    ? {
+                        label: "Connect GitHub",
+                        onClick: () => {
+                          void launchGithubInstall();
+                        },
+                      }
+                    : undefined,
+              });
+              return;
+            }
+            const fallbackMessage =
+              details.message && details.message.length > 0
+                ? details.message
+                : "Failed to setup instance";
+            toast.error(fallbackMessage);
           },
         }
       );
@@ -274,6 +381,7 @@ export function RepositoryPicker({
     [
       goToConfigure,
       instanceId,
+      launchGithubInstall,
       onStartConfigure,
       selectedSnapshotId,
       setupInstanceMutation,
@@ -352,7 +460,7 @@ export function RepositoryPicker({
           selectedLogin={selectedConnectionLogin}
           onSelectedLoginChange={setSelectedConnectionLogin}
           onContextChange={setConnectionContextSafe}
-          onConnectionsInvalidated={handleConnectionsInvalidated}
+          onInstallGithub={launchGithubInstall}
         />
 
         <RepositoryListSection
@@ -444,12 +552,11 @@ function RepositoryConnectionsSection({
   selectedLogin,
   onSelectedLoginChange,
   onContextChange,
-  onConnectionsInvalidated,
+  onInstallGithub,
 }: RepositoryConnectionsSectionProps) {
   const connections = useQuery(api.github.listProviderConnections, {
     teamSlugOrId,
   });
-  const mintState = useMutation(api.github_app.mintInstallState);
   const [connectionDropdownOpen, setConnectionDropdownOpen] = useState(false);
   const [connectionSearch, setConnectionSearch] = useState("");
 
@@ -490,9 +597,7 @@ function RepositoryConnectionsSection({
     );
   }, [activeConnections, currentLogin]);
 
-  const installNewUrl = env.NEXT_PUBLIC_GITHUB_APP_SLUG
-    ? `https://github.com/apps/${env.NEXT_PUBLIC_GITHUB_APP_SLUG}/installations/new`
-    : null;
+  const hasGithubInstall = Boolean(env.NEXT_PUBLIC_GITHUB_APP_SLUG);
 
   useEffect(() => {
     onContextChange({
@@ -505,105 +610,6 @@ function RepositoryConnectionsSection({
     currentLogin,
     onContextChange,
     selectedInstallationId,
-  ]);
-
-  const watchPopupClosed = useCallback(
-    (win: Window | null, onClose: () => void) => {
-      if (!win) return;
-      const timer = window.setInterval(() => {
-        try {
-          if (win.closed) {
-            window.clearInterval(timer);
-            onClose();
-          }
-        } catch (_error) {
-          void 0;
-        }
-      }, 600);
-    },
-    []
-  );
-
-  const openCenteredPopup = useCallback(
-    (
-      url: string,
-      opts?: { name?: string; width?: number; height?: number },
-      onClose?: () => void
-    ): Window | null => {
-      if (isElectron) {
-        window.open(url, "_blank", "noopener,noreferrer");
-        return null;
-      }
-      const name = opts?.name ?? "cmux-popup";
-      const width = Math.floor(opts?.width ?? 980);
-      const height = Math.floor(opts?.height ?? 780);
-      const dualScreenLeft = window.screenLeft ?? window.screenX ?? 0;
-      const dualScreenTop = window.screenTop ?? window.screenY ?? 0;
-      const outerWidth = window.outerWidth || window.innerWidth || width;
-      const outerHeight = window.outerHeight || window.innerHeight || height;
-      const left = Math.max(0, dualScreenLeft + (outerWidth - width) / 2);
-      const top = Math.max(0, dualScreenTop + (outerHeight - height) / 2);
-      const features = [
-        `width=${width}`,
-        `height=${height}`,
-        `left=${Math.floor(left)}`,
-        `top=${Math.floor(top)}`,
-        "resizable=yes",
-        "scrollbars=yes",
-        "toolbar=no",
-        "location=no",
-        "status=no",
-        "menubar=no",
-      ].join(",");
-
-      const win = window.open("about:blank", name, features);
-      if (win) {
-        try {
-          (win as Window & { opener: null | Window }).opener = null;
-        } catch (_error) {
-          void 0;
-        }
-        try {
-          win.location.href = url;
-        } catch (_error) {
-          window.open(url, "_blank");
-        }
-        win.focus?.();
-        if (onClose) watchPopupClosed(win, onClose);
-        return win;
-      } else {
-        window.open(url, "_blank");
-        return null;
-      }
-    },
-    [watchPopupClosed]
-  );
-
-  const handlePopupClosedRefetch = useCallback(() => {
-    onConnectionsInvalidated();
-  }, [onConnectionsInvalidated]);
-
-  const handleInstallApp = useCallback(async () => {
-    if (!installNewUrl) return;
-    try {
-      const { state } = await mintState({ teamSlugOrId });
-      const sep = installNewUrl.includes("?") ? "&" : "?";
-      const url = `${installNewUrl}${sep}state=${encodeURIComponent(state)}`;
-      openCenteredPopup(
-        url,
-        { name: "github-install" },
-        handlePopupClosedRefetch
-      );
-    } catch (err) {
-      console.error("Failed to start GitHub install:", err);
-      alert("Failed to start installation. Please try again.");
-    }
-  }, [
-    handlePopupClosedRefetch,
-    installNewUrl,
-    mintState,
-    openCenteredPopup,
-    teamSlugOrId,
   ]);
 
   return (
@@ -690,10 +696,10 @@ function RepositoryConnectionsSection({
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         e.preventDefault();
-                                        openCenteredPopup(
+                                        window.open(
                                           cfgUrl,
-                                          { name: "github-config" },
-                                          handlePopupClosedRefetch
+                                          "_blank",
+                                          "noopener,noreferrer",
                                         );
                                       }}
                                     >
@@ -714,7 +720,7 @@ function RepositoryConnectionsSection({
                         No connections match your search
                       </div>
                     ) : null}
-                    {installNewUrl ? (
+                    {hasGithubInstall ? (
                       <>
                         <div className="h-px bg-neutral-200 dark:bg-neutral-800" />
                         <CommandGroup forceMount>
@@ -722,7 +728,7 @@ function RepositoryConnectionsSection({
                             value="add-github-account"
                             forceMount
                             onSelect={() => {
-                              void handleInstallApp();
+                              void onInstallGithub?.();
                               setConnectionDropdownOpen(false);
                             }}
                             className="flex items-center gap-2"
@@ -741,7 +747,7 @@ function RepositoryConnectionsSection({
                         No connections yet
                       </div>
                     </CommandEmpty>
-                    {installNewUrl ? (
+                    {hasGithubInstall ? (
                       <>
                         <div className="h-px bg-neutral-200 dark:bg-neutral-800" />
                         <CommandGroup forceMount>
@@ -749,7 +755,7 @@ function RepositoryConnectionsSection({
                             value="add-github-account"
                             forceMount
                             onSelect={() => {
-                              void handleInstallApp();
+                              void onInstallGithub?.();
                               setConnectionDropdownOpen(false);
                             }}
                             className="flex items-center gap-2"
