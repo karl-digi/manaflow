@@ -5,6 +5,9 @@ import {
 } from "@/lib/utils/morph-defaults";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { env } from "@/lib/utils/www-env";
+import { api } from "@cmux/convex/api";
+import { extractMorphInstanceInfo } from "@cmux/shared";
+import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { MorphCloudClient } from "morphcloud";
 import { getConvex } from "../utils/get-convex";
@@ -15,6 +18,89 @@ import {
   configureGitIdentity,
   fetchGitIdentityInputs,
 } from "./sandboxes/git";
+
+const WAIT_FOR_READY_TIMEOUT_MS = 120_000;
+const WAIT_FOR_READY_POLL_INTERVAL_MS = 2_000;
+const MORPH_FAILURE_STATUSES = new Set(["error", "deleting", "deleted"]);
+
+type MorphInstance = Awaited<
+  ReturnType<MorphCloudClient["instances"]["get"]>
+>;
+type TaskRunDoc = NonNullable<typeof api.taskRuns.get._returnType>;
+
+const sleep = (ms: number) =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+function collectMorphCandidateUrls(run: TaskRunDoc): string[] {
+  const urls: string[] = [];
+  const push = (value?: string | null) => {
+    if (typeof value === "string" && value.trim().length > 0) {
+      urls.push(value);
+    }
+  };
+
+  if (run.vscode) {
+    push(run.vscode.url);
+    push(run.vscode.workspaceUrl);
+
+    if (run.vscode.ports) {
+      push(run.vscode.ports.vscode);
+      push(run.vscode.ports.worker);
+      push(run.vscode.ports.proxy);
+      push(run.vscode.ports.extension);
+      push(run.vscode.ports.vnc);
+    }
+  }
+
+  if (run.networking) {
+    for (const service of run.networking) {
+      push(service.url);
+    }
+  }
+
+  return urls;
+}
+
+function resolveMorphInstanceInfo(run: TaskRunDoc) {
+  const candidates = collectMorphCandidateUrls(run);
+  for (const candidate of candidates) {
+    const info = extractMorphInstanceInfo(candidate);
+    if (info) {
+      return info;
+    }
+  }
+  return null;
+}
+
+async function waitForMorphInstanceReady(
+  client: MorphCloudClient,
+  instanceId: string
+): Promise<MorphInstance> {
+  const deadline = Date.now() + WAIT_FOR_READY_TIMEOUT_MS;
+
+  while (Date.now() < deadline) {
+    const instance = await client.instances.get({ instanceId });
+    if (instance.status === "ready") {
+      return instance;
+    }
+    if (MORPH_FAILURE_STATUSES.has(instance.status)) {
+      throw new Error(
+        `Morph instance ${instanceId} entered "${instance.status}" state.`
+      );
+    }
+    await sleep(WAIT_FOR_READY_POLL_INTERVAL_MS);
+  }
+
+  throw new Error(
+    `Timed out waiting for Morph instance ${instanceId} to become ready.`
+  );
+}
+
+function isMorphNotFoundError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes("HTTP 404");
+}
 
 export const morphRouter = new OpenAPIHono();
 
@@ -45,6 +131,21 @@ const SetupInstanceResponse = z
     removedRepos: z.array(z.string()),
   })
   .openapi("SetupInstanceResponse");
+
+const ForceWakeTaskRunBody = z
+  .object({
+    teamSlugOrId: z.string().min(1),
+    taskRunId: z.string().min(1),
+  })
+  .openapi("ForceWakeTaskRunBody");
+
+const ForceWakeTaskRunResponse = z
+  .object({
+    instanceId: z.string(),
+    status: z.literal("ready"),
+    wasAlreadyReady: z.boolean(),
+  })
+  .openapi("ForceWakeTaskRunResponse");
 
 morphRouter.openapi(
   createRoute({
@@ -385,6 +486,208 @@ morphRouter.openapi(
     } catch (error) {
       console.error("Failed to setup Morph instance:", error);
       return c.text("Failed to setup instance", 500);
+    }
+  }
+);
+
+morphRouter.openapi(
+  createRoute({
+    method: "post" as const,
+    path: "/morph/task-runs/force-wake",
+    tags: ["Morph"],
+    summary:
+      "Force wake (resume) the Morph workspace that backs a specific task run.",
+    request: {
+      body: {
+        content: {
+          "application/json": {
+            schema: ForceWakeTaskRunBody,
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: ForceWakeTaskRunResponse,
+          },
+        },
+        description: "Morph instance is ready.",
+      },
+      400: { description: "Task run is not backed by Morph." },
+      401: { description: "Unauthorized" },
+      403: { description: "Forbidden" },
+      404: { description: "Task run or Morph instance not found." },
+      422: { description: "Unable to resolve Morph instance metadata." },
+      500: { description: "Failed to wake Morph instance." },
+    },
+  }),
+  async (c) => {
+    const user = await stackServerAppJs.getUser({ tokenStore: c.req.raw });
+    if (!user) {
+      return c.text("Unauthorized", 401);
+    }
+    const { accessToken } = await user.getAuthJson();
+    if (!accessToken) {
+      return c.text("Unauthorized", 401);
+    }
+
+    const { teamSlugOrId, taskRunId } = c.req.valid("json");
+
+    const parsedTaskRunId = typedZid("taskRuns").safeParse(taskRunId);
+    if (!parsedTaskRunId.success) {
+      return c.json({ code: 422, message: "Invalid taskRunId" }, 422);
+    }
+
+    const team = await verifyTeamAccess({ accessToken, teamSlugOrId });
+    const convex = getConvex({ accessToken });
+
+    let run: TaskRunDoc | null = null;
+    try {
+      run = await convex.query(api.taskRuns.get, {
+        teamSlugOrId,
+        id: parsedTaskRunId.data,
+      });
+    } catch (error) {
+      console.error("[morph.force-wake] Failed to load task run", {
+        taskRunId,
+        error,
+      });
+      return c.json(
+        { code: 500, message: "Failed to load task run details." },
+        500
+      );
+    }
+
+    if (!run) {
+      return c.json({ code: 404, message: "Task run not found." }, 404);
+    }
+
+    if (!run.vscode || run.vscode.provider !== "morph") {
+      return c.json(
+        { code: 400, message: "Task run is not backed by a Morph workspace." },
+        400
+      );
+    }
+
+    const morphInfo = resolveMorphInstanceInfo(run);
+    if (!morphInfo) {
+      return c.json(
+        {
+          code: 422,
+          message:
+            "Unable to determine the Morph workspace for this task run.",
+        },
+        422
+      );
+    }
+
+    const morphClient = new MorphCloudClient({
+      apiKey: env.MORPH_API_KEY,
+    });
+
+    let instance: MorphInstance;
+    try {
+      instance = await morphClient.instances.get({
+        instanceId: morphInfo.instanceId,
+      });
+    } catch (error) {
+      if (isMorphNotFoundError(error)) {
+        return c.json(
+          {
+            code: 404,
+            message: `Morph instance ${morphInfo.instanceId} was not found.`,
+          },
+          404
+        );
+      }
+      console.error("[morph.force-wake] Failed to load Morph instance", {
+        instanceId: morphInfo.instanceId,
+        error,
+      });
+      return c.json(
+        {
+          code: 502,
+          message: "Failed to load Morph instance metadata.",
+        },
+        502
+      );
+    }
+
+    const metadata = instance.metadata ?? {};
+    const metadataUserId =
+      typeof metadata.userId === "string" ? metadata.userId : null;
+    const metadataTeamId =
+      typeof metadata.teamId === "string" ? metadata.teamId : null;
+
+    if (metadataUserId && metadataUserId !== user.id) {
+      return c.json(
+        { code: 403, message: "You do not own this Morph workspace." },
+        403
+      );
+    }
+
+    if (
+      metadataTeamId &&
+      metadataTeamId !== run.teamId &&
+      metadataTeamId !== team.uuid
+    ) {
+      return c.json(
+        {
+          code: 403,
+          message: "You do not have permission to resume this workspace.",
+        },
+        403
+      );
+    }
+
+    const wasAlreadyReady = instance.status === "ready";
+
+    if (!wasAlreadyReady) {
+      try {
+        await instance.resume();
+      } catch (error) {
+        console.error("[morph.force-wake] Failed to resume Morph instance", {
+          instanceId: instance.id,
+          error,
+        });
+        return c.json(
+          { code: 502, message: "Failed to resume Morph instance." },
+          502
+        );
+      }
+    }
+
+    try {
+      const readyInstance = wasAlreadyReady
+        ? instance
+        : await waitForMorphInstanceReady(morphClient, instance.id);
+
+      return c.json({
+        instanceId: readyInstance.id,
+        status: "ready" as const,
+        wasAlreadyReady,
+      });
+    } catch (error) {
+      console.error(
+        "[morph.force-wake] Instance did not reach ready state in time",
+        {
+          instanceId: instance.id,
+          error,
+        }
+      );
+      return c.json(
+        {
+          code: 502,
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to confirm Morph instance readiness.",
+        },
+        502
+      );
     }
   }
 );

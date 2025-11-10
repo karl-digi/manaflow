@@ -365,6 +365,17 @@ export type SetupInstanceBody = {
     snapshotId?: string | ('snapshot_pmo7bxv7' | 'snapshot_qbpom27i');
 };
 
+export type ForceWakeTaskRunResponse = {
+    instanceId: string;
+    status: 'ready';
+    wasAlreadyReady: boolean;
+};
+
+export type ForceWakeTaskRunBody = {
+    teamSlugOrId: string;
+    taskRunId: string;
+};
+
 export type CreateEnvironmentResponse = {
     id: string;
     snapshotId: string;
@@ -1588,6 +1599,49 @@ export type PostApiMorphSetupInstanceResponses = {
 };
 
 export type PostApiMorphSetupInstanceResponse = PostApiMorphSetupInstanceResponses[keyof PostApiMorphSetupInstanceResponses];
+
+export type PostApiMorphTaskRunsForceWakeData = {
+    body: ForceWakeTaskRunBody;
+    path?: never;
+    query?: never;
+    url: '/api/morph/task-runs/force-wake';
+};
+
+export type PostApiMorphTaskRunsForceWakeErrors = {
+    /**
+     * Task run is not backed by Morph.
+     */
+    400: unknown;
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Forbidden
+     */
+    403: unknown;
+    /**
+     * Task run or Morph instance not found.
+     */
+    404: unknown;
+    /**
+     * Unable to resolve Morph instance metadata.
+     */
+    422: unknown;
+    /**
+     * Failed to wake Morph instance.
+     */
+    500: unknown;
+};
+
+export type PostApiMorphTaskRunsForceWakeResponses = {
+    /**
+     * Morph instance is ready.
+     */
+    200: ForceWakeTaskRunResponse;
+};
+
+export type PostApiMorphTaskRunsForceWakeResponse = PostApiMorphTaskRunsForceWakeResponses[keyof PostApiMorphTaskRunsForceWakeResponses];
 
 export type GetApiIframePreflightData = {
     body?: never;
