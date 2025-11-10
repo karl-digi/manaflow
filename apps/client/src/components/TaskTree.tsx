@@ -14,12 +14,14 @@ import type { AnnotatedTaskRun, TaskRunWithChildren } from "@/types/task";
 import { ContextMenu } from "@base-ui-components/react/context-menu";
 import { api } from "@cmux/convex/api";
 import { type Doc, type Id } from "@cmux/convex/dataModel";
+import { postApiTaskRunsByTaskRunIdForceWakeMutation } from "@cmux/www-openapi-client/react-query";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import {
   aggregatePullRequestState,
   type RunPullRequestState,
 } from "@cmux/shared/pull-request-state";
 import { Link, useLocation, type LinkProps } from "@tanstack/react-router";
+import { useMutation as useRQMutation } from "@tanstack/react-query";
 import clsx from "clsx";
 import { useMutation, useQuery as useConvexQuery } from "convex/react";
 import { toast } from "sonner";
@@ -44,6 +46,7 @@ import {
   GitPullRequestDraft,
   Globe,
   Monitor,
+  Power,
   Pencil,
   TerminalSquare,
   Loader2,
@@ -1239,6 +1242,45 @@ function TaskRunTreeInner({
     networking: run.networking,
   });
 
+  const forceWakeVmMutation = useRQMutation(
+    postApiTaskRunsByTaskRunIdForceWakeMutation(),
+  );
+
+  const hasMorphUrl =
+    Boolean(run.vscode?.workspaceUrl) ||
+    Boolean(run.vscode?.url) ||
+    Boolean(run.networking?.length);
+  const canForceWakeVm = run.vscode?.provider === "morph" && hasMorphUrl;
+
+  const handleForceWakeVm = useCallback(async () => {
+    if (!canForceWakeVm || forceWakeVmMutation.isPending) {
+      return;
+    }
+    const toastId = toast.loading("Waking Morph VM…");
+    try {
+      const response = await forceWakeVmMutation.mutateAsync({
+        path: { taskRunId: String(run._id) },
+        body: { teamSlugOrId },
+      });
+      const message =
+        response?.status === "already_ready"
+          ? "Workspace was already awake"
+          : "Workspace is ready";
+      toast.success(message, { id: toastId });
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Failed to wake the workspace";
+      toast.error(message, { id: toastId });
+    }
+  }, [
+    canForceWakeVm,
+    forceWakeVmMutation,
+    run._id,
+    teamSlugOrId,
+  ]);
+
   const shouldRenderDiffLink = true;
   const shouldRenderBrowserLink = run.vscode?.provider === "morph";
   const shouldRenderTerminalLink = shouldRenderBrowserLink;
@@ -1370,6 +1412,27 @@ function TaskRunTreeInner({
                   </ContextMenu.Positioner>
                 </ContextMenu.SubmenuRoot>
               ) : null}
+              {canForceWakeVm ? (
+                <ContextMenu.Item
+                  className={clsx(
+                    "flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none",
+                    "data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white",
+                    "data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700",
+                    forceWakeVmMutation.isPending &&
+                      "opacity-60 cursor-not-allowed"
+                  )}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    if (forceWakeVmMutation.isPending) return;
+                    void handleForceWakeVm();
+                  }}
+                >
+                  <Power className="w-3.5 h-3.5" />
+                  {forceWakeVmMutation.isPending
+                    ? "Waking VM…"
+                    : "Force wake VM"}
+                </ContextMenu.Item>
+              ) : null}
               <ContextMenu.Item
                 className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
                 onClick={handleArchiveRun}
@@ -1397,6 +1460,9 @@ function TaskRunTreeInner({
         environmentError={run.environmentError}
         onArchiveToggle={onArchiveToggle}
         showRunNumbers={showRunNumbers}
+        canForceWakeVm={canForceWakeVm}
+        onForceWakeVm={handleForceWakeVm}
+        isForceWakePending={forceWakeVmMutation.isPending}
       />
     </div>
   );
@@ -1448,6 +1514,47 @@ function TaskRunDetailLink({
   );
 }
 
+interface TaskRunDetailActionButtonProps {
+  icon: ReactNode;
+  label: string;
+  indentLevel: number;
+  onClick: () => void;
+  disabled?: boolean;
+  loading?: boolean;
+}
+
+function TaskRunDetailActionButton({
+  icon,
+  label,
+  indentLevel,
+  onClick,
+  disabled = false,
+  loading = false,
+}: TaskRunDetailActionButtonProps) {
+  return (
+    <button
+      type="button"
+      className={clsx(
+        "flex items-center justify-between gap-2 px-2 py-1 text-xs rounded-md mt-px",
+        disabled
+          ? "opacity-60 cursor-not-allowed"
+          : "hover:bg-neutral-200/45 dark:hover:bg-neutral-800/45 cursor-pointer"
+      )}
+      style={{ paddingLeft: `${24 + indentLevel * 8}px` }}
+      onClick={onClick}
+      disabled={disabled}
+    >
+      <span className="flex min-w-0 items-center">
+        {icon}
+        <span className="text-neutral-600 dark:text-neutral-400">{label}</span>
+      </span>
+      {loading ? (
+        <Loader2 className="w-3 h-3 animate-spin text-neutral-400" />
+      ) : null}
+    </button>
+  );
+}
+
 interface TaskRunDetailsProps {
   run: AnnotatedTaskRun;
   level: number;
@@ -1466,6 +1573,9 @@ interface TaskRunDetailsProps {
   };
   onArchiveToggle: (runId: Id<"taskRuns">, archive: boolean) => void;
   showRunNumbers: boolean;
+  canForceWakeVm: boolean;
+  onForceWakeVm: () => void;
+  isForceWakePending: boolean;
 }
 
 function TaskRunDetails({
@@ -1483,6 +1593,9 @@ function TaskRunDetails({
   environmentError,
   onArchiveToggle,
   showRunNumbers,
+  canForceWakeVm,
+  onForceWakeVm,
+  isForceWakePending,
 }: TaskRunDetailsProps) {
   if (!isExpanded) {
     return null;
@@ -1567,6 +1680,19 @@ function TaskRunDetails({
           icon={<TerminalSquare className="w-3 h-3 mr-2 text-neutral-400" />}
           label="Terminals"
           indentLevel={indentLevel}
+        />
+      ) : null}
+
+      {canForceWakeVm ? (
+        <TaskRunDetailActionButton
+          icon={<Power className="w-3 h-3 mr-2 text-neutral-400" />}
+          label={
+            isForceWakePending ? "Waking VM…" : "Force wake VM"
+          }
+          indentLevel={indentLevel}
+          onClick={onForceWakeVm}
+          disabled={isForceWakePending}
+          loading={isForceWakePending}
         />
       ) : null}
 

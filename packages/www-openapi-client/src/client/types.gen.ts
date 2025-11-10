@@ -497,6 +497,16 @@ export type UpdateSandboxEnvBody = {
     envVarsContent: string;
 };
 
+export type TaskRunForceWakeResponse = {
+    status: 'already_ready' | 'resumed';
+    instanceId: string;
+    morphId: string;
+};
+
+export type TaskRunForceWakeBody = {
+    teamSlugOrId: string;
+};
+
 export type CreateTeamResponse = {
     /**
      * Stack team ID
@@ -2118,6 +2128,51 @@ export type PostApiSandboxesByIdPublishDevcontainerResponses = {
 };
 
 export type PostApiSandboxesByIdPublishDevcontainerResponse = PostApiSandboxesByIdPublishDevcontainerResponses[keyof PostApiSandboxesByIdPublishDevcontainerResponses];
+
+export type PostApiTaskRunsByTaskRunIdForceWakeData = {
+    body: TaskRunForceWakeBody;
+    path: {
+        taskRunId: string;
+    };
+    query?: never;
+    url: '/api/task-runs/{taskRunId}/force-wake';
+};
+
+export type PostApiTaskRunsByTaskRunIdForceWakeErrors = {
+    /**
+     * Task run does not have a Morph workspace
+     */
+    400: unknown;
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Forbidden
+     */
+    403: unknown;
+    /**
+     * Task run or Morph VM not found
+     */
+    404: unknown;
+    /**
+     * Failed to resume the Morph VM
+     */
+    502: unknown;
+    /**
+     * Timed out waiting for the Morph VM
+     */
+    504: unknown;
+};
+
+export type PostApiTaskRunsByTaskRunIdForceWakeResponses = {
+    /**
+     * The Morph VM is ready
+     */
+    200: TaskRunForceWakeResponse;
+};
+
+export type PostApiTaskRunsByTaskRunIdForceWakeResponse = PostApiTaskRunsByTaskRunIdForceWakeResponses[keyof PostApiTaskRunsByTaskRunIdForceWakeResponses];
 
 export type PostApiTeamsData = {
     body: CreateTeamRequest;

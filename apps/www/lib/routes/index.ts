@@ -19,3 +19,4 @@ export { teamsRouter } from "./teams.route";
 export { usersRouter } from "./users.route";
 export { branchRouter } from "./branch.route";
 export { codeReviewRouter } from "./code-review.route";
+export { taskRunsRouter } from "./task-runs.route";
