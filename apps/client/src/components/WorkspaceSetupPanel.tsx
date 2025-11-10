@@ -1,3 +1,4 @@
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { parseEnvBlock } from "@/lib/parseEnvBlock";
 import { ensureInitialEnvVars, type EnvVar } from "@/types/environment";
 import { formatEnvVarsContent } from "@cmux/shared/utils/format-env-vars-content";
@@ -6,7 +7,7 @@ import {
   postApiWorkspaceConfigsMutation,
 } from "@cmux/www-openapi-client/react-query";
 import { useQuery, useMutation as useRQMutation } from "@tanstack/react-query";
-import { AlertTriangle, Check, ChevronDown, ChevronRight, Minus, Plus } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, Minus, Plus } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -252,11 +253,18 @@ export function WorkspaceSetupPanel({
             Configure workspace for{" "}
             <span className="font-semibold">{projectFullName}</span>
           </span>
-          {isConfigured ? (
-            <Check className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-400" />
-          ) : (
-            <AlertTriangle className="w-3.5 h-3.5 text-orange-600 dark:text-orange-500" />
-          )}
+          {!isConfigured ? (
+            <Tooltip delayDuration={0}>
+              <TooltipTrigger asChild>
+                <span className="inline-flex">
+                  <AlertTriangle className="w-3.5 h-3.5 text-orange-600 dark:text-orange-500" />
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="top" align="start" className="max-w-xs text-[11px]">
+                Workspace setup scripts and environment variables prepare the repo before a workspace launches.
+              </TooltipContent>
+            </Tooltip>
+          ) : null}
         </div>
       </button>
 
