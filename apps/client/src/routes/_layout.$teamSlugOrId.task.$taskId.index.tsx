@@ -126,6 +126,26 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
       const selectedRun = parsedRunId?.success
         ? (taskRunIndex.get(parsedRunId.data) ?? taskRuns[0])
         : taskRuns[0];
+      const selectedRunId = selectedRun?._id ?? null;
+      const rawBrowserUrl =
+        selectedRun?.vscode?.url ?? selectedRun?.vscode?.workspaceUrl ?? null;
+
+      if (selectedRunId && rawBrowserUrl) {
+        const vncUrl = toMorphVncUrl(rawBrowserUrl);
+        if (vncUrl) {
+          try {
+            await preloadTaskRunIframes([
+              {
+                url: vncUrl,
+                taskRunId: selectedRunId,
+                view: "browser",
+              },
+            ]);
+          } catch (error) {
+            console.error("Failed to preload browser iframe", error);
+          }
+        }
+      }
 
       const rawWorkspaceUrl = selectedRun?.vscode?.workspaceUrl ?? null;
       if (!rawWorkspaceUrl) {
