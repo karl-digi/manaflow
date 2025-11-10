@@ -90,6 +90,11 @@ export async function ensureVSCodeServeWeb(
       {
         detached: false,
         stdio: ["ignore", "pipe", "pipe"],
+        env: {
+          ...process.env,
+          // Force VS Code CLI to start without inheriting any existing IPC hook.
+          VSCODE_IPC_HOOK_CLI: undefined,
+        },
       }
     );
 
