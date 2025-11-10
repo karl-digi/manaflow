@@ -139,6 +139,7 @@ export const TaskAcknowledgedSchema = z.object({
 export const TaskErrorSchema = z.object({
   taskId: typedZid("tasks"),
   error: z.string(),
+  requiresGithubConnection: z.boolean().optional(),
 });
 
 // Git diff events

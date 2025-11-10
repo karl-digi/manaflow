@@ -526,9 +526,16 @@ export function setupSocketHandlers(
                 `Failed to spawn any agents for task ${taskId}:`,
                 errors
               );
+
+              // Check if any of the failures are due to missing GitHub connection
+              const requiresGithubConnection = agentResults.some(
+                (r) => !r.success && r.requiresGithubConnection
+              );
+
               rt.emit("task-failed", {
                 taskId,
                 error: errors || "Failed to spawn any agents",
+                requiresGithubConnection,
               });
               return;
             }

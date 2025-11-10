@@ -47,6 +47,8 @@ export interface AgentSpawnResult {
   vscodeUrl?: string;
   success: boolean;
   error?: string;
+  errorCode?: string;
+  requiresGithubConnection?: boolean;
 }
 
 export async function spawnAgent(
@@ -923,13 +925,22 @@ exit $EXIT_CODE
     };
   } catch (error) {
     serverLogger.error("Error spawning agent", error);
+
+    // Check if this is a GitHub token error
+    const errorObj = error as Error & { code?: string; requiresGithubConnection?: boolean };
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    const errorCode = errorObj.code;
+    const requiresGithubConnection = errorObj.requiresGithubConnection;
+
     return {
       agentName: agent.name,
       terminalId: "",
       taskRunId: "",
       worktreePath: "",
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: errorMessage,
+      errorCode,
+      requiresGithubConnection,
     };
   }
 }

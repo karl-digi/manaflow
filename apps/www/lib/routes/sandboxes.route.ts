@@ -211,7 +211,8 @@ sandboxesRouter.openapi(
       const gitIdentityPromise = githubAccessTokenPromise.then(
         ({ githubAccessToken }) => {
           if (!githubAccessToken) {
-            throw new Error("GitHub access token not found");
+            // Don't throw here, we'll handle this error later
+            return null;
           }
           return fetchGitIdentityInputs(convex, githubAccessToken);
         },
@@ -283,7 +284,14 @@ sandboxesRouter.openapi(
       }
 
       const configureGitIdentityTask = gitIdentityPromise
-        .then(([who, gh]) => {
+        .then((result) => {
+          if (!result) {
+            console.log(
+              `[sandboxes.start] Skipping git identity configuration due to missing GitHub token`,
+            );
+            return;
+          }
+          const [who, gh] = result;
           const { name, email } = selectGitIdentity(who, gh);
           return configureGitIdentity(instance, { name, email });
         })
@@ -300,7 +308,14 @@ sandboxesRouter.openapi(
         console.error(
           `[sandboxes.start] GitHub access token error: ${githubAccessTokenError}`,
         );
-        return c.text("Failed to resolve GitHub credentials", 401);
+        return c.json(
+          {
+            error: "github_token_missing",
+            message: "GitHub account not connected. Please connect your GitHub account to continue.",
+            details: githubAccessTokenError,
+          },
+          401,
+        );
       }
 
       // Sandboxes run as the requesting user, so prefer their OAuth scope over GitHub App installation tokens.

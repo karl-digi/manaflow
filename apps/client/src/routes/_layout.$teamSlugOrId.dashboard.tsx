@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/tooltip";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { useSocket } from "@/contexts/socket/use-socket";
+import { env } from "@/client-env";
 import { createFakeConvexId } from "@/lib/fakeConvexId";
 import { attachTaskLifecycleListeners } from "@/lib/socket/taskLifecycleListeners";
 import { branchesQueryOptions } from "@/queries/branches";
@@ -349,6 +350,7 @@ function DashboardComponent() {
   );
   const generateUploadUrl = useMutation(api.storage.generateUploadUrl);
   const addManualRepo = useAction(api.github_http.addManualRepo);
+  const mintInstallState = useMutation(api.github_app.mintInstallState);
 
   const effectiveSelectedBranch = useMemo(() => {
     if (selectedBranch.length > 0) {
@@ -419,6 +421,10 @@ function DashboardComponent() {
       const content = editorApiRef.current?.getContent();
       const images = content?.images || [];
 
+      // Store the content for potential restoration on error
+      const savedContent = content;
+      const savedTaskDescription = taskDescription;
+
       // Upload images to Convex storage first
       const uploadedImages = await Promise.all(
         images.map(
@@ -455,7 +461,7 @@ function DashboardComponent() {
         )
       );
 
-      // Clear input after successful task creation
+      // Clear input immediately after task creation (will be restored if spawn fails)
       setTaskDescription("");
       // Force editor to clear
       handleTaskDescriptionChange("");
@@ -493,7 +499,46 @@ function DashboardComponent() {
             console.log("Task started:", payload);
           },
           onFailed: (payload) => {
-            toast.error(`Task failed to start: ${payload.error}`);
+            // Restore the task description and content
+            setTaskDescription(savedTaskDescription);
+            handleTaskDescriptionChange(savedTaskDescription);
+            if (editorApiRef.current?.setContent && savedContent) {
+              editorApiRef.current.setContent(savedContent);
+            }
+
+            if (payload.requiresGithubConnection) {
+              toast.error("GitHub account not connected", {
+                description: "Connect your GitHub account to continue. Your prompt has been restored.",
+                action: {
+                  label: "Connect GitHub",
+                  onClick: async () => {
+                    try {
+                      const slug = env.NEXT_PUBLIC_GITHUB_APP_SLUG;
+                      if (!slug) {
+                        toast.error("GitHub app not configured");
+                        return;
+                      }
+                      const baseUrl = `https://github.com/apps/${slug}/installations/new`;
+                      const { state } = await mintInstallState({ teamSlugOrId });
+                      const sep = baseUrl.includes("?") ? "&" : "?";
+                      const url = `${baseUrl}${sep}state=${encodeURIComponent(state)}`;
+                      const win = window.open(
+                        url,
+                        "github-install",
+                        "width=800,height=600"
+                      );
+                      win?.focus?.();
+                    } catch (err) {
+                      console.error("Failed to start GitHub install:", err);
+                      toast.error("Failed to open GitHub connection. Please try again.");
+                    }
+                  },
+                },
+                duration: 10000,
+              });
+            } else {
+              toast.error(`Task failed to start: ${payload.error}. Your prompt has been restored.`);
+            }
           },
         });
         console.log("Task acknowledged:", response);

@@ -45,33 +45,34 @@ export class CmuxVSCodeInstance extends VSCodeInstance {
     dockerLogger.info(
       `[CmuxVSCodeInstance ${this.instanceId}] Requesting sandbox start via www API`
     );
-    const startRes = await postApiSandboxesStart({
-      client: getWwwClient(),
-      body: {
-        teamSlugOrId: this.teamSlugOrId,
-        ttlSeconds: 60 * 60,
-        metadata: {
-          instance: `cmux-${this.taskRunId}`,
-          agentName: this.config.agentName || "",
+    try {
+      const startRes = await postApiSandboxesStart({
+        client: getWwwClient(),
+        body: {
+          teamSlugOrId: this.teamSlugOrId,
+          ttlSeconds: 60 * 60,
+          metadata: {
+            instance: `cmux-${this.taskRunId}`,
+            agentName: this.config.agentName || "",
+          },
+          taskRunId: this.taskRunId,
+          taskRunJwt: this.taskRunJwt || "",
+          isCloudWorkspace: this.config.agentName === "cloud-workspace",
+          ...(this.environmentId ? { environmentId: this.environmentId } : {}),
+          ...(this.repoUrl
+            ? {
+              repoUrl: this.repoUrl,
+              branch: this.branch,
+              newBranch: this.newBranch,
+              depth: 1,
+            }
+            : {}),
         },
-        taskRunId: this.taskRunId,
-        taskRunJwt: this.taskRunJwt || "",
-        isCloudWorkspace: this.config.agentName === "cloud-workspace",
-        ...(this.environmentId ? { environmentId: this.environmentId } : {}),
-        ...(this.repoUrl
-          ? {
-            repoUrl: this.repoUrl,
-            branch: this.branch,
-            newBranch: this.newBranch,
-            depth: 1,
-          }
-          : {}),
-      },
-    });
-    const data = startRes.data;
-    if (!data) {
-      throw new Error("Failed to start sandbox");
-    }
+      });
+      const data = startRes.data;
+      if (!data) {
+        throw new Error("Failed to start sandbox");
+      }
 
     this.sandboxId = data.instanceId;
     this.vscodeBaseUrl = data.vscodeUrl;
@@ -97,13 +98,33 @@ export class CmuxVSCodeInstance extends VSCodeInstance {
       }
     }
 
-    return {
-      url: this.vscodeBaseUrl!,
-      workspaceUrl,
-      instanceId: this.instanceId,
-      taskRunId: this.taskRunId,
-      provider: this.provider,
-    };
+      return {
+        url: this.vscodeBaseUrl!,
+        workspaceUrl,
+        instanceId: this.instanceId,
+        taskRunId: this.taskRunId,
+        provider: this.provider,
+      };
+    } catch (error: unknown) {
+      // Check if this is a GitHub token error
+      if (error && typeof error === "object" && "error" in error) {
+        const apiError = error as {
+          error?: string;
+          message?: string;
+          details?: string;
+        };
+        if (apiError.error === "github_token_missing") {
+          const enhancedError = new Error(
+            apiError.message || "GitHub account not connected"
+          );
+          (enhancedError as Error & { code?: string; requiresGithubConnection?: boolean }).code = "GITHUB_TOKEN_MISSING";
+          (enhancedError as Error & { code?: string; requiresGithubConnection?: boolean }).requiresGithubConnection = true;
+          throw enhancedError;
+        }
+      }
+      // Re-throw other errors as-is
+      throw error;
+    }
   }
 
   async stop(): Promise<void> {
