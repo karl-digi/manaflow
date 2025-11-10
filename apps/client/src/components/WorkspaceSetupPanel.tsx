@@ -6,7 +6,15 @@ import {
   postApiWorkspaceConfigsMutation,
 } from "@cmux/www-openapi-client/react-query";
 import { useQuery, useMutation as useRQMutation } from "@tanstack/react-query";
-import { AlertTriangle, Check, ChevronDown, ChevronRight, Minus, Plus } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Loader2,
+  Minus,
+  Plus,
+} from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -224,6 +232,14 @@ export function WorkspaceSetupPanel({
     return null;
   }
 
+  const statusIcon = configQuery.isPending ? (
+    <Loader2 className="w-3.5 h-3.5 animate-spin text-neutral-500 dark:text-neutral-400" />
+  ) : isConfigured ? (
+    <Check className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-400" />
+  ) : (
+    <AlertTriangle className="w-3.5 h-3.5 text-orange-600 dark:text-orange-500" />
+  );
+
   return (
     <div className={`mt-2 rounded-lg relative ${isExpanded ? "" : ""}`}>
       <div
@@ -252,11 +268,7 @@ export function WorkspaceSetupPanel({
             Configure workspace for{" "}
             <span className="font-semibold">{projectFullName}</span>
           </span>
-          {isConfigured ? (
-            <Check className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-400" />
-          ) : (
-            <AlertTriangle className="w-3.5 h-3.5 text-orange-600 dark:text-orange-500" />
-          )}
+          {statusIcon}
         </div>
       </button>
 
