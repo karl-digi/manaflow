@@ -466,7 +466,7 @@ function TaskTreeInner({
   } = useTaskRename({
     taskId: task._id,
     teamSlugOrId,
-    currentText: task.text ?? "",
+    currentTitle: task.pullRequestTitle ?? task.text ?? "",
     canRename: canRenameTask,
   });
 
@@ -485,11 +485,11 @@ function TaskTreeInner({
   }, [unarchive, task._id]);
 
   const inferredBranch = getTaskBranch(task);
-  const trimmedTaskText = (task.text ?? "").trim();
   const trimmedPullRequestTitle = task.pullRequestTitle?.trim();
+  const trimmedTaskText = (task.text ?? "").trim();
   const taskTitleValue =
-    trimmedTaskText ||
     trimmedPullRequestTitle ||
+    trimmedTaskText ||
     task.pullRequestTitle ||
     task.text;
   const taskSecondaryParts: string[] = [];
@@ -499,7 +499,12 @@ function TaskTreeInner({
   if (task.projectFullName) {
     taskSecondaryParts.push(task.projectFullName);
   }
-  if (trimmedPullRequestTitle && trimmedPullRequestTitle !== taskTitleValue) {
+  if (trimmedTaskText && trimmedTaskText !== taskTitleValue) {
+    taskSecondaryParts.push(trimmedTaskText);
+  } else if (
+    trimmedPullRequestTitle &&
+    trimmedPullRequestTitle !== taskTitleValue
+  ) {
     taskSecondaryParts.push(trimmedPullRequestTitle);
   }
   const taskSecondary = taskSecondaryParts.join(" • ");

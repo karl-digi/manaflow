@@ -44,7 +44,7 @@ export const TaskItem = memo(function TaskItem({
   } = useTaskRename({
     taskId: task._id,
     teamSlugOrId,
-    currentText: task.text,
+    currentTitle: task.pullRequestTitle ?? task.text ?? "",
     canRename,
   });
 
@@ -167,6 +167,9 @@ export const TaskItem = memo(function TaskItem({
     [unarchive, task._id]
   );
 
+  const trimmedPullRequestTitle = task.pullRequestTitle?.trim();
+  const taskTitle = trimmedPullRequestTitle || task.text || "";
+
   return (
     <div className="relative group">
       <ContextMenu.Root>
@@ -218,7 +221,9 @@ export const TaskItem = memo(function TaskItem({
                   )}
                 />
               ) : (
-                <span className="text-[14px] truncate min-w-0">{task.text}</span>
+                <span className="text-[14px] truncate min-w-0">
+                  {taskTitle}
+                </span>
               )}
               {(task.projectFullName ||
                 (task.baseBranch && task.baseBranch !== "main")) && (
