@@ -488,6 +488,17 @@ export type StartSandboxBody = {
     depth?: number;
 };
 
+export type ForceWakeSandboxResponse = {
+    instanceId: string;
+    finalStatus: string;
+    resumed: boolean;
+};
+
+export type ForceWakeSandboxBody = {
+    teamSlugOrId: string;
+    taskRunId: string;
+};
+
 export type UpdateSandboxEnvResponse = {
     applied: true;
 };
@@ -1978,6 +1989,45 @@ export type PostApiSandboxesStartResponses = {
 };
 
 export type PostApiSandboxesStartResponse = PostApiSandboxesStartResponses[keyof PostApiSandboxesStartResponses];
+
+export type PostApiSandboxesForceWakeData = {
+    body: ForceWakeSandboxBody;
+    path?: never;
+    query?: never;
+    url: '/api/sandboxes/force-wake';
+};
+
+export type PostApiSandboxesForceWakeErrors = {
+    /**
+     * Invalid request
+     */
+    400: unknown;
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Forbidden
+     */
+    403: unknown;
+    /**
+     * Task run or Morph instance not found
+     */
+    404: unknown;
+    /**
+     * Timed out waiting for workspace readiness
+     */
+    504: unknown;
+};
+
+export type PostApiSandboxesForceWakeResponses = {
+    /**
+     * Workspace is ready
+     */
+    200: ForceWakeSandboxResponse;
+};
+
+export type PostApiSandboxesForceWakeResponse = PostApiSandboxesForceWakeResponses[keyof PostApiSandboxesForceWakeResponses];
 
 export type PostApiSandboxesByIdEnvData = {
     body: UpdateSandboxEnvBody;

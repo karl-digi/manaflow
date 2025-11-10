@@ -13,6 +13,7 @@ import { isFakeConvexId } from "@/lib/fakeConvexId";
 import type { AnnotatedTaskRun, TaskRunWithChildren } from "@/types/task";
 import { ContextMenu } from "@base-ui-components/react/context-menu";
 import { api } from "@cmux/convex/api";
+import { postApiSandboxesForceWake } from "@cmux/www-openapi-client";
 import { type Doc, type Id } from "@cmux/convex/dataModel";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import {
@@ -48,6 +49,7 @@ import {
   TerminalSquare,
   Loader2,
   XCircle,
+  Zap,
 } from "lucide-react";
 import {
   Fragment,
@@ -94,6 +96,24 @@ function getTaskBranch(task: TaskWithGeneratedBranch): string | null {
     return fromGenerated;
   }
   return sanitizeBranchName(task.baseBranch);
+}
+
+function extractApiErrorMessage(payload: unknown): string | null {
+  if (!payload) {
+    return null;
+  }
+  if (typeof payload === "string") {
+    return payload;
+  }
+  if (
+    typeof payload === "object" &&
+    payload !== null &&
+    "error" in payload &&
+    typeof (payload as { error?: unknown }).error === "string"
+  ) {
+    return (payload as { error?: string }).error ?? null;
+  }
+  return null;
 }
 
 interface TaskTreeProps {
@@ -1039,6 +1059,10 @@ function TaskRunTreeInner({
   }, [isExpanded, isRunSelected, run._id, setRunExpanded]);
 
   const hasChildren = run.children.length > 0;
+  const [isForceWakePending, setIsForceWakePending] = useState(false);
+  const canForceWakeVm =
+    run.vscode?.provider === "morph" &&
+    Boolean(run.vscode?.url || run.vscode?.workspaceUrl);
 
   // Memoize the display text to avoid recalculating on every render
   const baseDisplayText = useMemo(() => {
@@ -1068,6 +1092,33 @@ function TaskRunTreeInner({
   const handleArchiveRun = useCallback(() => {
     onArchiveToggle(run._id, true);
   }, [onArchiveToggle, run._id]);
+
+  const handleForceWakeVm = useCallback(async () => {
+    if (!canForceWakeVm || isForceWakePending) {
+      return;
+    }
+    setIsForceWakePending(true);
+    const toastId = toast.loading("Waking workspace…");
+    try {
+      const response = await postApiSandboxesForceWake({
+        body: {
+          teamSlugOrId,
+          taskRunId: String(run._id),
+        },
+      });
+      if (!response.data) {
+        const apiMessage = extractApiErrorMessage(response.error);
+        throw new Error(apiMessage ?? "Failed to wake workspace.");
+      }
+      toast.success("Workspace is ready to open.", { id: toastId });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to wake workspace.";
+      toast.error(message, { id: toastId });
+    } finally {
+      setIsForceWakePending(false);
+    }
+  }, [canForceWakeVm, isForceWakePending, run._id, teamSlugOrId]);
 
   const isLocalWorkspaceRunEntry = run.isLocalWorkspace;
   const isCloudWorkspaceRunEntry = run.isCloudWorkspace;
@@ -1367,8 +1418,25 @@ function TaskRunTreeInner({
                         ))}
                       </div>
                     </ContextMenu.Popup>
-                  </ContextMenu.Positioner>
+              </ContextMenu.Positioner>
                 </ContextMenu.SubmenuRoot>
+              ) : null}
+              {canForceWakeVm ? (
+                <ContextMenu.Item
+                  aria-disabled={isForceWakePending}
+                  className={clsx(
+                    "flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700",
+                    isForceWakePending && "opacity-60"
+                  )}
+                  onClick={() => {
+                    void handleForceWakeVm();
+                  }}
+                >
+                  <Zap className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
+                  <span>
+                    {isForceWakePending ? "Waking workspace…" : "Force wake VM"}
+                  </span>
+                </ContextMenu.Item>
               ) : null}
               <ContextMenu.Item
                 className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"

@@ -5,6 +5,7 @@ import { stackServerAppJs } from "@/lib/utils/stack";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { env } from "@/lib/utils/www-env";
 import { api } from "@cmux/convex/api";
+import { extractMorphInstanceInfo } from "@cmux/shared";
 import { RESERVED_CMUX_PORT_SET } from "@cmux/shared/utils/reserved-cmux-ports";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
@@ -71,6 +72,37 @@ const UpdateSandboxEnvResponse = z
     applied: z.literal(true),
   })
   .openapi("UpdateSandboxEnvResponse");
+
+const ForceWakeSandboxBody = z
+  .object({
+    teamSlugOrId: z.string(),
+    taskRunId: z.string(),
+  })
+  .openapi("ForceWakeSandboxBody");
+
+const ForceWakeSandboxResponse = z
+  .object({
+    instanceId: z.string(),
+    finalStatus: z.string(),
+    resumed: z.boolean(),
+  })
+  .openapi("ForceWakeSandboxResponse");
+
+const FORCE_WAKE_TIMEOUT_MS = 2 * 60 * 1000;
+const FORCE_WAKE_POLL_INTERVAL_MS = 2_000;
+const FORCE_WAKE_RESUME_ATTEMPTS = 3;
+const FORCE_WAKE_RESUME_RETRY_DELAY_MS = 1_000;
+
+const wait = (ms: number) =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+const isMorphNotFoundError = (error: unknown): boolean =>
+  error instanceof Error && error.message.includes("HTTP 404");
 
 // Start a new sandbox (currently Morph-backed)
 sandboxesRouter.openapi(
@@ -349,6 +381,223 @@ sandboxesRouter.openapi(
       console.error("Failed to start sandbox:", error);
       return c.text("Failed to start sandbox", 500);
     }
+  },
+);
+
+// Force wake (resume) a Morph-backed workspace for a task run
+sandboxesRouter.openapi(
+  createRoute({
+    method: "post" as const,
+    path: "/sandboxes/force-wake",
+    tags: ["Sandboxes"],
+    summary: "Resume a Morph workspace linked to a task run",
+    request: {
+      body: {
+        content: {
+          "application/json": {
+            schema: ForceWakeSandboxBody,
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: ForceWakeSandboxResponse,
+          },
+        },
+        description: "Workspace is ready",
+      },
+      400: { description: "Invalid request" },
+      401: { description: "Unauthorized" },
+      403: { description: "Forbidden" },
+      404: { description: "Task run or Morph instance not found" },
+      504: { description: "Timed out waiting for workspace readiness" },
+    },
+  }),
+  async (c) => {
+    const user = await stackServerAppJs.getUser({ tokenStore: c.req.raw });
+    if (!user) {
+      return c.text("Unauthorized", 401);
+    }
+    const { accessToken } = await user.getAuthJson();
+    if (!accessToken) {
+      return c.text("Unauthorized", 401);
+    }
+
+    const { teamSlugOrId, taskRunId } = c.req.valid("json");
+
+    const team = await verifyTeamAccess({
+      teamSlugOrId,
+      accessToken,
+    });
+
+    const convex = getConvex({ accessToken });
+    const run = await convex.query(api.taskRuns.get, {
+      teamSlugOrId,
+      id: taskRunId as unknown as string & { __tableName: "taskRuns" },
+    });
+
+    if (!run) {
+      return c.json({ error: "Task run not found" }, 404);
+    }
+
+    const vscodeInfo = run.vscode;
+    if (!vscodeInfo || vscodeInfo.provider !== "morph") {
+      return c.json(
+        { error: "This task run is not backed by a Morph workspace" },
+        400,
+      );
+    }
+
+    const workspaceUrl = vscodeInfo.url ?? vscodeInfo.workspaceUrl;
+    if (!workspaceUrl) {
+      return c.json(
+        { error: "This workspace does not have a reachable URL yet" },
+        400,
+      );
+    }
+
+    const morphInfo = extractMorphInstanceInfo(workspaceUrl);
+    if (!morphInfo) {
+      return c.json(
+        { error: "Unable to determine Morph instance for this workspace" },
+        400,
+      );
+    }
+
+    const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
+
+    let instance;
+    try {
+      instance = await client.instances.get({
+        instanceId: morphInfo.instanceId,
+      });
+    } catch (error) {
+      if (isMorphNotFoundError(error)) {
+        return c.json(
+          { error: `Morph instance ${morphInfo.instanceId} was not found` },
+          404,
+        );
+      }
+      console.error("[sandboxes.forceWake] Failed to load instance", error);
+      return c.json(
+        { error: "Failed to load Morph instance. Try again shortly." },
+        500,
+      );
+    }
+
+    const metadata = isRecord(instance.metadata) ? instance.metadata : {};
+    const metadataTeamId =
+      typeof metadata.teamId === "string" ? metadata.teamId : null;
+    const metadataUserId =
+      typeof metadata.userId === "string" ? metadata.userId : null;
+    const metadataTaskRunId =
+      typeof metadata.taskRunId === "string" ? metadata.taskRunId : null;
+
+    const ownsInstance =
+      (metadataTeamId && metadataTeamId === team.uuid) ||
+      (metadataUserId && metadataUserId === user.id) ||
+      (metadataTaskRunId && metadataTaskRunId === run._id);
+
+    if (!ownsInstance) {
+      return c.json(
+        { error: "You do not have permission to manage this workspace" },
+        403,
+      );
+    }
+
+    if (instance.status === "ready") {
+      return c.json({
+        instanceId: morphInfo.instanceId,
+        finalStatus: instance.status,
+        resumed: false,
+      });
+    }
+
+    let resumed = false;
+    let currentInstance = instance;
+
+    for (
+      let attempt = 1;
+      attempt <= FORCE_WAKE_RESUME_ATTEMPTS;
+      attempt += 1
+    ) {
+      try {
+        await currentInstance.resume();
+        resumed = true;
+        break;
+      } catch (error) {
+        if (attempt >= FORCE_WAKE_RESUME_ATTEMPTS) {
+          console.error(
+            "[sandboxes.forceWake] Failed to resume workspace",
+            error,
+          );
+          return c.json(
+            { error: "Failed to resume workspace. Please try again." },
+            500,
+          );
+        }
+        await wait(FORCE_WAKE_RESUME_RETRY_DELAY_MS * attempt);
+      }
+    }
+
+    const startWait = Date.now();
+    while (Date.now() - startWait < FORCE_WAKE_TIMEOUT_MS) {
+      await wait(FORCE_WAKE_POLL_INTERVAL_MS);
+      try {
+        currentInstance = await client.instances.get({
+          instanceId: morphInfo.instanceId,
+        });
+      } catch (error) {
+        if (isMorphNotFoundError(error)) {
+          return c.json(
+            { error: "Morph instance disappeared while resuming" },
+            404,
+          );
+        }
+        console.error(
+          "[sandboxes.forceWake] Failed to poll Morph instance",
+          error,
+        );
+        return c.json(
+          { error: "Failed to check workspace status. Please retry." },
+          500,
+        );
+      }
+
+      if (currentInstance.status === "ready") {
+        try {
+          await convex.mutation(api.taskRuns.updateVSCodeStatus, {
+            teamSlugOrId,
+            id: run._id,
+            status: "running",
+          });
+        } catch (error) {
+          console.error(
+            "[sandboxes.forceWake] Failed to update VSCode status",
+            error,
+          );
+        }
+
+        return c.json({
+          instanceId: morphInfo.instanceId,
+          finalStatus: currentInstance.status,
+          resumed,
+        });
+      }
+    }
+
+    return c.json(
+      {
+        error: "Timed out waiting for workspace to wake up. Try again soon.",
+        instanceId: morphInfo.instanceId,
+        status: currentInstance.status,
+      },
+      504,
+    );
   },
 );
 
