@@ -55,7 +55,7 @@ export function useTaskRename({
         const next = list.slice();
         next[index] = {
           ...next[index],
-          text: args.text,
+          userRenamedTitle: args.text,
           updatedAt: optimisticUpdatedAt,
         };
         localStore.setQuery(api.tasks.get, keyArgs, next);
@@ -74,7 +74,7 @@ export function useTaskRename({
       if (existingDetail) {
         localStore.setQuery(api.tasks.getById, detailArgs, {
           ...existingDetail,
-          text: args.text,
+          userRenamedTitle: args.text,
           updatedAt: optimisticUpdatedAt,
         });
       }

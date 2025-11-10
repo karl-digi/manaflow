@@ -207,7 +207,7 @@ export const update = authMutation({
     if (task === null || task.teamId !== teamId || task.userId !== userId) {
       throw new Error("Task not found or unauthorized");
     }
-    await ctx.db.patch(args.id, { text: args.text, updatedAt: Date.now() });
+    await ctx.db.patch(args.id, { userRenamedTitle: args.text, updatedAt: Date.now() });
   },
 });
 

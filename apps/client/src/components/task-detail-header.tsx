@@ -216,7 +216,7 @@ export function TaskDetailHeader({
   const handleAgentOpenChange = useCallback((open: boolean) => {
     setAgentMenuOpen(open);
   }, []);
-  const taskTitle = task?.pullRequestTitle || task?.text;
+  const taskTitle = task?.userRenamedTitle || task?.pullRequestTitle || task?.text;
   const handleCopyBranch = () => {
     if (selectedRun?.newBranch) {
       clipboard.copy(selectedRun.newBranch);

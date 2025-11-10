@@ -487,10 +487,13 @@ function TaskTreeInner({
   const inferredBranch = getTaskBranch(task);
   const trimmedTaskText = (task.text ?? "").trim();
   const trimmedPullRequestTitle = task.pullRequestTitle?.trim();
+  const trimmedUserRenamedTitle = task.userRenamedTitle?.trim();
   const taskTitleValue =
-    trimmedTaskText ||
+    trimmedUserRenamedTitle ||
+    task.userRenamedTitle ||
     trimmedPullRequestTitle ||
     task.pullRequestTitle ||
+    trimmedTaskText ||
     task.text;
   const taskSecondaryParts: string[] = [];
   if (inferredBranch) {
