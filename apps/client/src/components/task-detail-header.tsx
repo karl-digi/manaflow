@@ -81,6 +81,22 @@ type RepoDiffTarget = {
   headRef?: string;
 };
 
+type ActionablePullRequest = {
+  url?: string | null;
+  repoFullName?: string | null;
+  number?: number | null;
+};
+
+const getPullRequestUrl = (pr: ActionablePullRequest) => {
+  if (typeof pr.url === "string" && pr.url.trim()) {
+    return pr.url.trim();
+  }
+  if (pr.repoFullName && pr.number) {
+    return `https://github.com/${pr.repoFullName}/pull/${pr.number}`;
+  }
+  return undefined;
+};
+
 function AdditionsAndDeletions({
   repos,
   defaultBaseRef,
@@ -209,7 +225,7 @@ export function TaskDetailHeader({
 }: TaskDetailHeaderProps) {
   const navigate = useNavigate();
   const location = useLocation();
-  const clipboard = useClipboard({ timeout: 2000 });
+  const branchClipboard = useClipboard({ timeout: 2000 });
   const prIsOpen = selectedRun?.pullRequestState === "open";
   const prIsMerged = selectedRun?.pullRequestState === "merged";
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
@@ -219,7 +235,7 @@ export function TaskDetailHeader({
   const taskTitle = task?.pullRequestTitle || task?.text;
   const handleCopyBranch = () => {
     if (selectedRun?.newBranch) {
-      clipboard.copy(selectedRun.newBranch);
+      branchClipboard.copy(selectedRun.newBranch);
     }
   };
   const worktreePath = useMemo(
@@ -421,23 +437,25 @@ export function TaskDetailHeader({
               <GitBranch
                 className={clsx(
                   "w-3 h-3 absolute inset-0 z-0",
-                  clipboard.copied ? "hidden" : "block group-hover:hidden",
+                  branchClipboard.copied ? "hidden" : "block group-hover:hidden",
                 )}
-                aria-hidden={clipboard.copied}
+                aria-hidden={branchClipboard.copied}
               />
               <Copy
                 className={clsx(
                   "w-3 h-3 absolute inset-0 z-[var(--z-low)]",
-                  clipboard.copied ? "hidden" : "hidden group-hover:block",
+                  branchClipboard.copied
+                    ? "hidden"
+                    : "hidden group-hover:block",
                 )}
-                aria-hidden={clipboard.copied}
+                aria-hidden={branchClipboard.copied}
               />
               <Check
                 className={clsx(
                   "w-3 h-3 text-green-400 absolute inset-0 z-[var(--z-sticky)]",
-                  clipboard.copied ? "block" : "hidden",
+                  branchClipboard.copied ? "block" : "hidden",
                 )}
-                aria-hidden={!clipboard.copied}
+                aria-hidden={!branchClipboard.copied}
               />
             </div>
             {selectedRun?.newBranch ? (
@@ -627,13 +645,7 @@ function SocketActions({
         return (query.data ?? []).length > 0;
       });
 
-  const navigateToPrs = (
-    prs: Array<{
-      url?: string | null;
-      repoFullName?: string;
-      number?: number;
-    }>,
-  ) => {
+  const navigateToPrs = (prs: ActionablePullRequest[]) => {
     prs.forEach((pr) => {
       if (pr.repoFullName && pr.number) {
         const [owner = "", repo = ""] = pr.repoFullName.split("/", 2);
@@ -649,6 +661,51 @@ function SocketActions({
       }
     });
   };
+
+  const copyPrUrls = useCallback(async (prs: ActionablePullRequest[]) => {
+    const urls = prs
+      .map((pr) => getPullRequestUrl(pr))
+      .filter((url): url is string => Boolean(url));
+
+    if (urls.length === 0) {
+      toast.error("No PR URL available to copy");
+      return;
+    }
+
+    const text = urls.join("\n");
+    const copyWithFallback = async () => {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+      if (typeof document !== "undefined") {
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.style.position = "fixed";
+        textarea.style.left = "-9999px";
+        textarea.style.top = "-9999px";
+        textarea.setAttribute("readonly", "");
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        const successful = document.execCommand("copy");
+        document.body.removeChild(textarea);
+        if (!successful) {
+          throw new Error("Copy command was rejected");
+        }
+        return;
+      }
+      throw new Error("Clipboard API is not available");
+    };
+
+    try {
+      await copyWithFallback();
+      toast.success(urls.length === 1 ? "Copied PR URL" : "Copied PR URLs");
+    } catch (error) {
+      console.error("Failed to copy PR URLs", error);
+      toast.error("Failed to copy PR URL");
+    }
+  }, []);
 
   const summarizeResults = (
     results: Array<{ repoFullName: string; error?: string | undefined }>,
@@ -716,6 +773,15 @@ function SocketActions({
             ? {
               label: actionable.length === 1 ? "View PR" : "View PRs",
               onClick: () => navigateToPrs(actionable),
+            }
+            : undefined,
+        cancel:
+          actionable.length > 0
+            ? {
+              label: actionable.length === 1 ? "Copy PR URL" : "Copy PR URLs",
+              onClick: () => {
+                void copyPrUrls(actionable);
+              },
             }
             : undefined,
       });
