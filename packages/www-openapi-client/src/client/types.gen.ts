@@ -2049,6 +2049,50 @@ export type PostApiSandboxesByIdStopResponses = {
 
 export type PostApiSandboxesByIdStopResponse = PostApiSandboxesByIdStopResponses[keyof PostApiSandboxesByIdStopResponses];
 
+export type PostApiSandboxesByIdResumeData = {
+    body: {
+        teamSlugOrId: string;
+        taskRunId: string;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/sandboxes/{id}/resume';
+};
+
+export type PostApiSandboxesByIdResumeErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Forbidden - Instance does not belong to team
+     */
+    403: unknown;
+    /**
+     * Instance not found
+     */
+    404: unknown;
+    /**
+     * Failed to resume sandbox
+     */
+    500: unknown;
+};
+
+export type PostApiSandboxesByIdResumeResponses = {
+    /**
+     * Sandbox resumed successfully
+     */
+    200: {
+        status: 'running';
+        vscodeUrl?: string;
+        workerUrl?: string;
+    };
+};
+
+export type PostApiSandboxesByIdResumeResponse = PostApiSandboxesByIdResumeResponses[keyof PostApiSandboxesByIdResumeResponses];
+
 export type GetApiSandboxesByIdStatusData = {
     body?: never;
     path: {

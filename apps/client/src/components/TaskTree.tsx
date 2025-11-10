@@ -20,9 +20,11 @@ import {
   type RunPullRequestState,
 } from "@cmux/shared/pull-request-state";
 import { Link, useLocation, type LinkProps } from "@tanstack/react-router";
+import { useMutation as useTanStackMutation } from "@tanstack/react-query";
 import clsx from "clsx";
 import { useMutation, useQuery as useConvexQuery } from "convex/react";
 import { toast } from "sonner";
+import { postApiSandboxesByIdResumeMutation } from "@cmux/www-openapi-client/react-query";
 import {
   AlertTriangle,
   Archive as ArchiveIcon,
@@ -45,6 +47,7 @@ import {
   Globe,
   Monitor,
   Pencil,
+  Power,
   TerminalSquare,
   Loader2,
   XCircle,
@@ -1069,6 +1072,47 @@ function TaskRunTreeInner({
     onArchiveToggle(run._id, true);
   }, [onArchiveToggle, run._id]);
 
+  // Force wake VM mutation
+  const resumeSandboxMutation = useTanStackMutation(
+    postApiSandboxesByIdResumeMutation()
+  );
+
+  const handleForceWakeVM = useCallback(() => {
+    const instanceId = run.vscode?.containerName;
+    if (!instanceId) {
+      toast.error("No VM instance found for this task run");
+      return;
+    }
+
+    const toastId = toast.loading("Waking VM...");
+
+    resumeSandboxMutation.mutate(
+      {
+        path: { id: instanceId },
+        body: {
+          teamSlugOrId,
+          taskRunId: run._id,
+        },
+      },
+      {
+        onSuccess: (data) => {
+          if (data.vscodeUrl) {
+            toast.success("VM is ready!", { id: toastId });
+          } else {
+            toast.success("VM resumed (waiting for services...)", {
+              id: toastId,
+            });
+          }
+        },
+        onError: (error) => {
+          const errorMessage =
+            error instanceof Error ? error.message : "Failed to wake VM";
+          toast.error(errorMessage, { id: toastId });
+        },
+      }
+    );
+  }, [run._id, run.vscode?.containerName, resumeSandboxMutation, teamSlugOrId]);
+
   const isLocalWorkspaceRunEntry = run.isLocalWorkspace;
   const isCloudWorkspaceRunEntry = run.isCloudWorkspace;
 
@@ -1369,6 +1413,15 @@ function TaskRunTreeInner({
                     </ContextMenu.Popup>
                   </ContextMenu.Positioner>
                 </ContextMenu.SubmenuRoot>
+              ) : null}
+              {run.vscode?.provider === "morph" && run.vscode?.containerName ? (
+                <ContextMenu.Item
+                  className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                  onClick={handleForceWakeVM}
+                >
+                  <Power className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
+                  <span>Force wake VM</span>
+                </ContextMenu.Item>
               ) : null}
               <ContextMenu.Item
                 className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"

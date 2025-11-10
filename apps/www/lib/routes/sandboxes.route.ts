@@ -474,6 +474,125 @@ sandboxesRouter.openapi(
   },
 );
 
+// Resume/wake a paused sandbox
+sandboxesRouter.openapi(
+  createRoute({
+    method: "post" as const,
+    path: "/sandboxes/{id}/resume",
+    tags: ["Sandboxes"],
+    summary: "Resume a paused sandbox instance",
+    request: {
+      params: z.object({ id: z.string() }),
+      body: {
+        content: {
+          "application/json": {
+            schema: z.object({
+              teamSlugOrId: z.string(),
+              taskRunId: z.string(),
+            }),
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: z.object({
+              status: z.literal("running"),
+              vscodeUrl: z.string().optional(),
+              workerUrl: z.string().optional(),
+            }),
+          },
+        },
+        description: "Sandbox resumed successfully",
+      },
+      401: { description: "Unauthorized" },
+      403: { description: "Forbidden - Instance does not belong to team" },
+      404: { description: "Instance not found" },
+      500: { description: "Failed to resume sandbox" },
+    },
+  }),
+  async (c) => {
+    const id = c.req.valid("param").id;
+    const { teamSlugOrId, taskRunId } = c.req.valid("json");
+    const token = await getAccessTokenFromRequest(c.req.raw);
+    if (!token) return c.text("Unauthorized", 401);
+
+    try {
+      // Verify team access
+      const team = await verifyTeamAccess({
+        req: c.req.raw,
+        teamSlugOrId,
+      });
+
+      // Get the instance and verify ownership
+      const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
+      const instance = await client.instances.get({ instanceId: id });
+
+      // Security: ensure the instance belongs to the requested team
+      const meta = instance.metadata;
+      const instanceTeamId = meta?.teamId;
+      if (!instanceTeamId || instanceTeamId !== team.uuid) {
+        return c.text(
+          "Forbidden: Instance does not belong to this team",
+          403
+        );
+      }
+
+      // Resume the instance
+      await instance.resume();
+
+      // Wait for the instance to be ready by checking for services
+      let attempts = 0;
+      const maxAttempts = 30; // 30 seconds max
+      let vscodeUrl: string | undefined;
+      let workerUrl: string | undefined;
+
+      while (attempts < maxAttempts) {
+        const refreshedInstance = await client.instances.get({
+          instanceId: id,
+        });
+        const vscodeService = refreshedInstance.networking.httpServices.find(
+          (s) => s.port === 39378
+        );
+        const workerService = refreshedInstance.networking.httpServices.find(
+          (s) => s.port === 39377
+        );
+
+        if (vscodeService && workerService) {
+          vscodeUrl = vscodeService.url;
+          workerUrl = workerService.url;
+          break;
+        }
+
+        // Wait 1 second before checking again
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        attempts++;
+      }
+
+      return c.json({
+        status: "running" as const,
+        vscodeUrl,
+        workerUrl,
+      });
+    } catch (error) {
+      console.error("Failed to resume sandbox:", error);
+      if (
+        error &&
+        typeof error === "object" &&
+        "message" in error &&
+        typeof error.message === "string" &&
+        error.message.includes("not found")
+      ) {
+        return c.text("Instance not found", 404);
+      }
+      return c.text("Failed to resume sandbox", 500);
+    }
+  }
+);
+
 // Query status of sandbox
 sandboxesRouter.openapi(
   createRoute({
