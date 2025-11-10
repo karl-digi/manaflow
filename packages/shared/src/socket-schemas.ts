@@ -60,6 +60,7 @@ export const CreateLocalWorkspaceSchema = z.object({
   workspaceName: z.string().optional(),
   descriptor: z.string().optional(),
   sequence: z.number().optional(),
+  pullRequestUrl: z.string().optional(),
 });
 
 export const CreateLocalWorkspaceResponseSchema = z.object({
@@ -82,10 +83,16 @@ export const CreateCloudWorkspaceSchema = z
     taskId: typedZid("tasks").optional(),
     taskRunId: typedZid("taskRuns").optional(),
     theme: z.enum(["dark", "light", "system"]).optional(),
+    pullRequestUrl: z.string().optional(),
   })
   .refine(
-    (value) => Boolean(value.environmentId || value.projectFullName),
-    "Either environmentId or projectFullName is required"
+    (value) =>
+      Boolean(
+        value.environmentId ||
+          value.projectFullName ||
+          value.pullRequestUrl,
+      ),
+    "Either environmentId, projectFullName, or pullRequestUrl is required",
   );
 
 export const CreateCloudWorkspaceResponseSchema = z.object({

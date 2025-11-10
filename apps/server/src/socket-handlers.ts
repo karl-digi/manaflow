@@ -22,6 +22,7 @@ import {
   isLoopbackHostname,
   LOCAL_VSCODE_PLACEHOLDER_ORIGIN,
   type IframePreflightResult,
+  parseGithubPrUrl,
 } from "@cmux/shared";
 import {
   type PullRequestActionResult,
@@ -657,15 +658,32 @@ export function setupSocketHandlers(
 
         const {
           teamSlugOrId: requestedTeamSlugOrId,
-          projectFullName,
+          projectFullName: requestedProjectFullName,
           repoUrl: explicitRepoUrl,
           branch: requestedBranch,
           taskId: providedTaskId,
           taskRunId: providedTaskRunId,
           workspaceName: providedWorkspaceName,
           descriptor: providedDescriptor,
+          pullRequestUrl: rawPullRequestUrl,
         } = parsed.data;
         const teamSlugOrId = requestedTeamSlugOrId || safeTeam;
+
+        const pullRequestUrlInput = rawPullRequestUrl?.trim();
+        const pullRequestInfo = pullRequestUrlInput
+          ? parseGithubPrUrl(pullRequestUrlInput)
+          : null;
+        if (pullRequestUrlInput && !pullRequestInfo) {
+          callback({
+            success: false,
+            error: "Invalid GitHub pull request URL.",
+          });
+          return;
+        }
+
+        const pullRequestUrl = pullRequestInfo?.prUrl;
+        const projectFullName =
+          requestedProjectFullName ?? pullRequestInfo?.repoFullName ?? null;
 
         if (projectFullName && projectFullName.startsWith("env:")) {
           callback({
@@ -989,6 +1007,40 @@ export function setupSocketHandlers(
                   : "Git clone failed to produce a checkout"
               );
             }
+
+            if (pullRequestUrl) {
+              const prLabel = pullRequestInfo
+                ? `${pullRequestInfo.repoFullName}#${pullRequestInfo.prNumber}`
+                : pullRequestUrl;
+              serverLogger.info(
+                `[create-local-workspace] Checking out pull request ${prLabel}`
+              );
+              try {
+                await execFileAsync("gh", ["pr", "checkout", pullRequestUrl], {
+                  cwd: resolvedWorkspacePath,
+                });
+              } catch (error) {
+                if (cleanupWorkspace) {
+                  await cleanupWorkspace();
+                }
+                const execErr = isExecError(error) ? error : null;
+                const isMissingBinary =
+                  error &&
+                  typeof error === "object" &&
+                  "code" in error &&
+                  (error as NodeJS.ErrnoException).code === "ENOENT";
+                const stderr = execErr?.stderr?.trim() ?? "";
+                const stdout = execErr?.stdout?.trim() ?? "";
+                const baseMessage = isMissingBinary
+                  ? "GitHub CLI (gh) is required to checkout pull requests. Please install it and sign in."
+                  : stderr || stdout || (error instanceof Error ? error.message : "");
+                throw new Error(
+                  baseMessage
+                    ? `GitHub PR checkout failed: ${baseMessage}`
+                    : "GitHub PR checkout failed"
+                );
+              }
+            }
           } else {
             try {
               await fs.mkdir(resolvedWorkspacePath, { recursive: false });
@@ -1126,11 +1178,42 @@ export function setupSocketHandlers(
         const {
           teamSlugOrId: requestedTeamSlugOrId,
           environmentId,
-          projectFullName,
-          repoUrl,
+          projectFullName: requestedProjectFullName,
+          repoUrl: explicitRepoUrl,
           taskId: providedTaskId,
+          pullRequestUrl: rawPullRequestUrl,
         } = parsed.data;
         const teamSlugOrId = requestedTeamSlugOrId || safeTeam;
+
+        const pullRequestUrlInput = rawPullRequestUrl?.trim();
+        const pullRequestInfo = pullRequestUrlInput
+          ? parseGithubPrUrl(pullRequestUrlInput)
+          : null;
+        if (pullRequestUrlInput && !pullRequestInfo) {
+          callback({
+            success: false,
+            error: "Invalid GitHub pull request URL.",
+          });
+          return;
+        }
+
+        const projectFullName =
+          requestedProjectFullName ?? pullRequestInfo?.repoFullName ?? null;
+        const repoUrl =
+          explicitRepoUrl ??
+          (projectFullName
+            ? `https://github.com/${projectFullName}.git`
+            : undefined);
+        const pullRequestUrl = pullRequestInfo?.prUrl;
+
+        if (!environmentId && !repoUrl) {
+          callback({
+            success: false,
+            error:
+              "A repository is required when creating a cloud workspace without an environment.",
+          });
+          return;
+        }
 
         const convex = getConvex();
         let taskId: Id<"tasks"> | undefined = providedTaskId;
@@ -1186,10 +1269,15 @@ export function setupSocketHandlers(
           // Spawn Morph instance via www API
           const { postApiSandboxesStart } = await getWwwOpenApiModule();
 
+          const repoLabel =
+            projectFullName ??
+            pullRequestInfo?.repoFullName ??
+            explicitRepoUrl ??
+            "(unknown repo)";
           serverLogger.info(
             environmentId
               ? `[create-cloud-workspace] Starting Morph sandbox for environment ${environmentId}`
-              : `[create-cloud-workspace] Starting Morph sandbox for repo ${projectFullName}`
+              : `[create-cloud-workspace] Starting Morph sandbox for repo ${repoLabel}`
           );
 
           const startRes = await postApiSandboxesStart({
@@ -1204,9 +1292,13 @@ export function setupSocketHandlers(
               taskRunId,
               taskRunJwt,
               isCloudWorkspace: true,
+              pullRequestUrl: pullRequestUrl ?? undefined,
               ...(environmentId
                 ? { environmentId }
-                : { projectFullName, repoUrl }),
+                : {
+                    projectFullName: projectFullName ?? undefined,
+                    repoUrl,
+                  }),
             },
           });
 
@@ -1265,7 +1357,7 @@ export function setupSocketHandlers(
           serverLogger.info(
             environmentId
               ? `Cloud workspace created successfully: ${taskId} for environment ${environmentId}`
-              : `Cloud workspace created successfully: ${taskId} for repo ${projectFullName}`
+              : `Cloud workspace created successfully: ${taskId} for repo ${repoLabel}`
           );
         } catch (error) {
           serverLogger.error("Error creating cloud workspace:", error);
