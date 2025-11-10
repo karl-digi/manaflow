@@ -13,7 +13,7 @@ import clsx from "clsx";
 import { useQuery as useConvexQuery, useMutation } from "convex/react";
 // Read team slug from path to avoid route type coupling
 import { Archive, ArchiveRestore, Check, Copy, Pencil, Pin } from "lucide-react";
-import { memo, useCallback, useMemo } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 
 interface TaskItemProps {
   task: Doc<"tasks">;
@@ -29,6 +29,7 @@ export const TaskItem = memo(function TaskItem({
   const { archiveWithUndo, unarchive } = useArchiveTask(teamSlugOrId);
   const isOptimisticUpdate = task._id.includes("-") && task._id.length === 36;
   const canRename = !isOptimisticUpdate;
+  const [isHovered, setIsHovered] = useState(false);
 
   const {
     isRenaming,
@@ -168,7 +169,11 @@ export const TaskItem = memo(function TaskItem({
   );
 
   return (
-    <div className="relative group">
+    <div
+      className="relative group"
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
       <ContextMenu.Root>
         <ContextMenu.Trigger>
           <div
@@ -306,7 +311,8 @@ export const TaskItem = memo(function TaskItem({
                   "bg-neutral-100 dark:bg-neutral-700",
                   "text-neutral-600 dark:text-neutral-400",
                   "hover:bg-neutral-200 dark:hover:bg-neutral-600",
-                  "group-hover:opacity-100 opacity-0"
+                  "transition-opacity",
+                  isHovered ? "opacity-100" : "opacity-0"
                 )}
                 title="Copy task description"
               >
@@ -327,7 +333,10 @@ export const TaskItem = memo(function TaskItem({
             vscodeUrl={vscodeUrl}
             worktreePath={runWithVSCode?.worktreePath || task.worktreePath}
             branch={task.baseBranch}
-            className="group-hover:opacity-100 aria-expanded:opacity-100 opacity-0"
+            className={clsx(
+              "transition-opacity aria-expanded:opacity-100",
+              isHovered ? "opacity-100" : "opacity-0"
+            )}
           />
 
           {/* Keep-alive button */}
@@ -343,7 +352,8 @@ export const TaskItem = memo(function TaskItem({
                       ? "text-blue-600 dark:text-blue-400"
                       : "text-neutral-600 dark:text-neutral-400",
                     "hover:bg-neutral-200 dark:hover:bg-neutral-600",
-                    "group-hover:opacity-100 opacity-0",
+                    "transition-opacity",
+                    isHovered ? "opacity-100" : "opacity-0",
                     "hidden" // TODO: show this button
                   )}
                 >
@@ -369,7 +379,8 @@ export const TaskItem = memo(function TaskItem({
                     "bg-neutral-100 dark:bg-neutral-700",
                     "text-neutral-600 dark:text-neutral-400",
                     "hover:bg-neutral-200 dark:hover:bg-neutral-600",
-                    "group-hover:opacity-100 opacity-0"
+                    "transition-opacity",
+                    isHovered ? "opacity-100" : "opacity-0"
                   )}
                   title="Unarchive task"
                 >
@@ -383,7 +394,8 @@ export const TaskItem = memo(function TaskItem({
                     "bg-neutral-100 dark:bg-neutral-700",
                     "text-neutral-600 dark:text-neutral-400",
                     "hover:bg-neutral-200 dark:hover:bg-neutral-600",
-                    "group-hover:opacity-100 opacity-0"
+                    "transition-opacity",
+                    isHovered ? "opacity-100" : "opacity-0"
                   )}
                   title="Archive task"
                 >
