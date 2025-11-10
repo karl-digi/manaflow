@@ -61,7 +61,12 @@ import {
   selectSuggestedItems,
   useSuggestionHistory,
 } from "./command-bar/useSuggestionHistory";
+import { NewTaskDialog } from "./command-bar/NewTaskDialog";
 import clsx from "clsx";
+import type {
+  CloudWorkspaceOption,
+  LocalWorkspaceOption,
+} from "./command-bar/types";
 
 interface CommandBarProps {
   teamSlugOrId: string;
@@ -147,26 +152,6 @@ type TeamCommandItem = {
   isCurrent: boolean;
   keywords: string[];
 };
-
-type LocalWorkspaceOption = {
-  fullName: string;
-  repoBaseName: string;
-  keywords: string[];
-};
-
-type CloudWorkspaceOption =
-  | {
-      type: "environment";
-      environmentId: Id<"environments">;
-      name: string;
-      keywords: string[];
-    }
-  | {
-      type: "repo";
-      fullName: string;
-      repoBaseName: string;
-      keywords: string[];
-    };
 
 type CommandListEntry = {
   value: string;
@@ -297,6 +282,7 @@ export function CommandBar({
     useState(false);
   const [isCreatingCloudWorkspace, setIsCreatingCloudWorkspace] =
     useState(false);
+  const [isNewTaskDialogOpen, setIsNewTaskDialogOpen] = useState(false);
   const [commandValue, setCommandValue] = useState<string | undefined>(
     undefined
   );
@@ -546,6 +532,8 @@ export function CommandBar({
   }, [reposByOrg]);
 
   const isLocalWorkspaceLoading = reposByOrg === undefined;
+  const isProjectListLoading =
+    reposByOrg === undefined || environments === undefined;
 
   const cloudWorkspaceOptions = useMemo<CloudWorkspaceOption[]>(() => {
     const options: CloudWorkspaceOption[] = [];
@@ -1307,10 +1295,9 @@ export function CommandBar({
         setActivePage("teams");
         return;
       } else if (value === "new-task") {
-        navigate({
-          to: "/$teamSlugOrId/dashboard",
-          params: { teamSlugOrId },
-        });
+        setIsNewTaskDialogOpen(true);
+        closeCommand();
+        return;
       } else if (value === "local-workspaces") {
         setActivePage("local-workspaces");
         return;
@@ -1511,6 +1498,7 @@ export function CommandBar({
       allTasks,
       stackUser,
       stackTeams,
+      setIsNewTaskDialogOpen,
       closeCommand,
     ]
   );
@@ -2466,6 +2454,18 @@ export function CommandBar({
 
   return (
     <>
+      <NewTaskDialog
+        open={isNewTaskDialogOpen}
+        onOpenChange={setIsNewTaskDialogOpen}
+        teamSlugOrId={teamSlugOrId}
+        localWorkspaceOptions={localWorkspaceOptions}
+        environments={environments}
+        isProjectListLoading={isProjectListLoading}
+        createTask={createTask}
+        addTaskToExpand={addTaskToExpand}
+        socket={socket}
+        theme={theme}
+      />
       <div
         className={clsx(
           "fixed inset-0 z-[var(--z-commandbar)]",
