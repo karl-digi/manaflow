@@ -63,6 +63,7 @@ import {
   getVSCodeServeWebPort,
   waitForVSCodeServeWebBaseUrl,
 } from "./vscode/serveWeb";
+import { trustVSCodeWorkspace } from "./vscode/workspaceTrust";
 import { getProjectPaths } from "./workspace";
 import {
   collectRepoFullNamesForRun,
@@ -1566,9 +1567,11 @@ export function setupSocketHandlers(
 
         let command: string[];
         switch (editor) {
-          case "vscode":
+          case "vscode": {
+            await trustVSCodeWorkspace(path, serverLogger);
             command = ["code", path];
             break;
+          }
           case "cursor":
             command = ["cursor", path];
             break;
