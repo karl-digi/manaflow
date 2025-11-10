@@ -30,6 +30,7 @@ import {
   CheckCircle,
   Circle,
   ChevronRight,
+  Cloud,
   Copy as CopyIcon,
   Crown,
   EllipsisVertical,
@@ -640,7 +641,26 @@ function TaskTreeInner({
     }
 
     if (isLocalWorkspace || isCloudWorkspace) {
-      return null;
+      const workspaceIcon = isLocalWorkspace ? (
+        <Monitor className="w-3 h-3 text-neutral-500 dark:text-neutral-300" />
+      ) : (
+        <Cloud className="w-3 h-3 text-sky-600 dark:text-sky-400" />
+      );
+
+      const tooltipLabel = isLocalWorkspace
+        ? "Local workspace"
+        : "Cloud workspace";
+
+      return (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className="flex items-center justify-center">
+              {workspaceIcon}
+            </div>
+          </TooltipTrigger>
+          <TooltipContent side="right">{tooltipLabel}</TooltipContent>
+        </Tooltip>
+      );
     }
 
     return task.isCompleted ? (
@@ -1180,7 +1200,32 @@ function TaskRunTreeInner({
       resolvedStatusIcon
     );
 
-  const runLeadingIcon = pullRequestIcon ?? statusIconWithTooltip;
+  const workspaceIndicatorIcon = useMemo(() => {
+    if (isLocalWorkspaceRunEntry) {
+      return (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Monitor className="w-3 h-3 text-neutral-500 dark:text-neutral-300" />
+          </TooltipTrigger>
+          <TooltipContent side="right">Local workspace run</TooltipContent>
+        </Tooltip>
+      );
+    }
+    if (isCloudWorkspaceRunEntry) {
+      return (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Cloud className="w-3 h-3 text-sky-600 dark:text-sky-400" />
+          </TooltipTrigger>
+          <TooltipContent side="right">Cloud workspace run</TooltipContent>
+        </Tooltip>
+      );
+    }
+    return null;
+  }, [isCloudWorkspaceRunEntry, isLocalWorkspaceRunEntry]);
+
+  const runLeadingIcon =
+    pullRequestIcon ?? statusIconWithTooltip ?? workspaceIndicatorIcon;
 
   const runMetaIcon =
     !run.isArchived && runLeadingIcon ? (
