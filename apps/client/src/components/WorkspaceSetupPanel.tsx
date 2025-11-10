@@ -17,6 +17,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { Button } from "./ui/button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 
 type WorkspaceSetupPanelProps = {
   teamSlugOrId: string;
@@ -225,40 +226,46 @@ export function WorkspaceSetupPanel({
   }
 
   return (
-    <div className={`mt-2 rounded-lg relative ${isExpanded ? "" : ""}`}>
-      <div
-        className={`absolute inset-0 rounded-lg border pointer-events-none ${isExpanded
-          ? "border-neutral-200 dark:border-neutral-700"
-          : "border-transparent"
-          }`}
-        style={{
-          clipPath: isExpanded
-            ? 'inset(0 0 0 0)'
-            : 'inset(0 0 100% 0)',
-        }}
-      />
-      <button
-        type="button"
-        onClick={toggleExpanded}
-        className="w-full flex items-start justify-between gap-2 text-left px-2 py-1.5"
-      >
-        <div className="inline-flex items-center gap-1.5 pt-1 font-medium text-xs text-neutral-600 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-200">
-          {isExpanded ? (
-            <ChevronDown className="w-4 h-4 transition-transform duration-300" />
-          ) : (
-            <ChevronRight className="w-4 h-4 transition-transform duration-300" />
-          )}
-          <span>
-            Configure workspace for{" "}
-            <span className="font-semibold">{projectFullName}</span>
-          </span>
-          {isConfigured ? (
-            <Check className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-400" />
-          ) : (
-            <AlertTriangle className="w-3.5 h-3.5 text-orange-600 dark:text-orange-500" />
-          )}
-        </div>
-      </button>
+    <TooltipProvider>
+      <div className={`mt-2 rounded-lg relative ${isExpanded ? "" : ""}`}>
+        <div
+          className={`absolute inset-0 rounded-lg border pointer-events-none ${isExpanded
+            ? "border-neutral-200 dark:border-neutral-700"
+            : "border-transparent"
+            }`}
+          style={{
+            clipPath: isExpanded
+              ? 'inset(0 0 0 0)'
+              : 'inset(0 0 100% 0)',
+          }}
+        />
+        <button
+          type="button"
+          onClick={toggleExpanded}
+          className="w-full flex items-start justify-between gap-2 text-left px-2 py-1.5"
+        >
+          <div className="inline-flex items-center gap-1.5 pt-1 font-medium text-xs text-neutral-600 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-200">
+            {isExpanded ? (
+              <ChevronDown className="w-4 h-4 transition-transform duration-300" />
+            ) : (
+              <ChevronRight className="w-4 h-4 transition-transform duration-300" />
+            )}
+            <span>
+              Configure workspace for{" "}
+              <span className="font-semibold">{projectFullName}</span>
+            </span>
+            {!isConfigured && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <AlertTriangle className="w-3.5 h-3.5 text-orange-600 dark:text-orange-500" />
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Workspace setup required</p>
+                </TooltipContent>
+              </Tooltip>
+            )}
+          </div>
+        </button>
 
       <div
         className={`overflow-hidden ${isExpanded ? "max-h-[2000px]" : "max-h-0"}`}
@@ -420,6 +427,7 @@ export function WorkspaceSetupPanel({
           </div>
         </div>
       </div>
-    </div >
+    </div>
+    </TooltipProvider>
   );
 }
