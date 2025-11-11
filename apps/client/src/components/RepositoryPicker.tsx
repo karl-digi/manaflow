@@ -696,15 +696,15 @@ function RepositoryConnectionsSection({
                                           handlePopupClosedRefetch
                                         );
                                       }}
-                                    >
-                                      <Settings className="w-3 h-3 text-neutral-600 dark:text-neutral-300" />
-                                    </button>
-                                  </TooltipTrigger>
-                                  <TooltipContent className="z-[var(--z-tooltip)]">
-                                    Add Repos
-                                  </TooltipContent>
-                                </Tooltip>
-                              ) : null}
+                                  >
+                                    <Settings className="w-3 h-3 text-neutral-600 dark:text-neutral-300" />
+                                  </button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  Add Repos
+                                </TooltipContent>
+                              </Tooltip>
+                            ) : null}
                             </CommandItem>
                           );
                         })}
