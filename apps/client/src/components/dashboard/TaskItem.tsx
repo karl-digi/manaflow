@@ -184,6 +184,16 @@ export const TaskItem = memo(function TaskItem({
     [unarchive, task._id]
   );
 
+  const repoName = task.projectFullName
+    ? task.projectFullName.split("/")[1] ?? task.projectFullName
+    : null;
+  const branchName =
+    task.baseBranch && task.baseBranch !== "main" ? task.baseBranch : null;
+  const repoBranchLabel =
+    repoName || branchName
+      ? [repoName, branchName].filter(Boolean).join("/")
+      : "";
+
   return (
     <div className="relative group w-full">
       <ContextMenu.Root>
@@ -260,12 +270,15 @@ export const TaskItem = memo(function TaskItem({
                   )}
                 />
               ) : (
-                <span className="text-[13px] font-medium truncate min-w-0">
+                <span
+                  className="block w-full truncate text-[13px] font-medium"
+                  title={task.text}
+                >
                   {task.text}
                 </span>
               )}
             </div>
-            <div className="text-[11px] text-neutral-400 dark:text-neutral-500 flex-shrink-0 text-right flex items-center justify-end gap-2">
+            <div className="min-w-0 text-[11px] text-neutral-400 dark:text-neutral-500 text-right flex items-center justify-end gap-2">
               {task.environmentId && (
                 <EnvironmentName
                   environmentId={task.environmentId}
@@ -274,17 +287,13 @@ export const TaskItem = memo(function TaskItem({
               )}
               {(task.projectFullName ||
                 (task.baseBranch && task.baseBranch !== "main")) && (
-                <span>
-                  {task.projectFullName && (
-                    <span>{task.projectFullName.split("/")[1]}</span>
-                  )}
-                  {task.projectFullName &&
-                    task.baseBranch &&
-                    task.baseBranch !== "main" &&
-                    "/"}
-                  {task.baseBranch && task.baseBranch !== "main" && (
-                    <span>{task.baseBranch}</span>
-                  )}
+                <span
+                  className="block max-w-full truncate whitespace-nowrap"
+                  title={repoBranchLabel}
+                >
+                  {repoName}
+                  {repoName && branchName && "/"}
+                  {branchName}
                 </span>
               )}
             </div>
