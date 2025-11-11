@@ -69,7 +69,7 @@ export const addPrReaction = internalAction({
         reactionId: data.id,
       });
 
-      return { ok: true, reactionId: data.id };
+      return { ok: true as const, reactionId: data.id };
     } catch (error) {
       console.error(
         "[github_pr_comments] Unexpected error adding reaction",
@@ -81,7 +81,7 @@ export const addPrReaction = internalAction({
         },
       );
       return {
-        ok: false,
+        ok: false as const,
         error: error instanceof Error ? error.message : String(error),
       };
     }
@@ -149,7 +149,7 @@ export const addPrComment = internalAction({
         commentId: data.id,
       });
 
-      return { ok: true, commentId: data.id };
+      return { ok: true as const, commentId: data.id };
     } catch (error) {
       console.error(
         "[github_pr_comments] Unexpected error adding comment",
@@ -161,7 +161,7 @@ export const addPrComment = internalAction({
         },
       );
       return {
-        ok: false,
+        ok: false as const,
         error: error instanceof Error ? error.message : String(error),
       };
     }
@@ -266,10 +266,12 @@ async function getScreenshotsForPr(
         );
         if (screenshotSet && screenshotSet.status === "completed") {
           for (const image of screenshotSet.images) {
-            screenshots.push({
-              url: image.url,
-              fileName: image.fileName,
-            });
+            if (image.url) {
+              screenshots.push({
+                url: image.url,
+                fileName: image.fileName,
+              });
+            }
           }
         }
       }
@@ -340,7 +342,7 @@ export const addScreenshotCommentToPr = internalAction({
             prNumber,
           },
         );
-        return { ok: true, skipped: true, reason: "No screenshots found" };
+        return { ok: true as const, skipped: true, reason: "No screenshots found" };
       }
 
       const body = formatScreenshotComment(screenshots);
@@ -355,7 +357,7 @@ export const addScreenshotCommentToPr = internalAction({
       if (result.ok) {
         return { ok: true as const, commentId: result.commentId };
       }
-      return result;
+      return { ok: false as const, error: result.error };
     } catch (error) {
       console.error(
         "[github_pr_comments] Unexpected error adding screenshot comment",
@@ -368,7 +370,7 @@ export const addScreenshotCommentToPr = internalAction({
         },
       );
       return {
-        ok: false,
+        ok: false as const,
         error: error instanceof Error ? error.message : String(error),
       };
     }

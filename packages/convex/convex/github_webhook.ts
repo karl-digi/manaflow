@@ -500,41 +500,42 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
             payload: prPayload,
           });
 
+          const isOpened = prPayload.action === "opened";
+          const pr = prPayload.pull_request;
+          const prNumber = pr && typeof pr === "object" && "number" in pr
+            ? Number(pr.number ?? 0)
+            : 0;
+
           // Add eyes emoji reaction when a new PR is opened
           if (
             FEATURE_FLAGS.githubEyesReactionOnPrOpen &&
-            prPayload.action === "opened" &&
-            prPayload.pull_request
+            isOpened &&
+            prNumber
           ) {
-            const prNumber = Number(prPayload.pull_request.number ?? 0);
-            if (prNumber) {
-              await _ctx.runAction(internal.github_pr_comments.addPrReaction, {
-                installationId: installation,
-                repoFullName,
-                prNumber,
-                content: "eyes",
-              });
-            }
+            await _ctx.runAction(internal.github_pr_comments.addPrReaction, {
+              installationId: installation,
+              repoFullName,
+              prNumber,
+              content: "eyes",
+            });
           }
 
           // Add screenshot comment when a new PR is opened
           if (
             FEATURE_FLAGS.githubScreenshotCommentOnPrOpen &&
-            prPayload.action === "opened" &&
-            prPayload.pull_request
+            isOpened &&
+            prNumber &&
+            teamId
           ) {
-            const prNumber = Number(prPayload.pull_request.number ?? 0);
-            if (prNumber && teamId) {
-              await _ctx.runAction(
-                internal.github_pr_comments.addScreenshotCommentToPr,
-                {
-                  installationId: installation,
-                  repoFullName,
-                  prNumber,
-                  teamId,
-                },
-              );
-            }
+            await _ctx.runAction(
+              internal.github_pr_comments.addScreenshotCommentToPr,
+              {
+                installationId: installation,
+                repoFullName,
+                prNumber,
+                teamId,
+              },
+            );
           }
         } catch (err) {
           console.error("github_webhook pull_request handler failed", {
