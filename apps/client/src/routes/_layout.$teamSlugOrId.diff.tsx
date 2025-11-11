@@ -11,9 +11,10 @@ import { api } from "@cmux/convex/api";
 import { convexQuery } from "@convex-dev/react-query";
 import { useQuery as useRQ } from "@tanstack/react-query";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
-import { ArrowLeftRight, GitBranch } from "lucide-react";
+import { ArrowLeftRight, GitBranch, FolderOpen } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import type { CreateLocalWorkspaceResponse } from "@cmux/shared";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/diff")({
   component: DashboardDiffPage,
@@ -152,6 +153,51 @@ function DashboardDiffPage() {
     setSearch({ ref1: search.ref2, ref2: search.ref1 });
   }, [search.ref1, search.ref2, setSearch]);
 
+  const [isOpeningWorkspace, setIsOpeningWorkspace] = useState(false);
+
+  const handleOpenLocalWorkspace = useCallback(async () => {
+    if (!socket || !selectedProject || !search.ref2) {
+      toast.error("Cannot open workspace", {
+        description: "Please select a repository and branch first",
+      });
+      return;
+    }
+
+    setIsOpeningWorkspace(true);
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        socket.emit(
+          "create-local-workspace",
+          {
+            teamSlugOrId,
+            projectFullName: selectedProject,
+            branch: search.ref2,
+          },
+          (response: CreateLocalWorkspaceResponse) => {
+            if (response.success) {
+              toast.success("Local workspace opened", {
+                description: response.workspacePath
+                  ? `Workspace at ${response.workspacePath}`
+                  : "Workspace opened successfully",
+              });
+              resolve();
+            } else {
+              toast.error("Failed to open workspace", {
+                description: response.error || "Unknown error",
+              });
+              reject(new Error(response.error || "Unknown error"));
+            }
+          }
+        );
+      });
+    } catch (error) {
+      console.error("Error opening local workspace:", error);
+    } finally {
+      setIsOpeningWorkspace(false);
+    }
+  }, [socket, selectedProject, search.ref2, teamSlugOrId]);
+
   const bothSelected = !!search.ref1 && !!search.ref2 && !!selectedProject;
   const diffsQuery = useRQ({
     ...gitDiffQueryOptions({
@@ -229,6 +275,16 @@ function DashboardDiffPage() {
           disabled={!selectedProject}
           loading={branchesQuery.isLoading}
         />
+        <button
+          type="button"
+          onClick={handleOpenLocalWorkspace}
+          disabled={!selectedProject || !search.ref2 || isOpeningWorkspace}
+          className="inline-flex items-center gap-2 h-8 px-3 rounded-md border border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-200 bg-white dark:bg-neutral-950 hover:bg-neutral-50 dark:hover:bg-neutral-900 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
+          aria-label="Open local workspace"
+        >
+          <FolderOpen className="h-4 w-4" />
+          {isOpeningWorkspace ? "Opening..." : "Open Local Workspace"}
+        </button>
       </div>
       <div className="flex-1 flex flex-col bg-white dark:bg-neutral-950 overflow-y-auto grow">
         {/* Smart view: no toggle */}

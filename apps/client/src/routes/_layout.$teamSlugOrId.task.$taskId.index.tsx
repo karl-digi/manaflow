@@ -661,6 +661,7 @@ function TaskDetailPage() {
       browserPlaceholder,
       isMorphProvider,
       isBrowserBusy,
+      teamSlugOrId,
       TaskRunChatPane,
       PersistentWebView,
       WorkspaceLoadingIndicator,
@@ -693,6 +694,7 @@ function TaskDetailPage() {
       browserPlaceholder,
       isMorphProvider,
       isBrowserBusy,
+      teamSlugOrId,
       handlePanelClose,
     ]
   );

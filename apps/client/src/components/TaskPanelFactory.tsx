@@ -177,6 +177,8 @@ interface PanelFactoryProps {
   } | null;
   isMorphProvider?: boolean;
   isBrowserBusy?: boolean;
+  // Git diff panel props
+  teamSlugOrId?: string;
   // Additional components
   TaskRunChatPane?: React.ComponentType<TaskRunChatPaneProps>;
   PersistentWebView?: React.ComponentType<PersistentWebViewProps>;
@@ -619,14 +621,14 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
     }
 
     case "gitDiff": {
-      const { task, selectedRun, TaskRunGitDiffPanel } = props;
-      if (!TaskRunGitDiffPanel) return null;
+      const { task, selectedRun, teamSlugOrId, TaskRunGitDiffPanel } = props;
+      if (!TaskRunGitDiffPanel || !teamSlugOrId) return null;
 
       return panelWrapper(
         <GitCompare className="size-3" aria-hidden />,
         PANEL_LABELS.gitDiff,
         <div className="relative flex-1 min-h-0 overflow-auto">
-          <TaskRunGitDiffPanel key={selectedRun?._id} task={task} selectedRun={selectedRun} />
+          <TaskRunGitDiffPanel key={selectedRun?._id} task={task} selectedRun={selectedRun} teamSlugOrId={teamSlugOrId} />
         </div>
       );
     }
@@ -681,7 +683,8 @@ export const RenderPanel = React.memo(RenderPanelComponent, (prevProps, nextProp
   // For gitDiff panel, check task and selectedRun changes
   if (prevProps.type === "gitDiff") {
     if (prevProps.task?._id !== nextProps.task?._id ||
-      prevProps.selectedRun?._id !== nextProps.selectedRun?._id) {
+      prevProps.selectedRun?._id !== nextProps.selectedRun?._id ||
+      prevProps.teamSlugOrId !== nextProps.teamSlugOrId) {
       return false;
     }
   }
