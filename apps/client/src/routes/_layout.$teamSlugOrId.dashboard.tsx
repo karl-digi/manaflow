@@ -122,6 +122,8 @@ function DashboardComponent() {
     const stored = localStorage.getItem("isCloudMode");
     return stored ? JSON.parse(stored) : true;
   });
+  const [isStartingTask, setIsStartingTask] = useState(false);
+  const isStartingTaskRef = useRef(false);
 
   const [, setDockerReady] = useState<boolean | null>(null);
   const [providerStatus, setProviderStatus] =
@@ -391,53 +393,60 @@ function DashboardComponent() {
   }, [selectedBranch, branchNames, remoteDefaultBranch]);
 
   const handleStartTask = useCallback(async () => {
-    // For local mode, perform a fresh docker check right before starting
-    if (!isEnvSelected && !isCloudMode) {
-      // Always check Docker status when in local mode, regardless of current state
-      if (socket) {
-        const ready = await new Promise<boolean>((resolve) => {
-          socket.emit("check-provider-status", (response) => {
-            const isRunning = !!response?.dockerStatus?.isRunning;
-            if (typeof isRunning === "boolean") {
-              setDockerReady(isRunning);
-            }
-            resolve(isRunning);
-          });
-        });
-
-        // Only show the alert if Docker is actually not running after checking
-        if (!ready) {
-          toast.error("Docker is not running. Start Docker Desktop.");
-          return;
-        }
-      } else {
-        // If socket is not connected, we can't verify Docker status
-        console.error("Cannot verify Docker status: socket not connected");
-        toast.error(
-          "Cannot verify Docker status. Please ensure the server is running."
-        );
-        return;
-      }
-    }
-
-    if (!selectedProject[0] || !taskDescription.trim()) {
-      console.error("Please select a project and enter a task description");
-      return;
-    }
-    if (!socket) {
-      console.error("Socket not connected");
+    if (isStartingTaskRef.current) {
       return;
     }
 
-    // Use the effective selected branch (respects available branches and sensible defaults)
-    const branch = effectiveSelectedBranch[0];
-    const projectFullName = selectedProject[0];
-    const envSelected = projectFullName.startsWith("env:");
-    const environmentId = envSelected
-      ? (projectFullName.replace(/^env:/, "") as Id<"environments">)
-      : undefined;
+    isStartingTaskRef.current = true;
+    setIsStartingTask(true);
 
     try {
+      // For local mode, perform a fresh docker check right before starting
+      if (!isEnvSelected && !isCloudMode) {
+        // Always check Docker status when in local mode, regardless of current state
+        if (socket) {
+          const ready = await new Promise<boolean>((resolve) => {
+            socket.emit("check-provider-status", (response) => {
+              const isRunning = !!response?.dockerStatus?.isRunning;
+              if (typeof isRunning === "boolean") {
+                setDockerReady(isRunning);
+              }
+              resolve(isRunning);
+            });
+          });
+
+          // Only show the alert if Docker is actually not running after checking
+          if (!ready) {
+            toast.error("Docker is not running. Start Docker Desktop.");
+            return;
+          }
+        } else {
+          // If socket is not connected, we can't verify Docker status
+          console.error("Cannot verify Docker status: socket not connected");
+          toast.error(
+            "Cannot verify Docker status. Please ensure the server is running."
+          );
+          return;
+        }
+      }
+
+      if (!selectedProject[0] || !taskDescription.trim()) {
+        console.error("Please select a project and enter a task description");
+        return;
+      }
+      if (!socket) {
+        console.error("Socket not connected");
+        return;
+      }
+
+      // Use the effective selected branch (respects available branches and sensible defaults)
+      const branch = effectiveSelectedBranch[0];
+      const projectFullName = selectedProject[0];
+      const envSelected = projectFullName.startsWith("env:");
+      const environmentId = envSelected
+        ? (projectFullName.replace(/^env:/, "") as Id<"environments">)
+        : undefined;
+
       // Extract content including images from the editor
       const content = editorApiRef.current?.getContent();
       const images = content?.images || [];
@@ -544,6 +553,9 @@ function DashboardComponent() {
       console.log("Task created:", taskId);
     } catch (error) {
       console.error("Error starting task:", error);
+    } finally {
+      isStartingTaskRef.current = false;
+      setIsStartingTask(false);
     }
   }, [
     selectedProject,
@@ -868,10 +880,13 @@ function DashboardComponent() {
 
   // Handle Command+Enter keyboard shortcut
   const handleSubmit = useCallback(() => {
+    if (isStartingTask) {
+      return;
+    }
     if (selectedProject[0] && taskDescription.trim()) {
       void handleStartTask();
     }
-  }, [selectedProject, taskDescription, handleStartTask]);
+  }, [selectedProject, taskDescription, handleStartTask, isStartingTask]);
 
   // Memoized computed values for editor props
   const lexicalEnvironmentId = useMemo(() => {
@@ -943,6 +958,7 @@ function DashboardComponent() {
               providerStatus={providerStatus}
               canSubmit={canSubmit}
               onStartTask={handleStartTask}
+              isStartingTask={isStartingTask}
             />
             {shouldShowWorkspaceSetup ? (
               <WorkspaceSetupPanel
@@ -1020,6 +1036,7 @@ type DashboardMainCardProps = {
   providerStatus: ProviderStatusResponse | null;
   canSubmit: boolean;
   onStartTask: () => void;
+  isStartingTask: boolean;
 };
 
 function DashboardMainCard({
@@ -1048,6 +1065,7 @@ function DashboardMainCard({
   providerStatus,
   canSubmit,
   onStartTask,
+  isStartingTask,
 }: DashboardMainCardProps) {
   return (
     <div className="relative bg-white dark:bg-neutral-700/50 border border-neutral-500/15 dark:border-neutral-500/15 rounded-2xl transition-all">
@@ -1085,6 +1103,7 @@ function DashboardMainCard({
         <DashboardStartTaskButton
           canSubmit={canSubmit}
           onStartTask={onStartTask}
+          isStartingTask={isStartingTask}
         />
       </DashboardInputFooter>
     </div>
