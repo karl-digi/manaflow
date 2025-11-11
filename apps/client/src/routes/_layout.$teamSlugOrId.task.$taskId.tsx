@@ -12,6 +12,7 @@ import {
 import clsx from "clsx";
 import { Suspense, useEffect } from "react";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
+import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { useQuery } from "convex/react";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId")({
@@ -68,6 +69,7 @@ function TaskDetailPage() {
     taskId,
   });
   const clipboard = useClipboard({ timeout: 2000 });
+  const { addTaskToExpand } = useExpandTasks();
 
   // Get the deepest matched child to extract runId if present
   const childMatches = useChildMatches();
@@ -78,6 +80,18 @@ function TaskDetailPage() {
   const activeRunId = deepestMatchParams?.taskRunId as string | undefined;
 
   const navigate = useNavigate();
+
+  // Focus and expand task in sidebar on mount
+  useEffect(() => {
+    addTaskToExpand(taskId);
+    // Find and scroll the task link into view if it exists
+    const taskLink = document.querySelector(
+      `a[href*="/task/${taskId}"]`
+    ) as HTMLAnchorElement | null;
+    if (taskLink) {
+      taskLink.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }, [taskId, addTaskToExpand]);
 
   // Flatten the task runs tree structure for tab display
   const flattenRuns = (
