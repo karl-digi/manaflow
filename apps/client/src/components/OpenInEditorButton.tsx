@@ -91,8 +91,8 @@ export function OpenInEditorButton({ workspacePath }: OpenInEditorButtonProps) {
           editor: selectedEditor,
           path: workspacePath,
         },
-        (response) => {
-          if (!response.success) {
+        (response?: { success?: boolean; error?: string }) => {
+          if (response && response.success === false) {
             console.error("Failed to open editor:", response.error);
           }
         }

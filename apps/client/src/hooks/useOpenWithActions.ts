@@ -91,8 +91,10 @@ export function useOpenWithActions({
                 | "xcode",
               path: worktreePath,
             },
-            (response) => {
-              if (response.success) {
+            (response?: { success?: boolean; error?: string }) => {
+              if (!response || typeof response.success === "undefined") {
+                resolve();
+              } else if (response.success) {
                 resolve();
               } else {
                 reject(new Error(response.error || "Failed to open editor"));
