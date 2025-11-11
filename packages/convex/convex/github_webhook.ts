@@ -499,6 +499,30 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
             payload: prPayload,
           });
 
+          // Handle PR merge events: update TaskRun and Task with merged status
+          // Only process merge events, ignore close/open events
+          if (
+            prPayload.action === "closed" &&
+            prPayload.pull_request?.merged === true
+          ) {
+            const prNumber = Number(prPayload.pull_request?.number ?? 0);
+            const prUrl = String(prPayload.pull_request?.html_url ?? "");
+            const prTitle = prPayload.pull_request?.title;
+
+            if (prNumber && prUrl) {
+              await _ctx.runMutation(
+                internal.github_prs.handlePullRequestMergeFromWebhook,
+                {
+                  teamId,
+                  repoFullName,
+                  prNumber,
+                  prUrl,
+                  prTitle,
+                }
+              );
+            }
+          }
+
           // Add eyes emoji reaction when a new PR is opened
           if (
             FEATURE_FLAGS.githubEyesReactionOnPrOpen &&

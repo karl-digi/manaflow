@@ -445,3 +445,127 @@ export const upsertFromServer = authMutation({
     return await upsertCore(ctx, { teamId, installationId, repoFullName, number, record });
   },
 });
+
+/**
+ * Handles PR merge events from GitHub webhook.
+ * Finds associated TaskRun(s) by matching PR URL or branch,
+ * and updates both the TaskRun and Task with merged status.
+ *
+ * Handles both cases:
+ * - Single PR: TaskRun has a single pullRequestUrl
+ * - Multiple PRs: TaskRun has pullRequests array with multiple repos
+ */
+export const handlePullRequestMergeFromWebhook = internalMutation({
+  args: {
+    teamId: v.string(),
+    repoFullName: v.string(),
+    prNumber: v.number(),
+    prUrl: v.string(),
+    prTitle: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const { teamId, repoFullName, prNumber, prUrl, prTitle } = args;
+
+    // Find all TaskRuns that match this PR
+    // Check both single PR case (pullRequestUrl) and multi-PR case (pullRequests array)
+    const taskRuns = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_team_user", (q) => q.eq("teamId", teamId))
+      .collect();
+
+    const matchingRuns: typeof taskRuns = [];
+
+    for (const run of taskRuns) {
+      let isMatch = false;
+
+      // Case 1: Single PR - match by URL
+      if (run.pullRequestUrl === prUrl) {
+        isMatch = true;
+      }
+
+      // Case 2: Multiple PRs - match by repo and PR number in pullRequests array
+      if (run.pullRequests && run.pullRequests.length > 0) {
+        const prInArray = run.pullRequests.find(
+          (pr) => pr.repoFullName === repoFullName && pr.number === prNumber
+        );
+        if (prInArray) {
+          isMatch = true;
+        }
+      }
+
+      if (isMatch) {
+        matchingRuns.push(run);
+      }
+    }
+
+    // Update each matching TaskRun and its associated Task
+    for (const run of matchingRuns) {
+      try {
+        const task = await ctx.db.get(run.taskId);
+        if (!task) {
+          console.warn(
+            "[handlePullRequestMergeFromWebhook] Task not found for TaskRun",
+            {
+              teamId,
+              taskRunId: run._id,
+              taskId: run.taskId,
+            }
+          );
+          continue;
+        }
+
+        // Update TaskRun: mark the specific PR as merged in pullRequests array
+        if (run.pullRequests && run.pullRequests.length > 0) {
+          const updatedPullRequests = run.pullRequests.map((pr) => ({
+            ...pr,
+            state:
+              pr.repoFullName === repoFullName && pr.number === prNumber
+                ? ("merged" as const)
+                : pr.state,
+          }));
+
+          // Check if all PRs are now merged
+          const allMerged = updatedPullRequests.every((pr) => pr.state === "merged");
+
+          await ctx.db.patch(run._id, {
+            pullRequests: updatedPullRequests,
+            pullRequestState: allMerged ? "merged" : "open", // "open" if not all merged yet
+            updatedAt: Date.now(),
+          });
+
+          // Update Task's merge status only if all PRs are merged
+          if (allMerged) {
+            await ctx.db.patch(task._id, {
+              mergeStatus: "pr_merged",
+              updatedAt: Date.now(),
+            });
+          }
+        } else if (run.pullRequestUrl === prUrl) {
+          // Single PR case
+          await ctx.db.patch(run._id, {
+            pullRequestState: "merged",
+            pullRequestUrl: prUrl,
+            updatedAt: Date.now(),
+          });
+
+          await ctx.db.patch(task._id, {
+            mergeStatus: "pr_merged",
+            updatedAt: Date.now(),
+          });
+        }
+      } catch (error) {
+        console.error(
+          "[handlePullRequestMergeFromWebhook] Error updating TaskRun and Task",
+          {
+            error,
+            teamId,
+            taskRunId: run._id,
+            taskId: run.taskId,
+            repoFullName,
+            prNumber,
+          }
+        );
+      }
+    }
+  },
+});
