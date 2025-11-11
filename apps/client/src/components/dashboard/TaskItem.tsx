@@ -190,11 +190,11 @@ export const TaskItem = memo(function TaskItem({
         <ContextMenu.Trigger>
           <div
             className={clsx(
-              "relative grid w-full items-center py-2 pr-3 cursor-default select-none",
+              "relative grid w-full items-center py-2 pr-3 cursor-default select-none group",
               "grid-cols-[24px_36px_1fr_120px_58px]",
               isOptimisticUpdate
                 ? "bg-white/50 dark:bg-neutral-900/30 animate-pulse"
-                : "bg-white dark:bg-neutral-900/50 hover:bg-neutral-50/90 dark:hover:bg-neutral-600/60",
+                : "bg-white dark:bg-neutral-900/50 group-hover:bg-neutral-50/90 dark:group-hover:bg-neutral-600/60",
               isRenaming && "pr-2"
             )}
             onClick={handleClick}
@@ -360,7 +360,7 @@ export const TaskItem = memo(function TaskItem({
           </ContextMenu.Positioner>
         </ContextMenu.Portal>
       </ContextMenu.Root>
-      <div className="right-2 top-0 bottom-0 absolute py-2">
+      <div className="right-2 top-0 bottom-0 absolute py-2 group">
         <div className="flex gap-1">
           {/* Copy button */}
           <Tooltip>
@@ -372,7 +372,7 @@ export const TaskItem = memo(function TaskItem({
                   "bg-neutral-100 dark:bg-neutral-700",
                   "text-neutral-600 dark:text-neutral-400",
                   "hover:bg-neutral-200 dark:hover:bg-neutral-600",
-                  "group-hover:opacity-100 opacity-0"
+                  "group-hover:opacity-100 opacity-0 transition-opacity"
                 )}
                 title="Copy task description"
               >
@@ -393,7 +393,7 @@ export const TaskItem = memo(function TaskItem({
             vscodeUrl={vscodeUrl}
             worktreePath={runWithVSCode?.worktreePath || task.worktreePath}
             branch={task.baseBranch}
-            className="group-hover:opacity-100 aria-expanded:opacity-100 opacity-0"
+            className="group-hover:opacity-100 aria-expanded:opacity-100 opacity-0 transition-opacity"
           />
 
           {/* Keep-alive button */}
@@ -409,7 +409,7 @@ export const TaskItem = memo(function TaskItem({
                       ? "text-blue-600 dark:text-blue-400"
                       : "text-neutral-600 dark:text-neutral-400",
                     "hover:bg-neutral-200 dark:hover:bg-neutral-600",
-                    "group-hover:opacity-100 opacity-0",
+                    "group-hover:opacity-100 opacity-0 transition-opacity",
                     "hidden" // TODO: show this button
                   )}
                 >
@@ -435,7 +435,7 @@ export const TaskItem = memo(function TaskItem({
                     "bg-neutral-100 dark:bg-neutral-700",
                     "text-neutral-600 dark:text-neutral-400",
                     "hover:bg-neutral-200 dark:hover:bg-neutral-600",
-                    "group-hover:opacity-100 opacity-0"
+                    "group-hover:opacity-100 opacity-0 transition-opacity"
                   )}
                   title="Unarchive task"
                 >
@@ -449,7 +449,7 @@ export const TaskItem = memo(function TaskItem({
                     "bg-neutral-100 dark:bg-neutral-700",
                     "text-neutral-600 dark:text-neutral-400",
                     "hover:bg-neutral-200 dark:hover:bg-neutral-600",
-                    "group-hover:opacity-100 opacity-0"
+                    "group-hover:opacity-100 opacity-0 transition-opacity"
                   )}
                   title="Archive task"
                 >
