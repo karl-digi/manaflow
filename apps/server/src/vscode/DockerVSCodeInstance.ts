@@ -84,6 +84,27 @@ export class DockerVSCodeInstance extends VSCodeInstance {
     VSCodeInstance.getInstances().set(this.instanceId, this);
   }
 
+  /**
+   * Get the path where the workspace should be mounted inside the container.
+   * Local workspaces mount at /root/workspace.
+   * Local tasks mirror the host path structure.
+   */
+  private getContainerWorkspacePath(): string {
+    if (this.config.isLocalWorkspace) {
+      return "/root/workspace";
+    }
+    // For local tasks, mirror the host path
+    return this.config.workspacePath || "/root/workspace";
+  }
+
+  /**
+   * Override to use the container workspace path instead of hardcoded /root/workspace
+   */
+  protected getWorkspaceUrl(baseUrl: string): string {
+    const containerPath = this.getContainerWorkspacePath();
+    return `${baseUrl}/?folder=${encodeURIComponent(containerPath)}`;
+  }
+
   private async ensureImageExists(docker: Docker): Promise<void> {
     try {
       // Check if image exists locally
@@ -305,6 +326,8 @@ export class DockerVSCodeInstance extends VSCodeInstance {
 
     // Add volume mount if workspace path is provided
     if (this.config.workspacePath) {
+      const containerWorkspacePath = this.getContainerWorkspacePath();
+
       // Extract the origin path from the workspace path
       // Workspace path is like: ~/cmux/<repoName>/worktrees/<branchName>
       // Origin path is: ~/cmux/<repoName>/origin
@@ -328,7 +351,7 @@ export class DockerVSCodeInstance extends VSCodeInstance {
         if (!createOptions.HostConfig?.Binds) {
           createOptions.HostConfig!.Binds = binds;
         }
-        binds.push(`${this.config.workspacePath}:/root/workspace`);
+        binds.push(`${this.config.workspacePath}:${containerWorkspacePath}`);
         // Mount the origin directory at the same absolute path to preserve git references
         binds.push(`${originPath}:${originPath}:rw`); // Read-write mount for git operations
 
@@ -387,7 +410,7 @@ export class DockerVSCodeInstance extends VSCodeInstance {
         if (!createOptions.HostConfig?.Binds) {
           createOptions.HostConfig!.Binds = binds;
         }
-        binds.push(`${this.config.workspacePath}:/root/workspace`);
+        binds.push(`${this.config.workspacePath}:${containerWorkspacePath}`);
 
         // Mount SSH directory for git authentication
         const sshDir = path.join(homeDir, ".ssh");

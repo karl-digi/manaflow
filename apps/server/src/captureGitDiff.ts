@@ -22,10 +22,12 @@ export async function captureGitDiff(
       `[AgentSpawner] Collecting relevant git diff for ${worktreePath}`
     );
 
+    // Use worktreePath as the initial path for local tasks
+    // For cloud/Morph instances, worktreePath will be /root/workspace
     const repoCwd = await resolveWorkerRepoPath({
       workerSocket,
-      initialCwd: "/root/workspace",
-      fallbackCwd: "/root/workspace",
+      initialCwd: worktreePath,
+      fallbackCwd: worktreePath,
     });
     serverLogger.info(`[AgentSpawner] Running diff script from ${repoCwd}`);
 

@@ -418,6 +418,9 @@ export async function spawnAgent(
         taskId,
         theme: options.theme,
         teamSlugOrId,
+        // Local tasks should NOT use isLocalWorkspace flag
+        // This is only for local workspaces created via create-local-workspace
+        isLocalWorkspace: false,
       });
     }
 
@@ -660,6 +663,11 @@ export async function spawnAgent(
           `${unsetCommand}exec ${commandString}`,
         ];
 
+    // Determine the working directory based on whether this is cloud mode or local
+    // For cloud mode, always use /root/workspace
+    // For local mode (Docker), use the worktree path (which mirrors host structure)
+    const workingDirectory = options.isCloudMode ? "/root/workspace" : worktreePath;
+
     const terminalCreationCommand: WorkerCreateTerminal = {
       terminalId: tmuxSessionName,
       command: "tmux",
@@ -676,7 +684,7 @@ export async function spawnAgent(
       agentModel: agent.name,
       authFiles,
       startupCommands,
-      cwd: "/root/workspace",
+      cwd: workingDirectory,
     };
 
     const switchBranch = async () => {
@@ -696,7 +704,7 @@ exit $EXIT_CODE
         workerSocket,
         command: "bash",
         args: ["-lc", command],
-        cwd: "/root/workspace",
+        cwd: workingDirectory,
         env: {
           CMUX_BRANCH_NAME: newBranch,
         },

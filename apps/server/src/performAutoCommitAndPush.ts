@@ -19,7 +19,8 @@ export default async function performAutoCommitAndPush(
   taskRunId: Id<"taskRuns">,
   taskDescription: string,
   teamSlugOrId: string,
-  precollectedDiff: string
+  precollectedDiff: string,
+  worktreePath: string = "/root/workspace"
 ): Promise<void> {
   try {
     serverLogger.info(`[AgentSpawner] Starting auto-commit for ${agent.name}`);
@@ -109,7 +110,7 @@ exit $EXIT_CODE
         workerSocket,
         command: "bash",
         args: ["-c", combinedCommand],
-        cwd: "/root/workspace",
+        cwd: worktreePath,
         env: {
           CMUX_COMMIT_MESSAGE: commitMessage,
           CMUX_BRANCH_NAME: branchName,
@@ -224,7 +225,7 @@ ${taskRun.crownReason || "This implementation was selected as the best solution.
               workerSocket,
               command: "/bin/bash",
               args: ["-c", prScript],
-              cwd: "/root/workspace",
+              cwd: worktreePath,
               env: {},
               timeout: 30000,
             });

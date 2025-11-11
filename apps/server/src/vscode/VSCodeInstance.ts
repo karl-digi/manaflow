@@ -19,6 +19,9 @@ export interface VSCodeInstanceConfig {
   environmentId?: Id<"environments"> | string;
   // Optional: JWT token for crown workflow authentication
   taskRunJwt?: string;
+  // Optional: flag to indicate if this is a local workspace (vs a local task)
+  // Local workspaces mount at /root/workspace, local tasks mirror host path
+  isLocalWorkspace?: boolean;
 }
 
 export interface VSCodeInstanceInfo {
