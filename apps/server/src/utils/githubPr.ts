@@ -15,6 +15,8 @@ export type PrDetail = {
   draft?: boolean;
   merged_at: string | null;
   node_id: string;
+  mergeable: boolean | null;
+  mergeable_state: string;
 };
 
 export function parseRepoFromUrl(url: string): {
@@ -76,6 +78,8 @@ export async function fetchPrDetail(
     draft: data.draft ?? undefined,
     merged_at: data.merged_at,
     node_id: data.node_id,
+    mergeable: data.mergeable,
+    mergeable_state: data.mergeable_state,
   };
 }
 
@@ -161,6 +165,27 @@ export async function reopenPr(
   });
 }
 
+export function validatePrMergeability(detail: PrDetail): void {
+  // Check if PR has merge conflicts or other blocking issues
+  // mergeable can be null if GitHub is still calculating, false if conflicts exist, true if mergeable
+  if (detail.mergeable === false) {
+    throw new Error("Pull request has merge conflicts that must be resolved before merging");
+  }
+
+  // mergeable_state provides more specific information about why a PR cannot be merged
+  // Common states: clean, dirty (conflicts), unstable (failing checks), blocked, behind, draft, unknown
+  if (detail.mergeable_state === "dirty") {
+    throw new Error("Pull request has merge conflicts that must be resolved before merging");
+  }
+
+  if (detail.mergeable_state === "blocked") {
+    throw new Error("Pull request is blocked by required status checks, reviews, or branch protection rules");
+  }
+
+  // Note: We allow "behind" state as it can still be merged if there are no conflicts
+  // GitHub will automatically merge or update as needed
+}
+
 export async function mergePr(
   token: string,
   owner: string,
@@ -175,6 +200,12 @@ export async function mergePr(
   message?: string;
   html_url?: string;
 }> {
+  // Fetch PR details to check mergeability before attempting merge
+  const prDetail = await fetchPrDetail(token, owner, repo, number);
+
+  // Validate that the PR can be merged (no conflicts, not blocked, etc.)
+  validatePrMergeability(prDetail);
+
   const octokit = getOctokit(token);
   const { data } = await octokit.rest.pulls.merge({
     owner,
