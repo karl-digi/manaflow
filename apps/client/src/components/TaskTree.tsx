@@ -676,6 +676,7 @@ function TaskTreeInner({
               activeOptions={{ exact: true }}
               className="group block"
               data-focus-visible={isTaskLinkFocusVisible ? "true" : undefined}
+              data-task-id={task._id}
               onMouseEnter={handlePrefetch}
               onFocus={handleTaskLinkFocus}
               onBlur={handleTaskLinkBlur}
@@ -1304,6 +1305,7 @@ function TaskRunTreeInner({
             })}
             className="group block"
             data-focus-visible={isRunLinkFocusVisible ? "true" : undefined}
+            data-taskrun-id={run._id}
             activeOptions={{ exact: false }}
             onFocus={handleRunLinkFocus}
             onBlur={handleRunLinkBlur}

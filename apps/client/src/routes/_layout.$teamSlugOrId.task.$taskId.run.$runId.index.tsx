@@ -21,6 +21,7 @@ import {
   useLocalVSCodeServeWebQuery,
 } from "@/queries/local-vscode-serve-web";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
+import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 
 export const Route = createFileRoute(
   "/_layout/$teamSlugOrId/task/$taskId/run/$runId/"
@@ -67,7 +68,8 @@ export const Route = createFileRoute(
 });
 
 function TaskRunComponent() {
-  const { taskRunId, teamSlugOrId } = Route.useParams();
+  const { taskRunId, taskId, teamSlugOrId } = Route.useParams();
+  const { addTaskToExpand } = useExpandTasks();
   const localServeWeb = useLocalVSCodeServeWebQuery();
   const taskRun = useSuspenseQuery(
     convexQuery(api.taskRuns.get, {
@@ -92,6 +94,25 @@ function TaskRunComponent() {
   useEffect(() => {
     setIframeStatus("loading");
   }, [workspaceUrl]);
+
+  // Expand task and taskrun in sidebar, then scroll into view
+  useEffect(() => {
+    // Expand the task
+    addTaskToExpand(taskId);
+
+    // Small delay to ensure DOM is updated with expanded state
+    const timeoutId = setTimeout(() => {
+      // Query for taskrun element and scroll it into view
+      const taskRunElement = document.querySelector(
+        `[data-taskrun-id="${taskRunId}"]`
+      );
+      if (taskRunElement) {
+        taskRunElement.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+    }, 100);
+
+    return () => clearTimeout(timeoutId);
+  }, [taskId, taskRunId, addTaskToExpand]);
 
   const onLoad = useCallback(() => {
     console.log(`Workspace view loaded for task run ${taskRunId}`);
