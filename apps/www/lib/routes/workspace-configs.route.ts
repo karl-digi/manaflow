@@ -64,31 +64,68 @@ workspaceConfigsRouter.openapi(
           },
         },
       },
-      401: { description: "Unauthorized" },
+      400: { description: "Bad request - invalid parameters" },
+      401: { description: "Unauthorized - authentication required" },
+      403: { description: "Forbidden - not a member of the team" },
+      503: { description: "Service unavailable - database or storage service down" },
     },
   }),
   async (c) => {
     const accessToken = await getAccessTokenFromRequest(c.req.raw);
-    if (!accessToken) return c.text("Unauthorized", 401);
+    if (!accessToken) {
+      throw new HTTPException(401, {
+        message: "Authentication required. Please sign in to access workspace configurations.",
+      });
+    }
 
     const query = c.req.valid("query");
 
-    await verifyTeamAccess({
-      req: c.req.raw,
-      teamSlugOrId: query.teamSlugOrId,
-    });
+    if (!query.projectFullName || query.projectFullName.trim() === "") {
+      throw new HTTPException(400, {
+        message: "Invalid request: projectFullName is required and cannot be empty.",
+      });
+    }
+
+    try {
+      await verifyTeamAccess({
+        req: c.req.raw,
+        teamSlugOrId: query.teamSlugOrId,
+      });
+    } catch (error) {
+      // verifyTeamAccess throws HTTPException with descriptive messages
+      throw error;
+    }
 
     const convex = getConvex({ accessToken });
-    const config = await convex.query(api.workspaceConfigs.get, {
-      teamSlugOrId: query.teamSlugOrId,
-      projectFullName: query.projectFullName,
-    });
+
+    let config;
+    try {
+      config = await convex.query(api.workspaceConfigs.get, {
+        teamSlugOrId: query.teamSlugOrId,
+        projectFullName: query.projectFullName,
+      });
+    } catch (error) {
+      console.error("[workspace-configs] Failed to query Convex:", error);
+      throw new HTTPException(503, {
+        message: "Database service temporarily unavailable. Please try again in a few moments.",
+        cause: error,
+      });
+    }
 
     if (!config) {
       return c.json(null);
     }
 
-    const envVarsContent = await loadEnvVarsContent(config.dataVaultKey);
+    let envVarsContent;
+    try {
+      envVarsContent = await loadEnvVarsContent(config.dataVaultKey);
+    } catch (error) {
+      console.error("[workspace-configs] Failed to load env vars from data vault:", error);
+      throw new HTTPException(503, {
+        message: "Failed to retrieve environment variables from secure storage. Please try again later.",
+        cause: error,
+      });
+    }
 
     return c.json({
       projectFullName: config.projectFullName,
@@ -124,30 +161,65 @@ workspaceConfigsRouter.openapi(
           },
         },
       },
-      400: { description: "Invalid request" },
-      401: { description: "Unauthorized" },
+      400: { description: "Bad request - invalid parameters" },
+      401: { description: "Unauthorized - authentication required" },
+      403: { description: "Forbidden - not a member of the team" },
+      503: { description: "Service unavailable - database or storage service down" },
     },
   }),
   async (c) => {
     const accessToken = await getAccessTokenFromRequest(c.req.raw);
-    if (!accessToken) return c.text("Unauthorized", 401);
+    if (!accessToken) {
+      throw new HTTPException(401, {
+        message: "Authentication required. Please sign in to save workspace configurations.",
+      });
+    }
 
     const body = c.req.valid("json");
 
-    await verifyTeamAccess({
-      req: c.req.raw,
-      teamSlugOrId: body.teamSlugOrId,
-    });
+    if (!body.projectFullName || body.projectFullName.trim() === "") {
+      throw new HTTPException(400, {
+        message: "Invalid request: projectFullName is required and cannot be empty.",
+      });
+    }
+
+    try {
+      await verifyTeamAccess({
+        req: c.req.raw,
+        teamSlugOrId: body.teamSlugOrId,
+      });
+    } catch (error) {
+      // verifyTeamAccess throws HTTPException with descriptive messages
+      throw error;
+    }
 
     const convex = getConvex({ accessToken });
-    const existing = await convex.query(api.workspaceConfigs.get, {
-      teamSlugOrId: body.teamSlugOrId,
-      projectFullName: body.projectFullName,
-    });
 
-    const store = await stackServerAppJs.getDataVaultStore(
-      "cmux-snapshot-envs",
-    );
+    let existing;
+    try {
+      existing = await convex.query(api.workspaceConfigs.get, {
+        teamSlugOrId: body.teamSlugOrId,
+        projectFullName: body.projectFullName,
+      });
+    } catch (error) {
+      console.error("[workspace-configs] Failed to query existing config from Convex:", error);
+      throw new HTTPException(503, {
+        message: "Database service temporarily unavailable. Please try again in a few moments.",
+        cause: error,
+      });
+    }
+
+    let store;
+    try {
+      store = await stackServerAppJs.getDataVaultStore("cmux-snapshot-envs");
+    } catch (error) {
+      console.error("[workspace-configs] Failed to initialize data vault store:", error);
+      throw new HTTPException(503, {
+        message: "Secure storage service temporarily unavailable. Please try again later.",
+        cause: error,
+      });
+    }
+
     const envVarsContent = body.envVarsContent ?? "";
     let dataVaultKey = existing?.dataVaultKey;
     if (!dataVaultKey) {
@@ -159,18 +231,27 @@ workspaceConfigsRouter.openapi(
         secret: env.STACK_DATA_VAULT_SECRET,
       });
     } catch (error) {
-      throw new HTTPException(500, {
-        message: "Failed to persist environment variables",
+      console.error("[workspace-configs] Failed to save env vars to data vault:", error);
+      throw new HTTPException(503, {
+        message: "Failed to persist environment variables to secure storage. Please verify your data vault configuration and try again.",
         cause: error,
       });
     }
 
-    await convex.mutation(api.workspaceConfigs.upsert, {
-      teamSlugOrId: body.teamSlugOrId,
-      projectFullName: body.projectFullName,
-      maintenanceScript: body.maintenanceScript,
-      dataVaultKey,
-    });
+    try {
+      await convex.mutation(api.workspaceConfigs.upsert, {
+        teamSlugOrId: body.teamSlugOrId,
+        projectFullName: body.projectFullName,
+        maintenanceScript: body.maintenanceScript,
+        dataVaultKey,
+      });
+    } catch (error) {
+      console.error("[workspace-configs] Failed to save config to Convex:", error);
+      throw new HTTPException(503, {
+        message: "Database service temporarily unavailable. Configuration may not have been saved. Please try again.",
+        cause: error,
+      });
+    }
 
     return c.json({
       projectFullName: body.projectFullName,

@@ -36,6 +36,18 @@ export function WorkspaceSetupPanel({
       },
     }),
     enabled: Boolean(projectFullName),
+    retry: (failureCount, error) => {
+      // Don't retry on auth errors (401, 403) or client errors (400-499)
+      if (error && typeof error === 'object' && 'status' in error) {
+        const status = (error as { status: number }).status;
+        if (status >= 400 && status < 500) {
+          return false;
+        }
+      }
+      // Retry network/server errors up to 2 times
+      return failureCount < 2;
+    },
+    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 5000),
   });
 
   const saveMutation = useRQMutation(postApiWorkspaceConfigsMutation());
@@ -218,13 +230,33 @@ export function WorkspaceSetupPanel({
     [updateEnvVars],
   );
 
-  if (configQuery.error) {
-    throw configQuery.error;
-  }
-
   if (!projectFullName) {
     return null;
   }
+
+  // Handle errors gracefully instead of throwing
+  const hasError = Boolean(configQuery.error);
+  const errorMessage = hasError
+    ? (() => {
+        const error = configQuery.error;
+        if (error && typeof error === 'object' && 'status' in error) {
+          const status = (error as { status: number }).status;
+          if (status === 401) {
+            return "Authentication required. Please sign in again.";
+          }
+          if (status === 403) {
+            return "You don't have permission to access this workspace configuration.";
+          }
+          if (status === 404) {
+            return "Workspace configuration not found.";
+          }
+          if (status >= 500) {
+            return "Server error. Please try again later.";
+          }
+        }
+        return "Unable to load workspace configuration. Please check your connection and try again.";
+      })()
+    : null;
 
   return (
     <div className={`mt-2 rounded-lg relative ${isExpanded ? "" : ""}`}>
@@ -287,7 +319,28 @@ export function WorkspaceSetupPanel({
               <span className="font-semibold">{projectFullName}</span>.
             </p>
 
-            {configQuery.isPending ? (
+            {hasError ? (
+              <div className="mt-3 rounded-md bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/50 px-3 py-2">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-red-600 dark:text-red-500 mt-0.5 flex-shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium text-red-900 dark:text-red-200">
+                      Failed to load configuration
+                    </p>
+                    <p className="mt-1 text-[11px] text-red-700 dark:text-red-300">
+                      {errorMessage}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => configQuery.refetch()}
+                      className="mt-2 text-[11px] font-medium text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 underline"
+                    >
+                      Try again
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : configQuery.isPending ? (
               <p className="mt-3 text-[11px] text-neutral-500 dark:text-neutral-400">
                 Loading saved configuration…
               </p>

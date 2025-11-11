@@ -5,7 +5,7 @@ import { authMutation, authQuery } from "./users/utils";
 const normalizeProjectFullName = (value: string): string => {
   const trimmed = value.trim();
   if (!trimmed) {
-    throw new Error("projectFullName is required");
+    throw new Error("Invalid input: projectFullName is required and cannot be empty. Please provide a valid project name in the format 'owner/repository'.");
   }
   return trimmed;
 };
@@ -27,24 +27,35 @@ export const get = authQuery({
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
-    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
-    const projectFullName = normalizeProjectFullName(args.projectFullName);
 
     if (!userId) {
-      throw new Error("Authentication required");
+      throw new Error("Authentication required. Please sign in to access workspace configurations.");
     }
 
-    const config = await ctx.db
-      .query("workspaceConfigs")
-      .withIndex("by_team_user_repo", (q) =>
-        q
-          .eq("teamId", teamId)
-          .eq("userId", userId)
-          .eq("projectFullName", projectFullName),
-      )
-      .first();
+    let teamId;
+    try {
+      teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    } catch (error) {
+      throw new Error(`Failed to resolve team: ${error instanceof Error ? error.message : 'Team not found or access denied'}`);
+    }
 
-    return config ?? null;
+    const projectFullName = normalizeProjectFullName(args.projectFullName);
+
+    try {
+      const config = await ctx.db
+        .query("workspaceConfigs")
+        .withIndex("by_team_user_repo", (q) =>
+          q
+            .eq("teamId", teamId)
+            .eq("userId", userId)
+            .eq("projectFullName", projectFullName),
+        )
+        .first();
+
+      return config ?? null;
+    } catch (error) {
+      throw new Error(`Failed to query workspace configuration: ${error instanceof Error ? error.message : 'Database query failed'}`);
+    }
   },
 });
 
@@ -57,46 +68,62 @@ export const upsert = authMutation({
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
-    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+
+    if (!userId) {
+      throw new Error("Authentication required. Please sign in to save workspace configurations.");
+    }
+
+    let teamId;
+    try {
+      teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    } catch (error) {
+      throw new Error(`Failed to resolve team: ${error instanceof Error ? error.message : 'Team not found or access denied'}`);
+    }
+
     const projectFullName = normalizeProjectFullName(args.projectFullName);
     const maintenanceScript = normalizeScript(args.maintenanceScript);
     const now = Date.now();
 
-    if (!userId) {
-      throw new Error("Authentication required");
-    }
-
     // Check for existing config
-    const existing = await ctx.db
-      .query("workspaceConfigs")
-      .withIndex("by_team_user_repo", (q) =>
-        q
-          .eq("teamId", teamId)
-          .eq("userId", userId)
-          .eq("projectFullName", projectFullName),
-      )
-      .first();
-
-    if (existing) {
-      await ctx.db.patch(existing._id, {
-        maintenanceScript,
-        dataVaultKey: args.dataVaultKey ?? existing.dataVaultKey,
-        updatedAt: now,
-      });
-      return existing._id;
+    let existing;
+    try {
+      existing = await ctx.db
+        .query("workspaceConfigs")
+        .withIndex("by_team_user_repo", (q) =>
+          q
+            .eq("teamId", teamId)
+            .eq("userId", userId)
+            .eq("projectFullName", projectFullName),
+        )
+        .first();
+    } catch (error) {
+      throw new Error(`Failed to query existing configuration: ${error instanceof Error ? error.message : 'Database query failed'}`);
     }
 
-    // No existing config, create new
-    const id = await ctx.db.insert("workspaceConfigs", {
-      projectFullName,
-      maintenanceScript,
-      dataVaultKey: args.dataVaultKey,
-      createdAt: now,
-      updatedAt: now,
-      userId,
-      teamId,
-    });
+    try {
+      if (existing) {
+        await ctx.db.patch(existing._id, {
+          maintenanceScript,
+          dataVaultKey: args.dataVaultKey ?? existing.dataVaultKey,
+          updatedAt: now,
+        });
+        return existing._id;
+      }
 
-    return id;
+      // No existing config, create new
+      const id = await ctx.db.insert("workspaceConfigs", {
+        projectFullName,
+        maintenanceScript,
+        dataVaultKey: args.dataVaultKey,
+        createdAt: now,
+        updatedAt: now,
+        userId,
+        teamId,
+      });
+
+      return id;
+    } catch (error) {
+      throw new Error(`Failed to save workspace configuration: ${error instanceof Error ? error.message : 'Database operation failed'}`);
+    }
   },
 });

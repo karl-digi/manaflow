@@ -2244,9 +2244,21 @@ export type GetApiWorkspaceConfigsData = {
 
 export type GetApiWorkspaceConfigsErrors = {
     /**
-     * Unauthorized
+     * Bad request - invalid parameters
+     */
+    400: unknown;
+    /**
+     * Unauthorized - authentication required
      */
     401: unknown;
+    /**
+     * Forbidden - not a member of the team
+     */
+    403: unknown;
+    /**
+     * Service unavailable - database or storage service down
+     */
+    503: unknown;
 };
 
 export type GetApiWorkspaceConfigsResponses = {
@@ -2267,13 +2279,21 @@ export type PostApiWorkspaceConfigsData = {
 
 export type PostApiWorkspaceConfigsErrors = {
     /**
-     * Invalid request
+     * Bad request - invalid parameters
      */
     400: unknown;
     /**
-     * Unauthorized
+     * Unauthorized - authentication required
      */
     401: unknown;
+    /**
+     * Forbidden - not a member of the team
+     */
+    403: unknown;
+    /**
+     * Service unavailable - database or storage service down
+     */
+    503: unknown;
 };
 
 export type PostApiWorkspaceConfigsResponses = {
