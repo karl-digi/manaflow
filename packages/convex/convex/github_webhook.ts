@@ -514,6 +514,20 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
               });
             }
           }
+
+          // Handle PR merge events
+          if (prPayload.action === "closed") {
+            const prNumber = Number(prPayload.pull_request?.number ?? 0);
+            const isMerged = Boolean(prPayload.pull_request?.merged);
+            if (prNumber) {
+              await _ctx.runMutation(internal.github_prs.handlePullRequestClosed, {
+                teamId,
+                repoFullName,
+                prNumber,
+                isMerged,
+              });
+            }
+          }
         } catch (err) {
           console.error("github_webhook pull_request handler failed", {
             err,

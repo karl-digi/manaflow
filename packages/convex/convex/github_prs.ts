@@ -445,3 +445,134 @@ export const upsertFromServer = authMutation({
     return await upsertCore(ctx, { teamId, installationId, repoFullName, number, record });
   },
 });
+
+/**
+ * Handle PR closed events from GitHub webhook.
+ * When a PR is merged, find all taskRuns that reference this PR
+ * and update their state and the corresponding task's mergeStatus.
+ */
+export const handlePullRequestClosed = internalMutation({
+  args: {
+    teamId: v.string(),
+    repoFullName: v.string(),
+    prNumber: v.number(),
+    isMerged: v.boolean(),
+  },
+  handler: async (ctx, { teamId, repoFullName, prNumber, isMerged }) => {
+    // Only process merge events, not just closed PRs
+    if (!isMerged) {
+      return { updated: 0, message: "PR closed but not merged, no updates needed" };
+    }
+
+    // Find all taskRuns that reference this PR
+    // We need to check both single PR fields and the pullRequests array
+    const allTaskRuns = await ctx.db
+      .query("taskRuns")
+      .filter((q) => q.eq(q.field("teamId"), teamId))
+      .collect();
+
+    const matchingTaskRuns = allTaskRuns.filter((run) => {
+      // Check single PR fields (legacy)
+      if (
+        run.pullRequestNumber === prNumber &&
+        run.pullRequestUrl?.includes(repoFullName)
+      ) {
+        return true;
+      }
+
+      // Check pullRequests array (multi-repo support)
+      if (run.pullRequests) {
+        return run.pullRequests.some(
+          (pr) => pr.repoFullName === repoFullName && pr.number === prNumber
+        );
+      }
+
+      return false;
+    });
+
+    let updatedCount = 0;
+    const updatedTaskIds = new Set<string>();
+
+    for (const run of matchingTaskRuns) {
+      // Update the taskRun's PR state
+      const updates: Record<string, unknown> = {
+        updatedAt: Date.now(),
+      };
+
+      // Update single PR fields if they match
+      if (
+        run.pullRequestNumber === prNumber &&
+        run.pullRequestUrl?.includes(repoFullName)
+      ) {
+        updates.pullRequestState = "merged";
+        updates.pullRequestIsDraft = false;
+      }
+
+      // Update pullRequests array if it exists
+      if (run.pullRequests) {
+        updates.pullRequests = run.pullRequests.map((pr) =>
+          pr.repoFullName === repoFullName && pr.number === prNumber
+            ? { ...pr, state: "merged" as const, isDraft: false }
+            : pr
+        );
+
+        // Aggregate the state across all PRs
+        const { aggregatePullRequestState } = await import("@cmux/shared/pull-request-state");
+        const aggregate = aggregatePullRequestState(
+          updates.pullRequests as Array<{
+            repoFullName: string;
+            url?: string;
+            number?: number;
+            state: "none" | "draft" | "open" | "merged" | "closed" | "unknown";
+            isDraft?: boolean;
+          }>
+        );
+
+        updates.pullRequestState = aggregate.state;
+        updates.pullRequestIsDraft = aggregate.isDraft;
+        if (aggregate.url !== undefined) {
+          updates.pullRequestUrl = aggregate.url;
+        }
+        if (aggregate.number !== undefined) {
+          updates.pullRequestNumber = aggregate.number;
+        }
+      }
+
+      await ctx.db.patch(run._id, updates);
+      updatedCount++;
+
+      // Track which tasks need updating
+      updatedTaskIds.add(run.taskId);
+    }
+
+    // Update the mergeStatus of corresponding tasks
+    // Only update to pr_merged if ALL PRs in the taskRun are merged
+    for (const taskId of updatedTaskIds) {
+      const task = await ctx.db.get(taskId as any);
+      if (!task) continue;
+
+      // Get the taskRun to check its aggregated state
+      const taskRun = matchingTaskRuns.find((r) => r.taskId === taskId);
+      if (!taskRun) continue;
+
+      // Only update task to pr_merged if the aggregated state is "merged"
+      // This means ALL PRs are merged (for multi-repo tasks)
+      const shouldUpdateToMerged = taskRun.pullRequests
+        ? taskRun.pullRequests.every((pr) => pr.state === "merged")
+        : taskRun.pullRequestState === "merged";
+
+      if (shouldUpdateToMerged) {
+        await ctx.db.patch(taskId as any, {
+          mergeStatus: "pr_merged",
+          updatedAt: Date.now(),
+        });
+      }
+    }
+
+    return {
+      updated: updatedCount,
+      tasks: updatedTaskIds.size,
+      message: `Updated ${updatedCount} taskRun(s) and ${updatedTaskIds.size} task(s)`,
+    };
+  },
+});
