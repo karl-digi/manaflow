@@ -178,6 +178,36 @@ exit $EXIT_CODE
               serverLogger.error(`[AgentSpawner] Failed to save PR title:`, e);
             }
           }
+          // Fetch screenshots for this run
+          let screenshotSection = "";
+          try {
+            const diffContext = await getConvex().query(api.taskRuns.getRunDiffContext, {
+              teamSlugOrId,
+              taskId: task._id,
+              runId: taskRun._id,
+            });
+
+            if (diffContext.screenshotSets && diffContext.screenshotSets.length > 0) {
+              const screenshotUrls: string[] = [];
+              for (const set of diffContext.screenshotSets) {
+                for (const img of set.images) {
+                  if (img.url) {
+                    screenshotUrls.push(img.url);
+                  }
+                }
+              }
+
+              if (screenshotUrls.length > 0) {
+                screenshotSection = "\n\n### Screenshots\n\n";
+                for (const url of screenshotUrls) {
+                  screenshotSection += `![Screenshot](${url})\n\n`;
+                }
+              }
+            }
+          } catch (e) {
+            serverLogger.error(`[AgentSpawner] Failed to fetch screenshots for PR:`, e);
+          }
+
           const prBody = `## 🏆 Crown Winner: ${agent.name}
 
 ### Task Description
@@ -192,7 +222,7 @@ ${taskRun.crownReason || "This implementation was selected as the best solution.
 - **Task ID**: ${task._id}
 - **Run ID**: ${taskRun._id}
 - **Branch**: ${branchName}
-- **Completed**: ${new Date(taskRun.completedAt || Date.now()).toISOString()}`;
+- **Completed**: ${new Date(taskRun.completedAt || Date.now()).toISOString()}${screenshotSection}`;
 
           // Persist PR description on the task in Convex
           try {
