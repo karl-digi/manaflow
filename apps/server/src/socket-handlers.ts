@@ -1309,6 +1309,7 @@ export function setupSocketHandlers(
             id: taskRunId,
             vscode: {
               provider: "morph",
+              instanceId: sandboxId,
               status: "running",
               url: vscodeBaseUrl,
               workspaceUrl,

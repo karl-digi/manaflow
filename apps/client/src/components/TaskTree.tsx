@@ -821,6 +821,9 @@ function TaskTreeInner({
           <TaskRunsContent
             taskId={task._id}
             teamSlugOrId={teamSlugOrId}
+            projectFullName={task.projectFullName}
+            baseBranch={task.baseBranch}
+            isCloudWorkspace={task.isCloudWorkspace}
             level={level}
             runs={taskRuns}
             isLoading={runsLoading}
@@ -837,6 +840,9 @@ function TaskTreeInner({
 interface TaskRunsContentProps {
   taskId: Id<"tasks">;
   teamSlugOrId: string;
+  projectFullName?: string | null;
+  baseBranch?: string | null;
+  isCloudWorkspace?: boolean;
   level: number;
   runs: TaskRunWithChildren[] | undefined;
   isLoading: boolean;
@@ -848,6 +854,9 @@ interface TaskRunsContentProps {
 function TaskRunsContent({
   taskId,
   teamSlugOrId,
+  projectFullName,
+  baseBranch,
+  isCloudWorkspace,
   level,
   runs,
   isLoading,
@@ -951,6 +960,9 @@ function TaskRunsContent({
           }
           onArchiveToggle={onArchiveToggle}
           showRunNumbers={showRunNumbers}
+          projectFullName={projectFullName}
+          baseBranch={baseBranch}
+          isCloudWorkspace={isCloudWorkspace}
         />
       ))}
     </div>
@@ -996,6 +1008,10 @@ interface TaskRunTreeProps {
   isDefaultSelected?: boolean;
   onArchiveToggle: (runId: Id<"taskRuns">, archive: boolean) => void;
   showRunNumbers: boolean;
+  // Task data for cloud workspace rehydration
+  projectFullName?: string | null;
+  baseBranch?: string | null;
+  isCloudWorkspace?: boolean;
 }
 
 function TaskRunTreeInner({
@@ -1006,6 +1022,9 @@ function TaskRunTreeInner({
   isDefaultSelected = false,
   onArchiveToggle,
   showRunNumbers,
+  projectFullName,
+  baseBranch,
+  isCloudWorkspace,
 }: TaskRunTreeProps) {
   const location = useLocation();
   const { expandedRuns, setRunExpanded } = useTaskRunExpansionContext();
@@ -1245,6 +1264,9 @@ function TaskRunTreeInner({
     return run.networking.filter((service) => service.status === "running");
   }, [run.networking]);
 
+  // Construct repo URL from projectFullName if available
+  const repoUrl = projectFullName ? `https://github.com/${projectFullName}` : null;
+
   const {
     actions: openWithActions,
     executeOpenAction,
@@ -1256,6 +1278,10 @@ function TaskRunTreeInner({
     worktreePath: run.worktreePath,
     branch: run.newBranch,
     networking: run.networking,
+    instanceId: run.vscode?.instanceId,
+    repoUrl,
+    teamSlugOrId,
+    isCloudWorkspace: isCloudWorkspace ?? run.isCloudWorkspace,
   });
 
   const shouldRenderDiffLink = true;
@@ -1429,6 +1455,9 @@ function TaskRunTreeInner({
         environmentError={run.environmentError}
         onArchiveToggle={onArchiveToggle}
         showRunNumbers={showRunNumbers}
+        projectFullName={projectFullName}
+        baseBranch={baseBranch}
+        isCloudWorkspace={isCloudWorkspace}
       />
     </div>
   );
@@ -1498,6 +1527,9 @@ interface TaskRunDetailsProps {
   };
   onArchiveToggle: (runId: Id<"taskRuns">, archive: boolean) => void;
   showRunNumbers: boolean;
+  projectFullName?: string | null;
+  baseBranch?: string | null;
+  isCloudWorkspace?: boolean;
 }
 
 function TaskRunDetails({
@@ -1515,6 +1547,9 @@ function TaskRunDetails({
   environmentError,
   onArchiveToggle,
   showRunNumbers,
+  projectFullName,
+  baseBranch,
+  isCloudWorkspace,
 }: TaskRunDetailsProps) {
   if (!isExpanded) {
     return null;
@@ -1681,6 +1716,9 @@ function TaskRunDetails({
               teamSlugOrId={teamSlugOrId}
               onArchiveToggle={onArchiveToggle}
               showRunNumbers={showRunNumbers}
+              projectFullName={projectFullName}
+              baseBranch={baseBranch}
+              isCloudWorkspace={isCloudWorkspace}
             />
           ))}
         </div>

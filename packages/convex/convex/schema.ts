@@ -245,6 +245,7 @@ const convexSchema = defineSchema({
           v.literal("other")
         ), // Extensible for future providers
         containerName: v.optional(v.string()), // For Docker provider
+        instanceId: v.optional(v.string()), // For Morph/cloud providers
         status: v.union(
           v.literal("starting"),
           v.literal("running"),

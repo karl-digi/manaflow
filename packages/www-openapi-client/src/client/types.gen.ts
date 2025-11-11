@@ -497,6 +497,18 @@ export type UpdateSandboxEnvBody = {
     envVarsContent: string;
 };
 
+export type RehydrateSandboxResponse = {
+    success: boolean;
+};
+
+export type RehydrateSandboxBody = {
+    teamSlugOrId: string;
+    instanceId: string;
+    repoUrl?: string;
+    branch?: string;
+    depth?: number;
+};
+
 export type CreateTeamResponse = {
     /**
      * Stack team ID
@@ -2132,6 +2144,43 @@ export type PostApiSandboxesByIdPublishDevcontainerResponses = {
 };
 
 export type PostApiSandboxesByIdPublishDevcontainerResponse = PostApiSandboxesByIdPublishDevcontainerResponses[keyof PostApiSandboxesByIdPublishDevcontainerResponses];
+
+export type PostApiSandboxesByIdRehydrateData = {
+    body: RehydrateSandboxBody;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/sandboxes/{id}/rehydrate';
+};
+
+export type PostApiSandboxesByIdRehydrateErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Forbidden
+     */
+    403: unknown;
+    /**
+     * Sandbox not found
+     */
+    404: unknown;
+    /**
+     * Failed to re-hydrate workspace
+     */
+    500: unknown;
+};
+
+export type PostApiSandboxesByIdRehydrateResponses = {
+    /**
+     * Workspace re-hydrated successfully
+     */
+    200: RehydrateSandboxResponse;
+};
+
+export type PostApiSandboxesByIdRehydrateResponse = PostApiSandboxesByIdRehydrateResponses[keyof PostApiSandboxesByIdRehydrateResponses];
 
 export type PostApiTeamsData = {
     body: CreateTeamRequest;

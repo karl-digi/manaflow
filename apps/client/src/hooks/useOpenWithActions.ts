@@ -24,6 +24,11 @@ type UseOpenWithActionsArgs = {
   worktreePath?: string | null;
   branch?: string | null;
   networking?: NetworkingInfo;
+  // Cloud workspace rehydration info
+  instanceId?: string | null;
+  repoUrl?: string | null;
+  teamSlugOrId?: string;
+  isCloudWorkspace?: boolean;
 };
 
 export function useOpenWithActions({
@@ -31,6 +36,10 @@ export function useOpenWithActions({
   worktreePath,
   branch,
   networking,
+  instanceId,
+  repoUrl,
+  teamSlugOrId,
+  isCloudWorkspace,
 }: UseOpenWithActionsArgs) {
   const { socket, availableEditors } = useSocket();
   const localServeWeb = useLocalVSCodeServeWebQuery();
@@ -51,17 +60,38 @@ export function useOpenWithActions({
   }, [socket]);
 
   const handleOpenInEditor = useCallback(
-    (editor: EditorType): Promise<void> => {
+    async (editor: EditorType): Promise<void> => {
+      if (editor === "vscode-remote" && vscodeUrl) {
+        // For cloud workspaces, rehydrate before opening to ensure /root/workspace exists
+        if (isCloudWorkspace && instanceId && teamSlugOrId) {
+          try {
+            await fetch(`/api/sandboxes/${instanceId}/rehydrate`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                teamSlugOrId,
+                instanceId,
+                repoUrl: repoUrl ?? undefined,
+                branch: branch ?? undefined,
+              }),
+            });
+          } catch (error) {
+            console.error("Failed to rehydrate workspace:", error);
+            // Continue anyway - the workspace might already be hydrated
+          }
+        }
+
+        const normalizedUrl = rewriteLocalWorkspaceUrlIfNeeded(
+          vscodeUrl,
+          localServeWebOrigin,
+        );
+        const vscodeUrlWithWorkspace = `${normalizedUrl}?folder=/root/workspace`;
+        window.open(vscodeUrlWithWorkspace, "_blank", "noopener,noreferrer");
+        return;
+      }
+
       return new Promise((resolve, reject) => {
-        if (editor === "vscode-remote" && vscodeUrl) {
-          const normalizedUrl = rewriteLocalWorkspaceUrlIfNeeded(
-            vscodeUrl,
-            localServeWebOrigin,
-          );
-          const vscodeUrlWithWorkspace = `${normalizedUrl}?folder=/root/workspace`;
-          window.open(vscodeUrlWithWorkspace, "_blank", "noopener,noreferrer");
-          resolve();
-        } else if (
+        if (
           socket &&
           [
             "cursor",
@@ -104,7 +134,7 @@ export function useOpenWithActions({
         }
       });
     },
-    [socket, worktreePath, vscodeUrl, localServeWebOrigin]
+    [socket, worktreePath, vscodeUrl, localServeWebOrigin, isCloudWorkspace, instanceId, teamSlugOrId, repoUrl, branch]
   );
 
   const handleCopyBranch = useCallback(() => {

@@ -726,3 +726,122 @@ sandboxesRouter.openapi(
     }
   },
 );
+
+const RehydrateSandboxBody = z
+  .object({
+    teamSlugOrId: z.string(),
+    instanceId: z.string(),
+    repoUrl: z.string().optional(),
+    branch: z.string().optional(),
+    depth: z.number().optional().default(1),
+  })
+  .openapi("RehydrateSandboxBody");
+
+const RehydrateSandboxResponse = z
+  .object({
+    success: z.boolean(),
+  })
+  .openapi("RehydrateSandboxResponse");
+
+// Re-hydrate an existing sandbox workspace
+sandboxesRouter.openapi(
+  createRoute({
+    method: "post" as const,
+    path: "/sandboxes/{id}/rehydrate",
+    tags: ["Sandboxes"],
+    summary: "Re-hydrate a sandbox workspace (git pull to ensure /root/workspace exists)",
+    request: {
+      params: z.object({ id: z.string() }),
+      body: {
+        content: {
+          "application/json": {
+            schema: RehydrateSandboxBody,
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: RehydrateSandboxResponse,
+          },
+        },
+        description: "Workspace re-hydrated successfully",
+      },
+      401: { description: "Unauthorized" },
+      403: { description: "Forbidden" },
+      404: { description: "Sandbox not found" },
+      500: { description: "Failed to re-hydrate workspace" },
+    },
+  }),
+  async (c) => {
+    const accessToken = await getAccessTokenFromRequest(c.req.raw);
+    if (!accessToken) return c.text("Unauthorized", 401);
+
+    const { id } = c.req.valid("param");
+    const { teamSlugOrId, repoUrl, branch, depth } = c.req.valid("json");
+
+    try {
+      const team = await verifyTeamAccess({
+        req: c.req.raw,
+        teamSlugOrId,
+      });
+
+      const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
+      const instance = await client.instances
+        .get({ instanceId: id })
+        .catch((error) => {
+          console.error("[sandboxes.rehydrate] Failed to load instance", error);
+          return null;
+        });
+
+      if (!instance) {
+        return c.text("Sandbox not found", 404);
+      }
+
+      const metadataTeamId = (
+        instance as unknown as {
+          metadata?: { teamId?: string };
+        }
+      ).metadata?.teamId;
+
+      if (metadataTeamId && metadataTeamId !== team.uuid) {
+        return c.text("Forbidden", 403);
+      }
+
+      // Parse repo URL if provided
+      const parsedRepoUrl = repoUrl ? parseGithubRepoUrl(repoUrl) : null;
+
+      let repoConfig: HydrateRepoConfig | undefined;
+      if (parsedRepoUrl) {
+        repoConfig = {
+          owner: parsedRepoUrl.owner,
+          name: parsedRepoUrl.repo,
+          repoFull: parsedRepoUrl.fullName,
+          cloneUrl: parsedRepoUrl.gitUrl,
+          maskedCloneUrl: parsedRepoUrl.gitUrl,
+          depth: Math.max(1, Math.floor(depth ?? 1)),
+          baseBranch: branch || "main",
+          newBranch: "",
+        };
+      }
+
+      console.log(`[sandboxes.rehydrate] Re-hydrating workspace for instance ${id}`);
+
+      // Run the hydration script
+      await hydrateWorkspace({
+        instance,
+        repo: repoConfig,
+      });
+
+      console.log(`[sandboxes.rehydrate] Successfully re-hydrated workspace for instance ${id}`);
+
+      return c.json({ success: true });
+    } catch (error) {
+      console.error("[sandboxes.rehydrate] Failed to re-hydrate workspace:", error);
+      return c.text("Failed to re-hydrate workspace", 500);
+    }
+  },
+);
