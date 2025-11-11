@@ -265,7 +265,7 @@ export const TaskItem = memo(function TaskItem({
                 </span>
               )}
             </div>
-            <div className="text-[11px] text-neutral-400 dark:text-neutral-500 flex-shrink-0 text-right flex items-center justify-end gap-2">
+            <div className="text-[11px] text-neutral-400 dark:text-neutral-500 flex-shrink-0 text-right flex items-center justify-end gap-2 min-w-0 overflow-hidden">
               {task.environmentId && (
                 <EnvironmentName
                   environmentId={task.environmentId}
@@ -274,7 +274,7 @@ export const TaskItem = memo(function TaskItem({
               )}
               {(task.projectFullName ||
                 (task.baseBranch && task.baseBranch !== "main")) && (
-                <span>
+                <span className="truncate">
                   {task.projectFullName && (
                     <span>{task.projectFullName.split("/")[1]}</span>
                   )}
