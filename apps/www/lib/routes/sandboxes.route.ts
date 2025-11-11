@@ -44,8 +44,10 @@ const StartSandboxBody = z
     taskRunJwt: z.string().optional(),
     isCloudWorkspace: z.boolean().optional(),
     // Optional hydration parameters to clone a repo into the sandbox on start
+    projectFullName: z.string().optional(),
     repoUrl: z.string().optional(),
     branch: z.string().optional(),
+    prNumber: z.number().optional(),
     newBranch: z.string().optional(),
     depth: z.number().optional().default(1),
   })
@@ -323,6 +325,7 @@ sandboxesRouter.openapi(
           depth: Math.max(1, Math.floor(body.depth ?? 1)),
           baseBranch: body.branch || "main",
           newBranch: body.newBranch ?? "",
+          prNumber: body.prNumber,
         };
       }
 

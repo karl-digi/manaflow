@@ -660,6 +660,7 @@ export function setupSocketHandlers(
           projectFullName,
           repoUrl: explicitRepoUrl,
           branch: requestedBranch,
+          prNumber,
           taskId: providedTaskId,
           taskRunId: providedTaskRunId,
           workspaceName: providedWorkspaceName,
@@ -754,10 +755,13 @@ export function setupSocketHandlers(
             const descriptorBase = projectFullName
               ? `Local workspace ${workspaceName} (${projectFullName})`
               : `Local workspace ${workspaceName}`;
-            descriptor =
-              branch && branch.length > 0
-                ? `${descriptorBase} [${branch}]`
-                : descriptorBase;
+            if (prNumber) {
+              descriptor = `${descriptorBase} [PR #${prNumber}]`;
+            } else if (branch && branch.length > 0) {
+              descriptor = `${descriptorBase} [${branch}]`;
+            } else {
+              descriptor = descriptorBase;
+            }
           }
 
           const workspaceRoot = process.env.CMUX_WORKSPACE_DIR
@@ -952,7 +956,8 @@ export function setupSocketHandlers(
               await cleanupWorkspace();
             }
             const cloneArgs = ["clone"];
-            if (branch) {
+            if (branch && !prNumber) {
+              // Only use --branch if not checking out a PR
               cloneArgs.push("--branch", branch, "--single-branch");
             }
             cloneArgs.push(repoUrl, resolvedWorkspacePath);
@@ -969,6 +974,37 @@ export function setupSocketHandlers(
               throw new Error(
                 message ? `Git clone failed: ${message}` : "Git clone failed"
               );
+            }
+
+            // If prNumber is provided, use gh pr checkout
+            if (prNumber) {
+              try {
+                await execFileAsync(
+                  "gh",
+                  ["pr", "checkout", String(prNumber)],
+                  {
+                    cwd: resolvedWorkspacePath,
+                  }
+                );
+                serverLogger.info(
+                  `[create-local-workspace] Checked out PR #${prNumber} for ${projectFullName}`
+                );
+              } catch (error) {
+                if (cleanupWorkspace) {
+                  await cleanupWorkspace();
+                }
+                const execErr = isExecError(error) ? error : null;
+                const message =
+                  execErr?.stderr?.trim() ||
+                  (error instanceof Error
+                    ? error.message
+                    : "PR checkout failed");
+                throw new Error(
+                  message
+                    ? `Failed to checkout PR #${prNumber}: ${message}`
+                    : `Failed to checkout PR #${prNumber}`
+                );
+              }
             }
 
             try {
@@ -1128,6 +1164,8 @@ export function setupSocketHandlers(
           environmentId,
           projectFullName,
           repoUrl,
+          branch,
+          prNumber,
           taskId: providedTaskId,
         } = parsed.data;
         const teamSlugOrId = requestedTeamSlugOrId || safeTeam;
@@ -1206,7 +1244,7 @@ export function setupSocketHandlers(
               isCloudWorkspace: true,
               ...(environmentId
                 ? { environmentId }
-                : { projectFullName, repoUrl }),
+                : { projectFullName, repoUrl, branch, prNumber }),
             },
           });
 

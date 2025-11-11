@@ -14,6 +14,7 @@ interface HydrateConfig {
   depth: number;
   baseBranch?: string;
   newBranch?: string;
+  prNumber?: number;
 }
 
 function log(message: string, level: "info" | "error" | "debug" = "info") {
@@ -74,6 +75,9 @@ function getConfig(): HydrateConfig {
   const maskedCloneUrl = process.env.CMUX_MASKED_CLONE_URL;
   const baseBranch = process.env.CMUX_BASE_BRANCH;
   const newBranch = process.env.CMUX_NEW_BRANCH;
+  const prNumber = process.env.CMUX_PR_NUMBER
+    ? parseInt(process.env.CMUX_PR_NUMBER, 10)
+    : undefined;
 
   return {
     workspacePath,
@@ -85,6 +89,7 @@ function getConfig(): HydrateConfig {
     depth,
     baseBranch,
     newBranch,
+    prNumber,
   };
 }
 
@@ -166,6 +171,22 @@ function fetchUpdates(workspacePath: string) {
     log(`Fetch warning: ${stderr}`, "debug");
   } else {
     log("Fetched updates successfully");
+  }
+}
+
+function checkoutPR(workspacePath: string, prNumber: number) {
+  log(`Checking out PR #${prNumber} using gh cli`);
+
+  const { exitCode, stderr } = exec(
+    `gh pr checkout ${prNumber}`,
+    { cwd: workspacePath, throwOnError: false }
+  );
+
+  if (exitCode === 0) {
+    log(`Successfully checked out PR #${prNumber}`);
+  } else {
+    log(`Failed to checkout PR #${prNumber}: ${stderr}`, "error");
+    throw new Error(`Failed to checkout PR #${prNumber}: ${stderr}`);
   }
 }
 
@@ -271,8 +292,10 @@ async function main() {
         fetchUpdates(config.workspacePath);
       }
 
-      // Checkout branch
-      if (config.baseBranch) {
+      // Checkout PR or branch
+      if (config.prNumber) {
+        checkoutPR(config.workspacePath, config.prNumber);
+      } else if (config.baseBranch) {
         checkoutBranch(config.workspacePath, config.baseBranch, config.newBranch);
       }
 
