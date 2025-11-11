@@ -10,7 +10,7 @@ import {
   useNavigate,
 } from "@tanstack/react-router";
 import clsx from "clsx";
-import { Suspense, useEffect } from "react";
+import { Suspense, useEffect, useRef } from "react";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { useQuery } from "convex/react";
 
@@ -78,6 +78,31 @@ function TaskDetailPage() {
   const activeRunId = deepestMatchParams?.taskRunId as string | undefined;
 
   const navigate = useNavigate();
+  const hasScrolledOnMount = useRef(false);
+
+  // Expand task/taskrun and scroll into view when loading a taskRun route (runs once)
+  useEffect(() => {
+    if (!activeRunId || hasScrolledOnMount.current) return;
+
+    // Wait a bit for the sidebar to render and expand
+    const timeoutId = setTimeout(() => {
+      // Find the task run element in the sidebar
+      const runElement = document.querySelector(
+        `[href*="/task/${taskId}"][href*="runId=${activeRunId}"]`
+      );
+
+      if (runElement) {
+        // Scroll the run into view
+        runElement.scrollIntoView({
+          behavior: "smooth",
+          block: "nearest",
+        });
+        hasScrolledOnMount.current = true;
+      }
+    }, 300);
+
+    return () => clearTimeout(timeoutId);
+  }, [activeRunId, taskId]);
 
   // Flatten the task runs tree structure for tab display
   const flattenRuns = (
