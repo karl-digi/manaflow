@@ -6,6 +6,10 @@ import type {
   PullRequestActionResult,
 } from "./pull-request-state";
 import type { IframePreflightResult } from "./iframe-preflight";
+import type {
+  LocalPathSuggestion,
+  LocalRepoInfoResponse,
+} from "./local-repos";
 
 // Client to Server Events
 export const CreateTerminalSchema = z.object({
@@ -37,6 +41,7 @@ export const StartTaskSchema = z.object({
   taskId: typedZid("tasks"),
   selectedAgents: z.array(z.string()).optional(),
   isCloudMode: z.boolean().optional().default(false),
+  localRepoPath: z.string().optional(),
   images: z
     .array(
       z.object({
@@ -567,6 +572,18 @@ export interface ClientToServerEvents {
   "iframe-preflight": (
     data: { url: string },
     callback: (response: IframePreflightResult) => void
+  ) => void;
+  "local-path-suggestions": (
+    data: { input: string; limit?: number },
+    callback?: (response: {
+      ok: boolean;
+      suggestions?: LocalPathSuggestion[];
+      error?: string;
+    }) => void
+  ) => void;
+  "local-repo-info": (
+    data: { path: string },
+    callback?: (response: LocalRepoInfoResponse) => void
   ) => void;
   "check-provider-status": (
     callback: (response: ProviderStatusResponse) => void

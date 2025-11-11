@@ -31,13 +31,20 @@ import { getWwwOpenApiModule } from "./utils/wwwOpenApiModule";
 import { CmuxVSCodeInstance } from "./vscode/CmuxVSCodeInstance";
 import { DockerVSCodeInstance } from "./vscode/DockerVSCodeInstance";
 import { VSCodeInstance } from "./vscode/VSCodeInstance";
-import { getWorktreePath, setupProjectWorkspace } from "./workspace";
+import { getWorktreePath, setupProjectWorkspace, hydrateWorktreeFromArchive } from "./workspace";
+import type { LocalRepoArchive } from "./localRepoArchive";
 import { workerExec } from "./utils/workerExec";
 import rawSwitchBranchScript from "./utils/switch-branch.ts?raw";
 
 const SWITCH_BRANCH_BUN_SCRIPT = rawSwitchBranchScript;
 
 const { getApiEnvironmentsByIdVars } = await getWwwOpenApiModule();
+
+type LocalArchivePayload = LocalRepoArchive & {
+  downloadUrl: string;
+  storageId?: string;
+  baseBranch?: string;
+};
 
 export interface AgentSpawnResult {
   agentName: string;
@@ -65,6 +72,7 @@ export async function spawnAgent(
     }>;
     theme?: "dark" | "light" | "system";
     newBranch?: string; // Optional pre-generated branch name
+    localArchive?: LocalArchivePayload;
   },
   teamSlugOrId: string
 ): Promise<AgentSpawnResult> {
@@ -361,6 +369,13 @@ export async function spawnAgent(
 
     console.log("[AgentSpawner] [isCloudMode]", options.isCloudMode);
 
+    const derivedRepoUrl =
+      options.repoUrl ||
+      options.localArchive?.remoteUrl ||
+      (options.localArchive
+        ? `file://${options.localArchive.repoName}.git`
+        : undefined);
+
     if (options.isCloudMode) {
       // For remote sandboxes (Morph-backed via www API)
       vscodeInstance = new CmuxVSCodeInstance({
@@ -369,31 +384,67 @@ export async function spawnAgent(
         taskId,
         theme: options.theme,
         teamSlugOrId,
-        repoUrl: options.repoUrl,
+        repoUrl: options.localArchive ? undefined : options.repoUrl,
         branch: options.branch,
         newBranch,
         environmentId: options.environmentId,
         taskRunJwt,
+        localArchive:
+          options.localArchive && options.localArchive.downloadUrl
+            ? {
+                downloadUrl: options.localArchive.downloadUrl,
+                repoName: options.localArchive.repoName,
+                branch:
+                  options.branch ||
+                  options.localArchive.baseBranch ||
+                  options.localArchive.currentBranch ||
+                  "main",
+                headSha: options.localArchive.headSha,
+                remoteUrl: options.localArchive.remoteUrl,
+              }
+            : undefined,
       });
 
       worktreePath = "/root/workspace";
     } else {
       // For Docker, set up worktree as before
+      if (!derivedRepoUrl) {
+        throw new Error("Repository URL missing for local workspace setup");
+      }
       const worktreeInfo = await getWorktreePath(
         {
-          repoUrl: options.repoUrl!,
+          repoUrl: derivedRepoUrl,
           branch: newBranch,
         },
         teamSlugOrId
       );
 
-      // Setup workspace
-      const workspaceResult = await setupProjectWorkspace({
-        repoUrl: options.repoUrl!,
-        // If not provided, setupProjectWorkspace detects default from origin
-        branch: options.branch,
-        worktreeInfo,
-      });
+      let workspaceResult;
+      if (options.localArchive) {
+        workspaceResult = await hydrateWorktreeFromArchive({
+          archivePath: options.localArchive.archivePath,
+          branch: newBranch,
+          worktreeInfo,
+          headSha: options.localArchive.headSha,
+          remoteUrl: options.localArchive.remoteUrl,
+        });
+      } else if (options.repoUrl) {
+        workspaceResult = await setupProjectWorkspace({
+          repoUrl: options.repoUrl,
+          // If not provided, setupProjectWorkspace detects default from origin
+          branch: options.branch,
+          worktreeInfo,
+        });
+      } else {
+        return {
+          agentName: agent.name,
+          terminalId: "",
+          taskRunId,
+          worktreePath: "",
+          success: false,
+          error: "No repository information available",
+        };
+      }
 
       if (!workspaceResult.success || !workspaceResult.worktreePath) {
         return {
@@ -950,6 +1001,7 @@ export async function spawnAllAgents(
       altText: string;
     }>;
     theme?: "dark" | "light" | "system";
+    localArchive?: LocalArchivePayload;
   },
   teamSlugOrId: string
 ): Promise<AgentSpawnResult[]> {

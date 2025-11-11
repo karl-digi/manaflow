@@ -3,6 +3,7 @@
 import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { singleQuote } from "./shell";
 
 interface HydrateConfig {
   workspacePath: string;
@@ -240,6 +241,48 @@ function hydrateSubdirectories(workspacePath: string) {
   }
 }
 
+function hydrateFromArchive(workspacePath: string): boolean {
+  const archiveUrl = process.env.CMUX_LOCAL_ARCHIVE_URL;
+  if (!archiveUrl) {
+    return false;
+  }
+  const archiveName = process.env.CMUX_LOCAL_ARCHIVE_NAME || "local-repo";
+  log(`Hydrating workspace from uploaded archive: ${archiveName}`);
+  const tmpPath = `/tmp/cmux-archive-${Date.now()}.tar`;
+  log(`Downloading archive to ${tmpPath}`);
+  exec(`curl -L ${singleQuote(archiveUrl)} -o ${singleQuote(tmpPath)}`);
+  exec(`mkdir -p "${workspacePath}"`);
+  exec(`tar -xf ${singleQuote(tmpPath)} -C "${workspacePath}"`);
+  exec(`rm -f ${singleQuote(tmpPath)}`);
+
+  exec(`git init`, { cwd: workspacePath });
+  const branchName =
+    process.env.CMUX_LOCAL_ARCHIVE_BRANCH || "cmux-local-main";
+  exec(
+    `git symbolic-ref HEAD refs/heads/${branchName}`,
+    { cwd: workspacePath, throwOnError: false }
+  );
+  exec(`git add --all`, { cwd: workspacePath });
+  const headSha = process.env.CMUX_LOCAL_ARCHIVE_HEAD;
+  const commitMessage = headSha
+    ? `cmux: import local snapshot ${headSha}`
+    : "cmux: import local snapshot";
+  exec(
+    `git -c user.name="cmux" -c user.email="ai@cmux.dev" -c committer.name="cmux" -c committer.email="ai@cmux.dev" commit -m ${singleQuote(
+      commitMessage
+    )}`,
+    { cwd: workspacePath, throwOnError: false }
+  );
+  const remoteUrl = process.env.CMUX_LOCAL_ARCHIVE_REMOTE;
+  if (remoteUrl) {
+    exec(`git remote add origin ${singleQuote(remoteUrl)}`, {
+      cwd: workspacePath,
+      throwOnError: false,
+    });
+  }
+  return true;
+}
+
 async function main() {
   try {
     const config = getConfig();
@@ -247,6 +290,14 @@ async function main() {
 
     // Ensure workspace exists
     ensureWorkspace(config.workspacePath);
+
+    if (process.env.CMUX_LOCAL_ARCHIVE_URL) {
+      const hydrated = hydrateFromArchive(config.workspacePath);
+      if (hydrated) {
+        log("Hydration from local archive completed successfully");
+        process.exit(0);
+      }
+    }
 
     // Handle single repo case
     if (config.cloneUrl) {

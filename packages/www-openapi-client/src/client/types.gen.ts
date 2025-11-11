@@ -486,6 +486,13 @@ export type StartSandboxBody = {
     branch?: string;
     newBranch?: string;
     depth?: number;
+    localArchive?: {
+        downloadUrl: string;
+        repoName: string;
+        branch: string;
+        headSha?: string;
+        remoteUrl?: string;
+    };
 };
 
 export type UpdateSandboxEnvResponse = {

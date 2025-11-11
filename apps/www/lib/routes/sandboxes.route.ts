@@ -48,6 +48,15 @@ const StartSandboxBody = z
     branch: z.string().optional(),
     newBranch: z.string().optional(),
     depth: z.number().optional().default(1),
+    localArchive: z
+      .object({
+        downloadUrl: z.string(),
+        repoName: z.string(),
+        branch: z.string(),
+        headSha: z.string().optional(),
+        remoteUrl: z.string().optional(),
+      })
+      .optional(),
   })
   .openapi("StartSandboxBody");
 
@@ -112,26 +121,6 @@ sandboxesRouter.openapi(
     if (!accessToken) {
       return c.text("Unauthorized", 401);
     }
-    const githubAccessTokenPromise = (async () => {
-      const githubAccount = await user.getConnectedAccount("github");
-      if (!githubAccount) {
-        return {
-          githubAccessTokenError: "GitHub account not found",
-          githubAccessToken: null,
-        } as const;
-      }
-      const { accessToken: githubAccessToken } =
-        await githubAccount.getAccessToken();
-      if (!githubAccessToken) {
-        return {
-          githubAccessTokenError: "GitHub access token not found",
-          githubAccessToken: null,
-        } as const;
-      }
-
-      return { githubAccessTokenError: null, githubAccessToken } as const;
-    })();
-
     const body = c.req.valid("json");
     try {
       console.log("[sandboxes.start] incoming", {
@@ -144,6 +133,32 @@ sandboxesRouter.openapi(
     } catch {
       /* noop */
     }
+
+    const requiresGithubAccess = Boolean(body.repoUrl);
+    const githubAccessTokenPromise = requiresGithubAccess
+      ? (async () => {
+          const githubAccount = await user.getConnectedAccount("github");
+          if (!githubAccount) {
+            return {
+              githubAccessTokenError: "GitHub account not found",
+              githubAccessToken: null,
+            } as const;
+          }
+          const { accessToken: githubAccessToken } =
+            await githubAccount.getAccessToken();
+          if (!githubAccessToken) {
+            return {
+              githubAccessTokenError: "GitHub access token not found",
+              githubAccessToken: null,
+            } as const;
+          }
+
+          return { githubAccessTokenError: null, githubAccessToken } as const;
+        })()
+      : Promise.resolve({
+          githubAccessTokenError: null,
+          githubAccessToken: null,
+        } as const);
 
     try {
       const convex = getConvex({ accessToken });
@@ -208,14 +223,14 @@ sandboxesRouter.openapi(
           ? allocateScriptIdentifiers()
           : null;
 
-      const gitIdentityPromise = githubAccessTokenPromise.then(
-        ({ githubAccessToken }) => {
-          if (!githubAccessToken) {
-            throw new Error("GitHub access token not found");
-          }
-          return fetchGitIdentityInputs(convex, githubAccessToken);
-        },
-      );
+      const gitIdentityPromise = requiresGithubAccess
+        ? githubAccessTokenPromise.then(({ githubAccessToken }) => {
+            if (!githubAccessToken) {
+              throw new Error("GitHub access token not found");
+            }
+            return fetchGitIdentityInputs(convex, githubAccessToken);
+          })
+        : Promise.resolve(null);
 
       const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
 
@@ -283,7 +298,11 @@ sandboxesRouter.openapi(
       }
 
       const configureGitIdentityTask = gitIdentityPromise
-        .then(([who, gh]) => {
+        .then((identity) => {
+          if (!identity) {
+            return;
+          }
+          const [who, gh] = identity;
           const { name, email } = selectGitIdentity(who, gh);
           return configureGitIdentity(instance, { name, email });
         })
@@ -296,7 +315,7 @@ sandboxesRouter.openapi(
 
       const { githubAccessToken, githubAccessTokenError } =
         await githubAccessTokenPromise;
-      if (githubAccessTokenError) {
+      if (requiresGithubAccess && githubAccessTokenError) {
         console.error(
           `[sandboxes.start] GitHub access token error: ${githubAccessTokenError}`,
         );
@@ -304,7 +323,9 @@ sandboxesRouter.openapi(
       }
 
       // Sandboxes run as the requesting user, so prefer their OAuth scope over GitHub App installation tokens.
-      await configureGithubAccess(instance, githubAccessToken);
+      if (requiresGithubAccess && githubAccessToken) {
+        await configureGithubAccess(instance, githubAccessToken);
+      }
 
       let repoConfig: HydrateRepoConfig | undefined;
       if (body.repoUrl) {
@@ -326,10 +347,21 @@ sandboxesRouter.openapi(
         };
       }
 
+      const localArchiveConfig = body.localArchive
+        ? {
+            downloadUrl: body.localArchive.downloadUrl,
+            repoName: body.localArchive.repoName,
+            branch: body.localArchive.branch,
+            headSha: body.localArchive.headSha,
+            remoteUrl: body.localArchive.remoteUrl,
+          }
+        : undefined;
+
       try {
         await hydrateWorkspace({
           instance,
           repo: repoConfig,
+          localArchive: localArchiveConfig,
         });
       } catch (error) {
         console.error(`[sandboxes.start] Hydration failed:`, error);

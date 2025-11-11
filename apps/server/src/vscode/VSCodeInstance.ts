@@ -19,6 +19,13 @@ export interface VSCodeInstanceConfig {
   environmentId?: Id<"environments"> | string;
   // Optional: JWT token for crown workflow authentication
   taskRunJwt?: string;
+  localArchive?: {
+    downloadUrl: string;
+    repoName: string;
+    branch: string;
+    headSha?: string;
+    remoteUrl?: string;
+  };
 }
 
 export interface VSCodeInstanceInfo {

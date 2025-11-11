@@ -30,6 +30,7 @@ interface DashboardInputControlsProps {
   selectedProject: string[];
   onProjectChange: (projects: string[]) => void;
   onProjectSearchPaste?: (value: string) => boolean | Promise<boolean>;
+  onProjectSearchInputChange?: (value: string) => void;
   branchOptions: string[];
   selectedBranch: string[];
   onBranchChange: (branches: string[]) => void;
@@ -57,6 +58,7 @@ export const DashboardInputControls = memo(function DashboardInputControls({
   selectedProject,
   onProjectChange,
   onProjectSearchPaste,
+  onProjectSearchInputChange,
   branchOptions,
   selectedBranch,
   onBranchChange,
@@ -494,6 +496,7 @@ export const DashboardInputControls = memo(function DashboardInputControls({
           value={selectedProject}
           onChange={onProjectChange}
           onSearchPaste={onProjectSearchPaste}
+          onSearchChange={onProjectSearchInputChange}
           placeholder="Select project"
           singleSelect={true}
           className="rounded-2xl"

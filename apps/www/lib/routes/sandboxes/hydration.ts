@@ -17,6 +17,14 @@ export interface HydrateRepoConfig {
 
 const MORPH_WORKSPACE_PATH = "/root/workspace";
 
+export interface LocalArchiveHydrationConfig {
+  downloadUrl: string;
+  repoName: string;
+  branch: string;
+  headSha?: string;
+  remoteUrl?: string;
+}
+
 const getHydrateScript = (): string => {
   const __dirname = dirname(fileURLToPath(import.meta.url));
   const scriptPath = join(__dirname, "hydrateRepoScript.ts");
@@ -26,9 +34,11 @@ const getHydrateScript = (): string => {
 export const hydrateWorkspace = async ({
   instance,
   repo,
+  localArchive,
 }: {
   instance: MorphInstance;
   repo?: HydrateRepoConfig;
+  localArchive?: LocalArchiveHydrationConfig;
 }): Promise<void> => {
   const hydrateScript = getHydrateScript();
 
@@ -49,6 +59,18 @@ export const hydrateWorkspace = async ({
     envVars.CMUX_MASKED_CLONE_URL = repo.maskedCloneUrl;
     envVars.CMUX_BASE_BRANCH = repo.baseBranch;
     envVars.CMUX_NEW_BRANCH = repo.newBranch;
+  }
+
+  if (localArchive) {
+    envVars.CMUX_LOCAL_ARCHIVE_URL = localArchive.downloadUrl;
+    envVars.CMUX_LOCAL_ARCHIVE_NAME = localArchive.repoName;
+    envVars.CMUX_LOCAL_ARCHIVE_BRANCH = localArchive.branch;
+    if (localArchive.headSha) {
+      envVars.CMUX_LOCAL_ARCHIVE_HEAD = localArchive.headSha;
+    }
+    if (localArchive.remoteUrl) {
+      envVars.CMUX_LOCAL_ARCHIVE_REMOTE = localArchive.remoteUrl;
+    }
   }
 
   // Build the command to write and execute the script

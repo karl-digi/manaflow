@@ -22,6 +22,8 @@ import {
   isLoopbackHostname,
   LOCAL_VSCODE_PLACEHOLDER_ORIGIN,
   type IframePreflightResult,
+  type LocalRepoInfoResponse,
+  type LocalPathSuggestion,
 } from "@cmux/shared";
 import {
   type PullRequestActionResult,
@@ -72,6 +74,11 @@ import {
   splitRepoFullName,
   toPullRequestActionResult,
 } from "./pullRequestState";
+import {
+  inspectLocalRepo,
+  createGitArchive,
+  listDirectorySuggestions,
+} from "./localRepoArchive";
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -105,6 +112,15 @@ const IframePreflightRequestSchema = z.object({
   url: z.string().url(),
 });
 
+const LocalPathSuggestionsRequestSchema = z.object({
+  input: z.string(),
+  limit: z.number().int().positive().max(30).optional(),
+});
+
+const LocalRepoInfoRequestSchema = z.object({
+  path: z.string(),
+});
+
 function buildServeWebWorkspaceUrl(
   baseUrl: string,
   folderPath: string
@@ -116,6 +132,67 @@ function buildServeWebWorkspaceUrl(
 
 function buildPlaceholderWorkspaceUrl(folderPath: string): string {
   return buildServeWebWorkspaceUrl(LOCAL_VSCODE_PLACEHOLDER_ORIGIN, folderPath);
+}
+
+async function uploadArchiveToStorage(params: {
+  teamSlugOrId: string;
+  archivePath: string;
+}): Promise<{ storageId: Id<"_storage">; downloadUrl: string }> {
+  const convex = getConvex();
+  const uploadUrl = await convex.mutation(api.storage.generateUploadUrl, {
+    teamSlugOrId: params.teamSlugOrId,
+  });
+  const fileBuffer = await fs.readFile(params.archivePath);
+  const blob = new Blob([fileBuffer], { type: "application/x-tar" });
+  const response = await fetch(uploadUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-tar" },
+    body: blob,
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(
+      `Archive upload failed (${response.status}): ${body.slice(0, 200)}`
+    );
+  }
+  const json = (await response.json()) as { storageId: Id<"_storage"> };
+  const downloadUrl = await convex.query(api.storage.getUrl, {
+    teamSlugOrId: params.teamSlugOrId,
+    storageId: json.storageId,
+  });
+  return { storageId: json.storageId, downloadUrl };
+}
+
+async function prepareLocalArchive(params: {
+  teamSlugOrId: string;
+  localRepoPath: string;
+  preferredBranch?: string;
+}) {
+  const metadata = await inspectLocalRepo(params.localRepoPath);
+  const { archivePath } = await createGitArchive(metadata.repoRoot);
+  const upload = await uploadArchiveToStorage({
+    teamSlugOrId: params.teamSlugOrId,
+    archivePath,
+  });
+  return {
+    archivePath,
+    downloadUrl: upload.downloadUrl,
+    storageId: upload.storageId,
+    repoName: metadata.repoName,
+    headSha: metadata.headSha,
+    path: metadata.path,
+    branches: metadata.branches,
+    currentBranch: metadata.currentBranch,
+    defaultBranch: metadata.defaultBranch,
+    remoteUrl: metadata.remoteUrl,
+    displayPath: metadata.displayPath,
+    repoRoot: metadata.repoRoot,
+    baseBranch:
+      params.preferredBranch ||
+      metadata.currentBranch ||
+      metadata.defaultBranch ||
+      "main",
+  };
 }
 
 export function setupSocketHandlers(
@@ -242,6 +319,73 @@ export function setupSocketHandlers(
             status: null,
             method: null,
             error: message,
+          });
+        }
+      }
+    );
+
+    socket.on(
+      "local-path-suggestions",
+      async (
+        rawData: unknown,
+        callback?: (response: {
+          ok: boolean;
+          suggestions?: LocalPathSuggestion[];
+          error?: string;
+        }) => void
+      ) => {
+        try {
+          const { input, limit = 8 } =
+            LocalPathSuggestionsRequestSchema.parse(rawData ?? {});
+          const suggestions = await listDirectorySuggestions(input, limit);
+          callback?.({ ok: true, suggestions });
+        } catch (error) {
+          serverLogger.error("local-path-suggestions failed:", error);
+          callback?.({
+            ok: false,
+            error:
+              error instanceof Error
+                ? error.message
+                : "Failed to resolve suggestions",
+          });
+        }
+      }
+    );
+
+    socket.on(
+      "local-repo-info",
+      async (
+        rawData: unknown,
+        callback?: (response: LocalRepoInfoResponse) => void
+      ) => {
+        const respond = (response: LocalRepoInfoResponse) => callback?.(response);
+        try {
+          const { path: requestedPath } = LocalRepoInfoRequestSchema.parse(
+            rawData ?? {}
+          );
+          const info = await inspectLocalRepo(requestedPath);
+          respond({
+            success: true,
+            info: {
+              path: info.path,
+              repoRoot: info.repoRoot,
+              displayPath: info.displayPath,
+              repoName: info.repoName,
+              branches: info.branches,
+              currentBranch: info.currentBranch,
+              defaultBranch: info.defaultBranch,
+              remoteUrl: info.remoteUrl,
+              headSha: info.headSha,
+            },
+          });
+        } catch (error) {
+          serverLogger.error("local-repo-info failed:", error);
+          respond({
+            success: false,
+            error:
+              error instanceof Error
+                ? error.message
+                : "Failed to inspect repository",
           });
         }
       }
@@ -437,6 +581,21 @@ export function setupSocketHandlers(
       const taskData = taskDataParseResult.data;
       serverLogger.info("starting task!", taskData);
       const taskId = taskData.taskId;
+      let localArchiveInfo:
+        | (Awaited<ReturnType<typeof prepareLocalArchive>> & {
+            cleaned?: boolean;
+          })
+        | null = null;
+
+      const cleanupArchive = async () => {
+        if (localArchiveInfo && !localArchiveInfo.cleaned) {
+          localArchiveInfo.cleaned = true;
+          await fs
+            .rm(localArchiveInfo.archivePath, { force: true })
+            .catch(() => undefined);
+        }
+      };
+
       try {
         // For local mode, ensure Docker is running before attempting to spawn
         if (!taskData.isCloudMode) {
@@ -465,6 +624,14 @@ export function setupSocketHandlers(
             });
             return;
           }
+        }
+
+        if (taskData.localRepoPath) {
+          localArchiveInfo = await prepareLocalArchive({
+            teamSlugOrId: safeTeam,
+            localRepoPath: taskData.localRepoPath,
+            preferredBranch: taskData.branch,
+          });
         }
 
         callback({
@@ -500,7 +667,7 @@ export function setupSocketHandlers(
             const agentResults = await spawnAllAgents(
               taskId,
               {
-                repoUrl: taskData.repoUrl,
+                repoUrl: taskData.localRepoPath ? undefined : taskData.repoUrl,
                 branch: taskData.branch,
                 taskDescription: taskData.taskDescription,
                 prTitle: generatedTitle ?? undefined,
@@ -509,6 +676,7 @@ export function setupSocketHandlers(
                 images: taskData.images,
                 theme: taskData.theme,
                 environmentId: taskData.environmentId,
+                localArchive: localArchiveInfo ?? undefined,
               },
               safeTeam
             );
@@ -599,10 +767,13 @@ export function setupSocketHandlers(
               taskId,
               error: error instanceof Error ? error.message : "Unknown error",
             });
+          } finally {
+            await cleanupArchive();
           }
         })();
       } catch (error) {
         serverLogger.error("Error in start-task:", error);
+        await cleanupArchive();
         callback({
           taskId,
           error: error instanceof Error ? error.message : "Unknown error",

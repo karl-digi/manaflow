@@ -5,6 +5,10 @@ import path from "path";
 import { RepositoryManager } from "./repositoryManager";
 import { getConvex } from "./utils/convexClient";
 import { serverLogger } from "./utils/fileLogger";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 interface WorkspaceResult {
   success: boolean;
@@ -12,7 +16,7 @@ interface WorkspaceResult {
   error?: string;
 }
 
-interface WorktreeInfo {
+export interface WorktreeInfo {
   appDataPath: string;
   projectsPath: string;
   projectPath: string;
@@ -262,6 +266,81 @@ export async function setupProjectWorkspace(args: {
     return {
       success: false,
       error: error instanceof Error ? error.message : "Unknown error",
+    };
+  }
+}
+
+export async function hydrateWorktreeFromArchive(args: {
+  archivePath: string;
+  branch?: string;
+  worktreeInfo: WorktreeInfo;
+  remoteUrl?: string;
+  headSha?: string;
+}): Promise<WorkspaceResult> {
+  const { archivePath, worktreeInfo, remoteUrl, headSha } = args;
+  const branchName =
+    args.branch || worktreeInfo.branch || "cmux-local-main";
+  try {
+    await fs.mkdir(worktreeInfo.projectPath, { recursive: true });
+    await fs.mkdir(worktreeInfo.worktreesPath, { recursive: true });
+    const normalizedWorktreePath = path.join(
+      worktreeInfo.worktreesPath,
+      branchName
+    );
+    worktreeInfo.worktreePath = normalizedWorktreePath;
+    worktreeInfo.branch = branchName;
+    await fs.rm(worktreeInfo.worktreePath, {
+      recursive: true,
+      force: true,
+    });
+    await fs.mkdir(worktreeInfo.worktreePath, { recursive: true });
+
+    await execFileAsync("tar", ["-xf", archivePath, "-C", worktreeInfo.worktreePath]);
+
+    await execFileAsync("git", ["init"], { cwd: worktreeInfo.worktreePath });
+    await execFileAsync("git", ["symbolic-ref", "HEAD", `refs/heads/${branchName}`], {
+      cwd: worktreeInfo.worktreePath,
+    }).catch(() => undefined);
+
+    await execFileAsync("git", ["add", "--all"], { cwd: worktreeInfo.worktreePath });
+
+    const commitEnv = {
+      ...process.env,
+      GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || "cmux",
+      GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL || "ai@cmux.dev",
+      GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME || "cmux",
+      GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || "ai@cmux.dev",
+    };
+
+    const commitMessage = headSha
+      ? `cmux: import local snapshot ${headSha.slice(0, 12)}`
+      : "cmux: import local snapshot";
+    await execFileAsync("git", ["commit", "-m", commitMessage], {
+      cwd: worktreeInfo.worktreePath,
+      env: commitEnv,
+    });
+
+    if (remoteUrl) {
+      await execFileAsync("git", ["remote", "add", "origin", remoteUrl], {
+        cwd: worktreeInfo.worktreePath,
+      }).catch(() => undefined);
+    }
+
+    return {
+      success: true,
+      worktreePath: worktreeInfo.worktreePath,
+    };
+  } catch (error) {
+    serverLogger.error(
+      "[workspace] Failed to hydrate archive worktree:",
+      error
+    );
+    return {
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to hydrate archive workspace",
     };
   }
 }

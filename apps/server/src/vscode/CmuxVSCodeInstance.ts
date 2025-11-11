@@ -24,6 +24,13 @@ export class CmuxVSCodeInstance extends VSCodeInstance {
   private newBranch?: string;
   private environmentId?: string;
   private taskRunJwt?: string;
+  private localArchive?: {
+    downloadUrl: string;
+    repoName: string;
+    branch: string;
+    headSha?: string;
+    remoteUrl?: string;
+  };
 
   constructor(config: VSCodeInstanceConfig) {
     super(config);
@@ -33,12 +40,20 @@ export class CmuxVSCodeInstance extends VSCodeInstance {
       newBranch?: string;
       environmentId?: string;
       taskRunJwt?: string;
+      localArchive?: {
+        downloadUrl: string;
+        repoName: string;
+        branch: string;
+        headSha?: string;
+        remoteUrl?: string;
+      };
     };
     this.repoUrl = cfg.repoUrl;
     this.branch = cfg.branch;
     this.newBranch = cfg.newBranch;
     this.environmentId = cfg.environmentId;
     this.taskRunJwt = cfg.taskRunJwt;
+    this.localArchive = cfg.localArchive;
   }
 
   async start(): Promise<VSCodeInstanceInfo> {
@@ -65,6 +80,11 @@ export class CmuxVSCodeInstance extends VSCodeInstance {
             newBranch: this.newBranch,
             depth: 1,
           }
+          : {}),
+        ...(this.localArchive
+          ? {
+              localArchive: this.localArchive,
+            }
           : {}),
       },
     });
