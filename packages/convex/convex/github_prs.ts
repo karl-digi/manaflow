@@ -7,7 +7,6 @@ import {
 } from "./_generated/server";
 import { authMutation, authQuery } from "./users/utils";
 import { aggregatePullRequestState, type RunPullRequestState, type StoredPullRequestInfo } from "@cmux/shared/pull-request-state";
-import type { Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 
 const SYSTEM_BRANCH_USER_ID = "__system__";
