@@ -22,6 +22,7 @@ export class CmuxVSCodeInstance extends VSCodeInstance {
   private repoUrl?: string;
   private branch?: string;
   private newBranch?: string;
+  private pullRequestUrl?: string;
   private environmentId?: string;
   private taskRunJwt?: string;
 
@@ -31,12 +32,14 @@ export class CmuxVSCodeInstance extends VSCodeInstance {
       repoUrl?: string;
       branch?: string;
       newBranch?: string;
+      pullRequestUrl?: string;
       environmentId?: string;
       taskRunJwt?: string;
     };
     this.repoUrl = cfg.repoUrl;
     this.branch = cfg.branch;
     this.newBranch = cfg.newBranch;
+    this.pullRequestUrl = cfg.pullRequestUrl;
     this.environmentId = cfg.environmentId;
     this.taskRunJwt = cfg.taskRunJwt;
   }
@@ -63,6 +66,7 @@ export class CmuxVSCodeInstance extends VSCodeInstance {
             repoUrl: this.repoUrl,
             branch: this.branch,
             newBranch: this.newBranch,
+            pullRequestUrl: this.pullRequestUrl,
             depth: 1,
           }
           : {}),

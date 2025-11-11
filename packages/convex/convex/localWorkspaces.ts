@@ -57,11 +57,12 @@ export const reserve = authMutation({
     projectFullName: v.optional(v.string()),
     repoUrl: v.optional(v.string()),
     branch: v.optional(v.string()),
+    descriptorBranch: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
-    const { projectFullName, repoUrl, branch } = args;
+    const { projectFullName, repoUrl, branch, descriptorBranch } = args;
 
     const existingSetting = await ctx.db
       .query("workspaceSettings")
@@ -74,10 +75,11 @@ export const reserve = authMutation({
     const sequence = existingSetting?.nextLocalWorkspaceSequence ?? 0;
     const repoName = deriveRepoBaseName({ projectFullName, repoUrl });
     const workspaceName = generateWorkspaceName({ repoName, sequence });
+    const descriptorLabel = descriptorBranch ?? branch;
     const descriptor = DEFAULT_WORKSPACE_DESCRIPTOR({
       workspaceName,
       projectFullName,
-      branch,
+      branch: descriptorLabel,
     });
 
     if (existingSetting) {

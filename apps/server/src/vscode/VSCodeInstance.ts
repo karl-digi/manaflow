@@ -15,6 +15,7 @@ export interface VSCodeInstanceConfig {
   repoUrl?: string;
   branch?: string;
   newBranch?: string;
+  pullRequestUrl?: string;
   // Optional: when starting from an environment
   environmentId?: Id<"environments"> | string;
   // Optional: JWT token for crown workflow authentication

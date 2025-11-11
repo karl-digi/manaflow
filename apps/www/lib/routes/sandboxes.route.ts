@@ -47,6 +47,7 @@ const StartSandboxBody = z
     repoUrl: z.string().optional(),
     branch: z.string().optional(),
     newBranch: z.string().optional(),
+    pullRequestUrl: z.string().optional(),
     depth: z.number().optional().default(1),
   })
   .openapi("StartSandboxBody");
@@ -323,6 +324,7 @@ sandboxesRouter.openapi(
           depth: Math.max(1, Math.floor(body.depth ?? 1)),
           baseBranch: body.branch || "main",
           newBranch: body.newBranch ?? "",
+          pullRequestUrl: body.pullRequestUrl ?? undefined,
         };
       }
 

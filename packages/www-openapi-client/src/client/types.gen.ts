@@ -485,6 +485,7 @@ export type StartSandboxBody = {
     repoUrl?: string;
     branch?: string;
     newBranch?: string;
+    pullRequestUrl?: string;
     depth?: number;
 };
 

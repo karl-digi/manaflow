@@ -55,6 +55,7 @@ export async function spawnAgent(
   options: {
     repoUrl?: string;
     branch?: string;
+    pullRequestUrl?: string;
     taskDescription: string;
     isCloudMode?: boolean;
     environmentId?: Id<"environments">;
@@ -372,6 +373,7 @@ export async function spawnAgent(
         repoUrl: options.repoUrl,
         branch: options.branch,
         newBranch,
+        pullRequestUrl: options.pullRequestUrl,
         environmentId: options.environmentId,
         taskRunJwt,
       });

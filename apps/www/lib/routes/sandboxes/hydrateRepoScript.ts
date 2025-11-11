@@ -14,6 +14,7 @@ interface HydrateConfig {
   depth: number;
   baseBranch?: string;
   newBranch?: string;
+  pullRequestUrl?: string;
 }
 
 function log(message: string, level: "info" | "error" | "debug" = "info") {
@@ -74,6 +75,7 @@ function getConfig(): HydrateConfig {
   const maskedCloneUrl = process.env.CMUX_MASKED_CLONE_URL;
   const baseBranch = process.env.CMUX_BASE_BRANCH;
   const newBranch = process.env.CMUX_NEW_BRANCH;
+  const pullRequestUrl = process.env.CMUX_PULL_REQUEST_URL;
 
   return {
     workspacePath,
@@ -85,6 +87,7 @@ function getConfig(): HydrateConfig {
     depth,
     baseBranch,
     newBranch,
+    pullRequestUrl,
   };
 }
 
@@ -271,8 +274,23 @@ async function main() {
         fetchUpdates(config.workspacePath);
       }
 
-      // Checkout branch
-      if (config.baseBranch) {
+      // Checkout pull request or base branch
+      if (config.pullRequestUrl) {
+        log(`Checking out pull request: ${config.pullRequestUrl}`);
+        const result = exec(
+          `gh pr checkout "${config.pullRequestUrl}"`,
+          { cwd: config.workspacePath, throwOnError: false }
+        );
+        if (result.exitCode !== 0) {
+          log(
+            `Pull request checkout failed: ${(result.stderr || result.stdout).slice(0, 400)}`,
+            "error"
+          );
+          throw new Error(
+            `Failed to checkout pull request: ${result.stderr || result.stdout}`
+          );
+        }
+      } else if (config.baseBranch) {
         checkoutBranch(config.workspacePath, config.baseBranch, config.newBranch);
       }
 
