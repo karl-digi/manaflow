@@ -519,6 +519,45 @@ fn refs_diff_basic_on_local_repo() {
 }
 
 #[test]
+fn refs_diff_includes_dot_prefixed_paths() {
+  let tmp = tempdir().unwrap();
+  let work = tmp.path().join("repo");
+  std::fs::create_dir_all(&work).unwrap();
+  run(&work, "git init");
+  run(&work, "git -c user.email=a@b -c user.name=test checkout -b main");
+  std::fs::create_dir_all(work.join(".github/workflows")).unwrap();
+  std::fs::write(
+    work.join(".github/workflows/ci.yml"),
+    b"name: ci\non: [push]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n",
+  ).unwrap();
+  run(&work, "git add .");
+  run(&work, "git -c user.email=a@b -c user.name=test commit -m init");
+
+  run(&work, "git checkout -b feature");
+  std::fs::write(
+    work.join(".github/workflows/ci.yml"),
+    b"name: ci\non: [push]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: echo hi\n",
+  ).unwrap();
+  run(&work, "git add .");
+  run(&work, "git -c user.email=a@b -c user.name=test commit -m update-ci");
+
+  let out = crate::diff::refs::diff_refs(GitDiffOptions{
+    baseRef: Some("main".into()),
+    headRef: "feature".into(),
+    repoFullName: None,
+    repoUrl: None,
+    teamSlugOrId: None,
+    originPathOverride: Some(work.to_string_lossy().to_string()),
+    includeContents: Some(true),
+    maxBytes: Some(1024*1024),
+    lastKnownBaseSha: None,
+    lastKnownMergeCommitSha: None,
+  }).expect("diff refs dot paths");
+
+  assert!(out.iter().any(|e| e.filePath == ".github/workflows/ci.yml"));
+}
+
+#[test]
 fn refs_merge_base_after_merge_is_branch_tip() {
   let tmp = tempdir().unwrap();
   let work = tmp.path().join("repo");
