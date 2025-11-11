@@ -1,6 +1,8 @@
-import { readFileSync } from "node:fs";
+import { promises as fs, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import os from "node:os";
+import path from "node:path";
 import type { MorphInstance } from "./git";
 import { maskSensitive, singleQuote } from "./shell";
 
@@ -91,5 +93,65 @@ exit $EXIT_CODE
 
   if (hydrateRes.exit_code !== 0) {
     throw new Error(`Hydration failed with exit code ${hydrateRes.exit_code}`);
+  }
+};
+
+export const hydrateWorkspaceFromArchive = async ({
+  instance,
+  archive,
+}: {
+  instance: MorphInstance;
+  archive: { fileName: string; base64: string; branch?: string };
+}): Promise<void> => {
+  const tempDir = await fs.mkdtemp(
+    path.join(os.tmpdir(), "cmux-archive-upload-")
+  );
+  const localArchivePath = path.join(tempDir, archive.fileName);
+  try {
+    await fs.writeFile(localArchivePath, Buffer.from(archive.base64, "base64"));
+    const remoteDir = `/tmp/${path.basename(tempDir)}`;
+    await instance.exec(`mkdir -p ${remoteDir}`);
+    await instance.sync(tempDir, remoteDir, { delete: true }).catch(
+      (error: unknown) => {
+        throw new Error(
+          `Failed to sync archive to sandbox: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      }
+    );
+    const remoteArchivePath = `${remoteDir}/${archive.fileName}`;
+    const cleanupRemote = async () => {
+      await instance.exec(`rm -rf ${remoteDir}`).catch(() => {
+        /* ignore */
+      });
+    };
+    const commands = [
+      "set -e",
+      `rm -rf ${MORPH_WORKSPACE_PATH}`,
+      `mkdir -p ${MORPH_WORKSPACE_PATH}`,
+      `tar -xf ${remoteArchivePath} -C ${MORPH_WORKSPACE_PATH}`,
+      archive.branch
+        ? `cd ${MORPH_WORKSPACE_PATH} && git checkout ${archive.branch} || true`
+        : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+    const { exit_code, stderr } = await instance.exec(
+      `bash -lc ${singleQuote(commands)}`
+    );
+    if (exit_code !== 0) {
+      await cleanupRemote();
+      throw new Error(
+        `Archive hydration failed exit=${exit_code} stderr=${maskSensitive(
+          stderr || ""
+        )}`
+      );
+    }
+    await cleanupRemote();
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {
+      /* ignore */
+    });
   }
 };

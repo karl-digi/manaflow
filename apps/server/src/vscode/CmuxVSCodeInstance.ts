@@ -1,4 +1,5 @@
 import { dockerLogger } from "../utils/fileLogger";
+import type { LocalRepoArchivePayload } from "../utils/localRepoArchive";
 import { getWwwClient } from "../utils/wwwClient";
 import { getWwwOpenApiModule } from "../utils/wwwOpenApiModule";
 import {
@@ -24,6 +25,7 @@ export class CmuxVSCodeInstance extends VSCodeInstance {
   private newBranch?: string;
   private environmentId?: string;
   private taskRunJwt?: string;
+  private localRepoArchive?: LocalRepoArchivePayload;
 
   constructor(config: VSCodeInstanceConfig) {
     super(config);
@@ -39,6 +41,7 @@ export class CmuxVSCodeInstance extends VSCodeInstance {
     this.newBranch = cfg.newBranch;
     this.environmentId = cfg.environmentId;
     this.taskRunJwt = cfg.taskRunJwt;
+    this.localRepoArchive = cfg.localRepoArchive;
   }
 
   async start(): Promise<VSCodeInstanceInfo> {
@@ -64,6 +67,15 @@ export class CmuxVSCodeInstance extends VSCodeInstance {
             branch: this.branch,
             newBranch: this.newBranch,
             depth: 1,
+          }
+          : {}),
+        ...(this.localRepoArchive
+          ? {
+            archive: {
+              fileName: this.localRepoArchive.fileName,
+              base64: this.localRepoArchive.base64,
+              branch: this.localRepoArchive.branch ?? this.branch,
+            },
           }
           : {}),
       },

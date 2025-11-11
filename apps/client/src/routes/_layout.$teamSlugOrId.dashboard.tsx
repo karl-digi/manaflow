@@ -23,6 +23,8 @@ import { useSocket } from "@/contexts/socket/use-socket";
 import { createFakeConvexId } from "@/lib/fakeConvexId";
 import { attachTaskLifecycleListeners } from "@/lib/socket/taskLifecycleListeners";
 import { branchesQueryOptions } from "@/queries/branches";
+import { localBranchesQueryOptions } from "@/queries/localBranches";
+import { decodeLocalRepoValue } from "@/lib/localRepoSelection";
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
 import type { ProviderStatusResponse, TaskAcknowledged, TaskError, TaskStarted } from "@cmux/shared";
@@ -165,18 +167,46 @@ function DashboardComponent() {
     () => (selectedProject[0] || "").startsWith("env:"),
     [selectedProject]
   );
+  const selectedLocalRepoPath = useMemo(
+    () => decodeLocalRepoValue(selectedProject[0]),
+    [selectedProject]
+  );
+  const isLocalRepoSelected = !!selectedLocalRepoPath;
 
   const branchesQuery = useQuery({
     ...branchesQueryOptions({
       teamSlugOrId,
       repoFullName: selectedProject[0] || "",
     }),
-    enabled: !!selectedProject[0] && !isEnvSelected,
+    enabled: !!selectedProject[0] && !isEnvSelected && !isLocalRepoSelected,
   });
+  const localBranchesQuery = useQuery({
+    ...localBranchesQueryOptions(selectedLocalRepoPath || ""),
+    enabled: isLocalRepoSelected && !!selectedLocalRepoPath,
+  });
+  const branchesAreLoading = isLocalRepoSelected
+    ? localBranchesQuery.isPending
+    : branchesQuery.isPending;
   const branchSummary = useMemo(() => {
+    if (isLocalRepoSelected) {
+      const data = localBranchesQuery.data;
+      const names = data?.branches ?? [];
+      const preferredDefault = data?.defaultBranch;
+      const current = data?.currentBranch;
+      const normalizedDefault =
+        preferredDefault && names.includes(preferredDefault)
+          ? preferredDefault
+          : current && names.includes(current)
+            ? current
+            : undefined;
+      return { names, defaultName: normalizedDefault };
+    }
     const data = branchesQuery.data;
     if (!data?.branches) {
-      return { names: [] as string[], defaultName: undefined as string | undefined };
+      return {
+        names: [] as string[],
+        defaultName: undefined as string | undefined,
+      };
     }
     const names = data.branches.map((branch) => branch.name);
     const fromResponse = data.defaultBranch?.trim();
@@ -190,7 +220,7 @@ function DashboardComponent() {
       names,
       defaultName: normalizedFromResponse ?? normalizedFlagged,
     };
-  }, [branchesQuery.data]);
+  }, [branchesQuery.data, isLocalRepoSelected, localBranchesQuery.data]);
 
   const branchNames = branchSummary.names;
   const remoteDefaultBranch = branchSummary.defaultName;
@@ -413,6 +443,7 @@ function DashboardComponent() {
     const environmentId = envSelected
       ? (projectFullName.replace(/^env:/, "") as Id<"environments">)
       : undefined;
+    const localRepoPath = selectedLocalRepoPath;
 
     try {
       // Extract content including images from the editor
@@ -478,7 +509,9 @@ function DashboardComponent() {
 
       const repoUrl = envSelected
         ? undefined
-        : `https://github.com/${projectFullName}.git`;
+        : localRepoPath
+          ? undefined
+          : `https://github.com/${projectFullName}.git`;
 
       // For socket.io, we need to send the content text (which includes image references) and the images
       const handleStartTaskAck = (response: TaskAcknowledged | TaskStarted | TaskError) => {
@@ -503,6 +536,9 @@ function DashboardComponent() {
         "start-task",
         {
           ...(repoUrl ? { repoUrl } : {}),
+          ...(localRepoPath
+            ? { localRepoPath, localRepoBranch: branch }
+            : {}),
           ...(envSelected ? {} : { branch }),
           taskDescription: content?.text || taskDescription, // Use content.text which includes image references
           projectFullName,
@@ -522,6 +558,7 @@ function DashboardComponent() {
     }
   }, [
     selectedProject,
+    selectedLocalRepoPath,
     taskDescription,
     socket,
     effectiveSelectedBranch,
@@ -643,8 +680,9 @@ function DashboardComponent() {
 
   const selectedRepoFullName = useMemo(() => {
     if (!selectedProject[0] || isEnvSelected) return null;
+    if (selectedLocalRepoPath) return null;
     return selectedProject[0];
-  }, [selectedProject, isEnvSelected]);
+  }, [selectedLocalRepoPath, selectedProject, isEnvSelected]);
 
   const shouldShowWorkspaceSetup = !!selectedRepoFullName && !isEnvSelected;
 
@@ -850,8 +888,9 @@ function DashboardComponent() {
   const lexicalRepoUrl = useMemo(() => {
     if (!selectedProject[0]) return undefined;
     if (isEnvSelected) return undefined;
+    if (selectedLocalRepoPath) return undefined;
     return `https://github.com/${selectedProject[0]}.git`;
-  }, [selectedProject, isEnvSelected]);
+  }, [selectedLocalRepoPath, selectedProject, isEnvSelected]);
 
   const lexicalBranch = useMemo(
     () => effectiveSelectedBranch[0],
@@ -904,7 +943,7 @@ function DashboardComponent() {
               isCloudMode={isCloudMode}
               onCloudModeToggle={handleCloudModeToggle}
               isLoadingProjects={reposByOrgQuery.isLoading}
-              isLoadingBranches={branchesQuery.isPending}
+              isLoadingBranches={branchesAreLoading}
               teamSlugOrId={teamSlugOrId}
               cloudToggleDisabled={isEnvSelected}
               branchDisabled={isEnvSelected || !selectedProject[0]}

@@ -32,6 +32,8 @@ export const CloseTerminalSchema = z.object({
 export const StartTaskSchema = z.object({
   repoUrl: z.string().optional(),
   branch: z.string().optional(),
+  localRepoPath: z.string().optional(),
+  localRepoBranch: z.string().optional(),
   taskDescription: z.string(),
   projectFullName: z.string(),
   taskId: typedZid("tasks"),
@@ -423,6 +425,39 @@ export const DefaultRepoSchema = z.object({
   localPath: z.string(),
 });
 
+export const LocalRepoSuggestionRequestSchema = z.object({
+  input: z.string(),
+  limit: z.number().int().positive().max(50).optional(),
+});
+
+export const LocalRepoSuggestionSchema = z.object({
+  path: z.string(),
+  displayPath: z.string(),
+  isGitRepo: z.boolean(),
+  repoName: z.string().optional(),
+  remoteFullName: z.string().optional(),
+});
+
+export const LocalRepoSuggestionsResponseSchema = z.object({
+  success: z.boolean(),
+  suggestions: z.array(LocalRepoSuggestionSchema),
+  error: z.string().optional(),
+});
+
+export const LocalRepoBranchesRequestSchema = z.object({
+  path: z.string(),
+});
+
+export const LocalRepoBranchesResponseSchema = z.object({
+  success: z.boolean(),
+  branches: z.array(z.string()),
+  defaultBranch: z.string().optional(),
+  currentBranch: z.string().optional(),
+  remoteFullName: z.string().optional(),
+  repoUrl: z.string().optional(),
+  error: z.string().optional(),
+});
+
 // Type exports
 export type CreateTerminal = z.infer<typeof CreateTerminalSchema>;
 export type TerminalInput = z.infer<typeof TerminalInputSchema>;
@@ -436,6 +471,21 @@ export type CreateLocalWorkspaceResponse = z.infer<
 export type CreateCloudWorkspace = z.infer<typeof CreateCloudWorkspaceSchema>;
 export type CreateCloudWorkspaceResponse = z.infer<
   typeof CreateCloudWorkspaceResponseSchema
+>;
+export type LocalRepoSuggestionRequest = z.infer<
+  typeof LocalRepoSuggestionRequestSchema
+>;
+export type LocalRepoSuggestion = z.infer<
+  typeof LocalRepoSuggestionSchema
+>;
+export type LocalRepoSuggestionsResponse = z.infer<
+  typeof LocalRepoSuggestionsResponseSchema
+>;
+export type LocalRepoBranchesRequest = z.infer<
+  typeof LocalRepoBranchesRequestSchema
+>;
+export type LocalRepoBranchesResponse = z.infer<
+  typeof LocalRepoBranchesResponseSchema
 >;
 export type TerminalCreated = z.infer<typeof TerminalCreatedSchema>;
 export type TerminalOutput = z.infer<typeof TerminalOutputSchema>;
@@ -516,6 +566,14 @@ export interface ClientToServerEvents {
     callback: (response: OpenInEditorResponse) => void
   ) => void;
   "list-files": (data: ListFilesRequest) => void;
+  "local-repo-suggest": (
+    data: LocalRepoSuggestionRequest,
+    callback: (response: LocalRepoSuggestionsResponse) => void
+  ) => void;
+  "local-repo-branches": (
+    data: LocalRepoBranchesRequest,
+    callback: (response: LocalRepoBranchesResponse) => void
+  ) => void;
   // GitHub operations
   "github-test-auth": (
     callback: (response: GitHubAuthResponse) => void

@@ -486,6 +486,11 @@ export type StartSandboxBody = {
     branch?: string;
     newBranch?: string;
     depth?: number;
+    archive?: {
+        fileName: string;
+        base64: string;
+        branch?: string;
+    };
 };
 
 export type UpdateSandboxEnvResponse = {

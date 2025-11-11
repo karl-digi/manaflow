@@ -2,6 +2,7 @@ import type { Id } from "@cmux/convex/dataModel";
 import { connectToWorkerManagement } from "@cmux/shared/socket";
 import { EventEmitter } from "node:events";
 import { dockerLogger } from "../utils/fileLogger";
+import type { LocalRepoArchivePayload } from "../utils/localRepoArchive";
 
 export interface VSCodeInstanceConfig {
   workspacePath?: string;
@@ -19,6 +20,7 @@ export interface VSCodeInstanceConfig {
   environmentId?: Id<"environments"> | string;
   // Optional: JWT token for crown workflow authentication
   taskRunJwt?: string;
+  localRepoArchive?: LocalRepoArchivePayload;
 }
 
 export interface VSCodeInstanceInfo {

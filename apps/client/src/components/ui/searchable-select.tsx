@@ -66,6 +66,7 @@ export interface SearchableSelectProps {
   value: string[];
   onChange: (value: string[]) => void;
   onSearchPaste?: (value: string) => boolean | Promise<boolean>;
+  onSearchChange?: (value: string) => void;
   placeholder?: string;
   singleSelect?: boolean;
   className?: string;
@@ -234,6 +235,7 @@ const SearchableSelect = forwardRef<
     value,
     onChange,
     onSearchPaste,
+    onSearchChange,
     placeholder = "Select",
     singleSelect = false,
     className,
@@ -269,6 +271,13 @@ const SearchableSelect = forwardRef<
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const [search, setSearch] = useState("");
+  const handleSearchChange = useCallback(
+    (next: string) => {
+      setSearch(next);
+      onSearchChange?.(next);
+    },
+    [onSearchChange]
+  );
   const [_recalcTick, setRecalcTick] = useState(0);
   // Popover width is fixed; no need to track trigger width
   const pendingFocusRef = useRef<string | null>(null);
@@ -478,7 +487,7 @@ const SearchableSelect = forwardRef<
         } else {
           pendingFocusRef.current = null;
         }
-        setSearch("");
+        handleSearchChange("");
         setOpen(true);
         requestAnimationFrame(() => {
           if (focusValue && open) {
@@ -505,7 +514,7 @@ const SearchableSelect = forwardRef<
         setOpen(false);
       },
     }),
-    [filteredOptions, open, rowVirtualizer]
+    [filteredOptions, handleSearchChange, open, rowVirtualizer]
   );
 
   const updateValueCount = (val: string, nextCount: number) => {
@@ -524,7 +533,7 @@ const SearchableSelect = forwardRef<
       return;
     }
     // Clear search input upon selecting a value (covers mouse and keyboard selection)
-    setSearch("");
+    handleSearchChange("");
     if (singleSelect) {
       onChange([val]);
       setOpen(false);
@@ -587,11 +596,11 @@ const SearchableSelect = forwardRef<
                 showIcon={false}
                 placeholder={onSearchPaste ? "Search or paste a repo link..." : "Search..."}
                 value={search}
-                onValueChange={setSearch}
+                onValueChange={handleSearchChange}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     // Clear the search box when pressing Enter
-                    setSearch("");
+                    handleSearchChange("");
                   }
                 }}
                 onPaste={async (event) => {
@@ -606,7 +615,7 @@ const SearchableSelect = forwardRef<
                   try {
                     const handled = await onSearchPaste(trimmed);
                     if (handled) {
-                      setSearch("");
+                      handleSearchChange("");
                       setOpen(false);
                     }
                   } catch (error) {

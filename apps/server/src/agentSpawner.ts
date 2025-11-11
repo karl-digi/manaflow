@@ -27,6 +27,7 @@ import {
 import { getEditorSettingsUpload } from "./utils/editorSettings";
 import { env } from "./utils/server-env";
 import { getWwwClient } from "./utils/wwwClient";
+import type { LocalRepoArchivePayload } from "./utils/localRepoArchive";
 import { getWwwOpenApiModule } from "./utils/wwwOpenApiModule";
 import { CmuxVSCodeInstance } from "./vscode/CmuxVSCodeInstance";
 import { DockerVSCodeInstance } from "./vscode/DockerVSCodeInstance";
@@ -49,6 +50,12 @@ export interface AgentSpawnResult {
   error?: string;
 }
 
+interface LocalRepoOptions {
+  path: string;
+  branch?: string;
+  archive?: LocalRepoArchivePayload;
+}
+
 export async function spawnAgent(
   agent: AgentConfig,
   taskId: Id<"tasks">,
@@ -65,6 +72,7 @@ export async function spawnAgent(
     }>;
     theme?: "dark" | "light" | "system";
     newBranch?: string; // Optional pre-generated branch name
+    localRepo?: LocalRepoOptions;
   },
   teamSlugOrId: string
 ): Promise<AgentSpawnResult> {
@@ -374,6 +382,7 @@ export async function spawnAgent(
         newBranch,
         environmentId: options.environmentId,
         taskRunJwt,
+        localRepoArchive: options.localRepo?.archive,
       });
 
       worktreePath = "/root/workspace";
@@ -950,6 +959,7 @@ export async function spawnAllAgents(
       altText: string;
     }>;
     theme?: "dark" | "light" | "system";
+    localRepo?: LocalRepoOptions;
   },
   teamSlugOrId: string
 ): Promise<AgentSpawnResult[]> {

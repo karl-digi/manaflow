@@ -17,7 +17,10 @@ import {
   fetchGitIdentityInputs,
 } from "./sandboxes/git";
 import type { HydrateRepoConfig } from "./sandboxes/hydration";
-import { hydrateWorkspace } from "./sandboxes/hydration";
+import {
+  hydrateWorkspace,
+  hydrateWorkspaceFromArchive,
+} from "./sandboxes/hydration";
 import { resolveTeamAndSnapshot } from "./sandboxes/snapshot";
 import {
   allocateScriptIdentifiers,
@@ -48,6 +51,13 @@ const StartSandboxBody = z
     branch: z.string().optional(),
     newBranch: z.string().optional(),
     depth: z.number().optional().default(1),
+    archive: z
+      .object({
+        fileName: z.string(),
+        base64: z.string(),
+        branch: z.string().optional(),
+      })
+      .optional(),
   })
   .openapi("StartSandboxBody");
 
@@ -171,7 +181,7 @@ sandboxesRouter.openapi(
 
       // Load workspace config if we're in cloud mode with a repository (not an environment)
       let workspaceConfig: { maintenanceScript?: string; envVarsContent?: string } | null = null;
-      if (parsedRepoUrl && !body.environmentId) {
+      if (parsedRepoUrl && !body.environmentId && !body.archive) {
         try {
           const config = await convex.query(api.workspaceConfigs.get, {
             teamSlugOrId: body.teamSlugOrId,
@@ -327,10 +337,17 @@ sandboxesRouter.openapi(
       }
 
       try {
-        await hydrateWorkspace({
-          instance,
-          repo: repoConfig,
-        });
+        if (body.archive) {
+          await hydrateWorkspaceFromArchive({
+            instance,
+            archive: body.archive,
+          });
+        } else {
+          await hydrateWorkspace({
+            instance,
+            repo: repoConfig,
+          });
+        }
       } catch (error) {
         console.error(`[sandboxes.start] Hydration failed:`, error);
         await instance.stop().catch(() => { });

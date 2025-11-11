@@ -12,15 +12,35 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useSocket } from "@/contexts/socket/use-socket";
+import {
+  encodeLocalRepoValue,
+  decodeLocalRepoValue,
+  isLikelyPathInput,
+} from "@/lib/localRepoSelection";
 import { isElectron } from "@/lib/electron";
 import { api } from "@cmux/convex/api";
-import type { ProviderStatus, ProviderStatusResponse } from "@cmux/shared";
+import type {
+  LocalRepoSuggestion,
+  LocalRepoSuggestionsResponse,
+  ProviderStatus,
+  ProviderStatusResponse,
+} from "@cmux/shared";
 import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
 import { parseGithubRepoUrl } from "@cmux/shared";
 import { Link, useRouter } from "@tanstack/react-router";
 import clsx from "clsx";
 import { useAction, useMutation } from "convex/react";
-import { Check, GitBranch, Image, Link2, Mic, Server, X } from "lucide-react";
+import {
+  Check,
+  GitBranch,
+  HardDrive,
+  Image,
+  Link2,
+  Mic,
+  Server,
+  X,
+} from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AgentCommandItem, MAX_AGENT_COMMAND_COUNT } from "./AgentCommandItem";
@@ -72,9 +92,52 @@ export const DashboardInputControls = memo(function DashboardInputControls({
   providerStatus = null,
 }: DashboardInputControlsProps) {
   const router = useRouter();
+  const { socket } = useSocket();
   const agentSelectRef = useRef<SearchableSelectHandle | null>(null);
   const mintState = useMutation(api.github_app.mintInstallState);
   const addManualRepo = useAction(api.github_http.addManualRepo);
+  const [localSearchValue, setLocalSearchValue] = useState("");
+  const [localSuggestions, setLocalSuggestions] = useState<
+    LocalRepoSuggestion[]
+  >([]);
+  const suggestionRequestIdRef = useRef(0);
+
+  useEffect(() => {
+    if (!socket) {
+      setLocalSuggestions([]);
+      return;
+    }
+    const trimmed = localSearchValue.trim();
+    if (!trimmed || !isLikelyPathInput(trimmed)) {
+      setLocalSuggestions([]);
+      return;
+    }
+    const requestId = ++suggestionRequestIdRef.current;
+    const timer = window.setTimeout(() => {
+      socket.emit(
+        "local-repo-suggest",
+        { input: trimmed },
+        (response: LocalRepoSuggestionsResponse) => {
+          if (requestId !== suggestionRequestIdRef.current) {
+            return;
+          }
+          if (response?.success) {
+            setLocalSuggestions(response.suggestions ?? []);
+          } else {
+            console.warn(
+              "Failed to load local repo suggestions",
+              response?.error
+            );
+            setLocalSuggestions([]);
+          }
+        }
+      );
+    }, 200);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [localSearchValue, socket]);
   const providerStatusMap = useMemo(() => {
     const map = new Map<string, ProviderStatus>();
     providerStatus?.providers?.forEach((provider) => {
@@ -82,6 +145,63 @@ export const DashboardInputControls = memo(function DashboardInputControls({
     });
     return map;
   }, [providerStatus?.providers]);
+  const localSuggestionOptions = useMemo<SelectOptionObject[]>(() => {
+    return localSuggestions.map((suggestion) => ({
+      label: suggestion.displayPath || suggestion.path,
+      value: encodeLocalRepoValue(suggestion.path),
+      icon: <HardDrive className="w-4 h-4 text-neutral-600 dark:text-neutral-300" />,
+      iconKey: "local",
+      isUnavailable: !suggestion.isGitRepo,
+      warning: suggestion.isGitRepo
+        ? undefined
+        : {
+            tooltip: "This directory does not contain a .git folder.",
+          },
+    }));
+  }, [localSuggestions]);
+  const selectedLocalPath = useMemo(
+    () => decodeLocalRepoValue(selectedProject[0]),
+    [selectedProject]
+  );
+  const selectedLocalOption = useMemo<SelectOptionObject | null>(() => {
+    if (!selectedLocalPath) {
+      return null;
+    }
+    return {
+      label: selectedLocalPath,
+      value: encodeLocalRepoValue(selectedLocalPath),
+      icon: (
+        <HardDrive className="w-4 h-4 text-neutral-600 dark:text-neutral-300" />
+      ),
+      iconKey: "local",
+    };
+  }, [selectedLocalPath]);
+  const combinedProjectOptions = useMemo<SelectOption[]>(() => {
+    const localOptions: SelectOptionObject[] = [];
+    if (selectedLocalOption) {
+      localOptions.push(selectedLocalOption);
+    }
+    for (const option of localSuggestionOptions) {
+      if (!localOptions.some((existing) => existing.value === option.value)) {
+        localOptions.push(option);
+      }
+    }
+    if (localOptions.length === 0) {
+      return projectOptions;
+    }
+    return [
+      {
+        label: "Local repositories",
+        value: "__heading-local",
+        heading: true,
+      },
+      ...localOptions,
+      ...projectOptions,
+    ];
+  }, [localSuggestionOptions, projectOptions, selectedLocalOption]);
+  const handleProjectSearchInput = useCallback((value: string) => {
+    setLocalSearchValue(value);
+  }, []);
   const handleOpenSettings = useCallback(() => {
     void router.navigate({
       to: "/$teamSlugOrId/settings",
@@ -490,10 +610,11 @@ export const DashboardInputControls = memo(function DashboardInputControls({
     <div className="flex items-end gap-1 grow">
       <div className="flex items-end gap-1">
         <SearchableSelect
-          options={projectOptions}
+          options={combinedProjectOptions}
           value={selectedProject}
           onChange={onProjectChange}
           onSearchPaste={onProjectSearchPaste}
+          onSearchChange={handleProjectSearchInput}
           placeholder="Select project"
           singleSelect={true}
           className="rounded-2xl"

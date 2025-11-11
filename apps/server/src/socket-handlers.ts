@@ -10,6 +10,9 @@ import {
   GitHubMergeBranchSchema,
   GitHubSyncPrStateSchema,
   ListFilesRequestSchema,
+  LocalRepoBranchesRequestSchema,
+  LocalRepoSuggestionRequestSchema,
+  LocalRepoSuggestionSchema,
   OpenInEditorSchema,
   SpawnFromCommentSchema,
   StartTaskSchema,
@@ -23,6 +26,7 @@ import {
   LOCAL_VSCODE_PLACEHOLDER_ORIGIN,
   type IframePreflightResult,
 } from "@cmux/shared";
+import { parseGithubRepoUrl } from "@cmux/shared";
 import {
   type PullRequestActionResult,
   type StoredPullRequestInfo,
@@ -32,6 +36,7 @@ import { parse as parseDotenv } from "dotenv";
 import { minimatch } from "minimatch";
 import { exec, execFile, spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
+import type { Dirent, Stats } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
@@ -55,6 +60,7 @@ import { getOctokit } from "./utils/octokit";
 import { checkAllProvidersStatus } from "./utils/providerStatus";
 import { refreshGitHubData } from "./utils/refreshGitHubData";
 import { runWithAuth, runWithAuthToken } from "./utils/requestContext";
+import { createLocalRepoArchive } from "./utils/localRepoArchive";
 import { getWwwClient } from "./utils/wwwClient";
 import { getWwwOpenApiModule } from "./utils/wwwOpenApiModule";
 import { DockerVSCodeInstance } from "./vscode/DockerVSCodeInstance";
@@ -118,6 +124,248 @@ function buildPlaceholderWorkspaceUrl(folderPath: string): string {
   return buildServeWebWorkspaceUrl(LOCAL_VSCODE_PLACEHOLDER_ORIGIN, folderPath);
 }
 
+const LOCAL_SUGGESTION_DEFAULT_LIMIT = 6;
+
+function expandUserPath(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return os.homedir();
+  }
+  if (trimmed === "~") {
+    return os.homedir();
+  }
+  if (trimmed.startsWith("~/") || trimmed.startsWith("~\\")) {
+    return path.join(os.homedir(), trimmed.slice(2));
+  }
+  return trimmed;
+}
+
+function normalizeUserPath(input: string): string {
+  const expanded = expandUserPath(input);
+  return path.resolve(expanded);
+}
+
+function formatDisplayPath(absPath: string): string {
+  const home = os.homedir();
+  if (absPath === home) {
+    return "~";
+  }
+  if (absPath.startsWith(`${home}${path.sep}`)) {
+    const relative = path.relative(home, absPath);
+    return `~${path.sep}${relative}`;
+  }
+  return absPath;
+}
+
+async function statIfExists(target: string): Promise<Stats | null> {
+  try {
+    return await fs.stat(target);
+  } catch {
+    return null;
+  }
+}
+
+async function findExistingDirectory(start: string): Promise<string | null> {
+  let current = start;
+  while (current) {
+    const stats = await statIfExists(current);
+    if (stats?.isDirectory()) {
+      return current;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) {
+      break;
+    }
+    current = parent;
+  }
+  return null;
+}
+
+async function hasGitRepository(dir: string): Promise<boolean> {
+  const gitDir = path.join(dir, ".git");
+  const stats = await statIfExists(gitDir);
+  return Boolean(stats && stats.isDirectory());
+}
+
+async function getRemoteInfo(dir: string): Promise<{
+  remoteUrl?: string;
+  remoteFullName?: string;
+}> {
+  try {
+    const { stdout } = await execAsync(
+      `git -C "${dir}" config --get remote.origin.url`
+    );
+    const remoteUrl = stdout.trim();
+    if (!remoteUrl) {
+      return {};
+    }
+    try {
+      const parsed = parseGithubRepoUrl(remoteUrl);
+      return {
+        remoteUrl,
+        remoteFullName: parsed?.fullName,
+      };
+    } catch {
+      return { remoteUrl };
+    }
+  } catch {
+    return {};
+  }
+}
+
+async function buildLocalRepoSuggestion(
+  absPath: string
+): Promise<z.infer<typeof LocalRepoSuggestionSchema> | null> {
+  const stats = await statIfExists(absPath);
+  if (!stats || !stats.isDirectory()) {
+    return null;
+  }
+  const isGitRepo = await hasGitRepository(absPath);
+  const remoteInfo = isGitRepo ? await getRemoteInfo(absPath) : {};
+  return {
+    path: absPath,
+    displayPath: formatDisplayPath(absPath),
+    isGitRepo,
+    repoName: path.basename(absPath) || absPath,
+    remoteFullName: remoteInfo.remoteFullName,
+  };
+}
+
+async function resolveSearchScope(
+  targetPath: string
+): Promise<{ dir: string; partial: string }> {
+  const stats = await statIfExists(targetPath);
+  if (stats?.isDirectory()) {
+    return { dir: targetPath, partial: "" };
+  }
+  const parent = path.dirname(targetPath);
+  const existingParent =
+    (await statIfExists(parent))?.isDirectory() === true
+      ? parent
+      : await findExistingDirectory(parent);
+  return {
+    dir: existingParent ?? os.homedir(),
+    partial: path.basename(targetPath),
+  };
+}
+
+async function collectLocalRepoSuggestions(
+  resolvedPath: string,
+  limit: number
+): Promise<Array<z.infer<typeof LocalRepoSuggestionSchema>>> {
+  const suggestions: Array<z.infer<typeof LocalRepoSuggestionSchema>> = [];
+  const seen = new Set<string>();
+
+  const primary = await buildLocalRepoSuggestion(resolvedPath);
+  if (primary) {
+    suggestions.push(primary);
+    seen.add(primary.path);
+  }
+
+  const { dir, partial } = await resolveSearchScope(resolvedPath);
+  let entries: Dirent[] = [];
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch {
+    // ignore
+  }
+
+  const normalizedPartial = partial.toLowerCase();
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    if (normalizedPartial) {
+      if (!entry.name.toLowerCase().startsWith(normalizedPartial)) {
+        continue;
+      }
+    }
+    const candidatePath = path.join(dir, entry.name);
+    if (seen.has(candidatePath)) {
+      continue;
+    }
+    const suggestion = await buildLocalRepoSuggestion(candidatePath);
+    if (!suggestion) {
+      continue;
+    }
+    suggestions.push(suggestion);
+    seen.add(candidatePath);
+    if (suggestions.length >= limit) {
+      break;
+    }
+  }
+
+  suggestions.sort((a, b) => {
+    if (a.isGitRepo !== b.isGitRepo) {
+      return a.isGitRepo ? -1 : 1;
+    }
+    return a.displayPath.localeCompare(b.displayPath);
+  });
+
+  return suggestions.slice(0, limit);
+}
+
+async function collectLocalBranchInfo(repoPath: string): Promise<{
+  branches: string[];
+  currentBranch?: string;
+  defaultBranch?: string;
+  remoteFullName?: string;
+  remoteUrl?: string;
+}> {
+  if (!(await hasGitRepository(repoPath))) {
+    throw new Error("Not a git repository");
+  }
+
+  const branchesResult = await execAsync(
+    `git -C "${repoPath}" branch --format="%(refname:short)"`
+  );
+  const branches = branchesResult.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  let currentBranch: string | undefined;
+  try {
+    const { stdout } = await execAsync(
+      `git -C "${repoPath}" rev-parse --abbrev-ref HEAD`
+    );
+    currentBranch = stdout.trim();
+  } catch {
+    currentBranch = undefined;
+  }
+
+  let defaultBranch: string | undefined;
+  try {
+    const { stdout } = await execAsync(
+      `git -C "${repoPath}" symbolic-ref refs/remotes/origin/HEAD`
+    );
+    const ref = stdout.trim();
+    const parts = ref.split("/");
+    defaultBranch = parts[parts.length - 1] || undefined;
+  } catch {
+    defaultBranch = undefined;
+  }
+
+  if (!defaultBranch) {
+    if (branches.includes("main")) {
+      defaultBranch = "main";
+    } else if (branches.includes("master")) {
+      defaultBranch = "master";
+    } else {
+      defaultBranch = currentBranch;
+    }
+  }
+
+  const remoteInfo = await getRemoteInfo(repoPath);
+
+  return {
+    branches,
+    currentBranch,
+    defaultBranch,
+    remoteFullName: remoteInfo.remoteFullName,
+    remoteUrl: remoteInfo.remoteUrl,
+  };
+}
 export function setupSocketHandlers(
   rt: RealtimeServer,
   gitDiffManager: GitDiffManager,
@@ -437,6 +685,37 @@ export function setupSocketHandlers(
       const taskData = taskDataParseResult.data;
       serverLogger.info("starting task!", taskData);
       const taskId = taskData.taskId;
+      let resolvedLocalRepoPath: string | undefined;
+      if (taskData.localRepoPath) {
+        try {
+          const expanded = taskData.localRepoPath.trim();
+          if (!expanded) {
+            throw new Error("Local repository path is empty");
+          }
+          resolvedLocalRepoPath = path.resolve(expanded);
+          const gitDir = path.join(resolvedLocalRepoPath, ".git");
+          const gitStats = await fs.stat(gitDir).catch(() => null);
+          if (!gitStats || !gitStats.isDirectory()) {
+            throw new Error(
+              "Local repository must contain a .git directory"
+            );
+          }
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          callback({
+            taskId,
+            error: message,
+          });
+          return;
+        }
+      }
+      const localRepo = resolvedLocalRepoPath
+        ? {
+            path: resolvedLocalRepoPath,
+            branch: taskData.localRepoBranch ?? taskData.branch,
+          }
+        : undefined;
       try {
         // For local mode, ensure Docker is running before attempting to spawn
         if (!taskData.isCloudMode) {
@@ -473,6 +752,13 @@ export function setupSocketHandlers(
 
         (async () => {
           try {
+            const localRepoArchive =
+              localRepo && taskData.isCloudMode
+                ? await createLocalRepoArchive({
+                    repoPath: localRepo.path,
+                    branch: localRepo.branch,
+                  })
+                : undefined;
             // Generate PR title early from the task description
             let generatedTitle: string | null = null;
             try {
@@ -500,7 +786,10 @@ export function setupSocketHandlers(
             const agentResults = await spawnAllAgents(
               taskId,
               {
-                repoUrl: taskData.repoUrl,
+                repoUrl:
+                  localRepo && !taskData.isCloudMode
+                    ? localRepo.path
+                    : taskData.repoUrl,
                 branch: taskData.branch,
                 taskDescription: taskData.taskDescription,
                 prTitle: generatedTitle ?? undefined,
@@ -509,6 +798,12 @@ export function setupSocketHandlers(
                 images: taskData.images,
                 theme: taskData.theme,
                 environmentId: taskData.environmentId,
+                localRepo: localRepo
+                  ? {
+                      ...localRepo,
+                      archive: localRepoArchive,
+                    }
+                  : undefined,
               },
               safeTeam
             );
@@ -1867,6 +2162,59 @@ export function setupSocketHandlers(
         serverLogger.error("Error listing files:", error);
         socket.emit("list-files-response", {
           files: [],
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
+      }
+    });
+
+    socket.on("local-repo-suggest", async (data, callback) => {
+      try {
+        const payload = LocalRepoSuggestionRequestSchema.parse(data);
+        const trimmed = payload.input?.trim() ?? "";
+        if (!trimmed) {
+          callback({
+            success: true,
+            suggestions: [],
+          });
+          return;
+        }
+        const normalizedPath = normalizeUserPath(trimmed);
+        const suggestions = await collectLocalRepoSuggestions(
+          normalizedPath,
+          payload.limit ?? LOCAL_SUGGESTION_DEFAULT_LIMIT
+        );
+        callback({
+          success: true,
+          suggestions,
+        });
+      } catch (error) {
+        serverLogger.error("Error generating local repo suggestions:", error);
+        callback({
+          success: false,
+          suggestions: [],
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
+      }
+    });
+
+    socket.on("local-repo-branches", async (data, callback) => {
+      try {
+        const payload = LocalRepoBranchesRequestSchema.parse(data);
+        const normalizedPath = normalizeUserPath(payload.path);
+        const info = await collectLocalBranchInfo(normalizedPath);
+        callback({
+          success: true,
+          branches: info.branches,
+          defaultBranch: info.defaultBranch,
+          currentBranch: info.currentBranch,
+          remoteFullName: info.remoteFullName,
+          repoUrl: info.remoteUrl,
+        });
+      } catch (error) {
+        serverLogger.error("Error collecting local repo branches:", error);
+        callback({
+          success: false,
+          branches: [],
           error: error instanceof Error ? error.message : "Unknown error",
         });
       }
