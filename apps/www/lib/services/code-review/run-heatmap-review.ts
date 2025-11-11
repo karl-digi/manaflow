@@ -8,6 +8,7 @@ import {
   mapWithConcurrency,
 } from "@/scripts/pr-review-heatmap";
 import { formatUnifiedDiffWithLineNumbers } from "@/scripts/pr-review/diff-utils";
+import type { ModelConfig } from "./run-simple-anthropic-review";
 import {
   buildHeatmapPrompt,
   heatmapSchema,
@@ -23,6 +24,7 @@ interface HeatmapReviewConfig {
   accessToken: string;
   callbackToken: string;
   githubAccessToken?: string | null;
+  modelConfig?: ModelConfig;
 }
 
 // Placeholder sandbox ID for heatmap strategy (no Morph VM used)
@@ -86,6 +88,26 @@ export async function runHeatmapReview(
     });
 
     const openai = createOpenAI({ apiKey: openAiApiKey });
+    const selectedModel = (() => {
+      if (!config.modelConfig) {
+        return "gpt-5";
+      }
+      if (config.modelConfig.provider !== "openai") {
+        console.warn(
+          "[heatmap-review] Ignoring unsupported model provider override",
+          {
+            provider: config.modelConfig.provider,
+            jobId: config.jobId,
+          }
+        );
+        return "gpt-5";
+      }
+      console.info("[heatmap-review] Using fine-tuned OpenAI model override", {
+        jobId: config.jobId,
+        model: config.modelConfig.model,
+      });
+      return config.modelConfig.model;
+    })();
     const allResults: Array<{ filePath: string; lines: HeatmapLine[] }> = [];
     const failures: Array<{ filePath: string; message: string }> = [];
 
@@ -106,8 +128,7 @@ export async function runHeatmapReview(
         const prompt = buildHeatmapPrompt(file.filePath, formattedDiff);
         const streamStart = Date.now();
         const stream = streamObject({
-          // model: openai("gpt-5-nano"),
-          model: openai("gpt-5"),
+          model: openai(selectedModel),
           schema: heatmapSchema,
           prompt,
           temperature: 0,

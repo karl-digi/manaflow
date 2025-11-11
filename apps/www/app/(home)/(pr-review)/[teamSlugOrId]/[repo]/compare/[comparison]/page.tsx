@@ -29,6 +29,7 @@ import {
 import { buildComparisonJobDetails } from "@/lib/services/code-review/comparison";
 import type { ComparisonJobDetails } from "@/lib/services/code-review/comparison";
 import { trackRepoPageView } from "@/lib/analytics/track-repo-page-view";
+import { parseModelConfigFromRecord } from "@/lib/services/code-review/model-config";
 
 type PageParams = {
   teamSlugOrId: string;
@@ -50,19 +51,6 @@ async function getFirstTeam(): Promise<Team | null> {
     return null;
   }
   return firstTeam;
-}
-
-function parseModelConfigFromSearchParams(
-  searchParams: { [key: string]: string | string[] | undefined }
-): ModelConfig | undefined {
-  // Check for ?ft0 query parameter to use fine-tuned OpenAI model
-  if ("ft0" in searchParams) {
-    return {
-      provider: "openai",
-      model: "ft:gpt-4.1-mini-2025-04-14:lawrence:cmux-heatmap-sft:CZW6Lc77",
-    };
-  }
-  return undefined;
 }
 
 function parseComparisonSlug(
@@ -127,14 +115,19 @@ export async function generateMetadata({
   }
 }
 
-export default async function ComparisonPage({ params }: PageProps) {
+export default async function ComparisonPage({ params, searchParams }: PageProps) {
   const user = await stackServerApp.getUser({ or: "redirect" });
   const selectedTeam = user.selectedTeam || (await getFirstTeam());
   if (!selectedTeam) {
     throw notFound();
   }
 
-  const { teamSlugOrId: githubOwner, repo, comparison } = await params;
+  const [resolvedParams, resolvedSearchParams] = await Promise.all([
+    params,
+    searchParams,
+  ]);
+  const { teamSlugOrId: githubOwner, repo, comparison } = resolvedParams;
+  const modelConfig = parseModelConfigFromRecord(resolvedSearchParams);
 
   const refs = parseComparisonSlug(comparison);
   if (!refs) {
@@ -162,6 +155,7 @@ export default async function ComparisonPage({ params }: PageProps) {
     teamSlugOrId: selectedTeam.id,
     comparisonPromise,
     comparisonDetails,
+    modelConfig,
   });
 
   waitUntil(
@@ -422,10 +416,12 @@ function scheduleComparisonCodeReviewStart({
   teamSlugOrId,
   comparisonPromise,
   comparisonDetails,
+  modelConfig,
 }: {
   teamSlugOrId: string;
   comparisonPromise: ComparisonPromise;
   comparisonDetails: ComparisonJobDetails;
+  modelConfig?: ModelConfig;
 }): void {
   waitUntil(
     (async () => {
@@ -510,6 +506,7 @@ function scheduleComparisonCodeReviewStart({
               base: comparisonDetails.base,
               head: comparisonDetails.head,
             },
+            modelConfig,
           },
         });
 

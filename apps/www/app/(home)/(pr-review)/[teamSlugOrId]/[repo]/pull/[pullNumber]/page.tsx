@@ -33,6 +33,7 @@ import { PrivateRepoPrompt } from "../../_components/private-repo-prompt";
 import { TeamOnboardingPrompt } from "../../_components/team-onboarding-prompt";
 import { env } from "@/lib/utils/www-env";
 import { trackRepoPageView } from "@/lib/analytics/track-repo-page-view";
+import { parseModelConfigFromRecord } from "@/lib/services/code-review/model-config";
 
 const ENABLE_IMMEDIATE_CODE_REVIEW = false;
 
@@ -86,19 +87,6 @@ async function getFirstTeam(): Promise<Team | null> {
     return null;
   }
   return firstTeam;
-}
-
-function parseModelConfigFromSearchParams(
-  searchParams: { [key: string]: string | string[] | undefined }
-): ModelConfig | undefined {
-  // Check for ?ft0 query parameter to use fine-tuned OpenAI model
-  if ("ft0" in searchParams) {
-    return {
-      provider: "openai",
-      model: "ft:gpt-4.1-mini-2025-04-14:lawrence:cmux-heatmap-sft:CZW6Lc77",
-    };
-  }
-  return undefined;
 }
 
 export async function generateMetadata({
@@ -163,7 +151,7 @@ export default async function PullRequestPage({ params, searchParams }: PageProp
     pullNumber: pullNumberRaw,
   } = resolvedParams;
   const pullNumber = parsePullNumber(pullNumberRaw);
-  const modelConfig = parseModelConfigFromSearchParams(resolvedSearchParams);
+  const modelConfig = parseModelConfigFromRecord(resolvedSearchParams);
 
   if (pullNumber === null) {
     notFound();
