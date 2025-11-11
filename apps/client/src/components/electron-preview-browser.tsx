@@ -26,7 +26,7 @@ import type {
 } from "@/types/electron-webcontents";
 import clsx from "clsx";
 
-interface ElectronPreviewBrowserProps {
+export interface ElectronPreviewBrowserProps {
   persistKey: string;
   src: string;
   requestUrl?: string;

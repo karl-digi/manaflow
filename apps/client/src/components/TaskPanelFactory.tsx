@@ -1,4 +1,4 @@
-import React, { useState, useEffect, type ReactNode, useCallback } from "react";
+import React, { useState, useEffect, type ReactNode, useCallback, useMemo } from "react";
 import type { CSSProperties } from "react";
 import {
   Code2,
@@ -21,6 +21,9 @@ import type { PersistentWebViewProps } from "./persistent-webview";
 import type { WorkspaceLoadingIndicatorProps } from "./workspace-loading-indicator";
 import type { TaskRunTerminalPaneProps } from "./TaskRunTerminalPane";
 import type { TaskRunGitDiffPanelProps } from "./TaskRunGitDiffPanel";
+import type { ElectronPreviewBrowserProps } from "./electron-preview-browser";
+import { isElectron } from "@/lib/electron";
+import { getTaskRunPreviewPersistKey } from "@/lib/persistent-webview-keys";
 import { shouldUseServerIframePreflight } from "@/hooks/useIframePreflight";
 
 type PanelPosition = "topLeft" | "topRight" | "bottomLeft" | "bottomRight";
@@ -183,6 +186,7 @@ interface PanelFactoryProps {
   WorkspaceLoadingIndicator?: React.ComponentType<WorkspaceLoadingIndicatorProps>;
   TaskRunTerminalPane?: React.ComponentType<TaskRunTerminalPaneProps>;
   TaskRunGitDiffPanel?: React.ComponentType<TaskRunGitDiffPanelProps>;
+  ElectronPreviewBrowser?: React.ComponentType<ElectronPreviewBrowserProps>;
   // Constants
   TASK_RUN_IFRAME_ALLOW?: string;
   TASK_RUN_IFRAME_SANDBOX?: string;
@@ -201,6 +205,66 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
   const [isDragOver, setIsDragOver] = useState(false);
   const [isDraggingSelf, setIsDraggingSelf] = useState(false);
   const [isPanelDragActive, setIsPanelDragActive] = useState(false);
+  const selectedRunId = props.selectedRun?._id ?? null;
+
+  const previewServices = useMemo(() => {
+    const networking = props.selectedRun?.networking;
+    if (!networking || !networking.length) {
+      return [];
+    }
+    return networking
+      .filter((service) => service.status === "running" && Boolean(service.url))
+      .map((service) => ({
+        port: service.port,
+        url: service.url,
+      }));
+  }, [props.selectedRun?.networking]);
+
+  const [selectedPreviewPort, setSelectedPreviewPort] = useState<number | null>(
+    () => previewServices[0]?.port ?? null,
+  );
+
+  useEffect(() => {
+    if (type !== "browser") {
+      return;
+    }
+    if (!previewServices.length) {
+      setSelectedPreviewPort(null);
+      return;
+    }
+    setSelectedPreviewPort((current) => {
+      if (current && previewServices.some((service) => service.port === current)) {
+        return current;
+      }
+      return previewServices[0]?.port ?? null;
+    });
+  }, [type, selectedRunId, previewServices]);
+
+  const selectedPreviewService = useMemo(() => {
+    if (selectedPreviewPort == null) {
+      return null;
+    }
+    return previewServices.find((service) => service.port === selectedPreviewPort) ?? null;
+  }, [previewServices, selectedPreviewPort]);
+
+  const previewPersistKey = useMemo(() => {
+    if (type !== "browser" || !selectedRunId || selectedPreviewPort == null) {
+      return null;
+    }
+    return getTaskRunPreviewPersistKey(selectedRunId, selectedPreviewPort);
+  }, [type, selectedRunId, selectedPreviewPort]);
+
+  const previewRequestUrl = selectedPreviewService?.url ?? null;
+
+  const previewDisplayUrl = useMemo(() => {
+    if (type !== "browser" || !selectedPreviewService || !previewRequestUrl) {
+      return null;
+    }
+    if (isElectron) {
+      return `http://localhost:${selectedPreviewService.port}`;
+    }
+    return previewRequestUrl;
+  }, [type, selectedPreviewService, previewRequestUrl]);
 
   useEffect(() => {
     ensurePanelDragPointerEventHandling();
@@ -236,26 +300,28 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
     const container = document.querySelector(`[data-panel-position="${position}"]`);
     if (!container) return;
 
-    // Find any iframe target within this panel
-    const iframeTarget = container.querySelector('[data-iframe-target]') as HTMLElement;
-    if (!iframeTarget) return;
+    const iframeTargets = Array.from(
+      container.querySelectorAll('[data-iframe-target]'),
+    ) as HTMLElement[];
+    if (!iframeTargets.length) return;
 
-    const iframeKey = iframeTarget.getAttribute('data-iframe-target');
-    if (!iframeKey) return;
+    iframeTargets.forEach((target) => {
+      const iframeKey = target.getAttribute("data-iframe-target");
+      if (!iframeKey) return;
 
-    // Find the corresponding iframe wrapper
-    const wrapper = document.querySelector(`[data-iframe-key="${iframeKey}"]`) as HTMLElement;
-    if (!wrapper) return;
+      const wrapper = document.querySelector(`[data-iframe-key="${iframeKey}"]`) as HTMLElement | null;
+      if (!wrapper) return;
 
-    if (isAnyPanelExpanded && !isExpanded) {
-      // Another panel is expanded - hide this iframe
-      wrapper.style.visibility = "hidden";
-      wrapper.style.pointerEvents = "none";
-    } else {
-      // This panel is expanded OR no panel is expanded - show iframe
-      wrapper.style.visibility = "visible";
-      wrapper.style.pointerEvents = "auto";
-    }
+      if (isAnyPanelExpanded && !isExpanded) {
+        // Another panel is expanded - hide this iframe
+        wrapper.style.visibility = "hidden";
+        wrapper.style.pointerEvents = "none";
+      } else {
+        // This panel is expanded OR no panel is expanded - show iframe
+        wrapper.style.visibility = "visible";
+        wrapper.style.pointerEvents = "auto";
+      }
+    });
   }, [type, position, isExpanded, isAnyPanelExpanded]);
 
   const handleDragStart = useCallback((e: React.DragEvent) => {
@@ -563,17 +629,29 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
         isBrowserBusy,
         PersistentWebView,
         WorkspaceLoadingIndicator,
+        ElectronPreviewBrowser,
         TASK_RUN_IFRAME_ALLOW,
         TASK_RUN_IFRAME_SANDBOX,
       } = props;
 
       if (!PersistentWebView || !WorkspaceLoadingIndicator) return null;
       const shouldShowBrowserLoader = Boolean(selectedRun) && isMorphProvider && (!browserUrl || !browserPersistKey);
+      const showPreviewSection = Boolean(
+        ElectronPreviewBrowser && previewServices.length > 0,
+      );
+      const canRenderPreviewBrowser = Boolean(
+        ElectronPreviewBrowser && previewPersistKey && previewDisplayUrl && previewRequestUrl,
+      );
 
-      return panelWrapper(
-        <Globe2 className="size-3" aria-hidden />,
-        PANEL_LABELS.browser,
-        <div className={clsx("relative flex-1", isExpanded && "h-full")} aria-busy={isBrowserBusy}>
+      const vncSection = (
+        <div
+          className={clsx(
+            "relative min-h-0 flex",
+            showPreviewSection ? "flex-[3]" : "flex-1",
+            !showPreviewSection && isExpanded && "h-full",
+          )}
+          aria-busy={isBrowserBusy}
+        >
           {browserUrl && browserPersistKey ? (
             <PersistentWebView
               key={browserPersistKey}
@@ -599,11 +677,11 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
               isAnyPanelExpanded={isAnyPanelExpanded}
             />
           ) : shouldShowBrowserLoader ? (
-            <div className="flex h-full items-center justify-center">
+            <div className="flex h-full flex-1 items-center justify-center">
               <WorkspaceLoadingIndicator variant="browser" status="loading" />
             </div>
           ) : browserPlaceholder ? (
-            <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-neutral-500 dark:text-neutral-400">
+            <div className="flex h-full flex-1 flex-col items-center justify-center gap-2 px-4 text-center text-neutral-500 dark:text-neutral-400">
               <div className="text-sm font-medium text-neutral-600 dark:text-neutral-200">
                 {browserPlaceholder.title}
               </div>
@@ -615,6 +693,67 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
             </div>
           ) : null}
         </div>
+      );
+
+      const previewSection =
+        showPreviewSection && ElectronPreviewBrowser ? (
+          <div className="flex flex-[2] min-h-[200px] flex-col overflow-hidden rounded-lg border border-neutral-200 bg-white/80 dark:border-neutral-800 dark:bg-neutral-900/40">
+            <div className="flex flex-wrap items-center gap-2 border-b border-neutral-200 px-3 py-2 text-xs dark:border-neutral-800">
+              <div className="flex items-center gap-2 text-sm font-medium text-neutral-700 dark:text-neutral-100">
+                <Globe2 className="size-3.5" aria-hidden />
+                <span>Web Preview</span>
+              </div>
+              <span className="text-[11px] uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
+                WebContentsView
+              </span>
+              <div className="ml-auto flex flex-wrap gap-1">
+                {previewServices.map((service) => (
+                  <button
+                    key={service.port}
+                    type="button"
+                    onClick={() => setSelectedPreviewPort(service.port)}
+                    className={clsx(
+                      "rounded-full border px-2 py-0.5 text-xs transition-colors",
+                      selectedPreviewPort === service.port
+                        ? "border-blue-500 bg-blue-500/10 text-blue-600 dark:border-blue-400 dark:text-blue-300"
+                        : "border-neutral-300 text-neutral-600 hover:border-neutral-400 dark:border-neutral-700 dark:text-neutral-300 dark:hover:border-neutral-500",
+                    )}
+                    title={service.url}
+                  >
+                    Port {service.port}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex-1 min-h-0 bg-white dark:bg-neutral-950/50">
+              {canRenderPreviewBrowser && previewPersistKey && previewDisplayUrl ? (
+                <ElectronPreviewBrowser
+                  key={previewPersistKey}
+                  persistKey={previewPersistKey}
+                  src={previewDisplayUrl}
+                  requestUrl={previewRequestUrl ?? undefined}
+                  borderRadius={0}
+                />
+              ) : (
+                <div className="flex h-full items-center justify-center px-4 text-xs text-neutral-500 dark:text-neutral-400">
+                  Select a running port to open the mini browser.
+                </div>
+              )}
+            </div>
+          </div>
+        ) : null;
+
+      return panelWrapper(
+        <Globe2 className="size-3" aria-hidden />,
+        PANEL_LABELS.browser,
+        showPreviewSection ? (
+          <div className={clsx("flex flex-1 min-h-0 flex-col gap-2", isExpanded && "h-full")}>
+            {vncSection}
+            {previewSection}
+          </div>
+        ) : (
+          vncSection
+        )
       );
     }
 
@@ -639,6 +778,33 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
   }
 };
 
+const areNetworkingServicesEqual = (
+  prev: TaskRunWithChildren["networking"],
+  next: TaskRunWithChildren["networking"],
+): boolean => {
+  if (prev === next) {
+    return true;
+  }
+  if (!prev || !next) {
+    return !prev && !next;
+  }
+  if (prev.length !== next.length) {
+    return false;
+  }
+  for (let index = 0; index < prev.length; index += 1) {
+    const prevService = prev[index];
+    const nextService = next[index];
+    if (
+      prevService.port !== nextService.port ||
+      prevService.status !== nextService.status ||
+      prevService.url !== nextService.url
+    ) {
+      return false;
+    }
+  }
+  return true;
+};
+
 // Memoize to prevent unnecessary re-renders during drag operations
 // Only re-render when critical props actually change
 export const RenderPanel = React.memo(RenderPanelComponent, (prevProps, nextProps) => {
@@ -658,6 +824,10 @@ export const RenderPanel = React.memo(RenderPanelComponent, (prevProps, nextProp
       prevProps.browserPlaceholder?.title !== nextProps.browserPlaceholder?.title ||
       prevProps.browserPlaceholder?.description !== nextProps.browserPlaceholder?.description ||
       prevProps.selectedRun?._id !== nextProps.selectedRun?._id) {
+      return false;
+    }
+    if (prevProps.type === "browser" &&
+      !areNetworkingServicesEqual(prevProps.selectedRun?.networking, nextProps.selectedRun?.networking)) {
       return false;
     }
   }

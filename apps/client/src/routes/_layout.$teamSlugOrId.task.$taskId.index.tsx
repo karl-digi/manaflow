@@ -5,6 +5,7 @@ import { TaskDetailHeader } from "@/components/task-detail-header";
 import type { PersistentIframeStatus } from "@/components/persistent-iframe";
 import { PersistentWebView } from "@/components/persistent-webview";
 import { WorkspaceLoadingIndicator } from "@/components/workspace-loading-indicator";
+import { ElectronPreviewBrowser } from "@/components/electron-preview-browser";
 import { FlexiblePanelLayout } from "@/components/FlexiblePanelLayout";
 import { TaskRunGitDiffPanel } from "@/components/TaskRunGitDiffPanel";
 import { RenderPanel } from "@/components/TaskPanelFactory";
@@ -666,6 +667,7 @@ function TaskDetailPage() {
       WorkspaceLoadingIndicator,
       TaskRunTerminalPane,
       TaskRunGitDiffPanel,
+      ElectronPreviewBrowser,
       TASK_RUN_IFRAME_ALLOW,
       TASK_RUN_IFRAME_SANDBOX,
       onClose: handlePanelClose,
