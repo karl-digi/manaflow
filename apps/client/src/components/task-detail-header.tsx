@@ -355,7 +355,10 @@ export function TaskDetailHeader({
             />
           </Suspense>
 
-          <OpenEditorSplitButton worktreePath={worktreePath} />
+          <OpenEditorSplitButton
+            worktreePath={worktreePath}
+            taskRunId={selectedRun?._id || taskRunId || null}
+          />
 
           {onPanelSettings && (
             <button

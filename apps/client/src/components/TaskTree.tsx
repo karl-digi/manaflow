@@ -1256,6 +1256,7 @@ function TaskRunTreeInner({
     worktreePath: run.worktreePath,
     branch: run.newBranch,
     networking: run.networking,
+    taskRunId: run._id,
   });
 
   const shouldRenderDiffLink = true;

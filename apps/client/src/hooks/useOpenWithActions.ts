@@ -24,6 +24,7 @@ type UseOpenWithActionsArgs = {
   worktreePath?: string | null;
   branch?: string | null;
   networking?: NetworkingInfo;
+  taskRunId?: Doc<"taskRuns">["_id"] | null;
 };
 
 export function useOpenWithActions({
@@ -31,10 +32,12 @@ export function useOpenWithActions({
   worktreePath,
   branch,
   networking,
+  taskRunId,
 }: UseOpenWithActionsArgs) {
   const { socket, availableEditors } = useSocket();
   const localServeWeb = useLocalVSCodeServeWebQuery();
   const localServeWebOrigin = localServeWeb.data?.baseUrl ?? null;
+  const hasWorkspaceTarget = Boolean(worktreePath || taskRunId);
 
   useEffect(() => {
     if (!socket) return;
@@ -74,37 +77,52 @@ export function useOpenWithActions({
             "alacritty",
             "xcode",
           ].includes(editor) &&
-          worktreePath
+          hasWorkspaceTarget
         ) {
-          socket.emit(
-            "open-in-editor",
-            {
-              editor: editor as
-                | "cursor"
-                | "vscode"
-                | "windsurf"
-                | "finder"
-                | "iterm"
-                | "terminal"
-                | "ghostty"
-                | "alacritty"
-                | "xcode",
-              path: worktreePath,
-            },
-            (response) => {
-              if (response.success) {
-                resolve();
-              } else {
-                reject(new Error(response.error || "Failed to open editor"));
-              }
+          const payload: {
+            editor:
+              | "cursor"
+              | "vscode"
+              | "windsurf"
+              | "finder"
+              | "iterm"
+              | "terminal"
+              | "ghostty"
+              | "alacritty"
+              | "xcode";
+            path?: string;
+            taskRunId?: Doc<"taskRuns">["_id"];
+          } = {
+            editor: editor as
+              | "cursor"
+              | "vscode"
+              | "windsurf"
+              | "finder"
+              | "iterm"
+              | "terminal"
+              | "ghostty"
+              | "alacritty"
+              | "xcode",
+          };
+          if (worktreePath) {
+            payload.path = worktreePath;
+          }
+          if (taskRunId) {
+            payload.taskRunId = taskRunId;
+          }
+          socket.emit("open-in-editor", payload, (response) => {
+            if (response.success) {
+              resolve();
+            } else {
+              reject(new Error(response.error || "Failed to open editor"));
             }
-          );
+          });
         } else {
           reject(new Error("Unable to open editor"));
         }
       });
     },
-    [socket, worktreePath, vscodeUrl, localServeWebOrigin]
+    [socket, worktreePath, vscodeUrl, localServeWebOrigin, taskRunId, hasWorkspaceTarget]
   );
 
   const handleCopyBranch = useCallback(() => {
@@ -125,47 +143,47 @@ export function useOpenWithActions({
       {
         id: "vscode",
         name: "VS Code (local)",
-        enabled: Boolean(worktreePath) && (availableEditors?.vscode ?? true),
+        enabled: hasWorkspaceTarget && (availableEditors?.vscode ?? true),
       },
       {
         id: "cursor",
         name: "Cursor",
-        enabled: Boolean(worktreePath) && (availableEditors?.cursor ?? true),
+        enabled: hasWorkspaceTarget && (availableEditors?.cursor ?? true),
       },
       {
         id: "windsurf",
         name: "Windsurf",
-        enabled: Boolean(worktreePath) && (availableEditors?.windsurf ?? true),
+        enabled: hasWorkspaceTarget && (availableEditors?.windsurf ?? true),
       },
       {
         id: "finder",
         name: "Finder",
-        enabled: Boolean(worktreePath) && (availableEditors?.finder ?? true),
+        enabled: hasWorkspaceTarget && (availableEditors?.finder ?? true),
       },
       {
         id: "iterm",
         name: "iTerm",
-        enabled: Boolean(worktreePath) && (availableEditors?.iterm ?? false),
+        enabled: hasWorkspaceTarget && (availableEditors?.iterm ?? false),
       },
       {
         id: "terminal",
         name: "Terminal",
-        enabled: Boolean(worktreePath) && (availableEditors?.terminal ?? false),
+        enabled: hasWorkspaceTarget && (availableEditors?.terminal ?? false),
       },
       {
         id: "ghostty",
         name: "Ghostty",
-        enabled: Boolean(worktreePath) && (availableEditors?.ghostty ?? false),
+        enabled: hasWorkspaceTarget && (availableEditors?.ghostty ?? false),
       },
       {
         id: "alacritty",
         name: "Alacritty",
-        enabled: Boolean(worktreePath) && (availableEditors?.alacritty ?? false),
+        enabled: hasWorkspaceTarget && (availableEditors?.alacritty ?? false),
       },
       {
         id: "xcode",
         name: "Xcode",
-        enabled: Boolean(worktreePath) && (availableEditors?.xcode ?? false),
+        enabled: hasWorkspaceTarget && (availableEditors?.xcode ?? false),
       },
     ];
 
@@ -176,7 +194,7 @@ export function useOpenWithActions({
         name: item.name,
         Icon: editorIcons[item.id] ?? null,
       }));
-  }, [availableEditors, vscodeUrl, worktreePath]);
+  }, [availableEditors, vscodeUrl, worktreePath, hasWorkspaceTarget]);
 
   const portActions = useMemo<PortAction[]>(() => {
     if (!networking) return [];

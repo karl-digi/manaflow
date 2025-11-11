@@ -1636,41 +1636,68 @@ export function setupSocketHandlers(
 
     socket.on("open-in-editor", async (data, callback) => {
       try {
-        const { editor, path } = OpenInEditorSchema.parse(data);
+        const { editor, path, taskRunId } = OpenInEditorSchema.parse(data);
+
+        let targetPath = path;
+
+        if (taskRunId) {
+          try {
+            const ensured = await ensureRunWorktreeAndBranch(
+              taskRunId,
+              safeTeam
+            );
+            targetPath = ensured.worktreePath;
+          } catch (error) {
+            const errorMessage =
+              error instanceof Error
+                ? `Failed to prepare workspace: ${error.message}`
+                : "Failed to prepare workspace";
+            serverLogger.error("Error ensuring worktree for editor open:", error);
+            socket.emit("open-in-editor-error", { error: errorMessage });
+            if (callback) {
+              callback({ success: false, error: errorMessage });
+            }
+            return;
+          }
+        }
+
+        if (!targetPath) {
+          throw new Error("Workspace path is required to open an editor");
+        }
 
         let command: string[];
         switch (editor) {
           case "vscode":
-            command = ["code", path];
+            command = ["code", targetPath];
             break;
           case "cursor":
-            command = ["cursor", path];
+            command = ["cursor", targetPath];
             break;
           case "windsurf":
-            command = ["windsurf", path];
+            command = ["windsurf", targetPath];
             break;
           case "finder": {
             if (process.platform !== "darwin") {
               throw new Error("Finder is only supported on macOS");
             }
             // Use macOS 'open' to open the folder in Finder
-            command = ["open", path];
+            command = ["open", targetPath];
             break;
           }
           case "iterm":
-            command = ["open", "-a", "iTerm", path];
+            command = ["open", "-a", "iTerm", targetPath];
             break;
           case "terminal":
-            command = ["open", "-a", "Terminal", path];
+            command = ["open", "-a", "Terminal", targetPath];
             break;
           case "ghostty":
-            command = ["open", "-a", "Ghostty", path];
+            command = ["open", "-a", "Ghostty", targetPath];
             break;
           case "alacritty":
-            command = ["alacritty", "--working-directory", path];
+            command = ["alacritty", "--working-directory", targetPath];
             break;
           case "xcode":
-            command = ["open", "-a", "Xcode", path];
+            command = ["open", "-a", "Xcode", targetPath];
             break;
           default:
             throw new Error(`Unknown editor: ${editor}`);
@@ -1682,7 +1709,7 @@ export function setupSocketHandlers(
 
         childProcess.on("close", (code) => {
           if (code === 0) {
-            serverLogger.info(`Successfully opened ${path} in ${editor}`);
+            serverLogger.info(`Successfully opened ${targetPath} in ${editor}`);
             // Send success callback
             if (callback) {
               callback({ success: true });

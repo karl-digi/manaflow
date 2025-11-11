@@ -207,20 +207,26 @@ export const GitFullDiffResponseSchema = z.object({
   error: z.string().optional(),
 });
 
-export const OpenInEditorSchema = z.object({
-  editor: z.enum([
-    "vscode",
-    "cursor",
-    "windsurf",
-    "finder",
-    "iterm",
-    "terminal",
-    "ghostty",
-    "alacritty",
-    "xcode",
-  ]),
-  path: z.string(),
-});
+export const OpenInEditorSchema = z
+  .object({
+    editor: z.enum([
+      "vscode",
+      "cursor",
+      "windsurf",
+      "finder",
+      "iterm",
+      "terminal",
+      "ghostty",
+      "alacritty",
+      "xcode",
+    ]),
+    path: z.string().optional(),
+    taskRunId: typedZid("taskRuns").optional(),
+  })
+  .refine(
+    (data) => Boolean(data.path || data.taskRunId),
+    "Either path or taskRunId is required"
+  );
 
 export const AvailableEditorsSchema = z.object({
   vscode: z.boolean().optional(),
