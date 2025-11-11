@@ -9,6 +9,7 @@ import {
   X,
   Maximize2,
   Minimize2,
+  Monitor,
 } from "lucide-react";
 import clsx from "clsx";
 import type { PanelType } from "@/lib/panel-config";
@@ -177,6 +178,16 @@ interface PanelFactoryProps {
   } | null;
   isMorphProvider?: boolean;
   isBrowserBusy?: boolean;
+  // VNC panel props
+  vncUrl?: string | null;
+  vncPersistKey?: string | null;
+  vncStatus?: PersistentIframeStatus;
+  setVncStatus?: (status: PersistentIframeStatus) => void;
+  vncPlaceholder?: {
+    title: string;
+    description?: string;
+  } | null;
+  isVncBusy?: boolean;
   // Additional components
   TaskRunChatPane?: React.ComponentType<TaskRunChatPaneProps>;
   PersistentWebView?: React.ComponentType<PersistentWebViewProps>;
@@ -618,6 +629,72 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
       );
     }
 
+    case "vnc": {
+      const {
+        vncUrl,
+        vncPersistKey,
+        setVncStatus,
+        vncPlaceholder,
+        selectedRun,
+        isMorphProvider,
+        isVncBusy,
+        PersistentWebView,
+        WorkspaceLoadingIndicator,
+        TASK_RUN_IFRAME_ALLOW,
+        TASK_RUN_IFRAME_SANDBOX,
+      } = props;
+
+      if (!PersistentWebView || !WorkspaceLoadingIndicator) return null;
+      const shouldShowVncLoader = Boolean(selectedRun) && isMorphProvider && (!vncUrl || !vncPersistKey);
+
+      return panelWrapper(
+        <Monitor className="size-3" aria-hidden />,
+        PANEL_LABELS.vnc,
+        <div className={clsx("relative flex-1", isExpanded && "h-full")} aria-busy={isVncBusy}>
+          {vncUrl && vncPersistKey ? (
+            <PersistentWebView
+              key={vncPersistKey}
+              persistKey={vncPersistKey}
+              src={vncUrl}
+              className="flex h-full"
+              iframeClassName={clsx("select-none")}
+              persistentWrapperClassName={isExpanded ? "z-[var(--z-maximized-iframe)]" : undefined}
+              allow={TASK_RUN_IFRAME_ALLOW}
+              sandbox={TASK_RUN_IFRAME_SANDBOX}
+              retainOnUnmount
+              onStatusChange={setVncStatus}
+              fallback={
+                <WorkspaceLoadingIndicator variant="browser" status="loading" />
+              }
+              fallbackClassName="bg-neutral-50 dark:bg-black"
+              errorFallback={
+                <WorkspaceLoadingIndicator variant="browser" status="error" />
+              }
+              errorFallbackClassName="bg-neutral-50/95 dark:bg-black/95"
+              loadTimeoutMs={45_000}
+              isExpanded={isExpanded}
+              isAnyPanelExpanded={isAnyPanelExpanded}
+            />
+          ) : shouldShowVncLoader ? (
+            <div className="flex h-full items-center justify-center">
+              <WorkspaceLoadingIndicator variant="browser" status="loading" />
+            </div>
+          ) : vncPlaceholder ? (
+            <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-neutral-500 dark:text-neutral-400">
+              <div className="text-sm font-medium text-neutral-600 dark:text-neutral-200">
+                {vncPlaceholder.title}
+              </div>
+              {vncPlaceholder.description ? (
+                <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                  {vncPlaceholder.description}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      );
+    }
+
     case "gitDiff": {
       const { task, selectedRun, TaskRunGitDiffPanel } = props;
       if (!TaskRunGitDiffPanel) return null;
@@ -647,16 +724,20 @@ export const RenderPanel = React.memo(RenderPanelComponent, (prevProps, nextProp
     return false;
   }
 
-  // For iframe-based panels (workspace/browser), check persist keys
-  if (prevProps.type === "workspace" || prevProps.type === "browser") {
+  // For iframe-based panels (workspace/browser/vnc), check persist keys
+  if (prevProps.type === "workspace" || prevProps.type === "browser" || prevProps.type === "vnc") {
     if (prevProps.workspacePersistKey !== nextProps.workspacePersistKey ||
       prevProps.browserPersistKey !== nextProps.browserPersistKey ||
+      prevProps.vncPersistKey !== nextProps.vncPersistKey ||
       prevProps.workspaceUrl !== nextProps.workspaceUrl ||
       prevProps.workspacePlaceholder?.title !== nextProps.workspacePlaceholder?.title ||
       prevProps.workspacePlaceholder?.description !== nextProps.workspacePlaceholder?.description ||
       prevProps.browserUrl !== nextProps.browserUrl ||
       prevProps.browserPlaceholder?.title !== nextProps.browserPlaceholder?.title ||
       prevProps.browserPlaceholder?.description !== nextProps.browserPlaceholder?.description ||
+      prevProps.vncUrl !== nextProps.vncUrl ||
+      prevProps.vncPlaceholder?.title !== nextProps.vncPlaceholder?.title ||
+      prevProps.vncPlaceholder?.description !== nextProps.vncPlaceholder?.description ||
       prevProps.selectedRun?._id !== nextProps.selectedRun?._id) {
       return false;
     }

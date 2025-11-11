@@ -22,6 +22,7 @@ import type { PanelConfig, PanelType, PanelPosition } from "@/lib/panel-config";
 import {
   getTaskRunBrowserPersistKey,
   getTaskRunPersistKey,
+  getTaskRunVncPersistKey,
 } from "@/lib/persistent-webview-keys";
 import {
   toMorphVncUrl,
@@ -52,6 +53,7 @@ import {
   TerminalSquare,
   GitCompare,
   MessageCircle,
+  Monitor,
 } from "lucide-react";
 import z from "zod";
 import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
@@ -222,6 +224,8 @@ function EmptyPanelSlot({
         return <Globe2 className="size-4" />;
       case "gitDiff":
         return <GitCompare className="size-4" />;
+      case "vnc":
+        return <Monitor className="size-4" />;
     }
   };
 
@@ -577,16 +581,41 @@ function TaskDetailPage() {
     [updateIframeStatus, browserPersistKey, browserUrl]
   );
 
+  const rawVncUrl =
+    selectedRun?.vscode?.url ?? selectedRun?.vscode?.workspaceUrl ?? null;
+  const vncUrl = useMemo(() => {
+    if (!rawVncUrl) {
+      return null;
+    }
+    return toMorphVncUrl(rawVncUrl);
+  }, [rawVncUrl]);
+  const vncPersistKey = selectedRunId
+    ? getTaskRunVncPersistKey(selectedRunId)
+    : null;
+  const hasVncView = Boolean(vncUrl);
+
+  const handleVncStatusChange = useCallback(
+    (status: PersistentIframeStatus) => {
+      updateIframeStatus(vncPersistKey, vncUrl, status);
+    },
+    [updateIframeStatus, vncPersistKey, vncUrl]
+  );
+
   const editorStatus = workspacePersistKey
     ? (iframeStatusByKey[workspacePersistKey]?.status ?? "loading")
     : "loading";
   const browserStatus = browserPersistKey
     ? (iframeStatusByKey[browserPersistKey]?.status ?? "loading")
     : "loading";
+  const vncStatus = vncPersistKey
+    ? (iframeStatusByKey[vncPersistKey]?.status ?? "loading")
+    : "loading";
   const isEditorBusy =
     Boolean(selectedRun) && (!workspaceUrl || editorStatus !== "loaded");
   const isBrowserBusy =
     Boolean(selectedRun) && (!hasBrowserView || browserStatus !== "loaded");
+  const isVncBusy =
+    Boolean(selectedRun) && (!hasVncView || vncStatus !== "loaded");
 
   const workspacePlaceholder = useMemo(() => {
     if (!taskRuns?.length) {
@@ -614,6 +643,24 @@ function TaskDetailPage() {
       title: "Browser preview becomes available once a run starts.",
       description:
         "Start a cloud workspace run to expose a live browser session.",
+    };
+  }, [selectedRun, taskRuns?.length]);
+
+  const vncPlaceholder = useMemo(() => {
+    if (!selectedRun) {
+      if (taskRuns?.length) {
+        return {
+          title: "Select a run to open the VNC view.",
+          description:
+            "Pick a run with a workspace to view its desktop.",
+        };
+      }
+    }
+
+    return {
+      title: "VNC becomes available once a run starts.",
+      description:
+        "Start a cloud workspace run to access the desktop via VNC.",
     };
   }, [selectedRun, taskRuns?.length]);
 
@@ -661,6 +708,12 @@ function TaskDetailPage() {
       browserPlaceholder,
       isMorphProvider,
       isBrowserBusy,
+      vncUrl,
+      vncPersistKey,
+      vncStatus,
+      setVncStatus: handleVncStatusChange,
+      vncPlaceholder,
+      isVncBusy,
       TaskRunChatPane,
       PersistentWebView,
       WorkspaceLoadingIndicator,
@@ -693,6 +746,12 @@ function TaskDetailPage() {
       browserPlaceholder,
       isMorphProvider,
       isBrowserBusy,
+      vncUrl,
+      vncPersistKey,
+      vncStatus,
+      handleVncStatusChange,
+      vncPlaceholder,
+      isVncBusy,
       handlePanelClose,
     ]
   );
