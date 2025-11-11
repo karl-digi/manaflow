@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { log } from "../logger";
 import { execAsync, WORKSPACE_ROOT } from "./utils";
+import { convexRequest } from "./convex";
 import type {
   CandidateData,
   CrownWorkerCheckResponse,
@@ -21,6 +22,7 @@ export function buildPullRequestBody({
   branch,
   taskId,
   runId,
+  screenshotUrls,
 }: {
   summary?: string;
   prompt: string;
@@ -28,15 +30,22 @@ export function buildPullRequestBody({
   branch: string;
   taskId: string;
   runId: string;
+  screenshotUrls?: string[];
 }): string {
   const bodySummary = summary?.trim() || "Summary not available.";
+
+  let screenshotsSection = "";
+  if (screenshotUrls && screenshotUrls.length > 0) {
+    screenshotsSection = `\n\n### Screenshots\n${screenshotUrls.map((url, i) => `![Screenshot ${i + 1}](${url})`).join("\n\n")}`;
+  }
+
   return `## 🏆 Crown Winner: ${agentName}
 
 ### Task Description
 ${prompt}
 
 ### Summary
-${bodySummary}
+${bodySummary}${screenshotsSection}
 
 ### Implementation Details
 - **Agent**: ${agentName}
@@ -87,6 +96,32 @@ function parseGhPrCreateResponse(input: unknown): GhPrCreateResponse | null {
   return result.data;
 }
 
+async function fetchScreenshotsForRun(
+  runId: string,
+  token: string,
+  baseUrlOverride?: string
+): Promise<string[]> {
+  try {
+    const response = await convexRequest<{ ok: boolean; screenshots: string[] }>(
+      "/api/screenshots/get-for-run",
+      token,
+      { runId },
+      baseUrlOverride
+    );
+
+    if (response?.ok && response.screenshots) {
+      return response.screenshots;
+    }
+    return [];
+  } catch (error) {
+    log("WARNING", "Failed to fetch screenshots for PR", {
+      runId,
+      error,
+    });
+    return [];
+  }
+}
+
 export async function createPullRequest(options: {
   check: CrownWorkerCheckResponse;
   winner: CandidateData;
@@ -109,6 +144,14 @@ export async function createPullRequest(options: {
 
   const baseBranch = check.task.baseBranch || "main";
   const prTitle = buildPullRequestTitle(check.task.text);
+
+  // Fetch screenshots for the winner run
+  const screenshotUrls = await fetchScreenshotsForRun(
+    winner.runId,
+    context.token,
+    context.convexUrl
+  );
+
   const prBody = buildPullRequestBody({
     summary,
     prompt: check.task.text,
@@ -116,6 +159,7 @@ export async function createPullRequest(options: {
     branch,
     taskId: context.taskId ?? check.taskId,
     runId: winner.runId,
+    screenshotUrls: screenshotUrls.length > 0 ? screenshotUrls : undefined,
   });
 
   const script = `set -e

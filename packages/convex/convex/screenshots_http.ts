@@ -151,3 +151,61 @@ export const createScreenshotUploadUrl = httpAction(async (ctx, req) => {
   const uploadUrl = await ctx.storage.generateUploadUrl();
   return jsonResponse({ ok: true, uploadUrl });
 });
+
+export const getScreenshotsForRun = httpAction(async (ctx, req) => {
+  const auth = await getWorkerAuth(req, { loggerPrefix: "[screenshots]" });
+  if (!auth) {
+    throw jsonResponse({ code: 401, message: "Unauthorized" }, 401);
+  }
+
+  const parsed = await ensureJsonRequest(req);
+  if (parsed instanceof Response) return parsed;
+
+  const body = parsed.json as Record<string, unknown>;
+  const runId = body.runId;
+
+  if (!runId || typeof runId !== "string") {
+    return jsonResponse({ code: 400, message: "runId is required" }, 400);
+  }
+
+  const run = await ctx.runQuery(internal.taskRuns.getById, {
+    id: runId as Id<"taskRuns">,
+  });
+
+  if (!run) {
+    return jsonResponse({ code: 404, message: "Task run not found" }, 404);
+  }
+
+  if (
+    run.teamId !== auth.payload.teamId ||
+    run.userId !== auth.payload.userId
+  ) {
+    return jsonResponse({ code: 401, message: "Unauthorized" }, 401);
+  }
+
+  // Get the latest screenshot set for this run
+  const screenshotSetDocs = await ctx.runQuery(
+    internal.tasks.getScreenshotsForRun,
+    { runId: runId as Id<"taskRuns"> }
+  );
+
+  if (!screenshotSetDocs || screenshotSetDocs.length === 0) {
+    return jsonResponse({ ok: true, screenshots: [] });
+  }
+
+  // Get the latest screenshot set
+  const latestSet = screenshotSetDocs[0];
+
+  // Get URLs for all images in the latest set
+  const screenshotUrls = await Promise.all(
+    latestSet.images.map(async (image) => {
+      const url = await ctx.storage.getUrl(image.storageId);
+      return url;
+    })
+  );
+
+  return jsonResponse({
+    ok: true,
+    screenshots: screenshotUrls.filter((url): url is string => url !== null),
+  });
+});
