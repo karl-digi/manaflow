@@ -660,6 +660,7 @@ export function setupSocketHandlers(
           projectFullName,
           repoUrl: explicitRepoUrl,
           branch: requestedBranch,
+          prNumber: requestedPrNumber,
           taskId: providedTaskId,
           taskRunId: providedTaskRunId,
           workspaceName: providedWorkspaceName,
@@ -691,7 +692,44 @@ export function setupSocketHandlers(
           (projectFullName
             ? `https://github.com/${projectFullName}.git`
             : undefined);
-        const branch = requestedBranch?.trim();
+
+        // Resolve PR number to branch name if provided
+        let branch = requestedBranch?.trim();
+        if (requestedPrNumber && projectFullName) {
+          try {
+            const [owner, repo] = projectFullName.split("/");
+            const token = await getGitHubTokenFromKeychain();
+            if (!token) {
+              callback({
+                success: false,
+                error: "GitHub token not available. Cannot fetch PR information.",
+              });
+              return;
+            }
+
+            const octokit = getOctokit(token);
+            const { data: prData } = await octokit.rest.pulls.get({
+              owner,
+              repo,
+              pull_number: requestedPrNumber,
+            });
+
+            branch = prData.head.ref;
+            serverLogger.info(
+              `[create-local-workspace] Resolved PR #${requestedPrNumber} to branch: ${branch}`
+            );
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            serverLogger.error(
+              `[create-local-workspace] Failed to resolve PR #${requestedPrNumber}: ${errorMessage}`
+            );
+            callback({
+              success: false,
+              error: `Failed to fetch PR #${requestedPrNumber}: ${errorMessage}`,
+            });
+            return;
+          }
+        }
 
         let workspaceConfig: WorkspaceConfigResponse | null = null;
         if (projectFullName) {

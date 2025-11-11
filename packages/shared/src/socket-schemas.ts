@@ -55,6 +55,7 @@ export const CreateLocalWorkspaceSchema = z.object({
   projectFullName: z.string().optional(),
   repoUrl: z.string().optional(),
   branch: z.string().optional(),
+  prNumber: z.number().optional(),
   taskId: typedZid("tasks").optional(),
   taskRunId: typedZid("taskRuns").optional(),
   workspaceName: z.string().optional(),

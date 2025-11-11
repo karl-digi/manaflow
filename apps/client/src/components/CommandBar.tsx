@@ -683,7 +683,7 @@ export function CommandBar({
   }, [open]);
 
   const createLocalWorkspace = useCallback(
-    async (projectFullName: string) => {
+    async (projectFullName: string, branch?: string, prNumber?: number) => {
       if (isCreatingLocalWorkspace) {
         return;
       }
@@ -721,6 +721,8 @@ export function CommandBar({
               teamSlugOrId,
               projectFullName,
               repoUrl,
+              branch,
+              prNumber,
               taskId: reservation.taskId,
               taskRunId: reservation.taskRunId,
               workspaceName: reservation.workspaceName,
@@ -839,10 +841,21 @@ export function CommandBar({
   );
 
   const handleLocalWorkspaceSelect = useCallback(
-    (projectFullName: string) => {
+    (input: string) => {
       clearCommandInput();
       closeCommand();
-      void createLocalWorkspace(projectFullName);
+
+      // Try to parse as a GitHub URL
+      const { parseGithubRepoUrl } = require("@cmux/shared");
+      const parsed = parseGithubRepoUrl(input);
+
+      if (parsed) {
+        const { fullName, prNumber, branch } = parsed;
+        void createLocalWorkspace(fullName, branch, prNumber);
+      } else {
+        // Fallback to treating as projectFullName
+        void createLocalWorkspace(input);
+      }
     },
     [clearCommandInput, closeCommand, createLocalWorkspace]
   );
@@ -932,7 +945,7 @@ export function CommandBar({
   );
 
   const createCloudWorkspaceFromRepo = useCallback(
-    async (projectFullName: string) => {
+    async (input: string) => {
       if (isCreatingCloudWorkspace) {
         return;
       }
@@ -946,6 +959,11 @@ export function CommandBar({
       setIsCreatingCloudWorkspace(true);
 
       try {
+        // Try to parse as GitHub URL to extract repo info
+        const { parseGithubRepoUrl } = require("@cmux/shared");
+        const parsed = parseGithubRepoUrl(input);
+        const projectFullName = parsed?.fullName || input;
+
         const repoUrl = `https://github.com/${projectFullName}.git`;
 
         // Create task in Convex for repo-based cloud workspace
@@ -1926,7 +1944,7 @@ export function CommandBar({
   }, [allTasks, handleSelect, stackUser]);
 
   const localWorkspaceEntries = useMemo<CommandListEntry[]>(() => {
-    return localWorkspaceOptions.map((option) => {
+    const entries: CommandListEntry[] = localWorkspaceOptions.map((option) => {
       const value = `local-workspace:${option.fullName}`;
       return {
         value,
@@ -1948,14 +1966,60 @@ export function CommandBar({
         ),
       };
     });
+
+    // Check if the search input looks like a GitHub URL
+    if (search.trim()) {
+      const { parseGithubRepoUrl } = require("@cmux/shared");
+      const parsed = parseGithubRepoUrl(search.trim());
+
+      if (parsed) {
+        const { fullName, prNumber, branch } = parsed;
+        let label = fullName;
+        if (prNumber) {
+          label = `${fullName} (PR #${prNumber})`;
+        } else if (branch) {
+          label = `${fullName} (${branch})`;
+        }
+
+        // Add a dynamic entry for the pasted URL
+        const urlEntry: CommandListEntry = {
+          value: `local-workspace:url:${search.trim()}`,
+          label,
+          keywords: [fullName, branch || "", prNumber?.toString() || ""],
+          searchText: buildSearchText(label, [fullName, branch || ""]),
+          className: baseCommandItemClassName,
+          disabled: isCreatingLocalWorkspace,
+          execute: () => handleLocalWorkspaceSelect(search.trim()),
+          renderContent: () => (
+            <>
+              <GitHubIcon className="h-4 w-4 text-blue-500" />
+              <div className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate text-sm font-semibold">{label}</span>
+                {(prNumber || branch) && (
+                  <span className="truncate text-xs text-neutral-500 dark:text-neutral-400">
+                    {prNumber ? `Pull Request #${prNumber}` : `Branch: ${branch}`}
+                  </span>
+                )}
+              </div>
+            </>
+          ),
+        };
+
+        // Add the URL entry at the beginning
+        entries.unshift(urlEntry);
+      }
+    }
+
+    return entries;
   }, [
     handleLocalWorkspaceSelect,
     isCreatingLocalWorkspace,
     localWorkspaceOptions,
+    search,
   ]);
 
   const cloudWorkspaceEntries = useMemo<CommandListEntry[]>(() => {
-    return cloudWorkspaceOptions.map((option) => {
+    const entries: CommandListEntry[] = cloudWorkspaceOptions.map((option) => {
       if (option.type === "environment") {
         const value = `cloud-workspace-env:${option.environmentId}`;
         return {
@@ -1998,10 +2062,63 @@ export function CommandBar({
         };
       }
     });
+
+    // Check if the search input looks like a GitHub URL
+    if (search.trim()) {
+      const { parseGithubRepoUrl } = require("@cmux/shared");
+      const parsed = parseGithubRepoUrl(search.trim());
+
+      if (parsed) {
+        const { fullName, prNumber, branch } = parsed;
+        let label = fullName;
+        if (prNumber) {
+          label = `${fullName} (PR #${prNumber})`;
+        } else if (branch) {
+          label = `${fullName} (${branch})`;
+        }
+
+        // Create a dynamic repo-type option for the pasted URL
+        const urlOption: CloudWorkspaceOption = {
+          type: "repo",
+          fullName,
+          repoBaseName: fullName.split("/")[1] || fullName,
+          keywords: [fullName, branch || "", prNumber?.toString() || ""],
+        };
+
+        const urlEntry: CommandListEntry = {
+          value: `cloud-workspace-url:${search.trim()}`,
+          label,
+          keywords: urlOption.keywords,
+          searchText: buildSearchText(label, [fullName, branch || ""]),
+          className: baseCommandItemClassName,
+          disabled: isCreatingCloudWorkspace,
+          execute: () => handleCloudWorkspaceSelect(urlOption),
+          renderContent: () => (
+            <>
+              <GitHubIcon className="h-4 w-4 text-blue-500" />
+              <div className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate text-sm font-semibold">{label}</span>
+                {(prNumber || branch) && (
+                  <span className="truncate text-xs text-neutral-500 dark:text-neutral-400">
+                    {prNumber ? `Pull Request #${prNumber}` : `Branch: ${branch}`}
+                  </span>
+                )}
+              </div>
+            </>
+          ),
+        };
+
+        // Add the URL entry at the beginning
+        entries.unshift(urlEntry);
+      }
+    }
+
+    return entries;
   }, [
     cloudWorkspaceOptions,
     handleCloudWorkspaceSelect,
     isCreatingCloudWorkspace,
+    search,
   ]);
 
   const {

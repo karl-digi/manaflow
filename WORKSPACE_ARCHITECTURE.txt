@@ -1,0 +1,184 @@
+CMUX WORKSPACE CREATION ARCHITECTURE
+=====================================
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          FRONTEND (React/Electron)                      │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  Keyboard Event                Command Bar Component                    │
+│  ┌──────────────┐             ┌────────────────────────┐              │
+│  │ Cmd+K / Ctrl+K │ ────────→ │ CommandBar.tsx         │              │
+│  └──────────────┘             │ (283-2718)             │              │
+│       │                        │                        │              │
+│       │ (Electron)             │ State:                 │              │
+│       ▼                        │ - open                 │              │
+│  ┌──────────────┐             │ - search               │              │
+│  │ cmdk.ts      │             │ - activePage           │              │
+│  │ (Main Process)│             │ - commandValue         │              │
+│  └──────────────┘             │                        │              │
+│                                │ Search Pages:          │              │
+│                                │ - root                 │              │
+│                                │ - local-workspaces     │              │
+│                                │ - cloud-workspaces     │              │
+│                                │ - teams                │              │
+│                                └────────────────────────┘              │
+│                                         │                              │
+│                                         ▼                              │
+│                        ┌─────────────────────────────┐                │
+│                        │  User Action               │                │
+│                        └─────────────────────────────┘                │
+│                                         │                              │
+│                ┌────────────────────────┼────────────────────────┐    │
+│                ▼                        ▼                        ▼    │
+│         ┌──────────────┐        ┌──────────────┐        ┌──────────────┐
+│         │ Local WS     │        │ Cloud WS     │        │ Branch/URL   │
+│         │ Selection    │        │ Selection    │        │ Input        │
+│         └──────────────┘        └──────────────┘        └──────────────┘
+│                │                        │                        │
+│                └────────────────────────┼────────────────────────┘
+│                                         │
+│                         createLocalWorkspace()
+│                         OR
+│                         createCloudWorkspaceFromRepo()
+│                                         │
+│                                         ▼
+│                        ┌─────────────────────────────┐
+│                        │ reserveLocalWorkspace()     │
+│                        │ (Convex Mutation)           │
+│                        └─────────────────────────────┘
+│                                         │
+│                                         ▼
+│                        ┌─────────────────────────────┐
+│                        │ Socket.emit()               │
+│                        │ "create-local-workspace"    │
+│                        │ or                          │
+│                        │ "create-cloud-workspace"    │
+│                        └─────────────────────────────┘
+└─────────────────────────────────────────────────────────────────────────┘
+                                         │
+                           Network (Socket.IO)
+                                         │
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         BACKEND (Node.js Server)                        │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│                        Socket Handlers                                  │
+│                   socket-handlers.ts (640+)                             │
+│                                                                          │
+│                    ┌─────────────────────────────┐                      │
+│                    │ on("create-local-workspace")│                      │
+│                    │ (639-1105)                  │                      │
+│                    └─────────────────────────────┘                      │
+│                              │                                          │
+│              ┌───────────────┼───────────────┐                          │
+│              ▼               ▼               ▼                          │
+│         Validate       Reserve        Setup Workspace                   │
+│         Payload        Task/Run       Path & Config                    │
+│         (645-687)     (732-747)       (763-825)                        │
+│              │               │               │                          │
+│              └───────────────┼───────────────┘                          │
+│                              ▼                                          │
+│                      ┌─────────────────┐                               │
+│                      │  Git Operations │                               │
+│                      └─────────────────┘                               │
+│                              │                                          │
+│              ┌───────────────┼───────────────┐                          │
+│              ▼               ▼               ▼                          │
+│         Clone Repo    Checkout Branch  Verify HEAD                     │
+│         (950-972)      (954-957)        (974-991)                      │
+│                                                                          │
+│         execFileAsync("git", ["clone",                                 │
+│           "--branch", branch,                                          │
+│           "--single-branch",                                           │
+│           repoUrl,                                                     │
+│           path])                                                       │
+│                                                                          │
+│              ▼                                                          │
+│         ┌─────────────────────────────────────┐                        │
+│         │ Write .env & Run Maintenance        │                        │
+│         │ (779-894)                           │                        │
+│         └─────────────────────────────────────┘                        │
+│              ▼                                                          │
+│         ┌─────────────────────────────────────┐                        │
+│         │ Update Task/TaskRun Status          │                        │
+│         │ & VSCode Instance                   │                        │
+│         │ (908-1035)                          │                        │
+│         └─────────────────────────────────────┘                        │
+│              ▼                                                          │
+│         ┌─────────────────────────────────────┐                        │
+│         │ Setup File Watcher                  │                        │
+│         │ (1037-1052)                         │                        │
+│         └─────────────────────────────────────┘                        │
+│              ▼                                                          │
+│         ┌─────────────────────────────────────┐                        │
+│         │ Return Callback Response            │                        │
+│         │ {success, taskId, workspaceUrl}     │                        │
+│         └─────────────────────────────────────┘                        │
+└─────────────────────────────────────────────────────────────────────────┘
+                                         │
+                           Network (Socket.IO)
+                                         │
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    FRONTEND (Navigate to Workspace)                     │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  router.preloadRoute({                                                  │
+│    to: "/$teamSlugOrId/task/$taskId/run/$runId/vscode",                │
+│    params: { teamSlugOrId, taskId, runId }                             │
+│  })                                                                     │
+│                                                                          │
+│  navigate({                                                             │
+│    to: "/$teamSlugOrId/task/$taskId/run/$runId/vscode",                │
+│    params: { ... }                                                     │
+│  })                                                                     │
+└─────────────────────────────────────────────────────────────────────────┘
+
+=====================================
+GITHUB URL PARSING & BRANCH CHECKOUT
+=====================================
+
+URL Input
+├─ "owner/repo"
+├─ "https://github.com/owner/repo"
+├─ "https://github.com/owner/repo.git"
+└─ "git@github.com:owner/repo.git"
+   │
+   ▼ parseGithubRepoUrl()
+   │ (parse-github-repo-url.ts)
+   │
+   ├─ Apply regex pattern (3 patterns)
+   ├─ Validate format
+   ├─ Extract owner & repo
+   │
+   ▼
+{
+  owner: string,
+  repo: string,
+  fullName: "owner/repo",
+  url: "https://github.com/owner/repo",
+  gitUrl: "https://github.com/owner/repo.git"
+}
+   │
+   ▼
+Backend: create-local-workspace
+   │
+   ├─ Construct cloneArgs = ["clone"]
+   ├─ If branch:
+   │  ├─ cloneArgs.push("--branch", branch)
+   │  └─ cloneArgs.push("--single-branch")
+   ├─ cloneArgs.push(repoUrl, workspacePath)
+   │
+   ▼
+execFileAsync("git", cloneArgs, {
+  cwd: workspaceRoot
+})
+
+Verification:
+   ▼
+execFileAsync("git", ["rev-parse", "--verify", "HEAD"], {
+  cwd: resolvedWorkspacePath
+})
+
+Success ▶ Update VSCode, Start Workspace
+Error   ▶ Cleanup, Report Error
+
