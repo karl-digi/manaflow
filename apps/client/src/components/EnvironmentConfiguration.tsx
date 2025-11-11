@@ -4,7 +4,9 @@ import { WorkspaceLoadingIndicator } from "@/components/workspace-loading-indica
 import { ScriptTextareaField } from "@/components/ScriptTextareaField";
 import { SCRIPT_COPY } from "@/components/scriptCopy";
 import { ResizableColumns } from "@/components/ResizableColumns";
+import { RenderPanel } from "@/components/TaskPanelFactory";
 import { parseEnvBlock } from "@/lib/parseEnvBlock";
+import type { PanelPosition, PanelType } from "@/lib/panel-config";
 import {
   TASK_RUN_IFRAME_ALLOW,
   TASK_RUN_IFRAME_SANDBOX,
@@ -27,16 +29,16 @@ import { useMutation as useRQMutation } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import type { Id } from "@cmux/convex/dataModel";
 import clsx from "clsx";
-import type { PersistentIframeStatus } from "@/components/persistent-iframe";
 import {
   ArrowLeft,
   Code2,
+  Eye,
+  EyeOff,
   Loader2,
   Minus,
   Monitor,
   Plus,
   Settings,
-  X,
 } from "lucide-react";
 import {
   useCallback,
@@ -48,6 +50,17 @@ import {
 } from "react";
 import TextareaAutosize from "react-textarea-autosize";
 import { toast } from "sonner";
+
+const MASKED_ENV_VALUE = "••••••••••••••••";
+
+type PreviewMode = "split" | "vscode" | "browser";
+type EnvPanelPosition = Extract<PanelPosition, "topLeft" | "bottomLeft">;
+type EnvPanelType = Extract<PanelType, "workspace" | "browser">;
+const ENV_PANEL_POSITIONS: EnvPanelPosition[] = ["topLeft", "bottomLeft"];
+const isEnvPanelPosition = (
+  position: PanelPosition | null
+): position is EnvPanelPosition =>
+  position === "topLeft" || position === "bottomLeft";
 
 export function EnvironmentConfiguration({
   selectedRepos,
@@ -167,16 +180,65 @@ export function EnvironmentConfiguration({
   const [pendingFocusIndex, setPendingFocusIndex] = useState<number | null>(
     null
   );
+  const [areEnvValuesHidden, setAreEnvValuesHidden] = useState(true);
+  const [activeEnvValueIndex, setActiveEnvValueIndex] = useState<number | null>(null);
   const lastSubmittedEnvContent = useRef<string | null>(null);
-  const [activePreview, setActivePreview] = useState<"vscode" | "browser">(
-    "vscode"
-  );
-  const [vscodeStatus, setVscodeStatus] =
-    useState<PersistentIframeStatus>("loading");
-  const [vscodeError, setVscodeError] = useState<string | null>(null);
-  const [browserStatus, setBrowserStatus] =
-    useState<PersistentIframeStatus>("loading");
-  const [browserError, setBrowserError] = useState<string | null>(null);
+  const [previewMode, setPreviewMode] = useState<PreviewMode>(() => {
+    if (typeof window === "undefined") {
+      return "split";
+    }
+    const stored = window.localStorage.getItem("env-preview-mode");
+    if (stored === "split" || stored === "vscode" || stored === "browser") {
+      return stored;
+    }
+    return "split";
+  });
+  const [splitRatio, setSplitRatio] = useState(() => {
+    if (typeof window === "undefined") {
+      return 0.5;
+    }
+    const stored = window.localStorage.getItem("env-preview-split");
+    const parsed = stored ? Number.parseFloat(stored) : 0.5;
+    if (Number.isNaN(parsed)) {
+      return 0.5;
+    }
+    return Math.min(Math.max(parsed, 0.2), 0.8);
+  });
+  const splitContainerRef = useRef<HTMLDivElement | null>(null);
+  const splitDragRafRef = useRef<number | null>(null);
+  const [expandedPanelInSplit, setExpandedPanelInSplit] = useState<EnvPanelPosition | null>(null);
+  const [panelLayout, setPanelLayout] = useState<
+    Record<EnvPanelPosition, EnvPanelType>
+  >({
+    topLeft: "workspace",
+    bottomLeft: "browser",
+  });
+  const workspacePosition = useMemo<EnvPanelPosition | null>(() => {
+    return (
+      ENV_PANEL_POSITIONS.find(
+        (position) => panelLayout[position] === "workspace"
+      ) ?? null
+    );
+  }, [panelLayout]);
+  const browserPosition = useMemo<EnvPanelPosition | null>(() => {
+    return (
+      ENV_PANEL_POSITIONS.find(
+        (position) => panelLayout[position] === "browser"
+      ) ?? null
+    );
+  }, [panelLayout]);
+  const expandedPanelPosition = useMemo<PanelPosition | null>(() => {
+    if (previewMode === "split") {
+      return null;
+    }
+    if (previewMode === "vscode") {
+      return workspacePosition;
+    }
+    if (previewMode === "browser") {
+      return browserPosition;
+    }
+    return null;
+  }, [browserPosition, previewMode, workspacePosition]);
   const basePersistKey = useMemo(() => {
     if (instanceId) return `env-config:${instanceId}`;
     if (vscodeUrl) return `env-config:${vscodeUrl}`;
@@ -185,21 +247,186 @@ export function EnvironmentConfiguration({
   }, [browserUrl, instanceId, vscodeUrl]);
   const vscodePersistKey = `${basePersistKey}:vscode`;
   const browserPersistKey = `${basePersistKey}:browser`;
+
   useEffect(() => {
-    if (!browserUrl && activePreview === "browser") {
-      setActivePreview("vscode");
+    if (typeof window === "undefined") {
+      return;
     }
-  }, [activePreview, browserUrl]);
+    window.localStorage.setItem("env-preview-mode", previewMode);
+  }, [previewMode]);
 
   useEffect(() => {
-    setVscodeStatus("loading");
-    setVscodeError(null);
-  }, [vscodeUrl]);
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.localStorage.setItem("env-preview-split", String(splitRatio));
+  }, [splitRatio]);
 
   useEffect(() => {
-    setBrowserStatus("loading");
-    setBrowserError(null);
-  }, [browserUrl]);
+    if (previewMode === "browser" && !browserUrl) {
+      setPreviewMode("vscode");
+    }
+  }, [browserUrl, previewMode]);
+
+  const handlePanelSwap = useCallback(
+    (fromPosition: PanelPosition, toPosition: PanelPosition) => {
+      if (
+        !isEnvPanelPosition(fromPosition) ||
+        !isEnvPanelPosition(toPosition) ||
+        fromPosition === toPosition
+      ) {
+        return;
+      }
+      const fromKey = fromPosition;
+      const toKey = toPosition;
+      setPanelLayout((prev) => {
+        if (prev[fromKey] === prev[toKey]) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [fromKey]: prev[toKey],
+          [toKey]: prev[fromKey],
+        };
+      });
+    },
+    []
+  );
+
+  const handlePanelToggleExpand = useCallback(
+    (position: PanelPosition) => {
+      if (!isEnvPanelPosition(position)) {
+        return;
+      }
+      setExpandedPanelInSplit((prev) => {
+        if (prev === position) {
+          return null;
+        }
+        return position;
+      });
+    },
+    []
+  );
+
+  const clampSplitRatio = useCallback(
+    (value: number) => Math.min(Math.max(value, 0.2), 0.8),
+    []
+  );
+
+  const disableIframePointerEvents = useCallback(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+    const iframes = document.querySelectorAll("iframe");
+    for (const node of Array.from(iframes)) {
+      if (!(node instanceof HTMLIFrameElement)) {
+        continue;
+      }
+      const current = node.style.pointerEvents;
+      node.dataset.prevPointerEvents = current ? current : "__unset__";
+      node.style.pointerEvents = "none";
+    }
+  }, []);
+
+  const restoreIframePointerEvents = useCallback(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+    const iframes = document.querySelectorAll("iframe");
+    for (const node of Array.from(iframes)) {
+      if (!(node instanceof HTMLIFrameElement)) {
+        continue;
+      }
+      const prev = node.dataset.prevPointerEvents;
+      if (prev !== undefined) {
+        if (prev === "__unset__") {
+          node.style.removeProperty("pointer-events");
+        } else {
+          node.style.pointerEvents = prev;
+        }
+        delete node.dataset.prevPointerEvents;
+      } else {
+        node.style.removeProperty("pointer-events");
+      }
+    }
+  }, []);
+
+  const updateSplitFromEvent = useCallback(
+    (event: MouseEvent) => {
+      const container = splitContainerRef.current;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      if (rect.height <= 0) return;
+      const offset = (event.clientY - rect.top) / rect.height;
+      setSplitRatio(clampSplitRatio(offset));
+    },
+    [clampSplitRatio]
+  );
+
+  const handleSplitDragMove = useCallback(
+    (event: MouseEvent) => {
+      if (typeof window === "undefined") {
+        return;
+      }
+      if (splitDragRafRef.current != null) {
+        return;
+      }
+      splitDragRafRef.current = window.requestAnimationFrame(() => {
+        splitDragRafRef.current = null;
+        updateSplitFromEvent(event);
+      });
+    },
+    [updateSplitFromEvent]
+  );
+
+  const stopSplitDragging = useCallback(() => {
+    if (typeof window === "undefined" || typeof document === "undefined") {
+      return;
+    }
+    if (splitDragRafRef.current != null) {
+      cancelAnimationFrame(splitDragRafRef.current);
+      splitDragRafRef.current = null;
+    }
+    document.body.style.cursor = "";
+    document.body.classList.remove("select-none");
+    restoreIframePointerEvents();
+    window.removeEventListener("mousemove", handleSplitDragMove);
+    window.removeEventListener("mouseup", stopSplitDragging);
+  }, [handleSplitDragMove, restoreIframePointerEvents]);
+
+  const startSplitDragging = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      if (previewMode !== "split") {
+        return;
+      }
+      if (typeof window === "undefined" || typeof document === "undefined") {
+        return;
+      }
+      event.preventDefault();
+      document.body.style.cursor = "row-resize";
+      document.body.classList.add("select-none");
+      disableIframePointerEvents();
+      window.addEventListener("mousemove", handleSplitDragMove);
+      window.addEventListener("mouseup", stopSplitDragging);
+    },
+    [disableIframePointerEvents, handleSplitDragMove, previewMode, stopSplitDragging]
+  );
+
+  useEffect(() => {
+    return () => {
+      if (typeof window !== "undefined" && splitDragRafRef.current != null) {
+        cancelAnimationFrame(splitDragRafRef.current);
+        splitDragRafRef.current = null;
+        window.removeEventListener("mousemove", handleSplitDragMove);
+        window.removeEventListener("mouseup", stopSplitDragging);
+      }
+      if (typeof document !== "undefined") {
+        document.body.style.cursor = "";
+        document.body.classList.remove("select-none");
+      }
+      restoreIframePointerEvents();
+    };
+  }, [handleSplitDragMove, restoreIframePointerEvents, stopSplitDragging]);
 
   const createEnvironmentMutation = useRQMutation(
     postApiEnvironmentsMutation()
@@ -228,42 +455,6 @@ export function EnvironmentConfiguration({
       }
     }
   }, [pendingFocusIndex, envVars]);
-
-  const handlePreviewSelect = useCallback(
-    (view: "vscode" | "browser") => {
-      if (view === "browser" && !browserUrl) {
-        return;
-      }
-      setActivePreview(view);
-    },
-    [browserUrl]
-  );
-
-  const handleVscodeLoad = useCallback(() => {
-    setVscodeError(null);
-    setVscodeStatus("loaded");
-  }, []);
-
-  const handleVscodeError = useCallback((error: Error) => {
-    console.error("Failed to load VS Code workspace iframe", error);
-    setVscodeError(
-      "We couldn’t load VS Code. Try reloading or restarting the environment."
-    );
-    setVscodeStatus("error");
-  }, []);
-
-  const handleBrowserLoad = useCallback(() => {
-    setBrowserError(null);
-    setBrowserStatus("loaded");
-  }, []);
-
-  const handleBrowserError = useCallback((error: Error) => {
-    console.error("Failed to load browser workspace iframe", error);
-    setBrowserError(
-      "We couldn’t load the browser. Try reloading or restarting the environment."
-    );
-    setBrowserStatus("error");
-  }, []);
 
   // no-op placeholder removed; using onSnapshot instead
 
@@ -440,150 +631,215 @@ export function EnvironmentConfiguration({
   };
 
   const isBrowserAvailable = Boolean(browserUrl);
-  const showVscodeOverlay =
-    vscodeStatus !== "loaded" || vscodeError !== null;
-  const showBrowserOverlay =
-    browserStatus !== "loaded" || browserError !== null;
-  const browserLoadingFallback = useMemo(
-    () => <WorkspaceLoadingIndicator variant="browser" status="loading" />,
-    []
+  const workspacePlaceholder = useMemo(
+    () =>
+      vscodeUrl
+        ? null
+        : {
+            title: instanceId
+              ? "Waiting for VS Code"
+              : "VS Code workspace not ready",
+            description: instanceId
+              ? "The editor opens automatically once the environment finishes booting."
+              : "Select a repository and launch an environment to open VS Code.",
+          },
+    [instanceId, vscodeUrl]
   );
-  const browserErrorFallback = useMemo(
-    () => <WorkspaceLoadingIndicator variant="browser" status="error" />,
-    []
+  const browserPlaceholder = useMemo(
+    () =>
+      browserUrl
+        ? null
+        : {
+            title: instanceId
+              ? "Waiting for browser"
+              : "Browser preview unavailable",
+            description: instanceId
+              ? "We'll embed the browser session as soon as the environment exposes it."
+              : "Launch an environment so the browser agent can handle screenshots and authentication flows.",
+          },
+    [browserUrl, instanceId]
   );
 
-  const renderVscodePreview = () => {
-    if (!vscodeUrl) {
+  const renderEnvPanel = (position: EnvPanelPosition) => {
+    const type = panelLayout[position];
+    const isPanelExpanded = previewMode === "split" ? expandedPanelInSplit === position : expandedPanelPosition === position;
+    const isAnyExpanded = previewMode === "split" ? expandedPanelInSplit !== null : expandedPanelPosition !== null;
+    const commonPanelProps = {
+      position,
+      onSwap: handlePanelSwap,
+      onToggleExpand: handlePanelToggleExpand,
+      isExpanded: isPanelExpanded,
+      isAnyPanelExpanded: isAnyExpanded,
+    };
+
+    if (type === "workspace") {
       return (
-        <div className="flex h-full items-center justify-center px-6 text-center">
-          <div className="space-y-3">
-            <Loader2 className="w-6 h-6 mx-auto animate-spin text-neutral-500 dark:text-neutral-400" />
-            <p className="text-sm text-neutral-600 dark:text-neutral-400">
-              Waiting for the VS Code workspace URL...
-            </p>
-          </div>
-        </div>
+        <RenderPanel
+          key={`env-panel-${position}-workspace`}
+          type="workspace"
+          {...commonPanelProps}
+          workspaceUrl={vscodeUrl ?? null}
+          workspacePersistKey={vscodePersistKey}
+          PersistentWebView={PersistentWebView}
+          WorkspaceLoadingIndicator={WorkspaceLoadingIndicator}
+          TASK_RUN_IFRAME_ALLOW={TASK_RUN_IFRAME_ALLOW}
+          TASK_RUN_IFRAME_SANDBOX={TASK_RUN_IFRAME_SANDBOX}
+          workspacePlaceholder={workspacePlaceholder}
+          editorLoadingFallback={
+            <WorkspaceLoadingIndicator variant="vscode" status="loading" />
+          }
+          editorErrorFallback={
+            <WorkspaceLoadingIndicator variant="vscode" status="error" />
+          }
+          selectedRun={null}
+          rawWorkspaceUrl={null}
+        />
       );
     }
 
     return (
-      <div className="relative h-full" aria-busy={showVscodeOverlay}>
-        <div
-          aria-hidden={!showVscodeOverlay}
-          className={clsx(
-            "absolute inset-0 z-[var(--z-low)] flex items-center justify-center backdrop-blur-sm transition-opacity duration-300",
-            "bg-white/60 dark:bg-neutral-950/60",
-            showVscodeOverlay
-              ? "opacity-100 pointer-events-auto"
-              : "opacity-0 pointer-events-none"
-          )}
-        >
-          {vscodeError ? (
-            <div className="text-center max-w-sm px-6">
-              <X className="w-8 h-8 mx-auto mb-3 text-red-500" />
-              <p className="text-sm text-neutral-700 dark:text-neutral-300">
-                {vscodeError}
-              </p>
-            </div>
-          ) : (
-            <div className="text-center">
-              <Loader2 className="w-6 h-6 mx-auto mb-3 animate-spin text-neutral-500 dark:text-neutral-400" />
-              <p className="text-sm text-neutral-700 dark:text-neutral-300">
-                Loading VS Code...
-              </p>
-            </div>
-          )}
-        </div>
+      <RenderPanel
+        key={`env-panel-${position}-browser`}
+        type="browser"
+        {...commonPanelProps}
+        browserUrl={browserUrl ?? null}
+        browserPersistKey={browserPersistKey}
+        PersistentWebView={PersistentWebView}
+        WorkspaceLoadingIndicator={WorkspaceLoadingIndicator}
+        TASK_RUN_IFRAME_ALLOW={TASK_RUN_IFRAME_ALLOW}
+        TASK_RUN_IFRAME_SANDBOX={TASK_RUN_IFRAME_SANDBOX}
+        browserPlaceholder={browserPlaceholder}
+        selectedRun={null}
+        isMorphProvider={Boolean(instanceId)}
+      />
+    );
+  };
+
+  const renderSingleContent = () => {
+    if (previewMode === "vscode") {
+      return vscodeUrl ? (
         <PersistentWebView
+          key={vscodePersistKey}
           persistKey={vscodePersistKey}
           src={vscodeUrl}
-          className="absolute inset-0"
-          iframeClassName="w-full h-full border-0"
+          className="flex h-full"
+          iframeClassName="select-none"
           allow={TASK_RUN_IFRAME_ALLOW}
           sandbox={TASK_RUN_IFRAME_SANDBOX}
+          preflight
           retainOnUnmount
-          onLoad={handleVscodeLoad}
-          onError={handleVscodeError}
-          onStatusChange={setVscodeStatus}
+          fallback={<WorkspaceLoadingIndicator variant="vscode" status="loading" />}
+          fallbackClassName="bg-neutral-50 dark:bg-black"
+          errorFallback={<WorkspaceLoadingIndicator variant="vscode" status="error" />}
+          errorFallbackClassName="bg-neutral-50/95 dark:bg-black/95"
           loadTimeoutMs={60_000}
-          fallbackClassName="bg-neutral-50 dark:bg-neutral-950"
-          errorFallbackClassName="bg-neutral-50 dark:bg-neutral-950"
         />
-      </div>
-    );
-  };
-
-  const renderBrowserPreview = () => {
-    if (!browserUrl) {
-      return (
-        <div className="flex h-full items-center justify-center px-6 text-center">
-          <div className="space-y-3">
-            <Loader2 className="w-6 h-6 mx-auto animate-spin text-neutral-500 dark:text-neutral-400" />
-            <p className="text-sm text-neutral-600 dark:text-neutral-400">
-              Waiting for the workspace browser to be ready...
-            </p>
+      ) : workspacePlaceholder ? (
+        <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-neutral-500 dark:text-neutral-400">
+          <div className="text-sm font-medium text-neutral-600 dark:text-neutral-200">
+            {workspacePlaceholder.title}
           </div>
+          {workspacePlaceholder.description ? (
+            <p className="text-xs text-neutral-500 dark:text-neutral-400">
+              {workspacePlaceholder.description}
+            </p>
+          ) : null}
         </div>
-      );
+      ) : null;
     }
 
-    return (
-      <div className="relative h-full" aria-busy={showBrowserOverlay}>
+    if (previewMode === "browser") {
+      return browserUrl && browserPersistKey ? (
         <PersistentWebView
+          key={browserPersistKey}
           persistKey={browserPersistKey}
           src={browserUrl}
-          className="absolute inset-0"
-          iframeClassName="w-full h-full border-0"
+          className="flex h-full"
+          iframeClassName="select-none"
           allow={TASK_RUN_IFRAME_ALLOW}
           sandbox={TASK_RUN_IFRAME_SANDBOX}
           retainOnUnmount
-          onLoad={handleBrowserLoad}
-          onError={handleBrowserError}
-          onStatusChange={setBrowserStatus}
-          fallback={browserLoadingFallback}
-          fallbackClassName="bg-neutral-50 dark:bg-neutral-950"
-          errorFallback={browserErrorFallback}
-          errorFallbackClassName="bg-neutral-50/95 dark:bg-neutral-950/95"
-          loadTimeoutMs={60_000}
+          fallback={<WorkspaceLoadingIndicator variant="browser" status="loading" />}
+          fallbackClassName="bg-neutral-50 dark:bg-black"
+          errorFallback={<WorkspaceLoadingIndicator variant="browser" status="error" />}
+          errorFallbackClassName="bg-neutral-50/95 dark:bg-black/95"
+          loadTimeoutMs={45_000}
         />
-        <div
-          aria-hidden={!showBrowserOverlay}
-          className={clsx(
-            "absolute inset-0 z-[var(--z-low)] flex items-center justify-center backdrop-blur-sm transition-opacity duration-300",
-            "bg-white/60 dark:bg-neutral-950/60",
-            showBrowserOverlay
-              ? "opacity-100 pointer-events-auto"
-              : "opacity-0 pointer-events-none"
-          )}
-        >
-          {browserError ? (
-            <div className="text-center max-w-sm px-6">
-              <X className="w-8 h-8 mx-auto mb-3 text-red-500" />
-              <p className="text-sm text-neutral-700 dark:text-neutral-300">
-                {browserError}
-              </p>
-            </div>
-          ) : (
-            <WorkspaceLoadingIndicator variant="browser" status="loading" />
-          )}
+      ) : browserPlaceholder ? (
+        <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-neutral-500 dark:text-neutral-400">
+          <div className="text-sm font-medium text-neutral-600 dark:text-neutral-200">
+            {browserPlaceholder.title}
+          </div>
+          {browserPlaceholder.description ? (
+            <p className="text-xs text-neutral-500 dark:text-neutral-400">
+              {browserPlaceholder.description}
+            </p>
+          ) : null}
         </div>
-      </div>
-    );
+      ) : null;
+    }
+
+    return null;
   };
 
+  const previewContent =
+    previewMode === "split" ? (
+      <div
+        ref={splitContainerRef}
+        className="grid h-full min-h-0"
+        style={{
+          gridTemplateRows: expandedPanelInSplit === "topLeft"
+            ? "1fr 8px 0fr"
+            : expandedPanelInSplit === "bottomLeft"
+              ? "0fr 8px 1fr"
+              : `minmax(160px, ${splitRatio}fr) 8px minmax(160px, ${1 - splitRatio}fr)`,
+          gap: "0",
+        }}
+      >
+        <div className="min-h-0 h-full">{renderEnvPanel("topLeft")}</div>
+        {!expandedPanelInSplit && (
+          <div
+            role="separator"
+            aria-label="Resize preview panels"
+            aria-orientation="horizontal"
+            onMouseDown={startSplitDragging}
+            className="group relative cursor-row-resize select-none bg-transparent transition-colors z-10"
+            style={{
+              height: "8px",
+            }}
+            title="Resize panels"
+          >
+            <div className="absolute left-0 right-0 h-px bg-transparent group-hover:bg-neutral-400 dark:group-hover:bg-neutral-600 group-active:bg-neutral-500 dark:group-active:bg-neutral-500 transition-colors" style={{ top: "50%", transform: "translateY(-50%)" }} />
+          </div>
+        )}
+        {expandedPanelInSplit && <div className="h-0" />}
+        <div className="min-h-0 h-full">{renderEnvPanel("bottomLeft")}</div>
+      </div>
+    ) : (
+      <div className="h-full min-h-0">{renderSingleContent()}</div>
+    );
+
   const previewButtonClass = useCallback(
-    (view: "vscode" | "browser", disabled: boolean) =>
+    (view: PreviewMode, disabled: boolean) =>
       clsx(
-        "inline-flex h-7 w-7 items-center justify-center focus:outline-none text-neutral-600 dark:text-neutral-300",
+        "inline-flex h-7 w-7 items-center justify-center rounded focus:outline-none transition-colors",
         disabled
-          ? "opacity-50 cursor-not-allowed"
-          : "cursor-pointer hover:text-neutral-900 dark:hover:text-neutral-100",
-        view === activePreview && !disabled
-          ? "text-neutral-900 dark:text-neutral-100"
-          : undefined
+          ? "opacity-40 cursor-not-allowed text-neutral-500 dark:text-neutral-400"
+          : previewMode === view
+            ? "text-neutral-900 dark:text-white bg-neutral-100 dark:bg-neutral-800"
+            : "text-neutral-500 dark:text-neutral-400 cursor-pointer hover:text-neutral-900 dark:hover:text-neutral-100 hover:bg-neutral-50 dark:hover:bg-neutral-900"
       ),
-    [activePreview]
+    [previewMode]
+  );
+
+  const handlePreviewModeChange = useCallback(
+    (mode: PreviewMode) => {
+      if (mode === "browser" && !isBrowserAvailable) {
+        return;
+      }
+      setPreviewMode(mode);
+    },
+    [isBrowserAvailable]
   );
 
   const headerControls = useMemo(() => {
@@ -595,19 +851,40 @@ export function EnvironmentConfiguration({
       <div className="flex items-center gap-1.5">
         <button
           type="button"
-          onClick={() => handlePreviewSelect("vscode")}
+          onClick={() => handlePreviewModeChange("split")}
+          className={previewButtonClass("split", false)}
+          aria-pressed={previewMode === "split"}
+          aria-label="Split VS Code and browser"
+          title="Split VS Code and browser"
+        >
+          <svg
+            className="h-3.5 w-3.5"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <rect x="3" y="3" width="18" height="7" rx="1" />
+            <rect x="3" y="14" width="18" height="7" rx="1" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          onClick={() => handlePreviewModeChange("vscode")}
           className={previewButtonClass("vscode", false)}
-          aria-pressed={activePreview === "vscode"}
-          aria-label="Show VS Code workspace"
+          aria-pressed={previewMode === "vscode"}
+          aria-label="Focus VS Code workspace"
           title="Show VS Code workspace"
         >
           <Code2 className="h-3.5 w-3.5" />
         </button>
         <button
           type="button"
-          onClick={() => handlePreviewSelect("browser")}
+          onClick={() => handlePreviewModeChange("browser")}
           className={previewButtonClass("browser", !isBrowserAvailable)}
-          aria-pressed={activePreview === "browser"}
+          aria-pressed={previewMode === "browser"}
           aria-label="Show browser preview"
           title="Show browser preview"
           disabled={!isBrowserAvailable}
@@ -617,11 +894,11 @@ export function EnvironmentConfiguration({
       </div>
     );
   }, [
-    activePreview,
-    handlePreviewSelect,
+    handlePreviewModeChange,
     isBrowserAvailable,
     isProvisioning,
     previewButtonClass,
+    previewMode,
   ]);
 
   useEffect(() => {
@@ -808,78 +1085,114 @@ export function EnvironmentConfiguration({
                 }
               }}
             >
-              <div
-                className="grid gap-3 text-xs text-neutral-500 dark:text-neutral-500 items-center pb-1"
-                style={{
-                  gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.4fr) 44px",
-                }}
-              >
-                <span>Key</span>
-                <span>Value</span>
-                <span className="w-[44px]" />
+              <div className="flex items-center justify-between pb-1">
+                <div
+                  className="grid gap-3 text-xs text-neutral-500 dark:text-neutral-500 items-center"
+                  style={{
+                    gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.4fr) 44px",
+                  }}
+                >
+                  <span>Key</span>
+                  <span>Value</span>
+                  <span className="w-[44px]" />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveEnvValueIndex(null);
+                    setAreEnvValuesHidden((previous) => !previous);
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 px-2 py-1 text-xs text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-900"
+                >
+                  {areEnvValuesHidden ? (
+                    <>
+                      <EyeOff className="h-3 w-3" />
+                      Reveal
+                    </>
+                  ) : (
+                    <>
+                      <Eye className="h-3 w-3" />
+                      Hide
+                    </>
+                  )}
+                </button>
               </div>
 
               <div className="space-y-2">
-                {envVars.map((row, idx) => (
-                  <div
-                    key={idx}
-                    className="grid gap-3 items-center"
-                    style={{
-                      gridTemplateColumns:
-                        "minmax(0, 1fr) minmax(0, 1.4fr) 44px",
-                    }}
-                  >
-                    <input
-                      type="text"
-                      value={row.name}
-                      ref={(el) => {
-                        keyInputRefs.current[idx] = el;
+                {envVars.map((row, idx) => {
+                  const rowKey = idx;
+                  const isEditingValue = activeEnvValueIndex === idx;
+                  const shouldMaskValue = areEnvValuesHidden && row.value.trim().length > 0 && !isEditingValue;
+                  return (
+                    <div
+                      key={rowKey}
+                      className="grid gap-3 items-center"
+                      style={{
+                        gridTemplateColumns:
+                          "minmax(0, 1fr) minmax(0, 1.4fr) 44px",
                       }}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        updateEnvVars((prev) => {
-                          const next = [...prev];
-                          next[idx] = { ...next[idx]!, name: v };
-                          return next;
-                        });
-                      }}
-                      placeholder="EXAMPLE_NAME"
-                      className="w-full min-w-0 self-start rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700"
-                    />
-                    <TextareaAutosize
-                      value={row.value}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        updateEnvVars((prev) => {
-                          const next = [...prev];
-                          next[idx] = { ...next[idx]!, value: v };
-                          return next;
-                        });
-                      }}
-                      placeholder="I9JU23NF394R6HH"
-                      minRows={1}
-                      maxRows={10}
-                      className="w-full min-w-0 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 resize-none"
-                    />
-                    <div className="self-start flex items-center justify-end w-[44px]">
-                      <button
-                        type="button"
-                        onClick={() => {
+                    >
+                      <input
+                        type="text"
+                        value={row.name}
+                        ref={(el) => {
+                          keyInputRefs.current[idx] = el;
+                        }}
+                        onChange={(e) => {
+                          const v = e.target.value;
                           updateEnvVars((prev) => {
-                            const next = prev.filter((_, i) => i !== idx);
-                            return next.length > 0
-                              ? next
-                              : [{ name: "", value: "", isSecret: true }];
+                            const next = [...prev];
+                            const current = next[idx];
+                            if (current) {
+                              next[idx] = { ...current, name: v };
+                            }
+                            return next;
                           });
                         }}
-                        className="h-10 w-[44px] rounded-md border border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300 grid place-items-center hover:bg-neutral-50 dark:hover:bg-neutral-900"
-                        aria-label="Remove variable"
-                      >
-                        <Minus className="w-4 h-4" />
-                      </button>
-                    </div>
+                        placeholder="EXAMPLE_NAME"
+                        className="w-full min-w-0 self-start rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700"
+                      />
+                      <TextareaAutosize
+                        value={shouldMaskValue ? MASKED_ENV_VALUE : row.value}
+                        onChange={shouldMaskValue ? undefined : (e) => {
+                          const v = e.target.value;
+                          updateEnvVars((prev) => {
+                            const next = [...prev];
+                            const current = next[idx];
+                            if (current) {
+                              next[idx] = { ...current, value: v };
+                            }
+                            return next;
+                          });
+                        }}
+                        onFocus={() => setActiveEnvValueIndex(idx)}
+                        onBlur={() => setActiveEnvValueIndex((current) => current === idx ? null : current)}
+                        readOnly={shouldMaskValue}
+                        placeholder="I9JU23NF394R6HH"
+                        minRows={1}
+                        maxRows={10}
+                        className="w-full min-w-0 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 resize-none"
+                      />
+                      <div className="self-start flex items-center justify-end w-[44px]">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            updateEnvVars((prev) => {
+                              const next = prev.filter((_, i) => i !== idx);
+                              return next.length > 0
+                                ? next
+                                : [{ name: "", value: "", isSecret: true }];
+                            });
+                          }}
+                          className="h-10 w-[44px] rounded-md border border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300 grid place-items-center hover:bg-neutral-50 dark:hover:bg-neutral-900"
+                          aria-label="Remove variable"
+                        >
+                          <Minus className="w-4 h-4" />
+                        </button>
+                      </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
 
               <div className="pt-2">
@@ -975,6 +1288,26 @@ export function EnvironmentConfiguration({
               </div>
             </div>
           </AccordionItem>
+
+          <AccordionItem
+            key="browser-vnc"
+            aria-label="Browser setup"
+            title="Browser setup"
+          >
+            <div className="space-y-2 pb-4 text-xs text-neutral-600 dark:text-neutral-400">
+              <p>
+                Prepare the embedded browser so the browser agent can capture screenshots, finish authentication flows, and verify previews before you save this environment.
+              </p>
+              <ul className="list-disc space-y-1 pl-5">
+                <li>Sign in to SaaS tools or dashboards that require persistent sessions.</li>
+                <li>Clear cookie banners, popups, or MFA prompts that could block automation.</li>
+                <li>Load staging URLs and confirm pages render without certificate or CSP warnings.</li>
+              </ul>
+              <p className="text-[11px] text-neutral-500 dark:text-neutral-500">
+                Tip: the split-view toggle (first icon above the preview) keeps VS Code and the browser visible side-by-side while you configure things.
+              </p>
+            </div>
+          </AccordionItem>
         </Accordion>
 
         <div className="pt-2">
@@ -1028,11 +1361,7 @@ export function EnvironmentConfiguration({
         </div>
       ) : (
         <div className="flex h-full flex-col">
-          <div className="flex-1 min-h-0">
-            {activePreview === "browser"
-              ? renderBrowserPreview()
-              : renderVscodePreview()}
-          </div>
+          <div className="flex-1 min-h-0">{previewContent}</div>
         </div>
       )}
     </div>
