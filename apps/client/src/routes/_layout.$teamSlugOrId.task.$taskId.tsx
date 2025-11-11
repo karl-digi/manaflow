@@ -13,6 +13,7 @@ import clsx from "clsx";
 import { Suspense, useEffect } from "react";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { useQuery } from "convex/react";
+import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId")({
   component: TaskDetailPage,
@@ -68,6 +69,7 @@ function TaskDetailPage() {
     taskId,
   });
   const clipboard = useClipboard({ timeout: 2000 });
+  const { addTaskToExpand, expandTaskIds } = useExpandTasks();
 
   // Get the deepest matched child to extract runId if present
   const childMatches = useChildMatches();
@@ -78,6 +80,20 @@ function TaskDetailPage() {
   const activeRunId = deepestMatchParams?.taskRunId as string | undefined;
 
   const navigate = useNavigate();
+
+  // Expand and focus the current task in the sidebar on mount
+  useEffect(() => {
+    if (taskId && !expandTaskIds.includes(taskId)) {
+      addTaskToExpand(taskId);
+    }
+
+    // Focus the task in the sidebar
+    const taskElement = document.querySelector(`[href*="/task/${taskId}"]:not([href*="/run/"])`);
+    if (taskElement instanceof HTMLElement) {
+      taskElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      taskElement.focus();
+    }
+  }, [taskId, addTaskToExpand, expandTaskIds]);
 
   // Flatten the task runs tree structure for tab display
   const flattenRuns = (
