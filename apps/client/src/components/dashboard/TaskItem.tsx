@@ -194,7 +194,7 @@ export const TaskItem = memo(function TaskItem({
               "grid-cols-[24px_36px_1fr_120px_58px]",
               isOptimisticUpdate
                 ? "bg-white/50 dark:bg-neutral-900/30 animate-pulse"
-                : "bg-white dark:bg-neutral-900/50 hover:bg-neutral-50/90 dark:hover:bg-neutral-600/60",
+                : "bg-white dark:bg-neutral-900/50 group-hover:bg-neutral-50/90 dark:group-hover:bg-neutral-600/60",
               isRenaming && "pr-2"
             )}
             onClick={handleClick}
