@@ -574,6 +574,58 @@ export const get = authQuery({
   },
 });
 
+// Get task runs by pull request URL
+export const getByPullRequestUrl = authQuery({
+  args: { teamSlugOrId: v.string(), pullRequestUrl: v.string() },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+
+    // Normalize the PR URL to ensure consistent matching
+    const normalizedUrl = args.pullRequestUrl.trim();
+
+    // Query all task runs for this team/user that have a matching PR URL
+    const taskRuns = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_team_user", (q) => q.eq("teamId", teamId).eq("userId", userId))
+      .collect();
+
+    // Filter for task runs that match the PR URL
+    // We check both the primary pullRequestUrl field and the pullRequests array
+    const matchingRuns = taskRuns.filter((run) => {
+      // Check primary pullRequestUrl field
+      if (run.pullRequestUrl && run.pullRequestUrl.trim() === normalizedUrl) {
+        return true;
+      }
+
+      // Check pullRequests array
+      if (run.pullRequests) {
+        return run.pullRequests.some((pr) => pr.url && pr.url.trim() === normalizedUrl);
+      }
+
+      return false;
+    });
+
+    // Sort by creation date (most recent first) and limit to top 10
+    const sortedRuns = matchingRuns
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, 10);
+
+    // Get the associated tasks for each run
+    const runsWithTasks = await Promise.all(
+      sortedRuns.map(async (run) => {
+        const task = await ctx.db.get(run.taskId);
+        return {
+          taskRun: run,
+          task,
+        };
+      })
+    );
+
+    return runsWithTasks;
+  },
+});
+
 // Subscribe to task run updates
 export const subscribe = authQuery({
   args: { teamSlugOrId: v.string(), id: v.id("taskRuns") },

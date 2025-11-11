@@ -55,6 +55,7 @@ import { toast } from "sonner";
 import {
   buildSearchText,
   filterCommandItems,
+  detectGitHubPRUrl,
 } from "./command-bar/commandSearch";
 import {
   buildScopeKey,
@@ -665,6 +666,13 @@ export function CommandBar({
   const reserveLocalWorkspace = useMutation(api.localWorkspaces.reserve);
   const createTask = useMutation(api.tasks.create);
   const failTaskRun = useMutation(api.taskRuns.fail);
+
+  // Detect GitHub PR URL in search input
+  const detectedPRInfo = useMemo(() => detectGitHubPRUrl(search), [search]);
+  const prLinkedTaskRuns = useQuery(
+    api.taskRuns.getByPullRequestUrl,
+    detectedPRInfo ? { teamSlugOrId, pullRequestUrl: detectedPRInfo.url } : "skip"
+  );
 
   useEffect(() => {
     openRef.current = open;
@@ -1455,10 +1463,19 @@ export function CommandBar({
         const parts = value.slice(5).split(":");
         const taskId = parts[0] as Id<"tasks">;
         const action = parts[1];
+        const runIdOrAction = parts[2];
         const task = allTasks?.find((t) => t._id === taskId);
         const runId = task?.selectedTaskRun?._id;
 
-        if (!action) {
+        // Handle specific run navigation (e.g., task:taskId:run:runId)
+        if (action === "run" && runIdOrAction) {
+          const specificRunId = runIdOrAction as Id<"taskRuns">;
+          navigate({
+            to: "/$teamSlugOrId/task/$taskId",
+            params: { teamSlugOrId, taskId },
+            search: { runId: specificRunId },
+          });
+        } else if (!action) {
           navigate({
             to: "/$teamSlugOrId/task/$taskId",
             params: { teamSlugOrId, taskId },
@@ -1924,6 +1941,62 @@ export function CommandBar({
 
     return [...baseEntries, ...taskEntries, ...electronEntries];
   }, [allTasks, handleSelect, stackUser]);
+
+  // Create entries for PR-linked task runs
+  const prLinkedEntries = useMemo<CommandListEntry[]>(() => {
+    if (!detectedPRInfo || !prLinkedTaskRuns || prLinkedTaskRuns.length === 0) {
+      return [];
+    }
+
+    return prLinkedTaskRuns
+      .filter((item) => item.task !== null)
+      .map((item, index) => {
+        const { taskRun, task } = item;
+        if (!task) {
+          throw new Error("Task should not be null after filter");
+        }
+
+        const title = task.pullRequestTitle || task.text || `Task Run ${index + 1}`;
+        const statusLabel = taskRun.status;
+        const statusClassName =
+          taskRun.status === "completed"
+            ? "text-xs px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
+            : taskRun.status === "failed"
+              ? "text-xs px-2 py-0.5 rounded-full bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
+              : taskRun.status === "running"
+                ? "text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400"
+                : "text-xs px-2 py-0.5 rounded-full bg-neutral-100 dark:bg-neutral-900/30 text-neutral-700 dark:text-neutral-400";
+
+        const keywords = compactStrings([
+          title,
+          task.text,
+          task.pullRequestTitle,
+          "pr",
+          "pull request",
+          statusLabel,
+        ]);
+
+        return {
+          value: `pr-linked:${taskRun._id}`,
+          label: title,
+          keywords,
+          searchText: buildSearchText(title, keywords, [
+            detectedPRInfo.owner,
+            detectedPRInfo.repo,
+            detectedPRInfo.number.toString(),
+          ]),
+          className: taskCommandItemClassName,
+          execute: () => handleSelect(`task:${task._id}:run:${taskRun._id}`),
+          renderContent: () => (
+            <>
+              <GitPullRequest className="h-4 w-4 text-violet-500" />
+              <span className="flex-1 truncate text-sm">{title}</span>
+              <span className={statusClassName}>{statusLabel}</span>
+            </>
+          ),
+        };
+      });
+  }, [detectedPRInfo, prLinkedTaskRuns, handleSelect]);
 
   const localWorkspaceEntries = useMemo<CommandListEntry[]>(() => {
     return localWorkspaceOptions.map((option) => {
@@ -2552,6 +2625,21 @@ export function CommandBar({
 
               {activePage === "root" ? (
                 <>
+                  {prLinkedEntries.length > 0 ? (
+                    <>
+                      <Command.Group heading="Pull Request Task Runs">
+                        {prLinkedEntries.map((entry) =>
+                          renderRootCommandEntry(entry)
+                        )}
+                      </Command.Group>
+                      {(rootSuggestionsToRender.length > 0 ||
+                        rootCommandsToRender.length > 0) && (
+                        <div className="px-2">
+                          <hr className="border-neutral-200 dark:border-neutral-800" />
+                        </div>
+                      )}
+                    </>
+                  ) : null}
                   {rootSuggestionsToRender.length > 0 ? (
                     <Command.Group>
                       {rootSuggestionsToRender.map((entry) =>
