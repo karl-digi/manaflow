@@ -1,5 +1,9 @@
 import { OpenWithDropdown } from "@/components/OpenWithDropdown";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useArchiveTask } from "@/hooks/useArchiveTask";
 import { useTaskRename } from "@/hooks/useTaskRename";
 import { isFakeConvexId } from "@/lib/fakeConvexId";
@@ -12,8 +16,18 @@ import { useNavigate } from "@tanstack/react-router";
 import clsx from "clsx";
 import { useQuery as useConvexQuery, useMutation } from "convex/react";
 // Read team slug from path to avoid route type coupling
-import { Archive, ArchiveRestore, Check, Copy, Pencil, Pin } from "lucide-react";
+import {
+  Archive,
+  ArchiveRestore,
+  Box,
+  Check,
+  Copy,
+  GitMerge,
+  Pencil,
+  Pin,
+} from "lucide-react";
 import { memo, useCallback, useMemo } from "react";
+import { EnvironmentName } from "./EnvironmentName";
 
 interface TaskItemProps {
   task: Doc<"tasks">;
@@ -53,6 +67,9 @@ export const TaskItem = memo(function TaskItem({
     api.taskRuns.getByTask,
     isFakeConvexId(task._id) ? "skip" : { teamSlugOrId, taskId: task._id }
   );
+
+  // Check if task has a crown based on crownEvaluationStatus
+  const hasCrown = task.crownEvaluationStatus === "succeeded";
 
   // Mutation for toggling keep-alive status
   const toggleKeepAlive = useMutation(api.taskRuns.toggleKeepAlive);
@@ -168,30 +185,55 @@ export const TaskItem = memo(function TaskItem({
   );
 
   return (
-    <div className="relative group">
+    <div className="relative group w-full">
       <ContextMenu.Root>
         <ContextMenu.Trigger>
           <div
             className={clsx(
-              "relative flex items-center gap-2.5 px-3 py-2 border rounded-lg transition-all cursor-default select-none",
+              "relative grid w-full items-center py-2 pr-3 cursor-default select-none",
+              "grid-cols-[24px_36px_1fr_120px_50px]",
               isOptimisticUpdate
-                ? "bg-white/50 dark:bg-neutral-700/30 border-neutral-200 dark:border-neutral-500/15 animate-pulse"
-                : "bg-white dark:bg-neutral-700/50 border-neutral-200 dark:border-neutral-500/15 hover:border-neutral-300 dark:hover:border-neutral-500/30",
+                ? "bg-white/50 dark:bg-neutral-900/30 animate-pulse"
+                : "bg-white dark:bg-neutral-900/50 hover:bg-neutral-50/90 dark:hover:bg-neutral-600/60",
               isRenaming && "pr-2"
             )}
             onClick={handleClick}
           >
-            <div
-              className={clsx(
-                "w-1.5 h-1.5 rounded-full flex-shrink-0",
-                task.isCompleted
-                  ? "bg-green-500"
-                  : isOptimisticUpdate
-                    ? "bg-yellow-500"
-                    : "bg-blue-500 animate-pulse"
+            <div className="flex items-center justify-center pl-1 -mr-2 relative">
+              <input
+                type="checkbox"
+                className="peer w-3 h-3 cursor-pointer border border-neutral-400 dark:border-neutral-500 rounded bg-white dark:bg-neutral-900 appearance-none checked:bg-neutral-500 checked:border-neutral-500 dark:checked:bg-neutral-400 dark:checked:border-neutral-400 invisible"
+                onClick={(e) => e.stopPropagation()}
+                onChange={() => {
+                  // TODO: Implement checkbox functionality
+                }}
+              />
+              <Check
+                className="absolute w-2.5 h-2.5 text-white pointer-events-none transition-opacity peer-checked:opacity-100 opacity-0"
+                style={{
+                  left: "57%",
+                  top: "50%",
+                  transform: "translate(-50%, -50%)",
+                }}
+              />
+            </div>
+            <div className="flex items-center justify-center">
+              {task.mergeStatus === "pr_merged" ? (
+                <GitMerge className="w-3.5 h-3.5 text-purple-500 dark:text-purple-400 flex-shrink-0" />
+              ) : task.isCloudWorkspace || task.isLocalWorkspace ? (
+                <Box className="w-3.5 h-3.5 text-neutral-500 dark:text-neutral-400 flex-shrink-0" />
+              ) : (
+                <div
+                  className={clsx(
+                    "rounded-full flex-shrink-0",
+                    hasCrown
+                      ? "w-[8px] h-[8px] border border-transparent bg-green-500"
+                      : "w-[9.5px] h-[9.5px] border border-neutral-400 dark:border-neutral-500 bg-transparent"
+                  )}
+                />
               )}
-            />
-            <div className="flex-1 min-w-0 flex items-center gap-2">
+            </div>
+            <div className="min-w-0 flex items-center">
               {isRenaming ? (
                 <input
                   ref={renameInputRef}
@@ -209,7 +251,7 @@ export const TaskItem = memo(function TaskItem({
                   autoComplete="off"
                   spellCheck={false}
                   className={clsx(
-                    "inline-flex w-full items-center bg-transparent text-[14px] font-normal text-neutral-900 caret-neutral-600 transition-colors duration-200",
+                    "inline-flex w-full items-center bg-transparent text-[13px] font-medium text-neutral-900 caret-neutral-600 transition-colors duration-200",
                     "px-0 py-0 align-middle",
                     "placeholder:text-neutral-400 outline-none border-none focus-visible:outline-none focus-visible:ring-0 appearance-none",
                     "dark:text-neutral-100 dark:caret-neutral-200 dark:placeholder:text-neutral-500",
@@ -218,36 +260,63 @@ export const TaskItem = memo(function TaskItem({
                   )}
                 />
               ) : (
-                <span className="text-[14px] truncate min-w-0">{task.text}</span>
+                <span className="text-[13px] font-medium truncate min-w-0">
+                  {task.text}
+                </span>
+              )}
+            </div>
+            <div className="text-[11px] text-neutral-400 dark:text-neutral-500 flex-shrink-0 text-right flex items-center justify-end gap-2">
+              {task.environmentId && (
+                <EnvironmentName
+                  environmentId={task.environmentId}
+                  teamSlugOrId={teamSlugOrId}
+                />
               )}
               {(task.projectFullName ||
                 (task.baseBranch && task.baseBranch !== "main")) && (
-                  <span className="text-[11px] text-neutral-400 dark:text-neutral-500 flex-shrink-0 ml-auto mr-0">
-                    {task.projectFullName && (
-                      <span>{task.projectFullName.split("/")[1]}</span>
-                    )}
-                    {task.projectFullName &&
-                      task.baseBranch &&
-                      task.baseBranch !== "main" &&
-                      "/"}
-                    {task.baseBranch && task.baseBranch !== "main" && (
-                      <span>{task.baseBranch}</span>
-                    )}
-                  </span>
-                )}
+                <span>
+                  {task.projectFullName && (
+                    <span>{task.projectFullName.split("/")[1]}</span>
+                  )}
+                  {task.projectFullName &&
+                    task.baseBranch &&
+                    task.baseBranch !== "main" &&
+                    "/"}
+                  {task.baseBranch && task.baseBranch !== "main" && (
+                    <span>{task.baseBranch}</span>
+                  )}
+                </span>
+              )}
             </div>
-            {task.updatedAt && (
-              <span className="text-[11px] text-neutral-400 dark:text-neutral-500 flex-shrink-0 ml-auto mr-0 tabular-nums">
-                {new Date(task.updatedAt).toLocaleTimeString([], {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}
-              </span>
-            )}
+            <div className="text-[11px] text-neutral-400 dark:text-neutral-500 flex-shrink-0 tabular-nums text-right">
+              {task.updatedAt &&
+                (() => {
+                  const date = new Date(task.updatedAt);
+                  const today = new Date();
+                  const isToday =
+                    date.getDate() === today.getDate() &&
+                    date.getMonth() === today.getMonth() &&
+                    date.getFullYear() === today.getFullYear();
+
+                  return (
+                    <span>
+                      {isToday
+                        ? date.toLocaleTimeString([], {
+                            hour: "numeric",
+                            minute: "2-digit",
+                          })
+                        : date.toLocaleDateString([], {
+                            month: "short",
+                            day: "numeric",
+                          })}
+                    </span>
+                  );
+                })()}
+            </div>
           </div>
         </ContextMenu.Trigger>
         {renameError && (
-          <div className="mt-1 px-3 text-[11px] text-red-500 dark:text-red-400">
+          <div className="mt-1 pl-[76px] pr-3 text-[11px] text-red-500 dark:text-red-400">
             {renameError}
           </div>
         )}
