@@ -226,6 +226,34 @@ export const getCrownEvaluation = authQuery({
   },
 });
 
+export const getTasksWithCrowns = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
+    
+    // Get all crowned runs for this team/user
+    const crownedRuns = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_team_user", (q) =>
+        q.eq("teamId", teamId).eq("userId", userId)
+      )
+      .filter((q) => q.eq(q.field("isCrowned"), true))
+      .filter((q) => q.neq(q.field("isArchived"), true))
+      .collect();
+
+    // Extract unique task IDs
+    const taskIds = new Set<Id<"tasks">>();
+    for (const run of crownedRuns) {
+      taskIds.add(run.taskId);
+    }
+
+    return Array.from(taskIds);
+  },
+});
+
 export const getEvaluationByTaskInternal = internalQuery({
   args: {
     taskId: v.id("tasks"),

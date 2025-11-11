@@ -25,7 +25,12 @@ import { attachTaskLifecycleListeners } from "@/lib/socket/taskLifecycleListener
 import { branchesQueryOptions } from "@/queries/branches";
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
-import type { ProviderStatusResponse, TaskAcknowledged, TaskError, TaskStarted } from "@cmux/shared";
+import type {
+  ProviderStatusResponse,
+  TaskAcknowledged,
+  TaskError,
+  TaskStarted,
+} from "@cmux/shared";
 import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
 import { convexQuery } from "@convex-dev/react-query";
 import { useQuery } from "@tanstack/react-query";
@@ -48,7 +53,7 @@ const DEFAULT_AGENTS = [
 ];
 const KNOWN_AGENT_NAMES = new Set(AGENT_CONFIGS.map((agent) => agent.name));
 const DEFAULT_AGENT_SELECTION = DEFAULT_AGENTS.filter((agent) =>
-  KNOWN_AGENT_NAMES.has(agent),
+  KNOWN_AGENT_NAMES.has(agent)
 );
 
 const AGENT_SELECTION_SCHEMA = z.array(z.string());
@@ -91,7 +96,7 @@ function DashboardComponent() {
 
   const [selectedAgents, setSelectedAgentsState] = useState<string[]>(() => {
     const storedAgents = parseStoredAgentSelection(
-      localStorage.getItem("selectedAgents"),
+      localStorage.getItem("selectedAgents")
     );
 
     if (storedAgents.length > 0) {
@@ -104,10 +109,13 @@ function DashboardComponent() {
   });
   const selectedAgentsRef = useRef<string[]>(selectedAgents);
 
-  const setSelectedAgents = useCallback((agents: string[]) => {
-    selectedAgentsRef.current = agents;
-    setSelectedAgentsState(agents);
-  }, [setSelectedAgentsState]);
+  const setSelectedAgents = useCallback(
+    (agents: string[]) => {
+      selectedAgentsRef.current = agents;
+      setSelectedAgentsState(agents);
+    },
+    [setSelectedAgentsState]
+  );
 
   const [taskDescription, setTaskDescription] = useState<string>("");
   const [isCloudMode, setIsCloudMode] = useState<boolean>(() => {
@@ -131,7 +139,7 @@ function DashboardComponent() {
         DEFAULT_AGENT_SELECTION.length > 0 &&
         agents.length === DEFAULT_AGENT_SELECTION.length &&
         agents.every(
-          (agent, index) => agent === DEFAULT_AGENT_SELECTION[index],
+          (agent, index) => agent === DEFAULT_AGENT_SELECTION[index]
         );
 
       if (agents.length === 0 || isDefaultSelection) {
@@ -149,7 +157,10 @@ function DashboardComponent() {
     if (searchParams?.environmentId) {
       const val = `env:${searchParams.environmentId}`;
       setSelectedProject([val]);
-      localStorage.setItem(`selectedProject-${teamSlugOrId}`, JSON.stringify([val]));
+      localStorage.setItem(
+        `selectedProject-${teamSlugOrId}`,
+        JSON.stringify([val])
+      );
       setIsCloudMode(true);
       localStorage.setItem("isCloudMode", JSON.stringify(true));
     }
@@ -176,15 +187,22 @@ function DashboardComponent() {
   const branchSummary = useMemo(() => {
     const data = branchesQuery.data;
     if (!data?.branches) {
-      return { names: [] as string[], defaultName: undefined as string | undefined };
+      return {
+        names: [] as string[],
+        defaultName: undefined as string | undefined,
+      };
     }
     const names = data.branches.map((branch) => branch.name);
     const fromResponse = data.defaultBranch?.trim();
-    const flaggedDefault = data.branches.find((branch) => branch.isDefault)?.name;
+    const flaggedDefault = data.branches.find(
+      (branch) => branch.isDefault
+    )?.name;
     const normalizedFromResponse =
       fromResponse && names.includes(fromResponse) ? fromResponse : undefined;
     const normalizedFlagged =
-      flaggedDefault && names.includes(flaggedDefault) ? flaggedDefault : undefined;
+      flaggedDefault && names.includes(flaggedDefault)
+        ? flaggedDefault
+        : undefined;
 
     return {
       names,
@@ -198,7 +216,10 @@ function DashboardComponent() {
   const handleProjectChange = useCallback(
     (newProjects: string[]) => {
       setSelectedProject(newProjects);
-      localStorage.setItem(`selectedProject-${teamSlugOrId}`, JSON.stringify(newProjects));
+      localStorage.setItem(
+        `selectedProject-${teamSlugOrId}`,
+        JSON.stringify(newProjects)
+      );
       if (newProjects[0] !== selectedProject[0]) {
         setSelectedBranch([]);
       }
@@ -223,7 +244,7 @@ function DashboardComponent() {
       setSelectedAgents(normalizedAgents);
       persistAgentSelection(normalizedAgents);
     },
-    [persistAgentSelection, setSelectedAgents],
+    [persistAgentSelection, setSelectedAgents]
   );
 
   // Fetch repos from Convex
@@ -272,17 +293,17 @@ function DashboardComponent() {
       const availableAgents = new Set(
         providers
           .filter((provider) => provider.isAvailable)
-          .map((provider) => provider.name),
+          .map((provider) => provider.name)
       );
 
       const normalizedAgents = filterKnownAgents(currentAgents);
       const removedUnknown = normalizedAgents.length !== currentAgents.length;
 
       const filteredAgents = normalizedAgents.filter((agent) =>
-        availableAgents.has(agent),
+        availableAgents.has(agent)
       );
       const removedUnavailable = normalizedAgents.filter(
-        (agent) => !availableAgents.has(agent),
+        (agent) => !availableAgents.has(agent)
       );
 
       if (!removedUnknown && removedUnavailable.length === 0) {
@@ -298,7 +319,7 @@ function DashboardComponent() {
           const label = uniqueMissing.length === 1 ? "model" : "models";
           const verb = uniqueMissing.length === 1 ? "is" : "are";
           toast.warning(
-            `${uniqueMissing.join(", ")} ${verb} not configured and was removed from the selection. Update credentials in Settings to use this ${label}.`,
+            `${uniqueMissing.join(", ")} ${verb} not configured and was removed from the selection. Update credentials in Settings to use this ${label}.`
           );
         }
       }
@@ -392,7 +413,9 @@ function DashboardComponent() {
       } else {
         // If socket is not connected, we can't verify Docker status
         console.error("Cannot verify Docker status: socket not connected");
-        toast.error("Cannot verify Docker status. Please ensure the server is running.");
+        toast.error(
+          "Cannot verify Docker status. Please ensure the server is running."
+        );
         return;
       }
     }
@@ -481,7 +504,9 @@ function DashboardComponent() {
         : `https://github.com/${projectFullName}.git`;
 
       // For socket.io, we need to send the content text (which includes image references) and the images
-      const handleStartTaskAck = (response: TaskAcknowledged | TaskStarted | TaskError) => {
+      const handleStartTaskAck = (
+        response: TaskAcknowledged | TaskStarted | TaskError
+      ) => {
         if ("error" in response) {
           console.error("Task start error:", response.error);
           toast.error(`Task start error: ${JSON.stringify(response.error)}`);
@@ -692,7 +717,10 @@ function DashboardComponent() {
 
           // Select the newly added repo
           setSelectedProject([result.fullName]);
-          localStorage.setItem(`selectedProject-${teamSlugOrId}`, JSON.stringify([result.fullName]));
+          localStorage.setItem(
+            `selectedProject-${teamSlugOrId}`,
+            JSON.stringify([result.fullName])
+          );
 
           toast.success(`Added ${result.fullName} to repositories`);
           return true;
@@ -702,7 +730,11 @@ function DashboardComponent() {
       } catch (error) {
         // Only show error toast for non-validation errors
         // Validation errors mean it's not a GitHub URL, so just return false
-        if (error instanceof Error && error.message && !error.message.includes("Invalid GitHub")) {
+        if (
+          error instanceof Error &&
+          error.message &&
+          !error.message.includes("Invalid GitHub")
+        ) {
           toast.error(error.message);
         }
         return false; // Don't close dropdown if it's not a valid GitHub URL
@@ -874,10 +906,10 @@ function DashboardComponent() {
 
   return (
     <FloatingPane header={<TitleBar title="cmux" />}>
-      <div className="flex flex-col grow overflow-y-auto">
+      <div className="flex flex-col grow relative">
         {/* Main content area */}
-        <div className="flex-1 flex justify-center px-4 pt-60 pb-4">
-          <div className="w-full max-w-4xl min-w-0">
+        <div className="flex-1 flex flex-col pt-32 pb-0">
+          <div className="w-full max-w-4xl min-w-0 mx-auto px-4">
             {/* Workspace Creation Buttons */}
             <WorkspaceCreationButtons
               teamSlugOrId={teamSlugOrId}
@@ -950,8 +982,10 @@ function DashboardComponent() {
                 </div>
               </div>
             ) : null} */}
+          </div>
 
-            {/* Task List */}
+          {/* Task List */}
+          <div className="w-full">
             <TaskList teamSlugOrId={teamSlugOrId} />
           </div>
         </div>
