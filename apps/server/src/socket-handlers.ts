@@ -81,6 +81,75 @@ interface ExecError extends Error {
   stdout?: string;
 }
 
+const isWindows = process.platform === "win32";
+
+function sanitizeShellPath(candidate: string | undefined | null): string | null {
+  if (!candidate) {
+    return null;
+  }
+  const trimmed = candidate.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function getUserLoginShell(): string {
+  const override = sanitizeShellPath(process.env.CMUX_LOGIN_SHELL);
+  if (override) {
+    return override;
+  }
+
+  if (!isWindows) {
+    try {
+      const userShell = sanitizeShellPath(os.userInfo().shell);
+      if (userShell) {
+        return userShell;
+      }
+    } catch {
+      // Ignore failures – we'll fall back to other sources.
+    }
+
+    const envShell = sanitizeShellPath(process.env.SHELL);
+    if (envShell) {
+      return envShell;
+    }
+
+    return "/bin/zsh";
+  }
+
+  const envShell = sanitizeShellPath(process.env.SHELL);
+  if (envShell) {
+    return envShell;
+  }
+
+  const comspec = sanitizeShellPath(process.env.COMSPEC);
+  if (comspec) {
+    return comspec;
+  }
+
+  return "cmd.exe";
+}
+
+function buildLoginShellArgs(
+  shellPath: string,
+  command: string
+): string[] {
+  if (isWindows) {
+    const normalized = shellPath.toLowerCase();
+    if (normalized.includes("powershell") || normalized.includes("pwsh")) {
+      // PowerShell prefers -Command and does not distinguish login shells.
+      return ["-Command", command];
+    }
+
+    if (normalized.endsWith("cmd.exe")) {
+      return ["/d", "/c", command];
+    }
+
+    // Fall back to POSIX-style flags (e.g., Git Bash on Windows).
+    return ["-l", "-c", command];
+  }
+
+  return ["-l", "-c", command];
+}
+
 function isExecError(error: unknown): error is ExecError {
   return (
     typeof error === "object" &&
@@ -840,15 +909,20 @@ export function setupSocketHandlers(
 
             // Fire and forget - run in background without blocking
             void (async () => {
-              serverLogger.info(
-                `[create-local-workspace] Running local maintenance script for ${workspaceName} in background`
-              );
-
               const scriptPreamble = "set -euo pipefail";
               const maintenancePayload = `${scriptPreamble}\n${maintenanceScript}`;
+              const loginShell = getUserLoginShell();
+              const shellArgs = buildLoginShellArgs(
+                loginShell,
+                maintenancePayload
+              );
+
+              serverLogger.info(
+                `[create-local-workspace] Running local maintenance script for ${workspaceName} in background (shell: ${loginShell})`
+              );
 
               try {
-                await execFileAsync("zsh", ["-lc", maintenancePayload], {
+                await execFileAsync(loginShell, shellArgs, {
                   cwd: resolvedWorkspacePath,
                   env: {
                     ...process.env,
