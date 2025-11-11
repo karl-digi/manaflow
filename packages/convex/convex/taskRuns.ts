@@ -12,6 +12,9 @@ import {
 import { authMutation, authQuery, taskIdWithFake } from "./users/utils";
 import {
   aggregatePullRequestState,
+  mapGitHubStateToRunState,
+  reconcilePullRequestRecords,
+  type PullRequestActionResult,
   type StoredPullRequestInfo,
 } from "@cmux/shared/pull-request-state";
 
@@ -76,6 +79,30 @@ function deriveGeneratedBranchName(branch?: string | null): string | undefined {
   if (idx <= 0) return trimmed;
   const candidate = trimmed.slice(0, idx);
   return candidate || trimmed;
+}
+
+function normalizeRepoFullName(repo?: string | null): string {
+  return (repo ?? "").trim().toLowerCase();
+}
+
+function runMatchesRepo(
+  run: Doc<"taskRuns">,
+  task: Doc<"tasks"> | null,
+  normalizedRepo: string,
+): boolean {
+  if (!normalizedRepo) {
+    return false;
+  }
+  const taskRepo = normalizeRepoFullName(task?.projectFullName);
+  if (taskRepo && taskRepo === normalizedRepo) {
+    return true;
+  }
+  for (const record of run.pullRequests ?? []) {
+    if (normalizeRepoFullName(record.repoFullName) === normalizedRepo) {
+      return true;
+    }
+  }
+  return false;
 }
 
 type EnvironmentErrorPayload = {
@@ -1237,6 +1264,85 @@ export const updatePullRequestState = authMutation({
           : updates.pullRequestNumber;
     }
     await ctx.db.patch(args.id, updates);
+  },
+});
+
+export const syncPullRequestStateFromWebhook = internalMutation({
+  args: {
+    teamId: v.string(),
+    repoFullName: v.string(),
+    pullRequestNumber: v.number(),
+    pullRequestUrl: v.optional(v.string()),
+    state: v.optional(v.string()),
+    draft: v.optional(v.boolean()),
+    merged: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const normalizedRepo = normalizeRepoFullName(args.repoFullName);
+    if (!normalizedRepo) {
+      return { updatedRuns: 0 } as const;
+    }
+
+    const runs = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_team_prNumber", (q) =>
+        q.eq("teamId", args.teamId).eq("pullRequestNumber", args.pullRequestNumber),
+      )
+      .collect();
+
+    let updatedRuns = 0;
+    const now = Date.now();
+
+    for (const run of runs) {
+      const task = await ctx.db.get(run.taskId);
+      if (!task || task.teamId !== args.teamId) {
+        continue;
+      }
+
+      if (!runMatchesRepo(run, task, normalizedRepo)) {
+        continue;
+      }
+
+      const updates: PullRequestActionResult[] = [
+        {
+          repoFullName: args.repoFullName,
+          url: args.pullRequestUrl ?? undefined,
+          number: args.pullRequestNumber,
+          state: mapGitHubStateToRunState({
+            state: args.state,
+            draft: args.draft,
+            merged: args.merged,
+          }),
+          isDraft: args.draft ?? undefined,
+        },
+      ];
+
+      const { records, aggregate } = reconcilePullRequestRecords({
+        existing: run.pullRequests ?? [],
+        updates,
+        repoFullNames: [args.repoFullName],
+      });
+
+      await ctx.db.patch(run._id, {
+        pullRequests: records,
+        pullRequestState: aggregate.state,
+        pullRequestIsDraft: aggregate.isDraft,
+        pullRequestUrl:
+          aggregate.url ?? args.pullRequestUrl ?? run.pullRequestUrl,
+        pullRequestNumber:
+          aggregate.number ?? run.pullRequestNumber ?? args.pullRequestNumber,
+        updatedAt: now,
+      });
+
+      await ctx.db.patch(task._id, {
+        mergeStatus: aggregate.mergeStatus,
+        updatedAt: now,
+      });
+
+      updatedRuns += 1;
+    }
+
+    return { updatedRuns } as const;
   },
 });
 

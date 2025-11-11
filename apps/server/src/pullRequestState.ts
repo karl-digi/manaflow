@@ -1,5 +1,6 @@
 import { api } from "@cmux/convex/api";
 import {
+  mapGitHubStateToRunState,
   reconcilePullRequestRecords,
   type AggregatePullRequestSummary,
   type PullRequestActionResult,
@@ -49,34 +50,6 @@ export async function collectRepoFullNamesForRun(
     }
   }
   return Array.from(repos);
-}
-
-export function mapGitHubStateToRunState({
-  state,
-  draft,
-  merged,
-}: {
-  state?: string;
-  draft?: boolean;
-  merged?: boolean;
-}): RunPullRequestState {
-  if (merged) {
-    return "merged";
-  }
-  if (draft) {
-    return "draft";
-  }
-  const normalized = (state ?? "").toLowerCase();
-  if (normalized === "open") {
-    return "open";
-  }
-  if (normalized === "closed") {
-    return "closed";
-  }
-  if (!normalized) {
-    return "none";
-  }
-  return "unknown";
 }
 
 export function toPullRequestActionResult(

@@ -4,6 +4,7 @@ import { stackServerAppJs } from "@/lib/utils/stack";
 import { api } from "@cmux/convex/api";
 import type { Doc } from "@cmux/convex/dataModel";
 import {
+  mapGitHubStateToRunState,
   reconcilePullRequestRecords,
   type AggregatePullRequestSummary,
   type PullRequestActionResult,
@@ -1391,34 +1392,6 @@ function toPullRequestActionResult(
     }),
     isDraft: data.draft,
   };
-}
-
-function mapGitHubStateToRunState({
-  state,
-  draft,
-  merged,
-}: {
-  state?: string;
-  draft?: boolean;
-  merged?: boolean;
-}): RunPullRequestState {
-  if (merged) {
-    return "merged";
-  }
-  if (draft) {
-    return "draft";
-  }
-  const normalized = (state ?? "").toLowerCase();
-  if (normalized === "open") {
-    return "open";
-  }
-  if (normalized === "closed") {
-    return "closed";
-  }
-  if (!normalized) {
-    return "none";
-  }
-  return "unknown";
 }
 
 function emptyAggregate(): AggregatePullRequestSummary {

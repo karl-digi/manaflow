@@ -499,6 +499,26 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
             payload: prPayload,
           });
 
+          const prNumber = Number(
+            prPayload.pull_request?.number ?? prPayload.number ?? 0,
+          );
+          if (prNumber) {
+            const prUrl = prPayload.pull_request?.html_url;
+            await _ctx.runMutation(
+              internal.taskRuns.syncPullRequestStateFromWebhook,
+              {
+                teamId,
+                repoFullName,
+                pullRequestNumber: prNumber,
+                pullRequestUrl:
+                  typeof prUrl === "string" ? prUrl : undefined,
+                state: prPayload.pull_request?.state ?? undefined,
+                draft: prPayload.pull_request?.draft ?? undefined,
+                merged: prPayload.pull_request?.merged ?? undefined,
+              },
+            );
+          }
+
           // Add eyes emoji reaction when a new PR is opened
           if (
             FEATURE_FLAGS.githubEyesReactionOnPrOpen &&

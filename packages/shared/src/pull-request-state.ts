@@ -33,6 +33,34 @@ export interface AggregatePullRequestSummary {
   mergeStatus: TaskMergeStatus;
 }
 
+export function mapGitHubStateToRunState({
+  state,
+  draft,
+  merged,
+}: {
+  state?: string | null;
+  draft?: boolean | null;
+  merged?: boolean | null;
+}): RunPullRequestState {
+  if (merged) {
+    return "merged";
+  }
+  if (draft) {
+    return "draft";
+  }
+  const normalized = (state ?? "").toLowerCase();
+  if (normalized === "open") {
+    return "open";
+  }
+  if (normalized === "closed") {
+    return "closed";
+  }
+  if (!normalized) {
+    return "none";
+  }
+  return "unknown";
+}
+
 const STATE_PRIORITY: RunPullRequestState[] = [
   "open",
   "draft",
