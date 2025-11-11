@@ -1,11 +1,11 @@
 import { api } from "@cmux/convex/api";
 import type { Doc } from "@cmux/convex/dataModel";
-import { useLocalStorage } from "@mantine/hooks";
+import { useLocalStorage, useDebouncedValue } from "@mantine/hooks";
 import { useQuery } from "convex/react";
 import clsx from "clsx";
-import { memo, useCallback, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TaskItem } from "./TaskItem";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Search, X } from "lucide-react";
 
 type TaskCategoryKey =
   | "workspaces"
@@ -112,8 +112,43 @@ export const TaskList = memo(function TaskList({
     archived: true,
   });
   const [tab, setTab] = useState<"all" | "archived">("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearchQuery] = useDebouncedValue(searchQuery, 300);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
-  const categorizedTasks = useMemo(() => categorizeTasks(allTasks), [allTasks]);
+  // Filter tasks based on search query
+  const filterTasks = useCallback((tasks: Doc<"tasks">[] | undefined): Doc<"tasks">[] | undefined => {
+    if (!tasks || !debouncedSearchQuery.trim()) {
+      return tasks;
+    }
+
+    const query = debouncedSearchQuery.toLowerCase().trim();
+    return tasks.filter((task) => {
+      // Search in task text (name)
+      if (task.text?.toLowerCase().includes(query)) {
+        return true;
+      }
+      // Search in project full name (e.g., "owner/repo")
+      if (task.projectFullName?.toLowerCase().includes(query)) {
+        return true;
+      }
+      // Search in base branch name
+      if (task.baseBranch?.toLowerCase().includes(query)) {
+        return true;
+      }
+      // Search in task description
+      if (task.description?.toLowerCase().includes(query)) {
+        return true;
+      }
+      return false;
+    });
+  }, [debouncedSearchQuery]);
+
+  // Apply search filter to tasks
+  const filteredAllTasks = useMemo(() => filterTasks(allTasks), [allTasks, filterTasks]);
+  const filteredArchivedTasks = useMemo(() => filterTasks(archivedTasks), [archivedTasks, filterTasks]);
+
+  const categorizedTasks = useMemo(() => categorizeTasks(filteredAllTasks), [filteredAllTasks]);
   const categoryBuckets = categorizedTasks ?? createEmptyCategoryBuckets();
   const collapsedStorageKey = useMemo(
     () => `dashboard-collapsed-categories-${teamSlugOrId}`,
@@ -138,48 +173,97 @@ export const TaskList = memo(function TaskList({
     }));
   }, [setCollapsedCategories]);
 
+  // Handle cmd+f keyboard shortcut
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "f") {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+      // Clear search on Escape
+      if (e.key === "Escape" && document.activeElement === searchInputRef.current) {
+        setSearchQuery("");
+        searchInputRef.current?.blur();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
   return (
     <div className="mt-6 w-full">
       <div className="mb-3 px-4">
-        <div className="flex items-end gap-2.5 select-none">
-          <button
-            className={
-              "text-sm font-medium transition-colors " +
-              (tab === "all"
-                ? "text-neutral-900 dark:text-neutral-100"
-                : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200")
-            }
-            onMouseDown={() => setTab("all")}
-            onClick={() => setTab("all")}
-          >
-            Tasks
-          </button>
-          <button
-            className={
-              "text-sm font-medium transition-colors " +
-              (tab === "archived"
-                ? "text-neutral-900 dark:text-neutral-100"
-                : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200")
-            }
-            onMouseDown={() => setTab("archived")}
-            onClick={() => setTab("archived")}
-          >
-            Archived
-          </button>
+        <div className="flex items-end justify-between gap-2.5">
+          <div className="flex items-end gap-2.5 select-none">
+            <button
+              className={
+                "text-sm font-medium transition-colors " +
+                (tab === "all"
+                  ? "text-neutral-900 dark:text-neutral-100"
+                  : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200")
+              }
+              onMouseDown={() => setTab("all")}
+              onClick={() => setTab("all")}
+            >
+              Tasks
+            </button>
+            <button
+              className={
+                "text-sm font-medium transition-colors " +
+                (tab === "archived"
+                  ? "text-neutral-900 dark:text-neutral-100"
+                  : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200")
+              }
+              onMouseDown={() => setTab("archived")}
+              onClick={() => setTab("archived")}
+            >
+              Archived
+            </button>
+          </div>
+
+          {/* Search input */}
+          <div className="relative">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-neutral-400 dark:text-neutral-500 pointer-events-none" />
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search tasks... (⌘F)"
+                className="h-7 w-56 pl-8 pr-7 text-xs rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 dark:placeholder:text-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-300 dark:focus:ring-neutral-700 transition-all"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => {
+                    setSearchQuery("");
+                    searchInputRef.current?.focus();
+                  }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 dark:text-neutral-500 dark:hover:text-neutral-300 transition-colors"
+                  aria-label="Clear search"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       </div>
       <div className="flex flex-col gap-1 w-full">
         {tab === "archived" ? (
-          archivedTasks === undefined ? (
+          filteredArchivedTasks === undefined ? (
             <div className="text-sm text-neutral-500 dark:text-neutral-400 py-2 select-none">
               Loading...
             </div>
-          ) : archivedTasks.length === 0 ? (
+          ) : filteredArchivedTasks.length === 0 ? (
             <div className="text-sm text-neutral-500 dark:text-neutral-400 py-2 select-none">
-              No archived tasks
+              {debouncedSearchQuery.trim()
+                ? `No archived tasks matching "${debouncedSearchQuery}"`
+                : "No archived tasks"}
             </div>
           ) : (
-            archivedTasks.map((task) => (
+            filteredArchivedTasks.map((task) => (
               <TaskItem
                 key={task._id}
                 task={task}
@@ -187,9 +271,13 @@ export const TaskList = memo(function TaskList({
               />
             ))
           )
-        ) : allTasks === undefined ? (
+        ) : filteredAllTasks === undefined ? (
           <div className="text-sm text-neutral-500 dark:text-neutral-400 py-2 select-none">
             Loading...
+          </div>
+        ) : filteredAllTasks.length === 0 && debouncedSearchQuery.trim() ? (
+          <div className="text-sm text-neutral-500 dark:text-neutral-400 py-2 select-none">
+            No tasks matching "{debouncedSearchQuery}"
           </div>
         ) : (
           <div className="mt-1 w-full flex flex-col space-y-[-1px] transform -translate-y-px">
@@ -201,6 +289,7 @@ export const TaskList = memo(function TaskList({
                 teamSlugOrId={teamSlugOrId}
                 collapsed={Boolean(collapsedCategories[categoryKey])}
                 onToggle={toggleCategoryCollapse}
+                isSearching={Boolean(debouncedSearchQuery.trim())}
               />
             ))}
           </div>
@@ -216,12 +305,14 @@ function TaskCategorySection({
   teamSlugOrId,
   collapsed,
   onToggle,
+  isSearching,
 }: {
   categoryKey: TaskCategoryKey;
   tasks: Doc<"tasks">[];
   teamSlugOrId: string;
   collapsed: boolean;
   onToggle: (key: TaskCategoryKey) => void;
+  isSearching: boolean;
 }) {
   const meta = CATEGORY_META[categoryKey];
   const handleToggle = useCallback(
@@ -272,7 +363,7 @@ function TaskCategorySection({
       ) : (
         <div className="flex w-full items-center px-4 py-3">
           <p className="pl-5 text-xs text-neutral-500 dark:text-neutral-400 select-none">
-            {meta.emptyLabel}
+            {isSearching ? `No matching tasks in ${meta.title.toLowerCase()}` : meta.emptyLabel}
           </p>
         </div>
       )}
