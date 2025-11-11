@@ -81,7 +81,11 @@ export function usePersistentIframe({
       const iframe = persistentIframeManager.getOrCreateIframe(key, url, { allow, sandbox });
 
       // Set up load handlers if not already loaded
-      if (!iframe.contentWindow || iframe.src !== url) {
+      // Note: webviews don't have contentWindow property
+      const isIframe = "contentWindow" in iframe;
+      const needsLoad = isIframe ? (!iframe.contentWindow || iframe.src !== url) : (iframe.src !== url);
+
+      if (needsLoad) {
         const handleLoad = () => {
           iframe.removeEventListener("load", handleLoad);
           iframe.removeEventListener("error", handleError);
@@ -137,7 +141,8 @@ export function usePersistentIframe({
   const handleIsLoaded = useCallback(() => {
     try {
       const iframe = persistentIframeManager.getOrCreateIframe(key, url, { allow, sandbox });
-      return iframe.contentWindow !== null && iframe.src === url;
+      const isIframe = "contentWindow" in iframe;
+      return isIframe ? (iframe.contentWindow !== null && iframe.src === url) : (iframe.src === url);
     } catch {
       return false;
     }

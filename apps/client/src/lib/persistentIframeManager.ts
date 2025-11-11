@@ -1,3 +1,5 @@
+import { isElectron } from "./electron";
+
 // Extend the Element interface to include moveBefore
 declare global {
   interface Element {
@@ -6,7 +8,7 @@ declare global {
 }
 
 type IframeEntry = {
-  iframe: HTMLIFrameElement;
+  iframe: HTMLIFrameElement | HTMLWebViewElement;
   wrapper: HTMLDivElement;
   url: string;
   lastUsed: number;
@@ -125,27 +127,30 @@ class PersistentIframeManager {
   }
 
   /**
-   * Get or create an iframe
+   * Get or create an iframe (or webview in Electron)
    */
   getOrCreateIframe(
     key: string,
     url: string,
     options?: { allow?: string; sandbox?: string }
-  ): HTMLIFrameElement {
+  ): HTMLIFrameElement | HTMLWebViewElement {
     const existing = this.iframes.get(key);
 
     if (existing) {
       existing.lastUsed = Date.now();
-      if (options?.allow !== undefined && existing.allow !== options.allow) {
-        existing.iframe.allow = options.allow;
-        existing.allow = options.allow;
-      }
-      if (
-        options?.sandbox !== undefined &&
-        existing.sandbox !== options.sandbox
-      ) {
-        existing.iframe.setAttribute("sandbox", options.sandbox);
-        existing.sandbox = options.sandbox;
+      // Only update allow/sandbox for iframes, not webviews
+      if (!isElectron) {
+        if (options?.allow !== undefined && existing.allow !== options.allow) {
+          (existing.iframe as HTMLIFrameElement).allow = options.allow;
+          existing.allow = options.allow;
+        }
+        if (
+          options?.sandbox !== undefined &&
+          existing.sandbox !== options.sandbox
+        ) {
+          existing.iframe.setAttribute("sandbox", options.sandbox);
+          existing.sandbox = options.sandbox;
+        }
       }
       if (existing.url !== url) {
         existing.iframe.src = url;
@@ -172,24 +177,40 @@ class PersistentIframeManager {
     `;
     wrapper.setAttribute("data-iframe-key", key);
 
-    // Create iframe
-    const iframe = document.createElement("iframe");
-    iframe.style.cssText = `
-      width: 100%;
-      height: 100%;
-      border: 0;
-      background: white;
-      display: block;
-    `;
+    // Create iframe or webview depending on environment
+    let iframe: HTMLIFrameElement | HTMLWebViewElement;
 
-    // Apply permissions if provided
-    if (options?.allow) {
-      iframe.allow = options.allow;
-    }
+    if (isElectron) {
+      // Create webview for Electron
+      // Note: webviews don't support sandbox or allow attributes
+      iframe = document.createElement("webview") as HTMLWebViewElement;
+      iframe.style.cssText = `
+        width: 100%;
+        height: 100%;
+        border: 0;
+        background: white;
+        display: block;
+      `;
+    } else {
+      // Create iframe for web
+      iframe = document.createElement("iframe");
+      iframe.style.cssText = `
+        width: 100%;
+        height: 100%;
+        border: 0;
+        background: white;
+        display: block;
+      `;
 
-    // Apply sandbox if provided
-    if (options?.sandbox) {
-      iframe.setAttribute("sandbox", options.sandbox);
+      // Apply permissions if provided (only for iframes)
+      if (options?.allow) {
+        (iframe as HTMLIFrameElement).allow = options.allow;
+      }
+
+      // Apply sandbox if provided (only for iframes)
+      if (options?.sandbox) {
+        iframe.setAttribute("sandbox", options.sandbox);
+      }
     }
 
     iframe.src = url;
@@ -207,8 +228,8 @@ class PersistentIframeManager {
       url,
       lastUsed: Date.now(),
       isVisible: false,
-      allow: options?.allow,
-      sandbox: options?.sandbox,
+      allow: isElectron ? undefined : options?.allow,
+      sandbox: isElectron ? undefined : options?.sandbox,
     };
 
     this.iframes.set(key, entry);
@@ -444,7 +465,11 @@ class PersistentIframeManager {
         reject(new Error(`Failed to load iframe: ${url}`));
       };
 
-      if (iframe.contentWindow && iframe.src === url) {
+      // Check if already loaded - webviews don't have contentWindow
+      const isIframe = "contentWindow" in iframe;
+      const alreadyLoaded = isIframe ? (iframe.contentWindow && iframe.src === url) : (iframe.src === url);
+
+      if (alreadyLoaded) {
         resolve();
         return;
       }
