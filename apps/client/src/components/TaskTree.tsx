@@ -666,7 +666,7 @@ function TaskTreeInner({
 
   return (
     <TaskRunExpansionContext.Provider value={expansionContextValue}>
-      <div className="select-none flex flex-col">
+      <div className="select-none flex flex-col" data-task-id={task._id}>
         <ContextMenu.Root>
           <ContextMenu.Trigger>
             <Link
@@ -1289,7 +1289,7 @@ function TaskRunTreeInner({
   }, []);
 
   return (
-    <div className={clsx({ hidden: run.isArchived })}>
+    <div className={clsx({ hidden: run.isArchived })} data-task-run-id={run._id}>
       <ContextMenu.Root>
         <ContextMenu.Trigger>
           <Link

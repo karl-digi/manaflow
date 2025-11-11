@@ -93,6 +93,35 @@ function TaskRunComponent() {
     setIframeStatus("loading");
   }, [workspaceUrl]);
 
+  // Expand and scroll to this taskRun in the sidebar
+  useEffect(() => {
+    // First ensure the task is expanded
+    const taskElement = document.querySelector(`[data-task-id="${taskId}"]`);
+    if (taskElement) {
+      const taskLink = taskElement.querySelector("a");
+      const isTaskExpanded = taskElement.querySelector(
+        '[data-task-run-id]'
+      );
+
+      // If task runs aren't visible, click to expand the task
+      if (taskLink && !isTaskExpanded) {
+        taskLink.click();
+      }
+    }
+
+    // Small delay to allow the task to expand before scrolling to the run
+    const timeoutId = setTimeout(() => {
+      const taskRunElement = document.querySelector(
+        `[data-task-run-id="${taskRunId}"]`
+      );
+      if (taskRunElement) {
+        taskRunElement.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+    }, 100);
+
+    return () => clearTimeout(timeoutId);
+  }, [taskRunId, taskId]);
+
   const onLoad = useCallback(() => {
     console.log(`Workspace view loaded for task run ${taskRunId}`);
   }, [taskRunId]);
