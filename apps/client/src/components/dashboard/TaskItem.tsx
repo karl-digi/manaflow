@@ -393,6 +393,10 @@ export const TaskItem = memo(function TaskItem({
             vscodeUrl={vscodeUrl}
             worktreePath={runWithVSCode?.worktreePath || task.worktreePath}
             branch={task.baseBranch}
+            taskRunId={runWithVSCode?._id ?? null}
+            isCloudWorkspace={
+              runWithVSCode?.isCloudWorkspace ?? task.isCloudWorkspace ?? false
+            }
             className="group-hover:opacity-100 aria-expanded:opacity-100 opacity-0"
           />
 

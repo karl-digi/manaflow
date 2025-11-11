@@ -3,6 +3,7 @@ import { useOpenWithActions } from "@/hooks/useOpenWithActions";
 import { isElectron } from "@/lib/electron";
 import clsx from "clsx";
 import { EllipsisVertical, ExternalLink, GitBranch, Globe } from "lucide-react";
+import type { Id } from "@cmux/convex/dataModel";
 
 interface OpenWithDropdownProps {
   vscodeUrl?: string | null;
@@ -11,6 +12,8 @@ interface OpenWithDropdownProps {
   networking?: Parameters<typeof useOpenWithActions>[0]["networking"];
   className?: string;
   iconClassName?: string;
+  taskRunId?: Id<"taskRuns"> | null;
+  isCloudWorkspace?: boolean;
 }
 
 export function OpenWithDropdown({
@@ -20,6 +23,8 @@ export function OpenWithDropdown({
   networking,
   className,
   iconClassName = "w-3.5 h-3.5",
+  taskRunId,
+  isCloudWorkspace,
 }: OpenWithDropdownProps) {
   const {
     actions,
@@ -32,6 +37,8 @@ export function OpenWithDropdown({
     worktreePath,
     branch,
     networking,
+    taskRunId,
+    isCloudWorkspace,
   });
 
   return (

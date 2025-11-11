@@ -238,6 +238,16 @@ export const OpenInEditorErrorSchema = z.object({
   error: z.string(),
 });
 
+export const EnsureRunWorktreeSchema = z.object({
+  taskRunId: typedZid("taskRuns"),
+});
+
+export const EnsureRunWorktreeResponseSchema = z.object({
+  success: z.boolean(),
+  worktreePath: z.string().optional(),
+  error: z.string().optional(),
+});
+
 export const OpenInEditorResponseSchema = z.object({
   success: z.boolean(),
   error: z.string().optional(),
@@ -459,6 +469,10 @@ export type GitFullDiffResponse = z.infer<typeof GitFullDiffResponseSchema>;
 export type OpenInEditor = z.infer<typeof OpenInEditorSchema>;
 export type OpenInEditorError = z.infer<typeof OpenInEditorErrorSchema>;
 export type OpenInEditorResponse = z.infer<typeof OpenInEditorResponseSchema>;
+export type EnsureRunWorktree = z.infer<typeof EnsureRunWorktreeSchema>;
+export type EnsureRunWorktreeResponse = z.infer<
+  typeof EnsureRunWorktreeResponseSchema
+>;
 export type AvailableEditors = z.infer<typeof AvailableEditorsSchema>;
 export type ListFilesRequest = z.infer<typeof ListFilesRequestSchema>;
 export type FileInfo = z.infer<typeof FileInfoSchema>;
@@ -514,6 +528,10 @@ export interface ClientToServerEvents {
   "open-in-editor": (
     data: OpenInEditor,
     callback: (response: OpenInEditorResponse) => void
+  ) => void;
+  "ensure-run-worktree": (
+    data: EnsureRunWorktree,
+    callback: (response: EnsureRunWorktreeResponse) => void
   ) => void;
   "list-files": (data: ListFilesRequest) => void;
   // GitHub operations

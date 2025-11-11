@@ -3,9 +3,11 @@ import { useSocket } from "@/contexts/socket/use-socket";
 import { Menu } from "@base-ui-components/react/menu";
 import clsx from "clsx";
 import { Check, ChevronDown } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { MenuArrow } from "./ui/menu";
+import type { EnsureRunWorktreeResponse } from "@cmux/shared";
+import type { Id } from "@cmux/convex/dataModel";
 
 type EditorType =
   | "cursor"
@@ -20,17 +22,37 @@ type EditorType =
 
 interface OpenEditorSplitButtonProps {
   worktreePath?: string | null;
+  taskRunId?: Id<"taskRuns"> | null;
+  isCloudWorkspace?: boolean;
   classNameLeft?: string;
   classNameRight?: string;
 }
 
 export function OpenEditorSplitButton({
   worktreePath,
+  taskRunId,
+  isCloudWorkspace,
   classNameLeft,
   classNameRight,
 }: OpenEditorSplitButtonProps) {
   const { socket, availableEditors } = useSocket();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [resolvedWorktreePath, setResolvedWorktreePath] = useState<
+    string | null
+  >(worktreePath ?? null);
+  const hasEnsuredWorktreeRef = useRef(false);
+  const lastRunIdRef = useRef<Id<"taskRuns"> | null>(null);
+
+  useEffect(() => {
+    setResolvedWorktreePath(worktreePath ?? null);
+  }, [worktreePath]);
+
+  useEffect(() => {
+    if (lastRunIdRef.current !== (taskRunId ?? null)) {
+      lastRunIdRef.current = taskRunId ?? null;
+      hasEnsuredWorktreeRef.current = false;
+    }
+  }, [taskRunId]);
 
   useEffect(() => {
     if (!socket) return;
@@ -43,56 +65,108 @@ export function OpenEditorSplitButton({
     };
   }, [socket]);
 
+  const ensureWorktreePath = useCallback((): Promise<string> => {
+    if (!socket) {
+      return Promise.reject(new Error("Socket is not connected"));
+    }
+    if (!taskRunId) {
+      return Promise.reject(new Error("Task run is unavailable"));
+    }
+    return new Promise((resolve, reject) => {
+      socket.emit(
+        "ensure-run-worktree",
+        { taskRunId },
+        (response: EnsureRunWorktreeResponse) => {
+          if (response.success && response.worktreePath) {
+            hasEnsuredWorktreeRef.current = true;
+            setResolvedWorktreePath(response.worktreePath);
+            resolve(response.worktreePath);
+          } else {
+            reject(
+              new Error(response.error || "Failed to prepare workspace path")
+            );
+          }
+        }
+      );
+    });
+  }, [socket, taskRunId]);
+
+  const getWorktreePathForEditor = useCallback(() => {
+    if (
+      resolvedWorktreePath &&
+      (!isCloudWorkspace || hasEnsuredWorktreeRef.current)
+    ) {
+      return Promise.resolve(resolvedWorktreePath);
+    }
+    if (!taskRunId) {
+      if (resolvedWorktreePath) {
+        return Promise.resolve(resolvedWorktreePath);
+      }
+      return Promise.reject(new Error("Workspace path is not available"));
+    }
+    return ensureWorktreePath();
+  }, [
+    ensureWorktreePath,
+    isCloudWorkspace,
+    resolvedWorktreePath,
+    taskRunId,
+  ]);
+
+  const hasValidWorktreePath =
+    Boolean(resolvedWorktreePath) &&
+    (!isCloudWorkspace || hasEnsuredWorktreeRef.current);
+  const canUseLocalEditors = hasValidWorktreePath || Boolean(taskRunId);
+
   const menuItems = useMemo(
     () =>
       [
         {
           id: "vscode" as const,
           name: "VS Code",
-          enabled: !!worktreePath && (availableEditors?.vscode ?? true),
+          enabled: canUseLocalEditors && (availableEditors?.vscode ?? true),
         },
         {
           id: "cursor" as const,
           name: "Cursor",
-          enabled: !!worktreePath && (availableEditors?.cursor ?? true),
+          enabled: canUseLocalEditors && (availableEditors?.cursor ?? true),
         },
         {
           id: "windsurf" as const,
           name: "Windsurf",
-          enabled: !!worktreePath && (availableEditors?.windsurf ?? true),
+          enabled: canUseLocalEditors && (availableEditors?.windsurf ?? true),
         },
         {
           id: "finder" as const,
           name: "Finder",
-          enabled: !!worktreePath && (availableEditors?.finder ?? true),
+          enabled: canUseLocalEditors && (availableEditors?.finder ?? true),
         },
         {
           id: "iterm" as const,
           name: "iTerm",
-          enabled: !!worktreePath && (availableEditors?.iterm ?? false),
+          enabled: canUseLocalEditors && (availableEditors?.iterm ?? false),
         },
         {
           id: "terminal" as const,
           name: "Terminal",
-          enabled: !!worktreePath && (availableEditors?.terminal ?? false),
+          enabled: canUseLocalEditors && (availableEditors?.terminal ?? false),
         },
         {
           id: "ghostty" as const,
           name: "Ghostty",
-          enabled: !!worktreePath && (availableEditors?.ghostty ?? false),
+          enabled: canUseLocalEditors && (availableEditors?.ghostty ?? false),
         },
         {
           id: "alacritty" as const,
           name: "Alacritty",
-          enabled: !!worktreePath && (availableEditors?.alacritty ?? false),
+          enabled: canUseLocalEditors && (availableEditors?.alacritty ?? false),
         },
         {
           id: "xcode" as const,
           name: "Xcode",
-          enabled: !!worktreePath && (availableEditors?.xcode ?? false),
+          enabled: canUseLocalEditors && (availableEditors?.xcode ?? false),
         },
       ].filter((item) => item.enabled),
-    [worktreePath, availableEditors]
+    [availableEditors, canUseLocalEditors]
   );
 
   const [selectedEditor, setSelectedEditor] = useState<EditorType | null>(
@@ -101,24 +175,27 @@ export function OpenEditorSplitButton({
         typeof window !== "undefined"
           ? window.localStorage.getItem("cmux:lastEditor")
           : null;
+      const hasWorkspace = Boolean(worktreePath) || Boolean(taskRunId);
       const stored =
         raw === "vscode-remote"
-          ? worktreePath
+          ? hasWorkspace
             ? "vscode"
             : null
           : (raw as EditorType | null);
       if (stored) return stored;
-      if (worktreePath) return "vscode";
+      if (hasWorkspace) return "vscode";
       return null;
     }
   );
 
   useEffect(() => {
-    if (
-      selectedEditor &&
-      !menuItems.find((m) => m.id === selectedEditor) &&
-      menuItems[0]
-    ) {
+    if (menuItems.length === 0) {
+      if (selectedEditor) {
+        setSelectedEditor(null);
+      }
+      return;
+    }
+    if (!selectedEditor || !menuItems.find((m) => m.id === selectedEditor)) {
       setSelectedEditor(menuItems[0].id);
     }
   }, [menuItems, selectedEditor]);
@@ -131,36 +208,40 @@ export function OpenEditorSplitButton({
 
   const handleOpenInEditor = useCallback(
     (editor: EditorType): Promise<void> => {
-      return new Promise((resolve, reject) => {
-        if (
-          socket &&
-          [
-            "cursor",
-            "vscode",
-            "windsurf",
-            "finder",
-            "iterm",
-            "terminal",
-            "ghostty",
-            "alacritty",
-            "xcode",
-          ].includes(editor) &&
-          worktreePath
-        ) {
-          socket.emit(
-            "open-in-editor",
-            { editor, path: worktreePath },
-            (response: { success: boolean; error?: string }) => {
-              if (response.success) resolve();
-              else reject(new Error(response.error || "Failed to open editor"));
-            }
-          );
-        } else {
-          reject(new Error("Unable to open editor"));
-        }
-      });
+      if (
+        socket &&
+        [
+          "cursor",
+          "vscode",
+          "windsurf",
+          "finder",
+          "iterm",
+          "terminal",
+          "ghostty",
+          "alacritty",
+          "xcode",
+        ].includes(editor)
+      ) {
+        return getWorktreePathForEditor().then(
+          (pathToOpen) =>
+            new Promise((resolve, reject) => {
+              socket.emit(
+                "open-in-editor",
+                { editor, path: pathToOpen },
+                (response: { success: boolean; error?: string }) => {
+                  if (response.success) resolve();
+                  else
+                    reject(
+                      new Error(response.error || "Failed to open editor")
+                    );
+                }
+              );
+            })
+        );
+      }
+      return Promise.reject(new Error("Unable to open editor"));
     },
-    [socket, worktreePath]
+    [socket, getWorktreePathForEditor]
   );
 
   const selected = menuItems.find((m) => m.id === selectedEditor) || null;

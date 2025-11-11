@@ -1256,6 +1256,8 @@ function TaskRunTreeInner({
     worktreePath: run.worktreePath,
     branch: run.newBranch,
     networking: run.networking,
+    taskRunId: run._id,
+    isCloudWorkspace: run.isCloudWorkspace,
   });
 
   const shouldRenderDiffLink = true;

@@ -10,6 +10,7 @@ import {
   GitHubMergeBranchSchema,
   GitHubSyncPrStateSchema,
   ListFilesRequestSchema,
+  EnsureRunWorktreeSchema,
   OpenInEditorSchema,
   SpawnFromCommentSchema,
   StartTaskSchema,
@@ -1633,6 +1634,25 @@ export function setupSocketHandlers(
 
     // Continue with all other handlers...
     // (I'll include the rest of the handlers in the next message due to length)
+
+    socket.on("ensure-run-worktree", async (data, callback) => {
+      try {
+        const { taskRunId } = EnsureRunWorktreeSchema.parse(data);
+        const ensured = await ensureRunWorktreeAndBranch(taskRunId, safeTeam);
+        callback({
+          success: true,
+          worktreePath: ensured.worktreePath,
+        });
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Unknown error";
+        serverLogger.error("Error ensuring worktree path:", error);
+        callback({
+          success: false,
+          error: message,
+        });
+      }
+    });
 
     socket.on("open-in-editor", async (data, callback) => {
       try {

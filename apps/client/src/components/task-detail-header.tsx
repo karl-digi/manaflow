@@ -355,7 +355,13 @@ export function TaskDetailHeader({
             />
           </Suspense>
 
-          <OpenEditorSplitButton worktreePath={worktreePath} />
+          <OpenEditorSplitButton
+            worktreePath={worktreePath}
+            taskRunId={selectedRun?._id ?? null}
+            isCloudWorkspace={
+              selectedRun?.isCloudWorkspace ?? task?.isCloudWorkspace ?? false
+            }
+          />
 
           {onPanelSettings && (
             <button

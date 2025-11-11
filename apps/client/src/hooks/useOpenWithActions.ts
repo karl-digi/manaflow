@@ -1,10 +1,11 @@
 import { useSocket } from "@/contexts/socket/use-socket";
-import type { Doc } from "@cmux/convex/dataModel";
+import type { Doc, Id } from "@cmux/convex/dataModel";
 import { editorIcons, type EditorType } from "@/components/ui/dropdown-types";
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { rewriteLocalWorkspaceUrlIfNeeded } from "@/lib/toProxyWorkspaceUrl";
 import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
+import type { EnsureRunWorktreeResponse } from "@cmux/shared";
 
 type NetworkingInfo = Doc<"taskRuns">["networking"];
 
@@ -24,6 +25,8 @@ type UseOpenWithActionsArgs = {
   worktreePath?: string | null;
   branch?: string | null;
   networking?: NetworkingInfo;
+  taskRunId?: Id<"taskRuns"> | null;
+  isCloudWorkspace?: boolean;
 };
 
 export function useOpenWithActions({
@@ -31,10 +34,26 @@ export function useOpenWithActions({
   worktreePath,
   branch,
   networking,
+  taskRunId,
+  isCloudWorkspace,
 }: UseOpenWithActionsArgs) {
   const { socket, availableEditors } = useSocket();
   const localServeWeb = useLocalVSCodeServeWebQuery();
   const localServeWebOrigin = localServeWeb.data?.baseUrl ?? null;
+  const [resolvedWorktreePath, setResolvedWorktreePath] = useState<
+    string | null
+  >(worktreePath ?? null);
+  const hasEnsuredWorktreeRef = useRef(false);
+  const lastRunIdRef = useRef<Id<"taskRuns"> | null>(null);
+
+  if (lastRunIdRef.current !== (taskRunId ?? null)) {
+    lastRunIdRef.current = taskRunId ?? null;
+    hasEnsuredWorktreeRef.current = false;
+  }
+
+  useEffect(() => {
+    setResolvedWorktreePath(worktreePath ?? null);
+  }, [worktreePath]);
 
   useEffect(() => {
     if (!socket) return;
@@ -50,61 +69,114 @@ export function useOpenWithActions({
     };
   }, [socket]);
 
+  const ensureWorktreePath = useCallback((): Promise<string> => {
+    if (!socket) {
+      return Promise.reject(new Error("Socket is not connected"));
+    }
+    if (!taskRunId) {
+      return Promise.reject(new Error("Task run is unavailable"));
+    }
+    return new Promise((resolve, reject) => {
+      socket.emit(
+        "ensure-run-worktree",
+        { taskRunId },
+        (response: EnsureRunWorktreeResponse) => {
+          if (response.success && response.worktreePath) {
+            hasEnsuredWorktreeRef.current = true;
+            setResolvedWorktreePath(response.worktreePath);
+            resolve(response.worktreePath);
+          } else {
+            reject(
+              new Error(response.error || "Failed to prepare workspace path")
+            );
+          }
+        }
+      );
+    });
+  }, [socket, taskRunId]);
+
+  const getWorktreePathForEditor = useCallback(() => {
+    if (
+      resolvedWorktreePath &&
+      (!isCloudWorkspace || hasEnsuredWorktreeRef.current)
+    ) {
+      return Promise.resolve(resolvedWorktreePath);
+    }
+    if (!taskRunId) {
+      if (resolvedWorktreePath) {
+        return Promise.resolve(resolvedWorktreePath);
+      }
+      return Promise.reject(new Error("Workspace path is not available"));
+    }
+    return ensureWorktreePath();
+  }, [
+    ensureWorktreePath,
+    isCloudWorkspace,
+    resolvedWorktreePath,
+    taskRunId,
+  ]);
+
   const handleOpenInEditor = useCallback(
     (editor: EditorType): Promise<void> => {
-      return new Promise((resolve, reject) => {
-        if (editor === "vscode-remote" && vscodeUrl) {
-          const normalizedUrl = rewriteLocalWorkspaceUrlIfNeeded(
-            vscodeUrl,
-            localServeWebOrigin,
-          );
-          const vscodeUrlWithWorkspace = `${normalizedUrl}?folder=/root/workspace`;
-          window.open(vscodeUrlWithWorkspace, "_blank", "noopener,noreferrer");
-          resolve();
-        } else if (
-          socket &&
-          [
-            "cursor",
-            "vscode",
-            "windsurf",
-            "finder",
-            "iterm",
-            "terminal",
-            "ghostty",
-            "alacritty",
-            "xcode",
-          ].includes(editor) &&
-          worktreePath
-        ) {
-          socket.emit(
-            "open-in-editor",
-            {
-              editor: editor as
-                | "cursor"
-                | "vscode"
-                | "windsurf"
-                | "finder"
-                | "iterm"
-                | "terminal"
-                | "ghostty"
-                | "alacritty"
-                | "xcode",
-              path: worktreePath,
-            },
-            (response) => {
-              if (response.success) {
-                resolve();
-              } else {
-                reject(new Error(response.error || "Failed to open editor"));
-              }
-            }
-          );
-        } else {
-          reject(new Error("Unable to open editor"));
-        }
-      });
+      if (editor === "vscode-remote" && vscodeUrl) {
+        const normalizedUrl = rewriteLocalWorkspaceUrlIfNeeded(
+          vscodeUrl,
+          localServeWebOrigin
+        );
+        const vscodeUrlWithWorkspace = `${normalizedUrl}?folder=/root/workspace`;
+        window.open(vscodeUrlWithWorkspace, "_blank", "noopener,noreferrer");
+        return Promise.resolve();
+      }
+
+      if (
+        socket &&
+        [
+          "cursor",
+          "vscode",
+          "windsurf",
+          "finder",
+          "iterm",
+          "terminal",
+          "ghostty",
+          "alacritty",
+          "xcode",
+        ].includes(editor)
+      ) {
+        return getWorktreePathForEditor().then(
+          (pathToOpen) =>
+            new Promise((resolve, reject) => {
+              socket.emit(
+                "open-in-editor",
+                {
+                  editor: editor as
+                    | "cursor"
+                    | "vscode"
+                    | "windsurf"
+                    | "finder"
+                    | "iterm"
+                    | "terminal"
+                    | "ghostty"
+                    | "alacritty"
+                    | "xcode",
+                  path: pathToOpen,
+                },
+                (response) => {
+                  if (response.success) {
+                    resolve();
+                  } else {
+                    reject(
+                      new Error(response.error || "Failed to open editor")
+                    );
+                  }
+                }
+              );
+            })
+        );
+      }
+
+      return Promise.reject(new Error("Unable to open editor"));
     },
-    [socket, worktreePath, vscodeUrl, localServeWebOrigin]
+    [socket, vscodeUrl, localServeWebOrigin, getWorktreePathForEditor]
   );
 
   const handleCopyBranch = useCallback(() => {
@@ -119,53 +191,58 @@ export function useOpenWithActions({
       });
   }, [branch]);
 
+  const hasValidWorktreePath =
+    Boolean(resolvedWorktreePath) &&
+    (!isCloudWorkspace || hasEnsuredWorktreeRef.current);
+  const canUseLocalEditors = hasValidWorktreePath || Boolean(taskRunId);
+
   const openWithActions = useMemo<OpenWithAction[]>(() => {
     const baseItems: Array<{ id: EditorType; name: string; enabled: boolean }> = [
       { id: "vscode-remote", name: "VS Code (web)", enabled: Boolean(vscodeUrl) },
       {
         id: "vscode",
         name: "VS Code (local)",
-        enabled: Boolean(worktreePath) && (availableEditors?.vscode ?? true),
+        enabled: canUseLocalEditors && (availableEditors?.vscode ?? true),
       },
       {
         id: "cursor",
         name: "Cursor",
-        enabled: Boolean(worktreePath) && (availableEditors?.cursor ?? true),
+        enabled: canUseLocalEditors && (availableEditors?.cursor ?? true),
       },
       {
         id: "windsurf",
         name: "Windsurf",
-        enabled: Boolean(worktreePath) && (availableEditors?.windsurf ?? true),
+        enabled: canUseLocalEditors && (availableEditors?.windsurf ?? true),
       },
       {
         id: "finder",
         name: "Finder",
-        enabled: Boolean(worktreePath) && (availableEditors?.finder ?? true),
+        enabled: canUseLocalEditors && (availableEditors?.finder ?? true),
       },
       {
         id: "iterm",
         name: "iTerm",
-        enabled: Boolean(worktreePath) && (availableEditors?.iterm ?? false),
+        enabled: canUseLocalEditors && (availableEditors?.iterm ?? false),
       },
       {
         id: "terminal",
         name: "Terminal",
-        enabled: Boolean(worktreePath) && (availableEditors?.terminal ?? false),
+        enabled: canUseLocalEditors && (availableEditors?.terminal ?? false),
       },
       {
         id: "ghostty",
         name: "Ghostty",
-        enabled: Boolean(worktreePath) && (availableEditors?.ghostty ?? false),
+        enabled: canUseLocalEditors && (availableEditors?.ghostty ?? false),
       },
       {
         id: "alacritty",
         name: "Alacritty",
-        enabled: Boolean(worktreePath) && (availableEditors?.alacritty ?? false),
+        enabled: canUseLocalEditors && (availableEditors?.alacritty ?? false),
       },
       {
         id: "xcode",
         name: "Xcode",
-        enabled: Boolean(worktreePath) && (availableEditors?.xcode ?? false),
+        enabled: canUseLocalEditors && (availableEditors?.xcode ?? false),
       },
     ];
 
@@ -176,7 +253,7 @@ export function useOpenWithActions({
         name: item.name,
         Icon: editorIcons[item.id] ?? null,
       }));
-  }, [availableEditors, vscodeUrl, worktreePath]);
+  }, [availableEditors, vscodeUrl, canUseLocalEditors]);
 
   const portActions = useMemo<PortAction[]>(() => {
     if (!networking) return [];
