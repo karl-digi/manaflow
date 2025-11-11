@@ -37,13 +37,23 @@ const WorkspaceConfigBody = z
 
 async function loadEnvVarsContent(
   dataVaultKey: string | undefined,
+  context: string,
 ): Promise<string> {
   if (!dataVaultKey) return "";
-  const store = await stackServerAppJs.getDataVaultStore("cmux-snapshot-envs");
-  const value = await store.getValue(dataVaultKey, {
-    secret: env.STACK_DATA_VAULT_SECRET,
-  });
-  return value ?? "";
+  try {
+    const store = await stackServerAppJs.getDataVaultStore(
+      "cmux-snapshot-envs",
+    );
+    const value = await store.getValue(dataVaultKey, {
+      secret: env.STACK_DATA_VAULT_SECRET,
+    });
+    return value ?? "";
+  } catch (error) {
+    throw new HTTPException(500, {
+      message: `${context} Failed to read workspace environment variables`,
+      cause: error,
+    });
+  }
 }
 
 workspaceConfigsRouter.openapi(
@@ -72,6 +82,7 @@ workspaceConfigsRouter.openapi(
     if (!accessToken) return c.text("Unauthorized", 401);
 
     const query = c.req.valid("query");
+    const context = `[workspace-configs.get team=${query.teamSlugOrId} project=${query.projectFullName}]`;
 
     await verifyTeamAccess({
       req: c.req.raw,
@@ -79,16 +90,27 @@ workspaceConfigsRouter.openapi(
     });
 
     const convex = getConvex({ accessToken });
-    const config = await convex.query(api.workspaceConfigs.get, {
-      teamSlugOrId: query.teamSlugOrId,
-      projectFullName: query.projectFullName,
-    });
+    let config;
+    try {
+      config = await convex.query(api.workspaceConfigs.get, {
+        teamSlugOrId: query.teamSlugOrId,
+        projectFullName: query.projectFullName,
+      });
+    } catch (error) {
+      throw new HTTPException(500, {
+        message: `${context} Failed to load workspace configuration from Convex`,
+        cause: error,
+      });
+    }
 
     if (!config) {
       return c.json(null);
     }
 
-    const envVarsContent = await loadEnvVarsContent(config.dataVaultKey);
+    const envVarsContent = await loadEnvVarsContent(
+      config.dataVaultKey,
+      context,
+    );
 
     return c.json({
       projectFullName: config.projectFullName,
@@ -133,6 +155,7 @@ workspaceConfigsRouter.openapi(
     if (!accessToken) return c.text("Unauthorized", 401);
 
     const body = c.req.valid("json");
+    const context = `[workspace-configs.post team=${body.teamSlugOrId} project=${body.projectFullName}]`;
 
     await verifyTeamAccess({
       req: c.req.raw,
@@ -140,14 +163,28 @@ workspaceConfigsRouter.openapi(
     });
 
     const convex = getConvex({ accessToken });
-    const existing = await convex.query(api.workspaceConfigs.get, {
-      teamSlugOrId: body.teamSlugOrId,
-      projectFullName: body.projectFullName,
-    });
+    let existing;
+    try {
+      existing = await convex.query(api.workspaceConfigs.get, {
+        teamSlugOrId: body.teamSlugOrId,
+        projectFullName: body.projectFullName,
+      });
+    } catch (error) {
+      throw new HTTPException(500, {
+        message: `${context} Failed to load existing workspace configuration`,
+        cause: error,
+      });
+    }
 
-    const store = await stackServerAppJs.getDataVaultStore(
-      "cmux-snapshot-envs",
-    );
+    let store;
+    try {
+      store = await stackServerAppJs.getDataVaultStore("cmux-snapshot-envs");
+    } catch (error) {
+      throw new HTTPException(500, {
+        message: `${context} Unable to access workspace environment storage`,
+        cause: error,
+      });
+    }
     const envVarsContent = body.envVarsContent ?? "";
     let dataVaultKey = existing?.dataVaultKey;
     if (!dataVaultKey) {
@@ -160,17 +197,24 @@ workspaceConfigsRouter.openapi(
       });
     } catch (error) {
       throw new HTTPException(500, {
-        message: "Failed to persist environment variables",
+        message: `${context} Failed to persist environment variables (key=${dataVaultKey})`,
         cause: error,
       });
     }
 
-    await convex.mutation(api.workspaceConfigs.upsert, {
-      teamSlugOrId: body.teamSlugOrId,
-      projectFullName: body.projectFullName,
-      maintenanceScript: body.maintenanceScript,
-      dataVaultKey,
-    });
+    try {
+      await convex.mutation(api.workspaceConfigs.upsert, {
+        teamSlugOrId: body.teamSlugOrId,
+        projectFullName: body.projectFullName,
+        maintenanceScript: body.maintenanceScript,
+        dataVaultKey,
+      });
+    } catch (error) {
+      throw new HTTPException(500, {
+        message: `${context} Failed to update workspace configuration metadata`,
+        cause: error,
+      });
+    }
 
     return c.json({
       projectFullName: body.projectFullName,

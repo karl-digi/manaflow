@@ -52,6 +52,8 @@ export function WorkspaceSetupPanel({
 
   const hasInitializedFromServerRef = useRef(false);
 
+  const [hasNotifiedLoadError, setHasNotifiedLoadError] = useState(false);
+
   const [isExpanded, setIsExpanded] = useState(() => {
     const saved = localStorage.getItem('workspace-setup-expanded');
     return saved === 'true';
@@ -218,9 +220,18 @@ export function WorkspaceSetupPanel({
     [updateEnvVars],
   );
 
-  if (configQuery.error) {
-    throw configQuery.error;
-  }
+  useEffect(() => {
+    if (configQuery.isError && !hasNotifiedLoadError) {
+      toast.error(
+        "We couldn't reach the workspace setup service. Try again or update it later.",
+      );
+      setHasNotifiedLoadError(true);
+    }
+
+    if (!configQuery.isError && hasNotifiedLoadError) {
+      setHasNotifiedLoadError(false);
+    }
+  }, [configQuery.isError, hasNotifiedLoadError]);
 
   if (!projectFullName) {
     return null;
@@ -271,6 +282,28 @@ export function WorkspaceSetupPanel({
           ) : null}
         </div>
       </button>
+
+      {configQuery.isError ? (
+        <div className="mx-2 mb-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[11px] text-red-800 dark:border-red-950/50 dark:bg-red-950/30 dark:text-red-100">
+          <p className="font-semibold">
+            Workspace setup is temporarily unavailable.
+          </p>
+          <p className="mt-0.5 text-[11px] opacity-80">
+            We couldn't reach the configuration service. Your existing values are safe, so try again in a moment.
+          </p>
+          <div className="mt-1">
+            <Button
+              size="sm"
+              variant="outline"
+              className="!h-6 text-xs"
+              onClick={() => configQuery.refetch()}
+              disabled={configQuery.isFetching}
+            >
+              {configQuery.isFetching ? "Retrying…" : "Retry loading"}
+            </Button>
+          </div>
+        </div>
+      ) : null}
 
       <div
         className={`overflow-hidden ${isExpanded ? "max-h-[2000px]" : "max-h-0"}`}
