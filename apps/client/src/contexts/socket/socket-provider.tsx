@@ -11,7 +11,7 @@ import { stackClientApp } from "../../lib/stack";
 import { authJsonQueryOptions } from "../convex/authJsonQueryOptions";
 import { setGlobalSocket, socketBoot } from "./socket-boot";
 import { WebSocketContext } from "./socket-context";
-import { env } from "@/client-env";
+import { getBaseUrl } from "@/lib/getBaseUrl";
 
 export interface SocketContextType {
   socket: MainServerSocket | null;
@@ -26,7 +26,7 @@ interface SocketProviderProps {
 
 export const SocketProvider: React.FC<SocketProviderProps> = ({
   children,
-  url = env.NEXT_PUBLIC_SERVER_ORIGIN || "http://localhost:9776",
+  url = getBaseUrl("server"),
 }) => {
   const authJsonQuery = useQuery(authJsonQueryOptions());
   const authToken = authJsonQuery.data?.accessToken;

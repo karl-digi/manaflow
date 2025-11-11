@@ -33,7 +33,7 @@ export default defineConfig({
     ),
     global: "globalThis",
   },
-  envPrefix: "NEXT_PUBLIC_",
+  envPrefix: ["NEXT_PUBLIC_", "VITE_"],
   // TODO: make this safe
   server: {
     allowedHosts: true,
