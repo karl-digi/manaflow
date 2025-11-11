@@ -92,7 +92,7 @@ export function ModeToggleTooltip({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -4 }}
             transition={{ duration: 0.15, ease: "easeOut" }}
-            className="absolute top-full left-1/2 -translate-x-1/2 z-[var(--z-modal)] mt-2"
+            className="absolute top-full left-1/2 -translate-x-1/2 z-[var(--z-tooltip)] mt-2"
           >
             {/* Arrow pointing up - matching shadcn style */}
             <div className="absolute left-[calc(50%_-4px)] translate-y-[calc(-50%_+1px)] size-2.5 rounded-[2px] rotate-45 bg-black" />
