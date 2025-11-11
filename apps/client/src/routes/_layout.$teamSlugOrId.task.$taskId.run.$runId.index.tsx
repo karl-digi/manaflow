@@ -10,6 +10,7 @@ import type { PersistentIframeStatus } from "@/components/persistent-iframe";
 import { WorkspaceLoadingIndicator } from "@/components/workspace-loading-indicator";
 import { getTaskRunPersistKey } from "@/lib/persistent-webview-keys";
 import { toProxyWorkspaceUrl } from "@/lib/toProxyWorkspaceUrl";
+import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import {
   TASK_RUN_IFRAME_ALLOW,
   TASK_RUN_IFRAME_SANDBOX,
@@ -67,7 +68,8 @@ export const Route = createFileRoute(
 });
 
 function TaskRunComponent() {
-  const { taskRunId, teamSlugOrId } = Route.useParams();
+  const { taskRunId, teamSlugOrId, taskId } = Route.useParams();
+  const { addTaskToExpand } = useExpandTasks();
   const localServeWeb = useLocalVSCodeServeWebQuery();
   const taskRun = useSuspenseQuery(
     convexQuery(api.taskRuns.get, {
@@ -75,6 +77,71 @@ function TaskRunComponent() {
       id: taskRunId,
     })
   );
+
+  // Expand the task and scroll the taskRun into view when the component mounts
+  useEffect(() => {
+    // Add the task to the expanded list to ensure it's visible
+    addTaskToExpand(taskId);
+
+    // Wait for the DOM to update after the expansion
+    const scrollToTaskRun = () => {
+      // Find the active taskRun element in the sidebar
+      // The sidebar marks the current route as active with an 'active' class
+      const activeElements = document.querySelectorAll('.active');
+
+      // Find the element that contains our taskRunId in its href
+      let targetElement = null;
+      for (const element of activeElements) {
+        const link = element.querySelector(`[href*="${taskRunId}"]`);
+        if (link) {
+          targetElement = element;
+          break;
+        }
+      }
+
+      if (!targetElement) {
+        // Fallback: try to find any link with the taskRunId
+        const linkElement = document.querySelector(`[href*="${taskRunId}"]`);
+        if (linkElement) {
+          targetElement = linkElement.closest('li') || linkElement.closest('div') || linkElement;
+        }
+      }
+
+      if (targetElement) {
+        // Check if element is already visible in viewport
+        const rect = targetElement.getBoundingClientRect();
+        const sidebar = targetElement.closest('[class*="sidebar"]') || targetElement.closest('[class*="overflow-y"]');
+
+        if (sidebar) {
+          const sidebarRect = sidebar.getBoundingClientRect();
+          const isVisible =
+            rect.top >= sidebarRect.top &&
+            rect.bottom <= sidebarRect.bottom;
+
+          // Only scroll if not already visible
+          if (!isVisible) {
+            targetElement.scrollIntoView({
+              behavior: 'smooth',
+              block: 'center',
+              inline: 'nearest'
+            });
+          }
+        } else {
+          // If we can't find the sidebar, just scroll anyway
+          targetElement.scrollIntoView({
+            behavior: 'smooth',
+            block: 'center',
+            inline: 'nearest'
+          });
+        }
+      }
+    };
+
+    // Use a slightly longer delay to ensure expansion animation completes
+    const timeoutId = setTimeout(scrollToTaskRun, 200);
+
+    return () => clearTimeout(timeoutId);
+  }, [taskId, taskRunId, addTaskToExpand]);
 
   const rawWorkspaceUrl = taskRun?.data?.vscode?.workspaceUrl ?? null;
   const workspaceUrl = rawWorkspaceUrl
