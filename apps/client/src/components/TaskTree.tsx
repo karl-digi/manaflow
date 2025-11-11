@@ -1304,6 +1304,7 @@ function TaskRunTreeInner({
             })}
             className="group block"
             data-focus-visible={isRunLinkFocusVisible ? "true" : undefined}
+            data-taskrun-id={run._id}
             activeOptions={{ exact: false }}
             onFocus={handleRunLinkFocus}
             onBlur={handleRunLinkBlur}
@@ -1698,3 +1699,4 @@ export const TaskTree = memo(TaskTreeInner);
 const TaskRunTree = memo(TaskRunTreeInner);
 
 export type { AnnotatedTaskRun, TaskRunWithChildren } from "./task-tree/types";
+export { useTaskRunExpansionContext };
