@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
-import type { TaskAcknowledged, TaskStarted, TaskError } from "@cmux/shared";
+import type { TaskAcknowledged, TaskStarted, TaskError, CreateLocalWorkspaceResponse } from "@cmux/shared";
 import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { convexQuery } from "@convex-dev/react-query";
@@ -613,6 +613,7 @@ export const Route = createFileRoute(
 function RunDiffPage() {
   const { taskId, teamSlugOrId, runId } = Route.useParams();
   const [diffControls, setDiffControls] = useState<DiffControls | null>(null);
+  const { socket } = useSocket();
   const task = useQuery(api.tasks.getById, {
     teamSlugOrId,
     id: taskId,
@@ -746,6 +747,65 @@ function RunDiffPage() {
   const taskRunId = selectedRun?._id ?? runId;
   const restartTaskPersistenceKey = `restart-task-${taskId}-${runId}`;
 
+  const handleOpenLocalWorkspace = useCallback(() => {
+    if (!socket) {
+      toast.error("Socket not connected");
+      return;
+    }
+
+    if (!primaryRepo) {
+      toast.error("No repository information available");
+      return;
+    }
+
+    if (!selectedRun?.newBranch) {
+      toast.error("No branch information available");
+      return;
+    }
+
+    const loadingToast = toast.loading("Creating local workspace...");
+
+    socket.emit(
+      "create-local-workspace",
+      {
+        teamSlugOrId,
+        projectFullName: primaryRepo,
+        repoUrl: `https://github.com/${primaryRepo}.git`,
+        branch: selectedRun.newBranch,
+      },
+      (response: CreateLocalWorkspaceResponse) => {
+        if (response.success && response.workspacePath) {
+          toast.success("Workspace created successfully!", {
+            id: loadingToast,
+            description: `Opening workspace at ${response.workspacePath}`,
+          });
+
+          // Try to open the workspace in the user's local editor
+          if (response.workspacePath && socket) {
+            socket.emit(
+              "open-in-editor",
+              {
+                editor: "cursor",
+                path: response.workspacePath,
+              },
+              (openResponse) => {
+                if (!openResponse.success) {
+                  toast.info("Workspace ready, but couldn't open editor automatically", {
+                    description: response.workspacePath,
+                  });
+                }
+              }
+            );
+          }
+        } else {
+          toast.error(response.error || "Failed to create workspace", {
+            id: loadingToast,
+          });
+        }
+      }
+    );
+  }, [socket, teamSlugOrId, primaryRepo, selectedRun?.newBranch]);
+
   // 404 if selected run is missing
   if (!selectedRun) {
     return (
@@ -774,6 +834,7 @@ function RunDiffPage() {
             onCollapseAll={diffControls?.collapseAll}
             onExpandAllChecks={expandAllChecks}
             onCollapseAllChecks={collapseAllChecks}
+            onOpenLocalWorkspace={handleOpenLocalWorkspace}
             teamSlugOrId={teamSlugOrId}
           />
           {task?.text && (
