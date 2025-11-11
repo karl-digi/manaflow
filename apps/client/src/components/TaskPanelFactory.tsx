@@ -21,7 +21,9 @@ import type { PersistentWebViewProps } from "./persistent-webview";
 import type { WorkspaceLoadingIndicatorProps } from "./workspace-loading-indicator";
 import type { TaskRunTerminalPaneProps } from "./TaskRunTerminalPane";
 import type { TaskRunGitDiffPanelProps } from "./TaskRunGitDiffPanel";
+import type { ElectronPreviewBrowserProps } from "./electron-preview-browser";
 import { shouldUseServerIframePreflight } from "@/hooks/useIframePreflight";
+import { isElectron } from "@/lib/electron";
 
 type PanelPosition = "topLeft" | "topRight" | "bottomLeft" | "bottomRight";
 
@@ -169,6 +171,7 @@ interface PanelFactoryProps {
   // Browser panel props
   browserUrl?: string | null;
   browserPersistKey?: string | null;
+  browserWebContentsPersistKey?: string | null;
   browserStatus?: PersistentIframeStatus;
   setBrowserStatus?: (status: PersistentIframeStatus) => void;
   browserPlaceholder?: {
@@ -180,6 +183,7 @@ interface PanelFactoryProps {
   // Additional components
   TaskRunChatPane?: React.ComponentType<TaskRunChatPaneProps>;
   PersistentWebView?: React.ComponentType<PersistentWebViewProps>;
+  ElectronPreviewBrowser?: React.ComponentType<ElectronPreviewBrowserProps>;
   WorkspaceLoadingIndicator?: React.ComponentType<WorkspaceLoadingIndicatorProps>;
   TaskRunTerminalPane?: React.ComponentType<TaskRunTerminalPaneProps>;
   TaskRunGitDiffPanel?: React.ComponentType<TaskRunGitDiffPanelProps>;
@@ -236,26 +240,29 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
     const container = document.querySelector(`[data-panel-position="${position}"]`);
     if (!container) return;
 
-    // Find any iframe target within this panel
-    const iframeTarget = container.querySelector('[data-iframe-target]') as HTMLElement;
-    if (!iframeTarget) return;
+    const iframeTargets = container.querySelectorAll<HTMLElement>('[data-iframe-target]');
+    if (!iframeTargets.length) return;
 
-    const iframeKey = iframeTarget.getAttribute('data-iframe-target');
-    if (!iframeKey) return;
+    iframeTargets.forEach((target) => {
+      const iframeKey = target.getAttribute("data-iframe-target");
+      if (!iframeKey) {
+        return;
+      }
+      const wrapper = document.querySelector(
+        `[data-iframe-key="${iframeKey}"]`
+      ) as HTMLElement | null;
+      if (!wrapper) {
+        return;
+      }
 
-    // Find the corresponding iframe wrapper
-    const wrapper = document.querySelector(`[data-iframe-key="${iframeKey}"]`) as HTMLElement;
-    if (!wrapper) return;
-
-    if (isAnyPanelExpanded && !isExpanded) {
-      // Another panel is expanded - hide this iframe
-      wrapper.style.visibility = "hidden";
-      wrapper.style.pointerEvents = "none";
-    } else {
-      // This panel is expanded OR no panel is expanded - show iframe
-      wrapper.style.visibility = "visible";
-      wrapper.style.pointerEvents = "auto";
-    }
+      if (isAnyPanelExpanded && !isExpanded) {
+        wrapper.style.visibility = "hidden";
+        wrapper.style.pointerEvents = "none";
+      } else {
+        wrapper.style.visibility = "visible";
+        wrapper.style.pointerEvents = "auto";
+      }
+    });
   }, [type, position, isExpanded, isAnyPanelExpanded]);
 
   const handleDragStart = useCallback((e: React.DragEvent) => {
@@ -556,62 +563,115 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
       const {
         browserUrl,
         browserPersistKey,
+        browserWebContentsPersistKey,
         setBrowserStatus,
         browserPlaceholder,
         selectedRun,
         isMorphProvider,
         isBrowserBusy,
         PersistentWebView,
+        ElectronPreviewBrowser,
         WorkspaceLoadingIndicator,
         TASK_RUN_IFRAME_ALLOW,
         TASK_RUN_IFRAME_SANDBOX,
       } = props;
 
       if (!PersistentWebView || !WorkspaceLoadingIndicator) return null;
-      const shouldShowBrowserLoader = Boolean(selectedRun) && isMorphProvider && (!browserUrl || !browserPersistKey);
+      const shouldShowBrowserLoader =
+        Boolean(selectedRun) &&
+        isMorphProvider &&
+        (!browserUrl || !browserPersistKey);
+      const showElectronBrowser =
+        Boolean(
+          isElectron &&
+            ElectronPreviewBrowser &&
+            browserWebContentsPersistKey &&
+            browserUrl
+        );
 
       return panelWrapper(
         <Globe2 className="size-3" aria-hidden />,
         PANEL_LABELS.browser,
-        <div className={clsx("relative flex-1", isExpanded && "h-full")} aria-busy={isBrowserBusy}>
-          {browserUrl && browserPersistKey ? (
-            <PersistentWebView
-              key={browserPersistKey}
-              persistKey={browserPersistKey}
-              src={browserUrl}
-              className="flex h-full"
-              iframeClassName={clsx("select-none")}
-              persistentWrapperClassName={isExpanded ? "z-[var(--z-maximized-iframe)]" : undefined}
-              allow={TASK_RUN_IFRAME_ALLOW}
-              sandbox={TASK_RUN_IFRAME_SANDBOX}
-              retainOnUnmount
-              onStatusChange={setBrowserStatus}
-              fallback={
+        <div
+          className={clsx(
+            "flex flex-1 flex-col gap-3",
+            isExpanded && "h-full"
+          )}
+        >
+          <div
+            className={clsx(
+              "relative flex-1",
+              showElectronBrowser ? "min-h-[200px]" : "min-h-0",
+              isExpanded && "h-full"
+            )}
+            aria-busy={isBrowserBusy}
+          >
+            {browserUrl && browserPersistKey ? (
+              <PersistentWebView
+                key={browserPersistKey}
+                persistKey={browserPersistKey}
+                src={browserUrl}
+                className="flex h-full"
+                iframeClassName={clsx("select-none")}
+                persistentWrapperClassName={
+                  isExpanded ? "z-[var(--z-maximized-iframe)]" : undefined
+                }
+                allow={TASK_RUN_IFRAME_ALLOW}
+                sandbox={TASK_RUN_IFRAME_SANDBOX}
+                retainOnUnmount
+                onStatusChange={setBrowserStatus}
+                fallback={
+                  <WorkspaceLoadingIndicator
+                    variant="browser"
+                    status="loading"
+                  />
+                }
+                fallbackClassName="bg-neutral-50 dark:bg-black"
+                errorFallback={
+                  <WorkspaceLoadingIndicator
+                    variant="browser"
+                    status="error"
+                  />
+                }
+                errorFallbackClassName="bg-neutral-50/95 dark:bg-black/95"
+                loadTimeoutMs={45_000}
+                isExpanded={isExpanded}
+                isAnyPanelExpanded={isAnyPanelExpanded}
+              />
+            ) : shouldShowBrowserLoader ? (
+              <div className="flex h-full items-center justify-center">
                 <WorkspaceLoadingIndicator variant="browser" status="loading" />
-              }
-              fallbackClassName="bg-neutral-50 dark:bg-black"
-              errorFallback={
-                <WorkspaceLoadingIndicator variant="browser" status="error" />
-              }
-              errorFallbackClassName="bg-neutral-50/95 dark:bg-black/95"
-              loadTimeoutMs={45_000}
-              isExpanded={isExpanded}
-              isAnyPanelExpanded={isAnyPanelExpanded}
-            />
-          ) : shouldShowBrowserLoader ? (
-            <div className="flex h-full items-center justify-center">
-              <WorkspaceLoadingIndicator variant="browser" status="loading" />
-            </div>
-          ) : browserPlaceholder ? (
-            <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-neutral-500 dark:text-neutral-400">
-              <div className="text-sm font-medium text-neutral-600 dark:text-neutral-200">
-                {browserPlaceholder.title}
               </div>
-              {browserPlaceholder.description ? (
-                <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                  {browserPlaceholder.description}
-                </p>
-              ) : null}
+            ) : browserPlaceholder ? (
+              <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-neutral-500 dark:text-neutral-400">
+                <div className="text-sm font-medium text-neutral-600 dark:text-neutral-200">
+                  {browserPlaceholder.title}
+                </div>
+                {browserPlaceholder.description ? (
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                    {browserPlaceholder.description}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+          {showElectronBrowser ? (
+            <div className="flex flex-1 min-h-[220px] flex-col overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-950">
+              <div className="flex items-center justify-between border-b border-neutral-200 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:border-neutral-800 dark:text-neutral-400">
+                <span>WebContents Browser</span>
+                <span className="text-[10px] font-normal lowercase text-neutral-400 dark:text-neutral-500">
+                  electron only
+                </span>
+              </div>
+              <div className="flex-1 min-h-0">
+                <ElectronPreviewBrowser
+                  key={browserWebContentsPersistKey}
+                  persistKey={browserWebContentsPersistKey}
+                  src={browserUrl ?? ""}
+                  requestUrl={browserUrl ?? undefined}
+                  borderRadius={0}
+                />
+              </div>
             </div>
           ) : null}
         </div>
@@ -651,13 +711,16 @@ export const RenderPanel = React.memo(RenderPanelComponent, (prevProps, nextProp
   if (prevProps.type === "workspace" || prevProps.type === "browser") {
     if (prevProps.workspacePersistKey !== nextProps.workspacePersistKey ||
       prevProps.browserPersistKey !== nextProps.browserPersistKey ||
+      prevProps.browserWebContentsPersistKey !== nextProps.browserWebContentsPersistKey ||
       prevProps.workspaceUrl !== nextProps.workspaceUrl ||
       prevProps.workspacePlaceholder?.title !== nextProps.workspacePlaceholder?.title ||
       prevProps.workspacePlaceholder?.description !== nextProps.workspacePlaceholder?.description ||
       prevProps.browserUrl !== nextProps.browserUrl ||
       prevProps.browserPlaceholder?.title !== nextProps.browserPlaceholder?.title ||
       prevProps.browserPlaceholder?.description !== nextProps.browserPlaceholder?.description ||
-      prevProps.selectedRun?._id !== nextProps.selectedRun?._id) {
+      prevProps.selectedRun?._id !== nextProps.selectedRun?._id ||
+      prevProps.isMorphProvider !== nextProps.isMorphProvider ||
+      prevProps.ElectronPreviewBrowser !== nextProps.ElectronPreviewBrowser) {
       return false;
     }
   }

@@ -4,6 +4,7 @@ import { FloatingPane } from "@/components/floating-pane";
 import { TaskDetailHeader } from "@/components/task-detail-header";
 import type { PersistentIframeStatus } from "@/components/persistent-iframe";
 import { PersistentWebView } from "@/components/persistent-webview";
+import { ElectronPreviewBrowser } from "@/components/electron-preview-browser";
 import { WorkspaceLoadingIndicator } from "@/components/workspace-loading-indicator";
 import { FlexiblePanelLayout } from "@/components/FlexiblePanelLayout";
 import { TaskRunGitDiffPanel } from "@/components/TaskRunGitDiffPanel";
@@ -21,6 +22,7 @@ import {
 import type { PanelConfig, PanelType, PanelPosition } from "@/lib/panel-config";
 import {
   getTaskRunBrowserPersistKey,
+  getTaskRunBrowserWebContentsPersistKey,
   getTaskRunPersistKey,
 } from "@/lib/persistent-webview-keys";
 import {
@@ -567,6 +569,9 @@ function TaskDetailPage() {
   const browserPersistKey = selectedRunId
     ? getTaskRunBrowserPersistKey(selectedRunId)
     : null;
+  const browserWebContentsPersistKey = selectedRunId
+    ? getTaskRunBrowserWebContentsPersistKey(selectedRunId)
+    : null;
   const hasBrowserView = Boolean(browserUrl);
   const isMorphProvider = selectedRun?.vscode?.provider === "morph";
 
@@ -656,6 +661,7 @@ function TaskDetailPage() {
       rawWorkspaceUrl,
       browserUrl,
       browserPersistKey,
+      browserWebContentsPersistKey,
       browserStatus,
       setBrowserStatus: handleBrowserStatusChange,
       browserPlaceholder,
@@ -663,6 +669,7 @@ function TaskDetailPage() {
       isBrowserBusy,
       TaskRunChatPane,
       PersistentWebView,
+      ElectronPreviewBrowser,
       WorkspaceLoadingIndicator,
       TaskRunTerminalPane,
       TaskRunGitDiffPanel,
@@ -688,12 +695,14 @@ function TaskDetailPage() {
       rawWorkspaceUrl,
       browserUrl,
       browserPersistKey,
+      browserWebContentsPersistKey,
       browserStatus,
       handleBrowserStatusChange,
       browserPlaceholder,
       isMorphProvider,
       isBrowserBusy,
       handlePanelClose,
+      ElectronPreviewBrowser,
     ]
   );
 
