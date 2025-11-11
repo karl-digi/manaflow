@@ -874,10 +874,10 @@ function DashboardComponent() {
 
   return (
     <FloatingPane header={<TitleBar title="cmux" />}>
-      <div className="flex flex-col grow overflow-y-auto">
+      <div className="flex flex-col grow relative">
         {/* Main content area */}
-        <div className="flex-1 flex justify-center px-4 pt-60 pb-4">
-          <div className="w-full max-w-4xl min-w-0">
+        <div className="flex-1 flex flex-col pt-60 pb-4">
+          <div className="w-full max-w-4xl min-w-0 mx-auto px-4">
             {/* Workspace Creation Buttons */}
             <WorkspaceCreationButtons
               teamSlugOrId={teamSlugOrId}
@@ -950,8 +950,10 @@ function DashboardComponent() {
                 </div>
               </div>
             ) : null} */}
+          </div>
 
-            {/* Task List */}
+          {/* Task List */}
+          <div className="mt-10 w-full">
             <TaskList teamSlugOrId={teamSlugOrId} />
           </div>
         </div>

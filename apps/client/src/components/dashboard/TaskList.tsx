@@ -112,8 +112,8 @@ export const TaskList = memo(function TaskList({
     categorizedTasks ?? createEmptyCategoryBuckets();
 
   return (
-    <div className="mt-6">
-      <div className="mb-3">
+    <div className="mt-6 w-full">
+      <div className="mb-3 px-4">
         <div className="flex items-end gap-2.5 select-none">
           <button
             className={
@@ -141,7 +141,7 @@ export const TaskList = memo(function TaskList({
           </button>
         </div>
       </div>
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col gap-1 w-full">
         {tab === "archived" ? (
           archivedTasks === undefined ? (
             <div className="text-sm text-neutral-500 dark:text-neutral-400 py-2 select-none">
@@ -165,7 +165,7 @@ export const TaskList = memo(function TaskList({
             Loading...
           </div>
         ) : (
-          <div className="mt-1">
+          <div className="mt-1 w-full">
             {CATEGORY_ORDER.map((categoryKey, index) => (
               <TaskCategorySection
                 key={categoryKey}
@@ -194,24 +194,19 @@ function TaskCategorySection({
   showDivider: boolean;
 }) {
   const meta = CATEGORY_META[categoryKey];
+  const sectionClassName = showDivider
+    ? "w-full"
+    : "w-full";
   return (
-    <div
-      className={
-        showDivider
-          ? "pt-4 mt-4 border-t border-neutral-200 dark:border-neutral-800"
-          : undefined
-      }
-    >
-      <div className="flex items-center justify-between">
-        <div className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
-          {meta.title}
-        </div>
-        <div className="text-xs text-neutral-400 dark:text-neutral-500">
+    <div className={sectionClassName}>
+      <div className="sticky top-0 z-10 flex w-full flex-wrap items-center gap-2 border-y border-neutral-200 dark:border-neutral-800 bg-neutral-100 dark:bg-neutral-900 px-4 py-2 text-sm font-medium text-neutral-900 dark:text-neutral-100">
+        <span className="tracking-wide">{meta.title}</span>
+        <span className="text-sm text-neutral-500 dark:text-neutral-400">
           {tasks.length}
-        </div>
+        </span>
       </div>
       {tasks.length > 0 ? (
-        <div className="mt-3 flex flex-col gap-1">
+        <div className="flex flex-col w-full">
           {tasks.map((task) => (
             <TaskItem
               key={task._id}
@@ -221,7 +216,7 @@ function TaskCategorySection({
           ))}
         </div>
       ) : (
-        <p className="mt-3 text-xs text-neutral-500 dark:text-neutral-400 select-none">
+        <p className="mt-3 text-sm font-medium text-neutral-500 dark:text-neutral-400 select-none">
           {meta.emptyLabel}
         </p>
       )}

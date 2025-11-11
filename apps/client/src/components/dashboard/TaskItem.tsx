@@ -168,15 +168,15 @@ export const TaskItem = memo(function TaskItem({
   );
 
   return (
-    <div className="relative group">
+    <div className="relative group w-full">
       <ContextMenu.Root>
         <ContextMenu.Trigger>
           <div
             className={clsx(
-              "relative flex items-center gap-2.5 px-3 py-2 border rounded-lg transition-all cursor-default select-none",
+              "relative flex w-full items-center gap-2.5 px-3 py-2 cursor-default select-none",
               isOptimisticUpdate
-                ? "bg-white/50 dark:bg-neutral-700/30 border-neutral-200 dark:border-neutral-500/15 animate-pulse"
-                : "bg-white dark:bg-neutral-700/50 border-neutral-200 dark:border-neutral-500/15 hover:border-neutral-300 dark:hover:border-neutral-500/30",
+                ? "bg-white/50 dark:bg-neutral-700/30 animate-pulse"
+                : "bg-white dark:bg-neutral-700/50 hover:bg-neutral-50/90 dark:hover:bg-neutral-600/60",
               isRenaming && "pr-2"
             )}
             onClick={handleClick}
@@ -209,7 +209,7 @@ export const TaskItem = memo(function TaskItem({
                   autoComplete="off"
                   spellCheck={false}
                   className={clsx(
-                    "inline-flex w-full items-center bg-transparent text-[14px] font-normal text-neutral-900 caret-neutral-600 transition-colors duration-200",
+                    "inline-flex w-full items-center bg-transparent text-[14px] font-medium text-neutral-900 caret-neutral-600 transition-colors duration-200",
                     "px-0 py-0 align-middle",
                     "placeholder:text-neutral-400 outline-none border-none focus-visible:outline-none focus-visible:ring-0 appearance-none",
                     "dark:text-neutral-100 dark:caret-neutral-200 dark:placeholder:text-neutral-500",
@@ -218,7 +218,9 @@ export const TaskItem = memo(function TaskItem({
                   )}
                 />
               ) : (
-                <span className="text-[14px] truncate min-w-0">{task.text}</span>
+                <span className="text-[14px] font-medium truncate min-w-0">
+                  {task.text}
+                </span>
               )}
               {(task.projectFullName ||
                 (task.baseBranch && task.baseBranch !== "main")) && (
