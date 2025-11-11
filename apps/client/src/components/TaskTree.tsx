@@ -133,7 +133,9 @@ function SidebarArchiveOverlay({
             <ArchiveIcon className="w-3 h-3" />
           </button>
         </TooltipTrigger>
-        <TooltipContent side="right">{label}</TooltipContent>
+        <TooltipContent side="right" className="z-[var(--z-tooltip)]">
+          {label}
+        </TooltipContent>
       </Tooltip>
       <div className="flex items-center justify-center group-hover:pointer-events-none group-hover:opacity-0 group-data-[focus-visible=true]:pointer-events-none group-data-[focus-visible=true]:opacity-0 peer-focus-visible:pointer-events-none peer-focus-visible:opacity-0">
         {icon}
@@ -657,7 +659,7 @@ function TaskTreeInner({
   const taskMetaIcon = shouldShowTaskArchiveOverlay ? (
     <SidebarArchiveOverlay
       icon={taskLeadingIcon}
-      label="Archive task"
+      label="Archive"
       onArchive={handleArchive}
     />
   ) : (
@@ -1194,7 +1196,7 @@ function TaskRunTreeInner({
   const runMetaIcon = shouldShowRunArchiveOverlay ? (
     <SidebarArchiveOverlay
       icon={runLeadingIcon}
-      label="Archive task run"
+      label="Archive"
       onArchive={handleArchiveRun}
     />
   ) : (
