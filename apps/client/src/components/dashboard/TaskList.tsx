@@ -257,9 +257,11 @@ function TaskCategorySection({
           ))}
         </div>
       ) : (
-        <p className="mt-3 text-sm font-medium text-neutral-500 dark:text-neutral-400 select-none">
-          {meta.emptyLabel}
-        </p>
+        <div className="px-9 py-3">
+          <p className="text-xs text-neutral-500 dark:text-neutral-400 select-none">
+            {meta.emptyLabel}
+          </p>
+        </div>
       )}
     </div>
   );
