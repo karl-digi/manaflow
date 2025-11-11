@@ -23,6 +23,7 @@ const DEBUG_FLAGS = {
 
 const FEATURE_FLAGS = {
   githubEyesReactionOnPrOpen: false,
+  githubScreenshotCommentOnPrOpen: true,
 };
 
 async function verifySignature(
@@ -502,9 +503,10 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
           // Add eyes emoji reaction when a new PR is opened
           if (
             FEATURE_FLAGS.githubEyesReactionOnPrOpen &&
-            prPayload.action === "opened"
+            prPayload.action === "opened" &&
+            prPayload.pull_request
           ) {
-            const prNumber = Number(prPayload.pull_request?.number ?? 0);
+            const prNumber = Number(prPayload.pull_request.number ?? 0);
             if (prNumber) {
               await _ctx.runAction(internal.github_pr_comments.addPrReaction, {
                 installationId: installation,
@@ -512,6 +514,26 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
                 prNumber,
                 content: "eyes",
               });
+            }
+          }
+
+          // Add screenshot comment when a new PR is opened
+          if (
+            FEATURE_FLAGS.githubScreenshotCommentOnPrOpen &&
+            prPayload.action === "opened" &&
+            prPayload.pull_request
+          ) {
+            const prNumber = Number(prPayload.pull_request.number ?? 0);
+            if (prNumber && teamId) {
+              await _ctx.runAction(
+                internal.github_pr_comments.addScreenshotCommentToPr,
+                {
+                  installationId: installation,
+                  repoFullName,
+                  prNumber,
+                  teamId,
+                },
+              );
             }
           }
         } catch (err) {
