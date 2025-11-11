@@ -700,7 +700,7 @@ function RepositoryConnectionsSection({
                                       <Settings className="w-3 h-3 text-neutral-600 dark:text-neutral-300" />
                                     </button>
                                   </TooltipTrigger>
-                                  <TooltipContent className="z-[var(--z-tooltip)]">
+                                  <TooltipContent>
                                     Add Repos
                                   </TooltipContent>
                                 </Tooltip>
