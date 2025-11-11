@@ -5,6 +5,7 @@ import clsx from "clsx";
 import { memo, useCallback, useMemo, useState } from "react";
 import { TaskItem } from "./TaskItem";
 import { ChevronRight } from "lucide-react";
+import { useLocalStorage } from "../../hooks/useLocalStorage";
 
 type TaskCategoryKey =
   | "workspaces"
@@ -114,9 +115,12 @@ export const TaskList = memo(function TaskList({
 
   const categorizedTasks = useMemo(() => categorizeTasks(allTasks), [allTasks]);
   const categoryBuckets = categorizedTasks ?? createEmptyCategoryBuckets();
-  const [collapsedCategories, setCollapsedCategories] = useState<
+  const [collapsedCategories, setCollapsedCategories] = useLocalStorage<
     Record<TaskCategoryKey, boolean>
-  >(() => createCollapsedCategoryState());
+  >(
+    `dashboard-collapsed-categories-${teamSlugOrId}`,
+    createCollapsedCategoryState()
+  );
 
   const toggleCategoryCollapse = useCallback((categoryKey: TaskCategoryKey) => {
     setCollapsedCategories((prev) => ({
