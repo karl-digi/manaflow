@@ -3,9 +3,10 @@ import type { Doc } from "@cmux/convex/dataModel";
 import { useLocalStorage } from "@mantine/hooks";
 import { useQuery } from "convex/react";
 import clsx from "clsx";
-import { memo, useCallback, useMemo, useState } from "react";
+import { memo, useCallback, useMemo, useState, useRef, useEffect } from "react";
 import { TaskItem } from "./TaskItem";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, X } from "lucide-react";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 
 type TaskCategoryKey =
   | "workspaces"
@@ -75,6 +76,32 @@ const sortByRecentUpdate = (tasks: Doc<"tasks">[]): Doc<"tasks">[] => {
   );
 };
 
+const filterTasksBySearch = (
+  tasks: Doc<"tasks">[],
+  searchQuery: string
+): Doc<"tasks">[] => {
+  if (!searchQuery.trim()) {
+    return tasks;
+  }
+
+  const query = searchQuery.toLowerCase().trim();
+  return tasks.filter((task) => {
+    // Search in task text
+    if (task.text && task.text.toLowerCase().includes(query)) {
+      return true;
+    }
+    // Search in project name
+    if (task.projectFullName && task.projectFullName.toLowerCase().includes(query)) {
+      return true;
+    }
+    // Search in branch name
+    if (task.baseBranch && task.baseBranch.toLowerCase().includes(query)) {
+      return true;
+    }
+    return false;
+  });
+};
+
 const categorizeTasks = (
   tasks: Doc<"tasks">[] | undefined
 ): Record<TaskCategoryKey, Doc<"tasks">[]> | null => {
@@ -112,9 +139,39 @@ export const TaskList = memo(function TaskList({
     archived: true,
   });
   const [tab, setTab] = useState<"all" | "archived">("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const debouncedSearchQuery = useDebouncedValue(searchQuery, 300);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Handle cmd+f keyboard shortcut
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "f") {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   const categorizedTasks = useMemo(() => categorizeTasks(allTasks), [allTasks]);
-  const categoryBuckets = categorizedTasks ?? createEmptyCategoryBuckets();
+
+  // Apply search filter to categorized tasks
+  const filteredCategoryBuckets = useMemo(() => {
+    if (!categorizedTasks) {
+      return createEmptyCategoryBuckets();
+    }
+
+    const filtered = createEmptyCategoryBuckets();
+    for (const key of CATEGORY_ORDER) {
+      filtered[key] = filterTasksBySearch(categorizedTasks[key], debouncedSearchQuery);
+    }
+    return filtered;
+  }, [categorizedTasks, debouncedSearchQuery]);
+
+  const categoryBuckets = filteredCategoryBuckets;
   const collapsedStorageKey = useMemo(
     () => `dashboard-collapsed-categories-${teamSlugOrId}`,
     [teamSlugOrId]
@@ -141,31 +198,54 @@ export const TaskList = memo(function TaskList({
   return (
     <div className="mt-6 w-full">
       <div className="mb-3 px-4">
-        <div className="flex items-end gap-2.5 select-none">
-          <button
-            className={
-              "text-sm font-medium transition-colors " +
-              (tab === "all"
-                ? "text-neutral-900 dark:text-neutral-100"
-                : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200")
-            }
-            onMouseDown={() => setTab("all")}
-            onClick={() => setTab("all")}
-          >
-            Tasks
-          </button>
-          <button
-            className={
-              "text-sm font-medium transition-colors " +
-              (tab === "archived"
-                ? "text-neutral-900 dark:text-neutral-100"
-                : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200")
-            }
-            onMouseDown={() => setTab("archived")}
-            onClick={() => setTab("archived")}
-          >
-            Archived
-          </button>
+        <div className="flex items-end gap-2.5 select-none justify-between">
+          <div className="flex items-end gap-2.5">
+            <button
+              className={
+                "text-sm font-medium transition-colors " +
+                (tab === "all"
+                  ? "text-neutral-900 dark:text-neutral-100"
+                  : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200")
+              }
+              onMouseDown={() => setTab("all")}
+              onClick={() => setTab("all")}
+            >
+              Tasks
+            </button>
+            <button
+              className={
+                "text-sm font-medium transition-colors " +
+                (tab === "archived"
+                  ? "text-neutral-900 dark:text-neutral-100"
+                  : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200")
+              }
+              onMouseDown={() => setTab("archived")}
+              onClick={() => setTab("archived")}
+            >
+              Archived
+            </button>
+          </div>
+          {tab === "all" && (
+            <div className="relative flex items-center">
+              <input
+                ref={searchInputRef}
+                type="text"
+                placeholder="Search tasks..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="text-sm bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-md px-3 py-1.5 text-neutral-900 dark:text-neutral-100 placeholder-neutral-500 dark:placeholder-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-400 dark:focus:ring-neutral-600 transition-all w-48"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-2.5 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 transition-colors p-1"
+                  aria-label="Clear search"
+                >
+                  <X size={16} />
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
       <div className="flex flex-col gap-1 w-full">
