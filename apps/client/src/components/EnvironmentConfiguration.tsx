@@ -33,7 +33,10 @@ import {
   ArrowLeft,
   Code2,
   Columns2,
+  GripVertical,
   Loader2,
+  Maximize2,
+  Minimize2,
   Minus,
   Monitor,
   Plus,
@@ -173,6 +176,18 @@ export function EnvironmentConfiguration({
   const [viewMode, setViewMode] = useState<
     "split" | "vscode-only" | "browser-only"
   >("split");
+  const [panelOrder, setPanelOrder] = useState<"vscode-top" | "browser-top">(
+    "vscode-top"
+  );
+  const [draggedPanel, setDraggedPanel] = useState<"vscode" | "browser" | null>(
+    null
+  );
+  const [dragOverPanel, setDragOverPanel] = useState<
+    "vscode" | "browser" | null
+  >(null);
+  const [expandedPanel, setExpandedPanel] = useState<
+    "vscode" | "browser" | null
+  >(null);
   const [vscodeStatus, setVscodeStatus] =
     useState<PersistentIframeStatus>("loading");
   const [vscodeError, setVscodeError] = useState<string | null>(null);
@@ -447,15 +462,152 @@ export function EnvironmentConfiguration({
     []
   );
 
-  const renderVscodePreview = () => {
+  const handlePanelDragStart = useCallback(
+    (panel: "vscode" | "browser") => (e: React.DragEvent) => {
+      setDraggedPanel(panel);
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", panel);
+    },
+    []
+  );
+
+  const handlePanelDragEnter = useCallback(
+    (panel: "vscode" | "browser") => (e: React.DragEvent) => {
+      e.preventDefault();
+      if (draggedPanel && draggedPanel !== panel) {
+        setDragOverPanel(panel);
+      }
+    },
+    [draggedPanel]
+  );
+
+  const handlePanelDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  }, []);
+
+  const handlePanelDragLeave = useCallback(
+    (panel: "vscode" | "browser") => (e: React.DragEvent) => {
+      const nextTarget = e.relatedTarget as Node | null;
+      if (nextTarget && e.currentTarget.contains(nextTarget)) {
+        return;
+      }
+      if (dragOverPanel === panel) {
+        setDragOverPanel(null);
+      }
+    },
+    [dragOverPanel]
+  );
+
+  const handlePanelDrop = useCallback(
+    (targetPanel: "vscode" | "browser") => (e: React.DragEvent) => {
+      e.preventDefault();
+      setDragOverPanel(null);
+      const fromPanel = e.dataTransfer.getData("text/plain") as
+        | "vscode"
+        | "browser"
+        | null;
+      if (fromPanel && fromPanel !== targetPanel) {
+        setPanelOrder((prev) =>
+          prev === "vscode-top" ? "browser-top" : "vscode-top"
+        );
+      }
+      setDraggedPanel(null);
+    },
+    []
+  );
+
+  const handlePanelDragEnd = useCallback(() => {
+    setDraggedPanel(null);
+    setDragOverPanel(null);
+  }, []);
+
+  const renderPanelHeader = (
+    panelType: "vscode" | "browser",
+    title: string,
+    icon: ReactNode
+  ) => {
+    const isExpanded = expandedPanel === panelType;
+    const isDragging = draggedPanel === panelType;
+    const Icon = isExpanded ? Minimize2 : Maximize2;
+
+    return (
+      <div
+        className={clsx(
+          "flex items-center gap-1.5 border-b border-neutral-200 px-2 py-1 dark:border-neutral-800",
+          isExpanded && "relative z-[100000000] pointer-events-auto"
+        )}
+        onDragOver={handlePanelDragOver}
+        onDrop={handlePanelDrop(panelType)}
+        onDoubleClick={(e) => {
+          e.stopPropagation();
+          setExpandedPanel(isExpanded ? null : panelType);
+        }}
+      >
+        <div
+          draggable
+          onDragStart={handlePanelDragStart(panelType)}
+          onDragEnd={handlePanelDragEnd}
+          className={clsx(
+            "flex flex-1 items-center gap-1.5 cursor-move group transition-opacity",
+            isDragging && "opacity-60"
+          )}
+        >
+          <GripVertical className="size-3.5 text-neutral-400 transition-colors group-hover:text-neutral-600 dark:text-neutral-500 dark:group-hover:text-neutral-300" />
+          <div className="flex size-5 items-center justify-center rounded-full text-neutral-700 dark:text-neutral-200">
+            {icon}
+          </div>
+          <h2 className="text-xs font-medium text-neutral-800 dark:text-neutral-100">
+            {title}
+          </h2>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setExpandedPanel(isExpanded ? null : panelType);
+          }}
+          className="flex size-5 items-center justify-center rounded text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-200"
+          title={isExpanded ? "Exit expanded view" : "Expand panel"}
+          aria-pressed={isExpanded}
+          onDoubleClick={(e) => e.stopPropagation()}
+        >
+          <Icon className="size-3.5" />
+        </button>
+      </div>
+    );
+  };
+
+  const renderVscodePreview = (withHeader = false) => {
+    const isExpanded = expandedPanel === "vscode";
+    const isOtherExpanded = expandedPanel === "browser";
+    const isDragOver = dragOverPanel === "vscode";
+    const isDragging = draggedPanel !== null;
+    const isDraggingSelf = draggedPanel === "vscode";
+
+    // When expanded, the panel is rendered outside ResizableRows, so no need for absolute positioning here
+    const panelClassName = clsx(
+      "flex h-full flex-col bg-white dark:bg-neutral-950 transition-all duration-150",
+      "relative pointer-events-auto overflow-hidden",
+      isOtherExpanded && "pointer-events-none opacity-40"
+    );
+
+    const panelStyle: React.CSSProperties | undefined =
+      isOtherExpanded ? { visibility: "hidden" } : undefined;
+
+    const showDropOverlay = isDragging && !isDraggingSelf && !isExpanded;
+
     if (!vscodeUrl) {
       return (
-        <div className="flex h-full items-center justify-center px-6 text-center">
-          <div className="space-y-3">
-            <Loader2 className="w-6 h-6 mx-auto animate-spin text-neutral-500 dark:text-neutral-400" />
-            <p className="text-sm text-neutral-600 dark:text-neutral-400">
-              Waiting for the VS Code workspace URL...
-            </p>
+        <div className={panelClassName} style={panelStyle}>
+          {withHeader &&
+            renderPanelHeader("vscode", "VS Code", <Code2 className="size-3" />)}
+          <div className="flex h-full items-center justify-center px-6 text-center flex-1">
+            <div className="space-y-3">
+              <Loader2 className="w-6 h-6 mx-auto animate-spin text-neutral-500 dark:text-neutral-400" />
+              <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                Waiting for the VS Code workspace URL...
+              </p>
+            </div>
           </div>
         </div>
       );
@@ -464,112 +616,200 @@ export function EnvironmentConfiguration({
     const isNotFullScreen = viewMode !== "vscode-only";
 
     return (
-      <div className="relative h-full" aria-busy={showVscodeOverlay}>
-        <div
-          aria-hidden={!showVscodeOverlay}
-          className={clsx(
-            "absolute inset-0 z-[var(--z-low)] flex items-center justify-center backdrop-blur-sm transition-opacity duration-300",
-            "bg-white/60 dark:bg-neutral-950/60",
-            showVscodeOverlay
-              ? "opacity-100 pointer-events-auto"
-              : "opacity-0 pointer-events-none"
-          )}
-        >
-          {vscodeError ? (
-            <div className="text-center max-w-sm px-6">
-              <X className="w-8 h-8 mx-auto mb-3 text-red-500" />
-              <p className="text-sm text-neutral-700 dark:text-neutral-300">
-                {vscodeError}
-              </p>
-            </div>
-          ) : (
-            <div className="text-center">
-              <Loader2 className="w-6 h-6 mx-auto mb-3 animate-spin text-neutral-500 dark:text-neutral-400" />
-              <p className="text-sm text-neutral-700 dark:text-neutral-300">
-                Loading VS Code...
-              </p>
-            </div>
-          )}
+      <div className={panelClassName} style={panelStyle}>
+        {showDropOverlay && (
+          <div
+            aria-hidden
+            className={clsx(
+              "pointer-events-auto absolute inset-0 z-10 rounded-lg",
+              isDragOver ? "bg-blue-500/10 dark:bg-blue-400/15" : "bg-transparent"
+            )}
+            onDragEnter={(e) => {
+              handlePanelDragEnter("vscode")(e);
+              e.stopPropagation();
+            }}
+            onDragOver={(e) => {
+              handlePanelDragOver(e);
+              e.stopPropagation();
+            }}
+            onDragLeave={(e) => {
+              handlePanelDragLeave("vscode")(e);
+              e.stopPropagation();
+            }}
+            onDrop={(e) => {
+              handlePanelDrop("vscode")(e);
+              e.stopPropagation();
+            }}
+          />
+        )}
+        {withHeader &&
+          renderPanelHeader("vscode", "VS Code", <Code2 className="size-3" />)}
+        <div className="relative flex-1" aria-busy={showVscodeOverlay}>
+          <div
+            aria-hidden={!showVscodeOverlay}
+            className={clsx(
+              "absolute inset-0 z-[var(--z-low)] flex items-center justify-center backdrop-blur-sm transition-opacity duration-300",
+              "bg-white/60 dark:bg-neutral-950/60",
+              showVscodeOverlay
+                ? "opacity-100 pointer-events-auto"
+                : "opacity-0 pointer-events-none"
+            )}
+          >
+            {vscodeError ? (
+              <div className="text-center max-w-sm px-6">
+                <X className="w-8 h-8 mx-auto mb-3 text-red-500" />
+                <p className="text-sm text-neutral-700 dark:text-neutral-300">
+                  {vscodeError}
+                </p>
+              </div>
+            ) : (
+              <div className="text-center">
+                <Loader2 className="w-6 h-6 mx-auto mb-3 animate-spin text-neutral-500 dark:text-neutral-400" />
+                <p className="text-sm text-neutral-700 dark:text-neutral-300">
+                  Loading VS Code...
+                </p>
+              </div>
+            )}
+          </div>
+          {/* Dimming overlay when not in full screen mode */}
+          <div
+            className={clsx(
+              "absolute inset-0 bg-black/20 dark:bg-black/30 pointer-events-none transition-opacity duration-300",
+              isNotFullScreen ? "opacity-100" : "opacity-0"
+            )}
+          />
+          <PersistentWebView
+            persistKey={vscodePersistKey}
+            src={vscodeUrl}
+            className="absolute inset-0"
+            iframeClassName="w-full h-full border-0"
+            allow={TASK_RUN_IFRAME_ALLOW}
+            sandbox={TASK_RUN_IFRAME_SANDBOX}
+            retainOnUnmount
+            onLoad={handleVscodeLoad}
+            onError={handleVscodeError}
+            onStatusChange={setVscodeStatus}
+            loadTimeoutMs={60_000}
+            fallbackClassName="bg-neutral-50 dark:bg-neutral-950"
+            errorFallbackClassName="bg-neutral-50 dark:bg-neutral-950"
+          />
         </div>
-        {/* Dimming overlay when not in full screen mode */}
-        <div
-          className={clsx(
-            "absolute inset-0 bg-black/20 dark:bg-black/30 pointer-events-none transition-opacity duration-300",
-            isNotFullScreen ? "opacity-100" : "opacity-0"
-          )}
-        />
-        <PersistentWebView
-          persistKey={vscodePersistKey}
-          src={vscodeUrl}
-          className="absolute inset-0"
-          iframeClassName="w-full h-full border-0"
-          allow={TASK_RUN_IFRAME_ALLOW}
-          sandbox={TASK_RUN_IFRAME_SANDBOX}
-          retainOnUnmount
-          onLoad={handleVscodeLoad}
-          onError={handleVscodeError}
-          onStatusChange={setVscodeStatus}
-          loadTimeoutMs={60_000}
-          fallbackClassName="bg-neutral-50 dark:bg-neutral-950"
-          errorFallbackClassName="bg-neutral-50 dark:bg-neutral-950"
-        />
       </div>
     );
   };
 
-  const renderBrowserPreview = () => {
+  const renderBrowserPreview = (withHeader = false) => {
+    const isExpanded = expandedPanel === "browser";
+    const isOtherExpanded = expandedPanel === "vscode";
+    const isDragOver = dragOverPanel === "browser";
+    const isDragging = draggedPanel !== null;
+    const isDraggingSelf = draggedPanel === "browser";
+
+    // When expanded, the panel is rendered outside ResizableRows, so no need for absolute positioning here
+    const panelClassName = clsx(
+      "flex h-full flex-col bg-white dark:bg-neutral-950 transition-all duration-150",
+      "relative pointer-events-auto overflow-hidden",
+      isOtherExpanded && "pointer-events-none opacity-40"
+    );
+
+    const panelStyle: React.CSSProperties | undefined =
+      isOtherExpanded ? { visibility: "hidden" } : undefined;
+
+    const showDropOverlay = isDragging && !isDraggingSelf && !isExpanded;
+
     if (!browserUrl) {
       return (
-        <div className="flex h-full items-center justify-center px-6 text-center">
-          <div className="space-y-3">
-            <Loader2 className="w-6 h-6 mx-auto animate-spin text-neutral-500 dark:text-neutral-400" />
-            <p className="text-sm text-neutral-600 dark:text-neutral-400">
-              Waiting for the workspace browser to be ready...
-            </p>
+        <div className={panelClassName} style={panelStyle}>
+          {withHeader &&
+            renderPanelHeader(
+              "browser",
+              "Browser VNC",
+              <Monitor className="size-3" />
+            )}
+          <div className="flex h-full items-center justify-center px-6 text-center flex-1">
+            <div className="space-y-3">
+              <Loader2 className="w-6 h-6 mx-auto animate-spin text-neutral-500 dark:text-neutral-400" />
+              <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                Waiting for the workspace browser to be ready...
+              </p>
+            </div>
           </div>
         </div>
       );
     }
 
     return (
-      <div className="relative h-full" aria-busy={showBrowserOverlay}>
-        <PersistentWebView
-          persistKey={browserPersistKey}
-          src={browserUrl}
-          className="absolute inset-0"
-          iframeClassName="w-full h-full border-0"
-          allow={TASK_RUN_IFRAME_ALLOW}
-          sandbox={TASK_RUN_IFRAME_SANDBOX}
-          retainOnUnmount
-          onLoad={handleBrowserLoad}
-          onError={handleBrowserError}
-          onStatusChange={setBrowserStatus}
-          fallback={browserLoadingFallback}
-          fallbackClassName="bg-neutral-50 dark:bg-neutral-950"
-          errorFallback={browserErrorFallback}
-          errorFallbackClassName="bg-neutral-50/95 dark:bg-neutral-950/95"
-          loadTimeoutMs={60_000}
-        />
-        <div
-          aria-hidden={!showBrowserOverlay}
-          className={clsx(
-            "absolute inset-0 z-[var(--z-low)] flex items-center justify-center backdrop-blur-sm transition-opacity duration-300",
-            "bg-white/60 dark:bg-neutral-950/60",
-            showBrowserOverlay
-              ? "opacity-100 pointer-events-auto"
-              : "opacity-0 pointer-events-none"
+      <div className={panelClassName} style={panelStyle}>
+        {showDropOverlay && (
+          <div
+            aria-hidden
+            className={clsx(
+              "pointer-events-auto absolute inset-0 z-10 rounded-lg",
+              isDragOver ? "bg-blue-500/10 dark:bg-blue-400/15" : "bg-transparent"
+            )}
+            onDragEnter={(e) => {
+              handlePanelDragEnter("browser")(e);
+              e.stopPropagation();
+            }}
+            onDragOver={(e) => {
+              handlePanelDragOver(e);
+              e.stopPropagation();
+            }}
+            onDragLeave={(e) => {
+              handlePanelDragLeave("browser")(e);
+              e.stopPropagation();
+            }}
+            onDrop={(e) => {
+              handlePanelDrop("browser")(e);
+              e.stopPropagation();
+            }}
+          />
+        )}
+        {withHeader &&
+          renderPanelHeader(
+            "browser",
+            "Browser VNC",
+            <Monitor className="size-3" />
           )}
-        >
-          {browserError ? (
-            <div className="text-center max-w-sm px-6">
-              <X className="w-8 h-8 mx-auto mb-3 text-red-500" />
-              <p className="text-sm text-neutral-700 dark:text-neutral-300">
-                {browserError}
-              </p>
-            </div>
-          ) : (
-            <WorkspaceLoadingIndicator variant="browser" status="loading" />
-          )}
+        <div className="relative flex-1" aria-busy={showBrowserOverlay}>
+          <PersistentWebView
+            persistKey={browserPersistKey}
+            src={browserUrl}
+            className="absolute inset-0"
+            iframeClassName="w-full h-full border-0"
+            allow={TASK_RUN_IFRAME_ALLOW}
+            sandbox={TASK_RUN_IFRAME_SANDBOX}
+            retainOnUnmount
+            onLoad={handleBrowserLoad}
+            onError={handleBrowserError}
+            onStatusChange={setBrowserStatus}
+            fallback={browserLoadingFallback}
+            fallbackClassName="bg-neutral-50 dark:bg-neutral-950"
+            errorFallback={browserErrorFallback}
+            errorFallbackClassName="bg-neutral-50/95 dark:bg-neutral-950/95"
+            loadTimeoutMs={60_000}
+          />
+          <div
+            aria-hidden={!showBrowserOverlay}
+            className={clsx(
+              "absolute inset-0 z-[var(--z-low)] flex items-center justify-center backdrop-blur-sm transition-opacity duration-300",
+              "bg-white/60 dark:bg-neutral-950/60",
+              showBrowserOverlay
+                ? "opacity-100 pointer-events-auto"
+                : "opacity-0 pointer-events-none"
+            )}
+          >
+            {browserError ? (
+              <div className="text-center max-w-sm px-6">
+                <X className="w-8 h-8 mx-auto mb-3 text-red-500" />
+                <p className="text-sm text-neutral-700 dark:text-neutral-300">
+                  {browserError}
+                </p>
+              </div>
+            ) : (
+              <WorkspaceLoadingIndicator variant="browser" status="loading" />
+            )}
+          </div>
         </div>
       </div>
     );
@@ -1047,7 +1287,7 @@ export function EnvironmentConfiguration({
           </div>
         </div>
       ) : (
-        <div className="flex h-full flex-col">
+        <div className="relative flex h-full flex-col">
           <div className="flex-1 min-h-0">
             {viewMode === "split" && isBrowserAvailable ? (
               <ResizableRows
@@ -1055,15 +1295,34 @@ export function EnvironmentConfiguration({
                 defaultTopHeight={50}
                 minTop={20}
                 maxTop={80}
-                top={renderVscodePreview()}
-                bottom={renderBrowserPreview()}
+                top={
+                  panelOrder === "vscode-top"
+                    ? renderVscodePreview(true)
+                    : renderBrowserPreview(true)
+                }
+                bottom={
+                  panelOrder === "vscode-top"
+                    ? renderBrowserPreview(true)
+                    : renderVscodePreview(true)
+                }
               />
             ) : viewMode === "browser-only" && isBrowserAvailable ? (
-              renderBrowserPreview()
+              renderBrowserPreview(false)
             ) : (
-              renderVscodePreview()
+              renderVscodePreview(false)
             )}
           </div>
+          {/* Render expanded panels outside ResizableRows */}
+          {expandedPanel === "vscode" && viewMode === "split" && isBrowserAvailable && (
+            <div className="absolute inset-0 z-[var(--z-maximized)]">
+              {renderVscodePreview(true)}
+            </div>
+          )}
+          {expandedPanel === "browser" && viewMode === "split" && isBrowserAvailable && (
+            <div className="absolute inset-0 z-[var(--z-maximized)]">
+              {renderBrowserPreview(true)}
+            </div>
+          )}
         </div>
       )}
     </div>
