@@ -99,6 +99,21 @@ const EMPTY_TEAM_LIST: Team[] = [];
 
 const isDevEnvironment = import.meta.env.DEV;
 
+// Helper function to detect and parse GitHub PR URLs
+const parseGitHubPrUrl = (
+  text: string
+): { owner: string; repo: string; number: number; url: string } | null => {
+  const trimmed = text.trim();
+  const match = trimmed.match(/github\.com\/(.*?)\/(.*?)\/pull\/(\d+)/i);
+  if (!match) return null;
+  return {
+    owner: match[1]!,
+    repo: match[2]!,
+    number: parseInt(match[3]!, 10),
+    url: trimmed.startsWith("http") ? trimmed : `https://${trimmed}`,
+  };
+};
+
 const baseCommandItemClassName =
   "flex items-center gap-2 px-3 py-2.5 mx-1 rounded-md cursor-pointer hover:bg-neutral-100 dark:hover:bg-neutral-800 data-[selected=true]:bg-neutral-100 dark:data-[selected=true]:bg-neutral-800 data-[selected=true]:text-neutral-900 dark:data-[selected=true]:text-neutral-100";
 const taskCommandItemClassName =
@@ -665,6 +680,13 @@ export function CommandBar({
   const reserveLocalWorkspace = useMutation(api.localWorkspaces.reserve);
   const createTask = useMutation(api.tasks.create);
   const failTaskRun = useMutation(api.taskRuns.fail);
+
+  // Detect GitHub PR URL in search and query for matching taskruns
+  const parsedPrUrl = useMemo(() => parseGitHubPrUrl(search), [search]);
+  const taskRunsForPr = useQuery(
+    api.taskRuns.getByPullRequestUrl,
+    parsedPrUrl ? { teamSlugOrId, pullRequestUrl: parsedPrUrl.url } : "skip"
+  );
 
   useEffect(() => {
     openRef.current = open;
@@ -1451,6 +1473,40 @@ export function CommandBar({
           to: "/$teamSlugOrId/dashboard",
           params: { teamSlugOrId: targetTeamSlugOrId },
         });
+      } else if (value.startsWith("pr-taskrun:")) {
+        // Handle PR taskrun selection: "pr-taskrun:{taskId}:{runId}:{action}"
+        const parts = value.slice(11).split(":");
+        const taskId = parts[0] as Id<"tasks">;
+        const runId = parts[1] as Id<"taskRuns">;
+        const action = parts[2];
+
+        if (action === "vs") {
+          navigate({
+            to: "/$teamSlugOrId/task/$taskId/run/$runId",
+            params: {
+              teamSlugOrId,
+              taskId,
+              runId,
+              taskRunId: runId,
+            },
+          });
+        } else if (action === "gitdiff") {
+          navigate({
+            to: "/$teamSlugOrId/task/$taskId/run/$runId/diff",
+            params: {
+              teamSlugOrId,
+              taskId,
+              runId,
+            },
+          });
+        } else {
+          // Default: navigate to task view
+          navigate({
+            to: "/$teamSlugOrId/task/$taskId",
+            params: { teamSlugOrId, taskId },
+            search: { runId },
+          });
+        }
       } else if (value.startsWith("task:")) {
         const parts = value.slice(5).split(":");
         const taskId = parts[0] as Id<"tasks">;
@@ -2003,6 +2059,92 @@ export function CommandBar({
     handleCloudWorkspaceSelect,
     isCreatingCloudWorkspace,
   ]);
+
+  // PR taskrun entries - shown when a GitHub PR URL is detected in search
+  const prTaskRunEntries = useMemo<CommandListEntry[]>(() => {
+    if (!taskRunsForPr || taskRunsForPr.length === 0) {
+      return [];
+    }
+
+    return taskRunsForPr.flatMap((taskRunWithTask) => {
+      const { task, ...taskRun } = taskRunWithTask;
+      if (!task) return [];
+
+      const taskTitle = task.pullRequestTitle || task.text || "Task";
+      const keywords = compactStrings([
+        taskTitle,
+        task.text,
+        task.pullRequestTitle,
+        "pr",
+        "pull request",
+        "taskrun",
+      ]);
+      const baseSearch = buildSearchText(taskTitle, keywords);
+
+      const statusLabel = taskRun.status === "completed" ? "completed" : taskRun.status || "running";
+      const statusClassName =
+        taskRun.status === "completed"
+          ? "text-xs px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
+          : "text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400";
+
+      const entries: CommandListEntry[] = [
+        {
+          value: `pr-taskrun:${task._id}:${taskRun._id}`,
+          label: taskTitle,
+          keywords,
+          searchText: baseSearch,
+          className: taskCommandItemClassName,
+          execute: () => handleSelect(`pr-taskrun:${task._id}:${taskRun._id}`),
+          renderContent: () => (
+            <>
+              <GitPullRequest className="h-4 w-4 text-purple-500" />
+              <span className="flex-1 truncate text-sm">{taskTitle}</span>
+              <span className={statusClassName}>{statusLabel}</span>
+            </>
+          ),
+        },
+      ];
+
+      // Add VS Code and git diff variants if taskrun has vscode
+      if (taskRun.vscode) {
+        const vsKeywords = [...keywords, "vs", "vscode"];
+        entries.push({
+          value: `pr-taskrun:${task._id}:${taskRun._id}:vs`,
+          label: `${taskTitle} (VS)`,
+          keywords: vsKeywords,
+          searchText: buildSearchText(`${taskTitle} VS`, vsKeywords),
+          className: taskCommandItemClassName,
+          execute: () => handleSelect(`pr-taskrun:${task._id}:${taskRun._id}:vs`),
+          renderContent: () => (
+            <>
+              <GitPullRequest className="h-4 w-4 text-purple-500" />
+              <span className="flex-1 truncate text-sm">{taskTitle} (VS)</span>
+              <span className={statusClassName}>{statusLabel}</span>
+            </>
+          ),
+        });
+
+        const diffKeywords = [...keywords, "git", "diff"];
+        entries.push({
+          value: `pr-taskrun:${task._id}:${taskRun._id}:gitdiff`,
+          label: `${taskTitle} (git diff)`,
+          keywords: diffKeywords,
+          searchText: buildSearchText(`${taskTitle} git diff`, diffKeywords),
+          className: taskCommandItemClassName,
+          execute: () => handleSelect(`pr-taskrun:${task._id}:${taskRun._id}:gitdiff`),
+          renderContent: () => (
+            <>
+              <GitPullRequest className="h-4 w-4 text-purple-500" />
+              <span className="flex-1 truncate text-sm">{taskTitle} (git diff)</span>
+              <span className={statusClassName}>{statusLabel}</span>
+            </>
+          ),
+        });
+      }
+
+      return entries;
+    });
+  }, [taskRunsForPr, handleSelect]);
 
   const {
     history: rootSuggestionHistory,
@@ -2558,6 +2700,27 @@ export function CommandBar({
                         renderRootCommandEntry(entry)
                       )}
                     </Command.Group>
+                  ) : null}
+                  {prTaskRunEntries.length > 0 ? (
+                    <>
+                      {rootSuggestionsToRender.length > 0 ? (
+                        <div className="px-2 py-2">
+                          <div className="text-xs font-semibold text-neutral-500 dark:text-neutral-400 px-3">
+                            Pull Request TaskRuns
+                          </div>
+                        </div>
+                      ) : null}
+                      <Command.Group>
+                        {prTaskRunEntries.map((entry) =>
+                          renderRootCommandEntry(entry)
+                        )}
+                      </Command.Group>
+                      {rootCommandsToRender.length > 0 ? (
+                        <div className="px-2">
+                          <hr className="border-neutral-200 dark:border-neutral-800" />
+                        </div>
+                      ) : null}
+                    </>
                   ) : null}
                   {rootCommandsToRender.length > 0 ? (
                     <Command.Group>

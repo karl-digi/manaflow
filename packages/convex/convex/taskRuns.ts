@@ -1012,6 +1012,44 @@ export const getActiveVSCodeInstances = authQuery({
   },
 });
 
+// Find taskruns by PR URL
+export const getByPullRequestUrl = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    pullRequestUrl: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+
+    // Find all taskruns with matching PR URL for this user and team
+    const taskRuns = await ctx.db
+      .query("taskRuns")
+      .filter(
+        (q) =>
+          q.eq(q.field("userId"), userId) &&
+          q.eq(q.field("teamId"), teamId) &&
+          q.eq(q.field("pullRequestUrl"), args.pullRequestUrl) &&
+          q.neq(q.field("isArchived"), true)
+      )
+      .collect();
+
+    // Get task information for each taskrun
+    const taskRunsWithTasks = await Promise.all(
+      taskRuns.map(async (taskRun) => {
+        const task = await ctx.db.get(taskRun.taskId);
+        return {
+          ...taskRun,
+          task,
+        };
+      })
+    );
+
+    // Sort by creation time, most recent first
+    return taskRunsWithTasks.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+  },
+});
+
 // Update last accessed time for a container
 export const updateLastAccessed = authMutation({
   args: {
