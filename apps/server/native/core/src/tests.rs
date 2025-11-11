@@ -519,6 +519,62 @@ fn refs_diff_basic_on_local_repo() {
 }
 
 #[test]
+fn refs_diff_includes_dot_prefixed_directories() {
+  let tmp = tempdir().unwrap();
+  let work = tmp.path().join("repo-dot");
+  std::fs::create_dir_all(&work).unwrap();
+  run(&work, "git init");
+  run(&work, "git -c user.email=a@b -c user.name=test checkout -b main");
+  std::fs::write(work.join("README.md"), b"readme\n").unwrap();
+  run(&work, "git add .");
+  run(&work, "git -c user.email=a@b -c user.name=test commit -m init");
+
+  run(&work, "git checkout -b workflows");
+  std::fs::create_dir_all(work.join(".github/workflows")).unwrap();
+  std::fs::write(
+    work.join(".github/workflows/ci.yml"),
+    b"name: CI\non:\n  push:\n    branches:\n      - main\njobs:\n  lint:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n",
+  )
+  .unwrap();
+  run(&work, "git add .");
+  run(
+    &work,
+    "git -c user.email=a@b -c user.name=test commit -m workflows",
+  );
+
+  let out = crate::diff::refs::diff_refs(GitDiffOptions {
+    baseRef: Some("main".into()),
+    headRef: "workflows".into(),
+    repoFullName: None,
+    repoUrl: None,
+    teamSlugOrId: None,
+    originPathOverride: Some(work.to_string_lossy().to_string()),
+    includeContents: Some(true),
+    maxBytes: Some(1024 * 1024),
+    lastKnownBaseSha: None,
+    lastKnownMergeCommitSha: None,
+  })
+  .unwrap();
+
+  let entry = out
+    .iter()
+    .find(|e| e.filePath == ".github/workflows/ci.yml")
+    .unwrap_or_else(|| {
+      panic!(
+        "expected .github/workflows/ci.yml in diff, entries: {:?}",
+        out.iter().map(|e| e.filePath.clone()).collect::<Vec<_>>()
+      )
+    });
+  assert_eq!(entry.status, "added");
+  assert_eq!(entry.isBinary, false);
+  assert_eq!(entry.contentOmitted, Some(false));
+  assert!(
+    entry.newContent.as_deref().unwrap_or_default().contains("name: CI"),
+    "expected workflow content to be present"
+  );
+}
+
+#[test]
 fn refs_merge_base_after_merge_is_branch_tip() {
   let tmp = tempdir().unwrap();
   let work = tmp.path().join("repo");
