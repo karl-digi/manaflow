@@ -492,9 +492,17 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
           );
           const teamId = conn?.teamId;
           if (!teamId) break;
+
+          // Update PR record in database
           await _ctx.runMutation(internal.github_prs.upsertFromWebhookPayload, {
             installationId: installation,
             repoFullName,
+            teamId,
+            payload: prPayload,
+          });
+
+          // Handle PR merge/close events to update taskRuns and tasks
+          await _ctx.runMutation(internal.github_pr_merge_handler.processPullRequestWebhook, {
             teamId,
             payload: prPayload,
           });
