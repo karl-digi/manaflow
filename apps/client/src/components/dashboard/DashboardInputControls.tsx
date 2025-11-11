@@ -12,11 +12,13 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { DirectoryAutocompleteInput } from "@/components/ui/directory-autocomplete-input";
 import { isElectron } from "@/lib/electron";
+import { useSocket } from "@/contexts/socket/use-socket";
 import { api } from "@cmux/convex/api";
 import type { ProviderStatus, ProviderStatusResponse } from "@cmux/shared";
 import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
-import { parseGithubRepoUrl } from "@cmux/shared";
+import { parseGithubRepoUrl, parseLocalRepoPathClient } from "@cmux/shared";
 import { Link, useRouter } from "@tanstack/react-router";
 import clsx from "clsx";
 import { useAction, useMutation } from "convex/react";
@@ -72,6 +74,7 @@ export const DashboardInputControls = memo(function DashboardInputControls({
   providerStatus = null,
 }: DashboardInputControlsProps) {
   const router = useRouter();
+  const { socket } = useSocket();
   const agentSelectRef = useRef<SearchableSelectHandle | null>(null);
   const mintState = useMutation(api.github_app.mintInstallState);
   const addManualRepo = useAction(api.github_http.addManualRepo);
@@ -303,10 +306,55 @@ export const DashboardInputControls = memo(function DashboardInputControls({
 
     // Validate URL format before sending to backend
     if (!trimmedUrl) {
-      setCustomRepoError("Please enter a GitHub repository URL");
+      setCustomRepoError("Please enter a GitHub repository URL or local path");
       return;
     }
 
+    // Check if it's a local file path
+    const isFilePath = trimmedUrl.startsWith('/') || trimmedUrl.startsWith('~') || trimmedUrl.startsWith('./') || trimmedUrl.startsWith('../');
+
+    if (isFilePath) {
+      // Handle local file path
+      setIsAddingRepo(true);
+      setCustomRepoError(null);
+
+      if (!socket) {
+        setCustomRepoError("Not connected to server");
+        setIsAddingRepo(false);
+        return;
+      }
+
+      socket.emit(
+        "validate-local-repo",
+        { localPath: trimmedUrl },
+        (response: {
+          success: boolean;
+          isValid: boolean;
+          resolvedPath?: string;
+          repoName?: string;
+          error?: string;
+        }) => {
+          if (response.success && response.isValid) {
+            // Use a special format for local repos: "local://<absolute-path>"
+            const localRepoId = `local://${response.resolvedPath}`;
+            onProjectChange([localRepoId]);
+
+            setCustomRepoUrl("");
+            setCustomRepoError(null);
+            setShowCustomRepoInput(false);
+
+            toast.success(`Added local repository: ${response.repoName}`);
+          } else {
+            setCustomRepoError(response.error || "Invalid local repository path");
+            toast.error(response.error || "Invalid local repository path");
+          }
+          setIsAddingRepo(false);
+        }
+      );
+      return;
+    }
+
+    // Otherwise, handle as GitHub URL
     const parsed = parseGithubRepoUrl(trimmedUrl);
     if (!parsed) {
       setCustomRepoError("Invalid GitHub repository URL. Use format: owner/repo or https://github.com/owner/repo");
@@ -341,7 +389,7 @@ export const DashboardInputControls = memo(function DashboardInputControls({
     } finally {
       setIsAddingRepo(false);
     }
-  }, [customRepoUrl, addManualRepo, teamSlugOrId, onProjectChange]);
+  }, [customRepoUrl, socket, addManualRepo, teamSlugOrId, onProjectChange]);
 
   const handleCustomRepoInputChange = useCallback((value: string) => {
     setCustomRepoUrl(value);
@@ -567,31 +615,14 @@ export const DashboardInputControls = memo(function DashboardInputControls({
               {showCustomRepoInput ? (
                 <div className="px-2 pb-2 pt-1">
                   <div className="flex gap-1">
-                    <input
-                      type="text"
+                    <DirectoryAutocompleteInput
                       value={customRepoUrl}
-                      onChange={(e) => handleCustomRepoInputChange(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          void handleCustomRepoSubmit();
-                        } else if (e.key === "Escape") {
-                          setShowCustomRepoInput(false);
-                          setCustomRepoUrl("");
-                          setCustomRepoError(null);
-                        }
-                      }}
-                      placeholder="github.com/owner/repo"
-                      className={clsx(
-                        "flex-1 px-2 h-7 text-[13px] rounded border",
-                        "bg-white dark:bg-neutral-800",
-                        "border-neutral-300 dark:border-neutral-600",
-                        "text-neutral-900 dark:text-neutral-100",
-                        "placeholder:text-neutral-400 dark:placeholder:text-neutral-500",
-                        "focus:outline-none focus:ring-1 focus:ring-blue-500",
-                        customRepoError ? "border-red-500 dark:border-red-500" : ""
-                      )}
+                      onChange={handleCustomRepoInputChange}
+                      onSubmit={handleCustomRepoSubmit}
+                      placeholder="~/path/to/repo or github.com/owner/repo"
+                      error={customRepoError}
                       autoFocus
+                      disabled={isAddingRepo}
                     />
                     <button
                       type="button"
@@ -619,7 +650,7 @@ export const DashboardInputControls = memo(function DashboardInputControls({
                     </p>
                   ) : (
                     <p className="text-[10px] text-neutral-500 dark:text-neutral-400 mt-1 px-1">
-                      Enter any GitHub repository link
+                      Enter a GitHub repo or local path (~/my-project)
                     </p>
                   )}
                 </div>

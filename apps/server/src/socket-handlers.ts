@@ -2316,5 +2316,148 @@ ${title}`;
         });
       }
     });
+
+    socket.on("get-directory-suggestions", async (data, callback) => {
+      try {
+        const { partialPath } = z.object({ partialPath: z.string() }).parse(data);
+
+        // Resolve ~ to home directory
+        let resolvedPath = partialPath;
+        if (partialPath.startsWith('~')) {
+          resolvedPath = partialPath.replace(/^~/, os.homedir());
+        }
+
+        // Determine the directory to search and the filter
+        let searchDir: string;
+        let filter: string = '';
+
+        if (resolvedPath.endsWith(path.sep) || resolvedPath === '') {
+          // User is looking for subdirectories of this path
+          searchDir = resolvedPath || os.homedir();
+        } else {
+          // Extract directory and filename pattern
+          searchDir = path.dirname(resolvedPath);
+          filter = path.basename(resolvedPath);
+        }
+
+        try {
+          // Read directory contents
+          const entries = await fs.readdir(searchDir, { withFileTypes: true });
+
+          // Filter for directories only and apply filter
+          let directories = entries
+            .filter(entry => entry.isDirectory())
+            .filter(entry => !entry.name.startsWith('.')) // Hide hidden dirs by default
+            .map(entry => ({
+              name: entry.name,
+              fullPath: path.join(searchDir, entry.name),
+            }));
+
+          // Apply filter if present
+          if (filter) {
+            directories = directories.filter(dir =>
+              dir.name.toLowerCase().startsWith(filter.toLowerCase())
+            );
+          }
+
+          // Sort alphabetically
+          directories.sort((a, b) => a.name.localeCompare(b.name));
+
+          // Limit to 20 suggestions
+          directories = directories.slice(0, 20);
+
+          callback({
+            success: true,
+            suggestions: directories,
+            homeDir: os.homedir(),
+          });
+        } catch (fsError) {
+          // Directory doesn't exist or can't be read
+          callback({
+            success: true,
+            suggestions: [],
+            homeDir: os.homedir(),
+          });
+        }
+      } catch (error) {
+        serverLogger.error("Error getting directory suggestions:", error);
+        callback({
+          success: false,
+          error: error instanceof Error ? error.message : "Unknown error",
+          suggestions: [],
+          homeDir: os.homedir(),
+        });
+      }
+    });
+
+    socket.on("validate-local-repo", async (data, callback) => {
+      try {
+        const { localPath } = z.object({ localPath: z.string() }).parse(data);
+
+        // Resolve ~ to home directory
+        let resolvedPath = localPath;
+        if (localPath.startsWith('~')) {
+          resolvedPath = localPath.replace(/^~/, os.homedir());
+        }
+
+        // Check if directory exists
+        try {
+          const stat = await fs.stat(resolvedPath);
+          if (!stat.isDirectory()) {
+            callback({
+              success: false,
+              error: "Path is not a directory",
+              isValid: false,
+            });
+            return;
+          }
+        } catch (error) {
+          callback({
+            success: false,
+            error: "Directory does not exist",
+            isValid: false,
+          });
+          return;
+        }
+
+        // Check if it's a git repository
+        const gitDir = path.join(resolvedPath, '.git');
+        try {
+          const gitStat = await fs.stat(gitDir);
+          if (!gitStat.isDirectory()) {
+            callback({
+              success: false,
+              error: "Not a git repository (no .git directory found)",
+              isValid: false,
+            });
+            return;
+          }
+        } catch (error) {
+          callback({
+            success: false,
+            error: "Not a git repository (no .git directory found)",
+            isValid: false,
+          });
+          return;
+        }
+
+        // Get repo name from directory
+        const repoName = path.basename(resolvedPath);
+
+        callback({
+          success: true,
+          isValid: true,
+          resolvedPath,
+          repoName,
+        });
+      } catch (error) {
+        serverLogger.error("Error validating local repo:", error);
+        callback({
+          success: false,
+          error: error instanceof Error ? error.message : "Unknown error",
+          isValid: false,
+        });
+      }
+    });
   });
 }
