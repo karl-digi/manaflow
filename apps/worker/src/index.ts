@@ -44,6 +44,8 @@ import { FileWatcher, computeGitDiff, getFileWithDiff } from "./fileWatcher";
 import { log } from "./logger";
 import { startScreenshotCollection } from "./screenshotCollector/startScreenshotCollection";
 
+process.title = "cmux-worker";
+
 const execAsync = promisify(exec);
 
 const Terminal = xtermHeadless.Terminal;
