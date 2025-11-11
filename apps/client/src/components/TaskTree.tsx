@@ -657,7 +657,7 @@ function TaskTreeInner({
   const taskMetaIcon = shouldShowTaskArchiveOverlay ? (
     <SidebarArchiveOverlay
       icon={taskLeadingIcon}
-      label="Archive task"
+      label="Archive"
       onArchive={handleArchive}
     />
   ) : (
@@ -1194,7 +1194,7 @@ function TaskRunTreeInner({
   const runMetaIcon = shouldShowRunArchiveOverlay ? (
     <SidebarArchiveOverlay
       icon={runLeadingIcon}
-      label="Archive task run"
+      label="Archive"
       onArchive={handleArchiveRun}
     />
   ) : (
