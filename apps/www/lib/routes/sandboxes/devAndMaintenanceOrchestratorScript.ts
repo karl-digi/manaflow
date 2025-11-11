@@ -166,6 +166,13 @@ async function ensureTmuxSession(): Promise<void> {
       });
       if (result.exitCode === 0) {
         console.log("[ORCHESTRATOR] tmux session 'cmux' created by agent");
+
+        // Wait for environment variables to propagate before running scripts
+        // This ensures that env vars injected via envctl are available in the shell
+        console.log("[ORCHESTRATOR] Waiting for environment variables to propagate...");
+        await delay(2000);
+        console.log("[ORCHESTRATOR] Environment variables should now be available");
+
         return;
       }
       await delay(1000);
