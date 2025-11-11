@@ -22,7 +22,8 @@ const DEBUG_FLAGS = {
 };
 
 const FEATURE_FLAGS = {
-  githubEyesReactionOnPrOpen: false,
+  githubEyesReactionOnPrOpen: true,
+  githubCommentOnPrOpen: true,
 };
 
 async function verifySignature(
@@ -511,6 +512,25 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
                 repoFullName,
                 prNumber,
                 content: "eyes",
+              });
+            }
+          }
+
+          // Add comment with 0github link when a new PR is opened
+          if (
+            FEATURE_FLAGS.githubCommentOnPrOpen &&
+            prPayload.action === "opened"
+          ) {
+            const prNumber = Number(prPayload.pull_request?.number ?? 0);
+            const prUrl = String(prPayload.pull_request?.html_url ?? "");
+            if (prNumber && prUrl) {
+              await _ctx.runAction(internal.github_pr_comments.addPrComment, {
+                installationId: installation,
+                repoFullName,
+                prNumber,
+                prUrl,
+                // TODO: Pass screenshots from the run that created this PR
+                screenshots: undefined,
               });
             }
           }
