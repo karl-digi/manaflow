@@ -1221,4 +1221,175 @@ export class RepositoryManager {
       // Don't throw - hooks are nice to have but not critical
     }
   }
+
+  /**
+   * Create a git archive from a repository path.
+   * This packages the repository at a specific commit/branch into a tar.gz file.
+   *
+   * @param repoPath - Path to the git repository
+   * @param outputPath - Path where the archive should be created
+   * @param ref - Git ref (branch, tag, commit) to archive (defaults to HEAD)
+   * @returns Path to the created archive file
+   */
+  async createArchive(
+    repoPath: string,
+    outputPath: string,
+    ref = "HEAD"
+  ): Promise<string> {
+    return this.queueOperation(async () => {
+      serverLogger.info(
+        `Creating git archive from ${repoPath} at ref ${ref} to ${outputPath}`
+      );
+
+      try {
+        // Ensure the output directory exists
+        const outputDir = path.dirname(outputPath);
+        await fs.mkdir(outputDir, { recursive: true });
+
+        // Use git archive to create a tar.gz file
+        // --format=tar.gz creates a gzipped tar archive
+        // --prefix adds a top-level directory in the archive
+        const archiveName = path.basename(repoPath);
+        const cmd = `git archive --format=tar.gz --prefix=${archiveName}/ ${ref}`;
+
+        const result = await this.executeGitCommand(cmd, {
+          cwd: repoPath,
+          encoding: "binary" as const,
+        });
+
+        // Write the binary data to the output file
+        await fs.writeFile(outputPath, result.stdout, "binary");
+
+        serverLogger.info(`Git archive created successfully at ${outputPath}`);
+        return outputPath;
+      } catch (error) {
+        serverLogger.error(
+          `Failed to create git archive from ${repoPath}:`,
+          error
+        );
+        throw new Error(
+          `Failed to create git archive: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    });
+  }
+
+  /**
+   * Extract a git archive to a destination directory.
+   * This is useful for restoring a packaged repository.
+   *
+   * @param archivePath - Path to the tar.gz archive file
+   * @param destinationPath - Path where the archive should be extracted
+   * @returns Path to the extracted directory
+   */
+  async extractArchive(
+    archivePath: string,
+    destinationPath: string
+  ): Promise<string> {
+    return this.queueOperation(async () => {
+      serverLogger.info(
+        `Extracting git archive from ${archivePath} to ${destinationPath}`
+      );
+
+      try {
+        // Ensure the destination directory exists
+        await fs.mkdir(destinationPath, { recursive: true });
+
+        // Extract the tar.gz archive using tar command
+        const cmd = `tar -xzf ${archivePath} -C ${destinationPath}`;
+
+        await execAsync(cmd);
+
+        serverLogger.info(
+          `Git archive extracted successfully to ${destinationPath}`
+        );
+        return destinationPath;
+      } catch (error) {
+        serverLogger.error(
+          `Failed to extract git archive from ${archivePath}:`,
+          error
+        );
+        throw new Error(
+          `Failed to extract git archive: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    });
+  }
+
+  /**
+   * Create a git archive from a local repository path.
+   * This is specifically designed for packaging local repositories for cloud/local mode.
+   *
+   * @param localRepoPath - Absolute path to the local git repository
+   * @param branch - Optional branch name to archive (defaults to current branch)
+   * @returns Object containing the archive path and metadata
+   */
+  async archiveLocalRepo(
+    localRepoPath: string,
+    branch?: string
+  ): Promise<{
+    archivePath: string;
+    repoName: string;
+    branch: string;
+    commitHash: string;
+  }> {
+    return this.queueOperation(async () => {
+      serverLogger.info(
+        `Archiving local repository from ${localRepoPath}, branch: ${branch ?? "current"}`
+      );
+
+      try {
+        // Verify this is a git repository
+        const isRepo = await this.checkIfRepoExists(localRepoPath);
+        if (!isRepo) {
+          throw new Error(
+            `Path ${localRepoPath} is not a valid git repository`
+          );
+        }
+
+        // Get the current or specified branch
+        const targetBranch = branch ?? (await this.getCurrentBranch(localRepoPath));
+
+        // Get the current commit hash
+        const commitResult = await this.executeGitCommand(
+          "git rev-parse HEAD",
+          { cwd: localRepoPath }
+        );
+        const commitHash = commitResult.stdout.trim();
+
+        // Generate archive filename with timestamp
+        const repoName = path.basename(localRepoPath);
+        const timestamp = Date.now();
+        const archiveFilename = `${repoName}-${targetBranch}-${timestamp}.tar.gz`;
+
+        // Create archives directory if it doesn't exist
+        const archivesDir = path.join(process.cwd(), "archives");
+        await fs.mkdir(archivesDir, { recursive: true });
+
+        const archivePath = path.join(archivesDir, archiveFilename);
+
+        // Create the archive
+        await this.createArchive(localRepoPath, archivePath, targetBranch);
+
+        serverLogger.info(
+          `Local repository archived successfully: ${archivePath}`
+        );
+
+        return {
+          archivePath,
+          repoName,
+          branch: targetBranch,
+          commitHash,
+        };
+      } catch (error) {
+        serverLogger.error(
+          `Failed to archive local repository ${localRepoPath}:`,
+          error
+        );
+        throw new Error(
+          `Failed to archive local repository: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    });
+  }
 }

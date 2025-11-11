@@ -20,7 +20,7 @@ import { parseGithubRepoUrl } from "@cmux/shared";
 import { Link, useRouter } from "@tanstack/react-router";
 import clsx from "clsx";
 import { useAction, useMutation } from "convex/react";
-import { Check, GitBranch, Image, Link2, Mic, Server, X } from "lucide-react";
+import { Check, GitBranch, Image, Link2, Mic, Server, X, Folder } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AgentCommandItem, MAX_AGENT_COMMAND_COUNT } from "./AgentCommandItem";
@@ -232,6 +232,12 @@ export const DashboardInputControls = memo(function DashboardInputControls({
   const [customRepoError, setCustomRepoError] = useState<string | null>(null);
   const [isAddingRepo, setIsAddingRepo] = useState(false);
 
+  // Directory suggestions for local paths
+  const [dirSuggestions, setDirSuggestions] = useState<Array<{ path: string; name: string; isGitRepo: boolean }>>([]);
+  const [showDirSuggestions, setShowDirSuggestions] = useState(false);
+  const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
+  const suggestionsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
   useEffect(() => {
     const node = pillboxScrollRef.current;
     if (!node) {
@@ -303,20 +309,33 @@ export const DashboardInputControls = memo(function DashboardInputControls({
 
     // Validate URL format before sending to backend
     if (!trimmedUrl) {
-      setCustomRepoError("Please enter a GitHub repository URL");
-      return;
-    }
-
-    const parsed = parseGithubRepoUrl(trimmedUrl);
-    if (!parsed) {
-      setCustomRepoError("Invalid GitHub repository URL. Use format: owner/repo or https://github.com/owner/repo");
+      setCustomRepoError("Please enter a GitHub repository URL or local path");
       return;
     }
 
     setIsAddingRepo(true);
     setCustomRepoError(null);
+    setShowDirSuggestions(false);
 
     try {
+      // Check if this is a local path
+      if (isLocalPath(trimmedUrl)) {
+        // For local paths, we'll use a different flow
+        // TODO: Implement local repo path handling with git archive
+        setCustomRepoError("Local repository support coming soon - will use git archive to package the repo");
+        toast.info("Local repository paths will be supported with git archive");
+        setIsAddingRepo(false);
+        return;
+      }
+
+      // Otherwise, treat as GitHub URL
+      const parsed = parseGithubRepoUrl(trimmedUrl);
+      if (!parsed) {
+        setCustomRepoError("Invalid GitHub repository URL. Use format: owner/repo or https://github.com/owner/repo");
+        setIsAddingRepo(false);
+        return;
+      }
+
       const result = await addManualRepo({
         teamSlugOrId,
         repoUrl: trimmedUrl,
@@ -341,12 +360,73 @@ export const DashboardInputControls = memo(function DashboardInputControls({
     } finally {
       setIsAddingRepo(false);
     }
-  }, [customRepoUrl, addManualRepo, teamSlugOrId, onProjectChange]);
+  }, [customRepoUrl, addManualRepo, teamSlugOrId, onProjectChange, isLocalPath]);
+
+  // Check if input looks like a local path
+  const isLocalPath = useCallback((input: string): boolean => {
+    if (!input) return false;
+    const trimmed = input.trim();
+    return (
+      trimmed.startsWith("/") ||
+      trimmed.startsWith("~/") ||
+      trimmed === "~" ||
+      trimmed.startsWith("./") ||
+      trimmed.startsWith("../")
+    );
+  }, []);
+
+  // Fetch directory suggestions
+  const fetchDirSuggestions = useCallback(async (path: string) => {
+    if (!isLocalPath(path)) {
+      setDirSuggestions([]);
+      setShowDirSuggestions(false);
+      return;
+    }
+
+    setIsLoadingSuggestions(true);
+    try {
+      const response = await fetch(
+        `${env.VITE_CMUX_APP_HTTP}/api/filesystem/suggest-directories?path=${encodeURIComponent(path)}&limit=10`,
+        {
+          credentials: "include",
+        }
+      );
+
+      if (response.ok) {
+        const data = await response.json() as { suggestions: Array<{ path: string; name: string; isGitRepo: boolean }> };
+        setDirSuggestions(data.suggestions);
+        setShowDirSuggestions(data.suggestions.length > 0);
+      } else {
+        setDirSuggestions([]);
+        setShowDirSuggestions(false);
+      }
+    } catch (error) {
+      console.error("Failed to fetch directory suggestions:", error);
+      setDirSuggestions([]);
+      setShowDirSuggestions(false);
+    } finally {
+      setIsLoadingSuggestions(false);
+    }
+  }, [isLocalPath]);
 
   const handleCustomRepoInputChange = useCallback((value: string) => {
     setCustomRepoUrl(value);
     setCustomRepoError(null);
-  }, []);
+
+    // Debounce directory suggestions
+    if (suggestionsTimeoutRef.current) {
+      clearTimeout(suggestionsTimeoutRef.current);
+    }
+
+    if (isLocalPath(value)) {
+      suggestionsTimeoutRef.current = setTimeout(() => {
+        void fetchDirSuggestions(value);
+      }, 300);
+    } else {
+      setShowDirSuggestions(false);
+      setDirSuggestions([]);
+    }
+  }, [isLocalPath, fetchDirSuggestions]);
 
   const agentSelectionFooter = selectedAgents.length ? (
     <div className="bg-neutral-50 dark:bg-neutral-900/70">
@@ -566,52 +646,88 @@ export const DashboardInputControls = memo(function DashboardInputControls({
               </button>
               {showCustomRepoInput ? (
                 <div className="px-2 pb-2 pt-1">
-                  <div className="flex gap-1">
-                    <input
-                      type="text"
-                      value={customRepoUrl}
-                      onChange={(e) => handleCustomRepoInputChange(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          void handleCustomRepoSubmit();
-                        } else if (e.key === "Escape") {
-                          setShowCustomRepoInput(false);
-                          setCustomRepoUrl("");
-                          setCustomRepoError(null);
-                        }
-                      }}
-                      placeholder="github.com/owner/repo"
-                      className={clsx(
-                        "flex-1 px-2 h-7 text-[13px] rounded border",
-                        "bg-white dark:bg-neutral-800",
-                        "border-neutral-300 dark:border-neutral-600",
-                        "text-neutral-900 dark:text-neutral-100",
-                        "placeholder:text-neutral-400 dark:placeholder:text-neutral-500",
-                        "focus:outline-none focus:ring-1 focus:ring-blue-500",
-                        customRepoError ? "border-red-500 dark:border-red-500" : ""
-                      )}
-                      autoFocus
-                    />
-                    <button
-                      type="button"
-                      onClick={handleCustomRepoSubmit}
-                      disabled={isAddingRepo}
-                      className={clsx(
-                        "px-2 h-7 flex items-center justify-center rounded",
-                        "bg-blue-500 hover:bg-blue-600",
-                        "text-white text-[12px] font-medium",
-                        "transition-colors",
-                        "disabled:opacity-50 disabled:cursor-not-allowed"
-                      )}
-                      title="Add repository"
-                    >
-                      {isAddingRepo ? (
-                        <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      ) : (
-                        <Check className="w-3.5 h-3.5" />
-                      )}
-                    </button>
+                  <div className="relative">
+                    <div className="flex gap-1">
+                      <input
+                        type="text"
+                        value={customRepoUrl}
+                        onChange={(e) => handleCustomRepoInputChange(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            void handleCustomRepoSubmit();
+                          } else if (e.key === "Escape") {
+                            setShowCustomRepoInput(false);
+                            setCustomRepoUrl("");
+                            setCustomRepoError(null);
+                            setShowDirSuggestions(false);
+                          }
+                        }}
+                        onBlur={() => {
+                          // Delay hiding suggestions to allow clicking on them
+                          setTimeout(() => setShowDirSuggestions(false), 200);
+                        }}
+                        placeholder="github.com/owner/repo or ~/path/to/repo"
+                        className={clsx(
+                          "flex-1 px-2 h-7 text-[13px] rounded border",
+                          "bg-white dark:bg-neutral-800",
+                          "border-neutral-300 dark:border-neutral-600",
+                          "text-neutral-900 dark:text-neutral-100",
+                          "placeholder:text-neutral-400 dark:placeholder:text-neutral-500",
+                          "focus:outline-none focus:ring-1 focus:ring-blue-500",
+                          customRepoError ? "border-red-500 dark:border-red-500" : ""
+                        )}
+                        autoFocus
+                      />
+                      <button
+                        type="button"
+                        onClick={handleCustomRepoSubmit}
+                        disabled={isAddingRepo}
+                        className={clsx(
+                          "px-2 h-7 flex items-center justify-center rounded",
+                          "bg-blue-500 hover:bg-blue-600",
+                          "text-white text-[12px] font-medium",
+                          "transition-colors",
+                          "disabled:opacity-50 disabled:cursor-not-allowed"
+                        )}
+                        title="Add repository"
+                      >
+                        {isAddingRepo ? (
+                          <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          <Check className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+                    </div>
+                    {showDirSuggestions && dirSuggestions.length > 0 ? (
+                      <div className="absolute z-50 w-full mt-1 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded shadow-lg max-h-48 overflow-y-auto">
+                        {dirSuggestions.map((suggestion) => (
+                          <button
+                            key={suggestion.path}
+                            type="button"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              setCustomRepoUrl(suggestion.path);
+                              setShowDirSuggestions(false);
+                            }}
+                            className="w-full px-2 py-1.5 flex items-center gap-2 text-left hover:bg-neutral-100 dark:hover:bg-neutral-700 text-[12px]"
+                          >
+                            <Folder className={clsx(
+                              "w-3.5 h-3.5 shrink-0",
+                              suggestion.isGitRepo ? "text-orange-500" : "text-neutral-400"
+                            )} />
+                            <span className="flex-1 truncate text-neutral-900 dark:text-neutral-100">
+                              {suggestion.name}
+                            </span>
+                            {suggestion.isGitRepo ? (
+                              <span className="text-[10px] text-orange-600 dark:text-orange-400 shrink-0">
+                                git
+                              </span>
+                            ) : null}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                   {customRepoError ? (
                     <p className="text-[11px] text-red-500 dark:text-red-400 mt-1 px-1">
@@ -619,7 +735,7 @@ export const DashboardInputControls = memo(function DashboardInputControls({
                     </p>
                   ) : (
                     <p className="text-[10px] text-neutral-500 dark:text-neutral-400 mt-1 px-1">
-                      Enter any GitHub repository link
+                      Enter GitHub repo link or local path (~/path/to/repo)
                     </p>
                   )}
                 </div>

@@ -11,6 +11,7 @@ interface HydrateConfig {
   repoFull?: string;
   cloneUrl?: string;
   maskedCloneUrl?: string;
+  archivePath?: string;
   depth: number;
   baseBranch?: string;
   newBranch?: string;
@@ -72,6 +73,7 @@ function getConfig(): HydrateConfig {
   const repoFull = process.env.CMUX_REPO_FULL;
   const cloneUrl = process.env.CMUX_CLONE_URL;
   const maskedCloneUrl = process.env.CMUX_MASKED_CLONE_URL;
+  const archivePath = process.env.CMUX_ARCHIVE_PATH;
   const baseBranch = process.env.CMUX_BASE_BRANCH;
   const newBranch = process.env.CMUX_NEW_BRANCH;
 
@@ -82,6 +84,7 @@ function getConfig(): HydrateConfig {
     repoFull,
     cloneUrl,
     maskedCloneUrl,
+    archivePath,
     depth,
     baseBranch,
     newBranch,
@@ -134,6 +137,28 @@ function checkExistingRepo(workspacePath: string, owner?: string, repo?: string)
 function clearWorkspace(workspacePath: string) {
   log("Clearing workspace directory");
   exec(`rm -rf "${workspacePath}"/* "${workspacePath}"/.[!.]* "${workspacePath}"/..?* 2>/dev/null || true`);
+}
+
+function extractArchive(archivePath: string, workspacePath: string) {
+  log(`Extracting git archive from ${archivePath}`);
+
+  if (!existsSync(archivePath)) {
+    throw new Error(`Archive file not found: ${archivePath}`);
+  }
+
+  // Extract the tar.gz archive to the workspace
+  // Use --strip-components=1 to remove the top-level directory created by git archive
+  const { exitCode, stderr } = exec(
+    `tar -xzf "${archivePath}" --strip-components=1 -C "${workspacePath}"`,
+    { throwOnError: false }
+  );
+
+  if (exitCode !== 0) {
+    log(`Archive extraction failed: ${stderr}`, "error");
+    throw new Error(`Failed to extract archive: ${stderr}`);
+  }
+
+  log("Archive extracted successfully");
 }
 
 function cloneRepository(config: HydrateConfig) {
@@ -248,8 +273,28 @@ async function main() {
     // Ensure workspace exists
     ensureWorkspace(config.workspacePath);
 
-    // Handle single repo case
-    if (config.cloneUrl) {
+    // Handle archive extraction (for local repositories)
+    if (config.archivePath) {
+      log(`Hydrating from archive: ${config.archivePath}`);
+
+      // Clear workspace before extracting
+      clearWorkspace(config.workspacePath);
+
+      // Extract the archive
+      extractArchive(config.archivePath, config.workspacePath);
+
+      // Checkout branch if specified
+      if (config.baseBranch) {
+        checkoutBranch(config.workspacePath, config.baseBranch, config.newBranch);
+      }
+
+      // List files for verification
+      log("Listing workspace contents:");
+      const { stdout } = exec(`ls -la | head -50`, { cwd: config.workspacePath });
+      console.log(stdout);
+    }
+    // Handle single repo case (GitHub clone)
+    else if (config.cloneUrl) {
       log(`Hydrating single repository: ${config.maskedCloneUrl || config.cloneUrl}`);
 
       // Check existing repo
