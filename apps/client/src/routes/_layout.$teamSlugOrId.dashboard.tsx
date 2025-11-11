@@ -27,6 +27,7 @@ import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
 import type { ProviderStatusResponse, TaskAcknowledged, TaskError, TaskStarted } from "@cmux/shared";
 import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
+import { isLocalRepoPath } from "@cmux/shared";
 import { convexQuery } from "@convex-dev/react-query";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
@@ -677,10 +678,48 @@ function DashboardComponent() {
     localStorage.setItem("isCloudMode", JSON.stringify(newMode));
   }, [isCloudMode, isEnvSelected]);
 
-  // Handle paste of GitHub repo URL in the project search field
+  // Handle paste of GitHub repo URL or local path in the project search field
   const handleProjectSearchPaste = useCallback(
     async (input: string) => {
       try {
+        // Check if it's a local path
+        if (isLocalRepoPath(input)) {
+          // Call the Hono API to add local repo
+          const response = await fetch("/api/repos/local", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            credentials: "include",
+            body: JSON.stringify({
+              team: teamSlugOrId,
+              path: input,
+            }),
+          });
+
+          if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || "Failed to add local repository");
+          }
+
+          const result = await response.json();
+
+          if (result.success) {
+            // Refetch repos to get the newly added one
+            await reposByOrgQuery.refetch();
+
+            // Select the newly added repo
+            setSelectedProject([result.fullName]);
+            localStorage.setItem(`selectedProject-${teamSlugOrId}`, JSON.stringify([result.fullName]));
+
+            toast.success(`Added local repository ${result.fullName}`);
+            return true;
+          }
+
+          return false;
+        }
+
+        // Otherwise, treat it as a GitHub URL
         const result = await addManualRepo({
           teamSlugOrId,
           repoUrl: input,
@@ -705,7 +744,7 @@ function DashboardComponent() {
         if (error instanceof Error && error.message && !error.message.includes("Invalid GitHub")) {
           toast.error(error.message);
         }
-        return false; // Don't close dropdown if it's not a valid GitHub URL
+        return false; // Don't close dropdown if it's not a valid GitHub URL or local path
       }
     },
     [addManualRepo, teamSlugOrId, reposByOrgQuery]

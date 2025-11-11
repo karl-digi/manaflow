@@ -1,0 +1,361 @@
+================================================================================
+"SEARCH OR PASTE A REPO LINK..." FEATURE - COMPLETE ANALYSIS SUMMARY
+================================================================================
+
+ANALYSIS COMPLETED: 2025-11-11
+
+Found and analyzed 10 key files implementing the repo link feature.
+
+================================================================================
+QUICK START CHECKLIST
+================================================================================
+
+1. INPUT COMPONENT:
+   File: /root/workspace/apps/client/src/components/ui/searchable-select.tsx
+   - SearchableSelect React component with paste handler
+   - Placeholder: "Search or paste a repo link..."
+   - onPaste event at line 597
+
+2. DASHBOARD INTEGRATION:
+   File: /root/workspace/apps/client/src/components/dashboard/DashboardInputControls.tsx
+   - Uses Convex action: api.github_http.addManualRepo
+   - Custom input form in footer menu
+   - Error handling and validation
+
+3. ROUTE HANDLER:
+   File: /root/workspace/apps/client/src/routes/_layout.$teamSlugOrId.dashboard.tsx
+   - handleProjectSearchPaste callback (line 681)
+   - Refetches repos and updates selection
+
+4. URL PARSING:
+   File: /root/workspace/packages/shared/src/utils/parse-github-repo-url.ts
+   - Supports 3 URL formats
+   - Client-side and server-side validation
+
+5. BACKEND ACTION:
+   File: /root/workspace/packages/convex/convex/github_http.ts
+   - addManualRepo action orchestrates the flow
+   - Validates with GitHub API (public repos only)
+   - Calls database mutation
+
+6. DATABASE MUTATION:
+   File: /root/workspace/packages/convex/convex/github.ts
+   - insertManualRepoInternal creates repo record
+   - getRepoByFullNameInternal checks for duplicates
+
+7. SCHEMA:
+   File: /root/workspace/packages/convex/convex/schema.ts
+   - repos table with gitRemote and manual fields
+   - Indexes for efficient queries
+
+================================================================================
+SUPPORTED FORMATS
+================================================================================
+
+The parseGithubRepoUrl utility supports:
+
+1. Simple format:
+   owner/repo
+   
+2. HTTPS format:
+   https://github.com/owner/repo
+   https://github.com/owner/repo.git
+   
+3. SSH format:
+   git@github.com:owner/repo.git
+
+Returns object:
+{
+  owner: string
+  repo: string
+  fullName: string        // "owner/repo"
+  url: string            // "https://github.com/owner/repo"
+  gitUrl: string         // "https://github.com/owner/repo.git"
+}
+
+================================================================================
+VALIDATION LAYERS
+================================================================================
+
+Frontend (Component):
+  - Checks if onSearchPaste callback exists
+  - Trims clipboard text
+  - Handles errors gracefully
+
+Frontend (Dashboard):
+  - Uses parseGithubRepoUrl for validation
+  - Shows error messages for invalid URLs
+  - Prevents submission if URL invalid
+
+Backend:
+  - Validates URL parsing again
+  - Checks GitHub API for repo existence
+  - Validates repo is PUBLIC
+  - Checks for duplicates
+  - Verifies authentication
+  - Validates owner type (User/Organization)
+
+Database:
+  - Unique constraint via index (team + fullName)
+
+================================================================================
+GITHUB API INTEGRATION
+================================================================================
+
+Uses Octokit without authentication:
+- Can only validate public repositories
+- Makes unauthenticated request to GitHub API
+- Timeout: 10 seconds
+- Gets full repo metadata (owner, default_branch, etc.)
+- Private repos return 404
+
+Fetched metadata stored:
+  - providerRepoId: numeric ID from GitHub
+  - ownerLogin: owner username
+  - ownerType: "User" or "Organization"
+  - defaultBranch: default branch name
+  - lastPushedAt: timestamp
+
+================================================================================
+DATABASE SCHEMA DETAILS
+================================================================================
+
+repos table fields relevant to manual repos:
+
+Required:
+  - fullName: string           // "owner/repo"
+  - org: string                // owner name
+  - name: string               // repo name
+  - gitRemote: string          // "https://github.com/owner/repo.git"
+  - userId: string
+  - teamId: string
+
+Optional (set for manual repos):
+  - provider: "github"
+  - providerRepoId: number
+  - ownerLogin: string
+  - ownerType: "User" | "Organization"
+  - visibility: "public"
+  - defaultBranch: string
+  - lastPushedAt: number (milliseconds)
+  - manual: true               // <-- Distinguishes manual repos
+
+Indexes:
+  - by_team_fullName (team + fullName)
+  - by_gitRemote (gitRemote)
+  - by_team (teamId)
+
+================================================================================
+ERROR MESSAGES
+================================================================================
+
+Frontend shows user:
+  "Invalid GitHub repository URL. Use format: owner/repo or https://github.com/owner/repo"
+  "Failed to add repository"
+  Custom error from backend
+
+Backend throws:
+  "Invalid GitHub repository URL" (parsing failed)
+  "Private repositories are not supported for manual addition"
+  "Not authenticated"
+  "Repository not found or is private"
+  "GitHub API error: {status}"
+  "Failed to validate repository"
+
+User Experience:
+  - Validation errors: Dropdown stays open, no toast (allows retry)
+  - Other errors: Toast notification shown
+  - Success: Repo auto-selected, toast shown, dropdown closes
+
+================================================================================
+CURRENT LIMITATIONS
+================================================================================
+
+1. Public repositories only
+   - Private repos rejected by GitHub API validation
+   - No authentication support for private repos
+
+2. GitHub only
+   - No GitLab, Bitbucket, or other providers
+   - Hard-coded to github.com domain
+
+3. No local repository support
+   - Cannot add file:// paths
+   - Cannot add local cloned repos
+
+4. No git archive functionality
+   - No tar/zip export capability
+   - No streaming or chunking support
+
+5. No partial clone
+   - Full repository required
+   - No sparse checkout support
+
+6. Manual repos not tied to GitHub App
+   - Separate from GitHub App installation flow
+   - Different data model than app-synced repos
+
+================================================================================
+GIT OPERATIONS (DOWNSTREAM)
+================================================================================
+
+After repo is added to database, gitRemote is used by:
+
+File: /root/workspace/apps/server/src/repositoryManager.ts
+  - RepositoryManager class
+  - executeGitCommand() method
+  - Supports: git clone, git worktree, git pull
+  - Queue-based execution to prevent conflicts
+
+File: /root/workspace/packages/cmux/src/utils/gitUtils.ts
+  - getGitRepoInfo() utility
+  - Analyzes local git repositories
+  - Extracts remote URLs and branch info
+
+Note: No git archive functionality found in codebase
+
+================================================================================
+DEPENDENCIES
+================================================================================
+
+Frontend dependencies:
+  - React (with hooks)
+  - @tanstack/react-router
+  - @tanstack/react-query
+  - Convex (via api.github_http.addManualRepo)
+  - sonner (toast notifications)
+  - @cmux/shared (parseGithubRepoUrl)
+
+Backend dependencies:
+  - Convex (database, auth, mutations)
+  - Octokit (GitHub API client)
+  - @cmux/shared (parseGithubRepoUrl)
+
+Database:
+  - Convex managed database
+
+================================================================================
+FILES AND LINE NUMBERS
+================================================================================
+
+Frontend Components:
+  1. /root/workspace/apps/client/src/components/ui/searchable-select.tsx
+     - Lines 228-761 (SearchableSelect component)
+     - Lines 597-615 (onPaste handler)
+     - Line 588 (placeholder text)
+
+  2. /root/workspace/apps/client/src/components/dashboard/DashboardInputControls.tsx
+     - Lines 28-46 (interface)
+     - Lines 55-714 (component)
+     - Lines 77 (addManualRepo action)
+     - Lines 229-233 (state)
+     - Lines 301-344 (custom repo handler)
+     - Lines 553-566 (menu button)
+     - Lines 567-626 (custom input form)
+     - Lines 492-497 (SearchableSelect integration)
+
+  3. /root/workspace/apps/client/src/routes/_layout.$teamSlugOrId.dashboard.tsx
+     - Lines 681-710 (handleProjectSearchPaste)
+     - Line 351 (addManualRepo action)
+
+Utilities:
+  4. /root/workspace/packages/shared/src/utils/parse-github-repo-url.ts
+     - Lines 1-51 (full implementation)
+     - Lines 11-51 (function definition)
+     - Lines 25-31 (regex patterns)
+
+Backend:
+  5. /root/workspace/packages/convex/convex/github_http.ts
+     - Lines 1-99 (full file)
+     - Lines 10-99 (addManualRepo action)
+     - Lines 11-14 (arguments)
+     - Lines 15-81 (handler)
+     - Lines 82-97 (error handling)
+
+  6. /root/workspace/packages/convex/convex/github.ts
+     - Lines 714-776 (insertManualRepoInternal)
+     - Lines 779-793 (getRepoByFullNameInternal)
+
+Database:
+  7. /root/workspace/packages/convex/convex/schema.ts
+     - Lines 454-482 (repos table)
+
+Supporting Files:
+  8. /root/workspace/packages/cmux/src/utils/gitUtils.ts
+     - Lines 1-110 (git utilities)
+
+  9. /root/workspace/apps/server/src/repositoryManager.ts
+     - Queue-based git operations
+
+  10. /root/workspace/apps/server/src/archiveTask.ts
+      - Archive functionality (no git archive)
+
+================================================================================
+DATA PERSISTENCE
+================================================================================
+
+Local Storage (Frontend):
+  - selectedProject_{teamSlugOrId}: JSON array of selected project fullNames
+  - selectedAgents: JSON array of selected agent names
+
+Database (Backend):
+  - repos table: Core repo metadata
+  - branches table: Branch information
+  - tasks table: Task metadata (projectFullName field)
+
+Session State (Frontend):
+  - React state for form inputs
+  - React Query cache for fetched repos
+
+================================================================================
+NEXT STEPS FOR ENHANCEMENT
+================================================================================
+
+To support local repositories with git archive:
+
+1. Extend parseGithubRepoUrl or create parseLocalRepoPath:
+   - Detect file:// URLs
+   - Validate local path exists and is git repo
+
+2. Add to repos schema:
+   - localPath: optional(v.string())
+   - isLocal: optional(v.boolean())
+
+3. Extend addManualRepo action:
+   - Accept localPath parameter
+   - Call getGitRepoInfo() utility
+   - Insert repo with local path
+
+4. Add git archive support to RepositoryManager:
+   - git archive command
+   - Support tar, tar.gz, zip formats
+   - Streaming capability
+
+5. Update frontend:
+   - Add file picker for local repos
+   - Add format selection for archive
+   - Show archive generation progress
+
+================================================================================
+DOCUMENT REFERENCE
+================================================================================
+
+Main Analysis Document:
+  /root/workspace/REPO_LINK_FEATURE_ANALYSIS.md
+  
+  Contains:
+  - Detailed implementation of each component
+  - Full code snippets with line numbers
+  - Data flow diagrams
+  - Query reference
+  - Absolute file paths
+
+Quick Reference:
+  /tmp/quick_reference.txt
+
+This File:
+  /root/workspace/REPO_LINK_FEATURE_SUMMARY.txt
+
+================================================================================
+END OF ANALYSIS
+================================================================================

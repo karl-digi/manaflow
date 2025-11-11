@@ -791,3 +791,55 @@ export const getRepoByFullNameInternal = internalQuery({
       .first();
   },
 });
+
+// Internal mutation to insert a local repo
+export const insertLocalRepoInternal = internalMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    userId: v.string(),
+    fullName: v.string(),
+    org: v.string(),
+    name: v.string(),
+    gitRemote: v.string(),
+    defaultBranch: v.string(),
+    archiveStorageId: v.string(), // Convex storage ID for the git archive
+  },
+  handler: async (ctx, args) => {
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
+    const now = Date.now();
+
+    // Check for existing repo to prevent duplicates
+    const existing = await ctx.db
+      .query("repos")
+      .withIndex("by_team_fullName", (q) =>
+        q.eq("teamId", teamId).eq("fullName", args.fullName)
+      )
+      .first();
+
+    if (existing) {
+      // Update existing repo with new data
+      await ctx.db.patch(existing._id, {
+        org: args.org,
+        name: args.name,
+        gitRemote: args.gitRemote,
+        provider: "local",
+        defaultBranch: args.defaultBranch,
+        lastSyncedAt: now,
+      });
+      return existing._id;
+    }
+
+    return await ctx.db.insert("repos", {
+      fullName: args.fullName,
+      org: args.org,
+      name: args.name,
+      gitRemote: args.gitRemote,
+      provider: "local",
+      userId: args.userId,
+      teamId,
+      defaultBranch: args.defaultBranch,
+      lastSyncedAt: now,
+      manual: true,
+    });
+  },
+});

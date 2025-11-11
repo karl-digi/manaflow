@@ -5,6 +5,7 @@ import { api, internal } from "./_generated/api";
 import { action } from "./_generated/server";
 import { Octokit } from "octokit";
 import { parseGithubRepoUrl } from "@cmux/shared";
+import { parseLocalRepoPath } from "@cmux/shared/node";
 
 // Add a manual repository from a custom URL
 export const addManualRepo = action({
@@ -95,5 +96,60 @@ export const addManualRepo = action({
 
       throw new Error("Failed to validate repository");
     }
+  },
+});
+
+// Add a local repository from a file path
+export const addLocalRepo = action({
+  args: {
+    teamSlugOrId: v.string(),
+    repoPath: v.string(),
+    archiveStorageId: v.string(), // Storage ID for the git archive created by Hono endpoint
+  },
+  handler: async (ctx, { teamSlugOrId, repoPath, archiveStorageId }): Promise<{ success: boolean; repoId: Id<"repos">; fullName: string }> => {
+    // Parse the local repo path
+    const parsed = parseLocalRepoPath(repoPath);
+    if (!parsed) {
+      throw new Error("Invalid local repository path");
+    }
+
+    // Get the authenticated user
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error("Not authenticated");
+    }
+
+    // Verify team access by calling an authQuery (this will throw if user is not a team member)
+    await ctx.runQuery(api.github.hasReposForTeam, { teamSlugOrId });
+
+    // Extract repo name from path (last directory component)
+    const pathParts = parsed.resolvedPath.split("/").filter(Boolean);
+    const repoName = pathParts[pathParts.length - 1] || "local-repo";
+    const orgName = "local";
+    const fullName = `${orgName}/${repoName}`;
+
+    // Check if repo already exists
+    const existing = await ctx.runQuery(internal.github.getRepoByFullNameInternal, {
+      teamSlugOrId,
+      fullName,
+    });
+
+    if (existing) {
+      return { success: true, repoId: existing._id, fullName };
+    }
+
+    // Insert the local repo
+    const repoId = await ctx.runMutation(internal.github.insertLocalRepoInternal, {
+      teamSlugOrId,
+      userId: identity.subject,
+      fullName,
+      org: orgName,
+      name: repoName,
+      gitRemote: parsed.resolvedPath, // Store the resolved local path
+      defaultBranch: "main", // Default, will be updated when archive is processed
+      archiveStorageId,
+    });
+
+    return { success: true, repoId, fullName };
   },
 });

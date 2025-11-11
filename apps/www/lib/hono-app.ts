@@ -8,6 +8,7 @@ import { githubPrsOpenRouter } from "@/lib/routes/github.prs.open.route";
 import { githubPrsPatchRouter } from "@/lib/routes/github.prs.patch.route";
 import { githubPrsRouter } from "@/lib/routes/github.prs.route";
 import { githubReposRouter } from "@/lib/routes/github.repos.route";
+import { localReposRouter } from "@/lib/routes/local-repos.route";
 import {
   booksRouter,
   branchRouter,
@@ -104,6 +105,7 @@ app.route("/", usersRouter);
 app.route("/", booksRouter);
 app.route("/", devServerRouter);
 app.route("/", githubReposRouter);
+app.route("/", localReposRouter);
 app.route("/", githubPrsRouter);
 app.route("/", githubPrsBackfillRouter);
 app.route("/", githubPrsBackfillRepoRouter);
