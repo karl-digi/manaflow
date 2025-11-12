@@ -543,6 +543,14 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
               const headSha = prPayload.pull_request?.head?.sha ?? null;
               const baseSha = prPayload.pull_request?.base?.sha ?? undefined;
 
+              console.log("[preview-jobs] Preview config found for PR", {
+                repoFullName,
+                prNumber,
+                prUrl,
+                headSha: headSha?.slice(0, 7),
+                previewConfigId: previewConfig._id,
+              });
+
               if (prNumber && prUrl && headSha) {
                 try {
                   const runId = await _ctx.runMutation(
@@ -559,11 +567,23 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
                     },
                   );
 
+                  console.log("[preview-jobs] Preview run enqueued", {
+                    runId,
+                    repoFullName,
+                    prNumber,
+                    prUrl,
+                  });
+
                   await _ctx.scheduler.runAfter(
                     0,
                     internal.preview_jobs.requestDispatch,
                     { previewRunId: runId },
                   );
+
+                  console.log("[preview-jobs] Preview job dispatched", {
+                    runId,
+                    dispatchUrl: `${env.BASE_APP_URL}/api/preview/jobs/dispatch`,
+                  });
                 } catch (error) {
                   console.error("[preview-jobs] Failed to enqueue preview run", {
                     repoFullName,
@@ -572,6 +592,11 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
                   });
                 }
               }
+            } else {
+              console.log("[preview-jobs] No preview config found for repo", {
+                repoFullName,
+                teamId,
+              });
             }
           }
         } catch (err) {

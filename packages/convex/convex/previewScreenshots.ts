@@ -78,6 +78,10 @@ export const triggerGithubComment = internalAction({
     previewRunId: v.id("previewRuns"),
   },
   handler: async (ctx, args) => {
+    console.log("[previewScreenshots] Triggering GitHub comment", {
+      previewRunId: args.previewRunId,
+    });
+
     const run = await ctx.runQuery(internal.previewRuns.getRunWithConfig, {
       previewRunId: args.previewRunId,
     });
@@ -105,12 +109,23 @@ export const triggerGithubComment = internalAction({
       return;
     }
 
+    console.log("[previewScreenshots] Posting GitHub comment", {
+      previewRunId: args.previewRunId,
+      repoFullName: previewRun.repoFullName,
+      prNumber: previewRun.prNumber,
+      screenshotSetId: previewRun.screenshotSetId,
+    });
+
     // Post GitHub comment with screenshots
     await ctx.runAction(internal.github_pr_comments.postPreviewComment, {
       installationId: previewRun.repoInstallationId,
       repoFullName: previewRun.repoFullName,
       prNumber: previewRun.prNumber,
       screenshotSetId: previewRun.screenshotSetId,
+      previewRunId: args.previewRunId,
+    });
+
+    console.log("[previewScreenshots] GitHub comment posted successfully", {
       previewRunId: args.previewRunId,
     });
   },
