@@ -611,14 +611,16 @@ export type CodeReviewStartBody = {
 
 export type WorkspaceConfigResponse = {
     projectFullName: string;
-    environmentId?: string;
+    maintenanceScript?: string;
+    envVarsContent: string;
     updatedAt?: number;
 } | null;
 
 export type WorkspaceConfigBody = {
     teamSlugOrId: string;
     projectFullName: string;
-    environmentId?: string;
+    maintenanceScript?: string;
+    envVarsContent?: string;
 };
 
 export type PreviewConfig = {

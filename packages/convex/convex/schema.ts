@@ -95,6 +95,7 @@ const convexSchema = defineSchema({
     text: v.string(),
     isCompleted: v.boolean(),
     isArchived: v.optional(v.boolean()),
+    pinned: v.optional(v.boolean()),
     isLocalWorkspace: v.optional(v.boolean()),
     isCloudWorkspace: v.optional(v.boolean()),
     description: v.optional(v.string()),
