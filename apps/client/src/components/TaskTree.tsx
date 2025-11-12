@@ -352,6 +352,13 @@ function TaskTreeInner({
   );
   const runsLoading = !isOptimisticTask && taskRuns === undefined;
   const flattenedRuns = useMemo(() => flattenRuns(taskRuns), [taskRuns]);
+  const localWorkspaceRunId = useMemo(() => {
+    if (!task.isLocalWorkspace) {
+      return null;
+    }
+    const run = flattenedRuns.find((entry) => entry.isLocalWorkspace);
+    return run?._id ?? null;
+  }, [flattenedRuns, task.isLocalWorkspace]);
   const activeRunsFlat = useMemo(
     () => flattenedRuns.filter((run) => !run.isArchived),
     [flattenedRuns]
@@ -455,6 +462,36 @@ function TaskTreeInner({
   const handlePrefetch = useCallback(() => {
     prefetchTaskRuns();
   }, [prefetchTaskRuns]);
+  const handleTaskLinkClick = useCallback(
+    (event: MouseEvent<HTMLAnchorElement>) => {
+      if (
+        event.defaultPrevented ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey
+      ) {
+        return;
+      }
+      if (isRenaming) {
+        event.preventDefault();
+        return;
+      }
+      handleToggle(event);
+    },
+    [handleToggle, isRenaming]
+  );
+  const taskLinkCommonProps = {
+    ref: taskLinkRef,
+    className: "group block",
+    ["data-focus-visible"]: isTaskLinkFocusVisible ? "true" : undefined,
+    onMouseEnter: handlePrefetch,
+    onFocus: handleTaskLinkFocus,
+    onBlur: handleTaskLinkBlur,
+    onClick: handleTaskLinkClick,
+  } as const;
+  const shouldLinkTaskToVSCode =
+    Boolean(task.isLocalWorkspace) && Boolean(localWorkspaceRunId);
 
   // Expand and scroll into view when task becomes selected
   useEffect(() => {
@@ -755,48 +792,54 @@ function TaskTreeInner({
       <div className="select-none flex flex-col">
         <ContextMenu.Root>
           <ContextMenu.Trigger>
-            <Link
-              ref={taskLinkRef}
-              to="/$teamSlugOrId/task/$taskId"
-              params={{ teamSlugOrId, taskId: task._id }}
-              search={{ runId: undefined }}
-              activeOptions={{ exact: true }}
-              className="group block"
-              data-focus-visible={isTaskLinkFocusVisible ? "true" : undefined}
-              onMouseEnter={handlePrefetch}
-              onFocus={handleTaskLinkFocus}
-              onBlur={handleTaskLinkBlur}
-              onClick={(event) => {
-                if (
-                  event.defaultPrevented ||
-                  event.metaKey ||
-                  event.ctrlKey ||
-                  event.shiftKey ||
-                  event.altKey
-                ) {
-                  return;
-                }
-                if (isRenaming) {
-                  event.preventDefault();
-                  return;
-                }
-                handleToggle(event);
-              }}
-            >
-              <SidebarListItem
-                paddingLeft={taskListPaddingLeft}
-                toggle={{
-                  expanded: isExpanded,
-                  onToggle: handleToggle,
-                  visible: canExpand,
+            {shouldLinkTaskToVSCode ? (
+              <Link
+                {...taskLinkCommonProps}
+                to="/$teamSlugOrId/task/$taskId/run/$runId/vscode"
+                params={{
+                  teamSlugOrId,
+                  taskId: task._id,
+                  runId: localWorkspaceRunId!,
                 }}
-                title={taskTitleContent}
-                titleClassName={taskTitleClassName}
-                secondary={taskSecondary || undefined}
-                meta={taskMetaIcon || undefined}
-                className={clsx(isRenaming && "pr-2")}
-              />
-            </Link>
+                activeOptions={{ exact: true }}
+              >
+                <SidebarListItem
+                  paddingLeft={taskListPaddingLeft}
+                  toggle={{
+                    expanded: isExpanded,
+                    onToggle: handleToggle,
+                    visible: canExpand,
+                  }}
+                  title={taskTitleContent}
+                  titleClassName={taskTitleClassName}
+                  secondary={taskSecondary || undefined}
+                  meta={taskMetaIcon || undefined}
+                  className={clsx(isRenaming && "pr-2")}
+                />
+              </Link>
+            ) : (
+              <Link
+                {...taskLinkCommonProps}
+                to="/$teamSlugOrId/task/$taskId"
+                params={{ teamSlugOrId, taskId: task._id }}
+                search={{ runId: undefined }}
+                activeOptions={{ exact: true }}
+              >
+                <SidebarListItem
+                  paddingLeft={taskListPaddingLeft}
+                  toggle={{
+                    expanded: isExpanded,
+                    onToggle: handleToggle,
+                    visible: canExpand,
+                  }}
+                  title={taskTitleContent}
+                  titleClassName={taskTitleClassName}
+                  secondary={taskSecondary || undefined}
+                  meta={taskMetaIcon || undefined}
+                  className={clsx(isRenaming && "pr-2")}
+                />
+              </Link>
+            )}
           </ContextMenu.Trigger>
           {isRenaming && renameError ? (
             <div
@@ -1392,55 +1435,88 @@ function TaskRunTreeInner({
   const handleRunLinkBlur = useCallback(() => {
     setIsRunLinkFocusVisible(false);
   }, []);
+  const handleRunLinkClick = useCallback(
+    (event: MouseEvent<HTMLAnchorElement>) => {
+      if (
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey
+      ) {
+        return;
+      }
+      handleToggle();
+    },
+    [handleToggle]
+  );
+  const runLinkCommonProps = {
+    className: "group block",
+    ["data-focus-visible"]: isRunLinkFocusVisible ? "true" : undefined,
+    activeOptions: { exact: false },
+    onFocus: handleRunLinkFocus,
+    onBlur: handleRunLinkBlur,
+    onClick: handleRunLinkClick,
+  } as const;
+  const shouldLinkRunToVSCode = Boolean(isLocalWorkspaceRunEntry);
 
   return (
     <div className={clsx({ hidden: run.isArchived })}>
       <ContextMenu.Root>
         <ContextMenu.Trigger>
-          <Link
-            to="/$teamSlugOrId/task/$taskId"
-            params={{
-              teamSlugOrId,
-              taskId,
-            }}
-            search={(prev) => ({
-              ...(prev ?? {}),
-              runId: run._id,
-            })}
-            className="group block"
-            data-focus-visible={isRunLinkFocusVisible ? "true" : undefined}
-            activeOptions={{ exact: false }}
-            onFocus={handleRunLinkFocus}
-            onBlur={handleRunLinkBlur}
-            onClick={(event) => {
-              if (
-                event.defaultPrevented ||
-                event.button !== 0 ||
-                event.metaKey ||
-                event.ctrlKey ||
-                event.shiftKey ||
-                event.altKey
-              ) {
-                return;
-              }
-
-              handleToggle();
-            }}
-          >
-            <SidebarListItem
-              containerClassName={clsx("mt-px", { active: isRunSelected })}
-              paddingLeft={10 + level * 16}
-              toggle={{
-                expanded: isExpanded,
-                onToggle: handleToggle,
-                visible: hasCollapsibleContent,
+          {shouldLinkRunToVSCode ? (
+            <Link
+              {...runLinkCommonProps}
+              to="/$teamSlugOrId/task/$taskId/run/$runId/vscode"
+              params={{
+                teamSlugOrId,
+                taskId,
+                runId: run._id,
               }}
-              title={baseDisplayText}
-              titleClassName="text-[13px] text-neutral-700 dark:text-neutral-300"
-              titleSuffix={runNumberSuffix ?? undefined}
-              meta={leadingContent}
-            />
-          </Link>
+            >
+              <SidebarListItem
+                containerClassName={clsx("mt-px", { active: isRunSelected })}
+                paddingLeft={10 + level * 16}
+                toggle={{
+                  expanded: isExpanded,
+                  onToggle: handleToggle,
+                  visible: hasCollapsibleContent,
+                }}
+                title={baseDisplayText}
+                titleClassName="text-[13px] text-neutral-700 dark:text-neutral-300"
+                titleSuffix={runNumberSuffix ?? undefined}
+                meta={leadingContent}
+              />
+            </Link>
+          ) : (
+            <Link
+              {...runLinkCommonProps}
+              to="/$teamSlugOrId/task/$taskId"
+              params={{
+                teamSlugOrId,
+                taskId,
+              }}
+              search={(prev) => ({
+                ...(prev ?? {}),
+                runId: run._id,
+              })}
+            >
+              <SidebarListItem
+                containerClassName={clsx("mt-px", { active: isRunSelected })}
+                paddingLeft={10 + level * 16}
+                toggle={{
+                  expanded: isExpanded,
+                  onToggle: handleToggle,
+                  visible: hasCollapsibleContent,
+                }}
+                title={baseDisplayText}
+                titleClassName="text-[13px] text-neutral-700 dark:text-neutral-300"
+                titleSuffix={runNumberSuffix ?? undefined}
+                meta={leadingContent}
+              />
+            </Link>
+          )}
         </ContextMenu.Trigger>
         <ContextMenu.Portal>
           <ContextMenu.Positioner className="outline-none z-[var(--z-context-menu)]">
