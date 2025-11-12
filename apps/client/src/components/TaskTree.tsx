@@ -750,6 +750,10 @@ function TaskTreeInner({
     taskLeadingIcon
   );
 
+  // For local workspaces, get the first run to link directly to VSCode
+  const firstRun = taskRuns?.[0];
+  const shouldLinkToVSCode = isLocalWorkspace && firstRun;
+
   return (
     <TaskRunExpansionContext.Provider value={expansionContextValue}>
       <div className="select-none flex flex-col">
@@ -757,9 +761,17 @@ function TaskTreeInner({
           <ContextMenu.Trigger>
             <Link
               ref={taskLinkRef}
-              to="/$teamSlugOrId/task/$taskId"
-              params={{ teamSlugOrId, taskId: task._id }}
-              search={{ runId: undefined }}
+              to={
+                shouldLinkToVSCode
+                  ? "/$teamSlugOrId/task/$taskId/run/$runId"
+                  : "/$teamSlugOrId/task/$taskId"
+              }
+              params={
+                shouldLinkToVSCode
+                  ? { teamSlugOrId, taskId: task._id, runId: firstRun._id }
+                  : { teamSlugOrId, taskId: task._id }
+              }
+              search={shouldLinkToVSCode ? undefined : { runId: undefined }}
               activeOptions={{ exact: true }}
               className="group block"
               data-focus-visible={isTaskLinkFocusVisible ? "true" : undefined}
