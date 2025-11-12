@@ -190,7 +190,15 @@ devServerRouter.openapi(startDevServerRoute, async (c) => {
 
     const vscodeUrl = `${vscodeService.url}/?folder=/root/workspace`;
     console.log(`VSCode URL: ${vscodeUrl}`);
-    const vncUrl = `${vncService.url}/vnc.html`;
+
+    const vncUrl = new URL("/vnc.html", vncService.url);
+    const vncSearchParams = new URLSearchParams();
+    vncSearchParams.set("autoconnect", "1");
+    vncSearchParams.set("resize", "scale");
+    vncSearchParams.set("reconnect", "1");
+    vncSearchParams.set("reconnect_delay", "1000");
+    vncUrl.search = `?${vncSearchParams.toString()}`;
+    const vncUrlString = vncUrl.toString();
 
     // Connect to the worker management namespace
     const clientSocket: Socket<WorkerToServerEvents, ServerToWorkerEvents> =
@@ -274,7 +282,7 @@ devServerRouter.openapi(startDevServerRoute, async (c) => {
         instanceId: instance.id,
         vscodeUrl,
         workerUrl: workerService.url,
-        vncUrl,
+        vncUrl: vncUrlString,
         cdpUrl: `${cdpService.url}/json/version`,
         status: "running",
         taskId: body.taskId,

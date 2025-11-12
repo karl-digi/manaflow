@@ -134,6 +134,8 @@ export function toMorphVncUrl(sourceUrl: string): string | null {
   const searchParams = new URLSearchParams();
   searchParams.set("autoconnect", "1");
   searchParams.set("resize", "scale");
+  searchParams.set("reconnect", "1");
+  searchParams.set("reconnect_delay", "1000");
   vncUrl.search = `?${searchParams.toString()}`;
   vncUrl.hash = "";
 
