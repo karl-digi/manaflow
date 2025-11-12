@@ -21,6 +21,8 @@ export const env = createEnv({
           return s;
         }
         const vercelUrl = import.meta.env.VITE_VERCEL_URL;
+        console.log("vercelUrl", vercelUrl);
+        console.log("all import.meta.env", import.meta.env);
         if (!vercelUrl) {
           return undefined;
         }
