@@ -47,7 +47,7 @@ import { env } from "./electron-main-env";
 import {
   getProxyCredentialsForWebContents,
   startPreviewProxy,
-} from "./task-run-preview-proxy";
+} from "./task-run-preview-proxy-rust";
 import { normalizeBrowserUrl } from "@cmux/shared";
 
 // Use a cookieable HTTPS origin intercepted locally instead of a custom scheme.
