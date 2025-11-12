@@ -3,8 +3,30 @@ import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
+export interface PreviewProxyStartOptions {
+  startPort?: number;
+  maxAttempts?: number;
+}
+
+export interface PreviewProxyRegisterOptions {
+  webContentsId: number;
+  initialUrl: string;
+  persistKey?: string | null;
+}
+
+export interface PreviewProxyCredentials {
+  username: string;
+  password: string;
+}
+
 export interface NativeCoreModule {
   getTime?: () => Promise<string>;
+  previewProxyStart?: (options?: PreviewProxyStartOptions) => Promise<number>;
+  previewProxySetLoggingEnabled?: (enabled: boolean) => void;
+  previewProxyRegisterContext?: (
+    options: PreviewProxyRegisterOptions,
+  ) => PreviewProxyCredentials | null;
+  previewProxyReleaseContext?: (webContentsId: number) => boolean;
 }
 
 function tryLoadNative(): NativeCoreModule | null {
@@ -63,6 +85,10 @@ let cached: NativeCoreModule | null = null;
 function loadNative(): NativeCoreModule | null {
   if (!cached) cached = tryLoadNative();
   return cached;
+}
+
+export function loadNativeCoreModule(): NativeCoreModule | null {
+  return loadNative();
 }
 
 export async function getRustTime(): Promise<string> {

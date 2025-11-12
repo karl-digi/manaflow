@@ -21,7 +21,7 @@ import {
   configurePreviewProxyForView,
   getPreviewPartitionForPersistKey,
   isTaskRunPreviewPersistKey,
-} from "./task-run-preview-proxy";
+} from "./native-preview-proxy";
 import { normalizeBrowserUrl } from "@cmux/shared";
 
 interface RegisterOptions {

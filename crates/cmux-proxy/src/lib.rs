@@ -9,6 +9,7 @@ use hyper::{
     body::Body,
     client::Client,
     http::{HeaderMap, HeaderValue, Method, Request, Response, StatusCode, Uri},
+    Version,
 };
 use std::sync::Arc;
 use tokio::io::{copy_bidirectional, AsyncWriteExt};
@@ -48,7 +49,7 @@ where
     });
 
     let builder = hyper::Server::bind(&listen)
-        .http1_only(true)
+        .http2_adaptive_window(true)
         .serve(make_svc);
     let listen_addr = builder.local_addr();
     let server = builder.with_graceful_shutdown(shutdown);
@@ -114,7 +115,7 @@ where
         });
 
         let builder = hyper::Server::bind(&listen_addr)
-            .http1_only(true)
+            .http2_adaptive_window(true)
             .serve(make_svc);
         let local = builder.local_addr();
         bound_addrs.push(local);
@@ -404,7 +405,6 @@ async fn handle_http(
     let mut new_req = Request::builder()
         .method(req.method())
         .uri(uri)
-        .version(req.version())
         .body(body)
         .map_err(|_| {
             response_with(
@@ -412,6 +412,7 @@ async fn handle_http(
                 "failed to build request".into(),
             )
         })?;
+    *new_req.version_mut() = Version::HTTP_11;
 
     // Copy headers
     for (name, value) in req.headers().iter() {
@@ -486,7 +487,6 @@ async fn handle_upgrade(
     let mut proxied_req = Request::builder()
         .method(req.method())
         .uri(upstream_uri)
-        .version(req.version())
         .body(body)
         .map_err(|_| {
             response_with(
@@ -494,6 +494,7 @@ async fn handle_upgrade(
                 "failed to build upgrade request".into(),
             )
         })?;
+    *proxied_req.version_mut() = Version::HTTP_11;
 
     // Copy headers (keep upgrade headers)
     for (name, value) in req.headers().iter() {

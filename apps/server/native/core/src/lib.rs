@@ -6,6 +6,7 @@ mod repo;
 mod diff;
 mod merge_base;
 mod branches;
+mod preview_proxy;
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;

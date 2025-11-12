@@ -1,4 +1,5 @@
 use std::convert::Infallible;
+use std::future::Future;
 use std::io::ErrorKind;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
@@ -8,11 +9,23 @@ use futures_util::{SinkExt, StreamExt};
 use hyper::body::to_bytes;
 use hyper::client::HttpConnector;
 use hyper::service::{make_service_fn, service_fn};
-use hyper::{Body, Client, Request, Response, Server, StatusCode};
+use hyper::{Body, Client, Method, Request, Response, Server, StatusCode};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot;
 use tokio::time::timeout;
+
+#[derive(Clone)]
+struct TokioExec;
+
+impl<F> hyper::rt::Executor<F> for TokioExec
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    fn execute(&self, fut: F) {
+        tokio::spawn(fut);
+    }
+}
 
 async fn start_upstream_real_ws_echo() -> (SocketAddr, tokio::task::JoinHandle<()>) {
     use tokio_tungstenite::accept_async;
@@ -191,6 +204,7 @@ async fn start_upstream_tcp_echo() -> (SocketAddr, tokio::task::JoinHandle<()>) 
                             break;
                         }
                     }
+
                     Err(e) => {
                         if e.kind() != ErrorKind::WouldBlock {
                             break;
@@ -218,6 +232,45 @@ async fn start_proxy(
         let _ = rx.await;
     });
     (bound, tx, handle)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_http2_proxy_support() {
+    let upstream_addr = start_upstream_http().await;
+    let upstream_host = upstream_addr.ip().to_string();
+    let (proxy_addr, shutdown, handle) = start_proxy(
+        SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+        &upstream_host,
+        true,
+    )
+    .await;
+
+    let stream = TcpStream::connect(proxy_addr).await.unwrap();
+    let (mut sender, connection) = hyper::client::conn::http2::Builder::new(TokioExec)
+        .handshake(stream)
+        .await
+        .unwrap();
+    let conn_task = tokio::spawn(async move {
+        let _ = connection.await;
+    });
+
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("http://workspace-http2.internal/test")
+        .header("host", "workspace-http2.internal")
+        .header("x-cmux-port-internal", upstream_addr.port().to_string())
+        .body(Body::empty())
+        .unwrap();
+
+    let resp = sender.send_request(req).await.unwrap();
+    let status = resp.status();
+    let body = to_bytes(resp.into_body()).await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body.as_ref(), b"ok:GET:/test");
+
+    shutdown.send(()).ok();
+    let _ = handle.await;
+    let _ = conn_task.await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
