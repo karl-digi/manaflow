@@ -27,7 +27,9 @@ export const env = createEnv({
     NEXT_PUBLIC_WWW_ORIGIN:
       import.meta.env.NEXT_PUBLIC_WWW_ORIGIN ||
       (import.meta.env.VITE_VERCEL_URL
-        ? `https://${import.meta.env.VITE_VERCEL_URL}`
+        ? import.meta.env.VITE_VERCEL_URL.startsWith("http")
+          ? import.meta.env.VITE_VERCEL_URL
+          : `https://${import.meta.env.VITE_VERCEL_URL}`
         : undefined),
   },
 
