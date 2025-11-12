@@ -416,6 +416,12 @@ export const ProviderStatusResponseSchema = z.object({
   error: z.string().optional(),
 });
 
+// Update auth event (for refreshing tokens mid-connection)
+export const UpdateAuthSchema = z.object({
+  auth: z.string(),
+  auth_json: z.string().optional(),
+});
+
 // Default repo event
 export const DefaultRepoSchema = z.object({
   repoFullName: z.string(),
@@ -484,6 +490,7 @@ export type GitHubFetchRepos = z.infer<typeof GitHubFetchReposSchema>;
 export type ProviderStatusResponse = z.infer<
   typeof ProviderStatusResponseSchema
 >;
+export type UpdateAuth = z.infer<typeof UpdateAuthSchema>;
 export type DefaultRepo = z.infer<typeof DefaultRepoSchema>;
 
 // Socket.io event map types
@@ -589,6 +596,10 @@ export interface ClientToServerEvents {
       vscodeUrl?: string;
       error?: string;
     }) => void
+  ) => void;
+  "update-auth": (
+    data: UpdateAuth,
+    callback: (response: { success: boolean; error?: string }) => void
   ) => void;
 }
 

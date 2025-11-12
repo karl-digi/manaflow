@@ -46,6 +46,7 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({
     return seg;
   }, [location.pathname]);
 
+  // Effect to create and manage socket connection
   useEffect(() => {
     if (!authToken) {
       console.warn("[Socket] No auth token yet; delaying connect");
@@ -113,7 +114,40 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({
       setGlobalSocket(null);
       socketBoot.reset();
     };
-  }, [url, authToken, teamSlugOrId]);
+  }, [url, teamSlugOrId]); // Removed authToken from dependencies
+
+  // Separate effect to send updated auth tokens to server without reconnecting
+  useEffect(() => {
+    if (!socket || !authToken || !isConnected) {
+      return;
+    }
+
+    (async () => {
+      try {
+        // Fetch fresh auth JSON
+        const user = await cachedGetUser(stackClientApp);
+        const authJson = user ? await user.getAuthJson() : undefined;
+
+        // Send updated auth to server
+        socket.emit(
+          "update-auth",
+          {
+            auth: authToken,
+            auth_json: authJson ? JSON.stringify(authJson) : undefined,
+          },
+          (response) => {
+            if (response.success) {
+              console.log("[Socket] Auth token updated successfully");
+            } else {
+              console.error("[Socket] Failed to update auth token:", response.error);
+            }
+          }
+        );
+      } catch (error) {
+        console.error("[Socket] Error updating auth token:", error);
+      }
+    })();
+  }, [socket, authToken, isConnected]);
 
   const contextValue: SocketContextType = useMemo(
     () => ({
