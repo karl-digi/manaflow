@@ -14,7 +14,11 @@ export const ElectronSocketProvider: React.FC<React.PropsWithChildren> = ({
   children,
 }) => {
   const authJsonQuery = useQuery(authJsonQueryOptions());
-  const authToken = authJsonQuery.data?.accessToken;
+  const authJsonData = authJsonQuery.data;
+  const authToken =
+    authJsonData?.refreshedAccessToken ??
+    authJsonData?.accessToken ??
+    undefined;
   const location = useLocation();
   const [socket, setSocket] = React.useState<
     SocketContextType["socket"] | null
@@ -75,8 +79,12 @@ export const ElectronSocketProvider: React.FC<React.PropsWithChildren> = ({
         setAvailableEditors(editors as SocketContextType["availableEditors"]);
       });
 
-      // Connect the socket
-      createdSocket.connect();
+      try {
+        await createdSocket.connect();
+      } catch (error) {
+        console.error("[ElectronSocket] Failed to connect via IPC:", error);
+        return;
+      }
 
       if (!disposed) {
         // Cast to Socket type to satisfy type requirement
@@ -84,6 +92,8 @@ export const ElectronSocketProvider: React.FC<React.PropsWithChildren> = ({
         setGlobalSocket(createdSocket as unknown as MainServerSocket);
         // Signal that the provider has created the socket instance
         socketBoot.resolve();
+      } else {
+        createdSocket.disconnect();
       }
     })();
 
@@ -100,6 +110,20 @@ export const ElectronSocketProvider: React.FC<React.PropsWithChildren> = ({
       socketBoot.reset();
     };
   }, [authToken, teamSlugOrId]);
+
+  useEffect(() => {
+    if (!socket || !authToken) {
+      return;
+    }
+    const authJsonString =
+      authJsonData !== null && authJsonData !== undefined
+        ? JSON.stringify(authJsonData)
+        : undefined;
+    socket.emit("update-auth", {
+      authToken,
+      authJson: authJsonString,
+    });
+  }, [socket, authToken, authJsonData]);
 
   const contextValue = useMemo<SocketContextType>(
     () => ({

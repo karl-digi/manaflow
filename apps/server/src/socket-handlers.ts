@@ -22,6 +22,7 @@ import {
   isLoopbackHostname,
   LOCAL_VSCODE_PLACEHOLDER_ORIGIN,
   type IframePreflightResult,
+  UpdateAuthSchema,
 } from "@cmux/shared";
 import {
   type PullRequestActionResult,
@@ -198,29 +199,47 @@ export function setupSocketHandlers(
   rt.onConnection((socket) => {
     // Ensure every packet runs within the auth context associated with this socket
     const q = socket.handshake.query?.auth;
-    const token = Array.isArray(q)
+    let currentAuthToken = Array.isArray(q)
       ? q[0]
       : typeof q === "string"
         ? q
         : undefined;
     const qJson = socket.handshake.query?.auth_json;
-    const tokenJson = Array.isArray(qJson)
+    let currentAuthJson = Array.isArray(qJson)
       ? qJson[0]
       : typeof qJson === "string"
         ? qJson
         : undefined;
 
     // authenticate the token
-    if (!token) {
+    if (!currentAuthToken) {
       // disconnect the socket
       socket.disconnect();
       return;
     }
 
     socket.use((_, next) => {
-      runWithAuth(token, tokenJson, () => next());
+      runWithAuth(currentAuthToken, currentAuthJson, () => next());
     });
     serverLogger.info("Client connected:", socket.id);
+
+    socket.on("update-auth", (rawData) => {
+      try {
+        const parsed = UpdateAuthSchema.parse(rawData ?? {});
+        currentAuthToken = parsed.authToken;
+        if (parsed.authJson !== undefined) {
+          currentAuthJson = parsed.authJson;
+        }
+        serverLogger.debug("Updated auth context for socket", {
+          socketId: socket.id,
+        });
+      } catch (error) {
+        serverLogger.warn("Failed to parse auth update payload", {
+          socketId: socket.id,
+          error,
+        });
+      }
+    });
 
     // Rust N-API test endpoint
     socket.on("rust-get-time", async (callback) => {

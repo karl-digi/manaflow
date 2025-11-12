@@ -7,6 +7,11 @@ import type {
 } from "./pull-request-state";
 import type { IframePreflightResult } from "./iframe-preflight";
 
+export const UpdateAuthSchema = z.object({
+  authToken: z.string().min(1),
+  authJson: z.string().optional(),
+});
+
 // Client to Server Events
 export const CreateTerminalSchema = z.object({
   id: z.string().optional(),
@@ -485,9 +490,11 @@ export type ProviderStatusResponse = z.infer<
   typeof ProviderStatusResponseSchema
 >;
 export type DefaultRepo = z.infer<typeof DefaultRepoSchema>;
+export type UpdateAuth = z.infer<typeof UpdateAuthSchema>;
 
 // Socket.io event map types
 export interface ClientToServerEvents {
+  "update-auth": (data: UpdateAuth) => void;
   // Terminal operations
   "start-task": (
     data: StartTask,

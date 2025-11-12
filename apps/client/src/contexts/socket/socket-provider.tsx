@@ -29,7 +29,11 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({
   url = env.NEXT_PUBLIC_SERVER_ORIGIN || "http://localhost:9776",
 }) => {
   const authJsonQuery = useQuery(authJsonQueryOptions());
-  const authToken = authJsonQuery.data?.accessToken;
+  const authJsonData = authJsonQuery.data;
+  const authToken =
+    authJsonData?.refreshedAccessToken ??
+    authJsonData?.accessToken ??
+    undefined;
   const location = useLocation();
   const [socket, setSocket] = React.useState<
     SocketContextType["socket"] | null
@@ -57,14 +61,6 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({
       // Fetch full auth JSON for server to forward as x-stack-auth
       const user = await cachedGetUser(stackClientApp);
       const authJson = user ? await user.getAuthJson() : undefined;
-
-      const query: Record<string, string> = { auth: authToken };
-      if (teamSlugOrId) {
-        query.team = teamSlugOrId;
-      }
-      if (authJson) {
-        query.auth_json = JSON.stringify(authJson);
-      }
 
       const newSocket = connectToMainServer({
         url,
@@ -114,6 +110,20 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({
       socketBoot.reset();
     };
   }, [url, authToken, teamSlugOrId]);
+
+  useEffect(() => {
+    if (!socket || !authToken) {
+      return;
+    }
+    const authJsonString =
+      authJsonData !== null && authJsonData !== undefined
+        ? JSON.stringify(authJsonData)
+        : undefined;
+    socket.emit("update-auth", {
+      authToken,
+      authJson: authJsonString,
+    });
+  }, [socket, authToken, authJsonData]);
 
   const contextValue: SocketContextType = useMemo(
     () => ({
