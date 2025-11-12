@@ -21,7 +21,7 @@ import {
 } from "@cmux/shared/pull-request-state";
 import { Link, useLocation, type LinkProps } from "@tanstack/react-router";
 import clsx from "clsx";
-import { useMutation, useQuery as useConvexQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
 import {
   AlertTriangle,
@@ -123,7 +123,7 @@ function SidebarArchiveOverlay({
           <button
             type="button"
             aria-label={label}
-            className="peer absolute inset-0 flex items-center justify-center rounded-sm text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-50 opacity-0 pointer-events-none focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover:opacity-100 group-hover:pointer-events-auto group-data-[focus-visible=true]:opacity-100 group-data-[focus-visible=true]:pointer-events-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-400 dark:focus-visible:outline-neutral-500"
+            className="peer absolute inset-0 flex items-center justify-center rounded-sm text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-50 opacity-0 pointer-events-none focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover:opacity-100 group-hover:pointer-events-auto group-data-[focus-visible=true]:opacity-100 group-data-[focus-visible=true]:pointer-events-auto focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-400 dark:focus-visible:outline-neutral-500"
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
@@ -340,7 +340,7 @@ function TaskTreeInner({
   );
   const isOptimisticTask = isFakeConvexId(task._id);
   const canRenameTask = !isOptimisticTask;
-  const taskRuns = useConvexQuery(
+  const taskRuns = useQuery(
     api.taskRuns.getByTask,
     isOptimisticTask
       ? "skip"
@@ -365,6 +365,7 @@ function TaskTreeInner({
     [flattenedRuns]
   );
   const prefetched = useRef(false);
+  const taskLinkRef = useRef<HTMLAnchorElement | null>(null);
   const prefetchTaskRuns = useCallback(() => {
     if (prefetched.current || isOptimisticTask) {
       return;
@@ -450,6 +451,26 @@ function TaskTreeInner({
   const handlePrefetch = useCallback(() => {
     prefetchTaskRuns();
   }, [prefetchTaskRuns]);
+
+  // Expand and scroll into view when task becomes selected
+  useEffect(() => {
+    if (!isTaskSelected) {
+      return;
+    }
+
+    // Expand the task if not already expanded
+    setIsExpanded(true);
+
+    // Scroll into view
+    const linkElement = taskLinkRef.current;
+    if (linkElement) {
+      linkElement.scrollIntoView({
+        block: "center",
+        inline: "nearest",
+        behavior: "instant",
+      });
+    }
+  }, [isTaskSelected]);
   const [isTaskLinkFocusVisible, setIsTaskLinkFocusVisible] = useState(false);
   const handleTaskLinkFocus = useCallback(
     (event: FocusEvent<HTMLAnchorElement>) => {
@@ -670,6 +691,7 @@ function TaskTreeInner({
         <ContextMenu.Root>
           <ContextMenu.Trigger>
             <Link
+              ref={taskLinkRef}
               to="/$teamSlugOrId/task/$taskId"
               params={{ teamSlugOrId, taskId: task._id }}
               search={{ runId: undefined }}
@@ -702,14 +724,14 @@ function TaskTreeInner({
                   expanded: isExpanded,
                   onToggle: handleToggle,
                   visible: canExpand,
-              }}
-              title={taskTitleContent}
-              titleClassName={taskTitleClassName}
-              secondary={taskSecondary || undefined}
-              meta={taskMetaIcon || undefined}
-              className={clsx(isRenaming && "pr-2")}
-            />
-          </Link>
+                }}
+                title={taskTitleContent}
+                titleClassName={taskTitleClassName}
+                secondary={taskSecondary || undefined}
+                meta={taskMetaIcon || undefined}
+                className={clsx(isRenaming && "pr-2")}
+              />
+            </Link>
           </ContextMenu.Trigger>
           {isRenaming && renameError ? (
             <div
@@ -1536,9 +1558,7 @@ function TaskRunDetails({
         className="max-w-sm p-3 z-[var(--z-global-blocking)]"
       >
         <div className="space-y-1.5">
-          <p className="font-medium text-sm text-neutral-200">
-            Scripts error
-          </p>
+          <p className="font-medium text-sm text-neutral-200">Scripts error</p>
           {environmentError?.maintenanceError && (
             <p className="text-xs text-neutral-400">
               Maintenance: {environmentError.maintenanceError}

@@ -3,20 +3,20 @@ import { TitleBar } from "@/components/TitleBar";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { useEnvironmentDraft } from "@/state/environment-draft-store";
 import { api } from "@cmux/convex/api";
-import { convexQuery } from "@convex-dev/react-query";
-import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useQuery } from "convex/react";
 import { formatDistanceToNow } from "date-fns";
 import { Calendar, Eye, GitBranch, Play, Plus, Server } from "lucide-react";
 import { useEffect } from "react";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/environments/")({
   loader: async ({ params }) => {
-    await convexQueryClient.queryClient.ensureQueryData(
-      convexQuery(api.environments.list, {
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.environments.list,
+      args: {
         teamSlugOrId: params.teamSlugOrId,
-      })
-    );
+      },
+    });
   },
   component: EnvironmentsListPage,
 });
@@ -26,11 +26,9 @@ function EnvironmentsListPage() {
   const navigate = useNavigate({ from: Route.fullPath });
   const draft = useEnvironmentDraft(teamSlugOrId);
 
-  const { data: environments } = useSuspenseQuery(
-    convexQuery(api.environments.list, {
-      teamSlugOrId,
-    })
-  );
+  const environments = useQuery(api.environments.list, {
+    teamSlugOrId,
+  });
 
   useEffect(() => {
     if (!draft || draft.step !== "configure" || !draft.instanceId) {

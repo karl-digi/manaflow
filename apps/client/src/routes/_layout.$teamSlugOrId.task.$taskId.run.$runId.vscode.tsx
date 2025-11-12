@@ -1,8 +1,8 @@
 import { api } from "@cmux/convex/api";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { convexQuery } from "@convex-dev/react-query";
-import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
+import { useQuery } from "convex/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import z from "zod";
 import type { PersistentIframeStatus } from "@/components/persistent-iframe";
@@ -76,25 +76,23 @@ export const Route = createFileRoute(
 function VSCodeComponent() {
   const { runId: taskRunId, teamSlugOrId } = Route.useParams();
   const localServeWeb = useLocalVSCodeServeWebQuery();
-  const taskRun = useSuspenseQuery(
-    convexQuery(api.taskRuns.get, {
-      teamSlugOrId,
-      id: taskRunId,
-    })
-  );
+  const taskRun = useQuery(api.taskRuns.get, {
+    teamSlugOrId,
+    id: taskRunId,
+  });
 
-  const workspaceUrl = taskRun?.data?.vscode?.workspaceUrl
+  const workspaceUrl = taskRun?.vscode?.workspaceUrl
     ? toProxyWorkspaceUrl(
-        taskRun.data.vscode.workspaceUrl,
+        taskRun.vscode.workspaceUrl,
         localServeWeb.data?.baseUrl
       )
     : null;
-  const disablePreflight = taskRun?.data?.vscode?.workspaceUrl
-    ? shouldUseServerIframePreflight(taskRun.data.vscode.workspaceUrl)
+  const disablePreflight = taskRun?.vscode?.workspaceUrl
+    ? shouldUseServerIframePreflight(taskRun.vscode.workspaceUrl)
     : false;
   const persistKey = getTaskRunPersistKey(taskRunId);
   const hasWorkspace = workspaceUrl !== null;
-  const isLocalWorkspace = taskRun?.data?.vscode?.provider === "other";
+  const isLocalWorkspace = taskRun?.vscode?.provider === "other";
 
   const [iframeStatus, setIframeStatus] =
     useState<PersistentIframeStatus>("loading");

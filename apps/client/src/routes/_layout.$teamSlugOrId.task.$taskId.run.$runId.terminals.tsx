@@ -1,13 +1,9 @@
 import { api } from "@cmux/convex/api";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { convexQuery } from "@convex-dev/react-query";
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-  useSuspenseQuery,
-} from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
+import { useQuery as useConvexQuery } from "convex/react";
 import clsx from "clsx";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Plus, X } from "lucide-react";
@@ -163,14 +159,12 @@ function getTabRemovalOutcome(
 
 function TaskRunTerminals() {
   const { runId: taskRunId, teamSlugOrId } = Route.useParams();
-  const taskRun = useSuspenseQuery(
-    convexQuery(api.taskRuns.get, {
-      teamSlugOrId,
-      id: taskRunId,
-    })
-  );
+  const taskRun = useConvexQuery(api.taskRuns.get, {
+    teamSlugOrId,
+    id: taskRunId,
+  });
 
-  const vscodeInfo = taskRun?.data?.vscode;
+  const vscodeInfo = taskRun?.vscode;
   const rawMorphUrl = vscodeInfo?.url ?? vscodeInfo?.workspaceUrl ?? null;
   const isMorphProvider = vscodeInfo?.provider === "morph";
 
@@ -319,7 +313,10 @@ function TaskRunTerminals() {
 
   const closeTerminalTab = useCallback(
     (tabId: TerminalTabId) => {
-      if ((isDeletingTerminal && deletingTerminalId === tabId) || !hasTerminalBackend) {
+      if (
+        (isDeletingTerminal && deletingTerminalId === tabId) ||
+        !hasTerminalBackend
+      ) {
         return;
       }
       deleteTerminalMutation.mutate(tabId);

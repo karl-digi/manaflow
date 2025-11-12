@@ -12,7 +12,7 @@ import { api } from "@cmux/convex/api";
 import type { Doc } from "@cmux/convex/dataModel";
 import type { RunEnvironmentSummary } from "@/types/task";
 import { useClipboard } from "@mantine/hooks";
-import { useNavigate } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import clsx from "clsx";
 import { useQuery as useConvexQuery, useMutation } from "convex/react";
 // Read team slug from path to avoid route type coupling
@@ -38,7 +38,6 @@ export const TaskItem = memo(function TaskItem({
   task,
   teamSlugOrId,
 }: TaskItemProps) {
-  const navigate = useNavigate();
   const clipboard = useClipboard({ timeout: 2000 });
   const { archiveWithUndo, unarchive } = useArchiveTask(teamSlugOrId);
   const isOptimisticUpdate = task._id.includes("-") && task._id.length === 36;
@@ -122,17 +121,23 @@ export const TaskItem = memo(function TaskItem({
     return null;
   }, [hasActiveVSCode, runWithVSCode]);
 
-  const handleClick = useCallback(() => {
-    // Don't navigate if we're renaming
-    if (isRenaming) {
-      return;
-    }
-    navigate({
-      to: "/$teamSlugOrId/task/$taskId",
-      params: { teamSlugOrId, taskId: task._id },
-      search: { runId: undefined },
-    });
-  }, [navigate, task._id, teamSlugOrId, isRenaming]);
+  const handleLinkClick = useCallback(
+    (event: React.MouseEvent<HTMLAnchorElement>) => {
+      // Don't navigate if we're renaming or if modifier keys are pressed
+      if (
+        isRenaming ||
+        event.defaultPrevented ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey
+      ) {
+        event.preventDefault();
+        return;
+      }
+    },
+    [isRenaming]
+  );
 
   const handleCopy = useCallback(
     (e: React.MouseEvent) => {
@@ -188,16 +193,19 @@ export const TaskItem = memo(function TaskItem({
     <div className="relative group w-full">
       <ContextMenu.Root>
         <ContextMenu.Trigger>
-          <div
+          <Link
+            to="/$teamSlugOrId/task/$taskId"
+            params={{ teamSlugOrId, taskId: task._id }}
+            search={{ runId: undefined }}
+            onClick={handleLinkClick}
             className={clsx(
               "relative grid w-full items-center py-2 pr-3 cursor-default select-none group",
-              "grid-cols-[24px_36px_1fr_120px_58px]",
+              "grid-cols-[24px_36px_1fr_minmax(120px,auto)_58px]",
               isOptimisticUpdate
                 ? "bg-white/50 dark:bg-neutral-900/30 animate-pulse"
                 : "bg-white dark:bg-neutral-900/50 group-hover:bg-neutral-50/90 dark:group-hover:bg-neutral-600/60",
               isRenaming && "pr-2"
             )}
-            onClick={handleClick}
           >
             <div className="flex items-center justify-center pl-1 -mr-2 relative">
               <input
@@ -251,7 +259,7 @@ export const TaskItem = memo(function TaskItem({
                   autoComplete="off"
                   spellCheck={false}
                   className={clsx(
-                    "inline-flex w-full items-center bg-transparent text-[13px] font-medium text-neutral-900 caret-neutral-600 transition-colors duration-200",
+                    "inline-flex w-full items-center bg-transparent text-[13px] font-medium text-neutral-900 caret-neutral-600 transition-colors duration-200 pr-1",
                     "px-0 py-0 align-middle",
                     "placeholder:text-neutral-400 outline-none border-none focus-visible:outline-none focus-visible:ring-0 appearance-none",
                     "dark:text-neutral-100 dark:caret-neutral-200 dark:placeholder:text-neutral-500",
@@ -260,12 +268,12 @@ export const TaskItem = memo(function TaskItem({
                   )}
                 />
               ) : (
-                <span className="text-[13px] font-medium truncate min-w-0">
+                <span className="text-[13px] font-medium truncate min-w-0 pr-1">
                   {task.text}
                 </span>
               )}
             </div>
-            <div className="text-[11px] text-neutral-400 dark:text-neutral-500 flex-shrink-0 text-right flex items-center justify-end gap-2">
+            <div className="text-[11px] text-neutral-400 dark:text-neutral-500 min-w-0 text-right flex items-center justify-end gap-2">
               {task.environmentId && (
                 <EnvironmentName
                   environmentId={task.environmentId}
@@ -313,7 +321,7 @@ export const TaskItem = memo(function TaskItem({
                   );
                 })()}
             </div>
-          </div>
+          </Link>
         </ContextMenu.Trigger>
         {renameError && (
           <div className="mt-1 pl-[76px] pr-3 text-[11px] text-red-500 dark:text-red-400">
