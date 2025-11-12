@@ -1291,7 +1291,8 @@ export function setupSocketHandlers(
 
           const sandboxId = data.instanceId;
           const vscodeBaseUrl = data.vscodeUrl;
-          const workspaceUrl = `${vscodeBaseUrl}?folder=/root/workspace`;
+          const containerWorkspacePath = data.containerWorkspacePath || "/root/workspace";
+          const workspaceUrl = `${vscodeBaseUrl}?folder=${encodeURIComponent(containerWorkspacePath)}`;
 
           serverLogger.info(
             `[create-cloud-workspace] Sandbox started: ${sandboxId}, VSCode URL: ${workspaceUrl}`
@@ -1314,6 +1315,13 @@ export function setupSocketHandlers(
               workspaceUrl,
               startedAt: now,
             },
+          });
+
+          // Store container workspace path for "Open with" functionality
+          await convex.mutation(api.taskRuns.updateContainerWorkspacePath, {
+            teamSlugOrId,
+            id: taskRunId,
+            containerWorkspacePath,
           });
 
           await convex.mutation(api.taskRuns.updateStatusPublic, {

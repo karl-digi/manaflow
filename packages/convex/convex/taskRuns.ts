@@ -670,6 +670,26 @@ export const updateWorktreePath = authMutation({
   },
 });
 
+export const updateContainerWorkspacePath = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    id: v.id("taskRuns"),
+    containerWorkspacePath: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const doc = await ctx.db.get(args.id);
+    if (!doc || doc.teamId !== teamId || doc.userId !== userId) {
+      throw new Error("Task run not found or unauthorized");
+    }
+    await ctx.db.patch(args.id, {
+      containerWorkspacePath: args.containerWorkspacePath,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
 // Internal query to get a task run by ID
 export const getById = internalQuery({
   args: { id: v.id("taskRuns") },

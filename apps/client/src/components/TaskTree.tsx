@@ -1359,6 +1359,7 @@ function TaskRunTreeInner({
     worktreePath: run.worktreePath,
     branch: run.newBranch,
     networking: run.networking,
+    containerWorkspacePath: (run as any).containerWorkspacePath, // TODO: Add to type once schema is updated
   });
 
   const shouldRenderDiffLink = true;

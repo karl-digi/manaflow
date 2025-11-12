@@ -181,7 +181,8 @@ const convexSchema = defineSchema({
     isCloudWorkspace: v.optional(v.boolean()),
     // Optional log retained for backward compatibility; no longer written to.
     log: v.optional(v.string()), // CLI output log (deprecated)
-    worktreePath: v.optional(v.string()), // Path to the git worktree for this run
+    worktreePath: v.optional(v.string()), // Path to the git worktree for this run (local workspaces)
+    containerWorkspacePath: v.optional(v.string()), // Path inside container for cloud workspaces (e.g., /root/workspace or /root/workspace/repo-name)
     newBranch: v.optional(v.string()), // The generated branch name for this run
     createdAt: v.number(),
     updatedAt: v.number(),

@@ -57,6 +57,7 @@ const StartSandboxResponse = z
     vscodeUrl: z.string(),
     workerUrl: z.string(),
     provider: z.enum(["morph"]).default("morph"),
+    containerWorkspacePath: z.string().optional(), // Path inside container where repo/workspace is located
   })
   .openapi("StartSandboxResponse");
 
@@ -326,11 +327,13 @@ sandboxesRouter.openapi(
         };
       }
 
+      let containerWorkspacePath: string | undefined;
       try {
-        await hydrateWorkspace({
+        const hydrationResult = await hydrateWorkspace({
           instance,
           repo: repoConfig,
         });
+        containerWorkspacePath = hydrationResult.workspacePath;
       } catch (error) {
         console.error(`[sandboxes.start] Hydration failed:`, error);
         await instance.stop().catch(() => { });
@@ -363,6 +366,7 @@ sandboxesRouter.openapi(
         vscodeUrl: vscodeService.url,
         workerUrl: workerService.url,
         provider: "morph",
+        containerWorkspacePath,
       });
     } catch (error) {
       if (error instanceof HTTPException) {

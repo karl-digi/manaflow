@@ -29,7 +29,7 @@ export const hydrateWorkspace = async ({
 }: {
   instance: MorphInstance;
   repo?: HydrateRepoConfig;
-}): Promise<void> => {
+}): Promise<{ workspacePath: string }> => {
   const hydrateScript = getHydrateScript();
 
   // Create a temporary script file path
@@ -92,4 +92,16 @@ exit $EXIT_CODE
   if (hydrateRes.exit_code !== 0) {
     throw new Error(`Hydration failed with exit code ${hydrateRes.exit_code}`);
   }
+
+  // Extract workspace path from output
+  let workspacePath = MORPH_WORKSPACE_PATH; // Default
+  const workspacePathMatch = (hydrateRes.stdout || "").match(
+    /CMUX_WORKSPACE_PATH_RESULT=(.+)/
+  );
+  if (workspacePathMatch) {
+    workspacePath = workspacePathMatch[1].trim();
+    console.log(`[sandboxes.start] Hydration result workspace path: ${workspacePath}`);
+  }
+
+  return { workspacePath };
 };

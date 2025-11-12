@@ -19,6 +19,7 @@ export class CmuxVSCodeInstance extends VSCodeInstance {
   private workerUrl: string | null = null;
   private vscodeBaseUrl: string | null = null;
   private provider: VSCodeInstanceInfo["provider"] = "morph";
+  private containerWorkspacePath: string | null = null;
   private repoUrl?: string;
   private branch?: string;
   private newBranch?: string;
@@ -77,10 +78,14 @@ export class CmuxVSCodeInstance extends VSCodeInstance {
     this.vscodeBaseUrl = data.vscodeUrl;
     this.workerUrl = data.workerUrl;
     this.provider = data.provider || "morph";
+    this.containerWorkspacePath = data.containerWorkspacePath || null;
 
-    const workspaceUrl = this.getWorkspaceUrl(this.vscodeBaseUrl);
+    const workspaceUrl = this.getWorkspaceUrl(this.vscodeBaseUrl, this.containerWorkspacePath || undefined);
     dockerLogger.info(`[CmuxVSCodeInstance] VS Code URL: ${workspaceUrl}`);
     dockerLogger.info(`[CmuxVSCodeInstance] Worker URL: ${this.workerUrl}`);
+    if (this.containerWorkspacePath) {
+      dockerLogger.info(`[CmuxVSCodeInstance] Container workspace path: ${this.containerWorkspacePath}`);
+    }
 
     // Connect to the worker if available
     if (this.workerUrl) {
@@ -141,7 +146,7 @@ export class CmuxVSCodeInstance extends VSCodeInstance {
           running: true,
           info: {
             url: st.vscodeUrl,
-            workspaceUrl: this.getWorkspaceUrl(st.vscodeUrl),
+            workspaceUrl: this.getWorkspaceUrl(st.vscodeUrl, this.containerWorkspacePath || undefined),
             instanceId: this.instanceId,
             taskRunId: this.taskRunId,
             provider: st.provider || this.provider,

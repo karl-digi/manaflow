@@ -280,10 +280,16 @@ async function main() {
       log("Listing workspace contents:");
       const { stdout } = exec(`ls -la | head -50`, { cwd: config.workspacePath });
       console.log(stdout);
+
+      // Output the workspace path for the orchestrator to capture
+      console.log(`CMUX_WORKSPACE_PATH_RESULT=${config.workspacePath}`);
     } else {
-      // Handle multiple repos case
+      // Handle multiple repos case (environments with multiple repos)
       log("Hydrating multiple repositories");
       hydrateSubdirectories(config.workspacePath);
+
+      // For environments, the workspace is the base path
+      console.log(`CMUX_WORKSPACE_PATH_RESULT=${config.workspacePath}`);
     }
 
     log("Hydration completed successfully");

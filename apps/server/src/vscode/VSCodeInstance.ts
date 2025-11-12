@@ -229,8 +229,9 @@ export abstract class VSCodeInstance extends EventEmitter {
 
   abstract getName(): string;
 
-  protected getWorkspaceUrl(baseUrl: string): string {
-    return `${baseUrl}/?folder=/root/workspace`;
+  protected getWorkspaceUrl(baseUrl: string, containerWorkspacePath?: string): string {
+    const workspacePath = containerWorkspacePath || "/root/workspace";
+    return `${baseUrl}/?folder=${encodeURIComponent(workspacePath)}`;
   }
 
   protected async disconnectFromWorker(): Promise<void> {
