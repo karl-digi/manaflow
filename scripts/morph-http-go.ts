@@ -4,12 +4,10 @@ import process from "node:process";
 import {
   DEFAULT_MORPHCLOUD_BASE_URL,
   createMorphCloudClient,
+  listInstancesInstanceGet,
   type InstanceModel,
   type InstanceStatus,
-  type ListInstancesInstanceGetErrors,
-  type ListInstancesInstanceGetResponses,
 } from "@cmux/morphcloud-openapi-client";
-import type { Auth } from "@cmux/morphcloud-openapi-client/client";
 
 const MORPH_API_KEY = process.env.MORPH_API_KEY;
 const MORPH_API_BASE_URL =
@@ -28,15 +26,6 @@ const morphClient = createMorphCloudClient({
   baseUrl: MORPH_API_BASE_URL,
   auth: MORPH_API_KEY,
 });
-
-const bearerSecurity: ReadonlyArray<Auth> = [
-  {
-    in: "header",
-    name: "Authorization",
-    scheme: "bearer",
-    type: "http",
-  },
-];
 
 function formatRelativeTime(secondsSinceEpoch: number): string {
   const diffSeconds = Math.max(
@@ -144,12 +133,8 @@ async function main() {
     )}`
   );
 
-  const response = await morphClient.get<
-    ListInstancesInstanceGetResponses,
-    ListInstancesInstanceGetErrors
-  >({
-    url: "/instance",
-    security: bearerSecurity,
+  const response = await listInstancesInstanceGet({
+    client: morphClient,
   });
 
   if (!response.data) {

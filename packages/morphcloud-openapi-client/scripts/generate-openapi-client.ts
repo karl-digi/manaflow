@@ -51,7 +51,11 @@ try {
       path: outputPath,
       tsConfigPath,
     },
-    plugins: ['@hey-api/client-fetch', '@hey-api/typescript'],
+    plugins: [
+      '@hey-api/client-fetch',
+      '@hey-api/typescript',
+      '@hey-api/sdk',
+    ],
   })
   console.timeEnd('morphcloud:generate-client')
 } finally {
