@@ -7,6 +7,7 @@ import {
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { useArchiveTask } from "@/hooks/useArchiveTask";
 import { useOpenWithActions } from "@/hooks/useOpenWithActions";
+import { useSyncCloudWorkspace } from "@/hooks/useSyncCloudWorkspace";
 import { useTaskRename } from "@/hooks/useTaskRename";
 import { isElectron } from "@/lib/electron";
 import { isFakeConvexId } from "@/lib/fakeConvexId";
@@ -1348,6 +1349,15 @@ function TaskRunTreeInner({
     return run.networking.filter((service) => service.status === "running");
   }, [run.networking]);
 
+  // Cloud workspace sync
+  const { sync: syncCloudWorkspace } = useSyncCloudWorkspace(
+    run._id,
+    teamSlugOrId
+  );
+  const isCloudWorkspace = run.vscode?.provider === "morph";
+  const cloudWorkspaceRoot = "/root/workspace";
+  const selectedRepos = run.environment?.selectedRepos ?? null;
+
   const {
     actions: openWithActions,
     executeOpenAction,
@@ -1359,6 +1369,9 @@ function TaskRunTreeInner({
     worktreePath: run.worktreePath,
     branch: run.newBranch,
     networking: run.networking,
+    cloudWorkspaceRoot: isCloudWorkspace ? cloudWorkspaceRoot : null,
+    selectedRepos: isCloudWorkspace ? selectedRepos : null,
+    onSyncCloudWorkspace: isCloudWorkspace ? syncCloudWorkspace : null,
   });
 
   const shouldRenderDiffLink = true;

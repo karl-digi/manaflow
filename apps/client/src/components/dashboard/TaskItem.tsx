@@ -5,6 +5,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useArchiveTask } from "@/hooks/useArchiveTask";
+import { useSyncCloudWorkspace } from "@/hooks/useSyncCloudWorkspace";
 import { useTaskRename } from "@/hooks/useTaskRename";
 import { isFakeConvexId } from "@/lib/fakeConvexId";
 import { ContextMenu } from "@base-ui-components/react/context-menu";
@@ -168,6 +169,15 @@ export const TaskItem = memo(function TaskItem({
     }
     return null;
   }, [hasActiveVSCode, runWithVSCode]);
+
+  // Cloud workspace sync
+  const { sync: syncCloudWorkspace } = useSyncCloudWorkspace(
+    runWithVSCode?._id,
+    teamSlugOrId
+  );
+  const isCloudWorkspace = runWithVSCode?.vscode?.provider === "morph";
+  const cloudWorkspaceRoot = "/root/workspace";
+  const selectedRepos = runWithVSCode?.environment?.selectedRepos ?? null;
 
   const handleLinkClick = useCallback(
     (event: React.MouseEvent<HTMLAnchorElement>) => {
@@ -480,6 +490,9 @@ export const TaskItem = memo(function TaskItem({
             vscodeUrl={vscodeUrl}
             worktreePath={runWithVSCode?.worktreePath || task.worktreePath}
             branch={task.baseBranch}
+            cloudWorkspaceRoot={isCloudWorkspace ? cloudWorkspaceRoot : null}
+            selectedRepos={isCloudWorkspace ? selectedRepos : null}
+            onSyncCloudWorkspace={isCloudWorkspace ? syncCloudWorkspace : null}
             className="group-hover:opacity-100 aria-expanded:opacity-100 opacity-0 transition-opacity"
           />
 

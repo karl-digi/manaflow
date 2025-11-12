@@ -2,13 +2,16 @@ import { Dropdown } from "@/components/ui/dropdown";
 import { useOpenWithActions } from "@/hooks/useOpenWithActions";
 import { isElectron } from "@/lib/electron";
 import clsx from "clsx";
-import { EllipsisVertical, ExternalLink, GitBranch, Globe } from "lucide-react";
+import { EllipsisVertical, ExternalLink, GitBranch, Globe, RefreshCw } from "lucide-react";
 
 interface OpenWithDropdownProps {
   vscodeUrl?: string | null;
   worktreePath?: string | null;
   branch?: string | null;
   networking?: Parameters<typeof useOpenWithActions>[0]["networking"];
+  cloudWorkspaceRoot?: string | null;
+  selectedRepos?: string[] | null;
+  onSyncCloudWorkspace?: (() => Promise<void>) | null;
   className?: string;
   iconClassName?: string;
 }
@@ -18,6 +21,9 @@ export function OpenWithDropdown({
   worktreePath,
   branch,
   networking,
+  cloudWorkspaceRoot,
+  selectedRepos,
+  onSyncCloudWorkspace,
   className,
   iconClassName = "w-3.5 h-3.5",
 }: OpenWithDropdownProps) {
@@ -27,11 +33,15 @@ export function OpenWithDropdown({
     copyBranch,
     ports,
     executePortAction,
+    syncRepos,
   } = useOpenWithActions({
     vscodeUrl,
     worktreePath,
     branch,
     networking,
+    cloudWorkspaceRoot,
+    selectedRepos,
+    onSyncCloudWorkspace,
   });
 
   return (
@@ -72,16 +82,27 @@ export function OpenWithDropdown({
                 </Dropdown.Item>
               );
             })}
-            {copyBranch ? (
+            {copyBranch || syncRepos ? (
               <>
                 <div className="my-1 h-px bg-neutral-200 dark:bg-neutral-700" />
-                <Dropdown.Item
-                  onClick={copyBranch}
-                  className="flex items-center gap-2"
-                >
-                  <GitBranch className="w-3.5 h-3.5" />
-                  Copy branch
-                </Dropdown.Item>
+                {copyBranch ? (
+                  <Dropdown.Item
+                    onClick={copyBranch}
+                    className="flex items-center gap-2"
+                  >
+                    <GitBranch className="w-3.5 h-3.5" />
+                    Copy branch
+                  </Dropdown.Item>
+                ) : null}
+                {syncRepos ? (
+                  <Dropdown.Item
+                    onClick={syncRepos}
+                    className="flex items-center gap-2"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    Sync repos
+                  </Dropdown.Item>
+                ) : null}
               </>
             ) : null}
             {ports.length > 0 ? (

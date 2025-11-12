@@ -97,6 +97,16 @@ export const CreateCloudWorkspaceResponseSchema = z.object({
   error: z.string().optional(),
 });
 
+export const SyncCloudWorkspaceSchema = z.object({
+  taskRunId: typedZid("taskRuns"),
+  teamSlugOrId: z.string(),
+});
+
+export const SyncCloudWorkspaceResponseSchema = z.object({
+  success: z.boolean(),
+  error: z.string().optional(),
+});
+
 // Server to Client Events
 export const TerminalCreatedSchema = z.object({
   terminalId: z.string(),
@@ -500,6 +510,10 @@ export interface ClientToServerEvents {
   "create-cloud-workspace": (
     data: CreateCloudWorkspace,
     callback: (response: CreateCloudWorkspaceResponse) => void
+  ) => void;
+  "sync-cloud-workspace": (
+    data: z.infer<typeof SyncCloudWorkspaceSchema>,
+    callback: (response: z.infer<typeof SyncCloudWorkspaceResponseSchema>) => void
   ) => void;
   "git-status": (data: GitStatusRequest) => void;
   "git-diff": (

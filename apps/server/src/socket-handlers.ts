@@ -17,6 +17,7 @@ import {
   type CreateLocalWorkspaceResponse,
   CreateCloudWorkspaceSchema,
   type CreateCloudWorkspaceResponse,
+  SyncCloudWorkspaceSchema,
   type AvailableEditors,
   type FileInfo,
   isLoopbackHostname,
@@ -1380,6 +1381,184 @@ export function setupSocketHandlers(
               );
             }
           }
+        }
+      }
+    );
+
+    // Sync cloud workspace repos (re-run hydration)
+    socket.on(
+      "sync-cloud-workspace",
+      async (
+        rawData: unknown,
+        callback: (response: { success: boolean; error?: string }) => void
+      ) => {
+        const parsed = SyncCloudWorkspaceSchema.safeParse(rawData);
+        if (!parsed.success) {
+          serverLogger.error(
+            "Invalid sync-cloud-workspace payload:",
+            parsed.error
+          );
+          callback({
+            success: false,
+            error: "Invalid sync request",
+          });
+          return;
+        }
+
+        const { taskRunId, teamSlugOrId } = parsed.data;
+
+        try {
+          const convex = getConvex();
+          const run = await convex.query(api.taskRuns.get, {
+            teamSlugOrId,
+            id: taskRunId,
+          });
+
+          if (!run) {
+            callback({ success: false, error: "Task run not found" });
+            return;
+          }
+
+          if (!run.vscode || run.vscode.provider !== "morph") {
+            callback({
+              success: false,
+              error: "Task run is not a cloud workspace",
+            });
+            return;
+          }
+
+          // Get the Morph instance ID from the container name or metadata
+          // The instance ID should be stored or derivable from the run
+          const task = await convex.query(api.tasks.getById, {
+            teamSlugOrId,
+            id: run.taskId,
+          });
+
+          if (!task) {
+            callback({ success: false, error: "Task not found" });
+            return;
+          }
+
+          serverLogger.info(
+            `[sync-cloud-workspace] Syncing repos for task run ${taskRunId}`
+          );
+
+          // Call the www API to re-hydrate the workspace
+          // This will run the hydrateRepoScript again
+          const { MorphCloudClient } = await import("morphcloud");
+          const client = new MorphCloudClient({
+            apiKey: process.env.MORPH_API_KEY || "",
+          });
+
+          // Extract instance ID from container name if available
+          // Container name format is typically the instance ID
+          const containerName = run.vscode.containerName;
+          if (!containerName) {
+            callback({
+              success: false,
+              error: "Container name not found",
+            });
+            return;
+          }
+
+          // The container name is the Morph instance ID
+          const instance = await client.instances.get({ instanceId: containerName });
+
+          // Determine the hydration command based on environment or single repo
+          const environment = run.environmentId
+            ? await convex.query(api.environments.get, {
+                teamSlugOrId,
+                id: run.environmentId,
+              })
+            : null;
+
+          // Re-run the hydrate script
+          const hydrateScriptPath = path.join(
+            __dirname,
+            "../www/lib/routes/sandboxes/hydrateRepoScript.ts"
+          );
+
+          // Build env vars for hydration
+          const envVars: Record<string, string> = {
+            CMUX_WORKSPACE_PATH: "/root/workspace",
+            CMUX_DEPTH: "1",
+          };
+
+          if (environment?.selectedRepos && environment.selectedRepos.length > 0) {
+            // Multi-repo case - will trigger hydrateSubdirectories
+            serverLogger.info(
+              `[sync-cloud-workspace] Syncing ${environment.selectedRepos.length} repos`
+            );
+          } else if (task.projectFullName) {
+            // Single repo case
+            const [owner, repo] = task.projectFullName.split("/");
+            if (owner && repo) {
+              // For cloud workspaces, GitHub credentials are already configured via sandboxes.route
+              // We just need to provide the public clone URL
+              const cloneUrl = `https://github.com/${task.projectFullName}.git`;
+
+              envVars.CMUX_OWNER = owner;
+              envVars.CMUX_REPO = repo;
+              envVars.CMUX_REPO_FULL = task.projectFullName;
+              envVars.CMUX_CLONE_URL = cloneUrl;
+              envVars.CMUX_MASKED_CLONE_URL = cloneUrl;
+              envVars.CMUX_BASE_BRANCH = task.baseBranch || "main";
+              if (run.newBranch) {
+                envVars.CMUX_NEW_BRANCH = run.newBranch;
+              }
+            }
+          }
+
+          // Read and execute the hydrate script
+          const hydrateScript = await fs.readFile(hydrateScriptPath, "utf-8");
+          const envString = Object.entries(envVars)
+            .map(([key, value]) => `export ${key}='${value.replace(/'/g, "'\\''")}'`)
+            .join("\n");
+
+          const command = `
+set -e
+${envString}
+cat > /tmp/cmux-hydrate-sync.ts << 'CMUX_HYDRATE_EOF'
+${hydrateScript}
+CMUX_HYDRATE_EOF
+bun run /tmp/cmux-hydrate-sync.ts
+EXIT_CODE=$?
+rm -f /tmp/cmux-hydrate-sync.ts
+exit $EXIT_CODE
+`;
+
+          serverLogger.info(
+            `[sync-cloud-workspace] Executing hydration on instance ${containerName}`
+          );
+
+          const result = await instance.exec(`bash -c '${command.replace(/'/g, "'\\''")}'`);
+
+          if (result.exit_code !== 0) {
+            serverLogger.error(
+              `[sync-cloud-workspace] Hydration failed: exit=${result.exit_code}, stderr=${result.stderr}`
+            );
+            callback({
+              success: false,
+              error: `Sync failed: ${result.stderr || "unknown error"}`,
+            });
+            return;
+          }
+
+          serverLogger.info(
+            `[sync-cloud-workspace] Successfully synced repos for task run ${taskRunId}`
+          );
+
+          callback({ success: true });
+        } catch (error) {
+          serverLogger.error("[sync-cloud-workspace] Error:", error);
+          const message =
+            error instanceof Error
+              ? error.message
+              : "Failed to sync workspace";
+          callback({
+            success: false,
+            error: message,
+          });
         }
       }
     );

@@ -24,6 +24,9 @@ type UseOpenWithActionsArgs = {
   worktreePath?: string | null;
   branch?: string | null;
   networking?: NetworkingInfo;
+  cloudWorkspaceRoot?: string | null;
+  selectedRepos?: string[] | null;
+  onSyncCloudWorkspace?: (() => Promise<void>) | null;
 };
 
 export function useOpenWithActions({
@@ -31,6 +34,9 @@ export function useOpenWithActions({
   worktreePath,
   branch,
   networking,
+  cloudWorkspaceRoot,
+  selectedRepos: _selectedRepos,
+  onSyncCloudWorkspace,
 }: UseOpenWithActionsArgs) {
   const { socket, availableEditors } = useSocket();
   const localServeWeb = useLocalVSCodeServeWebQuery();
@@ -58,8 +64,10 @@ export function useOpenWithActions({
             vscodeUrl,
             localServeWebOrigin,
           );
-          const vscodeUrlWithWorkspace = `${normalizedUrl}?folder=/root/workspace`;
-          window.open(vscodeUrlWithWorkspace, "_blank", "noopener,noreferrer");
+          const url = new URL(normalizedUrl);
+          const folder = cloudWorkspaceRoot ?? "/root/workspace";
+          url.searchParams.set("folder", folder);
+          window.open(url.toString(), "_blank", "noopener,noreferrer");
           resolve();
         } else if (
           socket &&
@@ -104,7 +112,7 @@ export function useOpenWithActions({
         }
       });
     },
-    [socket, worktreePath, vscodeUrl, localServeWebOrigin]
+    [socket, worktreePath, vscodeUrl, localServeWebOrigin, cloudWorkspaceRoot]
   );
 
   const handleCopyBranch = useCallback(() => {
@@ -222,12 +230,28 @@ export function useOpenWithActions({
     window.open(port.url, "_blank", "noopener,noreferrer");
   }, []);
 
+  const syncRepos = useCallback(async () => {
+    if (!onSyncCloudWorkspace) {
+      return;
+    }
+    const loadingToast = toast.loading("Syncing repos...");
+    try {
+      await onSyncCloudWorkspace();
+      toast.success("Repos synced", { id: loadingToast });
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to sync repos";
+      toast.error(errorMessage, { id: loadingToast });
+    }
+  }, [onSyncCloudWorkspace]);
+
   return {
     actions: openWithActions,
     executeOpenAction,
     copyBranch: branch ? handleCopyBranch : undefined,
     ports: portActions,
     executePortAction,
+    syncRepos: onSyncCloudWorkspace ? syncRepos : undefined,
   } as const;
 }
 
