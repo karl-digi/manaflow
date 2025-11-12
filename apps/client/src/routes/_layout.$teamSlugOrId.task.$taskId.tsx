@@ -33,21 +33,6 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId")({
       query: api.tasks.getById,
       args: { teamSlugOrId: opts.params.teamSlugOrId, id: opts.params.taskId },
     });
-
-    await Promise.all([
-      opts.context.queryClient.ensureQueryData(
-        convexQuery(api.taskRuns.getByTask, {
-          teamSlugOrId: opts.params.teamSlugOrId,
-          taskId: opts.params.taskId,
-        })
-      ),
-      opts.context.queryClient.ensureQueryData(
-        convexQuery(api.tasks.getById, {
-          teamSlugOrId: opts.params.teamSlugOrId,
-          id: opts.params.taskId,
-        })
-      ),
-    ]);
   },
 });
 
