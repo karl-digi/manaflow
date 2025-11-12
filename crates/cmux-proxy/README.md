@@ -2,7 +2,7 @@
 
 Header-based reverse proxy that routes to different local ports based on the `X-Cmux-Port-Internal` header. Now also supports per-workspace routing via `X-Cmux-Workspace-Internal` to choose a distinct upstream IP for network isolation. Supports:
 
-- HTTP requests (streaming)
+- HTTP/1.1 and HTTP/2 requests (streaming)
 - WebSocket upgrades (transparent tunneling)
 - Generic TCP via HTTP CONNECT tunneling
 
@@ -77,7 +77,7 @@ This runs `cargo test` in a Debian-based Rust image and pre-adds example loopbac
   - Examples: `workspace-1 -> 127.18.0.1`, `workspace-256 -> 127.18.1.0`.
   - If the name does not end in digits, a stable hash may be used in the future; currently non-numeric names return 400.
 - This enables running identical services on the same ports in different workspaces, each bound to a unique loopback IP.
-- Only HTTP/1.1 is supported on the front-end. HTTP/2 is not supported (WebSocket over H2 is not handled).
+- HTTP/1.1 and HTTP/2 are supported on the front-end for standard HTTP traffic. WebSocket upgrades continue to use HTTP/1.1 semantics.
 - Hop-by-hop headers are stripped where appropriate; upgrade is handled specially to preserve handshake headers.
 - Upstream host defaults to `127.0.0.1`. If you need another host, pass `--upstream-host`. The header only specifies the port.
 

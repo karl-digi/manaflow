@@ -17,11 +17,13 @@ import type {
 import type { WebContentsLayoutActualState } from "../../src/types/webcontents-debug";
 import { applyChromeCamouflage, type Logger } from "./chrome-camouflage";
 import { registerContextMenuForTarget } from "./context-menu";
+import { createHash } from "node:crypto";
 import {
-  configurePreviewProxyForView,
-  getPreviewPartitionForPersistKey,
-  isTaskRunPreviewPersistKey,
-} from "./task-run-preview-proxy";
+  configureNativePreviewProxy,
+  releaseNativePreviewProxy,
+  type PreviewProxyRoute,
+  type PreviewProxyContextInfo,
+} from "./native-preview-proxy";
 import { normalizeBrowserUrl } from "@cmux/shared";
 
 interface RegisterOptions {
@@ -61,6 +63,13 @@ interface ReleaseOptions {
   persist?: boolean;
 }
 
+interface PreviewProxySetupOptions {
+  webContents: WebContents;
+  initialUrl: string;
+  persistKey?: string;
+  logger: Logger;
+}
+
 interface Entry {
   id: number;
   view: Electron.WebContentsView;
@@ -92,6 +101,138 @@ const validDevToolsModes: ReadonlySet<ElectronDevToolsMode> = new Set([
   "undocked",
   "detach",
 ]);
+
+const TASK_RUN_PREVIEW_PREFIX = "task-run-preview:";
+const CMUX_DOMAINS = [
+  "cmux.app",
+  "cmux.sh",
+  "cmux.dev",
+  "cmux.local",
+  "cmux.localhost",
+  "autobuild.app",
+] as const;
+
+function isTaskRunPreviewPersistKey(
+  key: string | undefined
+): key is string {
+  return typeof key === "string" && key.startsWith(TASK_RUN_PREVIEW_PREFIX);
+}
+
+function getPreviewPartitionForPersistKey(
+  key: string | undefined
+): string | null {
+  if (!isTaskRunPreviewPersistKey(key)) {
+    return null;
+  }
+  const hash = createHash("sha256").update(key).digest("hex").slice(0, 24);
+  return `persist:cmux-preview-${hash}`;
+}
+
+function derivePreviewRoute(url: string): PreviewProxyRoute | null {
+  try {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname.toLowerCase();
+    const morphMatch = hostname.match(
+      /^port-(\d+)-morphvm-([^.]+)\.http\.cloud\.morph\.so$/
+    );
+    if (morphMatch) {
+      const morphId = morphMatch[2];
+      if (morphId) {
+        return {
+          morphId,
+          scope: "base",
+          domainSuffix: "cmux.app",
+        };
+      }
+    }
+    for (const domain of CMUX_DOMAINS) {
+      const suffix = `.${domain}`;
+      if (!hostname.endsWith(suffix)) {
+        continue;
+      }
+      const subdomain = hostname.slice(0, -suffix.length);
+      if (!subdomain.startsWith("cmux-")) {
+        continue;
+      }
+      const remainder = subdomain.slice("cmux-".length);
+      const segments = remainder
+        .split("-")
+        .filter((segment) => segment.length > 0);
+      if (segments.length < 3) {
+        continue;
+      }
+      const portSegment = segments.pop();
+      const scopeSegment = segments.pop();
+      if (!portSegment || !scopeSegment) {
+        continue;
+      }
+      if (!/^\d+$/.test(portSegment)) {
+        continue;
+      }
+      const morphId = segments.join("-");
+      if (!morphId) {
+        continue;
+      }
+      return {
+        morphId,
+        scope: scopeSegment,
+        domainSuffix: domain,
+      };
+    }
+  } catch (error) {
+    console.error("Failed to derive preview route", error);
+    return null;
+  }
+  return null;
+}
+
+async function configurePreviewProxyForView(
+  options: PreviewProxySetupOptions
+): Promise<() => void> {
+  const { webContents, initialUrl, persistKey, logger } = options;
+  const route = derivePreviewRoute(initialUrl);
+  if (!route) {
+    logger.warn("Preview proxy skipped; unable to parse cmux host", {
+      url: initialUrl,
+      persistKey,
+    });
+    return () => {};
+  }
+
+  let context: PreviewProxyContextInfo;
+  try {
+    context = await configureNativePreviewProxy({
+      webContentsId: webContents.id,
+      persistKey,
+      route,
+    });
+  } catch (error) {
+    logger.warn("Failed to configure preview proxy", { error, persistKey });
+    throw error;
+  }
+
+  try {
+    await webContents.session.setProxy({
+      proxyRules: `http=127.0.0.1:${context.port};https=127.0.0.1:${context.port}`,
+      proxyBypassRules: "<-loopback>",
+    });
+  } catch (error) {
+    releaseNativePreviewProxy(webContents.id);
+    logger.warn("Failed to assign preview proxy session", { error });
+    throw error;
+  }
+
+  let cleanedUp = false;
+  const cleanup = () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    releaseNativePreviewProxy(webContents.id);
+    void webContents.session.setProxy({ mode: "direct" });
+  };
+
+  webContents.once("destroyed", cleanup);
+  return cleanup;
+}
 
 function eventChannelFor(id: number): string {
   return `cmux:webcontents:event:${id}`;

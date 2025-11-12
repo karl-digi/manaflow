@@ -3,7 +3,7 @@ use std::io::ErrorKind;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
-use cmux_proxy::ProxyConfig;
+use cmux_proxy::{spawn_proxy, ProxyConfig};
 use futures_util::{SinkExt, StreamExt};
 use hyper::body::to_bytes;
 use hyper::client::HttpConnector;
@@ -201,6 +201,41 @@ async fn start_upstream_tcp_echo() -> (SocketAddr, tokio::task::JoinHandle<()>) 
         }
     });
     (local, handle)
+}
+
+#[tokio::test]
+#[ignore = "requires TLS ALPN to negotiate HTTP/2 in front of the proxy"]
+async fn http2_frontend_basic_request() {
+    let upstream_addr = start_upstream_http().await;
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let cfg = ProxyConfig {
+        listen: SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+        upstream_host: "127.0.0.1".to_string(),
+        allow_default_upstream: true,
+    };
+    let (listen_addr, proxy_handle) =
+        spawn_proxy(cfg, async move { let _ = shutdown_rx.await; });
+
+    let mut connector = HttpConnector::new();
+    connector.enforce_http(false);
+    let client = Client::builder()
+        .http2_only(true)
+        .build::<_, Body>(connector);
+
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("http://127.0.0.1:{}/hello", listen_addr.port()))
+        .header("X-Cmux-Port-Internal", upstream_addr.port().to_string())
+        .body(Body::empty())
+        .unwrap();
+
+    let resp = client.request(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = to_bytes(resp.into_body()).await.unwrap();
+    assert_eq!(body, "ok:GET:/hello");
+
+    shutdown_tx.send(()).unwrap();
+    proxy_handle.await.unwrap();
 }
 
 async fn start_proxy(

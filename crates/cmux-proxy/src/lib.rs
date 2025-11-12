@@ -47,9 +47,7 @@ where
         }
     });
 
-    let builder = hyper::Server::bind(&listen)
-        .http1_only(true)
-        .serve(make_svc);
+    let builder = hyper::Server::bind(&listen).serve(make_svc);
     let listen_addr = builder.local_addr();
     let server = builder.with_graceful_shutdown(shutdown);
 
@@ -113,9 +111,7 @@ where
             }
         });
 
-        let builder = hyper::Server::bind(&listen_addr)
-            .http1_only(true)
-            .serve(make_svc);
+        let builder = hyper::Server::bind(&listen_addr).serve(make_svc);
         let local = builder.local_addr();
         bound_addrs.push(local);
         let server = builder.with_graceful_shutdown(async move {
