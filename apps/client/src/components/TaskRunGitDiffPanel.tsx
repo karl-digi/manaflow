@@ -73,7 +73,7 @@ export function TaskRunGitDiffPanel({ task, selectedRun, teamSlugOrId, taskId }:
     ...convexQuery(api.taskRuns.getRunDiffContext, {
       teamSlugOrId,
       taskId,
-      runId: selectedRun?._id ?? ("" as any),
+      runId: selectedRun?._id ?? ("" as Id<"taskRuns">),
     }),
     enabled: Boolean(selectedRun?._id && teamSlugOrId && taskId),
   });
