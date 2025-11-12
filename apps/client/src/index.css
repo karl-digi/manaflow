@@ -511,3 +511,12 @@ pre,
   -webkit-user-drag: none;
   user-drag: none;
 }
+
+/* Reduce gap between toast buttons */
+[data-sonner-toast] [data-button] {
+  gap: 0.5rem;
+}
+
+[data-sonner-toast] [data-buttons] {
+  gap: 0.5rem;
+}
