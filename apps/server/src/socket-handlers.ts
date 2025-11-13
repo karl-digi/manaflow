@@ -2092,10 +2092,10 @@ Please address the issue mentioned in the comment above.`;
             taskDescription: formattedPrompt,
             isCloudMode: true,
             theme: "dark",
-            // Use provided selectedAgents or default to claude/sonnet-4 and codex/gpt-5
+            // Use provided selectedAgents or default to claude/sonnet-4 and codex/gpt-5.1-codex-high
             selectedAgents: selectedAgents || [
               "claude/sonnet-4",
-              "codex/gpt-5",
+              "codex/gpt-5.1-codex-high",
             ],
           },
           safeTeam

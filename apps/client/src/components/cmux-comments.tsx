@@ -693,7 +693,7 @@ export function CmuxComments({ teamSlugOrId }: { teamSlugOrId: string }) {
         userId,
         // profileImageUrl: user.profileImageUrl || undefined,
         profileImageUrl,
-        selectedAgents: ["claude/sonnet-4.5", "codex/gpt-5-high"],
+        selectedAgents: ["claude/sonnet-4.5", "codex/gpt-5.1-codex-high"],
         commentId,
       };
 
