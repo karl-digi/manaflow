@@ -11,6 +11,7 @@ import {
   rewriteLocalWorkspaceUrlIfNeeded,
   toProxyWorkspaceUrl,
 } from "@/lib/toProxyWorkspaceUrl";
+import { emitWithAuth } from "@/lib/socketAuth";
 import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
@@ -715,7 +716,8 @@ export function CommandBar({
         addTaskToExpand(reservation.taskId);
 
         await new Promise<void>((resolve) => {
-          socket.emit(
+          emitWithAuth(
+            socket,
             "create-local-workspace",
             {
               teamSlugOrId,
@@ -808,7 +810,12 @@ export function CommandBar({
                 resolve();
               }
             }
-          );
+          ).then((success) => {
+            if (!success) {
+              toast.error("Failed to send local workspace request");
+              resolve();
+            }
+          });
         });
       } catch (error) {
         const message =
@@ -882,7 +889,8 @@ export function CommandBar({
         addTaskToExpand(taskId);
 
         await new Promise<void>((resolve) => {
-          socket.emit(
+          emitWithAuth(
+            socket,
             "create-cloud-workspace",
             {
               teamSlugOrId,
@@ -909,7 +917,12 @@ export function CommandBar({
                 resolve();
               }
             }
-          );
+          ).then((success) => {
+            if (!success) {
+              toast.error("Failed to send cloud workspace request");
+              resolve();
+            }
+          });
         });
 
         console.log("Cloud workspace created:", taskId);
@@ -962,7 +975,8 @@ export function CommandBar({
         addTaskToExpand(taskId);
 
         await new Promise<void>((resolve) => {
-          socket.emit(
+          emitWithAuth(
+            socket,
             "create-cloud-workspace",
             {
               teamSlugOrId,
@@ -990,7 +1004,12 @@ export function CommandBar({
                 resolve();
               }
             }
-          );
+          ).then((success) => {
+            if (!success) {
+              toast.error("Failed to send cloud workspace request");
+              resolve();
+            }
+          });
         });
 
         console.log("Cloud workspace created:", taskId);

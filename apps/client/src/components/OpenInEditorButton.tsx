@@ -1,6 +1,7 @@
 import { useSocket } from "@/contexts/socket/use-socket";
 import { ChevronDown, ExternalLink } from "lucide-react";
 import { useEffect, useRef, useState, useMemo } from "react";
+import { emitWithAuth } from "@/lib/socketAuth";
 
 type EditorType =
   | "vscode"
@@ -85,7 +86,8 @@ export function OpenInEditorButton({ workspacePath }: OpenInEditorButtonProps) {
 
   const handleOpenInEditor = () => {
     if (workspacePath && socket) {
-      socket.emit(
+      void emitWithAuth(
+        socket,
         "open-in-editor",
         {
           editor: selectedEditor,
@@ -96,7 +98,11 @@ export function OpenInEditorButton({ workspacePath }: OpenInEditorButtonProps) {
             console.error("Failed to open editor:", response.error);
           }
         }
-      );
+      ).then((success) => {
+        if (!success) {
+          console.error("Failed to emit open-in-editor");
+        }
+      });
     }
   };
 

@@ -8,6 +8,7 @@ import { useMutation, useQuery } from "convex/react";
 // Read team slug from path to avoid route type coupling
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { emitWithAuth } from "@/lib/socketAuth";
 
 const PlusIcon = ({ className }: { className?: string }) => (
   <svg
@@ -697,17 +698,23 @@ export function CmuxComments({ teamSlugOrId }: { teamSlugOrId: string }) {
         commentId,
       };
 
-      socket.emit("spawn-from-comment", spawnData, (response) => {
-        if (response.success) {
-          console.log("Agents spawned successfully:", response);
-          // Optionally navigate to the task page
-          if (response.taskId) {
-            // Could navigate to /task/{taskId} if desired
-            console.log("Task created:", response.taskId);
+      void emitWithAuth(
+        socket,
+        "spawn-from-comment",
+        spawnData,
+        (response) => {
+          if (response.success) {
+            console.log("Agents spawned successfully:", response);
+            if (response.taskId) {
+              console.log("Task created:", response.taskId);
+            }
+          } else {
+            console.error("Failed to spawn agents:", response.error);
           }
-        } else {
-          console.error("Failed to spawn agents:", response.error);
-          // Optionally show an error notification
+        }
+      ).then((success) => {
+        if (!success) {
+          console.error("Failed to emit spawn-from-comment");
         }
       });
     }

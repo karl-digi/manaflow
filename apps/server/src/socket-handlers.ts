@@ -72,6 +72,7 @@ import {
   splitRepoFullName,
   toPullRequestActionResult,
 } from "./pullRequestState";
+import { extractAuthContextFromPayload } from "./utils/socketAuth";
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -217,13 +218,40 @@ export function setupSocketHandlers(
       return;
     }
 
-    socket.use((_, next) => {
-      runWithAuth(token, tokenJson, () => next());
+    socket.use((packet, next) => {
+      const eventName =
+        typeof packet?.[0] === "string" ? (packet[0] as string) : "unknown";
+      const payload = Array.isArray(packet) ? packet[1] : undefined;
+      const extracted = extractAuthContextFromPayload(payload);
+
+      let effectiveToken = extracted?.accessToken;
+      let effectiveHeaderJson = extracted?.authHeaderJson;
+
+      if (!effectiveToken && token) {
+        effectiveToken = token;
+        effectiveHeaderJson = tokenJson ?? effectiveHeaderJson;
+        if (!extracted) {
+          serverLogger.warn(
+            `Missing auth payload for event "${eventName}", using handshake token`
+          );
+        }
+      }
+
+      if (!effectiveToken) {
+        const error = new Error(
+          `Missing authentication for socket event "${eventName}"`
+        );
+        serverLogger.error(error.message);
+        next(error);
+        return;
+      }
+
+      runWithAuth(effectiveToken, effectiveHeaderJson, () => next());
     });
     serverLogger.info("Client connected:", socket.id);
 
     // Rust N-API test endpoint
-    socket.on("rust-get-time", async (callback) => {
+    socket.on("rust-get-time", async (_data, callback) => {
       try {
         const time = await getRustTime();
         callback({ ok: true, time });
@@ -682,6 +710,7 @@ export function setupSocketHandlers(
     socket.on(
       "get-local-vscode-serve-web-origin",
       (
+        _data,
         callback?: (response: { baseUrl: string | null; port: number | null }) => void
       ) => {
         if (!callback) {
@@ -1610,7 +1639,7 @@ export function setupSocketHandlers(
     });
 
     // Keep old handlers for backwards compatibility but they're not used anymore
-    socket.on("git-status", async () => {
+    socket.on("git-status", async (_data) => {
       socket.emit("git-status-response", {
         files: [],
         error: "Not implemented - use git-full-diff instead",
@@ -1946,7 +1975,7 @@ export function setupSocketHandlers(
       }
     });
 
-    socket.on("github-test-auth", async (callback) => {
+    socket.on("github-test-auth", async (_data, callback) => {
       try {
         // Run all commands in parallel
         const [authStatus, whoami, home, ghConfig] = await Promise.all([
@@ -2345,7 +2374,7 @@ ${title}`;
       }
     });
 
-    socket.on("check-provider-status", async (callback) => {
+    socket.on("check-provider-status", async (_data, callback) => {
       try {
         const status = await checkAllProvidersStatus({
           teamSlugOrId: safeTeam,

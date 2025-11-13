@@ -1,5 +1,6 @@
 import { waitForConnectedSocket } from "@/contexts/socket/socket-boot";
 import { normalizeGitRef } from "@/lib/refWithOrigin";
+import { emitWithAuth } from "@/lib/socketAuth";
 import type { ReplaceDiffEntry } from "@cmux/shared";
 import { queryOptions } from "@tanstack/react-query";
 
@@ -46,7 +47,8 @@ export function gitDiffQueryOptions({
     queryFn: async () => {
       const socket = await waitForConnectedSocket();
       return await new Promise<ReplaceDiffEntry[]>((resolve, reject) => {
-        socket.emit(
+        emitWithAuth(
+          socket,
           "git-diff",
           {
             repoFullName,
@@ -72,7 +74,11 @@ export function gitDiffQueryOptions({
               );
             }
           }
-        );
+        ).then((success) => {
+          if (!success) {
+            reject(new Error("Failed to request repository diffs"));
+          }
+        });
       });
     },
     staleTime: 10_000,

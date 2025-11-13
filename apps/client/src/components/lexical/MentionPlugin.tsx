@@ -27,6 +27,7 @@ import {
   getIconForFolder,
 } from "vscode-icons-js";
 import { useSocket } from "../../contexts/socket/use-socket";
+import { emitWithAuth } from "@/lib/socketAuth";
 
 const MENTION_TRIGGER = "@";
 
@@ -186,10 +187,19 @@ export function MentionPlugin({
   useEffect(() => {
     if ((repoUrl || environmentId) && socket) {
       setIsLoading(true);
-      socket.emit("list-files", {
-        ...(repoUrl ? { repoPath: repoUrl } : {}),
-        ...(environmentId ? { environmentId } : {}),
-        ...(branch ? { branch } : {}),
+      emitWithAuth(
+        socket,
+        "list-files",
+        {
+          ...(repoUrl ? { repoPath: repoUrl } : {}),
+          ...(environmentId ? { environmentId } : {}),
+          ...(branch ? { branch } : {}),
+        }
+      ).then((success) => {
+        if (!success) {
+          setIsLoading(false);
+          setFiles([]);
+        }
       });
 
       const handleFilesResponse = (data: {

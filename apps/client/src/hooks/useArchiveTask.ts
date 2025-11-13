@@ -3,6 +3,7 @@ import { api } from "@cmux/convex/api";
 import type { Doc } from "@cmux/convex/dataModel";
 import { useMutation } from "convex/react";
 import { toast } from "sonner";
+import { emitWithAuth } from "@/lib/socketAuth";
 
 export function useArchiveTask(teamSlugOrId: string) {
   const { socket } = useSocket();
@@ -68,7 +69,8 @@ export function useArchiveTask(teamSlugOrId: string) {
 
     // Emit socket event to stop/pause containers
     if (socket) {
-      socket.emit(
+      void emitWithAuth(
+        socket,
         "archive-task",
         { taskId: task._id },
         (response: { success: boolean; error?: string }) => {
@@ -76,7 +78,11 @@ export function useArchiveTask(teamSlugOrId: string) {
             console.error("Failed to stop containers:", response.error);
           }
         }
-      );
+      ).then((success) => {
+        if (!success) {
+          console.error("Failed to send archive-task request");
+        }
+      });
     }
 
     toast("Task archived", {
@@ -95,7 +101,8 @@ export function useArchiveTask(teamSlugOrId: string) {
 
     // Emit socket event to stop/pause containers
     if (socket) {
-      socket.emit(
+      void emitWithAuth(
+        socket,
         "archive-task",
         { taskId: id as Doc<"tasks">["_id"] },
         (response: { success: boolean; error?: string }) => {
@@ -103,7 +110,11 @@ export function useArchiveTask(teamSlugOrId: string) {
             console.error("Failed to stop containers:", response.error);
           }
         }
-      );
+      ).then((success) => {
+        if (!success) {
+          console.error("Failed to send archive-task request");
+        }
+      });
     }
   };
 

@@ -2,6 +2,7 @@ import { ipcMain, webContents } from "electron";
 import type { RealtimeServer, RealtimeSocket } from "../realtime";
 import { serverLogger } from "../utils/fileLogger";
 import { runWithAuth } from "../utils/requestContext";
+import { extractAuthContextFromPayload } from "../utils/socketAuth";
 
 const PREFIX = "cmux";
 
@@ -46,22 +47,47 @@ export function createIPCTransport(): RealtimeServer {
       throw new Error(`No handler for event: ${eventName}`);
     }
 
+    const payload = Array.isArray(args) ? args[0] : undefined;
+    const extracted = extractAuthContextFromPayload(payload);
+    const fallbackToken =
+      typeof socket.handshake.query.auth === "string"
+        ? socket.handshake.query.auth
+        : Array.isArray(socket.handshake.query.auth)
+          ? socket.handshake.query.auth[0]
+          : undefined;
+    const fallbackHeaderJson =
+      typeof socket.handshake.query.auth_json === "string"
+        ? socket.handshake.query.auth_json
+        : Array.isArray(socket.handshake.query.auth_json)
+          ? socket.handshake.query.auth_json[0]
+          : undefined;
+
+    const effectiveToken = extracted?.accessToken ?? fallbackToken;
+    const effectiveHeaderJson = extracted?.authHeaderJson ?? fallbackHeaderJson;
+
+    if (!effectiveToken) {
+      throw new Error(`Missing auth for IPC event: ${eventName}`);
+    }
+
+    const eventArgs = Array.isArray(args) ? args : [];
+
     // Handle different handler signatures
     return new Promise((resolve, reject) => {
-      try {
-        const callback = (result?: unknown) => resolve(result);
+      runWithAuth(effectiveToken, effectiveHeaderJson, () => {
+        try {
+          const callback = (result?: unknown) => resolve(result);
 
-        // Call handler with args and callback
-        if (args.length === 0) {
-          handler(callback);
-        } else if (args.length === 1) {
-          handler(args[0], callback);
-        } else {
-          handler(...args, callback);
+          if (eventArgs.length === 0) {
+            handler(callback);
+          } else if (eventArgs.length === 1) {
+            handler(eventArgs[0], callback);
+          } else {
+            handler(...eventArgs, callback);
+          }
+        } catch (error) {
+          reject(error);
         }
-      } catch (error) {
-        reject(error);
-      }
+      });
     });
   });
 

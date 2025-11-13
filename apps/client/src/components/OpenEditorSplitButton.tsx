@@ -6,6 +6,7 @@ import { Check, ChevronDown } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { MenuArrow } from "./ui/menu";
+import { emitWithAuth } from "@/lib/socketAuth";
 
 type EditorType =
   | "cursor"
@@ -147,14 +148,19 @@ export function OpenEditorSplitButton({
           ].includes(editor) &&
           worktreePath
         ) {
-          socket.emit(
+          emitWithAuth(
+            socket,
             "open-in-editor",
             { editor, path: worktreePath },
             (response: { success: boolean; error?: string }) => {
               if (response.success) resolve();
               else reject(new Error(response.error || "Failed to open editor"));
             }
-          );
+          ).then((success) => {
+            if (!success) {
+              reject(new Error("Failed to send open in editor request"));
+            }
+          });
         } else {
           reject(new Error("Unable to open editor"));
         }

@@ -16,6 +16,7 @@ import { useMutation } from "convex/react";
 import { Server as ServerIcon, FolderOpen, Loader2 } from "lucide-react";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
+import { emitWithAuth } from "@/lib/socketAuth";
 
 type WorkspaceCreationButtonsProps = {
   teamSlugOrId: string;
@@ -72,7 +73,8 @@ export function WorkspaceCreationButtons({
       addTaskToExpand(reservation.taskId);
 
       await new Promise<void>((resolve) => {
-        socket.emit(
+        emitWithAuth(
+          socket,
           "create-local-workspace",
           {
             teamSlugOrId,
@@ -95,7 +97,12 @@ export function WorkspaceCreationButtons({
             }
             resolve();
           }
-        );
+        ).then((success) => {
+          if (!success) {
+            toast.error("Failed to send local workspace request");
+            resolve();
+          }
+        });
       });
     } catch (error) {
       console.error("Error creating local workspace:", error);
@@ -154,7 +161,8 @@ export function WorkspaceCreationButtons({
       addTaskToExpand(taskId);
 
       await new Promise<void>((resolve) => {
-        socket.emit(
+        emitWithAuth(
+          socket,
           "create-cloud-workspace",
           {
             teamSlugOrId,
@@ -172,7 +180,12 @@ export function WorkspaceCreationButtons({
             }
             resolve();
           }
-        );
+        ).then((success) => {
+          if (!success) {
+            toast.error("Failed to send cloud workspace request");
+            resolve();
+          }
+        });
       });
 
       console.log("Cloud workspace created:", taskId);

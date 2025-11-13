@@ -1,6 +1,7 @@
 import { waitForConnectedSocket } from "@/contexts/socket/socket-boot";
 import { normalizeWorkspaceOrigin } from "@/lib/toProxyWorkspaceUrl";
 import { queryOptions, useQuery } from "@tanstack/react-query";
+import { emitWithAuth } from "@/lib/socketAuth";
 
 export type LocalVSCodeServeWebInfo = {
   baseUrl: string | null;
@@ -25,8 +26,10 @@ export function localVSCodeServeWebQueryOptions() {
         }, 5_000);
 
         try {
-          socket.emit(
+          emitWithAuth(
+            socket,
             "get-local-vscode-serve-web-origin",
+            {},
             (response: { baseUrl: string | null; port: number | null } | undefined) => {
               if (settled) {
                 return;
@@ -43,7 +46,13 @@ export function localVSCodeServeWebQueryOptions() {
               };
               resolve(normalized);
             }
-          );
+          ).then((success) => {
+            if (!success && !settled) {
+              settled = true;
+              clearTimeout(timer);
+              reject(new Error("Failed to request local VS Code origin"));
+            }
+          });
         } catch (error) {
           clearTimeout(timer);
           if (settled) {

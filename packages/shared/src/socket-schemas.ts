@@ -7,6 +7,20 @@ import type {
 } from "./pull-request-state";
 import type { IframePreflightResult } from "./iframe-preflight";
 
+export const SocketAuthHeadersSchema = z.object({
+  "x-stack-auth": z.string(),
+});
+
+export type SocketAuthHeaders = z.infer<typeof SocketAuthHeadersSchema>;
+
+export type SocketAuthPayload = {
+  auth: SocketAuthHeaders;
+};
+
+export type SocketMessage<
+  T extends Record<string, unknown> = Record<string, never>
+> = T & SocketAuthPayload;
+
 // Client to Server Events
 export const CreateTerminalSchema = z.object({
   id: z.string().optional(),
@@ -490,47 +504,48 @@ export type DefaultRepo = z.infer<typeof DefaultRepoSchema>;
 export interface ClientToServerEvents {
   // Terminal operations
   "start-task": (
-    data: StartTask,
+    data: SocketMessage<StartTask>,
     callback: (response: TaskAcknowledged | TaskStarted | TaskError) => void
   ) => void;
   "create-local-workspace": (
-    data: CreateLocalWorkspace,
+    data: SocketMessage<CreateLocalWorkspace>,
     callback: (response: CreateLocalWorkspaceResponse) => void
   ) => void;
   "create-cloud-workspace": (
-    data: CreateCloudWorkspace,
+    data: SocketMessage<CreateCloudWorkspace>,
     callback: (response: CreateCloudWorkspaceResponse) => void
   ) => void;
-  "git-status": (data: GitStatusRequest) => void;
+  "git-status": (data: SocketMessage<GitStatusRequest>) => void;
   "git-diff": (
-    data: z.infer<typeof GitRepoDiffRequestSchema>,
+    data: SocketMessage<z.infer<typeof GitRepoDiffRequestSchema>>,
     callback: (
       response:
         | { ok: true; diffs: import("./diff-types.js").ReplaceDiffEntry[] }
         | { ok: false; error: string; diffs: [] }
     ) => void
   ) => void;
-  "git-full-diff": (data: GitFullDiffRequest) => void;
+  "git-full-diff": (data: SocketMessage<GitFullDiffRequest>) => void;
   "open-in-editor": (
-    data: OpenInEditor,
+    data: SocketMessage<OpenInEditor>,
     callback: (response: OpenInEditorResponse) => void
   ) => void;
-  "list-files": (data: ListFilesRequest) => void;
+  "list-files": (data: SocketMessage<ListFilesRequest>) => void;
   // GitHub operations
   "github-test-auth": (
+    data: SocketAuthPayload,
     callback: (response: GitHubAuthResponse) => void
   ) => void;
   "github-fetch-repos": (
-    data: GitHubFetchRepos,
+    data: SocketMessage<GitHubFetchRepos>,
     callback: (response: GitHubReposResponse) => void
   ) => void;
   "github-fetch-branches": (
-    data: GitHubFetchBranches,
+    data: SocketMessage<GitHubFetchBranches>,
     callback: (response: GitHubBranchesResponse) => void
   ) => void;
   // Create a draft pull request for a given task run
   "github-create-draft-pr": (
-    data: GitHubCreateDraftPr,
+    data: SocketMessage<GitHubCreateDraftPr>,
     callback: (response: {
       success: boolean;
       results: PullRequestActionResult[];
@@ -540,7 +555,7 @@ export interface ClientToServerEvents {
   ) => void;
   // Sync PR state with GitHub and update Convex
   "github-sync-pr-state": (
-    data: GitHubSyncPrState,
+    data: SocketMessage<GitHubSyncPrState>,
     callback: (response: {
       success: boolean;
       results: PullRequestActionResult[];
@@ -550,7 +565,7 @@ export interface ClientToServerEvents {
   ) => void;
   // Merge branch directly
   "github-merge-branch": (
-    data: GitHubMergeBranch,
+    data: SocketMessage<GitHubMergeBranch>,
     callback: (response: {
       success: boolean;
       merged?: boolean;
@@ -560,26 +575,29 @@ export interface ClientToServerEvents {
   ) => void;
   // Rust N-API test: returns current time
   "rust-get-time": (
+    data: SocketAuthPayload,
     callback: (
       response: { ok: true; time: string } | { ok: false; error: string }
     ) => void
   ) => void;
   "iframe-preflight": (
-    data: { url: string },
+    data: SocketMessage<{ url: string }>,
     callback: (response: IframePreflightResult) => void
   ) => void;
   "check-provider-status": (
+    data: SocketAuthPayload,
     callback: (response: ProviderStatusResponse) => void
   ) => void;
   "get-local-vscode-serve-web-origin": (
+    data: SocketAuthPayload,
     callback: (response: { baseUrl: string | null; port: number | null }) => void
   ) => void;
   "archive-task": (
-    data: ArchiveTask,
+    data: SocketMessage<ArchiveTask>,
     callback: (response: { success: boolean; error?: string }) => void
   ) => void;
   "spawn-from-comment": (
-    data: SpawnFromComment,
+    data: SocketMessage<SpawnFromComment>,
     callback: (response: {
       success: boolean;
       taskId?: Id<"tasks">;

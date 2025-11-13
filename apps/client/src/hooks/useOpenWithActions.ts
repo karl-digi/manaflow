@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo } from "react";
 import { toast } from "sonner";
 import { rewriteLocalWorkspaceUrlIfNeeded } from "@/lib/toProxyWorkspaceUrl";
 import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
+import { emitWithAuth } from "@/lib/socketAuth";
 
 type NetworkingInfo = Doc<"taskRuns">["networking"];
 
@@ -76,7 +77,8 @@ export function useOpenWithActions({
           ].includes(editor) &&
           worktreePath
         ) {
-          socket.emit(
+          emitWithAuth(
+            socket,
             "open-in-editor",
             {
               editor: editor as
@@ -98,7 +100,11 @@ export function useOpenWithActions({
                 reject(new Error(response.error || "Failed to open editor"));
               }
             }
-          );
+          ).then((success) => {
+            if (!success) {
+              reject(new Error("Failed to send open in editor request"));
+            }
+          });
         } else {
           reject(new Error("Unable to open editor"));
         }

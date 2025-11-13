@@ -4,6 +4,7 @@ import { MergeButton, type MergeMethod } from "@/components/ui/merge-button";
 import { useSocketSuspense } from "@/contexts/socket/use-socket";
 import { isElectron } from "@/lib/electron";
 import { cn } from "@/lib/utils";
+import { emitWithAuth } from "@/lib/socketAuth";
 import { normalizeGitRef } from "@/lib/refWithOrigin";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
 import type { Doc, Id } from "@cmux/convex/dataModel";
@@ -791,11 +792,22 @@ function SocketActions({
         throw new Error("Socket unavailable");
       }
       return new Promise<PullRequestActionResponse>((resolve, reject) => {
-        socket.emit("github-create-draft-pr", { taskRunId }, (resp) => {
-          if (resp.success) {
-            resolve(resp);
-          } else {
-            reject(new SocketMutationError(resp.error ?? draftErrorLabel, resp));
+        emitWithAuth(
+          socket,
+          "github-create-draft-pr",
+          { taskRunId },
+          (resp) => {
+            if (resp.success) {
+              resolve(resp);
+            } else {
+              reject(
+                new SocketMutationError(resp.error ?? draftErrorLabel, resp)
+              );
+            }
+          },
+        ).then((success) => {
+          if (!success) {
+            reject(new Error("Failed to request draft PR creation"));
           }
         });
       });
@@ -870,16 +882,25 @@ function SocketActions({
         throw new Error("Socket unavailable");
       }
       return new Promise<MergeBranchResponse>((resolve, reject) => {
-        socket.emit("github-merge-branch", { taskRunId }, (resp) => {
-          if (resp.success) {
-            resolve(resp);
-          } else {
-            reject(
-              new SocketMutationError(
-                resp.error ?? mergeBranchErrorLabel,
-                resp,
-              ),
-            );
+        emitWithAuth(
+          socket,
+          "github-merge-branch",
+          { taskRunId },
+          (resp) => {
+            if (resp.success) {
+              resolve(resp);
+            } else {
+              reject(
+                new SocketMutationError(
+                  resp.error ?? mergeBranchErrorLabel,
+                  resp,
+                ),
+              );
+            }
+          }
+        ).then((success) => {
+          if (!success) {
+            reject(new Error("Failed to request branch merge"));
           }
         });
       });

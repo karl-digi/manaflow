@@ -5,6 +5,7 @@ import { useNavigate } from "@tanstack/react-router";
 import clsx from "clsx";
 import { RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { emitWithAuth } from "@/lib/socketAuth";
 
 export function ProviderStatusPills({ teamSlugOrId }: { teamSlugOrId: string }) {
   const { socket } = useSocket();
@@ -15,10 +16,9 @@ export function ProviderStatusPills({ teamSlugOrId }: { teamSlugOrId: string }) 
   const checkProviderStatus = useCallback(() => {
     if (!socket) return;
 
-    socket.emit("check-provider-status", (response) => {
+    void emitWithAuth(socket, "check-provider-status", {}, (response) => {
       if (response.success) {
         setStatus(response);
-        // Delay visibility to create fade-in effect
         setTimeout(() => setIsVisible(true), 100);
       }
     });

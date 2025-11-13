@@ -13,6 +13,7 @@ import {
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { normalizeGitRef } from "@/lib/refWithOrigin";
+import { emitWithAuth } from "@/lib/socketAuth";
 import { cn } from "@/lib/utils";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
 import { api } from "@cmux/convex/api";
@@ -210,7 +211,8 @@ const RestartTaskForm = memo(function RestartTaskForm({
         setFollowUpText("");
       };
 
-      socket.emit(
+      const emitted = await emitWithAuth(
+        socket,
         "start-task",
         {
           ...(repoUrl ? { repoUrl } : {}),
@@ -225,6 +227,9 @@ const RestartTaskForm = memo(function RestartTaskForm({
         },
         handleRestartAck,
       );
+      if (!emitted) {
+        throw new Error("Failed to send restart request");
+      }
 
       toast.success("Started follow-up task", {
         action: {
@@ -767,39 +772,45 @@ function RunDiffPage() {
 
     const loadingToast = toast.loading("Creating local workspace...");
 
-    socket.emit(
-      "create-local-workspace",
-      {
-        teamSlugOrId,
-        projectFullName: primaryRepo,
-        repoUrl: `https://github.com/${primaryRepo}.git`,
-        branch: selectedRun.newBranch,
-      },
-      (response: CreateLocalWorkspaceResponse) => {
-        if (response.success && response.workspacePath) {
-          toast.success("Workspace created successfully!", {
-            id: loadingToast,
-            description: `Opening workspace at ${response.workspacePath}`,
-          });
+    void (async () => {
+      const success = await emitWithAuth(
+        socket,
+        "create-local-workspace",
+        {
+          teamSlugOrId,
+          projectFullName: primaryRepo,
+          repoUrl: `https://github.com/${primaryRepo}.git`,
+          branch: selectedRun.newBranch,
+        },
+        (response: CreateLocalWorkspaceResponse) => {
+          if (response.success && response.workspacePath) {
+            toast.success("Workspace created successfully!", {
+              id: loadingToast,
+              description: `Opening workspace at ${response.workspacePath}`,
+            });
 
-          // Navigate to the vscode view for this task run
-          if (response.taskRunId) {
-            navigate({
-              to: "/$teamSlugOrId/task/$taskId/run/$runId/vscode",
-              params: {
-                teamSlugOrId,
-                taskId,
-                runId: response.taskRunId,
-              },
+            if (response.taskRunId) {
+              navigate({
+                to: "/$teamSlugOrId/task/$taskId/run/$runId/vscode",
+                params: {
+                  teamSlugOrId,
+                  taskId,
+                  runId: response.taskRunId,
+                },
+              });
+            }
+          } else {
+            toast.error(response.error || "Failed to create workspace", {
+              id: loadingToast,
             });
           }
-        } else {
-          toast.error(response.error || "Failed to create workspace", {
-            id: loadingToast,
-          });
-        }
+        },
+      );
+
+      if (!success) {
+        toast.error("Failed to create workspace", { id: loadingToast });
       }
-    );
+    })();
   }, [socket, teamSlugOrId, primaryRepo, selectedRun?.newBranch, navigate, taskId]);
 
   // 404 if selected run is missing
