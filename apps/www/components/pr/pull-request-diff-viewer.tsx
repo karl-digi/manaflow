@@ -102,6 +102,10 @@ import {
   HEATMAP_MODEL_DENSE_FINETUNE_QUERY_VALUE,
   HEATMAP_MODEL_DENSE_V2_FINETUNE_QUERY_VALUE,
   HEATMAP_MODEL_FINETUNE_QUERY_VALUE,
+  HEATMAP_MODEL_GPT_51_CODEX_QUERY_VALUE,
+  HEATMAP_MODEL_GPT_51_CODEX_MINI_QUERY_VALUE,
+  HEATMAP_MODEL_GPT_51_QUERY_VALUE,
+  HEATMAP_MODEL_GPT_51_CODEX_HIGH_QUERY_VALUE,
   HEATMAP_MODEL_QUERY_KEY,
   normalizeHeatmapModelQueryValue,
   type HeatmapModelQueryValue,
@@ -233,12 +237,24 @@ const HEATMAP_MODEL_OPTIONS: ReadonlyArray<{
   label: string;
 }> = [
   {
+    value: HEATMAP_MODEL_GPT_51_CODEX_QUERY_VALUE,
+    label: "gpt-5.1-codex",
+  },
+  {
+    value: HEATMAP_MODEL_GPT_51_CODEX_MINI_QUERY_VALUE,
+    label: "gpt-5.1-codex-mini",
+  },
+  {
+    value: HEATMAP_MODEL_GPT_51_QUERY_VALUE,
+    label: "gpt-5.1",
+  },
+  {
     value: HEATMAP_MODEL_DENSE_V2_FINETUNE_QUERY_VALUE,
     label: "cmux-heatmap-2",
   },
   {
-    value: HEATMAP_MODEL_FINETUNE_QUERY_VALUE,
-    label: "cmux-heatmap-0",
+    value: HEATMAP_MODEL_GPT_51_CODEX_HIGH_QUERY_VALUE,
+    label: "gpt-5.1-codex-high",
   },
   {
     value: HEATMAP_MODEL_DENSE_FINETUNE_QUERY_VALUE,
