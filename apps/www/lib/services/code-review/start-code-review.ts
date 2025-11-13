@@ -12,6 +12,7 @@ import {
 import type { ComparisonJobDetails } from "./comparison";
 import { PR_REVIEW_STRATEGY } from "@/pr-review.config";
 import { runHeatmapReview } from "./run-heatmap-review";
+import type { ModelConfig } from "./run-simple-anthropic-review";
 import { loadOptionsFromEnv } from "@/scripts/pr-review/core/options";
 import type { PrReviewStrategyId } from "@/scripts/pr-review/core/options";
 
@@ -26,6 +27,7 @@ type StartCodeReviewPayload = {
   baseCommitRef?: string;
   force?: boolean;
   comparison?: ComparisonJobPayload;
+  modelConfig?: ModelConfig;
 };
 
 type StartCodeReviewOptions = {
@@ -282,6 +284,7 @@ export async function startCodeReviewJob({
           accessToken,
           callbackToken,
           githubAccessToken,
+          modelConfig: payload.modelConfig,
         });
       } else {
         console.info("[code-review] Starting automated PR review (Morph)", {
