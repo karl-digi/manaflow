@@ -614,6 +614,17 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
                     repoFullName,
                     prNumber,
                   });
+
+                  // Trigger the preview job dispatch
+                  await _ctx.scheduler.runAfter(
+                    0,
+                    internal.preview_jobs.requestDispatch,
+                    { previewRunId: runId },
+                  );
+
+                  console.log("[preview-jobs] Preview job dispatch scheduled", {
+                    runId,
+                  });
                 } catch (error) {
                   console.error("[preview-jobs] Failed to enqueue preview run", {
                     repoFullName,
