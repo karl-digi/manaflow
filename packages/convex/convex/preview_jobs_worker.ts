@@ -12,6 +12,25 @@ import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import type { ActionCtx } from "./_generated/server";
 
+const TOKEN_REDACTION = "[TOKEN_REDACTED]";
+
+const maskSensitiveValue = (
+  value: string | undefined | null,
+  sensitiveValues: Array<string | undefined>,
+): string | undefined => {
+  if (value == null) {
+    return undefined;
+  }
+  let masked = value;
+  for (const sensitive of sensitiveValues) {
+    if (!sensitive) {
+      continue;
+    }
+    masked = masked.split(sensitive).join(TOKEN_REDACTION);
+  }
+  return masked;
+};
+
 async function waitForInstanceReady(
   morphClient: ReturnType<typeof createMorphCloudClient>,
   instanceId: string,
@@ -131,7 +150,7 @@ async function triggerWorkerScreenshotCollection(
   });
 }
 
-export async function runPreviewJob(
+export async function runPreviewJob( 
   ctx: ActionCtx,
   previewRunId: Id<"previewRuns">,
 ) {
@@ -286,6 +305,7 @@ export async function runPreviewJob(
     console.log("[preview-jobs] Starting GitHub authentication setup", {
       previewRunId,
       hasInstallationId: Boolean(run.repoInstallationId),
+      installationId: run.repoInstallationId,
     });
 
     // Get GitHub App installation token for fetching from private repos
@@ -312,30 +332,115 @@ export async function runPreviewJob(
       });
 
       if (accessToken) {
-        // Configure GitHub authentication using gh CLI (same approach as cloud workspaces)
-        const ghAuthResponse = await execInstanceInstanceIdExecPost({
-          client: morphClient,
-          path: { instance_id: instance.id },
-          body: {
-            command: [
-              "bash",
-              "-lc",
-              `printf %s '${accessToken}' | gh auth login --with-token && gh auth setup-git 2>&1`,
-            ],
-          },
-        });
+        // Escape the token for shell (same as singleQuote in sandboxes/shell.ts)
+        const escapedToken = `'${accessToken.replace(/'/g, "'\\''")}'`;
+        const sensitiveValues = [accessToken, escapedToken, `'${accessToken}'`];
+        const maskLogValue = (value?: string | null) =>
+          maskSensitiveValue(value, sensitiveValues);
+        const maskAndSlice = (value?: string | null, length = 500) =>
+          maskLogValue(value)?.slice(0, length);
 
-        if (ghAuthResponse.error || ghAuthResponse.data?.exit_code !== 0) {
-          console.warn("[preview-jobs] Failed to configure GitHub authentication", {
+        // Configure GitHub authentication using gh CLI with retry logic (same approach as cloud workspaces)
+        let lastError: Error | undefined;
+        let authSucceeded = false;
+        const maxRetries = 5;
+
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+          try {
+            const shellScript = `cd ${repoDir} && printf %s ${escapedToken} | gh auth login --with-token && gh auth setup-git 2>&1`;
+            const commandPreview = shellScript.includes(escapedToken)
+              ? shellScript.replace(escapedToken, "'[TOKEN_REDACTED]'")
+              : shellScript;
+            console.log("[preview-jobs] GitHub auth attempt", {
+              previewRunId,
+              attempt,
+              maxRetries,
+              commandLength: shellScript.length,
+              commandPreview: commandPreview.slice(0, 150),
+            });
+
+            const ghAuthResponse = await execInstanceInstanceIdExecPost({
+              client: morphClient,
+              path: { instance_id: instance.id },
+              body: {
+                command: ["bash", "-lc", shellScript],
+              },
+            });
+
+            console.log("[preview-jobs] GitHub auth response received", {
+              previewRunId,
+              attempt,
+              hasError: Boolean(ghAuthResponse.error),
+              exitCode: ghAuthResponse.data?.exit_code,
+              stdout: maskAndSlice(ghAuthResponse.data?.stdout),
+              stderr: maskAndSlice(ghAuthResponse.data?.stderr),
+            });
+
+            if (ghAuthResponse.error) {
+              lastError = new Error(`API error: ${JSON.stringify(ghAuthResponse.error)}`);
+              console.error("[preview-jobs] GitHub auth API error", {
+                previewRunId,
+                attempt,
+                error: ghAuthResponse.error,
+              });
+            } else if (ghAuthResponse.data?.exit_code === 0) {
+              console.log("[preview-jobs] GitHub authentication configured successfully", {
+                previewRunId,
+                attempt,
+                stdout: maskAndSlice(ghAuthResponse.data?.stdout),
+                stderr: maskAndSlice(ghAuthResponse.data?.stderr),
+              });
+              authSucceeded = true;
+              break;
+            } else {
+              const rawErrorMessage = ghAuthResponse.data?.stderr || ghAuthResponse.data?.stdout || "Unknown error";
+              const maskedErrorMessage = maskLogValue(rawErrorMessage) || "Unknown error";
+              lastError = new Error(`GitHub auth failed: ${maskedErrorMessage.slice(0, 500)}`);
+              console.warn("[preview-jobs] GitHub auth command failed", {
+                previewRunId,
+                attempt,
+                exitCode: ghAuthResponse.data?.exit_code,
+                stderr: maskAndSlice(ghAuthResponse.data?.stderr, 200),
+                stdout: maskAndSlice(ghAuthResponse.data?.stdout, 200),
+              });
+            }
+
+            if (attempt < maxRetries) {
+              const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
+              console.log("[preview-jobs] Retrying GitHub auth", {
+                previewRunId,
+                attempt,
+                delayMs: delay,
+              });
+              await new Promise(resolve => setTimeout(resolve, delay));
+            }
+          } catch (error) {
+            const normalizedError = error instanceof Error ? error : new Error(String(error));
+            const maskedMessage = maskLogValue(normalizedError.message) || normalizedError.message;
+            lastError = new Error(maskedMessage);
+            console.error("[preview-jobs] GitHub auth attempt threw error", {
+              previewRunId,
+              attempt,
+              error: maskedMessage,
+            });
+
+            if (attempt < maxRetries) {
+              const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
+              await new Promise(resolve => setTimeout(resolve, delay));
+            }
+          }
+        }
+
+        if (!authSucceeded) {
+          console.error("[preview-jobs] GitHub authentication failed after all retries", {
             previewRunId,
-            exitCode: ghAuthResponse.data?.exit_code,
-            stderr: ghAuthResponse.data?.stderr,
-            stdout: ghAuthResponse.data?.stdout,
+            maxRetries,
+            lastError: maskLogValue(lastError?.message),
           });
-        } else {
-          console.log("[preview-jobs] GitHub authentication configured successfully", {
-            previewRunId,
-          });
+          const finalErrorMessage = maskLogValue(lastError?.message) || "Unknown error";
+          throw new Error(
+            `GitHub authentication failed after ${maxRetries} attempts: ${finalErrorMessage}`
+          );
         }
       } else {
         console.warn("[preview-jobs] Failed to fetch installation token, falling back to public fetch", {
