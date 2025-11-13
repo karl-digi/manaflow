@@ -678,6 +678,20 @@ export const getById = internalQuery({
   },
 });
 
+export const getScreenshotsForRun = internalQuery({
+  args: { runId: v.id("taskRuns") },
+  handler: async (ctx, args) => {
+    const screenshotSetDocs = await ctx.db
+      .query("taskRunScreenshotSets")
+      .withIndex("by_run_capturedAt", (q) => q.eq("runId", args.runId))
+      .collect();
+
+    screenshotSetDocs.sort((a, b) => b.capturedAt - a.capturedAt);
+
+    return screenshotSetDocs.slice(0, 20);
+  },
+});
+
 export const updateStatusPublic = authMutation({
   args: {
     teamSlugOrId: v.string(),

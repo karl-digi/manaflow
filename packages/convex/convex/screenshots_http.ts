@@ -2,6 +2,7 @@ import {
   ScreenshotUploadPayloadSchema,
   ScreenshotUploadUrlRequestSchema,
 } from "@cmux/shared/convex-safe";
+import { z } from "zod";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { httpAction } from "./_generated/server";
@@ -150,4 +151,76 @@ export const createScreenshotUploadUrl = httpAction(async (ctx, req) => {
 
   const uploadUrl = await ctx.storage.generateUploadUrl();
   return jsonResponse({ ok: true, uploadUrl });
+});
+
+const GetScreenshotsForRunSchema = z.object({
+  runId: z.string(),
+});
+
+export const getScreenshotsForRun = httpAction(async (ctx, req) => {
+  const auth = await getWorkerAuth(req, { loggerPrefix: "[screenshots]" });
+  if (!auth) {
+    throw jsonResponse({ code: 401, message: "Unauthorized" }, 401);
+  }
+
+  const parsed = await ensureJsonRequest(req);
+  if (parsed instanceof Response) return parsed;
+
+  const validation = GetScreenshotsForRunSchema.safeParse(parsed.json);
+  if (!validation.success) {
+    console.warn(
+      "[screenshots] Invalid get screenshots request payload",
+      validation.error
+    );
+    return jsonResponse({ code: 400, message: "Invalid input" }, 400);
+  }
+
+  const { runId } = validation.data;
+
+  const run = await ctx.runQuery(internal.taskRuns.getById, {
+    id: runId as Id<"taskRuns">,
+  });
+  if (!run) {
+    return jsonResponse({ code: 404, message: "Task run not found" }, 404);
+  }
+
+  if (
+    run.teamId !== auth.payload.teamId ||
+    run.userId !== auth.payload.userId
+  ) {
+    return jsonResponse({ code: 401, message: "Unauthorized" }, 401);
+  }
+
+  const screenshotSetDocs = await ctx.runQuery(
+    internal.taskRuns.getScreenshotsForRun,
+    {
+      runId: runId as Id<"taskRuns">,
+    }
+  );
+
+  const screenshotSetsWithUrls = await Promise.all(
+    screenshotSetDocs.map(async (set) => {
+      const imagesWithUrls = await Promise.all(
+        set.images.map(async (image) => {
+          const url = await ctx.storage.getUrl(image.storageId);
+          return {
+            ...image,
+            url: url ?? undefined,
+          };
+        })
+      );
+      return {
+        _id: set._id,
+        status: set.status,
+        capturedAt: set.capturedAt,
+        images: imagesWithUrls,
+        error: set.error,
+      };
+    })
+  );
+
+  return jsonResponse({
+    ok: true,
+    screenshots: screenshotSetsWithUrls,
+  });
 });

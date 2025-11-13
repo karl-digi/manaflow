@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { log } from "../logger";
 import { execAsync, WORKSPACE_ROOT } from "./utils";
+import { convexRequest } from "./convex";
 import type {
   CandidateData,
   CrownWorkerCheckResponse,
@@ -21,6 +22,7 @@ export function buildPullRequestBody({
   branch,
   taskId,
   runId,
+  screenshots,
 }: {
   summary?: string;
   prompt: string;
@@ -28,15 +30,32 @@ export function buildPullRequestBody({
   branch: string;
   taskId: string;
   runId: string;
+  screenshots?: ScreenshotSet[];
 }): string {
   const bodySummary = summary?.trim() || "Summary not available.";
+
+  let screenshotsSection = "";
+  if (screenshots && screenshots.length > 0) {
+    const latestScreenshotSet = screenshots[0];
+    if (latestScreenshotSet.status === "completed" && latestScreenshotSet.images.length > 0) {
+      screenshotsSection = "\n\n### Screenshots\n\n";
+
+      for (const image of latestScreenshotSet.images) {
+        if (image.url) {
+          const fileName = image.fileName || "screenshot";
+          screenshotsSection += `![${fileName}](${image.url})\n\n`;
+        }
+      }
+    }
+  }
+
   return `## 🏆 Crown Winner: ${agentName}
 
 ### Task Description
 ${prompt}
 
 ### Summary
-${bodySummary}
+${bodySummary}${screenshotsSection}
 
 ### Implementation Details
 - **Agent**: ${agentName}
@@ -79,6 +98,26 @@ const ghPrCreateResponseSchema = z.object({
 
 type GhPrCreateResponse = z.infer<typeof ghPrCreateResponseSchema>;
 
+type ScreenshotImage = {
+  storageId: string;
+  mimeType: string;
+  fileName?: string;
+  url?: string;
+};
+
+type ScreenshotSet = {
+  _id: string;
+  status: "completed" | "failed" | "skipped";
+  capturedAt: number;
+  images: ScreenshotImage[];
+  error?: string;
+};
+
+type GetScreenshotsResponse = {
+  ok: boolean;
+  screenshots: ScreenshotSet[];
+};
+
 function parseGhPrCreateResponse(input: unknown): GhPrCreateResponse | null {
   const result = ghPrCreateResponseSchema.safeParse(input);
   if (!result.success) {
@@ -107,6 +146,32 @@ export async function createPullRequest(options: {
     return null;
   }
 
+  // Fetch screenshots for the winner run
+  let screenshots: ScreenshotSet[] = [];
+  try {
+    const screenshotResponse = await convexRequest<GetScreenshotsResponse>(
+      "/api/screenshots/get-for-run",
+      context.token,
+      { runId: winner.runId },
+      context.convexUrl
+    );
+    if (screenshotResponse?.ok && screenshotResponse.screenshots) {
+      screenshots = screenshotResponse.screenshots;
+      log("INFO", "Fetched screenshots for PR", {
+        taskId: check.taskId,
+        runId: winner.runId,
+        count: screenshots.length,
+      });
+    }
+  } catch (error) {
+    log("WARNING", "Failed to fetch screenshots for PR", {
+      taskId: check.taskId,
+      runId: winner.runId,
+      error,
+    });
+    // Continue without screenshots - don't fail PR creation
+  }
+
   const baseBranch = check.task.baseBranch || "main";
   const prTitle = buildPullRequestTitle(check.task.text);
   const prBody = buildPullRequestBody({
@@ -116,6 +181,7 @@ export async function createPullRequest(options: {
     branch,
     taskId: context.taskId ?? check.taskId,
     runId: winner.runId,
+    screenshots,
   });
 
   const script = `set -e
