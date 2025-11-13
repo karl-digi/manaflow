@@ -1,4 +1,5 @@
 import { useTheme } from "@/components/theme/use-theme";
+import { NavigationHistoryProvider } from "@/contexts/navigation-history/NavigationHistoryProvider";
 import type { StackClientApp } from "@stackframe/react";
 import type { QueryClient } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
@@ -137,10 +138,10 @@ function RootComponent() {
   }, [location]);
 
   return (
-    <>
+    <NavigationHistoryProvider>
       <Outlet />
       <DevTools />
       <ToasterWithTheme />
-    </>
+    </NavigationHistoryProvider>
   );
 }

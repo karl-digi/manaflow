@@ -1,22 +1,34 @@
 import { TaskTree } from "@/components/TaskTree";
 import { TaskTreeSkeleton } from "@/components/TaskTreeSkeleton";
+import { Dropdown } from "@/components/ui/dropdown";
+import { useNavigationHistory } from "@/contexts/navigation-history/NavigationHistoryProvider";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { isElectron } from "@/lib/electron";
 import { type Doc } from "@cmux/convex/dataModel";
 import { api } from "@cmux/convex/api";
 import { useQuery } from "convex/react";
 import type { LinkProps } from "@tanstack/react-router";
-import { Link } from "@tanstack/react-router";
-import { Home, Plus, Server, Settings } from "lucide-react";
+import { Link, useRouter } from "@tanstack/react-router";
+import {
+  ArrowLeft,
+  ArrowRight,
+  Clock3,
+  Home,
+  Plus,
+  Server,
+  Settings,
+} from "lucide-react";
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ComponentType,
   type CSSProperties,
 } from "react";
 import CmuxLogo from "./logo/cmux-logo";
+import type { NavigationHistoryEntry } from "@/contexts/navigation-history/NavigationHistoryProvider";
 import { SidebarNavLink } from "./sidebar/SidebarNavLink";
 import { SidebarPullRequestList } from "./sidebar/SidebarPullRequestList";
 import { SidebarSectionLink } from "./sidebar/SidebarSectionLink";
@@ -80,6 +92,29 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
     const stored = localStorage.getItem("sidebarHidden");
     return stored === "true";
   });
+  const router = useRouter();
+  const {
+    entries: navigationEntries,
+    canGoBack,
+    canGoForward,
+    goBack,
+    goForward,
+  } = useNavigationHistory();
+  const recentEntries = useMemo(
+    () =>
+      [...navigationEntries].sort((a, b) => b.timestamp - a.timestamp),
+    [navigationEntries]
+  );
+
+  const iconButtonClass =
+    "w-7 h-7 rounded-lg flex items-center justify-center text-neutral-600 dark:text-neutral-300 transition-colors bg-transparent hover:bg-neutral-100 dark:hover:bg-neutral-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500/50 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent";
+
+  const handleRecentNavigate = useCallback(
+    (entry: NavigationHistoryEntry) => {
+      router.history.push(entry.href);
+    },
+    [router]
+  );
 
   const { expandTaskIds } = useExpandTasks();
 
@@ -241,6 +276,74 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
           {/* <Terminals */}
           <CmuxLogo height={32} />
         </Link>
+        {isElectron && (
+          <div
+            className="flex items-center gap-1 ml-2"
+            style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
+          >
+            <button
+              type="button"
+              className={iconButtonClass}
+              aria-label="Go back"
+              title="Go back"
+              onClick={goBack}
+              disabled={!canGoBack}
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              className={iconButtonClass}
+              aria-label="Go forward"
+              title="Go forward"
+              onClick={goForward}
+              disabled={!canGoForward}
+            >
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+            <Dropdown.Root>
+              <Dropdown.Trigger
+                className={iconButtonClass}
+                aria-label="Recently viewed pages"
+                title={
+                  recentEntries.length === 0
+                    ? "No recent pages"
+                    : "Recently viewed pages"
+                }
+                disabled={recentEntries.length === 0}
+              >
+                <Clock3 className="w-3.5 h-3.5" />
+              </Dropdown.Trigger>
+              <Dropdown.Portal>
+                <Dropdown.Positioner sideOffset={6} align="start">
+                  <Dropdown.Popup className="min-w-[240px] max-w-[320px]">
+                    <Dropdown.Arrow />
+                    {recentEntries.length === 0 ? (
+                      <div className="px-3 py-2 text-xs text-neutral-500 dark:text-neutral-400">
+                        No recent pages
+                      </div>
+                    ) : (
+                      recentEntries.slice(0, 15).map((entry) => (
+                        <Dropdown.Item
+                          key={`${entry.key}-${entry.timestamp}`}
+                          onSelect={() => handleRecentNavigate(entry)}
+                          className="flex flex-col gap-0.5 text-left max-w-[280px]"
+                        >
+                          <span className="text-sm font-medium text-neutral-900 dark:text-neutral-50 truncate">
+                            {entry.title}
+                          </span>
+                          <span className="text-xs text-neutral-500 dark:text-neutral-400 truncate">
+                            {entry.pathname}
+                          </span>
+                        </Dropdown.Item>
+                      ))
+                    )}
+                  </Dropdown.Popup>
+                </Dropdown.Positioner>
+              </Dropdown.Portal>
+            </Dropdown.Root>
+          </div>
+        )}
         <div className="grow"></div>
         <Link
           to="/$teamSlugOrId/dashboard"
