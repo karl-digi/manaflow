@@ -28,7 +28,6 @@ import { normalizeBrowserUrl } from "@cmux/shared";
 interface RegisterOptions {
   logger: Logger;
   maxSuspendedEntries?: number;
-  rendererBaseUrl: string;
   onPreviewWebContentsChange?: (payload: {
     webContentsId: number;
     present: boolean;
@@ -90,7 +89,6 @@ const suspendedQueue: number[] = [];
 const suspendedByKey = new Map<string, Entry>();
 let suspendedCount = 0;
 let maxSuspendedEntries = 25;
-let rendererBaseUrl = "";
 let previewWebContentsChangeHandler:
   | ((payload: { webContentsId: number; present: boolean }) => void)
   | null = null;
@@ -894,11 +892,9 @@ function destroyWebContents(contents: WebContents) {
 export function registerWebContentsViewHandlers({
   logger,
   maxSuspendedEntries: providedMax,
-  rendererBaseUrl: providedBaseUrl,
   onPreviewWebContentsChange,
 }: RegisterOptions): void {
   setMaxSuspendedEntries(providedMax);
-  rendererBaseUrl = providedBaseUrl;
   previewWebContentsChangeHandler = onPreviewWebContentsChange ?? null;
 
   ipcMain.handle(
