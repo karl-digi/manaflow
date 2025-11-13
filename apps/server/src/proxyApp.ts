@@ -33,7 +33,7 @@ function parseHostHeader(
   return null;
 }
 
-// Loading screen HTML
+// Loading screen HTML with retry limit and exponential backoff
 const loadingScreen = `
   <!DOCTYPE html>
   <html>
@@ -72,19 +72,65 @@ const loadingScreen = `
         font-family: monospace;
         color: #007acc;
       }
+      .error {
+        background-color: #5a1d1d;
+        border: 1px solid #ff6b6b;
+        border-radius: 4px;
+        padding: 20px;
+        margin-top: 20px;
+        max-width: 600px;
+      }
+      .error-title {
+        color: #ff6b6b;
+        font-weight: bold;
+        margin-bottom: 10px;
+      }
     </style>
     <script>
-      // Auto-refresh every 2 seconds
-      setTimeout(() => {
-        window.location.reload();
-      }, 2000);
+      // Retry limit and exponential backoff to prevent infinite loops
+      const MAX_RETRIES = 30; // Maximum 30 retries (~2 minutes with exponential backoff)
+      const BASE_DELAY = 2000; // Start with 2 seconds
+      const MAX_DELAY = 10000; // Max 10 seconds between retries
+
+      const urlParams = new URLSearchParams(window.location.search);
+      let retryCount = parseInt(urlParams.get('_retry') || '0', 10);
+
+      if (retryCount >= MAX_RETRIES) {
+        // Stop auto-refresh after max retries
+        document.addEventListener('DOMContentLoaded', () => {
+          const spinner = document.querySelector('.spinner');
+          const message = document.querySelector('.message');
+          const refreshDiv = document.querySelector('.refresh-message');
+
+          if (spinner) spinner.style.display = 'none';
+          if (message) message.textContent = 'Container failed to start';
+          if (refreshDiv) refreshDiv.innerHTML = \`
+            <div class="error">
+              <div class="error-title">Container startup timeout</div>
+              <div>The container did not start after \${MAX_RETRIES} attempts.</div>
+              <div style="margin-top: 10px;">
+                <a href="?" style="color: #007acc;">Click here to retry</a>
+              </div>
+            </div>
+          \`;
+        });
+      } else {
+        // Calculate exponential backoff delay
+        const delay = Math.min(BASE_DELAY * Math.pow(1.5, retryCount), MAX_DELAY);
+
+        setTimeout(() => {
+          // Increment retry count in URL
+          urlParams.set('_retry', (retryCount + 1).toString());
+          window.location.search = urlParams.toString();
+        }, delay);
+      }
     </script>
   </head>
   <body>
     <div class="spinner"></div>
     <div class="message">Starting VSCode container</div>
     <div class="container-name">{{containerName}}</div>
-    <div style="margin-top: 20px; font-size: 14px; color: #888;">
+    <div class="refresh-message" style="margin-top: 20px; font-size: 14px; color: #888;">
       This page will automatically refresh...
     </div>
   </body>
@@ -178,6 +224,13 @@ export function createProxyApp({
       res: express.Response,
       next: express.NextFunction
     ) => {
+      // Prevent infinite proxy loops - check if we're already proxying
+      const isAlreadyProxied = req.get("X-Cmux-Proxied") === "true";
+      if (isAlreadyProxied) {
+        serverLogger.warn("Loop detected in proxy request");
+        return res.status(508).send("Loop detected in proxy");
+      }
+
       const host = req.get("host");
       if (!host) {
         return res.status(400).send("Host header is required");
@@ -238,6 +291,11 @@ export function createProxyApp({
           // Increase timeout for long-running requests
           proxyTimeout: 120000, // 120 seconds
           timeout: 120000, // 120 seconds
+        });
+
+        // Add loop prevention header to proxied requests
+        proxy.on("proxyReq", (proxyReq) => {
+          proxyReq.setHeader("X-Cmux-Proxied", "true");
         });
 
         // Handle proxy errors
