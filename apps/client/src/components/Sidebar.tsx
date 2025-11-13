@@ -1,26 +1,67 @@
-import { TaskTree, type TaskWithRuns } from "@/components/TaskTree";
+import { TaskTree } from "@/components/TaskTree";
 import { TaskTreeSkeleton } from "@/components/TaskTreeSkeleton";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { isElectron } from "@/lib/electron";
 import { type Doc } from "@cmux/convex/dataModel";
+import { api } from "@cmux/convex/api";
+import { useQuery } from "convex/react";
+import type { LinkProps } from "@tanstack/react-router";
 import { Link } from "@tanstack/react-router";
-import { Plus, ServerIcon } from "lucide-react";
+import { Home, Plus, Server, Settings } from "lucide-react";
 import {
-  type CSSProperties,
   useCallback,
   useEffect,
   useRef,
   useState,
+  type ComponentType,
+  type CSSProperties,
 } from "react";
 import CmuxLogo from "./logo/cmux-logo";
+import { SidebarNavLink } from "./sidebar/SidebarNavLink";
+import { SidebarPullRequestList } from "./sidebar/SidebarPullRequestList";
+import { SidebarSectionLink } from "./sidebar/SidebarSectionLink";
 
 interface SidebarProps {
   tasks: Doc<"tasks">[] | undefined;
-  tasksWithRuns: TaskWithRuns[];
   teamSlugOrId: string;
 }
 
-export function Sidebar({ tasks, tasksWithRuns, teamSlugOrId }: SidebarProps) {
+interface SidebarNavItem {
+  label: string;
+  to: LinkProps["to"];
+  icon?: ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
+  search?: LinkProps["search"];
+  exact?: boolean;
+}
+const navItems: SidebarNavItem[] = [
+  {
+    label: "Home",
+    to: "/$teamSlugOrId/dashboard",
+    exact: true,
+    icon: Home,
+  },
+  {
+    label: "Environments",
+    to: "/$teamSlugOrId/environments",
+    search: {
+      step: undefined,
+      selectedRepos: undefined,
+      connectionLogin: undefined,
+      repoSearch: undefined,
+      instanceId: undefined,
+    },
+    exact: true,
+    icon: Server,
+  },
+  {
+    label: "Settings",
+    to: "/$teamSlugOrId/settings",
+    exact: true,
+    icon: Settings,
+  },
+];
+
+export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
   const DEFAULT_WIDTH = 256;
   const MIN_WIDTH = 240;
   const MAX_WIDTH = 600;
@@ -35,12 +76,61 @@ export function Sidebar({ tasks, tasksWithRuns, teamSlugOrId }: SidebarProps) {
     return Math.min(Math.max(parsed, MIN_WIDTH), MAX_WIDTH);
   });
   const [isResizing, setIsResizing] = useState(false);
+  const [isHidden, setIsHidden] = useState(() => {
+    const stored = localStorage.getItem("sidebarHidden");
+    return stored === "true";
+  });
 
   const { expandTaskIds } = useExpandTasks();
+
+  // Fetch pinned items
+  const pinnedData = useQuery(api.tasks.getPinned, { teamSlugOrId });
 
   useEffect(() => {
     localStorage.setItem("sidebarWidth", String(width));
   }, [width]);
+
+  useEffect(() => {
+    localStorage.setItem("sidebarHidden", String(isHidden));
+  }, [isHidden]);
+
+  // Keyboard shortcut to toggle sidebar (Ctrl+Shift+S)
+  useEffect(() => {
+    if (isElectron && window.cmux?.on) {
+      const off = window.cmux.on("shortcut:sidebar-toggle", () => {
+        setIsHidden((prev) => !prev);
+      });
+      return () => {
+        if (typeof off === "function") off();
+      };
+    }
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (
+        e.ctrlKey &&
+        e.shiftKey &&
+        (e.code === "KeyS" || e.key.toLowerCase() === "s")
+      ) {
+        e.preventDefault();
+        setIsHidden((prev) => !prev);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  // Listen for storage events from command bar (sidebar visibility sync)
+  useEffect(() => {
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === "sidebarHidden" && e.newValue !== null) {
+        setIsHidden(e.newValue === "true");
+      }
+    };
+
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, []);
 
   const onMouseMove = useCallback((e: MouseEvent) => {
     // Batch width updates to once per animation frame to reduce layout thrash
@@ -127,8 +217,9 @@ export function Sidebar({ tasks, tasksWithRuns, teamSlugOrId }: SidebarProps) {
   return (
     <div
       ref={containerRef}
-      className="relative bg-neutral-50 dark:bg-black flex flex-col shrink-0 h-dvh grow"
+      className="relative bg-neutral-50 dark:bg-black flex flex-col shrink-0 h-dvh grow pr-1"
       style={{
+        display: isHidden ? "none" : "flex",
         width: `${width}px`,
         minWidth: `${width}px`,
         maxWidth: `${width}px`,
@@ -143,6 +234,7 @@ export function Sidebar({ tasks, tasksWithRuns, teamSlugOrId }: SidebarProps) {
         <Link
           to="/$teamSlugOrId/dashboard"
           params={{ teamSlugOrId }}
+          activeOptions={{ exact: true }}
           className="flex items-center gap-2 select-none cursor-pointer"
           style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
         >
@@ -153,6 +245,7 @@ export function Sidebar({ tasks, tasksWithRuns, teamSlugOrId }: SidebarProps) {
         <Link
           to="/$teamSlugOrId/dashboard"
           params={{ teamSlugOrId }}
+          activeOptions={{ exact: true }}
           className="w-[25px] h-[25px] border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-900 rounded-lg flex items-center justify-center transition-colors cursor-default"
           title="New task"
           style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
@@ -164,27 +257,83 @@ export function Sidebar({ tasks, tasksWithRuns, teamSlugOrId }: SidebarProps) {
         </Link>
       </div>
       <nav className="grow flex flex-col overflow-hidden">
-        <div className="flex-1 overflow-y-auto">
-          <div className="pl-3 py-1">
-            <div className="flex items-center px-1 py-1">
-              <span className="text-[10px] font-medium text-neutral-500 dark:text-neutral-500 uppercase tracking-[-0.005em] select-none">
-                Tasks
-              </span>
+        <div className="flex-1 overflow-y-auto pb-8">
+          <ul className="flex flex-col gap-px">
+            {navItems.map((item) => (
+              <li key={item.label}>
+                <SidebarNavLink
+                  to={item.to}
+                  params={{ teamSlugOrId }}
+                  search={item.search}
+                  icon={item.icon}
+                  exact={item.exact}
+                  label={item.label}
+                />
+              </li>
+            ))}
+          </ul>
+
+          <div className="mt-4 flex flex-col">
+            <SidebarSectionLink
+              to="/$teamSlugOrId/prs"
+              params={{ teamSlugOrId }}
+              exact
+            >
+              Pull requests
+            </SidebarSectionLink>
+            <div className="ml-2 pt-px">
+              <SidebarPullRequestList teamSlugOrId={teamSlugOrId} />
             </div>
+          </div>
+
+          <div className="mt-2 flex flex-col gap-0.5">
+            <SidebarSectionLink
+              to="/$teamSlugOrId/workspaces"
+              params={{ teamSlugOrId }}
+              exact
+            >
+              Workspaces
+            </SidebarSectionLink>
+          </div>
+
+          <div className="ml-2 pt-px">
             <div className="space-y-px">
               {tasks === undefined ? (
                 <TaskTreeSkeleton count={5} />
-              ) : tasksWithRuns.length > 0 ? (
-                tasksWithRuns.map((task) => (
-                  <TaskTree
-                    key={task._id}
-                    task={task}
-                    defaultExpanded={expandTaskIds?.includes(task._id) ?? false}
-                    teamSlugOrId={teamSlugOrId}
-                  />
-                ))
+              ) : tasks && tasks.length > 0 ? (
+                <>
+                  {/* Pinned items at the top */}
+                  {pinnedData && pinnedData.length > 0 && (
+                    <>
+                      {pinnedData.map((task) => (
+                        <TaskTree
+                          key={task._id}
+                          task={task}
+                          defaultExpanded={expandTaskIds?.includes(task._id) ?? false}
+                          teamSlugOrId={teamSlugOrId}
+                        />
+                      ))}
+                      {/* Horizontal divider after pinned items */}
+                      <hr className="mx-2 border-t border-neutral-200 dark:border-neutral-800" />
+                    </>
+                  )}
+                  {/* Regular (non-pinned) tasks */}
+                  {tasks
+                    .filter((task) => {
+                      // Only filter out directly pinned tasks
+                      return !task.pinned;
+                    })
+                    .map((task) => (
+                      <TaskTree
+                        key={task._id}
+                        task={task}
+                        defaultExpanded={expandTaskIds?.includes(task._id) ?? false}
+                        teamSlugOrId={teamSlugOrId}
+                      />
+                    ))}
+                </>
               ) : (
-                <p className="px-2 py-1.5 text-xs text-center text-neutral-500 dark:text-neutral-400 select-none">
+                <p className="pl-2 pr-3 py-1.5 text-xs text-neutral-500 dark:text-neutral-400 select-none">
                   No recent tasks
                 </p>
               )}
@@ -192,65 +341,6 @@ export function Sidebar({ tasks, tasksWithRuns, teamSlugOrId }: SidebarProps) {
           </div>
         </div>
       </nav>
-
-      <div className="pb-2 shrink-0 flex flex-col">
-        <Link
-          to="/$teamSlugOrId/environments"
-          params={{ teamSlugOrId }}
-          search={{
-            step: undefined,
-            selectedRepos: undefined,
-            connectionLogin: undefined,
-            repoSearch: undefined,
-            instanceId: undefined,
-          }}
-          className="flex items-center px-7 py-2 text-sm text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors select-none cursor-default"
-        >
-          <ServerIcon className="size-3.5 mr-3 text-neutral-500" />
-          Environments
-        </Link>
-        <a
-          href="https://github.com/manaflow-ai/cmux/issues/new"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center px-7 py-2 text-sm text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors select-none cursor-pointer"
-        >
-          <svg
-            className="w-4 h-4 mr-3 text-neutral-500"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-            />
-          </svg>
-          Feedback
-        </a>
-        <Link
-          to="/$teamSlugOrId/settings"
-          params={{ teamSlugOrId }}
-          className="flex items-center px-7 py-2 text-sm text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors select-none cursor-default"
-        >
-          <svg
-            className="w-4 h-4 mr-3 text-neutral-500"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
-            />
-          </svg>
-          Settings
-        </Link>
-      </div>
 
       {/* Resize handle */}
       <div
@@ -264,11 +354,11 @@ export function Sidebar({ tasks, tasksWithRuns, teamSlugOrId }: SidebarProps) {
           {
             // Invisible, but with a comfortable hit area
             width: "14px",
-            transform: "translateX(13px)",
+            transform: "translateX(7px)",
             // marginRight: "-5px",
             background: "transparent",
             // background: "red",
-            zIndex: 99999999,
+            zIndex: "var(--z-sidebar-resize-handle)",
           } as CSSProperties
         }
       />

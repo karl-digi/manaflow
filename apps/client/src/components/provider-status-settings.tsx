@@ -22,10 +22,10 @@ export function ProviderStatusSettings() {
     });
   }, [socket]);
 
-  // Check status on mount and every 30 seconds
+  // Check status on mount and every 5 seconds
   useEffect(() => {
     checkProviderStatus();
-    const interval = setInterval(checkProviderStatus, 30000);
+    const interval = setInterval(checkProviderStatus, 5000);
     return () => clearInterval(interval);
   }, [checkProviderStatus]);
 
@@ -104,7 +104,7 @@ export function ProviderStatusSettings() {
             <XCircle className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />
           )}
           <span className="text-xs text-neutral-700 dark:text-neutral-300 select-text">
-            Docker
+            Docker required
             {dockerOk &&
               status.dockerStatus?.version &&
               ` ${status.dockerStatus.version}`}

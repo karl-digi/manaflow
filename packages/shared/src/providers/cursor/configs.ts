@@ -1,7 +1,7 @@
-import type { AgentConfig } from "../../agentConfig.js";
-import { CURSOR_API_KEY } from "../../apiKeys.js";
-import { checkCursorRequirements } from "./check-requirements.js";
-import { getCursorEnvironment } from "./environment.js";
+import type { AgentConfig } from "../../agentConfig";
+import { CURSOR_API_KEY } from "../../apiKeys";
+import { checkCursorRequirements } from "./check-requirements";
+import { getCursorEnvironment } from "./environment";
 
 export const CURSOR_OPUS_4_1_CONFIG: AgentConfig = {
   name: "cursor/opus-4.1",

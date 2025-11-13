@@ -5,6 +5,7 @@ import { buildAutoCommitPushCommand } from "./utils/autoCommitPushCommand";
 import { generateCommitMessageFromDiff } from "./utils/commitMessageGenerator";
 import { getConvex } from "./utils/convexClient";
 import { serverLogger } from "./utils/fileLogger";
+import { parseRepoFromUrl } from "./utils/githubPr";
 import { workerExec } from "./utils/workerExec";
 import { VSCodeInstance } from "./vscode/VSCodeInstance";
 
@@ -17,7 +18,8 @@ export default async function performAutoCommitAndPush(
   agent: AgentConfig,
   taskRunId: Id<"taskRuns">,
   taskDescription: string,
-  teamSlugOrId: string
+  teamSlugOrId: string,
+  precollectedDiff: string
 ): Promise<void> {
   try {
     serverLogger.info(`[AgentSpawner] Starting auto-commit for ${agent.name}`);
@@ -48,23 +50,17 @@ export default async function performAutoCommitAndPush(
         ? taskDescription.substring(0, 69) + "..."
         : taskDescription;
 
-    // Collect relevant diff from worker via script (does not modify repo index)
+    // Use the precollected diff for commit message generation
     let commitMessage = "";
-    try {
-      const { stdout: diffOut } = await workerExec({
-        workerSocket,
-        command: "/bin/bash",
-        args: ["-c", "/usr/local/bin/cmux-collect-relevant-diff.sh"],
-        cwd: "/root/workspace",
-        env: {},
-        timeout: 30000,
-      });
-      serverLogger.info(
-        `[AgentSpawner] Collected relevant diff (${diffOut.length} chars)`
-      );
+    const diffForCommit = precollectedDiff.trim();
 
+    serverLogger.info(
+      `[AgentSpawner] Using precollected diff for commit message (${diffForCommit.length} chars)`
+    );
+
+    try {
       const aiCommit = await generateCommitMessageFromDiff(
-        diffOut,
+        diffForCommit,
         teamSlugOrId
       );
       if (aiCommit && aiCommit.trim()) {
@@ -73,17 +69,15 @@ export default async function performAutoCommitAndPush(
         console.warn(
           "No AI commit message generated, falling back to task-based message"
         );
-        // Fallback to task-based message
         commitMessage = `${truncatedDescription}\n\nTask completed by ${agent.name} agent${
           isCrowned ? " 🏆" : ""
         }`;
       }
     } catch (e) {
       serverLogger.error(
-        `[AgentSpawner] Failed to collect diff or generate commit message:`,
+        `[AgentSpawner] Failed to generate commit message:`,
         e
       );
-      // Fallback commit message
       commitMessage = `${truncatedDescription}\n\nTask completed by ${agent.name} agent${
         isCrowned ? " 🏆" : ""
       }`;
@@ -94,18 +88,32 @@ export default async function performAutoCommitAndPush(
       return;
     }
 
-    const autoCommitScript = buildAutoCommitPushCommand({
-      branchName,
-      commitMessage,
-    });
+    const autoCommitScript = buildAutoCommitPushCommand();
     serverLogger.info(`[AgentSpawner] Executing auto-commit script...`);
+
+    // Create a single bash command that writes and executes the bun script
+    const scriptPath = `/tmp/cmux-auto-commit-${Date.now()}.ts`;
+    const combinedCommand = `
+set -e
+cat > ${scriptPath} << 'CMUX_SCRIPT_EOF'
+${autoCommitScript}
+CMUX_SCRIPT_EOF
+bun run ${scriptPath}
+EXIT_CODE=$?
+rm -f ${scriptPath}
+exit $EXIT_CODE
+`;
+
     try {
       const { stdout, stderr, exitCode } = await workerExec({
         workerSocket,
         command: "bash",
-        args: ["-c", `set -o pipefail; ${autoCommitScript}`],
+        args: ["-c", combinedCommand],
         cwd: "/root/workspace",
-        env: {},
+        env: {
+          CMUX_COMMIT_MESSAGE: commitMessage,
+          CMUX_BRANCH_NAME: branchName,
+        },
         timeout: 60000,
       });
       serverLogger.info(`[AgentSpawner] Auto-commit script output:`, {
@@ -113,6 +121,7 @@ export default async function performAutoCommitAndPush(
         stdout: stdout?.slice(0, 2000),
         stderr: stderr?.slice(0, 2000),
       });
+
       if (exitCode !== 0) {
         const errMsg = `[AgentSpawner] Auto-commit script failed with exit code ${exitCode}`;
         serverLogger.error(errMsg);
@@ -232,11 +241,31 @@ ${taskRun.crownReason || "This implementation was selected as the best solution.
             serverLogger.info(
               `[AgentSpawner] Pull request created: ${prUrlMatch[0]}`
             );
+            const parsed = parseRepoFromUrl(prUrlMatch[0]);
+            const repoFullName =
+              task.projectFullName ||
+              (parsed.owner && parsed.repo
+                ? `${parsed.owner}/${parsed.repo}`
+                : undefined);
+
             await getConvex().mutation(api.taskRuns.updatePullRequestUrl, {
               teamSlugOrId,
               id: taskRunId,
               pullRequestUrl: prUrlMatch[0],
               isDraft: false,
+              ...(repoFullName
+                ? {
+                    pullRequests: [
+                      {
+                        repoFullName,
+                        url: prUrlMatch[0],
+                        number: parsed.number,
+                        state: "open" as const,
+                        isDraft: false,
+                      },
+                    ],
+                  }
+                : {}),
             });
           } else {
             serverLogger.error(`[AgentSpawner] Failed to create PR`);

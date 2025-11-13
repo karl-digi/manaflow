@@ -1,13 +1,13 @@
-import { exec, execFile } from "child_process";
-import * as fs from "fs/promises";
-import * as path from "path";
-import { promisify } from "util";
+import { exec, execFile, type ExecFileOptions } from "node:child_process";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+import { promisify } from "node:util";
 import {
   generatePreCommitHook,
   generatePrePushHook,
   type GitHooksConfig,
-} from "./gitHooks.js";
-import { serverLogger } from "./utils/fileLogger.js";
+} from "./gitHooks";
+import { serverLogger } from "./utils/fileLogger";
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -31,9 +31,9 @@ interface GitCommandOptions {
 }
 
 interface QueuedOperation {
-  execute: () => Promise<any>;
-  resolve: (value: any) => void;
-  reject: (error: any) => void;
+  execute: () => Promise<unknown>;
+  resolve: (value: unknown) => void;
+  reject: (error: unknown) => void;
 }
 
 export class RepositoryManager {
@@ -82,11 +82,12 @@ export class RepositoryManager {
   }
 
   private async queueOperation<T>(operation: () => Promise<T>): Promise<T> {
-    return new Promise((resolve, reject) => {
+    return new Promise<T>((resolve, reject) => {
       this.operationQueue.push({
         execute: operation,
-        resolve,
-        reject,
+        // Wrap resolve/reject to satisfy the queue's unknown-typed callbacks
+        resolve: (value: unknown) => resolve(value as T),
+        reject: (error: unknown) => reject(error),
       });
       this.processQueue();
     });
@@ -113,6 +114,26 @@ export class RepositoryManager {
   }
 
   // Note: Keep all git invocations using executeGitCommand with a shell, as some CI envs lack direct execFile PATH resolution.
+
+  // Attempt to extract a stderr string from an unknown error shape
+  private extractStderr(err: unknown): string | null {
+    if (typeof err === "object" && err !== null && "stderr" in err) {
+      const candidate = (err as { stderr?: unknown }).stderr;
+      if (typeof candidate === "string") return candidate;
+      if (
+        candidate &&
+        typeof (candidate as { toString?: () => string }).toString ===
+          "function"
+      ) {
+        try {
+          return (candidate as { toString: () => string }).toString();
+        } catch {
+          return null;
+        }
+      }
+    }
+    return null;
+  }
 
   async executeGitCommand(
     command: string,
@@ -141,9 +162,8 @@ export class RepositoryManager {
             serverLogger.error(`Git command failed: ${command}`);
             if (error instanceof Error) {
               serverLogger.error(`Error: ${error.message}`);
-              if ("stderr" in error && (error as any).stderr) {
-                serverLogger.error(`Stderr: ${(error as any).stderr}`);
-              }
+              const stderrMsg = this.extractStderr(error);
+              if (stderrMsg) serverLogger.error(`Stderr: ${stderrMsg}`);
             }
           }
           throw error;
@@ -156,11 +176,13 @@ export class RepositoryManager {
       const gitPath = await this.getGitPath();
       const args = this.tokenizeGitArgs(command.slice(4));
       try {
-        const result = await execFileAsync(gitPath, args, {
+        const execOptions: ExecFileOptions = {
           cwd: options?.cwd,
+          // Ensure string output for easier logging; fall back to utf8
           encoding: options?.encoding ?? "utf8",
           windowsHide: true,
-        } as any);
+        };
+        const result = await execFileAsync(gitPath, args, execOptions);
         return {
           stdout: result.stdout.toString(),
           stderr: result.stderr?.toString?.() || "",
@@ -173,9 +195,8 @@ export class RepositoryManager {
           );
           if (error instanceof Error) {
             serverLogger.error(`Error: ${error.message}`);
-            if ((error as any).stderr) {
-              serverLogger.error(`Stderr: ${(error as any).stderr}`);
-            }
+            const stderrMsg = this.extractStderr(error);
+            if (stderrMsg) serverLogger.error(`Stderr: ${stderrMsg}`);
           }
         }
       }
@@ -197,9 +218,8 @@ export class RepositoryManager {
         serverLogger.error(`Git command failed: ${command}`);
         if (error instanceof Error) {
           serverLogger.error(`Error: ${error.message}`);
-          if ("stderr" in error && (error as any).stderr) {
-            serverLogger.error(`Stderr: ${(error as any).stderr}`);
-          }
+          const stderrMsg = this.extractStderr(error);
+          if (stderrMsg) serverLogger.error(`Stderr: ${stderrMsg}`);
         }
       }
       throw error;
@@ -271,6 +291,125 @@ export class RepositoryManager {
       args.push(m[2] ?? m[3] ?? m[1]);
     }
     return args;
+  }
+
+  async getGitDir(repoPath: string): Promise<string> {
+    try {
+      const { stdout } = await this.executeGitCommand(
+        `git rev-parse --git-dir`,
+        {
+          cwd: repoPath,
+        }
+      );
+      const p = stdout.trim();
+      return path.isAbsolute(p) ? p : path.join(repoPath, p);
+    } catch {
+      return path.join(repoPath, ".git");
+    }
+  }
+
+  async isShallow(repoPath: string): Promise<boolean> {
+    try {
+      const shallowPath = path.join(repoPath, ".git", "shallow");
+      await fs.access(shallowPath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Prewarm commit history for fast ancestry (merge-base) operations.
+   * Uses partial clone filter to avoid fetching blobs, and writes commit-graph.
+   * Idempotent and rate-limited via a timestamp file under .git.
+   */
+  async prewarmCommitHistory(
+    repoPath: string,
+    branch: string,
+    ttlMs = 30 * 60 * 1000
+  ): Promise<void> {
+    const gitDir = await this.getGitDir(repoPath);
+    const stamp = path.join(gitDir, "cmux-prewarm.stamp");
+    try {
+      const s = await fs.stat(stamp).catch(() => null);
+      if (s && Date.now() - s.mtimeMs < ttlMs) return;
+    } catch {
+      // ignore
+    }
+
+    try {
+      // Configure partial clone promisor settings (safe if already set)
+      await this.executeGitCommand(
+        `git config core.partialclonefilter blob:none`,
+        { cwd: repoPath }
+      );
+      await this.executeGitCommand(`git config remote.origin.promisor true`, {
+        cwd: repoPath,
+      });
+    } catch (e) {
+      serverLogger.warn("Failed to set partial clone promisor config:", e);
+    }
+
+    const shallow = await this.isShallow(repoPath);
+    try {
+      if (shallow) {
+        // Unshallow commit history, but keep blobs filtered
+        await this.executeGitCommand(
+          `git fetch --filter=blob:none --unshallow --prune origin ${branch}`,
+          { cwd: repoPath }
+        );
+      } else {
+        // Ensure we have latest commit graph for branch history
+        await this.executeGitCommand(
+          `git fetch --filter=blob:none --prune origin ${branch}`,
+          { cwd: repoPath }
+        );
+      }
+    } catch (e) {
+      serverLogger.warn("Prewarm fetch failed:", e);
+    }
+
+    try {
+      // Commit-graph speeds ancestry queries significantly
+      await this.executeGitCommand(`git commit-graph write --reachable`, {
+        cwd: repoPath,
+      });
+    } catch (e) {
+      // Non-fatal
+      serverLogger.warn("Commit-graph write failed:", e);
+    }
+
+    try {
+      await fs.writeFile(stamp, `${new Date().toISOString()}\n`, "utf8");
+    } catch {
+      // ignore
+    }
+  }
+
+  async updateRemoteBranchIfStale(
+    repoPath: string,
+    branch: string,
+    ttlMs = 20_000
+  ): Promise<void> {
+    const safeBranch = branch.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const gitDir = await this.getGitDir(repoPath);
+    const stamp = path.join(gitDir, `cmux-fetch-${safeBranch}.stamp`);
+    try {
+      const s = await fs.stat(stamp).catch(() => null);
+      if (s && Date.now() - s.mtimeMs < ttlMs) return;
+    } catch {
+      // ignore
+    }
+    try {
+      await this.removeStaleGitLock(repoPath, "shallow.lock", 15_000);
+      await this.executeGitCommand(
+        `git fetch --depth 1 origin +refs/heads/${branch}:refs/remotes/origin/${branch}`,
+        { cwd: repoPath }
+      );
+      await fs.writeFile(stamp, `${Date.now()}\n`, "utf8");
+    } catch (e) {
+      serverLogger.warn(`Stale fetch for ${branch} failed:`, e);
+    }
   }
 
   private async configureGitPullStrategy(repoPath: string): Promise<void> {
@@ -363,7 +502,7 @@ export class RepositoryManager {
           cwd: repoPath,
         });
       }
-    } catch (e) {
+    } catch (_e) {
       // If 'origin' does not exist, add it
       await this.executeGitCommand(`git remote add origin "${repoUrl}"`, {
         cwd: repoPath,
@@ -753,6 +892,46 @@ export class RepositoryManager {
 
     serverLogger.info(`Creating worktree with branch ${branchName}...`);
     try {
+      // Before creating the worktree, try to fetch the remote branch ref for this branch
+      // so that if the agent pushed it, we base the worktree on the pushed commits
+      // rather than creating a fresh branch off the base.
+      const fetchRemoteBranchRef = async (): Promise<boolean> => {
+        // Proactively clear shallow.lock to avoid fetch contention
+        await this.removeStaleGitLock(originPath, "shallow.lock", 15_000);
+        const fetchCmd = `git fetch --depth ${this.config.fetchDepth} origin +refs/heads/${branchName}:refs/remotes/origin/${branchName}`;
+        try {
+          await this.executeGitCommand(fetchCmd, { cwd: originPath });
+        } catch (e) {
+          const msg =
+            e instanceof Error ? `${e.message}\n${e || ""}` : String(e);
+          const lockHit =
+            msg.includes("shallow.lock") ||
+            msg.includes("could not lock shallow") ||
+            msg.includes("Another git process seems to be running");
+          if (lockHit) {
+            // Force-remove lock and retry once with a short backoff
+            await this.removeStaleGitLock(originPath, "shallow.lock", 0, true);
+            await new Promise((r) => setTimeout(r, 150));
+            await this.executeGitCommand(fetchCmd, { cwd: originPath });
+          } else {
+            // If fetch fails for other reasons (e.g., branch does not exist remotely),
+            // just continue and fall back to base branch creation below.
+            return false;
+          }
+        }
+        // Validate that the remote-tracking ref exists now
+        try {
+          await this.executeGitCommand(
+            `git rev-parse --verify refs/remotes/origin/${branchName}`,
+            { cwd: originPath, suppressErrorLogging: true }
+          );
+          return true;
+        } catch {
+          return false;
+        }
+      };
+
+      const remoteBranchAvailable = await fetchRemoteBranchRef();
       // If the branch is already attached to a worktree, reuse that path to avoid duplicates
       const preexistingPath = await this.findWorktreeUsingBranch(
         originPath,
@@ -811,7 +990,7 @@ export class RepositoryManager {
         }
       }
 
-      // Check if the branch already exists
+      // Check if the local branch already exists
       let branchExists = false;
       try {
         await this.executeGitCommand(
@@ -844,8 +1023,18 @@ export class RepositoryManager {
             { cwd: originPath }
           );
         }
+      } else if (remoteBranchAvailable) {
+        // No local branch yet, but we do have a remote-tracking branch.
+        // Create/reset the local branch to that remote and attach the worktree.
+        serverLogger.info(
+          `Remote branch origin/${branchName} found; creating worktree tracking remote`
+        );
+        await this.executeGitCommand(
+          `git worktree add -B "${branchName}" "${worktreePath}" origin/${branchName}`,
+          { cwd: originPath }
+        );
       } else {
-        // Branch doesn't exist, create it with the worktree
+        // Neither local nor remote branch exists; create a new branch from base
         await this.executeGitCommand(
           `git worktree add -b "${branchName}" "${worktreePath}" origin/${baseBranch}`,
           { cwd: originPath }

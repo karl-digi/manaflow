@@ -4,10 +4,10 @@ import type { IncomingMessage, Server } from "http";
 import httpProxy from "http-proxy";
 import { Buffer } from "node:buffer";
 import path from "node:path";
-import { getConvex } from "./utils/convexClient.js";
-import { serverLogger } from "./utils/fileLogger.js";
-import { DockerVSCodeInstance } from "./vscode/DockerVSCodeInstance.js";
-import { VSCodeInstance } from "./vscode/VSCodeInstance.js";
+import { getConvex } from "./utils/convexClient";
+import { serverLogger } from "./utils/fileLogger";
+import { DockerVSCodeInstance } from "./vscode/DockerVSCodeInstance";
+import { VSCodeInstance } from "./vscode/VSCodeInstance";
 
 // Port cache to avoid hammering Docker
 interface PortCacheEntry {
@@ -96,24 +96,10 @@ const KNOWN_PORT_MAPPINGS: { [key: string]: string } = {
   vscode: "39378",
   worker: "39377",
   extension: "39376",
+  proxy: "39379",
+  vnc: "39380",
+  cdp: "39381",
 };
-
-// Check if container exists in Docker
-async function checkContainerExists(containerName: string): Promise<boolean> {
-  const docker = DockerVSCodeInstance.getDocker();
-
-  try {
-    const containers = await docker.listContainers({
-      all: true,
-      filters: { name: [containerName] },
-    });
-
-    return containers.length > 0;
-  } catch (error) {
-    serverLogger.error(`Failed to check container existence:`, error);
-    return false;
-  }
-}
 
 // Get actual host port for a container port from Docker
 async function getActualPortFromDocker(
@@ -418,7 +404,7 @@ export function setupWebSocketProxy(server: Server) {
         }
       });
 
-      proxy.on("proxyReqWs", (proxyReq, req, socket) => {
+      proxy.on("proxyReqWs", (_proxyReq, _req, _upgradeSocket) => {
         // Log WebSocket upgrade for debugging
         serverLogger.info(
           `WebSocket upgrade for ${containerName}:${actualPort} established`

@@ -1,18 +1,16 @@
 export const getIsElectron = () => {
-  if (
-    typeof window !== "undefined" &&
-    typeof (window as unknown as { process?: unknown }).process === "object"
-  ) {
-    const wp = (window as unknown as { process?: { type?: string } }).process;
-    if (wp && wp.type === "renderer") {
-      return true;
-    }
+  // Prefer explicit bridges exposed by preload
+  if (typeof window !== "undefined") {
+    const w = window as unknown as { cmux?: unknown; electron?: unknown; process?: { type?: string } };
+    if (w.cmux || w.electron) return true;
+    // Fallbacks
+    if (typeof w.process === "object" && w.process?.type === "renderer") return true;
   }
 
   if (
     typeof navigator !== "undefined" &&
     typeof navigator.userAgent === "string" &&
-    navigator.userAgent.indexOf("Electron") >= 0
+    navigator.userAgent.includes("Electron")
   ) {
     return true;
   }

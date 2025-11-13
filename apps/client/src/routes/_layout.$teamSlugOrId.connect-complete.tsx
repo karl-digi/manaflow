@@ -1,5 +1,5 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { CheckCircle2, ExternalLink, X } from "lucide-react";
+import { createFileRoute } from "@tanstack/react-router";
+import { CheckCircle2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/connect-complete")(
@@ -9,11 +9,21 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/connect-complete")(
 );
 
 function ConnectComplete() {
-  const navigate = useNavigate();
   const { teamSlugOrId } = Route.useParams();
   const CLOSE_AFTER_SECONDS = 6;
   const [seconds, setSeconds] = useState(CLOSE_AFTER_SECONDS);
   const triedAutoClose = useRef(false);
+
+  useEffect(() => {
+    const href = `cmux://github-connect-complete?team=${encodeURIComponent(
+      teamSlugOrId
+    )}`;
+    try {
+      window.location.href = href;
+    } catch {
+      // non-fatal; user can return manually
+    }
+  }, [teamSlugOrId]);
 
   useEffect(() => {
     const iv = window.setInterval(() => {
@@ -47,7 +57,7 @@ function ConnectComplete() {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-10 bg-gradient-to-b from-neutral-50 to-white dark:from-neutral-950 dark:to-neutral-900">
+    <div className="fixed inset-0 z-[var(--z-modal)] flex items-center justify-center px-4 py-10 bg-gradient-to-b from-neutral-50 to-white dark:from-neutral-950 dark:to-neutral-900">
       <div className="w-full max-w-md">
         <div className="relative overflow-hidden rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-white/80 dark:bg-neutral-950/80 shadow-xl backdrop-blur-sm">
           <div className="p-8">
@@ -79,38 +89,11 @@ function ConnectComplete() {
                 Close Window
               </button>
 
-              <button
-                type="button"
-                onClick={() =>
-                  navigate({
-                    to: "/$teamSlugOrId/environments",
-                    params: { teamSlugOrId },
-                    search: {
-                      step: undefined,
-                      selectedRepos: undefined,
-                      connectionLogin: undefined,
-                      repoSearch: undefined,
-                      instanceId: undefined,
-                    },
-                  })
-                }
-                className="inline-flex items-center justify-center gap-2 rounded-lg border border-neutral-200 dark:border-neutral-800 px-4 py-2 text-sm text-neutral-800 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-900"
-              >
-                <ExternalLink className="h-4 w-4" /> Return to Environments
-              </button>
-
               <div className="mt-1 text-[11px] text-center text-neutral-500 dark:text-neutral-500">
-                If this window doesn’t close, use the button above.
+                If this window doesn't close, use the button above.
               </div>
             </div>
           </div>
-        </div>
-
-        <div className="mt-6 text-center text-xs text-neutral-500 dark:text-neutral-500">
-          Safe to close any time
-          <span className="inline-flex items-center gap-1 ml-2 align-middle">
-            <X className="h-3.5 w-3.5" />
-          </span>
         </div>
       </div>
     </div>

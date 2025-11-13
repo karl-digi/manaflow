@@ -1,17 +1,26 @@
 import { api } from "@cmux/convex/api";
-import { getShortId } from "@cmux/shared";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { convexQuery } from "@convex-dev/react-query";
-import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import clsx from "clsx";
-import { useCallback } from "react";
+import { useQuery } from "convex/react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import z from "zod";
-import { usePersistentIframe } from "../hooks/usePersistentIframe";
-import { preloadTaskRunIframes } from "../lib/preloadTaskRunIframes";
-
-// Configuration: Set to true to use the proxy URL, false to use direct localhost URL
-const USE_PROXY_URL = false;
+import type { PersistentIframeStatus } from "@/components/persistent-iframe";
+import { PersistentWebView } from "@/components/persistent-webview";
+import { getTaskRunPersistKey } from "@/lib/persistent-webview-keys";
+import { WorkspaceLoadingIndicator } from "@/components/workspace-loading-indicator";
+import { toProxyWorkspaceUrl } from "@/lib/toProxyWorkspaceUrl";
+import {
+  preloadTaskRunIframes,
+  TASK_RUN_IFRAME_ALLOW,
+  TASK_RUN_IFRAME_SANDBOX,
+} from "../lib/preloadTaskRunIframes";
+import { shouldUseServerIframePreflight } from "@/hooks/useIframePreflight";
+import {
+  localVSCodeServeWebQueryOptions,
+  useLocalVSCodeServeWebQuery,
+} from "@/queries/local-vscode-serve-web";
+import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 
 const paramsSchema = z.object({
   taskId: typedZid("tasks"),
@@ -32,102 +41,128 @@ export const Route = createFileRoute(
     },
   },
   loader: async (opts) => {
-    const result = await opts.context.queryClient.ensureQueryData(
-      convexQuery(api.taskRuns.get, {
-        teamSlugOrId: opts.params.teamSlugOrId,
-        id: opts.params.runId,
-      })
-    );
-    if (result) {
-      void preloadTaskRunIframes([
-        {
-          url: result.vscode?.workspaceUrl || "",
-          key: `task-run-${opts.params.runId}`,
-        },
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.taskRuns.get,
+      args: { teamSlugOrId: opts.params.teamSlugOrId, id: opts.params.runId },
+    });
+
+    void (async () => {
+      const [result, localServeWeb] = await Promise.all([
+        opts.context.queryClient.ensureQueryData(
+          convexQuery(api.taskRuns.get, {
+            teamSlugOrId: opts.params.teamSlugOrId,
+            id: opts.params.runId,
+          })
+        ),
+        opts.context.queryClient.ensureQueryData(
+          localVSCodeServeWebQueryOptions()
+        ),
       ]);
-    }
+      if (result) {
+        const workspaceUrl = result.vscode?.workspaceUrl;
+        await preloadTaskRunIframes([
+          {
+            url: workspaceUrl
+              ? toProxyWorkspaceUrl(workspaceUrl, localServeWeb.baseUrl)
+              : "",
+            taskRunId: opts.params.runId,
+          },
+        ]);
+      }
+    })();
   },
 });
 
 function VSCodeComponent() {
   const { runId: taskRunId, teamSlugOrId } = Route.useParams();
-  const taskRun = useSuspenseQuery(
-    convexQuery(api.taskRuns.get, {
-      teamSlugOrId,
-      id: taskRunId,
-    })
-  );
+  const localServeWeb = useLocalVSCodeServeWebQuery();
+  const taskRun = useQuery(api.taskRuns.get, {
+    teamSlugOrId,
+    id: taskRunId,
+  });
 
-  const shortId = getShortId(taskRunId);
+  const workspaceUrl = taskRun?.vscode?.workspaceUrl
+    ? toProxyWorkspaceUrl(
+        taskRun.vscode.workspaceUrl,
+        localServeWeb.data?.baseUrl
+      )
+    : null;
+  const disablePreflight = taskRun?.vscode?.workspaceUrl
+    ? shouldUseServerIframePreflight(taskRun.vscode.workspaceUrl)
+    : false;
+  const persistKey = getTaskRunPersistKey(taskRunId);
+  const hasWorkspace = workspaceUrl !== null;
+  const isLocalWorkspace = taskRun?.vscode?.provider === "other";
 
-  const iframeUrl = USE_PROXY_URL
-    ? `http://${shortId}.39378.localhost:9776/?folder=/root/workspace`
-    : taskRun?.data?.vscode?.workspaceUrl || "about:blank";
+  const [iframeStatus, setIframeStatus] =
+    useState<PersistentIframeStatus>("loading");
+  useEffect(() => {
+    setIframeStatus("loading");
+  }, [workspaceUrl]);
 
   const onLoad = useCallback(() => {
-    console.log(`Iframe loaded for task run ${taskRunId}`);
+    console.log(`Workspace view loaded for task run ${taskRunId}`);
   }, [taskRunId]);
 
   const onError = useCallback(
     (error: Error) => {
-      console.error(`Failed to load iframe for task run ${taskRunId}:`, error);
+      console.error(
+        `Failed to load workspace view for task run ${taskRunId}:`,
+        error
+      );
     },
     [taskRunId]
   );
 
-  const { containerRef } = usePersistentIframe({
-    key: `task-run-${taskRunId}`,
-    url: iframeUrl,
-    className: "select-none",
-    allow:
-      "clipboard-read; clipboard-write; usb; serial; hid; cross-origin-isolated; autoplay; camera; microphone; geolocation; payment; fullscreen",
-    sandbox:
-      "allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-same-origin allow-scripts allow-top-navigation",
-    onLoad,
-    onError,
-  });
+  const loadingFallback = useMemo(
+    () =>
+      isLocalWorkspace ? null : (
+        <WorkspaceLoadingIndicator variant="vscode" status="loading" />
+      ),
+    [isLocalWorkspace]
+  );
+  const errorFallback = useMemo(
+    () => <WorkspaceLoadingIndicator variant="vscode" status="error" />,
+    []
+  );
+
+  const isEditorBusy = !hasWorkspace || iframeStatus !== "loaded";
 
   return (
-    <div className="pl-1 flex flex-col grow bg-neutral-50 dark:bg-black">
+    <div className="flex flex-col grow bg-neutral-50 dark:bg-black">
       <div className="flex flex-col grow min-h-0 border-l border-neutral-200 dark:border-neutral-800">
-        <div className="flex flex-row grow min-h-0 relative">
-          <div
-            ref={containerRef}
-            className={clsx("grow flex relative", {
-              invisible: !taskRun?.data?.vscode?.workspaceUrl,
-            })}
-          />
-          <div
-            className={clsx(
-              "absolute inset-0 flex items-center justify-center transition",
-              {
-                "opacity-100 pointer-events-none":
-                  !taskRun?.data?.vscode?.workspaceUrl,
-                "opacity-0 pointer-events-auto":
-                  taskRun?.data?.vscode?.workspaceUrl,
-              }
-            )}
-          >
-            <div className="flex flex-col items-center gap-3">
-              <div className="flex gap-1">
-                <div
-                  className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"
-                  style={{ animationDelay: "0ms" }}
-                />
-                <div
-                  className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"
-                  style={{ animationDelay: "150ms" }}
-                />
-                <div
-                  className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"
-                  style={{ animationDelay: "300ms" }}
-                />
-              </div>
-              <span className="text-sm text-neutral-500">
-                Starting VS Code...
-              </span>
+        <div
+          className="flex flex-row grow min-h-0 relative"
+          aria-busy={isEditorBusy}
+        >
+          {workspaceUrl ? (
+            <PersistentWebView
+              persistKey={persistKey}
+              src={workspaceUrl}
+              className="grow flex"
+              iframeClassName="select-none"
+              sandbox={TASK_RUN_IFRAME_SANDBOX}
+              allow={TASK_RUN_IFRAME_ALLOW}
+              retainOnUnmount
+              suspended={!hasWorkspace}
+              preflight={!disablePreflight}
+              onLoad={onLoad}
+              onError={onError}
+              fallback={loadingFallback}
+              fallbackClassName="bg-neutral-50 dark:bg-black"
+              errorFallback={errorFallback}
+              errorFallbackClassName="bg-neutral-50/95 dark:bg-black/95"
+              onStatusChange={setIframeStatus}
+              loadTimeoutMs={60_000}
+            />
+          ) : (
+            <div className="grow" />
+          )}
+          {!hasWorkspace && !isLocalWorkspace ? (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <WorkspaceLoadingIndicator variant="vscode" status="loading" />
             </div>
-          </div>
+          ) : null}
         </div>
       </div>
     </div>

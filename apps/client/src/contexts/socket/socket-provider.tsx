@@ -1,19 +1,20 @@
-import type {
-  AvailableEditors,
-  ClientToServerEvents,
-  ServerToClientEvents,
-} from "@cmux/shared";
+import type { AvailableEditors } from "@cmux/shared";
+import {
+  connectToMainServer,
+  type MainServerSocket,
+} from "@cmux/shared/socket";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "@tanstack/react-router";
 import React, { useEffect, useMemo } from "react";
-import { io, Socket } from "socket.io-client";
-import { authJsonQueryOptions } from "../convex/authJsonQueryOptions";
 import { cachedGetUser } from "../../lib/cachedGetUser";
 import { stackClientApp } from "../../lib/stack";
-import { SocketContext } from "./socket-context";
+import { authJsonQueryOptions } from "../convex/authJsonQueryOptions";
+import { setGlobalSocket, socketBoot } from "./socket-boot";
+import { WebSocketContext } from "./socket-context";
+import { env } from "@/client-env";
 
 export interface SocketContextType {
-  socket: Socket<ServerToClientEvents, ClientToServerEvents> | null;
+  socket: MainServerSocket | null;
   isConnected: boolean;
   availableEditors: AvailableEditors | null;
 }
@@ -25,7 +26,7 @@ interface SocketProviderProps {
 
 export const SocketProvider: React.FC<SocketProviderProps> = ({
   children,
-  url = "http://localhost:9776",
+  url = env.NEXT_PUBLIC_SERVER_ORIGIN || "http://localhost:9776",
 }) => {
   const authJsonQuery = useQuery(authJsonQueryOptions());
   const authToken = authJsonQuery.data?.accessToken;
@@ -35,7 +36,7 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({
   >(null);
   const [isConnected, setIsConnected] = React.useState(false);
   const [availableEditors, setAvailableEditors] =
-    React.useState<AvailableEditors | null>(null);
+    React.useState<SocketContextType["availableEditors"]>(null);
 
   // Derive the current teamSlugOrId from the first URL segment, ignoring the team-picker route
   const teamSlugOrId = React.useMemo(() => {
@@ -47,10 +48,11 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({
 
   useEffect(() => {
     if (!authToken) {
+      console.warn("[Socket] No auth token yet; delaying connect");
       return;
     }
     let disposed = false;
-    let createdSocket: Socket<ServerToClientEvents, ClientToServerEvents> | null = null;
+    let createdSocket: MainServerSocket | null = null;
     (async () => {
       // Fetch full auth JSON for server to forward as x-stack-auth
       const user = await cachedGetUser(stackClientApp);
@@ -64,28 +66,42 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({
         query.auth_json = JSON.stringify(authJson);
       }
 
-      const newSocket = io(url, {
-        transports: ["websocket"],
-        query,
+      const newSocket = connectToMainServer({
+        url,
+        authToken,
+        teamSlugOrId,
+        authJson,
       });
+
       createdSocket = newSocket;
       if (disposed) {
         newSocket.disconnect();
         return;
       }
       setSocket(newSocket);
+      setGlobalSocket(newSocket);
+      // Signal that the provider has created the socket instance
+      socketBoot.resolve();
 
       newSocket.on("connect", () => {
-        console.log("Socket connected");
+        console.log("[Socket] connected");
         setIsConnected(true);
       });
 
       newSocket.on("disconnect", () => {
-        console.log("Socket disconnected");
+        console.warn("[Socket] disconnected");
         setIsConnected(false);
       });
 
-      newSocket.on("available-editors", (data) => {
+      newSocket.on("connect_error", (err) => {
+        const errorMessage =
+          err && typeof err === "object" && "message" in err
+            ? (err as Error).message
+            : String(err);
+        console.error("[Socket] connect_error", errorMessage);
+      });
+
+      newSocket.on("available-editors", (data: AvailableEditors) => {
         setAvailableEditors(data);
       });
     })();
@@ -93,6 +109,9 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({
     return () => {
       disposed = true;
       if (createdSocket) createdSocket.disconnect();
+      // Reset boot handle so future mounts can suspend appropriately
+      setGlobalSocket(null);
+      socketBoot.reset();
     };
   }, [url, authToken, teamSlugOrId]);
 
@@ -102,12 +121,12 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({
       isConnected,
       availableEditors,
     }),
-    [socket, isConnected, availableEditors]
+    [socket, isConnected, availableEditors],
   );
 
   return (
-    <SocketContext.Provider value={contextValue}>
+    <WebSocketContext.Provider value={contextValue}>
       {children}
-    </SocketContext.Provider>
+    </WebSocketContext.Provider>
   );
 };

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getAuthToken, runWithAuthToken } from "./requestContext.js";
+import { getAuthToken, runWithAuthToken } from "./requestContext";
 
 describe("requestContext", () => {
   it("propagates auth token via AsyncLocalStorage", () => {

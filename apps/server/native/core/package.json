@@ -1,0 +1,24 @@
+{
+  "name": "@cmux/native-core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Native Node-API addon (Rust) with core utilities for cmux",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "build": "bunx --bun @napi-rs/cli build --platform",
+    "build:release": "bunx --bun @napi-rs/cli build --platform --release"
+  },
+  "napi": {
+    "binaryName": "cmux_native_core",
+    "triples": [
+      "aarch64-apple-darwin",
+      "x86_64-apple-darwin",
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu"
+    ]
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^2.18.4"
+  }
+}

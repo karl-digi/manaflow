@@ -1,16 +1,16 @@
-import type { AgentConfig } from "../../agentConfig.js";
+import type { AgentConfig } from "../../agentConfig";
 import {
   ANTHROPIC_API_KEY,
   OPENAI_API_KEY,
   OPENROUTER_API_KEY,
-} from "../../apiKeys.js";
-import { checkOpencodeRequirements } from "./check-requirements.js";
-import { startOpenCodeCompletionDetector } from "./completion-detector.js";
+} from "../../apiKeys";
+import { checkOpencodeRequirements } from "./check-requirements";
+import { startOpenCodeCompletionDetector } from "./completion-detector";
 
 import {
   getOpencodeEnvironment,
   getOpencodeEnvironmentSkipAuth,
-} from "./environment.js";
+} from "./environment";
 
 export const OPENCODE_GROK_CODE_CONFIG: AgentConfig = {
   name: "opencode/grok-code",

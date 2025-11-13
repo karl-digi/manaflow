@@ -1,8 +1,12 @@
-export async function checkGeminiRequirements(): Promise<string[]> {
+import type { ProviderRequirementsContext } from "../../agentConfig.js";
+
+export async function checkGeminiRequirements(
+  context?: ProviderRequirementsContext
+): Promise<string[]> {
   const { access, readFile } = await import("node:fs/promises");
   const { homedir } = await import("node:os");
   const { join } = await import("node:path");
-  
+
   const missing: string[] = [];
   const geminiDir = join(homedir(), ".gemini");
 
@@ -21,6 +25,10 @@ export async function checkGeminiRequirements(): Promise<string[]> {
   ];
 
   let hasAuth = false;
+  const apiKeyFromSettings = context?.apiKeys?.GEMINI_API_KEY;
+  if (typeof apiKeyFromSettings === "string" && apiKeyFromSettings.trim()) {
+    hasAuth = true;
+  }
   for (const file of authFiles) {
     try {
       await access(join(geminiDir, file));

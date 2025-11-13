@@ -11,13 +11,10 @@ function inferVendor(agentName: string): string {
   if (lower.startsWith("codex/")) return "openai";
   if (lower.startsWith("claude/")) return "claude";
   if (lower.startsWith("gemini/")) return "gemini";
-  if (lower.includes("grok")) return "grok";
-  if (lower.includes("qwen")) return "qwen";
-  if (lower.includes("kimi")) return "kimi";
-  if (lower.includes("glm")) return "glm";
+  if (lower.startsWith("opencode/")) return "opencode";
+  if (lower.startsWith("qwen/")) return "qwen";
   if (lower.startsWith("cursor/")) return "cursor";
   if (lower.startsWith("amp")) return "amp";
-  if (lower.startsWith("opencode/")) return "opencode";
   return "other";
 }
 
@@ -210,44 +207,44 @@ export const AgentLogo = memo(function AgentLogo({
       </div>
     );
   }
-  if (vendor === "glm") {
-    return (
-      <svg viewBox="0 0 24 24" className={className} aria-hidden>
-        <path
-          d="M12.105 2L9.927 4.953H.653L2.83 2h9.276zM23.254 19.048L21.078 22h-9.242l2.174-2.952h9.244zM24 2L9.264 22H0L14.736 2H24z"
-          fill="currentColor"
-          fillRule="evenodd"
-        />
-      </svg>
-    );
-  }
-  if (vendor === "kimi") {
-    return (
-      <svg viewBox="0 0 24 24" className={className} aria-hidden>
-        <path
-          d="M19.738 5.776c.163-.209.306-.4.457-.585.07-.087.064-.153-.004-.244-.655-.861-.717-1.817-.34-2.787.283-.73.909-1.072 1.674-1.145.477-.045.945.004 1.379.236.57.305.902.77 1.01 1.412.086.512.07 1.012-.075 1.508-.257.878-.888 1.333-1.753 1.448-.718.096-1.446.108-2.17.157-.056.004-.113 0-.178 0z"
-          fill="#027AFF"
-        />
-        <path
-          d="M17.962 1.844h-4.326l-3.425 7.81H5.369V1.878H1.5V22h3.87v-8.477h6.824a3.025 3.025 0 002.743-1.75V22h3.87v-8.477a3.87 3.87 0 00-3.588-3.86v-.01h-2.125a3.94 3.94 0 002.323-2.12l2.545-5.689z"
-          fill="currentColor"
-          fillRule="evenodd"
-        />
-      </svg>
-    );
-  }
-  if (vendor === "grok") {
-    return (
-      <svg
-        viewBox="0 0 33 32"
-        className={className}
-        fill="currentColor"
-        aria-hidden
-      >
-        <path d="M12.745 20.54l10.97-8.19c.539-.4 1.307-.244 1.564.38 1.349 3.288.746 7.241-1.938 9.955-2.683 2.714-6.417 3.31-9.83 1.954l-3.728 1.745c5.347 3.697 11.84 2.782 15.898-1.324 3.219-3.255 4.216-7.692 3.284-11.693l.008.009c-1.351-5.878.332-8.227 3.782-13.031L33 0l-4.54 4.59v-.014L12.743 20.544m-2.263 1.987c-3.837-3.707-3.175-9.446.1-12.755 2.42-2.449 6.388-3.448 9.852-1.979l3.72-1.737c-.67-.49-1.53-1.017-2.515-1.387-4.455-1.854-9.789-.931-13.41 2.728-3.483 3.523-4.579 8.94-2.697 13.561 1.405 3.454-.899 5.898-3.22 8.364C1.49 30.2.666 31.074 0 32l10.478-9.466" />
-      </svg>
-    );
-  }
+  // if (vendor === "glm") {
+  //   return (
+  //     <svg viewBox="0 0 24 24" className={className} aria-hidden>
+  //       <path
+  //         d="M12.105 2L9.927 4.953H.653L2.83 2h9.276zM23.254 19.048L21.078 22h-9.242l2.174-2.952h9.244zM24 2L9.264 22H0L14.736 2H24z"
+  //         fill="currentColor"
+  //         fillRule="evenodd"
+  //       />
+  //     </svg>
+  //   );
+  // }
+  // if (vendor === "kimi") {
+  //   return (
+  //     <svg viewBox="0 0 24 24" className={className} aria-hidden>
+  //       <path
+  //         d="M19.738 5.776c.163-.209.306-.4.457-.585.07-.087.064-.153-.004-.244-.655-.861-.717-1.817-.34-2.787.283-.73.909-1.072 1.674-1.145.477-.045.945.004 1.379.236.57.305.902.77 1.01 1.412.086.512.07 1.012-.075 1.508-.257.878-.888 1.333-1.753 1.448-.718.096-1.446.108-2.17.157-.056.004-.113 0-.178 0z"
+  //         fill="#027AFF"
+  //       />
+  //       <path
+  //         d="M17.962 1.844h-4.326l-3.425 7.81H5.369V1.878H1.5V22h3.87v-8.477h6.824a3.025 3.025 0 002.743-1.75V22h3.87v-8.477a3.87 3.87 0 00-3.588-3.86v-.01h-2.125a3.94 3.94 0 002.323-2.12l2.545-5.689z"
+  //         fill="currentColor"
+  //         fillRule="evenodd"
+  //       />
+  //     </svg>
+  //   );
+  // }
+  // if (vendor === "grok") {
+  //   return (
+  //     <svg
+  //       viewBox="0 0 33 32"
+  //       className={className}
+  //       fill="currentColor"
+  //       aria-hidden
+  //     >
+  //       <path d="M12.745 20.54l10.97-8.19c.539-.4 1.307-.244 1.564.38 1.349 3.288.746 7.241-1.938 9.955-2.683 2.714-6.417 3.31-9.83 1.954l-3.728 1.745c5.347 3.697 11.84 2.782 15.898-1.324 3.219-3.255 4.216-7.692 3.284-11.693l.008.009c-1.351-5.878.332-8.227 3.782-13.031L33 0l-4.54 4.59v-.014L12.743 20.544m-2.263 1.987c-3.837-3.707-3.175-9.446.1-12.755 2.42-2.449 6.388-3.448 9.852-1.979l3.72-1.737c-.67-.49-1.53-1.017-2.515-1.387-4.455-1.854-9.789-.931-13.41 2.728-3.483 3.523-4.579 8.94-2.697 13.561 1.405 3.454-.899 5.898-3.22 8.364C1.49 30.2.666 31.074 0 32l10.478-9.466" />
+  //     </svg>
+  //   );
+  // }
   if (vendor === "amp") {
     return (
       <svg viewBox="0 0 19 19" className={className} aria-hidden>

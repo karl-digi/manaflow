@@ -1,18 +1,32 @@
 import { getAccessTokenFromRequest } from "@/lib/utils/auth";
 import { getConvex } from "@/lib/utils/get-convex";
-import {
-  generateGitHubInstallationToken,
-  getInstallationForRepo,
-} from "@/lib/utils/github-app-token";
-import { fetchGithubUserInfoForRequest } from "@/lib/utils/githubUserInfo";
 import { selectGitIdentity } from "@/lib/utils/gitIdentity";
-import { DEFAULT_MORPH_SNAPSHOT_ID } from "@/lib/utils/morph-defaults";
+import { stackServerAppJs } from "@/lib/utils/stack";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { env } from "@/lib/utils/www-env";
 import { api } from "@cmux/convex/api";
-import { typedZid } from "@cmux/shared/utils/typed-zid";
-import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
+import { RESERVED_CMUX_PORT_SET } from "@cmux/shared/utils/reserved-cmux-ports";
+import { parseGithubRepoUrl } from "@cmux/shared/utils/parse-github-repo-url";
+import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
+import { HTTPException } from "hono/http-exception";
 import { MorphCloudClient } from "morphcloud";
+import { loadEnvironmentEnvVars } from "./sandboxes/environment";
+import {
+  configureGithubAccess,
+  configureGitIdentity,
+  fetchGitIdentityInputs,
+} from "./sandboxes/git";
+import type { HydrateRepoConfig } from "./sandboxes/hydration";
+import { hydrateWorkspace } from "./sandboxes/hydration";
+import { resolveTeamAndSnapshot } from "./sandboxes/snapshot";
+import {
+  allocateScriptIdentifiers,
+  runMaintenanceAndDevScripts,
+} from "./sandboxes/startDevAndMaintenanceScript";
+import {
+  encodeEnvContentForEnvctl,
+  envctlLoadCommand,
+} from "./utils/ensure-env-vars";
 
 export const sandboxesRouter = new OpenAPIHono();
 
@@ -24,8 +38,11 @@ const StartSandboxBody = z
     ttlSeconds: z
       .number()
       .optional()
-      .default(20 * 60),
+      .default(60 * 60),
     metadata: z.record(z.string(), z.string()).optional(),
+    taskRunId: z.string().optional(),
+    taskRunJwt: z.string().optional(),
+    isCloudWorkspace: z.boolean().optional(),
     // Optional hydration parameters to clone a repo into the sandbox on start
     repoUrl: z.string().optional(),
     branch: z.string().optional(),
@@ -42,6 +59,19 @@ const StartSandboxResponse = z
     provider: z.enum(["morph"]).default("morph"),
   })
   .openapi("StartSandboxResponse");
+
+const UpdateSandboxEnvBody = z
+  .object({
+    teamSlugOrId: z.string(),
+    envVarsContent: z.string(),
+  })
+  .openapi("UpdateSandboxEnvBody");
+
+const UpdateSandboxEnvResponse = z
+  .object({
+    applied: z.literal(true),
+  })
+  .openapi("UpdateSandboxEnvResponse");
 
 // Start a new sandbox (currently Morph-backed)
 sandboxesRouter.openapi(
@@ -74,9 +104,33 @@ sandboxesRouter.openapi(
     },
   }),
   async (c) => {
-    // Require authentication (via access token header/cookie)
-    const accessToken = await getAccessTokenFromRequest(c.req.raw);
-    if (!accessToken) return c.text("Unauthorized", 401);
+    const user = await stackServerAppJs.getUser({ tokenStore: c.req.raw });
+    if (!user) {
+      return c.text("Unauthorized", 401);
+    }
+    const { accessToken } = await user.getAuthJson();
+    if (!accessToken) {
+      return c.text("Unauthorized", 401);
+    }
+    const githubAccessTokenPromise = (async () => {
+      const githubAccount = await user.getConnectedAccount("github");
+      if (!githubAccount) {
+        return {
+          githubAccessTokenError: "GitHub account not found",
+          githubAccessToken: null,
+        } as const;
+      }
+      const { accessToken: githubAccessToken } =
+        await githubAccount.getAccessToken();
+      if (!githubAccessToken) {
+        return {
+          githubAccessTokenError: "GitHub access token not found",
+          githubAccessToken: null,
+        } as const;
+      }
+
+      return { githubAccessTokenError: null, githubAccessToken } as const;
+    })();
 
     const body = c.req.valid("json");
     try {
@@ -92,52 +146,82 @@ sandboxesRouter.openapi(
     }
 
     try {
-      // Verify team access
-      const team = await verifyTeamAccess({
-        req: c.req.raw,
-        teamSlugOrId: body.teamSlugOrId,
-      });
-
-      // Determine snapshotId with access checks
       const convex = getConvex({ accessToken });
 
-      let resolvedSnapshotId: string | null = null;
+      const {
+        team,
+        resolvedSnapshotId,
+        environmentDataVaultKey,
+        environmentMaintenanceScript,
+        environmentDevScript,
+      } = await resolveTeamAndSnapshot({
+        req: c.req.raw,
+        convex,
+        teamSlugOrId: body.teamSlugOrId,
+        environmentId: body.environmentId,
+        snapshotId: body.snapshotId,
+      });
 
-      if (body.environmentId) {
-        const environmentId = typedZid("environments").parse(
-          body.environmentId
-        );
-        // Verify the environment belongs to this team
-        const envDoc = await convex.query(api.environments.get, {
-          teamSlugOrId: body.teamSlugOrId,
-          id: environmentId,
-        });
-        if (!envDoc) {
-          return c.text("Environment not found or not accessible", 403);
+      const environmentEnvVarsPromise = environmentDataVaultKey
+        ? loadEnvironmentEnvVars(environmentDataVaultKey)
+        : Promise.resolve<string | null>(null);
+
+      // Parse repo URL once if provided
+      const parsedRepoUrl = body.repoUrl ? parseGithubRepoUrl(body.repoUrl) : null;
+
+      // Load workspace config if we're in cloud mode with a repository (not an environment)
+      let workspaceConfig: { maintenanceScript?: string; envVarsContent?: string } | null = null;
+      if (parsedRepoUrl && !body.environmentId) {
+        try {
+          const config = await convex.query(api.workspaceConfigs.get, {
+            teamSlugOrId: body.teamSlugOrId,
+            projectFullName: parsedRepoUrl.fullName,
+          });
+          if (config) {
+            const envVarsContent = config.dataVaultKey
+              ? await loadEnvironmentEnvVars(config.dataVaultKey)
+              : null;
+            workspaceConfig = {
+              maintenanceScript: config.maintenanceScript ?? undefined,
+              envVarsContent: envVarsContent ?? undefined,
+            };
+            console.log(`[sandboxes.start] Loaded workspace config for ${parsedRepoUrl.fullName}`, {
+              hasMaintenanceScript: Boolean(workspaceConfig.maintenanceScript),
+              hasEnvVars: Boolean(workspaceConfig.envVarsContent),
+            });
+          }
+        } catch (error) {
+          console.error(`[sandboxes.start] Failed to load workspace config for ${parsedRepoUrl.fullName}`, error);
         }
-        resolvedSnapshotId = envDoc.morphSnapshotId;
-      } else if (body.snapshotId) {
-        // Ensure the provided snapshotId belongs to one of the team's environments
-        const envs = await convex.query(api.environments.list, {
-          teamSlugOrId: body.teamSlugOrId,
-        });
-        const match = envs.find((e) => e.morphSnapshotId === body.snapshotId);
-        if (!match) {
-          return c.text(
-            "Forbidden: Snapshot does not belong to this team",
-            403
-          );
-        }
-        resolvedSnapshotId = match.morphSnapshotId;
-      } else {
-        // Fall back to default snapshot if nothing provided
-        resolvedSnapshotId = DEFAULT_MORPH_SNAPSHOT_ID;
       }
 
+      const maintenanceScript = environmentMaintenanceScript ?? workspaceConfig?.maintenanceScript ?? null;
+      const devScript = environmentDevScript ?? null;
+
+      const isCloudWorkspace =
+        body.isCloudWorkspace !== undefined
+          ? body.isCloudWorkspace
+          : !body.taskRunId;
+
+      const scriptIdentifiers =
+        maintenanceScript || devScript
+          ? allocateScriptIdentifiers()
+          : null;
+
+      const gitIdentityPromise = githubAccessTokenPromise.then(
+        ({ githubAccessToken }) => {
+          if (!githubAccessToken) {
+            throw new Error("GitHub access token not found");
+          }
+          return fetchGitIdentityInputs(convex, githubAccessToken);
+        },
+      );
+
       const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
+
       const instance = await client.instances.start({
         snapshotId: resolvedSnapshotId,
-        ttlSeconds: body.ttlSeconds ?? 20 * 60,
+        ttlSeconds: body.ttlSeconds ?? 60 * 60,
         ttlAction: "pause",
         metadata: {
           app: "cmux",
@@ -151,168 +235,128 @@ sandboxesRouter.openapi(
       const vscodeService = exposed.find((s) => s.port === 39378);
       const workerService = exposed.find((s) => s.port === 39377);
       if (!vscodeService || !workerService) {
-        await instance.stop().catch(() => {});
+        await instance.stop().catch(() => { });
         return c.text("VSCode or worker service not found", 500);
       }
 
-      // Configure git identity from Convex + GitHub user info so commits don't fail
-      try {
-        const accessToken = await getAccessTokenFromRequest(c.req.raw);
-        if (accessToken) {
-          const convex = getConvex({ accessToken });
-          const [who, gh] = await Promise.all([
-            convex.query(api.users.getCurrentBasic, {}),
-            fetchGithubUserInfoForRequest(c.req.raw),
-          ]);
+      // Get environment variables from the environment if configured
+      const environmentEnvVarsContent = await environmentEnvVarsPromise;
 
-          const { name, email } = selectGitIdentity(who, gh);
+      // Prepare environment variables including task JWT if present
+      // Workspace env vars take precedence if no environment is configured
+      let envVarsToApply = environmentEnvVarsContent || workspaceConfig?.envVarsContent || "";
 
-          // Safe single-quote for shell (we'll wrap the whole -lc string in double quotes)
-          const shq = (v: string) => `'${v.replace(/'/g, "\\'")}'`;
-
-          const gitCfgRes = await instance.exec(
-            `bash -lc "git config --global user.name ${shq(name)} && git config --global user.email ${shq(email)} && git config --global init.defaultBranch main && echo NAME:$(git config --global --get user.name) && echo EMAIL:$(git config --global --get user.email) || true"`
-          );
-          console.log(
-            `[sandboxes.start] git identity configured exit=${gitCfgRes.exit_code} (${name} <${email}>)`
-          );
-        } else {
-          console.log(
-            `[sandboxes.start] No access token; skipping git identity configuration`
-          );
-        }
-      } catch (e) {
-        console.log(
-          `[sandboxes.start] Failed to configure git identity; continuing...`,
-          e
-        );
+      // Add CMUX task-related env vars if present
+      if (body.taskRunId) {
+        envVarsToApply += `\nCMUX_TASK_RUN_ID="${body.taskRunId}"`;
+      }
+      if (body.taskRunJwt) {
+        envVarsToApply += `\nCMUX_TASK_RUN_JWT="${body.taskRunJwt}"`;
       }
 
-      // Optional: Hydrate repo inside the sandbox
+      // Apply all environment variables if any
+      if (envVarsToApply.trim().length > 0) {
+        try {
+          const encodedEnv = encodeEnvContentForEnvctl(envVarsToApply);
+          const loadRes = await instance.exec(envctlLoadCommand(encodedEnv));
+          if (loadRes.exit_code === 0) {
+            console.log(
+              `[sandboxes.start] Applied environment variables via envctl`,
+              {
+                hasEnvironmentVars: Boolean(environmentEnvVarsContent),
+                hasWorkspaceVars: Boolean(workspaceConfig?.envVarsContent),
+                hasTaskRunId: Boolean(body.taskRunId),
+                hasTaskRunJwt: Boolean(body.taskRunJwt),
+              },
+            );
+          } else {
+            console.error(
+              `[sandboxes.start] Env var bootstrap failed exit=${loadRes.exit_code} stderr=${(loadRes.stderr || "").slice(0, 200)}`,
+            );
+          }
+        } catch (error) {
+          console.error(
+            "[sandboxes.start] Failed to apply environment variables",
+            error,
+          );
+        }
+      }
+
+      const configureGitIdentityTask = gitIdentityPromise
+        .then(([who, gh]) => {
+          const { name, email } = selectGitIdentity(who, gh);
+          return configureGitIdentity(instance, { name, email });
+        })
+        .catch((error) => {
+          console.log(
+            `[sandboxes.start] Failed to configure git identity; continuing...`,
+            error,
+          );
+        });
+
+      const { githubAccessToken, githubAccessTokenError } =
+        await githubAccessTokenPromise;
+      if (githubAccessTokenError) {
+        console.error(
+          `[sandboxes.start] GitHub access token error: ${githubAccessTokenError}`,
+        );
+        return c.text("Failed to resolve GitHub credentials", 401);
+      }
+
+      // Sandboxes run as the requesting user, so prefer their OAuth scope over GitHub App installation tokens.
+      await configureGithubAccess(instance, githubAccessToken);
+
+      let repoConfig: HydrateRepoConfig | undefined;
       if (body.repoUrl) {
         console.log(`[sandboxes.start] Hydrating repo for ${instance.id}`);
-        const match = body.repoUrl.match(
-          /github\.com\/?([^\s/]+)\/([^\s/.]+)(?:\.git)?/i
-        );
-        if (!match) {
+        if (!parsedRepoUrl) {
           return c.text("Unsupported repo URL; expected GitHub URL", 400);
         }
-        const owner = match[1]!;
-        const repo = match[2]!;
-        const repoFull = `${owner}/${repo}`;
-        console.log(`[sandboxes.start] Parsed owner/repo: ${repoFull}`);
+        console.log(`[sandboxes.start] Parsed owner/repo: ${parsedRepoUrl.fullName}`);
 
-        try {
-          const installationId = await getInstallationForRepo(repoFull);
-          if (!installationId) {
-            return c.text(
-              `No GitHub App installation found for ${owner}. Install the app for this org/user.`,
-              400
-            );
-          }
-          console.log(`[sandboxes.start] installationId: ${installationId}`);
-          const githubToken = await generateGitHubInstallationToken({
-            installationId,
-            repositories: [repoFull],
-          });
-          console.log(
-            `[sandboxes.start] Generated GitHub token (len=${githubToken.length})`
-          );
-
-          // Best-effort envctl for compatibility with gh and other tools
-          try {
-            const envctlRes = await instance.exec(
-              `envctl set GITHUB_TOKEN=${githubToken}`
-            );
-            console.log(
-              `[sandboxes.start] envctl set exit=${envctlRes.exit_code} stderr=${(envctlRes.stderr || "").slice(0, 200)}`
-            );
-          } catch (_e) {
-            console.log(
-              `[sandboxes.start] envctl not available; continuing without it`
-            );
-          }
-
-          // gh auth for CLI tools
-          const ghRes = await instance.exec(
-            `bash -lc "echo '${githubToken}' | gh auth login --with-token 2>&1 || true"`
-          );
-          console.log(
-            `[sandboxes.start] gh auth login exit=${ghRes.exit_code} stderr=${(ghRes.stderr || "").slice(0, 200)}`
-          );
-
-          // Git credential store for HTTPS operations
-          const credRes = await instance.exec(
-            `bash -lc "git config --global credential.helper store && printf '%s\\n' 'https://x-access-token:${githubToken}@github.com' > /root/.git-credentials && (git config --global --get credential.helper || true) && (test -f /root/.git-credentials && wc -c /root/.git-credentials || true)"`
-          );
-          console.log(
-            `[sandboxes.start] git creds configured exit=${credRes.exit_code} out=${(credRes.stdout || "").replace(/:[^@]*@/g, ":***@").slice(0, 200)}`
-          );
-
-          const depth = body.depth ?? 1;
-          const workspace = "/root/workspace";
-          await instance.exec(`mkdir -p ${workspace}`);
-
-          // Check remote
-          const remoteRes = await instance.exec(
-            `bash -lc "cd ${workspace} && test -d .git && git remote get-url origin || echo 'no-remote'"`
-          );
-          const remoteUrl = (remoteRes.stdout || "").trim();
-
-          if (!remoteUrl || !remoteUrl.includes(`${owner}/${repo}`)) {
-            await instance.exec(
-              `bash -lc "rm -rf ${workspace}/* ${workspace}/.[!.]* ${workspace}/..?* 2>/dev/null || true"`
-            );
-            const maskedUrl = `https://x-access-token:***@github.com/${owner}/${repo}.git`;
-            console.log(
-              `[sandboxes.start] Cloning ${maskedUrl} depth=${depth} -> ${workspace}`
-            );
-            const cloneRes = await instance.exec(
-              `bash -lc "git clone --depth ${depth} https://x-access-token:${githubToken}@github.com/${owner}/${repo}.git ${workspace}"`
-            );
-            console.log(
-              `[sandboxes.start] clone exit=${cloneRes.exit_code} stderr=${(cloneRes.stderr || "").slice(0, 300)}`
-            );
-            if (cloneRes.exit_code !== 0) {
-              return c.text("Failed to clone repository", 500);
-            }
-          } else {
-            const fetchRes = await instance.exec(
-              `bash -lc "cd ${workspace} && git fetch --all --prune"`
-            );
-            console.log(
-              `[sandboxes.start] fetch exit=${fetchRes.exit_code} stderr=${(fetchRes.stderr || "").slice(0, 200)}`
-            );
-          }
-
-          const baseBranch = body.branch || "main";
-          const coRes = await instance.exec(
-            `bash -lc "cd ${workspace} && (git checkout ${baseBranch} || git checkout -b ${baseBranch} origin/${baseBranch}) && git pull --ff-only || true"`
-          );
-          console.log(
-            `[sandboxes.start] checkout ${baseBranch} exit=${coRes.exit_code} stderr=${(coRes.stderr || "").slice(0, 200)}`
-          );
-          if (body.newBranch) {
-            const nbRes = await instance.exec(
-              `bash -lc "cd ${workspace} && git switch -C ${body.newBranch}"`
-            );
-            console.log(
-              `[sandboxes.start] switch -C ${body.newBranch} exit=${nbRes.exit_code} stderr=${(nbRes.stderr || "").slice(0, 200)}`
-            );
-          }
-
-          const lsRes = await instance.exec(
-            `bash -lc "ls -la ${workspace} | head -50"`
-          );
-          console.log(
-            `[sandboxes.start] workspace listing:\n${lsRes.stdout || ""}`
-          );
-        } catch (e) {
-          console.error(`[sandboxes.start] Hydration failed:`, e);
-          await instance.stop().catch(() => {});
-          return c.text("Failed to hydrate sandbox", 500);
-        }
+        repoConfig = {
+          owner: parsedRepoUrl.owner,
+          name: parsedRepoUrl.repo,
+          repoFull: parsedRepoUrl.fullName,
+          cloneUrl: parsedRepoUrl.gitUrl,
+          maskedCloneUrl: parsedRepoUrl.gitUrl,
+          depth: Math.max(1, Math.floor(body.depth ?? 1)),
+          baseBranch: body.branch || "main",
+          newBranch: body.newBranch ?? "",
+        };
       }
+
+      try {
+        await hydrateWorkspace({
+          instance,
+          repo: repoConfig,
+        });
+      } catch (error) {
+        console.error(`[sandboxes.start] Hydration failed:`, error);
+        await instance.stop().catch(() => { });
+        return c.text("Failed to hydrate sandbox", 500);
+      }
+
+      if (maintenanceScript || devScript) {
+        (async () => {
+          await runMaintenanceAndDevScripts({
+            instance,
+            maintenanceScript: maintenanceScript || undefined,
+            devScript: devScript || undefined,
+            identifiers: scriptIdentifiers ?? undefined,
+            convexUrl: env.NEXT_PUBLIC_CONVEX_URL,
+            taskRunJwt: body.taskRunJwt || undefined,
+            isCloudWorkspace,
+          });
+        })().catch((error) => {
+          console.error(
+            "[sandboxes.start] Background script execution failed:",
+            error,
+          );
+        });
+      }
+
+      await configureGitIdentityTask;
 
       return c.json({
         instanceId: instance.id,
@@ -321,10 +365,105 @@ sandboxesRouter.openapi(
         provider: "morph",
       });
     } catch (error) {
+      if (error instanceof HTTPException) {
+        const message =
+          typeof error.message === "string" && error.message.length > 0
+            ? error.message
+            : "Request failed";
+        return c.text(message, error.status);
+      }
       console.error("Failed to start sandbox:", error);
       return c.text("Failed to start sandbox", 500);
     }
-  }
+  },
+);
+
+sandboxesRouter.openapi(
+  createRoute({
+    method: "post" as const,
+    path: "/sandboxes/{id}/env",
+    tags: ["Sandboxes"],
+    summary: "Apply environment variables to a running sandbox",
+    request: {
+      params: z.object({ id: z.string() }),
+      body: {
+        content: {
+          "application/json": {
+            schema: UpdateSandboxEnvBody,
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: UpdateSandboxEnvResponse,
+          },
+        },
+        description: "Environment variables applied",
+      },
+      401: { description: "Unauthorized" },
+      403: { description: "Forbidden" },
+      404: { description: "Sandbox not found" },
+      500: { description: "Failed to apply environment variables" },
+    },
+  }),
+  async (c) => {
+    const accessToken = await getAccessTokenFromRequest(c.req.raw);
+    if (!accessToken) return c.text("Unauthorized", 401);
+
+    const { id } = c.req.valid("param");
+    const { teamSlugOrId, envVarsContent } = c.req.valid("json");
+
+    try {
+      const team = await verifyTeamAccess({
+        req: c.req.raw,
+        teamSlugOrId,
+      });
+
+      const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
+      const instance = await client.instances
+        .get({ instanceId: id })
+        .catch((error) => {
+          console.error("[sandboxes.env] Failed to load instance", error);
+          return null;
+        });
+
+      if (!instance) {
+        return c.text("Sandbox not found", 404);
+      }
+
+      const metadataTeamId = (
+        instance as unknown as {
+          metadata?: { teamId?: string };
+        }
+      ).metadata?.teamId;
+
+      if (metadataTeamId && metadataTeamId !== team.uuid) {
+        return c.text("Forbidden", 403);
+      }
+
+      const encodedEnv = encodeEnvContentForEnvctl(envVarsContent);
+      const command = envctlLoadCommand(encodedEnv);
+      const execResult = await instance.exec(command);
+      if (execResult.exit_code !== 0) {
+        console.error(
+          `[sandboxes.env] envctl load failed exit=${execResult.exit_code} stderr=${(execResult.stderr || "").slice(0, 200)}`,
+        );
+        return c.text("Failed to apply environment variables", 500);
+      }
+
+      return c.json({ applied: true as const });
+    } catch (error) {
+      console.error(
+        "[sandboxes.env] Failed to apply environment variables",
+        error,
+      );
+      return c.text("Failed to apply environment variables", 500);
+    }
+  },
 );
 
 // Stop/pause a sandbox
@@ -358,7 +497,7 @@ sandboxesRouter.openapi(
       console.error("Failed to stop sandbox:", error);
       return c.text("Failed to stop sandbox", 500);
     }
-  }
+  },
 );
 
 // Query status of sandbox
@@ -397,10 +536,10 @@ sandboxesRouter.openapi(
       const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
       const instance = await client.instances.get({ instanceId: id });
       const vscodeService = instance.networking.httpServices.find(
-        (s) => s.port === 39378
+        (s) => s.port === 39378,
       );
       const workerService = instance.networking.httpServices.find(
-        (s) => s.port === 39377
+        (s) => s.port === 39377,
       );
       const running = Boolean(vscodeService);
       return c.json({
@@ -413,7 +552,7 @@ sandboxesRouter.openapi(
       console.error("Failed to get sandbox status:", error);
       return c.text("Failed to get status", 500);
     }
-  }
+  },
 );
 
 // Publish devcontainer forwarded ports (read devcontainer.json inside instance, expose, persist to Convex)
@@ -447,7 +586,7 @@ sandboxesRouter.openapi(
                 status: z.enum(["running"]).default("running"),
                 port: z.number(),
                 url: z.string(),
-              })
+              }),
             ),
           },
         },
@@ -466,17 +605,17 @@ sandboxesRouter.openapi(
       const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
       const instance = await client.instances.get({ instanceId: id });
 
-      const CMUX_PORTS = new Set([39376, 39377, 39378]);
+      const reservedPorts = RESERVED_CMUX_PORT_SET;
 
       // Attempt to read devcontainer.json for declared forwarded ports
       const devcontainerJson = await instance.exec(
-        "cat /root/workspace/.devcontainer/devcontainer.json"
+        "cat /root/workspace/.devcontainer/devcontainer.json",
       );
       const parsed =
         devcontainerJson.exit_code === 0
           ? (JSON.parse(devcontainerJson.stdout || "{}") as {
-              forwardPorts?: number[];
-            })
+            forwardPorts?: number[];
+          })
           : { forwardPorts: [] as number[] };
 
       const devcontainerPorts = Array.isArray(parsed.forwardPorts)
@@ -512,7 +651,7 @@ sandboxesRouter.openapi(
       const addAllowed = (p: number) => {
         if (!Number.isFinite(p)) return;
         const pn = Math.floor(p);
-        if (pn > 0 && !CMUX_PORTS.has(pn)) allowedPorts.add(pn);
+        if (pn > 0 && !reservedPorts.has(pn)) allowedPorts.add(pn);
       };
 
       // Prefer environment.exposedPorts if available; otherwise use devcontainer forwardPorts
@@ -521,19 +660,55 @@ sandboxesRouter.openapi(
         : devcontainerPorts
       ).forEach(addAllowed);
 
-      // Expose each allowed port in Morph (best-effort)
-      await Promise.all(
-        Array.from(allowedPorts).map(async (p) => {
-          try {
-            await instance.exposeHttpService(`port-${p}` as const, p);
-          } catch {
-            // continue exposing other ports
-          }
-        })
+      const desiredPorts = Array.from(allowedPorts.values()).sort(
+        (a, b) => a - b,
       );
+      const serviceNameForPort = (port: number) => `port-${port}`;
 
-      // Intersect exposed HTTP services with allowed ports
-      const networking = instance.networking.httpServices
+      let workingInstance = instance;
+      const reloadInstance = async () => {
+        workingInstance = await client.instances.get({
+          instanceId: instance.id,
+        });
+      };
+
+      await reloadInstance();
+
+      for (const service of workingInstance.networking.httpServices) {
+        if (!service.name.startsWith("port-")) {
+          continue;
+        }
+        if (reservedPorts.has(service.port)) {
+          continue;
+        }
+        if (!allowedPorts.has(service.port)) {
+          await workingInstance.hideHttpService(service.name);
+        }
+      }
+
+      await reloadInstance();
+
+      for (const port of desiredPorts) {
+        const serviceName = serviceNameForPort(port);
+        const alreadyExposed = workingInstance.networking.httpServices.some(
+          (service) => service.name === serviceName,
+        );
+        if (alreadyExposed) {
+          continue;
+        }
+        try {
+          await workingInstance.exposeHttpService(serviceName, port);
+        } catch (error) {
+          console.error(
+            `[sandboxes.publishNetworking] Failed to expose ${serviceName}`,
+            error,
+          );
+        }
+      }
+
+      await reloadInstance();
+
+      const networking = workingInstance.networking.httpServices
         .filter((s) => allowedPorts.has(s.port))
         .map((s) => ({ status: "running" as const, port: s.port, url: s.url }));
 
@@ -549,5 +724,5 @@ sandboxesRouter.openapi(
       console.error("Failed to publish devcontainer networking:", error);
       return c.text("Failed to publish devcontainer networking", 500);
     }
-  }
+  },
 );

@@ -6,12 +6,21 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "scripts": {
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
   },
   "exports": {
     ".": {
       "import": "./src/index.ts",
       "types": "./src/index.ts"
+    },
+    "./socket": {
+      "import": "./src/socket-client.ts",
+      "types": "./src/socket-client.ts"
+    },
+    "./node/socket": {
+      "import": "./src/node/socket-server.ts",
+      "types": "./src/node/socket-server.ts"
     },
     "./src/providers/amp/start-amp-proxy.ts": {
       "import": "./src/providers/amp/start-amp-proxy.ts",
@@ -41,18 +50,67 @@
       "import": "./src/convex-ready.ts",
       "types": "./src/convex-ready.ts"
     },
+    "./convex-safe": {
+      "import": "./src/convex-safe.ts",
+      "types": "./src/convex-safe.ts"
+    },
     "./utils/typed-zid": {
       "import": "./src/utils/typed-zid.ts",
       "types": "./src/utils/typed-zid.ts"
+    },
+    "./utils/reserved-cmux-ports": {
+      "import": "./src/utils/reserved-cmux-ports.ts",
+      "types": "./src/utils/reserved-cmux-ports.ts"
+    },
+    "./utils/generate-workspace-name": {
+      "import": "./src/utils/generate-workspace-name.ts",
+      "types": "./src/utils/generate-workspace-name.ts"
+    },
+    "./utils/derive-repo-base-name": {
+      "import": "./src/utils/derive-repo-base-name.ts",
+      "types": "./src/utils/derive-repo-base-name.ts"
+    },
+    "./utils/parse-github-repo-url": {
+      "import": "./src/utils/parse-github-repo-url.ts",
+      "types": "./src/utils/parse-github-repo-url.ts"
+    },
+    "./utils/validate-exposed-ports": {
+      "import": "./src/utils/validate-exposed-ports.ts",
+      "types": "./src/utils/validate-exposed-ports.ts"
+    },
+    "./node/convex-cache": {
+      "import": "./src/node/convex-cache.ts",
+      "types": "./src/node/convex-cache.ts"
+    },
+    "./utils/format-env-vars-content": {
+      "import": "./src/utils/format-env-vars-content.ts",
+      "types": "./src/utils/format-env-vars-content.ts"
+    },
+    "./pull-request-state": {
+      "import": "./src/pull-request-state.ts",
+      "types": "./src/pull-request-state.ts"
+    },
+    "./codeReview/callback-schemas": {
+      "import": "./src/codeReview/callback-schemas.ts",
+      "types": "./src/codeReview/callback-schemas.ts"
+    },
+    "./providers/common/check-docker": {
+      "import": "./src/providers/common/check-docker.ts",
+      "types": "./src/providers/common/check-docker.ts"
     }
   },
   "dependencies": {
     "@cmux/convex": "workspace:*",
-    "zod": "^3.25.67"
+    "convex": "1.27.1",
+    "jose": "^6.1.0",
+    "zod": "^4.1.5",
+    "socket.io-client": "^4.8.1"
   },
   "devDependencies": {
-    "@types/node": "^24.3.0",
+    "@types/node": "^24.9.1",
     "@xterm/xterm": "^5.5.0",
-    "typescript": "^5.8.3"
+    "typescript": "^5.9.3",
+    "socket.io": "^4.8.1",
+    "vitest": "^3.2.4"
   }
 }

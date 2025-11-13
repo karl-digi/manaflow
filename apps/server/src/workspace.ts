@@ -2,9 +2,9 @@ import { api } from "@cmux/convex/api";
 import fs from "fs/promises";
 import os from "os";
 import path from "path";
-import { RepositoryManager } from "./repositoryManager.js";
-import { getConvex } from "./utils/convexClient.js";
-import { serverLogger } from "./utils/fileLogger.js";
+import { RepositoryManager } from "./repositoryManager";
+import { getConvex } from "./utils/convexClient";
+import { serverLogger } from "./utils/fileLogger";
 
 interface WorkspaceResult {
   success: boolean;
@@ -150,40 +150,6 @@ export async function setupProjectWorkspace(args: {
       worktreeInfo.worktreePath = normalizedWorktreePath;
     }
 
-    // Check if the projects path exists and has non-git content
-    try {
-      const stats = await fs.stat(worktreeInfo.projectsPath);
-      if (stats.isDirectory()) {
-        // Check if it contains non-git repositories
-        const entries = await fs.readdir(worktreeInfo.projectsPath);
-        for (const entry of entries) {
-          const entryPath = path.join(worktreeInfo.projectsPath, entry);
-          const entryStats = await fs.stat(entryPath);
-          if (entryStats.isDirectory()) {
-            // Check if it's a git repository structure we expect
-            const hasOrigin = await fs
-              .access(path.join(entryPath, "origin"))
-              .then(() => true)
-              .catch(() => false);
-            const hasWorktrees = await fs
-              .access(path.join(entryPath, "worktrees"))
-              .then(() => true)
-              .catch(() => false);
-
-            if (!hasOrigin && !hasWorktrees) {
-              // This directory has unexpected content
-              return {
-                success: false,
-                error: `The directory ${worktreeInfo.projectsPath} contains existing files that are not git worktrees. Please choose a different location in settings or move the existing files.`,
-              };
-            }
-          }
-        }
-      }
-    } catch {
-      // Directory doesn't exist, which is fine
-    }
-
     await fs.mkdir(worktreeInfo.projectPath, { recursive: true });
     await fs.mkdir(worktreeInfo.worktreesPath, { recursive: true });
 
@@ -198,6 +164,16 @@ export async function setupProjectWorkspace(args: {
     const baseBranch =
       args.branch ||
       (await repoManager.getDefaultBranch(worktreeInfo.originPath));
+
+    // Prewarm commit history at origin for fast merge-base computation
+    try {
+      await repoManager.prewarmCommitHistory(
+        worktreeInfo.originPath,
+        baseBranch
+      );
+    } catch (e) {
+      serverLogger.warn("Prewarm commit history failed:", e);
+    }
 
     // If a worktree for this branch already exists anywhere, reuse it
     try {

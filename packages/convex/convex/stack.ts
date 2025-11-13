@@ -1,4 +1,10 @@
 import { v } from "convex/values";
+import {
+  extractSlugFromMetadata,
+  buildSlugCandidate,
+  validateSlug,
+  deriveSlugSuffix,
+} from "../_shared/teamSlug";
 import { internalMutation, type MutationCtx } from "./_generated/server";
 import { authMutation } from "./users/utils";
 
@@ -181,13 +187,82 @@ type UpsertTeamArgs = {
   createdAtMillis: number;
 };
 
+async function isSlugTaken(ctx: MutationCtx, slug: string, teamId: string): Promise<boolean> {
+  const existing = await ctx.db
+    .query("teams")
+    .withIndex("by_slug", (q) => q.eq("slug", slug))
+    .first();
+  return existing !== null && existing.teamId !== teamId;
+}
+
+async function generateSlugFromName(
+  ctx: MutationCtx,
+  teamId: string,
+  displayName?: string,
+): Promise<string | undefined> {
+  const name = displayName ?? "";
+  const MAX_ATTEMPTS = 32;
+  const suffix = await deriveSlugSuffix(teamId);
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+    const candidate = await buildSlugCandidate(teamId, name, attempt, suffix);
+    try {
+      validateSlug(candidate);
+    } catch (_error) {
+      continue;
+    }
+    const taken = await isSlugTaken(ctx, candidate, teamId);
+    if (!taken) {
+      return candidate;
+    }
+  }
+  console.error("Failed to generate unique slug for team", { teamId, displayName });
+  return undefined;
+}
+
+async function resolveTeamSlug(
+  ctx: MutationCtx,
+  args: UpsertTeamArgs,
+  existing: { slug?: string } | null,
+): Promise<string | undefined> {
+  const metadataSlug = extractSlugFromMetadata(args.clientMetadata);
+  if (metadataSlug) {
+    const taken = await isSlugTaken(ctx, metadataSlug, args.id);
+    if (!taken) {
+      return metadataSlug;
+    }
+    console.warn("Metadata-provided slug already in use; falling back to generated slug", {
+      metadataSlug,
+      teamId: args.id,
+    });
+    if (existing?.slug) {
+      return existing.slug;
+    }
+  }
+
+  if (existing?.slug) {
+    return existing.slug;
+  }
+
+  return generateSlugFromName(ctx, args.id, args.displayName);
+}
+
 async function upsertTeamCore(ctx: MutationCtx, args: UpsertTeamArgs) {
   const now = Date.now();
   const existing = await ctx.db
     .query("teams")
     .withIndex("by_teamId", (q) => q.eq("teamId", args.id))
     .first();
-  const patch = {
+  const resolvedSlug = await resolveTeamSlug(ctx, args, existing);
+  const patch: {
+    displayName?: string;
+    profileImageUrl?: string;
+    clientMetadata?: unknown;
+    clientReadOnlyMetadata?: unknown;
+    serverMetadata?: unknown;
+    createdAtMillis: number;
+    updatedAt: number;
+    slug?: string;
+  } = {
     displayName: args.displayName,
     profileImageUrl: args.profileImageUrl,
     clientMetadata: args.clientMetadata,
@@ -195,7 +270,10 @@ async function upsertTeamCore(ctx: MutationCtx, args: UpsertTeamArgs) {
     serverMetadata: args.serverMetadata,
     createdAtMillis: args.createdAtMillis,
     updatedAt: now,
-  } as const;
+  };
+  if (resolvedSlug !== undefined && (!existing || existing.slug !== resolvedSlug)) {
+    patch.slug = resolvedSlug;
+  }
   if (existing) {
     await ctx.db.patch(existing._id, patch);
   } else {

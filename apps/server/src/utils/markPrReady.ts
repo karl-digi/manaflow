@@ -1,5 +1,5 @@
-import { serverLogger } from "./fileLogger.js";
-import { getOctokit } from "./octokit.js";
+import { serverLogger } from "./fileLogger";
+import { getOctokit } from "./octokit";
 
 export async function markPrReady(
   token: string,

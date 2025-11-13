@@ -36,6 +36,24 @@ function DebugComponent() {
 
         <button
           onClick={() => {
+            socket?.emit("rust-get-time", (res) => {
+              if (res.ok) {
+                console.log("Rust time (ms since epoch):", res.time);
+                alert(`Rust time: ${new Date(Number(res.time)).toISOString()}`);
+              } else {
+                console.error("Rust error:", res.error);
+                alert(`Rust error: ${res.error}`);
+              }
+            });
+          }}
+        >
+          Rust time
+        </button>
+
+        <br />
+
+        <button
+          onClick={() => {
             const teamSlugOrId =
               typeof window !== "undefined"
                 ? window.location.pathname.split("/")[1] || "default"

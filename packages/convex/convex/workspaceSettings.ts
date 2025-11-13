@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { resolveTeamIdLoose } from "../_shared/team";
+import { internalQuery } from "./_generated/server";
 import { authMutation, authQuery } from "./users/utils";
 
 export const get = authQuery({
@@ -35,22 +36,43 @@ export const update = authMutation({
     const now = Date.now();
 
     if (existing) {
-      await ctx.db.patch(existing._id, {
-        worktreePath: args.worktreePath,
-        autoPrEnabled: args.autoPrEnabled,
-        userId,
-        teamId,
-        updatedAt: now,
-      });
+      const updates: {
+        worktreePath?: string;
+        autoPrEnabled?: boolean;
+        updatedAt: number;
+      } = { updatedAt: now };
+
+      if (args.worktreePath !== undefined) {
+        updates.worktreePath = args.worktreePath;
+      }
+      if (args.autoPrEnabled !== undefined) {
+        updates.autoPrEnabled = args.autoPrEnabled;
+      }
+
+      await ctx.db.patch(existing._id, updates);
     } else {
       await ctx.db.insert("workspaceSettings", {
         worktreePath: args.worktreePath,
         autoPrEnabled: args.autoPrEnabled,
+        nextLocalWorkspaceSequence: 0,
         createdAt: now,
         updatedAt: now,
         userId,
         teamId,
       });
     }
+  },
+});
+
+export const getByTeamAndUserInternal = internalQuery({
+  args: { teamId: v.string(), userId: v.string() },
+  handler: async (ctx, args) => {
+    const settings = await ctx.db
+      .query("workspaceSettings")
+      .withIndex("by_team_user", (q) =>
+        q.eq("teamId", args.teamId).eq("userId", args.userId)
+      )
+      .first();
+    return settings ?? null;
   },
 });

@@ -1,0 +1,1 @@
+export const SIDEBAR_PRS_DEFAULT_LIMIT = 7;

@@ -12,12 +12,16 @@ for arg in "$@"; do
   esac
 done
 
+./scripts/clean.sh
+
 if [ "$NO_CACHE" = true ]; then
   docker build -t cmux-worker:0.0.1 . --no-cache &
 else
   docker build -t cmux-worker:0.0.1 . &
 fi
 
-pnpm i --frozen-lockfile &
+bun i --frozen-lockfile &
+
+(cd apps/server/native/core && cargo build --release) &
 
 wait

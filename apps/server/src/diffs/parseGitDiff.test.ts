@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { computeEntriesNodeGit } from "./parseGitDiff.js";
+import { computeEntriesNodeGit } from "./parseGitDiff";
 
 const exec = promisify(execCb);
 

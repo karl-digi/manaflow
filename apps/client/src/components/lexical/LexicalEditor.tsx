@@ -1,8 +1,7 @@
-import {
-  $createParagraphNode,
-  $getRoot,
-  type SerializedEditorState,
-} from "lexical";
+import Prism from "prismjs";
+if (typeof globalThis.Prism === "undefined") {
+  globalThis.Prism = Prism;
+}
 
 import { editorStorage } from "@/lib/editorStorage";
 import { CodeNode } from "@lexical/code";
@@ -22,13 +21,19 @@ import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
 import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
 import { HeadingNode, QuoteNode } from "@lexical/rich-text";
 import clsx from "clsx";
+import type { Id } from "@cmux/convex/dataModel";
 import {
+  $createParagraphNode,
+  $getRoot,
+  $getSelection,
+  $isRangeSelection,
   COMMAND_PRIORITY_HIGH,
-  KEY_ENTER_COMMAND,
-  KEY_DOWN_COMMAND,
   INSERT_LINE_BREAK_COMMAND,
+  KEY_DOWN_COMMAND,
+  KEY_ENTER_COMMAND,
+  type SerializedEditorState,
 } from "lexical";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { EditorStatePlugin } from "./EditorStatePlugin";
 import { ImageNode } from "./ImageNode";
 import { ImagePlugin } from "./ImagePlugin";
@@ -154,9 +159,51 @@ function KeyboardCommandPlugin({ onSubmit }: { onSubmit?: () => void }) {
       COMMAND_PRIORITY_HIGH
     );
 
+    const unregisterPlainPaste = editor.registerCommand(
+      KEY_DOWN_COMMAND,
+      (event: KeyboardEvent) => {
+        const isModifierPressed = event.metaKey || event.ctrlKey;
+        const isShiftV =
+          (event.key === "v" || event.key === "V" || event.code === "KeyV") &&
+          event.shiftKey;
+
+        if (!isModifierPressed || !isShiftV) {
+          return false;
+        }
+
+        if (typeof navigator === "undefined" || !navigator.clipboard?.readText) {
+          return false;
+        }
+
+        event.preventDefault();
+
+        void navigator.clipboard
+          .readText()
+          .then((text) => {
+            if (!text) {
+              return;
+            }
+
+            editor.update(() => {
+              const selection = $getSelection();
+              if ($isRangeSelection(selection)) {
+                selection.insertRawText(text);
+              }
+            });
+          })
+          .catch((error) => {
+            console.error("Plain paste failed", error);
+          });
+
+        return true;
+      },
+      COMMAND_PRIORITY_HIGH
+    );
+
     return () => {
       unregisterEnter();
       unregisterCtrlJ();
+      unregisterPlainPaste();
     };
   }, [editor, onSubmit]);
 
@@ -212,114 +259,118 @@ function LocalStoragePersistencePlugin({
   };
 
   // Extract images and replace with IDs
-  const extractImages = useCallback(async (
-    state: SerializedEditorState
-  ): Promise<{
-    cleanState: SerializedEditorState;
-    imageMap: Array<{ id: string; src: string }>;
-    activeImageIds: Set<string>;
-  }> => {
-    const imageMap: Array<{ id: string; src: string }> = [];
-    const activeImageIds = new Set<string>();
+  const extractImages = useCallback(
+    async (
+      state: SerializedEditorState
+    ): Promise<{
+      cleanState: SerializedEditorState;
+      imageMap: Array<{ id: string; src: string }>;
+      activeImageIds: Set<string>;
+    }> => {
+      const imageMap: Array<{ id: string; src: string }> = [];
+      const activeImageIds = new Set<string>();
 
-    const processNode = (node: SerializedNodeLike): SerializedNodeLike => {
-      if (node.type === "image" && node.src) {
-        // If it's a base64 image, store it in IndexedDB
-        if (typeof node.src === 'string' && node.src.startsWith("data:")) {
-          const imageId =
-            (typeof node.imageId === 'string' && node.imageId) ||
-            generateImageId(node.src);
-          imageMap.push({ id: imageId, src: node.src });
-          activeImageIds.add(imageId);
+      const processNode = (node: SerializedNodeLike): SerializedNodeLike => {
+        if (node.type === "image" && node.src) {
+          // If it's a base64 image, store it in IndexedDB
+          if (typeof node.src === "string" && node.src.startsWith("data:")) {
+            const imageId =
+              (typeof node.imageId === "string" && node.imageId) ||
+              generateImageId(node.src);
+            imageMap.push({ id: imageId, src: node.src });
+            activeImageIds.add(imageId);
 
+            return {
+              ...node,
+              src: undefined, // Remove the large src
+              imageId, // Store just the ID
+            };
+          }
+        }
+
+        if (Array.isArray(node.children)) {
           return {
             ...node,
-            src: undefined, // Remove the large src
-            imageId, // Store just the ID
+            children: node.children.map(processNode),
           };
         }
-      }
 
-      if (Array.isArray(node.children)) {
-        return {
-          ...node,
-          children: node.children.map(processNode),
-        };
-      }
+        return node;
+      };
 
-      return node;
-    };
+      const cleanRoot = processNode(
+        state.root as unknown as SerializedNodeLike
+      ) as unknown as SerializedEditorState["root"];
+      const cleanState: SerializedEditorState = {
+        ...state,
+        root: cleanRoot,
+      };
 
-    const cleanRoot = processNode(
-      state.root as unknown as SerializedNodeLike
-    ) as unknown as SerializedEditorState['root'];
-    const cleanState: SerializedEditorState = {
-      ...state,
-      root: cleanRoot,
-    };
-
-    return { cleanState, imageMap, activeImageIds };
-  }, []);
+      return { cleanState, imageMap, activeImageIds };
+    },
+    []
+  );
 
   // Restore images from IDs
-  const restoreImages = useCallback(async (
-    state: SerializedEditorState
-  ): Promise<SerializedEditorState> => {
-    const imageIds: string[] = [];
+  const restoreImages = useCallback(
+    async (state: SerializedEditorState): Promise<SerializedEditorState> => {
+      const imageIds: string[] = [];
 
-    // Collect all image IDs
-    const collectImageIds = (node: SerializedNodeLike): void => {
-      if (
-        node.type === "image" &&
-        typeof node.imageId === 'string' &&
-        !node.src
-      ) {
-        imageIds.push(node.imageId);
-      }
-      if (Array.isArray(node.children)) {
-        node.children.forEach(collectImageIds);
-      }
-    };
+      // Collect all image IDs
+      const collectImageIds = (node: SerializedNodeLike): void => {
+        if (
+          node.type === "image" &&
+          typeof node.imageId === "string" &&
+          !node.src
+        ) {
+          imageIds.push(node.imageId);
+        }
+        if (Array.isArray(node.children)) {
+          node.children.forEach(collectImageIds);
+        }
+      };
 
-    collectImageIds(state.root as unknown as SerializedNodeLike);
+      collectImageIds(state.root as unknown as SerializedNodeLike);
 
-    // Fetch all images from IndexedDB
-    const imageMap = await editorStorage.getImages(imageIds);
+      // Fetch all images from IndexedDB
+      const imageMap = await editorStorage.getImages(imageIds);
 
-    // Restore images in the state
-    const processNode = (node: SerializedNodeLike): SerializedNodeLike => {
-      if (
-        node.type === "image" &&
-        typeof node.imageId === 'string' &&
-        !node.src
-      ) {
-        const src = imageMap.get(node.imageId);
-        if (src) {
+      // Restore images in the state
+      const processNode = (node: SerializedNodeLike): SerializedNodeLike => {
+        if (
+          node.type === "image" &&
+          typeof node.imageId === "string" &&
+          !node.src
+        ) {
+          const src = imageMap.get(node.imageId);
+          if (src) {
+            return {
+              ...node,
+              src,
+            };
+          }
+        }
+
+        if (Array.isArray(node.children)) {
           return {
             ...node,
-            src,
+            children: node.children.map(processNode),
           };
         }
-      }
 
-      if (Array.isArray(node.children)) {
-        return {
-          ...node,
-          children: node.children.map(processNode),
-        };
-      }
+        return node;
+      };
 
-      return node;
-    };
-
-    const restoredRoot = processNode(
-      state.root as unknown as SerializedNodeLike
-    ) as unknown as SerializedEditorState['root'];
-    return {
-      ...state,
-      root: restoredRoot,
-    };
-  }, []);
+      const restoredRoot = processNode(
+        state.root as unknown as SerializedNodeLike
+      ) as unknown as SerializedEditorState["root"];
+      return {
+        ...state,
+        root: restoredRoot,
+      };
+    },
+    []
+  );
 
   // Load initial state from localStorage + IndexedDB
   useEffect(() => {
@@ -473,8 +524,10 @@ interface LexicalEditorProps {
   value?: string;
   repoUrl?: string;
   branch?: string;
+  environmentId?: Id<"environments">;
   persistenceKey?: string; // Key for localStorage persistence
   maxHeight?: string;
+  minHeight?: string;
   onEditorReady?: (editor: {
     getContent: () => {
       text: string;
@@ -498,25 +551,30 @@ export default function LexicalEditor({
   value,
   repoUrl,
   branch,
+  environmentId,
   persistenceKey,
   maxHeight,
+  minHeight,
   onEditorReady,
 }: LexicalEditorProps) {
-  const initialConfig = {
-    namespace: "TaskEditor",
-    theme,
-    onError,
-    nodes: [
-      HeadingNode,
-      ListNode,
-      ListItemNode,
-      QuoteNode,
-      CodeNode,
-      LinkNode,
-      AutoLinkNode,
-      ImageNode,
-    ],
-  };
+  const initialConfig = useMemo(
+    () => ({
+      namespace: "TaskEditor",
+      theme,
+      onError,
+      nodes: [
+        HeadingNode,
+        ListNode,
+        ListItemNode,
+        QuoteNode,
+        CodeNode,
+        LinkNode,
+        AutoLinkNode,
+        ImageNode,
+      ],
+    }),
+    []
+  );
 
   return (
     <LexicalComposer initialConfig={initialConfig}>
@@ -532,6 +590,7 @@ export default function LexicalEditor({
               style={{
                 ...padding,
                 maxHeight: maxHeight,
+                minHeight: minHeight ?? "60px",
                 overflowY: maxHeight ? "auto" : undefined,
               }}
               aria-placeholder={placeholder}
@@ -568,7 +627,11 @@ export default function LexicalEditor({
           persistenceKey={persistenceKey}
           clearOnSubmit={true}
         />
-        <MentionPlugin repoUrl={repoUrl} branch={branch} />
+        <MentionPlugin
+          repoUrl={repoUrl}
+          branch={branch}
+          environmentId={environmentId}
+        />
         <ImagePlugin />
         <EditorStatePlugin onEditorReady={onEditorReady} />
       </div>

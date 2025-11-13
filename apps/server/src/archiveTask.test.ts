@@ -4,7 +4,7 @@ import type { FunctionReturnType } from "convex/server";
 import { exec as _exec } from "node:child_process";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { stopContainersForRunsFromTree } from "./archiveTask.js";
+import { stopContainersForRunsFromTree } from "./archiveTask";
 
 // Quiet logger output during tests
 vi.mock("./utils/fileLogger.js", () => ({
@@ -34,7 +34,13 @@ function randomSuffix(): string {
   return Math.random().toString(36).slice(2, 8);
 }
 
-describe.sequential("stopContainersForRuns (docker E2E)", () => {
+const skipDockerTests =
+  process.env.CMUX_SKIP_DOCKER_TESTS === "1" || process.platform === "darwin";
+const describeDockerTests = skipDockerTests
+  ? describe.sequential.skip
+  : describe.sequential;
+
+describeDockerTests("stopContainersForRuns (docker E2E)", () => {
   const containers: string[] = [];
   const zidRun = typedZid("taskRuns");
   const zidTask = typedZid("tasks");
@@ -81,6 +87,7 @@ describe.sequential("stopContainersForRuns (docker E2E)", () => {
         userId: "test-user",
         teamId: "default",
         vscode: { provider: "docker", status: "running", containerName: runA },
+        environment: null,
         children: [
           {
             _id: zidRun.parse("r2"),
@@ -98,6 +105,7 @@ describe.sequential("stopContainersForRuns (docker E2E)", () => {
               status: "stopped",
               containerName: alreadyExited,
             },
+            environment: null,
             children: [],
           },
         ],
@@ -114,6 +122,7 @@ describe.sequential("stopContainersForRuns (docker E2E)", () => {
         userId: "test-user",
         teamId: "default",
         vscode: { provider: "docker", status: "running", containerName: runB },
+        environment: null,
         children: [],
       },
     ] satisfies FunctionReturnType<typeof api.taskRuns.getByTask>;
@@ -149,12 +158,20 @@ describe.sequential("stopContainersForRuns (docker E2E)", () => {
         updatedAt: now,
         userId: "test-user",
         teamId: "default",
-        vscode: { provider: "docker", status: "running", containerName: missing },
+        vscode: {
+          provider: "docker",
+          status: "running",
+          containerName: missing,
+        },
+        environment: null,
         children: [],
       },
     ] satisfies FunctionReturnType<typeof api.taskRuns.getByTask>;
 
-    const results = await stopContainersForRunsFromTree(treeMissing, "t-missing");
+    const results = await stopContainersForRunsFromTree(
+      treeMissing,
+      "t-missing"
+    );
     expect(results[0]?.success).toBe(false);
   }, 60_000);
 
@@ -166,7 +183,9 @@ describe.sequential("stopContainersForRuns (docker E2E)", () => {
     containers.push(actualContainerName);
 
     // Create actual container (without docker- prefix)
-    await docker(`docker run -d --name ${actualContainerName} alpine:3 sh -c 'sleep 300'`);
+    await docker(
+      `docker run -d --name ${actualContainerName} alpine:3 sh -c 'sleep 300'`
+    );
 
     // Test with docker- prefixed name (as stored in DB) - should succeed
     const treeWithPrefix = [
@@ -181,12 +200,20 @@ describe.sequential("stopContainersForRuns (docker E2E)", () => {
         updatedAt: now,
         userId: "test-user",
         teamId: "default",
-        vscode: { provider: "docker", status: "running", containerName: dbStoredName },
+        vscode: {
+          provider: "docker",
+          status: "running",
+          containerName: dbStoredName,
+        },
+        environment: null,
         children: [],
       },
     ] satisfies FunctionReturnType<typeof api.taskRuns.getByTask>;
 
-    const prefixResults = await stopContainersForRunsFromTree(treeWithPrefix, "t-prefix");
+    const prefixResults = await stopContainersForRunsFromTree(
+      treeWithPrefix,
+      "t-prefix"
+    );
     expect(prefixResults[0]?.success).toBe(true);
 
     // Verify container was stopped
@@ -202,7 +229,9 @@ describe.sequential("stopContainersForRuns (docker E2E)", () => {
     containers.push(containerName);
 
     // Create actual container
-    await docker(`docker run -d --name ${containerName} alpine:3 sh -c 'sleep 300'`);
+    await docker(
+      `docker run -d --name ${containerName} alpine:3 sh -c 'sleep 300'`
+    );
 
     // Test with non-prefixed name (for backward compatibility)
     const treeNonPrefixed = [
@@ -217,12 +246,20 @@ describe.sequential("stopContainersForRuns (docker E2E)", () => {
         updatedAt: now,
         userId: "test-user",
         teamId: "default",
-        vscode: { provider: "docker", status: "running", containerName: containerName },
+        vscode: {
+          provider: "docker",
+          status: "running",
+          containerName: containerName,
+        },
+        environment: null,
         children: [],
       },
     ] satisfies FunctionReturnType<typeof api.taskRuns.getByTask>;
 
-    const results = await stopContainersForRunsFromTree(treeNonPrefixed, "t-compat");
+    const results = await stopContainersForRunsFromTree(
+      treeNonPrefixed,
+      "t-compat"
+    );
     expect(results[0]?.success).toBe(true);
 
     // Verify container was stopped

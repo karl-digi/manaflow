@@ -1,12 +1,12 @@
 import { api } from "@cmux/convex/api";
 import { type Doc, type Id } from "@cmux/convex/dataModel";
+import type { RunEnvironmentSummary } from "@/types/task";
 import { useUser } from "@stackframe/react";
 import { Link, useParams } from "@tanstack/react-router";
 import { useQuery } from "convex/react";
 import { formatDistanceToNow } from "date-fns";
 import {
   AlertCircle,
-  ArrowUp,
   CheckCircle2,
   Clock,
   Play,
@@ -14,8 +14,7 @@ import {
   Trophy,
   XCircle,
 } from "lucide-react";
-import { useMemo, useState } from "react";
-import TextareaAutosize from "react-textarea-autosize";
+import { useMemo } from "react";
 import CmuxLogoMark from "./logo/cmux-logo-mark";
 import { TaskMessage } from "./task-message";
 
@@ -40,6 +39,7 @@ interface TimelineEvent {
 
 type TaskRunWithChildren = Doc<"taskRuns"> & {
   children?: TaskRunWithChildren[];
+  environment?: RunEnvironmentSummary | null;
 };
 
 interface TaskTimelineProps {
@@ -50,16 +50,13 @@ interface TaskTimelineProps {
     winnerRunId?: Id<"taskRuns">;
     reason?: string;
   } | null;
-  onComment?: (comment: string) => void;
 }
 
 export function TaskTimeline({
   task,
   taskRuns,
   crownEvaluation,
-  onComment,
 }: TaskTimelineProps) {
-  const [comment, setComment] = useState("");
   const user = useUser();
   const params = useParams({ from: "/_layout/$teamSlugOrId/task/$taskId" });
   const taskComments = useQuery(api.taskComments.listByTask, {
@@ -140,14 +137,6 @@ export function TaskTimeline({
     return timelineEvents.sort((a, b) => a.timestamp - b.timestamp);
   }, [task, taskRuns, crownEvaluation]);
 
-  const handleCommentSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (comment.trim() && onComment) {
-      onComment(comment.trim());
-      setComment("");
-    }
-  };
-
   if (!events.length && !task) {
     return (
       <div className="flex items-center justify-center py-12 text-neutral-500">
@@ -195,11 +184,12 @@ export function TaskTimeline({
         );
         content = event.runId ? (
           <Link
-            to="/$teamSlugOrId/task/$taskId/run/$runId/vscode"
+            to="/$teamSlugOrId/task/$taskId/run/$runId"
             params={{
               teamSlugOrId: params.teamSlugOrId,
               taskId: params.taskId,
               runId: event.runId,
+              taskRunId: event.runId,
             }}
             className="hover:underline inline"
           >
@@ -243,11 +233,12 @@ export function TaskTimeline({
           <>
             {event.runId ? (
               <Link
-                to="/$teamSlugOrId/task/$taskId/run/$runId/vscode"
+                to="/$teamSlugOrId/task/$taskId/run/$runId"
                 params={{
                   teamSlugOrId: params.teamSlugOrId,
                   taskId: params.taskId,
                   runId: event.runId,
+                  taskRunId: event.runId,
                 }}
                 className="hover:underline inline"
               >
@@ -302,11 +293,12 @@ export function TaskTimeline({
           <>
             {event.runId ? (
               <Link
-                to="/$teamSlugOrId/task/$taskId/run/$runId/vscode"
+                to="/$teamSlugOrId/task/$taskId/run/$runId"
                 params={{
                   teamSlugOrId: params.teamSlugOrId,
                   taskId: params.taskId,
                   runId: event.runId,
+                  taskRunId: event.runId,
                 }}
                 className="hover:underline inline"
               >
@@ -353,11 +345,12 @@ export function TaskTimeline({
           <>
             {event.runId ? (
               <Link
-                to="/$teamSlugOrId/task/$taskId/run/$runId/vscode"
+                to="/$teamSlugOrId/task/$taskId/run/$runId"
                 params={{
                   teamSlugOrId: params.teamSlugOrId,
                   taskId: params.taskId,
                   runId: event.runId,
+                  taskRunId: event.runId,
                 }}
                 className="hover:underline inline"
               >
@@ -482,31 +475,6 @@ export function TaskTimeline({
           ))}
         </div>
       ) : null}
-      {/* Comment Box */}
-      <div className="pt-6">
-        <form onSubmit={handleCommentSubmit}>
-          <div className="relative">
-            <TextareaAutosize
-              value={comment}
-              onChange={(e) => setComment(e.target.value)}
-              placeholder="Leave a comment..."
-              className="w-full px-3 py-2 pr-20 text-sm border border-neutral-300 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 placeholder-neutral-500 dark:placeholder-neutral-400 focus:outline-none resize-none"
-              minRows={3}
-              maxRows={10}
-            />
-            <div className="absolute bottom-2 pb-1.5 right-1.5">
-              <button
-                type="submit"
-                disabled={!comment.trim()}
-                className="flex items-center justify-center h-7 w-7 rounded-full border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-900 text-neutral-500 hover:text-neutral-700 hover:border-neutral-400 dark:hover:text-neutral-300 dark:hover:border-neutral-500 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                title="Send comment"
-              >
-                <ArrowUp className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          </div>
-        </form>
-      </div>
     </div>
   );
 }

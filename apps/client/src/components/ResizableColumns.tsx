@@ -1,3 +1,4 @@
+import clsx from "clsx";
 import React, {
   useCallback,
   useEffect,
@@ -9,7 +10,7 @@ import React, {
 interface ResizableColumnsProps {
   left: React.ReactNode;
   right: React.ReactNode;
-  storageKey?: string;
+  storageKey?: string | null;
   defaultLeftWidth?: number; // px
   minLeft?: number; // px
   maxLeft?: number; // px
@@ -34,14 +35,18 @@ export function ResizableColumns({
   const rafIdRef = useRef<number | null>(null);
   const [isResizing, setIsResizing] = useState(false);
   const [leftWidth, setLeftWidth] = useState<number>(() => {
-    const stored = storageKey ? localStorage.getItem(storageKey) : null;
+    if (!storageKey) {
+      return defaultLeftWidth;
+    }
+    const stored = localStorage.getItem(storageKey);
     const parsed = stored ? Number.parseInt(stored, 10) : defaultLeftWidth;
     if (Number.isNaN(parsed)) return defaultLeftWidth;
     return Math.min(Math.max(parsed, minLeft), maxLeft);
   });
 
   useEffect(() => {
-    if (storageKey) localStorage.setItem(storageKey, String(leftWidth));
+    if (!storageKey) return;
+    localStorage.setItem(storageKey, String(leftWidth));
   }, [leftWidth, storageKey]);
 
   const onMouseMove = useCallback(
@@ -120,10 +125,7 @@ export function ResizableColumns({
   }, [onMouseMove, stopResizing]);
 
   return (
-    <div
-      ref={containerRef}
-      className={`flex h-full relative ${className ?? ""}`}
-    >
+    <div ref={containerRef} className={clsx(`flex h-full relative`, className)}>
       <div
         className="shrink-0 h-full"
         style={
@@ -137,20 +139,24 @@ export function ResizableColumns({
       >
         {left}
       </div>
+      <div className="h-full block bg-neutral-200 dark:bg-neutral-800 w-[1px]"></div>
+      <div className="flex-1 h-full">{right}</div>
       <div
         role="separator"
         aria-orientation="vertical"
         onMouseDown={startResizing}
-        className={`h-full cursor-col-resize bg-transparent hover:bg-neutral-200 dark:hover:bg-neutral-800 active:bg-neutral-300 dark:active:bg-neutral-700 ${separatorClassName ?? ""}`}
+        className={clsx(
+          "absolute inset-y-0 cursor-col-resize bg-transparent hover:bg-neutral-200 dark:hover:bg-neutral-800 active:bg-neutral-300 dark:active:bg-neutral-800",
+          separatorClassName
+        )}
         style={{
           width: `${separatorWidth}px`,
           minWidth: `${separatorWidth}px`,
+          transform: `translateX(calc(${leftWidth}px - 50%))`,
+          zIndex: "var(--z-sidebar-resize-handle)",
         }}
         title="Resize"
       />
-      <div className="flex-1 h-full border-neutral-200 dark:border-neutral-800 border-l">
-        {right}
-      </div>
     </div>
   );
 }

@@ -1,8 +1,8 @@
 import { typedZid } from "@cmux/shared/utils/typed-zid";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createServer } from "node:http";
-import { CmuxVSCodeInstance } from "./CmuxVSCodeInstance.js";
-import { runWithAuth } from "../utils/requestContext.js";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { runWithAuth } from "../utils/requestContext";
+import { CmuxVSCodeInstance } from "./CmuxVSCodeInstance";
 
 describe("CmuxVSCodeInstance basic lifecycle via local API stub", () => {
   let server: ReturnType<typeof createServer> | null = null;
@@ -47,11 +47,13 @@ describe("CmuxVSCodeInstance basic lifecycle via local API stub", () => {
       res.end("not found");
     }).listen(0);
 
-    await new Promise<void>((resolve) => server!.on("listening", () => resolve()));
+    await new Promise<void>((resolve) =>
+      server!.on("listening", () => resolve())
+    );
     const addr = server.address();
     if (addr && typeof addr === "object" && addr.port) {
       baseUrl = `http://localhost:${addr.port}`;
-      process.env.WWW_API_BASE_URL = baseUrl;
+      process.env.NEXT_PUBLIC_WWW_ORIGIN = baseUrl;
     } else {
       throw new Error("Failed to get test server port");
     }
@@ -64,7 +66,10 @@ describe("CmuxVSCodeInstance basic lifecycle via local API stub", () => {
   it("start → status → stop works against stub API", async () => {
     await runWithAuth(
       "test-token",
-      JSON.stringify({ accessToken: "test-token", refreshToken: "test-refresh" }),
+      JSON.stringify({
+        accessToken: "test-token",
+        refreshToken: "test-refresh",
+      }),
       async () => {
         const taskRunId = typedZid("taskRuns").parse("tr1");
         const taskId = typedZid("tasks").parse("t1");
@@ -79,7 +84,9 @@ describe("CmuxVSCodeInstance basic lifecycle via local API stub", () => {
         expect(info.instanceId).toBe(taskRunId);
         expect(info.provider).toBe("morph");
         expect(info.url).toBe("http://127.0.0.1:39999");
-        expect(info.workspaceUrl.includes("/?folder=/root/workspace")).toBe(true);
+        expect(info.workspaceUrl.includes("/?folder=/root/workspace")).toBe(
+          true
+        );
 
         const st = await inst.getStatus();
         expect(st.running).toBe(true);
@@ -88,9 +95,13 @@ describe("CmuxVSCodeInstance basic lifecycle via local API stub", () => {
         await inst.stop();
 
         // Verify API calls were made
-        const startCall = calls.find((c) => c.method === "POST" && c.url === "/api/sandboxes/start");
+        const startCall = calls.find(
+          (c) => c.method === "POST" && c.url === "/api/sandboxes/start"
+        );
         const stopCall = calls.find(
-          (c) => c.method === "POST" && c.url === "/api/sandboxes/sandbox_local_1/stop"
+          (c) =>
+            c.method === "POST" &&
+            c.url === "/api/sandboxes/sandbox_local_1/stop"
         );
         expect(startCall).toBeTruthy();
         expect(stopCall).toBeTruthy();

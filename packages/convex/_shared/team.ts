@@ -15,14 +15,17 @@ export async function getTeamId(
   ctx: AnyCtx,
   teamSlugOrId: string
 ): Promise<string> {
-  if (isUuid(teamSlugOrId)) return teamSlugOrId;
+  if (isUuid(teamSlugOrId)) {
+    return teamSlugOrId;
+  }
 
-  const team = await ctx.db
-    .query("teams")
-    .filter((q) => q.eq(q.field("slug"), teamSlugOrId))
-    .first();
-
-  const identity = await ctx.auth.getUserIdentity();
+  const [team, identity] = await Promise.all([
+    ctx.db
+      .query("teams")
+      .withIndex("by_slug", (q) => q.eq("slug", teamSlugOrId))
+      .first(),
+    ctx.auth.getUserIdentity(),
+  ]);
   const userId = identity?.subject;
   if (team) {
     const teamId = team.teamId;
@@ -67,9 +70,11 @@ export async function resolveTeamIdLoose(
 
   const team = await ctx.db
     .query("teams")
-    .filter((q) => q.eq(q.field("slug"), teamSlugOrId))
+    .withIndex("by_slug", (q) => q.eq("slug", teamSlugOrId))
     .first();
-  if (team) return team.teamId;
+  if (team) {
+    return team.teamId;
+  }
 
   // Back-compat: allow legacy string teamIds (e.g., "default").
   return teamSlugOrId;

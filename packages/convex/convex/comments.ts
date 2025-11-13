@@ -150,10 +150,9 @@ export const getReplies = authQuery({
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
     const replies = await ctx.db
       .query("commentReplies")
-      .withIndex("by_team_user", (q) =>
-        q.eq("teamId", teamId).eq("userId", userId)
-      )
-      .filter((q) => q.eq(q.field("commentId"), args.commentId))
+      .withIndex("by_comment", (q) => q.eq("commentId", args.commentId))
+      .filter((q) => q.eq(q.field("teamId"), teamId))
+      .filter((q) => q.eq(q.field("userId"), userId))
       .collect();
     return replies;
   },

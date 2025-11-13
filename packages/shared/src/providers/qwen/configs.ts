@@ -1,14 +1,14 @@
-import type { AgentConfig } from "../../agentConfig.js";
+import type { AgentConfig } from "../../agentConfig";
+import { MODEL_STUDIO_API_KEY, OPENROUTER_API_KEY } from "../../apiKeys";
 import {
-  checkQwenOpenRouterRequirements,
   checkQwenModelStudioRequirements,
-} from "./check-requirements.js";
+  checkQwenOpenRouterRequirements,
+} from "./check-requirements";
+import { startQwenCompletionDetector } from "./completion-detector";
 import {
-  getQwenOpenRouterEnvironment,
   getQwenModelStudioEnvironment,
-} from "./environment.js";
-import { MODEL_STUDIO_API_KEY, OPENROUTER_API_KEY } from "../../apiKeys.js";
-import { startQwenCompletionDetector } from "./completion-detector.js";
+  getQwenOpenRouterEnvironment,
+} from "./environment";
 
 export const QWEN_OPENROUTER_CODER_FREE_CONFIG: AgentConfig = {
   name: "qwen/qwen3-coder:free",

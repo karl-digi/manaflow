@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { RepositoryManager } from "./repositoryManager.js";
+import { RepositoryManager } from "./repositoryManager";
 
 const exec = promisify(execCb);
 

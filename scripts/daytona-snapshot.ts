@@ -3,6 +3,7 @@ import { execSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { connectToWorkerManagement } from "@cmux/shared/socket";
 import { io } from "socket.io-client";
 
 try {
@@ -141,22 +142,40 @@ try {
 
   const { url } = await sandbox.getPreviewLink(39377);
 
-  const managementSocket = io(url);
+  const managementSocket = connectToWorkerManagement({ url });
 
   managementSocket.on("connect", () => {
     console.log("Connected to worker management port");
   });
 
+  const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL || "http://localhost:9777";
+  const prompt = "Run Daytona snapshot smoke test";
+
   managementSocket.on("worker:register", (data) => {
     console.log("Worker registered:", data);
 
     // Test creating a terminal
-    managementSocket.emit("worker:create-terminal", {
-      terminalId: "test-terminal-1",
-      cols: 80,
-      rows: 24,
-      cwd: "/",
-    });
+    managementSocket.emit(
+      "worker:create-terminal",
+      {
+        terminalId: "test-terminal-1",
+        cols: 80,
+        rows: 24,
+        cwd: "/",
+        taskRunContext: {
+          taskRunToken: "daytona-snapshot-token",
+          prompt: prompt,
+          convexUrl,
+        },
+      },
+      (err) => {
+        if (err) {
+          console.error("Error creating terminal:", err);
+        } else {
+          console.log("Terminal created:", data);
+        }
+      }
+    );
   });
 
   managementSocket.on("worker:terminal-created", (data) => {
@@ -185,10 +204,6 @@ try {
 
   managementSocket.on("worker:heartbeat", (data) => {
     console.log("Worker heartbeat:", data);
-  });
-
-  managementSocket.on("error", (error) => {
-    console.error("Socket error:", error);
   });
 
   // Also test client connection

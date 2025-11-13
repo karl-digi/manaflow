@@ -2,15 +2,19 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import { api } from "@cmux/convex/api";
+import { CLOUDFLARE_OPENAI_BASE_URL } from "@cmux/shared";
 import { generateText, type LanguageModel } from "ai";
-import { getConvex } from "../utils/convexClient.js";
-import { serverLogger } from "./fileLogger.js";
+import { getConvex } from "../utils/convexClient";
+import { serverLogger } from "./fileLogger";
 
 function getModelAndProvider(
   apiKeys: Record<string, string>
 ): { model: LanguageModel; providerName: string } | null {
   if (apiKeys.OPENAI_API_KEY) {
-    const openai = createOpenAI({ apiKey: apiKeys.OPENAI_API_KEY });
+    const openai = createOpenAI({
+      apiKey: apiKeys.OPENAI_API_KEY,
+      baseURL: CLOUDFLARE_OPENAI_BASE_URL,
+    });
     return { model: openai("gpt-5-nano"), providerName: "OpenAI" };
   }
   if (apiKeys.GEMINI_API_KEY) {
@@ -83,7 +87,7 @@ export async function generateCommitMessageFromDiff(
       model,
       system,
       prompt,
-      temperature: 0.2,
+      ...(providerName === "OpenAI" ? {} : { temperature: 0.2 }),
       maxRetries: 2,
     });
     const cleaned = text.trim();

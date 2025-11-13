@@ -1,7 +1,7 @@
-import type { AgentConfig } from "../../agentConfig.js";
-import { AMP_API_KEY } from "../../apiKeys.js";
-import { checkAmpRequirements } from "./check-requirements.js";
-import { getAmpEnvironment } from "./environment.js";
+import type { AgentConfig } from "../../agentConfig";
+import { AMP_API_KEY } from "../../apiKeys";
+import { checkAmpRequirements } from "./check-requirements";
+import { getAmpEnvironment } from "./environment";
 
 export const AMP_CONFIG: AgentConfig = {
   name: "amp",

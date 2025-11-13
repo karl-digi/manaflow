@@ -1,8 +1,9 @@
-import type { ServerToWorkerEvents, WorkerToServerEvents } from "@cmux/shared";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { MorphCloudClient } from "morphcloud";
 import { DEFAULT_MORPH_SNAPSHOT_ID } from "@/lib/utils/morph-defaults";
-import { io, type Socket } from "socket.io-client";
+import { env } from "@/lib/utils/www-env";
+import { connectToWorkerManagement, type Socket } from "@cmux/shared/socket";
+import type { WorkerToServerEvents, ServerToWorkerEvents } from "@cmux/shared";
 
 // Define the request schema based on StartTaskSchema
 const StartDevServerSchema = z.object({
@@ -75,6 +76,12 @@ const DevServerResponseSchema = z
     }),
     workerUrl: z.string().openapi({
       example: "https://instance.morph.cloud:39377",
+    }),
+    vncUrl: z.string().openapi({
+      example: "https://instance.morph.cloud:39380/vnc.html",
+    }),
+    cdpUrl: z.string().openapi({
+      example: "https://instance.morph.cloud:39381/json/version",
     }),
     status: z.string().openapi({
       example: "running",
@@ -172,24 +179,34 @@ devServerRouter.openapi(startDevServerRoute, async (c) => {
     const workerService = exposedServices.find(
       (service) => service.port === 39377
     );
+    const vncService = exposedServices.find((service) => service.port === 39380);
+    const cdpService = exposedServices.find((service) => service.port === 39381);
 
-    if (!vscodeService || !workerService) {
+    if (!vscodeService || !workerService || !vncService || !cdpService) {
       // Stop the instance if services are not available
       await instance.stop();
-      throw new Error("VSCode or worker service not found");
+      throw new Error("VSCode, worker, VNC, or DevTools service not found");
     }
 
     const vscodeUrl = `${vscodeService.url}/?folder=/root/workspace`;
     console.log(`VSCode URL: ${vscodeUrl}`);
 
+    const vncUrl = new URL("/vnc.html", vncService.url);
+    const vncSearchParams = new URLSearchParams();
+    vncSearchParams.set("autoconnect", "1");
+    vncSearchParams.set("resize", "scale");
+    vncSearchParams.set("reconnect", "1");
+    vncSearchParams.set("reconnect_delay", "1000");
+    vncUrl.search = `?${vncSearchParams.toString()}`;
+    const vncUrlString = vncUrl.toString();
+
     // Connect to the worker management namespace
-    const clientSocket: Socket<
-      WorkerToServerEvents,
-      ServerToWorkerEvents
-    > = io(workerService.url + "/management", {
-      timeout: 10000,
-      reconnectionAttempts: 3,
-    });
+    const clientSocket: Socket<WorkerToServerEvents, ServerToWorkerEvents> =
+      connectToWorkerManagement({
+        url: workerService.url,
+        timeoutMs: 10_000,
+        reconnectionAttempts: 3,
+      });
 
     let terminalCreated = false;
 
@@ -234,6 +251,11 @@ devServerRouter.openapi(startDevServerRoute, async (c) => {
             rows: 24,
             cwd: "/root/workspace",
             command,
+            taskRunContext: {
+              taskRunToken: "dev-server-placeholder-token",
+              prompt: body.taskDescription,
+              convexUrl: env.NEXT_PUBLIC_CONVEX_URL,
+            },
           },
           () => {
             console.log("Terminal created with command:", command);
@@ -260,6 +282,8 @@ devServerRouter.openapi(startDevServerRoute, async (c) => {
         instanceId: instance.id,
         vscodeUrl,
         workerUrl: workerService.url,
+        vncUrl: vncUrlString,
+        cdpUrl: `${cdpService.url}/json/version`,
         status: "running",
         taskId: body.taskId,
         terminalCreated,

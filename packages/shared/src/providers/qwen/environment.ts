@@ -1,7 +1,7 @@
 import type {
   EnvironmentContext,
   EnvironmentResult,
-} from "../common/environment-result.js";
+} from "../common/environment-result";
 
 // Prepare Qwen CLI environment for OpenAI-compatible API key mode.
 // We previously supported the Qwen OAuth device flow, but cmux now uses
@@ -22,7 +22,7 @@ async function makeQwenEnvironment(
 
   // Ensure .qwen directory exists
   startupCommands.push("mkdir -p ~/.qwen");
-  
+
   // Clean up any old Qwen telemetry files from previous runs
   // The actual telemetry path will be set by the agent spawner with the task ID
   startupCommands.push("rm -f /tmp/qwen-telemetry-*.log 2>/dev/null || true");

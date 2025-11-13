@@ -18,6 +18,14 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
+  resolve: {
+    // Dedupe so Monaco services (e.g. hoverService) are registered once
+    dedupe: ["monaco-editor"],
+  },
+  optimizeDeps: {
+    // Skip pre-bundling to avoid shipping a second Monaco runtime copy
+    exclude: ["monaco-editor"],
+  },
   define: {
     "process.env": {},
     "process.env.NODE_ENV": JSON.stringify(

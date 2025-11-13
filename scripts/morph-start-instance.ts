@@ -1,7 +1,7 @@
 import type { ServerToWorkerEvents, WorkerToServerEvents } from "@cmux/shared";
 import { MorphCloudClient } from "morphcloud";
 import readline from "readline";
-import { io, Socket } from "socket.io-client";
+import { connectToWorkerManagement, type Socket } from "@cmux/shared/socket";
 
 const client = new MorphCloudClient();
 
@@ -41,7 +41,7 @@ process.on("SIGINT", async () => {
 
 console.log(`Created instance: ${instance.id}`);
 
-const portsToExpose = [5173, 9777, 9778, 6791, 39378, 39377];
+const portsToExpose = [5173, 9777, 9778, 6791, 39378, 39377, 39379, 39380, 39381];
 console.log("Exposing ports", portsToExpose);
 await Promise.all(
   portsToExpose.map((port) => instance.exposeHttpService(`port-${port}`, port))
@@ -52,11 +52,17 @@ const exposedServices = instance.networking.httpServices;
 console.log(exposedServices);
 const vscodeService = exposedServices.find((service) => service.port === 39378);
 const workerService = exposedServices.find((service) => service.port === 39377);
-if (!vscodeService || !workerService) {
-  throw new Error("VSCode or worker service not found");
+const proxyService = exposedServices.find((service) => service.port === 39379);
+const vncService = exposedServices.find((service) => service.port === 39380);
+const cdpService = exposedServices.find((service) => service.port === 39381);
+if (!vscodeService || !workerService || !proxyService || !vncService || !cdpService) {
+  throw new Error("VSCode, worker, proxy, VNC, or DevTools service not found");
 }
 
 console.log(`VSCode: ${vscodeService.url}/?folder=/root/workspace`);
+console.log(`Proxy: ${proxyService.url}`);
+console.log(`VNC: ${vncService.url}/vnc.html`);
+console.log(`DevTools: ${cdpService.url}/json/version`);
 
 console.log("Connecting to worker...");
 
@@ -97,13 +103,12 @@ workerUrl.pathname = "/management";
 console.log("workerUrl", workerUrl.toString());
 
 // connect to the worker management namespace with socketio
-const clientSocket = io(workerUrl.toString(), {
-  timeout: 10000,
+const clientSocket = connectToWorkerManagement({
+  url: workerService.url,
+  timeoutMs: 10_000,
   reconnectionAttempts: 3,
-  autoConnect: true,
-  transports: ["websocket"],
   forceNew: true,
-}) as Socket<WorkerToServerEvents, ServerToWorkerEvents>;
+});
 
 clientSocket.on("disconnect", () => {
   console.log("Disconnected from worker");

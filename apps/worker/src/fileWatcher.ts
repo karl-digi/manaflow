@@ -1,9 +1,9 @@
-import { watch, type FSWatcher } from "node:fs";
-import { promises as fs } from "node:fs";
-import * as path from "node:path";
 import { exec } from "node:child_process";
+import { promises as fs, watch, type FSWatcher } from "node:fs";
+import * as path from "node:path";
 import { promisify } from "node:util";
-import { log } from "./logger.js";
+import { log } from "./logger";
+import { detectGitRepoPath } from "./crown/git";
 
 const execAsync = promisify(exec);
 
@@ -24,6 +24,7 @@ interface FileWatcherOptions {
 export class FileWatcher {
   private watcher: FSWatcher | null = null;
   private watchPath: string;
+  private gitRepoPath: string | null = null;
   private taskRunId?: string;
   private onFileChange: (changes: FileChange[]) => void;
   private debounceMs: number;
@@ -32,7 +33,7 @@ export class FileWatcher {
   private debounceTimer: NodeJS.Timeout | null = null;
   private lastGitStatus: Map<string, string> = new Map();
   private gitIgnorePatterns: string[] = [];
-  
+
   constructor(options: FileWatcherOptions) {
     this.watchPath = options.watchPath;
     this.taskRunId = options.taskRunId;
@@ -40,22 +41,19 @@ export class FileWatcher {
     this.debounceMs = options.debounceMs || 1000; // Default 1 second debounce
     this.gitIgnore = options.gitIgnore ?? true;
   }
-  
+
+
   async start(): Promise<void> {
-    log("INFO", `[FileWatcher] Starting file watcher for ${this.watchPath}`, {
-      taskRunId: this.taskRunId,
-      debounceMs: this.debounceMs,
-      gitIgnore: this.gitIgnore
-    });
-    
+    this.gitRepoPath = await detectGitRepoPath();
+
     // Load gitignore patterns if enabled
     if (this.gitIgnore) {
       await this.loadGitIgnorePatterns();
     }
-    
+
     // Get initial git status
     await this.updateGitStatus();
-    
+
     // Start watching; use recursive only on platforms that support it (macOS/Windows)
     const supportsRecursive =
       process.platform === "darwin" || process.platform === "win32";
@@ -64,76 +62,83 @@ export class FileWatcher {
       supportsRecursive ? { recursive: true } : undefined,
       this.handleFileChange.bind(this)
     );
-    
-    log("INFO", `[FileWatcher] File watcher started successfully`);
   }
-  
+
   stop(): void {
     if (this.watcher) {
       this.watcher.close();
       this.watcher = null;
-      log("INFO", `[FileWatcher] File watcher stopped`);
     }
-    
+
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
       this.debounceTimer = null;
     }
   }
-  
+
   private async loadGitIgnorePatterns(): Promise<void> {
+    const searchPath = this.gitRepoPath || this.watchPath;
+
     try {
-      const gitIgnorePath = path.join(this.watchPath, ".gitignore");
+      const gitIgnorePath = path.join(searchPath, ".gitignore");
       const gitIgnoreContent = await fs.readFile(gitIgnorePath, "utf-8");
-      
+
       this.gitIgnorePatterns = gitIgnoreContent
         .split("\n")
-        .filter(line => line.trim() && !line.startsWith("#"))
-        .map(pattern => pattern.trim());
-      
+        .filter((line) => line.trim() && !line.startsWith("#"))
+        .map((pattern) => pattern.trim());
+
       // Always ignore .git directory
       this.gitIgnorePatterns.push(".git");
-      
-      log("INFO", `[FileWatcher] Loaded ${this.gitIgnorePatterns.length} gitignore patterns`);
     } catch (error) {
       // No gitignore file, just ignore .git
       this.gitIgnorePatterns = [".git"];
     }
   }
-  
+
   private shouldIgnore(filePath: string): boolean {
     if (!this.gitIgnore) return false;
-    
+
     const relativePath = path.relative(this.watchPath, filePath);
-    
+
     // Check against gitignore patterns (simplified check)
     for (const pattern of this.gitIgnorePatterns) {
       if (relativePath.includes(pattern)) {
         return true;
       }
     }
-    
+
     // Ignore common build/temp directories
-    const ignoreDirs = ["node_modules", ".git", "dist", "build", ".next", ".cache"];
+    const ignoreDirs = [
+      "node_modules",
+      ".git",
+      "dist",
+      "build",
+      ".next",
+      ".cache",
+    ];
     for (const dir of ignoreDirs) {
       if (relativePath.includes(dir)) {
         return true;
       }
     }
-    
+
     return false;
   }
-  
+
   private async updateGitStatus(): Promise<void> {
+    if (!this.gitRepoPath) {
+      throw new Error("gitRepoPath cannot be found");
+    }
+
     try {
-      const { stdout } = await execAsync(
-        "git status --porcelain",
-        { cwd: this.watchPath }
-      );
-      
+      const { stdout } = await execAsync("git status --porcelain", {
+        cwd: this.gitRepoPath,
+      });
+
       this.lastGitStatus.clear();
-      
-      const lines = stdout.split("\n").filter(line => line.trim());
+
+      const lines = stdout.split("\n").filter((line) => line.trim());
       for (const line of lines) {
         const status = line.substring(0, 2).trim();
         const filePath = line.substring(3).trim();
@@ -145,28 +150,32 @@ export class FileWatcher {
       log("WARN", `[FileWatcher] Failed to update git status:`, error);
     }
   }
-  
-  private async handleFileChange(eventType: string, filename: string | null): Promise<void> {
+
+  private async handleFileChange(
+    _eventType: string,
+    filename: string | null
+  ): Promise<void> {
     if (!filename) return;
-    
+
     const fullPath = path.join(this.watchPath, filename);
-    
+
     // Ignore if should be ignored
     if (this.shouldIgnore(fullPath)) {
       return;
     }
-    
+
     // Determine change type
     let changeType: FileChange["type"] = "modified";
-    
+
     try {
       const stats = await fs.stat(fullPath);
       if (!stats.isFile()) return; // Ignore directories
-      
-      // Check if file is new
-      const relativePath = path.relative(this.watchPath, fullPath);
+
+      // Check if file is new (relative to git repo if available, else watchPath)
+      const basePath = this.gitRepoPath || this.watchPath;
+      const relativePath = path.relative(basePath, fullPath);
       const gitStatus = this.lastGitStatus.get(relativePath);
-      
+
       if (gitStatus === "??" || gitStatus?.startsWith("A")) {
         changeType = "added";
       }
@@ -174,41 +183,36 @@ export class FileWatcher {
       // File doesn't exist, it was deleted
       changeType = "deleted";
     }
-    
+
     // Add to pending changes
     const change: FileChange = {
       type: changeType,
       path: fullPath,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     };
-    
+
     this.pendingChanges.set(fullPath, change);
-    
+
     // Reset debounce timer
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
     }
-    
+
     // Set new debounce timer
     this.debounceTimer = setTimeout(() => {
       this.flushPendingChanges();
     }, this.debounceMs);
   }
-  
+
   private async flushPendingChanges(): Promise<void> {
     if (this.pendingChanges.size === 0) return;
-    
+
     const changes = Array.from(this.pendingChanges.values());
     this.pendingChanges.clear();
-    
-    log("INFO", `[FileWatcher] Detected ${changes.length} file changes`, {
-      taskRunId: this.taskRunId,
-      changes: changes.map(c => ({ type: c.type, path: path.relative(this.watchPath, c.path) }))
-    });
-    
+
     // Update git status after changes
     await this.updateGitStatus();
-    
+
     // Emit changes
     this.onFileChange(changes);
   }
@@ -221,23 +225,28 @@ export async function computeGitDiff(
   worktreePath: string,
   files?: string[]
 ): Promise<string> {
+  const gitRepoPath = await detectGitRepoPath();
+  if (!gitRepoPath) {
+    throw new Error("gitRepoPath cannot not be found");
+  }
+
   try {
     let command = "git diff HEAD";
-    
+
     // Add specific files if provided
     if (files && files.length > 0) {
-      const relativePaths = files.map(f => path.relative(worktreePath, f));
+      const relativePaths = files.map((f) => path.relative(gitRepoPath, f));
       command += ` -- ${relativePaths.join(" ")}`;
     }
-    
-    const { stdout } = await execAsync(command, { 
-      cwd: worktreePath,
-      maxBuffer: 10 * 1024 * 1024 // 10MB buffer
+
+    const { stdout } = await execAsync(command, {
+      cwd: gitRepoPath,
+      maxBuffer: 10 * 1024 * 1024, // 10MB buffer
     });
-    
+
     return stdout;
   } catch (error) {
-    log("ERROR", `[FileWatcher] Failed to compute git diff:`, error);
+    log("ERROR,", `[FileWatcher] Failed to compute git diff:`, error);
     return "";
   }
 }
@@ -249,9 +258,14 @@ export async function getFileWithDiff(
   filePath: string,
   worktreePath: string
 ): Promise<{ oldContent: string; newContent: string; patch: string }> {
+  const gitRepoPath = await detectGitRepoPath();
+  if (!gitRepoPath) {
+    throw new Error("gitRepoPath cannot be found");
+  }
+
   try {
-    const relativePath = path.relative(worktreePath, filePath);
-    
+    const relativePath = path.relative(gitRepoPath, filePath);
+
     // Get current content
     let newContent = "";
     try {
@@ -259,34 +273,37 @@ export async function getFileWithDiff(
     } catch {
       // File might be deleted
     }
-    
+
     // Get old content from git
     let oldContent = "";
     try {
-      const { stdout } = await execAsync(
-        `git show HEAD:"${relativePath}"`,
-        { cwd: worktreePath }
-      );
+      const { stdout } = await execAsync(`git show HEAD:"${relativePath}"`, {
+        cwd: gitRepoPath,
+      });
       oldContent = stdout;
     } catch {
       // File might be new
     }
-    
+
     // Get patch
     let patch = "";
     try {
-      const { stdout } = await execAsync(
-        `git diff HEAD -- "${relativePath}"`,
-        { cwd: worktreePath, maxBuffer: 5 * 1024 * 1024 }
-      );
+      const { stdout } = await execAsync(`git diff HEAD -- "${relativePath}"`, {
+        cwd: gitRepoPath,
+        maxBuffer: 5 * 1024 * 1024,
+      });
       patch = stdout;
     } catch {
       // Might not have a diff
     }
-    
+
     return { oldContent, newContent, patch };
   } catch (error) {
-    log("ERROR", `[FileWatcher] Failed to get file diff for ${filePath}:`, error);
+    log(
+      "ERROR",
+      `[FileWatcher] Failed to get file diff for ${filePath}:`,
+      error
+    );
     return { oldContent: "", newContent: "", patch: "" };
   }
 }

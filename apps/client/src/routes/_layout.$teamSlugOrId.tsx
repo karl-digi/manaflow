@@ -1,34 +1,58 @@
 import { CmuxComments } from "@/components/cmux-comments";
 import { CommandBar } from "@/components/CommandBar";
 import { Sidebar } from "@/components/Sidebar";
+import { SIDEBAR_PRS_DEFAULT_LIMIT } from "@/components/sidebar/const";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { ExpandTasksProvider } from "@/contexts/expand-tasks/ExpandTasksProvider";
-import { isFakeConvexId } from "@/lib/fakeConvexId";
+import { cachedGetUser } from "@/lib/cachedGetUser";
+import { setLastTeamSlugOrId } from "@/lib/lastTeam";
+import { stackClientApp } from "@/lib/stack";
 import { api } from "@cmux/convex/api";
-import { type Id } from "@cmux/convex/dataModel";
-import { convexQuery } from "@convex-dev/react-query";
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
-import { useQueries, useQuery } from "convex/react";
-import { Suspense, useMemo } from "react";
+import { useQuery } from "convex/react";
+import { Suspense, useEffect, useMemo } from "react";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId")({
   component: LayoutComponentWrapper,
-  beforeLoad: async ({ params }) => {
+  beforeLoad: async ({ params, location }) => {
+    const user = await cachedGetUser(stackClientApp);
+    if (!user) {
+      throw redirect({
+        to: "/sign-in",
+        search: {
+          after_auth_return_to: location.pathname,
+        },
+      });
+    }
     const { teamSlugOrId } = params;
     const teamMemberships = await convexQueryClient.convexClient.query(
       api.teams.listTeamMemberships
     );
-    const teamMembership = teamMemberships.find(
-      (m) => m.team.slug === teamSlugOrId || m.team.teamId === teamSlugOrId
-    );
+    const teamMembership = teamMemberships.find((membership) => {
+      const team = membership.team;
+      const membershipTeamId = team?.teamId ?? membership.teamId;
+      const membershipSlug = team?.slug;
+      return (
+        membershipSlug === teamSlugOrId || membershipTeamId === teamSlugOrId
+      );
+    });
     if (!teamMembership) {
       throw redirect({ to: "/team-picker" });
     }
   },
   loader: async ({ params }) => {
-    void convexQueryClient.queryClient.ensureQueryData(
-      convexQuery(api.tasks.get, { teamSlugOrId: params.teamSlugOrId })
-    );
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.tasks.get,
+      args: { teamSlugOrId: params.teamSlugOrId },
+    });
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.github_prs.listPullRequests,
+      args: {
+        teamSlugOrId: params.teamSlugOrId,
+        state: "open",
+        limit: SIDEBAR_PRS_DEFAULT_LIMIT,
+      },
+    });
   },
 });
 
@@ -45,67 +69,21 @@ function LayoutComponent() {
     );
   }, [tasks]);
 
-  // Create queries object for all recent tasks with memoization, filtering out fake IDs
-  const taskRunQueries = useMemo(() => {
-    return recentTasks
-      .filter((task) => !isFakeConvexId(task._id))
-      .reduce(
-        (acc, task) => ({
-          ...acc,
-          [task._id]: {
-            query: api.taskRuns.getByTask,
-            args: { teamSlugOrId, taskId: task._id },
-          },
-        }),
-        {} as Record<
-          Id<"tasks">,
-          {
-            query: typeof api.taskRuns.getByTask;
-            args:
-              | ((d: { params: { teamSlugOrId: string } }) => {
-                  teamSlugOrId: string;
-                  taskId: Id<"tasks">;
-                })
-              | { teamSlugOrId: string; taskId: Id<"tasks"> };
-          }
-        >
-      );
-  }, [recentTasks, teamSlugOrId]);
-
-  // Fetch task runs for all recent tasks using useQueries
-  const taskRunResults = useQueries(
-    taskRunQueries as Parameters<typeof useQueries>[0]
-  );
-
-  // Map tasks with their respective runs
-  const tasksWithRuns = useMemo(
-    () =>
-      recentTasks.map((task) => ({
-        ...task,
-        runs: taskRunResults[task._id] || [],
-      })),
-    [recentTasks, taskRunResults]
-  );
+  const displayTasks = tasks === undefined ? undefined : recentTasks;
 
   return (
-    <>
+    <ExpandTasksProvider>
       <CommandBar teamSlugOrId={teamSlugOrId} />
 
-      <ExpandTasksProvider>
-        <div className="flex flex-row grow bg-white dark:bg-black">
-          <Sidebar
-            tasks={tasks}
-            tasksWithRuns={tasksWithRuns}
-            teamSlugOrId={teamSlugOrId}
-          />
+      <div className="flex flex-row grow min-h-0 h-dvh bg-white dark:bg-black">
+        <Sidebar tasks={displayTasks} teamSlugOrId={teamSlugOrId} />
 
-          {/* <div className="flex flex-col grow overflow-hidden bg-white dark:bg-neutral-950"> */}
-          <Suspense fallback={<div>Loading...</div>}>
-            <Outlet />
-          </Suspense>
-          {/* </div> */}
-        </div>
-      </ExpandTasksProvider>
+        {/* <div className="flex flex-col grow overflow-hidden bg-white dark:bg-neutral-950"> */}
+        <Suspense fallback={<div>Loading...</div>}>
+          <Outlet />
+        </Suspense>
+        {/* </div> */}
+      </div>
 
       <button
         onClick={() => {
@@ -121,7 +99,7 @@ function LayoutComponent() {
           position: "fixed",
           bottom: "16px",
           right: "16px",
-          zIndex: 9999,
+          zIndex: "var(--z-overlay)",
           background: "#ffbf00",
           color: "#000",
           border: "none",
@@ -135,7 +113,7 @@ function LayoutComponent() {
       >
         Add Debug Note
       </button>
-    </>
+    </ExpandTasksProvider>
   );
 }
 
@@ -143,6 +121,9 @@ function LayoutComponent() {
 // Avoid nesting providers here to prevent auth/loading thrash.
 function LayoutComponentWrapper() {
   const { teamSlugOrId } = Route.useParams();
+  useEffect(() => {
+    setLastTeamSlugOrId(teamSlugOrId);
+  }, [teamSlugOrId]);
   return (
     <>
       <LayoutComponent />

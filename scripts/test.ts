@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { performance } from "node:perf_hooks";
 
@@ -209,18 +209,31 @@ async function runTests() {
   console.log(
     `🧪 Running tests across workspaces in parallel${showTimings ? " (with per-test timings)" : ""}...\n`
   );
+  // Discover JS/TS packages
   const pkgs = findPackagesWithTests();
+  // Partition: run all non-server packages first, then cargo crates, then @cmux/server
+  const serverPkg = pkgs.find(
+    (p) => p.name === "@cmux/server" || /(^|\/)apps\/server$/.test(p.dir)
+  );
+  const otherPkgs = pkgs.filter((p) => p !== serverPkg);
   if (pkgs.length === 0) {
     console.log("⚠️  No packages with test scripts found.");
     return;
   }
-  // Log which workspaces will run tests
-  const workspaceNames = pkgs.map((p) => p.name).join(", ");
-  console.log(`🧵 Workspaces to test (${pkgs.length}): ${workspaceNames}`);
+  // Log which workspaces will run first
+  const otherNames = otherPkgs.map((p) => p.name).join(", ");
+  console.log(
+    `🧵 Stage 1 — workspaces (excluding @cmux/server) (${otherPkgs.length}): ${otherNames}`
+  );
+  const cargoCrates = findCargoCrates();
+  const cargoNames = cargoCrates.map((c) => `cargo:${c.name}`).join(", ");
+  console.log(
+    `🧵 Stage 1 — cargo crates (${cargoCrates.length}): ${cargoNames}`
+  );
 
   const allPerTests: PerTestTiming[] = [];
 
-  const tasks = pkgs.map(
+  const tasksStage1 = otherPkgs.map(
     ({ name, dir, isVitest, usesDotenv, dotenvEnvPath }) => {
       return new Promise<Result>((resolve) => {
         let combined = "";
@@ -282,7 +295,9 @@ async function runTests() {
         });
         child.on("error", (err) => {
           const durationMs = performance.now() - start;
-          console.log(`❌ ${name}: errored after ${(durationMs / 1000).toFixed(2)}s`);
+          console.log(
+            `❌ ${name}: errored after ${(durationMs / 1000).toFixed(2)}s`
+          );
           resolve({
             name,
             dir,
@@ -296,7 +311,144 @@ async function runTests() {
     }
   );
 
-  const results = await Promise.all(tasks);
+  // Run Stage 1 — non-server packages and cargo crates concurrently
+  const cargoTasks = cargoCrates.map((c) =>
+    new Promise<Result>((resolve) => {
+      console.log(`▶️  cargo:${c.name}: starting tests`);
+      const start = performance.now();
+      const child = spawn("cargo", ["test", "--", "--nocapture"], {
+        cwd: c.dir,
+        shell: true,
+        env: process.env,
+      });
+      let buf = "";
+      child.stdout?.on("data", (d) => (buf += d.toString()));
+      child.stderr?.on("data", (d) => (buf += d.toString()));
+      child.on("close", (code) => {
+        const durationMs = performance.now() - start;
+        const success =
+          code === 0 && /test result:\s+ok\./.test(buf) && !/\bFAILED\b/.test(buf);
+        console.log(
+          `${success ? "✅" : "❌"} cargo:${c.name}: finished in ${(durationMs / 1000).toFixed(2)}s`
+        );
+        resolve({
+          name: `cargo:${c.name}`,
+          dir: c.dir,
+          success,
+          output: buf,
+          durationMs,
+          usedJsonReporter: false,
+        });
+      });
+      child.on("error", (err) => {
+        const durationMs = performance.now() - start;
+        resolve({
+          name: `cargo:${c.name}`,
+          dir: c.dir,
+          success: false,
+          output: String(err),
+          durationMs,
+          usedJsonReporter: false,
+        });
+      });
+    })
+  );
+
+  const resultsStage1 = await Promise.all([...tasksStage1, ...cargoTasks]);
+
+  // Build native Node-API addons for cargo crates (if they define a build script)
+  await buildNativeAddons(cargoCrates);
+
+  // Stage 3 — run @cmux/server tests (after cargo)
+  let serverResults: Result[] = [];
+  if (serverPkg) {
+    console.log(`🧵 Stage 3 — @cmux/server tests`);
+    const r = await new Promise<Result>((resolve) => {
+      let combined = "";
+      const start = performance.now();
+      const cmd = "pnpm";
+      const useJson = showTimings && serverPkg.isVitest;
+      let args: string[];
+      const skipDocker = process.env.CMUX_SKIP_DOCKER_TESTS === "1";
+      if (useJson) {
+        if (serverPkg.usesDotenv) {
+          args = [
+            "exec",
+            "dotenv",
+            ...(serverPkg.dotenvEnvPath ? ["-e", serverPkg.dotenvEnvPath] : []),
+            "--",
+            "vitest",
+            "run",
+            "--reporter=json",
+            "--silent",
+            ...(skipDocker ? ["--exclude", "**/archiveTask.test.ts"] : []),
+          ];
+        } else {
+          args = [
+            "exec",
+            "vitest",
+            "run",
+            "--reporter=json",
+            "--silent",
+            ...(skipDocker ? ["--exclude", "**/archiveTask.test.ts"] : []),
+          ];
+        }
+      } else {
+        args = [
+          "run",
+          "test",
+          ...(skipDocker ? ["--", "--exclude", "**/archiveTask.test.ts"] : []),
+        ];
+      }
+      console.log(`▶️  ${serverPkg.name}: starting tests`);
+      const child = spawn(cmd, args, {
+        cwd: serverPkg.dir,
+        shell: true,
+        env: process.env,
+      });
+      child.stdout?.on("data", (d) => (combined += d.toString()));
+      child.stderr?.on("data", (d) => (combined += d.toString()));
+      child.on("close", (code) => {
+        const durationMs = performance.now() - start;
+        if (useJson) {
+          try {
+            const per = parseVitestPerTests(combined, serverPkg.name);
+            allPerTests.push(...per);
+          } catch {
+            // pass
+          }
+        }
+        console.log(
+          `${code === 0 ? "✅" : "❌"} ${serverPkg.name}: finished in ${(durationMs / 1000).toFixed(2)}s`
+        );
+        resolve({
+          name: serverPkg.name,
+          dir: serverPkg.dir,
+          success: code === 0,
+          output: combined,
+          durationMs,
+          usedJsonReporter: useJson,
+        });
+      });
+      child.on("error", (err) => {
+        const durationMs = performance.now() - start;
+        console.log(
+          `❌ ${serverPkg.name}: errored after ${(durationMs / 1000).toFixed(2)}s`
+        );
+        resolve({
+          name: serverPkg.name,
+          dir: serverPkg.dir,
+          success: false,
+          output: String(err),
+          durationMs,
+          usedJsonReporter: useJson,
+        });
+      });
+    });
+    serverResults = [r];
+  }
+
+  const results = [...resultsStage1, ...serverResults];
 
   // Sort by duration ascending so the longest running are at the bottom
   results.sort((a, b) => a.durationMs - b.durationMs);
@@ -384,3 +536,106 @@ runTests().catch((err) => {
   console.error("Fatal error:", err);
   process.exit(1);
 });
+
+// Recursively find Rust crates (Cargo.toml) under apps/, packages/, and crates/
+function findCargoCrates(): { name: string; dir: string }[] {
+  const roots = ["apps", "packages", "crates"];
+  const crates: { name: string; dir: string }[] = [];
+  const seen = new Set<string>();
+
+  for (const root of roots) {
+    const rootPath = join(__dirname, "..", root);
+    walk(rootPath, (dir) => {
+      const cargo = join(dir, "Cargo.toml");
+      if (existsSync(cargo)) {
+        const name = dir.replace(rootPath + "/", "");
+        // Discover cargo crate
+        if (!seen.has(dir)) {
+          seen.add(dir);
+          crates.push({ name, dir });
+        }
+      }
+    });
+  }
+  return crates;
+}
+
+function walk(root: string, onDir: (dir: string) => void) {
+  let entries: string[] = [];
+  try {
+    entries = readdirSync(root);
+  } catch {
+    return;
+  }
+  onDir(root);
+  for (const ent of entries) {
+    if (ent === "node_modules" || ent === ".git" || ent === "target") continue;
+    const p = join(root, ent);
+    let st: ReturnType<typeof statSync> | undefined;
+    try {
+      st = statSync(p);
+    } catch {
+      continue;
+    }
+    if (st && st.isDirectory()) walk(p, onDir);
+  }
+}
+
+// Build Node-API binaries for crates that expose a package.json with a build script
+async function buildNativeAddons(crates: { name: string; dir: string }[]) {
+  for (const c of crates) {
+    const pkgJsonPath = join(c.dir, "package.json");
+    if (!existsSync(pkgJsonPath)) continue;
+    try {
+      const pkg = JSON.parse(readFileSync(pkgJsonPath, "utf8")) as {
+        scripts?: Record<string, string>;
+      };
+      if (pkg.scripts?.build) {
+        console.log(`🔧 Building native addon for cargo:${c.name}`);
+        await new Promise<void>((resolve) => {
+          const child = spawn("bun", ["run", "build"], {
+            cwd: c.dir,
+            shell: true,
+            env: process.env,
+          });
+          child.stdout?.on("data", (d) => process.stdout.write(d));
+          child.stderr?.on("data", (d) => process.stderr.write(d));
+          child.on("close", () => resolve());
+          child.on("error", () => resolve());
+        });
+
+        // Optionally cross-build Linux targets if toolchains are present
+        const buildLinux = process.env.CMUX_BUILD_LINUX === "1";
+        if (buildLinux) {
+          console.log(`🔧 Building Linux targets for cargo:${c.name}`);
+          await new Promise<void>((resolve) => {
+            const child = spawn(
+              "bunx",
+              [
+                "--bun",
+                "@napi-rs/cli",
+                "build",
+                "--platform",
+                "--target",
+                "x86_64-unknown-linux-gnu",
+                "--target",
+                "aarch64-unknown-linux-gnu",
+              ],
+              {
+                cwd: c.dir,
+                shell: true,
+                env: process.env,
+              }
+            );
+            child.stdout?.on("data", (d) => process.stdout.write(d));
+            child.stderr?.on("data", (d) => process.stderr.write(d));
+            child.on("close", () => resolve());
+            child.on("error", () => resolve());
+          });
+        }
+      }
+    } catch {
+      // ignore invalid package.json
+    }
+  }
+}

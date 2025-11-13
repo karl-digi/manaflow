@@ -9,16 +9,21 @@ export const env = createEnv({
     STACK_SUPER_SECRET_ADMIN_KEY: z.string().min(1),
     STACK_DATA_VAULT_SECRET: z.string().min(32), // For secure DataBook storage
     // GitHub App
-    GITHUB_APP_ID: z.string().min(1),
-    GITHUB_APP_PRIVATE_KEY: z.string().min(1),
+    CMUX_GITHUB_APP_ID: z.string().min(1),
+    CMUX_GITHUB_APP_PRIVATE_KEY: z.string().min(1),
     // Morph
     MORPH_API_KEY: z.string().min(1),
     CONVEX_DEPLOY_KEY: z.string().min(1),
+    OPENAI_API_KEY: z.string().min(1).optional(),
+    GEMINI_API_KEY: z.string().min(1).optional(),
+    ANTHROPIC_API_KEY: z.string().min(1),
+    CMUX_TASK_RUN_JWT_SECRET: z.string().min(1),
   },
   client: {
     NEXT_PUBLIC_STACK_PROJECT_ID: z.string().min(1),
     NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY: z.string().min(1),
     NEXT_PUBLIC_CONVEX_URL: z.string().min(1),
+    NEXT_PUBLIC_GITHUB_APP_SLUG: z.string().min(1).optional(),
   },
   runtimeEnv: process.env,
   emptyStringAsUndefined: true,

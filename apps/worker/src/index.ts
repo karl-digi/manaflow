@@ -3,6 +3,7 @@ import {
   WorkerConfigureGitSchema,
   WorkerCreateTerminalSchema,
   WorkerExecSchema,
+  WorkerStartScreenshotCollectionSchema,
   type ClientToServerEvents,
   type InterServerEvents,
   type ServerToClientEvents,
@@ -10,11 +11,17 @@ import {
   type SocketData,
   type WorkerHeartbeat,
   type WorkerRegister,
+  type WorkerStartScreenshotCollection,
+  type WorkerTaskRunContext,
+  type WorkerToServerEventNames,
   type WorkerToServerEvents,
 } from "@cmux/shared";
 import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
+import type { Id } from "@cmux/convex/dataModel";
 
+import { getWorkerServerSocketOptions } from "@cmux/shared/node/socket";
 import { startAmpProxy } from "@cmux/shared/src/providers/amp/start-amp-proxy.ts";
+import { handleWorkerTaskCompletion } from "./crown/workflow";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import * as xtermHeadless from "@xterm/headless";
 import express from "express";
@@ -30,11 +37,12 @@ import { cpus, platform, totalmem } from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import { Server, type Namespace, type Socket } from "socket.io";
-import { checkDockerReadiness } from "./checkDockerReadiness.js";
-import { detectTerminalIdle } from "./detectTerminalIdle.js";
-import { runWorkerExec } from "./execRunner.js";
-import { FileWatcher, computeGitDiff, getFileWithDiff } from "./fileWatcher.js";
-import { log } from "./logger.js";
+import { checkDockerReadiness } from "./checkDockerReadiness";
+import { detectTerminalIdle } from "./detectTerminalIdle";
+import { runWorkerExec } from "./execRunner";
+import { FileWatcher, computeGitDiff, getFileWithDiff } from "./fileWatcher";
+import { log } from "./logger";
+import { startScreenshotCollection } from "./screenshotCollector/startScreenshotCollection";
 
 const execAsync = promisify(exec);
 
@@ -57,12 +65,16 @@ app.get("/health", (_req, res) => {
     uptime: process.uptime(),
     mainServerConnected: !!mainServerSocket && mainServerSocket.connected,
     pendingEventsCount: pendingEvents.length,
-    pendingEvents: pendingEvents.map((e) => ({
-      event: e.event,
-      age: Date.now() - e.timestamp,
-      taskId: e.data.taskId,
-      taskRunId: e.data.taskRunId,
-    })),
+    pendingEvents: pendingEvents.map((pendingEvent) => {
+      const payload = pendingEvent.args[0];
+      return {
+        event: pendingEvent.event,
+        age: Date.now() - pendingEvent.timestamp,
+        taskId: payload && hasTaskId(payload) ? payload.taskId : undefined,
+        taskRunId:
+          payload && hasTaskRunId(payload) ? payload.taskRunId : undefined,
+      };
+    }),
   });
 });
 
@@ -119,16 +131,7 @@ app.post("/upload-image", upload.single("image"), async (req, res) => {
 const httpServer = createServer(app);
 
 // Socket.IO server with namespaces
-const io = new Server(httpServer, {
-  cors: {
-    origin: "*", // In production, restrict this
-    methods: ["GET", "POST"],
-  },
-  maxHttpBufferSize: 50 * 1024 * 1024, // 50MB to handle large images
-  pingTimeout: 240000, // 120 seconds - increased for long tasks
-  pingInterval: 30000, // 30 seconds
-  upgradeTimeout: 30000, // 30 seconds
-});
+const io = new Server(httpServer, getWorkerServerSocketOptions());
 
 // Client namespace
 const vscodeIO = io.of("/vscode") as Namespace<
@@ -154,29 +157,45 @@ let mainServerSocket: Socket<
 const activeFileWatchers: Map<string, FileWatcher> = new Map();
 
 // Queue for pending events when mainServerSocket is not connected
-interface PendingEvent {
-  event: string;
-  data: any;
+interface PendingEvent<
+  K extends WorkerToServerEventNames = WorkerToServerEventNames,
+> {
+  event: K;
+  args: Parameters<WorkerToServerEvents[K]>;
   timestamp: number;
 }
+
+const hasTaskId = (value: unknown): value is { taskId?: Id<"tasks"> } =>
+  typeof value === "object" && value !== null && "taskId" in value;
+
+const hasTaskRunId = (
+  value: unknown
+): value is { taskRunId?: Id<"taskRuns"> } =>
+  typeof value === "object" && value !== null && "taskRunId" in value;
+
 const pendingEvents: PendingEvent[] = [];
 
 /**
  * Emit an event to the main server, queuing it if not connected
  */
-function emitToMainServer(event: string, data: any) {
+function emitToMainServer<K extends WorkerToServerEventNames>(
+  event: K,
+  ...args: Parameters<WorkerToServerEvents[K]>
+) {
+  const [payload] = args;
+
   if (mainServerSocket && mainServerSocket.connected) {
-    log("DEBUG", `Emitting ${event} to main server`, { event, data });
-    mainServerSocket.emit(event as any, data);
+    log("DEBUG", `Emitting ${event} to main server`, { event, data: payload });
+    mainServerSocket.emit(event, ...args);
   } else {
     log("WARNING", `Main server not connected, queuing ${event} event`, {
       event,
-      data,
+      data: payload,
       pendingEventsCount: pendingEvents.length + 1,
     });
     pendingEvents.push({
       event,
-      data,
+      args,
       timestamp: Date.now(),
     });
   }
@@ -195,6 +214,8 @@ function sendPendingEvents() {
     return;
   }
 
+  const socket = mainServerSocket;
+
   log("INFO", `Sending ${pendingEvents.length} pending events to main server`);
 
   const eventsToSend = [...pendingEvents];
@@ -202,16 +223,17 @@ function sendPendingEvents() {
 
   for (const pendingEvent of eventsToSend) {
     const age = Date.now() - pendingEvent.timestamp;
+    const payload = pendingEvent.args[0];
     log(
       "DEBUG",
       `Sending pending ${pendingEvent.event} event (age: ${age}ms)`,
       {
         event: pendingEvent.event,
-        data: pendingEvent.data,
+        data: payload,
         age,
       }
     );
-    mainServerSocket.emit(pendingEvent.event as any, pendingEvent.data);
+    socket.emit(pendingEvent.event, ...pendingEvent.args);
   }
 }
 
@@ -390,6 +412,7 @@ managementIO.on("connection", (socket) => {
         taskRunId: validated.taskRunId,
         agentModel: validated.agentModel,
         startupCommands: validated.startupCommands,
+        taskRunContext: validated.taskRunContext,
       });
 
       callback({
@@ -435,17 +458,85 @@ managementIO.on("connection", (socket) => {
     } catch (error) {
       callback({
         ready: false,
-        message: `Error checking Docker: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`,
+        message: `Error checking Docker: ${error instanceof Error ? error.message : "Unknown error"
+          }`,
       });
     }
   });
+
+  socket.on(
+    "worker:start-screenshot-collection",
+    async (rawData: WorkerStartScreenshotCollection | undefined) => {
+      log(
+        "INFO",
+        `Worker ${WORKER_ID} received request to start screenshot collection`,
+        undefined,
+        WORKER_ID
+      );
+      let config: WorkerStartScreenshotCollection | null = null;
+      if (rawData) {
+        try {
+          config = WorkerStartScreenshotCollectionSchema.parse(rawData);
+        } catch (validationError) {
+          log(
+            "ERROR",
+            "Invalid screenshot collection payload",
+            {
+              error:
+                validationError instanceof Error
+                  ? validationError.message
+                  : String(validationError),
+            },
+            WORKER_ID
+          );
+        }
+      }
+      try {
+        const result = await startScreenshotCollection({
+          anthropicApiKey: config?.anthropicApiKey,
+          outputPath: config?.outputPath,
+        });
+        log(
+          "INFO",
+          "Screenshot collection completed",
+          {
+            result,
+          },
+          WORKER_ID,
+        );
+      } catch (error) {
+        log(
+          "ERROR",
+          "Failed to start screenshot collection",
+          {
+            error: error instanceof Error ? error.message : String(error),
+          },
+          WORKER_ID
+        );
+      }
+    }
+  );
 
   socket.on("worker:configure-git", async (data) => {
     try {
       const validated = WorkerConfigureGitSchema.parse(data);
       console.log(`Worker ${WORKER_ID} configuring git...`);
+
+      const credentialStorePath = "/root/.git-credentials";
+      const normalizeCredentialHelper = (helper: string): string | null => {
+        const trimmed = helper.trim();
+        if (trimmed.includes("/opt/homebrew/bin/gh")) {
+          return "!gh auth git-credential";
+        }
+        if (
+          trimmed.includes("osxkeychain") ||
+          trimmed.includes("wincred") ||
+          trimmed.includes("manager-core")
+        ) {
+          return null;
+        }
+        return trimmed.length > 0 ? trimmed : null;
+      };
 
       // Create a custom git config file that includes the mounted one
       const customGitConfigPath = "/root/.gitconfig.custom";
@@ -484,7 +575,7 @@ managementIO.on("connection", (socket) => {
                 if (!configSections.has(currentSection)) {
                   configSections.set(currentSection, new Map());
                 }
-                configSections.get(currentSection)!.set(key, value);
+                configSections.get(currentSection)?.set(key, value);
               }
             }
           }
@@ -493,19 +584,46 @@ managementIO.on("connection", (socket) => {
         // No mounted config
       }
 
-      // Add the store credential helper
-      if (!configSections.has("credential")) {
-        configSections.set("credential", new Map());
+      for (const [section, settings] of configSections) {
+        if (!section.startsWith("credential")) {
+          continue;
+        }
+        const helperValue = settings.get("helper");
+        if (!helperValue) {
+          continue;
+        }
+        const normalized = normalizeCredentialHelper(helperValue);
+        if (normalized) {
+          settings.set("helper", normalized);
+        } else {
+          settings.delete("helper");
+          if (settings.size === 0) {
+            configSections.delete(section);
+          }
+        }
       }
-      configSections.get("credential")!.set("helper", "store");
 
       // Create .git-credentials file if GitHub token is provided
       if (validated.githubToken) {
-        const credentialsPath = "/root/.git-credentials";
+        if (!configSections.has("credential")) {
+          configSections.set("credential", new Map());
+        }
+        configSections
+          .get("credential")
+          ?.set("helper", `store --file ${credentialStorePath}`);
+
         const credentialsContent = `https://oauth:${validated.githubToken}@github.com\n`;
-        await fs.writeFile(credentialsPath, credentialsContent);
-        await fs.chmod(credentialsPath, 0o600);
+        await fs.writeFile(credentialStorePath, credentialsContent);
+        await fs.chmod(credentialStorePath, 0o600);
         console.log("GitHub credentials stored in .git-credentials");
+      } else {
+        const credentialSection = configSections.get("credential");
+        if (credentialSection?.get("helper")) {
+          credentialSection.delete("helper");
+        }
+        if (credentialSection && credentialSection.size === 0) {
+          configSections.delete("credential");
+        }
       }
 
       // Add additional git settings if provided
@@ -518,7 +636,7 @@ managementIO.on("connection", (socket) => {
             if (!configSections.has(section)) {
               configSections.set(section, new Map());
             }
-            configSections.get(section)!.set(configKey, value);
+            configSections.get(section)?.set(configKey, value);
           }
         }
       }
@@ -820,10 +938,11 @@ async function createTerminal(
     env?: Record<string, string>;
     command?: string;
     args?: string[];
-    taskRunId?: string;
+    taskRunId?: Id<"taskRuns">;
     agentModel?: string;
     startupCommands?: string[];
-  } = {}
+    taskRunContext: WorkerTaskRunContext;
+  }
 ): Promise<void> {
   const {
     cols = SERVER_TERMINAL_CONFIG.cols,
@@ -833,7 +952,26 @@ async function createTerminal(
     command,
     args = [],
     startupCommands = [],
+    taskRunContext,
   } = options;
+
+  const taskRunToken = taskRunContext.taskRunToken;
+  const convexUrl = taskRunContext.convexUrl;
+  const promptValue = taskRunContext.prompt;
+
+  if (!taskRunToken) {
+    log("ERROR", "[createTerminal] Missing CMUX task run token in context", {
+      terminalId,
+      taskRunId: options.taskRunId,
+    });
+  }
+
+  if (!convexUrl) {
+    log("ERROR", "[createTerminal] Missing Convex URL in task run context", {
+      terminalId,
+      taskRunId: options.taskRunId,
+    });
+  }
 
   const shell = command || (platform() === "win32" ? "powershell.exe" : "bash");
 
@@ -884,19 +1022,28 @@ async function createTerminal(
     });
   }
 
-  const ptyEnv = {
-    ...process.env,
+  const inheritedEnvEntries = Object.entries(process.env).filter(
+    (entry): entry is [string, string] => typeof entry[1] === "string"
+  );
+  const inheritedEnv: Record<string, string> =
+    Object.fromEntries(inheritedEnvEntries);
+
+  if (!Object.prototype.hasOwnProperty.call(env, "NODE_ENV")) {
+    delete inheritedEnv.NODE_ENV;
+  }
+
+  const ptyEnv: Record<string, string> = {
+    ...inheritedEnv,
     ...env, // Override with provided env vars
     WORKER_ID,
     TERM: "xterm-256color",
     PS1: "\\u@\\h:\\w\\$ ", // Basic prompt
-    SHELL: "/bin/bash",
+    SHELL: "/bin/zsh",
     USER: process.env.USER || "root",
     HOME: process.env.HOME || "/root",
-    PATH: `/root/.bun/bin:${
-      process.env.PATH ||
+    PATH: `/root/.bun/bin:${process.env.PATH ||
       "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-    }`,
+      }`,
     // Pass through git config if set
     ...(process.env.GIT_CONFIG_GLOBAL
       ? { GIT_CONFIG_GLOBAL: process.env.GIT_CONFIG_GLOBAL }
@@ -905,43 +1052,71 @@ async function createTerminal(
       ? { GIT_SSH_COMMAND: process.env.GIT_SSH_COMMAND }
       : {}),
   };
+  if (!Object.prototype.hasOwnProperty.call(env, "NODE_ENV")) {
+    // Ensure tmux sessions do not inherit NODE_ENV unless explicitly provided
+    delete ptyEnv.NODE_ENV;
+  }
 
   // Run optional startup commands prior to spawning the agent process
+  // Commands execute SEQUENTIALLY in BACKGROUND to preserve dependencies without blocking spawn
   if (startupCommands && startupCommands.length > 0) {
     log(
       "INFO",
-      `Running ${startupCommands.length} startup command(s) before spawn`,
+      `Launching ${startupCommands.length} startup command(s) in background (sequential)`,
       { startupCommands }
     );
-    for (const cmd of startupCommands) {
-      try {
-        await new Promise<void>((resolve, reject) => {
-          const p = spawn("bash", ["-lc", cmd], {
-            cwd,
-            env: ptyEnv,
-            stdio: ["ignore", "pipe", "pipe"],
+
+    // Execute commands sequentially in background (don't await)
+    (async () => {
+      for (let i = 0; i < startupCommands.length; i++) {
+        const cmd = startupCommands[i]!;
+        try {
+          log("INFO", `[Startup ${i + 1}/${startupCommands.length}] Running: ${cmd}`);
+
+          await new Promise<void>((resolve, reject) => {
+            const p = spawn("bash", ["-lc", cmd], {
+              cwd,
+              env: ptyEnv,
+              stdio: ["ignore", "pipe", "pipe"],
+            });
+            let stderr = "";
+            p.stderr.on("data", (d) => {
+              stderr += d.toString();
+            });
+            p.on("exit", (code) => {
+              if (code === 0) {
+                log("INFO", `[Startup ${i + 1}/${startupCommands.length}] ✓ Completed: ${cmd}`);
+                resolve();
+              } else {
+                log(
+                  "ERROR",
+                  `[Startup ${i + 1}/${startupCommands.length}] ✗ Failed (${code}): ${cmd}`,
+                  new Error(stderr)
+                );
+                reject(new Error(`Command failed with exit code ${code}`));
+              }
+            });
+            p.on("error", (e) => {
+              log("ERROR", `[Startup ${i + 1}/${startupCommands.length}] ✗ Error: ${cmd}`, e);
+              reject(e);
+            });
           });
-          let stderr = "";
-          p.stderr.on("data", (d) => {
-            stderr += d.toString();
-          });
-          p.on("exit", (code) => {
-            if (code === 0) resolve();
-            else
-              reject(
-                new Error(`Startup command failed (${code}): ${cmd}\n${stderr}`)
-              );
-          });
-          p.on("error", (e) => reject(e));
-        });
-      } catch (e) {
-        log(
-          "ERROR",
-          `Startup command failed: ${cmd}`,
-          e instanceof Error ? e : new Error(String(e))
-        );
+        } catch (e) {
+          log(
+            "ERROR",
+            `[Startup ${i + 1}/${startupCommands.length}] Failed, stopping remaining commands`,
+            e instanceof Error ? e : new Error(String(e))
+          );
+          // Stop executing remaining commands on error
+          break;
+        }
       }
-    }
+      log("INFO", "All startup commands completed");
+    })().catch((e) => {
+      log("ERROR", "Unexpected error in background startup commands", e);
+    });
+
+    log("INFO", "Startup commands running in background, continuing with spawn...");
   }
 
   log("INFO", "Spawning process", {
@@ -1000,26 +1175,88 @@ async function createTerminal(
   const stopErrorCaptureAt = Date.now() + INITIAL_ERROR_CAPTURE_WINDOW_MS;
 
   // Config-driven completion detector
-  const agentConfig = AGENT_CONFIGS.find((c) => c.name === options.agentModel);
+  const agentConfig = options.agentModel
+    ? AGENT_CONFIGS.find((c) => c.name === options.agentModel)
+    : undefined;
 
-  // if missing need to return early
-  if (!agentConfig) {
-    log("ERROR", `Agent config not found for ${options.agentModel}`);
-    return;
+  if (!agentConfig && options.agentModel) {
+    log("WARN", `Agent config not found for ${options.agentModel}`, {
+      agentModel: options.agentModel,
+      availableConfigs: AGENT_CONFIGS.map((c) => c.name),
+    });
   }
 
   if (options.taskRunId && agentConfig?.completionDetector) {
     try {
-      void agentConfig
+      log(
+        "INFO",
+        `Setting up completion detector for task ${options.taskRunId}`,
+        {
+          taskRunId: options.taskRunId,
+          agentModel: options.agentModel,
+          hasDetector: !!agentConfig.completionDetector,
+        }
+      );
+
+      agentConfig
         .completionDetector(options.taskRunId)
-        .then(() => {
-          emitToMainServer("worker:task-complete", {
-            workerId: WORKER_ID,
-            terminalId,
-            taskRunId: options.taskRunId!,
-            agentModel: options.agentModel,
-            elapsedMs: Date.now() - processStartTime,
-          });
+        .then(async () => {
+          log(
+            "INFO",
+            `Completion detector resolved for task ${options.taskRunId}`
+          );
+
+          log(
+            "INFO",
+            `Starting crown evaluation for task ${options.taskRunId}`,
+            {
+              taskRunId: options.taskRunId,
+              agentModel: options.agentModel,
+              elapsedMs: Date.now() - processStartTime,
+            }
+          );
+
+          if (!taskRunToken) {
+            log("ERROR", "Missing task run token for crown workflow", {
+              taskRunId: options.taskRunId,
+            });
+            return;
+          }
+
+          if (!options.taskRunId) {
+            log("ERROR", "Missing task run ID for crown workflow", {
+              taskRunId: options.taskRunId,
+            });
+            return;
+          }
+
+          // Await the crown workflow directly
+          try {
+            await handleWorkerTaskCompletion({
+              taskRunId: options.taskRunId,
+              token: taskRunToken,
+              prompt: promptValue,
+              convexUrl: convexUrl ?? undefined,
+              agentModel: options.agentModel,
+              elapsedMs: Date.now() - processStartTime,
+            });
+
+            log("INFO", `Crown workflow completed for ${options.taskRunId}`, {
+              taskRunId: options.taskRunId,
+              agentModel: options.agentModel,
+            });
+          } catch (error) {
+            log(
+              "ERROR",
+              `Failed to handle crown workflow for ${options.taskRunId}`,
+              {
+                taskRunId: options.taskRunId,
+                agentModel: options.agentModel,
+                error: error instanceof Error ? error.message : String(error),
+                stack: error instanceof Error ? error.stack : undefined,
+              }
+            );
+          }
         })
         .catch((e) => {
           log(
@@ -1056,6 +1293,7 @@ async function createTerminal(
   // Handle process exit
   childProcess.on("exit", (code, signal) => {
     const runtime = Date.now() - processStartTime;
+
     log("INFO", `Process exited for terminal ${terminalId}`, {
       code,
       signal,
@@ -1063,13 +1301,6 @@ async function createTerminal(
       runtimeSeconds: (runtime / 1000).toFixed(2),
       command: spawnCommand,
       args: spawnArgs.slice(0, 5), // Log first 5 args for debugging
-    });
-
-    // Notify via management socket
-    emitToMainServer("worker:terminal-exit", {
-      workerId: WORKER_ID,
-      terminalId,
-      exitCode: code ?? 0,
     });
   });
 
@@ -1180,10 +1411,20 @@ httpServer.listen(WORKER_PORT, () => {
 });
 
 // Start AMP proxy via shared provider module
+const parsedAmpProxyPort = Number.parseInt(
+  process.env.AMP_PROXY_PORT ?? "",
+  10
+);
+const ampProxyPort = Number.isNaN(parsedAmpProxyPort)
+  ? undefined
+  : parsedAmpProxyPort;
+
 startAmpProxy({
   ampUrl: process.env.AMP_URL,
+  ampUpstreamUrl: process.env.AMP_UPSTREAM_URL,
+  port: ampProxyPort,
   workerId: WORKER_ID,
-  emitToMainServer: emitToMainServer,
+  emitToMainServer,
 });
 
 // Periodic maintenance for pending events
@@ -1206,13 +1447,15 @@ setInterval(() => {
   const validEvents = pendingEvents.filter((event) => {
     const age = now - event.timestamp;
     if (age > MAX_EVENT_AGE) {
+      const payload = event.args[0];
       log(
         "WARNING",
         `Dropping old pending ${event.event} event (age: ${age}ms)`,
         {
           event: event.event,
           age,
-          taskRunId: event.data.taskRunId,
+          taskRunId:
+            payload && hasTaskRunId(payload) ? payload.taskRunId : undefined,
         }
       );
       return false;
@@ -1235,11 +1478,15 @@ setInterval(() => {
       "WARNING",
       `Still have ${pendingEvents.length} pending events waiting to be sent`,
       {
-        events: pendingEvents.map((e) => ({
-          event: e.event,
-          age: now - e.timestamp,
-          taskRunId: e.data.taskRunId,
-        })),
+        events: pendingEvents.map((e) => {
+          const payload = e.args[0];
+          return {
+            event: e.event,
+            age: now - e.timestamp,
+            taskRunId:
+              payload && hasTaskRunId(payload) ? payload.taskRunId : undefined,
+          };
+        }),
       }
     );
   }

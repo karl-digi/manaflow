@@ -1,14 +1,29 @@
+import { githubPrsBackfillRepoRouter } from "@/lib/routes/github.prs.backfill-repo.route";
+import { githubPrsBackfillRouter } from "@/lib/routes/github.prs.backfill.route";
+import { githubPrsCodeRouter } from "@/lib/routes/github.prs.code.route";
+import { githubPrsFileContentsBatchRouter } from "@/lib/routes/github.prs.file-contents-batch.route";
+import { githubPrsFileContentsRouter } from "@/lib/routes/github.prs.file-contents.route";
+import { githubPrsFilesRouter } from "@/lib/routes/github.prs.files.route";
+import { githubPrsOpenRouter } from "@/lib/routes/github.prs.open.route";
+import { githubPrsPatchRouter } from "@/lib/routes/github.prs.patch.route";
+import { githubPrsRouter } from "@/lib/routes/github.prs.route";
 import { githubReposRouter } from "@/lib/routes/github.repos.route";
-import { githubUserRouter } from "@/lib/routes/github.user.route";
 import {
   booksRouter,
+  branchRouter,
+  codeReviewRouter,
   devServerRouter,
   environmentsRouter,
+  githubInstallStateRouter,
   healthRouter,
-  sandboxesRouter,
   morphRouter,
+  sandboxesRouter,
+  teamsRouter,
   usersRouter,
+  iframePreflightRouter,
+  workspaceConfigsRouter,
 } from "@/lib/routes/index";
+import { authAnonymousRouter } from "@/lib/routes/auth.anonymous.route";
 import { stackServerApp } from "@/lib/utils/stack";
 import { swaggerUI } from "@hono/swagger-ui";
 import { OpenAPIHono } from "@hono/zod-openapi";
@@ -31,7 +46,7 @@ const app = new OpenAPIHono({
           message: "Validation Error",
           errors,
         },
-        422
+        422,
       );
     }
   },
@@ -50,10 +65,15 @@ app.use("*", prettyJSON());
 app.use(
   "*",
   cors({
-    origin: ["http://localhost:5173", "http://localhost:9779"],
+    origin: [
+      "http://localhost:5173",
+      "http://localhost:9779",
+      "https://cmux.sh",
+      "https://www.cmux.sh",
+    ],
     credentials: true,
-    allowHeaders: ["x-stack-auth", "content-type"],
-  })
+    allowHeaders: ["x-stack-auth", "content-type", "authorization"],
+  }),
 );
 
 app.get("/", (c) => {
@@ -79,14 +99,29 @@ app.get("/user", async (c) => {
 
 // Routes - Next.js passes the full /api/* path
 app.route("/", healthRouter);
+app.route("/", authAnonymousRouter);
 app.route("/", usersRouter);
 app.route("/", booksRouter);
 app.route("/", devServerRouter);
 app.route("/", githubReposRouter);
-app.route("/", githubUserRouter);
+app.route("/", githubPrsRouter);
+app.route("/", githubPrsBackfillRouter);
+app.route("/", githubPrsBackfillRepoRouter);
+app.route("/", githubPrsCodeRouter);
+app.route("/", githubPrsOpenRouter);
+app.route("/", githubPrsPatchRouter);
+app.route("/", githubPrsFilesRouter);
+app.route("/", githubPrsFileContentsRouter);
+app.route("/", githubPrsFileContentsBatchRouter);
+app.route("/", githubInstallStateRouter);
 app.route("/", morphRouter);
+app.route("/", iframePreflightRouter);
 app.route("/", environmentsRouter);
 app.route("/", sandboxesRouter);
+app.route("/", teamsRouter);
+app.route("/", branchRouter);
+app.route("/", codeReviewRouter);
+app.route("/", workspaceConfigsRouter);
 
 // OpenAPI documentation
 app.doc("/doc", {
@@ -107,7 +142,7 @@ app.notFound((c) => {
       code: 404,
       message: `Route ${c.req.path} not found`,
     },
-    404
+    404,
   );
 });
 
@@ -119,7 +154,7 @@ app.onError((err, c) => {
       code: 500,
       message: "Internal Server Error",
     },
-    500
+    500,
   );
 });
 

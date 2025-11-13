@@ -2,7 +2,8 @@ import { v } from "convex/values";
 import { resolveTeamIdLoose } from "../_shared/team";
 import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import { authMutation, authQuery } from "./users/utils";
+import { internalMutation, internalQuery } from "./_generated/server";
+import { authMutation, authQuery, taskIdWithFake } from "./users/utils";
 
 export const get = authQuery({
   args: {
@@ -16,7 +17,7 @@ export const get = authQuery({
     let q = ctx.db
       .query("tasks")
       .withIndex("by_team_user", (idx) =>
-        idx.eq("teamId", teamId).eq("userId", userId)
+        idx.eq("teamId", teamId).eq("userId", userId),
       );
 
     if (args.archived === true) {
@@ -27,13 +28,98 @@ export const get = authQuery({
 
     if (args.projectFullName) {
       q = q.filter((qq) =>
-        qq.eq(qq.field("projectFullName"), args.projectFullName)
+        qq.eq(qq.field("projectFullName"), args.projectFullName),
       );
     }
 
     // Note: order by createdAt desc, fallback to insertion order if not present
     const results = await q.collect();
     return results.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+  },
+});
+
+export const getPinned = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+
+    // Get pinned tasks
+    const pinnedTasks = await ctx.db
+      .query("tasks")
+      .withIndex("by_pinned", (idx) =>
+        idx.eq("pinned", true).eq("teamId", teamId).eq("userId", userId),
+      )
+      .filter((q) => q.neq(q.field("isArchived"), true))
+      .collect();
+
+    return pinnedTasks.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+  },
+});
+
+export const getTasksWithTaskRuns = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    projectFullName: v.optional(v.string()),
+    archived: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    let q = ctx.db
+      .query("tasks")
+      .withIndex("by_team_user", (idx) =>
+        idx.eq("teamId", teamId).eq("userId", userId),
+      );
+
+    if (args.archived === true) {
+      q = q.filter((qq) => qq.eq(qq.field("isArchived"), true));
+    } else {
+      q = q.filter((qq) => qq.neq(qq.field("isArchived"), true));
+    }
+
+    if (args.projectFullName) {
+      q = q.filter((qq) =>
+        qq.eq(qq.field("projectFullName"), args.projectFullName),
+      );
+    }
+
+    const tasks = await q.collect();
+    const sortedTasks = tasks.sort(
+      (a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0),
+    );
+
+    const tasksWithRuns = await Promise.all(
+      sortedTasks.map(async (task) => {
+        const crownedRun = await ctx.db
+          .query("taskRuns")
+          .withIndex("by_task", (query) => query.eq("taskId", task._id))
+          .filter((query) => query.eq(query.field("isCrowned"), true))
+          .filter((query) => query.neq(query.field("isArchived"), true))
+          .first();
+
+        let selectedTaskRun = crownedRun ?? null;
+
+        if (!selectedTaskRun) {
+          const [latestRun] = await ctx.db
+            .query("taskRuns")
+            .withIndex("by_task", (query) => query.eq("taskId", task._id))
+            .filter((query) => query.neq(query.field("isArchived"), true))
+            .order("desc")
+            .take(1);
+          selectedTaskRun = latestRun ?? null;
+        }
+
+        return {
+          ...task,
+          selectedTaskRun,
+        };
+      }),
+    );
+
+    return tasksWithRuns;
   },
 });
 
@@ -51,13 +137,21 @@ export const create = authMutation({
           storageId: v.id("_storage"),
           fileName: v.optional(v.string()),
           altText: v.string(),
-        })
-      )
+        }),
+      ),
     ),
+    environmentId: v.optional(v.id("environments")),
+    isCloudWorkspace: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    if (args.environmentId) {
+      const environment = await ctx.db.get(args.environmentId);
+      if (!environment || environment.teamId !== teamId) {
+        throw new Error("Environment not found");
+      }
+    }
     const now = Date.now();
     const taskId = await ctx.db.insert("tasks", {
       text: args.text,
@@ -71,6 +165,8 @@ export const create = authMutation({
       images: args.images,
       userId,
       teamId,
+      environmentId: args.environmentId,
+      isCloudWorkspace: args.isCloudWorkspace,
     });
 
     return taskId;
@@ -136,12 +232,37 @@ export const update = authMutation({
   },
 });
 
-export const getById = authQuery({
-  args: { teamSlugOrId: v.string(), id: v.id("tasks") },
+export const updateWorktreePath = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    id: v.id("tasks"),
+    worktreePath: v.string(),
+  },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
     const task = await ctx.db.get(args.id);
+    if (!task || task.teamId !== teamId || task.userId !== userId) {
+      throw new Error("Task not found or unauthorized");
+    }
+    await ctx.db.patch(args.id, {
+      worktreePath: args.worktreePath,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+export const getById = authQuery({
+  args: { teamSlugOrId: v.string(), id: taskIdWithFake },
+  handler: async (ctx, args) => {
+    // Handle fake IDs by returning null
+    if (typeof args.id === "string" && args.id.startsWith("fake-")) {
+      return null;
+    }
+
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const task = await ctx.db.get(args.id as Id<"tasks">);
     if (!task || task.teamId !== teamId || task.userId !== userId) return null;
 
     if (task.images && task.images.length > 0) {
@@ -152,7 +273,7 @@ export const getById = authQuery({
             ...image,
             url,
           };
-        })
+        }),
       );
       return {
         ...task,
@@ -171,10 +292,9 @@ export const getVersions = authQuery({
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
     return await ctx.db
       .query("taskVersions")
-      .withIndex("by_team_user", (q) =>
-        q.eq("teamId", teamId).eq("userId", userId)
-      )
-      .filter((q) => q.eq(q.field("taskId"), args.taskId))
+      .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
+      .filter((q) => q.eq(q.field("teamId"), teamId))
+      .filter((q) => q.eq(q.field("userId"), userId))
       .collect();
   },
 });
@@ -205,10 +325,44 @@ export const unarchive = authMutation({
   },
 });
 
+export const pin = authMutation({
+  args: { teamSlugOrId: v.string(), id: v.id("tasks") },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const task = await ctx.db.get(args.id);
+    if (task === null || task.teamId !== teamId || task.userId !== userId) {
+      throw new Error("Task not found or unauthorized");
+    }
+    await ctx.db.patch(args.id, { pinned: true, updatedAt: Date.now() });
+  },
+});
+
+export const unpin = authMutation({
+  args: { teamSlugOrId: v.string(), id: v.id("tasks") },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const task = await ctx.db.get(args.id);
+    if (task === null || task.teamId !== teamId || task.userId !== userId) {
+      throw new Error("Task not found or unauthorized");
+    }
+    await ctx.db.patch(args.id, { pinned: false, updatedAt: Date.now() });
+  },
+});
+
 export const updateCrownError = authMutation({
   args: {
     teamSlugOrId: v.string(),
     id: v.id("tasks"),
+    crownEvaluationStatus: v.optional(
+      v.union(
+        v.literal("pending"),
+        v.literal("in_progress"),
+        v.literal("succeeded"),
+        v.literal("error"),
+      ),
+    ),
     crownEvaluationError: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -226,6 +380,41 @@ export const updateCrownError = authMutation({
   },
 });
 
+export const setCrownEvaluationStatusInternal = internalMutation({
+  args: {
+    taskId: v.id("tasks"),
+    teamId: v.string(),
+    userId: v.string(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("in_progress"),
+      v.literal("succeeded"),
+      v.literal("error"),
+    ),
+    errorMessage: v.optional(v.string()),
+    clearError: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const task = await ctx.db.get(args.taskId);
+    if (!task || task.teamId !== args.teamId || task.userId !== args.userId) {
+      throw new Error("Task not found or unauthorized");
+    }
+
+    const patch: Record<string, unknown> = {
+      crownEvaluationStatus: args.status,
+      updatedAt: Date.now(),
+    };
+
+    if (args.clearError) {
+      patch.crownEvaluationError = undefined;
+    } else if (Object.prototype.hasOwnProperty.call(args, "errorMessage")) {
+      patch.crownEvaluationError = args.errorMessage;
+    }
+
+    await ctx.db.patch(args.taskId, patch);
+  },
+});
+
 // Try to atomically begin a crown evaluation; returns true if we acquired the lock
 export const tryBeginCrownEvaluation = authMutation({
   args: {
@@ -239,11 +428,12 @@ export const tryBeginCrownEvaluation = authMutation({
     if (!task || task.teamId !== teamId || task.userId !== userId) {
       throw new Error("Task not found or unauthorized");
     }
-    if (task.crownEvaluationError === "in_progress") {
+    if (task.crownEvaluationStatus === "in_progress") {
       return false;
     }
     await ctx.db.patch(args.id, {
-      crownEvaluationError: "in_progress",
+      crownEvaluationStatus: "in_progress",
+      crownEvaluationError: undefined,
       updatedAt: Date.now(),
     });
     return true;
@@ -304,7 +494,7 @@ export const createVersion = authMutation({
       v.object({
         path: v.string(),
         changes: v.string(),
-      })
+      }),
     ),
   },
   handler: async (ctx, args) => {
@@ -312,10 +502,9 @@ export const createVersion = authMutation({
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
     const existingVersions = await ctx.db
       .query("taskVersions")
-      .withIndex("by_team_user", (q) =>
-        q.eq("teamId", teamId).eq("userId", userId)
-      )
-      .filter((q) => q.eq(q.field("taskId"), args.taskId))
+      .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
+      .filter((q) => q.eq(q.field("teamId"), teamId))
+      .filter((q) => q.eq(q.field("userId"), userId))
       .collect();
 
     const version = existingVersions.length + 1;
@@ -347,11 +536,9 @@ export const getTasksWithPendingCrownEvaluation = authQuery({
     const tasks = await ctx.db
       .query("tasks")
       .withIndex("by_team_user", (q) =>
-        q.eq("teamId", teamId).eq("userId", userId)
+        q.eq("teamId", teamId).eq("userId", userId),
       )
-      .filter((q) =>
-        q.eq(q.field("crownEvaluationError"), "pending_evaluation")
-      )
+      .filter((q) => q.eq(q.field("crownEvaluationStatus"), "pending"))
       .collect();
 
     // Double-check that no evaluation exists for these tasks
@@ -359,10 +546,9 @@ export const getTasksWithPendingCrownEvaluation = authQuery({
     for (const task of tasks) {
       const existingEvaluation = await ctx.db
         .query("crownEvaluations")
-        .withIndex("by_team_user", (q) =>
-          q.eq("teamId", teamId).eq("userId", userId)
-        )
-        .filter((q) => q.eq(q.field("taskId"), task._id))
+        .withIndex("by_task", (q) => q.eq("taskId", task._id))
+        .filter((q) => q.eq(q.field("teamId"), teamId))
+        .filter((q) => q.eq(q.field("userId"), userId))
         .first();
 
       if (!existingEvaluation) {
@@ -385,7 +571,7 @@ export const updateMergeStatus = authMutation({
       v.literal("pr_approved"),
       v.literal("pr_changes_requested"),
       v.literal("pr_merged"),
-      v.literal("pr_closed")
+      v.literal("pr_closed"),
     ),
   },
   handler: async (ctx, args) => {
@@ -402,6 +588,95 @@ export const updateMergeStatus = authMutation({
   },
 });
 
+export const recordScreenshotResult = internalMutation({
+  args: {
+    taskId: v.id("tasks"),
+    runId: v.id("taskRuns"),
+    status: v.union(
+      v.literal("completed"),
+      v.literal("failed"),
+      v.literal("skipped"),
+    ),
+    screenshots: v.optional(
+      v.array(
+        v.object({
+          storageId: v.id("_storage"),
+          mimeType: v.string(),
+          fileName: v.optional(v.string()),
+          commitSha: v.string(),
+        }),
+      ),
+    ),
+    error: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const task = await ctx.db.get(args.taskId);
+    if (!task) {
+      throw new Error("Task not found");
+    }
+
+    const run = await ctx.db.get(args.runId);
+    if (!run || run.taskId !== args.taskId) {
+      throw new Error("Task run not found for task");
+    }
+
+    const now = Date.now();
+    const screenshots = args.screenshots ?? [];
+
+    const screenshotSetId = await ctx.db.insert("taskRunScreenshotSets", {
+      taskId: args.taskId,
+      runId: args.runId,
+      status: args.status,
+      commitSha: screenshots[0]?.commitSha,
+      capturedAt: now,
+      error: args.error ?? undefined,
+      images: screenshots.map((screenshot) => ({
+        storageId: screenshot.storageId,
+        mimeType: screenshot.mimeType,
+        fileName: screenshot.fileName,
+        commitSha: screenshot.commitSha,
+      })),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const patch: Record<string, unknown> = {
+      screenshotStatus: args.status,
+      screenshotRunId: args.runId,
+      screenshotRequestedAt: now,
+      updatedAt: now,
+      latestScreenshotSetId:
+        args.status === "completed" && screenshots.length > 0
+          ? screenshotSetId
+          : undefined,
+    };
+
+    if (args.status === "completed" && screenshots.length > 0) {
+      patch.screenshotStorageId = screenshots[0].storageId;
+      patch.screenshotMimeType = screenshots[0].mimeType;
+      patch.screenshotFileName = screenshots[0].fileName;
+      patch.screenshotCommitSha = screenshots[0].commitSha;
+      patch.screenshotCompletedAt = now;
+      patch.screenshotError = undefined;
+    } else {
+      patch.screenshotStorageId = undefined;
+      patch.screenshotMimeType = undefined;
+      patch.screenshotFileName = undefined;
+      patch.screenshotCommitSha = undefined;
+      patch.screenshotCompletedAt = undefined;
+      patch.screenshotError = args.error ?? undefined;
+    }
+
+    if (args.status === "failed" || args.status === "skipped") {
+      patch.screenshotError = args.error ?? patch.screenshotError;
+    }
+
+    await ctx.db.patch(args.taskId, patch);
+
+    return screenshotSetId;
+  },
+});
+
 export const checkAndEvaluateCrown = authMutation({
   args: {
     teamSlugOrId: v.string(),
@@ -413,10 +688,9 @@ export const checkAndEvaluateCrown = authMutation({
     // Get all runs for this task
     const taskRuns = await ctx.db
       .query("taskRuns")
-      .withIndex("by_team_user", (q) =>
-        q.eq("teamId", teamId).eq("userId", userId)
-      )
-      .filter((q) => q.eq(q.field("taskId"), args.taskId))
+      .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
+      .filter((q) => q.eq(q.field("teamId"), teamId))
+      .filter((q) => q.eq(q.field("userId"), userId))
       .collect();
 
     console.log(`[CheckCrown] Task ${args.taskId} has ${taskRuns.length} runs`);
@@ -426,12 +700,12 @@ export const checkAndEvaluateCrown = authMutation({
         id: r._id,
         status: r.status,
         isCrowned: r.isCrowned,
-      }))
+      })),
     );
 
     // Check if all runs are completed or failed
     const allCompleted = taskRuns.every(
-      (run) => run.status === "completed" || run.status === "failed"
+      (run) => run.status === "completed" || run.status === "failed",
     );
 
     if (!allCompleted) {
@@ -453,7 +727,7 @@ export const checkAndEvaluateCrown = authMutation({
       const singleRun = taskRuns[0];
       if (singleRun.status === "completed") {
         console.log(
-          `[CheckCrown] Single agent completed successfully: ${singleRun._id}`
+          `[CheckCrown] Single agent completed successfully: ${singleRun._id}`,
         );
         return singleRun._id;
       }
@@ -470,15 +744,14 @@ export const checkAndEvaluateCrown = authMutation({
     // Check if we've already evaluated crown for this task
     const existingEvaluation = await ctx.db
       .query("crownEvaluations")
-      .withIndex("by_team_user", (q) =>
-        q.eq("teamId", teamId).eq("userId", userId)
-      )
-      .filter((q) => q.eq(q.field("taskId"), args.taskId))
+      .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
+      .filter((q) => q.eq(q.field("teamId"), teamId))
+      .filter((q) => q.eq(q.field("userId"), userId))
       .first();
 
     if (existingEvaluation) {
       console.log(
-        `[CheckCrown] Crown already evaluated for task ${args.taskId}, winner: ${existingEvaluation.winnerRunId}`
+        `[CheckCrown] Crown already evaluated for task ${args.taskId}, winner: ${existingEvaluation.winnerRunId}`,
       );
       return existingEvaluation.winnerRunId;
     }
@@ -486,24 +759,24 @@ export const checkAndEvaluateCrown = authMutation({
     // Check if crown evaluation is already pending or in progress
     const task = await ctx.db.get(args.taskId);
     if (
-      task?.crownEvaluationError === "pending_evaluation" ||
-      task?.crownEvaluationError === "in_progress"
+      task?.crownEvaluationStatus === "pending" ||
+      task?.crownEvaluationStatus === "in_progress"
     ) {
       console.log(
-        `[CheckCrown] Crown evaluation already ${task.crownEvaluationError} for task ${args.taskId}`
+        `[CheckCrown] Crown evaluation already ${task.crownEvaluationStatus} for task ${args.taskId}`,
       );
       return "pending";
     }
 
     console.log(
-      `[CheckCrown] No existing evaluation, proceeding with crown evaluation`
+      `[CheckCrown] No existing evaluation, proceeding with crown evaluation`,
     );
 
     // Only evaluate if we have at least 2 completed runs
     const completedRuns = taskRuns.filter((run) => run.status === "completed");
     if (completedRuns.length < 2) {
       console.log(
-        `[CheckCrown] Not enough completed runs (${completedRuns.length} < 2)`
+        `[CheckCrown] Not enough completed runs (${completedRuns.length} < 2)`,
       );
       return null;
     }
@@ -512,14 +785,14 @@ export const checkAndEvaluateCrown = authMutation({
     let winnerId = null;
     try {
       console.log(
-        `[CheckCrown] Starting crown evaluation for task ${args.taskId}`
+        `[CheckCrown] Starting crown evaluation for task ${args.taskId}`,
       );
       winnerId = await ctx.runMutation(api.crown.evaluateAndCrownWinner, {
         teamSlugOrId: args.teamSlugOrId,
         taskId: args.taskId,
       });
       console.log(
-        `[CheckCrown] Crown evaluation completed, winner: ${winnerId}`
+        `[CheckCrown] Crown evaluation completed, winner: ${winnerId}`,
       );
     } catch (error) {
       console.error(`[CheckCrown] Crown evaluation failed:`, error);
@@ -527,6 +800,7 @@ export const checkAndEvaluateCrown = authMutation({
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       await ctx.db.patch(args.taskId, {
+        crownEvaluationStatus: "error",
         crownEvaluationError: errorMessage,
         updatedAt: Date.now(),
       });
@@ -541,5 +815,12 @@ export const checkAndEvaluateCrown = authMutation({
     console.log(`[CheckCrown] Marked task ${args.taskId} as completed`);
 
     return winnerId;
+  },
+});
+
+export const getByIdInternal = internalQuery({
+  args: { id: v.id("tasks") },
+  handler: async (ctx, args) => {
+    return await ctx.db.get(args.id);
   },
 });

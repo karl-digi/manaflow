@@ -1,0 +1,15 @@
+{
+  "extends": "./electron-builder.json",
+  "mac": {
+    "identity": null,
+    "hardenedRuntime": false,
+    "entitlements": null,
+    "entitlementsInherit": null,
+    "gatekeeperAssess": false,
+    "forceCodeSigning": false
+  },
+  "dmg": {
+    "sign": false
+  }
+}
+

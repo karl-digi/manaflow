@@ -1,6 +1,6 @@
 import { onConvexReady } from "@cmux/shared/convex-ready";
-import { CONVEX_URL } from "./convexClient";
-import { serverLogger } from "./fileLogger.js";
+import { serverLogger } from "./fileLogger";
+import { env } from "./server-env";
 
 export async function waitForConvex(): Promise<void> {
   serverLogger.info("Waiting for convex to be ready...");
@@ -14,7 +14,7 @@ export async function waitForConvex(): Promise<void> {
 
   for (; attempt <= maxRetries; attempt++) {
     try {
-      const response = await fetch(CONVEX_URL, {
+      const response = await fetch(env.NEXT_PUBLIC_CONVEX_URL, {
         signal: AbortSignal.timeout(1000),
       });
       if (response.ok) {

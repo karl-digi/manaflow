@@ -2,68 +2,72 @@ import type { StackClientApp } from "@stackframe/react";
 import { decodeJwt } from "jose";
 
 type User = Awaited<ReturnType<StackClientApp["getUser"]>>;
-let cachedUser: User | null = null;
-let userPromise: Promise<User | null> | null = null;
+declare global {
+  interface Window {
+    cachedUser: User | null;
+    userPromise: Promise<User | null> | null;
+  }
+}
 
 export async function cachedGetUser(
   stackClientApp: StackClientApp
 ): Promise<User | null> {
   // If we have a cached user, check if it's still valid
-  if (cachedUser) {
+  if (window.cachedUser) {
     try {
-      const tokens = await cachedUser.currentSession.getTokens();
+      const tokens = await window.cachedUser.currentSession.getTokens();
       if (!tokens.accessToken) {
-        cachedUser = null;
-        userPromise = null;
+        window.cachedUser = null;
+        window.userPromise = null;
         return null;
       }
       const jwt = decodeJwt(tokens.accessToken);
       if (jwt.exp && jwt.exp < Date.now() / 1000) {
-        cachedUser = null;
-        userPromise = null;
+        window.cachedUser = null;
+        window.userPromise = null;
         return null;
       }
-      return cachedUser;
+      return window.cachedUser;
     } catch (error) {
       console.warn("Error checking cached user validity:", error);
-      cachedUser = null;
-      userPromise = null;
+      window.cachedUser = null;
+      window.userPromise = null;
     }
   }
 
-  if (userPromise) {
-    return userPromise;
+  if (window.userPromise) {
+    return window.userPromise;
   }
 
-  userPromise = (async () => {
+  window.userPromise = (async () => {
     try {
       const user = await stackClientApp.getUser();
 
       if (!user) {
-        cachedUser = null;
-        userPromise = null;
+        window.cachedUser = null;
+        window.userPromise = null;
         return null;
       }
 
       const tokens = await user.currentSession.getTokens();
 
       if (!tokens.accessToken) {
-        cachedUser = null;
-        userPromise = null;
+        window.cachedUser = null;
+        window.userPromise = null;
         return null;
       }
-      cachedUser = user;
-      userPromise = null;
+      window.cachedUser = user;
+      window.userPromise = null;
       return user;
     } catch (error) {
       console.error("Error fetching user:", error);
-      cachedUser = null;
-      userPromise = null;
+      window.cachedUser = null;
+      window.userPromise = null;
       return null;
     } finally {
-      userPromise = null;
+      window.userPromise = null;
     }
   })();
 
-  return userPromise;
+  return window.userPromise;
 }

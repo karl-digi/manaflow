@@ -1,5 +1,5 @@
-import type { AgentConfig } from "./agentConfig.js";
-import { AGENT_CONFIGS } from "./agentConfig.js";
+import type { AgentConfig } from "./agentConfig";
+import { AGENT_CONFIGS } from "./agentConfig";
 
 export type ApiKeyModelsByEnv = Record<string, string[]>;
 

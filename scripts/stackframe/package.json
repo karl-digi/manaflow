@@ -1,0 +1,16 @@
+{
+  "name": "@cmux/stackframe-scripts",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "get-run-diffs": "bun run get-run-diffs.ts",
+    "convex-test": "bun run convex-test.ts"
+  },
+  "dependencies": {
+    "@stackframe/js": "^2.8.48"
+  },
+  "devDependencies": {
+    "@types/node": "^24.9.1"
+  }
+}

@@ -12,11 +12,17 @@ console.log(`Created instance: ${instance.id}`);
 const exposedServices = instance.networking.httpServices;
 const vscodeService = exposedServices.find((service) => service.port === 39378);
 const workerService = exposedServices.find((service) => service.port === 39377);
-if (!vscodeService || !workerService) {
-  throw new Error("VSCode or worker service not found");
+const proxyService = exposedServices.find((service) => service.port === 39379);
+const vncService = exposedServices.find((service) => service.port === 39380);
+const cdpService = exposedServices.find((service) => service.port === 39381);
+if (!vscodeService || !workerService || !proxyService || !vncService || !cdpService) {
+  throw new Error("VSCode, worker, proxy, VNC, or DevTools service not found");
 }
 
 console.log(`VSCode: ${vscodeService.url}/?folder=/root/workspace`);
+console.log(`Proxy: ${proxyService.url}`);
+console.log(`VNC: ${vncService.url}/vnc.html`);
+console.log(`DevTools: ${cdpService.url}/json/version`);
 
 // connect to the worker management namespace with socketio
 const clientSocket = io(workerService.url + "/management", {
@@ -28,6 +34,7 @@ clientSocket.on("connect", () => {
   console.log("Connected to worker");
   // clientSocket.emit("get-active-terminals");
   // dispatch a tack
+  const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL || "http://localhost:9777";
   clientSocket.emit(
     "worker:create-terminal",
     {
@@ -36,6 +43,11 @@ clientSocket.on("connect", () => {
       rows: 24,
       cwd: "/root/workspace",
       command: "bun x opencode-ai 'whats the time'",
+      taskRunContext: {
+        taskRunToken: "morph-start-snapshot-token",
+        prompt: "what's the time",
+        convexUrl,
+      },
     },
     () => {
       console.log("Terminal created");

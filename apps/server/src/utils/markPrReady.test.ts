@@ -1,9 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { getGitHubTokenFromKeychain } from "./getGitHubToken.js";
-import { markPrReady } from "./markPrReady.js";
-import { getOctokit } from "./octokit.js";
+import { getGitHubTokenFromKeychain } from "./getGitHubToken";
+import { markPrReady } from "./markPrReady";
+import { getOctokit } from "./octokit";
 
-describe.concurrent("markPrReady E2E Tests", () => {
+// Temporarily disabled due to external GitHub API rate limits.
+// Re-enable when sufficient quota is available.
+describe.skip("markPrReady E2E Tests", () => {
   let githubToken: string;
   const TEST_REPO_OWNER = "manaflow-ai";
   const TEST_REPO_NAME = "cmux-testing";
@@ -54,7 +56,7 @@ describe.concurrent("markPrReady E2E Tests", () => {
       console.error("Error setting up test repository:", error);
       throw error;
     }
-  });
+  }, 60000);
 
   afterAll(async () => {
     // Clean up all test PRs

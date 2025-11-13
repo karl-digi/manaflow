@@ -1,4 +1,4 @@
-import { serverLogger } from "./fileLogger.js";
+import { serverLogger } from "./fileLogger";
 
 export function executeInIIFE<T>(code: () => T | Promise<T>): void {
   try {

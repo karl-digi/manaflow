@@ -1,4 +1,4 @@
-import type { AgentConfigApiKey } from "./agentConfig.js";
+import type { AgentConfigApiKey } from "./agentConfig";
 
 export const ANTHROPIC_API_KEY: AgentConfigApiKey = {
   envVar: "ANTHROPIC_API_KEY",

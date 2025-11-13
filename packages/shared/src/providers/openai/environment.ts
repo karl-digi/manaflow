@@ -1,7 +1,7 @@
 import type {
   EnvironmentContext,
   EnvironmentResult,
-} from "../common/environment-result.js";
+} from "../common/environment-result";
 
 export async function getOpenAIEnvironment(
   _ctx: EnvironmentContext

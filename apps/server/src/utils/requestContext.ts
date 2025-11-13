@@ -13,7 +13,10 @@ export function runWithAuth<T>(
   fn: () => T
 ): T {
   return storage.run(
-    { authToken: authToken ?? undefined, authHeaderJson: authHeaderJson ?? undefined },
+    {
+      authToken: authToken ?? undefined,
+      authHeaderJson: authHeaderJson ?? undefined,
+    },
     fn
   );
 }

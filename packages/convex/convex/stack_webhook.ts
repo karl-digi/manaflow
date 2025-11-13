@@ -5,10 +5,28 @@ import {
   type StackWebhookPayload,
 } from "../_shared/stack-webhook-schema";
 import { internal } from "./_generated/api";
-import { httpAction } from "./_generated/server";
+import { httpAction, type ActionCtx } from "./_generated/server";
 
 function undefIfNull<T>(value: T | null | undefined): T | undefined {
   return value === null || value === undefined ? undefined : value;
+}
+
+async function upsertTeamFromEventData(
+  ctx: ActionCtx,
+  t: Extract<
+    StackWebhookPayload,
+    { type: "team.created" | "team.updated" }
+  >["data"],
+) {
+  await ctx.runMutation(internal.stack.upsertTeam, {
+    id: t.id,
+    displayName: undefIfNull(t.display_name || undefined),
+    profileImageUrl: undefIfNull(t.profile_image_url || undefined),
+    clientMetadata: undefIfNull(t.client_metadata),
+    clientReadOnlyMetadata: undefIfNull(t.client_read_only_metadata),
+    serverMetadata: undefIfNull(t.server_metadata),
+    createdAtMillis: t.created_at_millis,
+  });
 }
 
 export const stackWebhook = httpAction(async (ctx, req) => {
@@ -53,10 +71,10 @@ export const stackWebhook = httpAction(async (ctx, req) => {
         displayName: undefIfNull(u.display_name || undefined),
         selectedTeamId: undefIfNull(u.selected_team_id || undefined),
         selectedTeamDisplayName: undefIfNull(
-          u.selected_team?.display_name || undefined
+          u.selected_team?.display_name || undefined,
         ),
         selectedTeamProfileImageUrl: undefIfNull(
-          u.selected_team?.profile_image_url || undefined
+          u.selected_team?.profile_image_url || undefined,
         ),
         profileImageUrl: undefIfNull(u.profile_image_url || undefined),
         signedUpAtMillis: u.signed_up_at_millis,
@@ -77,18 +95,22 @@ export const stackWebhook = httpAction(async (ctx, req) => {
       await ctx.runMutation(internal.stack.deleteUser, { id: u.id });
       break;
     }
-    case "team.created":
+    case "team.created": {
+      const t = event.data;
+      await Promise.all([
+        upsertTeamFromEventData(ctx, t),
+        ctx.runAction(
+          internal.stack_webhook_actions.syncTeamMembershipsFromStack,
+          {
+            teamId: t.id,
+          },
+        ),
+      ]);
+      break;
+    }
     case "team.updated": {
       const t = event.data;
-      await ctx.runMutation(internal.stack.upsertTeam, {
-        id: t.id,
-        displayName: undefIfNull(t.display_name || undefined),
-        profileImageUrl: undefIfNull(t.profile_image_url || undefined),
-        clientMetadata: undefIfNull(t.client_metadata),
-        clientReadOnlyMetadata: undefIfNull(t.client_read_only_metadata),
-        serverMetadata: undefIfNull(t.server_metadata),
-        createdAtMillis: t.created_at_millis,
-      });
+      await upsertTeamFromEventData(ctx, t);
       break;
     }
     case "team.deleted": {

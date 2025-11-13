@@ -1,16 +1,16 @@
 import * as fs from "node:fs";
-import * as path from "node:path";
 import * as os from "node:os";
+import * as path from "node:path";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
 /**
  * FileLogger - Logs to file and optionally to console based on NODE_ENV
- * 
+ *
  * Behavior:
  * - Production (NODE_ENV=production): Logs only to file
  * - Development (NODE_ENV!=production): Logs to both file and console
- * 
+ *
  * Log files are stored in ~/.cmux/logs/
  */
 export class FileLogger {
@@ -40,40 +40,52 @@ export class FileLogger {
     });
   }
 
-  private formatMessage(level: LogLevel, message: string, ...args: any[]): string {
+  private formatMessage(
+    level: LogLevel,
+    message: string,
+    ...args: unknown[]
+  ): string {
     const timestamp = new Date().toISOString();
-    const formattedArgs = args.length > 0 ? " " + args.map(arg => 
-      typeof arg === "object" ? JSON.stringify(arg, null, 2) : String(arg)
-    ).join(" ") : "";
+    const formattedArgs =
+      args.length > 0
+        ? " " +
+          args
+            .map((arg) =>
+              typeof arg === "object"
+                ? JSON.stringify(arg, null, 2)
+                : String(arg)
+            )
+            .join(" ")
+        : "";
     return `[${timestamp}] [${level.toUpperCase()}] ${message}${formattedArgs}\n`;
   }
 
-  debug(message: string, ...args: any[]): void {
+  debug(message: string, ...args: unknown[]): void {
     if (process.env.DEBUG) {
       this.write("debug", message, ...args);
     }
   }
 
-  info(message: string, ...args: any[]): void {
+  info(message: string, ...args: unknown[]): void {
     this.write("info", message, ...args);
   }
 
-  warn(message: string, ...args: any[]): void {
+  warn(message: string, ...args: unknown[]): void {
     this.write("warn", message, ...args);
   }
 
-  error(message: string, ...args: any[]): void {
+  error(message: string, ...args: unknown[]): void {
     this.write("error", message, ...args);
   }
 
-  private write(level: LogLevel, message: string, ...args: any[]): void {
+  private write(level: LogLevel, message: string, ...args: unknown[]): void {
     const formattedMessage = this.formatMessage(level, message, ...args);
-    
+
     if (process.env.NODE_ENV === "production") {
       // In production, use synchronous write to ensure data is written immediately
       try {
         fs.appendFileSync(this.logFile, formattedMessage);
-      } catch (error) {
+      } catch (_error) {
         // Fallback to stream if sync write fails
         if (this.writeStream && !this.writeStream.destroyed) {
           this.writeStream.write(formattedMessage);
@@ -84,14 +96,16 @@ export class FileLogger {
       if (this.writeStream && !this.writeStream.destroyed) {
         this.writeStream.write(formattedMessage);
       }
-      
-      const consoleMethod = level === "error" ? console.error : 
-                           level === "warn" ? console.warn : 
-                           console.log;
+
+      const consoleMethod =
+        level === "error"
+          ? console.error
+          : level === "warn"
+            ? console.warn
+            : console.log;
       consoleMethod(`[${level.toUpperCase()}]`, message, ...args);
     }
   }
-
 
   close(): void {
     if (this.writeStream && !this.writeStream.destroyed) {
@@ -103,7 +117,8 @@ export class FileLogger {
 // Create logger instances for different modules
 export const dockerLogger = new FileLogger("docker-vscode.log");
 export const serverLogger = new FileLogger("server.log");
-export const createLogger = (logFileName: string) => new FileLogger(logFileName);
+export const createLogger = (logFileName: string) =>
+  new FileLogger(logFileName);
 
 // Register exit handlers to ensure logs are flushed
 const closeAllLoggers = () => {
@@ -114,13 +129,17 @@ const closeAllLoggers = () => {
 process.on("exit", closeAllLoggers);
 process.on("SIGINT", closeAllLoggers);
 process.on("SIGTERM", closeAllLoggers);
+
 process.on("uncaughtException", (error) => {
-  serverLogger.error("Uncaught exception:", error);
+  serverLogger.error("Uncaught exception:", error.message);
   closeAllLoggers();
   process.exit(1);
 });
+
 process.on("unhandledRejection", (reason, promise) => {
-  serverLogger.error("Unhandled rejection at:", promise, "reason:", reason);
+  const errorText =
+    typeof reason === "string" ? reason : JSON.stringify(reason);
+  serverLogger.error("Unhandled rejection at:", promise, "reason:", errorText);
   closeAllLoggers();
   process.exit(1);
 });

@@ -309,7 +309,7 @@ function CommentMarker({ comment, onClick, teamSlugOrId }: CommentMarkerProps) {
     <>
       {/* Comment marker dot */}
       <div
-        className="fixed w-8 h-8 bg-gradient-to-br from-blue-500 to-blue-600 rounded-full flex items-center justify-center text-white cursor-pointer shadow-lg z-[9999] transition-all duration-200"
+        className="fixed w-8 h-8 bg-gradient-to-br from-blue-500 to-blue-600 rounded-full flex items-center justify-center text-white cursor-pointer shadow-lg z-[var(--z-overlay)] transition-all duration-200"
         style={{
           left: 0,
           top: 0,
@@ -326,7 +326,7 @@ function CommentMarker({ comment, onClick, teamSlugOrId }: CommentMarkerProps) {
       {/* Comment content bubble */}
       {showContent && (
         <div
-          className="fixed z-[9998] rounded-xl shadow-2xl backdrop-blur-md pointer-events-auto"
+          className="fixed z-[var(--z-overlay-behind)] rounded-xl shadow-2xl backdrop-blur-md pointer-events-auto"
           style={{
             left: 0,
             top: 0,
@@ -531,7 +531,13 @@ export function CmuxComments({ teamSlugOrId }: { teamSlugOrId: string }) {
       // Regular C to enter comment mode
       else if (e.key === "c" && !e.ctrlKey && !e.metaKey && !e.altKey) {
         const target = e.target as HTMLElement;
-        if (target.tagName !== "INPUT" && target.tagName !== "TEXTAREA") {
+        const isEditableElement = Boolean(
+          target &&
+            (target.tagName === "INPUT" ||
+              target.tagName === "TEXTAREA" ||
+              target.isContentEditable)
+        );
+        if (!isEditableElement) {
           e.preventDefault();
           setIsCommenting(true);
         }
@@ -687,7 +693,7 @@ export function CmuxComments({ teamSlugOrId }: { teamSlugOrId: string }) {
         userId,
         // profileImageUrl: user.profileImageUrl || undefined,
         profileImageUrl,
-        selectedAgents: ["claude/sonnet-4", "codex/gpt-5"],
+        selectedAgents: ["claude/sonnet-4.5", "codex/gpt-5.1-codex-high"],
         commentId,
       };
 
@@ -759,7 +765,7 @@ export function CmuxComments({ teamSlugOrId }: { teamSlugOrId: string }) {
       {/* Cursor indicator when in commenting mode - simple tooltip */}
       {isCommenting && (
         <div
-          className="fixed z-[10000] pointer-events-none"
+          className="fixed z-[var(--z-context-menu)] pointer-events-none"
           style={{
             left: 0,
             top: 0,
@@ -775,7 +781,7 @@ export function CmuxComments({ teamSlugOrId }: { teamSlugOrId: string }) {
       {/* Comment input popup */}
       {commentInputPos && pendingCommentData && (
         <div
-          className="fixed z-[10000] rounded-2xl shadow-2xl backdrop-blur-md"
+          className="fixed z-[var(--z-context-menu)] rounded-2xl shadow-2xl backdrop-blur-md"
           data-cmux-comment-widget="true"
           style={{
             left: 0,
@@ -893,7 +899,7 @@ export function CmuxComments({ teamSlugOrId }: { teamSlugOrId: string }) {
       <div
         ref={widgetRef}
         data-cmux-comment-widget="true"
-        className={`fixed z-[999999] rounded-2xl shadow-2xl backdrop-blur-md ${
+        className={`fixed z-[var(--z-floating-high)] rounded-2xl shadow-2xl backdrop-blur-md ${
           isOpen
             ? "opacity-100 scale-100"
             : "opacity-0 scale-95 pointer-events-none"
@@ -1011,7 +1017,7 @@ export function CmuxComments({ teamSlugOrId }: { teamSlugOrId: string }) {
       {!isOpen && (
         <button
           onClick={() => setIsOpen(true)}
-          className="fixed bottom-4 right-4 w-14 h-14 bg-gradient-to-br from-blue-500 to-blue-600 rounded-full flex items-center justify-center text-white shadow-2xl transition-all z-[9999]"
+          className="fixed bottom-4 right-4 w-14 h-14 bg-gradient-to-br from-blue-500 to-blue-600 rounded-full flex items-center justify-center text-white shadow-2xl transition-all z-[var(--z-overlay)]"
         >
           <MessageIcon />
         </button>

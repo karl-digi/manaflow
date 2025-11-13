@@ -1,5 +1,5 @@
-import { exec } from "child_process";
-import { promisify } from "util";
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
 
 const execAsync = promisify(exec);
 
@@ -7,7 +7,9 @@ export async function getGitHubTokenFromKeychain(): Promise<string | null> {
   try {
     // Only try to get GitHub token from gh CLI
     try {
-      const { stdout: ghToken } = await execAsync("gh auth token 2>/dev/null");
+      const { stdout: ghToken } = await execAsync(
+        "bash -lc 'gh auth token 2>/dev/null'"
+      );
       if (ghToken.trim()) {
         return ghToken.trim();
       }

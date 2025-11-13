@@ -1,17 +1,18 @@
-import { getShortId } from "@cmux/shared";
-import {
-  getApiSandboxesByIdStatus,
-  postApiSandboxesByIdPublishDevcontainer,
-  postApiSandboxesByIdStop,
-  postApiSandboxesStart,
-} from "@cmux/www-openapi-client";
-import { dockerLogger } from "../utils/fileLogger.js";
-import { getWwwClient } from "../utils/wwwClient.js";
+import { dockerLogger } from "../utils/fileLogger";
+import { getWwwClient } from "../utils/wwwClient";
+import { getWwwOpenApiModule } from "../utils/wwwOpenApiModule";
 import {
   VSCodeInstance,
   type VSCodeInstanceConfig,
   type VSCodeInstanceInfo,
-} from "./VSCodeInstance.js";
+} from "./VSCodeInstance";
+
+const {
+  getApiSandboxesByIdStatus,
+  postApiSandboxesByIdPublishDevcontainer,
+  postApiSandboxesByIdStop,
+  postApiSandboxesStart,
+} = await getWwwOpenApiModule();
 
 export class CmuxVSCodeInstance extends VSCodeInstance {
   private sandboxId: string | null = null;
@@ -22,6 +23,7 @@ export class CmuxVSCodeInstance extends VSCodeInstance {
   private branch?: string;
   private newBranch?: string;
   private environmentId?: string;
+  private taskRunJwt?: string;
 
   constructor(config: VSCodeInstanceConfig) {
     super(config);
@@ -30,11 +32,13 @@ export class CmuxVSCodeInstance extends VSCodeInstance {
       branch?: string;
       newBranch?: string;
       environmentId?: string;
+      taskRunJwt?: string;
     };
     this.repoUrl = cfg.repoUrl;
     this.branch = cfg.branch;
     this.newBranch = cfg.newBranch;
     this.environmentId = cfg.environmentId;
+    this.taskRunJwt = cfg.taskRunJwt;
   }
 
   async start(): Promise<VSCodeInstanceInfo> {
@@ -45,24 +49,25 @@ export class CmuxVSCodeInstance extends VSCodeInstance {
       client: getWwwClient(),
       body: {
         teamSlugOrId: this.teamSlugOrId,
-        ttlSeconds: 20 * 60,
+        ttlSeconds: 60 * 60,
         metadata: {
-          instance: `cmux-${getShortId(this.taskRunId)}`,
-          taskRunId: String(this.taskRunId),
+          instance: `cmux-${this.taskRunId}`,
           agentName: this.config.agentName || "",
         },
+        taskRunId: this.taskRunId,
+        taskRunJwt: this.taskRunJwt || "",
+        isCloudWorkspace: this.config.agentName === "cloud-workspace",
         ...(this.environmentId ? { environmentId: this.environmentId } : {}),
         ...(this.repoUrl
           ? {
-              repoUrl: this.repoUrl,
-              branch: this.branch,
-              newBranch: this.newBranch,
-              depth: 1,
-            }
+            repoUrl: this.repoUrl,
+            branch: this.branch,
+            newBranch: this.newBranch,
+            depth: 1,
+          }
           : {}),
       },
     });
-    console.log("startRes", startRes);
     const data = startRes.data;
     if (!data) {
       throw new Error("Failed to start sandbox");
@@ -158,7 +163,7 @@ export class CmuxVSCodeInstance extends VSCodeInstance {
         path: { id: this.sandboxId },
         body: {
           teamSlugOrId: this.teamSlugOrId,
-          taskRunId: String(this.taskRunId),
+          taskRunId: this.taskRunId,
         },
       });
     } catch (e) {

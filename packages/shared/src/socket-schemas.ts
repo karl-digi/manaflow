@@ -1,6 +1,11 @@
 import type { Id } from "@cmux/convex/dataModel";
 import { z } from "zod";
-import { typedZid } from "./utils/typed-zid.js";
+import { typedZid } from "./utils/typed-zid";
+import type {
+  AggregatePullRequestSummary,
+  PullRequestActionResult,
+} from "./pull-request-state";
+import type { IframePreflightResult } from "./iframe-preflight";
 
 // Client to Server Events
 export const CreateTerminalSchema = z.object({
@@ -45,6 +50,53 @@ export const StartTaskSchema = z.object({
   environmentId: typedZid("environments").optional(),
 });
 
+export const CreateLocalWorkspaceSchema = z.object({
+  teamSlugOrId: z.string(),
+  projectFullName: z.string().optional(),
+  repoUrl: z.string().optional(),
+  branch: z.string().optional(),
+  taskId: typedZid("tasks").optional(),
+  taskRunId: typedZid("taskRuns").optional(),
+  workspaceName: z.string().optional(),
+  descriptor: z.string().optional(),
+  sequence: z.number().optional(),
+});
+
+export const CreateLocalWorkspaceResponseSchema = z.object({
+  success: z.boolean(),
+  taskId: typedZid("tasks").optional(),
+  taskRunId: typedZid("taskRuns").optional(),
+  workspaceName: z.string().optional(),
+  workspacePath: z.string().optional(),
+  workspaceUrl: z.string().optional(),
+  pending: z.boolean().optional(),
+  error: z.string().optional(),
+});
+
+export const CreateCloudWorkspaceSchema = z
+  .object({
+    teamSlugOrId: z.string(),
+    environmentId: typedZid("environments").optional(),
+    projectFullName: z.string().optional(),
+    repoUrl: z.string().optional(),
+    taskId: typedZid("tasks").optional(),
+    taskRunId: typedZid("taskRuns").optional(),
+    theme: z.enum(["dark", "light", "system"]).optional(),
+  })
+  .refine(
+    (value) => Boolean(value.environmentId || value.projectFullName),
+    "Either environmentId or projectFullName is required"
+  );
+
+export const CreateCloudWorkspaceResponseSchema = z.object({
+  success: z.boolean(),
+  taskId: typedZid("tasks").optional(),
+  taskRunId: typedZid("taskRuns").optional(),
+  workspaceUrl: z.string().optional(),
+  pending: z.boolean().optional(),
+  error: z.string().optional(),
+});
+
 // Server to Client Events
 export const TerminalCreatedSchema = z.object({
   terminalId: z.string(),
@@ -80,6 +132,10 @@ export const TaskStartedSchema = z.object({
   terminalId: z.string(),
 });
 
+export const TaskAcknowledgedSchema = z.object({
+  taskId: typedZid("tasks"),
+});
+
 export const TaskErrorSchema = z.object({
   taskId: typedZid("tasks"),
   error: z.string(),
@@ -97,6 +153,19 @@ export const GitDiffRequestSchema = z.object({
 
 export const GitFullDiffRequestSchema = z.object({
   workspacePath: z.string(),
+});
+
+// Compare arbitrary refs within a repository (e.g., branch names or SHAs)
+export const GitRepoDiffRequestSchema = z.object({
+  headRef: z.string(),
+  baseRef: z.string().optional(),
+  repoFullName: z.string().optional(),
+  repoUrl: z.string().optional(),
+  originPathOverride: z.string().optional(),
+  includeContents: z.boolean().optional(),
+  maxBytes: z.number().optional(),
+  lastKnownBaseSha: z.string().optional(),
+  lastKnownMergeCommitSha: z.string().optional(),
 });
 
 export const GitFileSchema = z.object({
@@ -175,17 +244,24 @@ export const OpenInEditorResponseSchema = z.object({
 });
 
 // File listing events
-export const ListFilesRequestSchema = z.object({
-  repoPath: z.string(),
-  branch: z.string().optional(),
-  pattern: z.string().optional(), // Optional glob pattern for filtering
-});
+export const ListFilesRequestSchema = z
+  .object({
+    repoPath: z.string().optional(),
+    environmentId: typedZid("environments").optional(),
+    branch: z.string().optional(),
+    pattern: z.string().optional(), // Optional glob pattern for filtering
+  })
+  .refine(
+    (value) => Boolean(value.repoPath || value.environmentId),
+    "repoPath or environmentId is required"
+  );
 
 export const FileInfoSchema = z.object({
   path: z.string(),
   name: z.string(),
   isDirectory: z.boolean(),
   relativePath: z.string(),
+  repoFullName: z.string().optional(),
 });
 
 export const ListFilesResponseSchema = z.object({
@@ -201,9 +277,6 @@ export const VSCodeSpawnedSchema = z.object({
   provider: z.enum(["docker", "morph", "daytona"]),
 });
 
-export const VSCodeErrorSchema = z.object({
-  error: z.string(),
-});
 
 // GitHub events
 export const GitHubFetchReposSchema = z.object({
@@ -215,9 +288,19 @@ export const GitHubFetchBranchesSchema = z.object({
   repo: z.string(),
 });
 
+export const GitHubBranchSchema = z.object({
+  name: z.string(),
+  lastCommitSha: z.string().optional(),
+  lastActivityAt: z.number().optional(),
+  isDefault: z.boolean().optional(),
+  lastKnownBaseSha: z.string().optional(),
+  lastKnownMergeCommitSha: z.string().optional(),
+});
+
 export const GitHubBranchesResponseSchema = z.object({
   success: z.boolean(),
-  branches: z.array(z.string()).optional(),
+  branches: z.array(GitHubBranchSchema),
+  defaultBranch: z.string().optional(),
   error: z.string().optional(),
 });
 
@@ -258,20 +341,9 @@ export const GitHubCreateDraftPrSchema = z.object({
   taskRunId: typedZid("taskRuns"),
 });
 
-// Open PR (create non-draft or convert draft to ready)
-export const GitHubOpenPrSchema = z.object({
-  taskRunId: typedZid("taskRuns"),
-});
-
 // Sync PR state
 export const GitHubSyncPrStateSchema = z.object({
   taskRunId: typedZid("taskRuns"),
-});
-
-// Merge PR
-export const GitHubMergePrSchema = z.object({
-  taskRunId: typedZid("taskRuns"),
-  method: z.enum(["squash", "rebase", "merge"]),
 });
 
 // Merge branch directly
@@ -357,6 +429,14 @@ export type TerminalInput = z.infer<typeof TerminalInputSchema>;
 export type Resize = z.infer<typeof ResizeSchema>;
 export type CloseTerminal = z.infer<typeof CloseTerminalSchema>;
 export type StartTask = z.infer<typeof StartTaskSchema>;
+export type CreateLocalWorkspace = z.infer<typeof CreateLocalWorkspaceSchema>;
+export type CreateLocalWorkspaceResponse = z.infer<
+  typeof CreateLocalWorkspaceResponseSchema
+>;
+export type CreateCloudWorkspace = z.infer<typeof CreateCloudWorkspaceSchema>;
+export type CreateCloudWorkspaceResponse = z.infer<
+  typeof CreateCloudWorkspaceResponseSchema
+>;
 export type TerminalCreated = z.infer<typeof TerminalCreatedSchema>;
 export type TerminalOutput = z.infer<typeof TerminalOutputSchema>;
 export type TerminalExit = z.infer<typeof TerminalExitSchema>;
@@ -364,6 +444,7 @@ export type TerminalClosed = z.infer<typeof TerminalClosedSchema>;
 export type TerminalClear = z.infer<typeof TerminalClearSchema>;
 export type TerminalRestore = z.infer<typeof TerminalRestoreSchema>;
 export type TaskStarted = z.infer<typeof TaskStartedSchema>;
+export type TaskAcknowledged = z.infer<typeof TaskAcknowledgedSchema>;
 export type TaskError = z.infer<typeof TaskErrorSchema>;
 export type GitStatusRequest = z.infer<typeof GitStatusRequestSchema>;
 export type GitDiffRequest = z.infer<typeof GitDiffRequestSchema>;
@@ -373,6 +454,7 @@ export type GitStatusResponse = z.infer<typeof GitStatusResponseSchema>;
 export type GitDiffResponse = z.infer<typeof GitDiffResponseSchema>;
 export type GitFileChanged = z.infer<typeof GitFileChangedSchema>;
 export type GitFullDiffRequest = z.infer<typeof GitFullDiffRequestSchema>;
+export type GitRepoDiffRequest = z.infer<typeof GitRepoDiffRequestSchema>;
 export type GitFullDiffResponse = z.infer<typeof GitFullDiffResponseSchema>;
 export type OpenInEditor = z.infer<typeof OpenInEditorSchema>;
 export type OpenInEditorError = z.infer<typeof OpenInEditorErrorSchema>;
@@ -382,7 +464,7 @@ export type ListFilesRequest = z.infer<typeof ListFilesRequestSchema>;
 export type FileInfo = z.infer<typeof FileInfoSchema>;
 export type ListFilesResponse = z.infer<typeof ListFilesResponseSchema>;
 export type VSCodeSpawned = z.infer<typeof VSCodeSpawnedSchema>;
-export type VSCodeError = z.infer<typeof VSCodeErrorSchema>;
+export type GitHubBranch = z.infer<typeof GitHubBranchSchema>;
 export type GitHubFetchBranches = z.infer<typeof GitHubFetchBranchesSchema>;
 export type GitHubBranchesResponse = z.infer<
   typeof GitHubBranchesResponseSchema
@@ -390,9 +472,7 @@ export type GitHubBranchesResponse = z.infer<
 export type GitHubReposResponse = z.infer<typeof GitHubReposResponseSchema>;
 export type GitHubAuthResponse = z.infer<typeof GitHubAuthResponseSchema>;
 export type GitHubCreateDraftPr = z.infer<typeof GitHubCreateDraftPrSchema>;
-export type GitHubOpenPr = z.infer<typeof GitHubOpenPrSchema>;
 export type GitHubSyncPrState = z.infer<typeof GitHubSyncPrStateSchema>;
-export type GitHubMergePr = z.infer<typeof GitHubMergePrSchema>;
 export type GitHubMergeBranch = z.infer<typeof GitHubMergeBranchSchema>;
 export type ArchiveTask = z.infer<typeof ArchiveTaskSchema>;
 export type SpawnFromComment = z.infer<typeof SpawnFromCommentSchema>;
@@ -411,33 +491,26 @@ export interface ClientToServerEvents {
   // Terminal operations
   "start-task": (
     data: StartTask,
-    callback: (response: TaskStarted | TaskError) => void
+    callback: (response: TaskAcknowledged | TaskStarted | TaskError) => void
+  ) => void;
+  "create-local-workspace": (
+    data: CreateLocalWorkspace,
+    callback: (response: CreateLocalWorkspaceResponse) => void
+  ) => void;
+  "create-cloud-workspace": (
+    data: CreateCloudWorkspace,
+    callback: (response: CreateCloudWorkspaceResponse) => void
   ) => void;
   "git-status": (data: GitStatusRequest) => void;
-  "git-diff": (data: GitDiffRequest) => void;
-  "git-full-diff": (data: GitFullDiffRequest) => void;
-  // On-demand diffs for a task run
-  "get-run-diffs": (
-    data: { taskRunId: Id<"taskRuns"> },
+  "git-diff": (
+    data: z.infer<typeof GitRepoDiffRequestSchema>,
     callback: (
       response:
         | { ok: true; diffs: import("./diff-types.js").ReplaceDiffEntry[] }
         | { ok: false; error: string; diffs: [] }
     ) => void
   ) => void;
-  "git-diff-file-contents": (
-    data: { taskRunId: Id<"taskRuns">; filePath: string },
-    callback: (
-      response:
-        | {
-            ok: true;
-            oldContent: string;
-            newContent: string;
-            isBinary: boolean;
-          }
-        | { ok: false; error: string }
-    ) => void
-  ) => void;
+  "git-full-diff": (data: GitFullDiffRequest) => void;
   "open-in-editor": (
     data: OpenInEditor,
     callback: (response: OpenInEditorResponse) => void
@@ -460,17 +533,8 @@ export interface ClientToServerEvents {
     data: GitHubCreateDraftPr,
     callback: (response: {
       success: boolean;
-      url?: string;
-      error?: string;
-    }) => void
-  ) => void;
-  // Open PR: create a normal PR or mark draft ready
-  "github-open-pr": (
-    data: GitHubOpenPr,
-    callback: (response: {
-      success: boolean;
-      url?: string;
-      state?: string;
+      results: PullRequestActionResult[];
+      aggregate: AggregatePullRequestSummary;
       error?: string;
     }) => void
   ) => void;
@@ -479,21 +543,8 @@ export interface ClientToServerEvents {
     data: GitHubSyncPrState,
     callback: (response: {
       success: boolean;
-      url?: string;
-      number?: number;
-      state?: string;
-      isDraft?: boolean;
-      error?: string;
-    }) => void
-  ) => void;
-  // Merge PR with selected method
-  "github-merge-pr": (
-    data: GitHubMergePr,
-    callback: (response: {
-      success: boolean;
-      merged?: boolean;
-      state?: string;
-      url?: string;
+      results: PullRequestActionResult[];
+      aggregate: AggregatePullRequestSummary;
       error?: string;
     }) => void
   ) => void;
@@ -507,8 +558,21 @@ export interface ClientToServerEvents {
       error?: string;
     }) => void
   ) => void;
+  // Rust N-API test: returns current time
+  "rust-get-time": (
+    callback: (
+      response: { ok: true; time: string } | { ok: false; error: string }
+    ) => void
+  ) => void;
+  "iframe-preflight": (
+    data: { url: string },
+    callback: (response: IframePreflightResult) => void
+  ) => void;
   "check-provider-status": (
     callback: (response: ProviderStatusResponse) => void
+  ) => void;
+  "get-local-vscode-serve-web-origin": (
+    callback: (response: { baseUrl: string | null; port: number | null }) => void
   ) => void;
   "archive-task": (
     data: ArchiveTask,
@@ -529,18 +593,16 @@ export interface ClientToServerEvents {
 }
 
 export interface ServerToClientEvents {
-  "task-started": (data: TaskStarted) => void;
-  "task-error": (data: TaskError) => void;
   "git-status-response": (data: GitStatusResponse) => void;
-  "git-diff-response": (data: GitDiffResponse) => void;
   "git-file-changed": (data: GitFileChanged) => void;
   "git-full-diff-response": (data: GitFullDiffResponse) => void;
   "open-in-editor-error": (data: OpenInEditorError) => void;
   "list-files-response": (data: ListFilesResponse) => void;
   "vscode-spawned": (data: VSCodeSpawned) => void;
-  "vscode-error": (data: VSCodeError) => void;
   "default-repo": (data: DefaultRepo) => void;
   "available-editors": (data: AvailableEditors) => void;
+  "task-started": (data: TaskStarted) => void;
+  "task-failed": (data: TaskError) => void;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type

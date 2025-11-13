@@ -3,3 +3,5 @@ build
 dist-electron
 # Symlink created by postinstall script
 node_modules/electron
+
+electron.vite.config.*.mjs

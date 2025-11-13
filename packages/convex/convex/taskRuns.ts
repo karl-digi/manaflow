@@ -1,8 +1,251 @@
 import { v } from "convex/values";
+import { SignJWT } from "jose";
+import { env } from "../_shared/convex-env";
 import { resolveTeamIdLoose } from "../_shared/team";
-import type { Doc } from "./_generated/dataModel";
-import { internalMutation, internalQuery } from "./_generated/server";
-import { authMutation, authQuery } from "./users/utils";
+import type { Doc, Id } from "./_generated/dataModel";
+import {
+  internalMutation,
+  internalQuery,
+  type MutationCtx,
+  type QueryCtx,
+} from "./_generated/server";
+import { authMutation, authQuery, taskIdWithFake } from "./users/utils";
+import {
+  aggregatePullRequestState,
+  type StoredPullRequestInfo,
+} from "@cmux/shared/pull-request-state";
+
+function rewriteMorphUrl(url: string): string {
+  // do not rewrite ports 39375 39376 39377 39378 39379 39380 39381
+  if (
+    url.includes("http.cloud.morph.so") &&
+    (url.startsWith("https://port-39375-") ||
+      url.startsWith("https://port-39376-") ||
+      url.startsWith("https://port-39377-") ||
+      url.startsWith("https://port-39378-") ||
+      url.startsWith("https://port-39379-") ||
+      url.startsWith("https://port-39380-") ||
+      url.startsWith("https://port-39381-"))
+  ) {
+    return url;
+  }
+
+  // Transform morph URLs to cmux.app format
+  // https://port-8101-morphvm-jrtutqa3.http.cloud.morph.so/handler/sign-in -> https://cmux-jrtutqa3-base-8101.cmux.app/handler/sign-in
+  if (url.includes("http.cloud.morph.so")) {
+    // Extract port and morphId from the URL
+    const match = url.match(/port-(\d+)-morphvm-([^.]+)\.http\.cloud\.morph\.so/);
+    if (match) {
+      const [fullMatch, port, morphId] = match;
+      const scope = "base";
+      const result = url.replace(
+        fullMatch,
+        `cmux-${morphId}-${scope}-${port}.cmux.app`
+      );
+      return result;
+    }
+  }
+  return url;
+}
+
+function normalizePullRequestRecords(
+  records: readonly StoredPullRequestInfo[] | undefined,
+): StoredPullRequestInfo[] | undefined {
+  if (!records) {
+    return undefined;
+  }
+  return records.map((record) => ({
+    repoFullName: record.repoFullName.trim(),
+    url: record.url,
+    number: record.number,
+    state: record.state,
+    isDraft:
+      record.isDraft !== undefined
+        ? record.isDraft
+        : record.state === "draft"
+          ? true
+          : undefined,
+  }));
+}
+
+function deriveGeneratedBranchName(branch?: string | null): string | undefined {
+  if (!branch) return undefined;
+  const trimmed = branch.trim();
+  if (!trimmed) return undefined;
+  const idx = trimmed.lastIndexOf("-");
+  if (idx <= 0) return trimmed;
+  const candidate = trimmed.slice(0, idx);
+  return candidate || trimmed;
+}
+
+type EnvironmentErrorPayload = {
+  maintenanceError?: string;
+  devError?: string;
+};
+
+const MAX_ENVIRONMENT_ERROR_MESSAGE_CHARS = 2500;
+
+function normalizeEnvironmentErrorPayload(
+  maintenanceError?: string,
+  devError?: string,
+): EnvironmentErrorPayload {
+  const truncate = (msg?: string) => {
+    if (!msg) return undefined;
+    const trimmed = msg.trim();
+    if (!trimmed) return undefined;
+    return trimmed.length > MAX_ENVIRONMENT_ERROR_MESSAGE_CHARS
+      ? `${trimmed.slice(0, MAX_ENVIRONMENT_ERROR_MESSAGE_CHARS)}…`
+      : trimmed;
+  };
+
+  const normalizedMaintenance = truncate(maintenanceError);
+  const normalizedDev = truncate(devError);
+
+  const payload: EnvironmentErrorPayload = {};
+  if (normalizedMaintenance) {
+    payload.maintenanceError = normalizedMaintenance;
+  }
+  if (normalizedDev) {
+    payload.devError = normalizedDev;
+  }
+  return payload;
+}
+
+type EnvironmentSummary = Pick<
+  Doc<"environments">,
+  "_id" | "name" | "selectedRepos"
+>;
+
+type TaskRunWithChildren = Doc<"taskRuns"> & {
+  children: TaskRunWithChildren[];
+  environment: EnvironmentSummary | null;
+};
+
+async function collectRunSubtreeIds(
+  ctx: MutationCtx,
+  rootRunId: Id<"taskRuns">,
+  teamId: string,
+  userId: string,
+): Promise<Id<"taskRuns">[]> {
+  const visited = new Set<Id<"taskRuns">>();
+  const stack: Id<"taskRuns">[] = [rootRunId];
+
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (visited.has(current)) {
+      continue;
+    }
+    visited.add(current);
+
+    const children = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_parent", (q) => q.eq("parentRunId", current))
+      .collect();
+
+    for (const child of children) {
+      if (child.teamId !== teamId || child.userId !== userId) {
+        continue;
+      }
+      stack.push(child._id);
+    }
+  }
+
+  return Array.from(visited);
+}
+
+async function fetchTaskRunsForTask(
+  ctx: QueryCtx,
+  teamId: string,
+  userId: string,
+  taskId: Id<"tasks">,
+  includeArchived = true,
+): Promise<TaskRunWithChildren[]> {
+  const runs = await ctx.db
+    .query("taskRuns")
+    .withIndex("by_task", (q) => q.eq("taskId", taskId))
+    .filter(
+      (q) => q.eq(q.field("teamId"), teamId) && q.eq(q.field("userId"), userId),
+    )
+    .collect();
+
+  const environmentSummaries = new Map<
+    Id<"environments">,
+    EnvironmentSummary
+  >();
+  const environmentIds = Array.from(
+    new Set(
+      runs
+        .map((run) => run.environmentId)
+        .filter((id): id is Id<"environments"> => id !== undefined),
+    ),
+  );
+
+  if (environmentIds.length > 0) {
+    const environmentDocs = await Promise.all(
+      environmentIds.map((environmentId) => ctx.db.get(environmentId)),
+    );
+
+    for (const environment of environmentDocs) {
+      if (!environment || environment.teamId !== teamId) continue;
+      environmentSummaries.set(environment._id, {
+        _id: environment._id,
+        name: environment.name,
+        selectedRepos: environment.selectedRepos,
+      });
+    }
+  }
+
+  const runMap = new Map<string, TaskRunWithChildren>();
+  const rootRuns: TaskRunWithChildren[] = [];
+
+  runs.forEach((run) => {
+    if (!includeArchived && run.isArchived) {
+      return;
+    }
+    const networking = run.networking?.map((item) => ({
+      ...item,
+      url: rewriteMorphUrl(item.url),
+    }));
+
+    runMap.set(run._id, {
+      ...run,
+      log: "",
+      networking,
+      children: [],
+      environment: run.environmentId
+        ? (environmentSummaries.get(run.environmentId) ?? null)
+        : null,
+    });
+  });
+
+  runs.forEach((run) => {
+    if (!includeArchived && run.isArchived) {
+      return;
+    }
+    const runWithChildren = runMap.get(run._id)!;
+    if (run.parentRunId) {
+      const parent = runMap.get(run.parentRunId);
+      if (parent) {
+        parent.children.push(runWithChildren);
+      }
+    } else {
+      rootRuns.push(runWithChildren);
+    }
+  });
+
+  const sortRuns = (items: TaskRunWithChildren[]) => {
+    items.sort((a, b) => {
+      // Sort crowned runs first, then by creation time
+      if (a.isCrowned && !b.isCrowned) return -1;
+      if (!a.isCrowned && b.isCrowned) return 1;
+      return a.createdAt - b.createdAt;
+    });
+    items.forEach((item) => sortRuns(item.children));
+  };
+  sortRuns(rootRuns);
+
+  return rootRuns;
+}
 
 // Create a new task run
 export const create = authMutation({
@@ -13,11 +256,22 @@ export const create = authMutation({
     prompt: v.string(),
     agentName: v.optional(v.string()),
     newBranch: v.optional(v.string()),
+    environmentId: v.optional(v.id("environments")),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
     const now = Date.now();
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const task = await ctx.db.get(args.taskId);
+    if (!task || task.teamId !== teamId || task.userId !== userId) {
+      throw new Error("Task not found or unauthorized");
+    }
+    if (args.environmentId) {
+      const environment = await ctx.db.get(args.environmentId);
+      if (!environment || environment.teamId !== teamId) {
+        throw new Error("Environment not found");
+      }
+    }
     const taskRunId = await ctx.db.insert("taskRuns", {
       taskId: args.taskId,
       parentRunId: args.parentRunId,
@@ -25,65 +279,112 @@ export const create = authMutation({
       agentName: args.agentName,
       newBranch: args.newBranch,
       status: "pending",
-      log: "",
       createdAt: now,
       updatedAt: now,
       userId,
       teamId,
+      environmentId: args.environmentId,
+      isLocalWorkspace: task.isLocalWorkspace,
+      isCloudWorkspace: task.isCloudWorkspace,
     });
-    return taskRunId;
+    const generatedBranchName = deriveGeneratedBranchName(args.newBranch);
+    if (
+      generatedBranchName &&
+      task.generatedBranchName !== generatedBranchName
+    ) {
+      await ctx.db.patch(args.taskId, {
+        generatedBranchName,
+      });
+    }
+    const jwt = await new SignJWT({
+      taskRunId,
+      teamId,
+      userId,
+    })
+      .setProtectedHeader({ alg: "HS256" })
+      .setIssuedAt()
+      .setExpirationTime("12h")
+      .sign(new TextEncoder().encode(env.CMUX_TASK_RUN_JWT_SECRET));
+
+    return { taskRunId, jwt };
   },
 });
 
 // Get all task runs for a task, organized in tree structure
 export const getByTask = authQuery({
-  args: { teamSlugOrId: v.string(), taskId: v.id("tasks") },
+  args: {
+    teamSlugOrId: v.string(),
+    taskId: taskIdWithFake,
+    includeArchived: v.optional(v.boolean()),
+  },
   handler: async (ctx, args) => {
+    if (typeof args.taskId === "string" && args.taskId.startsWith("fake-")) {
+      return [];
+    }
+
     const userId = ctx.identity.subject;
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
-    const runs = await ctx.db
-      .query("taskRuns")
-      .withIndex("by_team_user", (q) =>
-        q.eq("teamId", teamId).eq("userId", userId)
-      )
-      .filter((q) => q.eq(q.field("taskId"), args.taskId))
-      .collect();
-
-    // Build tree structure
-    type TaskRunWithChildren = Doc<"taskRuns"> & {
-      children: TaskRunWithChildren[];
-    };
-    const runMap = new Map<string, TaskRunWithChildren>();
-    const rootRuns: TaskRunWithChildren[] = [];
-
-    // First pass: create map with children arrays
-    runs.forEach((run) => {
-      runMap.set(run._id, { ...run, children: [] });
-    });
-
-    // Second pass: build tree
-    runs.forEach((run) => {
-      const runWithChildren = runMap.get(run._id)!;
-      if (run.parentRunId) {
-        const parent = runMap.get(run.parentRunId);
-        if (parent) {
-          parent.children.push(runWithChildren);
-        }
-      } else {
-        rootRuns.push(runWithChildren);
-      }
-    });
-
-    // Sort by creation date
-    const sortRuns = (runs: TaskRunWithChildren[]) => {
-      runs.sort((a, b) => a.createdAt - b.createdAt);
-      runs.forEach((run) => sortRuns(run.children));
-    };
-    sortRuns(rootRuns);
-
-    return rootRuns;
+    return await fetchTaskRunsForTask(
+      ctx,
+      teamId,
+      userId,
+      args.taskId as Id<"tasks">,
+      args.includeArchived ?? true,
+    );
   },
 });
+
+const SYSTEM_BRANCH_USER_ID = "__system__";
+
+async function fetchBranchMetadataForRepo(
+  ctx: QueryCtx,
+  teamId: string,
+  userId: string,
+  repo: string,
+): Promise<Doc<"branches">[]> {
+  const rows = await ctx.db
+    .query("branches")
+    .withIndex("by_repo", (q) => q.eq("repo", repo))
+    .filter((q) => q.eq(q.field("teamId"), teamId))
+    .collect();
+
+  const relevant = rows.filter(
+    (row) => row.userId === userId || row.userId === SYSTEM_BRANCH_USER_ID,
+  );
+
+  const byName = new Map<string, Doc<"branches">>();
+  for (const row of relevant) {
+    const existing = byName.get(row.name);
+    if (!existing) {
+      byName.set(row.name, row);
+      continue;
+    }
+
+    const currentHasKnown = Boolean(
+      row.lastKnownBaseSha || row.lastKnownMergeCommitSha,
+    );
+    const existingHasKnown = Boolean(
+      existing.lastKnownBaseSha || existing.lastKnownMergeCommitSha,
+    );
+
+    if (currentHasKnown && !existingHasKnown) {
+      byName.set(row.name, row);
+      continue;
+    }
+
+    if (!currentHasKnown && existingHasKnown) {
+      continue;
+    }
+
+    const currentActivity = row.lastActivityAt ?? -Infinity;
+    const existingActivity = existing.lastActivityAt ?? -Infinity;
+    if (currentActivity > existingActivity) {
+      byName.set(row.name, row);
+    }
+  }
+
+  return Array.from(byName.values());
+}
 
 // Update task run status
 export const updateStatus = internalMutation({
@@ -93,7 +394,7 @@ export const updateStatus = internalMutation({
       v.literal("pending"),
       v.literal("running"),
       v.literal("completed"),
-      v.literal("failed")
+      v.literal("failed"),
     ),
     exitCode: v.optional(v.number()),
   },
@@ -120,26 +421,111 @@ export const updateStatus = internalMutation({
   },
 });
 
-// Append to task run log
-export const appendLog = internalMutation({
+export const getRunDiffContext = authQuery({
   args: {
-    id: v.id("taskRuns"),
-    content: v.string(),
+    teamSlugOrId: v.string(),
+    taskId: v.id("tasks"),
+    runId: v.id("taskRuns"),
   },
   handler: async (ctx, args) => {
-    const run = await ctx.db.get(args.id);
-    if (!run) {
-      throw new Error("Task run not found");
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+
+    const [taskDoc, taskRuns] = await Promise.all([
+      ctx.db.get(args.taskId),
+      fetchTaskRunsForTask(ctx, teamId, userId, args.taskId, true),
+    ]);
+
+    if (!taskDoc || taskDoc.teamId !== teamId || taskDoc.userId !== userId) {
+      return {
+        task: null,
+        taskRuns,
+        branchMetadataByRepo: {} as Record<string, Doc<"branches">[]>,
+        screenshotSets: [],
+      };
     }
 
-    console.log(
-      `[appendLog] Adding ${args.content.length} chars to task run ${args.id}`
-    );
+    let taskWithImages = taskDoc;
+    if (taskDoc.images && taskDoc.images.length > 0) {
+      const imagesWithUrls = await Promise.all(
+        taskDoc.images.map(async (image) => {
+          const url = await ctx.storage.getUrl(image.storageId);
+          return {
+            ...image,
+            url,
+          };
+        }),
+      );
+      taskWithImages = {
+        ...taskDoc,
+        images: imagesWithUrls,
+      };
+    }
 
-    await ctx.db.patch(args.id, {
-      log: run.log + args.content,
-      updatedAt: Date.now(),
-    });
+    const trimmedProjectFullName = taskDoc.projectFullName?.trim();
+    const branchMetadataByRepo: Record<string, Doc<"branches">[]> = {};
+
+    if (trimmedProjectFullName) {
+      try {
+        const metadata = await fetchBranchMetadataForRepo(
+          ctx,
+          teamId,
+          userId,
+          trimmedProjectFullName,
+        );
+        if (metadata.length > 0) {
+          branchMetadataByRepo[trimmedProjectFullName] = metadata;
+        }
+      } catch {
+        // swallow errors – branch metadata is optional for diff prefetching
+      }
+    }
+
+    const screenshotSets = await (async () => {
+      const runDoc = await ctx.db.get(args.runId);
+      // Prevent leaking screenshots for runs outside the authenticated task/team
+      if (
+        !runDoc ||
+        runDoc.teamId !== teamId ||
+        runDoc.taskId !== args.taskId
+      ) {
+        return [];
+      }
+
+      const screenshotSetDocs = await ctx.db
+        .query("taskRunScreenshotSets")
+        .withIndex("by_run_capturedAt", (q) => q.eq("runId", args.runId))
+        .collect();
+
+      screenshotSetDocs.sort((a, b) => b.capturedAt - a.capturedAt);
+
+      const trimmedScreenshotSets = screenshotSetDocs.slice(0, 20);
+
+      return Promise.all(
+        trimmedScreenshotSets.map(async (set) => {
+          const imagesWithUrls = await Promise.all(
+            set.images.map(async (image) => {
+              const url = await ctx.storage.getUrl(image.storageId);
+              return {
+                ...image,
+                url: url ?? undefined,
+              };
+            }),
+          );
+          return {
+            ...set,
+            images: imagesWithUrls,
+          };
+        }),
+      );
+    })();
+
+    return {
+      task: taskWithImages,
+      taskRuns,
+      branchMetadataByRepo,
+      screenshotSets,
+    };
   },
 });
 
@@ -174,6 +560,16 @@ export const get = authQuery({
     if (!doc || doc.teamId !== teamId || doc.userId !== userId) {
       return null;
     }
+    // Rewrite morph URLs in networking field
+    if (doc.networking) {
+      return {
+        ...doc,
+        networking: doc.networking.map((item) => ({
+          ...item,
+          url: rewriteMorphUrl(item.url),
+        })),
+      };
+    }
     return doc;
   },
 });
@@ -188,6 +584,16 @@ export const subscribe = authQuery({
     if (!doc || doc.teamId !== teamId || doc.userId !== userId) {
       return null;
     }
+    // Rewrite morph URLs in networking field
+    if (doc.networking) {
+      return {
+        ...doc,
+        networking: doc.networking.map((item) => ({
+          ...item,
+          url: rewriteMorphUrl(item.url),
+        })),
+      };
+    }
     return doc;
   },
 });
@@ -201,6 +607,43 @@ export const updateExitCode = internalMutation({
   handler: async (ctx, args) => {
     await ctx.db.patch(args.id, {
       exitCode: args.exitCode,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+export const updateScreenshotMetadata = internalMutation({
+  args: {
+    id: v.id("taskRuns"),
+    storageId: v.id("_storage"),
+    mimeType: v.optional(v.string()),
+    fileName: v.optional(v.string()),
+    commitSha: v.optional(v.string()),
+    screenshotSetId: v.optional(v.id("taskRunScreenshotSets")),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.id, {
+      screenshotStorageId: args.storageId,
+      screenshotCapturedAt: Date.now(),
+      screenshotMimeType: args.mimeType,
+      screenshotFileName: args.fileName,
+      screenshotCommitSha: args.commitSha,
+      latestScreenshotSetId: args.screenshotSetId,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+export const clearScreenshotMetadata = internalMutation({
+  args: { id: v.id("taskRuns") },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.id, {
+      screenshotStorageId: undefined,
+      screenshotCapturedAt: undefined,
+      screenshotMimeType: undefined,
+      screenshotFileName: undefined,
+      screenshotCommitSha: undefined,
+      latestScreenshotSetId: undefined,
       updatedAt: Date.now(),
     });
   },
@@ -243,7 +686,7 @@ export const updateStatusPublic = authMutation({
       v.literal("pending"),
       v.literal("running"),
       v.literal("completed"),
-      v.literal("failed")
+      v.literal("failed"),
     ),
     exitCode: v.optional(v.number()),
   },
@@ -276,34 +719,6 @@ export const updateStatusPublic = authMutation({
   },
 });
 
-export const appendLogPublic = authMutation({
-  args: {
-    teamSlugOrId: v.string(),
-    id: v.id("taskRuns"),
-    content: v.string(),
-  },
-  handler: async (ctx, args) => {
-    const userId = ctx.identity.subject;
-    const run = await ctx.db.get(args.id);
-    if (!run) {
-      throw new Error("Task run not found");
-    }
-    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
-    if (run.teamId !== teamId || run.userId !== userId) {
-      throw new Error("Unauthorized");
-    }
-
-    console.log(
-      `[appendLog] Adding ${args.content.length} chars to task run ${args.id}`
-    );
-
-    await ctx.db.patch(args.id, {
-      log: run.log + args.content,
-      updatedAt: Date.now(),
-    });
-  },
-});
-
 // Update VSCode instance information
 export const updateVSCodeInstance = authMutation({
   args: {
@@ -314,20 +729,22 @@ export const updateVSCodeInstance = authMutation({
         v.literal("docker"),
         v.literal("morph"),
         v.literal("daytona"),
-        v.literal("other")
+        v.literal("other"),
       ),
       containerName: v.optional(v.string()),
       status: v.union(
         v.literal("starting"),
         v.literal("running"),
-        v.literal("stopped")
+        v.literal("stopped"),
       ),
       ports: v.optional(
         v.object({
           vscode: v.string(),
           worker: v.string(),
           extension: v.optional(v.string()),
-        })
+          proxy: v.optional(v.string()),
+          vnc: v.optional(v.string()),
+        }),
       ),
       url: v.optional(v.string()),
       workspaceUrl: v.optional(v.string()),
@@ -357,7 +774,7 @@ export const updateVSCodeStatus = authMutation({
     status: v.union(
       v.literal("starting"),
       v.literal("running"),
-      v.literal("stopped")
+      v.literal("stopped"),
     ),
     stoppedAt: v.optional(v.number()),
   },
@@ -397,6 +814,8 @@ export const updateVSCodePorts = authMutation({
       vscode: v.string(),
       worker: v.string(),
       extension: v.optional(v.string()),
+      proxy: v.optional(v.string()),
+      vnc: v.optional(v.string()),
     }),
   },
   handler: async (ctx, args) => {
@@ -431,17 +850,31 @@ export const getByContainerName = authQuery({
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
-    const runs = await ctx.db
-      .query("taskRuns")
-      .withIndex("by_team_user", (q) =>
-        q.eq("teamId", teamId).eq("userId", userId)
-      )
-      .filter((q) => q.eq(q.field("vscode.containerName"), args.containerName))
-      .collect();
-    return (
-      runs.find((run) => run.vscode?.containerName === args.containerName) ??
-      null
-    );
+    const run =
+      (await ctx.db
+        .query("taskRuns")
+        .withIndex("by_vscode_container_name", (q) =>
+          q.eq("vscode.containerName", args.containerName),
+        )
+        .filter((q) => q.eq(q.field("teamId"), teamId))
+        .filter((q) => q.eq(q.field("userId"), userId))
+        .first()) ?? null;
+
+    if (!run) {
+      return null;
+    }
+
+    if (run.networking) {
+      return {
+        ...run,
+        networking: run.networking.map((item) => ({
+          ...item,
+          url: rewriteMorphUrl(item.url),
+        })),
+      };
+    }
+
+    return run;
   },
 });
 
@@ -495,6 +928,145 @@ export const fail = authMutation({
   },
 });
 
+export const addCustomPreview = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    runId: v.id("taskRuns"),
+    url: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const doc = await ctx.db.get(args.runId);
+    if (!doc || doc.teamId !== teamId || doc.userId !== userId) {
+      throw new Error("Task run not found or unauthorized");
+    }
+
+    const newPreview = {
+      url: args.url,
+      createdAt: Date.now(),
+    };
+
+    const customPreviews = doc.customPreviews || [];
+    const index = customPreviews.length;
+    
+    await ctx.db.patch(args.runId, {
+      customPreviews: [...customPreviews, newPreview],
+      updatedAt: Date.now(),
+    });
+
+    return index;
+  },
+});
+
+export const removeCustomPreview = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    runId: v.id("taskRuns"),
+    index: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const doc = await ctx.db.get(args.runId);
+    if (!doc || doc.teamId !== teamId || doc.userId !== userId) {
+      throw new Error("Task run not found or unauthorized");
+    }
+
+    const customPreviews = doc.customPreviews || [];
+    const updated = customPreviews.filter((_, i) => i !== args.index);
+
+    await ctx.db.patch(args.runId, {
+      customPreviews: updated,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+export const updateCustomPreviewUrl = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    runId: v.id("taskRuns"),
+    index: v.number(),
+    url: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const doc = await ctx.db.get(args.runId);
+    if (!doc || doc.teamId !== teamId || doc.userId !== userId) {
+      throw new Error("Task run not found or unauthorized");
+    }
+
+    const customPreviews = doc.customPreviews || [];
+    if (args.index < 0 || args.index >= customPreviews.length) {
+      throw new Error("Invalid preview index");
+    }
+
+    const updated = customPreviews.map((preview, i) =>
+      i === args.index
+        ? { ...preview, url: args.url }
+        : preview
+    );
+
+    await ctx.db.patch(args.runId, {
+      customPreviews: updated,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+export const listByTaskInternal = internalQuery({
+  args: { taskId: v.id("tasks") },
+  handler: async (ctx, args) => {
+    const runs = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
+      .collect();
+    return runs;
+  },
+});
+
+export const listByTaskAndTeamInternal = internalQuery({
+  args: { taskId: v.id("tasks"), teamId: v.string(), userId: v.string() },
+  handler: async (ctx, args) => {
+    const runs = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
+      .filter(
+        (q) =>
+          q.eq(q.field("teamId"), args.teamId) &&
+          q.eq(q.field("userId"), args.userId),
+      )
+      .collect();
+    return runs;
+  },
+});
+
+export const workerComplete = internalMutation({
+  args: {
+    taskRunId: v.id("taskRuns"),
+    exitCode: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.taskRunId);
+    if (!run) {
+      throw new Error("Task run not found");
+    }
+
+    const now = Date.now();
+
+    await ctx.db.patch(args.taskRunId, {
+      status: "completed",
+      exitCode: args.exitCode ?? 0,
+      completedAt: now,
+      updatedAt: now,
+    });
+
+    return run;
+  },
+});
+
 // Get all active VSCode instances
 export const getActiveVSCodeInstances = authQuery({
   args: { teamSlugOrId: v.string() },
@@ -504,14 +1076,27 @@ export const getActiveVSCodeInstances = authQuery({
     const runs = await ctx.db
       .query("taskRuns")
       .withIndex("by_team_user", (q) =>
-        q.eq("teamId", teamId).eq("userId", userId)
+        q.eq("teamId", teamId).eq("userId", userId),
       )
       .collect();
-    return runs.filter(
-      (run) =>
-        run.vscode &&
-        (run.vscode.status === "starting" || run.vscode.status === "running")
-    );
+    return runs
+      .filter(
+        (run) =>
+          run.vscode &&
+          (run.vscode.status === "starting" || run.vscode.status === "running"),
+      )
+      .map((run) => {
+        if (run.networking) {
+          return {
+            ...run,
+            networking: run.networking.map((item) => ({
+              ...item,
+              url: rewriteMorphUrl(item.url),
+            })),
+          };
+        }
+        return run;
+      });
   },
 });
 
@@ -573,25 +1158,18 @@ export const toggleKeepAlive = authMutation({
   },
 });
 
-// Update scheduled stop time for a container
-export const updateScheduledStop = authMutation({
+export const updateScheduledStopInternal = internalMutation({
   args: {
-    teamSlugOrId: v.string(),
-    id: v.id("taskRuns"),
-    scheduledStopAt: v.optional(v.number()),
+    taskRunId: v.id("taskRuns"),
+    scheduledStopAt: v.number(),
   },
   handler: async (ctx, args) => {
-    const userId = ctx.identity.subject;
-    const run = await ctx.db.get(args.id);
+    const run = await ctx.db.get(args.taskRunId);
     if (!run || !run.vscode) {
-      throw new Error("Task run or VSCode instance not found");
-    }
-    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
-    if (run.teamId !== teamId || run.userId !== userId) {
-      throw new Error("Unauthorized");
+      return;
     }
 
-    await ctx.db.patch(args.id, {
+    await ctx.db.patch(args.taskRunId, {
       vscode: {
         ...run.vscode,
         scheduledStopAt: args.scheduledStopAt,
@@ -615,10 +1193,28 @@ export const updatePullRequestUrl = authMutation({
         v.literal("open"),
         v.literal("merged"),
         v.literal("closed"),
-        v.literal("unknown")
-      )
+        v.literal("unknown"),
+      ),
     ),
     number: v.optional(v.number()),
+    pullRequests: v.optional(
+      v.array(
+        v.object({
+          repoFullName: v.string(),
+          url: v.optional(v.string()),
+          number: v.optional(v.number()),
+          state: v.union(
+            v.literal("none"),
+            v.literal("draft"),
+            v.literal("open"),
+            v.literal("merged"),
+            v.literal("closed"),
+            v.literal("unknown"),
+          ),
+          isDraft: v.optional(v.boolean()),
+        }),
+      ),
+    ),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
@@ -627,13 +1223,35 @@ export const updatePullRequestUrl = authMutation({
     if (!run || run.teamId !== teamId || run.userId !== userId) {
       throw new Error("Task run not found or unauthorized");
     }
-    await ctx.db.patch(args.id, {
+    const updates: Partial<Doc<"taskRuns">> = {
       pullRequestUrl: args.pullRequestUrl,
-      pullRequestIsDraft: args.isDraft,
-      ...(args.state ? { pullRequestState: args.state } : {}),
-      ...(args.number !== undefined ? { pullRequestNumber: args.number } : {}),
       updatedAt: Date.now(),
-    });
+    };
+    if (args.isDraft !== undefined) {
+      updates.pullRequestIsDraft = args.isDraft;
+    }
+    if (args.state) {
+      updates.pullRequestState = args.state;
+    }
+    if (args.number !== undefined) {
+      updates.pullRequestNumber = args.number;
+    }
+    const normalizedPullRequests = normalizePullRequestRecords(
+      args.pullRequests,
+    );
+    if (normalizedPullRequests) {
+      updates.pullRequests = normalizedPullRequests;
+      const aggregate = aggregatePullRequestState(normalizedPullRequests);
+      updates.pullRequestState = aggregate.state;
+      updates.pullRequestIsDraft = aggregate.isDraft;
+      updates.pullRequestUrl =
+        aggregate.url !== undefined ? aggregate.url : updates.pullRequestUrl;
+      updates.pullRequestNumber =
+        aggregate.number !== undefined
+          ? aggregate.number
+          : updates.pullRequestNumber;
+    }
+    await ctx.db.patch(args.id, updates);
   },
 });
 
@@ -647,11 +1265,29 @@ export const updatePullRequestState = authMutation({
       v.literal("open"),
       v.literal("merged"),
       v.literal("closed"),
-      v.literal("unknown")
+      v.literal("unknown"),
     ),
     isDraft: v.optional(v.boolean()),
     number: v.optional(v.number()),
     url: v.optional(v.string()),
+    pullRequests: v.optional(
+      v.array(
+        v.object({
+          repoFullName: v.string(),
+          url: v.optional(v.string()),
+          number: v.optional(v.number()),
+          state: v.union(
+            v.literal("none"),
+            v.literal("draft"),
+            v.literal("open"),
+            v.literal("merged"),
+            v.literal("closed"),
+            v.literal("unknown"),
+          ),
+          isDraft: v.optional(v.boolean()),
+        }),
+      ),
+    ),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
@@ -660,15 +1296,35 @@ export const updatePullRequestState = authMutation({
     if (!run || run.teamId !== teamId || run.userId !== userId) {
       throw new Error("Task run not found or unauthorized");
     }
-    await ctx.db.patch(args.id, {
+    const updates: Partial<Doc<"taskRuns">> = {
       pullRequestState: args.state,
-      ...(args.isDraft !== undefined
-        ? { pullRequestIsDraft: args.isDraft }
-        : {}),
-      ...(args.number !== undefined ? { pullRequestNumber: args.number } : {}),
-      ...(args.url ? { pullRequestUrl: args.url } : {}),
       updatedAt: Date.now(),
-    });
+    };
+    if (args.isDraft !== undefined) {
+      updates.pullRequestIsDraft = args.isDraft;
+    }
+    if (args.number !== undefined) {
+      updates.pullRequestNumber = args.number;
+    }
+    if (args.url !== undefined) {
+      updates.pullRequestUrl = args.url;
+    }
+    const normalizedPullRequests = normalizePullRequestRecords(
+      args.pullRequests,
+    );
+    if (normalizedPullRequests) {
+      updates.pullRequests = normalizedPullRequests;
+      const aggregate = aggregatePullRequestState(normalizedPullRequests);
+      updates.pullRequestState = aggregate.state;
+      updates.pullRequestIsDraft = aggregate.isDraft;
+      updates.pullRequestUrl =
+        aggregate.url !== undefined ? aggregate.url : updates.pullRequestUrl;
+      updates.pullRequestNumber =
+        aggregate.number !== undefined
+          ? aggregate.number
+          : updates.pullRequestNumber;
+    }
+    await ctx.db.patch(args.id, updates);
   },
 });
 
@@ -682,11 +1338,11 @@ export const updateNetworking = authMutation({
         status: v.union(
           v.literal("starting"),
           v.literal("running"),
-          v.literal("stopped")
+          v.literal("stopped"),
         ),
         port: v.number(),
         url: v.string(),
-      })
+      }),
     ),
   },
   handler: async (ctx, args) => {
@@ -703,6 +1359,106 @@ export const updateNetworking = authMutation({
   },
 });
 
+async function performUpdateEnvironmentError(
+  ctx: MutationCtx,
+  args: {
+    id: Id<"taskRuns">;
+    teamId: string;
+    userId: string;
+    maintenanceError?: string;
+    devError?: string;
+  },
+) {
+  const run = await ctx.db.get(args.id);
+
+  if (!run) {
+    throw new Error("Task run not found");
+  }
+
+  if (run.teamId !== args.teamId || run.userId !== args.userId) {
+    throw new Error("Task run mismatch for provided credentials");
+  }
+
+  const environmentError = normalizeEnvironmentErrorPayload(
+    args.maintenanceError,
+    args.devError,
+  );
+
+  await ctx.db.patch(args.id, {
+    environmentError,
+    updatedAt: Date.now(),
+  });
+}
+
+export const updateEnvironmentErrorFromWorker = internalMutation({
+  args: {
+    id: v.id("taskRuns"),
+    teamId: v.string(),
+    userId: v.string(),
+    maintenanceError: v.optional(v.string()),
+    devError: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    await performUpdateEnvironmentError(ctx, args);
+  },
+});
+
+export const updateEnvironmentError = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    id: v.id("taskRuns"),
+    maintenanceError: v.optional(v.string()),
+    devError: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+
+    await performUpdateEnvironmentError(ctx, {
+      id: args.id,
+      teamId,
+      userId,
+      maintenanceError: args.maintenanceError,
+      devError: args.devError,
+    });
+  },
+});
+
+export const archive = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    id: v.id("taskRuns"),
+    archive: v.boolean(),
+    includeChildren: v.optional(v.boolean()),
+    taskId: v.optional(v.id("tasks")),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+
+    const run = await ctx.db.get(args.id);
+    if (!run || run.teamId !== teamId || run.userId !== userId) {
+      throw new Error("Task run not found or unauthorized");
+    }
+    if (args.taskId && run.taskId !== args.taskId) {
+      throw new Error("Task run does not belong to provided task");
+    }
+
+    const targetIds = args.includeChildren
+      ? await collectRunSubtreeIds(ctx, args.id, teamId, userId)
+      : [args.id];
+
+    await Promise.all(
+      targetIds.map((runId) =>
+        ctx.db.patch(runId, {
+          isArchived: args.archive,
+          updatedAt: Date.now(),
+        }),
+      ),
+    );
+  },
+});
+
 // Get containers that should be stopped based on TTL and settings
 export const getContainersToStop = authQuery({
   args: { teamSlugOrId: v.string() },
@@ -712,7 +1468,7 @@ export const getContainersToStop = authQuery({
     const settings = await ctx.db
       .query("containerSettings")
       .withIndex("by_team_user", (q) =>
-        q.eq("teamId", teamId).eq("userId", userId)
+        q.eq("teamId", teamId).eq("userId", userId),
       )
       .first();
     const autoCleanupEnabled = settings?.autoCleanupEnabled ?? true;
@@ -726,32 +1482,45 @@ export const getContainersToStop = authQuery({
     const activeRuns = await ctx.db
       .query("taskRuns")
       .withIndex("by_team_user", (q) =>
-        q.eq("teamId", teamId).eq("userId", userId)
+        q.eq("teamId", teamId).eq("userId", userId),
       )
       .collect();
 
     const runningContainers = activeRuns.filter(
       (run) =>
-        run.vscode && run.vscode.status === "running" && !run.vscode.keepAlive // Don't stop containers marked as keep alive
+        run.vscode && run.vscode.status === "running" && !run.vscode.keepAlive, // Don't stop containers marked as keep alive
     );
 
     // Sort containers by creation time (newest first) to identify which to keep
     const sortedContainers = [...runningContainers].sort(
-      (a, b) => (b.createdAt || 0) - (a.createdAt || 0)
+      (a, b) => (b.createdAt || 0) - (a.createdAt || 0),
     );
 
     // Get IDs of the most recent N containers to keep
     const containersToKeepIds = new Set(
-      sortedContainers.slice(0, minContainersToKeep).map((c) => c._id)
+      sortedContainers.slice(0, minContainersToKeep).map((c) => c._id),
     );
 
     // Filter containers that have exceeded their scheduled stop time AND are not in the keep set
-    const containersToStop = runningContainers.filter(
-      (run) =>
-        run.vscode!.scheduledStopAt &&
-        run.vscode!.scheduledStopAt <= now &&
-        !containersToKeepIds.has(run._id)
-    );
+    const containersToStop = runningContainers
+      .filter(
+        (run) =>
+          run.vscode!.scheduledStopAt &&
+          run.vscode!.scheduledStopAt <= now &&
+          !containersToKeepIds.has(run._id),
+      )
+      .map((run) => {
+        if (run.networking) {
+          return {
+            ...run,
+            networking: run.networking.map((item) => ({
+              ...item,
+              url: rewriteMorphUrl(item.url),
+            })),
+          };
+        }
+        return run;
+      });
 
     return containersToStop;
   },
@@ -766,7 +1535,7 @@ export const getRunningContainersByCleanupPriority = authQuery({
     const settings = await ctx.db
       .query("containerSettings")
       .withIndex("by_team_user", (q) =>
-        q.eq("teamId", teamId).eq("userId", userId)
+        q.eq("teamId", teamId).eq("userId", userId),
       )
       .first();
     const minContainersToKeep = settings?.minContainersToKeep ?? 0;
@@ -774,28 +1543,28 @@ export const getRunningContainersByCleanupPriority = authQuery({
     const activeRuns = await ctx.db
       .query("taskRuns")
       .withIndex("by_team_user", (q) =>
-        q.eq("teamId", teamId).eq("userId", userId)
+        q.eq("teamId", teamId).eq("userId", userId),
       )
       .collect();
 
     const runningContainers = activeRuns.filter(
       (run) =>
-        run.vscode && run.vscode.status === "running" && !run.vscode.keepAlive // Don't include keep-alive containers in cleanup consideration
+        run.vscode && run.vscode.status === "running" && !run.vscode.keepAlive, // Don't include keep-alive containers in cleanup consideration
     );
 
     // Sort all containers by creation time to identify which to keep
     const sortedByCreation = [...runningContainers].sort(
-      (a, b) => (b.createdAt || 0) - (a.createdAt || 0)
+      (a, b) => (b.createdAt || 0) - (a.createdAt || 0),
     );
 
     // Get IDs of the most recent N containers to keep
     const containersToKeepIds = new Set(
-      sortedByCreation.slice(0, minContainersToKeep).map((c) => c._id)
+      sortedByCreation.slice(0, minContainersToKeep).map((c) => c._id),
     );
 
     // Filter out containers that should be kept
     const eligibleForCleanup = runningContainers.filter(
-      (c) => !containersToKeepIds.has(c._id)
+      (c) => !containersToKeepIds.has(c._id),
     );
 
     // Categorize eligible containers
@@ -823,14 +1592,43 @@ export const getRunningContainersByCleanupPriority = authQuery({
       return aTime - bTime;
     });
 
+    // Helper to rewrite networking URLs
+    const rewriteContainerNetworking = <
+      T extends (typeof eligibleForCleanup)[number],
+    >(
+      container: T,
+    ): T => {
+      if (container.networking) {
+        return {
+          ...container,
+          networking: container.networking.map((item) => ({
+            ...item,
+            url: rewriteMorphUrl(item.url),
+          })),
+        };
+      }
+      return container;
+    };
+
+    // Rewrite networking URLs in all containers
+    const reviewContainersWithRewrittenUrls = reviewContainers.map(
+      rewriteContainerNetworking,
+    );
+    const activeContainersWithRewrittenUrls = activeContainers.map(
+      rewriteContainerNetworking,
+    );
+
     // Return containers in cleanup priority order:
     // 1. Review period containers (oldest scheduled first)
     // 2. Active containers (only if absolutely necessary)
     return {
       total: runningContainers.length,
-      reviewContainers,
-      activeContainers,
-      prioritizedForCleanup: [...reviewContainers, ...activeContainers],
+      reviewContainers: reviewContainersWithRewrittenUrls,
+      activeContainers: activeContainersWithRewrittenUrls,
+      prioritizedForCleanup: [
+        ...reviewContainersWithRewrittenUrls,
+        ...activeContainersWithRewrittenUrls,
+      ],
       protectedCount: containersToKeepIds.size,
     };
   },

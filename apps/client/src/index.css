@@ -1,50 +1,53 @@
 @import "tailwindcss";
 @plugin './hero.ts';
-@source '../../../node_modules/@heroui/theme/dist/**/*.{js,ts,jsx,tsx}';
+@source '../node_modules/@heroui/theme/dist/**/*.{js,ts,jsx,tsx,mjs,cjs}';
+@source '../../../node_modules/@heroui/theme/dist/**/*.{js,ts,jsx,tsx,mjs,cjs}';
 @import "tw-animate-css";
 
 /* JetBrains Mono Font */
 @font-face {
-  font-family: 'JetBrains Mono';
-  src: url('/fonts/JetBrainsMono-Regular.woff2') format('woff2'),
-       url('/fonts/JetBrainsMono-Regular.woff') format('woff');
+  font-family: "JetBrains Mono";
+  src:
+    url("/fonts/JetBrainsMono-Regular.woff2") format("woff2"),
+    url("/fonts/JetBrainsMono-Regular.woff") format("woff");
   font-weight: 400;
   font-style: normal;
   font-display: swap;
 }
 
 @font-face {
-  font-family: 'JetBrains Mono';
-  src: url('/fonts/JetBrainsMono-Bold.woff2') format('woff2'),
-       url('/fonts/JetBrainsMono-Bold.woff') format('woff');
+  font-family: "JetBrains Mono";
+  src:
+    url("/fonts/JetBrainsMono-Bold.woff2") format("woff2"),
+    url("/fonts/JetBrainsMono-Bold.woff") format("woff");
   font-weight: 700;
   font-style: normal;
   font-display: swap;
 }
 
 @font-face {
-  font-family: 'JetBrains Mono';
-  src: url('/fonts/JetBrainsMono-Italic.woff2') format('woff2'),
-       url('/fonts/JetBrainsMono-Italic.woff') format('woff');
+  font-family: "JetBrains Mono";
+  src:
+    url("/fonts/JetBrainsMono-Italic.woff2") format("woff2"),
+    url("/fonts/JetBrainsMono-Italic.woff") format("woff");
   font-weight: 400;
   font-style: italic;
   font-display: swap;
 }
 
 @font-face {
-  font-family: 'JetBrains Mono';
-  src: url('/fonts/JetBrainsMono-BoldItalic.woff2') format('woff2'),
-       url('/fonts/JetBrainsMono-BoldItalic.woff') format('woff');
+  font-family: "JetBrains Mono";
+  src:
+    url("/fonts/JetBrainsMono-BoldItalic.woff2") format("woff2"),
+    url("/fonts/JetBrainsMono-BoldItalic.woff") format("woff");
   font-weight: 700;
   font-style: italic;
   font-display: swap;
 }
-
 
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme inline {
-
   --radius-sm: calc(var(--radius) - 4px);
 
   --radius-md: calc(var(--radius) - 2px);
@@ -117,7 +120,6 @@
 }
 
 :root {
-
   --radius: 0.625rem;
 
   --background: oklch(1 0 0);
@@ -183,10 +185,10 @@
   --sidebar-border: oklch(0.922 0 0);
 
   --sidebar-ring: oklch(0.708 0 0);
+
 }
 
 .dark {
-
   --background: oklch(0.145 0 0);
 
   --foreground: oklch(0.985 0 0);
@@ -254,9 +256,44 @@
 }
 
 @layer base {
+  html {
+    color-scheme: light;
+  }
+
+  html.dark {
+    color-scheme: dark;
+  }
+
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: 320ms;
+    animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  ::view-transition-old(root) {
+    mix-blend-mode: normal;
+  }
+
+  html.dark::view-transition-old(root) {
+    z-index: 1;
+  }
+
+  html.dark::view-transition-new(root) {
+    z-index: 2;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+
+    ::view-transition-old(root),
+    ::view-transition-new(root) {
+      animation-duration: 1ms;
+    }
+  }
+
   * {
     @apply border-border outline-ring/50;
   }
+
   body {
     @apply bg-background text-foreground;
   }
@@ -264,20 +301,26 @@
 
 /* JetBrains Mono utility classes */
 .font-jetbrains-mono {
-  font-family: 'JetBrains Mono', monospace;
+  font-family: "JetBrains Mono", monospace;
 }
 
-code, pre, .font-mono {
-  font-family: 'JetBrains Mono', monospace;
+code,
+pre,
+.font-mono {
+  font-family: "JetBrains Mono", monospace;
 }
 
 /* Hide scrollbars while keeping scroll functional */
 .hide-scrollbar {
-  -ms-overflow-style: none; /* IE and Edge */
-  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none;
+  /* IE and Edge */
+  scrollbar-width: none;
+  /* Firefox */
 }
+
 .hide-scrollbar::-webkit-scrollbar {
-  width: 0px; /* Chrome, Safari, Opera */
+  width: 0px;
+  /* Chrome, Safari, Opera */
   height: 0px;
 }
 
@@ -372,12 +415,12 @@ code, pre, .font-mono {
 
 .editor-text-code {
   @apply bg-neutral-100 dark:bg-neutral-800 px-1 py-0.5 text-sm rounded;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: "JetBrains Mono", monospace;
 }
 
 .editor-code {
   @apply bg-neutral-100 dark:bg-neutral-800 block py-2 px-2 overflow-x-auto relative my-2 rounded text-sm;
-  font-family: 'JetBrains Mono', monospace;
+  font-family: "JetBrains Mono", monospace;
   tab-size: 2;
 }
 
@@ -440,9 +483,12 @@ code, pre, .font-mono {
 
 /* Custom animations */
 @keyframes pulse-subtle {
-  0%, 100% {
+
+  0%,
+  100% {
     opacity: 1;
   }
+
   50% {
     opacity: 0.8;
   }
@@ -458,4 +504,10 @@ code, pre, .font-mono {
 
 .diff-hidden-lines-widget {
   user-select: none;
+}
+
+/* Prevent anchor dragging in Electron only */
+.is-electron a {
+  -webkit-user-drag: none;
+  user-drag: none;
 }

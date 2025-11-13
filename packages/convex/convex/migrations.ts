@@ -1,3 +1,6 @@
+// To run migrations:
+// bunx convex run migrations:run '{fn: "migrations:setDefaultValue"}'
+
 import { Migrations } from "@convex-dev/migrations";
 import { components } from "./_generated/api";
 import type { DataModel } from "./_generated/dataModel";
@@ -43,6 +46,17 @@ export const dropTeamsUuid = migrations.define({
   table: "teams",
   migrateOne: (_ctx, doc) => {
     return { teamId: doc.teamId, uuid: undefined } as Partial<typeof doc>;
+  },
+});
+
+// Remove deprecated CLI output logs retained on historical task runs
+export const clearTaskRunsLog = migrations.define({
+  table: "taskRuns",
+  migrateOne: (_ctx, doc) => {
+    if (doc.log === undefined) {
+      return;
+    }
+    return { log: undefined };
   },
 });
 

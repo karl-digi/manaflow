@@ -1,8 +1,7 @@
-import { Id } from "@cmux/convex/dataModel";
-import type { ServerToWorkerEvents, WorkerToServerEvents } from "@cmux/shared";
+import type { Id } from "@cmux/convex/dataModel";
+import { connectToWorkerManagement } from "@cmux/shared/socket";
 import { EventEmitter } from "node:events";
-import { io, type Socket } from "socket.io-client";
-import { dockerLogger } from "../utils/fileLogger.js";
+import { dockerLogger } from "../utils/fileLogger";
 
 export interface VSCodeInstanceConfig {
   workspacePath?: string;
@@ -18,6 +17,8 @@ export interface VSCodeInstanceConfig {
   newBranch?: string;
   // Optional: when starting from an environment
   environmentId?: Id<"environments"> | string;
+  // Optional: JWT token for crown workflow authentication
+  taskRunJwt?: string;
 }
 
 export interface VSCodeInstanceInfo {
@@ -36,10 +37,8 @@ export abstract class VSCodeInstance extends EventEmitter {
   protected instanceId: Id<"taskRuns">;
   protected taskRunId: Id<"taskRuns">;
   protected taskId: Id<"tasks">;
-  protected workerSocket: Socket<
-    WorkerToServerEvents,
-    ServerToWorkerEvents
-  > | null = null;
+  protected workerSocket: ReturnType<typeof connectToWorkerManagement> | null =
+    null;
   protected workerConnected: boolean = false;
   protected teamSlugOrId: string;
 
@@ -82,15 +81,11 @@ export abstract class VSCodeInstance extends EventEmitter {
     );
 
     return new Promise((resolve, reject) => {
-      this.workerSocket = io(`${workerUrl}/management`, {
-        reconnection: true,
-        reconnectionAttempts: 10, // Keep trying 10 times
-        reconnectionDelay: 2000,
-        reconnectionDelayMax: 10000,
-        timeout: 30000, // 30 seconds timeout
-        transports: ["websocket"], // Allow fallback to polling
-        upgrade: false,
-        forceNew: true, // Force new connection
+      this.workerSocket = connectToWorkerManagement({
+        url: workerUrl,
+        timeoutMs: 30_000,
+        reconnectionAttempts: 10,
+        forceNew: true,
       });
 
       this.workerSocket.on("connect", () => {
@@ -184,7 +179,7 @@ export abstract class VSCodeInstance extends EventEmitter {
     });
   }
 
-  getWorkerSocket(): Socket<WorkerToServerEvents, ServerToWorkerEvents> {
+  getWorkerSocket(): ReturnType<typeof connectToWorkerManagement> {
     if (!this.workerSocket) {
       throw new Error("Worker socket not connected");
     }

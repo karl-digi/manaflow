@@ -1,3 +1,4 @@
+import type { Id } from "@cmux/convex/dataModel";
 import type { FileInfo } from "@cmux/shared";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import clsx from "clsx";
@@ -7,16 +8,24 @@ import {
   $isRangeSelection,
   $isTextNode,
   BLUR_COMMAND,
+  COMMAND_PRIORITY_CRITICAL,
   COMMAND_PRIORITY_HIGH,
   KEY_ARROW_DOWN_COMMAND,
   KEY_ARROW_UP_COMMAND,
+  KEY_DOWN_COMMAND,
   KEY_ENTER_COMMAND,
   KEY_ESCAPE_COMMAND,
   TextNode,
 } from "lexical";
+import type { EditorState } from "lexical";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { getIconForFile } from "vscode-icons-js";
+import {
+  DEFAULT_FILE,
+  DEFAULT_FOLDER,
+  getIconForFile,
+  getIconForFolder,
+} from "vscode-icons-js";
 import { useSocket } from "../../contexts/socket/use-socket";
 
 const MENTION_TRIGGER = "@";
@@ -25,7 +34,7 @@ interface MentionMenuProps {
   files: FileInfo[];
   selectedIndex: number;
   onSelect: (file: FileInfo) => void;
-  position: { top: number; left: number } | null;
+  position: { top: number; left: number; showAbove?: boolean } | null;
   hasRepository: boolean;
   isLoading: boolean;
 }
@@ -53,12 +62,19 @@ function MentionMenu({
 
   if (!position) return null;
 
+  const bottomOffset =
+    position.showAbove && typeof document !== "undefined"
+      ? Math.max(document.documentElement.scrollHeight - position.top, 0)
+      : undefined;
+
   return createPortal(
     <div
       ref={menuRef}
-      className="absolute z-50 w-72 max-h-48 overflow-y-auto bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-md shadow-lg"
+      className="absolute z-[var(--z-modal)] max-h-48 overflow-y-auto bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-md shadow-lg max-w-[580px]"
       style={{
-        top: position.top,
+        ...(position.showAbove && bottomOffset !== undefined
+          ? { bottom: `${bottomOffset}px` }
+          : { top: position.top }),
         left: position.left,
       }}
     >
@@ -93,10 +109,25 @@ function MentionMenu({
             : "Please select a project to see files"}
         </div>
       ) : (
-        files.map((file, index) => (
+        files.map((file, index) => {
+          const rel = file.relativePath.replace(/\\/g, "/");
+          const lastSlash = rel.lastIndexOf("/");
+          const dirPath = lastSlash > -1 ? rel.slice(0, lastSlash) : "";
+          const rawName = file.name || (lastSlash > -1 ? rel.slice(lastSlash + 1) : rel);
+          const displayName = file.isDirectory ? `${rawName}/` : rawName;
+          const iconName = file.isDirectory
+            ? getIconForFolder(rawName) || DEFAULT_FOLDER
+            : rawName === "Dockerfile"
+              ? "file_type_docker.svg"
+              : getIconForFile(rawName) || DEFAULT_FILE;
+          const iconSrc = `https://cdn.jsdelivr.net/gh/vscode-icons/vscode-icons/icons/${iconName}`;
+          return (
           <button
             key={file.relativePath}
-            onClick={() => onSelect(file)}
+            onMouseDown={(e) => {
+              e.preventDefault(); // Prevent blur event from firing
+              onSelect(file);
+            }}
             className={clsx(
               "w-full text-left px-2.5 py-1 text-xs flex items-center gap-1.5",
               index === selectedIndex
@@ -106,13 +137,19 @@ function MentionMenu({
             type="button"
           >
             <img
-              src={`https://cdn.jsdelivr.net/gh/vscode-icons/vscode-icons/icons/${file.name === "Dockerfile" ? "file_type_docker.svg" : getIconForFile(file.name)}`}
+              src={iconSrc}
               alt=""
               className="w-3 h-3 flex-shrink-0"
             />
-            <span className="truncate">{file.relativePath}</span>
+            <div className="flex items-center gap-1 min-w-0 whitespace-nowrap">
+              <span className="truncate font-medium">{displayName}</span>
+              {dirPath ? (
+                <span className="truncate text-neutral-500 dark:text-neutral-400">{dirPath}</span>
+              ) : null}
+            </div>
           </button>
-        ))
+          );
+        })
       )}
     </div>,
     document.body
@@ -122,14 +159,20 @@ function MentionMenu({
 interface MentionPluginProps {
   repoUrl?: string;
   branch?: string;
+  environmentId?: Id<"environments">;
 }
 
-export function MentionPlugin({ repoUrl, branch }: MentionPluginProps) {
+export function MentionPlugin({
+  repoUrl,
+  branch,
+  environmentId,
+}: MentionPluginProps) {
   const [editor] = useLexicalComposerContext();
   const [isShowingMenu, setIsShowingMenu] = useState(false);
   const [menuPosition, setMenuPosition] = useState<{
     top: number;
     left: number;
+    showAbove?: boolean;
   } | null>(null);
   const [searchText, setSearchText] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -141,12 +184,12 @@ export function MentionPlugin({ repoUrl, branch }: MentionPluginProps) {
 
   // Fetch all files once when repository URL is available
   useEffect(() => {
-    if (repoUrl && socket) {
+    if ((repoUrl || environmentId) && socket) {
       setIsLoading(true);
       socket.emit("list-files", {
-        repoPath: repoUrl,
-        branch: branch || undefined,
-        // Don't send pattern - we want all files
+        ...(repoUrl ? { repoPath: repoUrl } : {}),
+        ...(environmentId ? { environmentId } : {}),
+        ...(branch ? { branch } : {}),
       });
 
       const handleFilesResponse = (data: {
@@ -155,9 +198,7 @@ export function MentionPlugin({ repoUrl, branch }: MentionPluginProps) {
       }) => {
         setIsLoading(false);
         if (!data.error) {
-          // Filter to only show actual files, not directories
-          const fileList = data.files.filter((f) => !f.isDirectory);
-          setFiles(fileList);
+          setFiles(data.files);
         } else {
           setFiles([]);
         }
@@ -168,12 +209,11 @@ export function MentionPlugin({ repoUrl, branch }: MentionPluginProps) {
       return () => {
         socket.off("list-files-response", handleFilesResponse);
       };
-    } else if (!repoUrl) {
-      // If no repository URL, set empty files list
-      setFiles([]);
-      setIsLoading(false);
     }
-  }, [repoUrl, branch, socket]);
+
+    setFiles([]);
+    setIsLoading(false);
+  }, [repoUrl, branch, environmentId, socket]);
 
   // Filter files based on search text using fuzzysort
   useEffect(() => {
@@ -203,25 +243,58 @@ export function MentionPlugin({ repoUrl, branch }: MentionPluginProps) {
 
   const selectFile = useCallback(
     (file: FileInfo) => {
-      // Store the trigger node before it gets cleared
       const currentTriggerNode = triggerNodeRef.current;
 
       editor.update(() => {
         const selection = $getSelection();
 
-        if ($isRangeSelection(selection) && currentTriggerNode) {
-          const triggerText = currentTriggerNode.getTextContent();
-          const mentionStartIndex = triggerText.lastIndexOf(MENTION_TRIGGER);
+        if (!$isRangeSelection(selection) || !currentTriggerNode) {
+          return;
+        }
 
-          if (mentionStartIndex !== -1) {
-            // Replace @ and search text with @filename and a space
-            currentTriggerNode.spliceText(
-              mentionStartIndex,
-              triggerText.length - mentionStartIndex,
-              `@${file.relativePath} `,
-              true
-            );
+        const anchorNode = selection.anchor.getNode();
+        if (!anchorNode || anchorNode.getKey() !== currentTriggerNode.getKey()) {
+          return;
+        }
+
+        const triggerText = currentTriggerNode.getTextContent();
+        const anchorOffset = selection.anchor.offset;
+
+        let mentionStartIndex = -1;
+        for (let i = anchorOffset - 1; i >= 0; i -= 1) {
+          const char = triggerText[i];
+          if (char === MENTION_TRIGGER) {
+            mentionStartIndex = i;
+            break;
           }
+          if (/\s/.test(char)) {
+            break;
+          }
+        }
+
+        if (mentionStartIndex === -1) {
+          return;
+        }
+
+        const deleteCount = Math.max(anchorOffset - mentionStartIndex, 0);
+
+        if (deleteCount > 0) {
+          const relativePath = file.relativePath;
+          const hasBackslash = relativePath.includes("\\");
+          const directorySeparator = hasBackslash ? "\\" : "/";
+          const pathWithSeparator =
+            file.isDirectory &&
+            !relativePath.endsWith("/") &&
+            !relativePath.endsWith("\\")
+              ? `${relativePath}${directorySeparator}`
+              : relativePath;
+
+          currentTriggerNode.spliceText(
+            mentionStartIndex,
+            deleteCount,
+            `@${pathWithSeparator} `,
+            true
+          );
         }
       });
       hideMenu();
@@ -229,63 +302,100 @@ export function MentionPlugin({ repoUrl, branch }: MentionPluginProps) {
     [editor, hideMenu]
   );
 
+  const updateMenuFromSelection = useCallback(
+    (editorState?: EditorState) => {
+      (editorState ?? editor.getEditorState()).read(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection) || !selection.isCollapsed()) {
+          hideMenu();
+          return;
+        }
+
+        const node = selection.anchor.getNode();
+        if (!$isTextNode(node)) {
+          hideMenu();
+          return;
+        }
+
+        const text = node.getTextContent();
+        const offset = selection.anchor.offset;
+
+        // Find the last @ before the cursor
+        let mentionStartIndex = -1;
+        for (let i = offset - 1; i >= 0; i--) {
+          if (text[i] === MENTION_TRIGGER) {
+            mentionStartIndex = i;
+            break;
+          }
+          // Stop if we hit whitespace
+          if (/\s/.test(text[i])) {
+            break;
+          }
+        }
+
+        if (mentionStartIndex !== -1) {
+          const searchQuery = text.slice(mentionStartIndex + 1, offset);
+          setSearchText(searchQuery);
+          triggerNodeRef.current = node;
+
+          if (typeof window === "undefined") {
+            return;
+          }
+
+          // Calculate menu position with edge collision detection
+          const domSelection = window.getSelection();
+          if (domSelection && domSelection.rangeCount > 0) {
+            const range = domSelection.getRangeAt(0);
+            const rect = range.getBoundingClientRect();
+
+            // Menu dimensions (approximate max height from CSS: max-h-48 = 192px)
+            const menuMaxHeight = 192;
+            const menuGap = 4;
+
+            // Calculate available space above and below cursor
+            const spaceBelow = window.innerHeight - rect.bottom;
+            const spaceAbove = rect.top;
+
+            // Decide whether to show above or below based on available space
+            const showAbove = spaceBelow < menuMaxHeight + menuGap && spaceAbove > spaceBelow;
+
+            setMenuPosition({
+              top: showAbove
+                ? rect.top + window.scrollY - menuGap
+                : rect.bottom + window.scrollY + menuGap,
+              left: rect.left + window.scrollX,
+              showAbove,
+            });
+            setIsShowingMenu(true);
+          }
+        } else {
+          hideMenu();
+        }
+      });
+    },
+    [editor, hideMenu]
+  );
+
   useEffect(() => {
-    const checkForMentionTrigger = () => {
-      const selection = $getSelection();
-      if (!$isRangeSelection(selection) || !selection.isCollapsed()) {
-        hideMenu();
-        return;
-      }
+    const unregister = editor.registerUpdateListener(({ editorState }) => {
+      updateMenuFromSelection(editorState);
+    });
 
-      const node = selection.anchor.getNode();
-      if (!$isTextNode(node)) {
-        hideMenu();
-        return;
-      }
-
-      const text = node.getTextContent();
-      const offset = selection.anchor.offset;
-
-      // Find the last @ before the cursor
-      let mentionStartIndex = -1;
-      for (let i = offset - 1; i >= 0; i--) {
-        if (text[i] === MENTION_TRIGGER) {
-          mentionStartIndex = i;
-          break;
-        }
-        // Stop if we hit whitespace
-        if (/\s/.test(text[i])) {
-          break;
-        }
-      }
-
-      if (mentionStartIndex !== -1) {
-        const searchQuery = text.slice(mentionStartIndex + 1, offset);
-        setSearchText(searchQuery);
-        triggerNodeRef.current = node;
-
-        // Calculate menu position
-        const domSelection = window.getSelection();
-        if (domSelection && domSelection.rangeCount > 0) {
-          const range = domSelection.getRangeAt(0);
-          const rect = range.getBoundingClientRect();
-          setMenuPosition({
-            top: rect.bottom + window.scrollY + 4,
-            left: rect.left + window.scrollX,
-          });
-          setIsShowingMenu(true);
-        }
-      } else {
-        hideMenu();
-      }
+    const handleResize = () => {
+      updateMenuFromSelection();
     };
 
-    return editor.registerUpdateListener(() => {
-      editor.getEditorState().read(() => {
-        checkForMentionTrigger();
-      });
-    });
-  }, [editor, hideMenu]);
+    if (typeof window !== "undefined") {
+      window.addEventListener("resize", handleResize);
+    }
+
+    return () => {
+      unregister();
+      if (typeof window !== "undefined") {
+        window.removeEventListener("resize", handleResize);
+      }
+    };
+  }, [editor, updateMenuFromSelection]);
 
   // Store current state in refs to avoid stale closures
   const isShowingMenuRef = useRef(isShowingMenu);
@@ -355,26 +465,6 @@ export function MentionPlugin({ repoUrl, branch }: MentionPluginProps) {
       return true;
     };
 
-    // Handle Ctrl+N/P and Ctrl+J/K
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (!isShowingMenuRef.current) return;
-
-      if (event.ctrlKey) {
-        switch (event.key) {
-          case "n":
-          case "j":
-            event.preventDefault();
-            handleArrowDown();
-            break;
-          case "p":
-          case "k":
-            event.preventDefault();
-            handleArrowUp();
-            break;
-        }
-      }
-    };
-
     const removeArrowDown = editor.registerCommand(
       KEY_ARROW_DOWN_COMMAND,
       (event) => handleArrowDown(event || undefined),
@@ -399,6 +489,31 @@ export function MentionPlugin({ repoUrl, branch }: MentionPluginProps) {
       COMMAND_PRIORITY_HIGH
     );
 
+    // Handle Ctrl+N/P/J/K with critical priority to override other handlers
+    const removeKeyDown = editor.registerCommand(
+      KEY_DOWN_COMMAND,
+      (event: KeyboardEvent) => {
+        if (!isShowingMenuRef.current) return false;
+
+        if (event.ctrlKey) {
+          switch (event.key) {
+            case "n":
+            case "j":
+              event.preventDefault();
+              handleArrowDown();
+              return true;
+            case "p":
+            case "k":
+              event.preventDefault();
+              handleArrowUp();
+              return true;
+          }
+        }
+        return false;
+      },
+      COMMAND_PRIORITY_CRITICAL
+    );
+
     // Hide menu on blur
     const removeBlur = editor.registerCommand(
       BLUR_COMMAND,
@@ -411,15 +526,13 @@ export function MentionPlugin({ repoUrl, branch }: MentionPluginProps) {
       COMMAND_PRIORITY_HIGH
     );
 
-    document.addEventListener("keydown", handleKeyDown);
-
     return () => {
       removeArrowDown();
       removeArrowUp();
       removeEnter();
       removeEscape();
+      removeKeyDown();
       removeBlur();
-      document.removeEventListener("keydown", handleKeyDown);
     };
   }, [editor, selectFile, hideMenu]);
 
@@ -429,7 +542,7 @@ export function MentionPlugin({ repoUrl, branch }: MentionPluginProps) {
       selectedIndex={selectedIndex}
       onSelect={selectFile}
       position={menuPosition}
-      hasRepository={!!repoUrl}
+      hasRepository={Boolean(repoUrl || environmentId)}
       isLoading={isLoading}
     />
   );

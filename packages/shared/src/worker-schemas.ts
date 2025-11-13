@@ -1,7 +1,6 @@
 import type { Id } from "@cmux/convex/dataModel";
 import { z } from "zod";
-import { AGENT_CONFIGS } from "./agentConfig.js";
-import { typedZid } from "./utils/typed-zid.js";
+import { typedZid } from "./utils/typed-zid";
 
 // Auth file schema for file uploads and environment setup
 export const AuthFileSchema = z.object({
@@ -52,25 +51,27 @@ export const WorkerStatusSchema = z.object({
   lastSeen: z.number(),
 });
 
+export const WorkerTaskRunContextSchema = z.object({
+  taskRunToken: z.string(),
+  prompt: z.string(),
+  convexUrl: z.string(),
+});
+
 // Terminal operation schemas for server<>worker communication
 export const WorkerCreateTerminalSchema = z.object({
   terminalId: z.string(),
   cols: z.number().int().positive().default(80),
   rows: z.number().int().positive().default(24),
   cwd: z.string().optional(),
-  env: z.record(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
+  taskRunContext: WorkerTaskRunContextSchema,
   command: z.string().optional(),
   args: z.array(z.string()).optional(),
   taskId: typedZid("tasks").optional(),
   taskRunId: typedZid("taskRuns").optional(),
-  // Preferred: validated against AgentConfig names at runtime (browser-safe)
-  agentModel: z
-    .string()
-    .optional()
-    .refine(
-      (val) => !val || new Set(AGENT_CONFIGS.map((c) => c.name)).has(val),
-      { message: "agentModel must be one of AGENT_CONFIGS names" }
-    ),
+  // Validation happens on the server where configs can be updated without
+  // rebuilding the worker image.
+  agentModel: z.string().optional(),
   authFiles: z.array(AuthFileSchema).optional(),
   startupCommands: z.array(z.string()).optional(),
 });
@@ -125,13 +126,7 @@ export const WorkerTerminalIdleSchema = z.object({
 export const WorkerTaskCompleteSchema = z.object({
   workerId: z.string(),
   taskRunId: typedZid("taskRuns"),
-  agentModel: z
-    .string()
-    .optional()
-    .refine(
-      (val) => !val || new Set(AGENT_CONFIGS.map((c) => c.name)).has(val),
-      { message: "agentModel must be one of AGENT_CONFIGS names" }
-    ),
+  agentModel: z.string().optional(),
   elapsedMs: z.number(),
 });
 
@@ -160,7 +155,7 @@ export const WorkerUploadFilesSchema = z.object({
 // Git configuration schema
 export const WorkerConfigureGitSchema = z.object({
   githubToken: z.string().optional(),
-  gitConfig: z.record(z.string()).optional(), // Key-value pairs for git config
+  gitConfig: z.record(z.string(), z.string()).optional(), // Key-value pairs for git config
   sshKeys: z
     .object({
       privateKey: z.string().optional(), // Base64 encoded
@@ -175,7 +170,7 @@ export const WorkerExecSchema = z.object({
   command: z.string(),
   args: z.array(z.string()).optional(),
   cwd: z.string().optional(),
-  env: z.record(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
   timeout: z.number().optional(), // Timeout in milliseconds
 });
 
@@ -185,6 +180,11 @@ export const WorkerExecResultSchema = z.object({
   stderr: z.string(),
   exitCode: z.number(),
   signal: z.string().optional(),
+});
+
+export const WorkerStartScreenshotCollectionSchema = z.object({
+  anthropicApiKey: z.string().min(1).optional(),
+  outputPath: z.string().optional(),
 });
 
 // Server to Worker Events
@@ -199,6 +199,7 @@ export type WorkerRegister = z.infer<typeof WorkerRegisterSchema>;
 export type WorkerHeartbeat = z.infer<typeof WorkerHeartbeatSchema>;
 export type TerminalAssignment = z.infer<typeof TerminalAssignmentSchema>;
 export type WorkerStatus = z.infer<typeof WorkerStatusSchema>;
+export type WorkerTaskRunContext = z.infer<typeof WorkerTaskRunContextSchema>;
 export type ServerToWorkerCommand = z.infer<typeof ServerToWorkerCommandSchema>;
 export type WorkerCreateTerminal = z.infer<typeof WorkerCreateTerminalSchema>;
 export type WorkerTerminalInput = z.infer<typeof WorkerTerminalInputSchema>;
@@ -215,6 +216,9 @@ export type WorkerUploadFiles = z.infer<typeof WorkerUploadFilesSchema>;
 export type WorkerConfigureGit = z.infer<typeof WorkerConfigureGitSchema>;
 export type WorkerExec = z.infer<typeof WorkerExecSchema>;
 export type WorkerExecResult = z.infer<typeof WorkerExecResultSchema>;
+export type WorkerStartScreenshotCollection = z.infer<
+  typeof WorkerStartScreenshotCollectionSchema
+>;
 
 // Socket.io event maps for Server <-> Worker communication
 // Docker readiness response type
@@ -253,6 +257,9 @@ export interface ServerToWorkerEvents {
     worktreePath: string;
   }) => void;
   "worker:stop-file-watch": (data: { taskRunId: Id<"taskRuns"> }) => void;
+  "worker:start-screenshot-collection": (
+    data: WorkerStartScreenshotCollection | undefined
+  ) => void;
 
   // Management events
   "worker:terminal-assignment": (data: TerminalAssignment) => void;
@@ -306,6 +313,7 @@ export interface WorkerToServerEvents {
   // Error reporting
   "worker:error": (data: { workerId: string; error: string }) => void;
 }
+export type WorkerToServerEventNames = keyof WorkerToServerEvents;
 
 // For worker's internal socket server (client connections)
 export interface WorkerSocketData {

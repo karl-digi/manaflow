@@ -35,7 +35,7 @@ const DropdownPositioner: React.FC<DropdownPositionerProps> = ({
   return (
     <Menu.Positioner
       {...props}
-      className={clsx("outline-none z-[10001]", className)}
+      className={clsx("outline-none z-[var(--z-popover)]", className)}
     />
   );
 };

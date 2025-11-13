@@ -93,7 +93,7 @@ githubReposRouter.openapi(
     const octokit = new Octokit({
       authStrategy: createAppAuth,
       auth: {
-        appId: env.GITHUB_APP_ID,
+        appId: env.CMUX_GITHUB_APP_ID,
         privateKey: githubPrivateKey,
         installationId: target.installationId,
       },
@@ -109,7 +109,7 @@ githubReposRouter.openapi(
         target.accountType === "Organization"
           ? `org:${target.accountLogin}`
           : `user:${target.accountLogin}`;
-      const q = [ownerQualifier, search ? `${search} in:name` : null]
+      const q = [ownerQualifier, "fork:true", search ? `${search} in:name` : null]
         .filter(Boolean)
         .join(" ");
       const searchRes = await octokit.request("GET /search/repositories", {

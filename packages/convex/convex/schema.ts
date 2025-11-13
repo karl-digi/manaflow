@@ -95,16 +95,29 @@ const convexSchema = defineSchema({
     text: v.string(),
     isCompleted: v.boolean(),
     isArchived: v.optional(v.boolean()),
+    pinned: v.optional(v.boolean()),
+    isLocalWorkspace: v.optional(v.boolean()),
+    isCloudWorkspace: v.optional(v.boolean()),
     description: v.optional(v.string()),
     pullRequestTitle: v.optional(v.string()),
     pullRequestDescription: v.optional(v.string()),
     projectFullName: v.optional(v.string()),
     baseBranch: v.optional(v.string()),
     worktreePath: v.optional(v.string()),
+    generatedBranchName: v.optional(v.string()),
     createdAt: v.optional(v.number()),
     updatedAt: v.optional(v.number()),
     userId: v.string(), // Link to user who created the task
     teamId: v.string(),
+    environmentId: v.optional(v.id("environments")),
+    crownEvaluationStatus: v.optional(
+      v.union(
+        v.literal("pending"),
+        v.literal("in_progress"),
+        v.literal("succeeded"),
+        v.literal("error"),
+      ),
+    ), // State of crown evaluation workflow
     crownEvaluationError: v.optional(v.string()), // Error message if crown evaluation failed
     mergeStatus: v.optional(
       v.union(
@@ -126,10 +139,30 @@ const convexSchema = defineSchema({
         })
       )
     ),
+    screenshotStatus: v.optional(
+      v.union(
+        v.literal("pending"),
+        v.literal("running"),
+        v.literal("completed"),
+        v.literal("failed"),
+        v.literal("skipped"),
+      ),
+    ),
+    screenshotRunId: v.optional(v.id("taskRuns")),
+    screenshotRequestId: v.optional(v.string()),
+    screenshotRequestedAt: v.optional(v.number()),
+    screenshotCompletedAt: v.optional(v.number()),
+    screenshotError: v.optional(v.string()),
+    screenshotStorageId: v.optional(v.id("_storage")),
+    screenshotMimeType: v.optional(v.string()),
+    screenshotFileName: v.optional(v.string()),
+    screenshotCommitSha: v.optional(v.string()),
+    latestScreenshotSetId: v.optional(v.id("taskRunScreenshotSets")),
   })
     .index("by_created", ["createdAt"])
     .index("by_user", ["userId", "createdAt"])
-    .index("by_team_user", ["teamId", "userId"]),
+    .index("by_team_user", ["teamId", "userId"])
+    .index("by_pinned", ["pinned", "teamId", "userId"]),
 
   taskRuns: defineTable({
     taskId: v.id("tasks"),
@@ -143,16 +176,27 @@ const convexSchema = defineSchema({
       v.literal("completed"),
       v.literal("failed")
     ),
-    log: v.string(), // CLI output log, will be appended to in real-time
+    isArchived: v.optional(v.boolean()), // Whether this run is hidden from default views
+    isLocalWorkspace: v.optional(v.boolean()),
+    isCloudWorkspace: v.optional(v.boolean()),
+    // Optional log retained for backward compatibility; no longer written to.
+    log: v.optional(v.string()), // CLI output log (deprecated)
     worktreePath: v.optional(v.string()), // Path to the git worktree for this run
     newBranch: v.optional(v.string()), // The generated branch name for this run
     createdAt: v.number(),
     updatedAt: v.number(),
     completedAt: v.optional(v.number()),
     exitCode: v.optional(v.number()),
+    environmentError: v.optional(
+      v.object({
+        devError: v.optional(v.string()),
+        maintenanceError: v.optional(v.string()),
+      }),
+    ),
     errorMessage: v.optional(v.string()), // Error message when run fails early
     userId: v.string(), // Link to user who created the run
     teamId: v.string(),
+    environmentId: v.optional(v.id("environments")),
     isCrowned: v.optional(v.boolean()), // Whether this run won the crown evaluation
     crownReason: v.optional(v.string()), // LLM's reasoning for why this run was crowned
     pullRequestUrl: v.optional(v.string()), // URL of the PR
@@ -168,7 +212,31 @@ const convexSchema = defineSchema({
       )
     ),
     pullRequestNumber: v.optional(v.number()), // Numeric PR number on provider
+    pullRequests: v.optional(
+      v.array(
+        v.object({
+          repoFullName: v.string(),
+          url: v.optional(v.string()),
+          number: v.optional(v.number()),
+          state: v.union(
+            v.literal("none"),
+            v.literal("draft"),
+            v.literal("open"),
+            v.literal("merged"),
+            v.literal("closed"),
+            v.literal("unknown")
+          ),
+          isDraft: v.optional(v.boolean()),
+        })
+      )
+    ),
     diffsLastUpdated: v.optional(v.number()), // Timestamp when diffs were last fetched/updated
+    screenshotStorageId: v.optional(v.id("_storage")),
+    screenshotCapturedAt: v.optional(v.number()),
+    screenshotMimeType: v.optional(v.string()),
+    screenshotFileName: v.optional(v.string()),
+    screenshotCommitSha: v.optional(v.string()),
+    latestScreenshotSetId: v.optional(v.id("taskRunScreenshotSets")),
     // VSCode instance information
     vscode: v.optional(
       v.object({
@@ -189,6 +257,8 @@ const convexSchema = defineSchema({
             vscode: v.string(),
             worker: v.string(),
             extension: v.optional(v.string()),
+            proxy: v.optional(v.string()),
+            vnc: v.optional(v.string()),
           })
         ),
         url: v.optional(v.string()), // The VSCode URL
@@ -213,6 +283,14 @@ const convexSchema = defineSchema({
         })
       )
     ),
+    customPreviews: v.optional(
+      v.array(
+        v.object({
+          url: v.string(),
+          createdAt: v.number(),
+        })
+      )
+    ),
   })
     .index("by_task", ["taskId", "createdAt"])
     .index("by_parent", ["parentRunId"])
@@ -221,6 +299,30 @@ const convexSchema = defineSchema({
     .index("by_vscode_container_name", ["vscode.containerName"])
     .index("by_user", ["userId", "createdAt"])
     .index("by_team_user", ["teamId", "userId"]),
+  taskRunScreenshotSets: defineTable({
+    taskId: v.id("tasks"),
+    runId: v.id("taskRuns"),
+    status: v.union(
+      v.literal("completed"),
+      v.literal("failed"),
+      v.literal("skipped"),
+    ),
+    commitSha: v.optional(v.string()),
+    capturedAt: v.number(),
+    error: v.optional(v.string()),
+    images: v.array(
+      v.object({
+        storageId: v.id("_storage"),
+        mimeType: v.string(),
+        fileName: v.optional(v.string()),
+        commitSha: v.optional(v.string()),
+      }),
+    ),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_task_capturedAt", ["taskId", "capturedAt"])
+    .index("by_run_capturedAt", ["runId", "capturedAt"]),
   taskVersions: defineTable({
     taskId: v.id("tasks"),
     version: v.number(),
@@ -238,6 +340,127 @@ const convexSchema = defineSchema({
   })
     .index("by_task", ["taskId", "version"])
     .index("by_team_user", ["teamId", "userId"]),
+
+  automatedCodeReviewJobs: defineTable({
+    teamId: v.optional(v.string()),
+    repoFullName: v.string(),
+    repoUrl: v.string(),
+    prNumber: v.optional(v.number()),
+    commitRef: v.string(),
+    headCommitRef: v.optional(v.string()),
+    baseCommitRef: v.optional(v.string()),
+    requestedByUserId: v.string(),
+    jobType: v.optional(v.union(v.literal("pull_request"), v.literal("comparison"))),
+    comparisonSlug: v.optional(v.string()),
+    comparisonBaseOwner: v.optional(v.string()),
+    comparisonBaseRef: v.optional(v.string()),
+    comparisonHeadOwner: v.optional(v.string()),
+    comparisonHeadRef: v.optional(v.string()),
+    state: v.union(
+      v.literal("pending"),
+      v.literal("running"),
+      v.literal("completed"),
+      v.literal("failed"),
+    ),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    startedAt: v.optional(v.number()),
+    completedAt: v.optional(v.number()),
+    sandboxInstanceId: v.optional(v.string()), // `morphvm_` prefix indicates Morph-managed instance IDs
+    callbackTokenHash: v.optional(v.string()),
+    callbackTokenIssuedAt: v.optional(v.number()),
+    errorCode: v.optional(v.string()),
+    errorDetail: v.optional(v.string()),
+    codeReviewOutput: v.optional(v.record(v.string(), v.any())),
+  })
+    .index("by_team_repo_pr", ["teamId", "repoFullName", "prNumber", "createdAt"])
+    .index("by_team_repo_pr_updated", [
+      "teamId",
+      "repoFullName",
+      "prNumber",
+      "updatedAt",
+    ])
+    .index("by_team_repo_comparison", [
+      "teamId",
+      "repoFullName",
+      "comparisonSlug",
+      "createdAt",
+    ])
+    .index("by_team_repo_comparison_updated", [
+      "teamId",
+      "repoFullName",
+      "comparisonSlug",
+      "updatedAt",
+    ])
+    .index("by_repo_comparison_commit", [
+      "repoFullName",
+      "comparisonSlug",
+      "commitRef",
+      "updatedAt",
+    ])
+    .index("by_state_updated", ["state", "updatedAt"])
+    .index("by_team_created", ["teamId", "createdAt"]),
+
+  automatedCodeReviewVersions: defineTable({
+    jobId: v.id("automatedCodeReviewJobs"),
+    teamId: v.optional(v.string()),
+    requestedByUserId: v.string(),
+    repoFullName: v.string(),
+    repoUrl: v.string(),
+    prNumber: v.optional(v.number()),
+    commitRef: v.string(),
+    headCommitRef: v.optional(v.string()),
+    baseCommitRef: v.optional(v.string()),
+    jobType: v.optional(v.union(v.literal("pull_request"), v.literal("comparison"))),
+    comparisonSlug: v.optional(v.string()),
+    comparisonBaseOwner: v.optional(v.string()),
+    comparisonBaseRef: v.optional(v.string()),
+    comparisonHeadOwner: v.optional(v.string()),
+    comparisonHeadRef: v.optional(v.string()),
+    sandboxInstanceId: v.optional(v.string()), // `morphvm_` prefix indicates Morph-managed instance IDs
+    codeReviewOutput: v.record(v.string(), v.any()),
+    createdAt: v.number(),
+  })
+    .index("by_job", ["jobId"])
+    .index("by_team_pr", ["teamId", "repoFullName", "prNumber", "createdAt"]),
+
+  automatedCodeReviewFileOutputs: defineTable({
+    jobId: v.id("automatedCodeReviewJobs"),
+    teamId: v.optional(v.string()),
+    repoFullName: v.string(),
+    prNumber: v.optional(v.number()),
+    commitRef: v.string(),
+    headCommitRef: v.optional(v.string()),
+    baseCommitRef: v.optional(v.string()),
+    jobType: v.optional(v.union(v.literal("pull_request"), v.literal("comparison"))),
+    comparisonSlug: v.optional(v.string()),
+    comparisonBaseOwner: v.optional(v.string()),
+    comparisonBaseRef: v.optional(v.string()),
+    comparisonHeadOwner: v.optional(v.string()),
+    comparisonHeadRef: v.optional(v.string()),
+    sandboxInstanceId: v.optional(v.string()),
+    filePath: v.string(),
+    codexReviewOutput: v.any(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_job", ["jobId", "createdAt"])
+    .index("by_job_file", ["jobId", "filePath"])
+    .index("by_team_repo_pr_commit", [
+      "teamId",
+      "repoFullName",
+      "prNumber",
+      "commitRef",
+      "createdAt",
+    ])
+    .index("by_team_repo_comparison_commit", [
+      "teamId",
+      "repoFullName",
+      "comparisonSlug",
+      "commitRef",
+      "createdAt",
+    ]),
+
   repos: defineTable({
     fullName: v.string(),
     org: v.string(),
@@ -256,13 +479,17 @@ const convexSchema = defineSchema({
     defaultBranch: v.optional(v.string()),
     connectionId: v.optional(v.id("providerConnections")),
     lastSyncedAt: v.optional(v.number()),
+    lastPushedAt: v.optional(v.number()),
+    // Manual repos (added via custom URL input)
+    manual: v.optional(v.boolean()),
   })
     .index("by_org", ["org"])
     .index("by_gitRemote", ["gitRemote"])
     .index("by_team_user", ["teamId", "userId"]) // legacy user scoping
     .index("by_team", ["teamId"]) // team-scoped listing
     .index("by_providerRepoId", ["teamId", "providerRepoId"]) // provider id lookup
-    .index("by_connection", ["connectionId"]),
+    .index("by_connection", ["connectionId"])
+    .index("by_team_fullName", ["teamId", "fullName"]),
   branches: defineTable({
     repo: v.string(), // legacy string repo name (fullName)
     repoId: v.optional(v.id("repos")), // canonical link to repos table
@@ -271,6 +498,8 @@ const convexSchema = defineSchema({
     teamId: v.string(),
     lastCommitSha: v.optional(v.string()),
     lastActivityAt: v.optional(v.number()),
+    lastKnownBaseSha: v.optional(v.string()),
+    lastKnownMergeCommitSha: v.optional(v.string()),
   })
     .index("by_repo", ["repo"])
     .index("by_repoId", ["repoId"]) // new canonical lookup
@@ -299,11 +528,21 @@ const convexSchema = defineSchema({
   workspaceSettings: defineTable({
     worktreePath: v.optional(v.string()), // Custom path for git worktrees
     autoPrEnabled: v.optional(v.boolean()), // Auto-create PR for crown winner (default: false)
+    nextLocalWorkspaceSequence: v.optional(v.number()), // Counter for local workspace naming
     createdAt: v.number(),
     updatedAt: v.number(),
     userId: v.string(),
     teamId: v.string(),
   }).index("by_team_user", ["teamId", "userId"]),
+  workspaceConfigs: defineTable({
+    projectFullName: v.string(),
+    maintenanceScript: v.optional(v.string()),
+    dataVaultKey: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    userId: v.string(),
+    teamId: v.string(),
+  }).index("by_team_user_repo", ["teamId", "userId", "projectFullName"]),
   crownEvaluations: defineTable({
     taskId: v.id("tasks"),
     evaluatedAt: v.number(),
@@ -419,6 +658,22 @@ const convexSchema = defineSchema({
     .index("by_team_user", ["teamId", "userId"])
     .index("by_dataVaultKey", ["dataVaultKey"]),
 
+  environmentSnapshotVersions: defineTable({
+    environmentId: v.id("environments"),
+    teamId: v.string(),
+    morphSnapshotId: v.string(),
+    version: v.number(),
+    createdAt: v.number(),
+    createdByUserId: v.string(),
+    label: v.optional(v.string()),
+    maintenanceScript: v.optional(v.string()),
+    devScript: v.optional(v.string()),
+  })
+    .index("by_environment_version", ["environmentId", "version"])
+    .index("by_environment_createdAt", ["environmentId", "createdAt"])
+    .index("by_team_createdAt", ["teamId", "createdAt"])
+    .index("by_team_snapshot", ["teamId", "morphSnapshotId"]),
+
   // Webhook deliveries for idempotency and auditing
   webhookDeliveries: defineTable({
     provider: v.string(), // e.g. "github"
@@ -441,7 +696,273 @@ const convexSchema = defineSchema({
       v.literal("expired")
     ),
     createdAt: v.number(),
+    returnUrl: v.optional(v.string()),
   }).index("by_nonce", ["nonce"]),
+
+  // Pull Requests ingested from GitHub (via webhook or backfill)
+  pullRequests: defineTable({
+    // Identity within provider and repo context
+    provider: v.literal("github"),
+    installationId: v.number(),
+    repositoryId: v.optional(v.number()),
+    repoFullName: v.string(), // owner/repo
+    number: v.number(), // PR number
+    providerPrId: v.optional(v.number()), // GitHub numeric id
+
+    // Team scoping
+    teamId: v.string(),
+
+    // Core fields
+    title: v.string(),
+    state: v.union(v.literal("open"), v.literal("closed")),
+    merged: v.optional(v.boolean()),
+    draft: v.optional(v.boolean()),
+    authorLogin: v.optional(v.string()),
+    authorId: v.optional(v.number()),
+    htmlUrl: v.optional(v.string()),
+
+    // Branch and commit info
+    baseRef: v.optional(v.string()),
+    headRef: v.optional(v.string()),
+    baseSha: v.optional(v.string()),
+    headSha: v.optional(v.string()),
+    mergeCommitSha: v.optional(v.string()),
+
+    // Timestamps
+    createdAt: v.optional(v.number()),
+    updatedAt: v.optional(v.number()),
+    closedAt: v.optional(v.number()),
+    mergedAt: v.optional(v.number()),
+
+    // Misc metrics
+    commentsCount: v.optional(v.number()),
+    reviewCommentsCount: v.optional(v.number()),
+    commitsCount: v.optional(v.number()),
+    additions: v.optional(v.number()),
+    deletions: v.optional(v.number()),
+    changedFiles: v.optional(v.number()),
+  })
+    .index("by_team", ["teamId", "updatedAt"]) // list by team, recent first client-side
+    .index("by_team_state", ["teamId", "state", "updatedAt"]) // filter by state
+    .index("by_team_repo_number", ["teamId", "repoFullName", "number"]) // upsert key
+    .index("by_installation", ["installationId", "updatedAt"]) // debug/ops
+    .index("by_repo", ["repoFullName", "updatedAt"]),
+
+  // GitHub Actions workflow runs
+  githubWorkflowRuns: defineTable({
+    // Identity within provider and repo context
+    provider: v.literal("github"),
+    installationId: v.number(),
+    repositoryId: v.optional(v.number()),
+    repoFullName: v.string(), // owner/repo
+
+    // Workflow run identity
+    runId: v.number(), // GitHub's run ID
+    runNumber: v.number(), // Run number within repo
+
+    // Team scoping
+    teamId: v.string(),
+
+    // Workflow info
+    workflowId: v.number(),
+    workflowName: v.string(),
+
+    // Run details
+    name: v.optional(v.string()), // Run name (can be custom)
+    event: v.string(), // Event that triggered the run (push, pull_request, etc.)
+    status: v.optional(
+      v.union(
+        v.literal("queued"),
+        v.literal("in_progress"),
+        v.literal("completed"),
+        v.literal("pending"),
+        v.literal("waiting")
+      )
+    ),
+    conclusion: v.optional(
+      v.union(
+        v.literal("success"),
+        v.literal("failure"),
+        v.literal("neutral"),
+        v.literal("cancelled"),
+        v.literal("skipped"),
+        v.literal("timed_out"),
+        v.literal("action_required")
+      )
+    ),
+
+    // Branch and commit info
+    headBranch: v.optional(v.string()),
+    headSha: v.optional(v.string()),
+
+    // URLs
+    htmlUrl: v.optional(v.string()),
+
+    // Timestamps
+    createdAt: v.optional(v.number()),
+    updatedAt: v.optional(v.number()),
+    runStartedAt: v.optional(v.number()),
+    runCompletedAt: v.optional(v.number()),
+
+    // Run times (in seconds)
+    runDuration: v.optional(v.number()),
+
+    // Actor info
+    actorLogin: v.optional(v.string()),
+    actorId: v.optional(v.number()),
+
+    // Triggering PR (if applicable)
+    triggeringPrNumber: v.optional(v.number()),
+  })
+    .index("by_team", ["teamId", "updatedAt"]) // list by team, recent first
+    .index("by_team_repo", ["teamId", "repoFullName", "updatedAt"]) // filter by repo
+    .index("by_team_workflow", ["teamId", "workflowId", "updatedAt"]) // filter by workflow
+    .index("by_installation", ["installationId", "updatedAt"]) // debug/ops
+    .index("by_runId", ["runId"]) // unique lookup
+    .index("by_repo_runNumber", ["repoFullName", "runNumber"]) // unique per repo
+    .index("by_repo_sha", ["repoFullName", "headSha", "runStartedAt"]), // filter by SHA for PR
+
+  // GitHub Check Runs (for Vercel, deployments, etc.)
+  githubCheckRuns: defineTable({
+    // Identity
+    provider: v.literal("github"),
+    installationId: v.number(),
+    repositoryId: v.optional(v.number()),
+    repoFullName: v.string(),
+    checkRunId: v.number(), // GitHub check run ID
+
+    // Team scoping
+    teamId: v.string(),
+
+    // Check run details
+    name: v.string(), // Check name (e.g., "Vercel - cmux-client")
+    status: v.optional(
+      v.union(
+        v.literal("queued"),
+        v.literal("in_progress"),
+        v.literal("completed"),
+        v.literal("pending"),
+        v.literal("waiting")
+      )
+    ),
+    conclusion: v.optional(
+      v.union(
+        v.literal("success"),
+        v.literal("failure"),
+        v.literal("neutral"),
+        v.literal("cancelled"),
+        v.literal("skipped"),
+        v.literal("timed_out"),
+        v.literal("action_required")
+      )
+    ),
+
+    // Commit info
+    headSha: v.string(),
+
+    // URLs
+    htmlUrl: v.optional(v.string()),
+
+    // Timestamps
+    updatedAt: v.optional(v.number()),
+    startedAt: v.optional(v.number()),
+    completedAt: v.optional(v.number()),
+
+    // App info (e.g., Vercel)
+    appName: v.optional(v.string()),
+    appSlug: v.optional(v.string()),
+
+    // Triggering PR (if applicable)
+    triggeringPrNumber: v.optional(v.number()),
+  })
+    .index("by_team", ["teamId", "updatedAt"])
+    .index("by_team_repo", ["teamId", "repoFullName", "updatedAt"])
+    .index("by_checkRunId", ["checkRunId"])
+    .index("by_headSha", ["headSha", "updatedAt"]),
+
+  // GitHub Deployments (Vercel, etc.)
+  githubDeployments: defineTable({
+    provider: v.literal("github"),
+    installationId: v.number(),
+    repositoryId: v.optional(v.number()),
+    repoFullName: v.string(),
+    deploymentId: v.number(),
+    teamId: v.string(),
+
+    // Deployment details
+    sha: v.string(),
+    ref: v.optional(v.string()),
+    task: v.optional(v.string()),
+    environment: v.optional(v.string()),
+    description: v.optional(v.string()),
+
+    // Creator info
+    creatorLogin: v.optional(v.string()),
+
+    // Timestamps
+    createdAt: v.optional(v.number()),
+    updatedAt: v.optional(v.number()),
+
+    // Current status (from latest deployment_status)
+    state: v.optional(
+      v.union(
+        v.literal("error"),
+        v.literal("failure"),
+        v.literal("pending"),
+        v.literal("in_progress"),
+        v.literal("queued"),
+        v.literal("success")
+      )
+    ),
+    statusDescription: v.optional(v.string()),
+    targetUrl: v.optional(v.string()),
+    environmentUrl: v.optional(v.string()),
+    logUrl: v.optional(v.string()),
+
+    // Triggering PR (if applicable)
+    triggeringPrNumber: v.optional(v.number()),
+  })
+    .index("by_team", ["teamId", "updatedAt"])
+    .index("by_team_repo", ["teamId", "repoFullName", "updatedAt"])
+    .index("by_deploymentId", ["deploymentId"])
+    .index("by_sha", ["sha", "updatedAt"]),
+
+  // GitHub Commit Statuses (legacy status API)
+  githubCommitStatuses: defineTable({
+    provider: v.literal("github"),
+    installationId: v.number(),
+    repositoryId: v.optional(v.number()),
+    repoFullName: v.string(),
+    statusId: v.number(),
+    teamId: v.string(),
+
+    // Status details
+    sha: v.string(),
+    state: v.union(
+      v.literal("error"),
+      v.literal("failure"),
+      v.literal("pending"),
+      v.literal("success")
+    ),
+    context: v.string(),
+    description: v.optional(v.string()),
+    targetUrl: v.optional(v.string()),
+
+    // Creator info
+    creatorLogin: v.optional(v.string()),
+
+    // Timestamps
+    createdAt: v.optional(v.number()),
+    updatedAt: v.optional(v.number()),
+
+    // Triggering PR (if applicable)
+    triggeringPrNumber: v.optional(v.number()),
+  })
+    .index("by_team", ["teamId", "updatedAt"])
+    .index("by_team_repo", ["teamId", "repoFullName", "updatedAt"])
+    .index("by_statusId", ["statusId"])
+    .index("by_sha_context", ["sha", "context", "updatedAt"])
+    .index("by_sha", ["sha", "updatedAt"]),
 });
 
 export default convexSchema;

@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { log } from "./logger.js";
+import { log } from "./logger";
 
 interface IdleDetectionOptions {
   sessionName: string;
@@ -121,7 +121,7 @@ export async function detectTerminalIdle(
     onIdle,
     ignorePatterns = DEFAULT_IGNORE_PATTERNS,
   } = options;
-  
+
   log("INFO", "[detectTerminalIdle] Starting terminal idle detection", {
     sessionName,
     idleTimeoutMs,
@@ -143,12 +143,16 @@ export async function detectTerminalIdle(
     // Set a maximum timeout for the entire detection process
     const MAX_RUNTIME_MS = 20 * 60 * 1000; // 20 minutes max for any agent
     maxRuntimeTimer = setTimeout(() => {
-      log("WARNING", "[detectTerminalIdle] Maximum runtime reached, forcing completion", {
-        sessionName,
-        maxRuntimeMs: MAX_RUNTIME_MS,
-        elapsedMs: Date.now() - startTime,
-      });
-      
+      log(
+        "WARNING",
+        "[detectTerminalIdle] Maximum runtime reached, forcing completion",
+        {
+          sessionName,
+          maxRuntimeMs: MAX_RUNTIME_MS,
+          elapsedMs: Date.now() - startTime,
+        }
+      );
+
       if (!idleDetected) {
         idleDetected = true;
         if (onIdle) {
@@ -166,7 +170,7 @@ export async function detectTerminalIdle(
         });
       }
     }, MAX_RUNTIME_MS);
-    
+
     // Poll tmux session to see if it's ready, retry up to 10 times with 100ms delay
     try {
       log(
@@ -283,7 +287,7 @@ export async function detectTerminalIdle(
           });
           clearTimeout(idleTimer);
         }
-        
+
         if (maxRuntimeTimer) {
           clearTimeout(maxRuntimeTimer);
         }
@@ -343,7 +347,10 @@ export async function detectTerminalIdle(
 
       // Check if we're in the grace period after sending detach command
       const DETACH_GRACE_PERIOD_MS = 500; // 500ms grace period
-      if (detachCommandSentTime && currentTime - detachCommandSentTime < DETACH_GRACE_PERIOD_MS) {
+      if (
+        detachCommandSentTime &&
+        currentTime - detachCommandSentTime < DETACH_GRACE_PERIOD_MS
+      ) {
         log(
           "DEBUG",
           `[detectTerminalIdle] Ignoring stdout output during detach grace period`,
@@ -419,7 +426,10 @@ export async function detectTerminalIdle(
 
       // Check if we're in the grace period after sending detach command
       const DETACH_GRACE_PERIOD_MS = 500; // 500ms grace period
-      if (detachCommandSentTime && currentTime - detachCommandSentTime < DETACH_GRACE_PERIOD_MS) {
+      if (
+        detachCommandSentTime &&
+        currentTime - detachCommandSentTime < DETACH_GRACE_PERIOD_MS
+      ) {
         log(
           "DEBUG",
           `[detectTerminalIdle] Ignoring stderr output during detach grace period`,
@@ -510,16 +520,16 @@ export async function detectTerminalIdle(
         );
         clearTimeout(idleTimer);
       }
-      
+
       if (maxRuntimeTimer) {
         clearTimeout(maxRuntimeTimer);
       }
-      
+
       if (!idleDetected) {
         // Session ended before idle timeout
         // Only treat as completion if it ran for a reasonable amount of time AND exited cleanly
         const MIN_RUNTIME_MS = 30000; // Require at least 30 seconds of runtime
-        
+
         if (elapsedTime < MIN_RUNTIME_MS) {
           log(
             "ERROR",
@@ -533,10 +543,14 @@ export async function detectTerminalIdle(
             }
           );
           // Reject to indicate this was not a successful completion
-          reject(new Error(`Terminal exited too quickly after ${elapsedTime}ms (min: ${MIN_RUNTIME_MS}ms)`));
+          reject(
+            new Error(
+              `Terminal exited too quickly after ${elapsedTime}ms (min: ${MIN_RUNTIME_MS}ms)`
+            )
+          );
           return;
         }
-        
+
         // Don't treat ANY exit as success if it happened too quickly
         // Even exit code 0 can mean the process failed to properly start
         log(
@@ -551,7 +565,11 @@ export async function detectTerminalIdle(
           }
         );
         // Reject to indicate this was not a successful completion
-        reject(new Error(`Terminal exited prematurely with code ${code} after ${elapsedTime}ms - process likely failed to start properly`));
+        reject(
+          new Error(
+            `Terminal exited prematurely with code ${code} after ${elapsedTime}ms - process likely failed to start properly`
+          )
+        );
         return;
       } else {
         log(

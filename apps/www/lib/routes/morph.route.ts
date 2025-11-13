@@ -1,15 +1,30 @@
 import {
-  generateGitHubInstallationToken,
-  getInstallationForRepo,
-} from "@/lib/utils/github-app-token";
+  DEFAULT_MORPH_SNAPSHOT_ID,
+  MORPH_SNAPSHOT_PRESETS,
+  type MorphSnapshotId,
+} from "@/lib/utils/morph-defaults";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { env } from "@/lib/utils/www-env";
-import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
+import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { MorphCloudClient } from "morphcloud";
-import { DEFAULT_MORPH_SNAPSHOT_ID } from "@/lib/utils/morph-defaults";
+import { getConvex } from "../utils/get-convex";
+import { selectGitIdentity } from "../utils/gitIdentity";
 import { stackServerAppJs } from "../utils/stack";
+import {
+  configureGithubAccess,
+  configureGitIdentity,
+  fetchGitIdentityInputs,
+} from "./sandboxes/git";
 
 export const morphRouter = new OpenAPIHono();
+
+const morphSnapshotIds = MORPH_SNAPSHOT_PRESETS.map(
+  (preset) => preset.id
+) as MorphSnapshotId[];
+
+const SnapshotIdSchema = z.enum(
+  morphSnapshotIds as [MorphSnapshotId, ...MorphSnapshotId[]]
+);
 
 const SetupInstanceBody = z
   .object({
@@ -17,6 +32,8 @@ const SetupInstanceBody = z
     instanceId: z.string().optional(), // Existing instance ID to reuse
     selectedRepos: z.array(z.string()).optional(), // Repositories to clone
     ttlSeconds: z.number().default(60 * 30), // 30 minutes default
+    // TODO: This is a temporary solution to allow both string and enum values since client values are diff from backend values
+    snapshotId: z.union([z.string(), SnapshotIdSchema]).optional(),
   })
   .openapi("SetupInstanceBody");
 
@@ -70,10 +87,40 @@ morphRouter.openapi(
       instanceId: existingInstanceId,
       selectedRepos,
       ttlSeconds,
+      snapshotId,
     } = c.req.valid("json");
+
+    const convex = getConvex({ accessToken });
 
     // Verify team access and get the team
     const team = await verifyTeamAccess({ req: c.req.raw, teamSlugOrId });
+    const githubAccessTokenPromise = (async () => {
+      const githubAccount = await user.getConnectedAccount("github");
+      if (!githubAccount) {
+        return {
+          githubAccessTokenError: "GitHub account not found",
+          githubAccessToken: null,
+        } as const;
+      }
+      const { accessToken: githubAccessToken } =
+        await githubAccount.getAccessToken();
+      if (!githubAccessToken) {
+        return {
+          githubAccessTokenError: "GitHub access token not found",
+          githubAccessToken: null,
+        } as const;
+      }
+
+      return { githubAccessTokenError: null, githubAccessToken } as const;
+    })();
+    const gitIdentityPromise = githubAccessTokenPromise.then(
+      ({ githubAccessToken }) => {
+        if (!githubAccessToken) {
+          throw new Error("GitHub access token not found");
+        }
+        return fetchGitIdentityInputs(convex, githubAccessToken);
+      }
+    );
 
     try {
       const client = new MorphCloudClient({
@@ -82,12 +129,15 @@ morphRouter.openapi(
 
       let instance;
       let instanceId = existingInstanceId;
+      const selectedSnapshotId = snapshotId ?? DEFAULT_MORPH_SNAPSHOT_ID;
 
       // If no instanceId provided, create a new instance
       if (!instanceId) {
-        console.log("Creating new Morph instance");
+        console.log(
+          `Creating new Morph instance (snapshot: ${selectedSnapshotId})`
+        );
         instance = await client.instances.start({
-          snapshotId: DEFAULT_MORPH_SNAPSHOT_ID,
+          snapshotId: selectedSnapshotId,
           ttlSeconds,
           ttlAction: "pause",
           metadata: {
@@ -114,6 +164,18 @@ morphRouter.openapi(
         }
       }
 
+      void gitIdentityPromise
+        .then(([who, gh]) => {
+          const { name, email } = selectGitIdentity(who, gh);
+          return configureGitIdentity(instance, { name, email });
+        })
+        .catch((error) => {
+          console.log(
+            `[sandboxes.start] Failed to configure git identity; continuing...`,
+            error
+          );
+        });
+
       // Get VSCode URL
       const vscodeUrl = instance.networking.httpServices.find(
         (service) => service.port === 39378
@@ -123,11 +185,23 @@ morphRouter.openapi(
         throw new Error("VSCode URL not found");
       }
 
+      const { githubAccessToken, githubAccessTokenError } =
+        await githubAccessTokenPromise;
+      if (githubAccessTokenError) {
+        console.error(
+          `[sandboxes.start] GitHub access token error: ${githubAccessTokenError}`
+        );
+        return c.text("Failed to resolve GitHub credentials", 401);
+      }
+      await configureGithubAccess(instance, githubAccessToken);
+
       const url = `${vscodeUrl}/?folder=/root/workspace`;
 
       // Handle repository management if repos are specified
       const removedRepos: string[] = [];
       const clonedRepos: string[] = [];
+      const failedClones: { repo: string; error: string; isAuth: boolean }[] =
+        [];
 
       if (selectedRepos && selectedRepos.length > 0) {
         // Validate repo format and check for duplicates
@@ -207,59 +281,93 @@ morphRouter.openapi(
         }
 
         // For each owner group, mint a token and clone that owner's repos
-        for (const [owner, repos] of reposByOwner) {
-          // Resolve installation for this owner via any repo under it
-          const firstRepoForOwner = repos[0];
-          const installationId =
-            await getInstallationForRepo(firstRepoForOwner);
-          if (!installationId) {
-            return c.text(
-              `No GitHub App installation found for ${owner}. Please install the GitHub App for this organization/user.`,
-              400
-            );
-          }
-
-          console.log(
-            `Generating GitHub App token for installation ${installationId} with repos: ${repos.join(", ")}`
-          );
-
-          const githubToken = await generateGitHubInstallationToken({
-            installationId,
-            repositories: repos,
-          });
-
-          // Set GitHub token via envctl for this batch
-          console.log("Setting GitHub token via envctl for owner", owner);
-          const setTokenCmd = await instance.exec(
-            `envctl set GITHUB_TOKEN=${githubToken}`
-          );
-          if (setTokenCmd.exit_code !== 0) {
-            console.error(`Failed to set GitHub token: ${setTokenCmd.stderr}`);
-          }
-
-          // Clone new repos for this owner
-          for (const repo of repos) {
+        for (const [, repos] of reposByOwner) {
+          // Clone new repos for this owner in parallel with retries
+          const clonePromises = repos.map(async (repo) => {
             const repoName = repo.split("/").pop()!;
             if (!existingRepos.has(repoName)) {
               console.log(`Cloning repository: ${repo}`);
 
-              // Ensure workspace directory exists
-              await instance.exec("mkdir -p /root/workspace");
+              const maxRetries = 3;
+              let lastError: string | undefined;
+              let isAuthError = false;
 
-              const cloneCmd = await instance.exec(
-                `cd /root/workspace && git clone https://\${GITHUB_TOKEN}@github.com/${repo}.git ${repoName}`
-              );
+              for (let attempt = 1; attempt <= maxRetries; attempt++) {
+                const cloneCmd = await instance.exec(
+                  `mkdir -p /root/workspace && cd /root/workspace && git clone https://github.com/${repo}.git ${repoName} 2>&1`
+                );
 
-              if (cloneCmd.exit_code === 0) {
-                clonedRepos.push(repo);
-              } else {
-                console.error(`Failed to clone ${repo}: ${cloneCmd.stderr}`);
-                // Continue with other repos instead of failing entire request
+                if (cloneCmd.exit_code === 0) {
+                  return { success: true as const, repo };
+                } else {
+                  lastError = cloneCmd.stderr || cloneCmd.stdout;
+
+                  // Check for authentication errors
+                  isAuthError =
+                    lastError.includes("Authentication failed") ||
+                    lastError.includes("could not read Username") ||
+                    lastError.includes("could not read Password") ||
+                    lastError.includes("Invalid username or password") ||
+                    lastError.includes("Permission denied") ||
+                    lastError.includes("Repository not found") ||
+                    lastError.includes("403");
+
+                  // Don't retry authentication errors
+                  if (isAuthError) {
+                    console.error(
+                      `Authentication failed for ${repo}: ${lastError}`
+                    );
+                    break;
+                  }
+
+                  if (attempt < maxRetries) {
+                    console.log(
+                      `Clone attempt ${attempt} failed for ${repo}, retrying...`
+                    );
+                    // Clean up partial clone if it exists
+                    await instance.exec(`rm -rf /root/workspace/${repoName}`);
+                    // Wait before retry with exponential backoff
+                    await new Promise((resolve) =>
+                      setTimeout(resolve, attempt * 1000)
+                    );
+                  }
+                }
               }
+
+              const errorMsg = isAuthError
+                ? `Authentication failed - check repository access permissions`
+                : `Failed after ${maxRetries} attempts`;
+
+              console.error(
+                `Failed to clone ${repo}: ${errorMsg}\nDetails: ${lastError}`
+              );
+              return {
+                success: false as const,
+                repo,
+                error: lastError || "Unknown error",
+                isAuth: isAuthError,
+              };
             } else {
               console.log(
                 `Repository ${repo} already exists with correct remote, skipping clone`
               );
+              return null;
+            }
+          });
+
+          const results = await Promise.all(clonePromises);
+
+          for (const result of results) {
+            if (result && "success" in result) {
+              if (result.success) {
+                clonedRepos.push(result.repo);
+              } else {
+                failedClones.push({
+                  repo: result.repo,
+                  error: result.error,
+                  isAuth: result.isAuth,
+                });
+              }
             }
           }
         }
@@ -272,6 +380,7 @@ morphRouter.openapi(
         vscodeUrl: url,
         clonedRepos,
         removedRepos,
+        failedClones,
       });
     } catch (error) {
       console.error("Failed to setup Morph instance:", error);

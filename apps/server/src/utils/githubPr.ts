@@ -1,5 +1,5 @@
-import { markPrReady as markPrReadyImpl } from "./markPrReady.js";
-import { getOctokit } from "./octokit.js";
+import { markPrReady as markPrReadyImpl } from "./markPrReady";
+import { getOctokit } from "./octokit";
 
 export type PrBasic = {
   number: number;
@@ -97,6 +97,33 @@ export async function createReadyPr(
     base,
     body,
     draft: false,
+  });
+  return {
+    number: data.number,
+    html_url: data.html_url,
+    state: data.state,
+    draft: data.draft ?? undefined,
+  };
+}
+
+export async function createDraftPr(
+  token: string,
+  owner: string,
+  repo: string,
+  title: string,
+  head: string,
+  base: string,
+  body: string
+): Promise<PrBasic> {
+  const octokit = getOctokit(token);
+  const { data } = await octokit.rest.pulls.create({
+    owner,
+    repo,
+    title,
+    head,
+    base,
+    body,
+    draft: true,
   });
   return {
     number: data.number,

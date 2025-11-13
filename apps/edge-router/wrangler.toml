@@ -1,0 +1,17 @@
+name = "cmux-edge-router"
+main = "src/index.ts"
+compatibility_date = "2024-09-01"
+account_id = "0c1675e0def6de1ab3a50a4e17dc5656"
+
+# Bind to cmux.sh apex and all subdomains
+routes = [
+  { pattern = "cmux.sh/*", zone_name = "cmux.sh" },
+  { pattern = "*.cmux.sh/*", zone_name = "cmux.sh" },
+]
+
+
+[observability.logs]
+enabled = true
+
+[placement]
+mode = "smart"

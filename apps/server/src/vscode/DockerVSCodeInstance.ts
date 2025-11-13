@@ -1,20 +1,20 @@
 import { api } from "@cmux/convex/api";
 import type { Id } from "@cmux/convex/dataModel";
-import { getShortId } from "@cmux/shared";
 import Docker from "dockerode";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import * as os from "os";
-import * as path from "path";
-import { getConvex } from "../utils/convexClient.js";
-import { getAuthToken, runWithAuthToken } from "../utils/requestContext.js";
-import { cleanupGitCredentials } from "../utils/dockerGitSetup.js";
-import { dockerLogger } from "../utils/fileLogger.js";
-import { getGitHubTokenFromKeychain } from "../utils/getGitHubToken.js";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { getDockerSocketCandidates } from "@cmux/shared/providers/common/check-docker";
+import { getConvex } from "../utils/convexClient";
+import { cleanupGitCredentials } from "../utils/dockerGitSetup";
+import { dockerLogger } from "../utils/fileLogger";
+import { getGitHubTokenFromKeychain } from "../utils/getGitHubToken";
+import { getAuthToken, runWithAuthToken } from "../utils/requestContext";
 import {
   VSCodeInstance,
   type VSCodeInstanceConfig,
   type VSCodeInstanceInfo,
-} from "./VSCodeInstance.js";
+} from "./VSCodeInstance";
 
 // Global port mapping storage
 export interface ContainerMapping {
@@ -26,6 +26,8 @@ export interface ContainerMapping {
     vscode: string;
     worker: string;
     extension?: string;
+    proxy?: string;
+    vnc?: string;
   };
   status: "starting" | "running" | "stopped";
   workspacePath?: string;
@@ -41,6 +43,11 @@ interface DockerEvent {
   };
 }
 
+type HostConfigWithCgroupns =
+  Docker.ContainerCreateOptions["HostConfig"] & {
+    CgroupnsMode?: "host" | "private";
+  };
+
 export class DockerVSCodeInstance extends VSCodeInstance {
   private containerName: string;
   private imageName: string;
@@ -51,29 +58,26 @@ export class DockerVSCodeInstance extends VSCodeInstance {
     timestamp: number;
   } | null = null;
   private static readonly PORT_CACHE_DURATION = 2000; // 2 seconds
-  private static eventsProcess: ChildProcessWithoutNullStreams | null = null;
+  private static eventsStream: NodeJS.ReadableStream | null = null;
   private static dockerInstance: Docker | null = null;
+  private static eventStreamRetryTimer: NodeJS.Timeout | null = null;
+  private static eventStreamBackoffMs = 1000;
 
   // Get or create the Docker singleton
   static getDocker(): Docker {
     if (!DockerVSCodeInstance.dockerInstance) {
-      DockerVSCodeInstance.dockerInstance = new Docker({
-        socketPath: "/var/run/docker.sock",
-      });
+      const socketPath = DockerVSCodeInstance.getDockerSocketPath();
+      DockerVSCodeInstance.dockerInstance = socketPath
+        ? new Docker({ socketPath })
+        : new Docker();
     }
     return DockerVSCodeInstance.dockerInstance;
   }
 
   constructor(config: VSCodeInstanceConfig) {
     super(config);
-    // Use a simplified container name based on taskRunId
-    // Since taskRunId is a Convex ID like "jb74m5s2g9d6c5w6qkbmxsm7sh744d"
-    // We'll take the first 12 chars for a shorter container name
-    const shortId = getShortId(this.taskRunId);
-    this.containerName = `cmux-${shortId}`;
+    this.containerName = `cmux-${this.taskRunId}`;
     this.imageName = process.env.WORKER_IMAGE_NAME || "cmux-worker:0.0.1";
-    // this.imageName =
-    //   process.env.WORKER_IMAGE_NAME || "lawrencecchen/cmux:0.2.16";
     dockerLogger.info(`WORKER_IMAGE_NAME: ${process.env.WORKER_IMAGE_NAME}`);
     dockerLogger.info(`this.imageName: ${this.imageName}`);
     // Register this instance
@@ -93,8 +97,6 @@ export class DockerVSCodeInstance extends VSCodeInstance {
 
       try {
         const stream = await docker.pull(this.imageName);
-
-        // Wait for pull to complete
         await new Promise((resolve, reject) => {
           docker.modem.followProgress(
             stream,
@@ -115,7 +117,6 @@ export class DockerVSCodeInstance extends VSCodeInstance {
             }
           );
         });
-
         dockerLogger.info(`Successfully pulled image ${this.imageName}`);
       } catch (pullError) {
         dockerLogger.error(
@@ -131,7 +132,7 @@ export class DockerVSCodeInstance extends VSCodeInstance {
 
   /**
    * Get the actual host port for a given container port
-   * @param containerPort The port inside the container (e.g., "39378", "39377", "39376")
+   * @param containerPort The port inside the container (e.g., "39378", "39377", "39376", "39379", "39380")
    * @returns The actual host port or null if not found
    */
   async getActualPort(containerPort: string): Promise<string | null> {
@@ -179,6 +180,9 @@ export class DockerVSCodeInstance extends VSCodeInstance {
       }
 
       // Also cache other known ports while we're at it
+      if (ports["39375/tcp"]?.[0]?.HostPort) {
+        portMapping["39375"] = ports["39375/tcp"][0].HostPort;
+      }
       if (ports["39378/tcp"]?.[0]?.HostPort) {
         portMapping["39378"] = ports["39378/tcp"][0].HostPort;
       }
@@ -187,6 +191,15 @@ export class DockerVSCodeInstance extends VSCodeInstance {
       }
       if (ports["39376/tcp"]?.[0]?.HostPort) {
         portMapping["39376"] = ports["39376/tcp"][0].HostPort;
+      }
+      if (ports["39379/tcp"]?.[0]?.HostPort) {
+        portMapping["39379"] = ports["39379/tcp"][0].HostPort;
+      }
+      if (ports["39380/tcp"]?.[0]?.HostPort) {
+        portMapping["39380"] = ports["39380/tcp"][0].HostPort;
+      }
+      if (ports["39381/tcp"]?.[0]?.HostPort) {
+        portMapping["39381"] = ports["39381/tcp"][0].HostPort;
       }
 
       // Update cache
@@ -225,7 +238,7 @@ export class DockerVSCodeInstance extends VSCodeInstance {
       instanceId: this.instanceId,
       teamSlugOrId: this.teamSlugOrId,
       authToken: this.authToken,
-      ports: { vscode: "", worker: "" },
+      ports: { vscode: "", worker: "", extension: "", proxy: "", vnc: "" },
       status: "starting",
       workspacePath: this.config.workspacePath,
     });
@@ -251,23 +264,39 @@ export class DockerVSCodeInstance extends VSCodeInstance {
     }
 
     // Create container configuration
+    const hostConfig: HostConfigWithCgroupns = {
+      AutoRemove: true,
+      Privileged: true,
+      CgroupnsMode: "host",
+      PortBindings: {
+        "39375/tcp": [{ HostPort: "0" }], // Exec service port
+        "39378/tcp": [{ HostPort: "0" }], // VS Code port
+        "39377/tcp": [{ HostPort: "0" }], // Worker port
+        "39376/tcp": [{ HostPort: "0" }], // Extension socket port
+        "39379/tcp": [{ HostPort: "0" }], // cmux-proxy port
+        "39380/tcp": [{ HostPort: "0" }], // VNC websockify port
+        "39381/tcp": [{ HostPort: "0" }], // Chrome DevTools port
+      },
+      Tmpfs: {
+        "/run": "rw,mode=755",
+        "/run/lock": "rw,mode=755",
+      },
+      Binds: ["/sys/fs/cgroup:/sys/fs/cgroup:rw"],
+    };
+
     const createOptions: Docker.ContainerCreateOptions = {
       name: this.containerName,
       Image: this.imageName,
       Env: envVars,
-      HostConfig: {
-        AutoRemove: true,
-        Privileged: true,
-        PortBindings: {
-          "39378/tcp": [{ HostPort: "0" }], // VS Code port
-          "39377/tcp": [{ HostPort: "0" }], // Worker port
-          "39376/tcp": [{ HostPort: "0" }], // Extension socket port
-        },
-      },
+      HostConfig: hostConfig,
       ExposedPorts: {
+        "39375/tcp": {},
         "39378/tcp": {},
         "39377/tcp": {},
         "39376/tcp": {},
+        "39379/tcp": {},
+        "39380/tcp": {},
+        "39381/tcp": {},
       },
     };
     dockerLogger.info(
@@ -293,16 +322,19 @@ export class DockerVSCodeInstance extends VSCodeInstance {
         const homeDir = os.homedir();
         const gitConfigPath = path.join(homeDir, ".gitconfig");
 
-        const binds = [
-          `${this.config.workspacePath}:/root/workspace`,
-          // Mount the origin directory at the same absolute path to preserve git references
-          `${originPath}:${originPath}:rw`, // Read-write mount for git operations
-        ];
+        const binds =
+          createOptions.HostConfig?.Binds ??
+          ["/sys/fs/cgroup:/sys/fs/cgroup:rw"];
+        if (!createOptions.HostConfig?.Binds) {
+          createOptions.HostConfig!.Binds = binds;
+        }
+        binds.push(`${this.config.workspacePath}:/root/workspace`);
+        // Mount the origin directory at the same absolute path to preserve git references
+        binds.push(`${originPath}:${originPath}:rw`); // Read-write mount for git operations
 
         // Mount SSH directory for git authentication
         const sshDir = path.join(homeDir, ".ssh");
         try {
-          const fs = await import("fs");
           await fs.promises.access(sshDir);
           binds.push(`${sshDir}:/root/.ssh:ro`);
           dockerLogger.info(`  SSH mount: ${sshDir} -> /root/.ssh (read-only)`);
@@ -312,7 +344,6 @@ export class DockerVSCodeInstance extends VSCodeInstance {
 
         // Mount git config if it exists
         try {
-          const fs = await import("fs");
           await fs.promises.access(gitConfigPath);
 
           // Read and filter the git config to remove macOS-specific settings
@@ -350,12 +381,17 @@ export class DockerVSCodeInstance extends VSCodeInstance {
         const homeDir = os.homedir();
         const gitConfigPath = path.join(homeDir, ".gitconfig");
 
-        const binds = [`${this.config.workspacePath}:/root/workspace`];
+        const binds =
+          createOptions.HostConfig?.Binds ??
+          ["/sys/fs/cgroup:/sys/fs/cgroup:rw"];
+        if (!createOptions.HostConfig?.Binds) {
+          createOptions.HostConfig!.Binds = binds;
+        }
+        binds.push(`${this.config.workspacePath}:/root/workspace`);
 
         // Mount SSH directory for git authentication
         const sshDir = path.join(homeDir, ".ssh");
         try {
-          const fs = await import("fs");
           await fs.promises.access(sshDir);
           binds.push(`${sshDir}:/root/.ssh:ro`);
           dockerLogger.info(`  SSH mount: ${sshDir} -> /root/.ssh (read-only)`);
@@ -366,7 +402,6 @@ export class DockerVSCodeInstance extends VSCodeInstance {
         // Mount GitHub CLI config for authentication
         const ghConfigDir = path.join(homeDir, ".config", "gh");
         try {
-          const fs = await import("fs");
           await fs.promises.access(ghConfigDir);
           binds.push(`${ghConfigDir}:/root/.config/gh:rw`);
           dockerLogger.info(
@@ -378,7 +413,6 @@ export class DockerVSCodeInstance extends VSCodeInstance {
 
         // Mount git config if it exists
         try {
-          const fs = await import("fs");
           await fs.promises.access(gitConfigPath);
 
           // Read and filter the git config to remove macOS-specific settings
@@ -435,6 +469,8 @@ export class DockerVSCodeInstance extends VSCodeInstance {
     const vscodePort = ports["39378/tcp"]?.[0]?.HostPort;
     const workerPort = ports["39377/tcp"]?.[0]?.HostPort;
     const extensionPort = ports["39376/tcp"]?.[0]?.HostPort;
+    const proxyPort = ports["39379/tcp"]?.[0]?.HostPort;
+    const vncPort = ports["39380/tcp"]?.[0]?.HostPort;
 
     if (!vscodePort) {
       dockerLogger.error(`Available ports:`, ports);
@@ -446,6 +482,16 @@ export class DockerVSCodeInstance extends VSCodeInstance {
       throw new Error("Failed to get worker port mapping for port 39377");
     }
 
+    if (!proxyPort) {
+      dockerLogger.error(`Available ports:`, ports);
+      throw new Error("Failed to get proxy port mapping for port 39379");
+    }
+
+    if (!vncPort) {
+      dockerLogger.error(`Available ports:`, ports);
+      throw new Error("Failed to get VNC port mapping for port 39380");
+    }
+
     // Update the container mapping with actual ports
     const mapping = containerMappings.get(this.containerName);
     if (mapping) {
@@ -453,6 +499,8 @@ export class DockerVSCodeInstance extends VSCodeInstance {
         vscode: vscodePort,
         worker: workerPort,
         extension: extensionPort,
+        proxy: proxyPort,
+        vnc: vncPort,
       };
       mapping.status = "running";
     }
@@ -466,6 +514,8 @@ export class DockerVSCodeInstance extends VSCodeInstance {
           vscode: vscodePort,
           worker: workerPort,
           extension: extensionPort,
+          proxy: proxyPort,
+          vnc: vncPort,
         },
       });
     } catch (error) {
@@ -504,14 +554,9 @@ export class DockerVSCodeInstance extends VSCodeInstance {
     const workerUrl = `http://localhost:${workerPort}`;
 
     // Generate the proxy URL that clients will use
-    const shortId = getShortId(this.taskRunId);
-    const proxyBaseUrl = `http://${shortId}.39378.localhost:9776`;
-    const proxyWorkspaceUrl = `${proxyBaseUrl}/?folder=/root/workspace`;
-
     dockerLogger.info(`Docker VSCode instance started:`);
     dockerLogger.info(`  VS Code URL: ${workspaceUrl}`);
     dockerLogger.info(`  Worker URL: ${workerUrl}`);
-    dockerLogger.info(`  Proxy URL: ${proxyWorkspaceUrl}`);
 
     // Monitor container events
     this.setupContainerEventMonitoring();
@@ -534,7 +579,7 @@ export class DockerVSCodeInstance extends VSCodeInstance {
       try {
         const recentLogs = await this.getLogs(300);
         dockerLogger.error(
-          `Recent container logs for ${this.containerName}:\n${recentLogs}`
+          `Recent container logs for ${this.containerName}:\n${recentLogs.trim()}`
         );
       } catch (e) {
         dockerLogger.error(
@@ -571,7 +616,7 @@ export class DockerVSCodeInstance extends VSCodeInstance {
           try {
             const recentLogs = await this.getLogs(300);
             dockerLogger.error(
-              `Recent container logs for ${this.containerName} (on exit):\n${recentLogs}`
+              `Recent container logs for ${this.containerName} (on exit):\n${recentLogs.trim()}`
             );
           } catch (e) {
             dockerLogger.error(
@@ -668,7 +713,6 @@ export class DockerVSCodeInstance extends VSCodeInstance {
 
     // Clean up temporary git config file
     try {
-      const fs = await import("fs");
       const tempGitConfigPath = path.join(
         os.tmpdir(),
         "cmux-git-configs",
@@ -856,7 +900,6 @@ export class DockerVSCodeInstance extends VSCodeInstance {
       }
 
       // Check host for .devcontainer/devcontainer.json
-      const fs = await import("fs");
       const devcontainerFile = path.join(
         workspaceHostPath,
         ".devcontainer",
@@ -930,7 +973,13 @@ export class DockerVSCodeInstance extends VSCodeInstance {
     return `docker-${this.containerName}`;
   }
 
-  getPorts(): { vscode?: string; worker?: string; extension?: string } | null {
+  getPorts(): {
+    vscode?: string;
+    worker?: string;
+    extension?: string;
+    proxy?: string;
+    vnc?: string;
+  } | null {
     const mapping = containerMappings.get(this.containerName);
     return mapping?.ports || null;
   }
@@ -1030,7 +1079,6 @@ export class DockerVSCodeInstance extends VSCodeInstance {
         | undefined = undefined;
 
       try {
-        const fs = await import("fs");
         const privateKeyPath = path.join(sshDir, "id_rsa");
         const publicKeyPath = path.join(sshDir, "id_rsa.pub");
         const knownHostsPath = path.join(sshDir, "known_hosts");
@@ -1104,38 +1152,195 @@ export class DockerVSCodeInstance extends VSCodeInstance {
 
   // Static method to stop the container state sync
   static stopContainerStateSync(): void {
-    if (DockerVSCodeInstance.eventsProcess) {
-      DockerVSCodeInstance.eventsProcess.kill();
-      DockerVSCodeInstance.eventsProcess = null;
-    }
+    DockerVSCodeInstance.clearEventStreamRetryTimer();
+    DockerVSCodeInstance.closeEventStream();
   }
 
   private static syncDockerContainerStates(): void {
     dockerLogger.info("Starting docker event stream for container state sync");
+    void DockerVSCodeInstance.startDockerodeEventStream();
+  }
 
-    const proc = spawn("docker", ["events", "--format", "{{json .}}"]);
-    DockerVSCodeInstance.eventsProcess = proc;
+  // Try to stream events using the Docker socket (no CLI dependency)
+  private static async startDockerodeEventStream(
+    retryDelayMs = 1000
+  ): Promise<void> {
+    if (DockerVSCodeInstance.eventsStream) {
+      return;
+    }
 
-    proc.stdout.setEncoding("utf8");
-    proc.stdout.on("data", (chunk: string) => {
-      const lines = chunk.split("\n").filter((l) => l.trim().length > 0);
-      for (const line of lines) {
-        try {
-          const event = JSON.parse(line) as DockerEvent;
-          void DockerVSCodeInstance.handleDockerEvent(event);
-        } catch (error) {
-          dockerLogger.error("[docker events] Failed to parse event:", error);
+    DockerVSCodeInstance.clearEventStreamRetryTimer();
+    DockerVSCodeInstance.eventStreamBackoffMs = retryDelayMs;
+
+    const socketPath = DockerVSCodeInstance.getDockerSocketPath();
+    if (socketPath && !fs.existsSync(socketPath)) {
+      DockerVSCodeInstance.scheduleEventStreamRestart(
+        `Docker socket not found at ${socketPath}`
+      );
+      return;
+    }
+
+    try {
+      const docker = DockerVSCodeInstance.getDocker();
+      docker.getEvents({}, (err, stream) => {
+        if (err) {
+          DockerVSCodeInstance.scheduleEventStreamRestart(
+            "Failed to attach to docker events stream",
+            err
+          );
+          return;
         }
+        if (!stream) {
+          DockerVSCodeInstance.scheduleEventStreamRestart(
+            "No stream returned by docker.getEvents"
+          );
+          return;
+        }
+
+        DockerVSCodeInstance.eventsStream = stream;
+        DockerVSCodeInstance.eventStreamBackoffMs = 1000;
+
+        let buffer = "";
+        stream.on("data", (chunk: Buffer | string) => {
+          buffer += chunk.toString();
+          for (;;) {
+            const idx = buffer.indexOf("\n");
+            if (idx === -1) break;
+            const line = buffer.slice(0, idx);
+            buffer = buffer.slice(idx + 1);
+            if (!line.trim()) continue;
+            try {
+              const event = JSON.parse(line) as DockerEvent;
+              void DockerVSCodeInstance.handleDockerEvent(event);
+            } catch (e) {
+              dockerLogger.error(
+                "[docker events] Failed to parse socket event:",
+                e
+              );
+            }
+          }
+        });
+
+        stream.on("error", (e) => {
+          DockerVSCodeInstance.logEventStreamError(
+            "Socket stream error",
+            e
+          );
+          DockerVSCodeInstance.closeEventStream();
+          DockerVSCodeInstance.scheduleEventStreamRestart(
+            "Socket stream error",
+            e
+          );
+        });
+
+        stream.on("close", () => {
+          dockerLogger.info("docker socket events stream closed");
+          DockerVSCodeInstance.closeEventStream();
+          DockerVSCodeInstance.scheduleEventStreamRestart(
+            "Docker socket events stream closed"
+          );
+        });
+      });
+    } catch (e) {
+      DockerVSCodeInstance.scheduleEventStreamRestart(
+        "Unable to start Dockerode event stream",
+        e
+      );
+    }
+  }
+
+  private static logEventStreamError(message: string, error: unknown): void {
+    const code =
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      (typeof error.code === "string" || typeof error.code === "number")
+        ? error.code
+        : undefined;
+    const isConnectionReset =
+      code === "ECONNRESET" ||
+      (error instanceof Error && error.message.includes("aborted"));
+
+    if (isConnectionReset) {
+      dockerLogger.warn(`[docker events] ${message}:`, error);
+      return;
+    }
+
+    dockerLogger.error(`[docker events] ${message}:`, error);
+  }
+
+  private static clearEventStreamRetryTimer(): void {
+    if (DockerVSCodeInstance.eventStreamRetryTimer) {
+      clearTimeout(DockerVSCodeInstance.eventStreamRetryTimer);
+      DockerVSCodeInstance.eventStreamRetryTimer = null;
+    }
+  }
+
+  private static scheduleEventStreamRestart(
+    reason: string,
+    error?: unknown
+  ): void {
+    const delay = Math.min(
+      Math.max(DockerVSCodeInstance.eventStreamBackoffMs, 500),
+      30_000
+    );
+    DockerVSCodeInstance.eventStreamBackoffMs = Math.min(delay * 2, 30_000);
+
+    if (error) {
+      DockerVSCodeInstance.logEventStreamError(
+        `${reason}. Retrying in ${delay}ms`,
+        error
+      );
+    } else {
+      dockerLogger.warn(`[docker events] ${reason}. Retrying in ${delay}ms`);
+    }
+
+    DockerVSCodeInstance.clearEventStreamRetryTimer();
+    DockerVSCodeInstance.eventStreamRetryTimer = setTimeout(() => {
+      DockerVSCodeInstance.eventStreamRetryTimer = null;
+      void DockerVSCodeInstance.startDockerodeEventStream(
+        DockerVSCodeInstance.eventStreamBackoffMs
+      );
+    }, delay);
+  }
+
+  private static closeEventStream(): void {
+    if (!DockerVSCodeInstance.eventsStream) {
+      return;
+    }
+
+    try {
+      const stream = DockerVSCodeInstance.eventsStream;
+      if (
+        stream &&
+        "removeAllListeners" in stream &&
+        typeof stream.removeAllListeners === "function"
+      ) {
+        stream.removeAllListeners();
       }
-    });
+      if (stream && "destroy" in stream && typeof stream.destroy === "function") {
+        stream.destroy();
+      }
+    } catch {
+      // ignore cleanup errors
+    }
 
-    proc.stderr.on("data", (data: Buffer) => {
-      dockerLogger.error("[docker events]", data.toString());
-    });
+    DockerVSCodeInstance.eventsStream = null;
+  }
 
-    proc.on("close", (code) => {
-      dockerLogger.info(`docker events stream closed with code ${code}`);
-    });
+  private static getDockerSocketPath(): string | null {
+    const { remoteHost, candidates } = getDockerSocketCandidates();
+    if (remoteHost) {
+      return null;
+    }
+
+    for (const candidate of candidates) {
+      if (fs.existsSync(candidate)) {
+        return candidate;
+      }
+    }
+
+    return candidates[0] ?? null;
   }
 
   private static async handleDockerEvent(event: DockerEvent): Promise<void> {
@@ -1161,11 +1366,15 @@ export class DockerVSCodeInstance extends VSCodeInstance {
         const vscodePort = ports["39378/tcp"]?.[0]?.HostPort;
         const workerPort = ports["39377/tcp"]?.[0]?.HostPort;
         const extensionPort = ports["39376/tcp"]?.[0]?.HostPort;
-        if (vscodePort && workerPort) {
+        const proxyPort = ports["39379/tcp"]?.[0]?.HostPort;
+        const vncPort = ports["39380/tcp"]?.[0]?.HostPort;
+        if (vscodePort && workerPort && proxyPort && vncPort) {
           mapping.ports = {
             vscode: vscodePort,
             worker: workerPort,
             extension: extensionPort,
+            proxy: proxyPort,
+            vnc: vncPort,
           };
         }
         mapping.status = "running";
@@ -1177,7 +1386,7 @@ export class DockerVSCodeInstance extends VSCodeInstance {
             return;
           }
           await runWithAuthToken(mapping.authToken, async () => {
-            if (vscodePort && workerPort) {
+            if (vscodePort && workerPort && proxyPort && vncPort) {
               await getConvex().mutation(api.taskRuns.updateVSCodePorts, {
                 teamSlugOrId: mapping.teamSlugOrId,
                 id: taskRunId,
@@ -1185,6 +1394,8 @@ export class DockerVSCodeInstance extends VSCodeInstance {
                   vscode: vscodePort,
                   worker: workerPort,
                   extension: extensionPort,
+                  proxy: proxyPort,
+                  vnc: vncPort,
                 },
               });
             }

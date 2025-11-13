@@ -121,7 +121,7 @@ export function OpenInEditorButton({ workspacePath }: OpenInEditorButtonProps) {
         </button>
       </div>
       {isDropdownOpen && (
-        <div className="absolute right-0 mt-1 w-40 bg-neutral-800 border border-neutral-700 rounded-md shadow-lg z-20 select-none">
+        <div className="absolute right-0 mt-1 w-40 bg-neutral-800 border border-neutral-700 rounded-md shadow-lg z-[var(--z-popover)] select-none">
           {editors.map((editor) => (
             <button
               key={editor.id}

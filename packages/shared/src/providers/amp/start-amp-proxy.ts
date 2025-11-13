@@ -1,11 +1,55 @@
 import { createServer as createHttpServer } from "node:http";
 import { readFile as fspReadFile } from "node:fs/promises";
+import type { Id } from "@cmux/convex/dataModel";
+import type { WorkerToServerEvents } from "../../worker-schemas";
+import {
+  DEFAULT_AMP_PROXY_PORT,
+  DEFAULT_AMP_PROXY_URL,
+} from "./constants";
 
 export type AmpProxyOptions = {
   ampUrl?: string;
+  ampUpstreamUrl?: string;
+  port?: number;
   workerId?: string;
-  emitToMainServer?: (event: string, payload: unknown) => void;
+  emitToMainServer?: <K extends keyof WorkerToServerEvents>(
+    event: K,
+    ...args: Parameters<WorkerToServerEvents[K]>
+  ) => void;
 };
+
+const parsePort = (value?: string | null): number | undefined => {
+  if (!value) return undefined;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isNaN(parsed) || parsed <= 0 ? undefined : parsed;
+};
+
+const portFromUrl = (value?: string | null): number | undefined => {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value);
+    const portString = url.port;
+    if (!portString) return undefined;
+    return parsePort(portString);
+  } catch {
+    return undefined;
+  }
+};
+
+const normalizeUrlPort = (rawUrl: string, port: number): string => {
+  try {
+    const url = new URL(rawUrl);
+    if (!url.port || parsePort(url.port) !== port) {
+      url.port = String(port);
+    }
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return `http://localhost:${port}`;
+  }
+};
+
+const ensureNoTrailingSlash = (value: string): string =>
+  value.endsWith("/") ? value.slice(0, -1) : value;
 
 async function getRealAmpApiKey(): Promise<string | null> {
   try {
@@ -104,17 +148,40 @@ function ampResponseIndicatesCompletion(json: unknown): boolean {
 }
 
 export function startAmpProxy(options: AmpProxyOptions = {}) {
-  const AMP_PROXY_PORT = 39379;
-  const AMP_TARGET_HOST =
-    options.ampUrl || process.env.AMP_UPSTREAM_URL || "https://ampcode.com";
+  const explicitPort =
+    typeof options.port === "number" && Number.isFinite(options.port)
+      ? options.port
+      : undefined;
+
+  const port =
+    explicitPort ??
+    portFromUrl(options.ampUrl) ??
+    parsePort(process.env.AMP_PROXY_PORT) ??
+    portFromUrl(process.env.AMP_URL) ??
+    DEFAULT_AMP_PROXY_PORT;
+
+  const ampUrl = normalizeUrlPort(
+    options.ampUrl ?? process.env.AMP_URL ?? DEFAULT_AMP_PROXY_URL,
+    port,
+  );
+
+  const upstreamHost = ensureNoTrailingSlash(
+    options.ampUpstreamUrl ??
+      process.env.AMP_UPSTREAM_URL ??
+      "https://ampcode.com",
+  );
 
   const emit = options.emitToMainServer || (() => {});
   const workerId = options.workerId;
 
+  console.info(
+    `[AMP proxy] Starting local proxy on ${ampUrl}, forwarding to ${upstreamHost}`,
+  );
+
   (async () => {
     const ampProxy = createHttpServer(async (req, res) => {
       const start = Date.now();
-      const targetUrl = `${AMP_TARGET_HOST}${req.url || "/"}`;
+      const targetUrl = `${upstreamHost}${req.url || "/"}`;
 
       const chunks: Buffer[] = [];
       req.on("data", (chunk) =>
@@ -174,23 +241,35 @@ export function startAmpProxy(options: AmpProxyOptions = {}) {
           }
         }
 
-        const proxyResponse = await fetch(targetUrl, {
-          method: req.method,
-          headers: upstreamHeaders,
-          body: bodyForFetch,
-          redirect: "manual",
-        });
+        let proxyResponse: Response;
+        try {
+          proxyResponse = await fetch(targetUrl, {
+            method: req.method,
+            headers: upstreamHeaders,
+            body: bodyForFetch,
+            redirect: "manual",
+          });
+        } catch (error) {
+          res.statusCode = 502;
+          res.statusMessage = "Bad Gateway";
+          res.end("AMP proxy failed to reach upstream");
+          console.error(
+            `[AMP proxy] Upstream request failed`,
+            error instanceof Error ? error : String(error),
+          );
+          return;
+        }
 
         const responseHeaders = new Headers(proxyResponse.headers);
         responseHeaders.delete("content-encoding");
         responseHeaders.delete("content-length");
         const completed = ampResponseIndicatesCompletion(loggedRequestBody);
 
-        if (completed && taskRunId) {
+        if (completed && taskRunId && workerId) {
           const elapsedMs = Date.now() - start;
           emit("worker:task-complete", {
             workerId,
-            taskRunId,
+            taskRunId: taskRunId as Id<"taskRuns">,
             agentModel: "amp",
             elapsedMs,
           });
@@ -228,8 +307,16 @@ export function startAmpProxy(options: AmpProxyOptions = {}) {
         }
       });
     });
+    ampProxy.on("error", (error) => {
+      console.error(
+        `[AMP proxy] Failed to start on port ${port}`,
+        error instanceof Error ? error : String(error),
+      );
+    });
 
-    ampProxy.listen(AMP_PROXY_PORT);
+    ampProxy.listen(port, () => {
+      console.info(`[AMP proxy] Listening on port ${port}`);
+    });
   })();
 
   return;

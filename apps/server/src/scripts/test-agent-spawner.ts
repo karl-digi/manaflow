@@ -1,9 +1,9 @@
 #!/usr/bin/env tsx
 import { api } from "@cmux/convex/api";
 import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
-import { spawnAgent } from "../agentSpawner.js";
-import { getConvex } from "../utils/convexClient.js";
-import { VSCodeInstance } from "../vscode/VSCodeInstance.js";
+import { spawnAgent } from "../agentSpawner";
+import { getConvex } from "../utils/convexClient";
+import { VSCodeInstance } from "../vscode/VSCodeInstance";
 
 async function main() {
   console.log("=== Testing Agent Spawner ===\n");
@@ -17,10 +17,10 @@ async function main() {
   }
 
   const agentConfig = AGENT_CONFIGS.find(
-    (agent) => agent.name === "codex/gpt-5"
+    (agent) => agent.name === "codex/gpt-5.1-codex-high"
   );
   if (!agentConfig) {
-    console.error("Could not find codex/gpt-5 agent config");
+    console.error("Could not find codex/gpt-5.1-codex-high agent config");
     process.exit(1);
   }
 

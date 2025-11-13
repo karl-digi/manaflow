@@ -21,7 +21,9 @@ function getAdmin(): StackAdminApp {
   return adminApp;
 }
 
-export async function __TEST_INTERNAL_ONLY_GET_STACK_TOKENS(userId: string = DEFAULT_TEST_USER_ID): Promise<Tokens> {
+export async function __TEST_INTERNAL_ONLY_GET_STACK_TOKENS(
+  userId: string = DEFAULT_TEST_USER_ID
+): Promise<Tokens> {
   const admin = getAdmin();
   const user = await admin.getUser(userId);
   if (!user) throw new Error("Test user not found");

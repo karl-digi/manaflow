@@ -43,7 +43,7 @@ console.log(result);
 
 // For each provider connection (GitHub App installation), use an installation token
 // so private repos are included. Do NOT use the user's OAuth token here.
-const appId = env.GITHUB_APP_ID;
+const appId = env.CMUX_GITHUB_APP_ID;
 
 await Promise.all(
   result

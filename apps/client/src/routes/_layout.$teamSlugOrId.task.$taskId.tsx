@@ -1,8 +1,6 @@
 import { api } from "@cmux/convex/api";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
-import { convexQuery } from "@convex-dev/react-query";
 import { useClipboard } from "@mantine/hooks";
-import { useSuspenseQuery } from "@tanstack/react-query";
 import {
   createFileRoute,
   Link,
@@ -12,6 +10,8 @@ import {
 } from "@tanstack/react-router";
 import clsx from "clsx";
 import { Suspense, useEffect } from "react";
+import { convexQueryClient } from "@/contexts/convex/convex-query-client";
+import { useQuery } from "convex/react";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId")({
   component: TaskDetailPage,
@@ -20,20 +20,18 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId")({
     taskId: typedZid("tasks").parse(params.taskId),
   }),
   loader: async (opts) => {
-    await Promise.all([
-      opts.context.queryClient.ensureQueryData(
-        convexQuery(api.taskRuns.getByTask, {
-          teamSlugOrId: opts.params.teamSlugOrId,
-          taskId: opts.params.taskId,
-        })
-      ),
-      opts.context.queryClient.ensureQueryData(
-        convexQuery(api.tasks.getById, {
-          teamSlugOrId: opts.params.teamSlugOrId,
-          id: opts.params.taskId,
-        })
-      ),
-    ]);
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.taskRuns.getByTask,
+      args: {
+        teamSlugOrId: opts.params.teamSlugOrId,
+        taskId: opts.params.taskId,
+      },
+    });
+
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.tasks.getById,
+      args: { teamSlugOrId: opts.params.teamSlugOrId, id: opts.params.taskId },
+    });
   },
 });
 
@@ -45,18 +43,14 @@ type GetByTaskResultItem = (typeof api.taskRuns.getByTask._returnType)[number];
 
 function TaskDetailPage() {
   const { taskId, teamSlugOrId } = Route.useParams();
-  const { data: task } = useSuspenseQuery(
-    convexQuery(api.tasks.getById, {
-      teamSlugOrId,
-      id: taskId,
-    })
-  );
-  const { data: taskRuns } = useSuspenseQuery(
-    convexQuery(api.taskRuns.getByTask, {
-      teamSlugOrId,
-      taskId,
-    })
-  );
+  const task = useQuery(api.tasks.getById, {
+    teamSlugOrId,
+    id: taskId,
+  });
+  const taskRuns = useQuery(api.taskRuns.getByTask, {
+    teamSlugOrId,
+    taskId,
+  });
   const clipboard = useClipboard({ timeout: 2000 });
 
   // Get the deepest matched child to extract runId if present
@@ -116,8 +110,13 @@ function TaskDetailPage() {
 
         if (flatRuns[runIndex]) {
           navigate({
-            to: "/$teamSlugOrId/task/$taskId/run/$taskRunId",
-            params: { teamSlugOrId, taskId, taskRunId: flatRuns[runIndex]._id },
+            to: "/$teamSlugOrId/task/$taskId/run/$runId",
+            params: {
+              teamSlugOrId,
+              taskId,
+              runId: flatRuns[runIndex]._id,
+              taskRunId: flatRuns[runIndex]._id,
+            },
           });
         }
       }
@@ -182,8 +181,13 @@ function TaskDetailPage() {
             {flatRuns.map((run, index) => (
               <Link
                 key={run._id}
-                to="/$teamSlugOrId/task/$taskId/run/$taskRunId"
-                params={{ teamSlugOrId, taskId, taskRunId: run._id }}
+                to="/$teamSlugOrId/task/$taskId/run/$runId"
+                params={{
+                  teamSlugOrId,
+                  taskId,
+                  runId: run._id,
+                  taskRunId: run._id,
+                }}
                 className={clsx(
                   "px-4 py-2 text-sm font-medium whitespace-nowrap border-b-2 transition-colors select-none",
                   activeRunId === run._id
@@ -194,11 +198,11 @@ function TaskDetailPage() {
               >
                 <span style={{ paddingLeft: `${run.depth * 12}px` }}>
                   {(() => {
-                    const agentMatch = run.prompt.match(/\(([^)]+)\)$/);
-                    const agentName = agentMatch
-                      ? agentMatch[1]
-                      : `Run ${index + 1}`;
-                    return agentName;
+                    const name = run.agentName?.trim();
+                    if (name && name.length > 0) return name;
+                    const summary = run.summary?.trim();
+                    if (summary && summary.length > 0) return summary;
+                    return `Run ${index + 1}`;
                   })()}
                   {run.status === "running" && " 🟢"}
                   {run.status === "completed" && " ✅"}

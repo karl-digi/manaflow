@@ -1,25 +1,8 @@
 import { v } from "convex/values";
 import { getTeamId, resolveTeamIdLoose } from "../_shared/team";
-import { authMutation, authQuery } from "./users/utils";
+import { normalizeSlug, validateSlug } from "../_shared/teamSlug";
 import { internalQuery } from "./_generated/server";
-
-function normalizeSlug(input: string): string {
-  const s = input.trim().toLowerCase();
-  return s;
-}
-
-function validateSlug(slug: string): void {
-  const s = normalizeSlug(slug);
-  // 3-48 chars, lowercase letters, numbers, and hyphens. Must start/end with alphanumeric.
-  if (s.length < 3 || s.length > 48) {
-    throw new Error("Slug must be 3–48 characters long");
-  }
-  if (!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(s)) {
-    throw new Error(
-      "Slug can contain lowercase letters, numbers, and hyphens, and must start/end with a letter or number"
-    );
-  }
-}
+import { authMutation, authQuery } from "./users/utils";
 
 export const get = authQuery({
   args: { teamSlugOrId: v.string() },
@@ -47,14 +30,14 @@ export const listTeamMemberships = authQuery({
       .query("teamMemberships")
       .withIndex("by_user", (q) => q.eq("userId", ctx.identity.subject))
       .collect();
-  const teams = await Promise.all(
-    memberships.map((m) =>
-      ctx.db
-        .query("teams")
-        .withIndex("by_teamId", (q) => q.eq("teamId", m.teamId))
-        .first()
-    )
-  );
+    const teams = await Promise.all(
+      memberships.map((m) =>
+        ctx.db
+          .query("teams")
+          .withIndex("by_teamId", (q) => q.eq("teamId", m.teamId))
+          .first()
+      )
+    );
     return memberships.map((m, i) => ({
       ...m,
       team: teams[i]!,

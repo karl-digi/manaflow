@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 import { Id } from "@cmux/convex/dataModel";
-import { DockerVSCodeInstance } from "../vscode/DockerVSCodeInstance.js";
+import { DockerVSCodeInstance } from "../vscode/DockerVSCodeInstance";
 
 async function main() {
   console.log("=== Testing Socket Connection ===\n");
@@ -57,6 +57,7 @@ async function main() {
 
     // Now test terminal creation
     console.log(`\nTesting terminal creation...`);
+    const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL || "http://localhost:9777";
     const terminalCommand = {
       terminalId: "test-terminal",
       command: "echo",
@@ -64,6 +65,11 @@ async function main() {
       cols: 80,
       rows: 24,
       env: {},
+      taskRunContext: {
+        taskRunToken: "test-socket-connection-token",
+        prompt: "Echo Hello World",
+        convexUrl,
+      },
     };
 
     console.log(`Terminal command:`, terminalCommand);

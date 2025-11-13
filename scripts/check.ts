@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
+import { spawn } from "node:child_process";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
-import { spawn } from "node:child_process";
 
 type Pkg = {
   name: string;
@@ -21,7 +21,7 @@ type CheckResult = {
 
 function findPackages(): Pkg[] {
   const repoRoot = join(__dirname, "..");
-  const roots = ["apps", "packages", "scripts"]; // mirrors pnpm-workspace.yaml
+  const roots = ["apps", "packages", "scripts"];
 
   const pkgs: Pkg[] = [];
 
@@ -35,15 +35,18 @@ function findPackages(): Pkg[] {
     }
 
     // "scripts" is a single package; others have many subfolders
-    const dirs = root === "scripts" ? [rootPath] : readdirSync(rootPath)
-      .map((d) => join(rootPath, d))
-      .filter((p) => {
-        try {
-          return statSync(p).isDirectory();
-        } catch {
-          return false;
-        }
-      });
+    const dirs =
+      root === "scripts"
+        ? [rootPath]
+        : readdirSync(rootPath)
+            .map((d) => join(rootPath, d))
+            .filter((p) => {
+              try {
+                return statSync(p).isDirectory();
+              } catch {
+                return false;
+              }
+            });
 
     for (const dir of dirs) {
       const pkgJsonPath = join(dir, "package.json");
@@ -55,7 +58,7 @@ function findPackages(): Pkg[] {
         const name = pkgJson.name ?? relative(repoRoot, dir);
         const hasLint = Boolean(pkgJson.scripts && pkgJson.scripts["lint"]);
         const hasTypecheck = Boolean(
-          pkgJson.scripts && pkgJson.scripts["typecheck"],
+          pkgJson.scripts && pkgJson.scripts["typecheck"]
         );
         if (hasLint || hasTypecheck) {
           pkgs.push({
@@ -76,7 +79,7 @@ function findPackages(): Pkg[] {
 
 function runScript(pkg: Pkg, kind: CheckKind): Promise<CheckResult> {
   const cwd = join(__dirname, "..", pkg.path);
-  const child = spawn("pnpm", ["run", "--silent", kind], {
+  const child = spawn("bun", ["run", "--silent", kind], {
     cwd,
     shell: true,
   });
