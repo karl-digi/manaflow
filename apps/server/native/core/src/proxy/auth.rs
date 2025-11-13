@@ -44,9 +44,7 @@ pub fn generate_credentials(web_contents_id: u32) -> (String, String) {
     use rand::Rng;
     let mut rng = rand::thread_rng();
 
-    let random_suffix: String = (0..4)
-        .map(|_| format!("{:02x}", rng.gen::<u8>()))
-        .collect();
+    let random_suffix: String = (0..4).map(|_| format!("{:02x}", rng.gen::<u8>())).collect();
 
     let username = format!("wc-{}-{}", web_contents_id, random_suffix);
 

@@ -15,6 +15,7 @@ pub struct Route {
     pub morph_id: String,
     pub scope: String,
     pub domain_suffix: String,
+    pub morph_domain_suffix: Option<String>,
 }
 
 pub fn is_loopback_hostname(hostname: &str) -> bool {
@@ -26,13 +27,20 @@ pub fn is_loopback_hostname(hostname: &str) -> bool {
         || lower == "::1"
 }
 
-pub fn rewrite_url_if_needed(uri: &Uri, route: Option<&Route>) -> Result<Uri, Box<dyn std::error::Error + Send + Sync>> {
+pub fn rewrite_url_if_needed(
+    uri: &Uri,
+    route: Option<&Route>,
+) -> Result<Uri, Box<dyn std::error::Error + Send + Sync>> {
     let hostname = uri.host().unwrap_or("");
 
     if let Some(route) = route {
         if is_loopback_hostname(hostname) {
             let port = determine_port(uri);
-            let new_host = build_cmux_host(route, port);
+            let new_host = route
+                .morph_domain_suffix
+                .as_ref()
+                .map(|suffix| build_morph_host(route, suffix, port))
+                .unwrap_or_else(|| build_cmux_host(route, port));
 
             let mut parts = uri.clone().into_parts();
             parts.scheme = Some(http::uri::Scheme::HTTPS);
@@ -63,4 +71,8 @@ fn build_cmux_host(route: &Route, port: u16) -> String {
         "cmux-{}-{}-{}.{}",
         route.morph_id, route.scope, port, route.domain_suffix
     )
+}
+
+fn build_morph_host(route: &Route, suffix: &str, port: u16) -> String {
+    format!("port-{}-morphvm-{}{}", port, route.morph_id, suffix)
 }

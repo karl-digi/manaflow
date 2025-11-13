@@ -8,6 +8,10 @@ import type { Logger } from "./chrome-camouflage";
 import { createHash } from "node:crypto";
 import * as path from "node:path";
 import { existsSync } from "node:fs";
+import {
+  deriveProxyRoute,
+  type ProxyRoute,
+} from "./rust-preview-proxy-route";
 
 // Determine the correct path to the native module
 // Uses the same multi-path search strategy as apps/server/src/native/git.ts
@@ -74,26 +78,11 @@ try {
 
 const TASK_RUN_PREVIEW_PREFIX = "task-run-preview:";
 const DEFAULT_PROXY_LOGGING_ENABLED = false;
-const CMUX_DOMAINS = [
-  "cmux.app",
-  "cmux.sh",
-  "cmux.dev",
-  "cmux.local",
-  "cmux.localhost",
-  "autobuild.app",
-] as const;
-
 interface ConfigureOptions {
   webContents: WebContents;
   initialUrl: string;
   persistKey?: string;
   logger: Logger;
-}
-
-interface ProxyRoute {
-  morphId: string;
-  scope: string;
-  domainSuffix: string;
 }
 
 interface ProxyContextInfo {
@@ -180,7 +169,9 @@ export async function configurePreviewProxyForView(
   options: ConfigureOptions
 ): Promise<() => void> {
   const { webContents, initialUrl, persistKey, logger } = options;
-  const route = deriveRoute(initialUrl);
+  const route = deriveProxyRoute(initialUrl, {
+    morphDomainSuffix: null, // Route through global cmux proxy first
+  });
 
   if (!route) {
     logger.warn("Preview proxy skipped; unable to parse cmux host", {
@@ -189,6 +180,11 @@ export async function configurePreviewProxyForView(
     });
     return () => {};
   }
+  logger.log("Preview proxy route resolved", {
+    persistKey,
+    initialUrl,
+    route,
+  });
 
   const port = await ensureProxyServer(logger);
 
@@ -200,6 +196,7 @@ export async function configurePreviewProxyForView(
     morphId: route.morphId,
     scope: route.scope,
     domainSuffix: route.domainSuffix,
+    morphDomainSuffix: route.morphDomainSuffix,
   };
 
   const context = proxyServer.createContext(webContents.id, proxyRoute);
@@ -289,64 +286,4 @@ async function startProxyServer(logger: Logger): Promise<number> {
     logger.error("Failed to start Rust preview proxy", { error });
     throw error;
   }
-}
-
-function deriveRoute(url: string): ProxyRoute | null {
-  try {
-    const parsed = new URL(url);
-    const hostname = parsed.hostname.toLowerCase();
-
-    const morphMatch = hostname.match(
-      /^port-(\d+)-morphvm-([^.]+)\.http\.cloud\.morph\.so$/
-    );
-    if (morphMatch) {
-      const morphId = morphMatch[2];
-      if (morphId) {
-        return {
-          morphId,
-          scope: "base",
-          domainSuffix: "cmux.app",
-        };
-      }
-    }
-
-    for (const domain of CMUX_DOMAINS) {
-      const suffix = `.${domain}`;
-      if (!hostname.endsWith(suffix)) {
-        continue;
-      }
-      const subdomain = hostname.slice(0, -suffix.length);
-      if (!subdomain.startsWith("cmux-")) {
-        continue;
-      }
-      const remainder = subdomain.slice("cmux-".length);
-      const segments = remainder
-        .split("-")
-        .filter((segment) => segment.length > 0);
-      if (segments.length < 3) {
-        continue;
-      }
-      const portSegment = segments.pop();
-      const scopeSegment = segments.pop();
-      if (!portSegment || !scopeSegment) {
-        continue;
-      }
-      if (!/^\d+$/.test(portSegment)) {
-        continue;
-      }
-      const morphId = segments.join("-");
-      if (!morphId) {
-        continue;
-      }
-      return {
-        morphId,
-        scope: scopeSegment,
-        domainSuffix: domain,
-      };
-    }
-  } catch (error) {
-    console.error("Failed to derive route", error);
-    return null;
-  }
-  return null;
 }

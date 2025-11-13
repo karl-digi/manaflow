@@ -35,6 +35,11 @@ tracing = "0.1"
 base64 = "0.22"
 rand = "0.8"
 parking_lot = "0.12"
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "logging", "tls12", "aws-lc-rs", "native-tokio", "webpki-tokio"] }
+tokio-rustls = { version = "0.26", features = ["tls12"] }
+rustls = { version = "0.23", default-features = false, features = ["std", "log", "aws_lc_rs"] }
+rustls-pki-types = "1"
+webpki-roots = "0.26"
 
 [dev-dependencies]
 tempfile = "3"

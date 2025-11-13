@@ -1,25 +1,92 @@
-use std::{convert::Infallible, future::Future, net::SocketAddr, str::FromStr, time::Duration};
+use std::{
+    cmp::min,
+    convert::Infallible,
+    future::Future,
+    io,
+    net::SocketAddr,
+    pin::Pin,
+    str::FromStr,
+    task::{Context, Poll},
+    time::Duration,
+};
 
 use bytes::Bytes;
 use futures_util::future;
-use http::{HeaderMap, HeaderValue, Method, Request, Response, StatusCode, Uri};
+use http::{HeaderMap, HeaderValue, Method, Request, Response, StatusCode, Uri, Version};
 use http_body_util::{BodyExt, Empty, Full};
 use hyper::body::Incoming;
-use hyper::server::conn::http1;
+use hyper::server::conn::{http1, http2};
 use hyper::service::service_fn;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use std::sync::Arc;
-use tokio::io::{copy_bidirectional, AsyncWriteExt};
+use tokio::io::{copy_bidirectional, AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Notify;
 use tokio::task::{JoinHandle, JoinSet};
 use tracing::{error, info, warn};
 
-use http::header::{CONNECTION, UPGRADE};
+use http::header::{CONNECTION, HOST, UPGRADE};
 
 type BoxBody = http_body_util::combinators::BoxBody<Bytes, Box<dyn std::error::Error + Send + Sync>>;
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
+const HTTP2_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+const HOST_OVERRIDE_HEADER: &str = "X-Cmux-Host-Override";
+
+struct BufferedStream {
+    stream: TcpStream,
+    buffer: Vec<u8>,
+    cursor: usize,
+}
+
+impl BufferedStream {
+    fn new(stream: TcpStream, buffer: Vec<u8>) -> Self {
+        Self {
+            stream,
+            buffer,
+            cursor: 0,
+        }
+    }
+}
+
+impl AsyncRead for BufferedStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        if self.cursor < self.buffer.len() && buf.remaining() > 0 {
+            let remaining = self.buffer.len() - self.cursor;
+            let to_copy = min(remaining, buf.remaining());
+            buf.put_slice(&self.buffer[self.cursor..self.cursor + to_copy]);
+            self.cursor += to_copy;
+            return Poll::Ready(Ok(()));
+        }
+
+        Pin::new(&mut self.stream).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for BufferedStream {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        data: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        let this = self.get_mut();
+        Pin::new(&mut this.stream).poll_write(cx, data)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        let this = self.get_mut();
+        Pin::new(&mut this.stream).poll_flush(cx)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        let this = self.get_mut();
+        Pin::new(&mut this.stream).poll_shutdown(cx)
+    }
+}
 
 fn empty_body() -> BoxBody {
     Empty::<Bytes>::new()
@@ -67,22 +134,10 @@ where
                 result = listener.accept() => {
                     match result {
                         Ok((stream, remote_addr)) => {
-                            let io = TokioIo::new(stream);
                             let client = client.clone();
                             let cfg = cfg.clone();
-                            
                             tokio::spawn(async move {
-                                let svc = service_fn(move |req| {
-                                    handle(client.clone(), cfg.clone(), remote_addr, req)
-                                });
-                                
-                                if let Err(err) = http1::Builder::new()
-                                    .preserve_header_case(true)
-                                    .title_case_headers(true)
-                                    .serve_connection(io, svc)
-                                    .with_upgrades()
-                                    .await
-                                {
+                                if let Err(err) = serve_client_stream(stream, remote_addr, client, cfg).await {
                                     error!(%err, "connection error");
                                 }
                             });
@@ -157,7 +212,6 @@ where
                     result = listener.accept() => {
                         match result {
                             Ok((stream, remote_addr)) => {
-                                let io = TokioIo::new(stream);
                                 let client = client.clone();
                                 let upstream = upstream.clone();
                                 
@@ -167,16 +221,8 @@ where
                                         upstream_host: upstream.clone(),
                                         allow_default_upstream: allow_default,
                                     };
-                                    let svc = service_fn(move |req| {
-                                        handle(client.clone(), cfg.clone(), remote_addr, req)
-                                    });
-                                    
-                                    if let Err(err) = http1::Builder::new()
-                                        .preserve_header_case(true)
-                                        .title_case_headers(true)
-                                        .serve_connection(io, svc)
-                                        .with_upgrades()
-                                        .await
+                                    if let Err(err) =
+                                        serve_client_stream(stream, remote_addr, client, cfg).await
                                     {
                                         error!(%err, "connection error");
                                     }
@@ -199,6 +245,64 @@ where
     let handle = tokio::spawn(async move { while let Some(_res) = join_set.join_next().await {} });
 
     (bound_addrs, handle)
+}
+
+async fn serve_client_stream(
+    stream: TcpStream,
+    remote_addr: SocketAddr,
+    client: Client<HttpConnector, BoxBody>,
+    cfg: ProxyConfig,
+) -> Result<(), BoxError> {
+    let (buffered_stream, client_prefers_http2) = sniff_http2_preface(stream).await?;
+    let io = TokioIo::new(buffered_stream);
+    let svc_client = client.clone();
+    let svc_cfg = cfg.clone();
+    let service = service_fn(move |req| {
+        handle(svc_client.clone(), svc_cfg.clone(), remote_addr, req)
+    });
+
+    if client_prefers_http2 {
+        http2::Builder::new(TokioExecutor::new())
+            .serve_connection(io, service)
+            .await?;
+    } else {
+        http1::Builder::new()
+            .preserve_header_case(true)
+            .title_case_headers(true)
+            .serve_connection(io, service)
+            .with_upgrades()
+            .await?;
+    }
+    Ok(())
+}
+
+async fn sniff_http2_preface(stream: TcpStream) -> io::Result<(BufferedStream, bool)> {
+    let mut buffer: Vec<u8> = Vec::new();
+    let mut temp = [0u8; 24];
+
+    loop {
+        if buffer.len() >= HTTP2_PREFACE.len() {
+            break;
+        }
+
+        stream.readable().await?;
+        let needed = HTTP2_PREFACE.len() - buffer.len();
+        match stream.try_read(&mut temp[..needed]) {
+            Ok(0) => break,
+            Ok(n) => {
+                buffer.extend_from_slice(&temp[..n]);
+                if !HTTP2_PREFACE.starts_with(&buffer) {
+                    return Ok((BufferedStream::new(stream, buffer), false));
+                }
+            }
+            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+            Err(e) => return Err(e),
+        }
+    }
+
+    let is_http2 = buffer.len() >= HTTP2_PREFACE.len()
+        && buffer[..HTTP2_PREFACE.len()] == *HTTP2_PREFACE;
+    Ok((BufferedStream::new(stream, buffer), is_http2))
 }
 
 fn get_port_from_header(headers: &HeaderMap) -> Result<u16, Response<BoxBody>> {
@@ -350,6 +454,7 @@ fn strip_hop_by_hop_headers(h: &mut HeaderMap) {
         "proxy-connection",
         "x-cmux-port-internal",
         "x-cmux-workspace-internal",
+        "x-cmux-host-override",
     ];
     for name in HOP_HEADERS {
         h.remove(*name);
@@ -469,6 +574,7 @@ async fn handle_http(
     )?;
     
     parts.uri = build_upstream_uri(&upstream_host, port, &parts.uri)?;
+    parts.version = Version::HTTP_11;
     
     // Convert incoming body to BoxBody
     let proxied_body: BoxBody = incoming_to_box(incoming);
@@ -477,6 +583,18 @@ async fn handle_http(
     // Strip internal headers
     new_req.headers_mut().remove("x-cmux-port-internal");
     new_req.headers_mut().remove("x-cmux-workspace-internal");
+    let host_override = new_req
+        .headers()
+        .get(HOST_OVERRIDE_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    new_req.headers_mut().remove(HOST_OVERRIDE_HEADER);
+    if let Some(host) = host_override {
+        if let Ok(value) = HeaderValue::from_str(&host) {
+            new_req.headers_mut().insert(HOST, value);
+        }
+    }
 
     // Strip hop-by-hop headers on the proxied request
     strip_hop_by_hop_headers(new_req.headers_mut());
@@ -534,6 +652,12 @@ async fn handle_upgrade(
         cfg.allow_default_upstream,
     )?;
     let upstream_uri = build_upstream_uri(&upstream_host, port, req.uri())?;
+    let host_override = req
+        .headers()
+        .get(HOST_OVERRIDE_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
     
     // Build proxied request for upstream - need to clone headers before consuming req
     let mut proxied_req_builder = Request::builder()
@@ -545,6 +669,7 @@ async fn handle_upgrade(
     for (name, value) in req.headers().iter() {
         if !name.as_str().eq_ignore_ascii_case("x-cmux-port-internal")
             && !name.as_str().eq_ignore_ascii_case("x-cmux-workspace-internal")
+            && !name.as_str().eq_ignore_ascii_case(HOST_OVERRIDE_HEADER)
         {
             proxied_req_builder = proxied_req_builder.header(name, value);
         }
@@ -565,6 +690,11 @@ async fn handle_upgrade(
     proxied_req.headers_mut().remove("te");
     proxied_req.headers_mut().remove("transfer-encoding");
     proxied_req.headers_mut().remove("trailers");
+    if let Some(host) = host_override {
+        if let Ok(value) = HeaderValue::from_str(&host) {
+            proxied_req.headers_mut().insert(HOST, value);
+        }
+    }
 
     info!(client = %remote_addr, port = port, upstream = %upstream_host, "proxy upgrade (e.g. websocket)");
 
