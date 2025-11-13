@@ -2,6 +2,7 @@ use std::{
     io::{self, Cursor, Read},
     net::SocketAddr,
     sync::Arc,
+    time::Duration,
 };
 
 use bytes::Bytes;
@@ -10,11 +11,12 @@ use http::{
     header::{self, HeaderValue, CONNECTION, UPGRADE},
     uri::Scheme,
 };
-use hyper::{
-    Body, Client, body,
-    client::HttpConnector,
-    server::conn::AddrStream,
-    service::{make_service_fn, service_fn},
+use http_body_util::{BodyExt, Empty, Full};
+use hyper::body::{Incoming, Body as HttpBody};
+use hyper_util::{
+    client::legacy::{Client, connect::HttpConnector},
+    rt::TokioExecutor,
+    server::conn::auto::Builder as ServerBuilder,
 };
 use hyper::upgrade::Upgraded;
 use hyper_rustls::HttpsConnectorBuilder;
@@ -23,16 +25,28 @@ use flate2::read::{GzDecoder, ZlibDecoder};
 use brotli::Decompressor;
 use tokio::{
     io::{copy_bidirectional, AsyncWriteExt},
+    net::TcpListener,
     sync::oneshot,
     task::JoinHandle,
 };
+use hyper_util::rt::TokioIo;
 use tracing::{error, warn};
 use zstd::stream::read::Decoder as ZstdDecoder;
 
 use chrono::Utc;
 use serde_json::{Value, json};
 
-type HttpClient = Client<hyper_rustls::HttpsConnector<HttpConnector>, Body>;
+type BoxBody = http_body_util::combinators::BoxBody<Bytes, std::io::Error>;
+type HttpClient = Client<hyper_rustls::HttpsConnector<HttpConnector>, BoxBody>;
+
+fn boxed<B>(body: B) -> BoxBody
+where
+    B: HttpBody<Data = Bytes> + Send + Sync + 'static,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    body.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+        .boxed()
+}
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const GIT_COMMIT: &str = match option_env!("GIT_COMMIT") {
@@ -96,16 +110,31 @@ struct AppState {
 }
 
 pub async fn spawn_proxy(config: ProxyConfig) -> Result<ProxyHandle, ProxyError> {
-    let listener = std::net::TcpListener::bind(config.bind_addr)?;
-    listener.set_nonblocking(true)?;
+    let listener = TcpListener::bind(config.bind_addr).await?;
     let local_addr = listener.local_addr()?;
+
+    // Configure HTTPS connector with HTTP/1 and HTTP/2 support
+    let mut http_connector = HttpConnector::new();
+    http_connector.set_nodelay(true);
+    http_connector.set_keepalive(Some(Duration::from_secs(90)));
 
     let https = HttpsConnectorBuilder::new()
         .with_webpki_roots()
         .https_or_http()
         .enable_http1()
+        .enable_http2()
         .build();
-    let client: HttpClient = Client::builder().build(https);
+
+    // Build client with connection pooling and HTTP/2 settings
+    let client: HttpClient = Client::builder(TokioExecutor::new())
+        .pool_max_idle_per_host(32)
+        .pool_idle_timeout(Duration::from_secs(90))
+        .http2_adaptive_window(true)
+        .http2_keep_alive_interval(Duration::from_secs(10))
+        .http2_keep_alive_timeout(Duration::from_secs(20))
+        .http2_initial_stream_window_size(1024 * 1024)
+        .http2_initial_connection_window_size(1024 * 1024)
+        .build(https);
 
     let state = Arc::new(AppState {
         client,
@@ -115,24 +144,43 @@ pub async fn spawn_proxy(config: ProxyConfig) -> Result<ProxyHandle, ProxyError>
         workspace_domain_suffix: config.workspace_domain_suffix,
     });
 
-    let make_svc = make_service_fn(move |_conn: &AddrStream| {
-        let state = state.clone();
-        async move {
-            Ok::<_, hyper::Error>(service_fn(move |req| {
-                let state = state.clone();
-                async move { Ok::<_, hyper::Error>(handle_request(state, req).await) }
-            }))
-        }
-    });
+    let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
 
-    let server = hyper::Server::from_tcp(listener)?.serve(make_svc);
-    let (shutdown_tx, shutdown_rx) = oneshot::channel();
-    let graceful = server.with_graceful_shutdown(async move {
-        let _ = shutdown_rx.await;
-    });
     let task = tokio::spawn(async move {
-        if let Err(err) = graceful.await {
-            error!(%err, "proxy server error");
+        // Configure server builder with HTTP/1.1 and HTTP/2 support
+        let server_builder = ServerBuilder::new(TokioExecutor::new());
+
+        loop {
+            tokio::select! {
+                accept_result = listener.accept() => {
+                    match accept_result {
+                        Ok((stream, _addr)) => {
+                            let io = TokioIo::new(stream);
+                            let state = state.clone();
+                            let server_builder = server_builder.clone();
+
+                            tokio::spawn(async move {
+                                let service = hyper::service::service_fn(move |req| {
+                                    let state = state.clone();
+                                    async move {
+                                        Ok::<_, hyper::Error>(handle_request(state, req).await)
+                                    }
+                                });
+
+                                if let Err(err) = server_builder.serve_connection(io, service).await {
+                                    error!(%err, "connection error");
+                                }
+                            });
+                        }
+                        Err(err) => {
+                            error!(%err, "accept error");
+                        }
+                    }
+                }
+                _ = &mut shutdown_rx => {
+                    break;
+                }
+            }
         }
     });
 
@@ -143,7 +191,7 @@ pub async fn spawn_proxy(config: ProxyConfig) -> Result<ProxyHandle, ProxyError>
     })
 }
 
-async fn handle_request(state: Arc<AppState>, req: Request<Body>) -> Response<Body> {
+async fn handle_request(state: Arc<AppState>, req: Request<Incoming>) -> Response<BoxBody> {
     if req.uri().path() == "/health" {
         return json_response(
             StatusCode::OK,
@@ -199,7 +247,7 @@ async fn handle_request(state: Arc<AppState>, req: Request<Body>) -> Response<Bo
                 if route.port == 39_378 && *req.method() == Method::OPTIONS {
                     return Response::builder()
                         .status(StatusCode::NO_CONTENT)
-                        .body(Body::empty())
+                        .body(boxed(Empty::<Bytes>::new()))
                         .unwrap();
                 }
 
@@ -246,7 +294,7 @@ async fn handle_request(state: Arc<AppState>, req: Request<Body>) -> Response<Bo
                     if is_vscode_route {
                         return Response::builder()
                             .status(StatusCode::NO_CONTENT)
-                            .body(Body::empty())
+                            .body(boxed(Empty::<Bytes>::new()))
                             .unwrap();
                     }
                     return cors_response(StatusCode::NO_CONTENT);
@@ -338,10 +386,10 @@ struct ProxyBehavior {
 
 async fn forward_request(
     state: Arc<AppState>,
-    mut req: Request<Body>,
+    mut req: Request<Incoming>,
     target: Target,
     behavior: ProxyBehavior,
-) -> Response<Body> {
+) -> Response<BoxBody> {
     if is_upgrade_request(&req) {
         return handle_websocket(state, req, target, behavior).await;
     }
@@ -409,6 +457,11 @@ async fn forward_request(
         None
     };
 
+    // Convert request body from Incoming to BoxBody
+    let (parts, body) = req.into_parts();
+    let boxed_body = boxed(body);
+    let req = Request::from_parts(parts, boxed_body);
+
     let response = match state.client.request(req).await {
         Ok(resp) => resp,
         Err(_) => return text_response(StatusCode::BAD_GATEWAY, "Upstream fetch failed"),
@@ -444,12 +497,12 @@ async fn handle_head_method_not_allowed(
     state: Arc<AppState>,
     context: HeadFallbackContext,
     behavior: ProxyBehavior,
-) -> Option<Response<Body>> {
+) -> Option<Response<BoxBody>> {
     let mut get_request = Request::builder()
         .method(Method::GET)
         .uri(context.uri)
         .version(context.version)
-        .body(Body::empty())
+        .body(boxed(Empty::<Bytes>::new()))
         .ok()?;
 
     *get_request.headers_mut() = context.headers;
@@ -465,9 +518,9 @@ async fn handle_head_method_not_allowed(
 }
 
 async fn transform_head_response_from_get(
-    response: Response<Body>,
+    response: Response<Incoming>,
     behavior: ProxyBehavior,
-) -> Result<Response<Body>, hyper::Error> {
+) -> Result<Response<BoxBody>, std::io::Error> {
     let transformed_response = transform_response(response, behavior.clone()).await;
     let status = transformed_response.status();
     let version = transformed_response.version();
@@ -475,8 +528,8 @@ async fn transform_head_response_from_get(
 
     // Drain the transformed body so we can surface an accurate Content-Length
     // header that matches the rewritten GET response.
-    let body_bytes = body::to_bytes(transformed_response.into_body()).await?;
-    let body_len = body_bytes.len();
+    let body_bytes = transformed_response.into_body().collect().await?;
+    let body_len = body_bytes.to_bytes().len();
 
     Ok(build_head_response(
         status,
@@ -495,7 +548,7 @@ fn build_head_response(
     behavior: &ProxyBehavior,
     body_len: Option<usize>,
     force_cors_headers: bool,
-) -> Response<Body> {
+) -> Response<BoxBody> {
     let mut builder = Response::builder().status(status).version(version);
     // Start from the upstream headers, then strip only the payload metadata we
     // are about to recompute so things like content-encoding remain intact.
@@ -525,15 +578,15 @@ fn build_head_response(
     for (name, value) in new_headers.iter() {
         headers_mut.insert(name, value.clone());
     }
-    builder.body(Body::empty()).unwrap()
+    builder.body(boxed(Empty::<Bytes>::new())).unwrap()
 }
 
 async fn handle_websocket(
     state: Arc<AppState>,
-    req: Request<Body>,
+    req: Request<Incoming>,
     target: Target,
     behavior: ProxyBehavior,
-) -> Response<Body> {
+) -> Response<BoxBody> {
     let (scheme, host, port_opt) = match target {
         Target::BackendPort(port) => (
             state.backend_scheme.clone(),
@@ -570,7 +623,7 @@ async fn handle_websocket(
         .method(req.method())
         .uri(backend_uri)
         .version(req.version())
-        .body(Body::empty())
+        .body(boxed(Empty::<Bytes>::new()))
     {
         Ok(request) => request,
         Err(_) => {
@@ -607,7 +660,7 @@ async fn handle_websocket(
             }
             Err(err) => {
                 warn!(%err, "client upgrade error");
-                let mut backend_stream = backend_stream;
+                let mut backend_stream = TokioIo::new(backend_stream);
                 let _ = backend_stream.shutdown().await;
             }
         }
@@ -686,7 +739,7 @@ fn scope_from_cmux_subdomain(subdomain: &str) -> Option<String> {
     }
 }
 
-fn is_upgrade_request(req: &Request<Body>) -> bool {
+fn is_upgrade_request(req: &Request<Incoming>) -> bool {
     if req.method() == Method::CONNECT {
         return true;
     }
@@ -702,8 +755,8 @@ fn is_upgrade_request(req: &Request<Body>) -> bool {
 
 async fn connect_upstream_websocket(
     client: HttpClient,
-    request: Request<Body>,
-) -> Result<(Upgraded, HeaderMap), Response<Body>> {
+    request: Request<BoxBody>,
+) -> Result<(Upgraded, HeaderMap), Response<BoxBody>> {
     let response = client.request(request).await.map_err(|err| {
         error!(%err, "upstream websocket request error");
         text_response(
@@ -714,13 +767,13 @@ async fn connect_upstream_websocket(
 
     if response.status() != StatusCode::SWITCHING_PROTOCOLS {
         let status = response.status();
-        let body_bytes = body::to_bytes(response.into_body())
-            .await
+        let body_bytes = response.into_body().collect().await
+            .map(|buf| buf.to_bytes())
             .unwrap_or_else(|_| Bytes::new());
         return Err(
             Response::builder()
                 .status(status)
-                .body(Body::from(body_bytes))
+                .body(boxed(Full::new(body_bytes)))
                 .unwrap(),
         );
     }
@@ -738,7 +791,7 @@ async fn connect_upstream_websocket(
     }
 }
 
-fn build_websocket_response(headers: &HeaderMap) -> Response<Body> {
+fn build_websocket_response(headers: &HeaderMap) -> Response<BoxBody> {
     let mut builder = Response::builder()
         .status(StatusCode::SWITCHING_PROTOCOLS)
         .header(CONNECTION, HeaderValue::from_static("upgrade"))
@@ -754,20 +807,22 @@ fn build_websocket_response(headers: &HeaderMap) -> Response<Body> {
         }
     }
 
-    builder.body(Body::empty()).unwrap()
+    builder.body(boxed(Empty::<Bytes>::new())).unwrap()
 }
 
 async fn tunnel_upgraded(
-    mut client: Upgraded,
-    mut backend: Upgraded,
+    client: Upgraded,
+    backend: Upgraded,
 ) -> io::Result<()> {
+    let mut client = TokioIo::new(client);
+    let mut backend = TokioIo::new(backend);
     let result = copy_bidirectional(&mut client, &mut backend).await;
     let _ = client.shutdown().await;
     let _ = backend.shutdown().await;
     result.map(|_| ())
 }
 
-async fn transform_response(response: Response<Body>, behavior: ProxyBehavior) -> Response<Body> {
+async fn transform_response(response: Response<Incoming>, behavior: ProxyBehavior) -> Response<BoxBody> {
     let status = response.status();
     let version = response.version();
     let headers = response.headers().clone();
@@ -782,8 +837,9 @@ async fn transform_response(response: Response<Body>, behavior: ProxyBehavior) -
         .unwrap_or("");
 
     if content_type.contains("text/html") {
-        match body::to_bytes(response.into_body()).await {
-            Ok(bytes) => {
+        match response.into_body().collect().await {
+            Ok(collected) => {
+                let bytes = collected.to_bytes();
                 let decoded = match decode_body_with_encoding(bytes.as_ref(), content_encoding.as_deref()) {
                     Ok(body) => Bytes::from(body),
                     Err(err) => {
@@ -793,7 +849,7 @@ async fn transform_response(response: Response<Body>, behavior: ProxyBehavior) -
                             version,
                             &headers,
                             &behavior,
-                            Body::from(bytes),
+                            boxed(Full::new(bytes)),
                             /* strip_payload_headers */ false,
                         );
                     }
@@ -822,7 +878,7 @@ async fn transform_response(response: Response<Body>, behavior: ProxyBehavior) -
                         for (name, value) in new_headers.iter() {
                             headers_mut.insert(name, value.clone());
                         }
-                        builder.body(Body::from(body)).unwrap()
+                        builder.body(boxed(Full::new(Bytes::from(body)))).unwrap()
                     }
                     Err(_) => text_response(StatusCode::INTERNAL_SERVER_ERROR, "HTML rewrite failed"),
                 }
@@ -835,7 +891,7 @@ async fn transform_response(response: Response<Body>, behavior: ProxyBehavior) -
             version,
             &headers,
             &behavior,
-            response.into_body(),
+            boxed(response.into_body()),
             /* strip_payload_headers */ false,
         )
     }
@@ -846,9 +902,9 @@ fn forward_response_with_body(
     version: Version,
     headers: &HeaderMap,
     behavior: &ProxyBehavior,
-    body: Body,
+    body: BoxBody,
     strip_payload_headers: bool,
-) -> Response<Body> {
+) -> Response<BoxBody> {
     let mut builder = Response::builder().status(status).version(version);
     let mut new_headers = sanitize_headers(headers, strip_payload_headers);
     strip_csp_headers(&mut new_headers);
@@ -1200,10 +1256,10 @@ enum Route {
     Port(PortRoute),
     Cmux(CmuxRoute),
     Workspace(WorkspaceRoute),
-    Invalid(Response<Body>),
+    Invalid(Response<BoxBody>),
 }
 
-fn is_loop_header(req: &Request<Body>) -> bool {
+fn is_loop_header(req: &Request<Incoming>) -> bool {
     req.headers()
         .get("X-Cmux-Proxied")
         .and_then(|v| v.to_str().ok())
@@ -1211,7 +1267,7 @@ fn is_loop_header(req: &Request<Body>) -> bool {
         .unwrap_or(false)
 }
 
-fn cors_response(status: StatusCode) -> Response<Body> {
+fn cors_response(status: StatusCode) -> Response<BoxBody> {
     let mut headers = HeaderMap::new();
     add_cors_headers(&mut headers);
     let mut builder = Response::builder().status(status);
@@ -1219,26 +1275,26 @@ fn cors_response(status: StatusCode) -> Response<Body> {
     for (name, value) in headers.iter() {
         headers_mut.insert(name, value.clone());
     }
-    builder.body(Body::empty()).unwrap()
+    builder.body(boxed(Empty::<Bytes>::new())).unwrap()
 }
 
-fn text_response(status: StatusCode, body: &str) -> Response<Body> {
+fn text_response(status: StatusCode, body: &str) -> Response<BoxBody> {
     Response::builder()
         .status(status)
         .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
-        .body(Body::from(body.to_string()))
+        .body(boxed(Full::new(Bytes::from(body.to_string()))))
         .unwrap()
 }
 
-fn json_response(status: StatusCode, value: Value) -> Response<Body> {
+fn json_response(status: StatusCode, value: Value) -> Response<BoxBody> {
     Response::builder()
         .status(status)
         .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(value.to_string()))
+        .body(boxed(Full::new(Bytes::from(value.to_string()))))
         .unwrap()
 }
 
-fn extract_host(req: &Request<Body>) -> Option<String> {
+fn extract_host(req: &Request<Incoming>) -> Option<String> {
     let headers = req.headers();
     if let Some(forwarded) = headers
         .get("x-forwarded-host")
@@ -1359,11 +1415,11 @@ self.addEventListener('fetch', (event) => {
 });
 "#;
 
-fn service_worker_response() -> Response<Body> {
+fn service_worker_response() -> Response<BoxBody> {
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/javascript")
         .header(header::CACHE_CONTROL, "no-cache")
-        .body(Body::from(SERVICE_WORKER_JS))
+        .body(boxed(Full::new(Bytes::from(SERVICE_WORKER_JS))))
         .unwrap()
 }

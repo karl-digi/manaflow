@@ -6,9 +6,11 @@ edition = "2024"
 [dependencies]
 bytes = "1.6"
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
-http = "0.2"
-hyper = { version = "0.14", features = ["full"] }
-hyper-rustls = { version = "0.24", default-features = false, features = ["http1", "tokio-runtime", "webpki-roots"] }
+http = "1"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["full"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "webpki-roots", "ring"] }
 lol_html = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
@@ -20,6 +22,8 @@ thiserror = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+tower = "0.4"
+pin-project-lite = "0.2"
 
 [dev-dependencies]
 reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }

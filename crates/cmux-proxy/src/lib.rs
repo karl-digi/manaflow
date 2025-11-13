@@ -1,21 +1,34 @@
 use std::{convert::Infallible, future::Future, net::SocketAddr, str::FromStr, time::Duration};
 
+use bytes::Bytes;
 use futures_util::future;
-use hyper::client::HttpConnector;
-use hyper::header::{CONNECTION, UPGRADE};
-use hyper::server::conn::AddrStream;
-use hyper::service::{make_service_fn, service_fn};
-use hyper::{
-    body::Body,
-    client::Client,
-    http::{HeaderMap, HeaderValue, Method, Request, Response, StatusCode, Uri},
-};
+use http::{HeaderMap, HeaderValue, Method, Request, Response, StatusCode, Uri};
+use http_body_util::{BodyExt, Empty, Full};
+use hyper::body::{Body as HttpBody, Incoming};
+use hyper::service::service_fn;
+use hyper_util::client::legacy::{connect::HttpConnector, Client};
+use hyper_util::rt::{TokioExecutor, TokioIo};
 use std::sync::Arc;
 use tokio::io::{copy_bidirectional, AsyncWriteExt};
-use tokio::net::TcpStream;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Notify;
 use tokio::task::{JoinHandle, JoinSet};
+use tower::ServiceExt;
 use tracing::{error, info, warn};
+
+type BoxBody = http_body_util::combinators::BoxBody<Bytes, hyper::Error>;
+
+fn boxed<B>(body: B) -> BoxBody
+where
+    B: HttpBody<Data = Bytes> + Send + 'static,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    body.map_err(|e| {
+        let err: Box<dyn std::error::Error + Send + Sync> = e.into();
+        hyper::Error::new(hyper::error::Kind::BodyWrite, err)
+    })
+    .boxed()
+}
 
 #[derive(Clone, Debug)]
 pub struct ProxyConfig {
@@ -28,38 +41,93 @@ pub fn spawn_proxy<S>(cfg: ProxyConfig, shutdown: S) -> (SocketAddr, JoinHandle<
 where
     S: Future<Output = ()> + Send + 'static,
 {
-    // Hyper client for proxying HTTP/1.1
+    // Hyper client with HTTP/1.1 and HTTP/2 support, optimized connection pooling
     let mut connector = HttpConnector::new();
     connector.set_connect_timeout(Some(Duration::from_secs(5)));
-    let client: Client<HttpConnector, Body> =
-        Client::builder().pool_max_idle_per_host(8).build(connector);
+    connector.set_nodelay(true); // Disable Nagle's algorithm for lower latency
+    connector.set_keepalive(Some(Duration::from_secs(90))); // Keep connections alive
+
+    let client = Client::builder(TokioExecutor::new())
+        .pool_idle_timeout(Duration::from_secs(90))
+        .pool_max_idle_per_host(32) // Increased from 8 for better connection reuse
+        .http2_only(false) // Support both HTTP/1.1 and HTTP/2
+        .http2_initial_stream_window_size(1024 * 1024) // 1MB initial window
+        .http2_initial_connection_window_size(2 * 1024 * 1024) // 2MB initial window
+        .http2_adaptive_window(true) // Adaptive flow control
+        .http2_max_frame_size(16384) // Default 16KB frame size
+        .http2_keep_alive_interval(Duration::from_secs(10)) // Send PING every 10s
+        .http2_keep_alive_timeout(Duration::from_secs(20)) // Timeout for PING response
+        .build(connector);
 
     let listen = cfg.listen;
     let make_cfg = cfg;
-    let make_svc = make_service_fn(move |conn: &AddrStream| {
-        let remote_addr = conn.remote_addr();
-        let client = client.clone();
-        let cfg = make_cfg.clone();
-        async move {
-            Ok::<_, Infallible>(service_fn(move |req| {
-                handle(client.to_owned(), cfg.to_owned(), remote_addr, req)
-            }))
-        }
-    });
-
-    let builder = hyper::Server::bind(&listen)
-        .http1_only(true)
-        .serve(make_svc);
-    let listen_addr = builder.local_addr();
-    let server = builder.with_graceful_shutdown(shutdown);
 
     let handle = tokio::spawn(async move {
-        if let Err(err) = server.await {
-            error!(%err, "server error");
+        let listener = match TcpListener::bind(&listen).await {
+            Ok(l) => l,
+            Err(err) => {
+                error!(%err, "failed to bind");
+                return;
+            }
+        };
+
+        let listen_addr = listener.local_addr().unwrap();
+        info!(%listen_addr, "proxy listening with HTTP/1.1 and HTTP/2 support");
+
+        let notify = Arc::new(Notify::new());
+        let notify_clone = notify.clone();
+        tokio::spawn(async move {
+            shutdown.await;
+            notify_clone.notify_waiters();
+        });
+
+        loop {
+            tokio::select! {
+                _ = notify.notified() => {
+                    info!("shutting down");
+                    break;
+                }
+                result = listener.accept() => {
+                    match result {
+                        Ok((stream, remote_addr)) => {
+                            let client = client.clone();
+                            let cfg = make_cfg.clone();
+                            tokio::spawn(async move {
+                                let io = TokioIo::new(stream);
+
+                                let service = service_fn(move |req| {
+                                    handle(client.clone(), cfg.clone(), remote_addr, req)
+                                });
+
+                                // Use auto::Builder for automatic HTTP/1.1 and HTTP/2 protocol detection
+                                let conn = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new())
+                                    .http2()
+                                    .adaptive_window(true)
+                                    .initial_stream_window_size(1024 * 1024)
+                                    .initial_connection_window_size(2 * 1024 * 1024)
+                                    .max_frame_size(16384)
+                                    .keep_alive_interval(Duration::from_secs(10))
+                                    .keep_alive_timeout(Duration::from_secs(20))
+                                    .http1()
+                                    .title_case_headers(true)
+                                    .preserve_header_case(true)
+                                    .serve_connection(io, service);
+
+                                if let Err(err) = conn.await {
+                                    error!(%err, "connection error");
+                                }
+                            });
+                        }
+                        Err(err) => {
+                            error!(%err, "accept error");
+                        }
+                    }
+                }
+            }
         }
     });
 
-    (listen_addr, handle)
+    (listen, handle)
 }
 
 /// Start the proxy on multiple addresses. Returns the bound addresses actually used and a handle
@@ -73,11 +141,23 @@ pub fn spawn_proxy_multi<S>(
 where
     S: Future<Output = ()> + Send + 'static,
 {
-    // Prepare shared client and shutdown notifier
+    // Prepare shared client with HTTP/2 support and optimized pooling
     let mut connector = HttpConnector::new();
     connector.set_connect_timeout(Some(Duration::from_secs(5)));
-    let client: Client<HttpConnector, Body> =
-        Client::builder().pool_max_idle_per_host(8).build(connector);
+    connector.set_nodelay(true);
+    connector.set_keepalive(Some(Duration::from_secs(90)));
+
+    let client = Client::builder(TokioExecutor::new())
+        .pool_idle_timeout(Duration::from_secs(90))
+        .pool_max_idle_per_host(32)
+        .http2_only(false)
+        .http2_initial_stream_window_size(1024 * 1024)
+        .http2_initial_connection_window_size(2 * 1024 * 1024)
+        .http2_adaptive_window(true)
+        .http2_max_frame_size(16384)
+        .http2_keep_alive_interval(Duration::from_secs(10))
+        .http2_keep_alive_timeout(Duration::from_secs(20))
+        .build(connector);
 
     let notify = Arc::new(Notify::new());
     let notify_clone = notify.clone();
@@ -94,37 +174,68 @@ where
         let upstream = upstream_host.clone();
         let notify = notify.clone();
         let allow_default = allow_default_upstream;
-        let listen_addr = addr;
 
-        let make_svc = make_service_fn(move |conn: &AddrStream| {
-            let remote_addr = conn.remote_addr();
-            let client = client.clone();
-            let upstream = upstream.clone();
-            let allow_default = allow_default;
-            async move {
-                Ok::<_, Infallible>(service_fn(move |req| {
-                    let cfg = ProxyConfig {
-                        listen: listen_addr,
-                        upstream_host: upstream.clone(),
-                        allow_default_upstream: allow_default,
-                    };
-                    handle(client.to_owned(), cfg, remote_addr, req)
-                }))
+        let listener = match tokio::runtime::Handle::current().block_on(TcpListener::bind(&addr)) {
+            Ok(l) => l,
+            Err(err) => {
+                error!(%err, %addr, "failed to bind");
+                continue;
             }
-        });
+        };
 
-        let builder = hyper::Server::bind(&listen_addr)
-            .http1_only(true)
-            .serve(make_svc);
-        let local = builder.local_addr();
+        let local = listener.local_addr().unwrap();
         bound_addrs.push(local);
-        let server = builder.with_graceful_shutdown(async move {
-            notify.notified().await;
-        });
+        info!(%local, "proxy listening with HTTP/1.1 and HTTP/2 support");
 
         join_set.spawn(async move {
-            if let Err(err) = server.await {
-                error!(%err, "server error");
+            loop {
+                tokio::select! {
+                    _ = notify.notified() => {
+                        info!("shutting down listener");
+                        break;
+                    }
+                    result = listener.accept() => {
+                        match result {
+                            Ok((stream, remote_addr)) => {
+                                let client = client.clone();
+                                let upstream = upstream.clone();
+                                let allow_default = allow_default;
+                                tokio::spawn(async move {
+                                    let io = TokioIo::new(stream);
+                                    let cfg = ProxyConfig {
+                                        listen: local,
+                                        upstream_host: upstream.clone(),
+                                        allow_default_upstream: allow_default,
+                                    };
+
+                                    let service = service_fn(move |req| {
+                                        handle(client.clone(), cfg.clone(), remote_addr, req)
+                                    });
+
+                                    let conn = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new())
+                                        .http2()
+                                        .adaptive_window(true)
+                                        .initial_stream_window_size(1024 * 1024)
+                                        .initial_connection_window_size(2 * 1024 * 1024)
+                                        .max_frame_size(16384)
+                                        .keep_alive_interval(Duration::from_secs(10))
+                                        .keep_alive_timeout(Duration::from_secs(20))
+                                        .http1()
+                                        .title_case_headers(true)
+                                        .preserve_header_case(true)
+                                        .serve_connection(io, service);
+
+                                    if let Err(err) = conn.await {
+                                        error!(%err, "connection error");
+                                    }
+                                });
+                            }
+                            Err(err) => {
+                                error!(%err, "accept error");
+                            }
+                        }
+                    }
+                }
             }
         });
     }
@@ -134,7 +245,7 @@ where
     (bound_addrs, handle)
 }
 
-fn get_port_from_header(headers: &HeaderMap) -> Result<u16, Response<Body>> {
+fn get_port_from_header(headers: &HeaderMap) -> Result<u16, Response<BoxBody>> {
     const HDR: &str = "X-Cmux-Port-Internal";
     if let Some(val) = headers.get(HDR) {
         let s = val.to_str().map_err(|_| {
@@ -210,7 +321,7 @@ fn upstream_host_from_headers(
     headers: &HeaderMap,
     default_host: &str,
     allow_default_without_workspace: bool,
-) -> Result<String, Response<Body>> {
+) -> Result<String, Response<BoxBody>> {
     const HDR_WS: &str = "X-Cmux-Workspace-Internal";
     if let Some(val) = headers.get(HDR_WS) {
         let v = val.to_str().map_err(|_| {
@@ -254,18 +365,18 @@ fn upstream_host_from_headers(
     Ok(default_host.to_string())
 }
 
-fn is_upgrade_request(req: &Request<Body>) -> bool {
+fn is_upgrade_request(req: &Request<Incoming>) -> bool {
     if req.method() == Method::CONNECT {
         return true;
     }
     // Check headers like: Connection: upgrade and Upgrade: websocket
     let has_conn_upgrade = req
         .headers()
-        .get(CONNECTION)
+        .get("connection")
         .and_then(|v| v.to_str().ok())
         .map(|v| v.to_ascii_lowercase().contains("upgrade"))
         .unwrap_or(false);
-    let has_upgrade_hdr = req.headers().contains_key(UPGRADE);
+    let has_upgrade_hdr = req.headers().contains_key("upgrade");
     has_conn_upgrade && has_upgrade_hdr
 }
 
@@ -290,7 +401,7 @@ fn strip_hop_by_hop_headers(h: &mut HeaderMap) {
 
     // Also remove headers listed in Connection: <header-names>
     if let Some(conn_val) = h
-        .get(CONNECTION)
+        .get("connection")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string())
     {
@@ -303,7 +414,7 @@ fn strip_hop_by_hop_headers(h: &mut HeaderMap) {
     }
 }
 
-fn build_upstream_uri(upstream_host: &str, port: u16, orig: &Uri) -> Result<Uri, Response<Body>> {
+fn build_upstream_uri(upstream_host: &str, port: u16, orig: &Uri) -> Result<Uri, Response<BoxBody>> {
     let path_and_query = orig.path_and_query().map(|pq| pq.as_str()).unwrap_or("/");
     let uri_str = format!("http://{}:{}{}", upstream_host, port, path_and_query);
     Uri::from_str(&uri_str)
@@ -347,20 +458,20 @@ fn parse_workspace_port_from_host(headers: &HeaderMap) -> Option<(String, u16)> 
     Some((ws_part.to_string(), port))
 }
 
-fn response_with(status: StatusCode, msg: String) -> Response<Body> {
+fn response_with(status: StatusCode, msg: String) -> Response<BoxBody> {
     Response::builder()
         .status(status)
         .header("content-type", "text/plain; charset=utf-8")
-        .body(Body::from(msg))
+        .body(boxed(Full::new(Bytes::from(msg))))
         .unwrap()
 }
 
 async fn handle(
-    client: Client<HttpConnector, Body>,
+    client: Client<HttpConnector, BoxBody>,
     cfg: ProxyConfig,
     remote_addr: SocketAddr,
-    mut req: Request<Body>,
-) -> Result<Response<Body>, Infallible> {
+    mut req: Request<Incoming>,
+) -> Result<Response<BoxBody>, Infallible> {
     let method = req.method().clone();
     let is_upgrade = is_upgrade_request(&req);
 
@@ -386,11 +497,11 @@ async fn handle(
 }
 
 async fn handle_http(
-    client: Client<HttpConnector, Body>,
+    client: Client<HttpConnector, BoxBody>,
     cfg: &ProxyConfig,
     remote_addr: SocketAddr,
-    req: &mut Request<Body>,
-) -> Result<Response<Body>, Response<Body>> {
+    req: &mut Request<Incoming>,
+) -> Result<Response<BoxBody>, Response<BoxBody>> {
     let port = get_port_from_header(req.headers())?;
     let upstream_host = upstream_host_from_headers(
         req.headers(),
@@ -400,12 +511,14 @@ async fn handle_http(
     let uri = build_upstream_uri(&upstream_host, port, req.uri())?;
 
     // Build proxied request
-    let body = std::mem::replace(req.body_mut(), Body::empty());
+    let body = std::mem::replace(req.body_mut(), Incoming::default());
+    let body_boxed = boxed(body);
+
     let mut new_req = Request::builder()
         .method(req.method())
         .uri(uri)
         .version(req.version())
-        .body(body)
+        .body(body_boxed)
         .map_err(|_| {
             response_with(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -466,11 +579,11 @@ async fn handle_http(
 }
 
 async fn handle_upgrade(
-    client: Client<HttpConnector, Body>,
+    client: Client<HttpConnector, BoxBody>,
     cfg: ProxyConfig,
     remote_addr: SocketAddr,
-    mut req: Request<Body>,
-) -> Result<Response<Body>, Response<Body>> {
+    mut req: Request<Incoming>,
+) -> Result<Response<BoxBody>, Response<BoxBody>> {
     // Treat as reverse-proxied upgrade (e.g., WebSocket). We forward the request to upstream,
     // then mirror the 101 response headers to the client and tunnel bytes between both upgrades.
     let port = get_port_from_header(req.headers())?;
@@ -482,12 +595,14 @@ async fn handle_upgrade(
     let upstream_uri = build_upstream_uri(&upstream_host, port, req.uri())?;
 
     // Build proxied request for upstream
-    let body = std::mem::replace(req.body_mut(), Body::empty());
+    let body = std::mem::replace(req.body_mut(), Incoming::default());
+    let body_boxed = boxed(body);
+
     let mut proxied_req = Request::builder()
         .method(req.method())
         .uri(upstream_uri)
         .version(req.version())
-        .body(body)
+        .body(body_boxed)
         .map_err(|_| {
             response_with(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -549,15 +664,17 @@ async fn handle_upgrade(
         out_headers.insert(k, v.clone());
     }
     // Ensure Connection: upgrade and Upgrade headers are present
-    out_headers.insert(CONNECTION, HeaderValue::from_static("upgrade"));
+    out_headers.insert("connection", HeaderValue::from_static("upgrade"));
 
     // Prepare response to client (empty body; the connection upgrades)
-    let client_resp = client_resp_builder.body(Body::empty()).map_err(|_| {
-        response_with(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "failed to build upgrade response".into(),
-        )
-    })?;
+    let client_resp = client_resp_builder
+        .body(boxed(Empty::<Bytes>::new()))
+        .map_err(|_| {
+            response_with(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to build upgrade response".into(),
+            )
+        })?;
 
     // Spawn tunnel after returning the 101 to the client
     tokio::spawn(async move {
@@ -568,14 +685,17 @@ async fn handle_upgrade(
         .await
         {
             Ok((mut client_upgraded, mut upstream_upgraded)) => {
-                if let Err(e) =
-                    copy_bidirectional(&mut client_upgraded, &mut upstream_upgraded).await
-                {
+                let client_upgraded = TokioIo::new(client_upgraded);
+                let upstream_upgraded = TokioIo::new(upstream_upgraded);
+                let (mut client_read, mut client_write) = tokio::io::split(client_upgraded);
+                let (mut upstream_read, mut upstream_write) = tokio::io::split(upstream_upgraded);
+
+                let client_to_upstream = tokio::io::copy(&mut client_read, &mut upstream_write);
+                let upstream_to_client = tokio::io::copy(&mut upstream_read, &mut client_write);
+
+                if let Err(e) = tokio::try_join!(client_to_upstream, upstream_to_client) {
                     warn!(%e, "upgrade tunnel error");
                 }
-                // Try to shutdown both sides
-                let _ = client_upgraded.shutdown().await;
-                let _ = upstream_upgraded.shutdown().await;
             }
             Err(e) => {
                 warn!("upgrade error: {:?}", e);
@@ -587,10 +707,10 @@ async fn handle_upgrade(
 }
 
 async fn handle_connect(
-    mut req: Request<Body>,
+    mut req: Request<Incoming>,
     cfg: &ProxyConfig,
     remote_addr: SocketAddr,
-) -> Result<Response<Body>, Response<Body>> {
+) -> Result<Response<BoxBody>, Response<BoxBody>> {
     let port = get_port_from_header(req.headers())?;
     let upstream_host = upstream_host_from_headers(
         req.headers(),
@@ -603,8 +723,8 @@ async fn handle_connect(
     // Respond that the connection is established; then upgrade to a raw tunnel
     let resp = Response::builder()
         .status(StatusCode::OK)
-        .header(CONNECTION, HeaderValue::from_static("upgrade"))
-        .body(Body::empty())
+        .header("connection", HeaderValue::from_static("upgrade"))
+        .body(boxed(Empty::<Bytes>::new()))
         .map_err(|_| {
             response_with(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -614,22 +734,25 @@ async fn handle_connect(
 
     tokio::spawn(async move {
         match hyper::upgrade::on(&mut req).await {
-            Ok(mut upgraded) => match TcpStream::connect(&target).await {
-                Ok(mut upstream) => {
-                    if let Err(e) = copy_bidirectional(&mut upgraded, &mut upstream).await {
-                        warn!(%e, "tcp tunnel error");
+            Ok(upgraded) => {
+                let mut upgraded = TokioIo::new(upgraded);
+                match TcpStream::connect(&target).await {
+                    Ok(mut upstream) => {
+                        if let Err(e) = copy_bidirectional(&mut upgraded, &mut upstream).await {
+                            warn!(%e, "tcp tunnel error");
+                        }
+                        let _ = upgraded.shutdown().await;
+                        let _ = upstream.shutdown().await;
                     }
-                    let _ = upgraded.shutdown().await;
-                    let _ = upstream.shutdown().await;
+                    Err(e) => {
+                        warn!(%e, "failed to connect to upstream for CONNECT");
+                        let _ = upgraded
+                            .write_all(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
+                            .await;
+                        let _ = upgraded.shutdown().await;
+                    }
                 }
-                Err(e) => {
-                    warn!(%e, "failed to connect to upstream for CONNECT");
-                    let _ = upgraded
-                        .write_all(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
-                        .await;
-                    let _ = upgraded.shutdown().await;
-                }
-            },
+            }
             Err(e) => warn!("CONNECT upgrade error: {:?}", e),
         }
     });

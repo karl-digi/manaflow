@@ -3,6 +3,7 @@ import http, {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
+import http2, { type Http2ServerRequest, type Http2ServerResponse } from "node:http2";
 import https from "node:https";
 import net, { type Socket } from "node:net";
 import tls, { type TLSSocket } from "node:tls";
@@ -24,6 +25,28 @@ const CMUX_DOMAINS = [
   "cmux.localhost",
   "autobuild.app",
 ] as const;
+
+// HTTP/2 connection pool for better performance
+const http2Sessions = new Map<string, http2.ClientHttp2Session>();
+const http2SessionUseCount = new Map<string, number>();
+const MAX_SESSION_REQUESTS = 1000; // Recreate session after this many requests
+
+// HTTP/1.1 agents with connection pooling
+const httpAgent = new http.Agent({
+  keepAlive: true,
+  keepAliveMsecs: 30000,
+  maxSockets: 50,
+  maxFreeSockets: 10,
+  timeout: 60000,
+});
+
+const httpsAgent = new https.Agent({
+  keepAlive: true,
+  keepAliveMsecs: 30000,
+  maxSockets: 50,
+  maxFreeSockets: 10,
+  timeout: 60000,
+});
 
 interface ProxyRoute {
   morphId: string;
@@ -126,6 +149,90 @@ export function releasePreviewProxy(webContentsId: number): void {
   });
 }
 
+// Clean up HTTP/2 sessions on shutdown
+function cleanupHttp2Sessions(): void {
+  for (const [key, session] of http2Sessions.entries()) {
+    try {
+      session.close();
+    } catch (error) {
+      console.error("Failed to close HTTP/2 session", error);
+    }
+  }
+  http2Sessions.clear();
+  http2SessionUseCount.clear();
+}
+
+// Get or create an HTTP/2 session for a given authority
+function getHttp2Session(authority: string, secure: boolean): http2.ClientHttp2Session | null {
+  const protocol = secure ? "https:" : "http:";
+  const key = `${protocol}//${authority}`;
+
+  // Check if we have an existing session
+  let session = http2Sessions.get(key);
+  const useCount = http2SessionUseCount.get(key) ?? 0;
+
+  // Recreate session if it's been used too many times or is closed
+  if (session && (useCount >= MAX_SESSION_REQUESTS || session.closed || session.destroyed)) {
+    try {
+      session.close();
+    } catch (error) {
+      // Ignore close errors
+    }
+    session = undefined;
+    http2Sessions.delete(key);
+    http2SessionUseCount.delete(key);
+  }
+
+  // Create new session if needed
+  if (!session) {
+    try {
+      session = http2.connect(key, {
+        // Enable settings for better performance
+        peerMaxConcurrentStreams: 100,
+        // Disable session timeout - we'll manage lifecycle ourselves
+        createConnection: secure
+          ? (authority, options) => {
+              return tls.connect({
+                ...options,
+                host: authority.split(":")[0],
+                port: Number.parseInt(authority.split(":")[1] || "443", 10),
+                servername: authority.split(":")[0],
+                ALPNProtocols: ["h2", "http/1.1"],
+              });
+            }
+          : undefined,
+      });
+
+      session.on("error", (error) => {
+        proxyWarn("http2-session-error", { authority, error: error.message });
+        http2Sessions.delete(key);
+        http2SessionUseCount.delete(key);
+      });
+
+      session.on("goaway", () => {
+        proxyLog("http2-goaway", { authority });
+        http2Sessions.delete(key);
+        http2SessionUseCount.delete(key);
+      });
+
+      http2Sessions.set(key, session);
+      http2SessionUseCount.set(key, 0);
+      proxyLog("http2-session-created", { authority });
+    } catch (error) {
+      proxyWarn("http2-session-creation-failed", {
+        authority,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return null;
+    }
+  }
+
+  // Increment use count
+  http2SessionUseCount.set(key, useCount + 1);
+
+  return session;
+}
+
 export async function configurePreviewProxyForView(
   options: ConfigureOptions
 ): Promise<() => void> {
@@ -221,9 +328,13 @@ async function startProxyServer(logger: Logger): Promise<number> {
       await listen(server, candidatePort);
       proxyServer = server;
       proxyLogger = logger;
-      console.log(`[cmux-preview-proxy] listening on port ${candidatePort}`);
-      logger.log("Preview proxy listening", { port: candidatePort });
-      proxyLog("listening", { port: candidatePort });
+      console.log(`[cmux-preview-proxy] listening on port ${candidatePort} with HTTP/1.1 and HTTP/2 support`);
+      logger.log("Preview proxy listening with HTTP/2 support", { port: candidatePort });
+      proxyLog("listening", { port: candidatePort, http2Enabled: true });
+
+      // Clean up HTTP/2 sessions on process exit
+      process.once("beforeExit", cleanupHttp2Sessions);
+
       return candidatePort;
     } catch (error) {
       server.removeAllListeners();
@@ -494,6 +605,97 @@ function forwardHttpRequest(
   context: ProxyContext
 ) {
   const { url, secure, connectPort } = target;
+
+  // Try HTTP/2 first for HTTPS connections
+  if (secure) {
+    const authority = `${url.hostname}:${connectPort}`;
+    const session = getHttp2Session(authority, true);
+
+    if (session && !session.closed && !session.destroyed) {
+      forwardHttpRequestViaHttp2(clientReq, clientRes, target, context, session);
+      return;
+    }
+  }
+
+  // Fall back to HTTP/1.1 with connection pooling
+  forwardHttpRequestViaHttp1(clientReq, clientRes, target, context);
+}
+
+function forwardHttpRequestViaHttp2(
+  clientReq: IncomingMessage,
+  clientRes: ServerResponse,
+  target: ProxyTarget,
+  context: ProxyContext,
+  session: http2.ClientHttp2Session
+) {
+  const { url } = target;
+  const requestHeaders: Record<string, string | string[]> = {
+    ":method": clientReq.method ?? "GET",
+    ":path": url.pathname + url.search,
+    ":scheme": "https",
+    ":authority": url.host,
+  };
+
+  for (const [key, value] of Object.entries(clientReq.headers)) {
+    if (!value) continue;
+    const lowerKey = key.toLowerCase();
+    // Skip pseudo-headers and proxy-specific headers
+    if (lowerKey.startsWith(":") || lowerKey === "proxy-authorization" || lowerKey === "connection") continue;
+    requestHeaders[lowerKey] = value;
+  }
+
+  try {
+    const req = session.request(requestHeaders);
+
+    req.on("response", (headers) => {
+      const statusCode = Number(headers[":status"]) || 500;
+      const responseHeaders: Record<string, string | string[]> = {};
+
+      for (const [key, value] of Object.entries(headers)) {
+        if (!key.startsWith(":") && value !== undefined) {
+          responseHeaders[key] = value;
+        }
+      }
+
+      clientRes.writeHead(statusCode, responseHeaders);
+      req.pipe(clientRes);
+    });
+
+    req.on("error", (error) => {
+      proxyWarn("http2-upstream-error", {
+        error: error.message,
+        persistKey: context.persistKey,
+        username: context.username,
+        host: url.hostname,
+      });
+
+      // Fall back to HTTP/1.1 on error
+      forwardHttpRequestViaHttp1(clientReq, clientRes, target, context);
+    });
+
+    clientReq.pipe(req);
+
+    clientReq.on("aborted", () => {
+      req.close();
+    });
+  } catch (error) {
+    proxyWarn("http2-request-failed", {
+      error: error instanceof Error ? error.message : String(error),
+      host: url.hostname,
+    });
+
+    // Fall back to HTTP/1.1
+    forwardHttpRequestViaHttp1(clientReq, clientRes, target, context);
+  }
+}
+
+function forwardHttpRequestViaHttp1(
+  clientReq: IncomingMessage,
+  clientRes: ServerResponse,
+  target: ProxyTarget,
+  context: ProxyContext
+) {
+  const { url, secure, connectPort } = target;
   const requestHeaders: Record<string, string> = {};
 
   for (const [key, value] of Object.entries(clientReq.headers)) {
@@ -514,6 +716,7 @@ function forwardHttpRequest(
     method: clientReq.method,
     path: url.pathname + url.search,
     headers: requestHeaders,
+    agent: secure ? httpsAgent : httpAgent,
   };
 
   const httpModule = secure ? https : http;
@@ -557,6 +760,7 @@ function forwardUpgradeRequest(
         host: url.hostname,
         port: connectPort,
         servername: url.hostname,
+        ALPNProtocols: ["http/1.1"], // WebSocket requires HTTP/1.1
       })
     : net.connect(connectPort, url.hostname);
 

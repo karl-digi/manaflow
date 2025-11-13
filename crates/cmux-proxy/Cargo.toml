@@ -7,13 +7,17 @@ edition = "2021"
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 # HTTP server/client
-hyper = { version = "0.14", features = ["full"] }
-http = "0.2"
+hyper = { version = "1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["full"] }
+http = "1"
+http-body-util = "0.1"
 bytes = "1"
 clap = { version = "4", features = ["derive", "env"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 futures-util = "0.3"
+tower = "0.4"
+pin-project-lite = "0.2"
 
 [profile.release]
 opt-level = 3
