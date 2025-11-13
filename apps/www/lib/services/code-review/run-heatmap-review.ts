@@ -2,12 +2,15 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { streamObject } from "ai";
 import { api } from "@cmux/convex/api";
 import type { Id } from "@cmux/convex/dataModel";
+import { CLOUDFLARE_OPENAI_BASE_URL } from "@cmux/shared";
 import { getConvex } from "@/lib/utils/get-convex";
 import {
   collectPrDiffs,
   mapWithConcurrency,
 } from "@/scripts/pr-review-heatmap";
 import { formatUnifiedDiffWithLineNumbers } from "@/scripts/pr-review/diff-utils";
+import type { ModelConfig } from "./run-simple-anthropic-review";
+import { getDefaultHeatmapModelConfig } from "./model-config";
 import {
   buildHeatmapPrompt,
   heatmapSchema,
@@ -23,6 +26,7 @@ interface HeatmapReviewConfig {
   accessToken: string;
   callbackToken: string;
   githubAccessToken?: string | null;
+  modelConfig?: ModelConfig;
 }
 
 // Placeholder sandbox ID for heatmap strategy (no Morph VM used)
@@ -85,7 +89,31 @@ export async function runHeatmapReview(
       fileCount: sortedFiles.length,
     });
 
-    const openai = createOpenAI({ apiKey: openAiApiKey });
+    const openai = createOpenAI({
+      apiKey: openAiApiKey,
+      baseURL: CLOUDFLARE_OPENAI_BASE_URL,
+    });
+    const defaultModelConfig = getDefaultHeatmapModelConfig();
+    const selectedModel = (() => {
+      const resolvedConfig = config.modelConfig ?? defaultModelConfig;
+      if (resolvedConfig.provider !== "openai") {
+        console.warn(
+          "[heatmap-review] Ignoring unsupported model provider override",
+          {
+            provider: resolvedConfig.provider,
+            jobId: config.jobId,
+          }
+        );
+        return defaultModelConfig.model;
+      }
+      if (config.modelConfig) {
+        console.info("[heatmap-review] Using OpenAI model override", {
+          jobId: config.jobId,
+          model: resolvedConfig.model,
+        });
+      }
+      return resolvedConfig.model;
+    })();
     const allResults: Array<{ filePath: string; lines: HeatmapLine[] }> = [];
     const failures: Array<{ filePath: string; message: string }> = [];
 
@@ -106,8 +134,7 @@ export async function runHeatmapReview(
         const prompt = buildHeatmapPrompt(file.filePath, formattedDiff);
         const streamStart = Date.now();
         const stream = streamObject({
-          // model: openai("gpt-5-nano"),
-          model: openai("gpt-5"),
+          model: openai(selectedModel),
           schema: heatmapSchema,
           prompt,
           temperature: 0,

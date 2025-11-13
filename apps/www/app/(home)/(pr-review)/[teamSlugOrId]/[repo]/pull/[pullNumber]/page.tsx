@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { waitUntil } from "@vercel/functions";
 import { type Team } from "@stackframe/stack";
+import type { ModelConfig } from "@/lib/services/code-review/run-simple-anthropic-review";
 
 import {
   fetchPullRequest,
@@ -32,6 +33,7 @@ import { PrivateRepoPrompt } from "../../_components/private-repo-prompt";
 import { TeamOnboardingPrompt } from "../../_components/team-onboarding-prompt";
 import { env } from "@/lib/utils/www-env";
 import { trackRepoPageView } from "@/lib/analytics/track-repo-page-view";
+import { parseModelConfigFromRecord } from "@/lib/services/code-review/model-config";
 
 const ENABLE_IMMEDIATE_CODE_REVIEW = false;
 
@@ -43,6 +45,7 @@ type PageParams = {
 
 type PageProps = {
   params: Promise<PageParams>;
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 };
 
 export const dynamic = "force-dynamic";
@@ -138,8 +141,9 @@ export async function generateMetadata({
   }
 }
 
-export default async function PullRequestPage({ params }: PageProps) {
+export default async function PullRequestPage({ params, searchParams }: PageProps) {
   const resolvedParams = await params;
+  const resolvedSearchParams = await searchParams;
 
   const {
     teamSlugOrId: githubOwner,
@@ -147,6 +151,7 @@ export default async function PullRequestPage({ params }: PageProps) {
     pullNumber: pullNumberRaw,
   } = resolvedParams;
   const pullNumber = parsePullNumber(pullNumberRaw);
+  const modelConfig = parseModelConfigFromRecord(resolvedSearchParams);
 
   if (pullNumber === null) {
     notFound();
@@ -244,6 +249,7 @@ export default async function PullRequestPage({ params }: PageProps) {
       repo,
       pullNumber,
       pullRequestPromise,
+      modelConfig,
     });
   }
 
@@ -290,12 +296,14 @@ function scheduleCodeReviewStart({
   repo,
   pullNumber,
   pullRequestPromise,
+  modelConfig,
 }: {
   teamSlugOrId: string;
   githubOwner: string;
   repo: string;
   pullNumber: number;
   pullRequestPromise: Promise<GithubPullRequest>;
+  modelConfig?: ModelConfig;
 }): void {
   waitUntil(
     (async () => {
@@ -408,6 +416,7 @@ function scheduleCodeReviewStart({
           simpleReviewPromise = runSimpleAnthropicReviewStream({
             prIdentifier: githubLink,
             githubToken: simpleReviewToken,
+            modelConfig,
           }).catch((error) => {
             const message =
               error instanceof Error ? error.message : String(error ?? "");

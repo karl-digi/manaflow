@@ -1,7 +1,11 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
+import { createOpenAI } from "@ai-sdk/openai";
 import { streamText } from "ai";
 
-import { CLOUDFLARE_ANTHROPIC_BASE_URL } from "@cmux/shared";
+import {
+  CLOUDFLARE_ANTHROPIC_BASE_URL,
+  CLOUDFLARE_OPENAI_BASE_URL,
+} from "@cmux/shared";
 import { collectPrDiffs, collectPrDiffsViaGhCli } from "@/scripts/pr-review-heatmap";
 import { env } from "@/lib/utils/www-env";
 import {
@@ -13,6 +17,7 @@ import {
   getInstallationForRepo,
 } from "@/lib/utils/github-app-token";
 import { checkRepoVisibility } from "@/lib/github/check-repo-visibility";
+import { getDefaultHeatmapModelConfig } from "./model-config";
 
 const SIMPLE_REVIEW_INSTRUCTIONS = `Dannotate every modified/deleted/added line of this diff with a "fake" comment at the end of each line.
 
@@ -111,9 +116,15 @@ type RepoSlug = {
   repo: string;
 };
 
+export type ModelConfig = {
+  provider: "anthropic" | "openai";
+  model: string;
+};
+
 export type SimpleReviewStreamOptions = {
   prIdentifier: string;
   githubToken?: string | null;
+  modelConfig?: ModelConfig;
   onChunk?: (chunk: string) => void | Promise<void>;
   onEvent?: (event: SimpleReviewParsedEvent) => void | Promise<void>;
   signal?: AbortSignal;
@@ -281,6 +292,7 @@ export async function runSimpleAnthropicReviewStream(
   const {
     prIdentifier,
     githubToken: providedGithubToken = null,
+    modelConfig,
     onChunk,
     signal,
   } = options;
@@ -333,9 +345,18 @@ export async function runSimpleAnthropicReviewStream(
     metadata.prUrl ??
     `${metadata.owner}/${metadata.repo}#${metadata.number ?? "unknown"}`;
 
+  // Determine which model to use based on configuration
+  const effectiveModelConfig: ModelConfig =
+    modelConfig ?? getDefaultHeatmapModelConfig();
+
   const anthropic = createAnthropic({
     apiKey: env.ANTHROPIC_API_KEY,
     baseURL: CLOUDFLARE_ANTHROPIC_BASE_URL,
+  });
+
+  const openai = createOpenAI({
+    apiKey: env.OPENAI_API_KEY,
+    baseURL: CLOUDFLARE_OPENAI_BASE_URL,
   });
 
   const runWithSemaphore = createSemaphore(MAX_CONCURRENCY);
@@ -368,9 +389,13 @@ export async function runSimpleAnthropicReviewStream(
         const prompt = buildFilePrompt(prLabel, file.filePath, file.diffText);
 
         try {
+          const modelInstance =
+            effectiveModelConfig.provider === "openai"
+              ? openai(effectiveModelConfig.model)
+              : anthropic(effectiveModelConfig.model);
+
           const stream = streamText({
-            model: anthropic("claude-opus-4-1-20250805"),
-            // model: anthropic("claude-haiku-4-5"),
+            model: modelInstance,
             prompt,
             temperature: 0,
             maxRetries: 2,
