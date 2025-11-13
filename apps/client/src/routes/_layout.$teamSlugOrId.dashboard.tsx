@@ -67,7 +67,7 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/dashboard")({
 const DEFAULT_AGENTS = [
   "claude/sonnet-4.5",
   "claude/opus-4.1",
-  "codex/gpt-5-codex-high",
+  "codex/gpt-5.1-codex-high",
 ];
 const KNOWN_AGENT_NAMES = new Set(AGENT_CONFIGS.map((agent) => agent.name));
 const DEFAULT_AGENT_SELECTION = DEFAULT_AGENTS.filter((agent) =>
