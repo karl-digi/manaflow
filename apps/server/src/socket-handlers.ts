@@ -22,6 +22,7 @@ import {
   isLoopbackHostname,
   LOCAL_VSCODE_PLACEHOLDER_ORIGIN,
   type IframePreflightResult,
+  type SocketAuth,
 } from "@cmux/shared";
 import {
   type PullRequestActionResult,
@@ -185,6 +186,23 @@ function buildServeWebWorkspaceUrl(
 
 function buildPlaceholderWorkspaceUrl(folderPath: string): string {
   return buildServeWebWorkspaceUrl(LOCAL_VSCODE_PLACEHOLDER_ORIGIN, folderPath);
+}
+
+/**
+ * Helper to extract auth from event data and run handler within auth context.
+ * This ensures every socket message uses fresh tokens from the client.
+ */
+function withEventAuth<TData extends { auth?: SocketAuth }, TResult>(
+  handler: (data: TData) => TResult | Promise<TResult>
+): (data: TData) => TResult | Promise<TResult> {
+  return (data: TData) => {
+    const { auth } = data;
+    if (!auth) {
+      serverLogger.warn("Socket event received without auth", { data });
+      throw new Error("Authentication required for this operation");
+    }
+    return runWithAuth(auth.authToken, auth.authJson, () => handler(data));
+  };
 }
 
 export function setupSocketHandlers(

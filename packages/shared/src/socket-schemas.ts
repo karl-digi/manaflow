@@ -7,26 +7,38 @@ import type {
 } from "./pull-request-state";
 import type { IframePreflightResult } from "./iframe-preflight";
 
+// Auth payload that should be included with every client-to-server event
+export const SocketAuthSchema = z.object({
+  authToken: z.string(),
+  authJson: z.string().optional(), // Stringified JSON from user.getAuthJson()
+});
+
+export type SocketAuth = z.infer<typeof SocketAuthSchema>;
+
 // Client to Server Events
 export const CreateTerminalSchema = z.object({
   id: z.string().optional(),
   cols: z.number().int().positive().default(80),
   rows: z.number().int().positive().default(24),
+  auth: SocketAuthSchema,
 });
 
 export const TerminalInputSchema = z.object({
   terminalId: z.string(),
   data: z.string(),
+  auth: SocketAuthSchema,
 });
 
 export const ResizeSchema = z.object({
   terminalId: z.string(),
   cols: z.number().int().positive(),
   rows: z.number().int().positive(),
+  auth: SocketAuthSchema,
 });
 
 export const CloseTerminalSchema = z.object({
   terminalId: z.string(),
+  auth: SocketAuthSchema,
 });
 
 export const StartTaskSchema = z.object({
@@ -48,6 +60,7 @@ export const StartTaskSchema = z.object({
     .optional(),
   theme: z.enum(["dark", "light", "system"]).optional(),
   environmentId: typedZid("environments").optional(),
+  auth: SocketAuthSchema,
 });
 
 export const CreateLocalWorkspaceSchema = z.object({
@@ -60,6 +73,7 @@ export const CreateLocalWorkspaceSchema = z.object({
   workspaceName: z.string().optional(),
   descriptor: z.string().optional(),
   sequence: z.number().optional(),
+  auth: SocketAuthSchema,
 });
 
 export const CreateLocalWorkspaceResponseSchema = z.object({
@@ -82,6 +96,7 @@ export const CreateCloudWorkspaceSchema = z
     taskId: typedZid("tasks").optional(),
     taskRunId: typedZid("taskRuns").optional(),
     theme: z.enum(["dark", "light", "system"]).optional(),
+    auth: SocketAuthSchema,
   })
   .refine(
     (value) => Boolean(value.environmentId || value.projectFullName),
@@ -144,15 +159,18 @@ export const TaskErrorSchema = z.object({
 // Git diff events
 export const GitStatusRequestSchema = z.object({
   workspacePath: z.string(),
+  auth: SocketAuthSchema,
 });
 
 export const GitDiffRequestSchema = z.object({
   workspacePath: z.string(),
   filePath: z.string(),
+  auth: SocketAuthSchema,
 });
 
 export const GitFullDiffRequestSchema = z.object({
   workspacePath: z.string(),
+  auth: SocketAuthSchema,
 });
 
 // Compare arbitrary refs within a repository (e.g., branch names or SHAs)
@@ -166,6 +184,7 @@ export const GitRepoDiffRequestSchema = z.object({
   maxBytes: z.number().optional(),
   lastKnownBaseSha: z.string().optional(),
   lastKnownMergeCommitSha: z.string().optional(),
+  auth: SocketAuthSchema,
 });
 
 export const GitFileSchema = z.object({
@@ -220,6 +239,7 @@ export const OpenInEditorSchema = z.object({
     "xcode",
   ]),
   path: z.string(),
+  auth: SocketAuthSchema,
 });
 
 export const AvailableEditorsSchema = z.object({
@@ -250,6 +270,7 @@ export const ListFilesRequestSchema = z
     environmentId: typedZid("environments").optional(),
     branch: z.string().optional(),
     pattern: z.string().optional(), // Optional glob pattern for filtering
+    auth: SocketAuthSchema,
   })
   .refine(
     (value) => Boolean(value.repoPath || value.environmentId),
@@ -281,11 +302,13 @@ export const VSCodeSpawnedSchema = z.object({
 // GitHub events
 export const GitHubFetchReposSchema = z.object({
   teamSlugOrId: z.string(),
+  auth: SocketAuthSchema,
 });
 
 export const GitHubFetchBranchesSchema = z.object({
   teamSlugOrId: z.string(),
   repo: z.string(),
+  auth: SocketAuthSchema,
 });
 
 export const GitHubBranchSchema = z.object({
@@ -339,21 +362,25 @@ export const GitHubAuthResponseSchema = z.object({
 // Create draft PR input
 export const GitHubCreateDraftPrSchema = z.object({
   taskRunId: typedZid("taskRuns"),
+  auth: SocketAuthSchema,
 });
 
 // Sync PR state
 export const GitHubSyncPrStateSchema = z.object({
   taskRunId: typedZid("taskRuns"),
+  auth: SocketAuthSchema,
 });
 
 // Merge branch directly
 export const GitHubMergeBranchSchema = z.object({
   taskRunId: typedZid("taskRuns"),
+  auth: SocketAuthSchema,
 });
 
 // Archive task schema
 export const ArchiveTaskSchema = z.object({
   taskId: typedZid("tasks"),
+  auth: SocketAuthSchema,
 });
 
 export const SpawnFromCommentSchema = z.object({
@@ -372,6 +399,7 @@ export const SpawnFromCommentSchema = z.object({
   screenWidth: z.number().optional(),
   screenHeight: z.number().optional(),
   devicePixelRatio: z.number().optional(),
+  auth: SocketAuthSchema,
 });
 
 // Provider status schemas
