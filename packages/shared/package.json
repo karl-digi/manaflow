@@ -97,6 +97,10 @@
     "./providers/common/check-docker": {
       "import": "./src/providers/common/check-docker.ts",
       "types": "./src/providers/common/check-docker.ts"
+    },
+    "./src/providers/opencode/constants.ts": {
+      "import": "./src/providers/opencode/constants.ts",
+      "types": "./src/providers/opencode/constants.ts"
     }
   },
   "dependencies": {

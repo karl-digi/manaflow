@@ -21,6 +21,11 @@ import type { Id } from "@cmux/convex/dataModel";
 
 import { getWorkerServerSocketOptions } from "@cmux/shared/node/socket";
 import { startAmpProxy } from "@cmux/shared/src/providers/amp/start-amp-proxy.ts";
+import {
+  OPENCODE_BASE_URL,
+  OPENCODE_HOSTNAME,
+  OPENCODE_PORT,
+} from "@cmux/shared/src/providers/opencode/constants.ts";
 import { handleWorkerTaskCompletion } from "./crown/workflow";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import * as xtermHeadless from "@xterm/headless";
@@ -174,6 +179,136 @@ const hasTaskRunId = (
   typeof value === "object" && value !== null && "taskRunId" in value;
 
 const pendingEvents: PendingEvent[] = [];
+
+const OPENCODE_SESSION_URL = `${OPENCODE_BASE_URL}/session`;
+const OPENCODE_SUBMIT_PROMPT_URL = `${OPENCODE_BASE_URL}/tui/submit-prompt`;
+const OPENCODE_POLL_INTERVAL_MS = 1000;
+const OPENCODE_MAX_ATTEMPTS = 90;
+const OPENCODE_FETCH_TIMEOUT_MS = 5000;
+
+const isOpenCodeAgent = (agentModel?: string): boolean =>
+  typeof agentModel === "string" &&
+  agentModel.toLowerCase().startsWith("opencode/");
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit = {},
+  timeoutMs: number = OPENCODE_FETCH_TIMEOUT_MS
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+}
+
+type OpenCodeAutomationContext = {
+  taskRunId?: Id<"taskRuns">;
+  terminalId: string;
+  agentModel?: string;
+};
+
+async function waitForOpenCodeSession(
+  context: OpenCodeAutomationContext
+): Promise<boolean> {
+  // Give the TUI a brief moment to boot before polling aggressively
+  await sleep(OPENCODE_POLL_INTERVAL_MS);
+
+  for (let attempt = 1; attempt <= OPENCODE_MAX_ATTEMPTS; attempt++) {
+    try {
+      const response = await fetchWithTimeout(OPENCODE_SESSION_URL, {
+        method: "GET",
+      });
+      if (response.ok) {
+        log("INFO", "OpenCode session endpoint is ready", {
+          attempt,
+          ...context,
+          hostname: OPENCODE_HOSTNAME,
+          port: OPENCODE_PORT,
+        });
+        return true;
+      }
+
+      log("DEBUG", "OpenCode session endpoint not ready yet", {
+        attempt,
+        status: response.status,
+        ...context,
+      });
+    } catch (error) {
+      log("DEBUG", "OpenCode session poll failed", {
+        attempt,
+        ...context,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    await sleep(OPENCODE_POLL_INTERVAL_MS);
+  }
+
+  log("ERROR", "OpenCode session endpoint did not become ready in time", {
+    ...context,
+    hostname: OPENCODE_HOSTNAME,
+    port: OPENCODE_PORT,
+  });
+  return false;
+}
+
+async function automateOpenCodePromptSubmission(
+  prompt: string,
+  context: OpenCodeAutomationContext
+): Promise<void> {
+  if (!prompt || prompt.trim().length === 0) {
+    log("WARN", "Skipping OpenCode automation because prompt is empty", {
+      ...context,
+    });
+    return;
+  }
+
+  const ready = await waitForOpenCodeSession(context);
+  if (!ready) {
+    return;
+  }
+
+  try {
+    const response = await fetchWithTimeout(OPENCODE_SUBMIT_PROMPT_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: "{}",
+    });
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      log("ERROR", "Failed to submit OpenCode prompt", {
+        ...context,
+        status: response.status,
+        bodyPreview: body.slice(0, 200),
+      });
+      return;
+    }
+
+    log("INFO", "Submitted OpenCode prompt via TUI API", {
+      ...context,
+      promptLength: prompt.length,
+    });
+  } catch (error) {
+    log("ERROR", "Error submitting OpenCode prompt", {
+      ...context,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
 
 /**
  * Emit an event to the main server, queuing it if not connected
@@ -1148,6 +1283,14 @@ async function createTerminal(
       pid: childProcess.pid,
       terminalId,
     });
+
+    if (isOpenCodeAgent(options.agentModel)) {
+      void automateOpenCodePromptSubmission(promptValue ?? "", {
+        taskRunId: options.taskRunId,
+        terminalId,
+        agentModel: options.agentModel,
+      });
+    }
   } catch (error) {
     log("ERROR", "Failed to spawn process", error);
     return;
