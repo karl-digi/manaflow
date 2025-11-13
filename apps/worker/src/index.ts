@@ -3,6 +3,7 @@ import {
   WorkerConfigureGitSchema,
   WorkerCreateTerminalSchema,
   WorkerExecSchema,
+  WorkerRunTaskScreenshotsSchema,
   WorkerStartScreenshotCollectionSchema,
   type ClientToServerEvents,
   type InterServerEvents,
@@ -11,6 +12,7 @@ import {
   type SocketData,
   type WorkerHeartbeat,
   type WorkerRegister,
+  type WorkerRunTaskScreenshots,
   type WorkerStartScreenshotCollection,
   type WorkerTaskRunContext,
   type WorkerToServerEventNames,
@@ -43,6 +45,7 @@ import { runWorkerExec } from "./execRunner";
 import { FileWatcher, computeGitDiff, getFileWithDiff } from "./fileWatcher";
 import { log } from "./logger";
 import { startScreenshotCollection } from "./screenshotCollector/startScreenshotCollection";
+import { runTaskScreenshots } from "./screenshotCollector/runTaskScreenshots";
 
 const execAsync = promisify(exec);
 
@@ -513,6 +516,65 @@ managementIO.on("connection", (socket) => {
           },
           WORKER_ID
         );
+      }
+    }
+  );
+
+  socket.on(
+    "worker:run-task-screenshots",
+    async (rawData: WorkerRunTaskScreenshots, callback) => {
+      log(
+        "INFO",
+        `Worker ${WORKER_ID} received request to run task screenshots`,
+        {
+          taskId: rawData.taskId,
+          taskRunId: rawData.taskRunId,
+        },
+        WORKER_ID
+      );
+
+      try {
+        const validated = WorkerRunTaskScreenshotsSchema.parse(rawData);
+
+        await runTaskScreenshots({
+          taskId: validated.taskId,
+          taskRunId: validated.taskRunId,
+          token: validated.token,
+          convexUrl: validated.convexUrl,
+          anthropicApiKey: validated.anthropicApiKey,
+          taskRunJwt: validated.taskRunJwt,
+        });
+
+        log(
+          "INFO",
+          "Task screenshot workflow completed successfully",
+          {
+            taskId: validated.taskId,
+            taskRunId: validated.taskRunId,
+          },
+          WORKER_ID
+        );
+
+        callback({
+          error: null,
+          data: { success: true },
+        });
+      } catch (error) {
+        log(
+          "ERROR",
+          "Failed to run task screenshots",
+          {
+            error: error instanceof Error ? error.message : String(error),
+            taskId: rawData.taskId,
+            taskRunId: rawData.taskRunId,
+          },
+          WORKER_ID
+        );
+
+        callback({
+          error: error instanceof Error ? error : new Error(String(error)),
+          data: null,
+        });
       }
     }
   );

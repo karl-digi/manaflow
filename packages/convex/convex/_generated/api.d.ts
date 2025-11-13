@@ -28,6 +28,7 @@ import type * as github_deployments from "../github_deployments.js";
 import type * as github_http from "../github_http.js";
 import type * as github_pr_comments from "../github_pr_comments.js";
 import type * as github_pr_merge_handler from "../github_pr_merge_handler.js";
+import type * as github_pr_queries from "../github_pr_queries.js";
 import type * as github_prs from "../github_prs.js";
 import type * as github_setup from "../github_setup.js";
 import type * as github_webhook from "../github_webhook.js";
@@ -94,6 +95,7 @@ declare const fullApi: ApiFromModules<{
   github_http: typeof github_http;
   github_pr_comments: typeof github_pr_comments;
   github_pr_merge_handler: typeof github_pr_merge_handler;
+  github_pr_queries: typeof github_pr_queries;
   github_prs: typeof github_prs;
   github_setup: typeof github_setup;
   github_webhook: typeof github_webhook;

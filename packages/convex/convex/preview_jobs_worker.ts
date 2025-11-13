@@ -7,6 +7,7 @@ import {
   type InstanceModel,
 } from "@cmux/morphcloud-openapi-client";
 import { SignJWT } from "jose";
+import { io as socketIOClient } from "socket.io-client";
 import { env } from "../_shared/convex-env";
 import { fetchInstallationAccessToken } from "../_shared/githubApp";
 import { internal } from "./_generated/api";
@@ -107,7 +108,7 @@ async function ensureCommitAvailable({
   // If PR is from a fork, add fork fetch as the highest priority
   if (headRepoCloneUrl && headRef) {
     fetchAttempts.unshift({
-      description: "fetch from fork",
+      description: "Check the git diff and look for frontend changes where screenshots could add good context.",
       command: [
         "git",
         "-C",
@@ -244,103 +245,6 @@ async function stopMorphInstance(
   await stopInstanceInstanceInstanceIdDelete({
     client: morphClient,
     path: { instance_id: instanceId },
-  });
-}
-
-async function triggerWorkerScreenshotCollection(
-  workerUrl: string,
-  previewRunId: Id<"previewRuns">,
-  config?: {
-    taskId?: Id<"tasks">;
-    taskRunId?: Id<"taskRuns">;
-    taskRunJwt?: string;
-    convexUrl?: string;
-    anthropicApiKey?: string;
-  },
-): Promise<void> {
-  const pollingBase = `${workerUrl}/socket.io/?EIO=4&transport=polling`;
-
-  console.log("[preview-jobs] Starting Socket.IO handshake", {
-    previewRunId,
-    workerUrl,
-    pollingBase,
-  });
-
-  // Step 1: Handshake to get session ID
-  const handshakeResponse = await fetch(`${pollingBase}&t=${Date.now()}`, {
-    signal: AbortSignal.timeout(10_000),
-  });
-
-  if (!handshakeResponse.ok) {
-    throw new Error(`Socket.IO handshake failed: ${handshakeResponse.status} ${handshakeResponse.statusText}`);
-  }
-
-  const handshakeText = await handshakeResponse.text();
-  console.log("[preview-jobs] Socket.IO handshake response", {
-    previewRunId,
-    status: handshakeResponse.status,
-    responseLength: handshakeText.length,
-    responsePreview: handshakeText.slice(0, 200),
-  });
-
-  // Parse session ID from response like: 0{"sid":"xxx","upgrades":[],"pingInterval":25000,"pingTimeout":20000}
-  const startIdx = handshakeText.indexOf('{');
-  const endIdx = handshakeText.lastIndexOf('}') + 1;
-  if (startIdx === -1 || endIdx === 0) {
-    throw new Error(`Failed to parse Socket.IO handshake response: ${handshakeText.slice(0, 200)}`);
-  }
-  const handshake = JSON.parse(handshakeText.slice(startIdx, endIdx)) as { sid: string };
-  const sid = handshake.sid;
-
-  console.log("[preview-jobs] Socket.IO session established", {
-    previewRunId,
-    sessionId: sid.slice(0, 8) + "...",
-  });
-
-  // Step 2: Connect to /management namespace
-  const connectResponse = await fetch(`${pollingBase}&sid=${sid}&t=${Date.now()}`, {
-    method: "POST",
-    headers: { "Content-Type": "text/plain;charset=UTF-8" },
-    body: "40/management",
-    signal: AbortSignal.timeout(10_000),
-  });
-
-  if (!connectResponse.ok) {
-    throw new Error(`Socket.IO namespace connect failed: ${connectResponse.status} ${connectResponse.statusText}`);
-  }
-
-  console.log("[preview-jobs] Connected to /management namespace", {
-    previewRunId,
-    status: connectResponse.status,
-  });
-
-  // Step 3: Send worker:start-screenshot-collection event
-  const eventPayload = config && {
-    taskId: config.taskId,
-    taskRunId: config.taskRunId,
-    taskRunJwt: config.taskRunJwt,
-    convexUrl: config.convexUrl,
-    anthropicApiKey: config.anthropicApiKey,
-  };
-  const eventBody = `42/management,${JSON.stringify(["worker:start-screenshot-collection", eventPayload])}`;
-  const eventResponse = await fetch(`${pollingBase}&sid=${sid}&t=${Date.now()}`, {
-    method: "POST",
-    headers: { "Content-Type": "text/plain;charset=UTF-8" },
-    body: eventBody,
-    signal: AbortSignal.timeout(10_000),
-  });
-
-  if (!eventResponse.ok) {
-    throw new Error(`Socket.IO event send failed: ${eventResponse.status} ${eventResponse.statusText}`);
-  }
-
-  console.log("[preview-jobs] Screenshot collection event sent", {
-    previewRunId,
-    status: eventResponse.status,
-    hasConfig: Boolean(config),
-    hasTaskId: Boolean(config?.taskId),
-    hasTaskRunId: Boolean(config?.taskRunId),
-    hasJwt: Boolean(config?.taskRunJwt),
   });
 }
 
@@ -722,31 +626,27 @@ export async function runPreviewJob(
       stdout: checkoutResult.stdout?.slice(0, 200),
     });
 
-    // Step 4: Trigger screenshot collection
+    // Step 4: Run screenshot workflow
     await ctx.runMutation(internal.previewRuns.updateStatus, {
       previewRunId,
       status: "running",
       stateReason: "Collecting screenshots",
     });
 
-    console.log("[preview-jobs] Triggering screenshot collection", {
+    console.log("[preview-jobs] Running screenshot workflow", {
       previewRunId,
-      workerUrl: workerService.url,
-      screenshotLogUrl: `${workerService.url.replace(':39377', ':39376')}/file?path=/root/.cmux/screenshot-collector/screenshot-collector.log`,
+      instanceId: instance.id,
+      hasTaskRunId: Boolean(run.taskRunId),
     });
 
-    // Get taskRunId and taskId for screenshot upload workflow
-    let screenshotConfig:
-      | { taskId: Id<"tasks">; taskRunId: Id<"taskRuns">; taskRunJwt: string; convexUrl: string; anthropicApiKey?: string }
-      | undefined;
-
+    // Run screenshot collection only if we have a taskRunId
     if (run.taskRunId) {
       const taskRun = await ctx.runQuery(internal.taskRuns.getById, {
         id: run.taskRunId,
       });
 
       if (taskRun) {
-        console.log("[preview-jobs] Preparing screenshot config", {
+        console.log("[preview-jobs] Executing runTaskScreenshots on Morph instance", {
           previewRunId,
           taskId: taskRun.taskId,
           taskRunId: run.taskRunId,
@@ -763,13 +663,82 @@ export async function runPreviewJob(
           .setExpirationTime("12h")
           .sign(new TextEncoder().encode(env.CMUX_TASK_RUN_JWT_SECRET));
 
-        screenshotConfig = {
-          taskId: taskRun.taskId,
-          taskRunId: run.taskRunId,
-          taskRunJwt: jwt,
-          convexUrl: env.BASE_APP_URL,
-          anthropicApiKey: env.ANTHROPIC_API_KEY,
-        };
+        // Connect to worker Socket.IO and trigger screenshot workflow
+        const workerSocketUrl = `${workerService.url}/management`;
+        console.log("[preview-jobs] Connecting to worker Socket.IO", {
+          previewRunId,
+          workerSocketUrl,
+        });
+
+        const socket = socketIOClient(workerSocketUrl, {
+          transports: ["websocket", "polling"],
+          timeout: 10000,
+        });
+
+        try {
+          await new Promise<void>((resolve, reject) => {
+            const timeout = setTimeout(() => {
+              socket.close();
+              reject(new Error("Socket.IO connection timeout"));
+            }, 10000);
+
+            socket.on("connect", () => {
+              clearTimeout(timeout);
+              console.log("[preview-jobs] Connected to worker Socket.IO", {
+                previewRunId,
+              });
+              resolve();
+            });
+
+            socket.on("connect_error", (error) => {
+              clearTimeout(timeout);
+              reject(error);
+            });
+          });
+
+          // Emit worker:run-task-screenshots event
+          const screenshotResult = await new Promise<{ success: true } | { error: string }>((resolve) => {
+            socket.emit(
+              "worker:run-task-screenshots",
+              {
+                taskId: taskRun.taskId,
+                taskRunId: run.taskRunId,
+                token: jwt,
+                convexUrl: env.BASE_APP_URL,
+                anthropicApiKey: env.ANTHROPIC_API_KEY,
+                taskRunJwt: jwt,
+              },
+              (response: { error: Error | null; data: { success: true } | null }) => {
+                if (response.error) {
+                  resolve({ error: response.error.message });
+                } else if (response.data) {
+                  resolve(response.data);
+                } else {
+                  resolve({ error: "No response from worker" });
+                }
+              }
+            );
+          });
+
+          socket.close();
+
+          if ("error" in screenshotResult) {
+            console.error("[preview-jobs] Screenshot workflow failed", {
+              previewRunId,
+              error: screenshotResult.error,
+            });
+          } else {
+            console.log("[preview-jobs] Screenshot workflow completed successfully", {
+              previewRunId,
+            });
+          }
+        } catch (socketError) {
+          console.error("[preview-jobs] Failed to connect to worker Socket.IO", {
+            previewRunId,
+            error: socketError instanceof Error ? socketError.message : String(socketError),
+          });
+          socket.close();
+        }
       } else {
         console.warn("[preview-jobs] TaskRun not found for preview run", {
           previewRunId,
@@ -777,40 +746,12 @@ export async function runPreviewJob(
         });
       }
     } else {
-      console.warn("[preview-jobs] No taskRunId linked to preview run", {
+      console.warn("[preview-jobs] No taskRunId linked to preview run, skipping screenshot workflow", {
         previewRunId,
       });
     }
 
-    await triggerWorkerScreenshotCollection(workerService.url, previewRunId, screenshotConfig);
-
-    console.log("[preview-jobs] Screenshot collection triggered", {
-      previewRunId,
-      hasScreenshotConfig: Boolean(screenshotConfig),
-    });
-
-    // Step 5: Wait for screenshots to complete
-    // The worker will now use runTaskScreenshots() which uploads directly to taskRunScreenshotSets
-    await ctx.runMutation(internal.previewRuns.updateStatus, {
-      previewRunId,
-      status: "running",
-      stateReason: "Waiting for screenshot collection to complete",
-    });
-
-    console.log("[preview-jobs] Waiting for screenshots to complete...", {
-      previewRunId,
-      waitTimeSeconds: 120,
-    });
-
-    // Wait 2 minutes for screenshot collection
-    // TODO: Replace with listening to worker:screenshot-collection-complete event
-    await new Promise((resolve) => setTimeout(resolve, 120_000));
-
-    console.log("[preview-jobs] Screenshot collection wait complete", {
-      previewRunId,
-    });
-
-    // Check if screenshots were uploaded to taskRunScreenshotSets
+    // Step 5: Check if screenshots were uploaded and post to GitHub
     if (run.taskRunId) {
       const taskRun = await ctx.runQuery(internal.taskRuns.getById, {
         id: run.taskRunId,
@@ -822,13 +763,66 @@ export async function runPreviewJob(
           screenshotSetId: taskRun.latestScreenshotSetId,
         });
 
-        await ctx.runMutation(internal.previewRuns.updateStatus, {
-          previewRunId,
-          status: "completed",
-          stateReason: "Screenshots collected and uploaded",
-        });
+        // Post screenshots to GitHub PR
+        if (run.repoInstallationId) {
+          console.log("[preview-jobs] Posting screenshots to GitHub PR", {
+            previewRunId,
+            repoFullName: run.repoFullName,
+            prNumber: run.prNumber,
+            installationId: run.repoInstallationId,
+          });
 
-        // TODO: Trigger GitHub comment using screenshots from taskRunScreenshotSets
+          const commentResult = await ctx.runAction(
+            internal.github_pr_comments.addScreenshotCommentToPr,
+            {
+              installationId: run.repoInstallationId,
+              repoFullName: run.repoFullName,
+              prNumber: run.prNumber,
+              teamId: run.teamId,
+            },
+          );
+
+          if (commentResult.ok) {
+            console.log("[preview-jobs] Successfully posted screenshots to PR", {
+              previewRunId,
+              commentId: commentResult.commentId,
+              skipped: commentResult.skipped,
+            });
+
+            await ctx.runMutation(internal.previewRuns.updateStatus, {
+              previewRunId,
+              status: "completed",
+              stateReason: commentResult.skipped
+                ? "Screenshots collected but not posted (no screenshots found)"
+                : "Screenshots collected and posted to PR",
+              githubCommentUrl: commentResult.commentId
+                ? `https://github.com/${run.repoFullName}/pull/${run.prNumber}#issuecomment-${commentResult.commentId}`
+                : undefined,
+            });
+          } else {
+            console.error("[preview-jobs] Failed to post screenshots to PR", {
+              previewRunId,
+              error: commentResult.error,
+            });
+
+            await ctx.runMutation(internal.previewRuns.updateStatus, {
+              previewRunId,
+              status: "completed",
+              stateReason: `Screenshots collected but failed to post: ${commentResult.error}`,
+            });
+          }
+        } else {
+          console.warn("[preview-jobs] No installation ID, skipping GitHub comment", {
+            previewRunId,
+          });
+
+          await ctx.runMutation(internal.previewRuns.updateStatus, {
+            previewRunId,
+            status: "completed",
+            stateReason: "Screenshots collected (no GitHub installation)",
+          });
+        }
+
         console.log("[preview-jobs] Preview job completed with screenshots", { previewRunId });
       } else {
         console.warn("[preview-jobs] No screenshots found in taskRunScreenshotSets", {
