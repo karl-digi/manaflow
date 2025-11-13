@@ -978,6 +978,31 @@ app.whenReady().then(async () => {
         ],
       },
       viewMenu,
+      {
+        label: "History",
+        submenu: [
+          {
+            label: "Back",
+            accelerator: "CommandOrControl+[",
+            click: () => {
+              const target = resolveTargetWindow();
+              if (target && !target.isDestroyed()) {
+                target.webContents.send("cmux:event:shortcut:history-back");
+              }
+            },
+          },
+          {
+            label: "Forward",
+            accelerator: "CommandOrControl+]",
+            click: () => {
+              const target = resolveTargetWindow();
+              if (target && !target.isDestroyed()) {
+                target.webContents.send("cmux:event:shortcut:history-forward");
+              }
+            },
+          },
+        ],
+      },
       { role: "windowMenu" }
     );
     template.push({

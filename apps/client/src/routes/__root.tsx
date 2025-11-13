@@ -10,6 +10,7 @@ import {
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import { useEffect, useState } from "react";
 import { toast, Toaster } from "sonner";
+import { router } from "@/router";
 
 const AUTO_UPDATE_TOAST_ID = "auto-update-toast";
 
@@ -135,6 +136,33 @@ function RootComponent() {
       });
     }
   }, [location]);
+
+  // Handle global history navigation shortcuts
+  useEffect(() => {
+    const maybeWindow = typeof window === "undefined" ? undefined : window;
+    const cmux = maybeWindow?.cmux;
+    if (!cmux?.on) return;
+
+    const handleBack = () => {
+      router.history.back();
+    };
+
+    const handleForward = () => {
+      router.history.forward();
+    };
+
+    const unsubscribeBack = cmux.on("shortcut:history-back", handleBack);
+    const unsubscribeForward = cmux.on("shortcut:history-forward", handleForward);
+
+    return () => {
+      try {
+        unsubscribeBack?.();
+        unsubscribeForward?.();
+      } catch {
+        // ignore
+      }
+    };
+  }, []);
 
   return (
     <>
