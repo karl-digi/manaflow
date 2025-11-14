@@ -7,6 +7,8 @@ import {
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { useArchiveTask } from "@/hooks/useArchiveTask";
 import { useOpenWithActions } from "@/hooks/useOpenWithActions";
+import { rewriteLocalWorkspaceUrlIfNeeded } from "@/lib/toProxyWorkspaceUrl";
+import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
 import { useTaskRename } from "@/hooks/useTaskRename";
 import { isElectron } from "@/lib/electron";
 import { isFakeConvexId } from "@/lib/fakeConvexId";
@@ -582,6 +584,47 @@ function TaskTreeInner({
     });
   }, [unpinTask, teamSlugOrId, task._id]);
 
+  // Get VSCode URL for local workspaces to open directly on click
+  const isLocalWorkspace = task.isLocalWorkspace;
+  const vscodeUrlForLocalWorkspace = useMemo(() => {
+    if (!isLocalWorkspace || !taskRuns) return null;
+
+    // Flatten all task runs to find one with active VSCode
+    const allRuns: TaskRunWithChildren[] = [];
+    const flatten = (runs: TaskRunWithChildren[]) => {
+      for (const run of runs) {
+        allRuns.push(run);
+        if (run.children.length > 0) {
+          flatten(run.children);
+        }
+      }
+    };
+    flatten(taskRuns);
+
+    // Find most recent run with running VSCode
+    const runWithVSCode = allRuns
+      .filter(run => run.vscode?.status === "running" && run.vscode?.url)
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
+
+    return runWithVSCode?.vscode?.workspaceUrl || null;
+  }, [isLocalWorkspace, taskRuns]);
+
+  // Get local serve web origin for rewriting local workspace URLs
+  const localServeWeb = useLocalVSCodeServeWebQuery();
+  const localServeWebOrigin = localServeWeb.data?.baseUrl ?? null;
+
+  // Handler to open VSCode directly for local workspaces
+  const handleOpenVSCodeForLocalWorkspace = useCallback(() => {
+    if (!vscodeUrlForLocalWorkspace) return;
+
+    const normalizedUrl = rewriteLocalWorkspaceUrlIfNeeded(
+      vscodeUrlForLocalWorkspace,
+      localServeWebOrigin,
+    );
+    const vscodeUrlWithWorkspace = `${normalizedUrl}?folder=/root/workspace`;
+    window.open(vscodeUrlWithWorkspace, "_blank", "noopener,noreferrer");
+  }, [vscodeUrlForLocalWorkspace, localServeWebOrigin]);
+
   const inferredBranch = getTaskBranch(task);
   const trimmedTaskText = (task.text ?? "").trim();
   const trimmedPullRequestTitle = task.pullRequestTitle?.trim();
@@ -637,7 +680,6 @@ function TaskTreeInner({
   const taskTitleContent = isRenaming ? renameInputElement : taskTitleValue;
   const canExpand = true;
   const isCrownEvaluating = task.crownEvaluationStatus === "in_progress";
-  const isLocalWorkspace = task.isLocalWorkspace;
   const isCloudWorkspace = task.isCloudWorkspace;
 
   const taskLeadingIcon = (() => {
@@ -780,6 +822,14 @@ function TaskTreeInner({
                   event.preventDefault();
                   return;
                 }
+
+                // For local workspaces, open VSCode directly instead of navigating
+                if (isLocalWorkspace && vscodeUrlForLocalWorkspace) {
+                  event.preventDefault();
+                  handleOpenVSCodeForLocalWorkspace();
+                  return;
+                }
+
                 handleToggle(event);
               }}
             >

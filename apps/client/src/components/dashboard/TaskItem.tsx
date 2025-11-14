@@ -7,6 +7,8 @@ import {
 import { useArchiveTask } from "@/hooks/useArchiveTask";
 import { useTaskRename } from "@/hooks/useTaskRename";
 import { isFakeConvexId } from "@/lib/fakeConvexId";
+import { rewriteLocalWorkspaceUrlIfNeeded } from "@/lib/toProxyWorkspaceUrl";
+import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
 import { ContextMenu } from "@base-ui-components/react/context-menu";
 import { api } from "@cmux/convex/api";
 import type { Doc } from "@cmux/convex/dataModel";
@@ -169,6 +171,22 @@ export const TaskItem = memo(function TaskItem({
     return null;
   }, [hasActiveVSCode, runWithVSCode]);
 
+  // Get local serve web origin for rewriting local workspace URLs
+  const localServeWeb = useLocalVSCodeServeWebQuery();
+  const localServeWebOrigin = localServeWeb.data?.baseUrl ?? null;
+
+  // Handler to open VSCode directly for local workspaces
+  const handleOpenVSCodeForLocalWorkspace = useCallback(() => {
+    if (!vscodeUrl) return;
+
+    const normalizedUrl = rewriteLocalWorkspaceUrlIfNeeded(
+      vscodeUrl,
+      localServeWebOrigin,
+    );
+    const vscodeUrlWithWorkspace = `${normalizedUrl}?folder=/root/workspace`;
+    window.open(vscodeUrlWithWorkspace, "_blank", "noopener,noreferrer");
+  }, [vscodeUrl, localServeWebOrigin]);
+
   const handleLinkClick = useCallback(
     (event: React.MouseEvent<HTMLAnchorElement>) => {
       // Don't navigate if we're renaming or if modifier keys are pressed
@@ -183,8 +201,15 @@ export const TaskItem = memo(function TaskItem({
         event.preventDefault();
         return;
       }
+
+      // For local workspaces, open VSCode directly instead of navigating
+      if (task.isLocalWorkspace && vscodeUrl) {
+        event.preventDefault();
+        handleOpenVSCodeForLocalWorkspace();
+        return;
+      }
     },
-    [isRenaming]
+    [isRenaming, task.isLocalWorkspace, vscodeUrl, handleOpenVSCodeForLocalWorkspace]
   );
 
   const handleCopy = useCallback(
