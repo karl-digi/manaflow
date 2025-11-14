@@ -10,15 +10,16 @@ const result = await fetch("https://api.freestyle.sh/v1/vms", {
   },
   body: JSON.stringify({
     idleTimeoutSeconds: 0,
-    ports: [
-      {
-        port: 443,
-        targetPort: 3000,
-      },
-    ],
-    waitForReadySignal: true,
-    readySignalTimeoutSeconds: 0,
+    // ports: [
+    //   {
+    //     port: 443,
+    //     targetPort: 3000,
+    //   },
+    // ],
+    // waitForReadySignal: true,
+    // readySignalTimeoutSeconds: 0,
     workdir: "/root",
+    memory: 16,
     persistence: {
       priority: 5,
       type: "sticky",
