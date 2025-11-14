@@ -1,18 +1,26 @@
 use std::convert::Infallible;
 use std::io::ErrorKind;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
+use bytes::Bytes;
 use cmux_proxy::ProxyConfig;
-use futures_util::{SinkExt, StreamExt};
-use hyper::body::to_bytes;
-use hyper::client::HttpConnector;
-use hyper::service::{make_service_fn, service_fn};
-use hyper::{Body, Client, Request, Response, Server, StatusCode};
+use futures_util::{FutureExt, SinkExt, StreamExt};
+use http_body_util::BodyExt;
+use http_body_util::{Empty, Full};
+use hyper::body::Incoming;
+use hyper::client::conn::http2;
+use hyper::server::conn::http1;
+use hyper::service::service_fn;
+use hyper::{Request, Response, StatusCode};
+use hyper_util::client::legacy::{connect::HttpConnector, Client};
+use hyper_util::rt::{TokioExecutor, TokioIo};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot;
-use tokio::time::timeout;
+use tokio::time::{sleep, timeout};
+
+type TestRequestBody = Empty<Bytes>;
 
 async fn start_upstream_real_ws_echo() -> (SocketAddr, tokio::task::JoinHandle<()>) {
     use tokio_tungstenite::accept_async;
@@ -25,30 +33,27 @@ async fn start_upstream_real_ws_echo() -> (SocketAddr, tokio::task::JoinHandle<(
     let handle = tokio::spawn(async move {
         // Accept a single WebSocket connection and echo frames
         if let Ok((stream, _addr)) = listener.accept().await {
-            match accept_async(stream).await {
-                Ok(mut ws) => {
-                    while let Some(msg) = ws.next().await {
-                        match msg {
-                            Ok(m) => {
-                                if m.is_close() {
+            if let Ok(mut ws) = accept_async(stream).await {
+                while let Some(msg) = ws.next().await {
+                    match msg {
+                        Ok(m) => {
+                            if m.is_close() {
+                                break;
+                            }
+                            if m.is_text() || m.is_binary() {
+                                if ws.send(m).await.is_err() {
                                     break;
                                 }
-                                if m.is_text() || m.is_binary() {
-                                    if ws.send(m).await.is_err() {
-                                        break;
-                                    }
-                                } else if let tungstenite::Message::Ping(p) = m {
-                                    // Reply to ping with pong
-                                    if ws.send(tungstenite::Message::Pong(p)).await.is_err() {
-                                        break;
-                                    }
+                            } else if let tungstenite::Message::Ping(p) = m {
+                                // Reply to ping with pong
+                                if ws.send(tungstenite::Message::Pong(p)).await.is_err() {
+                                    break;
                                 }
                             }
-                            Err(_) => break,
                         }
+                        Err(_) => break,
                     }
                 }
-                Err(_) => {}
             }
         }
     });
@@ -71,27 +76,24 @@ async fn start_upstream_real_ws_echo_multi() -> (SocketAddr, tokio::task::JoinHa
                 Err(_) => break,
             };
             tokio::spawn(async move {
-                match accept_async(stream).await {
-                    Ok(mut ws) => {
-                        while let Some(msg) = ws.next().await {
-                            match msg {
-                                Ok(m) => {
-                                    if m.is_close() {
+                if let Ok(mut ws) = accept_async(stream).await {
+                    while let Some(msg) = ws.next().await {
+                        match msg {
+                            Ok(m) => {
+                                if m.is_close() {
+                                    break;
+                                }
+                                if m.is_text() || m.is_binary() {
+                                    if ws.send(m).await.is_err() {
                                         break;
                                     }
-                                    if m.is_text() || m.is_binary() {
-                                        if ws.send(m).await.is_err() {
-                                            break;
-                                        }
-                                    } else if let tungstenite::Message::Ping(p) = m {
-                                        let _ = ws.send(tungstenite::Message::Pong(p)).await;
-                                    }
+                                } else if let tungstenite::Message::Ping(p) = m {
+                                    let _ = ws.send(tungstenite::Message::Pong(p)).await;
                                 }
-                                Err(_) => break,
                             }
+                            Err(_) => break,
                         }
                     }
-                    Err(_) => {}
                 }
             });
         }
@@ -101,77 +103,135 @@ async fn start_upstream_real_ws_echo_multi() -> (SocketAddr, tokio::task::JoinHa
 }
 
 async fn start_upstream_http() -> SocketAddr {
-    let make_svc = make_service_fn(|_conn| async move {
-        Ok::<_, Infallible>(service_fn(|req: Request<Body>| async move {
-            let body = format!("ok:{}:{}", req.method(), req.uri().path());
-            Ok::<_, Infallible>(Response::new(Body::from(body)))
-        }))
+    let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
+        .await
+        .unwrap();
+    let local = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (stream, _) = match listener.accept().await {
+                Ok(s) => s,
+                Err(_) => break,
+            };
+            tokio::spawn(async move {
+                let service = service_fn(|req: Request<Incoming>| async move {
+                    let body = format!("ok:{}:{}", req.method(), req.uri().path());
+                    Ok::<_, Infallible>(Response::new(Full::new(Bytes::from(body))))
+                });
+                let _ = http1::Builder::new()
+                    .preserve_header_case(true)
+                    .title_case_headers(true)
+                    .serve_connection(TokioIo::new(stream), service)
+                    .await;
+            });
+        }
     });
-    let addr: SocketAddr = (IpAddr::V4(Ipv4Addr::LOCALHOST), 0).into();
-    let server = Server::bind(&addr).serve(make_svc);
-    let local = server.local_addr();
-    tokio::spawn(server);
+    local
+}
+
+async fn start_upstream_host_echo() -> SocketAddr {
+    let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
+        .await
+        .unwrap();
+    let local = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (stream, _) = match listener.accept().await {
+                Ok(s) => s,
+                Err(_) => break,
+            };
+            tokio::spawn(async move {
+                let service = service_fn(|req: Request<Incoming>| async move {
+                    let host = req
+                        .headers()
+                        .get("host")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("")
+                        .to_string();
+                    Ok::<_, Infallible>(Response::new(Full::new(Bytes::from(host))))
+                });
+                let _ = http1::Builder::new()
+                    .preserve_header_case(true)
+                    .title_case_headers(true)
+                    .serve_connection(TokioIo::new(stream), service)
+                    .await;
+            });
+        }
+    });
     local
 }
 
 async fn start_upstream_ws_like_upgrade_echo() -> SocketAddr {
     use hyper::header::{CONNECTION, UPGRADE};
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    let make_svc = make_service_fn(|_conn| async move {
-        Ok::<_, Infallible>(service_fn(|mut req: Request<Body>| async move {
-            let is_upgrade = req
-                .headers()
-                .get(CONNECTION)
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.to_ascii_lowercase().contains("upgrade"))
-                .unwrap_or(false)
-                && req.headers().contains_key(UPGRADE);
+    let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
+        .await
+        .unwrap();
+    let local = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (stream, _) = match listener.accept().await {
+                Ok(s) => s,
+                Err(_) => break,
+            };
+            tokio::spawn(async move {
+                let service = service_fn(|mut req: Request<Incoming>| async move {
+                    let is_upgrade = req
+                        .headers()
+                        .get(CONNECTION)
+                        .and_then(|v| v.to_str().ok())
+                        .map(|s| s.to_ascii_lowercase().contains("upgrade"))
+                        .unwrap_or(false)
+                        && req.headers().contains_key(UPGRADE);
 
-            if is_upgrade {
-                let resp = Response::builder()
-                    .status(StatusCode::SWITCHING_PROTOCOLS)
-                    .header(CONNECTION, "upgrade")
-                    .header(UPGRADE, "websocket")
-                    .body(Body::empty())
-                    .unwrap();
+                    if is_upgrade {
+                        let resp = Response::builder()
+                            .status(StatusCode::SWITCHING_PROTOCOLS)
+                            .header(CONNECTION, "upgrade")
+                            .header(UPGRADE, "websocket")
+                            .body(Full::new(Bytes::new()))
+                            .unwrap();
 
-                tokio::spawn(async move {
-                    match hyper::upgrade::on(&mut req).await {
-                        Ok(mut upgraded) => {
-                            let mut buf = [0u8; 1024];
-                            loop {
-                                match upgraded.read(&mut buf).await {
-                                    Ok(0) => break,
-                                    Ok(n) => {
-                                        if upgraded.write_all(&buf[..n]).await.is_err() {
-                                            break;
+                        tokio::spawn(async move {
+                            if let Ok(mut upgraded) = hyper::upgrade::on(&mut req).await {
+                                let mut buf = [0u8; 1024];
+                                loop {
+                                    match TokioIo::new(&mut upgraded).read(&mut buf).await {
+                                        Ok(0) => break,
+                                        Ok(n) => {
+                                            if TokioIo::new(&mut upgraded)
+                                                .write_all(&buf[..n])
+                                                .await
+                                                .is_err()
+                                            {
+                                                break;
+                                            }
                                         }
+                                        Err(_) => break,
                                     }
-                                    Err(_) => break,
                                 }
                             }
-                        }
-                        Err(_) => {}
+                        });
+
+                        return Ok::<_, Infallible>(resp);
                     }
+
+                    Ok::<_, Infallible>(
+                        Response::builder()
+                            .status(400)
+                            .body(Full::new(Bytes::from("no upgrade")))
+                            .unwrap(),
+                    )
                 });
 
-                return Ok::<_, Infallible>(resp);
-            }
-
-            Ok::<_, Infallible>(
-                Response::builder()
-                    .status(400)
-                    .body(Body::from("no upgrade"))
-                    .unwrap(),
-            )
-        }))
+                let _ = http1::Builder::new()
+                    .preserve_header_case(true)
+                    .serve_connection(TokioIo::new(stream), service)
+                    .with_upgrades()
+                    .await;
+            });
+        }
     });
-
-    let addr: SocketAddr = (IpAddr::V4(Ipv4Addr::LOCALHOST), 0).into();
-    let server = Server::bind(&addr).serve(make_svc);
-    let local = server.local_addr();
-    tokio::spawn(server);
     local
 }
 
@@ -214,10 +274,20 @@ async fn start_proxy(
         allow_default_upstream,
     };
     let (tx, rx) = oneshot::channel::<()>();
-    let (bound, handle) = cmux_proxy::spawn_proxy(cfg, async move {
-        let _ = rx.await;
-    });
+    let (bound, handle) = cmux_proxy::spawn_proxy(
+        cfg,
+        async move {
+            let _ = rx.await;
+        }
+        .boxed(),
+    );
+    sleep(Duration::from_millis(25)).await;
     (bound, tx, handle)
+}
+
+fn new_test_client() -> Client<HttpConnector, TestRequestBody> {
+    let connector = HttpConnector::new();
+    Client::builder(TokioExecutor::new()).build(connector)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -231,13 +301,13 @@ async fn test_http_proxy_routes_by_header() {
     .await;
 
     // Build client
-    let client: Client<HttpConnector, Body> = Client::new();
+    let client: Client<HttpConnector, TestRequestBody> = new_test_client();
     let url = format!("http://{}:{}/hello", proxy_addr.ip(), proxy_addr.port());
     let req = Request::builder()
         .method("GET")
         .uri(url)
         .header("X-Cmux-Port-Internal", upstream_addr.port().to_string())
-        .body(Body::empty())
+        .body(Empty::new())
         .unwrap();
 
     let resp = timeout(Duration::from_secs(5), client.request(req))
@@ -245,16 +315,31 @@ async fn test_http_proxy_routes_by_header() {
         .expect("resp timeout")
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let body = to_bytes(resp.into_body()).await.unwrap();
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
     let s = String::from_utf8(body.to_vec()).unwrap();
     assert!(s.contains("ok:GET:/hello"), "unexpected body: {}", s);
+
+    // Same request but with a custom host should fail without override
+    let url_custom = format!("http://{}:{}/hello", proxy_addr.ip(), proxy_addr.port());
+    let req_custom = Request::builder()
+        .method("GET")
+        .uri(url_custom)
+        .header("X-Cmux-Port-Internal", upstream_addr.port().to_string())
+        .header("Host", "cmux.tld")
+        .body(Empty::new())
+        .unwrap();
+    let resp_custom = timeout(Duration::from_secs(5), client.request(req_custom))
+        .await
+        .expect("resp custom timeout")
+        .unwrap();
+    assert_eq!(resp_custom.status(), StatusCode::BAD_GATEWAY);
 
     // Missing header -> 400
     let url2 = format!("http://{}:{}/missing", proxy_addr.ip(), proxy_addr.port());
     let req2 = Request::builder()
         .method("GET")
         .uri(url2)
-        .body(Body::empty())
+        .body(Empty::new())
         .unwrap();
     let resp2 = timeout(Duration::from_secs(5), client.request(req2))
         .await
@@ -277,14 +362,14 @@ async fn test_wildcard_bind_accepts_localhost_clients() {
     )
     .await;
 
-    let client: Client<HttpConnector, Body> = Client::new();
+    let client: Client<HttpConnector, TestRequestBody> = new_test_client();
     let host_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, proxy_addr.port()));
     let url = format!("http://{}:{}/wildcard", host_addr.ip(), host_addr.port());
     let req = Request::builder()
         .method("GET")
         .uri(url)
         .header("X-Cmux-Port-Internal", upstream_addr.port().to_string())
-        .body(Body::empty())
+        .body(Empty::new())
         .unwrap();
 
     let resp = timeout(Duration::from_secs(5), client.request(req))
@@ -516,10 +601,14 @@ async fn test_concurrent_websocket_connections() {
     let n = 16usize;
     let mut tasks = Vec::new();
     for i in 0..n {
-        let proxy_addr = proxy_addr.clone();
+        let proxy_addr_copy = proxy_addr;
         let ws_port = ws_addr.port();
         tasks.push(tokio::spawn(async move {
-            let url = format!("ws://{}:{}/ws", proxy_addr.ip(), proxy_addr.port());
+            let url = format!(
+                "ws://{}:{}/ws",
+                proxy_addr_copy.ip(),
+                proxy_addr_copy.port()
+            );
             let mut req = url.into_client_request().unwrap();
             req.headers_mut()
                 .insert("X-Cmux-Port-Internal", ws_port.to_string().parse().unwrap());
@@ -553,6 +642,89 @@ async fn test_concurrent_websocket_connections() {
 
     // Shutdown
     ws_handle.abort();
+    let _ = shutdown.send(());
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_http2_clients_are_supported() {
+    let upstream_addr = start_upstream_http().await;
+    let (proxy_addr, shutdown, handle) = start_proxy(
+        SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+        "127.0.0.1",
+        true,
+    )
+    .await;
+
+    let stream = TcpStream::connect(proxy_addr).await.unwrap();
+    let (mut send_request, connection) = http2::Builder::new(TokioExecutor::new())
+        .handshake(TokioIo::new(stream))
+        .await
+        .expect("http2 handshake");
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+
+    let req = Request::builder()
+        .method("GET")
+        .uri("http://cmux-http2.test/hello")
+        .header("X-Cmux-Port-Internal", upstream_addr.port().to_string())
+        .body(Empty::<Bytes>::new())
+        .unwrap();
+
+    let resp = send_request
+        .send_request(req)
+        .await
+        .expect("http2 response");
+    let status = resp.status();
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "unexpected status {:?} body {:?}",
+        status,
+        String::from_utf8_lossy(&body)
+    );
+    let body_str = String::from_utf8(body.to_vec()).unwrap();
+    assert!(
+        body_str.contains("ok:GET:/hello"),
+        "unexpected body: {}",
+        body_str
+    );
+
+    let _ = shutdown.send(());
+    let _ = handle.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_host_override_header_sets_host() {
+    let upstream_addr = start_upstream_host_echo().await;
+    let (proxy_addr, shutdown, handle) = start_proxy(
+        SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+        "127.0.0.1",
+        true,
+    )
+    .await;
+
+    let client: Client<HttpConnector, TestRequestBody> = new_test_client();
+    let url = format!("http://{}:{}/override", proxy_addr.ip(), proxy_addr.port());
+    let req = Request::builder()
+        .method("GET")
+        .uri(url)
+        .header("X-Cmux-Port-Internal", upstream_addr.port().to_string())
+        .header("X-Cmux-Host-Override", "localhost:3006")
+        .body(Empty::new())
+        .unwrap();
+
+    let resp = timeout(Duration::from_secs(5), client.request(req))
+        .await
+        .expect("resp timeout")
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let host_seen = String::from_utf8(body.to_vec()).unwrap();
+    assert_eq!(host_seen, "localhost:3006");
+
     let _ = shutdown.send(());
     let _ = handle.await;
 }

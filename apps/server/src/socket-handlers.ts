@@ -147,7 +147,9 @@ function buildLoginShellArgs(
     return ["-l", "-c", command];
   }
 
-  return ["-l", "-c", command];
+  // Use interactive login shells so ~/.zshrc, ~/.bashrc, etc. run and populate
+  // PATH the same way users expect in their terminals.
+  return ["-l", "-i", "-c", command];
 }
 
 function isExecError(error: unknown): error is ExecError {

@@ -2,15 +2,22 @@
 mod linux_only {
     use std::env;
     use std::io::{Read, Write};
-    use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
+    use std::net::TcpListener as StdTcpListener;
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::path::{Path, PathBuf};
     use std::process::{Command, Stdio};
     use std::sync::OnceLock;
     use std::time::Duration;
 
+    use bytes::Bytes;
     use cmux_proxy::workspace_ip_from_name;
-    use hyper::service::{make_service_fn, service_fn};
-    use hyper::{Body, Request, Response, Server};
+    use http::{Request, Response};
+    use http_body_util::Full;
+    use hyper::body::Incoming;
+    use hyper::service::service_fn;
+    use hyper_util::rt::{TokioExecutor, TokioIo};
+    use hyper_util::server::conn::auto::Builder as AutoBuilder;
+    use tokio::net::TcpListener as TokioTcpListener;
     use tokio::time::sleep;
     use tokio::time::timeout;
 
@@ -21,20 +28,35 @@ mod linux_only {
     }
 
     async fn start_upstream_http_on_fixed(ip: Ipv4Addr, port: u16, body: &'static str) {
-        let make_svc = make_service_fn(move |_conn| {
-            let body_text = body;
-            async move {
-                Ok::<_, std::convert::Infallible>(service_fn(move |_req: Request<Body>| {
-                    let body_text = body_text;
-                    async move {
-                        Ok::<_, std::convert::Infallible>(Response::new(Body::from(body_text)))
+        let listener = TokioTcpListener::bind(SocketAddr::from((IpAddr::V4(ip), port)))
+            .await
+            .expect("bind upstream");
+        let response_bytes = Bytes::from_static(body.as_bytes());
+        tokio::spawn(async move {
+            loop {
+                let (stream, _) = match listener.accept().await {
+                    Ok(s) => s,
+                    Err(_) => break,
+                };
+                let response_bytes = response_bytes.clone();
+                tokio::spawn(async move {
+                    let service = service_fn(move |_req: Request<Incoming>| {
+                        let response_bytes = response_bytes.clone();
+                        async move {
+                            Ok::<_, std::convert::Infallible>(Response::new(Full::new(
+                                response_bytes,
+                            )))
+                        }
+                    });
+                    if let Err(err) = AutoBuilder::new(TokioExecutor::new())
+                        .serve_connection(TokioIo::new(stream), service)
+                        .await
+                    {
+                        eprintln!("ldpreload upstream error: {err}");
                     }
-                }))
+                });
             }
         });
-        let addr: SocketAddr = (IpAddr::V4(ip), port).into();
-        let server = Server::bind(&addr).serve(make_svc);
-        tokio::spawn(server);
         // tiny delay to ensure listener is up
         sleep(Duration::from_millis(50)).await;
     }
@@ -75,7 +97,8 @@ mod linux_only {
         ensure_loopback(ws_ip).await;
 
         // Start a plain TCP echo server bound to the workspace IP
-        let listener = TcpListener::bind(SocketAddr::from((ws_ip, 0))).expect("bind workspace ip");
+        let listener =
+            StdTcpListener::bind(SocketAddr::from((ws_ip, 0))).expect("bind workspace ip");
         let addr = listener.local_addr().unwrap();
         std::thread::spawn(move || {
             if let Ok((mut s, _)) = listener.accept() {
@@ -128,7 +151,8 @@ mod linux_only {
         ensure_loopback(ws_ip).await;
 
         // Start echo server on workspace IP
-        let listener = TcpListener::bind(SocketAddr::from((ws_ip, 0))).expect("bind workspace ip");
+        let listener =
+            StdTcpListener::bind(SocketAddr::from((ws_ip, 0))).expect("bind workspace ip");
         let addr = listener.local_addr().unwrap();
         std::thread::spawn(move || {
             if let Ok((mut s, _)) = listener.accept() {
