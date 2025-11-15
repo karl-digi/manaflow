@@ -3,6 +3,7 @@ import { CommandBar } from "@/components/CommandBar";
 import { Sidebar } from "@/components/Sidebar";
 import { SIDEBAR_PRS_DEFAULT_LIMIT } from "@/components/sidebar/const";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
+import { WorkspaceOrderProvider } from "@/contexts/workspace-order/WorkspaceOrderContext";
 import { ExpandTasksProvider } from "@/contexts/expand-tasks/ExpandTasksProvider";
 import { cachedGetUser } from "@/lib/cachedGetUser";
 import { setLastTeamSlugOrId } from "@/lib/lastTeam";
@@ -125,9 +126,9 @@ function LayoutComponentWrapper() {
     setLastTeamSlugOrId(teamSlugOrId);
   }, [teamSlugOrId]);
   return (
-    <>
+    <WorkspaceOrderProvider teamSlugOrId={teamSlugOrId}>
       <LayoutComponent />
       <CmuxComments teamSlugOrId={teamSlugOrId} />
-    </>
+    </WorkspaceOrderProvider>
   );
 }

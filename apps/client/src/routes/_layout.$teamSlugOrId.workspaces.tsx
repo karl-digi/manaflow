@@ -3,7 +3,9 @@ import { TaskTreeSkeleton } from "@/components/TaskTreeSkeleton";
 import { FloatingPane } from "@/components/floating-pane";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
+import { useWorkspaceOrderContext } from "@/contexts/workspace-order/WorkspaceOrderContext";
 import { isFakeConvexId } from "@/lib/fakeConvexId";
+import { applyWorkspaceOrder } from "@/lib/workspaceOrder";
 import { api } from "@cmux/convex/api";
 import { type Id } from "@cmux/convex/dataModel";
 import { convexQuery } from "@convex-dev/react-query";
@@ -25,11 +27,15 @@ function WorkspacesRoute() {
   const { teamSlugOrId } = Route.useParams();
   const tasks = useQuery(api.tasks.get, { teamSlugOrId });
   const { expandTaskIds } = useExpandTasks();
+  const { order } = useWorkspaceOrderContext();
 
   const orderedTasks = useMemo(() => {
     if (!tasks) return [] as NonNullable<typeof tasks>;
-    return [...tasks].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
-  }, [tasks]);
+    const sortedByCreated = [...tasks].sort(
+      (a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0)
+    );
+    return applyWorkspaceOrder(sortedByCreated, order) ?? sortedByCreated;
+  }, [order, tasks]);
 
   const taskRunQueries = useMemo(() => {
     return orderedTasks

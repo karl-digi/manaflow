@@ -1,3 +1,5 @@
+import { useWorkspaceOrderContext } from "@/contexts/workspace-order/WorkspaceOrderContext";
+import { applyWorkspaceOrder } from "@/lib/workspaceOrder";
 import { api } from "@cmux/convex/api";
 import type { Doc } from "@cmux/convex/dataModel";
 import { useLocalStorage } from "@mantine/hooks";
@@ -122,23 +124,36 @@ export const TaskList = memo(function TaskList({
   const pinnedData = useQuery(api.tasks.getPinned, { teamSlugOrId });
   const [tab, setTab] = useState<"all" | "archived">("all");
 
+  const { order } = useWorkspaceOrderContext();
+
   const categorizedTasks = useMemo(() => {
     const categorized = categorizeTasks(allTasks);
-    if (categorized && pinnedData) {
-      // Filter pinned tasks out from other categories
-      const pinnedTaskIds = new Set(pinnedData.map(t => t._id));
+    if (!categorized) {
+      return null;
+    }
+    if (pinnedData) {
+      const pinnedTaskIds = new Set(pinnedData.map((t) => t._id));
 
       for (const key of CATEGORY_ORDER) {
-        if (key !== 'pinned') {
-          categorized[key] = categorized[key].filter(t => !pinnedTaskIds.has(t._id));
+        if (key !== "pinned") {
+          categorized[key] = categorized[key].filter(
+            (t) => !pinnedTaskIds.has(t._id)
+          );
         }
       }
 
-      // Add pinned tasks to the pinned category (already sorted by the API)
       categorized.pinned = pinnedData;
     }
+
+    for (const key of CATEGORY_ORDER) {
+      if (key === "pinned") continue;
+      const ordered = applyWorkspaceOrder(categorized[key], order);
+      if (ordered) {
+        categorized[key] = ordered;
+      }
+    }
     return categorized;
-  }, [allTasks, pinnedData]);
+  }, [allTasks, order, pinnedData]);
   const categoryBuckets = categorizedTasks ?? createEmptyCategoryBuckets();
   const collapsedStorageKey = useMemo(
     () => `dashboard-collapsed-categories-${teamSlugOrId}`,

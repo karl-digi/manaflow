@@ -1,20 +1,29 @@
 import { TaskTree } from "@/components/TaskTree";
 import { TaskTreeSkeleton } from "@/components/TaskTreeSkeleton";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
+import { useWorkspaceOrderContext } from "@/contexts/workspace-order/WorkspaceOrderContext";
 import { isElectron } from "@/lib/electron";
-import { type Doc } from "@cmux/convex/dataModel";
+import {
+  applyWorkspaceOrder,
+  filterOrderToKnownTasks,
+  moveTaskId,
+} from "@/lib/workspaceOrder";
 import { api } from "@cmux/convex/api";
-import { useQuery } from "convex/react";
+import { type Doc } from "@cmux/convex/dataModel";
 import type { LinkProps } from "@tanstack/react-router";
 import { Link } from "@tanstack/react-router";
-import { Home, Plus, Server, Settings } from "lucide-react";
+import { GripVertical, Home, Plus, Server, Settings } from "lucide-react";
+import { useQuery } from "convex/react";
+import clsx from "clsx";
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ComponentType,
   type CSSProperties,
+  type DragEvent,
 } from "react";
 import CmuxLogo from "./logo/cmux-logo";
 import { SidebarNavLink } from "./sidebar/SidebarNavLink";
@@ -61,6 +70,8 @@ const navItems: SidebarNavItem[] = [
   },
 ];
 
+const END_DROP_ID = "__workspace-drop-end";
+
 export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
   const DEFAULT_WIDTH = 256;
   const MIN_WIDTH = 240;
@@ -82,9 +93,125 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
   });
 
   const { expandTaskIds } = useExpandTasks();
+  const { order, setOrder } = useWorkspaceOrderContext();
+  const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
+  const [dragOverTargetId, setDragOverTargetId] = useState<
+    string | typeof END_DROP_ID | null
+  >(null);
+
+  const workspaceTasks = useMemo(
+    () => (tasks ? tasks.filter((task) => !task.pinned) : []),
+    [tasks]
+  );
+  const orderedWorkspaceTasks = useMemo(() => {
+    const sorted = applyWorkspaceOrder(workspaceTasks, order);
+    return sorted ?? workspaceTasks;
+  }, [order, workspaceTasks]);
 
   // Fetch pinned items
   const pinnedData = useQuery(api.tasks.getPinned, { teamSlugOrId });
+
+  useEffect(() => {
+    if (!tasks) {
+      return;
+    }
+    const validIds = tasks
+      .filter((task) => !task.pinned)
+      .map((task) => task._id);
+    setOrder((prev) => {
+      const filtered = filterOrderToKnownTasks(prev, validIds);
+      return filtered.length === prev.length ? prev : filtered;
+    });
+  }, [setOrder, tasks]);
+
+  const commitReorder = useCallback(
+    (taskId: string, targetId: string | null) => {
+      if (orderedWorkspaceTasks.length === 0) {
+        return;
+      }
+      const currentIds = orderedWorkspaceTasks.map((task) => task._id);
+      if (!currentIds.includes(taskId)) {
+        return;
+      }
+      const nextOrder = moveTaskId(currentIds, taskId, targetId);
+      setOrder(nextOrder);
+    },
+    [orderedWorkspaceTasks, setOrder]
+  );
+
+  const resetDragState = useCallback(() => {
+    setDraggingTaskId(null);
+    setDragOverTargetId(null);
+  }, []);
+
+  const handleDragStart = useCallback(
+    (taskId: string) => (event: DragEvent<HTMLButtonElement>) => {
+      event.stopPropagation();
+      event.dataTransfer.effectAllowed = "move";
+      setDraggingTaskId(taskId);
+    },
+    []
+  );
+
+  const handleDragOverItem = useCallback(
+    (taskId: string, event: DragEvent<HTMLDivElement>) => {
+      if (!draggingTaskId || draggingTaskId === taskId) {
+        return;
+      }
+      event.preventDefault();
+      if (dragOverTargetId !== taskId) {
+        setDragOverTargetId(taskId);
+      }
+    },
+    [dragOverTargetId, draggingTaskId]
+  );
+
+  const handleDropOnTask = useCallback(
+    (taskId: string | null, event: DragEvent<HTMLDivElement>) => {
+      if (!draggingTaskId) {
+        return;
+      }
+      event.preventDefault();
+      commitReorder(draggingTaskId, taskId);
+      resetDragState();
+    },
+    [commitReorder, draggingTaskId, resetDragState]
+  );
+
+  const handleDragLeave = useCallback((taskId: string) => {
+    setDragOverTargetId((prev) => (prev === taskId ? null : prev));
+  }, []);
+
+  const handleDropZoneDragOver = useCallback(
+    (event: DragEvent<HTMLDivElement>) => {
+      if (!draggingTaskId) {
+        return;
+      }
+      event.preventDefault();
+      if (dragOverTargetId !== END_DROP_ID) {
+        setDragOverTargetId(END_DROP_ID);
+      }
+    },
+    [dragOverTargetId, draggingTaskId]
+  );
+
+  const handleDropZoneLeave = useCallback(() => {
+    setDragOverTargetId((prev) => (prev === END_DROP_ID ? null : prev));
+  }, []);
+
+  const handleDropAtEnd = useCallback(
+    (event: DragEvent<HTMLDivElement>) => {
+      if (!draggingTaskId) {
+        return;
+      }
+      handleDropOnTask(null, event);
+    },
+    [draggingTaskId, handleDropOnTask]
+  );
+
+  const handleDragEnd = useCallback(() => {
+    resetDragState();
+  }, [resetDragState]);
 
   useEffect(() => {
     localStorage.setItem("sidebarWidth", String(width));
@@ -302,35 +429,71 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
                 <TaskTreeSkeleton count={5} />
               ) : tasks && tasks.length > 0 ? (
                 <>
-                  {/* Pinned items at the top */}
                   {pinnedData && pinnedData.length > 0 && (
                     <>
                       {pinnedData.map((task) => (
                         <TaskTree
                           key={task._id}
                           task={task}
-                          defaultExpanded={expandTaskIds?.includes(task._id) ?? false}
+                          defaultExpanded={
+                            expandTaskIds?.includes(task._id) ?? false
+                          }
                           teamSlugOrId={teamSlugOrId}
                         />
                       ))}
-                      {/* Horizontal divider after pinned items */}
                       <hr className="mx-2 border-t border-neutral-200 dark:border-neutral-800" />
                     </>
                   )}
-                  {/* Regular (non-pinned) tasks */}
-                  {tasks
-                    .filter((task) => {
-                      // Only filter out directly pinned tasks
-                      return !task.pinned;
-                    })
-                    .map((task) => (
-                      <TaskTree
+                  <div className="space-y-px">
+                    {orderedWorkspaceTasks.map((task) => (
+                      <div
                         key={task._id}
-                        task={task}
-                        defaultExpanded={expandTaskIds?.includes(task._id) ?? false}
-                        teamSlugOrId={teamSlugOrId}
-                      />
+                        className={clsx(
+                          "flex items-stretch rounded-md pr-1 transition-colors",
+                          dragOverTargetId === task._id &&
+                            "bg-neutral-200/60 dark:bg-neutral-900/60",
+                          draggingTaskId === task._id && "opacity-60"
+                        )}
+                        onDragOver={(event) =>
+                          handleDragOverItem(task._id, event)
+                        }
+                        onDrop={(event) => handleDropOnTask(task._id, event)}
+                        onDragLeave={() => handleDragLeave(task._id)}
+                      >
+                        <button
+                          type="button"
+                          aria-label="Drag workspace to reorder"
+                          className="flex items-center px-1 text-neutral-400 hover:text-neutral-700 dark:text-neutral-600 dark:hover:text-neutral-200 cursor-grab active:cursor-grabbing"
+                          draggable
+                          onDragStart={handleDragStart(task._id)}
+                          onDragEnd={handleDragEnd}
+                        >
+                          <GripVertical className="h-3 w-3" />
+                        </button>
+                        <div className="flex-1 min-w-0">
+                          <TaskTree
+                            task={task}
+                            defaultExpanded={
+                              expandTaskIds?.includes(task._id) ?? false
+                            }
+                            teamSlugOrId={teamSlugOrId}
+                          />
+                        </div>
+                      </div>
                     ))}
+                    {draggingTaskId ? (
+                      <div
+                        className={clsx(
+                          "mt-1 h-4 rounded border border-dashed border-transparent transition-colors",
+                          dragOverTargetId === END_DROP_ID &&
+                            "border-neutral-400 dark:border-neutral-600 bg-neutral-100/60 dark:bg-neutral-900/40"
+                        )}
+                        onDragOver={handleDropZoneDragOver}
+                        onDrop={handleDropAtEnd}
+                        onDragLeave={handleDropZoneLeave}
+                      />
+                    ) : null}
+                  </div>
                 </>
               ) : (
                 <p className="pl-2 pr-3 py-1.5 text-xs text-neutral-500 dark:text-neutral-400 select-none">
