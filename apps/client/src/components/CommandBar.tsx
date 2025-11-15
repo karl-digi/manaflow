@@ -6,6 +6,10 @@ import { isElectron } from "@/lib/electron";
 import { copyAllElectronLogs } from "@/lib/electron-logs/electron-logs";
 import { setLastTeamSlugOrId } from "@/lib/lastTeam";
 import { stackClientApp } from "@/lib/stack";
+import {
+  COMMAND_BAR_OPEN_EVENT,
+  type CommandBarOpenEventDetail,
+} from "@/lib/command-bar-events";
 import { preloadTaskRunIframes } from "@/lib/preloadTaskRunIframes";
 import {
   rewriteLocalWorkspaceUrlIfNeeded,
@@ -669,6 +673,52 @@ export function CommandBar({
   useEffect(() => {
     openRef.current = open;
   }, [open]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handleOpenEvent = (event: Event) => {
+      if (!(event instanceof CustomEvent)) return;
+      const detail =
+        (event as CustomEvent<CommandBarOpenEventDetail>).detail ?? undefined;
+      const nextPage = detail?.page ?? "root";
+
+      setActivePage(nextPage);
+
+      if (typeof detail?.search === "string") {
+        setSearch(detail.search);
+      } else if (detail?.resetSearch ?? true) {
+        setSearch("");
+      }
+
+      if (!openRef.current) {
+        setOpenedWithShift(Boolean(detail?.openWithShift));
+        captureFocusBeforeOpen();
+        setOpen(true);
+      } else {
+        window.setTimeout(() => {
+          inputRef.current?.focus({ preventScroll: true });
+        }, 0);
+      }
+    };
+
+    window.addEventListener(
+      COMMAND_BAR_OPEN_EVENT,
+      handleOpenEvent as EventListener
+    );
+    return () => {
+      window.removeEventListener(
+        COMMAND_BAR_OPEN_EVENT,
+        handleOpenEvent as EventListener
+      );
+    };
+  }, [
+    captureFocusBeforeOpen,
+    setActivePage,
+    setOpen,
+    setOpenedWithShift,
+    setSearch,
+  ]);
 
   useEffect(() => {
     if (typeof document === "undefined") return;
