@@ -55,6 +55,7 @@ export const WorkerTaskRunContextSchema = z.object({
   taskRunToken: z.string(),
   prompt: z.string(),
   convexUrl: z.string(),
+  isPreviewJob: z.boolean().optional(),
 });
 
 // Terminal operation schemas for server<>worker communication

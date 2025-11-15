@@ -9,6 +9,7 @@ import {
 import { SignJWT } from "jose";
 import { env } from "../_shared/convex-env";
 import { fetchInstallationAccessToken } from "../_shared/githubApp";
+import { stringToBase64 } from "../_shared/encoding";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import type { ActionCtx } from "./_generated/server";
@@ -327,6 +328,7 @@ export async function runPreviewJob(
 
   const snapshotId = environment.morphSnapshotId;
   let instance: InstanceModel | null = null;
+  let taskId: Id<"tasks"> | null = null;
 
   if (!taskRunId) {
     console.log("[preview-jobs] No taskRun linked to preview run, creating one now", {
@@ -335,7 +337,7 @@ export async function runPreviewJob(
       prNumber: run.prNumber,
     });
 
-    const taskId = await ctx.runMutation(internal.tasks.createForPreview, {
+    taskId = await ctx.runMutation(internal.tasks.createForPreview, {
       teamId: run.teamId,
       userId: config.createdByUserId,
       previewRunId,
@@ -401,7 +403,7 @@ export async function runPreviewJob(
           .sign(new TextEncoder().encode(env.CMUX_TASK_RUN_JWT_SECRET))
       : null;
 
-    console.log("[preview-jobs] Starting Morph instance with metadata", {
+    console.log("[preview-jobs] Starting Morph instance", {
       previewRunId,
       hasTaskRunId: Boolean(taskRunId),
       hasToken: Boolean(previewJwt),
@@ -416,14 +418,6 @@ export async function runPreviewJob(
         repo: run.repoFullName,
         prNumber: String(run.prNumber),
         headSha: run.headSha,
-        // Pass task run info so worker can check isPreviewJob flag and auto-run screenshots
-        ...(taskRunId && previewJwt
-          ? {
-              taskRunId,
-              taskRunToken: previewJwt,
-              convexUrl: env.BASE_APP_URL,
-            }
-          : {}),
       },
       ttlSeconds: 600,
       ttlAction: "stop",
@@ -704,25 +698,107 @@ export async function runPreviewJob(
       stdout: checkoutResult.stdout?.slice(0, 200),
     });
 
-    // Step 4: Morph instance ready, worker will check isPreviewJob and auto-run screenshots
+    // Step 4: Apply environment variables and trigger screenshot collection
     await ctx.runMutation(internal.previewRuns.updateStatus, {
       previewRunId,
       status: "running",
-      stateReason: "Workspace ready - checking for screenshot workflow",
+      stateReason: "Setting up environment and triggering screenshots",
     });
 
-    console.log("[preview-jobs] Morph instance started, worker will check isPreviewJob flag and auto-run screenshots if needed", {
+    if (taskRunId && previewJwt) {
+      // Apply CMUX environment variables via envctl (same as crown runs)
+      const envVarsContent = `CMUX_TASK_RUN_ID="${taskRunId}"\nCMUX_TASK_RUN_JWT="${previewJwt}"`;
+      const envBase64 = stringToBase64(envVarsContent);
+      const envctlCommand = `envctl load --base64 ${envBase64}`;
+
+      const envctlResponse = await execInstanceInstanceIdExecPost({
+        client: morphClient,
+        path: { instance_id: instance.id },
+        body: {
+          command: ["bash", "-c", envctlCommand],
+        },
+      });
+
+      if (envctlResponse.error || envctlResponse.data?.exit_code !== 0) {
+        console.error("[preview-jobs] Failed to apply environment variables", {
+          previewRunId,
+          exitCode: envctlResponse.data?.exit_code,
+          stderr: sliceOutput(envctlResponse.data?.stderr),
+          error: envctlResponse.error,
+        });
+        throw new Error("Failed to apply environment variables via envctl");
+      }
+
+      console.log("[preview-jobs] Applied environment variables via envctl", {
+        previewRunId,
+        taskRunId,
+      });
+
+      // Trigger screenshot collection via socket.io using inline Node.js script
+      if (!taskId) {
+        throw new Error("taskId is required but not available");
+      }
+
+      const socketScript = `
+const io = require('socket.io-client');
+const socket = io('http://localhost:39377/management', {
+  transports: ['websocket'],
+  reconnection: false
+});
+
+socket.on('connect', () => {
+  socket.emit('worker:run-task-screenshots', {
+    taskId: '${taskId}',
+    taskRunId: '${taskRunId}',
+    token: '${previewJwt}',
+    convexUrl: '${env.BASE_APP_URL}',
+  });
+  console.log('Screenshot collection triggered');
+  process.exit(0);
+});
+
+socket.on('connect_error', (err) => {
+  console.error('Connection error:', err.message);
+  process.exit(1);
+});
+
+setTimeout(() => {
+  console.error('Timeout connecting to worker');
+  process.exit(1);
+}, 30000); // 30 second connection timeout
+`;
+
+      const screenshotResponse = await execInstanceInstanceIdExecPost({
+        client: morphClient,
+        path: { instance_id: instance.id },
+        body: {
+          command: ["node", "-e", socketScript],
+        },
+      });
+
+      if (screenshotResponse.error || screenshotResponse.data?.exit_code !== 0) {
+        console.error("[preview-jobs] Failed to trigger screenshots", {
+          previewRunId,
+          exitCode: screenshotResponse.data?.exit_code,
+          stderr: sliceOutput(screenshotResponse.data?.stderr),
+          stdout: sliceOutput(screenshotResponse.data?.stdout),
+          error: screenshotResponse.error,
+        });
+        throw new Error("Failed to trigger screenshot collection");
+      }
+
+      console.log("[preview-jobs] Triggered screenshot collection via socket", {
+        previewRunId,
+        taskRunId,
+        response: sliceOutput(screenshotResponse.data?.stdout),
+      });
+    }
+
+    console.log("[preview-jobs] Preview run initialized successfully", {
       previewRunId,
       instanceId: instance.id,
       hasTaskRunId: Boolean(taskRunId),
-      metadataPassed: Boolean(taskRunId && previewJwt),
     });
-
-    // Worker will:
-    // 1. Read MORPH_METADATA_* environment variables
-    // 2. Fetch taskRun and check if isPreviewJob === true
-    // 3. If true, run screenshot workflow (runTaskScreenshots)
-    // 4. Call /api/preview/complete to post GitHub comment and stop instance
   } catch (error) {
     const message =
       error instanceof Error ? error.message : String(error ?? "Unknown error");

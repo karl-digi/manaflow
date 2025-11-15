@@ -44,6 +44,8 @@ import { FileWatcher, computeGitDiff, getFileWithDiff } from "./fileWatcher";
 import { log } from "./logger";
 import { startScreenshotCollection } from "./screenshotCollector/startScreenshotCollection";
 import { runTaskScreenshots } from "./screenshotCollector/runTaskScreenshots";
+import { convexRequest } from "./crown/convex";
+import type { WorkerTaskRunResponse } from "@cmux/shared/convex-safe";
 
 const execAsync = promisify(exec);
 
@@ -410,6 +412,7 @@ managementIO.on("connection", (socket) => {
         env: validated.env,
         command: validated.command,
         args: validated.args,
+        taskId: validated.taskId,
         taskRunId: validated.taskRunId,
         agentModel: validated.agentModel,
         startupCommands: validated.startupCommands,
@@ -517,6 +520,97 @@ managementIO.on("connection", (socket) => {
       }
     }
   );
+
+  socket.on("worker:run-task-screenshots", async (data, callback) => {
+    log("INFO", "[worker:run-task-screenshots] Received request", {
+      taskRunId: data.taskRunId,
+      taskId: data.taskId,
+    });
+
+    try {
+      const info = await convexRequest<WorkerTaskRunResponse>(
+        "/api/crown/check",
+        data.token,
+        {
+          taskRunId: data.taskRunId,
+          checkType: "info",
+        },
+        data.convexUrl,
+      );
+
+      if (!info?.ok || !info.taskRun) {
+        log("ERROR", "[worker:run-task-screenshots] Failed to load task run metadata", {
+          taskRunId: data.taskRunId,
+          hasInfo: Boolean(info),
+        });
+        throw new Error("Unable to load task run metadata for screenshot workflow");
+      }
+
+      if (!info.taskRun.isPreviewJob) {
+        log("ERROR", "[worker:run-task-screenshots] Task run is not a preview job", {
+          taskRunId: data.taskRunId,
+        });
+        throw new Error("Task run is not marked as a preview job");
+      }
+
+      log("INFO", "[worker:run-task-screenshots] Verified preview job metadata", {
+        taskRunId: data.taskRunId,
+      });
+
+      await runTaskScreenshots({
+        taskId: data.taskId,
+        taskRunId: data.taskRunId,
+        token: data.token,
+        convexUrl: data.convexUrl,
+        anthropicApiKey: data.anthropicApiKey,
+        taskRunJwt: data.taskRunJwt,
+      });
+
+      log("INFO", "[worker:run-task-screenshots] Screenshots completed, calling /api/preview/complete", {
+        taskRunId: data.taskRunId,
+      });
+
+      // Call /api/preview/complete
+      const completeUrl = `${data.convexUrl}/api/preview/complete`;
+      const response = await fetch(completeUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${process.env.CMUX_TASK_RUN_JWT_SECRET ?? ""}`,
+        },
+        body: JSON.stringify({
+          taskRunId: data.taskRunId,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        log("ERROR", "[worker:run-task-screenshots] Failed to complete preview job", {
+          status: response.status,
+          error: errorText,
+        });
+        callback({
+          error: new Error(`Failed to complete preview job: ${errorText}`),
+          data: null,
+        });
+      } else {
+        const result = await response.json();
+        log("INFO", "[worker:run-task-screenshots] Preview job completed successfully", {
+          result,
+        });
+        callback({
+          error: null,
+          data: { success: true },
+        });
+      }
+    } catch (error) {
+      log("ERROR", "[worker:run-task-screenshots] Failed", error);
+      callback({
+        error: error instanceof Error ? error : new Error(String(error)),
+        data: null,
+      });
+    }
+  });
 
   socket.on("worker:configure-git", async (data) => {
     try {
@@ -939,6 +1033,7 @@ async function createTerminal(
     env?: Record<string, string>;
     command?: string;
     args?: string[];
+    taskId?: Id<"tasks">;
     taskRunId?: Id<"taskRuns">;
     agentModel?: string;
     startupCommands?: string[];
@@ -1386,168 +1481,6 @@ if (ENABLE_HEARTBEAT) {
   }, 30000);
 }
 
-/**
- * Check if this worker was started for a preview job that should auto-run screenshots.
- * This function:
- * 1. Reads taskRunId, token, and convexUrl from MORPH_METADATA_* env vars
- * 2. Fetches the taskRun from Convex to check the isPreviewJob flag
- * 3. If isPreviewJob is true, runs the screenshot workflow
- * 4. Calls /api/preview/complete to post GitHub comment and stop the Morph instance
- */
-async function checkAndRunPreviewScreenshots() {
-  const taskRunId = process.env.MORPH_METADATA_taskRunId;
-  const token = process.env.MORPH_METADATA_taskRunToken;
-  const convexUrl = process.env.MORPH_METADATA_convexUrl;
-
-  log("INFO", "[preview-screenshots] Checking for preview job metadata", {
-    hasTaskRunId: Boolean(taskRunId),
-    hasToken: Boolean(token),
-    hasConvexUrl: Boolean(convexUrl),
-    allEnvKeys: Object.keys(process.env).filter(k => k.startsWith("MORPH_METADATA_")),
-  });
-
-  if (!taskRunId || !token || !convexUrl) {
-    log("INFO", "[preview-screenshots] No preview job metadata found - not a preview job, skipping");
-    return;
-  }
-
-  log("INFO", "[preview-screenshots] Preview metadata found, fetching taskRun to check isPreviewJob flag", {
-    taskRunId,
-    convexUrl,
-  });
-
-  try {
-    // Fetch taskRun info from Convex to check if it's a preview job
-    const checkResponse = await fetch(`${convexUrl}/api/crown/check`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({
-        taskRunId,
-        checkType: "info",
-      }),
-    });
-
-    log("INFO", "[preview-screenshots] Received response from /api/crown/check", {
-      status: checkResponse.status,
-      ok: checkResponse.ok,
-      taskRunId,
-    });
-
-    if (!checkResponse.ok) {
-      throw new Error(`Failed to fetch task info: ${checkResponse.status} ${checkResponse.statusText}`);
-    }
-
-    const data = await checkResponse.json();
-
-    if (!data.ok || !data.taskRun) {
-      log("ERROR", "[preview-screenshots] Invalid task info response", {
-        hasOk: Boolean(data.ok),
-        hasTaskRun: Boolean(data.taskRun),
-        taskRunId,
-      });
-      throw new Error("Invalid task info response from /api/crown/check");
-    }
-
-    const taskRun = data.taskRun;
-
-    log("INFO", "[preview-screenshots] Fetched taskRun successfully", {
-      taskRunId,
-      taskId: taskRun.taskId,
-      isPreviewJob: taskRun.isPreviewJob,
-      status: taskRun.status,
-    });
-
-    // Check if this is a preview job
-    if (!taskRun.isPreviewJob) {
-      log("INFO", "[preview-screenshots] TaskRun.isPreviewJob is false - not a preview job, skipping screenshot workflow", {
-        taskRunId,
-        isPreviewJob: taskRun.isPreviewJob,
-      });
-      return;
-    }
-
-    log("INFO", "[preview-screenshots] ✓ TaskRun.isPreviewJob is TRUE - starting screenshot workflow", {
-      taskRunId,
-      taskId: taskRun.taskId,
-    });
-
-    // Run the screenshot workflow
-    await runTaskScreenshots({
-      taskId: taskRun.taskId as Id<"tasks">,
-      taskRunId: taskRunId as Id<"taskRuns">,
-      token,
-      convexUrl,
-    });
-
-    log("INFO", "[preview-screenshots] ✓ Screenshot workflow completed successfully", {
-      taskRunId,
-      taskId: taskRun.taskId,
-    });
-
-    log("INFO", "[preview-screenshots] Calling /api/preview/complete to post GitHub comment and stop instance", {
-      taskRunId,
-    });
-
-    // Call completion endpoint to post GitHub comment and stop the Morph instance
-    try {
-      const completeResponse = await fetch(`${convexUrl}/api/preview/complete`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          taskRunId,
-        }),
-      });
-
-      log("INFO", "[preview-screenshots] Received response from /api/preview/complete", {
-        status: completeResponse.status,
-        ok: completeResponse.ok,
-        taskRunId,
-      });
-
-      if (!completeResponse.ok) {
-        const errorText = await completeResponse.text();
-        throw new Error(`Completion endpoint failed: ${completeResponse.status} ${errorText}`);
-      }
-
-      const result = await completeResponse.json();
-
-      if (result.success) {
-        log("INFO", "[preview-screenshots] ✓ Preview job completed successfully", {
-          taskRunId,
-          commentUrl: result.commentUrl,
-          skipped: result.skipped,
-          reason: result.reason,
-        });
-      } else {
-        log("ERROR", "[preview-screenshots] Preview job completion reported failure", {
-          taskRunId,
-          error: result.error,
-        });
-      }
-    } catch (completeError) {
-      log("ERROR", "[preview-screenshots] Failed to call /api/preview/complete", {
-        taskRunId,
-        error: completeError instanceof Error ? completeError.message : String(completeError),
-        stack: completeError instanceof Error ? completeError.stack : undefined,
-      });
-      throw completeError;
-    }
-  } catch (error) {
-    log("ERROR", "[preview-screenshots] Preview screenshot workflow failed", {
-      taskRunId,
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
-    throw error;
-  }
-}
-
 // Start server
 httpServer.listen(WORKER_PORT, () => {
   log(
@@ -1571,14 +1504,6 @@ httpServer.listen(WORKER_PORT, () => {
     undefined,
     WORKER_ID
   );
-
-  // Check if this is a preview job and auto-run screenshots if needed
-  checkAndRunPreviewScreenshots().catch((error) => {
-    log("ERROR", "[preview-screenshots] Fatal error in preview screenshot check", {
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
-  });
 });
 
 // Start AMP proxy via shared provider module
