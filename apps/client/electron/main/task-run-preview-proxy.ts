@@ -62,7 +62,6 @@ interface ProxyContext {
 interface CmuxProxyMetadata {
   hostOverride: string;
   upstreamPort: number;
-  workspaceHeader: string | null;
 }
 
 interface ProxyTarget {
@@ -618,8 +617,6 @@ function buildCmuxProxyTarget(
         : 80
       : connectPort;
     const hostOverride = formatHostOverride(original.hostname, requestedPort);
-    const workspaceHeader =
-      route.scope && route.scope.toLowerCase() !== "base" ? route.scope : null;
     return {
       url: rewritten,
       secure: rewritten.protocol === "https:",
@@ -627,7 +624,6 @@ function buildCmuxProxyTarget(
       cmuxProxy: {
         hostOverride,
         upstreamPort: requestedPort,
-        workspaceHeader,
       },
     };
   } catch (error) {
@@ -696,19 +692,7 @@ function forwardHttpRequestViaHttp1(
 ): Promise<void> {
   return new Promise((resolve) => {
     const { url, secure, connectPort } = target;
-    const requestHeaders: Record<string, string> = {};
-
-    for (const [key, value] of Object.entries(clientReq.headers)) {
-      if (!value) continue;
-      if (key.toLowerCase() === "proxy-authorization") continue;
-      if (Array.isArray(value)) {
-        requestHeaders[key] = value.join(", ");
-      } else {
-        requestHeaders[key] = value;
-      }
-    }
-    requestHeaders.host = url.host;
-    injectCmuxProxyHeaders(requestHeaders, target.cmuxProxy);
+    const requestHeaders = buildHttp1Headers(clientReq.headers, target);
 
     const requestOptions = {
       protocol: secure ? "https:" : "http:",
@@ -716,7 +700,8 @@ function forwardHttpRequestViaHttp1(
       port: connectPort,
       method: clientReq.method,
       path: url.pathname + url.search,
-      headers: requestHeaders,
+      headers: requestHeaders.headers,
+      setHost: requestHeaders.setHost,
     };
 
     const httpModule = secure ? https : http;
@@ -827,6 +812,7 @@ function buildHttp2Headers(
     if (!value) continue;
     const lowerKey = key.toLowerCase();
     if (lowerKey === "proxy-authorization") continue;
+    if (lowerKey === "host" && target.cmuxProxy) continue;
     if (HOP_BY_HOP_HEADERS.has(lowerKey)) continue;
     if (Array.isArray(value)) {
       headers[lowerKey] = value.join(", ");
@@ -834,26 +820,47 @@ function buildHttp2Headers(
       headers[lowerKey] = value;
     }
   }
-  headers.host = target.url.host;
+  if (!target.cmuxProxy) {
+    headers.host = target.url.host;
+  }
   injectCmuxProxyHeaders(headers, target.cmuxProxy);
   return headers;
 }
 
+function buildHttp1Headers(
+  source: IncomingHttpHeaders,
+  target: ProxyTarget
+): { headers: Record<string, string>; setHost?: boolean } {
+  const headers: Record<string, string> = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (!value) continue;
+    const lowerKey = key.toLowerCase();
+    if (lowerKey === "proxy-authorization") continue;
+    if (lowerKey === "host" && target.cmuxProxy) continue;
+    if (Array.isArray(value)) {
+      headers[lowerKey] = value.join(", ");
+    } else {
+      headers[lowerKey] = value;
+    }
+  }
+  if (!target.cmuxProxy) {
+    headers.host = target.url.host;
+  }
+  injectCmuxProxyHeaders(headers, target.cmuxProxy);
+  return { headers, setHost: target.cmuxProxy ? false : undefined };
+}
+
 function injectCmuxProxyHeaders(
   headers: Record<string, string>,
-  cmuxProxy: CmuxProxyMetadata | undefined
+  metadata: CmuxProxyMetadata | undefined
 ) {
   delete headers["x-cmux-port-internal"];
   delete headers["x-cmux-host-override"];
-  delete headers["x-cmux-workspace-internal"];
-  if (!cmuxProxy) {
+  if (!metadata) {
     return;
   }
-  headers["x-cmux-port-internal"] = String(cmuxProxy.upstreamPort);
-  headers["x-cmux-host-override"] = cmuxProxy.hostOverride;
-  if (cmuxProxy.workspaceHeader) {
-    headers["x-cmux-workspace-internal"] = cmuxProxy.workspaceHeader;
-  }
+  headers["x-cmux-port-internal"] = String(metadata.upstreamPort);
+  headers["x-cmux-host-override"] = metadata.hostOverride;
 }
 
 function forwardUpgradeRequest(
@@ -869,11 +876,14 @@ function forwardUpgradeRequest(
     const headers: Record<string, string> = {};
     for (const [key, value] of Object.entries(clientReq.headers)) {
       if (!value) continue;
-      if (key.toLowerCase() === "proxy-authorization") continue;
       const lowerKey = key.toLowerCase();
+      if (lowerKey === "proxy-authorization") continue;
+      if (lowerKey === "host" && target.cmuxProxy) continue;
       headers[lowerKey] = Array.isArray(value) ? value.join(", ") : value;
     }
-    headers.host = url.host;
+    if (!target.cmuxProxy) {
+      headers.host = url.host;
+    }
     injectCmuxProxyHeaders(headers, target.cmuxProxy);
 
     const lines = [
@@ -931,10 +941,7 @@ function establishCmuxProxyConnect(
 ) {
   const upstream = createUpstreamSocket(target);
   const sendConnectRequest = () => {
-    const headers: Record<string, string> = {
-      host: target.url.host,
-      "proxy-connection": "keep-alive",
-    };
+    const headers: Record<string, string> = {};
     injectCmuxProxyHeaders(headers, target.cmuxProxy);
     const lines = [`CONNECT ${target.url.host} HTTP/1.1`];
     for (const [key, value] of Object.entries(headers)) {
