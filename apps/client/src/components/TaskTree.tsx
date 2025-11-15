@@ -1362,6 +1362,14 @@ function TaskRunTreeInner({
     branch: run.newBranch,
     networking: run.networking,
   });
+  const defaultVsCodeAction = useMemo(
+    () =>
+      isLocalWorkspaceRunEntry
+        ? openWithActions.find((action) => action.id === "vscode-remote") ??
+          null
+        : null,
+    [isLocalWorkspaceRunEntry, openWithActions]
+  );
 
   const shouldRenderDiffLink = true;
   const shouldRenderBrowserLink = run.vscode?.provider === "morph";
@@ -1421,6 +1429,19 @@ function TaskRunTreeInner({
                 event.shiftKey ||
                 event.altKey
               ) {
+                return;
+              }
+
+              if (
+                defaultVsCodeAction &&
+                !event.metaKey &&
+                !event.ctrlKey &&
+                !event.shiftKey &&
+                !event.altKey
+              ) {
+                event.preventDefault();
+                event.stopPropagation();
+                void executeOpenAction(defaultVsCodeAction);
                 return;
               }
 

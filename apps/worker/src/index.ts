@@ -61,7 +61,7 @@ const app = express();
 app.get("/health", (_req, res) => {
   res.json({
     status: "healthy",
-    workerId: WORKER_ID,
+
     uptime: process.uptime(),
     mainServerConnected: !!mainServerSocket && mainServerSocket.connected,
     pendingEventsCount: pendingEvents.length,

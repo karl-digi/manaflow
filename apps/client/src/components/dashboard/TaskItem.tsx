@@ -7,6 +7,8 @@ import {
 import { useArchiveTask } from "@/hooks/useArchiveTask";
 import { useTaskRename } from "@/hooks/useTaskRename";
 import { isFakeConvexId } from "@/lib/fakeConvexId";
+import { rewriteLocalWorkspaceUrlIfNeeded } from "@/lib/toProxyWorkspaceUrl";
+import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
 import { ContextMenu } from "@base-ui-components/react/context-menu";
 import { api } from "@cmux/convex/api";
 import type { Doc } from "@cmux/convex/dataModel";
@@ -160,6 +162,37 @@ export const TaskItem = memo(function TaskItem({
     [getLatestVSCodeInstance]
   );
   const hasActiveVSCode = runWithVSCode?.vscode?.status === "running";
+  const { data: localServeWebInfo } = useLocalVSCodeServeWebQuery();
+  const serveWebOrigin = localServeWebInfo?.baseUrl ?? null;
+  const workspaceUrl = runWithVSCode?.vscode?.workspaceUrl ?? null;
+  const vscodeBaseUrl = runWithVSCode?.vscode?.url ?? null;
+  const rawWorkspaceUrl = useMemo(() => {
+    if (workspaceUrl) {
+      return workspaceUrl;
+    }
+    if (!vscodeBaseUrl) {
+      return null;
+    }
+    try {
+      const url = new URL(vscodeBaseUrl);
+      if (!url.searchParams.has("folder")) {
+        url.searchParams.set("folder", "/root/workspace");
+      }
+      return url.toString();
+    } catch {
+      return `${vscodeBaseUrl}?folder=/root/workspace`;
+    }
+  }, [workspaceUrl, vscodeBaseUrl]);
+  const resolvedWorkspaceUrl = useMemo(() => {
+    if (!rawWorkspaceUrl) {
+      return null;
+    }
+    return rewriteLocalWorkspaceUrlIfNeeded(rawWorkspaceUrl, serveWebOrigin);
+  }, [rawWorkspaceUrl, serveWebOrigin]);
+  const shouldDefaultToVSCodeLink =
+    Boolean(task.isLocalWorkspace) &&
+    hasActiveVSCode &&
+    Boolean(resolvedWorkspaceUrl);
 
   // Generate the VSCode URL if available
   const vscodeUrl = useMemo(() => {
@@ -171,20 +204,39 @@ export const TaskItem = memo(function TaskItem({
 
   const handleLinkClick = useCallback(
     (event: React.MouseEvent<HTMLAnchorElement>) => {
-      // Don't navigate if we're renaming or if modifier keys are pressed
-      if (
-        isRenaming ||
-        event.defaultPrevented ||
-        event.metaKey ||
-        event.ctrlKey ||
-        event.shiftKey ||
-        event.altKey
-      ) {
+      if (event.defaultPrevented) {
+        return;
+      }
+
+      if (isRenaming) {
         event.preventDefault();
         return;
       }
+
+      const hasModifier =
+        event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
+
+      if (
+        shouldDefaultToVSCodeLink &&
+        resolvedWorkspaceUrl &&
+        !hasModifier &&
+        event.button === 0
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        void window.open(
+          resolvedWorkspaceUrl,
+          "_blank",
+          "noopener,noreferrer"
+        );
+        return;
+      }
+
+      if (hasModifier) {
+        event.preventDefault();
+      }
     },
-    [isRenaming]
+    [isRenaming, resolvedWorkspaceUrl, shouldDefaultToVSCodeLink]
   );
 
   const handleCopy = useCallback(
