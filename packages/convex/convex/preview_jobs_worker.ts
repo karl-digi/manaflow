@@ -6,6 +6,8 @@ import {
   stopInstanceInstanceInstanceIdDelete,
   type InstanceModel,
 } from "@cmux/morphcloud-openapi-client";
+import { connectToWorkerManagement } from "@cmux/shared/socket";
+import type { WorkerRunTaskScreenshots } from "@cmux/shared";
 import { SignJWT } from "jose";
 import { env } from "../_shared/convex-env";
 import { fetchInstallationAccessToken } from "../_shared/githubApp";
@@ -19,6 +21,103 @@ const sliceOutput = (value?: string | null, length = 200): string | undefined =>
 
 const singleQuote = (value: string): string =>
   `'${value.replace(/'/g, "'\\''")}'`;
+
+const WORKER_SOCKET_TIMEOUT_MS = 30_000;
+
+const formatWorkerSocketError = (error: unknown): string => {
+  if (!error) {
+    return "Unknown worker socket error";
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  if (typeof error === "object") {
+    const maybeMessage =
+      "message" in error && typeof (error as { message?: unknown }).message === "string"
+        ? (error as { message?: string }).message
+        : undefined;
+
+    if (maybeMessage) {
+      return maybeMessage;
+    }
+
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return String(error);
+    }
+  }
+  return String(error);
+};
+
+async function triggerWorkerScreenshotCollection({
+  workerUrl,
+  payload,
+  previewRunId,
+}: {
+  workerUrl: string;
+  payload: WorkerRunTaskScreenshots;
+  previewRunId: Id<"previewRuns">;
+}): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const socket = connectToWorkerManagement({
+      url: workerUrl,
+      timeoutMs: WORKER_SOCKET_TIMEOUT_MS,
+      reconnectionAttempts: 0,
+      forceNew: true,
+    });
+
+    let settled = false;
+
+    const settle = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      socket.disconnect();
+      if (error) {
+        reject(error);
+      } else {
+        resolve();
+      }
+    };
+
+    const timeoutId = setTimeout(() => {
+      settle(new Error("Timed out connecting to worker for screenshot collection"));
+    }, WORKER_SOCKET_TIMEOUT_MS);
+
+    socket.on("connect", () => {
+      console.log("[preview-jobs] Connected to worker socket", {
+        previewRunId,
+      });
+
+      socket.emit("worker:run-task-screenshots", payload, (response) => {
+        if (response.error) {
+          settle(new Error(formatWorkerSocketError(response.error)));
+          return;
+        }
+        settle();
+      });
+    });
+
+    socket.on("connect_error", (error: Error) => {
+      settle(new Error(formatWorkerSocketError(error)));
+    });
+
+    socket.on("disconnect", (reason) => {
+      if (settled) {
+        return;
+      }
+      settle(
+        new Error(
+          `Worker socket disconnected before acknowledging screenshot run: ${reason ?? "unknown"}`,
+        ),
+      );
+    });
+  });
+}
 
 async function repoHasCommit({
   morphClient,
@@ -709,7 +808,8 @@ export async function runPreviewJob(
       // Apply CMUX environment variables via envctl (same as crown runs)
       const envVarsContent = `CMUX_TASK_RUN_ID="${taskRunId}"\nCMUX_TASK_RUN_JWT="${previewJwt}"`;
       const envBase64 = stringToBase64(envVarsContent);
-      const envctlCommand = `envctl load --base64 ${envBase64}`;
+      // Pipe base64 payload via stdin so envctl always receives the input it expects
+      const envctlCommand = `printf %s ${singleQuote(envBase64)} | envctl load --base64 -`;
 
       const envctlResponse = await execInstanceInstanceIdExecPost({
         client: morphClient,
@@ -734,55 +834,28 @@ export async function runPreviewJob(
         taskRunId,
       });
 
-      // Trigger screenshot collection via socket.io using inline Node.js script
+      // Trigger screenshot collection via worker socket
       if (!taskId) {
         throw new Error("taskId is required but not available");
       }
+      const screenshotPayload: WorkerRunTaskScreenshots = {
+        taskId,
+        taskRunId,
+        token: previewJwt,
+        convexUrl: env.BASE_APP_URL,
+        taskRunJwt: previewJwt,
+      };
 
-      const socketScript = `
-const io = require('socket.io-client');
-const socket = io('http://localhost:39377/management', {
-  transports: ['websocket'],
-  reconnection: false
-});
-
-socket.on('connect', () => {
-  socket.emit('worker:run-task-screenshots', {
-    taskId: '${taskId}',
-    taskRunId: '${taskRunId}',
-    token: '${previewJwt}',
-    convexUrl: '${env.BASE_APP_URL}',
-  });
-  console.log('Screenshot collection triggered');
-  process.exit(0);
-});
-
-socket.on('connect_error', (err) => {
-  console.error('Connection error:', err.message);
-  process.exit(1);
-});
-
-setTimeout(() => {
-  console.error('Timeout connecting to worker');
-  process.exit(1);
-}, 30000); // 30 second connection timeout
-`;
-
-      const screenshotResponse = await execInstanceInstanceIdExecPost({
-        client: morphClient,
-        path: { instance_id: instance.id },
-        body: {
-          command: ["node", "-e", socketScript],
-        },
-      });
-
-      if (screenshotResponse.error || screenshotResponse.data?.exit_code !== 0) {
+      try {
+        await triggerWorkerScreenshotCollection({
+          workerUrl: workerService.url,
+          payload: screenshotPayload,
+          previewRunId,
+        });
+      } catch (error) {
         console.error("[preview-jobs] Failed to trigger screenshots", {
           previewRunId,
-          exitCode: screenshotResponse.data?.exit_code,
-          stderr: sliceOutput(screenshotResponse.data?.stderr),
-          stdout: sliceOutput(screenshotResponse.data?.stdout),
-          error: screenshotResponse.error,
+          error: error instanceof Error ? error.message : String(error),
         });
         throw new Error("Failed to trigger screenshot collection");
       }
@@ -790,7 +863,6 @@ setTimeout(() => {
       console.log("[preview-jobs] Triggered screenshot collection via socket", {
         previewRunId,
         taskRunId,
-        response: sliceOutput(screenshotResponse.data?.stdout),
       });
     }
 
