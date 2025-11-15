@@ -11,20 +11,28 @@ const require = createRequire(import.meta.url);
 const XTERM_JS_PATH = require.resolve("@xterm/xterm/lib/xterm.js");
 const XTERM_CSS_PATH = require.resolve("@xterm/xterm/css/xterm.css");
 const XTERM_FIT_PATH = require.resolve("@xterm/addon-fit/lib/addon-fit.js");
-const XTERM_ATTACH_PATH = require.resolve("@xterm/addon-attach/lib/addon-attach.js");
+const XTERM_ATTACH_PATH = require.resolve(
+  "@xterm/addon-attach/lib/addon-attach.js"
+);
 const XTERM_WEB_LINKS_PATH = require.resolve(
   "@xterm/addon-web-links/lib/addon-web-links.js"
 );
 const XTERM_UNICODE_PATH = require.resolve(
   "@xterm/addon-unicode11/lib/addon-unicode11.js"
 );
-const XTERM_WEBGL_PATH = require.resolve("@xterm/addon-webgl/lib/addon-webgl.js");
-const XTERM_SEARCH_PATH = require.resolve("@xterm/addon-search/lib/addon-search.js");
+const XTERM_WEBGL_PATH = require.resolve(
+  "@xterm/addon-webgl/lib/addon-webgl.js"
+);
+const XTERM_SEARCH_PATH = require.resolve(
+  "@xterm/addon-search/lib/addon-search.js"
+);
 
 const WORKSPACE_DIR = "/root/workspace";
 const XTERM_HTTP_PORT = 39383;
 
-type MorphInstance = Awaited<ReturnType<MorphCloudClient["instances"]["start"]>>;
+type MorphInstance = Awaited<
+  ReturnType<MorphCloudClient["instances"]["start"]>
+>;
 
 interface XtermAssets {
   css: string;
@@ -127,7 +135,9 @@ function formatCloneLog(stdout: string, stderr: string): string {
 }
 
 function extractHttpService(instance: MorphInstance, port: number) {
-  return instance.networking.httpServices.find((service) => service.port === port);
+  return instance.networking.httpServices.find(
+    (service) => service.port === port
+  );
 }
 
 async function cloneRepository({
@@ -178,7 +188,9 @@ async function createTerminalSession({
       cmd: "/bin/bash",
       args: [
         "-lc",
-        `cd ${singleQuote(repoPath)} && exec /bin/bash`,
+        `cd ${singleQuote(
+          repoPath
+        )} && (bunx opencode-ai@latest || true); exec /bin/bash`,
       ],
     }),
   });
@@ -484,8 +496,8 @@ export async function GET(
     console.log(`[cliweb] Spawning Morph sandbox for ${org}/${repo}`);
     instance = await client.instances.start({
       snapshotId: DEFAULT_MORPH_SNAPSHOT_ID,
-      ttlSeconds: 60 * 30,
-      ttlAction: "pause",
+      ttlSeconds: 60 * 10, // 10 minutes
+      ttlAction: "stop",
       metadata: {
         source: "cliweb",
         org,
