@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { resolveTeamIdLoose } from "../_shared/team";
+import type { Id } from "./_generated/dataModel";
 import { internalQuery } from "./_generated/server";
 import { authMutation, authQuery } from "./users/utils";
 
@@ -23,6 +24,7 @@ export const update = authMutation({
     teamSlugOrId: v.string(),
     worktreePath: v.optional(v.string()),
     autoPrEnabled: v.optional(v.boolean()),
+    workspaceOrder: v.optional(v.array(v.id("tasks"))),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
@@ -39,6 +41,7 @@ export const update = authMutation({
       const updates: {
         worktreePath?: string;
         autoPrEnabled?: boolean;
+        workspaceOrder?: Id<"tasks">[];
         updatedAt: number;
       } = { updatedAt: now };
 
@@ -48,12 +51,16 @@ export const update = authMutation({
       if (args.autoPrEnabled !== undefined) {
         updates.autoPrEnabled = args.autoPrEnabled;
       }
+      if (args.workspaceOrder !== undefined) {
+        updates.workspaceOrder = args.workspaceOrder;
+      }
 
       await ctx.db.patch(existing._id, updates);
     } else {
       await ctx.db.insert("workspaceSettings", {
         worktreePath: args.worktreePath,
         autoPrEnabled: args.autoPrEnabled,
+        workspaceOrder: args.workspaceOrder ?? [],
         nextLocalWorkspaceSequence: 0,
         createdAt: now,
         updatedAt: now,

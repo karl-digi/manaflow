@@ -1,5 +1,6 @@
+import { sortTasksByWorkspaceOrder } from "@/lib/workspaceOrdering";
 import { api } from "@cmux/convex/api";
-import type { Doc } from "@cmux/convex/dataModel";
+import type { Doc, Id } from "@cmux/convex/dataModel";
 import { useLocalStorage } from "@mantine/hooks";
 import { useQuery } from "convex/react";
 import clsx from "clsx";
@@ -72,18 +73,9 @@ const getTaskCategory = (task: Doc<"tasks">): TaskCategoryKey => {
   return "in_progress";
 };
 
-const sortByRecentUpdate = (tasks: Doc<"tasks">[]): Doc<"tasks">[] => {
-  if (tasks.length <= 1) {
-    return tasks;
-  }
-  return [...tasks].sort(
-    (a, b) =>
-      (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0)
-  );
-};
-
 const categorizeTasks = (
-  tasks: Doc<"tasks">[] | undefined
+  tasks: Doc<"tasks">[] | undefined,
+  workspaceOrder?: Id<"tasks">[] | null
 ): Record<TaskCategoryKey, Doc<"tasks">[]> | null => {
   if (!tasks) {
     return null;
@@ -94,7 +86,7 @@ const categorizeTasks = (
     buckets[key].push(task);
   }
   for (const key of CATEGORY_ORDER) {
-    buckets[key] = sortByRecentUpdate(buckets[key]);
+    buckets[key] = sortTasksByWorkspaceOrder(buckets[key], workspaceOrder);
   }
   return buckets;
 };
@@ -120,10 +112,14 @@ export const TaskList = memo(function TaskList({
     archived: true,
   });
   const pinnedData = useQuery(api.tasks.getPinned, { teamSlugOrId });
+  const workspaceSettings = useQuery(api.workspaceSettings.get, {
+    teamSlugOrId,
+  });
+  const workspaceOrder = workspaceSettings?.workspaceOrder ?? null;
   const [tab, setTab] = useState<"all" | "archived">("all");
 
   const categorizedTasks = useMemo(() => {
-    const categorized = categorizeTasks(allTasks);
+    const categorized = categorizeTasks(allTasks, workspaceOrder);
     if (categorized && pinnedData) {
       // Filter pinned tasks out from other categories
       const pinnedTaskIds = new Set(pinnedData.map(t => t._id));
@@ -138,7 +134,7 @@ export const TaskList = memo(function TaskList({
       categorized.pinned = pinnedData;
     }
     return categorized;
-  }, [allTasks, pinnedData]);
+  }, [allTasks, pinnedData, workspaceOrder]);
   const categoryBuckets = categorizedTasks ?? createEmptyCategoryBuckets();
   const collapsedStorageKey = useMemo(
     () => `dashboard-collapsed-categories-${teamSlugOrId}`,

@@ -89,6 +89,7 @@ export const reserve = authMutation({
       await ctx.db.insert("workspaceSettings", {
         worktreePath: undefined,
         autoPrEnabled: undefined,
+        workspaceOrder: [],
         nextLocalWorkspaceSequence: sequence + 1,
         createdAt: now,
         updatedAt: now,

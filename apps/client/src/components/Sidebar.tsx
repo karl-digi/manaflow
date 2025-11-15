@@ -2,20 +2,30 @@ import { TaskTree } from "@/components/TaskTree";
 import { TaskTreeSkeleton } from "@/components/TaskTreeSkeleton";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { isElectron } from "@/lib/electron";
-import { type Doc } from "@cmux/convex/dataModel";
+import {
+  areWorkspaceOrdersEqual,
+  reorderWorkspaceOrder,
+  sortTasksByWorkspaceOrder,
+  type DropPosition,
+} from "@/lib/workspaceOrdering";
 import { api } from "@cmux/convex/api";
-import { useQuery } from "convex/react";
+import { type Doc, type Id } from "@cmux/convex/dataModel";
+import { useMutation, useQuery } from "convex/react";
 import type { LinkProps } from "@tanstack/react-router";
 import { Link } from "@tanstack/react-router";
 import { Home, Plus, Server, Settings } from "lucide-react";
+import clsx from "clsx";
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ComponentType,
   type CSSProperties,
+  type DragEvent,
 } from "react";
+import { toast } from "sonner";
 import CmuxLogo from "./logo/cmux-logo";
 import { SidebarNavLink } from "./sidebar/SidebarNavLink";
 import { SidebarPullRequestList } from "./sidebar/SidebarPullRequestList";
@@ -61,6 +71,8 @@ const navItems: SidebarNavItem[] = [
   },
 ];
 
+const EMPTY_PINNED_SET: ReadonlySet<Id<"tasks">> = new Set();
+
 export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
   const DEFAULT_WIDTH = 256;
   const MIN_WIDTH = 240;
@@ -83,8 +95,107 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
 
   const { expandTaskIds } = useExpandTasks();
 
-  // Fetch pinned items
   const pinnedData = useQuery(api.tasks.getPinned, { teamSlugOrId });
+  const workspaceSettings = useQuery(api.workspaceSettings.get, {
+    teamSlugOrId,
+  });
+  const serverWorkspaceOrder = workspaceSettings?.workspaceOrder ?? null;
+  const [pendingWorkspaceOrder, setPendingWorkspaceOrder] = useState<
+    Id<"tasks">[] | null
+  >(null);
+  useEffect(() => {
+    if (!pendingWorkspaceOrder) {
+      return;
+    }
+    if (areWorkspaceOrdersEqual(serverWorkspaceOrder, pendingWorkspaceOrder)) {
+      setPendingWorkspaceOrder(null);
+    }
+  }, [pendingWorkspaceOrder, serverWorkspaceOrder]);
+  const effectiveWorkspaceOrder =
+    pendingWorkspaceOrder ?? serverWorkspaceOrder;
+  const updateWorkspaceSettings = useMutation(api.workspaceSettings.update);
+  const sortedTasks = useMemo(() => {
+    if (tasks === undefined) {
+      return undefined;
+    }
+    return sortTasksByWorkspaceOrder(tasks, effectiveWorkspaceOrder);
+  }, [tasks, effectiveWorkspaceOrder]);
+  const pinnedTaskIds = useMemo(() => {
+    if (!pinnedData) {
+      return EMPTY_PINNED_SET;
+    }
+    return new Set(pinnedData.map((task) => task._id));
+  }, [pinnedData]);
+  const unpinnedTasks = useMemo(() => {
+    if (sortedTasks === undefined) {
+      return undefined;
+    }
+    return sortedTasks.filter(
+      (task) => !task.pinned && !pinnedTaskIds.has(task._id)
+    );
+  }, [sortedTasks, pinnedTaskIds]);
+  const [draggingTaskId, setDraggingTaskId] = useState<Id<"tasks"> | null>(
+    null
+  );
+  const [dropPreview, setDropPreview] = useState<{
+    taskId: Id<"tasks">;
+    position: DropPosition;
+  } | null>(null);
+  const showDropPreview = useCallback(
+    (taskId: Id<"tasks">, position: DropPosition) => {
+      setDropPreview((prev) => {
+        if (prev?.taskId === taskId && prev.position === position) {
+          return prev;
+        }
+        return { taskId, position };
+      });
+    },
+    []
+  );
+  const clearDropPreview = useCallback((taskId?: Id<"tasks">) => {
+    setDropPreview((prev) => {
+      if (!prev) {
+        return prev;
+      }
+      if (taskId === undefined || prev.taskId === taskId) {
+        return null;
+      }
+      return prev;
+    });
+  }, []);
+
+  const handleWorkspaceDrop = useCallback(
+    (sourceId: Id<"tasks">, targetId: Id<"tasks">, position: DropPosition) => {
+      if (!sortedTasks || sortedTasks.length === 0) {
+        return;
+      }
+      const nextOrder = reorderWorkspaceOrder({
+        currentOrder: effectiveWorkspaceOrder,
+        sourceId,
+        targetId,
+        position,
+        tasks: sortedTasks,
+      });
+      if (areWorkspaceOrdersEqual(nextOrder, effectiveWorkspaceOrder)) {
+        return;
+      }
+      setPendingWorkspaceOrder(nextOrder);
+      updateWorkspaceSettings({
+        teamSlugOrId,
+        workspaceOrder: nextOrder,
+      }).catch((error) => {
+        console.error(error);
+        toast.error("Failed to save workspace order");
+        setPendingWorkspaceOrder(null);
+      });
+    },
+    [
+      sortedTasks,
+      effectiveWorkspaceOrder,
+      teamSlugOrId,
+      updateWorkspaceSettings,
+    ]
+  );
 
   useEffect(() => {
     localStorage.setItem("sidebarWidth", String(width));
@@ -298,9 +409,9 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
 
           <div className="ml-2 pt-px">
             <div className="space-y-px">
-              {tasks === undefined ? (
+              {sortedTasks === undefined ? (
                 <TaskTreeSkeleton count={5} />
-              ) : tasks && tasks.length > 0 ? (
+              ) : sortedTasks.length > 0 ? (
                 <>
                   {/* Pinned items at the top */}
                   {pinnedData && pinnedData.length > 0 && (
@@ -318,19 +429,20 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
                     </>
                   )}
                   {/* Regular (non-pinned) tasks */}
-                  {tasks
-                    .filter((task) => {
-                      // Only filter out directly pinned tasks
-                      return !task.pinned;
-                    })
-                    .map((task) => (
-                      <TaskTree
-                        key={task._id}
-                        task={task}
-                        defaultExpanded={expandTaskIds?.includes(task._id) ?? false}
-                        teamSlugOrId={teamSlugOrId}
-                      />
-                    ))}
+                  {unpinnedTasks?.map((task) => (
+                    <SidebarWorkspaceItem
+                      key={task._id}
+                      task={task}
+                      teamSlugOrId={teamSlugOrId}
+                      expandTaskIds={expandTaskIds}
+                      draggingTaskId={draggingTaskId}
+                      setDraggingTaskId={setDraggingTaskId}
+                      dropPreview={dropPreview}
+                      showDropPreview={showDropPreview}
+                      clearDropPreview={clearDropPreview}
+                      onReorder={handleWorkspaceDrop}
+                    />
+                  ))}
                 </>
               ) : (
                 <p className="pl-2 pr-3 py-1.5 text-xs text-neutral-500 dark:text-neutral-400 select-none">
@@ -363,5 +475,127 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
         }
       />
     </div>
+  );
+}
+
+interface SidebarWorkspaceItemProps {
+  task: Doc<"tasks">;
+  teamSlugOrId: string;
+  expandTaskIds?: string[];
+  draggingTaskId: Id<"tasks"> | null;
+  setDraggingTaskId: (taskId: Id<"tasks"> | null) => void;
+  dropPreview: { taskId: Id<"tasks">; position: DropPosition } | null;
+  showDropPreview: (taskId: Id<"tasks">, position: DropPosition) => void;
+  clearDropPreview: (taskId?: Id<"tasks">) => void;
+  onReorder: (
+    sourceId: Id<"tasks">,
+    targetId: Id<"tasks">,
+    position: DropPosition
+  ) => void;
+}
+
+function SidebarWorkspaceItem({
+  task,
+  teamSlugOrId,
+  expandTaskIds,
+  draggingTaskId,
+  setDraggingTaskId,
+  dropPreview,
+  showDropPreview,
+  clearDropPreview,
+  onReorder,
+}: SidebarWorkspaceItemProps) {
+  const isDragging = draggingTaskId === task._id;
+  const showTopIndicator =
+    dropPreview?.taskId === task._id && dropPreview.position === "above";
+  const showBottomIndicator =
+    dropPreview?.taskId === task._id && dropPreview.position === "below";
+
+  const handleDragStart = useCallback(
+    (event: DragEvent<HTMLDivElement>) => {
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", task._id);
+      setDraggingTaskId(task._id);
+    },
+    [setDraggingTaskId, task._id]
+  );
+
+  const handleDragOver = useCallback(
+    (event: DragEvent<HTMLDivElement>) => {
+      if (!draggingTaskId || draggingTaskId === task._id) {
+        return;
+      }
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      const position = getDropPosition(event);
+      showDropPreview(task._id, position);
+    },
+    [draggingTaskId, showDropPreview, task._id]
+  );
+
+  const handleDragLeave = useCallback(
+    (event: DragEvent<HTMLDivElement>) => {
+      const nextTarget = event.relatedTarget as Node | null;
+      if (nextTarget && event.currentTarget.contains(nextTarget)) {
+        return;
+      }
+      clearDropPreview(task._id);
+    },
+    [clearDropPreview, task._id]
+  );
+
+  const handleDrop = useCallback(
+    (event: DragEvent<HTMLDivElement>) => {
+      if (!draggingTaskId || draggingTaskId === task._id) {
+        return;
+      }
+      event.preventDefault();
+      const position = getDropPosition(event);
+      clearDropPreview();
+      onReorder(draggingTaskId, task._id, position);
+      setDraggingTaskId(null);
+    },
+    [clearDropPreview, draggingTaskId, onReorder, setDraggingTaskId, task._id]
+  );
+
+  const handleDragEnd = useCallback(() => {
+    clearDropPreview();
+    setDraggingTaskId(null);
+  }, [clearDropPreview, setDraggingTaskId]);
+
+  return (
+    <div
+      draggable
+      onDragStart={handleDragStart}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      onDragEnd={handleDragEnd}
+      className={clsx(
+        "rounded-sm",
+        isDragging && "opacity-60",
+        (showTopIndicator || showBottomIndicator) && "py-0.5"
+      )}
+    >
+      {showTopIndicator ? <SidebarDropIndicator /> : null}
+      <TaskTree
+        task={task}
+        defaultExpanded={expandTaskIds?.includes(task._id) ?? false}
+        teamSlugOrId={teamSlugOrId}
+      />
+      {showBottomIndicator ? <SidebarDropIndicator /> : null}
+    </div>
+  );
+}
+
+const getDropPosition = (event: DragEvent<HTMLElement>): DropPosition => {
+  const rect = event.currentTarget.getBoundingClientRect();
+  const offset = event.clientY - rect.top;
+  return offset < rect.height / 2 ? "above" : "below";
+};
+
+function SidebarDropIndicator() {
+  return (
+    <div className="mx-2 mb-0.5 mt-0.5 h-0.5 rounded-full bg-blue-500 dark:bg-blue-400" />
   );
 }
