@@ -640,6 +640,32 @@ function TaskTreeInner({
   const isLocalWorkspace = task.isLocalWorkspace;
   const isCloudWorkspace = task.isCloudWorkspace;
 
+  // Find the latest run with VSCode for routing local workspaces
+  const latestRunWithVSCode = useMemo(() => {
+    if (!isLocalWorkspace || !taskRuns || taskRuns.length === 0) return null;
+
+    const allRuns: TaskRunWithChildren[] = [];
+    const flattenRuns = (runs: TaskRunWithChildren[]) => {
+      runs.forEach((run) => {
+        allRuns.push(run);
+        if (run.children) {
+          flattenRuns(run.children);
+        }
+      });
+    };
+    flattenRuns(taskRuns);
+
+    const runWithVSCode = allRuns
+      .filter(
+        (run) =>
+          run.vscode &&
+          (run.vscode.status === "running" || run.vscode.status === "starting")
+      )
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
+
+    return runWithVSCode;
+  }, [isLocalWorkspace, taskRuns]);
+
   const taskLeadingIcon = (() => {
     if (isCrownEvaluating) {
       return (
@@ -757,9 +783,25 @@ function TaskTreeInner({
           <ContextMenu.Trigger>
             <Link
               ref={taskLinkRef}
-              to="/$teamSlugOrId/task/$taskId"
-              params={{ teamSlugOrId, taskId: task._id }}
-              search={{ runId: undefined }}
+              to={
+                isLocalWorkspace && latestRunWithVSCode && isElectron
+                  ? "/$teamSlugOrId/task/$taskId/run/$runId/vscode"
+                  : "/$teamSlugOrId/task/$taskId"
+              }
+              params={
+                isLocalWorkspace && latestRunWithVSCode && isElectron
+                  ? {
+                      teamSlugOrId,
+                      taskId: task._id,
+                      runId: latestRunWithVSCode._id,
+                    }
+                  : { teamSlugOrId, taskId: task._id }
+              }
+              search={
+                isLocalWorkspace && latestRunWithVSCode && isElectron
+                  ? undefined
+                  : { runId: undefined }
+              }
               activeOptions={{ exact: true }}
               className="group block"
               data-focus-visible={isTaskLinkFocusVisible ? "true" : undefined}

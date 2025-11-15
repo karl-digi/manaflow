@@ -7,6 +7,7 @@ import {
 import { useArchiveTask } from "@/hooks/useArchiveTask";
 import { useTaskRename } from "@/hooks/useTaskRename";
 import { isFakeConvexId } from "@/lib/fakeConvexId";
+import { isElectron } from "@/lib/electron";
 import { ContextMenu } from "@base-ui-components/react/context-menu";
 import { api } from "@cmux/convex/api";
 import type { Doc } from "@cmux/convex/dataModel";
@@ -251,14 +252,30 @@ export const TaskItem = memo(function TaskItem({
     });
   }, [unpinTask, teamSlugOrId, task._id]);
 
+  const isLocalWorkspace = task.isLocalWorkspace;
+  const shouldRouteToVSCode =
+    isLocalWorkspace && runWithVSCode && isElectron;
+
   return (
     <div className="relative group w-full">
       <ContextMenu.Root>
         <ContextMenu.Trigger>
           <Link
-            to="/$teamSlugOrId/task/$taskId"
-            params={{ teamSlugOrId, taskId: task._id }}
-            search={{ runId: undefined }}
+            to={
+              shouldRouteToVSCode
+                ? "/$teamSlugOrId/task/$taskId/run/$runId/vscode"
+                : "/$teamSlugOrId/task/$taskId"
+            }
+            params={
+              shouldRouteToVSCode
+                ? {
+                    teamSlugOrId,
+                    taskId: task._id,
+                    runId: runWithVSCode._id,
+                  }
+                : { teamSlugOrId, taskId: task._id }
+            }
+            search={shouldRouteToVSCode ? undefined : { runId: undefined }}
             onClick={handleLinkClick}
             className={clsx(
               "relative grid w-full items-center py-2 pr-3 cursor-default select-none group",
