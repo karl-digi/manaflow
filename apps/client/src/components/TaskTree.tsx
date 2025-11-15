@@ -350,6 +350,7 @@ function TaskTreeInner({
       ? "skip"
       : { teamSlugOrId, taskId: task._id, includeArchived: true }
   );
+  const navigate = useNavigate();
   const runsLoading = !isOptimisticTask && taskRuns === undefined;
   const flattenedRuns = useMemo(() => flattenRuns(taskRuns), [taskRuns]);
   const activeRunsFlat = useMemo(
@@ -455,6 +456,69 @@ function TaskTreeInner({
   const handlePrefetch = useCallback(() => {
     prefetchTaskRuns();
   }, [prefetchTaskRuns]);
+
+  const localWorkspaceRunId = useMemo(() => {
+    if (!isLocalWorkspace || flattenedRuns.length === 0) {
+      return null;
+    }
+
+    const activeRuns = flattenedRuns
+      .filter((run) => !run.isArchived)
+      .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+    if (activeRuns.length === 0) {
+      return null;
+    }
+
+    const workspaceRun = activeRuns.find((run) =>
+      run.isLocalWorkspace || run.vscode?.provider === "other"
+    );
+
+    return workspaceRun?._id ?? activeRuns[0]?._id ?? null;
+  }, [flattenedRuns, isLocalWorkspace]);
+
+  const handleTaskLinkClick = useCallback(
+    (event: MouseEvent<HTMLAnchorElement>) => {
+      if (
+        event.defaultPrevented ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey
+      ) {
+        return;
+      }
+
+      if (isRenaming) {
+        event.preventDefault();
+        return;
+      }
+
+      if (isLocalWorkspace && localWorkspaceRunId) {
+        event.preventDefault();
+        handleToggle(event);
+        void navigate({
+          to: "/$teamSlugOrId/task/$taskId/run/$runId/vscode",
+          params: {
+            teamSlugOrId,
+            taskId: task._id,
+            runId: localWorkspaceRunId,
+          },
+        });
+        return;
+      }
+
+      handleToggle(event);
+    },
+    [
+      handleToggle,
+      isLocalWorkspace,
+      isRenaming,
+      localWorkspaceRunId,
+      navigate,
+      task._id,
+      teamSlugOrId,
+    ]
+  );
 
   // Expand and scroll into view when task becomes selected
   useEffect(() => {
@@ -761,28 +825,13 @@ function TaskTreeInner({
               params={{ teamSlugOrId, taskId: task._id }}
               search={{ runId: undefined }}
               activeOptions={{ exact: true }}
-              className="group block"
-              data-focus-visible={isTaskLinkFocusVisible ? "true" : undefined}
-              onMouseEnter={handlePrefetch}
-              onFocus={handleTaskLinkFocus}
-              onBlur={handleTaskLinkBlur}
-              onClick={(event) => {
-                if (
-                  event.defaultPrevented ||
-                  event.metaKey ||
-                  event.ctrlKey ||
-                  event.shiftKey ||
-                  event.altKey
-                ) {
-                  return;
-                }
-                if (isRenaming) {
-                  event.preventDefault();
-                  return;
-                }
-                handleToggle(event);
-              }}
-            >
+            className="group block"
+            data-focus-visible={isTaskLinkFocusVisible ? "true" : undefined}
+            onMouseEnter={handlePrefetch}
+            onFocus={handleTaskLinkFocus}
+            onBlur={handleTaskLinkBlur}
+            onClick={handleTaskLinkClick}
+          >
               <SidebarListItem
                 paddingLeft={taskListPaddingLeft}
                 toggle={{
