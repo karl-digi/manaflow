@@ -4,7 +4,7 @@ import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { isElectron } from "@/lib/electron";
 import { type Doc } from "@cmux/convex/dataModel";
 import { api } from "@cmux/convex/api";
-import { useQuery } from "convex/react";
+import { useQuery, useMutation } from "convex/react";
 import type { LinkProps } from "@tanstack/react-router";
 import { Link } from "@tanstack/react-router";
 import { Home, Plus, Server, Settings } from "lucide-react";
@@ -85,6 +85,11 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
 
   // Fetch pinned items
   const pinnedData = useQuery(api.tasks.getPinned, { teamSlugOrId });
+
+  // Drag and drop state
+  const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const reorderMutation = useMutation(api.tasks.reorder);
 
   useEffect(() => {
     localStorage.setItem("sidebarWidth", String(width));
@@ -212,6 +217,68 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
     };
   }, [onMouseMove, stopResizing]);
 
+  // Drag and drop handlers
+  const handleDragStart = useCallback((taskId: string) => {
+    setDraggedTaskId(taskId);
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    setDragOverIndex(index);
+  }, []);
+
+  const handleDragLeave = useCallback(() => {
+    setDragOverIndex(null);
+  }, []);
+
+  const handleDrop = useCallback(
+    async (e: React.DragEvent, dropIndex: number) => {
+      e.preventDefault();
+      setDragOverIndex(null);
+
+      if (!draggedTaskId || !tasks) return;
+
+      const allTasks = [
+        ...(pinnedData || []),
+        ...tasks.filter((t) => !t.pinned),
+      ];
+      const draggedIndex = allTasks.findIndex((t) => t._id === draggedTaskId);
+
+      if (draggedIndex === -1 || draggedIndex === dropIndex) {
+        setDraggedTaskId(null);
+        return;
+      }
+
+      // Reorder the tasks array
+      const reorderedTasks = [...allTasks];
+      const [removed] = reorderedTasks.splice(draggedIndex, 1);
+      reorderedTasks.splice(dropIndex, 0, removed);
+
+      // Update display order for all affected tasks
+      try {
+        await Promise.all(
+          reorderedTasks.map((task, index) =>
+            reorderMutation({
+              teamSlugOrId,
+              taskId: task._id,
+              newOrder: index,
+            })
+          )
+        );
+      } catch (error) {
+        console.error("Failed to reorder tasks:", error);
+      }
+
+      setDraggedTaskId(null);
+    },
+    [draggedTaskId, tasks, pinnedData, teamSlugOrId, reorderMutation]
+  );
+
+  const handleDragEnd = useCallback(() => {
+    setDraggedTaskId(null);
+    setDragOverIndex(null);
+  }, []);
+
   const resetWidth = useCallback(() => setWidth(DEFAULT_WIDTH), []);
 
   return (
@@ -302,35 +369,43 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
                 <TaskTreeSkeleton count={5} />
               ) : tasks && tasks.length > 0 ? (
                 <>
-                  {/* Pinned items at the top */}
-                  {pinnedData && pinnedData.length > 0 && (
-                    <>
-                      {pinnedData.map((task) => (
-                        <TaskTree
-                          key={task._id}
-                          task={task}
-                          defaultExpanded={expandTaskIds?.includes(task._id) ?? false}
-                          teamSlugOrId={teamSlugOrId}
-                        />
-                      ))}
-                      {/* Horizontal divider after pinned items */}
-                      <hr className="mx-2 border-t border-neutral-200 dark:border-neutral-800" />
-                    </>
-                  )}
-                  {/* Regular (non-pinned) tasks */}
-                  {tasks
-                    .filter((task) => {
-                      // Only filter out directly pinned tasks
-                      return !task.pinned;
-                    })
-                    .map((task) => (
-                      <TaskTree
-                        key={task._id}
-                        task={task}
-                        defaultExpanded={expandTaskIds?.includes(task._id) ?? false}
-                        teamSlugOrId={teamSlugOrId}
-                      />
-                    ))}
+                  {/* Combine pinned and unpinned tasks for drag and drop */}
+                  {[
+                    ...(pinnedData || []),
+                    ...tasks.filter((task) => !task.pinned),
+                  ].map((task, index) => {
+                    const isPinned = task.pinned;
+                    const showDivider =
+                      isPinned &&
+                      index === (pinnedData?.length ?? 0) - 1 &&
+                      tasks.some((t) => !t.pinned);
+
+                    return (
+                      <div key={task._id}>
+                        <div
+                          draggable
+                          onDragStart={() => handleDragStart(task._id)}
+                          onDragOver={(e) => handleDragOver(e, index)}
+                          onDragLeave={handleDragLeave}
+                          onDrop={(e) => handleDrop(e, index)}
+                          onDragEnd={handleDragEnd}
+                          className={`
+                            ${draggedTaskId === task._id ? "opacity-50" : ""}
+                            ${dragOverIndex === index ? "border-t-2 border-blue-500" : ""}
+                          `}
+                        >
+                          <TaskTree
+                            task={task}
+                            defaultExpanded={expandTaskIds?.includes(task._id) ?? false}
+                            teamSlugOrId={teamSlugOrId}
+                          />
+                        </div>
+                        {showDivider && (
+                          <hr className="mx-2 border-t border-neutral-200 dark:border-neutral-800" />
+                        )}
+                      </div>
+                    );
+                  })}
                 </>
               ) : (
                 <p className="pl-2 pr-3 py-1.5 text-xs text-neutral-500 dark:text-neutral-400 select-none">

@@ -32,9 +32,14 @@ export const get = authQuery({
       );
     }
 
-    // Note: order by createdAt desc, fallback to insertion order if not present
+    // Note: order by displayOrder (if set), then by createdAt desc
     const results = await q.collect();
-    return results.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+    return results.sort((a, b) => {
+      const aOrder = a.displayOrder ?? Infinity;
+      const bOrder = b.displayOrder ?? Infinity;
+      if (aOrder !== bOrder) return aOrder - bOrder;
+      return (b.createdAt ?? 0) - (a.createdAt ?? 0);
+    });
   },
 });
 
@@ -55,7 +60,12 @@ export const getPinned = authQuery({
       .filter((q) => q.neq(q.field("isArchived"), true))
       .collect();
 
-    return pinnedTasks.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+    return pinnedTasks.sort((a, b) => {
+      const aOrder = a.displayOrder ?? Infinity;
+      const bOrder = b.displayOrder ?? Infinity;
+      if (aOrder !== bOrder) return aOrder - bOrder;
+      return (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
+    });
   },
 });
 
@@ -87,9 +97,12 @@ export const getTasksWithTaskRuns = authQuery({
     }
 
     const tasks = await q.collect();
-    const sortedTasks = tasks.sort(
-      (a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0),
-    );
+    const sortedTasks = tasks.sort((a, b) => {
+      const aOrder = a.displayOrder ?? Infinity;
+      const bOrder = b.displayOrder ?? Infinity;
+      if (aOrder !== bOrder) return aOrder - bOrder;
+      return (b.createdAt ?? 0) - (a.createdAt ?? 0);
+    });
 
     const tasksWithRuns = await Promise.all(
       sortedTasks.map(async (task) => {
@@ -348,6 +361,26 @@ export const unpin = authMutation({
       throw new Error("Task not found or unauthorized");
     }
     await ctx.db.patch(args.id, { pinned: false, updatedAt: Date.now() });
+  },
+});
+
+export const reorder = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    taskId: v.id("tasks"),
+    newOrder: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const task = await ctx.db.get(args.taskId);
+    if (task === null || task.teamId !== teamId || task.userId !== userId) {
+      throw new Error("Task not found or unauthorized");
+    }
+    await ctx.db.patch(args.taskId, {
+      displayOrder: args.newOrder,
+      updatedAt: Date.now(),
+    });
   },
 });
 

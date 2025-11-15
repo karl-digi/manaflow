@@ -107,6 +107,7 @@ const convexSchema = defineSchema({
     generatedBranchName: v.optional(v.string()),
     createdAt: v.optional(v.number()),
     updatedAt: v.optional(v.number()),
+    displayOrder: v.optional(v.number()),
     userId: v.string(), // Link to user who created the task
     teamId: v.string(),
     environmentId: v.optional(v.id("environments")),
