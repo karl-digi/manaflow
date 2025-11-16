@@ -1,8 +1,3 @@
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { useTheme } from "@/components/theme/use-theme";
@@ -195,61 +190,154 @@ export function WorkspaceCreationButtons({
   const canCreateLocal = selectedProject.length > 0 && !isEnvSelected;
   const canCreateCloud = selectedProject.length > 0 && isEnvSelected;
 
-  const SHOW_WORKSPACE_BUTTONS = false;
+  const SHOW_WORKSPACE_BUTTONS = true;
 
   if (!SHOW_WORKSPACE_BUTTONS) {
     return null;
   }
 
   return (
-    <div className="flex items-center gap-2 mb-3">
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            onClick={handleCreateLocalWorkspace}
-            disabled={!canCreateLocal || isCreatingLocal}
-            className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium transition-colors rounded-lg bg-white dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-700 border border-neutral-300 dark:border-neutral-600 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isCreatingLocal ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <FolderOpen className="w-3.5 h-3.5" />
-            )}
-            <span>Create Local Workspace</span>
-          </button>
-        </TooltipTrigger>
-        <TooltipContent>
-          {!selectedProject.length
-            ? "Select a repository first"
-            : isEnvSelected
-              ? "Switch to repository mode (not environment)"
-              : "Create workspace from selected repository"}
-        </TooltipContent>
-      </Tooltip>
+    <div className="mb-6">
+      <div className="flex items-start justify-center gap-3">
+        {/* Local Workspace Card */}
+        <div
+          className={`flex-1 max-w-md rounded-xl border transition-all ${
+            canCreateLocal
+              ? "border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800/50 hover:border-neutral-300 dark:hover:border-neutral-600 hover:shadow-sm"
+              : "border-neutral-200/50 dark:border-neutral-800/50 bg-neutral-50/50 dark:bg-neutral-900/30"
+          }`}
+        >
+          <div className="p-4">
+            <div className="flex items-start gap-3">
+              <div
+                className={`mt-0.5 flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${
+                  canCreateLocal
+                    ? "bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400"
+                    : "bg-neutral-100 dark:bg-neutral-800 text-neutral-400 dark:text-neutral-600"
+                }`}
+              >
+                <FolderOpen className="h-5 w-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3
+                  className={`text-sm font-semibold mb-1 ${
+                    canCreateLocal
+                      ? "text-neutral-900 dark:text-neutral-100"
+                      : "text-neutral-500 dark:text-neutral-600"
+                  }`}
+                >
+                  Local Workspace
+                </h3>
+                <p
+                  className={`text-xs leading-relaxed mb-3 ${
+                    canCreateLocal
+                      ? "text-neutral-600 dark:text-neutral-400"
+                      : "text-neutral-500 dark:text-neutral-600"
+                  }`}
+                >
+                  Run on your own machine with full control. Best for testing,
+                  debugging, or working with existing local environments.
+                </p>
+                <button
+                  onClick={handleCreateLocalWorkspace}
+                  disabled={!canCreateLocal || isCreatingLocal}
+                  className={`flex items-center justify-center gap-2 w-full px-3 py-2 text-xs font-medium rounded-lg transition-all ${
+                    canCreateLocal
+                      ? "bg-blue-600 hover:bg-blue-700 text-white shadow-sm hover:shadow active:scale-[0.98]"
+                      : "bg-neutral-200 dark:bg-neutral-800 text-neutral-400 dark:text-neutral-600 cursor-not-allowed"
+                  }`}
+                >
+                  {isCreatingLocal ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <FolderOpen className="w-3.5 h-3.5" />
+                  )}
+                  <span>
+                    {isCreatingLocal ? "Creating..." : "Add Local Workspace"}
+                  </span>
+                </button>
+                {!canCreateLocal && (
+                  <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-600">
+                    {!selectedProject.length
+                      ? "Select a repository first"
+                      : "Switch to repository mode"}
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
 
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            onClick={handleCreateCloudWorkspace}
-            disabled={!canCreateCloud || isCreatingCloud}
-            className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium transition-colors rounded-lg bg-white dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-700 border border-neutral-300 dark:border-neutral-600 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isCreatingCloud ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <ServerIcon className="w-3.5 h-3.5" />
-            )}
-            <span>Create Cloud Workspace</span>
-          </button>
-        </TooltipTrigger>
-        <TooltipContent>
-          {!selectedProject.length
-            ? "Select an environment first"
-            : !isEnvSelected
-              ? "Switch to environment mode (not repository)"
-              : "Create workspace from selected environment"}
-        </TooltipContent>
-      </Tooltip>
+        {/* Cloud Workspace Card */}
+        <div
+          className={`flex-1 max-w-md rounded-xl border transition-all ${
+            canCreateCloud
+              ? "border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800/50 hover:border-neutral-300 dark:hover:border-neutral-600 hover:shadow-sm"
+              : "border-neutral-200/50 dark:border-neutral-800/50 bg-neutral-50/50 dark:bg-neutral-900/30"
+          }`}
+        >
+          <div className="p-4">
+            <div className="flex items-start gap-3">
+              <div
+                className={`mt-0.5 flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${
+                  canCreateCloud
+                    ? "bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400"
+                    : "bg-neutral-100 dark:bg-neutral-800 text-neutral-400 dark:text-neutral-600"
+                }`}
+              >
+                <ServerIcon className="h-5 w-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3
+                  className={`text-sm font-semibold mb-1 ${
+                    canCreateCloud
+                      ? "text-neutral-900 dark:text-neutral-100"
+                      : "text-neutral-500 dark:text-neutral-600"
+                  }`}
+                >
+                  Cloud Workspace
+                </h3>
+                <p
+                  className={`text-xs leading-relaxed mb-3 ${
+                    canCreateCloud
+                      ? "text-neutral-600 dark:text-neutral-400"
+                      : "text-neutral-500 dark:text-neutral-600"
+                  }`}
+                >
+                  Instant setup with pre-configured environments. Perfect for
+                  consistent development with pre-installed packages and
+                  scripts.
+                </p>
+                <button
+                  onClick={handleCreateCloudWorkspace}
+                  disabled={!canCreateCloud || isCreatingCloud}
+                  className={`flex items-center justify-center gap-2 w-full px-3 py-2 text-xs font-medium rounded-lg transition-all ${
+                    canCreateCloud
+                      ? "bg-purple-600 hover:bg-purple-700 text-white shadow-sm hover:shadow active:scale-[0.98]"
+                      : "bg-neutral-200 dark:bg-neutral-800 text-neutral-400 dark:text-neutral-600 cursor-not-allowed"
+                  }`}
+                >
+                  {isCreatingCloud ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <ServerIcon className="w-3.5 h-3.5" />
+                  )}
+                  <span>
+                    {isCreatingCloud ? "Creating..." : "Add Cloud Workspace"}
+                  </span>
+                </button>
+                {!canCreateCloud && (
+                  <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-600">
+                    {!selectedProject.length
+                      ? "Select an environment first"
+                      : "Switch to environment mode"}
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
