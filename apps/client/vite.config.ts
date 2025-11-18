@@ -8,14 +8,14 @@ import { sentryVitePlugin } from "@sentry/vite-plugin";
 // Ensure all env is loaded
 await import("./src/client-env.ts");
 
-const SentryVitePlugin = sentryVitePlugin({
+const SentryVitePlugin = process.env.SENTRY_AUTH_TOKEN ?  sentryVitePlugin({
   org: "manaflow",
   project: "cmux-client-web",
   authToken: process.env.SENTRY_AUTH_TOKEN,
   sourcemaps: {
     filesToDeleteAfterUpload: ["**/*.map"],
   },
-});
+}) : undefined;
 
 // https://vite.dev/config/
 export default defineConfig({
