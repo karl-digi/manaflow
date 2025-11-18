@@ -148,7 +148,6 @@ func TestStaticFileServing(t *testing.T) {
 
 	expectedHeaders := map[string]string{
 		"X-Content-Type-Options":       "nosniff",
-		"X-Frame-Options":              "SAMEORIGIN",
 		"Referrer-Policy":              "no-referrer",
 		"Cross-Origin-Resource-Policy": "same-origin",
 	}
@@ -156,6 +155,12 @@ func TestStaticFileServing(t *testing.T) {
 		if got := resp.Header.Get(key); got != want {
 			t.Fatalf("header %s = %q, want %q", key, got, want)
 		}
+	}
+	if got := resp.Header.Get("X-Frame-Options"); got != "" {
+		t.Fatalf("expected no X-Frame-Options header, got %q", got)
+	}
+	if got := resp.Header.Get("Content-Security-Policy"); got != "" {
+		t.Fatalf("expected no Content-Security-Policy header, got %q", got)
 	}
 }
 
