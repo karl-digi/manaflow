@@ -254,6 +254,8 @@ COPY packages/convex ./packages/convex/
 
 # Copy Chrome DevTools proxy source
 COPY scripts/cdp-proxy ./scripts/cdp-proxy/
+# Copy VNC websocket proxy source
+COPY scripts/vnc-proxy ./scripts/vnc-proxy/
 
 # Build Chrome DevTools proxy binary
 RUN --mount=type=cache,target=/root/.cache/go-build \
@@ -280,6 +282,33 @@ export CGO_ENABLED=0
 cd /cmux/scripts/cdp-proxy
 go build -trimpath -ldflags="-s -w" -o /usr/local/lib/cmux/cmux-cdp-proxy .
 test -x /usr/local/lib/cmux/cmux-cdp-proxy
+EOF
+
+# Build VNC websocket proxy binary
+RUN --mount=type=cache,target=/root/.cache/go-build \
+  --mount=type=cache,target=/go/pkg/mod \
+  <<'EOF'
+set -eux
+mkdir -p /usr/local/lib/cmux
+export PATH="/usr/local/go/bin:${PATH}"
+case "${TARGETPLATFORM:-}" in
+  linux/amd64 | linux/amd64/*)
+    export GOOS=linux
+    export GOARCH=amd64
+    ;;
+  linux/arm64 | linux/arm64/*)
+    export GOOS=linux
+    export GOARCH=arm64
+    ;;
+  *)
+    echo "Unsupported TARGETPLATFORM: ${TARGETPLATFORM:-}" >&2
+    exit 1
+    ;;
+esac
+export CGO_ENABLED=0
+cd /cmux/scripts/vnc-proxy
+go build -trimpath -ldflags="-s -w" -o /usr/local/lib/cmux/cmux-vnc-proxy .
+test -x /usr/local/lib/cmux/cmux-vnc-proxy
 EOF
 
 # Verify bun is still working in builder
@@ -484,10 +513,10 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   dbus \
   kmod \
   util-linux \
+  tigervnc-standalone-server \
+  tigervnc-common \
   xvfb \
-  x11vnc \
   fluxbox \
-  websockify \
   novnc \
   xauth \
   xdg-utils \
@@ -829,8 +858,8 @@ COPY configs/systemd/cmux-proxy.service /usr/lib/systemd/system/cmux-proxy.servi
 COPY configs/systemd/cmux-dockerd.service /usr/lib/systemd/system/cmux-dockerd.service
 COPY configs/systemd/cmux-devtools.service /usr/lib/systemd/system/cmux-devtools.service
 COPY configs/systemd/cmux-xvfb.service /usr/lib/systemd/system/cmux-xvfb.service
-COPY configs/systemd/cmux-x11vnc.service /usr/lib/systemd/system/cmux-x11vnc.service
-COPY configs/systemd/cmux-websockify.service /usr/lib/systemd/system/cmux-websockify.service
+COPY configs/systemd/cmux-tigervnc.service /usr/lib/systemd/system/cmux-tigervnc.service
+COPY configs/systemd/cmux-vnc-proxy.service /usr/lib/systemd/system/cmux-vnc-proxy.service
 COPY configs/systemd/cmux-cdp-proxy.service /usr/lib/systemd/system/cmux-cdp-proxy.service
 COPY configs/systemd/cmux-xterm.service /usr/lib/systemd/system/cmux-xterm.service
 COPY configs/systemd/cmux-memory-setup.service /usr/lib/systemd/system/cmux-memory-setup.service
@@ -840,7 +869,8 @@ COPY configs/systemd/bin/cmux-manage-dockerd /usr/local/lib/cmux/cmux-manage-doc
 COPY configs/systemd/bin/cmux-stop-dockerd /usr/local/lib/cmux/cmux-stop-dockerd
 COPY configs/systemd/bin/cmux-configure-memory /usr/local/sbin/cmux-configure-memory
 COPY --from=builder /usr/local/lib/cmux/cmux-cdp-proxy /usr/local/lib/cmux/cmux-cdp-proxy
-RUN chmod +x /usr/local/lib/cmux/configure-openvscode /usr/local/lib/cmux/cmux-start-chrome /usr/local/lib/cmux/cmux-cdp-proxy && \
+COPY --from=builder /usr/local/lib/cmux/cmux-vnc-proxy /usr/local/lib/cmux/cmux-vnc-proxy
+RUN chmod +x /usr/local/lib/cmux/configure-openvscode /usr/local/lib/cmux/cmux-start-chrome /usr/local/lib/cmux/cmux-cdp-proxy /usr/local/lib/cmux/cmux-vnc-proxy && \
   chmod +x /usr/local/lib/cmux/cmux-manage-dockerd /usr/local/lib/cmux/cmux-stop-dockerd && \
   chmod +x /usr/local/sbin/cmux-configure-memory && \
   touch /usr/local/lib/cmux/dockerd.flag && \
@@ -854,9 +884,8 @@ RUN chmod +x /usr/local/lib/cmux/configure-openvscode /usr/local/lib/cmux/cmux-s
   ln -sf /usr/lib/systemd/system/cmux-proxy.service /etc/systemd/system/cmux.target.wants/cmux-proxy.service && \
   ln -sf /usr/lib/systemd/system/cmux-dockerd.service /etc/systemd/system/cmux.target.wants/cmux-dockerd.service && \
   ln -sf /usr/lib/systemd/system/cmux-devtools.service /etc/systemd/system/cmux.target.wants/cmux-devtools.service && \
-  ln -sf /usr/lib/systemd/system/cmux-xvfb.service /etc/systemd/system/cmux.target.wants/cmux-xvfb.service && \
-  ln -sf /usr/lib/systemd/system/cmux-x11vnc.service /etc/systemd/system/cmux.target.wants/cmux-x11vnc.service && \
-  ln -sf /usr/lib/systemd/system/cmux-websockify.service /etc/systemd/system/cmux.target.wants/cmux-websockify.service && \
+  ln -sf /usr/lib/systemd/system/cmux-tigervnc.service /etc/systemd/system/cmux.target.wants/cmux-tigervnc.service && \
+  ln -sf /usr/lib/systemd/system/cmux-vnc-proxy.service /etc/systemd/system/cmux.target.wants/cmux-vnc-proxy.service && \
   ln -sf /usr/lib/systemd/system/cmux-cdp-proxy.service /etc/systemd/system/cmux.target.wants/cmux-cdp-proxy.service && \
   ln -sf /usr/lib/systemd/system/cmux-xterm.service /etc/systemd/system/cmux.target.wants/cmux-xterm.service && \
   ln -sf /usr/lib/systemd/system/cmux-memory-setup.service /etc/systemd/system/multi-user.target.wants/cmux-memory-setup.service && \
@@ -878,7 +907,7 @@ RUN mkdir -p /root/.openvscode-server/data/User && \
 # 39377: Worker service
 # 39378: OpenVSCode server
 # 39379: cmux-proxy
-# 39380: VNC over Websockify (noVNC)
+# 39380: VNC websocket proxy (noVNC)
 # 39381: Chrome DevTools (CDP)
 # 39382: Chrome DevTools target
 # 39383: cmux-xterm server

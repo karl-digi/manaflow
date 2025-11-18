@@ -138,6 +138,85 @@ wait_for_cdp() {
   exit 1
 }
 
+check_vnc_handshake() {
+  local container="$1"
+  local platform="$2"
+  echo "[sanity][$platform] Checking TigerVNC handshake on 127.0.0.1:5901..."
+  if ! docker exec "$container" python3 - <<'PY'
+import socket
+import sys
+
+addr = ("127.0.0.1", 5901)
+try:
+    with socket.create_connection(addr, timeout=5) as sock:
+        sock.settimeout(5)
+        banner = sock.recv(12)
+        if not banner.startswith(b"RFB "):
+            print(f"Unexpected banner: {banner!r}", file=sys.stderr)
+            sys.exit(1)
+        sock.sendall(b"RFB 003.008\n")
+        response = sock.recv(4)
+        if not response:
+            print("Empty security response from server", file=sys.stderr)
+            sys.exit(1)
+except Exception as exc:
+    print(f"Handshake failed: {exc}", file=sys.stderr)
+    sys.exit(1)
+PY
+  then
+    echo "[sanity][$platform] ERROR: TigerVNC handshake failed" >&2
+    docker exec "$container" ss -ltnp | grep 5901 || true
+    docker exec "$container" bash -lc 'tail -n 80 /var/log/cmux/tigervnc.log 2>/dev/null || true' || true
+    exit 1
+  fi
+  echo "[sanity][$platform] TigerVNC handshake succeeded"
+}
+
+check_vnc_websocket() {
+  local container="$1"
+  local platform="$2"
+  echo "[sanity][$platform] Checking VNC websocket proxy upgrade on 127.0.0.1:39380..."
+  if ! docker exec "$container" python3 - <<'PY'
+import os
+import socket
+import sys
+
+host = "127.0.0.1"
+port = 39380
+path = "/websockify"
+key = os.urandom(16)
+import base64
+sec_key = base64.b64encode(key).decode()
+
+request = (
+    f"GET {path} HTTP/1.1\r\n"
+    f"Host: {host}:{port}\r\n"
+    "Upgrade: websocket\r\n"
+    "Connection: Upgrade\r\n"
+    f"Sec-WebSocket-Key: {sec_key}\r\n"
+    "Sec-WebSocket-Version: 13\r\n"
+    "\r\n"
+)
+
+with socket.create_connection((host, port), timeout=5) as sock:
+    sock.settimeout(5)
+    sock.sendall(request.encode("ascii"))
+    resp = sock.recv(1024).decode("latin1", "replace")
+
+status_line = resp.splitlines()[0] if resp else ""
+if not status_line.startswith("HTTP/1.1 101"):
+    print(f"Unexpected websocket response: {status_line!r}", file=sys.stderr)
+    sys.exit(1)
+PY
+  then
+    echo "[sanity][$platform] ERROR: VNC websocket proxy handshake failed" >&2
+    docker exec "$container" systemctl status cmux-vnc-proxy.service --no-pager || true
+    docker exec "$container" bash -lc 'tail -n 80 /var/log/cmux/vnc-proxy.log 2>/dev/null || true' || true
+    exit 1
+  fi
+  echo "[sanity][$platform] VNC websocket proxy handshake succeeded"
+}
+
 check_unit() {
   local container="$1"
   local unit="$2"
@@ -339,6 +418,10 @@ run_checks_for_platform() {
   wait_for_novnc "$container_name" "$NOVNC_URL" "$platform"
   wait_for_cdp "$CDP_PORT" "$platform"
 
+  check_unit "$container_name" cmux-tigervnc.service
+  check_unit "$container_name" cmux-vnc-proxy.service
+  check_vnc_handshake "$container_name" "$platform"
+  check_vnc_websocket "$container_name" "$platform"
   check_unit "$container_name" cmux-openvscode.service
   check_unit "$container_name" cmux-worker.service
   check_gh_cli "$container_name" "$platform"
