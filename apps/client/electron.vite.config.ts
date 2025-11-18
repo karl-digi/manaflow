@@ -50,6 +50,7 @@ export default defineConfig({
           "@cmux/shared",
           "@cmux/convex",
           "@cmux/www-openapi-client",
+          "@sentry/electron",
         ],
       }),
       resolveWorkspacePackages(),
@@ -70,7 +71,7 @@ export default defineConfig({
   preload: {
     plugins: [
       createExternalizeDepsPlugin({
-        exclude: ["@cmux/server", "@cmux/server/**"],
+        exclude: ["@cmux/server", "@cmux/server/**", "@sentry/electron"],
       }),
       resolveWorkspacePackages(),
       SentryVitePlugin,
