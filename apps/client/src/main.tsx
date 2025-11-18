@@ -7,7 +7,6 @@ init(
     integrations: [
       /* integrations */
     ],
-    /* Other Electron and React SDK config */
   },
   reactInit
 );
