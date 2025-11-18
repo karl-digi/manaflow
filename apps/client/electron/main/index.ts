@@ -724,7 +724,7 @@ function createWindow(): void {
     // In production, serve the renderer over HTTPS on a private host which we
     // intercept and back with local files (supports cookies).
     mainLog("Loading renderer (prod)", { host: APP_HOST });
-    mainWindow.loadURL(`https://${APP_HOST}/index.html`);
+    mainWindow.loadURL(`https://${APP_HOST}/index-electron.html`);
   }
 }
 
@@ -935,7 +935,7 @@ app.whenReady().then(async () => {
       return net.fetch(request);
     }
 
-    const pathname = url.pathname === "/" ? "/index.html" : url.pathname;
+    const pathname = url.pathname === "/" ? "/index-electron.html" : url.pathname;
     const fsPath = path.normalize(
       path.join(baseDir, decodeURIComponent(pathname))
     );
