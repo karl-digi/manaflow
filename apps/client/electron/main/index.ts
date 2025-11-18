@@ -45,6 +45,7 @@ import { initCmdK, keyDebug } from "./cmdk";
 import { env } from "./electron-main-env";
 import {
   getProxyCredentialsForWebContents,
+  getPreviewProxyCertificateDetails,
   startPreviewProxy,
 } from "./task-run-preview-proxy";
 import { normalizeBrowserUrl } from "@cmux/shared";
@@ -221,8 +222,44 @@ function setupConsoleFileMirrors(): void {
   };
 }
 
+function normalizeFingerprint(value: string | undefined): string {
+  if (!value) return "";
+  return value.replace(/[^a-fA-F0-9]/g, "").toUpperCase();
+}
+
+function normalizePem(pem: string | undefined): string {
+  if (!pem) return "";
+  return pem.replace(/\s+/g, "");
+}
+
 function setupPreviewProxyCertificateTrust(): void {
-  // Certificate trust setup removed
+  const certificate = getPreviewProxyCertificateDetails();
+  const trustedFingerprints = new Set([
+    normalizeFingerprint(certificate.fingerprint),
+    normalizeFingerprint(certificate.fingerprint256),
+  ]);
+  const trustedPem = normalizePem(certificate.cert);
+
+  app.on("certificate-error", (event, _webContents, url, _error, cert, cb) => {
+    try {
+      const parsed = new URL(url);
+      const hostname = parsed.hostname.toLowerCase();
+      const isLoopbackHost =
+        hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1";
+      const fingerprintMatch = trustedFingerprints.has(
+        normalizeFingerprint(cert.fingerprint)
+      );
+      const pemMatch = normalizePem(cert.data) === trustedPem;
+      if (isLoopbackHost && (fingerprintMatch || pemMatch)) {
+        event.preventDefault();
+        cb(true);
+        return;
+      }
+    } catch (error) {
+      console.error("Failed to evaluate preview proxy certificate", error);
+    }
+    cb(false);
+  });
 }
 
 function resolveResourcePath(rel: string) {

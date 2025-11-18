@@ -1,7 +1,7 @@
 import http, {
   type IncomingHttpHeaders,
   type IncomingMessage,
-  type ServerResponse,
+  type OutgoingHttpHeaders,
 } from "node:http";
 import https from "node:https";
 import http2 from "node:http2";
@@ -13,8 +13,23 @@ import { URL } from "node:url";
 import type { Session, WebContents } from "electron";
 import { isLoopbackHostname } from "@cmux/shared";
 import type { Logger } from "./chrome-camouflage";
+import forge from "node-forge";
 
-type ProxyServer = http.Server;
+type ProxyHttpServer = http.Server;
+type ProxyHttpsServer = http2.Http2SecureServer;
+type ProxyRequest = IncomingMessage | http2.Http2ServerRequest;
+
+interface ProxyResponse extends NodeJS.WritableStream {
+  writeHead(
+    statusCode: number,
+    headers?: OutgoingHttpHeaders | http2.OutgoingHttpHeaders
+  ): this;
+  end(cb?: () => void): this;
+  end(chunk: string | Uint8Array<ArrayBufferLike>, cb?: () => void): this;
+  end(str: string, encoding?: BufferEncoding, cb?: () => void): this;
+  readonly headersSent: boolean;
+  readonly writableEnded: boolean;
+}
 type ClientHttp2Session = http2.ClientHttp2Session;
 type ClientHttp2Stream = http2.ClientHttp2Stream;
 
@@ -97,6 +112,13 @@ const ENABLE_TLS_MITM =
   process.env.CMUX_PREVIEW_TLS_MITM === "" ||
   process.env.CMUX_PREVIEW_TLS_MITM === "1";
 
+interface PreviewProxyCertificate {
+  key: string;
+  cert: string;
+  fingerprint: string;
+  fingerprint256: string;
+}
+
 interface ProxyRoute {
   morphId: string;
   scope: string;
@@ -137,13 +159,20 @@ interface ConfigureOptions {
   logger: Logger;
 }
 
-let proxyServer: ProxyServer | null = null;
-let proxyPort: number | null = null;
+interface ProxyPorts {
+  httpPort: number;
+  httpsPort: number;
+}
+
+let proxyHttpServer: ProxyHttpServer | null = null;
+let proxyHttpsServer: ProxyHttpsServer | null = null;
+let proxyPorts: ProxyPorts | null = null;
 let proxyLogger: Logger | null = null;
-let startingProxy: Promise<number> | null = null;
+let startingProxy: Promise<ProxyPorts> | null = null;
 let proxyLoggingEnabled = DEFAULT_PROXY_LOGGING_ENABLED;
 const http2Sessions = new Map<string, ClientHttp2Session>();
 const pendingHttp2Sessions = new Map<string, Promise<ClientHttp2Session>>();
+let previewProxyCertificate: PreviewProxyCertificate | null = null;
 
 export function setPreviewProxyLoggingEnabled(enabled: boolean): void {
   proxyLoggingEnabled = Boolean(enabled);
@@ -157,6 +186,82 @@ const SOCKET_CONTEXT_SYMBOL = Symbol("cmuxPreviewProxyContext");
 type ContextAwareSocket = (Socket | TLSSocket) & {
   [SOCKET_CONTEXT_SYMBOL]?: ProxyContext;
 };
+
+function formatFingerprintHash(
+  source: Buffer,
+  algorithm: "sha1" | "sha256"
+): string {
+  const hex = createHash(algorithm).update(source).digest("hex").toUpperCase();
+  const segments = hex.match(/.{1,2}/g);
+  return segments ? segments.join(":") : hex;
+}
+
+function ensurePreviewProxyCertificate(): PreviewProxyCertificate {
+  if (previewProxyCertificate) {
+    return previewProxyCertificate;
+  }
+  const keys = forge.pki.rsa.generateKeyPair(2048);
+  const certificate = forge.pki.createCertificate();
+  certificate.publicKey = keys.publicKey;
+  certificate.serialNumber = randomBytes(16).toString("hex");
+
+  const notBefore = new Date();
+  notBefore.setMinutes(notBefore.getMinutes() - 1);
+  const notAfter = new Date(notBefore.getTime());
+  notAfter.setFullYear(notBefore.getFullYear() + 1);
+  certificate.validity.notBefore = notBefore;
+  certificate.validity.notAfter = notAfter;
+
+  const attributes = [{ name: "commonName", value: "cmux-preview-proxy" }];
+  certificate.setSubject(attributes);
+  certificate.setIssuer(attributes);
+
+  certificate.setExtensions([
+    { name: "basicConstraints", cA: false },
+    {
+      name: "keyUsage",
+      digitalSignature: true,
+      keyEncipherment: true,
+    },
+    { name: "extKeyUsage", serverAuth: true },
+    {
+      name: "subjectAltName",
+      altNames: [
+        { type: 2, value: "localhost" },
+        { type: 7, ip: "127.0.0.1" },
+        { type: 7, ip: "::1" },
+      ],
+    },
+  ]);
+
+  certificate.sign(keys.privateKey, forge.md.sha256.create());
+  const certPem = forge.pki.certificateToPem(certificate);
+  const keyPem = forge.pki.privateKeyToPem(keys.privateKey);
+  const derBuffer = Buffer.from(
+    forge.asn1.toDer(forge.pki.certificateToAsn1(certificate)).getBytes(),
+    "binary"
+  );
+  previewProxyCertificate = {
+    key: keyPem,
+    cert: certPem,
+    fingerprint: formatFingerprintHash(derBuffer, "sha1"),
+    fingerprint256: formatFingerprintHash(derBuffer, "sha256"),
+  };
+  return previewProxyCertificate;
+}
+
+export function getPreviewProxyCertificateDetails(): {
+  cert: string;
+  fingerprint: string;
+  fingerprint256: string;
+} {
+  const certificate = ensurePreviewProxyCertificate();
+  return {
+    cert: certificate.cert,
+    fingerprint: certificate.fingerprint,
+    fingerprint256: certificate.fingerprint256,
+  };
+}
 
 function attachContextToSocket(
   socket: Socket | TLSSocket,
@@ -275,7 +380,7 @@ export async function configurePreviewProxyForView(
     return () => {};
   }
 
-  const port = await ensureProxyServer(logger);
+  const ports = await ensureProxyServer(logger);
   const username = `wc-${webContents.id}-${randomBytes(4).toString("hex")}`;
   const password = randomBytes(12).toString("hex");
   const authToken = Buffer.from(`${username}:${password}`).toString("base64");
@@ -297,14 +402,14 @@ export async function configurePreviewProxyForView(
   try {
     await webContents.session.setProxy({
       mode: "fixed_servers",
-      proxyRules: `http=127.0.0.1:${port};https=127.0.0.1:${port}`,
+      proxyRules: `http=127.0.0.1:${ports.httpPort};https=https://127.0.0.1:${ports.httpsPort}`,
       proxyBypassRules: "<-loopback>",
     });
     proxyLog("session-proxy-configured", {
       webContentsId: webContents.id,
       persistKey,
       route,
-      port,
+      ports,
     });
   } catch (error) {
     contextsByUsername.delete(username);
@@ -341,60 +446,120 @@ export async function configurePreviewProxyForView(
   return cleanup;
 }
 
-export function startPreviewProxy(logger: Logger): Promise<number> {
+export function startPreviewProxy(logger: Logger): Promise<ProxyPorts> {
   return ensureProxyServer(logger);
 }
 
-async function ensureProxyServer(logger: Logger): Promise<number> {
-  if (proxyPort && proxyServer) {
-    return proxyPort;
+async function ensureProxyServer(logger: Logger): Promise<ProxyPorts> {
+  if (proxyPorts && proxyHttpServer && proxyHttpsServer) {
+    return proxyPorts;
   }
   if (startingProxy) {
     return startingProxy;
   }
-  startingProxy = startProxyServer(logger);
+  startingProxy = startProxyServers(logger);
   try {
-    const port = await startingProxy;
-    proxyPort = port;
-    return port;
+    const ports = await startingProxy;
+    proxyPorts = ports;
+    return ports;
   } finally {
     startingProxy = null;
   }
 }
 
-async function startProxyServer(logger: Logger): Promise<number> {
-  const startPort = 39385;
+async function startProxyServers(logger: Logger): Promise<ProxyPorts> {
+  const certificate = ensurePreviewProxyCertificate();
+  const httpStartPort = 39385;
+  const httpsStartPort = 39435;
   const maxAttempts = 50;
-  for (let i = 0; i < maxAttempts; i += 1) {
-    const candidatePort = startPort + i;
-    const server = http.createServer();
-    attachServerHandlers(server);
+  const httpServer = http.createServer();
+  let httpsServer: ProxyHttpsServer | null = null;
+  attachHttpServerHandlers(httpServer);
+  let httpPort: number | null = null;
+  let httpsPort: number | null = null;
+
+  try {
+    httpPort = await listenWithRetry(
+      httpServer,
+      httpStartPort,
+      maxAttempts,
+      "http"
+    );
+
+    httpsServer = http2.createSecureServer({
+      key: certificate.key,
+      cert: certificate.cert,
+      allowHTTP1: true,
+      ALPNProtocols: ["h2", "http/1.1"],
+    });
+    attachHttpsServerHandlers(httpsServer);
+    httpsPort = await listenWithRetry(
+      httpsServer,
+      httpsStartPort,
+      maxAttempts,
+      "https"
+    );
+
+    proxyHttpServer = httpServer;
+    proxyHttpsServer = httpsServer;
+    proxyLogger = logger;
+    console.log(
+      `[cmux-preview-proxy] listening on http ${httpPort} and https ${httpsPort}`
+    );
+    logger.log("Preview proxy listening", { httpPort, httpsPort });
+    proxyLog("listening", { httpPort, httpsPort });
+
+    return { httpPort, httpsPort };
+  } catch (error) {
     try {
-      await listen(server, candidatePort);
-      proxyServer = server;
-      proxyLogger = logger;
-      console.log(`[cmux-preview-proxy] listening on port ${candidatePort}`);
-      logger.log("Preview proxy listening", { port: candidatePort });
-      proxyLog("listening", { port: candidatePort });
-      return candidatePort;
-    } catch (error) {
-      server.removeAllListeners();
-      try {
-        server.close();
-      } catch (error) {
-        console.error("Failed to close preview proxy server", error);
-        // ignore close failure
-      }
-      if ((error as NodeJS.ErrnoException).code === "EADDRINUSE") {
-        continue;
-      }
-      throw error;
+      httpServer.close();
+    } catch (closeError) {
+      console.error("Failed to close HTTP preview proxy server", closeError);
     }
+    try {
+      httpsServer?.close();
+    } catch (closeError) {
+      console.error("Failed to close HTTPS preview proxy server", closeError);
+    }
+    throw error;
   }
-  throw new Error("Unable to bind preview proxy port");
 }
 
-function listen(server: ProxyServer, port: number): Promise<void> {
+function listenWithRetry(
+  server: ProxyHttpServer | ProxyHttpsServer,
+  startPort: number,
+  maxAttempts: number,
+  protocol: "http" | "https"
+): Promise<number> {
+  return new Promise((resolve, reject) => {
+    let attempt = 0;
+    const tryListen = () => {
+      const candidatePort = startPort + attempt;
+      listen(server, candidatePort)
+        .then(() => resolve(candidatePort))
+        .catch((error) => {
+          if ((error as NodeJS.ErrnoException).code === "EADDRINUSE") {
+            attempt += 1;
+            if (attempt >= maxAttempts) {
+              reject(
+                new Error(`Unable to bind ${protocol} preview proxy port`)
+              );
+              return;
+            }
+            tryListen();
+            return;
+          }
+          reject(error);
+        });
+    };
+    tryListen();
+  });
+}
+
+function listen(
+  server: ProxyHttpServer | ProxyHttpsServer,
+  port: number
+): Promise<void> {
   return new Promise((resolve, reject) => {
     const handleError = (error: Error) => {
       server.off("listening", handleListening);
@@ -410,7 +575,7 @@ function listen(server: ProxyServer, port: number): Promise<void> {
   });
 }
 
-function attachServerHandlers(server: ProxyServer) {
+function attachHttpServerHandlers(server: ProxyHttpServer) {
   server.on("request", handleHttpRequest);
   server.on("request", (req) => {
     proxyLog("raw-http-request", {
@@ -424,6 +589,23 @@ function attachServerHandlers(server: ProxyServer) {
   server.on("clientError", (error, socket) => {
     proxyLogger?.warn("Proxy client error", { error });
     socket.end();
+  });
+}
+
+function attachHttpsServerHandlers(server: ProxyHttpsServer) {
+  server.on("request", handleHttpRequest);
+  server.on("request", (req) => {
+    proxyLog("raw-https-request", {
+      method: req.method,
+      url: req.url,
+      host: req.headers.host,
+      httpVersion: req.httpVersion,
+    });
+  });
+  server.on("connect", handleConnect);
+  server.on("upgrade", handleUpgrade);
+  server.on("sessionError", (error) => {
+    proxyLogger?.warn("Proxy HTTP/2 session error", { error });
   });
 }
 
@@ -509,7 +691,7 @@ function monitorHttp2Session(originKey: string, session: ClientHttp2Session) {
   });
 }
 
-function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
+function handleHttpRequest(req: ProxyRequest, res: ProxyResponse) {
   const context = authenticateRequest(req.headers, req.socket);
   if (!context) {
     respondProxyAuthRequired(res);
@@ -872,7 +1054,7 @@ function authenticateRequest(
   }
 }
 
-function respondProxyAuthRequired(res: ServerResponse) {
+function respondProxyAuthRequired(res: ProxyResponse) {
   res.writeHead(407, {
     "Proxy-Authenticate": 'Basic realm="Cmux Preview Proxy"',
   });
@@ -906,7 +1088,22 @@ function extractBasicToken(raw: string | string[] | undefined): string | null {
   return token || null;
 }
 
-function parseProxyRequestTarget(req: IncomingMessage): URL | null {
+function getHeaderValue(
+  headers: IncomingHttpHeaders,
+  name: string
+): string | null {
+  const value = headers[name];
+  if (typeof value === "string") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    const [first] = value;
+    return first ?? null;
+  }
+  return null;
+}
+
+function parseProxyRequestTarget(req: ProxyRequest): URL | null {
   try {
     if (req.url && /^[a-z]+:\/\//i.test(req.url)) {
       const normalized = req.url.replace(/^ws(s)?:\/\//i, (_match, secure) =>
@@ -914,11 +1111,20 @@ function parseProxyRequestTarget(req: IncomingMessage): URL | null {
       );
       return new URL(normalized);
     }
-    const host = req.headers.host;
-    if (!host || !req.url) {
+
+    const authority =
+      getHeaderValue(req.headers, "host") ??
+      getHeaderValue(req.headers, ":authority");
+    const pathHeader =
+      (typeof req.url === "string" && req.url) ||
+      getHeaderValue(req.headers, ":path") ||
+      "/";
+    if (!authority || !pathHeader) {
       return null;
     }
-    return new URL(`http://${host}${req.url}`);
+    const schemeHeader = getHeaderValue(req.headers, ":scheme");
+    const scheme = schemeHeader ? `${schemeHeader}:` : "http:";
+    return new URL(`${scheme}//${authority}${pathHeader}`);
   } catch (error) {
     console.error("Failed to parse proxy request target", error);
     return null;
@@ -1046,8 +1252,8 @@ function shouldAttemptHttp2(target: ProxyTarget): boolean {
 }
 
 async function forwardHttpRequest(
-  clientReq: IncomingMessage,
-  clientRes: ServerResponse,
+  clientReq: ProxyRequest,
+  clientRes: ProxyResponse,
   target: ProxyTarget,
   context: ProxyContext
 ): Promise<void> {
@@ -1071,8 +1277,8 @@ async function forwardHttpRequest(
 }
 
 function forwardHttpRequestViaHttp1(
-  clientReq: IncomingMessage,
-  clientRes: ServerResponse,
+  clientReq: ProxyRequest,
+  clientRes: ProxyResponse,
   target: ProxyTarget,
   context: ProxyContext
 ): Promise<void> {
@@ -1095,11 +1301,7 @@ function forwardHttpRequestViaHttp1(
     const httpModule = secure ? https : http;
     const proxyReq = httpModule.request(requestOptions, (proxyRes) => {
       if (!clientRes.headersSent) {
-        clientRes.writeHead(
-          proxyRes.statusCode ?? 500,
-          proxyRes.statusMessage ?? "",
-          proxyRes.headers
-        );
+        clientRes.writeHead(proxyRes.statusCode ?? 500, proxyRes.headers);
       }
       void streamPipeline(proxyRes, clientRes)
         .then(() => {
@@ -1143,8 +1345,8 @@ function forwardHttpRequestViaHttp1(
 }
 
 async function forwardHttpRequestViaHttp2(
-  clientReq: IncomingMessage,
-  clientRes: ServerResponse,
+  clientReq: ProxyRequest,
+  clientRes: ProxyResponse,
   target: ProxyTarget,
   context: ProxyContext
 ): Promise<void> {
@@ -1176,7 +1378,7 @@ async function forwardHttpRequestViaHttp2(
 
     upstreamReq.on("response", (upstreamHeaders) => {
       const status = Number(upstreamHeaders[":status"] ?? 502);
-      const responseHeaders: Record<string, string | string[]> = {};
+      const responseHeaders: OutgoingHttpHeaders = {};
       for (const [name, value] of Object.entries(upstreamHeaders)) {
         if (name.startsWith(":")) continue;
         if (Array.isArray(value)) {
@@ -1240,6 +1442,7 @@ function buildHttp2Headers(
   for (const [key, value] of Object.entries(source)) {
     if (!value) continue;
     const lowerKey = key.toLowerCase();
+    if (lowerKey.startsWith(":")) continue;
     if (lowerKey === "proxy-authorization") continue;
     if (lowerKey === "host" && target.cmuxProxy) continue;
     if (HOP_BY_HOP_HEADERS.has(lowerKey)) continue;
@@ -1264,6 +1467,7 @@ function buildHttp1Headers(
   for (const [key, value] of Object.entries(source)) {
     if (!value) continue;
     const lowerKey = key.toLowerCase();
+    if (lowerKey.startsWith(":")) continue;
     if (lowerKey === "proxy-authorization") continue;
     if (lowerKey === "host" && target.cmuxProxy) continue;
     if (Array.isArray(value)) {
@@ -1563,12 +1767,12 @@ function establishMitmTunnel(
   context: ProxyContext,
   target: ProxyTarget
 ) {
-  if (!proxyServer) {
+  if (!proxyHttpServer) {
     clientSocket.write("HTTP/1.1 500 Internal Server Error\r\n\r\n");
     clientSocket.end();
     return;
   }
-  const server = proxyServer;
+  const server = proxyHttpServer;
 
   const secureContext = tls.createSecureContext();
   let buffered = head;
