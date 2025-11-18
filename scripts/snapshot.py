@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """
-Provision a Morph instance from an existing snapshot, perform parallelized
+Provision Morph instances from an existing base snapshot, perform parallelized
 environment setup that mirrors the Dockerfile, validate critical tooling, and
-snapshot the configured system.
+snapshot the configured system for multiple presets (standard + boosted by default).
 
 The flow:
-1. Boot an instance from the provided snapshot (default snapshot_i7l4i12s)
+1. Boot an instance per preset from the provided base snapshot (default snapshot_i7l4i12s)
 2. Expose the standard cmux HTTP services
 3. Execute dependency graph tasks concurrently using Morph's async APIs
 4. Run in-instance sanity checks (cargo/node/bun/uv/envd/envctl + service curls)
-5. Snapshot the configured instance, start a new instance from that snapshot,
-   and rerun sanity checks for validation
+5. Snapshot the configured instance, optionally prompt for manual verification, and
+   record the snapshot in packages/shared/src/morph-snapshots.json
 
 Examples:
 uv run --env-file .env ./scripts/snapshot.py
-uv run --env-file .env ./scripts/snapshot.py --vcpus 8 --memory 32768
+uv run --env-file .env ./scripts/snapshot.py --require-verify
 """
 
 from __future__ import annotations
@@ -39,6 +39,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 import dotenv
@@ -69,7 +70,315 @@ VNC_HTTP_PORT = 39380
 CDP_HTTP_PORT = 39381
 XTERM_HTTP_PORT = 39383
 CDP_PROXY_BINARY_NAME = "cmux-cdp-proxy"
+VNC_PROXY_BINARY_NAME = "cmux-vnc-proxy"
+MORPH_SNAPSHOT_MANIFEST_PATH = (
+    Path(__file__).resolve().parent.parent / "packages/shared/src/morph-snapshots.json"
+)
 
+
+class MorphSnapshotVersionEntry(t.TypedDict):
+    version: int
+    snapshotId: str
+    capturedAt: str
+
+
+class MorphSnapshotPresetEntry(t.TypedDict):
+    presetId: str
+    label: str
+    cpu: str
+    memory: str
+    disk: str
+    versions: list[MorphSnapshotVersionEntry]
+    description: t.NotRequired[str]
+
+
+class MorphSnapshotManifestEntry(t.TypedDict):
+    schemaVersion: int
+    updatedAt: str
+    presets: list[MorphSnapshotPresetEntry]
+
+
+@dataclass(slots=True, frozen=True)
+class SnapshotPresetPlan:
+    preset_id: str
+    label: str
+    cpu_display: str
+    memory_display: str
+    disk_display: str
+    vcpus: int
+    memory_mib: int
+    disk_size_mib: int
+
+
+@dataclass(slots=True)
+class SnapshotRunResult:
+    preset: SnapshotPresetPlan
+    snapshot: Snapshot
+    captured_at: str
+    vscode_url: str
+    vnc_url: str
+    instance_id: str
+
+    def __init__(
+        self,
+        *,
+        preset: SnapshotPresetPlan,
+        snapshot: Snapshot,
+        captured_at: str,
+        vscode_url: str,
+        vnc_url: str,
+        instance_id: str,
+    ) -> None:
+        self.preset = preset
+        self.snapshot = snapshot
+        self.captured_at = captured_at
+        self.vscode_url = vscode_url
+        self.vnc_url = vnc_url
+        self.instance_id = instance_id
+
+
+CURRENT_MANIFEST_SCHEMA_VERSION = 1
+
+
+def _iso_timestamp() -> str:
+    return (
+        datetime.now(tz=timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
+def _coalesce_str(
+    value: t.Any,
+    default: str,
+) -> str:
+    if isinstance(value, str) and value:
+        return value
+    return default
+
+
+def _coalesce_int(value: t.Any, default: int) -> int:
+    try:
+        parsed = int(value)
+    except Exception:
+        return default
+    return parsed
+
+
+def _normalize_manifest(manifest: MorphSnapshotManifestEntry) -> MorphSnapshotManifestEntry:
+    presets: list[MorphSnapshotPresetEntry] = []
+    for preset in manifest.get("presets", []):
+        if not isinstance(preset, dict):
+            continue
+        versions: list[MorphSnapshotVersionEntry] = []
+        for version in preset.get("versions", []):
+            if not isinstance(version, dict):
+                continue
+            version_entry: MorphSnapshotVersionEntry = {
+                "version": _coalesce_int(version.get("version"), 0),
+                "snapshotId": _coalesce_str(version.get("snapshotId"), ""),
+                "capturedAt": _coalesce_str(version.get("capturedAt"), _iso_timestamp()),
+            }
+            versions.append(version_entry)
+        versions.sort(key=lambda entry: entry["version"])
+        preset_entry: MorphSnapshotPresetEntry = {
+            "presetId": _coalesce_str(preset.get("presetId"), ""),
+            "label": _coalesce_str(preset.get("label"), ""),
+            "cpu": _coalesce_str(preset.get("cpu"), ""),
+            "memory": _coalesce_str(preset.get("memory"), ""),
+            "disk": _coalesce_str(preset.get("disk"), ""),
+            "versions": versions,
+        }
+        description = preset.get("description")
+        if isinstance(description, str) and description:
+            preset_entry["description"] = description
+        presets.append(preset_entry)
+
+    return {
+        "schemaVersion": _coalesce_int(
+            manifest.get("schemaVersion"), CURRENT_MANIFEST_SCHEMA_VERSION
+        ),
+        "updatedAt": _coalesce_str(manifest.get("updatedAt"), _iso_timestamp()),
+        "presets": presets,
+    }
+
+
+def _load_manifest(console: Console) -> MorphSnapshotManifestEntry:
+    if not MORPH_SNAPSHOT_MANIFEST_PATH.exists():
+        return {
+            "schemaVersion": CURRENT_MANIFEST_SCHEMA_VERSION,
+            "updatedAt": _iso_timestamp(),
+            "presets": [],
+        }
+    try:
+        raw_manifest = json.loads(MORPH_SNAPSHOT_MANIFEST_PATH.read_text())
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(
+            f"Failed to read morph snapshot manifest at {MORPH_SNAPSHOT_MANIFEST_PATH}: {exc}"
+        ) from exc
+    manifest = _normalize_manifest(raw_manifest)
+    if manifest["schemaVersion"] != CURRENT_MANIFEST_SCHEMA_VERSION:
+        console.always(
+            f"Warning: manifest schema version {manifest['schemaVersion']} "
+            f"differs from expected {CURRENT_MANIFEST_SCHEMA_VERSION}"
+        )
+    return manifest
+
+
+def _write_manifest(manifest: MorphSnapshotManifestEntry) -> None:
+    manifest_to_write = _normalize_manifest(manifest)
+    MORPH_SNAPSHOT_MANIFEST_PATH.write_text(
+        json.dumps(manifest_to_write, indent=2, sort_keys=False)
+    )
+
+
+def _update_manifest_with_snapshot(
+    manifest: MorphSnapshotManifestEntry,
+    preset: SnapshotPresetPlan,
+    snapshot_id: str,
+    captured_at: str,
+) -> MorphSnapshotManifestEntry:
+    updated_manifest = _normalize_manifest(manifest)
+    preset_entry: MorphSnapshotPresetEntry | None = None
+    for candidate in updated_manifest["presets"]:
+        if candidate.get("presetId") == preset.preset_id:
+            preset_entry = candidate
+            break
+
+    if preset_entry is None:
+        preset_entry = {
+            "presetId": preset.preset_id,
+            "label": preset.label,
+            "cpu": preset.cpu_display,
+            "memory": preset.memory_display,
+            "disk": preset.disk_display,
+            "versions": [],
+        }
+        updated_manifest["presets"].append(preset_entry)
+    else:
+        preset_entry["label"] = preset.label
+        preset_entry["cpu"] = preset.cpu_display
+        preset_entry["memory"] = preset.memory_display
+        preset_entry["disk"] = preset.disk_display
+
+    next_version = 1
+    if preset_entry["versions"]:
+        next_version = max(entry["version"] for entry in preset_entry["versions"]) + 1
+
+    preset_entry["versions"].append(
+        {
+            "version": next_version,
+            "snapshotId": snapshot_id,
+            "capturedAt": captured_at,
+        }
+    )
+    preset_entry["versions"].sort(key=lambda entry: entry["version"])
+
+    updated_manifest["schemaVersion"] = CURRENT_MANIFEST_SCHEMA_VERSION
+    updated_manifest["updatedAt"] = captured_at
+    return updated_manifest
+
+
+def _render_verification_table(
+    results: list[SnapshotRunResult],
+    console: Console,
+) -> None:
+    if not results:
+        return
+    headers = (
+        "Preset",
+        "CPU",
+        "Memory",
+        "Disk",
+        "VS Code URL",
+        "VNC URL",
+    )
+    rows: list[tuple[str, ...]] = [headers]
+    for result in results:
+        rows.append(
+            (
+                result.preset.preset_id,
+                result.preset.cpu_display,
+                result.preset.memory_display,
+                result.preset.disk_display,
+                result.vscode_url,
+                result.vnc_url,
+            )
+        )
+    col_widths = [max(len(row[idx]) for row in rows) for idx in range(len(headers))]
+    console.always("\nSnapshot verification URLs:")
+    for row in rows:
+        line_parts: list[str] = []
+        for idx, cell in enumerate(row):
+            width = col_widths[idx]
+            line_parts.append(cell.ljust(width))
+        console.always("  " + "  |  ".join(line_parts))
+
+
+async def _prompt_verification_for_preset(
+    preset_id: str,
+    vscode_url: str,
+    vnc_url: str,
+    console: Console,
+) -> None:
+    console.always(
+        f"\nVerify preset {preset_id} (VS Code: {vscode_url}, VNC: {vnc_url})"
+    )
+    console.always("Press Enter after verification to proceed with snapshotting.")
+    await asyncio.to_thread(input, "")
+
+
+def _format_cpu_display(vcpus: int) -> str:
+    return f"{vcpus} vCPU"
+
+
+def _format_memory_display(memory_mib: int) -> str:
+    memory_gb = max(memory_mib // 1024, 1)
+    return f"{memory_gb} GB RAM"
+
+
+def _format_disk_display(disk_size_mib: int) -> str:
+    disk_gb = max(disk_size_mib // 1024, 1)
+    return f"{disk_gb} GB SSD"
+
+
+def _preset_id_from_resources(
+    vcpus: int,
+    memory_mib: int,
+    disk_size_mib: int,
+) -> str:
+    memory_gb = max(memory_mib // 1024, 1)
+    disk_gb = max(disk_size_mib // 1024, 1)
+    return f"{vcpus}vcpu_{memory_gb}gb_{disk_gb}gb"
+
+
+def _build_preset_plans(args: argparse.Namespace) -> tuple[SnapshotPresetPlan, ...]:
+    standard_plan = SnapshotPresetPlan(
+        preset_id=_preset_id_from_resources(
+            args.standard_vcpus, args.standard_memory, args.standard_disk_size
+        ),
+        label="Standard workspace",
+        cpu_display=_format_cpu_display(args.standard_vcpus),
+        memory_display=_format_memory_display(args.standard_memory),
+        disk_display=_format_disk_display(args.standard_disk_size),
+        vcpus=args.standard_vcpus,
+        memory_mib=args.standard_memory,
+        disk_size_mib=args.standard_disk_size,
+    )
+    boosted_plan = SnapshotPresetPlan(
+        preset_id=_preset_id_from_resources(
+            args.boosted_vcpus, args.boosted_memory, args.boosted_disk_size
+        ),
+        label="Performance workspace",
+        cpu_display=_format_cpu_display(args.boosted_vcpus),
+        memory_display=_format_memory_display(args.boosted_memory),
+        disk_display=_format_disk_display(args.boosted_disk_size),
+        vcpus=args.boosted_vcpus,
+        memory_mib=args.boosted_memory,
+        disk_size_mib=args.boosted_disk_size,
+    )
+    return (standard_plan, boosted_plan)
 
 @dataclass(slots=True)
 class ResourceProfile:
@@ -231,11 +540,20 @@ class TaskContext:
             else command_with_env
         )
         if self.exec_client is not None:
-            return await self.exec_client.run(
-                label,
-                command_to_run,
-                timeout=timeout,
-            )
+            try:
+                return await self.exec_client.run(
+                    label,
+                    command_to_run,
+                    timeout=timeout,
+                )
+            except Exception as exc:
+                # Best-effort: capture recent exec daemon logs to aid debugging.
+                log_tail = await self._collect_execd_log()
+                if log_tail:
+                    raise RuntimeError(
+                        f"{exc}\n\ncmux-execd.log (tail):\n{log_tail}".rstrip()
+                    ) from exc
+                raise
         return await _run_command(self, label, command_to_run, timeout=timeout)
 
     async def run_via_ssh(
@@ -261,6 +579,21 @@ class TaskContext:
             return f"{self.environment_prelude}\n{command}"
         quoted = " ".join(shlex.quote(str(part)) for part in command)
         return f"{self.environment_prelude}\n{quoted}"
+
+    async def _collect_execd_log(self) -> str | None:
+        """Best-effort tail of the exec daemon log without using the exec service."""
+        log_path = "/var/log/cmux-execd.log"
+        try:
+            result = await self.instance.aexec(
+                ["bash", "-lc", f'if [ -f {log_path} ]; then tail -n 200 {log_path}; fi'],
+                timeout=5,
+            )
+        except Exception:
+            return None
+        if result.exit_code not in (0, None):
+            return None
+        output = result.stdout.strip()
+        return output or None
 
 
 @dataclass(frozen=True)
@@ -313,6 +646,23 @@ def send_macos_notification(console: Console, title: str, message: str) -> None:
         subprocess.run(["osascript", "-e", script], check=False)
     except Exception as exc:  # noqa: BLE001
         console.info(f"Failed to send macOS notification: {exc}")
+
+
+def send_scary_notification(message: str) -> None:
+    if sys.platform != "darwin":
+        return
+    if shutil.which("osascript") is None:
+        return
+    script = textwrap.dedent(
+        f"""
+        display notification {json.dumps(message)} with title "cmux snapshot failed"
+        """
+    ).strip()
+    try:
+        subprocess.run(["osascript", "-e", script], check=False)
+    except Exception:
+        # Intentionally ignore secondary failures to avoid masking the root error
+        pass
 
 
 def _exec_git(repo_root: Path, args: list[str]) -> str | None:
@@ -746,15 +1096,18 @@ async def build_exec_binary(ctx: TaskContext) -> None:
     ctx.console.info("Exec service setup complete")
 
 
-def _build_resource_profile(args: argparse.Namespace) -> ResourceProfile:
+def _build_resource_profile(
+    vcpus: int,
+    memory_mib: int,
+) -> ResourceProfile:
     cpu_period = 100_000
     cpu_quota: int | None = None
-    if args.vcpus and args.vcpus > 0:
-        cpu_quota = max(int(args.vcpus * cpu_period * 0.9), cpu_period)
+    if vcpus > 0:
+        cpu_quota = max(int(vcpus * cpu_period * 0.9), cpu_period)
 
     memory_high: int | None = None
     memory_max: int | None = None
-    memory_bytes = args.memory * 1024 * 1024
+    memory_bytes = memory_mib * 1024 * 1024
     if memory_bytes > 0:
         memory_high = max(memory_bytes * 9 // 10, 1)
         memory_max = max(memory_bytes * 95 // 100, memory_high)
@@ -927,10 +1280,8 @@ async def task_install_base_packages(ctx: TaskContext) -> None:
             build-essential make pkg-config g++ libssl-dev \
             ruby-full perl software-properties-common \
             tigervnc-standalone-server tigervnc-common \
-            python3-websockify websockify \
             xvfb \
             x11-xserver-utils xterm novnc \
-            x11vnc \
             tmux \
             gh \
             zsh \
@@ -1309,10 +1660,29 @@ async def task_install_openvscode_extensions(ctx: TaskContext) -> None:
           local version="$3"
           local destination="$4"
           local tmpfile="${destination}.download"
+          local curl_stderr="${tmpfile}.stderr"
           local url="https://marketplace.visualstudio.com/_apis/public/gallery/publishers/${publisher}/vsextensions/${name}/${version}/vspackage"
-          if ! curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o "${tmpfile}" "${url}"; then
-            echo "Failed to download ${publisher}.${name}@${version}" >&2
+          local attempt=1
+          local max_attempts=3
+          while [ "${attempt}" -le "${max_attempts}" ]; do
+            if curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o "${tmpfile}" "${url}" 2>"${curl_stderr}"; then
+              rm -f "${curl_stderr}"
+              break
+            fi
+            echo "Download attempt ${attempt}/${max_attempts} failed for ${publisher}.${name}@${version}; retrying..." >&2
+            if [ -s "${curl_stderr}" ]; then
+              cat "${curl_stderr}" >&2
+            fi
             rm -f "${tmpfile}"
+            attempt=$((attempt + 1))
+            sleep $((attempt * 2))
+          done
+          if [ "${attempt}" -gt "${max_attempts}" ]; then
+            echo "Failed to download ${publisher}.${name}@${version} after ${max_attempts} attempts" >&2
+            if [ -s "${curl_stderr}" ]; then
+              cat "${curl_stderr}" >&2
+            fi
+            rm -f "${curl_stderr}"
             return 1
           fi
           if gzip -t "${tmpfile}" >/dev/null 2>&1; then
@@ -1520,7 +1890,7 @@ async def task_install_service_scripts(ctx: TaskContext) -> None:
 @registry.task(
     name="build-cdp-proxy",
     deps=("install-service-scripts", "install-go-toolchain"),
-    description="Build and install Chrome DevTools proxy binary",
+    description="Build and install Chrome DevTools and VNC proxy binaries",
 )
 async def task_build_cdp_proxy(ctx: TaskContext) -> None:
     repo = shlex.quote(ctx.remote_repo_root)
@@ -1533,6 +1903,12 @@ async def task_build_cdp_proxy(ctx: TaskContext) -> None:
         go build -trimpath -o /usr/local/lib/cmux/{CDP_PROXY_BINARY_NAME} .
         if [ ! -x /usr/local/lib/cmux/{CDP_PROXY_BINARY_NAME} ]; then
           echo "Failed to build {CDP_PROXY_BINARY_NAME}" >&2
+          exit 1
+        fi
+        cd {repo}/scripts/vnc-proxy
+        go build -trimpath -o /usr/local/lib/cmux/{VNC_PROXY_BINARY_NAME} .
+        if [ ! -x /usr/local/lib/cmux/{VNC_PROXY_BINARY_NAME} ]; then
+          echo "Failed to build {VNC_PROXY_BINARY_NAME}" >&2
           exit 1
         fi
         """
@@ -1568,8 +1944,8 @@ async def task_install_systemd_units(ctx: TaskContext) -> None:
         install -Dm0644 {repo}/configs/systemd/cmux-dockerd.service /usr/lib/systemd/system/cmux-dockerd.service
         install -Dm0644 {repo}/configs/systemd/cmux-devtools.service /usr/lib/systemd/system/cmux-devtools.service
         install -Dm0644 {repo}/configs/systemd/cmux-xvfb.service /usr/lib/systemd/system/cmux-xvfb.service
-        install -Dm0644 {repo}/configs/systemd/cmux-x11vnc.service /usr/lib/systemd/system/cmux-x11vnc.service
-        install -Dm0644 {repo}/configs/systemd/cmux-websockify.service /usr/lib/systemd/system/cmux-websockify.service
+        install -Dm0644 {repo}/configs/systemd/cmux-tigervnc.service /usr/lib/systemd/system/cmux-tigervnc.service
+        install -Dm0644 {repo}/configs/systemd/cmux-vnc-proxy.service /usr/lib/systemd/system/cmux-vnc-proxy.service
         install -Dm0644 {repo}/configs/systemd/cmux-cdp-proxy.service /usr/lib/systemd/system/cmux-cdp-proxy.service
         install -Dm0644 {repo}/configs/systemd/cmux-xterm.service /usr/lib/systemd/system/cmux-xterm.service
         install -Dm0644 {repo}/configs/systemd/cmux-memory-setup.service /usr/lib/systemd/system/cmux-memory-setup.service
@@ -1586,9 +1962,8 @@ async def task_install_systemd_units(ctx: TaskContext) -> None:
         ln -sf /usr/lib/systemd/system/cmux-proxy.service /etc/systemd/system/cmux.target.wants/cmux-proxy.service
         ln -sf /usr/lib/systemd/system/cmux-dockerd.service /etc/systemd/system/cmux.target.wants/cmux-dockerd.service
         ln -sf /usr/lib/systemd/system/cmux-devtools.service /etc/systemd/system/cmux.target.wants/cmux-devtools.service
-        ln -sf /usr/lib/systemd/system/cmux-xvfb.service /etc/systemd/system/cmux.target.wants/cmux-xvfb.service
-        ln -sf /usr/lib/systemd/system/cmux-x11vnc.service /etc/systemd/system/cmux.target.wants/cmux-x11vnc.service
-        ln -sf /usr/lib/systemd/system/cmux-websockify.service /etc/systemd/system/cmux.target.wants/cmux-websockify.service
+        ln -sf /usr/lib/systemd/system/cmux-tigervnc.service /etc/systemd/system/cmux.target.wants/cmux-tigervnc.service
+        ln -sf /usr/lib/systemd/system/cmux-vnc-proxy.service /etc/systemd/system/cmux.target.wants/cmux-vnc-proxy.service
         ln -sf /usr/lib/systemd/system/cmux-cdp-proxy.service /etc/systemd/system/cmux.target.wants/cmux-cdp-proxy.service
         ln -sf /usr/lib/systemd/system/cmux-xterm.service /etc/systemd/system/cmux.target.wants/cmux-xterm.service
         ln -sf /usr/lib/systemd/system/cmux-memory-setup.service /etc/systemd/system/multi-user.target.wants/cmux-memory-setup.service
@@ -1975,10 +2350,18 @@ async def task_check_ssh_service(ctx: TaskContext) -> None:
     cmd = textwrap.dedent(
         """
         set -euo pipefail
-        status_output="$(systemctl status ssh --no-pager)"
+        status_output="$(systemctl status ssh --no-pager || true)"
         printf '%s\n' "$status_output"
-        if ! printf '%s\n' "$status_output" | grep -Fq "active (running)"; then
+        if ! systemctl is-active --quiet ssh; then
+          echo "ssh service not active; attempting restart..." >&2
+          systemctl restart ssh || true
+          sleep 2
+          status_output="$(systemctl status ssh --no-pager || true)"
+          printf '%s\n' "$status_output"
+        fi
+        if ! systemctl is-active --quiet ssh; then
           echo "ERROR: ssh service status did not report active (running)" >&2
+          journalctl -u ssh --no-pager -n 50 || true
           exit 1
         fi
         """
@@ -2069,11 +2452,10 @@ async def task_check_vnc(ctx: TaskContext) -> None:
         """
         # Verify VNC binaries are installed
         vncserver -version
-        if ! command -v websockify >/dev/null 2>&1; then
-          echo "websockify not installed" >&2
+        if [ ! -x /usr/local/lib/cmux/cmux-vnc-proxy ]; then
+          echo "cmux-vnc-proxy binary missing" >&2
           exit 1
         fi
-        websockify --help >/dev/null
         
         # Verify VNC endpoint is accessible
         sleep 5
@@ -2085,18 +2467,53 @@ async def task_check_vnc(ctx: TaskContext) -> None:
           sleep 2
         done
         echo "ERROR: VNC endpoint not reachable after 30s" >&2
-        systemctl status cmux-xvfb.service --no-pager || true
-        systemctl status cmux-x11vnc.service --no-pager || true
-        systemctl status cmux-websockify.service --no-pager || true
+        systemctl status cmux-tigervnc.service --no-pager || true
+        systemctl status cmux-vnc-proxy.service --no-pager || true
         systemctl status cmux-devtools.service --no-pager || true
-        tail -n 60 /var/log/cmux/xvfb.log || true
         tail -n 40 /var/log/cmux/chrome.log || true
-        tail -n 40 /var/log/cmux/x11vnc.log || true
-        tail -n 40 /var/log/cmux/websockify.log || true
+        tail -n 40 /var/log/cmux/tigervnc.log || true
+        tail -n 40 /var/log/cmux/vnc-proxy.log || true
         exit 1
         """
     )
     await ctx.run("check-vnc", cmd)
+
+    websocket_cmd = textwrap.dedent(
+        """
+        python3 - <<'PY'
+import base64
+import os
+import socket
+import sys
+
+host = "127.0.0.1"
+port = 39380
+path = "/websockify"
+
+key = base64.b64encode(os.urandom(16)).decode()
+request = (
+    f"GET {path} HTTP/1.1\\r\\n"
+    f"Host: {host}:{port}\\r\\n"
+    "Upgrade: websocket\\r\\n"
+    "Connection: Upgrade\\r\\n"
+    f"Sec-WebSocket-Key: {key}\\r\\n"
+    "Sec-WebSocket-Version: 13\\r\\n"
+    "\\r\\n"
+)
+
+with socket.create_connection((host, port), timeout=5) as sock:
+    sock.settimeout(5)
+    sock.sendall(request.encode("ascii"))
+    resp = sock.recv(1024).decode("latin1", "replace")
+
+status_line = resp.splitlines()[0] if resp else ""
+if not status_line.startswith("HTTP/1.1 101"):
+    print(f"Unexpected websocket response: {status_line!r}", file=sys.stderr)
+    sys.exit(1)
+PY
+        """
+    )
+    await ctx.run("check-vnc-websocket-upgrade", websocket_cmd)
 
 
 @registry.task(
@@ -2121,11 +2538,10 @@ async def task_check_devtools(ctx: TaskContext) -> None:
         done
         echo "ERROR: DevTools endpoint not reachable after 90s" >&2
         systemctl status cmux-devtools.service --no-pager || true
-        systemctl status cmux-xvfb.service --no-pager || true
         systemctl status cmux-cdp-proxy.service --no-pager || true
         ss -ltnp | grep 3938 || true
         tail -n 100 /var/log/cmux/chrome.log || true
-        tail -n 40 /var/log/cmux/x11vnc.log || true
+        tail -n 40 /var/log/cmux/tigervnc.log || true
         exit 1
         """
     )
@@ -2294,43 +2710,41 @@ async def report_disk_usage(ctx: TaskContext) -> None:
     await ctx.run("disk-usage-summary", disk_script)
 
 
-async def provision_and_snapshot(args: argparse.Namespace) -> None:
-    console = Console()
+async def provision_and_snapshot_for_preset(
+    args: argparse.Namespace,
+    *,
+    preset: SnapshotPresetPlan,
+    console: Console,
+    client: MorphCloudClient,
+    repo_root: Path,
+    started_instances: list[Instance],
+    require_verify: bool,
+    show_dependency_graph: bool,
+) -> SnapshotRunResult:
+    console.always(
+        f"\n=== Provisioning preset {preset.preset_id} ({preset.label}) ==="
+    )
     timings = TimingsCollector()
-    client = MorphCloudClient()
-    started_instances: list[Instance] = []
-
-    def _cleanup() -> None:
-        while started_instances:
-            inst = started_instances.pop()
-            _stop_instance(inst, console)
-
-    def _sync_cleanup() -> None:
-        _cleanup()
-
-    atexit.register(_sync_cleanup)
-
-    repo_root = Path(args.repo_root).resolve()
 
     instance = await client.instances.aboot(
         args.snapshot_id,
-        vcpus=args.vcpus,
-        memory=args.memory,
-        disk_size=args.disk_size,
+        vcpus=preset.vcpus,
+        memory=preset.memory_mib,
+        disk_size=preset.disk_size_mib,
         ttl_seconds=args.ttl_seconds,
         ttl_action=args.ttl_action,
     )
     started_instances.append(instance)
     await _await_instance_ready(instance, console=console)
     console.always(
-        f"Dashboard: https://cloud.morph.so/web/instances/{instance.id}?ssh=true"
+        f"[{preset.preset_id}] Dashboard: https://cloud.morph.so/web/instances/{instance.id}?ssh=true"
     )
     port_map = await _expose_standard_ports(instance, console)
     exec_service_url = port_map.get(EXEC_HTTP_PORT)
     if exec_service_url is None:
         raise RuntimeError("Failed to expose exec service port on primary instance")
 
-    resource_profile = _build_resource_profile(args)
+    resource_profile = _build_resource_profile(preset.vcpus, preset.memory_mib)
 
     ctx = TaskContext(
         instance=instance,
@@ -2340,17 +2754,18 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
         console=console,
         timings=timings,
         resource_profile=resource_profile,
-        exec_service_url=exec_service_url
+        exec_service_url=exec_service_url,
     )
 
     await run_task_graph(registry, ctx)
     await verify_devtools_via_exposed_url(port_map, console=console)
 
-    graph = format_dependency_graph(registry)
-    if graph:
-        console.always("\nDependency Graph")
-        for line in graph.splitlines():
-            console.always(line)
+    if show_dependency_graph:
+        graph = format_dependency_graph(registry)
+        if graph:
+            console.always("\nDependency Graph")
+            for line in graph.splitlines():
+                console.always(line)
 
     summary = timings.summary()
     if summary:
@@ -2368,27 +2783,123 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
         raise RuntimeError("Failed to expose VNC service URL")
     vnc_url = urllib.parse.urljoin(vnc_base_url.rstrip("/") + "/", "vnc.html")
 
-    console.always(f"VS Code is at this URL: {vscode_url}")
-    console.always(f"VNC is at this URL: {vnc_url}")
+    console.always(f"[{preset.preset_id}] VS Code: {vscode_url}")
+    console.always(f"[{preset.preset_id}] VNC: {vnc_url}")
 
     send_macos_notification(
         console,
-        "Verify cmux workspace",
+        f"Verify cmux workspace – {preset.label}",
         f"VS Code: {vscode_url} / VNC: {vnc_url}",
     )
     console.info("Sent verification notification (macOS only).")
-    console.always(
-        "Review the workspace URLs above, then press Enter to create the snapshot."
-    )
-    await asyncio.to_thread(input, "")
+
+    if require_verify:
+        await _prompt_verification_for_preset(
+            preset.preset_id, vscode_url, vnc_url, console
+        )
 
     await cleanup_instance_disk(ctx)
-
     snapshot = await snapshot_instance(instance, console=console)
+    captured_at = _iso_timestamp()
 
-    console.always(f"Snapshot created: {snapshot.id}")
-    console.always(f"Provisioning complete. Snapshot id: {snapshot.id}")
-    console.always(f"Primary instance: {instance.id}")
+    console.always(f"[{preset.preset_id}] Snapshot created: {snapshot.id}")
+    console.always(
+        f"[{preset.preset_id}] Provisioning complete. Snapshot id: {snapshot.id}"
+    )
+    console.always(f"[{preset.preset_id}] Instance: {instance.id}")
+
+    return SnapshotRunResult(
+        preset=preset,
+        snapshot=snapshot,
+        captured_at=captured_at,
+        vscode_url=vscode_url,
+        vnc_url=vnc_url,
+        instance_id=instance.id,
+    )
+
+
+async def provision_and_snapshot(args: argparse.Namespace) -> None:
+    console = Console()
+    client = MorphCloudClient()
+    started_instances: list[Instance] = []
+    manifest = _load_manifest(console)
+    results: list[SnapshotRunResult] = []
+
+    def _cleanup() -> None:
+        if args.require_verify:
+            while started_instances:
+                inst = started_instances.pop()
+                _stop_instance(inst, console)
+
+    def _sync_cleanup() -> None:
+        _cleanup()
+
+    atexit.register(_sync_cleanup)
+
+    repo_root = Path(args.repo_root).resolve()
+    preset_plans = _build_preset_plans(args)
+
+    console.always(
+        "Starting snapshot runs for presets "
+        f"{', '.join(plan.preset_id for plan in preset_plans)} "
+        f"from base snapshot {args.snapshot_id}"
+    )
+
+    preset_order: dict[str, int] = {
+        plan.preset_id: index for index, plan in enumerate(preset_plans)
+    }
+    tasks = [
+        asyncio.create_task(
+            provision_and_snapshot_for_preset(
+                args,
+                preset=preset_plan,
+                console=console,
+                client=client,
+                repo_root=repo_root,
+                started_instances=started_instances,
+                require_verify=args.require_verify,
+                show_dependency_graph=index == 0,
+            )
+        )
+        for index, preset_plan in enumerate(preset_plans)
+    ]
+
+    results = await asyncio.gather(*tasks)
+    ordered_results = sorted(
+        results,
+        key=lambda item: preset_order.get(item.preset.preset_id, 0),
+    )
+
+    if not args.require_verify:
+        for result in ordered_results:
+            try:
+                inst = client.instances.get(instance_id=result.instance_id)
+                inst.set_ttl(ttl_seconds=600, ttl_action="pause")
+                console.always(
+                    f"[{result.preset.preset_id}] Instance {result.instance_id} "
+                    "will pause in ~10 minutes (TTL set)."
+                )
+            except Exception as exc:  # noqa: BLE001
+                console.always(
+                    f"[{result.preset.preset_id}] Failed to set TTL on instance "
+                    f"{result.instance_id}: {exc}"
+                )
+
+    for result in ordered_results:
+        manifest = _update_manifest_with_snapshot(
+            manifest, result.preset, result.snapshot.id, result.captured_at
+        )
+    _write_manifest(manifest)
+
+    _render_verification_table(ordered_results, console)
+
+    console.always(
+        f"\nUpdated morph snapshot manifest at {MORPH_SNAPSHOT_MANIFEST_PATH}"
+    )
+    for result in ordered_results:
+        console.always(
+            f"[{result.preset.preset_id}] Snapshot {result.snapshot.id} captured at {result.captured_at}"
+        )
 
 
 def format_dependency_graph(registry: TaskRegistry) -> str:
@@ -2465,19 +2976,48 @@ def parse_args() -> argparse.Namespace:
         default=".",
         help="Repository root to upload (default: current directory)",
     )
-    parser.add_argument("--vcpus", type=int, default=4, help="vCPU count for instance")
     parser.add_argument(
-        "--memory",
+        "--standard-vcpus",
+        "--vcpus",
+        dest="standard_vcpus",
         type=int,
-        default=16_384,
-        help="Memory (MiB) for instance",
+        default=4,
+        help="vCPU count for the standard preset",
     )
     parser.add_argument(
+        "--standard-memory",
+        "--memory",
+        dest="standard_memory",
+        type=int,
+        default=16_384,
+        help="Memory (MiB) for the standard preset",
+    )
+    parser.add_argument(
+        "--standard-disk-size",
         "--disk-size",
+        dest="standard_disk_size",
         type=int,
         # 48gb
         default=49_152,
-        help="Disk size (MiB) for instance",
+        help="Disk size (MiB) for the standard preset",
+    )
+    parser.add_argument(
+        "--boosted-vcpus",
+        type=int,
+        default=8,
+        help="vCPU count for the boosted preset",
+    )
+    parser.add_argument(
+        "--boosted-memory",
+        type=int,
+        default=32_768,
+        help="Memory (MiB) for the boosted preset",
+    )
+    parser.add_argument(
+        "--boosted-disk-size",
+        type=int,
+        default=49_152,
+        help="Disk size (MiB) for the boosted preset",
     )
     parser.add_argument(
         "--ttl-seconds",
@@ -2496,6 +3036,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Print dependency graph and exit",
     )
+    parser.add_argument(
+        "--require-verify",
+        action="store_true",
+        help="Require manual verification (VS Code/VNC) before snapshotting each preset",
+    )
     return parser.parse_args()
 
 
@@ -2506,7 +3051,11 @@ def main() -> None:
         if graph:
             print(graph)
         return
-    asyncio.run(provision_and_snapshot(args))
+    try:
+        asyncio.run(provision_and_snapshot(args))
+    except Exception as exc:  # noqa: BLE001
+        send_scary_notification(f"Snapshot run failed: {exc}")
+        raise
 
 
 if __name__ == "__main__":
