@@ -233,9 +233,9 @@ export function WorkspaceSetupPanel({
   }
 
   return (
-    <div className={`mt-2 rounded-lg relative ${isExpanded ? "" : ""}`}>
+    <div className={`mt-2 rounded-2xl relative ${isExpanded ? "" : ""}`}>
       <div
-        className={`absolute inset-0 rounded-lg border pointer-events-none ${isExpanded
+        className={`absolute inset-0 rounded-2xl border pointer-events-none ${isExpanded
           ? "border-neutral-200 dark:border-neutral-700"
           : "border-transparent"
           }`}

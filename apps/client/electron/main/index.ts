@@ -32,7 +32,6 @@ import {
   jwtVerify,
   type JWTPayload,
 } from "jose";
-import { promises as fs } from "node:fs";
 import { collectAllLogs } from "./log-management/collect-logs";
 import { ensureLogDirectory } from "./log-management/log-paths";
 import {
@@ -82,13 +81,6 @@ const LOG_ROTATION: LogRotationOptions = {
   maxBackups: 3,
 };
 
-process.on("uncaughtException", (error) => {
-  console.error("[ElectronMain] Uncaught exception", error);
-});
-
-process.on("unhandledRejection", (reason) => {
-  console.error("[ElectronMain] Unhandled rejection", reason);
-});
 
 let rendererLoaded = false;
 let pendingProtocolUrl: string | null = null;
@@ -156,8 +148,9 @@ function updateHistoryMenuState(target?: BrowserWindow | null): void {
     target && !target.isDestroyed() && target.isFocused() ? target : null;
   const window = focusableTarget ?? getActiveBrowserWindow();
   const contents = window && !window.isDestroyed() ? window.webContents : null;
-  const canGoBack = Boolean(contents?.canGoBack?.());
-  const canGoForward = Boolean(contents?.canGoForward?.());
+  const navigationHistory = contents?.navigationHistory;
+  const canGoBack = Boolean(navigationHistory?.canGoBack());
+  const canGoForward = Boolean(navigationHistory?.canGoForward());
   if (historyBackMenuItem) {
     historyBackMenuItem.enabled = canGoBack;
   }
@@ -170,11 +163,12 @@ function navigateHistory(direction: "back" | "forward"): void {
   const target = getActiveBrowserWindow();
   if (!target) return;
   const contents = target.webContents;
+  const navigationHistory = contents.navigationHistory;
   if (direction === "back") {
-    if (contents.canGoBack()) {
+    if (navigationHistory.canGoBack()) {
       contents.goBack();
     }
-  } else if (direction === "forward" && contents.canGoForward()) {
+  } else if (direction === "forward" && navigationHistory.canGoForward()) {
     contents.goForward();
   }
   updateHistoryMenuState(target);
@@ -489,28 +483,6 @@ function registerAutoUpdateIpcHandlers(): void {
   });
 }
 
-// Write critical errors to a file to aid debugging packaged crashes
-async function writeFatalLog(...args: unknown[]) {
-  try {
-    const ts = new Date().toISOString().replace(/[:.]/g, "-");
-    const base = app.getPath("userData");
-    const file = path.join(base, `fatal-${ts}.log`);
-    const msg = formatArgs(args);
-    await fs.writeFile(file, msg + "\n", { encoding: "utf8" });
-  } catch (error) {
-    console.error("Failed to write fatal log", error);
-    // ignore
-  }
-}
-
-process.on("uncaughtException", (err) => {
-  console.error("[MAIN] uncaughtException", err);
-  void writeFatalLog("uncaughtException", err);
-});
-process.on("unhandledRejection", (reason) => {
-  console.error("[MAIN] unhandledRejection", reason);
-  void writeFatalLog("unhandledRejection", reason);
-});
 
 function setupAutoUpdates(): void {
   if (!app.isPackaged) {
@@ -745,7 +717,7 @@ function createWindow(): void {
     // In production, serve the renderer over HTTPS on a private host which we
     // intercept and back with local files (supports cookies).
     mainLog("Loading renderer (prod)", { host: APP_HOST });
-    mainWindow.loadURL(`https://${APP_HOST}/index.html`);
+    mainWindow.loadURL(`https://${APP_HOST}/index-electron.html`);
   }
 }
 
@@ -956,7 +928,7 @@ app.whenReady().then(async () => {
       return net.fetch(request);
     }
 
-    const pathname = url.pathname === "/" ? "/index.html" : url.pathname;
+    const pathname = url.pathname === "/" ? "/index-electron.html" : url.pathname;
     const fsPath = path.normalize(
       path.join(baseDir, decodeURIComponent(pathname))
     );
@@ -967,10 +939,11 @@ app.whenReady().then(async () => {
     }
 
     const response = await net.fetch(pathToFileURL(fsPath).toString());
-    response.headers.set(
-      "Content-Security-Policy",
-      "default-src * 'unsafe-inline' 'unsafe-eval' data: blob: ws: wss:; worker-src * blob:; child-src * blob:; frame-src *"
-    );
+    const contentSecurityPolicy =
+      "default-src * 'unsafe-inline' 'unsafe-eval' data: blob: ws: wss:; " +
+      "connect-src * sentry-ipc:; " +
+      "worker-src * blob:; child-src * blob:; frame-src *";
+    response.headers.set("Content-Security-Policy", contentSecurityPolicy);
     return response;
   };
 

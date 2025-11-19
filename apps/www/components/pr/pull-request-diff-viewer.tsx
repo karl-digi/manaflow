@@ -53,12 +53,6 @@ import {
   type RenderToken,
 } from "react-diff-view";
 import "react-diff-view/style/index.css";
-import {
-  usePathname,
-  useRouter,
-  useSearchParams,
-  type ReadonlyURLSearchParams,
-} from "next/navigation";
 
 import { api } from "@cmux/convex/api";
 import { useConvexQuery } from "@convex-dev/react-query";
@@ -103,7 +97,6 @@ import {
   HEATMAP_MODEL_DENSE_V2_FINETUNE_QUERY_VALUE,
   HEATMAP_MODEL_FINETUNE_QUERY_VALUE,
   HEATMAP_MODEL_QUERY_KEY,
-  normalizeHeatmapModelQueryValue,
   type HeatmapModelQueryValue,
 } from "@/lib/services/code-review/model-config";
 
@@ -221,13 +214,6 @@ const filenameLanguageMap: Record<string, string> = {
 
 type HeatmapModelOptionValue = HeatmapModelQueryValue;
 
-const LEGACY_HEATMAP_MODEL_PARAM_ENTRIES: ReadonlyArray<
-  [string, HeatmapModelOptionValue]
-> = [
-  ["ft0", HEATMAP_MODEL_FINETUNE_QUERY_VALUE],
-  ["ft1", HEATMAP_MODEL_DENSE_FINETUNE_QUERY_VALUE],
-];
-
 const HEATMAP_MODEL_OPTIONS: ReadonlyArray<{
   value: HeatmapModelOptionValue;
   label: string;
@@ -249,20 +235,6 @@ const HEATMAP_MODEL_OPTIONS: ReadonlyArray<{
     label: "Claude Opus 4.1",
   },
 ];
-
-function deriveHeatmapModelFromSearchParams(
-  params: ReadonlyURLSearchParams | null
-): HeatmapModelOptionValue {
-  if (!params) {
-    return HEATMAP_MODEL_ANTHROPIC_QUERY_VALUE;
-  }
-  for (const [paramKey, selection] of LEGACY_HEATMAP_MODEL_PARAM_ENTRIES) {
-    if (params.has(paramKey)) {
-      return selection;
-    }
-  }
-  return normalizeHeatmapModelQueryValue(params.get(HEATMAP_MODEL_QUERY_KEY));
-}
 
 type RefractorLike = {
   highlight(code: string, language: string): unknown;
@@ -599,9 +571,6 @@ export function PullRequestDiffViewer({
   pullRequestTitle,
   pullRequestUrl,
 }: PullRequestDiffViewerProps) {
-  const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
   const normalizedJobType: "pull_request" | "comparison" =
     jobType ?? (comparisonSlug ? "comparison" : "pull_request");
   const [heatmapModelPreference, setHeatmapModelPreference] =
@@ -609,391 +578,388 @@ export function PullRequestDiffViewer({
       key: "cmux-heatmap-model",
       defaultValue: HEATMAP_MODEL_ANTHROPIC_QUERY_VALUE,
     });
-  const pendingModelPreferenceRef = useRef<HeatmapModelOptionValue | null>(
-    null
+  const heatmapModelPreferenceRef = useRef<HeatmapModelOptionValue>(
+    heatmapModelPreference
   );
-  const urlModelValue = useMemo(
-    () => deriveHeatmapModelFromSearchParams(searchParams),
-    [searchParams]
-  );
-
+  const hasFetchedReviewRef = useRef(false);
+  const activeReviewControllerRef = useRef<AbortController | null>(null);
+  const activeReviewModelRef = useRef<HeatmapModelOptionValue | null>(null);
   const [streamStateByFile, setStreamStateByFile] = useState<
     Map<string, StreamFileState>
   >(() => new Map());
 
-  useEffect(() => {
-    if (pendingModelPreferenceRef.current) {
-      if (urlModelValue === pendingModelPreferenceRef.current) {
-        pendingModelPreferenceRef.current = null;
+  const fetchCodeReview = useCallback(
+    (modelOverride?: HeatmapModelOptionValue) => {
+      if (normalizedJobType !== "pull_request") {
+        return;
       }
-      return;
-    }
-    if (urlModelValue !== heatmapModelPreference) {
-      setHeatmapModelPreference(urlModelValue);
-    }
-  }, [heatmapModelPreference, setHeatmapModelPreference, urlModelValue]);
-
-  const handleHeatmapModelPreferenceChange = useCallback(
-    (value: HeatmapModelOptionValue) => {
-      const hasLegacyModelOverride = LEGACY_HEATMAP_MODEL_PARAM_ENTRIES.some(
-        ([paramKey]) => searchParams.has(paramKey)
-      );
-      const isQuerySynced = value === urlModelValue && !hasLegacyModelOverride;
-      if (value !== heatmapModelPreference) {
-        setHeatmapModelPreference(value);
+      if (typeof prNumber !== "number" || Number.isNaN(prNumber)) {
+        return;
       }
-      if (isQuerySynced) {
-        pendingModelPreferenceRef.current = null;
+      if (!repoFullName) {
         return;
       }
 
-      pendingModelPreferenceRef.current = value;
-      const currentParams = new URLSearchParams(searchParams.toString());
-      for (const [paramKey] of LEGACY_HEATMAP_MODEL_PARAM_ENTRIES) {
-        currentParams.delete(paramKey);
+      const model = modelOverride ?? heatmapModelPreferenceRef.current;
+      const existingController = activeReviewControllerRef.current;
+      const hasActiveMatchingRequest =
+        existingController &&
+        activeReviewModelRef.current === model &&
+        !existingController.signal.aborted;
+      if (hasActiveMatchingRequest) {
+        return;
       }
-      currentParams.set(HEATMAP_MODEL_QUERY_KEY, value);
-      const nextQuery = currentParams.toString();
-      const targetUrl =
-        nextQuery.length > 0 ? `${pathname}?${nextQuery}` : pathname;
-      router.replace(targetUrl);
-      router.refresh();
+
+      existingController?.abort();
+      const controller = new AbortController();
+      activeReviewControllerRef.current = controller;
+      activeReviewModelRef.current = model;
+
+      setStreamStateByFile(new Map());
+      const params = new URLSearchParams({
+        repoFullName,
+        prNumber: String(prNumber),
+      });
+      params.set(HEATMAP_MODEL_QUERY_KEY, model);
+
+      (async () => {
+        try {
+          const response = await fetch(
+            `/api/pr-review/simple?${params.toString()}`,
+            {
+              signal: controller.signal,
+            }
+          );
+
+          if (!response.ok) {
+            console.error(
+              "[simple-review][frontend] Failed to start stream",
+              response.status
+            );
+            return;
+          }
+
+          const body = response.body;
+          if (!body) {
+            console.error(
+              "[simple-review][frontend] Response body missing for stream"
+            );
+            return;
+          }
+
+          const reader = body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) {
+              break;
+            }
+            buffer += decoder.decode(value, { stream: true });
+
+            let separatorIndex = buffer.indexOf("\n\n");
+            while (separatorIndex !== -1) {
+              const rawEvent = buffer.slice(0, separatorIndex);
+              buffer = buffer.slice(separatorIndex + 2);
+              separatorIndex = buffer.indexOf("\n\n");
+
+              const lines = rawEvent.split("\n");
+              for (const line of lines) {
+                if (!line.startsWith("data:")) {
+                  continue;
+                }
+                const data = line.slice(5).trim();
+                if (data.length === 0) {
+                  continue;
+                }
+                try {
+                  const payload = JSON.parse(data) as Record<string, unknown>;
+                  const type =
+                    typeof payload.type === "string" ? payload.type : "";
+                  const filePath =
+                    typeof payload.filePath === "string"
+                      ? payload.filePath
+                      : null;
+
+                  switch (type) {
+                    case "status":
+                      if (DEBUG_LOG) {
+                        console.info(
+                          "[simple-review][frontend][status]",
+                          payload
+                        );
+                      }
+                      break;
+                    case "file":
+                      if (DEBUG_LOG) {
+                        console.info("[simple-review][frontend][file]", payload);
+                      }
+                      if (filePath) {
+                        setStreamStateByFile((previous) => {
+                          const next = new Map(previous);
+                          const current = next.get(filePath);
+                          next.set(filePath, {
+                            lines: current?.lines ?? [],
+                            status: "pending",
+                            skipReason: null,
+                            summary: null,
+                          });
+                          return next;
+                        });
+                      }
+                      break;
+                    case "skip":
+                      if (DEBUG_LOG) {
+                        console.info("[simple-review][frontend][skip]", payload);
+                      }
+                      if (filePath) {
+                        setStreamStateByFile((previous) => {
+                          const next = new Map(previous);
+                          const current = next.get(filePath) ?? {
+                            lines: [],
+                            status: "pending",
+                            skipReason: null,
+                            summary: null,
+                          };
+                          next.set(filePath, {
+                            ...current,
+                            skipReason:
+                              typeof payload.reason === "string"
+                                ? payload.reason
+                                : (current.skipReason ?? null),
+                            summary:
+                              typeof payload.reason === "string"
+                                ? payload.reason
+                                : (current.summary ?? null),
+                          });
+                          return next;
+                        });
+                      }
+                      break;
+                    case "file-complete":
+                      if (DEBUG_LOG) {
+                        console.info(
+                          "[simple-review][frontend][file-complete]",
+                          payload
+                        );
+                      }
+                      if (filePath) {
+                        const status =
+                          payload.status === "skipped" ||
+                          payload.status === "error" ||
+                          payload.status === "success"
+                            ? (payload.status as StreamFileStatus)
+                            : "success";
+                        const summary =
+                          typeof payload.summary === "string"
+                            ? payload.summary
+                            : undefined;
+                        setStreamStateByFile((previous) => {
+                          const next = new Map(previous);
+                          const current = next.get(filePath) ?? {
+                            lines: [],
+                            status: "pending",
+                            skipReason: null,
+                            summary: null,
+                          };
+                          next.set(filePath, {
+                            ...current,
+                            status,
+                            summary: summary ?? current.summary ?? null,
+                          });
+                          return next;
+                        });
+                      }
+                      break;
+                    case "hunk":
+                      if (DEBUG_LOG) {
+                        console.info("[simple-review][frontend][hunk]", payload);
+                      }
+                      break;
+                    case "line": {
+                      if (DEBUG_LOG) {
+                        console.info("[simple-review][frontend][line]", payload);
+                      }
+                      if (!filePath) {
+                        break;
+                      }
+                      const linePayload = payload.line as
+                        | Record<string, unknown>
+                        | undefined;
+                      if (!linePayload) {
+                        break;
+                      }
+                      const rawScore =
+                        typeof linePayload.scoreNormalized === "number"
+                          ? linePayload.scoreNormalized
+                          : typeof linePayload.score === "number"
+                            ? linePayload.score / 100
+                            : null;
+                      if (rawScore === null || rawScore <= 0) {
+                        break;
+                      }
+                      const normalizedScore = Math.max(0, Math.min(rawScore, 1));
+                      const lineNumber =
+                        typeof linePayload.newLineNumber === "number"
+                          ? linePayload.newLineNumber
+                          : typeof linePayload.oldLineNumber === "number"
+                            ? linePayload.oldLineNumber
+                            : null;
+                      const lineText =
+                        typeof linePayload.diffLine === "string"
+                          ? linePayload.diffLine
+                          : typeof linePayload.codeLine === "string"
+                            ? linePayload.codeLine
+                            : null;
+                      const normalizedText =
+                        typeof lineText === "string"
+                          ? lineText.replace(/\s+/g, " ").trim()
+                          : null;
+                      if (!normalizedText) {
+                        break;
+                      }
+
+                      const reviewLine: ReviewHeatmapLine = {
+                        lineNumber,
+                        lineText,
+                        score: normalizedScore,
+                        reason:
+                          typeof linePayload.shouldReviewWhy === "string"
+                            ? linePayload.shouldReviewWhy
+                            : null,
+                        mostImportantWord:
+                          typeof linePayload.mostImportantWord === "string"
+                            ? linePayload.mostImportantWord
+                            : null,
+                      };
+
+                      setStreamStateByFile((previous) => {
+                        const next = new Map(previous);
+                        const current = next.get(filePath) ?? {
+                          lines: [],
+                          status: "pending",
+                          skipReason: null,
+                          summary: null,
+                        };
+                        const lineKey = `${reviewLine.lineNumber ?? "unknown"}:${
+                          reviewLine.lineText ?? ""
+                        }`;
+                        const filtered = current.lines.filter((line) => {
+                          const existingKey = `${line.lineNumber ?? "unknown"}:${
+                            line.lineText ?? ""
+                          }`;
+                          return existingKey !== lineKey;
+                        });
+                        const updated = [...filtered, reviewLine].sort(
+                          (a, b) => {
+                            const aLine =
+                              a.lineNumber ?? Number.MAX_SAFE_INTEGER;
+                            const bLine =
+                              b.lineNumber ?? Number.MAX_SAFE_INTEGER;
+                            if (aLine !== bLine) {
+                              return aLine - bLine;
+                            }
+                            return (a.lineText ?? "").localeCompare(
+                              b.lineText ?? ""
+                            );
+                          }
+                        );
+                        next.set(filePath, {
+                          ...current,
+                          lines: updated,
+                        });
+                        return next;
+                      });
+                      break;
+                    }
+                    case "complete":
+                      if (DEBUG_LOG) {
+                        console.info(
+                          "[simple-review][frontend][complete]",
+                          payload
+                        );
+                      }
+                      setStreamStateByFile((previous) => {
+                        let changed = false;
+                        const next = new Map(previous);
+                        for (const [path, state] of next.entries()) {
+                          if (state.status === "pending") {
+                            next.set(path, {
+                              ...state,
+                              status: "success",
+                            });
+                            changed = true;
+                          }
+                        }
+                        return changed ? next : previous;
+                      });
+                      break;
+                    case "error":
+                      console.error(
+                        "[simple-review][frontend][error]",
+                        payload
+                      );
+                      break;
+                    default:
+                      console.info("[simple-review][frontend][event]", payload);
+                  }
+                } catch (error) {
+                  console.warn(
+                    "[simple-review][frontend] Failed to parse SSE data",
+                    { data, error }
+                  );
+                }
+              }
+            }
+          }
+
+          if (buffer.trim().length > 0) {
+            console.debug(
+              "[simple-review][frontend] Remaining buffer",
+              buffer
+            );
+          }
+        } catch (error) {
+          if (controller.signal.aborted) {
+            return;
+          }
+          console.error("[simple-review][frontend] Stream failed", error);
+        }
+      })();
     },
     [
-      heatmapModelPreference,
-      pathname,
-      router,
-      searchParams,
-      setHeatmapModelPreference,
-      urlModelValue,
+      normalizedJobType,
+      prNumber,
+      repoFullName,
+      setStreamStateByFile,
     ]
   );
 
   useEffect(() => {
-    if (normalizedJobType !== "pull_request") {
-      return;
-    }
-    if (typeof prNumber !== "number" || Number.isNaN(prNumber)) {
-      return;
-    }
-    if (!repoFullName) {
-      return;
-    }
+    heatmapModelPreferenceRef.current = heatmapModelPreference;
+  }, [heatmapModelPreference]);
 
-    const controller = new AbortController();
-    setStreamStateByFile(new Map());
-    const params = new URLSearchParams({
-      repoFullName,
-      prNumber: String(prNumber),
-    });
-    params.set(HEATMAP_MODEL_QUERY_KEY, heatmapModelPreference);
-
-    (async () => {
-      try {
-        const response = await fetch(
-          `/api/pr-review/simple?${params.toString()}`,
-          {
-            signal: controller.signal,
-          }
-        );
-
-        if (!response.ok) {
-          console.error(
-            "[simple-review][frontend] Failed to start stream",
-            response.status
-          );
-          return;
-        }
-
-        const body = response.body;
-        if (!body) {
-          console.error(
-            "[simple-review][frontend] Response body missing for stream"
-          );
-          return;
-        }
-
-        const reader = body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) {
-            break;
-          }
-          buffer += decoder.decode(value, { stream: true });
-
-          let separatorIndex = buffer.indexOf("\n\n");
-          while (separatorIndex !== -1) {
-            const rawEvent = buffer.slice(0, separatorIndex);
-            buffer = buffer.slice(separatorIndex + 2);
-            separatorIndex = buffer.indexOf("\n\n");
-
-            const lines = rawEvent.split("\n");
-            for (const line of lines) {
-              if (!line.startsWith("data:")) {
-                continue;
-              }
-              const data = line.slice(5).trim();
-              if (data.length === 0) {
-                continue;
-              }
-              try {
-                const payload = JSON.parse(data) as Record<string, unknown>;
-                const type =
-                  typeof payload.type === "string" ? payload.type : "";
-                const filePath =
-                  typeof payload.filePath === "string"
-                    ? payload.filePath
-                    : null;
-
-                switch (type) {
-                  case "status":
-                    if (DEBUG_LOG) {
-                      console.info(
-                        "[simple-review][frontend][status]",
-                        payload
-                      );
-                    }
-                    break;
-                  case "file":
-                    if (DEBUG_LOG) {
-                      console.info("[simple-review][frontend][file]", payload);
-                    }
-                    if (filePath) {
-                      setStreamStateByFile((previous) => {
-                        const next = new Map(previous);
-                        const current = next.get(filePath);
-                        next.set(filePath, {
-                          lines: current?.lines ?? [],
-                          status: "pending",
-                          skipReason: null,
-                          summary: null,
-                        });
-                        return next;
-                      });
-                    }
-                    break;
-                  case "skip":
-                    if (DEBUG_LOG) {
-                      console.info("[simple-review][frontend][skip]", payload);
-                    }
-                    if (filePath) {
-                      setStreamStateByFile((previous) => {
-                        const next = new Map(previous);
-                        const current = next.get(filePath) ?? {
-                          lines: [],
-                          status: "pending",
-                          skipReason: null,
-                          summary: null,
-                        };
-                        next.set(filePath, {
-                          ...current,
-                          skipReason:
-                            typeof payload.reason === "string"
-                              ? payload.reason
-                              : (current.skipReason ?? null),
-                          summary:
-                            typeof payload.reason === "string"
-                              ? payload.reason
-                              : (current.summary ?? null),
-                        });
-                        return next;
-                      });
-                    }
-                    break;
-                  case "file-complete":
-                    if (DEBUG_LOG) {
-                      console.info(
-                        "[simple-review][frontend][file-complete]",
-                        payload
-                      );
-                    }
-                    if (filePath) {
-                      const status =
-                        payload.status === "skipped" ||
-                        payload.status === "error" ||
-                        payload.status === "success"
-                          ? (payload.status as StreamFileStatus)
-                          : "success";
-                      const summary =
-                        typeof payload.summary === "string"
-                          ? payload.summary
-                          : undefined;
-                      setStreamStateByFile((previous) => {
-                        const next = new Map(previous);
-                        const current = next.get(filePath) ?? {
-                          lines: [],
-                          status: "pending",
-                          skipReason: null,
-                          summary: null,
-                        };
-                        next.set(filePath, {
-                          ...current,
-                          status,
-                          summary: summary ?? current.summary ?? null,
-                        });
-                        return next;
-                      });
-                    }
-                    break;
-                  case "hunk":
-                    if (DEBUG_LOG) {
-                      console.info("[simple-review][frontend][hunk]", payload);
-                    }
-                    break;
-                  case "line": {
-                    if (DEBUG_LOG) {
-                      console.info("[simple-review][frontend][line]", payload);
-                    }
-                    if (!filePath) {
-                      break;
-                    }
-                    const linePayload = payload.line as
-                      | Record<string, unknown>
-                      | undefined;
-                    if (!linePayload) {
-                      break;
-                    }
-                    const rawScore =
-                      typeof linePayload.scoreNormalized === "number"
-                        ? linePayload.scoreNormalized
-                        : typeof linePayload.score === "number"
-                          ? linePayload.score / 100
-                          : null;
-                    if (rawScore === null || rawScore <= 0) {
-                      break;
-                    }
-                    const normalizedScore = Math.max(0, Math.min(rawScore, 1));
-                    const lineNumber =
-                      typeof linePayload.newLineNumber === "number"
-                        ? linePayload.newLineNumber
-                        : typeof linePayload.oldLineNumber === "number"
-                          ? linePayload.oldLineNumber
-                          : null;
-                    const lineText =
-                      typeof linePayload.diffLine === "string"
-                        ? linePayload.diffLine
-                        : typeof linePayload.codeLine === "string"
-                          ? linePayload.codeLine
-                          : null;
-                    const normalizedText =
-                      typeof lineText === "string"
-                        ? lineText.replace(/\s+/g, " ").trim()
-                        : null;
-                    if (!normalizedText) {
-                      break;
-                    }
-
-                    const reviewLine: ReviewHeatmapLine = {
-                      lineNumber,
-                      lineText,
-                      score: normalizedScore,
-                      reason:
-                        typeof linePayload.shouldReviewWhy === "string"
-                          ? linePayload.shouldReviewWhy
-                          : null,
-                      mostImportantWord:
-                        typeof linePayload.mostImportantWord === "string"
-                          ? linePayload.mostImportantWord
-                          : null,
-                    };
-
-                    setStreamStateByFile((previous) => {
-                      const next = new Map(previous);
-                      const current = next.get(filePath) ?? {
-                        lines: [],
-                        status: "pending",
-                        skipReason: null,
-                        summary: null,
-                      };
-                      const lineKey = `${reviewLine.lineNumber ?? "unknown"}:${
-                        reviewLine.lineText ?? ""
-                      }`;
-                      const filtered = current.lines.filter((line) => {
-                        const existingKey = `${line.lineNumber ?? "unknown"}:${
-                          line.lineText ?? ""
-                        }`;
-                        return existingKey !== lineKey;
-                      });
-                      const updated = [...filtered, reviewLine].sort((a, b) => {
-                        const aLine = a.lineNumber ?? Number.MAX_SAFE_INTEGER;
-                        const bLine = b.lineNumber ?? Number.MAX_SAFE_INTEGER;
-                        if (aLine !== bLine) {
-                          return aLine - bLine;
-                        }
-                        return (a.lineText ?? "").localeCompare(
-                          b.lineText ?? ""
-                        );
-                      });
-                      next.set(filePath, {
-                        ...current,
-                        lines: updated,
-                      });
-                      return next;
-                    });
-                    break;
-                  }
-                  case "complete":
-                    if (DEBUG_LOG) {
-                      console.info(
-                        "[simple-review][frontend][complete]",
-                        payload
-                      );
-                    }
-                    setStreamStateByFile((previous) => {
-                      let changed = false;
-                      const next = new Map(previous);
-                      for (const [path, state] of next.entries()) {
-                        if (state.status === "pending") {
-                          next.set(path, {
-                            ...state,
-                            status: "success",
-                          });
-                          changed = true;
-                        }
-                      }
-                      return changed ? next : previous;
-                    });
-                    break;
-                  case "error":
-                    console.error("[simple-review][frontend][error]", payload);
-                    break;
-                  default:
-                    console.info("[simple-review][frontend][event]", payload);
-                }
-              } catch (error) {
-                console.warn(
-                  "[simple-review][frontend] Failed to parse SSE data",
-                  { data, error }
-                );
-              }
-            }
-          }
-        }
-
-        if (buffer.trim().length > 0) {
-          console.debug("[simple-review][frontend] Remaining buffer", buffer);
-        }
-      } catch (error) {
-        if (controller.signal.aborted) {
-          return;
-        }
-        console.error("[simple-review][frontend] Stream failed", error);
+  const handleHeatmapModelPreferenceChange = useCallback(
+    (value: HeatmapModelOptionValue) => {
+      if (value === heatmapModelPreference) {
+        return;
       }
-    })();
+      setHeatmapModelPreference(value);
+      fetchCodeReview(value);
+    },
+    [fetchCodeReview, heatmapModelPreference, setHeatmapModelPreference]
+  );
 
-    return () => {
-      controller.abort();
-    };
-  }, [
-    heatmapModelPreference,
-    normalizedJobType,
-    prNumber,
-    repoFullName,
-    setStreamStateByFile,
-  ]);
+  useEffect(() => {
+    if (hasFetchedReviewRef.current) {
+      return;
+    }
+    hasFetchedReviewRef.current = true;
+    fetchCodeReview();
+    // We intentionally only fetch once on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const prQueryArgs = useMemo(
     () =>
