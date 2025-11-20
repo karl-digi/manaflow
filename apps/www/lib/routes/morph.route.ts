@@ -147,7 +147,9 @@ morphRouter.openapi(
           },
         });
         instanceId = instance.id;
-        await instance.setWakeOn(true, true);
+        void (async () => {
+          await instance.setWakeOn(true, true);
+        })();
       } else {
         // Get existing instance
         console.log(`Using existing Morph instance: ${instanceId}`);

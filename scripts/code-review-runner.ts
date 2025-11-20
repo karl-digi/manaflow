@@ -129,7 +129,9 @@ async function main() {
         runId: randomUUID(),
       },
     });
-    await instance.setWakeOn(true, true);
+    void (async () => {
+      await instance.setWakeOn(true, true);
+    })();
 
     const sandboxInstanceId = instance.id;
     const repoName = config.repoFullName.split("/")[1] ?? config.repoFullName;

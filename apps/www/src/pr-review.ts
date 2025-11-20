@@ -334,7 +334,7 @@ async function startMorphInstanceTask(
   console.log(`Starting Morph instance from snapshot ${snapshotId}...`);
   const finishStartInstance = startTiming("start Morph instance");
   try {
-    return await client.instances.start({
+    const instance = await client.instances.start({
       snapshotId,
       ttlSeconds: 60 * 30,
       ttlAction: "pause",
@@ -346,6 +346,10 @@ async function startMorphInstanceTask(
         repo: config.repoFullName,
       },
     });
+    void (async () => {
+      await instance.setWakeOn(true, true);
+    })();
+    return instance;
   } catch (error) {
     const message =
       error instanceof Error ? error.message : String(error ?? "unknown error");
