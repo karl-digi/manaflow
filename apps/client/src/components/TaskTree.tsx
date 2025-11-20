@@ -6,6 +6,10 @@ import {
 } from "@/components/ui/tooltip";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { useArchiveTask } from "@/hooks/useArchiveTask";
+import {
+  useMorphInstancePauseQuery,
+  useResumeMorphWorkspace,
+} from "@/hooks/useMorphWorkspace";
 import { useOpenWithActions } from "@/hooks/useOpenWithActions";
 import { useTaskRename } from "@/hooks/useTaskRename";
 import { isElectron } from "@/lib/electron";
@@ -47,6 +51,7 @@ import {
   Pencil,
   Pin,
   PinOff,
+  Play,
   Plus,
   TerminalSquare,
   Loader2,
@@ -1363,6 +1368,37 @@ function TaskRunTreeInner({
     networking: run.networking,
   });
 
+  const isMorphWorkspace = run.vscode?.provider === "morph";
+  const isStoppedMorphWorkspace =
+    isMorphWorkspace &&
+    run.vscode?.status === "stopped" &&
+    Boolean(run.vscode?.containerName);
+
+  const pauseStatusQuery = useMorphInstancePauseQuery({
+    taskRunId: run._id,
+    teamSlugOrId,
+    enabled: isStoppedMorphWorkspace,
+  });
+
+  const canResumeWorkspace =
+    isStoppedMorphWorkspace && pauseStatusQuery.data?.paused === true;
+
+  const resumeWorkspace = useResumeMorphWorkspace({
+    taskRunId: run._id,
+    teamSlugOrId,
+  });
+
+  const handleResumeWorkspace = useCallback(() => {
+    if (!canResumeWorkspace || resumeWorkspace.isPending) {
+      return;
+    }
+
+    void resumeWorkspace.mutateAsync({
+      path: { taskRunId: run._id },
+      body: { teamSlugOrId },
+    });
+  }, [canResumeWorkspace, resumeWorkspace, run._id, teamSlugOrId]);
+
   const shouldRenderDiffLink = true;
   const shouldRenderBrowserLink = run.vscode?.provider === "morph";
   const shouldRenderTerminalLink = shouldRenderBrowserLink;
@@ -1452,6 +1488,15 @@ function TaskRunTreeInner({
                 >
                   <GitBranch className="w-3.5 h-3.5" />
                   Copy branch name
+                </ContextMenu.Item>
+              ) : null}
+              {canResumeWorkspace ? (
+                <ContextMenu.Item
+                  className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                  onClick={handleResumeWorkspace}
+                >
+                  <Play className="w-3.5 h-3.5" />
+                  {resumeWorkspace.isPending ? "Resuming…" : "Resume workspace"}
                 </ContextMenu.Item>
               ) : null}
               {hasOpenWithActions ? (

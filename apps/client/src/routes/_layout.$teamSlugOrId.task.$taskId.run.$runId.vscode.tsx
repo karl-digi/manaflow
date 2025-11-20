@@ -21,6 +21,7 @@ import {
   useLocalVSCodeServeWebQuery,
 } from "@/queries/local-vscode-serve-web";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
+import { ResumeWorkspaceOverlay } from "@/components/resume-workspace-overlay";
 
 const paramsSchema = z.object({
   taskId: typedZid("tasks"),
@@ -163,6 +164,10 @@ function VSCodeComponent() {
               <WorkspaceLoadingIndicator variant="vscode" status="loading" />
             </div>
           ) : null}
+          <ResumeWorkspaceOverlay
+            taskRun={taskRun}
+            teamSlugOrId={teamSlugOrId}
+          />
         </div>
       </div>
     </div>
