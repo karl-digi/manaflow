@@ -36,6 +36,7 @@ import type * as http from "../http.js";
 import type * as localWorkspaces from "../localWorkspaces.js";
 import type * as migrations from "../migrations.js";
 import type * as screenshots_http from "../screenshots_http.js";
+import type * as seed from "../seed.js";
 import type * as stack from "../stack.js";
 import type * as stack_webhook from "../stack_webhook.js";
 import type * as stack_webhook_actions from "../stack_webhook_actions.js";
@@ -95,6 +96,7 @@ declare const fullApi: ApiFromModules<{
   localWorkspaces: typeof localWorkspaces;
   migrations: typeof migrations;
   screenshots_http: typeof screenshots_http;
+  seed: typeof seed;
   stack: typeof stack;
   stack_webhook: typeof stack_webhook;
   stack_webhook_actions: typeof stack_webhook_actions;
