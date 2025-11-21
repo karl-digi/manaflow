@@ -2,9 +2,9 @@ import { TaskTree } from "@/components/TaskTree";
 import { TaskTreeSkeleton } from "@/components/TaskTreeSkeleton";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { isElectron } from "@/lib/electron";
-import { type Doc } from "@cmux/convex/dataModel";
+import { type Doc, type Id } from "@cmux/convex/dataModel";
 import { api } from "@cmux/convex/api";
-import { useQuery } from "convex/react";
+import { useQuery, useMutation } from "convex/react";
 import type { LinkProps } from "@tanstack/react-router";
 import { Link } from "@tanstack/react-router";
 import { Home, Plus, Server, Settings } from "lucide-react";
@@ -85,6 +85,54 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
 
   // Fetch pinned items
   const pinnedData = useQuery(api.tasks.getPinned, { teamSlugOrId });
+
+  // Mutation for reordering tasks
+  const reorderTasks = useMutation(api.tasks.reorderTasks);
+
+  // State for drag-and-drop
+  const [draggedTaskId, setDraggedTaskId] = useState<Id<"tasks"> | null>(null);
+  const [dragOverTaskId, setDragOverTaskId] = useState<Id<"tasks"> | null>(null);
+
+  const handleDragStart = useCallback((taskId: Id<"tasks">) => {
+    setDraggedTaskId(taskId);
+  }, []);
+
+  const handleDragOver = useCallback((taskId: Id<"tasks">) => {
+    setDragOverTaskId(taskId);
+  }, []);
+
+  const handleDragEnd = useCallback(() => {
+    if (!draggedTaskId || !tasks) {
+      setDraggedTaskId(null);
+      setDragOverTaskId(null);
+      return;
+    }
+
+    const draggedIndex = tasks.findIndex((t) => t._id === draggedTaskId);
+    const targetIndex = dragOverTaskId
+      ? tasks.findIndex((t) => t._id === dragOverTaskId)
+      : -1;
+
+    if (draggedIndex === -1 || targetIndex === -1 || draggedIndex === targetIndex) {
+      setDraggedTaskId(null);
+      setDragOverTaskId(null);
+      return;
+    }
+
+    // Create new order
+    const newTasks = [...tasks];
+    const [draggedTask] = newTasks.splice(draggedIndex, 1);
+    newTasks.splice(targetIndex, 0, draggedTask);
+
+    // Update order in database
+    reorderTasks({
+      teamSlugOrId,
+      taskIds: newTasks.map((t) => t._id),
+    });
+
+    setDraggedTaskId(null);
+    setDragOverTaskId(null);
+  }, [draggedTaskId, dragOverTaskId, tasks, reorderTasks, teamSlugOrId]);
 
   useEffect(() => {
     localStorage.setItem("sidebarWidth", String(width));
@@ -311,6 +359,12 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
                           task={task}
                           defaultExpanded={expandTaskIds?.includes(task._id) ?? false}
                           teamSlugOrId={teamSlugOrId}
+                          draggable
+                          onDragStart={() => handleDragStart(task._id)}
+                          onDragOver={() => handleDragOver(task._id)}
+                          onDragEnd={handleDragEnd}
+                          isDragging={draggedTaskId === task._id}
+                          isDragOver={dragOverTaskId === task._id}
                         />
                       ))}
                       {/* Horizontal divider after pinned items */}
@@ -329,6 +383,12 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
                         task={task}
                         defaultExpanded={expandTaskIds?.includes(task._id) ?? false}
                         teamSlugOrId={teamSlugOrId}
+                        draggable
+                        onDragStart={() => handleDragStart(task._id)}
+                        onDragOver={() => handleDragOver(task._id)}
+                        onDragEnd={handleDragEnd}
+                        isDragging={draggedTaskId === task._id}
+                        isDragOver={dragOverTaskId === task._id}
                       />
                     ))}
                 </>

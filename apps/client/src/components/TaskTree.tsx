@@ -114,6 +114,13 @@ interface TaskTreeProps {
   // When true, expand the task node on initial mount
   defaultExpanded?: boolean;
   teamSlugOrId: string;
+  // Drag and drop props
+  draggable?: boolean;
+  onDragStart?: () => void;
+  onDragOver?: () => void;
+  onDragEnd?: () => void;
+  isDragging?: boolean;
+  isDragOver?: boolean;
 }
 
 interface SidebarArchiveOverlayProps {
@@ -318,6 +325,12 @@ function TaskTreeInner({
   level = 0,
   defaultExpanded = false,
   teamSlugOrId,
+  draggable = false,
+  onDragStart,
+  onDragOver,
+  onDragEnd,
+  isDragging = false,
+  isDragOver = false,
 }: TaskTreeProps) {
   // Get the current route to determine if this task is selected
   const location = useLocation();
@@ -781,7 +794,33 @@ function TaskTreeInner({
 
   return (
     <TaskRunExpansionContext.Provider value={expansionContextValue}>
-      <div className="select-none flex flex-col">
+      <div
+        className="select-none flex flex-col"
+        draggable={draggable}
+        onDragStart={(e) => {
+          if (draggable && onDragStart) {
+            e.stopPropagation();
+            onDragStart();
+          }
+        }}
+        onDragOver={(e) => {
+          if (draggable && onDragOver) {
+            e.preventDefault();
+            e.stopPropagation();
+            onDragOver();
+          }
+        }}
+        onDragEnd={(e) => {
+          if (draggable && onDragEnd) {
+            e.stopPropagation();
+            onDragEnd();
+          }
+        }}
+        style={{
+          opacity: isDragging ? 0.5 : 1,
+          cursor: draggable ? "move" : "default",
+        }}
+      >
         <ContextMenu.Root>
           <ContextMenu.Trigger>
             <Link
@@ -823,7 +862,10 @@ function TaskTreeInner({
                 titleClassName={taskTitleClassName}
                 secondary={taskSecondary || undefined}
                 meta={taskMetaIcon || undefined}
-                className={clsx(isRenaming && "pr-2")}
+                className={clsx(
+                  isRenaming && "pr-2",
+                  isDragOver && "border-t-2 border-blue-500"
+                )}
               />
             </Link>
           </ContextMenu.Trigger>

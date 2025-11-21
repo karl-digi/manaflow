@@ -32,9 +32,17 @@ export const get = authQuery({
       );
     }
 
-    // Note: order by createdAt desc, fallback to insertion order if not present
+    // Note: order by sortOrder, then by createdAt desc
     const results = await q.collect();
-    return results.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+    return results.sort((a, b) => {
+      // Sort by sortOrder first (lower numbers first), then by createdAt
+      const sortOrderA = a.sortOrder ?? Number.MAX_SAFE_INTEGER;
+      const sortOrderB = b.sortOrder ?? Number.MAX_SAFE_INTEGER;
+      if (sortOrderA !== sortOrderB) {
+        return sortOrderA - sortOrderB;
+      }
+      return (b.createdAt ?? 0) - (a.createdAt ?? 0);
+    });
   },
 });
 
@@ -55,7 +63,15 @@ export const getPinned = authQuery({
       .filter((q) => q.neq(q.field("isArchived"), true))
       .collect();
 
-    return pinnedTasks.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+    return pinnedTasks.sort((a, b) => {
+      // Sort by sortOrder first (lower numbers first), then by updatedAt
+      const sortOrderA = a.sortOrder ?? Number.MAX_SAFE_INTEGER;
+      const sortOrderB = b.sortOrder ?? Number.MAX_SAFE_INTEGER;
+      if (sortOrderA !== sortOrderB) {
+        return sortOrderA - sortOrderB;
+      }
+      return (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
+    });
   },
 });
 
@@ -822,5 +838,29 @@ export const getByIdInternal = internalQuery({
   args: { id: v.id("tasks") },
   handler: async (ctx, args) => {
     return await ctx.db.get(args.id);
+  },
+});
+
+export const reorderTasks = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    taskIds: v.array(v.id("tasks")),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+
+    // Update sortOrder for each task based on its position in the array
+    await Promise.all(
+      args.taskIds.map(async (taskId, index) => {
+        const task = await ctx.db.get(taskId);
+        if (task && task.teamId === teamId && task.userId === userId) {
+          await ctx.db.patch(taskId, {
+            sortOrder: index,
+            updatedAt: Date.now(),
+          });
+        }
+      })
+    );
   },
 });
