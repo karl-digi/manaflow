@@ -25,6 +25,7 @@ import {
 } from "@/lib/routes/index";
 import { authAnonymousRouter } from "@/lib/routes/auth.anonymous.route";
 import { stackServerApp } from "@/lib/utils/stack";
+import { setSentryUserContext } from "@/lib/utils/sentry-context";
 import { swaggerUI } from "@hono/swagger-ui";
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { cors } from "hono/cors";
@@ -75,6 +76,17 @@ app.use(
     allowHeaders: ["x-stack-auth", "content-type", "authorization"],
   }),
 );
+
+// Sentry user context middleware - set user context for all requests
+app.use("*", async (c, next) => {
+  try {
+    await setSentryUserContext(c.req.raw);
+  } catch (error) {
+    // Don't block requests if Sentry context fails
+    console.error("Failed to set Sentry user context:", error);
+  }
+  return next();
+});
 
 app.get("/", (c) => {
   return c.text("cmux!");

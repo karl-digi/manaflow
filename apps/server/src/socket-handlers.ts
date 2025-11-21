@@ -45,6 +45,10 @@ import { getRustTime } from "./native/core";
 import type { RealtimeServer } from "./realtime";
 import { RepositoryManager } from "./repositoryManager";
 import type { GitRepoInfo } from "./server";
+import {
+  setSentryContextFromAuthToken,
+  setSentryContextFromAuthJson,
+} from "./sentry";
 import { getPRTitleFromTaskDescription } from "./utils/branchNameGenerator";
 import { getConvex } from "./utils/convexClient";
 import { ensureRunWorktreeAndBranch } from "./utils/ensureRunWorktree";
@@ -221,6 +225,17 @@ export function setupSocketHandlers(
       return;
     }
 
+    // Set Sentry context from initial auth
+    try {
+      if (currentAuthHeaderJson) {
+        setSentryContextFromAuthJson(currentAuthHeaderJson);
+      } else if (currentAuthToken) {
+        setSentryContextFromAuthToken(currentAuthToken);
+      }
+    } catch (error) {
+      serverLogger.error("Failed to set Sentry context on connection:", error);
+    }
+
     socket.use((_, next) => {
       runWithAuth(currentAuthToken, currentAuthHeaderJson, () => next());
     });
@@ -235,6 +250,18 @@ export function setupSocketHandlers(
       const nextAuthJson = data?.authJson;
       currentAuthToken = nextToken;
       currentAuthHeaderJson = nextAuthJson;
+
+      // Update Sentry context when authentication changes
+      try {
+        if (currentAuthHeaderJson) {
+          setSentryContextFromAuthJson(currentAuthHeaderJson);
+        } else if (currentAuthToken) {
+          setSentryContextFromAuthToken(currentAuthToken);
+        }
+      } catch (error) {
+        serverLogger.error("Failed to set Sentry context on re-auth:", error);
+      }
+
       runWithAuth(currentAuthToken, currentAuthHeaderJson, () => {
         callback?.({ ok: true });
       });

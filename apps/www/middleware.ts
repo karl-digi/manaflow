@@ -1,10 +1,19 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { env } from "@/lib/utils/www-env";
+import { setSentryUserContext } from "@/lib/utils/sentry-context";
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const hostname = request.nextUrl.hostname;
+
+  // Set Sentry user context for all requests (best-effort, don't block on errors)
+  try {
+    await setSentryUserContext(request);
+  } catch (error) {
+    // Don't block the request if Sentry context fails
+    console.error("Failed to set Sentry user context in middleware:", error);
+  }
 
   if (hostname === "0github.com" && pathname === "/") {
     return NextResponse.rewrite(new URL("/heatmap", request.url));

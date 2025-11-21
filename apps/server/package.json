@@ -60,6 +60,7 @@
     "@cmux/www-openapi-client": "workspace:*",
     "@daytonaio/sdk": "^0.22.1",
     "@octokit/auth-app": "^6.1.4",
+    "@sentry/node": "^10.26.0",
     "@t3-oss/env-core": "^0.13.8",
     "@xterm/addon-serialize": "^0.13.0",
     "@xterm/headless": "^5.5.0",
