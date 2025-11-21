@@ -230,6 +230,9 @@ sandboxesRouter.openapi(
           ...(body.metadata || {}),
         },
       });
+      void (async () => {
+        await instance.setWakeOn(true, true);
+      })();
 
       const exposed = instance.networking.httpServices;
       const vscodeService = exposed.find((s) => s.port === 39378);
