@@ -1857,6 +1857,9 @@ async function forwardHttp2StreamToHttp2(
     if (key.startsWith(":") || HOP_BY_HOP_HEADERS.has(key)) {
       delete upstreamHeaders[key];
     }
+    if (key === "host" && target.cmuxProxy) {
+      delete upstreamHeaders[key];
+    }
   }
   
   // Re-add pseudo headers
@@ -1908,6 +1911,7 @@ async function forwardHttp2StreamToHttp1(
     const headers: Record<string, string> = {};
     for (const [key, value] of Object.entries(clientHeaders)) {
         if (key.startsWith(":") || HOP_BY_HOP_HEADERS.has(key)) continue;
+        if (key === "host" && target.cmuxProxy) continue;
         if (Array.isArray(value)) headers[key] = value.join(", ");
         else if (value) headers[key] = value;
     }
