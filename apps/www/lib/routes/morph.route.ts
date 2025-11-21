@@ -82,7 +82,7 @@ morphRouter.openapi(
     summary: "Resume the Morph instance backing a task run",
     request: {
       params: z.object({
-        taskRunId: z.string(),
+        taskRunId: typedZid("taskRuns"),
       }),
       body: {
         content: {
@@ -123,7 +123,7 @@ morphRouter.openapi(
 
     const taskRun = await convex.query(api.taskRuns.get, {
       teamSlugOrId,
-      id: taskRunId as Id<"taskRuns">,
+      id: taskRunId,
     });
 
     if (!taskRun) {
@@ -141,7 +141,11 @@ morphRouter.openapi(
       const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
       const instance = await client.instances.get({ instanceId });
       void (async () => {
-        await instance.setWakeOn(true, true);
+        try {
+          await instance.setWakeOn(true, true);
+        } catch (error) {
+          console.error("[morph.resume-task-run] Failed to set wake on", error);
+        }
       })();
 
       const metadataTeamId = (
