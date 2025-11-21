@@ -13,4 +13,7 @@ export * from "./utils/reserved-cmux-ports";
 export * from "./utils/validate-exposed-ports";
 export * from "./vscode-schemas";
 export * from "./screenshots/types";
+export * from "./json";
+export * from "./acp/token";
+export * from "./acp/schemas";
 // Note: worker-schemas is excluded because it imports agentConfig which has Node.js dependencies

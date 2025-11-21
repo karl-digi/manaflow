@@ -43,6 +43,7 @@ import { runWorkerExec } from "./execRunner";
 import { FileWatcher, computeGitDiff, getFileWithDiff } from "./fileWatcher";
 import { log } from "./logger";
 import { startScreenshotCollection } from "./screenshotCollector/startScreenshotCollection";
+import { startOpencodeAcpSession } from "./acp/opencodeRunner";
 
 const execAsync = promisify(exec);
 
@@ -56,6 +57,7 @@ const CONTAINER_VERSION = process.env.CONTAINER_VERSION || "0.0.1";
 
 // Create Express app
 const app = express();
+app.use(express.json({ limit: "5mb" }));
 
 // Health check endpoint
 app.get("/health", (_req, res) => {
@@ -123,6 +125,47 @@ app.post("/upload-image", upload.single("image"), async (req, res) => {
     log("ERROR", "Failed to upload image", error);
     res.status(500).json({
       error: error instanceof Error ? error.message : "Upload failed",
+    });
+  }
+});
+
+app.post("/acp/opencode", async (req, res) => {
+  const tokenInBody =
+    req.body && typeof req.body.token === "string" ? req.body.token : undefined;
+  const token =
+    tokenInBody ??
+    (typeof process.env.CMUX_TASK_RUN_JWT === "string"
+      ? process.env.CMUX_TASK_RUN_JWT
+      : "");
+  if (!token) {
+    res.status(400).json({ error: "Missing CMUX task run token" });
+    return;
+  }
+  const prompt =
+    req.body && typeof req.body.prompt === "string"
+      ? req.body.prompt
+      : undefined;
+  const convexUrl =
+    (req.body && typeof req.body.convexUrl === "string"
+      ? req.body.convexUrl
+      : undefined) ||
+    process.env.NEXT_PUBLIC_CONVEX_URL ||
+    process.env.CONVEX_URL;
+  try {
+    const result = await startOpencodeAcpSession({
+      prompt,
+      token,
+      convexUrl,
+    });
+    res.json({
+      ok: true,
+      threadId: result.threadId,
+      sessionId: result.sessionId,
+      stopReason: result.stopReason,
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: error instanceof Error ? error.message : String(error),
     });
   }
 });

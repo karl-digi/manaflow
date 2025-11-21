@@ -623,6 +623,75 @@ export type WorkspaceConfigBody = {
     envVarsContent?: string;
 };
 
+export type ListAcpThreadsResponse = Array<{
+    _id: string;
+    provider: string;
+    status: string;
+    sessionId?: string | null;
+    title?: string | null;
+    createdAt: number;
+    updatedAt: number;
+    lastStopReason?: string | null;
+    errorMessage?: string | null;
+}>;
+
+export type AcpBadRequestResponse = {
+    code: number;
+    message: string;
+};
+
+export type AcpUnauthorizedResponse = {
+    code: number;
+    message: string;
+};
+
+export type AcpErrorResponse = {
+    code: number;
+    message: string;
+};
+
+export type CreateAcpThreadResponse = {
+    threadId: string;
+};
+
+export type AcpNewUnauthorizedResponse = {
+    code: number;
+    message: string;
+};
+
+export type AcpNewErrorResponse = {
+    code: number;
+    message: string;
+};
+
+export type CreateAcpThreadRequest = {
+    teamSlugOrId: string;
+    provider: string;
+    title?: string;
+};
+
+export type StartAcpThreadResponse = {
+    ok: boolean;
+    threadId: string;
+};
+
+export type AcpStartUnauthorizedResponse = {
+    code: number;
+    message: string;
+};
+
+export type AcpStartErrorResponse = {
+    code: number;
+    message: string;
+};
+
+export type StartAcpThreadRequest = {
+    teamSlugOrId: string;
+    threadId: string;
+    workerUrl?: string;
+    prompt?: string;
+};
+
 export type GetApiHealthData = {
     body?: never;
     path?: never;
@@ -2284,6 +2353,100 @@ export type PostApiWorkspaceConfigsResponses = {
 };
 
 export type PostApiWorkspaceConfigsResponse = PostApiWorkspaceConfigsResponses[keyof PostApiWorkspaceConfigsResponses];
+
+export type GetApiAcpData = {
+    body?: never;
+    path?: never;
+    query?: {
+        teamSlugOrId?: string;
+        limit?: number;
+    };
+    url: '/api/acp';
+};
+
+export type GetApiAcpErrors = {
+    /**
+     * Missing team context
+     */
+    400: AcpBadRequestResponse;
+    /**
+     * Unauthorized
+     */
+    401: AcpUnauthorizedResponse;
+    /**
+     * Failed to load threads
+     */
+    500: AcpErrorResponse;
+};
+
+export type GetApiAcpError = GetApiAcpErrors[keyof GetApiAcpErrors];
+
+export type GetApiAcpResponses = {
+    /**
+     * Threads
+     */
+    200: ListAcpThreadsResponse;
+};
+
+export type GetApiAcpResponse = GetApiAcpResponses[keyof GetApiAcpResponses];
+
+export type PostApiAcpNewData = {
+    body: CreateAcpThreadRequest;
+    path?: never;
+    query?: never;
+    url: '/api/acp/new';
+};
+
+export type PostApiAcpNewErrors = {
+    /**
+     * Unauthorized
+     */
+    401: AcpNewUnauthorizedResponse;
+    /**
+     * Failed to create thread
+     */
+    500: AcpNewErrorResponse;
+};
+
+export type PostApiAcpNewError = PostApiAcpNewErrors[keyof PostApiAcpNewErrors];
+
+export type PostApiAcpNewResponses = {
+    /**
+     * Thread created
+     */
+    200: CreateAcpThreadResponse;
+};
+
+export type PostApiAcpNewResponse = PostApiAcpNewResponses[keyof PostApiAcpNewResponses];
+
+export type PostApiAcpStartData = {
+    body: StartAcpThreadRequest;
+    path?: never;
+    query?: never;
+    url: '/api/acp/start';
+};
+
+export type PostApiAcpStartErrors = {
+    /**
+     * Unauthorized
+     */
+    401: AcpStartUnauthorizedResponse;
+    /**
+     * Failed to start ACP
+     */
+    500: AcpStartErrorResponse;
+};
+
+export type PostApiAcpStartError = PostApiAcpStartErrors[keyof PostApiAcpStartErrors];
+
+export type PostApiAcpStartResponses = {
+    /**
+     * Started
+     */
+    200: StartAcpThreadResponse;
+};
+
+export type PostApiAcpStartResponse = PostApiAcpStartResponses[keyof PostApiAcpStartResponses];
 
 export type ClientOptions = {
     baseUrl: `${string}://${string}` | (string & {});

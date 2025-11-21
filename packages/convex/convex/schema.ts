@@ -48,6 +48,49 @@ const convexSchema = defineSchema({
     .index("by_user", ["userId"]) // all permissions for a user
     .index("by_team", ["teamId"]) // all permissions in a team
     .index("by_team_user_perm", ["teamId", "userId", "permissionId"]),
+  acpThreads: defineTable({
+    teamId: v.string(),
+    userId: v.string(),
+    provider: v.string(), // e.g., "opencode"
+    sessionId: v.optional(v.string()),
+    title: v.optional(v.string()),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("running"),
+      v.literal("completed"),
+      v.literal("error")
+    ),
+    lastStopReason: v.optional(v.string()),
+    errorMessage: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_team", ["teamId", "createdAt"])
+    .index("by_session", ["sessionId"]),
+  acpMessages: defineTable({
+    threadId: v.id("acpThreads"),
+    teamId: v.string(),
+    userId: v.string(),
+    provider: v.string(),
+    role: v.union(
+      v.literal("user"),
+      v.literal("agent"),
+      v.literal("tool"),
+      v.literal("system")
+    ),
+    kind: v.union(
+      v.literal("prompt"),
+      v.literal("update"),
+      v.literal("stop"),
+      v.literal("error")
+    ),
+    sessionUpdateType: v.optional(v.string()),
+    sequence: v.number(),
+    content: v.any(),
+    createdAt: v.number(),
+  })
+    .index("by_thread", ["threadId", "sequence"])
+    .index("by_team", ["teamId", "createdAt"]),
   // Stack user directory
   users: defineTable({
     userId: v.string(),

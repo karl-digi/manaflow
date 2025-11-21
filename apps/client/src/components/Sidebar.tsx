@@ -7,7 +7,7 @@ import { api } from "@cmux/convex/api";
 import { useQuery } from "convex/react";
 import type { LinkProps } from "@tanstack/react-router";
 import { Link } from "@tanstack/react-router";
-import { Home, Plus, Server, Settings } from "lucide-react";
+import { Home, MessageSquare, Plus, Server, Settings } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -52,6 +52,12 @@ const navItems: SidebarNavItem[] = [
     },
     exact: true,
     icon: Server,
+  },
+  {
+    label: "ACP",
+    to: "/$teamSlugOrId/acp",
+    exact: true,
+    icon: MessageSquare,
   },
   {
     label: "Settings",

@@ -1371,7 +1371,7 @@ async def task_install_global_cli(ctx: TaskContext) -> None:
     cmd = textwrap.dedent(
         """
         bun add -g @openai/codex@0.50.0 @anthropic-ai/claude-code@2.0.27 \
-          @google/gemini-cli@0.1.21 opencode-ai@0.6.4 codebuff \
+          @google/gemini-cli@0.1.21 opencode-ai@1.0.78 codebuff \
           @devcontainers/cli @sourcegraph/amp
         """
     )

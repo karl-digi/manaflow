@@ -683,7 +683,7 @@ RUN curl -fsSL https://bun.sh/install | bash && \
 ENV PATH="/usr/local/bin:$PATH"
 
 RUN --mount=type=cache,target=/root/.bun/install/cache \
-  bun add -g @openai/codex@0.50.0 @anthropic-ai/claude-code@2.0.27 @google/gemini-cli@0.1.21 opencode-ai@0.6.4 codebuff @devcontainers/cli @sourcegraph/amp
+  bun add -g @openai/codex@0.50.0 @anthropic-ai/claude-code@2.0.27 @google/gemini-cli@0.1.21 opencode-ai@1.0.78 codebuff @devcontainers/cli @sourcegraph/amp
 
 # Install cursor cli
 RUN curl https://cursor.com/install -fsS | bash

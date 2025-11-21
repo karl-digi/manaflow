@@ -11,6 +11,7 @@ import {
   codeReviewFileCallback,
   codeReviewJobCallback,
 } from "./codeReview_http";
+import { ingest as acpIngest } from "./acp_http";
 import { githubSetup } from "./github_setup";
 import { githubWebhook } from "./github_webhook";
 import { reportEnvironmentError } from "./taskRuns_http";
@@ -58,6 +59,12 @@ http.route({
   path: "/api/crown/complete",
   method: "POST",
   handler: crownWorkerComplete,
+});
+
+http.route({
+  path: "/api/acp/ingest",
+  method: "POST",
+  handler: acpIngest,
 });
 
 http.route({

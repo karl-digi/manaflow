@@ -8,6 +8,8 @@
  * @module
  */
 
+import type * as acp from "../acp.js";
+import type * as acp_http from "../acp_http.js";
 import type * as apiKeys from "../apiKeys.js";
 import type * as backfill from "../backfill.js";
 import type * as codeReview from "../codeReview.js";
@@ -67,6 +69,8 @@ import type {
  * ```
  */
 declare const fullApi: ApiFromModules<{
+  acp: typeof acp;
+  acp_http: typeof acp_http;
   apiKeys: typeof apiKeys;
   backfill: typeof backfill;
   codeReview: typeof codeReview;

@@ -14,6 +14,7 @@ import {
   codeReviewRouter,
   devServerRouter,
   environmentsRouter,
+  acpRouter,
   githubInstallStateRouter,
   healthRouter,
   morphRouter,
@@ -122,6 +123,7 @@ app.route("/", teamsRouter);
 app.route("/", branchRouter);
 app.route("/", codeReviewRouter);
 app.route("/", workspaceConfigsRouter);
+app.route("/", acpRouter);
 
 // OpenAPI documentation
 app.doc("/doc", {
