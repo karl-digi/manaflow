@@ -233,8 +233,11 @@ jobs:
             temp_dir="$(mktemp -d)"
           fi
           cargo_home="$temp_dir/cargo-${GITHUB_RUN_ID}-${GITHUB_JOB}"
+          cargo_target_dir="$temp_dir/cargo-target-${GITHUB_RUN_ID}-${GITHUB_JOB}"
           mkdir -p "$cargo_home/bin"
+          mkdir -p "$cargo_target_dir"
           echo "CARGO_HOME=$cargo_home" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_DIR=$cargo_target_dir" >> "$GITHUB_ENV"
           echo "RUSTUP_HOME=$cargo_home" >> "$GITHUB_ENV"
           echo "PATH=$cargo_home/bin:$PATH" >> "$GITHUB_ENV"
       - name: Configure Bun install dir
@@ -341,8 +344,11 @@ jobs:
             temp_dir="$(mktemp -d)"
           fi
           cargo_home="$temp_dir/cargo-${GITHUB_RUN_ID}-${GITHUB_JOB}"
+          cargo_target_dir="$temp_dir/cargo-target-${GITHUB_RUN_ID}-${GITHUB_JOB}"
           mkdir -p "$cargo_home/bin"
+          mkdir -p "$cargo_target_dir"
           echo "CARGO_HOME=$cargo_home" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_DIR=$cargo_target_dir" >> "$GITHUB_ENV"
           echo "RUSTUP_HOME=$cargo_home" >> "$GITHUB_ENV"
           echo "PATH=$cargo_home/bin:$PATH" >> "$GITHUB_ENV"
 
