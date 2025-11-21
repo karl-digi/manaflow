@@ -33,6 +33,7 @@ import sys
 import tarfile
 import tempfile
 import textwrap
+import traceback
 import time
 import typing as t
 import urllib.error
@@ -641,7 +642,7 @@ def send_macos_notification(console: Console, title: str, message: str) -> None:
         return
     if shutil.which("osascript") is None:
         return
-    script = f"display notification {json.dumps(message)} with title {json.dumps(title)}"
+    script = f"display notification {json.dumps(message, ensure_ascii=False)} with title {json.dumps(title, ensure_ascii=False)}"
     try:
         subprocess.run(["osascript", "-e", script], check=False)
     except Exception as exc:  # noqa: BLE001
@@ -655,7 +656,7 @@ def send_scary_notification(message: str) -> None:
         return
     script = textwrap.dedent(
         f"""
-        display notification {json.dumps(message)} with title "cmux snapshot failed"
+        display notification {json.dumps(message, ensure_ascii=False)} with title "cmux snapshot failed"
         """
     ).strip()
     try:
@@ -3054,6 +3055,7 @@ def main() -> None:
     try:
         asyncio.run(provision_and_snapshot(args))
     except Exception as exc:  # noqa: BLE001
+        traceback.print_exc()
         send_scary_notification(f"Snapshot run failed: {exc}")
         raise
 

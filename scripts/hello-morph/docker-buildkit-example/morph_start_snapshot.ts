@@ -6,6 +6,9 @@ const client = new MorphCloudClient();
 const instance = await client.instances.start({
   snapshotId: "snapshot_r9jerhal",
 });
+void (async () => {
+  await instance.setWakeOn(true, true);
+})();
 
 console.log(`Created instance: ${instance.id}`);
 

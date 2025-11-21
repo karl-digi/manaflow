@@ -169,6 +169,9 @@ devServerRouter.openapi(startDevServerRoute, async (c) => {
         branch: body.branch || "main",
       },
     });
+    void (async () => {
+      await instance.setWakeOn(true, true);
+    })();
 
     console.log(`Created dev server instance: ${instance.id}`);
 
