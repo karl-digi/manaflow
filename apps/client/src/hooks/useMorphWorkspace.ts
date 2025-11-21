@@ -1,4 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { useQuery as useConvexQuery } from "convex/react";
 import {
   postApiMorphTaskRunsByTaskRunIdIsPaused,
   type Options,
@@ -8,15 +9,17 @@ import {
 import { postApiMorphTaskRunsByTaskRunIdResumeMutation } from "@cmux/www-openapi-client/react-query";
 import { toast } from "sonner";
 import { queryClient } from "@/query-client";
+import { api } from "@cmux/convex/api";
+import { type Id } from "@cmux/convex/dataModel";
 
 interface MorphWorkspaceQueryArgs {
-  taskRunId: string;
+  taskRunId: Id<"taskRuns">;
   teamSlugOrId: string;
   enabled?: boolean;
 }
 
 interface UseResumeMorphWorkspaceArgs {
-  taskRunId: string;
+  taskRunId: Id<"taskRuns">;
   teamSlugOrId: string;
   onSuccess?: () => void;
   onError?: (error: unknown) => void;
@@ -31,7 +34,13 @@ export function useMorphInstancePauseQuery({
   teamSlugOrId,
   enabled,
 }: MorphWorkspaceQueryArgs) {
+  const taskRun = useConvexQuery(api.taskRuns.get, {
+    teamSlugOrId,
+    id: taskRunId,
+  });
+  const canResume = taskRun?.vscode?.provider === "morph";
   return useQuery({
+    enabled: canResume && enabled,
     queryKey: morphPauseQueryKey(taskRunId, teamSlugOrId),
     queryFn: async ({ signal }) => {
       const { data } = await postApiMorphTaskRunsByTaskRunIdIsPaused({
@@ -46,7 +55,6 @@ export function useMorphInstancePauseQuery({
       });
       return data;
     },
-    enabled,
   });
 }
 

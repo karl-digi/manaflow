@@ -1396,8 +1396,6 @@ function TaskRunTreeInner({
     teamSlugOrId,
   });
 
-  const canResumeWorkspace = run.vscode?.provider === "morph";
-
   const handleResumeWorkspace = useCallback(() => {
     if (resumeWorkspace.isPending) {
       return;
@@ -1500,7 +1498,7 @@ function TaskRunTreeInner({
                   Copy branch name
                 </ContextMenu.Item>
               ) : null}
-              {canResumeWorkspace ? (
+              {run.vscode?.provider === "morph" ? (
                 <ContextMenu.Item
                   className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
                   onClick={handleResumeWorkspace}

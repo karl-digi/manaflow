@@ -164,10 +164,12 @@ function VSCodeComponent() {
               <WorkspaceLoadingIndicator variant="vscode" status="loading" />
             </div>
           ) : null}
-          <ResumeWorkspaceOverlay
-            taskRun={taskRun}
-            teamSlugOrId={teamSlugOrId}
-          />
+          {taskRun ? (
+            <ResumeWorkspaceOverlay
+              taskRun={taskRun}
+              teamSlugOrId={teamSlugOrId}
+            />
+          ) : null}
         </div>
       </div>
     </div>

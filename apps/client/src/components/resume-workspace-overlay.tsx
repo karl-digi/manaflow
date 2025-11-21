@@ -8,7 +8,7 @@ import {
 } from "@/hooks/useMorphWorkspace";
 
 interface ResumeWorkspaceOverlayProps {
-  taskRun: Doc<"taskRuns"> | null | undefined;
+  taskRun: Doc<"taskRuns">;
   teamSlugOrId: string;
   className?: string;
   onResumed?: () => void;
@@ -20,7 +20,7 @@ export function ResumeWorkspaceOverlay({
   className,
   onResumed,
 }: ResumeWorkspaceOverlayProps) {
-  const taskRunId = taskRun?._id ?? "";
+  const taskRunId = taskRun._id;
 
   const pauseStatusQuery = useMorphInstancePauseQuery({
     taskRunId,
