@@ -3,7 +3,7 @@ set timeout 10
 
 expect {
     "Connected to sandbox shell" {
-        send "ls\r"
+        send "pwd\r"
         expect {
             "nsenter: cannot open /workspace" {
                 puts "Reproduced nsenter error"
@@ -13,12 +13,12 @@ expect {
                 puts "Reproduced shell-init error"
                 exit 1
             }
-            "bin" {
-                puts "Success: Listed directory"
+            "/workspace" {
+                puts "Success: In workspace"
                 exit 0
             }
             timeout {
-                puts "Timeout waiting for ls output"
+                puts "Timeout waiting for pwd output"
                 exit 1
             }
         }

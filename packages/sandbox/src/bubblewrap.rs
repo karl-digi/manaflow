@@ -76,6 +76,8 @@ fn nsenter_args(pid: u32, workdir: Option<&str>, command: &[String]) -> Vec<Stri
 
     if let Some(dir) = workdir {
         args.push(format!("--wd={}", dir));
+    } else {
+        args.push("--wd".to_string());
     }
 
     args.push("--".to_string());
@@ -762,12 +764,14 @@ mod tests {
         let args = nsenter_args(123, None, &["ls".to_string()]);
         assert!(args.contains(&"--target".to_string()));
         assert!(args.contains(&"123".to_string()));
-        assert!(!args.iter().any(|s| s.starts_with("--wd=")));
+        assert!(args.contains(&"--wd".to_string()));
 
-        // Verify structure: --target 123 ... -- ls
+        // Verify structure: --target 123 ... --wd -- ls
+        let wd_idx = args.iter().position(|s| s == "--wd").unwrap();
         let double_dash_idx = args.iter().position(|s| s == "--").unwrap();
         let ls_idx = args.iter().position(|s| s == "ls").unwrap();
 
+        assert!(wd_idx < double_dash_idx);
         assert!(double_dash_idx < ls_idx);
     }
 
