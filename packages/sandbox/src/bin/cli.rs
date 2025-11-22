@@ -33,11 +33,10 @@ enum Command {
     Openapi,
 
     /// List known sandboxes (alias for 'sandboxes list')
-    #[command(alias = "ls")]
     Ls,
 
     /// Attach to a shell in the sandbox (SSH-like)
-    #[command(alias = "a", alias = "attach")]
+    #[command(alias = "a")]
     Attach {
         /// Sandbox ID or index (optional, defaults to last connected)
         id: Option<String>,

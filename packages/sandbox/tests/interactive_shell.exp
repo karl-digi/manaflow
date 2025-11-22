@@ -1,0 +1,35 @@
+spawn cmux new
+set timeout 10
+
+expect {
+    "Connected to sandbox shell" {
+        send "ls\r"
+        expect {
+            "nsenter: cannot open /workspace" {
+                puts "Reproduced nsenter error"
+                exit 1
+            }
+            "shell-init: error retrieving current directory" {
+                puts "Reproduced shell-init error"
+                exit 1
+            }
+            "bin" {
+                puts "Success: Listed directory"
+                exit 0
+            }
+            timeout {
+                puts "Timeout waiting for ls output"
+                exit 1
+            }
+        }
+    }
+    timeout {
+        puts "Timeout waiting for connection"
+        exit 1
+    }
+    eof {
+        puts "Process exited unexpectedly"
+        exit 1
+    }
+}
+

@@ -76,8 +76,6 @@ fn nsenter_args(pid: u32, workdir: Option<&str>, command: &[String]) -> Vec<Stri
 
     if let Some(dir) = workdir {
         args.push(format!("--wd={}", dir));
-    } else {
-        args.push("--wd=/workspace".to_string());
     }
 
     args.push("--".to_string());
@@ -185,15 +183,16 @@ impl BubblewrapService {
             "--unshare-pid",
             "--unshare-uts",
             "--unshare-ipc",
-            "--bind",
-            "/",
-            "/",
             "--dev",
             "/dev",
             "--proc",
             "/proc",
             "--tmpfs",
             "/tmp",
+            "--tmpfs",
+            "/var",
+            "--tmpfs",
+            "/run",
             "--bind",
             &workspace_str,
             "/workspace",
@@ -204,6 +203,25 @@ impl BubblewrapService {
             "--json-status-fd",
             "1",
         ]);
+
+        for path_str in ["/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc"] {
+            let path = Path::new(path_str);
+            if !path.exists() {
+                continue;
+            }
+
+            match fs::symlink_metadata(path).await {
+                Ok(meta) if meta.file_type().is_symlink() => {
+                    if let Ok(target) = fs::read_link(path).await {
+                        command.args(["--symlink", &target.to_string_lossy(), path_str]);
+                    }
+                }
+                Ok(_) => {
+                    command.args(["--ro-bind", path_str, path_str]);
+                }
+                Err(_) => {}
+            }
+        }
 
         for path in &request.read_only_paths {
             command.args(["--ro-bind", path, path]);
@@ -744,14 +762,12 @@ mod tests {
         let args = nsenter_args(123, None, &["ls".to_string()]);
         assert!(args.contains(&"--target".to_string()));
         assert!(args.contains(&"123".to_string()));
-        assert!(args.contains(&"--wd=/workspace".to_string()));
+        assert!(!args.iter().any(|s| s.starts_with("--wd=")));
 
-        // Verify structure: --target 123 ... --wd=/workspace -- ls
-        let wd_idx = args.iter().position(|s| s == "--wd=/workspace").unwrap();
+        // Verify structure: --target 123 ... -- ls
         let double_dash_idx = args.iter().position(|s| s == "--").unwrap();
         let ls_idx = args.iter().position(|s| s == "ls").unwrap();
 
-        assert!(wd_idx < double_dash_idx);
         assert!(double_dash_idx < ls_idx);
     }
 

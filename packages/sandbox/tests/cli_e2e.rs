@@ -38,6 +38,7 @@ impl SandboxService for MockService {
     ) -> cmux_sandbox::errors::SandboxResult<SandboxSummary> {
         let summary = SandboxSummary {
             id: Uuid::new_v4(),
+            index: 0,
             name: request.name.unwrap_or_else(|| "mock".to_string()),
             created_at: chrono::Utc::now(),
             workspace: request
