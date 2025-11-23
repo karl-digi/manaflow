@@ -225,9 +225,9 @@ async fn run() -> anyhow::Result<()> {
 
             // Upload directory
             eprintln!("Uploading directory: {}", args.path.display());
-            let tarball = pack_directory(&args.path)?;
+            let body = stream_directory(args.path.clone());
             let url = format!("{}/sandboxes/{}/files", cli.base_url.trim_end_matches('/'), summary.id);
-            let response = client.post(url).body(tarball).send().await?;
+            let response = client.post(url).body(body).send().await?;
             if !response.status().is_success() {
                  eprintln!("Failed to upload files: {}", response.status());
             } else {
@@ -325,9 +325,9 @@ async fn run() -> anyhow::Result<()> {
 
                 // Upload directory
                 eprintln!("Uploading directory: {}", args.path.display());
-                let tarball = pack_directory(&args.path)?;
+                let body = stream_directory(args.path.clone());
                 let url = format!("{}/sandboxes/{}/files", cli.base_url.trim_end_matches('/'), summary.id);
-                let response = client.post(url).body(tarball).send().await?;
+                let response = client.post(url).body(body).send().await?;
                 if !response.status().is_success() {
                      eprintln!("Failed to upload files: {}", response.status());
                 } else {
@@ -464,30 +464,83 @@ where
     Ok(response.json::<T>().await?)
 }
 
-fn pack_directory(path: &std::path::Path) -> anyhow::Result<Vec<u8>> {
-    let mut tar = Builder::new(Vec::new());
-    let root = path.canonicalize()?;
-    
-    let walker = WalkBuilder::new(&root).hidden(false).git_ignore(true).build();
+struct ChunkedWriter {
+    sender: tokio::sync::mpsc::Sender<Result<Vec<u8>, std::io::Error>>,
+}
 
-    for result in walker {
-        let entry = result?;
-        let entry_path = entry.path();
-        
-        if entry_path == root {
-            continue;
-        }
-
-        let relative_path = entry_path.strip_prefix(&root)?;
-        
-        if entry_path.is_dir() {
-            tar.append_dir(relative_path, entry_path)?;
-        } else {
-             tar.append_path_with_name(entry_path, relative_path)?;
+impl std::io::Write for ChunkedWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let data = buf.to_vec();
+        // We use blocking_send because this runs in a spawn_blocking task
+        match self.sender.blocking_send(Ok(data)) {
+            Ok(_) => Ok(buf.len()),
+            Err(_) => Err(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "Channel closed")),
         }
     }
-    
-    tar.into_inner().map_err(|e| anyhow::anyhow!(e))
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn stream_directory(path: PathBuf) -> reqwest::Body {
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Vec<u8>, std::io::Error>>(10);
+
+    tokio::task::spawn_blocking(move || {
+        let writer = ChunkedWriter { sender: tx.clone() };
+        let mut tar = Builder::new(writer);
+        
+        let root = match path.canonicalize() {
+            Ok(p) => p,
+            Err(e) => {
+                let _ = tx.blocking_send(Err(std::io::Error::other(e)));
+                return;
+            }
+        };
+        
+        let walker = WalkBuilder::new(&root).hidden(false).git_ignore(true).build();
+
+        for result in walker {
+            match result {
+                Ok(entry) => {
+                    let entry_path = entry.path();
+                    if entry_path == root {
+                        continue;
+                    }
+
+                    let relative_path = match entry_path.strip_prefix(&root) {
+                         Ok(p) => p,
+                         Err(e) => {
+                              let _ = tx.blocking_send(Err(std::io::Error::other(e)));
+                              return;
+                         }
+                    };
+                    
+                    if entry_path.is_dir() {
+                        if let Err(e) = tar.append_dir(relative_path, entry_path) {
+                            let _ = tx.blocking_send(Err(e));
+                            return;
+                        }
+                    } else if let Err(e) = tar.append_path_with_name(entry_path, relative_path) {
+                        let _ = tx.blocking_send(Err(e));
+                        return;
+                    }
+                }
+                Err(e) => {
+                     let _ = tx.blocking_send(Err(std::io::Error::other(e)));
+                     return;
+                }
+            }
+        }
+        
+        if let Err(e) = tar.finish() {
+             let _ = tx.blocking_send(Err(e));
+        }
+    });
+
+    reqwest::Body::wrap_stream(futures::stream::unfold(rx, |mut rx| async move {
+        rx.recv().await.map(|msg| (msg, rx))
+    }))
 }
 
 fn print_json<T: Serialize>(value: &T) -> anyhow::Result<()> {
