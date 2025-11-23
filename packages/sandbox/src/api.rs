@@ -4,15 +4,21 @@ use crate::models::{
 };
 use crate::service::{AppState, SandboxService};
 use axum::extract::ws::WebSocketUpgrade;
-use axum::extract::Path;
+use axum::extract::{Path, Query};
 use axum::http::StatusCode;
 use axum::response::Response;
 use axum::routing::{any, get, post};
 use axum::{Json, Router};
+use serde::Deserialize;
 use std::sync::Arc;
 use utoipa::OpenApi as UtoipaOpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 use uuid::Uuid;
+
+#[derive(Deserialize)]
+struct ProxyParams {
+    port: u16,
+}
 
 #[derive(UtoipaOpenApi)]
 #[openapi(
@@ -50,6 +56,7 @@ pub fn build_router(service: Arc<dyn SandboxService>) -> Router {
         .route("/sandboxes/{id}", get(get_sandbox).delete(delete_sandbox))
         .route("/sandboxes/{id}/exec", post(exec_sandbox))
         .route("/sandboxes/{id}/attach", any(attach_sandbox))
+        .route("/sandboxes/{id}/proxy", any(proxy_sandbox))
         .merge(swagger_routes)
         .with_state(state)
 }
@@ -148,6 +155,19 @@ async fn attach_sandbox(
     })
 }
 
+async fn proxy_sandbox(
+    state: axum::extract::State<AppState>,
+    Path(id): Path<String>,
+    Query(params): Query<ProxyParams>,
+    ws: WebSocketUpgrade,
+) -> Response {
+    ws.on_upgrade(move |socket| async move {
+        if let Err(e) = state.service.proxy(id, params.port, socket).await {
+            tracing::error!("proxy failed: {e}");
+        }
+    })
+}
+
 #[utoipa::path(
     delete,
     path = "/sandboxes/{id}",
@@ -213,6 +233,10 @@ mod tests {
         }
 
         async fn attach(&self, _id: String, _socket: WebSocket) -> SandboxResult<()> {
+            Ok(())
+        }
+
+        async fn proxy(&self, _id: String, _port: u16, _socket: WebSocket) -> SandboxResult<()> {
             Ok(())
         }
 

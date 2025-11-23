@@ -17,7 +17,7 @@ use std::process::Stdio;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::fs;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
@@ -772,6 +772,70 @@ impl SandboxService for BubblewrapService {
         let _ = child.kill();
         let _ = child.wait();
 
+        Ok(())
+    }
+
+    async fn proxy(&self, id_str: String, port: u16, mut socket: WebSocket) -> SandboxResult<()> {
+        let id = self.resolve_id(&id_str).await?;
+        let entry = {
+            let sandboxes = self.sandboxes.lock().await;
+            sandboxes.get(&id).cloned()
+        }
+        .ok_or(SandboxError::NotFound(id))?;
+
+        let target_address = format!("127.0.0.1:{}", port);
+        
+        let mut command = Command::new(&self.nsenter_path);
+        command.args(nsenter_args(
+            entry.inner_pid,
+            None,
+            &["cmux".to_string(), "_internal-proxy".to_string(), target_address],
+        ));
+        
+        command.stdin(Stdio::piped());
+        command.stdout(Stdio::piped());
+        command.stderr(Stdio::inherit()); 
+        
+        command.kill_on_drop(true);
+        
+        let mut child = command.spawn()?;
+        
+        let mut stdin = child.stdin.take().ok_or(SandboxError::Internal("failed to open stdin".into()))?;
+        let mut stdout = child.stdout.take().ok_or(SandboxError::Internal("failed to open stdout".into()))?;
+        
+        let mut buf = [0u8; 8192];
+
+        loop {
+            tokio::select! {
+                res = stdout.read(&mut buf) => {
+                    match res {
+                        Ok(0) => break, 
+                        Ok(n) => {
+                            if socket.send(Message::Binary(buf[..n].to_vec().into())).await.is_err() {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+                msg = socket.recv() => {
+                    match msg {
+                        Some(Ok(Message::Binary(data))) => {
+                            if stdin.write_all(&data).await.is_err() { break; }
+                            if stdin.flush().await.is_err() { break; }
+                        }
+                        Some(Ok(Message::Text(text))) => {
+                            if stdin.write_all(text.as_bytes()).await.is_err() { break; }
+                            if stdin.flush().await.is_err() { break; }
+                        }
+                        Some(Ok(Message::Close(_))) | None => break,
+                        _ => {}
+                    }
+                }
+            }
+        }
+        
+        let _ = child.kill().await;
         Ok(())
     }
 

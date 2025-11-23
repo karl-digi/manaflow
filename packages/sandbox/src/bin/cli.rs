@@ -8,9 +8,17 @@ use futures::{SinkExt, StreamExt};
 use reqwest::Client;
 use serde::Serialize;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
+
+// Proxy imports
+use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, SanType};
+use tokio_rustls::TlsAcceptor;
+use rustls::ServerConfig;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 
 #[derive(Parser, Debug)]
 #[command(name = "cmux", about = "cmux sandbox controller")]
@@ -41,6 +49,30 @@ enum Command {
         /// Sandbox ID or index (optional, defaults to last connected)
         id: Option<String>,
     },
+
+    /// Execute a command inside a sandbox
+    Exec(ExecArgs),
+
+    /// Start a proxy server for the sandbox
+    #[command(alias = "p")]
+    Proxy {
+        /// Sandbox ID or index
+        id: String,
+        /// Port to listen on (0 for random)
+        #[arg(long, default_value_t = 0)]
+        port: u16,
+    },
+
+    /// Open a browser connected to the sandbox
+    #[command(alias = "b")]
+    Browser {
+        /// Sandbox ID or index
+        id: String,
+    },
+
+    /// Internal helper to proxy stdin/stdout to a TCP address
+    #[command(name = "_internal-proxy", hide = true)]
+    InternalProxy { address: String },
 }
 
 #[derive(Subcommand, Debug)]
@@ -131,6 +163,7 @@ fn save_last_sandbox(id: &str) {
 
 #[tokio::main]
 async fn main() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
     if let Err(e) = run().await {
         eprintln!("Error: {e:?}");
         std::process::exit(1);
@@ -183,10 +216,30 @@ async fn run() -> anyhow::Result<()> {
             } else {
                 get_last_sandbox().ok_or_else(|| {
                     anyhow::anyhow!("No sandbox ID provided and no previous sandbox found")
-                })?
+                })? 
             };
             save_last_sandbox(&target_id);
             handle_ssh(&cli.base_url, &target_id).await?;
+        }
+        Command::Exec(args) => {
+            handle_exec_request(&client, &cli.base_url, args).await?;
+        }
+        Command::InternalProxy { address } => {
+            let mut stream = tokio::net::TcpStream::connect(address).await?;
+            let (mut ri, mut wi) = stream.split();
+            let mut stdin = tokio::io::stdin();
+            let mut stdout = tokio::io::stdout();
+
+            let _ = tokio::join!(
+                tokio::io::copy(&mut stdin, &mut wi),
+                tokio::io::copy(&mut ri, &mut stdout)
+            );
+        }
+        Command::Proxy { id, port } => {
+            handle_proxy(cli.base_url, id, port).await?;
+        }
+        Command::Browser { id } => {
+            handle_browser(cli.base_url, id).await?;
         }
         Command::Sandboxes(cmd) => match cmd {
             SandboxCommand::List => {
@@ -233,24 +286,7 @@ async fn run() -> anyhow::Result<()> {
                 print_json(&summary)?;
             }
             SandboxCommand::Exec(args) => {
-                let command = if args.command.len() == 1 && args.command[0].contains(' ') {
-                    vec!["/bin/sh".into(), "-c".into(), args.command[0].clone()]
-                } else {
-                    args.command
-                };
-                let body = ExecRequest {
-                    command,
-                    workdir: args.workdir,
-                    env: args.env,
-                };
-                let url = format!(
-                    "{}/sandboxes/{}/exec",
-                    cli.base_url.trim_end_matches('/'),
-                    args.id
-                );
-                let response = client.post(url).json(&body).send().await?;
-                let result: ExecResponse = parse_response(response).await?;
-                print_json(&result)?;
+                handle_exec_request(&client, &cli.base_url, args).await?;
             }
             SandboxCommand::Ssh { id } => {
                 save_last_sandbox(&id);
@@ -358,6 +394,243 @@ where
 fn print_json<T: Serialize>(value: &T) -> anyhow::Result<()> {
     let rendered = serde_json::to_string_pretty(value)?;
     println!("{rendered}");
+    Ok(())
+}
+
+async fn handle_proxy(base_url: String, id: String, port: u16) -> anyhow::Result<()> {
+    let ca = Arc::new(generate_ca()?);
+    let listener = TcpListener::bind(format!("127.0.0.1:{}", port)).await?;
+    let local_addr = listener.local_addr()?;
+    eprintln!("Proxy listening on http://{}", local_addr);
+
+    loop {
+        let (socket, _) = listener.accept().await?;
+        let base_url = base_url.clone();
+        let id = id.clone();
+        let ca = ca.clone();
+        
+        tokio::spawn(async move {
+            if let Err(_e) = handle_connection(socket, base_url, id, ca).await {
+                // Ignore
+            }
+        });
+    }
+}
+
+async fn handle_browser(base_url: String, id: String) -> anyhow::Result<()> {
+    let ca = Arc::new(generate_ca()?);
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let port = listener.local_addr()?.port();
+    eprintln!("Proxy started on port {}", port);
+    
+    let base_url_c = base_url.clone();
+    let id_c = id.clone();
+    let ca_c = ca.clone();
+    
+    tokio::spawn(async move {
+        loop {
+            if let Ok((socket, _)) = listener.accept().await {
+                 let b = base_url_c.clone();
+                 let i = id_c.clone();
+                 let c = ca_c.clone();
+                 tokio::spawn(async move {
+                     let _ = handle_connection(socket, b, i, c).await;
+                 });
+            }
+        }
+    });
+    
+    // Launch Chrome
+    #[cfg(target_os = "macos")]
+    let chrome_bin = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+    #[cfg(target_os = "linux")]
+    let chrome_bin = "google-chrome"; 
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    let chrome_bin = "chrome";
+
+    let user_data = std::env::temp_dir().join("cmux-chrome-profile");
+    let _ = std::fs::create_dir_all(&user_data);
+
+    eprintln!("Launching Chrome...");
+    let mut child = tokio::process::Command::new(chrome_bin)
+        .arg(format!("--proxy-server=http=127.0.0.1:{};https=127.0.0.1:{}", port, port))
+        .arg("--proxy-bypass-list=<-loopback>")
+        .arg("--ignore-certificate-errors")
+        .arg(format!("--user-data-dir={}", user_data.display()))
+        .arg("--no-first-run")
+        .arg("http://localhost:8000") 
+        .kill_on_drop(true)
+        .spawn()?;
+
+    child.wait().await?;
+    Ok(())
+}
+
+fn generate_ca() -> anyhow::Result<rcgen::Certificate> {
+    let mut params = CertificateParams::default();
+    params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    params.distinguished_name.push(DnType::CommonName, "cmux-sandbox-ca");
+    Ok(rcgen::Certificate::from_params(params)?)
+}
+
+async fn handle_connection(
+    mut socket: tokio::net::TcpStream, 
+    base_url: String, 
+    id: String, 
+    ca: Arc<rcgen::Certificate>
+) -> anyhow::Result<()> {
+    let mut buf = [0u8; 4096];
+    let n = socket.peek(&mut buf).await?;
+    if n == 0 { return Ok(()); }
+    
+    let header = String::from_utf8_lossy(&buf[..n]);
+    
+    if header.starts_with("CONNECT ") {
+        let line = header.lines().next().unwrap_or("");
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 2 { return Ok(()); }
+        let target = parts[1];
+        let port = target.split(':').nth(1).unwrap_or("80").parse::<u16>().unwrap_or(80);
+        
+        let mut trash = [0u8; 4096];
+        let mut total_read = 0;
+        loop {
+             let n_read = socket.read(&mut trash[total_read..]).await?;
+             if n_read == 0 { return Ok(()); }
+             total_read += n_read;
+             if trash[..total_read].windows(4).any(|w| w == b"\r\n\r\n") {
+                 break;
+             }
+             if total_read >= trash.len() { break; } 
+        }
+
+        socket.write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n").await?;
+        
+        let mut peek_buf = [0u8; 1];
+        let n = socket.peek(&mut peek_buf).await?;
+        if n > 0 && peek_buf[0] == 0x16 {
+            let target_host = target.split(':').next().unwrap_or("localhost");
+            
+            let mut params = CertificateParams::new(vec![target_host.to_string()]);
+            params.distinguished_name.push(DnType::CommonName, target_host);
+            params.subject_alt_names = vec![SanType::DnsName(target_host.to_string())];
+            
+            let cert = rcgen::Certificate::from_params(params)?;
+            let cert_der = cert.serialize_der_with_signer(&ca)?;
+            let key_der = cert.serialize_private_key_der();
+            
+            let certs = vec![CertificateDer::from(cert_der)];
+            let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_der));
+             
+            let server_config = ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(certs, key)?;
+                
+            let acceptor = TlsAcceptor::from(Arc::new(server_config));
+            let tls_stream = acceptor.accept(socket).await?;
+            
+            connect_and_tunnel(tls_stream, base_url, id, port, None).await?;
+        } else {
+            connect_and_tunnel(socket, base_url, id, port, None).await?;
+        }
+    } else if header.starts_with("GET ") || header.starts_with("POST ") || header.starts_with("PUT ") || header.starts_with("DELETE ") || header.starts_with("HEAD ") || header.starts_with("OPTIONS ") || header.starts_with("PATCH ") {
+         let line = header.lines().next().unwrap_or("");
+         let parts: Vec<&str> = line.split_whitespace().collect();
+         if parts.len() < 2 { return Ok(()); }
+         let url = parts[1];
+         
+         if let Some(host_start) = url.strip_prefix("http://") {
+             let path_start = host_start.find('/').unwrap_or(host_start.len());
+             let host_port = &host_start[..path_start];
+             let path = if path_start == host_start.len() { "/" } else { &host_start[path_start..] };
+             
+             let port = host_port.split(':').nth(1).unwrap_or("80").parse::<u16>().unwrap_or(80);
+             
+             // Consume the first line from the socket
+             let mut line_buf = Vec::new();
+             let mut byte = [0u8; 1];
+             loop {
+                 socket.read_exact(&mut byte).await?;
+                 line_buf.push(byte[0]);
+                 if byte[0] == b'\n' { break; }
+             }
+             
+             let method = parts[0];
+             let version = if parts.len() > 2 { parts[2] } else { "HTTP/1.1" };
+             let new_line = format!("{} {} {}\r\n", method, path, version);
+             
+             connect_and_tunnel(socket, base_url, id, port, Some(new_line.into_bytes())).await?;
+         }
+    }
+    
+    Ok(())
+}
+
+async fn connect_and_tunnel<S>(socket: S, base_url: String, id: String, port: u16, initial_data: Option<Vec<u8>>) -> anyhow::Result<()> 
+where S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin {
+    let ws_url = base_url
+        .replace("http://", "ws://")
+        .replace("https://", "wss://")
+        .trim_end_matches('/')
+        .to_string();
+    let url = format!("{}/sandboxes/{}/proxy?port={}", ws_url, id, port);
+    
+    let (ws_stream, _) = connect_async(url).await?;
+    let (mut ws_write, mut ws_read) = ws_stream.split();
+    let (mut sock_read, mut sock_write) = tokio::io::split(socket);
+    
+    if let Some(data) = initial_data {
+        ws_write.send(Message::Binary(data)).await?;
+    }
+    
+    let mut buf = [0u8; 8192];
+    
+    loop {
+        tokio::select! {
+             res = sock_read.read(&mut buf) => {
+                 match res {
+                     Ok(0) => break,
+                     Ok(n) => {
+                         ws_write.send(Message::Binary(buf[..n].to_vec())).await?;
+                     }
+                     Err(_) => break,
+                 }
+             }
+             msg = ws_read.next() => {
+                 match msg {
+                     Some(Ok(Message::Binary(data))) => {
+                         sock_write.write_all(&data).await?;
+                     }
+                      Some(Ok(Message::Text(data))) => {
+                         sock_write.write_all(data.as_bytes()).await?;
+                     }
+                     Some(Ok(Message::Close(_))) | None => break,
+                     _ => {}
+                 }
+             }
+        }
+    }
+    Ok(())
+}
+async fn handle_exec_request(client: &Client, base_url: &str, args: ExecArgs) -> anyhow::Result<()> {
+    let command = if args.command.len() == 1 && args.command[0].contains(' ') {
+        vec!["/bin/sh".into(), "-c".into(), args.command[0].clone()]
+    } else {
+        args.command
+    };
+    let body = ExecRequest {
+        command,
+        workdir: args.workdir,
+        env: args.env,
+    };
+    let url = format!(
+        "{}/sandboxes/{}/exec",
+        base_url.trim_end_matches('/'),
+        args.id
+    );
+    let response = client.post(url).json(&body).send().await?;
+    let result: ExecResponse = parse_response(response).await?;
+    print_json(&result)?;
     Ok(())
 }
 

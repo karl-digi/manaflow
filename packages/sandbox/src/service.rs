@@ -11,6 +11,7 @@ pub trait SandboxService: Send + Sync + 'static {
     async fn get(&self, id: String) -> SandboxResult<Option<SandboxSummary>>;
     async fn exec(&self, id: String, exec: ExecRequest) -> SandboxResult<ExecResponse>;
     async fn attach(&self, id: String, socket: WebSocket) -> SandboxResult<()>;
+    async fn proxy(&self, id: String, port: u16, socket: WebSocket) -> SandboxResult<()>;
     async fn delete(&self, id: String) -> SandboxResult<Option<SandboxSummary>>;
 }
 

@@ -86,6 +86,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   tini \
   python3 \
   python3-venv \
+  python3-websockets \
+  socat \
   tmux \
   lsof \
   htop \

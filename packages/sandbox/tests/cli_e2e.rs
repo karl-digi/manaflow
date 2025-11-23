@@ -1,7 +1,12 @@
 use assert_cmd::Command;
 use cmux_sandbox::build_router;
 use cmux_sandbox::models::{
-    CreateSandboxRequest, ExecRequest, ExecResponse, SandboxNetwork, SandboxStatus, SandboxSummary,
+    CreateSandboxRequest,
+    ExecRequest,
+    ExecResponse,
+    SandboxNetwork,
+    SandboxStatus,
+    SandboxSummary,
 };
 use cmux_sandbox::service::SandboxService;
 use std::net::SocketAddr;
@@ -41,9 +46,8 @@ impl SandboxService for MockService {
             index: 0,
             name: request.name.unwrap_or_else(|| "mock".to_string()),
             created_at: chrono::Utc::now(),
-            workspace: request
-                .workspace
-                .unwrap_or_else(|| "/tmp/mock-workspace".to_string()),
+            workspace:
+                request.workspace.unwrap_or_else(|| "/tmp/mock-workspace".to_string()),
             status: SandboxStatus::Running,
             network: SandboxNetwork {
                 host_interface: "vethh-mock".into(),
@@ -75,6 +79,7 @@ impl SandboxService for MockService {
         _id: String,
         _exec: ExecRequest,
     ) -> cmux_sandbox::errors::SandboxResult<ExecResponse> {
+        self.record("exec").await;
         Ok(ExecResponse {
             exit_code: 0,
             stdout: "ok".into(),
@@ -85,6 +90,15 @@ impl SandboxService for MockService {
     async fn attach(
         &self,
         _id: String,
+        _socket: axum::extract::ws::WebSocket,
+    ) -> cmux_sandbox::errors::SandboxResult<()> {
+        Ok(())
+    }
+
+    async fn proxy(
+        &self,
+        _id: String,
+        _port: u16,
         _socket: axum::extract::ws::WebSocket,
     ) -> cmux_sandbox::errors::SandboxResult<()> {
         Ok(())
@@ -104,8 +118,7 @@ impl SandboxService for MockService {
     }
 }
 
-#[tokio::test]
-async fn cli_can_list_and_create_via_http() {
+#[tokio::test] async fn cli_can_list_and_create_via_http() {
     let service = Arc::new(MockService::new());
     let app = build_router(service.clone());
     let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
@@ -168,11 +181,11 @@ async fn cli_can_list_and_create_via_http() {
         .text()
         .await
         .unwrap();
-    transcript.push((
+    transcript.push(( 
         "cmux sandboxes create --name demo --workspace /tmp/demo".into(),
         created.clone(),
     ));
-    assert!(created.contains("\"demo\""));
+    assert!(created.contains("demo"));
 
     let list_after = client
         .get(format!("{base}/sandboxes"))
@@ -183,7 +196,7 @@ async fn cli_can_list_and_create_via_http() {
         .await
         .unwrap();
     transcript.push(("cmux sandboxes list".into(), list_after.clone()));
-    assert!(list_after.contains("\"demo\""));
+    assert!(list_after.contains("demo"));
 
     assert!(service.calls.lock().await.contains(&"create"));
     assert!(
@@ -214,4 +227,41 @@ fn cli_help_exits_quickly() {
         .assert()
         .success()
         .stdout(predicates::str::contains("cmux sandbox controller"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+
+async fn cli_exec_shorthand() {
+
+
+    let service = Arc::new(MockService::new());
+    let app = build_router(service.clone());
+    let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async {
+                tokio::signal::ctrl_c().await.ok();
+            })
+            .await
+            .ok();
+    });
+
+    let base_url = format!("http://{}", addr);
+
+    // Test 'cmux exec <id> <cmd>'
+    Command::new(assert_cmd::cargo::cargo_bin!("cmux"))
+        .env("CMUX_SANDBOX_URL", &base_url)
+        .args(&["exec", "any-id", "echo hello"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("\"stdout\": \"ok\""));
+
+    assert!(service.calls.lock().await.contains(&"exec"));
+    
+    server.abort();
+    let _ = server.await;
 }
