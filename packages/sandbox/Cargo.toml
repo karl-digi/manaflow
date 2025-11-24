@@ -50,6 +50,7 @@ tui-textarea = "0.7"
 agent-client-protocol = { version = "0.7.0", features = ["unstable"] }
 tokio-util = { version = "0.7", features = ["compat"] }
 url = "2.5"
+pulldown-cmark = "0.12"
 
 [dev-dependencies]
 assert_cmd = "2.0"

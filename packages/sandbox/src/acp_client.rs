@@ -506,7 +506,90 @@ async fn run_app<B: ratatui::backend::Backend>(
     }
 }
 
+use pulldown_cmark::{Parser, Event as MarkdownEvent, Tag, TagEnd, HeadingLevel};
+use ratatui::style::{Style, Modifier, Color};
 use ratatui::text::{Line, Span};
+
+fn render_markdown(text: &str) -> Vec<Line> {
+    let mut lines = Vec::new();
+    let mut current_line_spans = Vec::new();
+    let mut style_stack = vec![Style::default()];
+    
+    macro_rules! flush_line {
+        () => {
+            if !current_line_spans.is_empty() {
+                lines.push(Line::from(current_line_spans.clone()));
+                current_line_spans.clear();
+            }
+        };
+    }
+
+    let parser = Parser::new(text);
+    for event in parser {
+        match event {
+            MarkdownEvent::Start(tag) => {
+                let mut style = *style_stack.last().unwrap();
+                match tag {
+                    Tag::Strong => style = style.add_modifier(Modifier::BOLD),
+                    Tag::Emphasis => style = style.add_modifier(Modifier::ITALIC),
+                    Tag::Heading { .. } => {
+                        flush_line!();
+                        style = style.add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+                    }
+                    Tag::BlockQuote(_) => {
+                        flush_line!();
+                        style = style.fg(Color::Gray);
+                        current_line_spans.push(Span::styled("▎ ", style));
+                    }
+                    Tag::CodeBlock(_) => {
+                        flush_line!();
+                        style = style.bg(Color::DarkGray).fg(Color::White);
+                    }
+                    Tag::List(_) => {
+                        flush_line!();
+                    }
+                    Tag::Item => {
+                        flush_line!();
+                        current_line_spans.push(Span::raw("• "));
+                    }
+                    _ => {}
+                }
+                style_stack.push(style);
+            }
+            MarkdownEvent::End(tag) => {
+                style_stack.pop();
+                match tag {
+                    TagEnd::Paragraph | TagEnd::Heading(_) | TagEnd::BlockQuote(_) | TagEnd::CodeBlock | TagEnd::Item | TagEnd::List(_) => {
+                        flush_line!();
+                    }
+                    _ => {}
+                }
+            }
+            MarkdownEvent::Text(cow) => {
+                let style = *style_stack.last().unwrap();
+                current_line_spans.push(Span::styled(cow.to_string(), style));
+            }
+            MarkdownEvent::Code(cow) => {
+                let style = style_stack.last().unwrap().bg(Color::DarkGray).fg(Color::White);
+                current_line_spans.push(Span::styled(cow.to_string(), style));
+            }
+            MarkdownEvent::SoftBreak => {
+                current_line_spans.push(Span::raw(" "));
+            }
+            MarkdownEvent::HardBreak => {
+                flush_line!();
+            }
+            MarkdownEvent::Rule => {
+                flush_line!();
+                lines.push(Line::from("---"));
+            }
+            _ => {}
+        }
+    }
+    
+    flush_line!();
+    lines
+}
 
 fn ui(f: &mut ratatui::Frame, app: &App) {
     // Calculate dynamic height based on line count
@@ -545,22 +628,11 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
         } else {
              let prefix = format!("{}: ", msg.role);
              let prefix_style = ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::BOLD);
+             lines.push(Line::from(vec![Span::styled(prefix, prefix_style)]));
              
-             let mut first = true;
-             for text_line in msg.text.lines() {
-                 if first {
-                     lines.push(Line::from(vec![
-                         Span::styled(prefix.clone(), prefix_style),
-                         Span::raw(text_line),
-                     ]));
-                     first = false;
-                 } else {
-                     lines.push(Line::from(text_line));
-                 }
-             }
-             if first {
-                 lines.push(Line::from(vec![Span::styled(prefix, prefix_style)]));
-             }
+             // Render markdown for Agent/Thought content
+             let rendered = render_markdown(&msg.text);
+             lines.extend(rendered);
         }
     }
 
