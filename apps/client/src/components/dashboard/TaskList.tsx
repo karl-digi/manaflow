@@ -200,7 +200,7 @@ export const TaskList = memo(function TaskList({
               Loading...
             </div>
           ) : archivedTasks.length === 0 ? (
-            <div className="text-sm text-neutral-500 dark:text-neutral-400 py-2 select-none">
+            <div className="text-sm text-neutral-500 dark:text-neutral-400 py-2 pl-4 select-none">
               No archived tasks
             </div>
           ) : (
