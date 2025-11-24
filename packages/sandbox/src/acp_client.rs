@@ -129,8 +129,13 @@ impl Client for AppClient {
     }
 }
 
+struct ChatMessage {
+    role: String,
+    text: String,
+}
+
 struct App<'a> {
-    history: Vec<String>,
+    history: Vec<ChatMessage>,
     textarea: TextArea<'a>,
     client_connection: Option<Arc<ClientSideConnection>>,
     session_id: Option<SessionId>,
@@ -175,14 +180,16 @@ impl<'a> App<'a> {
     }
 
     fn append_message(&mut self, role: &str, text: &str) {
-        let prefix = format!("{}: ", role);
         if let Some(last) = self.history.last_mut() {
-             if last.starts_with(&prefix) {
-                 last.push_str(text);
+             if last.role == role {
+                 last.text.push_str(text);
                  return;
              }
         }
-        self.history.push(format!("{}{}", prefix, text));
+        self.history.push(ChatMessage {
+            role: role.to_string(),
+            text: text.to_string(),
+        });
     }
 
     async fn send_message(&mut self) {
@@ -476,7 +483,7 @@ async fn run_app<B: ratatui::backend::Backend>(
             Some(event) = rx.recv() => {
                 match event {
                     AppEvent::SessionUpdate(notification) => app.on_session_update(notification),
-                    AppEvent::Error(msg) => app.history.push(format!("Error: {}", msg)),
+                    AppEvent::Error(msg) => app.append_message("System", &format!("Error: {}", msg)),
                 }
             }
             Some(Ok(event)) = reader.next() => {
@@ -499,6 +506,8 @@ async fn run_app<B: ratatui::backend::Backend>(
     }
 }
 
+use ratatui::text::{Line, Span};
+
 fn ui(f: &mut ratatui::Frame, app: &App) {
     // Calculate dynamic height based on line count
     // +2 accounts for top and bottom borders
@@ -517,9 +526,58 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
         )
         .split(f.area());
 
-    let history_text = app.history.join("\n");
-    let history_paragraph = Paragraph::new(history_text)
-        .wrap(Wrap { trim: true });
+    let area_width = chunks[0].width as usize;
+    let mut lines = Vec::new();
+    
+    for (i, msg) in app.history.iter().enumerate() {
+        if i > 0 {
+            lines.push(Line::from("")); // Spacing
+        }
+        
+        if msg.role == "User" {
+            let style = ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray);
+            let border = "─".repeat(area_width);
+            lines.push(Line::styled(border.clone(), style));
+            for line in msg.text.lines() {
+                lines.push(Line::styled(line, style));
+            }
+            lines.push(Line::styled(border, style));
+        } else {
+             let prefix = format!("{}: ", msg.role);
+             let prefix_style = ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::BOLD);
+             
+             let mut first = true;
+             for text_line in msg.text.lines() {
+                 if first {
+                     lines.push(Line::from(vec![
+                         Span::styled(prefix.clone(), prefix_style),
+                         Span::raw(text_line),
+                     ]));
+                     first = false;
+                 } else {
+                     lines.push(Line::from(text_line));
+                 }
+             }
+             if first {
+                 lines.push(Line::from(vec![Span::styled(prefix, prefix_style)]));
+             }
+        }
+    }
+
+    // Auto-scroll to bottom approximation
+    // We count total lines generated.
+    let total_lines = lines.len() as u16;
+    let view_height = chunks[0].height;
+    let scroll_offset = if total_lines > view_height {
+        total_lines - view_height
+    } else {
+        0
+    };
+
+    let history_paragraph = Paragraph::new(lines)
+        .wrap(Wrap { trim: true })
+        .scroll((scroll_offset, 0));
+        
     f.render_widget(history_paragraph, chunks[0]);
 
     f.render_widget(&app.textarea, chunks[1]);
