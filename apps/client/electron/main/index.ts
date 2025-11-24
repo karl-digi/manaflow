@@ -51,6 +51,7 @@ import {
   ELECTRON_WINDOW_FOCUS_EVENT,
   type ElectronRendererEventMap,
 } from "../../src/types/electron-events";
+import { CertificateManager } from "./preview-proxy-certs";
 
 // Use a cookieable HTTPS origin intercepted locally instead of a custom scheme.
 const PARTITION = "persist:cmux";
@@ -228,8 +229,44 @@ function setupConsoleFileMirrors(): void {
 }
 
 function setupPreviewProxyCertificateTrust(): void {
-  // Certificate trust setup removed
+  // Also whitelist the SPKI for caching purposes (Chromium disables cache on cert errors)
+  // Note: This switch must be appended before the app is ready, but we are calling this function
+  // inside app.whenReady(). However, for the *next* launch or if we move it, it would be better.
+  // Actually, let's just do it here and hope it works for new requests, or move it out.
+  // Documentation says "This switch must be set before the app is ready".
+  // So we should call a separate function for it.
+  
+  app.on(
+    "certificate-error",
+    (event, _webContents, url, error, certificate, callback) => {
+      // Trust the self-signed certificate for the preview proxy
+      if (
+        error === "net::ERR_CERT_AUTHORITY_INVALID" &&
+        certificate.issuerName === "Cmux Preview Proxy CA"
+      ) {
+        event.preventDefault();
+        callback(true);
+        mainLog("Trusted preview proxy certificate", { url });
+      } else {
+        callback(false);
+      }
+    }
+  );
 }
+
+function setupSpkiWhitelist() {
+  try {
+    const certManager = new CertificateManager();
+    const fingerprint = certManager.getCaSpkiFingerprint();
+    app.commandLine.appendSwitch("ignore-certificate-errors-spki-list", fingerprint);
+    console.log("[MAIN] Added SPKI whitelist for proxy CA:", fingerprint);
+  } catch (error) {
+    console.error("[MAIN] Failed to setup SPKI whitelist", error);
+  }
+}
+
+// Call immediately to ensure it's set before ready
+setupSpkiWhitelist();
 
 function resolveResourcePath(rel: string) {
   // Prod: packaged resources directory; Dev: look under client/assets

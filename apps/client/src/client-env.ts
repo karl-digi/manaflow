@@ -15,6 +15,8 @@ export const env = createEnv({
     NEXT_PUBLIC_GITHUB_APP_SLUG: z.string().optional(),
     NEXT_PUBLIC_WWW_ORIGIN: z.string().min(1),
     NEXT_PUBLIC_SERVER_ORIGIN: z.string().optional(),
+    NEXT_PUBLIC_POSTHOG_KEY: z.string().optional(),
+    NEXT_PUBLIC_POSTHOG_HOST: z.string().optional(),
   },
 
   /**
