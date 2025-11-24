@@ -2,17 +2,18 @@ use agent_client_protocol::{
     Agent, Client, ClientCapabilities, ClientSideConnection, ContentBlock, CreateTerminalRequest,
     CreateTerminalResponse, Error, FileSystemCapability, InitializeRequest,
     KillTerminalCommandRequest, KillTerminalCommandResponse, NewSessionRequest, PermissionOptionId,
-    PromptRequest, ReadTextFileRequest, ReadTextFileResponse, ReleaseTerminalRequest,
-    ReleaseTerminalResponse, RequestPermissionOutcome, RequestPermissionRequest,
-    RequestPermissionResponse, SessionId, SessionNotification, SessionUpdate,
-    TerminalOutputRequest, TerminalOutputResponse, TextContent, WaitForTerminalExitRequest,
+    Plan, PlanEntryStatus, PromptRequest, ReadTextFileRequest, ReadTextFileResponse,
+    ReleaseTerminalRequest, ReleaseTerminalResponse, RequestPermissionOutcome,
+    RequestPermissionRequest, RequestPermissionResponse, SessionId, SessionNotification,
+    SessionUpdate, TerminalOutputRequest, TerminalOutputResponse, TextContent, ToolCall,
+    ToolCallStatus, ToolCallUpdate, ToolKind, WaitForTerminalExitRequest,
     WaitForTerminalExitResponse, WriteTextFileRequest, WriteTextFileResponse, V1,
 };
 use anyhow::Result;
 use crossterm::{
     event::{
-        DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyCode, KeyModifiers,
-        MouseEventKind,
+        DisableBracketedPaste, EnableBracketedPaste, EnableMouseCapture, Event, EventStream,
+        KeyCode, KeyModifiers, MouseEventKind,
     },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -139,14 +140,28 @@ impl Client for AppClient {
     }
 }
 
-struct ChatMessage {
-    role: String,
-    text: String,
-    normalized_markdown: Option<String>,
+/// Different types of chat entries displayed in the TUI
+#[derive(Clone)]
+enum ChatEntry {
+    /// Text message from user, agent, or thought
+    Message {
+        role: String,
+        text: String,
+        normalized_markdown: Option<String>,
+    },
+    /// Tool call notification
+    ToolCall {
+        id: String,
+        title: String,
+        kind: ToolKind,
+        status: ToolCallStatus,
+    },
+    /// Execution plan
+    Plan(Plan),
 }
 
 struct App<'a> {
-    history: Vec<ChatMessage>,
+    history: Vec<ChatEntry>,
     textarea: TextArea<'a>,
     client_connection: Option<Arc<ClientSideConnection>>,
     session_id: Option<SessionId>,
@@ -179,8 +194,10 @@ impl<'a> App<'a> {
     /// Scroll up by the given number of lines
     fn scroll_up(&mut self, lines: u16) {
         let max_scroll = self.cached_total_lines;
-        self.scroll_offset_from_bottom =
-            self.scroll_offset_from_bottom.saturating_add(lines).min(max_scroll);
+        self.scroll_offset_from_bottom = self
+            .scroll_offset_from_bottom
+            .saturating_add(lines)
+            .min(max_scroll);
     }
 
     /// Scroll down by the given number of lines
@@ -215,16 +232,33 @@ impl<'a> App<'a> {
                     self.append_message("Thought", &text_content.text);
                 }
             }
-            _ => {}
+            SessionUpdate::ToolCall(tool_call) => {
+                self.add_tool_call(tool_call);
+            }
+            SessionUpdate::ToolCallUpdate(update) => {
+                self.update_tool_call(update);
+            }
+            SessionUpdate::Plan(plan) => {
+                self.update_plan(plan);
+            }
+            SessionUpdate::AvailableCommandsUpdate(_) | SessionUpdate::CurrentModeUpdate(_) => {
+                // These don't need visual representation in chat
+            }
         }
     }
 
     fn append_message(&mut self, role: &str, text: &str) {
-        if let Some(last) = self.history.last_mut() {
-            if last.role == role {
-                last.text.push_str(text);
+        // Try to append to existing message of same role
+        if let Some(ChatEntry::Message {
+            role: last_role,
+            text: last_text,
+            normalized_markdown,
+        }) = self.history.last_mut()
+        {
+            if last_role == role {
+                last_text.push_str(text);
                 if matches!(role, "Agent" | "Thought") {
-                    last.normalized_markdown = Some(normalize_code_fences(&last.text));
+                    *normalized_markdown = Some(normalize_code_fences(last_text));
                 }
                 return;
             }
@@ -234,11 +268,67 @@ impl<'a> App<'a> {
         } else {
             None
         };
-        self.history.push(ChatMessage {
+        self.history.push(ChatEntry::Message {
             role: role.to_string(),
             text: text.to_string(),
             normalized_markdown,
         });
+    }
+
+    fn add_tool_call(&mut self, tool_call: ToolCall) {
+        self.history.push(ChatEntry::ToolCall {
+            id: tool_call.id.to_string(),
+            title: tool_call.title,
+            kind: tool_call.kind,
+            status: tool_call.status,
+        });
+    }
+
+    fn update_tool_call(&mut self, update: ToolCallUpdate) {
+        let id_str = update.id.to_string();
+        // Find and update existing tool call
+        for entry in self.history.iter_mut().rev() {
+            if let ChatEntry::ToolCall {
+                id,
+                title,
+                kind,
+                status,
+            } = entry
+            {
+                if id == &id_str {
+                    if let Some(new_title) = update.fields.title {
+                        *title = new_title;
+                    }
+                    if let Some(new_kind) = update.fields.kind {
+                        *kind = new_kind;
+                    }
+                    if let Some(new_status) = update.fields.status {
+                        *status = new_status;
+                    }
+                    return;
+                }
+            }
+        }
+        // If not found, create from update if we have enough info
+        if let Some(title) = update.fields.title {
+            self.history.push(ChatEntry::ToolCall {
+                id: id_str,
+                title,
+                kind: update.fields.kind.unwrap_or_default(),
+                status: update.fields.status.unwrap_or_default(),
+            });
+        }
+    }
+
+    fn update_plan(&mut self, plan: Plan) {
+        // Replace existing plan or add new one
+        for entry in self.history.iter_mut().rev() {
+            if matches!(entry, ChatEntry::Plan(_)) {
+                *entry = ChatEntry::Plan(plan);
+                return;
+            }
+        }
+        self.history.push(ChatEntry::Plan(plan));
     }
 
     async fn send_message(&mut self) {
@@ -331,7 +421,13 @@ impl<T: tokio::io::AsyncWrite + Unpin> futures::io::AsyncWrite for TokioCompatWr
 
 pub async fn run_chat_tui(base_url: String, sandbox_id: String) -> Result<()> {
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    // Enable mouse capture for scroll, and bracketed paste for multi-line paste
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        EnableMouseCapture,
+        EnableBracketedPaste
+    )?;
     enable_raw_mode()?;
 
     let backend = CrosstermBackend::new(stdout);
@@ -346,7 +442,7 @@ pub async fn run_chat_tui(base_url: String, sandbox_id: String) -> Result<()> {
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
-        DisableMouseCapture
+        DisableBracketedPaste
     )?;
     terminal.show_cursor()?;
 
@@ -599,13 +695,17 @@ async fn run_app<B: ratatui::backend::Backend>(
                             }
                         }
                     }
+                    Event::Paste(text) => {
+                        // Handle multi-line paste by inserting the text directly
+                        app.textarea.insert_str(&text);
+                    }
                     Event::Mouse(mouse_event) => {
                         match mouse_event.kind {
                             MouseEventKind::ScrollUp => {
-                                app.scroll_up(3);
+                                app.scroll_up(1);
                             }
                             MouseEventKind::ScrollDown => {
-                                app.scroll_down(3);
+                                app.scroll_down(1);
                             }
                             _ => {}
                         }
@@ -632,44 +732,34 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
     let area_width = chunks[0].width as usize;
     let mut lines: Vec<Line<'_>> = Vec::new();
 
-    for (i, msg) in app.history.iter().enumerate() {
+    for (i, entry) in app.history.iter().enumerate() {
         if i > 0 {
             lines.push(Line::from("")); // Spacing
         }
-        match msg.role.as_str() {
-            "User" => {
-                let style = ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray);
-                let border = "─".repeat(area_width);
-                lines.push(Line::styled(border.clone(), style));
-                for line in msg.text.lines() {
-                    lines.push(Line::styled(line.to_owned(), style));
-                }
-                lines.push(Line::styled(border, style));
+        match entry {
+            ChatEntry::Message {
+                role,
+                text,
+                normalized_markdown,
+            } => {
+                render_message(
+                    &mut lines,
+                    role,
+                    text,
+                    normalized_markdown.as_deref(),
+                    area_width,
+                );
             }
-            "Agent" | "Thought" => {
-                let prefix_style =
-                    ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::BOLD);
-                render_markdown_message(&mut lines, msg, prefix_style);
+            ChatEntry::ToolCall {
+                title,
+                kind,
+                status,
+                ..
+            } => {
+                render_tool_call(&mut lines, title, kind, status);
             }
-            _ => {
-                let prefix = format!("{}: ", msg.role);
-                let prefix_style =
-                    ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::BOLD);
-                let mut first = true;
-                for text_line in msg.text.lines() {
-                    if first {
-                        lines.push(Line::from(vec![
-                            Span::styled(prefix.clone(), prefix_style),
-                            Span::raw(text_line.to_owned()),
-                        ]));
-                        first = false;
-                    } else {
-                        lines.push(Line::from(text_line.to_owned()));
-                    }
-                }
-                if first {
-                    lines.push(Line::from(vec![Span::styled(prefix, prefix_style)]));
-                }
+            ChatEntry::Plan(plan) => {
+                render_plan(&mut lines, plan);
             }
         }
     }
@@ -696,17 +786,126 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
     f.render_widget(&app.textarea, chunks[1]);
 }
 
+fn render_message<'a>(
+    lines: &mut Vec<Line<'a>>,
+    role: &str,
+    text: &'a str,
+    normalized_markdown: Option<&'a str>,
+    area_width: usize,
+) {
+    match role {
+        "User" => {
+            let style = ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray);
+            let border = "─".repeat(area_width);
+            lines.push(Line::styled(border.clone(), style));
+            for line in text.lines() {
+                lines.push(Line::styled(line.to_owned(), style));
+            }
+            lines.push(Line::styled(border, style));
+        }
+        "Agent" | "Thought" => {
+            let prefix_style =
+                ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::BOLD);
+            render_markdown_message(lines, role, text, normalized_markdown, prefix_style);
+        }
+        _ => {
+            let prefix = format!("{}: ", role);
+            let prefix_style =
+                ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::BOLD);
+            let mut first = true;
+            for text_line in text.lines() {
+                if first {
+                    lines.push(Line::from(vec![
+                        Span::styled(prefix.clone(), prefix_style),
+                        Span::raw(text_line.to_owned()),
+                    ]));
+                    first = false;
+                } else {
+                    lines.push(Line::from(text_line.to_owned()));
+                }
+            }
+            if first {
+                lines.push(Line::from(vec![Span::styled(prefix, prefix_style)]));
+            }
+        }
+    }
+}
+
+fn render_tool_call<'a>(
+    lines: &mut Vec<Line<'a>>,
+    title: &str,
+    kind: &ToolKind,
+    status: &ToolCallStatus,
+) {
+    let icon = match kind {
+        ToolKind::Read => "📖",
+        ToolKind::Edit => "✏️",
+        ToolKind::Delete => "🗑️",
+        ToolKind::Move => "📦",
+        ToolKind::Search => "🔍",
+        ToolKind::Execute => "▶️",
+        ToolKind::Think => "💭",
+        ToolKind::Fetch => "🌐",
+        ToolKind::SwitchMode => "🔄",
+        ToolKind::Other => "🔧",
+    };
+
+    let status_indicator = match status {
+        ToolCallStatus::Pending => ("⏳", ratatui::style::Color::Yellow),
+        ToolCallStatus::InProgress => ("⚙️", ratatui::style::Color::Cyan),
+        ToolCallStatus::Completed => ("✓", ratatui::style::Color::Green),
+        ToolCallStatus::Failed => ("✗", ratatui::style::Color::Red),
+    };
+
+    let tool_style = ratatui::style::Style::default().fg(ratatui::style::Color::Cyan);
+    let status_style = ratatui::style::Style::default().fg(status_indicator.1);
+
+    lines.push(Line::from(vec![
+        Span::raw(format!("{} ", icon)),
+        Span::styled(title.to_owned(), tool_style),
+        Span::raw(" "),
+        Span::styled(status_indicator.0.to_owned(), status_style),
+    ]));
+}
+
+fn render_plan<'a>(lines: &mut Vec<Line<'a>>, plan: &Plan) {
+    let header_style = ratatui::style::Style::default()
+        .fg(ratatui::style::Color::Magenta)
+        .add_modifier(ratatui::style::Modifier::BOLD);
+    lines.push(Line::styled("📋 Plan", header_style));
+
+    for entry in &plan.entries {
+        let (status_icon, status_color) = match entry.status {
+            PlanEntryStatus::Pending => ("○", ratatui::style::Color::DarkGray),
+            PlanEntryStatus::InProgress => ("◐", ratatui::style::Color::Yellow),
+            PlanEntryStatus::Completed => ("●", ratatui::style::Color::Green),
+        };
+
+        let status_style = ratatui::style::Style::default().fg(status_color);
+        let content_style = ratatui::style::Style::default();
+
+        lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(status_icon.to_owned(), status_style),
+            Span::raw(" "),
+            Span::styled(entry.content.clone(), content_style),
+        ]));
+    }
+}
+
 fn render_markdown_message<'a>(
     lines: &mut Vec<Line<'a>>,
-    msg: &'a ChatMessage,
+    role: &str,
+    text: &'a str,
+    normalized_markdown: Option<&'a str>,
     prefix_style: ratatui::style::Style,
 ) {
-    let source = msg.normalized_markdown.as_deref().unwrap_or(&msg.text);
+    let source = normalized_markdown.unwrap_or(text);
     let mut markdown_lines = markdown_from_str(source).lines.into_iter();
     match markdown_lines.next() {
         Some(mut line) => {
             let mut spans = Vec::with_capacity(line.spans.len() + 1);
-            spans.push(Span::styled(format!("{}: ", msg.role), prefix_style));
+            spans.push(Span::styled(format!("{}: ", role), prefix_style));
             spans.append(&mut line.spans);
             let mut new_line = Line::from(spans);
             new_line.style = line.style;
@@ -714,7 +913,7 @@ fn render_markdown_message<'a>(
         }
         None => {
             lines.push(Line::from(vec![Span::styled(
-                format!("{}: ", msg.role),
+                format!("{}: ", role),
                 prefix_style,
             )]));
         }
@@ -749,37 +948,76 @@ fn normalize_code_fences(content: &str) -> String {
     normalized
 }
 
+/// Normalize code fence language tokens to syntect-compatible format.
+/// Syntect's `find_syntax_by_token` performs case-insensitive matching,
+/// so we normalize to lowercase for consistency and also map common aliases.
 fn canonical_language_token(lang: &str) -> Cow<'static, str> {
     let trimmed = lang.trim_start_matches('.');
     let lower = trimmed.to_ascii_lowercase();
     match lower.as_str() {
-        "js" | "javascript" | "node" => Cow::Borrowed("JavaScript"),
-        "ts" | "typescript" => Cow::Borrowed("TypeScript"),
-        "tsx" => Cow::Borrowed("TSX"),
-        "jsx" => Cow::Borrowed("JSX"),
-        "py" | "python" => Cow::Borrowed("Python"),
-        "rb" | "ruby" => Cow::Borrowed("Ruby"),
-        "rs" | "rust" => Cow::Borrowed("Rust"),
-        "go" | "golang" => Cow::Borrowed("Go"),
-        "java" => Cow::Borrowed("Java"),
-        "kt" | "kotlin" => Cow::Borrowed("Kotlin"),
-        "swift" => Cow::Borrowed("Swift"),
-        "php" => Cow::Borrowed("PHP"),
-        "sh" | "bash" | "shell" => Cow::Borrowed("Bash"),
-        "zsh" => Cow::Borrowed("Zsh"),
-        "ps" | "ps1" | "powershell" => Cow::Borrowed("PowerShell"),
-        "c" => Cow::Borrowed("C"),
-        "cpp" | "c++" => Cow::Borrowed("C++"),
-        "cs" | "csharp" | "c#" => Cow::Borrowed("C#"),
-        "json" => Cow::Borrowed("JSON"),
-        "yaml" | "yml" => Cow::Borrowed("YAML"),
-        "toml" => Cow::Borrowed("TOML"),
-        "ini" => Cow::Borrowed("INI"),
-        "sql" => Cow::Borrowed("SQL"),
-        "html" => Cow::Borrowed("HTML"),
-        "css" => Cow::Borrowed("CSS"),
-        "elixir" | "ex" | "exs" => Cow::Borrowed("Elixir"),
-        "dart" => Cow::Borrowed("Dart"),
-        other => Cow::Owned(other.to_string()),
+        // JavaScript/TypeScript variants
+        // Note: TypeScript/TSX are not in syntect's default set, so we map them to JavaScript/JSX
+        "js" | "javascript" | "node" | "ts" | "typescript" => Cow::Borrowed("javascript"),
+        "tsx" | "jsx" => Cow::Borrowed("javascript"),
+        // Python
+        "py" | "python" => Cow::Borrowed("python"),
+        // Ruby
+        "rb" | "ruby" => Cow::Borrowed("ruby"),
+        // Rust
+        "rs" | "rust" => Cow::Borrowed("rust"),
+        // Go
+        "go" | "golang" => Cow::Borrowed("go"),
+        // Java
+        "java" => Cow::Borrowed("java"),
+        // Kotlin
+        "kt" | "kotlin" => Cow::Borrowed("kotlin"),
+        // Swift
+        "swift" => Cow::Borrowed("swift"),
+        // PHP
+        "php" => Cow::Borrowed("php"),
+        // Shell variants
+        "sh" | "bash" | "shell" => Cow::Borrowed("bash"),
+        "zsh" => Cow::Borrowed("zsh"),
+        "ps" | "ps1" | "powershell" => Cow::Borrowed("powershell"),
+        // C family
+        "c" => Cow::Borrowed("c"),
+        "cpp" | "c++" | "cxx" => Cow::Borrowed("cpp"),
+        "cs" | "csharp" | "c#" => Cow::Borrowed("cs"),
+        // Objective-C
+        "objc" | "objective-c" | "objectivec" => Cow::Borrowed("objective-c"),
+        // Data formats
+        "json" => Cow::Borrowed("json"),
+        "yaml" | "yml" => Cow::Borrowed("yaml"),
+        "toml" => Cow::Borrowed("toml"),
+        "xml" => Cow::Borrowed("xml"),
+        // SQL
+        "sql" => Cow::Borrowed("sql"),
+        // Web
+        "html" | "htm" => Cow::Borrowed("html"),
+        "css" => Cow::Borrowed("css"),
+        "scss" => Cow::Borrowed("scss"),
+        "less" => Cow::Borrowed("less"),
+        // Other languages
+        "elixir" | "ex" | "exs" => Cow::Borrowed("elixir"),
+        "dart" => Cow::Borrowed("dart"),
+        "scala" => Cow::Borrowed("scala"),
+        "clojure" | "clj" => Cow::Borrowed("clojure"),
+        "haskell" | "hs" => Cow::Borrowed("haskell"),
+        "lua" => Cow::Borrowed("lua"),
+        "perl" | "pl" => Cow::Borrowed("perl"),
+        "r" => Cow::Borrowed("r"),
+        "julia" | "jl" => Cow::Borrowed("julia"),
+        "erlang" | "erl" => Cow::Borrowed("erlang"),
+        "groovy" => Cow::Borrowed("groovy"),
+        // Markup
+        "markdown" | "md" => Cow::Borrowed("markdown"),
+        "tex" | "latex" => Cow::Borrowed("latex"),
+        "rst" | "restructuredtext" => Cow::Borrowed("restructuredtext"),
+        // Config files
+        "ini" | "cfg" => Cow::Borrowed("ini"),
+        "dockerfile" | "docker" => Cow::Borrowed("dockerfile"),
+        "makefile" | "make" => Cow::Borrowed("makefile"),
+        // Default: pass through as-is (lowercase)
+        _ => Cow::Owned(lower),
     }
 }
