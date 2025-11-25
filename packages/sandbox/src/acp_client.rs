@@ -115,10 +115,23 @@ struct AppClient {
     tx: mpsc::UnboundedSender<AppEvent>,
 }
 
-#[derive(Debug)]
 enum AppEvent {
     SessionUpdate(Box<SessionNotification>),
-    DebugMessage { direction: String, message: String },
+    DebugMessage {
+        direction: String,
+        message: String,
+    },
+    /// Provider switch completed successfully
+    ProviderSwitchComplete {
+        provider: AcpProvider,
+        connection: Arc<ClientSideConnection>,
+        session_id: SessionId,
+    },
+    /// Provider switch failed
+    ProviderSwitchFailed {
+        provider: AcpProvider,
+        error: String,
+    },
 }
 
 #[async_trait::async_trait(?Send)]
@@ -235,10 +248,12 @@ enum ChatEntry {
 /// Connection state for the ACP provider
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ConnectionState {
-    /// Currently connecting to the provider
+    /// Currently connecting to the provider (initial connection)
     Connecting,
     /// Connected and ready
     Connected,
+    /// Switching to a new provider (background connection in progress)
+    SwitchingProvider(AcpProvider),
 }
 
 /// UI mode for the application
@@ -293,14 +308,6 @@ impl PaletteCommand {
     }
 }
 
-/// Result from running the app loop
-enum AppLoopResult {
-    /// User requested exit
-    Exit,
-    /// User requested provider switch
-    SwitchProvider(AcpProvider),
-}
-
 struct App<'a> {
     history: Vec<ChatEntry>,
     textarea: TextArea<'a>,
@@ -321,10 +328,21 @@ struct App<'a> {
     debug_mode: bool,
     /// Debug messages log
     debug_messages: Vec<String>,
+    /// Event sender for async operations
+    event_tx: mpsc::UnboundedSender<AppEvent>,
+    /// Base URL for sandbox connections
+    base_url: String,
+    /// Sandbox ID for connections
+    sandbox_id: String,
 }
 
 impl<'a> App<'a> {
-    fn new(provider: AcpProvider) -> Self {
+    fn new(
+        provider: AcpProvider,
+        event_tx: mpsc::UnboundedSender<AppEvent>,
+        base_url: String,
+        sandbox_id: String,
+    ) -> Self {
         let mut textarea = TextArea::default();
         textarea.set_block(
             Block::default()
@@ -345,6 +363,9 @@ impl<'a> App<'a> {
             connection_state: ConnectionState::Connecting,
             debug_mode: false,
             debug_messages: vec![],
+            event_tx,
+            base_url,
+            sandbox_id,
         }
     }
 
@@ -482,8 +503,8 @@ impl<'a> App<'a> {
     }
 
     /// Select provider in provider palette
-    /// Returns Some(provider) if a new provider was selected
-    fn execute_provider_palette_selection(&mut self) -> Option<AcpProvider> {
+    /// Initiates async provider switch if a new provider was selected
+    fn execute_provider_palette_selection(&mut self) {
         if let UiMode::ProviderPalette { search } = &self.ui_mode {
             let filtered: Vec<_> = if search.is_empty() {
                 AcpProvider::all().to_vec()
@@ -499,14 +520,42 @@ impl<'a> App<'a> {
                 let selected = *selected;
                 self.ui_mode = UiMode::Chat;
                 if selected != self.current_provider {
+                    // Start async provider switch - update provider name immediately for UI
+                    let old_provider = self.current_provider;
                     self.current_provider = selected;
-                    self.connection_state = ConnectionState::Connecting;
-                    return Some(selected);
+                    self.connection_state = ConnectionState::SwitchingProvider(old_provider);
+                    self.start_provider_switch(selected);
+                    return;
                 }
             }
         }
         self.ui_mode = UiMode::Chat;
-        None
+    }
+
+    /// Start connecting to a new provider in the background
+    fn start_provider_switch(&self, provider: AcpProvider) {
+        let tx = self.event_tx.clone();
+        let base_url = self.base_url.clone();
+        let sandbox_id = self.sandbox_id.clone();
+
+        tokio::task::spawn_local(async move {
+            match connect_to_provider(&base_url, &sandbox_id, provider, tx.clone()).await {
+                Ok((connection, session_id)) => {
+                    let _ = tx.send(AppEvent::ProviderSwitchComplete {
+                        provider,
+                        connection,
+                        session_id,
+                    });
+                }
+                Err(e) => {
+                    log_debug(&format!("Provider switch failed: {}", e));
+                    let _ = tx.send(AppEvent::ProviderSwitchFailed {
+                        provider,
+                        error: e.to_string(),
+                    });
+                }
+            }
+        });
     }
 
     /// Toggle debug mode
@@ -795,230 +844,236 @@ pub async fn run_chat_tui(
     }
 }
 
+/// WebSocket reader wrapper for ACP protocol
+struct WsRead {
+    stream: futures::stream::SplitStream<
+        tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+    >,
+    tx: mpsc::UnboundedSender<AppEvent>,
+}
+
+/// WebSocket writer wrapper for ACP protocol
+struct WsWrite {
+    sink: futures::stream::SplitSink<
+        tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+        tokio_tungstenite::tungstenite::Message,
+    >,
+    tx: mpsc::UnboundedSender<AppEvent>,
+}
+
+impl tokio::io::AsyncRead for WsRead {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        loop {
+            match futures::ready!(self.stream.poll_next_unpin(cx)) {
+                Some(Ok(tokio_tungstenite::tungstenite::Message::Binary(data))) => {
+                    let msg = String::from_utf8_lossy(&data).to_string();
+                    let _ = self.tx.send(AppEvent::DebugMessage {
+                        direction: "←".to_string(),
+                        message: msg,
+                    });
+                    buf.put_slice(&data);
+                    return std::task::Poll::Ready(Ok(()));
+                }
+                Some(Ok(tokio_tungstenite::tungstenite::Message::Text(data))) => {
+                    log_debug(&format!("RECV TEXT: {}", data));
+                    let _ = self.tx.send(AppEvent::DebugMessage {
+                        direction: "←".to_string(),
+                        message: data.clone(),
+                    });
+                    buf.put_slice(data.as_bytes());
+                    return std::task::Poll::Ready(Ok(()));
+                }
+                Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_))) | None => {
+                    log_debug("RECV EOF");
+                    return std::task::Poll::Ready(Ok(()));
+                }
+                Some(Err(e)) => {
+                    log_debug(&format!("RECV Error: {}", e));
+                    return std::task::Poll::Ready(Err(io::Error::other(e)));
+                }
+                _ => continue,
+            }
+        }
+    }
+}
+
+impl tokio::io::AsyncWrite for WsWrite {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<io::Result<usize>> {
+        let msg = String::from_utf8_lossy(buf).to_string();
+        log_debug(&format!("SEND: {:?}", msg));
+        let _ = self.tx.send(AppEvent::DebugMessage {
+            direction: "→".to_string(),
+            message: msg,
+        });
+        match self
+            .sink
+            .start_send_unpin(tokio_tungstenite::tungstenite::Message::Binary(
+                buf.to_vec(),
+            )) {
+            Ok(_) => {
+                match self.sink.poll_flush_unpin(cx) {
+                    std::task::Poll::Ready(Ok(_)) => log_debug("Auto-flush success"),
+                    std::task::Poll::Ready(Err(e)) => {
+                        log_debug(&format!("Auto-flush error: {}", e))
+                    }
+                    std::task::Poll::Pending => log_debug("Auto-flush pending"),
+                }
+                std::task::Poll::Ready(Ok(buf.len()))
+            }
+            Err(e) => std::task::Poll::Ready(Err(io::Error::other(e))),
+        }
+    }
+
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        log_debug("FLUSH");
+        self.sink.poll_flush_unpin(cx).map_err(io::Error::other)
+    }
+
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        self.sink.poll_close_unpin(cx).map_err(io::Error::other)
+    }
+}
+
+/// Connect to an ACP provider and return the connection and session ID.
+/// This function can be called from background tasks for provider switching.
+async fn connect_to_provider(
+    base_url: &str,
+    sandbox_id: &str,
+    provider: AcpProvider,
+    tx: mpsc::UnboundedSender<AppEvent>,
+) -> Result<(Arc<ClientSideConnection>, SessionId)> {
+    log_debug(&format!(
+        "Connecting to provider: {}",
+        provider.display_name()
+    ));
+
+    let ws_url = base_url
+        .replace("http://", "ws://")
+        .replace("https://", "wss://")
+        .trim_end_matches('/')
+        .to_string();
+
+    let command = provider.command();
+    let encoded_command =
+        url::form_urlencoded::byte_serialize(command.as_bytes()).collect::<String>();
+
+    let url = format!(
+        "{}/sandboxes/{}/attach?cols=80&rows=24&tty=false&command={}",
+        ws_url, sandbox_id, encoded_command
+    );
+    log_debug(&format!("Connecting to: {}", url));
+
+    let (ws_stream, _) = tokio_tungstenite::connect_async(url).await?;
+    log_debug("WebSocket connected");
+
+    let (write, read) = ws_stream.split();
+
+    let (client_conn, io_task) = ClientSideConnection::new(
+        Arc::new(AppClient { tx: tx.clone() }),
+        TokioCompatWrite(WsWrite {
+            sink: write,
+            tx: tx.clone(),
+        }),
+        TokioCompatRead(WsRead {
+            stream: read,
+            tx: tx.clone(),
+        }),
+        Box::new(|fut| {
+            tokio::task::spawn_local(fut);
+        }),
+    );
+    let client_conn = Arc::new(client_conn);
+
+    tokio::task::spawn_local(async move {
+        if let Err(e) = io_task.await {
+            log_debug(&format!("IO Task Error: {}", e));
+        } else {
+            log_debug("IO Task Finished");
+        }
+    });
+
+    log_debug("Sending Initialize...");
+    client_conn
+        .initialize(InitializeRequest {
+            protocol_version: V1,
+            client_capabilities: ClientCapabilities {
+                fs: FileSystemCapability {
+                    read_text_file: true,
+                    write_text_file: true,
+                    meta: None,
+                },
+                terminal: false,
+                meta: None,
+            },
+            client_info: None,
+            meta: None,
+        })
+        .await?;
+    log_debug("Initialize complete");
+
+    log_debug("Starting New Session...");
+    let new_session_res = client_conn
+        .new_session(NewSessionRequest {
+            cwd: std::path::PathBuf::from("/workspace"),
+            mcp_servers: vec![],
+            meta: None,
+        })
+        .await?;
+    log_debug("New Session started");
+
+    Ok((client_conn, new_session_res.session_id))
+}
+
 async fn run_main_loop<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     base_url: String,
     sandbox_id: String,
     initial_provider: AcpProvider,
 ) -> Result<()> {
-    let mut current_provider = initial_provider;
+    log_debug(&format!(
+        "Starting run_main_loop with provider: {}",
+        initial_provider.display_name()
+    ));
+    let (tx, rx) = mpsc::unbounded_channel();
 
-    loop {
-        log_debug(&format!(
-            "Starting run_main_loop with provider: {}",
-            current_provider.display_name()
-        ));
-        let (tx, rx) = mpsc::unbounded_channel();
+    // Connect to initial provider
+    let (client_conn, session_id) =
+        connect_to_provider(&base_url, &sandbox_id, initial_provider, tx.clone()).await?;
 
-        let ws_url = base_url
-            .replace("http://", "ws://")
-            .replace("https://", "wss://")
-            .trim_end_matches('/')
-            .to_string();
+    let mut app = App::new(initial_provider, tx, base_url, sandbox_id);
+    app.client_connection = Some(client_conn);
+    app.session_id = Some(session_id);
+    app.connection_state = ConnectionState::Connected;
 
-        // Get the command for the selected provider
-        let command = current_provider.command();
-        let encoded_command =
-            url::form_urlencoded::byte_serialize(command.as_bytes()).collect::<String>();
-
-        let url = format!(
-            "{}/sandboxes/{}/attach?cols=80&rows=24&tty=false&command={}",
-            ws_url, sandbox_id, encoded_command
-        );
-        log_debug(&format!("Connecting to: {}", url));
-
-        let (ws_stream, _) = tokio_tungstenite::connect_async(url).await?;
-        log_debug("WebSocket connected");
-
-        let (write, read) = ws_stream.split();
-
-        struct WsRead {
-            stream: futures::stream::SplitStream<
-                tokio_tungstenite::WebSocketStream<
-                    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-                >,
-            >,
-            tx: mpsc::UnboundedSender<AppEvent>,
-        }
-        struct WsWrite {
-            sink: futures::stream::SplitSink<
-                tokio_tungstenite::WebSocketStream<
-                    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-                >,
-                tokio_tungstenite::tungstenite::Message,
-            >,
-            tx: mpsc::UnboundedSender<AppEvent>,
-        }
-
-        impl tokio::io::AsyncRead for WsRead {
-            fn poll_read(
-                mut self: std::pin::Pin<&mut Self>,
-                cx: &mut std::task::Context<'_>,
-                buf: &mut tokio::io::ReadBuf<'_>,
-            ) -> std::task::Poll<io::Result<()>> {
-                loop {
-                    match futures::ready!(self.stream.poll_next_unpin(cx)) {
-                        Some(Ok(tokio_tungstenite::tungstenite::Message::Binary(data))) => {
-                            let msg = String::from_utf8_lossy(&data).to_string();
-                            let _ = self.tx.send(AppEvent::DebugMessage {
-                                direction: "←".to_string(),
-                                message: msg,
-                            });
-                            buf.put_slice(&data);
-                            return std::task::Poll::Ready(Ok(()));
-                        }
-                        Some(Ok(tokio_tungstenite::tungstenite::Message::Text(data))) => {
-                            log_debug(&format!("RECV TEXT: {}", data));
-                            let _ = self.tx.send(AppEvent::DebugMessage {
-                                direction: "←".to_string(),
-                                message: data.clone(),
-                            });
-                            buf.put_slice(data.as_bytes());
-                            return std::task::Poll::Ready(Ok(()));
-                        }
-                        Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_))) | None => {
-                            log_debug("RECV EOF");
-                            return std::task::Poll::Ready(Ok(()));
-                        }
-                        Some(Err(e)) => {
-                            log_debug(&format!("RECV Error: {}", e));
-                            return std::task::Poll::Ready(Err(io::Error::other(e)));
-                        }
-                        _ => continue,
-                    }
-                }
-            }
-        }
-
-        impl tokio::io::AsyncWrite for WsWrite {
-            fn poll_write(
-                mut self: std::pin::Pin<&mut Self>,
-                cx: &mut std::task::Context<'_>,
-                buf: &[u8],
-            ) -> std::task::Poll<io::Result<usize>> {
-                let msg = String::from_utf8_lossy(buf).to_string();
-                log_debug(&format!("SEND: {:?}", msg));
-                let _ = self.tx.send(AppEvent::DebugMessage {
-                    direction: "→".to_string(),
-                    message: msg,
-                });
-                match self
-                    .sink
-                    .start_send_unpin(tokio_tungstenite::tungstenite::Message::Binary(
-                        buf.to_vec(),
-                    )) {
-                    Ok(_) => {
-                        match self.sink.poll_flush_unpin(cx) {
-                            std::task::Poll::Ready(Ok(_)) => log_debug("Auto-flush success"),
-                            std::task::Poll::Ready(Err(e)) => {
-                                log_debug(&format!("Auto-flush error: {}", e))
-                            }
-                            std::task::Poll::Pending => log_debug("Auto-flush pending"),
-                        }
-                        std::task::Poll::Ready(Ok(buf.len()))
-                    }
-                    Err(e) => std::task::Poll::Ready(Err(io::Error::other(e))),
-                }
-            }
-
-            fn poll_flush(
-                mut self: std::pin::Pin<&mut Self>,
-                cx: &mut std::task::Context<'_>,
-            ) -> std::task::Poll<io::Result<()>> {
-                log_debug("FLUSH");
-                self.sink.poll_flush_unpin(cx).map_err(io::Error::other)
-            }
-
-            fn poll_shutdown(
-                mut self: std::pin::Pin<&mut Self>,
-                cx: &mut std::task::Context<'_>,
-            ) -> std::task::Poll<io::Result<()>> {
-                self.sink.poll_close_unpin(cx).map_err(io::Error::other)
-            }
-        }
-
-        let (client_conn, io_task) = ClientSideConnection::new(
-            Arc::new(AppClient { tx: tx.clone() }),
-            TokioCompatWrite(WsWrite {
-                sink: write,
-                tx: tx.clone(),
-            }),
-            TokioCompatRead(WsRead {
-                stream: read,
-                tx: tx.clone(),
-            }),
-            Box::new(|fut| {
-                tokio::task::spawn_local(fut);
-            }),
-        );
-        let client_conn = Arc::new(client_conn);
-
-        tokio::task::spawn_local(async move {
-            if let Err(e) = io_task.await {
-                log_debug(&format!("IO Task Error: {}", e));
-            } else {
-                log_debug("IO Task Finished");
-            }
-        });
-
-        log_debug("Sending Initialize...");
-        client_conn
-            .initialize(InitializeRequest {
-                protocol_version: V1,
-                client_capabilities: ClientCapabilities {
-                    fs: FileSystemCapability {
-                        read_text_file: true,
-                        write_text_file: true,
-                        meta: None,
-                    },
-                    terminal: false,
-                    meta: None,
-                },
-                client_info: None,
-                meta: None,
-            })
-            .await?;
-        log_debug("Initialize complete");
-
-        log_debug("Starting New Session...");
-        let new_session_res = client_conn
-            .new_session(NewSessionRequest {
-                cwd: std::path::PathBuf::from("/workspace"),
-                mcp_servers: vec![],
-                meta: None,
-            })
-            .await?;
-        log_debug("New Session started");
-
-        let mut app = App::new(current_provider);
-        app.client_connection = Some(client_conn);
-        app.session_id = Some(new_session_res.session_id);
-        app.connection_state = ConnectionState::Connected;
-
-        log_debug("Running App UI loop...");
-        match run_app(terminal, app, rx).await? {
-            AppLoopResult::Exit => {
-                log_debug("App UI loop finished - exiting");
-                return Ok(());
-            }
-            AppLoopResult::SwitchProvider(new_provider) => {
-                log_debug(&format!(
-                    "Switching provider from {} to {}",
-                    current_provider.display_name(),
-                    new_provider.display_name()
-                ));
-                current_provider = new_provider;
-                // Loop will continue with new provider
-            }
-        }
-    }
+    log_debug("Running App UI loop...");
+    run_app(terminal, app, rx).await?;
+    log_debug("App UI loop finished - exiting");
+    Ok(())
 }
 
 async fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     mut app: App<'_>,
     mut rx: mpsc::UnboundedReceiver<AppEvent>,
-) -> io::Result<AppLoopResult> {
+) -> io::Result<()> {
     let mut reader = EventStream::new();
 
     loop {
@@ -1030,6 +1085,29 @@ async fn run_app<B: ratatui::backend::Backend>(
                     AppEvent::SessionUpdate(notification) => app.on_session_update(*notification),
                     AppEvent::DebugMessage { direction, message } => {
                         app.add_debug_message(&direction, &message);
+                    }
+                    AppEvent::ProviderSwitchComplete { provider, connection, session_id } => {
+                        log_debug(&format!("Provider switch complete: {}", provider.display_name()));
+                        app.current_provider = provider;
+                        app.client_connection = Some(connection);
+                        app.session_id = Some(session_id);
+                        app.connection_state = ConnectionState::Connected;
+                        // Clear history for new provider session
+                        app.history.clear();
+                    }
+                    AppEvent::ProviderSwitchFailed { provider, error } => {
+                        log_debug(&format!("Provider switch failed for {}: {}", provider.display_name(), error));
+                        // Revert to old provider (stored in SwitchingProvider state)
+                        if let ConnectionState::SwitchingProvider(old_provider) = app.connection_state {
+                            app.current_provider = old_provider;
+                        }
+                        app.connection_state = ConnectionState::Connected;
+                        // Add error message to chat
+                        app.history.push(ChatEntry::Message {
+                            role: "System".to_string(),
+                            text: format!("Failed to switch to {}: {}", provider.display_name(), error),
+                            normalized_markdown: None,
+                        });
                     }
                 }
             }
@@ -1043,6 +1121,7 @@ async fn run_app<B: ratatui::backend::Backend>(
                                     KeyCode::Char('p') | KeyCode::Char('k') => app.palette_up(),
                                     KeyCode::Char('n') | KeyCode::Char('j') => app.palette_down(),
                                     KeyCode::Char('c') | KeyCode::Char('g') => app.close_palette(),
+                                    KeyCode::Char('o') => app.close_palette(), // Toggle: close if already open
                                     _ => {}
                                 }
                             } else if key.modifiers.contains(KeyModifiers::ALT) {
@@ -1081,6 +1160,7 @@ async fn run_app<B: ratatui::backend::Backend>(
                                     KeyCode::Char('p') | KeyCode::Char('k') => app.palette_up(),
                                     KeyCode::Char('n') | KeyCode::Char('j') => app.palette_down(),
                                     KeyCode::Char('c') | KeyCode::Char('g') => app.close_palette(),
+                                    KeyCode::Char('m') => app.close_palette(), // Toggle: close if already open
                                     _ => {}
                                 }
                             } else if key.modifiers.contains(KeyModifiers::ALT) {
@@ -1094,10 +1174,8 @@ async fn run_app<B: ratatui::backend::Backend>(
                                     KeyCode::Down => app.palette_down(),
                                     KeyCode::Backspace => app.palette_backspace(),
                                     KeyCode::Enter => {
-                                        if let Some(new_provider) = app.execute_provider_palette_selection() {
-                                            // Return to trigger reconnection with new provider
-                                            return Ok(AppLoopResult::SwitchProvider(new_provider));
-                                        }
+                                        // This now triggers async provider switch
+                                        app.execute_provider_palette_selection();
                                     }
                                     KeyCode::Char(c) => app.palette_input(c),
                                     _ => {}
@@ -1111,7 +1189,7 @@ async fn run_app<B: ratatui::backend::Backend>(
                                 if key.modifiers.contains(KeyModifiers::CONTROL) {
                                     match key.code {
                                         KeyCode::Char('q') | KeyCode::Char('c') | KeyCode::Char('d') => {
-                                            return Ok(AppLoopResult::Exit);
+                                            return Ok(());
                                         }
                                         KeyCode::Char('j') => { app.textarea.insert_newline(); },
                                         KeyCode::Char('m') => { app.open_provider_palette(); },
@@ -1300,11 +1378,14 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
     )];
 
     // Show connection state
-    match app.connection_state {
+    match &app.connection_state {
         ConnectionState::Connecting => {
             status_spans.push(Span::styled(" (connecting...)", connecting_style));
         }
         ConnectionState::Connected => {}
+        ConnectionState::SwitchingProvider(_) => {
+            status_spans.push(Span::styled(" (loading...)", connecting_style));
+        }
     }
 
     // Show debug indicator
@@ -1830,7 +1911,10 @@ pub async fn run_demo_tui() -> Result<()> {
 }
 
 async fn run_demo_loop<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>) -> Result<()> {
-    let mut app = App::new(AcpProvider::default());
+    // Create a dummy channel for demo mode (not used)
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let mut app = App::new(AcpProvider::default(), tx, String::new(), String::new());
+    app.connection_state = ConnectionState::Connected;
     app.history = create_demo_chat_entries();
 
     let mut reader = EventStream::new();
