@@ -476,6 +476,7 @@ dependencies = [
  "ignore",
  "portable-pty",
  "predicates",
+ "pulldown-cmark 0.12.2",
  "ratatui",
  "rcgen",
  "reqwest",
@@ -483,6 +484,7 @@ dependencies = [
  "rustls-pki-types",
  "serde",
  "serde_json",
+ "syntect",
  "tar",
  "tempfile",
  "thiserror 1.0.69",
@@ -496,6 +498,7 @@ dependencies = [
  "tracing-subscriber",
  "tui-markdown",
  "tui-textarea",
+ "two-face",
  "url",
  "utoipa",
  "utoipa-swagger-ui",
@@ -1930,6 +1933,19 @@ dependencies = [
 
 [[package]]
 name = "pulldown-cmark"
+version = "0.12.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f86ba2052aebccc42cbbb3ed234b8b13ce76f75c3551a303cb2bcffcff12bb14"
+dependencies = [
+ "bitflags 2.10.0",
+ "getopts",
+ "memchr",
+ "pulldown-cmark-escape",
+ "unicase",
+]
+
+[[package]]
+name = "pulldown-cmark"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e8bbe1a966bd2f362681a44f6edce3c2310ac21e4d5067a6e7ec396297a6ea0"
@@ -3226,7 +3242,7 @@ dependencies = [
  "ansi-to-tui",
  "itertools 0.14.0",
  "pretty_assertions",
- "pulldown-cmark",
+ "pulldown-cmark 0.13.0",
  "ratatui",
  "rstest",
  "syntect",
@@ -3279,6 +3295,17 @@ dependencies = [
  "sha1",
  "thiserror 2.0.17",
  "utf-8",
+]
+
+[[package]]
+name = "two-face"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d112cfd41c1387546416bcf49c4ae2a1fcacda0d42c9e97120e9798c90c0923"
+dependencies = [
+ "serde",
+ "serde_derive",
+ "syntect",
 ]
 
 [[package]]

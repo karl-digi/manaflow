@@ -2,11 +2,11 @@ use agent_client_protocol::{
     Agent, Client, ClientCapabilities, ClientSideConnection, ContentBlock, CreateTerminalRequest,
     CreateTerminalResponse, Error, FileSystemCapability, InitializeRequest,
     KillTerminalCommandRequest, KillTerminalCommandResponse, NewSessionRequest, PermissionOptionId,
-    Plan, PlanEntryStatus, PromptRequest, ReadTextFileRequest, ReadTextFileResponse,
-    ReleaseTerminalRequest, ReleaseTerminalResponse, RequestPermissionOutcome,
-    RequestPermissionRequest, RequestPermissionResponse, SessionId, SessionNotification,
-    SessionUpdate, TerminalOutputRequest, TerminalOutputResponse, TextContent, ToolCall,
-    ToolCallStatus, ToolCallUpdate, ToolKind, WaitForTerminalExitRequest,
+    Plan, PlanEntryPriority, PlanEntryStatus, PromptRequest, ReadTextFileRequest,
+    ReadTextFileResponse, ReleaseTerminalRequest, ReleaseTerminalResponse,
+    RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse, SessionId,
+    SessionNotification, SessionUpdate, TerminalOutputRequest, TerminalOutputResponse, TextContent,
+    ToolCall, ToolCallStatus, ToolCallUpdate, ToolKind, WaitForTerminalExitRequest,
     WaitForTerminalExitResponse, WriteTextFileRequest, WriteTextFileResponse, V1,
 };
 use anyhow::Result;
@@ -19,18 +19,27 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use futures::{SinkExt, StreamExt};
+use pulldown_cmark::{Event as MdEvent, Options, Parser, Tag, TagEnd};
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, Paragraph},
     Terminal,
 };
 use std::borrow::Cow;
+use std::sync::LazyLock;
 use std::{fs::OpenOptions, io, io::Write, sync::Arc};
+use syntect::easy::HighlightLines;
+use syntect::highlighting::ThemeSet;
+use syntect::parsing::SyntaxSet;
+use syntect::util::LinesWithEndings;
 use tokio::sync::mpsc;
-use tui_markdown::from_str as markdown_from_str;
 use tui_textarea::TextArea;
+
+// Use two-face's extended syntax set which includes TypeScript, Kotlin, Swift, etc.
+static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(two_face::syntax::extra_newlines);
+static THEME_SET: LazyLock<ThemeSet> = LazyLock::new(ThemeSet::load_defaults);
 
 fn log_debug(msg: &str) {
     if let Ok(mut file) = OpenOptions::new()
@@ -165,10 +174,9 @@ struct App<'a> {
     textarea: TextArea<'a>,
     client_connection: Option<Arc<ClientSideConnection>>,
     session_id: Option<SessionId>,
-    /// User-controlled scroll offset from bottom. 0 = at bottom (auto-scroll), >0 = scrolled up
+    /// Scroll offset from the bottom in lines. 0 = at bottom, >0 = scrolled up.
+    /// This is clamped during render, so scroll methods can freely modify it.
     scroll_offset_from_bottom: u16,
-    /// Cached total lines for scroll calculations
-    cached_total_lines: u16,
 }
 
 impl<'a> App<'a> {
@@ -187,30 +195,27 @@ impl<'a> App<'a> {
             client_connection: None,
             session_id: None,
             scroll_offset_from_bottom: 0,
-            cached_total_lines: 0,
         }
     }
 
-    /// Scroll up by the given number of lines
+    /// Scroll up by the given number of lines (increase offset from bottom)
     fn scroll_up(&mut self, lines: u16) {
-        let max_scroll = self.cached_total_lines;
-        self.scroll_offset_from_bottom = self
-            .scroll_offset_from_bottom
-            .saturating_add(lines)
-            .min(max_scroll);
+        // No clamping here - render will clamp with fresh values
+        self.scroll_offset_from_bottom = self.scroll_offset_from_bottom.saturating_add(lines);
     }
 
-    /// Scroll down by the given number of lines
+    /// Scroll down by the given number of lines (decrease offset from bottom)
     fn scroll_down(&mut self, lines: u16) {
         self.scroll_offset_from_bottom = self.scroll_offset_from_bottom.saturating_sub(lines);
     }
 
     /// Scroll to the very top
     fn scroll_to_top(&mut self) {
-        self.scroll_offset_from_bottom = self.cached_total_lines;
+        // Use max value, render will clamp to actual max
+        self.scroll_offset_from_bottom = u16::MAX;
     }
 
-    /// Scroll to the very bottom (auto-scroll mode)
+    /// Scroll to the very bottom
     fn scroll_to_bottom(&mut self) {
         self.scroll_offset_from_bottom = 0;
     }
@@ -767,19 +772,18 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
     // Calculate scroll offset
     let total_lines = lines.len() as u16;
     let view_height = chunks[0].height;
-
-    // Update cached total lines for scroll calculations
-    app.cached_total_lines = total_lines.saturating_sub(view_height);
-
-    // Calculate actual scroll offset from top
-    // scroll_offset_from_bottom == 0 means we're at the bottom (auto-scroll)
-    // scroll_offset_from_bottom > 0 means we're scrolled up
     let max_scroll = total_lines.saturating_sub(view_height);
-    let scroll_offset = max_scroll.saturating_sub(app.scroll_offset_from_bottom);
 
-    let history_paragraph = Paragraph::new(lines)
-        .wrap(Wrap { trim: false })
-        .scroll((scroll_offset, 0));
+    // Clamp offset to valid range and update stored value
+    let offset_from_bottom = app.scroll_offset_from_bottom.min(max_scroll);
+    app.scroll_offset_from_bottom = offset_from_bottom;
+
+    // Convert offset-from-bottom to offset-from-top for rendering
+    let scroll_offset = max_scroll.saturating_sub(offset_from_bottom);
+
+    // Note: Don't use Wrap with scroll - they don't work correctly together in ratatui
+    // Long lines will be truncated at the terminal edge
+    let history_paragraph = Paragraph::new(lines).scroll((scroll_offset, 0));
 
     f.render_widget(history_paragraph, chunks[0]);
 
@@ -893,35 +897,201 @@ fn render_plan<'a>(lines: &mut Vec<Line<'a>>, plan: &Plan) {
     }
 }
 
-fn render_markdown_message<'a>(
-    lines: &mut Vec<Line<'a>>,
+fn render_markdown_message(
+    lines: &mut Vec<Line<'_>>,
     role: &str,
-    text: &'a str,
-    normalized_markdown: Option<&'a str>,
+    text: &str,
+    normalized_markdown: Option<&str>,
     prefix_style: ratatui::style::Style,
 ) {
     let source = normalized_markdown.unwrap_or(text);
-    let mut markdown_lines = markdown_from_str(source).lines.into_iter();
-    match markdown_lines.next() {
-        Some(mut line) => {
-            let mut spans = Vec::with_capacity(line.spans.len() + 1);
-            spans.push(Span::styled(format!("{}: ", role), prefix_style));
-            spans.append(&mut line.spans);
-            let mut new_line = Line::from(spans);
-            new_line.style = line.style;
-            lines.push(new_line);
-        }
-        None => {
-            lines.push(Line::from(vec![Span::styled(
-                format!("{}: ", role),
-                prefix_style,
-            )]));
+    let mut result_lines = markdown_to_lines(source);
+
+    // Add role prefix to first line
+    if let Some(first_line) = result_lines.first_mut() {
+        let mut spans = vec![Span::styled(format!("{}: ", role), prefix_style)];
+        spans.append(&mut first_line.spans);
+        *first_line = Line::from(spans);
+    } else {
+        result_lines.push(Line::from(vec![Span::styled(
+            format!("{}: ", role),
+            prefix_style,
+        )]));
+    }
+
+    lines.extend(result_lines);
+}
+
+/// Convert markdown text to ratatui Lines with syntax highlighting for code blocks
+fn markdown_to_lines(source: &str) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut current_spans: Vec<Span<'static>> = Vec::new();
+
+    let parser = Parser::new_ext(source, Options::all());
+
+    let mut in_code_block = false;
+    let mut code_lang: Option<String> = None;
+    let mut code_content = String::new();
+
+    for event in parser {
+        match event {
+            MdEvent::Start(Tag::CodeBlock(kind)) => {
+                // Flush current line
+                if !current_spans.is_empty() {
+                    lines.push(Line::from(std::mem::take(&mut current_spans)));
+                }
+                // Add spacing before code block
+                lines.push(Line::from(""));
+                in_code_block = true;
+                code_lang = match kind {
+                    pulldown_cmark::CodeBlockKind::Fenced(lang) => {
+                        let lang_str = lang.to_string();
+                        if lang_str.is_empty() {
+                            None
+                        } else {
+                            Some(canonical_language_token(&lang_str).into_owned())
+                        }
+                    }
+                    pulldown_cmark::CodeBlockKind::Indented => None,
+                };
+                code_content.clear();
+            }
+            MdEvent::End(TagEnd::CodeBlock) => {
+                // Highlight and add code block
+                let highlighted_lines = highlight_code(&code_content, code_lang.as_deref());
+                lines.extend(highlighted_lines);
+                // Add spacing after code block
+                lines.push(Line::from(""));
+                in_code_block = false;
+                code_lang = None;
+                code_content.clear();
+            }
+            MdEvent::Text(text) => {
+                if in_code_block {
+                    code_content.push_str(&text);
+                } else {
+                    // Handle regular text - split by newlines
+                    let text_str = text.to_string();
+                    let mut parts = text_str.split('\n').peekable();
+                    while let Some(part) = parts.next() {
+                        if !part.is_empty() {
+                            current_spans.push(Span::raw(part.to_owned()));
+                        }
+                        if parts.peek().is_some() {
+                            lines.push(Line::from(std::mem::take(&mut current_spans)));
+                        }
+                    }
+                }
+            }
+            MdEvent::Code(code) => {
+                // Inline code
+                let code_style = ratatui::style::Style::default()
+                    .fg(ratatui::style::Color::Yellow)
+                    .add_modifier(ratatui::style::Modifier::BOLD);
+                current_spans.push(Span::styled(format!("`{}`", code), code_style));
+            }
+            MdEvent::Start(Tag::Strong) => {
+                // We'll handle this by tracking state, but for simplicity just continue
+            }
+            MdEvent::End(TagEnd::Strong) => {}
+            MdEvent::Start(Tag::Emphasis) => {}
+            MdEvent::End(TagEnd::Emphasis) => {}
+            MdEvent::Start(Tag::Paragraph) => {}
+            MdEvent::End(TagEnd::Paragraph) => {
+                if !current_spans.is_empty() {
+                    lines.push(Line::from(std::mem::take(&mut current_spans)));
+                }
+            }
+            MdEvent::SoftBreak | MdEvent::HardBreak => {
+                if !current_spans.is_empty() {
+                    lines.push(Line::from(std::mem::take(&mut current_spans)));
+                }
+            }
+            MdEvent::Start(Tag::Heading { level, .. }) => {
+                let prefix = "#".repeat(level as usize);
+                let header_style = ratatui::style::Style::default()
+                    .fg(ratatui::style::Color::Cyan)
+                    .add_modifier(ratatui::style::Modifier::BOLD);
+                current_spans.push(Span::styled(format!("{} ", prefix), header_style));
+            }
+            MdEvent::End(TagEnd::Heading(_)) => {
+                if !current_spans.is_empty() {
+                    lines.push(Line::from(std::mem::take(&mut current_spans)));
+                }
+            }
+            MdEvent::Start(Tag::List(_)) => {}
+            MdEvent::End(TagEnd::List(_)) => {}
+            MdEvent::Start(Tag::Item) => {
+                current_spans.push(Span::raw("• ".to_owned()));
+            }
+            MdEvent::End(TagEnd::Item) => {
+                if !current_spans.is_empty() {
+                    lines.push(Line::from(std::mem::take(&mut current_spans)));
+                }
+            }
+            _ => {}
         }
     }
 
-    for line in markdown_lines {
-        lines.push(line);
+    // Flush remaining spans
+    if !current_spans.is_empty() {
+        lines.push(Line::from(current_spans));
     }
+
+    lines
+}
+
+/// Highlight code using syntect with two-face's extended syntax set
+fn highlight_code(code: &str, lang: Option<&str>) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+
+    // Try to find syntax for the language
+    let syntax = lang
+        .and_then(|l| SYNTAX_SET.find_syntax_by_token(l))
+        .unwrap_or_else(|| SYNTAX_SET.find_syntax_plain_text());
+
+    let theme = &THEME_SET.themes["base16-ocean.dark"];
+    let mut highlighter = HighlightLines::new(syntax, theme);
+
+    for line in LinesWithEndings::from(code) {
+        match highlighter.highlight_line(line, &SYNTAX_SET) {
+            Ok(ranges) => {
+                let spans: Vec<Span<'static>> = ranges
+                    .into_iter()
+                    .map(|(style, text)| {
+                        let fg = ratatui::style::Color::Rgb(
+                            style.foreground.r,
+                            style.foreground.g,
+                            style.foreground.b,
+                        );
+                        let mut ratatui_style = ratatui::style::Style::default().fg(fg);
+                        if style
+                            .font_style
+                            .contains(syntect::highlighting::FontStyle::BOLD)
+                        {
+                            ratatui_style =
+                                ratatui_style.add_modifier(ratatui::style::Modifier::BOLD);
+                        }
+                        if style
+                            .font_style
+                            .contains(syntect::highlighting::FontStyle::ITALIC)
+                        {
+                            ratatui_style =
+                                ratatui_style.add_modifier(ratatui::style::Modifier::ITALIC);
+                        }
+                        Span::styled(text.trim_end_matches('\n').to_owned(), ratatui_style)
+                    })
+                    .collect();
+                lines.push(Line::from(spans));
+            }
+            Err(_) => {
+                // Fallback to plain text
+                lines.push(Line::from(line.trim_end_matches('\n').to_owned()));
+            }
+        }
+    }
+
+    lines
 }
 
 fn normalize_code_fences(content: &str) -> String {
@@ -949,16 +1119,466 @@ fn normalize_code_fences(content: &str) -> String {
 }
 
 /// Normalize code fence language tokens to syntect-compatible format.
-/// Syntect's `find_syntax_by_token` performs case-insensitive matching,
-/// so we normalize to lowercase for consistency and also map common aliases.
+/// Uses two-face's extended syntax set which includes TypeScript, Kotlin, Swift, etc.
+/// Run the chat TUI in demo mode with fake conversation data for visual testing
+pub async fn run_demo_tui() -> Result<()> {
+    let mut stdout = io::stdout();
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        EnableMouseCapture,
+        EnableBracketedPaste
+    )?;
+    enable_raw_mode()?;
+
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+
+    let res = run_demo_loop(&mut terminal).await;
+
+    disable_raw_mode()?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableBracketedPaste
+    )?;
+    terminal.show_cursor()?;
+
+    res
+}
+
+async fn run_demo_loop<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>) -> Result<()> {
+    let mut app = App::new();
+    app.history = create_demo_chat_entries();
+
+    let mut reader = EventStream::new();
+
+    loop {
+        terminal.draw(|f| ui(f, &mut app))?;
+
+        // Wait for at least one event
+        if let Some(Ok(event)) = reader.next().await {
+            if process_demo_event(&mut app, event) {
+                return Ok(());
+            }
+
+            // Drain any additional pending events to batch scroll operations
+            // This prevents jank when mouse wheel momentum generates many events
+            while let Ok(Some(Ok(event))) =
+                tokio::time::timeout(std::time::Duration::from_millis(5), reader.next()).await
+            {
+                if process_demo_event(&mut app, event) {
+                    return Ok(());
+                }
+            }
+        }
+    }
+}
+
+/// Process a single event, returns true if should exit
+fn process_demo_event(app: &mut App, event: Event) -> bool {
+    match event {
+        Event::Key(key) => {
+            if key.modifiers.contains(KeyModifiers::CONTROL) {
+                match key.code {
+                    KeyCode::Char('q') | KeyCode::Char('c') | KeyCode::Char('d') => {
+                        return true;
+                    }
+                    _ => {}
+                }
+            } else {
+                match key.code {
+                    KeyCode::PageUp => app.scroll_up(10),
+                    KeyCode::PageDown => app.scroll_down(10),
+                    KeyCode::Home => app.scroll_to_top(),
+                    KeyCode::End => app.scroll_to_bottom(),
+                    KeyCode::Char('q') => return true,
+                    _ => {}
+                }
+            }
+        }
+        Event::Mouse(mouse_event) => match mouse_event.kind {
+            MouseEventKind::ScrollUp => app.scroll_up(1),
+            MouseEventKind::ScrollDown => app.scroll_down(1),
+            _ => {}
+        },
+        _ => {}
+    }
+    false
+}
+
+fn create_demo_chat_entries() -> Vec<ChatEntry> {
+    vec![
+        // User message
+        ChatEntry::Message {
+            role: "User".to_string(),
+            text: "Can you help me build a web server with authentication?".to_string(),
+            normalized_markdown: None,
+        },
+        // Agent message with comprehensive markdown
+        ChatEntry::Message {
+            role: "Agent".to_string(),
+            text: DEMO_MARKDOWN_CONTENT.to_string(),
+            normalized_markdown: Some(normalize_code_fences(DEMO_MARKDOWN_CONTENT)),
+        },
+        // Thought message
+        ChatEntry::Message {
+            role: "Thought".to_string(),
+            text: "Let me analyze the requirements...\n\nI should:\n1. Check existing code structure\n2. Plan the authentication flow\n3. Implement secure password hashing".to_string(),
+            normalized_markdown: Some("Let me analyze the requirements...\n\nI should:\n1. Check existing code structure\n2. Plan the authentication flow\n3. Implement secure password hashing".to_string()),
+        },
+        // Plan with all statuses
+        ChatEntry::Plan(Plan {
+            entries: vec![
+                agent_client_protocol::PlanEntry {
+                    content: "Research authentication patterns".to_string(),
+                    priority: PlanEntryPriority::High,
+                    status: PlanEntryStatus::Completed,
+                    meta: None,
+                },
+                agent_client_protocol::PlanEntry {
+                    content: "Implement JWT token generation".to_string(),
+                    priority: PlanEntryPriority::High,
+                    status: PlanEntryStatus::Completed,
+                    meta: None,
+                },
+                agent_client_protocol::PlanEntry {
+                    content: "Add password hashing with bcrypt".to_string(),
+                    priority: PlanEntryPriority::Medium,
+                    status: PlanEntryStatus::InProgress,
+                    meta: None,
+                },
+                agent_client_protocol::PlanEntry {
+                    content: "Create login/logout endpoints".to_string(),
+                    priority: PlanEntryPriority::Medium,
+                    status: PlanEntryStatus::Pending,
+                    meta: None,
+                },
+                agent_client_protocol::PlanEntry {
+                    content: "Write integration tests".to_string(),
+                    priority: PlanEntryPriority::Low,
+                    status: PlanEntryStatus::Pending,
+                    meta: None,
+                },
+            ],
+            meta: None,
+        }),
+        // All tool types with different statuses
+        // Read - Completed
+        ChatEntry::ToolCall {
+            id: "tool-1".to_string(),
+            title: "Read src/auth/mod.rs".to_string(),
+            kind: ToolKind::Read,
+            status: ToolCallStatus::Completed,
+        },
+        // Edit - InProgress
+        ChatEntry::ToolCall {
+            id: "tool-2".to_string(),
+            title: "Edit src/auth/jwt.rs - add token validation".to_string(),
+            kind: ToolKind::Edit,
+            status: ToolCallStatus::InProgress,
+        },
+        // Delete - Completed
+        ChatEntry::ToolCall {
+            id: "tool-3".to_string(),
+            title: "Delete src/auth/deprecated.rs".to_string(),
+            kind: ToolKind::Delete,
+            status: ToolCallStatus::Completed,
+        },
+        // Move - Completed
+        ChatEntry::ToolCall {
+            id: "tool-4".to_string(),
+            title: "Move src/utils/hash.rs → src/auth/hash.rs".to_string(),
+            kind: ToolKind::Move,
+            status: ToolCallStatus::Completed,
+        },
+        // Search - Completed
+        ChatEntry::ToolCall {
+            id: "tool-5".to_string(),
+            title: "Search for \"password\" in src/".to_string(),
+            kind: ToolKind::Search,
+            status: ToolCallStatus::Completed,
+        },
+        // Execute - Failed
+        ChatEntry::ToolCall {
+            id: "tool-6".to_string(),
+            title: "Execute: cargo test auth::tests".to_string(),
+            kind: ToolKind::Execute,
+            status: ToolCallStatus::Failed,
+        },
+        // Think - Completed
+        ChatEntry::ToolCall {
+            id: "tool-7".to_string(),
+            title: "Analyzing authentication flow".to_string(),
+            kind: ToolKind::Think,
+            status: ToolCallStatus::Completed,
+        },
+        // Fetch - Pending
+        ChatEntry::ToolCall {
+            id: "tool-8".to_string(),
+            title: "Fetch https://docs.rs/jsonwebtoken".to_string(),
+            kind: ToolKind::Fetch,
+            status: ToolCallStatus::Pending,
+        },
+        // SwitchMode - Completed
+        ChatEntry::ToolCall {
+            id: "tool-9".to_string(),
+            title: "Switch to code-review mode".to_string(),
+            kind: ToolKind::SwitchMode,
+            status: ToolCallStatus::Completed,
+        },
+        // Other - InProgress
+        ChatEntry::ToolCall {
+            id: "tool-10".to_string(),
+            title: "Custom: generate-schema".to_string(),
+            kind: ToolKind::Other,
+            status: ToolCallStatus::InProgress,
+        },
+        // Another user message
+        ChatEntry::Message {
+            role: "User".to_string(),
+            text: "Great progress! Can you also add rate limiting?".to_string(),
+            normalized_markdown: None,
+        },
+        // Agent response with more code examples
+        ChatEntry::Message {
+            role: "Agent".to_string(),
+            text: DEMO_CODE_EXAMPLES.to_string(),
+            normalized_markdown: Some(normalize_code_fences(DEMO_CODE_EXAMPLES)),
+        },
+    ]
+}
+
+const DEMO_MARKDOWN_CONTENT: &str = r#"# Authentication System Design
+
+I'll help you build a secure authentication system. Here's my plan:
+
+## Overview
+
+This implementation will use **JWT tokens** for stateless authentication with `bcrypt` for password hashing.
+
+### Key Components
+
+- **Token Service**: Handles JWT creation and validation
+- **Password Hasher**: Secure bcrypt-based hashing
+- **Middleware**: Request authentication layer
+
+## Implementation
+
+Here's the core token generation code:
+
+```rust
+use jsonwebtoken::{encode, decode, Header, Validation, EncodingKey, DecodingKey};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Claims {
+    sub: String,
+    exp: usize,
+    iat: usize,
+}
+
+fn generate_token(user_id: &str, secret: &[u8]) -> Result<String, Error> {
+    let claims = Claims {
+        sub: user_id.to_owned(),
+        exp: (chrono::Utc::now() + chrono::Duration::hours(24)).timestamp() as usize,
+        iat: chrono::Utc::now().timestamp() as usize,
+    };
+
+    encode(&Header::default(), &claims, &EncodingKey::from_secret(secret))
+}
+```
+
+### Password Hashing
+
+```python
+import bcrypt
+
+def hash_password(password: str) -> bytes:
+    salt = bcrypt.gensalt(rounds=12)
+    return bcrypt.hashpw(password.encode(), salt)
+
+def verify_password(password: str, hashed: bytes) -> bool:
+    return bcrypt.checkpw(password.encode(), hashed)
+```
+
+## Configuration
+
+Add these to your `config.toml`:
+
+```toml
+[auth]
+jwt_secret = "your-secret-key-here"
+token_expiry_hours = 24
+bcrypt_rounds = 12
+```
+
+## API Endpoints
+
+The following endpoints will be created:
+
+• `POST /auth/register` - Create new user account
+• `POST /auth/login` - Authenticate and receive token
+• `POST /auth/logout` - Invalidate current token
+• `GET /auth/me` - Get current user info
+
+### Example Request
+
+```json
+{
+  "username": "johndoe",
+  "password": "secure_password_123",
+  "email": "john@example.com"
+}
+```
+
+## Security Notes
+
+1. Always use HTTPS in production
+2. Store secrets in environment variables
+3. Implement rate limiting on auth endpoints
+4. Use secure cookie settings for token storage
+
+Let me start implementing this now."#;
+
+const DEMO_CODE_EXAMPLES: &str = r#"## Rate Limiting Implementation
+
+I'll add rate limiting using a token bucket algorithm. Here are examples in multiple languages:
+
+### TypeScript Implementation
+
+```typescript
+interface RateLimiter {
+  tokens: number;
+  lastRefill: number;
+  maxTokens: number;
+  refillRate: number;
+}
+
+function createRateLimiter(maxTokens: number, refillRate: number): RateLimiter {
+  return {
+    tokens: maxTokens,
+    lastRefill: Date.now(),
+    maxTokens,
+    refillRate,
+  };
+}
+
+function tryConsume(limiter: RateLimiter): boolean {
+  const now = Date.now();
+  const elapsed = (now - limiter.lastRefill) / 1000;
+  limiter.tokens = Math.min(limiter.maxTokens, limiter.tokens + elapsed * limiter.refillRate);
+  limiter.lastRefill = now;
+
+  if (limiter.tokens >= 1) {
+    limiter.tokens -= 1;
+    return true;
+  }
+  return false;
+}
+```
+
+### Go Implementation
+
+```go
+package ratelimit
+
+import (
+    "sync"
+    "time"
+)
+
+type Limiter struct {
+    mu         sync.Mutex
+    tokens     float64
+    maxTokens  float64
+    refillRate float64
+    lastRefill time.Time
+}
+
+func NewLimiter(maxTokens, refillRate float64) *Limiter {
+    return &Limiter{
+        tokens:     maxTokens,
+        maxTokens:  maxTokens,
+        refillRate: refillRate,
+        lastRefill: time.Now(),
+    }
+}
+
+func (l *Limiter) Allow() bool {
+    l.mu.Lock()
+    defer l.mu.Unlock()
+
+    now := time.Now()
+    elapsed := now.Sub(l.lastRefill).Seconds()
+    l.tokens = min(l.maxTokens, l.tokens+elapsed*l.refillRate)
+    l.lastRefill = now
+
+    if l.tokens >= 1 {
+        l.tokens--
+        return true
+    }
+    return false
+}
+```
+
+### SQL Schema
+
+```sql
+CREATE TABLE rate_limits (
+    id SERIAL PRIMARY KEY,
+    client_id VARCHAR(255) NOT NULL,
+    tokens DECIMAL(10, 2) NOT NULL,
+    last_refill TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(client_id)
+);
+
+CREATE INDEX idx_rate_limits_client ON rate_limits(client_id);
+```
+
+### Shell Script for Testing
+
+```bash
+#!/bin/bash
+# Test rate limiting endpoint
+
+for i in {1..20}; do
+    response=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/api/test)
+    echo "Request $i: HTTP $response"
+    sleep 0.1
+done
+```
+
+### YAML Configuration
+
+```yaml
+rate_limiting:
+  enabled: true
+  default_limits:
+    requests_per_minute: 60
+    burst_size: 10
+  endpoints:
+    /auth/login:
+      requests_per_minute: 5
+      burst_size: 2
+    /api/heavy:
+      requests_per_minute: 10
+      burst_size: 3
+```
+
+The rate limiter is now ready to use with your authentication system!"#;
+
 fn canonical_language_token(lang: &str) -> Cow<'static, str> {
     let trimmed = lang.trim_start_matches('.');
     let lower = trimmed.to_ascii_lowercase();
     match lower.as_str() {
-        // JavaScript/TypeScript variants
-        // Note: TypeScript/TSX are not in syntect's default set, so we map them to JavaScript/JSX
-        "js" | "javascript" | "node" | "ts" | "typescript" => Cow::Borrowed("javascript"),
-        "tsx" | "jsx" => Cow::Borrowed("javascript"),
+        // JavaScript variants
+        "js" | "javascript" | "node" => Cow::Borrowed("javascript"),
+        "jsx" => Cow::Borrowed("jsx"),
+        // TypeScript variants (two-face includes TypeScript support)
+        "ts" | "typescript" => Cow::Borrowed("typescript"),
+        "tsx" => Cow::Borrowed("tsx"),
         // Python
         "py" | "python" => Cow::Borrowed("python"),
         // Ruby

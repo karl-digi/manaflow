@@ -92,10 +92,17 @@ enum Command {
     Status,
 
     /// Start interactive ACP chat client
-    Chat,
+    Chat(ChatArgs),
 
     /// Manage authentication files
     Auth(AuthArgs),
+}
+
+#[derive(Args, Debug)]
+struct ChatArgs {
+    /// Run in demo mode with fake conversation data for visual testing
+    #[arg(long)]
+    demo: bool,
 }
 
 #[derive(Args, Debug)]
@@ -436,45 +443,52 @@ async fn run() -> anyhow::Result<()> {
         Command::Status => {
             handle_server_status(&cli.base_url).await?;
         }
-        Command::Chat => {
-            let body = CreateSandboxRequest {
-                name: Some("interactive".into()),
-                workspace: None,
-                read_only_paths: vec![],
-                tmpfs: vec![],
-                env: vec![],
-            };
-            let url = format!("{}/sandboxes", cli.base_url.trim_end_matches('/'));
-            let response = client.post(url).json(&body).send().await?;
-            let summary: SandboxSummary = parse_response(response).await?;
-            eprintln!("Created sandbox {}", summary.id);
-
-            // Upload directory (current directory)
-            let current_dir = std::env::current_dir()?;
-            eprintln!("Uploading directory: {}", current_dir.display());
-            let body = stream_directory(current_dir);
-            let url = format!(
-                "{}/sandboxes/{}/files",
-                cli.base_url.trim_end_matches('/'),
-                summary.id
-            );
-            let response = client.post(url).body(body).send().await?;
-            if !response.status().is_success() {
-                eprintln!("Failed to upload files: {}", response.status());
+        Command::Chat(args) => {
+            if args.demo {
+                cmux_sandbox::run_demo_tui()
+                    .await
+                    .map_err(|e| anyhow::anyhow!(e))?;
             } else {
-                eprintln!("Files uploaded.");
-            }
+                let body = CreateSandboxRequest {
+                    name: Some("interactive".into()),
+                    workspace: None,
+                    read_only_paths: vec![],
+                    tmpfs: vec![],
+                    env: vec![],
+                };
+                let url = format!("{}/sandboxes", cli.base_url.trim_end_matches('/'));
+                let response = client.post(url).json(&body).send().await?;
+                let summary: SandboxSummary = parse_response(response).await?;
+                eprintln!("Created sandbox {}", summary.id);
 
-            // Upload auth files
-            if let Err(e) = upload_auth_files(&client, &cli.base_url, &summary.id.to_string()).await
-            {
-                eprintln!("Warning: Failed to upload auth files: {}", e);
-            }
+                // Upload directory (current directory)
+                let current_dir = std::env::current_dir()?;
+                eprintln!("Uploading directory: {}", current_dir.display());
+                let body = stream_directory(current_dir);
+                let url = format!(
+                    "{}/sandboxes/{}/files",
+                    cli.base_url.trim_end_matches('/'),
+                    summary.id
+                );
+                let response = client.post(url).body(body).send().await?;
+                if !response.status().is_success() {
+                    eprintln!("Failed to upload files: {}", response.status());
+                } else {
+                    eprintln!("Files uploaded.");
+                }
 
-            save_last_sandbox(&summary.id.to_string());
-            cmux_sandbox::run_chat_tui(cli.base_url, summary.id.to_string())
-                .await
-                .map_err(|e| anyhow::anyhow!(e))?;
+                // Upload auth files
+                if let Err(e) =
+                    upload_auth_files(&client, &cli.base_url, &summary.id.to_string()).await
+                {
+                    eprintln!("Warning: Failed to upload auth files: {}", e);
+                }
+
+                save_last_sandbox(&summary.id.to_string());
+                cmux_sandbox::run_chat_tui(cli.base_url, summary.id.to_string())
+                    .await
+                    .map_err(|e| anyhow::anyhow!(e))?;
+            }
         }
         Command::Auth(args) => match args.command {
             AuthCommand::Status => {

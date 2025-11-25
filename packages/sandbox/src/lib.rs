@@ -6,7 +6,7 @@ pub mod ip_pool;
 pub mod models;
 pub mod service;
 
-pub use acp_client::run_chat_tui;
+pub use acp_client::{run_chat_tui, run_demo_tui};
 pub use api::build_router;
 pub use bubblewrap::BubblewrapService;
 
