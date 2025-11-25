@@ -2,7 +2,7 @@ use clap::{Args, Parser, Subcommand};
 use cmux_sandbox::models::{
     CreateSandboxRequest, EnvVar, ExecRequest, ExecResponse, SandboxSummary,
 };
-use cmux_sandbox::DEFAULT_HTTP_PORT;
+use cmux_sandbox::{AcpProvider, DEFAULT_HTTP_PORT};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use futures::{SinkExt, StreamExt};
 use ignore::WalkBuilder;
@@ -103,6 +103,10 @@ struct ChatArgs {
     /// Run in demo mode with fake conversation data for visual testing
     #[arg(long)]
     demo: bool,
+
+    /// ACP provider to use (codex, opencode, claude, gemini)
+    #[arg(long, short = 'a', value_enum, default_value_t = AcpProvider::default())]
+    acp: AcpProvider,
 }
 
 #[derive(Args, Debug)]
@@ -332,6 +336,34 @@ async fn main() {
     std::process::exit(0);
 }
 
+/// Check if the sandbox server is reachable and provide helpful error if not
+async fn check_server_reachable(client: &Client, base_url: &str) -> anyhow::Result<()> {
+    let url = format!("{}/sandboxes", base_url.trim_end_matches('/'));
+    match client
+        .get(&url)
+        .timeout(Duration::from_secs(2))
+        .send()
+        .await
+    {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            let is_connection_error = e.is_connect();
+            if is_connection_error {
+                eprintln!(
+                    "\n\x1b[31mError: Cannot connect to sandbox server at {}\x1b[0m",
+                    base_url
+                );
+                eprintln!("\nThe sandbox server is not running. To start it, run:");
+                eprintln!("\n  \x1b[36mcd packages/sandbox && ./scripts/start-dev.sh\x1b[0m\n");
+                eprintln!("Or check the server status with:");
+                eprintln!("\n  \x1b[36mcmux status\x1b[0m\n");
+                std::process::exit(1);
+            }
+            Err(e.into())
+        }
+    }
+}
+
 async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
     if std::env::var("CMUX_DEBUG").is_ok() {
@@ -345,12 +377,14 @@ async fn run() -> anyhow::Result<()> {
 
     match cli.command {
         Command::Openapi => {
+            check_server_reachable(&client, &cli.base_url).await?;
             let url = format!("{}/openapi.json", cli.base_url.trim_end_matches('/'));
             let response = client.get(url).send().await?;
             let value: serde_json::Value = parse_response(response).await?;
             print_json(&value)?;
         }
         Command::New(args) => {
+            check_server_reachable(&client, &cli.base_url).await?;
             let body = CreateSandboxRequest {
                 name: Some("interactive".into()),
                 workspace: None,
@@ -394,6 +428,7 @@ async fn run() -> anyhow::Result<()> {
             }
         }
         Command::Ls => {
+            check_server_reachable(&client, &cli.base_url).await?;
             let url = format!("{}/sandboxes", cli.base_url.trim_end_matches('/'));
             let response = client.get(url).send().await?;
             let sandboxes: Vec<SandboxSummary> = parse_response(response).await?;
@@ -449,6 +484,9 @@ async fn run() -> anyhow::Result<()> {
                     .await
                     .map_err(|e| anyhow::anyhow!(e))?;
             } else {
+                check_server_reachable(&client, &cli.base_url).await?;
+                eprintln!("Using ACP provider: {}", args.acp.display_name());
+
                 let body = CreateSandboxRequest {
                     name: Some("interactive".into()),
                     workspace: None,
@@ -485,7 +523,7 @@ async fn run() -> anyhow::Result<()> {
                 }
 
                 save_last_sandbox(&summary.id.to_string());
-                cmux_sandbox::run_chat_tui(cli.base_url, summary.id.to_string())
+                cmux_sandbox::run_chat_tui(cli.base_url, summary.id.to_string(), args.acp)
                     .await
                     .map_err(|e| anyhow::anyhow!(e))?;
             }

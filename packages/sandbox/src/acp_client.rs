@@ -10,10 +10,70 @@ use agent_client_protocol::{
     WaitForTerminalExitResponse, WriteTextFileRequest, WriteTextFileResponse, V1,
 };
 use anyhow::Result;
+use clap::ValueEnum;
+
+/// Available ACP (Agent Client Protocol) providers
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
+pub enum AcpProvider {
+    /// OpenAI Codex CLI ACP - `codex-acp`
+    #[default]
+    Codex,
+    /// OpenCode ACP - `opencode acp`
+    Opencode,
+    /// Claude Code ACP - `claude-code-acp`
+    Claude,
+    /// Gemini CLI ACP - `gemini --experimental-acp`
+    Gemini,
+}
+
+impl AcpProvider {
+    /// Get all available providers for display in the command palette
+    pub fn all() -> &'static [AcpProvider] {
+        &[
+            AcpProvider::Codex,
+            AcpProvider::Opencode,
+            AcpProvider::Claude,
+            AcpProvider::Gemini,
+        ]
+    }
+
+    /// Get the display name for this provider
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            AcpProvider::Codex => "Codex CLI",
+            AcpProvider::Opencode => "OpenCode",
+            AcpProvider::Claude => "Claude Code",
+            AcpProvider::Gemini => "Gemini CLI",
+        }
+    }
+
+    /// Get the command to execute for this provider
+    /// Commands are wrapped with stdbuf for unbuffered I/O
+    pub fn command(&self) -> &'static str {
+        match self {
+            AcpProvider::Codex => {
+                "/usr/bin/stdbuf -i0 -o0 -e0 /usr/local/bin/codex-acp -c approval_policy=\"never\" -c sandbox_mode=\"danger-full-access\" -c model=\"gpt-5.1-codex-max\""
+            }
+            AcpProvider::Opencode => "/usr/bin/stdbuf -i0 -o0 -e0 opencode acp",
+            AcpProvider::Claude => "/usr/bin/stdbuf -i0 -o0 -e0 claude-code-acp",
+            AcpProvider::Gemini => "/usr/bin/stdbuf -i0 -o0 -e0 gemini --experimental-acp",
+        }
+    }
+
+    /// Get a short identifier for this provider
+    pub fn short_name(&self) -> &'static str {
+        match self {
+            AcpProvider::Codex => "codex",
+            AcpProvider::Opencode => "opencode",
+            AcpProvider::Claude => "claude",
+            AcpProvider::Gemini => "gemini",
+        }
+    }
+}
 use crossterm::{
     event::{
-        DisableBracketedPaste, EnableBracketedPaste, EnableMouseCapture, Event, EventStream,
-        KeyCode, KeyModifiers, MouseEventKind,
+        DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+        Event, EventStream, KeyCode, KeyModifiers, MouseEventKind,
     },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -57,7 +117,8 @@ struct AppClient {
 
 #[derive(Debug)]
 enum AppEvent {
-    SessionUpdate(SessionNotification),
+    SessionUpdate(Box<SessionNotification>),
+    DebugMessage { direction: String, message: String },
 }
 
 #[async_trait::async_trait(?Send)]
@@ -144,7 +205,9 @@ impl Client for AppClient {
 
     async fn session_notification(&self, notification: SessionNotification) -> Result<(), Error> {
         log_debug(&format!("SessionNotification: {:?}", notification));
-        let _ = self.tx.send(AppEvent::SessionUpdate(notification));
+        let _ = self
+            .tx
+            .send(AppEvent::SessionUpdate(Box::new(notification)));
         Ok(())
     }
 }
@@ -169,6 +232,75 @@ enum ChatEntry {
     Plan(Plan),
 }
 
+/// Connection state for the ACP provider
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ConnectionState {
+    /// Currently connecting to the provider
+    Connecting,
+    /// Connected and ready
+    Connected,
+}
+
+/// UI mode for the application
+#[derive(Clone, PartialEq, Eq)]
+enum UiMode {
+    /// Normal chat mode
+    Chat,
+    /// Main command palette (Ctrl+O) - searchable list of commands
+    MainPalette { search: String },
+    /// ACP provider selection palette (Ctrl+M or from main palette)
+    ProviderPalette { search: String },
+}
+
+/// Commands available in the main palette
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PaletteCommand {
+    ToggleDebugMode,
+    SwitchProvider,
+}
+
+impl PaletteCommand {
+    fn all() -> &'static [PaletteCommand] {
+        &[
+            PaletteCommand::ToggleDebugMode,
+            PaletteCommand::SwitchProvider,
+        ]
+    }
+
+    fn label(&self) -> &'static str {
+        match self {
+            PaletteCommand::ToggleDebugMode => "Toggle Debug Mode",
+            PaletteCommand::SwitchProvider => "Switch ACP Provider",
+        }
+    }
+
+    fn description(&self) -> &'static str {
+        match self {
+            PaletteCommand::ToggleDebugMode => "Show/hide raw ACP protocol messages",
+            PaletteCommand::SwitchProvider => {
+                "Change the AI provider (Codex, Claude, Gemini, OpenCode)"
+            }
+        }
+    }
+
+    fn matches(&self, query: &str) -> bool {
+        if query.is_empty() {
+            return true;
+        }
+        let query_lower = query.to_lowercase();
+        self.label().to_lowercase().contains(&query_lower)
+            || self.description().to_lowercase().contains(&query_lower)
+    }
+}
+
+/// Result from running the app loop
+enum AppLoopResult {
+    /// User requested exit
+    Exit,
+    /// User requested provider switch
+    SwitchProvider(AcpProvider),
+}
+
 struct App<'a> {
     history: Vec<ChatEntry>,
     textarea: TextArea<'a>,
@@ -177,10 +309,22 @@ struct App<'a> {
     /// Scroll offset from the bottom in lines. 0 = at bottom, >0 = scrolled up.
     /// This is clamped during render, so scroll methods can freely modify it.
     scroll_offset_from_bottom: u16,
+    /// Current ACP provider
+    current_provider: AcpProvider,
+    /// Current UI mode
+    ui_mode: UiMode,
+    /// Selected index in command palette
+    palette_selection: usize,
+    /// Connection state
+    connection_state: ConnectionState,
+    /// Debug mode - show raw ACP messages
+    debug_mode: bool,
+    /// Debug messages log
+    debug_messages: Vec<String>,
 }
 
 impl<'a> App<'a> {
-    fn new() -> Self {
+    fn new(provider: AcpProvider) -> Self {
         let mut textarea = TextArea::default();
         textarea.set_block(
             Block::default()
@@ -195,6 +339,181 @@ impl<'a> App<'a> {
             client_connection: None,
             session_id: None,
             scroll_offset_from_bottom: 0,
+            current_provider: provider,
+            ui_mode: UiMode::Chat,
+            palette_selection: 0,
+            connection_state: ConnectionState::Connecting,
+            debug_mode: false,
+            debug_messages: vec![],
+        }
+    }
+
+    /// Add a debug message (only stored if debug mode is enabled)
+    fn add_debug_message(&mut self, direction: &str, msg: &str) {
+        if self.debug_mode {
+            let timestamp = chrono::Utc::now().format("%H:%M:%S%.3f");
+            self.debug_messages
+                .push(format!("[{}] {} {}", timestamp, direction, msg));
+            // Keep only last 100 messages
+            if self.debug_messages.len() > 100 {
+                self.debug_messages.remove(0);
+            }
+        }
+    }
+
+    /// Open the main command palette (Ctrl+O)
+    fn open_main_palette(&mut self) {
+        self.ui_mode = UiMode::MainPalette {
+            search: String::new(),
+        };
+        self.palette_selection = 0;
+    }
+
+    /// Open the provider palette (Ctrl+M)
+    fn open_provider_palette(&mut self) {
+        self.ui_mode = UiMode::ProviderPalette {
+            search: String::new(),
+        };
+        // Pre-select the current provider
+        self.palette_selection = AcpProvider::all()
+            .iter()
+            .position(|p| *p == self.current_provider)
+            .unwrap_or(0);
+    }
+
+    /// Close any palette
+    fn close_palette(&mut self) {
+        self.ui_mode = UiMode::Chat;
+    }
+
+    /// Get filtered items count for current palette
+    fn filtered_items_count(&self) -> usize {
+        match &self.ui_mode {
+            UiMode::MainPalette { search } => PaletteCommand::all()
+                .iter()
+                .filter(|c| c.matches(search))
+                .count(),
+            UiMode::ProviderPalette { search } => {
+                if search.is_empty() {
+                    AcpProvider::all().len()
+                } else {
+                    let search_lower = search.to_lowercase();
+                    AcpProvider::all()
+                        .iter()
+                        .filter(|p| p.display_name().to_lowercase().contains(&search_lower))
+                        .count()
+                }
+            }
+            UiMode::Chat => 0,
+        }
+    }
+
+    /// Move selection up in palette
+    fn palette_up(&mut self) {
+        let len = self.filtered_items_count();
+        if len > 0 {
+            self.palette_selection = (self.palette_selection + len - 1) % len;
+        }
+    }
+
+    /// Move selection down in palette
+    fn palette_down(&mut self) {
+        let len = self.filtered_items_count();
+        if len > 0 {
+            self.palette_selection = (self.palette_selection + 1) % len;
+        }
+    }
+
+    /// Handle character input in palette search
+    fn palette_input(&mut self, c: char) {
+        match &mut self.ui_mode {
+            UiMode::MainPalette { search } | UiMode::ProviderPalette { search } => {
+                search.push(c);
+                self.palette_selection = 0; // Reset selection on search change
+            }
+            UiMode::Chat => {}
+        }
+    }
+
+    /// Handle backspace in palette search
+    fn palette_backspace(&mut self) {
+        match &mut self.ui_mode {
+            UiMode::MainPalette { search } | UiMode::ProviderPalette { search } => {
+                search.pop();
+                self.palette_selection = 0; // Reset selection on search change
+            }
+            UiMode::Chat => {}
+        }
+    }
+
+    /// Handle Option+Backspace (delete whole word) in palette search
+    fn palette_delete_word(&mut self) {
+        match &mut self.ui_mode {
+            UiMode::MainPalette { search } | UiMode::ProviderPalette { search } => {
+                // Delete trailing whitespace first
+                while search.ends_with(' ') {
+                    search.pop();
+                }
+                // Then delete until we hit whitespace or empty
+                while !search.is_empty() && !search.ends_with(' ') {
+                    search.pop();
+                }
+                self.palette_selection = 0; // Reset selection on search change
+            }
+            UiMode::Chat => {}
+        }
+    }
+
+    /// Execute selected command in main palette
+    fn execute_main_palette_selection(&mut self) -> Option<PaletteCommand> {
+        if let UiMode::MainPalette { search } = &self.ui_mode {
+            let filtered: Vec<_> = PaletteCommand::all()
+                .iter()
+                .filter(|c| c.matches(search))
+                .collect();
+            if let Some(cmd) = filtered.get(self.palette_selection) {
+                let cmd = **cmd;
+                self.ui_mode = UiMode::Chat;
+                return Some(cmd);
+            }
+        }
+        self.ui_mode = UiMode::Chat;
+        None
+    }
+
+    /// Select provider in provider palette
+    /// Returns Some(provider) if a new provider was selected
+    fn execute_provider_palette_selection(&mut self) -> Option<AcpProvider> {
+        if let UiMode::ProviderPalette { search } = &self.ui_mode {
+            let filtered: Vec<_> = if search.is_empty() {
+                AcpProvider::all().to_vec()
+            } else {
+                let search_lower = search.to_lowercase();
+                AcpProvider::all()
+                    .iter()
+                    .filter(|p| p.display_name().to_lowercase().contains(&search_lower))
+                    .copied()
+                    .collect()
+            };
+            if let Some(selected) = filtered.get(self.palette_selection) {
+                let selected = *selected;
+                self.ui_mode = UiMode::Chat;
+                if selected != self.current_provider {
+                    self.current_provider = selected;
+                    self.connection_state = ConnectionState::Connecting;
+                    return Some(selected);
+                }
+            }
+        }
+        self.ui_mode = UiMode::Chat;
+        None
+    }
+
+    /// Toggle debug mode
+    fn toggle_debug_mode(&mut self) {
+        self.debug_mode = !self.debug_mode;
+        if !self.debug_mode {
+            self.debug_messages.clear();
         }
     }
 
@@ -424,7 +743,11 @@ impl<T: tokio::io::AsyncWrite + Unpin> futures::io::AsyncWrite for TokioCompatWr
     }
 }
 
-pub async fn run_chat_tui(base_url: String, sandbox_id: String) -> Result<()> {
+pub async fn run_chat_tui(
+    base_url: String,
+    sandbox_id: String,
+    provider: AcpProvider,
+) -> Result<()> {
     let mut stdout = io::stdout();
     // Enable mouse capture for scroll, and bracketed paste for multi-line paste
     execute!(
@@ -440,12 +763,13 @@ pub async fn run_chat_tui(base_url: String, sandbox_id: String) -> Result<()> {
 
     let local = tokio::task::LocalSet::new();
     let res = local
-        .run_until(run_main_loop(&mut terminal, base_url, sandbox_id))
+        .run_until(run_main_loop(&mut terminal, base_url, sandbox_id, provider))
         .await;
 
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
+        DisableMouseCapture,
         LeaveAlternateScreen,
         DisableBracketedPaste
     )?;
@@ -475,187 +799,226 @@ async fn run_main_loop<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     base_url: String,
     sandbox_id: String,
+    initial_provider: AcpProvider,
 ) -> Result<()> {
-    log_debug("Starting run_main_loop");
-    let (tx, rx) = mpsc::unbounded_channel();
+    let mut current_provider = initial_provider;
 
-    let ws_url = base_url
-        .replace("http://", "ws://")
-        .replace("https://", "wss://")
-        .trim_end_matches('/')
-        .to_string();
+    loop {
+        log_debug(&format!(
+            "Starting run_main_loop with provider: {}",
+            current_provider.display_name()
+        ));
+        let (tx, rx) = mpsc::unbounded_channel();
 
-    // Wrap in stdbuf to ensure unbuffered I/O over pipes
-    let command = "/usr/bin/stdbuf -i0 -o0 -e0 /usr/local/bin/codex-acp -c approval_policy=\"never\" -c sandbox_mode=\"danger-full-access\" -c model=\"gpt-5.1-codex-max\"";
-    let encoded_command =
-        url::form_urlencoded::byte_serialize(command.as_bytes()).collect::<String>();
+        let ws_url = base_url
+            .replace("http://", "ws://")
+            .replace("https://", "wss://")
+            .trim_end_matches('/')
+            .to_string();
 
-    let url = format!(
-        "{}/sandboxes/{}/attach?cols=80&rows=24&tty=false&command={}",
-        ws_url, sandbox_id, encoded_command
-    );
-    log_debug(&format!("Connecting to: {}", url));
+        // Get the command for the selected provider
+        let command = current_provider.command();
+        let encoded_command =
+            url::form_urlencoded::byte_serialize(command.as_bytes()).collect::<String>();
 
-    let (ws_stream, _) = tokio_tungstenite::connect_async(url).await?;
-    log_debug("WebSocket connected");
+        let url = format!(
+            "{}/sandboxes/{}/attach?cols=80&rows=24&tty=false&command={}",
+            ws_url, sandbox_id, encoded_command
+        );
+        log_debug(&format!("Connecting to: {}", url));
 
-    let (write, read) = ws_stream.split();
+        let (ws_stream, _) = tokio_tungstenite::connect_async(url).await?;
+        log_debug("WebSocket connected");
 
-    struct WsRead(
-        futures::stream::SplitStream<
-            tokio_tungstenite::WebSocketStream<
-                tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        let (write, read) = ws_stream.split();
+
+        struct WsRead {
+            stream: futures::stream::SplitStream<
+                tokio_tungstenite::WebSocketStream<
+                    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+                >,
             >,
-        >,
-    );
-    struct WsWrite(
-        futures::stream::SplitSink<
-            tokio_tungstenite::WebSocketStream<
-                tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-            >,
-            tokio_tungstenite::tungstenite::Message,
-        >,
-    );
-
-    impl tokio::io::AsyncRead for WsRead {
-        fn poll_read(
-            mut self: std::pin::Pin<&mut Self>,
-            cx: &mut std::task::Context<'_>,
-            buf: &mut tokio::io::ReadBuf<'_>,
-        ) -> std::task::Poll<io::Result<()>> {
-            loop {
-                match futures::ready!(self.0.poll_next_unpin(cx)) {
-                    Some(Ok(tokio_tungstenite::tungstenite::Message::Binary(data))) => {
-                        // log_debug(&format!("RECV BINARY: {} bytes", data.len()));
-                        buf.put_slice(&data);
-                        return std::task::Poll::Ready(Ok(()));
-                    }
-                    Some(Ok(tokio_tungstenite::tungstenite::Message::Text(data))) => {
-                        log_debug(&format!("RECV TEXT: {}", data));
-                        buf.put_slice(data.as_bytes());
-                        return std::task::Poll::Ready(Ok(()));
-                    }
-                    Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_))) | None => {
-                        log_debug("RECV EOF");
-                        return std::task::Poll::Ready(Ok(())); // EOF
-                    }
-                    Some(Err(e)) => {
-                        log_debug(&format!("RECV Error: {}", e));
-                        return std::task::Poll::Ready(Err(io::Error::other(e)));
-                    }
-                    _ => continue,
-                }
-            }
+            tx: mpsc::UnboundedSender<AppEvent>,
         }
-    }
+        struct WsWrite {
+            sink: futures::stream::SplitSink<
+                tokio_tungstenite::WebSocketStream<
+                    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+                >,
+                tokio_tungstenite::tungstenite::Message,
+            >,
+            tx: mpsc::UnboundedSender<AppEvent>,
+        }
 
-    impl tokio::io::AsyncWrite for WsWrite {
-        fn poll_write(
-            mut self: std::pin::Pin<&mut Self>,
-            cx: &mut std::task::Context<'_>,
-            buf: &[u8],
-        ) -> std::task::Poll<io::Result<usize>> {
-            log_debug(&format!("SEND: {:?}", String::from_utf8_lossy(buf)));
-            match self
-                .0
-                .start_send_unpin(tokio_tungstenite::tungstenite::Message::Binary(
-                    buf.to_vec(),
-                )) {
-                Ok(_) => {
-                    // Force a flush attempt to ensure the message is pushed to the underlying socket
-                    // even if the caller doesn't call flush immediately.
-                    match self.0.poll_flush_unpin(cx) {
-                        std::task::Poll::Ready(Ok(_)) => log_debug("Auto-flush success"),
-                        std::task::Poll::Ready(Err(e)) => {
-                            log_debug(&format!("Auto-flush error: {}", e))
+        impl tokio::io::AsyncRead for WsRead {
+            fn poll_read(
+                mut self: std::pin::Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
+                buf: &mut tokio::io::ReadBuf<'_>,
+            ) -> std::task::Poll<io::Result<()>> {
+                loop {
+                    match futures::ready!(self.stream.poll_next_unpin(cx)) {
+                        Some(Ok(tokio_tungstenite::tungstenite::Message::Binary(data))) => {
+                            let msg = String::from_utf8_lossy(&data).to_string();
+                            let _ = self.tx.send(AppEvent::DebugMessage {
+                                direction: "←".to_string(),
+                                message: msg,
+                            });
+                            buf.put_slice(&data);
+                            return std::task::Poll::Ready(Ok(()));
                         }
-                        std::task::Poll::Pending => log_debug("Auto-flush pending"),
+                        Some(Ok(tokio_tungstenite::tungstenite::Message::Text(data))) => {
+                            log_debug(&format!("RECV TEXT: {}", data));
+                            let _ = self.tx.send(AppEvent::DebugMessage {
+                                direction: "←".to_string(),
+                                message: data.clone(),
+                            });
+                            buf.put_slice(data.as_bytes());
+                            return std::task::Poll::Ready(Ok(()));
+                        }
+                        Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_))) | None => {
+                            log_debug("RECV EOF");
+                            return std::task::Poll::Ready(Ok(()));
+                        }
+                        Some(Err(e)) => {
+                            log_debug(&format!("RECV Error: {}", e));
+                            return std::task::Poll::Ready(Err(io::Error::other(e)));
+                        }
+                        _ => continue,
                     }
-                    std::task::Poll::Ready(Ok(buf.len()))
                 }
-                Err(e) => std::task::Poll::Ready(Err(io::Error::other(e))),
             }
         }
 
-        fn poll_flush(
-            mut self: std::pin::Pin<&mut Self>,
-            cx: &mut std::task::Context<'_>,
-        ) -> std::task::Poll<io::Result<()>> {
-            log_debug("FLUSH");
-            self.0.poll_flush_unpin(cx).map_err(io::Error::other)
+        impl tokio::io::AsyncWrite for WsWrite {
+            fn poll_write(
+                mut self: std::pin::Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
+                buf: &[u8],
+            ) -> std::task::Poll<io::Result<usize>> {
+                let msg = String::from_utf8_lossy(buf).to_string();
+                log_debug(&format!("SEND: {:?}", msg));
+                let _ = self.tx.send(AppEvent::DebugMessage {
+                    direction: "→".to_string(),
+                    message: msg,
+                });
+                match self
+                    .sink
+                    .start_send_unpin(tokio_tungstenite::tungstenite::Message::Binary(
+                        buf.to_vec(),
+                    )) {
+                    Ok(_) => {
+                        match self.sink.poll_flush_unpin(cx) {
+                            std::task::Poll::Ready(Ok(_)) => log_debug("Auto-flush success"),
+                            std::task::Poll::Ready(Err(e)) => {
+                                log_debug(&format!("Auto-flush error: {}", e))
+                            }
+                            std::task::Poll::Pending => log_debug("Auto-flush pending"),
+                        }
+                        std::task::Poll::Ready(Ok(buf.len()))
+                    }
+                    Err(e) => std::task::Poll::Ready(Err(io::Error::other(e))),
+                }
+            }
+
+            fn poll_flush(
+                mut self: std::pin::Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<io::Result<()>> {
+                log_debug("FLUSH");
+                self.sink.poll_flush_unpin(cx).map_err(io::Error::other)
+            }
+
+            fn poll_shutdown(
+                mut self: std::pin::Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<io::Result<()>> {
+                self.sink.poll_close_unpin(cx).map_err(io::Error::other)
+            }
         }
 
-        fn poll_shutdown(
-            mut self: std::pin::Pin<&mut Self>,
-            cx: &mut std::task::Context<'_>,
-        ) -> std::task::Poll<io::Result<()>> {
-            self.0.poll_close_unpin(cx).map_err(io::Error::other)
-        }
-    }
+        let (client_conn, io_task) = ClientSideConnection::new(
+            Arc::new(AppClient { tx: tx.clone() }),
+            TokioCompatWrite(WsWrite {
+                sink: write,
+                tx: tx.clone(),
+            }),
+            TokioCompatRead(WsRead {
+                stream: read,
+                tx: tx.clone(),
+            }),
+            Box::new(|fut| {
+                tokio::task::spawn_local(fut);
+            }),
+        );
+        let client_conn = Arc::new(client_conn);
 
-    let (client_conn, io_task) = ClientSideConnection::new(
-        Arc::new(AppClient { tx: tx.clone() }),
-        TokioCompatWrite(WsWrite(write)),
-        TokioCompatRead(WsRead(read)),
-        Box::new(|fut| {
-            tokio::task::spawn_local(fut);
-        }),
-    );
-    let client_conn = Arc::new(client_conn);
+        tokio::task::spawn_local(async move {
+            if let Err(e) = io_task.await {
+                log_debug(&format!("IO Task Error: {}", e));
+            } else {
+                log_debug("IO Task Finished");
+            }
+        });
 
-    tokio::task::spawn_local(async move {
-        if let Err(e) = io_task.await {
-            log_debug(&format!("IO Task Error: {}", e));
-        } else {
-            log_debug("IO Task Finished");
-        }
-    });
-
-    log_debug("Sending Initialize...");
-    client_conn
-        .initialize(InitializeRequest {
-            protocol_version: V1,
-            client_capabilities: ClientCapabilities {
-                fs: FileSystemCapability {
-                    read_text_file: true,
-                    write_text_file: true,
+        log_debug("Sending Initialize...");
+        client_conn
+            .initialize(InitializeRequest {
+                protocol_version: V1,
+                client_capabilities: ClientCapabilities {
+                    fs: FileSystemCapability {
+                        read_text_file: true,
+                        write_text_file: true,
+                        meta: None,
+                    },
+                    terminal: false,
                     meta: None,
                 },
-                terminal: false,
+                client_info: None,
                 meta: None,
-            },
-            client_info: None,
-            meta: None,
-        })
-        .await?;
-    log_debug("Initialize complete");
+            })
+            .await?;
+        log_debug("Initialize complete");
 
-    log_debug("Starting New Session...");
-    let new_session_res = client_conn
-        .new_session(NewSessionRequest {
-            cwd: std::path::PathBuf::from("/workspace"),
-            mcp_servers: vec![],
-            meta: None,
-        })
-        .await?;
-    log_debug("New Session started");
+        log_debug("Starting New Session...");
+        let new_session_res = client_conn
+            .new_session(NewSessionRequest {
+                cwd: std::path::PathBuf::from("/workspace"),
+                mcp_servers: vec![],
+                meta: None,
+            })
+            .await?;
+        log_debug("New Session started");
 
-    let mut app = App::new();
-    app.client_connection = Some(client_conn);
-    app.session_id = Some(new_session_res.session_id);
+        let mut app = App::new(current_provider);
+        app.client_connection = Some(client_conn);
+        app.session_id = Some(new_session_res.session_id);
+        app.connection_state = ConnectionState::Connected;
 
-    log_debug("Running App UI loop...");
-    run_app(terminal, app, rx).await?;
-    log_debug("App UI loop finished");
-
-    Ok(())
+        log_debug("Running App UI loop...");
+        match run_app(terminal, app, rx).await? {
+            AppLoopResult::Exit => {
+                log_debug("App UI loop finished - exiting");
+                return Ok(());
+            }
+            AppLoopResult::SwitchProvider(new_provider) => {
+                log_debug(&format!(
+                    "Switching provider from {} to {}",
+                    current_provider.display_name(),
+                    new_provider.display_name()
+                ));
+                current_provider = new_provider;
+                // Loop will continue with new provider
+            }
+        }
+    }
 }
 
 async fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     mut app: App<'_>,
     mut rx: mpsc::UnboundedReceiver<AppEvent>,
-) -> io::Result<()> {
+) -> io::Result<AppLoopResult> {
     let mut reader = EventStream::new();
 
     loop {
@@ -664,58 +1027,141 @@ async fn run_app<B: ratatui::backend::Backend>(
         tokio::select! {
             Some(event) = rx.recv() => {
                 match event {
-                    AppEvent::SessionUpdate(notification) => app.on_session_update(notification),
+                    AppEvent::SessionUpdate(notification) => app.on_session_update(*notification),
+                    AppEvent::DebugMessage { direction, message } => {
+                        app.add_debug_message(&direction, &message);
+                    }
                 }
             }
             Some(Ok(event)) = reader.next() => {
-                // log_debug(&format!("Event: {:?}", event));
-                match event {
-                    Event::Key(key) => {
-                        if key.modifiers.contains(KeyModifiers::CONTROL) {
-                            match key.code {
-                                KeyCode::Char('q') | KeyCode::Char('c') | KeyCode::Char('d') => return Ok(()),
-                                KeyCode::Char('j') => { app.textarea.insert_newline(); },
-                                _ => { app.textarea.input(key); }
-                            }
-                        } else {
-                            match key.code {
-                                KeyCode::Enter => {
-                                    app.send_message().await;
+                match &app.ui_mode {
+                    UiMode::MainPalette { .. } => {
+                        // Handle main command palette input
+                        if let Event::Key(key) = event {
+                            if key.modifiers.contains(KeyModifiers::CONTROL) {
+                                match key.code {
+                                    KeyCode::Char('p') | KeyCode::Char('k') => app.palette_up(),
+                                    KeyCode::Char('n') | KeyCode::Char('j') => app.palette_down(),
+                                    KeyCode::Char('c') | KeyCode::Char('g') => app.close_palette(),
+                                    _ => {}
                                 }
-                                KeyCode::PageUp => {
-                                    app.scroll_up(10);
+                            } else if key.modifiers.contains(KeyModifiers::ALT) {
+                                if key.code == KeyCode::Backspace {
+                                    app.palette_delete_word();
                                 }
-                                KeyCode::PageDown => {
-                                    app.scroll_down(10);
-                                }
-                                KeyCode::Home => {
-                                    app.scroll_to_top();
-                                }
-                                KeyCode::End => {
-                                    app.scroll_to_bottom();
-                                }
-                                _ => {
-                                    app.textarea.input(key);
+                            } else {
+                                match key.code {
+                                    KeyCode::Esc => app.close_palette(),
+                                    KeyCode::Up => app.palette_up(),
+                                    KeyCode::Down => app.palette_down(),
+                                    KeyCode::Backspace => app.palette_backspace(),
+                                    KeyCode::Enter => {
+                                        if let Some(cmd) = app.execute_main_palette_selection() {
+                                            match cmd {
+                                                PaletteCommand::ToggleDebugMode => {
+                                                    app.toggle_debug_mode();
+                                                }
+                                                PaletteCommand::SwitchProvider => {
+                                                    app.open_provider_palette();
+                                                }
+                                            }
+                                        }
+                                    }
+                                    KeyCode::Char(c) => app.palette_input(c),
+                                    _ => {}
                                 }
                             }
                         }
                     }
-                    Event::Paste(text) => {
-                        // Handle multi-line paste by inserting the text directly
-                        app.textarea.insert_str(&text);
-                    }
-                    Event::Mouse(mouse_event) => {
-                        match mouse_event.kind {
-                            MouseEventKind::ScrollUp => {
-                                app.scroll_up(1);
+                    UiMode::ProviderPalette { .. } => {
+                        // Handle provider palette input
+                        if let Event::Key(key) = event {
+                            if key.modifiers.contains(KeyModifiers::CONTROL) {
+                                match key.code {
+                                    KeyCode::Char('p') | KeyCode::Char('k') => app.palette_up(),
+                                    KeyCode::Char('n') | KeyCode::Char('j') => app.palette_down(),
+                                    KeyCode::Char('c') | KeyCode::Char('g') => app.close_palette(),
+                                    _ => {}
+                                }
+                            } else if key.modifiers.contains(KeyModifiers::ALT) {
+                                if key.code == KeyCode::Backspace {
+                                    app.palette_delete_word();
+                                }
+                            } else {
+                                match key.code {
+                                    KeyCode::Esc => app.close_palette(),
+                                    KeyCode::Up => app.palette_up(),
+                                    KeyCode::Down => app.palette_down(),
+                                    KeyCode::Backspace => app.palette_backspace(),
+                                    KeyCode::Enter => {
+                                        if let Some(new_provider) = app.execute_provider_palette_selection() {
+                                            // Return to trigger reconnection with new provider
+                                            return Ok(AppLoopResult::SwitchProvider(new_provider));
+                                        }
+                                    }
+                                    KeyCode::Char(c) => app.palette_input(c),
+                                    _ => {}
+                                }
                             }
-                            MouseEventKind::ScrollDown => {
-                                app.scroll_down(1);
+                        }
+                    }
+                    UiMode::Chat => {
+                        match event {
+                            Event::Key(key) => {
+                                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                                    match key.code {
+                                        KeyCode::Char('q') | KeyCode::Char('c') | KeyCode::Char('d') => {
+                                            return Ok(AppLoopResult::Exit);
+                                        }
+                                        KeyCode::Char('j') => { app.textarea.insert_newline(); },
+                                        KeyCode::Char('m') => { app.open_provider_palette(); },
+                                        KeyCode::Char('o') => { app.open_main_palette(); },
+                                        _ => { app.textarea.input(key); }
+                                    }
+                                } else {
+                                    match key.code {
+                                        KeyCode::Enter => {
+                                            // Only send if connected
+                                            if app.connection_state == ConnectionState::Connected {
+                                                app.send_message().await;
+                                            }
+                                        }
+                                        KeyCode::PageUp => {
+                                            app.scroll_up(10);
+                                        }
+                                        KeyCode::PageDown => {
+                                            app.scroll_down(10);
+                                        }
+                                        KeyCode::Home => {
+                                            app.scroll_to_top();
+                                        }
+                                        KeyCode::End => {
+                                            app.scroll_to_bottom();
+                                        }
+                                        _ => {
+                                            app.textarea.input(key);
+                                        }
+                                    }
+                                }
+                            }
+                            Event::Paste(text) => {
+                                // Handle multi-line paste by inserting the text directly
+                                app.textarea.insert_str(&text);
+                            }
+                            Event::Mouse(mouse_event) => {
+                                match mouse_event.kind {
+                                    MouseEventKind::ScrollUp => {
+                                        app.scroll_up(1);
+                                    }
+                                    MouseEventKind::ScrollDown => {
+                                        app.scroll_down(1);
+                                    }
+                                    _ => {}
+                                }
                             }
                             _ => {}
                         }
                     }
-                    _ => {}
                 }
             }
         }
@@ -729,12 +1175,31 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
     let line_count = app.textarea.lines().len() as u16;
     let input_height = (line_count + 2).clamp(3, 12);
 
+    // Status bar showing current provider (1 line) - below input
+    let status_height = 1u16;
+
+    // Debug panel height (if enabled)
+    let debug_height = if app.debug_mode { 8u16 } else { 0u16 };
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(input_height)].as_ref())
+        .constraints(
+            [
+                Constraint::Min(1),                // Chat history
+                Constraint::Length(debug_height),  // Debug panel (if enabled)
+                Constraint::Length(input_height),  // Input area
+                Constraint::Length(status_height), // Status bar
+            ]
+            .as_ref(),
+        )
         .split(f.area());
 
-    let area_width = chunks[0].width as usize;
+    let history_area = chunks[0];
+    let debug_area = chunks[1];
+    let input_area = chunks[2];
+    let status_area = chunks[3];
+
+    let area_width = history_area.width as usize;
     let mut lines: Vec<Line<'_>> = Vec::new();
 
     for (i, entry) in app.history.iter().enumerate() {
@@ -771,7 +1236,7 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
 
     // Calculate scroll offset
     let total_lines = lines.len() as u16;
-    let view_height = chunks[0].height;
+    let view_height = history_area.height;
     let max_scroll = total_lines.saturating_sub(view_height);
 
     // Clamp offset to valid range and update stored value
@@ -785,9 +1250,225 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
     // Long lines will be truncated at the terminal edge
     let history_paragraph = Paragraph::new(lines).scroll((scroll_offset, 0));
 
-    f.render_widget(history_paragraph, chunks[0]);
+    f.render_widget(history_paragraph, history_area);
 
-    f.render_widget(&app.textarea, chunks[1]);
+    // Render debug panel if enabled
+    if app.debug_mode && debug_height > 0 {
+        let debug_lines: Vec<Line<'_>> = app
+            .debug_messages
+            .iter()
+            .rev()
+            .take(debug_height as usize - 2) // -2 for borders
+            .rev()
+            .map(|s| {
+                Line::styled(
+                    s.clone(),
+                    ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray),
+                )
+            })
+            .collect();
+
+        let debug_block = Block::default()
+            .title(" Debug (ACP Messages) ")
+            .title_style(
+                ratatui::style::Style::default()
+                    .fg(ratatui::style::Color::Yellow)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
+            )
+            .borders(Borders::ALL)
+            .border_style(ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray));
+
+        let debug_paragraph = Paragraph::new(debug_lines).block(debug_block);
+        f.render_widget(debug_paragraph, debug_area);
+    }
+
+    f.render_widget(&app.textarea, input_area);
+
+    // Render status bar at the bottom (no background highlighting)
+    let provider_style = ratatui::style::Style::default()
+        .fg(ratatui::style::Color::Cyan)
+        .add_modifier(ratatui::style::Modifier::BOLD);
+    let hint_style = ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray);
+    let connecting_style = ratatui::style::Style::default()
+        .fg(ratatui::style::Color::Yellow)
+        .add_modifier(ratatui::style::Modifier::BOLD);
+    let debug_indicator_style = ratatui::style::Style::default().fg(ratatui::style::Color::Yellow);
+
+    let mut status_spans = vec![Span::styled(
+        app.current_provider.display_name(),
+        provider_style,
+    )];
+
+    // Show connection state
+    match app.connection_state {
+        ConnectionState::Connecting => {
+            status_spans.push(Span::styled(" (connecting...)", connecting_style));
+        }
+        ConnectionState::Connected => {}
+    }
+
+    // Show debug indicator
+    if app.debug_mode {
+        status_spans.push(Span::styled(" [DEBUG]", debug_indicator_style));
+    }
+
+    status_spans.push(Span::styled(" │ ^O: commands │ ^M: switch", hint_style));
+
+    let status_line = Line::from(status_spans);
+    let status_paragraph = Paragraph::new(status_line);
+    f.render_widget(status_paragraph, status_area);
+
+    // Render palette overlay if active
+    match &app.ui_mode {
+        UiMode::MainPalette { search } => {
+            render_searchable_palette(
+                f,
+                " Commands ",
+                search,
+                app.palette_selection,
+                PaletteCommand::all()
+                    .iter()
+                    .filter(|c| c.matches(search))
+                    .map(|c| {
+                        (
+                            c.label().to_string(),
+                            Some(c.description().to_string()),
+                            false,
+                        )
+                    })
+                    .collect(),
+            );
+        }
+        UiMode::ProviderPalette { search } => {
+            let search_lower = search.to_lowercase();
+            let items: Vec<_> = AcpProvider::all()
+                .iter()
+                .filter(|p| {
+                    search.is_empty() || p.display_name().to_lowercase().contains(&search_lower)
+                })
+                .map(|p| {
+                    let is_current = *p == app.current_provider;
+                    (p.display_name().to_string(), None, is_current)
+                })
+                .collect();
+            render_searchable_palette(
+                f,
+                " Select ACP Provider ",
+                search,
+                app.palette_selection,
+                items,
+            );
+        }
+        UiMode::Chat => {}
+    }
+}
+
+/// Render a searchable palette overlay
+fn render_searchable_palette(
+    f: &mut ratatui::Frame,
+    title: &str,
+    search: &str,
+    selection: usize,
+    items: Vec<(String, Option<String>, bool)>, // (label, description, is_current)
+) {
+    use ratatui::widgets::Clear;
+
+    let area = f.area();
+
+    // Calculate palette dimensions
+    let palette_width = 70u16.min(area.width.saturating_sub(4));
+    let palette_height = (items.len() as u16 + 6).min(area.height.saturating_sub(4)); // +6 for borders, search, padding
+
+    // Center the palette
+    let x = (area.width.saturating_sub(palette_width)) / 2;
+    let y = (area.height.saturating_sub(palette_height)) / 2;
+
+    let palette_area = ratatui::layout::Rect::new(x, y, palette_width, palette_height);
+
+    // Clear the area behind the palette
+    f.render_widget(Clear, palette_area);
+
+    // Build palette content
+    let mut palette_lines: Vec<Line<'_>> = Vec::new();
+
+    // Search box
+    let search_display = if search.is_empty() {
+        "Type to search...".to_string()
+    } else {
+        search.to_string()
+    };
+    let search_style = if search.is_empty() {
+        ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray)
+    } else {
+        ratatui::style::Style::default().fg(ratatui::style::Color::White)
+    };
+    palette_lines.push(Line::from(vec![
+        Span::styled(
+            " > ",
+            ratatui::style::Style::default().fg(ratatui::style::Color::Cyan),
+        ),
+        Span::styled(search_display, search_style),
+    ]));
+    palette_lines.push(Line::from("")); // Spacing
+
+    // Items
+    for (i, (label, description, is_current)) in items.iter().enumerate() {
+        let is_selected = i == selection;
+
+        let prefix = if is_selected { "▶ " } else { "  " };
+        let suffix = if *is_current { " ●" } else { "" };
+
+        let style = if is_selected {
+            ratatui::style::Style::default()
+                .fg(ratatui::style::Color::Cyan)
+                .add_modifier(ratatui::style::Modifier::BOLD)
+        } else if *is_current {
+            ratatui::style::Style::default().fg(ratatui::style::Color::Green)
+        } else {
+            ratatui::style::Style::default()
+        };
+
+        let mut spans = vec![Span::styled(
+            format!("{}{}{}", prefix, label, suffix),
+            style,
+        )];
+
+        // Add description if present
+        if let Some(desc) = description {
+            spans.push(Span::styled(
+                format!("  {}", desc),
+                ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray),
+            ));
+        }
+
+        palette_lines.push(Line::from(spans));
+    }
+
+    if items.is_empty() {
+        palette_lines.push(Line::styled(
+            "  No matches",
+            ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray),
+        ));
+    }
+
+    palette_lines.push(Line::from("")); // Padding
+    palette_lines.push(Line::styled(
+        " ↑↓: navigate │ Enter: select │ Esc: cancel",
+        ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray),
+    ));
+
+    let palette_block = Block::default()
+        .title(title)
+        .title_style(
+            ratatui::style::Style::default()
+                .fg(ratatui::style::Color::Cyan)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        )
+        .borders(Borders::ALL)
+        .border_style(ratatui::style::Style::default().fg(ratatui::style::Color::Cyan));
+
+    let palette_paragraph = Paragraph::new(palette_lines).block(palette_block);
+    f.render_widget(palette_paragraph, palette_area);
 }
 
 fn render_message<'a>(
@@ -1139,6 +1820,7 @@ pub async fn run_demo_tui() -> Result<()> {
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
+        DisableMouseCapture,
         LeaveAlternateScreen,
         DisableBracketedPaste
     )?;
@@ -1148,7 +1830,7 @@ pub async fn run_demo_tui() -> Result<()> {
 }
 
 async fn run_demo_loop<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>) -> Result<()> {
-    let mut app = App::new();
+    let mut app = App::new(AcpProvider::default());
     app.history = create_demo_chat_entries();
 
     let mut reader = EventStream::new();

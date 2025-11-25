@@ -39,3 +39,9 @@ else
   sudo cp "$SOURCE_BINARY" "$DEST"
   echo "✅ Installed $TARGET_NAME to $INSTALL_DIR (via sudo)"
 fi
+
+# On macOS, remove quarantine attribute and re-sign to prevent "killed" on launch
+if [[ "$(uname)" == "Darwin" ]]; then
+  xattr -d com.apple.provenance "$DEST" 2>/dev/null || true
+  codesign -s - -f "$DEST" 2>/dev/null || true
+fi

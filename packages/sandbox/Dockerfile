@@ -166,6 +166,7 @@ ENV BUN_INSTALL_BIN=/usr/local/bin
 RUN bun add -g \
     @openai/codex \
     @anthropic-ai/claude-code \
+    @zed-industries/claude-code-acp \
     @google/gemini-cli \
     opencode-ai
 
