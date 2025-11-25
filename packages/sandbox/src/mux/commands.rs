@@ -429,13 +429,9 @@ impl MuxCommand {
             MuxCommand::ToggleSidebar => Some((KeyModifiers::CONTROL, KeyCode::Char('s'))),
             // SelectSandbox has no global keybinding - Enter is handled contextually in sidebar focus
             MuxCommand::SelectSandbox => None,
-            // Alt+Shift+{ and Alt+Shift+} for sandbox switching
-            MuxCommand::NextSandbox => {
-                Some((KeyModifiers::ALT | KeyModifiers::SHIFT, KeyCode::Char('}')))
-            }
-            MuxCommand::PrevSandbox => {
-                Some((KeyModifiers::ALT | KeyModifiers::SHIFT, KeyCode::Char('{')))
-            }
+            // Alt+Shift+{ and Alt+Shift+} for sandbox switching (accepts Alt+{ / Alt+} too)
+            MuxCommand::NextSandbox => Some((KeyModifiers::ALT, KeyCode::Char('}'))),
+            MuxCommand::PrevSandbox => Some((KeyModifiers::ALT, KeyCode::Char('{'))),
 
             // Sandbox management - use Alt
             MuxCommand::NewSandbox => Some((KeyModifiers::ALT, KeyCode::Char('n'))),
@@ -521,6 +517,17 @@ impl MuxCommand {
 
     /// Try to match a key event to a command.
     pub fn from_key(modifiers: KeyModifiers, keycode: KeyCode) -> Option<MuxCommand> {
+        // Be lenient for braces: macOS reports Option+Shift+[{ as Alt with '{'/' }'
+        // but Shift may or may not be present in modifiers, so accept any Alt+{ or Alt+}.
+        if modifiers.contains(KeyModifiers::ALT) {
+            if keycode == KeyCode::Char('{') {
+                return Some(MuxCommand::PrevSandbox);
+            }
+            if keycode == KeyCode::Char('}') {
+                return Some(MuxCommand::NextSandbox);
+            }
+        }
+
         for cmd in Self::all() {
             if let Some((m, k)) = cmd.keybinding() {
                 if m == modifiers && k == keycode {
