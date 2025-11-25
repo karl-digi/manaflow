@@ -232,7 +232,7 @@ const HEATMAP_MODEL_OPTIONS: ReadonlyArray<{
   },
   {
     value: HEATMAP_MODEL_ANTHROPIC_QUERY_VALUE,
-    label: "Claude Opus 4.1",
+    label: "Claude Opus 4.5",
   },
 ];
 
