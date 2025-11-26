@@ -170,7 +170,8 @@ RUN bun add -g \
     @anthropic-ai/claude-code \
     @zed-industries/claude-code-acp \
     @google/gemini-cli \
-    opencode-ai
+    opencode-ai \
+    @sourcegraph/amp
 
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
   mv /root/.local/bin/uv /usr/local/bin/uv && \

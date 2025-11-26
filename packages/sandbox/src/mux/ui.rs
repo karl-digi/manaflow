@@ -299,7 +299,23 @@ fn render_pane(
         crate::mux::layout::PaneContent::Terminal { sandbox_id, .. } => {
             // Check if we have terminal output to display
             let height = inner_area.height as usize;
-            if let Some(view) = app.get_terminal_view(pane.id, height) {
+            let view = app.get_terminal_view(pane.id, height);
+            let previous = app.last_terminal_views.get(&pane.id).cloned();
+            let render_view = match (view, previous.clone()) {
+                (Some(v), _) if v.has_content => Some(v),
+                (Some(v), Some(prev)) => {
+                    // Prefer previous non-empty view to avoid placeholder flicker
+                    if prev.has_content {
+                        Some(prev)
+                    } else {
+                        Some(v)
+                    }
+                }
+                (None, Some(prev)) => Some(prev),
+                _ => None,
+            };
+
+            if let Some(view) = render_view {
                 if view.has_content {
                     // Render terminal output
                     let buf = f.buffer_mut();
