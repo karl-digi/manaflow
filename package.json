@@ -20,6 +20,9 @@
     "node": ">=20.0.0"
   },
   "overrides": {
+    "@sentry/browser": "10.27.0",
+    "@sentry/core": "10.27.0",
+    "@sentry/types": "10.27.0",
     "node-abi": "^4.14.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
@@ -51,7 +54,8 @@
     "generate-openapi-client": "cd apps/www && bun run generate-openapi-client",
     "generate-morphcloud-openapi-client": "cd packages/morphcloud-openapi-client && bun run generate",
     "build:mac-arm64-prod": "bash scripts/build-prod-mac-arm64.sh",
-    "convex:deploy:prod": "(cd packages/convex && bun run deploy:prod)"
+    "convex:deploy:prod": "(cd packages/convex && bun run deploy:prod)",
+    "convex:setup": "bun run --env-file .env --cwd packages/convex setup"
   },
   "type": "module",
   "workspaces": [
@@ -60,6 +64,13 @@
     "scripts"
   ],
   "dependencies": {
+    "@sentry/browser": "10.27.0",
+    "@sentry/core": "10.27.0",
+    "@sentry/electron": "7.3.0",
+    "@sentry/nextjs": "10.27.0",
+    "@sentry/react": "10.27.0",
+    "@sentry/types": "10.27.0",
+    "@sentry/vite-plugin": "4.6.1",
     "ajv": "6.12.6",
     "ajv-keywords": "3.5.2",
     "morphcloud": "^0.0.20",

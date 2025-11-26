@@ -92,6 +92,7 @@ import {
 import clsx from "clsx";
 import { kitties } from "./kitty";
 import {
+  HEATMAP_MODEL_ANTHROPIC_OPUS_45_QUERY_VALUE,
   HEATMAP_MODEL_ANTHROPIC_QUERY_VALUE,
   HEATMAP_MODEL_DENSE_FINETUNE_QUERY_VALUE,
   HEATMAP_MODEL_DENSE_V2_FINETUNE_QUERY_VALUE,
@@ -218,6 +219,10 @@ const HEATMAP_MODEL_OPTIONS: ReadonlyArray<{
   value: HeatmapModelOptionValue;
   label: string;
 }> = [
+  {
+    value: HEATMAP_MODEL_ANTHROPIC_OPUS_45_QUERY_VALUE,
+    label: "Claude Opus 4.5",
+  },
   {
     value: HEATMAP_MODEL_DENSE_V2_FINETUNE_QUERY_VALUE,
     label: "cmux-heatmap-2",
@@ -576,7 +581,7 @@ export function PullRequestDiffViewer({
   const [heatmapModelPreference, setHeatmapModelPreference] =
     useLocalStorage<HeatmapModelOptionValue>({
       key: "cmux-heatmap-model",
-      defaultValue: HEATMAP_MODEL_ANTHROPIC_QUERY_VALUE,
+      defaultValue: HEATMAP_MODEL_ANTHROPIC_OPUS_45_QUERY_VALUE,
     });
   const heatmapModelPreferenceRef = useRef<HeatmapModelOptionValue>(
     heatmapModelPreference

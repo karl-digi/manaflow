@@ -1,24 +1,26 @@
-name: Daily Release
+name: Daily Release PR
 
 on:
   schedule:
-    - cron: "30 12 * * *" # 4:30 AM PST
+    - cron: "30 12 * * *" # 4:30 AM PT
+    - cron: "0 3 * * *" # 7:00 PM PT
   workflow_dispatch:
 
 concurrency:
-  group: daily-release
+  group: release-pr
   cancel-in-progress: false
 
 permissions:
   contents: write
+  pull-requests: write
 
 env:
   NODE_VERSION: "24"
   BUN_VERSION: "1.2.21"
 
 jobs:
-  run-release:
-    name: Run release script
+  open-release-pr:
+    name: Open draft release PR
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -68,11 +70,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Run release script
+      - name: Create draft release PR
         if: steps.release_changes.outputs.proceed == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bun ./scripts/release.ts
+          RELEASE_BASE_BRANCH: ${{ github.event.repository.default_branch }}
+        run: bun ./scripts/release-pr.ts
 
       - name: Skip release (no changes)
         if: steps.release_changes.outputs.proceed == 'false'
