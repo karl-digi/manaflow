@@ -1,129 +1,193 @@
+//! Sync files from host to sandbox.
+//!
+//! This module handles syncing configuration files (auth tokens, settings, shell config)
+//! from the user's home directory on the host to the sandbox environment.
+
 use crate::models::ExecRequest;
 use anyhow::anyhow;
 use reqwest::Client;
 use std::path::{Path, PathBuf};
 use tar::Builder;
 
-pub struct AuthFileDef {
+pub struct SyncFileDef {
     pub name: &'static str,
     pub host_path: &'static str,    // Relative to HOME
     pub sandbox_path: &'static str, // Absolute in sandbox
+    pub is_dir: bool,               // Whether this is a directory
 }
 
-pub struct AuthFileToUpload {
+pub struct SyncFileToUpload {
     pub host_path: PathBuf,
     pub sandbox_path: &'static str,
+    pub is_dir: bool,
 }
 
-pub const AUTH_FILES: &[AuthFileDef] = &[
-    AuthFileDef {
+pub const SYNC_FILES: &[SyncFileDef] = &[
+    // Claude Code
+    SyncFileDef {
         name: "Claude Config",
         host_path: ".claude.json",
         sandbox_path: "/root/.claude.json",
+        is_dir: false,
     },
-    AuthFileDef {
+    // Codex
+    SyncFileDef {
         name: "Codex Auth",
         host_path: ".codex/auth.json",
         sandbox_path: "/root/.codex/auth.json",
+        is_dir: false,
     },
-    AuthFileDef {
+    SyncFileDef {
         name: "Codex Instructions",
         host_path: ".codex/instructions.md",
         sandbox_path: "/root/.codex/instructions.md",
+        is_dir: false,
     },
-    AuthFileDef {
+    SyncFileDef {
         name: "Codex Config",
         host_path: ".codex/config.toml",
         sandbox_path: "/root/.codex/config.toml",
+        is_dir: false,
     },
-    AuthFileDef {
+    // Gemini
+    SyncFileDef {
         name: "Gemini Settings",
         host_path: ".gemini/settings.json",
         sandbox_path: "/root/.gemini/settings.json",
+        is_dir: false,
     },
-    AuthFileDef {
+    SyncFileDef {
         name: "Gemini OAuth",
         host_path: ".gemini/oauth_creds.json",
         sandbox_path: "/root/.gemini/oauth_creds.json",
+        is_dir: false,
     },
-    AuthFileDef {
+    SyncFileDef {
         name: "Gemini MCP Tokens",
         host_path: ".gemini/mcp-oauth-tokens.json",
         sandbox_path: "/root/.gemini/mcp-oauth-tokens.json",
+        is_dir: false,
     },
-    AuthFileDef {
+    SyncFileDef {
         name: "Gemini Google Accounts",
         host_path: ".gemini/google_accounts.json",
         sandbox_path: "/root/.gemini/google_accounts.json",
+        is_dir: false,
     },
-    AuthFileDef {
+    SyncFileDef {
         name: "Gemini Account ID",
         host_path: ".gemini/google_account_id",
         sandbox_path: "/root/.gemini/google_account_id",
+        is_dir: false,
     },
-    AuthFileDef {
+    SyncFileDef {
         name: "Gemini Install ID",
         host_path: ".gemini/installation_id",
         sandbox_path: "/root/.gemini/installation_id",
+        is_dir: false,
     },
-    AuthFileDef {
+    SyncFileDef {
         name: "Gemini User ID",
         host_path: ".gemini/user_id",
         sandbox_path: "/root/.gemini/user_id",
+        is_dir: false,
     },
-    AuthFileDef {
+    SyncFileDef {
         name: "Gemini Env",
         host_path: ".gemini/.env",
         sandbox_path: "/root/.gemini/.env",
+        is_dir: false,
     },
-    AuthFileDef {
+    // General
+    SyncFileDef {
         name: "Env",
         host_path: ".env",
         sandbox_path: "/root/.env",
+        is_dir: false,
     },
-    AuthFileDef {
+    // OpenCode
+    SyncFileDef {
         name: "OpenCode Auth",
         host_path: ".local/share/opencode/auth.json",
         sandbox_path: "/root/.local/share/opencode/auth.json",
+        is_dir: false,
     },
-    AuthFileDef {
+    // Amp
+    SyncFileDef {
         name: "Amp Settings",
         host_path: ".config/amp/settings.json",
         sandbox_path: "/root/.config/amp/settings.json",
+        is_dir: false,
     },
-    AuthFileDef {
+    SyncFileDef {
         name: "Amp Secrets",
         host_path: ".local/share/amp/secrets.json",
         sandbox_path: "/root/.local/share/amp/secrets.json",
+        is_dir: false,
     },
-    AuthFileDef {
+    // Cursor
+    SyncFileDef {
         name: "Cursor CLI Config",
         host_path: ".cursor/cli-config.json",
         sandbox_path: "/root/.cursor/cli-config.json",
+        is_dir: false,
     },
-    AuthFileDef {
+    SyncFileDef {
         name: "Cursor Auth",
         host_path: ".config/cursor/auth.json",
         sandbox_path: "/root/.config/cursor/auth.json",
+        is_dir: false,
     },
-    AuthFileDef {
+    // Qwen
+    SyncFileDef {
         name: "Qwen Settings",
         host_path: ".qwen/settings.json",
         sandbox_path: "/root/.qwen/settings.json",
+        is_dir: false,
+    },
+    // Zsh configuration - only sync .zshrc.local for user customizations
+    // (sandbox has its own default .zshrc with git prompt, autosuggestions, etc.)
+    SyncFileDef {
+        name: "Zshrc Local",
+        host_path: ".zshrc.local",
+        sandbox_path: "/root/.zshrc.local",
+        is_dir: false,
+    },
+    // Zsh history - needed for zsh-autosuggestions to work
+    SyncFileDef {
+        name: "Zsh History",
+        host_path: ".zsh_history",
+        sandbox_path: "/root/.zsh_history",
+        is_dir: false,
+    },
+    SyncFileDef {
+        name: "Zsh Plugins",
+        host_path: ".zsh",
+        sandbox_path: "/root/.zsh",
+        is_dir: true,
     },
 ];
 
-pub fn detect_auth_files() -> Vec<AuthFileToUpload> {
+pub fn detect_sync_files() -> Vec<SyncFileToUpload> {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
     let home_path = PathBuf::from(home);
     let mut files_to_upload = Vec::new();
 
-    for def in AUTH_FILES {
+    for def in SYNC_FILES {
         let path = home_path.join(def.host_path);
         if path.exists() {
-            files_to_upload.push(AuthFileToUpload {
+            // For directories, verify it's actually a directory
+            if def.is_dir && !path.is_dir() {
+                continue;
+            }
+            // For files, verify it's actually a file
+            if !def.is_dir && !path.is_file() {
+                continue;
+            }
+            files_to_upload.push(SyncFileToUpload {
                 host_path: path,
                 sandbox_path: def.sandbox_path,
+                is_dir: def.is_dir,
             });
         }
     }
@@ -131,21 +195,21 @@ pub fn detect_auth_files() -> Vec<AuthFileToUpload> {
     files_to_upload
 }
 
-pub async fn upload_auth_files(
+pub async fn upload_sync_files(
     client: &Client,
     base_url: &str,
     id: &str,
     log_progress: bool,
 ) -> anyhow::Result<()> {
-    let files_to_upload = detect_auth_files();
-    upload_auth_files_with_list(client, base_url, id, files_to_upload, log_progress).await
+    let files_to_upload = detect_sync_files();
+    upload_sync_files_with_list(client, base_url, id, files_to_upload, log_progress).await
 }
 
-pub async fn upload_auth_files_with_list(
+pub async fn upload_sync_files_with_list(
     client: &Client,
     base_url: &str,
     id: &str,
-    files_to_upload: Vec<AuthFileToUpload>,
+    files_to_upload: Vec<SyncFileToUpload>,
     log_progress: bool,
 ) -> anyhow::Result<()> {
     if files_to_upload.is_empty() {
@@ -153,7 +217,7 @@ pub async fn upload_auth_files_with_list(
     }
 
     if log_progress {
-        eprintln!("Uploading {} auth files...", files_to_upload.len());
+        eprintln!("Syncing {} file(s)...", files_to_upload.len());
     }
 
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<Vec<u8>, std::io::Error>>(10);
@@ -162,11 +226,12 @@ pub async fn upload_auth_files_with_list(
         let writer = ChunkedWriter { sender: tx.clone() };
         let mut tar = Builder::new(writer);
 
-        let temp_dir_name = "__cmux_auth_temp";
+        let temp_dir_name = "__cmux_sync_temp";
 
-        for AuthFileToUpload {
+        for SyncFileToUpload {
             host_path,
             sandbox_path: sandbox_path_str,
+            is_dir,
         } in files_to_upload
         {
             let sandbox_path = Path::new(sandbox_path_str);
@@ -174,7 +239,15 @@ pub async fn upload_auth_files_with_list(
 
             let tar_path = Path::new(temp_dir_name).join(rel_sandbox_path);
 
-            if let Err(e) = tar.append_path_with_name(&host_path, &tar_path) {
+            let result = if is_dir {
+                // For directories, recursively add all contents
+                tar.append_dir_all(&tar_path, &host_path)
+            } else {
+                // For files, add with the specified name
+                tar.append_path_with_name(&host_path, &tar_path)
+            };
+
+            if let Err(e) = result {
                 let _ = tx.blocking_send(Err(e));
                 return;
             }
@@ -193,15 +266,15 @@ pub async fn upload_auth_files_with_list(
     let response = client.post(url).body(body).send().await?;
     if !response.status().is_success() {
         return Err(anyhow!(
-            "Failed to upload auth files: {}",
+            "Failed to upload sync files: {}",
             response.status()
         ));
     }
 
     let move_script = r#"
-        if [ -d /workspace/__cmux_auth_temp ]; then
-            cp -r /workspace/__cmux_auth_temp/root/. /root/ 2>/dev/null || true
-            rm -rf /workspace/__cmux_auth_temp
+        if [ -d /workspace/__cmux_sync_temp ]; then
+            cp -r /workspace/__cmux_sync_temp/root/. /root/ 2>/dev/null || true
+            rm -rf /workspace/__cmux_sync_temp
         fi
     "#;
 

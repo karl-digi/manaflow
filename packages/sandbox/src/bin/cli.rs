@@ -3,9 +3,9 @@ use cmux_sandbox::models::{
     CreateSandboxRequest, EnvVar, ExecRequest, ExecResponse, SandboxSummary,
 };
 use cmux_sandbox::{
-    auth_files::{upload_auth_files, AUTH_FILES},
-    build_default_env_vars, extract_api_key_from_output, store_claude_token, AcpProvider,
-    DEFAULT_HTTP_PORT,
+    build_default_env_vars, extract_api_key_from_output, store_claude_token,
+    sync_files::{upload_sync_files, SYNC_FILES},
+    AcpProvider, DEFAULT_HTTP_PORT,
 };
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use futures::{SinkExt, StreamExt};
@@ -328,7 +328,7 @@ async fn run() -> anyhow::Result<()> {
 
             // Upload auth files
             if let Err(e) =
-                upload_auth_files(&client, &cli.base_url, &summary.id.to_string(), true).await
+                upload_sync_files(&client, &cli.base_url, &summary.id.to_string(), true).await
             {
                 eprintln!("Warning: Failed to upload auth files: {}", e);
             }
@@ -449,7 +449,7 @@ async fn run() -> anyhow::Result<()> {
                     }
 
                     let auth_result =
-                        upload_auth_files(&sync_client, &sync_base_url, &sync_id, false).await;
+                        upload_sync_files(&sync_client, &sync_base_url, &sync_id, false).await;
 
                     if let Err(e) = auth_result {
                         let _ = sync_status_tx.send(cmux_sandbox::WorkspaceSyncStatus::Failed(
@@ -483,7 +483,7 @@ async fn run() -> anyhow::Result<()> {
                 println!("{:<25} {:<50} {:<10}", "NAME", "PATH", "STATUS");
                 println!("{}", "-".repeat(85));
 
-                for def in AUTH_FILES {
+                for def in SYNC_FILES {
                     let path = home_path.join(def.host_path);
                     let status = if path.exists() {
                         "\x1b[32mFound\x1b[0m"
@@ -554,7 +554,7 @@ async fn run() -> anyhow::Result<()> {
 
                     // Upload auth files
                     if let Err(e) =
-                        upload_auth_files(&client, &cli.base_url, &summary.id.to_string(), true)
+                        upload_sync_files(&client, &cli.base_url, &summary.id.to_string(), true)
                             .await
                     {
                         eprintln!("Warning: Failed to upload auth files: {}", e);

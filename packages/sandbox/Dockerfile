@@ -126,6 +126,10 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   ca-certificates \
   curl \
   bash \
+  zsh \
+  zsh-autosuggestions \
+  zsh-syntax-highlighting \
+  vim \
   tini \
   python3 \
   python3-venv \

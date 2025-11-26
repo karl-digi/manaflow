@@ -15,7 +15,6 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::MissedTickBehavior;
 
-use crate::auth_files::{detect_auth_files, upload_auth_files_with_list};
 use crate::mux::commands::MuxCommand;
 use crate::mux::events::{MuxEvent, NotificationLevel};
 use crate::mux::layout::{ClosedTabInfo, PaneContent, PaneExitOutcome};
@@ -24,6 +23,7 @@ use crate::mux::terminal::{
     connect_to_sandbox, create_terminal_manager, request_create_sandbox, request_list_sandboxes,
 };
 use crate::mux::ui::ui;
+use crate::sync_files::{detect_sync_files, upload_sync_files_with_list};
 
 /// Run the multiplexer TUI.
 ///
@@ -139,26 +139,24 @@ async fn run_main_loop<B: ratatui::backend::Backend>(
                         )));
                     }
 
-                    let auth_files = detect_auth_files();
-                    if !auth_files.is_empty() {
+                    let sync_files = detect_sync_files();
+                    if !sync_files.is_empty() {
                         let _ = init_tx.send(MuxEvent::Notification {
-                            message: format!("Uploading {} auth file(s)...", auth_files.len()),
+                            message: format!("Syncing {} file(s)...", sync_files.len()),
                             level: NotificationLevel::Info,
                         });
 
-                        if let Err(e) = upload_auth_files_with_list(
+                        if let Err(e) = upload_sync_files_with_list(
                             &client,
                             &init_url,
                             &sandbox_id,
-                            auth_files,
+                            sync_files,
                             false,
                         )
                         .await
                         {
-                            let _ = init_tx.send(MuxEvent::Error(format!(
-                                "Failed to upload auth files: {}",
-                                e
-                            )));
+                            let _ = init_tx
+                                .send(MuxEvent::Error(format!("Failed to sync files: {}", e)));
                         }
                     }
 

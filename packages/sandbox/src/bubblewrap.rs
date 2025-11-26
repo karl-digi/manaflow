@@ -322,6 +322,104 @@ alias g=git
         Ok(())
     }
 
+    async fn setup_zshrc(&self, root_merged: &Path) -> SandboxResult<()> {
+        let root_home = root_merged.join("root");
+        fs::create_dir_all(&root_home).await?;
+
+        let zshrc = root_home.join(".zshrc");
+        // Only create default .zshrc if user hasn't synced their own
+        if zshrc.exists() {
+            return Ok(());
+        }
+
+        let content = r#"# ~/.zshrc: zsh configuration for cmux sandbox
+
+# If not running interactively, don't do anything
+[[ $- != *i* ]] && return
+
+# History configuration
+HISTFILE=~/.zsh_history
+HISTSIZE=50000
+SAVEHIST=50000
+setopt SHARE_HISTORY
+setopt HIST_IGNORE_DUPS
+setopt HIST_IGNORE_SPACE
+setopt HIST_REDUCE_BLANKS
+setopt INC_APPEND_HISTORY
+
+# Directory navigation
+setopt AUTO_CD
+setopt AUTO_PUSHD
+setopt PUSHD_IGNORE_DUPS
+
+# Enable colors
+autoload -U colors && colors
+
+# Git branch info for prompt
+autoload -Uz vcs_info
+precmd() { vcs_info }
+zstyle ':vcs_info:git:*' formats ' %F{magenta}(%b)%f'
+zstyle ':vcs_info:*' enable git
+setopt PROMPT_SUBST
+
+# Prompt: user@host:path (branch)#
+# Green user@host, blue path, magenta git branch
+PROMPT='%F{green}%n@%m%f:%F{blue}%~%f${vcs_info_msg_0_}%F{yellow}#%f '
+
+# Enable completion
+autoload -Uz compinit && compinit
+zstyle ':completion:*' menu select
+zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}'
+zstyle ':completion:*' list-colors ${(s.:.)LS_COLORS}
+
+# Color support for ls
+if [[ -x /usr/bin/dircolors ]]; then
+    eval "$(dircolors -b)"
+fi
+alias ls='ls --color=auto'
+alias grep='grep --color=auto'
+
+# Aliases
+alias ll='ls -alF'
+alias la='ls -A'
+alias l='ls -CF'
+alias g='git'
+alias gs='git status'
+alias gd='git diff'
+alias ga='git add'
+alias gc='git commit'
+alias gp='git push'
+alias gl='git log --oneline -20'
+
+# Key bindings
+bindkey -e  # emacs mode
+bindkey '^[[A' up-line-or-search
+bindkey '^[[B' down-line-or-search
+bindkey '^[[H' beginning-of-line
+bindkey '^[[F' end-of-line
+bindkey '^[[3~' delete-char
+
+# Source zsh-autosuggestions
+if [[ -f ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh ]]; then
+    source ~/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh
+elif [[ -f /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh ]]; then
+    source /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh
+fi
+
+# Source zsh-syntax-highlighting (must be last)
+if [[ -f ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]]; then
+    source ~/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+elif [[ -f /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]]; then
+    source /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+fi
+
+# Source user's custom additions
+[[ -f ~/.zshrc.local ]] && source ~/.zshrc.local
+"#;
+        fs::write(&zshrc, content).await?;
+        Ok(())
+    }
+
     async fn setup_gitconfig(&self, root_merged: &Path) -> SandboxResult<()> {
         let root_home = root_merged.join("root");
         fs::create_dir_all(&root_home).await?;
@@ -354,6 +452,7 @@ alias g=git
         let root_merged = system_dir.join("root-merged");
         fs::create_dir_all(&root_merged).await?;
         self.setup_bashrc(&root_merged).await?;
+        self.setup_zshrc(&root_merged).await?;
         self.setup_gitconfig(&root_merged).await?;
 
         // Ensure we have valid DNS and hosts file in the overlay
@@ -893,7 +992,7 @@ impl SandboxService for BubblewrapService {
         .ok_or(SandboxError::NotFound(id))?;
 
         let target_command =
-            command.unwrap_or_else(|| vec!["/bin/bash".to_string(), "-i".to_string()]);
+            command.unwrap_or_else(|| vec!["/bin/zsh".to_string(), "-i".to_string()]);
         info!(
             "attaching to sandbox {} with command: {:?} (tty={})",
             id_str, target_command, tty
@@ -1349,7 +1448,7 @@ impl SandboxService for BubblewrapService {
                             };
 
                             let target_command = command
-                                .unwrap_or_else(|| vec!["/bin/bash".to_string(), "-i".to_string()]);
+                                .unwrap_or_else(|| vec!["/bin/zsh".to_string(), "-i".to_string()]);
 
                             if !tty {
                                 // Non-PTY mode: not supported in mux for simplicity
