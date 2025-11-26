@@ -327,17 +327,17 @@ const STEPS = [
 
 function StepIndicator({ currentStep }: { currentStep: WizardStep }) {
   return (
-    <div className="flex items-center gap-3 mb-6">
+    <div className="flex items-center gap-2">
       {STEPS.map((step, index) => {
         const isActive = step.id === currentStep;
         const isCompleted = step.id < currentStep;
 
         return (
-          <div key={step.id} className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
+          <div key={step.id} className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5">
               <div
                 className={clsx(
-                  "flex h-7 w-7 items-center justify-center rounded-full text-xs font-medium transition-colors",
+                  "flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-medium transition-colors",
                   isActive
                     ? "bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900"
                     : isCompleted
@@ -345,25 +345,23 @@ function StepIndicator({ currentStep }: { currentStep: WizardStep }) {
                       : "bg-neutral-200 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400"
                 )}
               >
-                {isCompleted ? <Check className="h-3.5 w-3.5" /> : step.numeral}
+                {isCompleted ? <Check className="h-3 w-3" /> : step.numeral}
               </div>
-              <div className="hidden sm:block">
-                <div
-                  className={clsx(
-                    "text-sm font-medium",
-                    isActive
-                      ? "text-neutral-900 dark:text-neutral-100"
-                      : "text-neutral-500 dark:text-neutral-400"
-                  )}
-                >
-                  {step.title}
-                </div>
-              </div>
+              <span
+                className={clsx(
+                  "text-xs",
+                  isActive
+                    ? "text-neutral-900 dark:text-neutral-100"
+                    : "text-neutral-500 dark:text-neutral-400"
+                )}
+              >
+                {step.title}
+              </span>
             </div>
             {index < STEPS.length - 1 && (
               <div
                 className={clsx(
-                  "h-px w-8 transition-colors",
+                  "h-px w-6 transition-colors",
                   isCompleted
                     ? "bg-green-500"
                     : "bg-neutral-200 dark:bg-neutral-800"
@@ -757,22 +755,20 @@ export function PreviewConfigureClient({
   }
 
   const renderStep1Content = () => (
-    <div className="space-y-5">
+    <div className="space-y-6">
       {/* Workspace Info */}
-      <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900/50 p-3">
-        <p className="text-xs text-neutral-600 dark:text-neutral-400">
-          The workspace root <code className="px-1 py-0.5 rounded bg-neutral-200 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300">/root/workspace</code> maps to your repository root. All scripts run from this directory.
-        </p>
-      </div>
+      <p className="text-xs text-neutral-500 dark:text-neutral-400">
+        Your repository root is mounted at <code className="px-1 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300">/root/workspace</code>. Environment variables are encrypted and securely injected at runtime.
+      </p>
 
       {/* Environment Variables */}
       <div>
-        <div className="flex items-center gap-3 mb-2">
-          <div className="flex h-6 w-6 items-center justify-center rounded-full bg-neutral-100 dark:bg-neutral-800 text-xs font-medium text-neutral-600 dark:text-neutral-300">
+        <div className="flex items-center gap-2 mb-2">
+          <div className="flex h-5 w-5 items-center justify-center rounded-full bg-neutral-100 dark:bg-neutral-800 text-[10px] font-medium text-neutral-600 dark:text-neutral-300">
             1
           </div>
-          <h3 className="text-sm font-medium text-neutral-900 dark:text-neutral-100 flex-1">
-            Add environment variables
+          <h3 className="text-xs font-medium text-neutral-900 dark:text-neutral-100 flex-1">
+            Environment variables
           </h3>
           <button
             type="button"
@@ -780,21 +776,18 @@ export function PreviewConfigureClient({
               setActiveEnvValueIndex(null);
               setAreEnvValuesHidden((previous) => !previous);
             }}
-            className="text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 transition p-1"
+            className="text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 transition p-0.5"
             aria-label={areEnvValuesHidden ? "Reveal values" : "Hide values"}
           >
             {areEnvValuesHidden ? (
-              <EyeOff className="h-4 w-4" />
+              <EyeOff className="h-3.5 w-3.5" />
             ) : (
-              <Eye className="h-4 w-4" />
+              <Eye className="h-3.5 w-3.5" />
             )}
           </button>
         </div>
-        <p className="ml-9 text-xs text-neutral-500 dark:text-neutral-400 mb-3">
-          Stored encrypted and injected securely at runtime. Never exposed in logs or code.
-        </p>
         <div
-          className="ml-9"
+          className="ml-7"
           onPasteCapture={(e) => {
             const text = e.clipboardData?.getData("text") ?? "";
             if (text && (/\n/.test(text) || /(=|:)\s*\S/.test(text))) {
@@ -1106,24 +1099,24 @@ export function PreviewConfigureClient({
     <div className="flex h-screen overflow-hidden bg-neutral-50 dark:bg-neutral-950">
       {/* Left: Configuration Form */}
       <div className="w-[420px] flex flex-col overflow-hidden border-r border-neutral-200 dark:border-neutral-800 bg-white dark:bg-black">
-        <div className="flex-shrink-0 p-6 pb-4">
-          <Link
-            href="/preview"
-            className="inline-flex items-center gap-1.5 text-sm text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100 mb-4"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" />
-            Back to Home
-          </Link>
-
-          <div className="flex items-center gap-2 mb-4">
-            <span className="inline-flex items-center gap-2 rounded border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 px-2 py-1 text-xs font-mono">
+        <div className="flex-shrink-0 px-6 pt-4 pb-3">
+          <div className="flex items-center justify-between mb-2">
+            <Link
+              href="/preview"
+              className="inline-flex items-center gap-1.5 text-xs text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
+            >
+              <ArrowLeft className="h-3 w-3" />
+              Back to Home
+            </Link>
+            <span className="inline-flex items-center gap-1.5 rounded border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 text-neutral-600 dark:text-neutral-400 px-2 py-0.5 text-xs font-mono">
               {/* eslint-disable-next-line @typescript-eslint/no-deprecated */}
-              <Github className="h-3.5 w-3.5" />
+              <Github className="h-3 w-3" />
               {repo}
             </span>
           </div>
-
-          <StepIndicator currentStep={currentStep} />
+          <h1 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
+            Configure environment
+          </h1>
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 pb-6">
@@ -1145,7 +1138,7 @@ export function PreviewConfigureClient({
                 className="inline-flex items-center gap-2 rounded-md border border-neutral-200 dark:border-neutral-800 px-4 py-2 text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-900 transition"
               >
                 <ArrowLeft className="w-4 h-4" />
-                Back
+                Previous
               </button>
             ) : (
               <div />
