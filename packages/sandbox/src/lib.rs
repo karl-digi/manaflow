@@ -4,6 +4,7 @@ pub mod auth_files;
 pub mod bubblewrap;
 pub mod errors;
 pub mod ip_pool;
+pub mod keyring;
 pub mod models;
 pub mod mux;
 pub mod palette;
@@ -15,6 +16,9 @@ pub use acp_client::{
 };
 pub use api::build_router;
 pub use bubblewrap::BubblewrapService;
+pub use keyring::{
+    build_default_env_vars, extract_api_key_from_output, get_claude_token, store_claude_token,
+};
 pub use mux::run_mux_tui;
 
 pub const DEFAULT_HTTP_PORT: u16 = 46831;

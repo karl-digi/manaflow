@@ -2017,7 +2017,10 @@ pub async fn request_create_sandbox(
 
     let mgr = manager.lock().await;
     if let Some(sender) = mgr.get_mux_sender() {
-        sender.send(MuxClientMessage::CreateSandbox { name });
+        sender.send(MuxClientMessage::CreateSandbox {
+            name,
+            env: crate::keyring::build_default_env_vars(),
+        });
         Ok(())
     } else {
         Err(anyhow::anyhow!("Mux connection not established"))

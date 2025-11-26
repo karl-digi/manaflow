@@ -91,6 +91,9 @@ pub enum MuxClientMessage {
         /// Optional name for the sandbox.
         #[serde(default)]
         name: Option<String>,
+        /// Environment variables to inject into the sandbox.
+        #[serde(default)]
+        env: Vec<EnvVar>,
     },
     /// List all sandboxes.
     ListSandboxes,

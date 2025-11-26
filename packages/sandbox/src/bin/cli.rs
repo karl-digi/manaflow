@@ -4,7 +4,8 @@ use cmux_sandbox::models::{
 };
 use cmux_sandbox::{
     auth_files::{upload_auth_files, AUTH_FILES},
-    AcpProvider, DEFAULT_HTTP_PORT,
+    build_default_env_vars, extract_api_key_from_output, store_claude_token, AcpProvider,
+    DEFAULT_HTTP_PORT,
 };
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use futures::{SinkExt, StreamExt};
@@ -99,6 +100,9 @@ enum Command {
 
     /// Manage authentication files
     Auth(AuthArgs),
+
+    /// Setup Claude API token by running `claude setup-token` and storing in keyring
+    SetupClaude,
 }
 
 #[derive(Args, Debug)]
@@ -300,7 +304,7 @@ async fn run() -> anyhow::Result<()> {
                 workspace: None,
                 read_only_paths: vec![],
                 tmpfs: vec![],
-                env: vec![],
+                env: build_default_env_vars(),
             };
             let url = format!("{}/sandboxes", cli.base_url.trim_end_matches('/'));
             let response = client.post(url).json(&body).send().await?;
@@ -408,7 +412,7 @@ async fn run() -> anyhow::Result<()> {
                     workspace: None,
                     read_only_paths: vec![],
                     tmpfs: vec![],
-                    env: vec![],
+                    env: build_default_env_vars(),
                 };
                 let url = format!("{}/sandboxes", cli.base_url.trim_end_matches('/'));
                 let response = client.post(url).json(&body).send().await?;
@@ -490,6 +494,9 @@ async fn run() -> anyhow::Result<()> {
                 }
             }
         },
+        Command::SetupClaude => {
+            handle_setup_claude().await?;
+        }
         Command::Sandboxes(cmd) => {
             match cmd {
                 SandboxCommand::List => {
@@ -523,7 +530,7 @@ async fn run() -> anyhow::Result<()> {
                         workspace: None,
                         read_only_paths: vec![],
                         tmpfs: vec![],
-                        env: vec![],
+                        env: build_default_env_vars(),
                     };
                     let url = format!("{}/sandboxes", cli.base_url.trim_end_matches('/'));
                     let response = client.post(url).json(&body).send().await?;
@@ -1487,6 +1494,55 @@ async fn handle_exec_request(
     let response = client.post(url).json(&body).send().await?;
     let result: ExecResponse = parse_response(response).await?;
     print_json(&result)?;
+    Ok(())
+}
+
+async fn handle_setup_claude() -> anyhow::Result<()> {
+    eprintln!("Running 'claude setup-token'...");
+    eprintln!("Please follow the prompts to authenticate with Claude.\n");
+
+    // Run claude setup-token and capture output
+    // We need to run it interactively so the user can input their token
+    let child = tokio::process::Command::new("claude")
+        .arg("setup-token")
+        .stdin(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+
+    let output = child.wait_with_output().await?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Print output for user visibility
+    if !stdout.is_empty() {
+        print!("{}", stdout);
+    }
+    if !stderr.is_empty() {
+        eprint!("{}", stderr);
+    }
+
+    if !output.status.success() {
+        return Err(anyhow::anyhow!(
+            "'claude setup-token' failed with exit code: {:?}",
+            output.status.code()
+        ));
+    }
+
+    // Try to extract the token from stdout or stderr
+    let combined_output = format!("{}\n{}", stdout, stderr);
+    if let Some(token) = extract_api_key_from_output(&combined_output) {
+        eprintln!("\nOAuth token detected, storing in keychain...");
+        store_claude_token(&token).map_err(|e| anyhow::anyhow!("Failed to store token: {}", e))?;
+        eprintln!("\x1b[32m✓ Claude OAuth token stored in macOS Keychain\x1b[0m");
+        eprintln!("  Service: cmux, Account: CLAUDE_CODE_OAUTH_TOKEN");
+        eprintln!("  The token will be automatically injected into sandbox environments.");
+    } else {
+        eprintln!("\n\x1b[33mNote: No OAuth token detected in output.\x1b[0m");
+        eprintln!("You can manually add with: security add-generic-password -s cmux -a CLAUDE_CODE_OAUTH_TOKEN -w <token> -A");
+    }
+
     Ok(())
 }
 

@@ -1,7 +1,7 @@
 use crate::errors::{SandboxError, SandboxResult};
 use crate::ip_pool::{IpLease, IpPool};
 use crate::models::{
-    CreateSandboxRequest, ExecRequest, ExecResponse, MuxClientMessage, MuxServerMessage,
+    CreateSandboxRequest, EnvVar, ExecRequest, ExecResponse, MuxClientMessage, MuxServerMessage,
     PtySessionId, SandboxNetwork, SandboxStatus, SandboxSummary,
 };
 use crate::service::SandboxService;
@@ -61,6 +61,7 @@ struct SandboxEntry {
     handle: SandboxHandle,
     child: Arc<Mutex<Child>>,
     inner_pid: u32,
+    env: Vec<EnvVar>,
 }
 
 pub struct BubblewrapService {
@@ -453,6 +454,7 @@ alias g=git
             "CMUX_SANDBOX_URL",
             format!("http://{}:{}", lease.host, self.port),
         );
+        command.env("IS_SANDBOX", "1");
 
         command.args(["--", "/bin/sh", "-c", "ip link set lo up && sleep infinity"]);
 
@@ -602,6 +604,7 @@ alias g=git
     }
 
     /// Spawn a PTY session for multiplexed attach.
+    #[allow(clippy::too_many_arguments)]
     async fn spawn_mux_pty_session(
         &self,
         session_id: PtySessionId,
@@ -609,6 +612,7 @@ alias g=git
         command: Vec<String>,
         cols: u16,
         rows: u16,
+        env: &[EnvVar],
         output_tx: mpsc::UnboundedSender<MuxServerMessage>,
     ) -> SandboxResult<PtySessionHandle> {
         let system = NativePtySystem::default();
@@ -626,6 +630,11 @@ alias g=git
         cmd.env("TERM", "xterm-256color");
         cmd.env("LANG", "C.UTF-8");
         cmd.env("LC_ALL", "C.UTF-8");
+        cmd.env("IS_SANDBOX", "1");
+        // Apply sandbox-specific env vars
+        for e in env {
+            cmd.env(&e.key, &e.value);
+        }
 
         let child = pair
             .slave
@@ -777,6 +786,7 @@ impl SandboxService for BubblewrapService {
             handle,
             child: Arc::new(Mutex::new(child)),
             inner_pid,
+            env: request.env.clone(),
         };
 
         let summary = {
@@ -1034,6 +1044,7 @@ impl SandboxService for BubblewrapService {
         cmd.env("TERM", "xterm-256color");
         cmd.env("LANG", "C.UTF-8");
         cmd.env("LC_ALL", "C.UTF-8");
+        cmd.env("IS_SANDBOX", "1");
 
         let mut child = pair
             .slave
@@ -1257,7 +1268,7 @@ impl SandboxService for BubblewrapService {
                     };
 
                     match client_msg {
-                        MuxClientMessage::CreateSandbox { name } => {
+                        MuxClientMessage::CreateSandbox { name, env } => {
                             debug!("mux_attach: create sandbox request name={:?}", name);
                             match self
                                 .create(CreateSandboxRequest {
@@ -1265,7 +1276,7 @@ impl SandboxService for BubblewrapService {
                                     workspace: None,
                                     read_only_paths: vec![],
                                     tmpfs: vec![],
-                                    env: vec![],
+                                    env,
                                 })
                                 .await
                             {
@@ -1358,6 +1369,7 @@ impl SandboxService for BubblewrapService {
                                     target_command,
                                     cols,
                                     rows,
+                                    &entry.env,
                                     output_tx.clone(),
                                 )
                                 .await

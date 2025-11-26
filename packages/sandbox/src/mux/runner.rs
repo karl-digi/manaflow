@@ -116,7 +116,7 @@ async fn run_main_loop<B: ratatui::backend::Backend>(
             workspace: None,
             read_only_paths: vec![],
             tmpfs: vec![],
-            env: vec![],
+            env: crate::keyring::build_default_env_vars(),
         };
 
         match client.post(&url).json(&body).send().await {
