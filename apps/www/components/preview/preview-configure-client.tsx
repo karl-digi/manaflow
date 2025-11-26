@@ -1439,7 +1439,7 @@ export function PreviewConfigureClient({
       {/* Left: Configuration Form */}
       <div className="w-96 overflow-y-auto border-r border-neutral-200 dark:border-neutral-800 bg-white dark:bg-black p-6">
         <Link
-          href="/preview/get-started"
+          href="/preview"
           className="inline-flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100 mb-4"
         >
           <ArrowLeft className="h-4 w-4" />

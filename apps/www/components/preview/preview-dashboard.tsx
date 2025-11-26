@@ -1,8 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, Shield, Search, Github, ExternalLink, Zap, Eye, User } from "lucide-react";
-import { useRouter } from "next/navigation";
+import {
+  ArrowLeft,
+  Eye,
+  Github,
+  Loader2,
+  Search,
+  Shield,
+  User,
+  Zap,
+} from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 
@@ -19,14 +27,6 @@ type RepoSearchResult = {
   updated_at?: string | null;
 };
 
-type StackTeam = {
-    slug?: string | null;
-    teamId?: string;
-    id?: string;
-    displayName?: string | null;
-    name?: string | null;
-};
-
 type PreviewDashboardProps = {
   selectedTeamSlugOrId: string;
   hasGithubAppInstallation: boolean;
@@ -34,21 +34,12 @@ type PreviewDashboardProps = {
   isAuthenticated: boolean;
 };
 
-function getTeamSlugOrId(team: StackTeam): string {
-  return team.slug ?? team.teamId ?? team.id ?? "";
-}
-
-function getTeamDisplayName(team: StackTeam): string {
-  return team.displayName ?? team.name ?? team.slug ?? team.teamId ?? team.id ?? "team";
-}
-
 export function PreviewDashboard({
   selectedTeamSlugOrId,
   hasGithubAppInstallation,
   providerConnections,
   isAuthenticated,
 }: PreviewDashboardProps) {
-  const router = useRouter();
   const [isInstallingApp, setIsInstallingApp] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -59,7 +50,52 @@ export function PreviewDashboard({
   const [isLoadingRepos, setIsLoadingRepos] = useState(false);
   const [isNavigating, setIsNavigating] = useState(false);
 
+  // Public URL input state
+  const [repoUrlInput, setRepoUrlInput] = useState("");
+
   const activeConnections = providerConnections.filter((c) => c.isActive);
+  const searchPlaceholder = !isAuthenticated
+    ? "Sign in to search your GitHub repos"
+    : !hasGithubAppInstallation
+      ? "Install the GitHub App to search your repos"
+      : "Search installed repositories";
+
+  // Parse GitHub URL to extract owner/repo
+  const parseGithubUrl = useCallback((input: string): string | null => {
+    const trimmed = input.trim();
+    // Try to parse as URL
+    try {
+      const url = new URL(trimmed);
+      if (url.hostname === "github.com" || url.hostname === "www.github.com") {
+        const parts = url.pathname.split("/").filter(Boolean);
+        if (parts.length >= 2) {
+          return `${parts[0]}/${parts[1]}`;
+        }
+      }
+    } catch {
+      // Not a valid URL, check if it's owner/repo format
+      const ownerRepoMatch = trimmed.match(/^([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)$/);
+      if (ownerRepoMatch) {
+        return trimmed;
+      }
+    }
+    return null;
+  }, []);
+
+  const handleStartPreview = useCallback(() => {
+    const repoName = parseGithubUrl(repoUrlInput);
+    if (!repoName) {
+      setErrorMessage("Please enter a valid GitHub URL or owner/repo");
+      return;
+    }
+    setErrorMessage(null);
+    setIsNavigating(true);
+    const params = new URLSearchParams({ repo: repoName });
+    if (selectedTeamSlugOrId) {
+      params.set("team", selectedTeamSlugOrId);
+    }
+    window.location.href = `/preview/configure?${params.toString()}`;
+  }, [repoUrlInput, parseGithubUrl, selectedTeamSlugOrId]);
 
   // Auto-select first connection
   useEffect(() => {
@@ -153,52 +189,79 @@ export function PreviewDashboard({
     window.location.href = `/preview/configure?${params.toString()}`;
   }, [selectedInstallationId, selectedTeamSlugOrId]);
 
-  const selectedConnection = activeConnections.find(
-    (c) => c.installationId === selectedInstallationId
-  );
-
   return (
     <div className="mx-auto w-full max-w-[1200px] px-6 py-12">
-      <div className="mb-12 space-y-4">
-        <Link 
-          href="https://cmux.dev" 
-          className="inline-block text-sm text-neutral-400 hover:text-white transition-colors mb-2"
-        >
-          back to cmux →
-        </Link>
-        <h1 className="text-4xl font-bold tracking-tight text-white">
-          Screenshot previews for your code reviews
-        </h1>
-        <p className="max-w-2xl text-lg text-neutral-300">
-          Link your repository, configure your dev server, and cmux Preview automatically
-          captures screenshots for every pull request.
-        </p>
+      <div className="mb-12 space-y-5">
+        <div className="flex items-center gap-4">
+          <Link
+            href="https://cmux.dev"
+            className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-neutral-200 transition hover:border-white/20 hover:text-white"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            <span>Back to cmux</span>
+          </Link>
+        </div>
+
+        <div className="space-y-3">
+          <h1 className="text-4xl font-bold tracking-tight text-white sm:text-5xl">
+            preview.new for every pull request
+          </h1>
+          <p className="max-w-3xl text-lg text-neutral-300">
+            preview.new sets up a GitHub bot that takes screenshot previews of your dev server so you
+            can visually verify every pull request.
+          </p>
+        </div>
       </div>
 
-      {/* Global Search/Input Bar */}
-      <div className="mb-12 relative group">
-        <div className="absolute inset-0 -z-10 rounded-xl bg-gradient-to-r from-sky-500/20 via-blue-500/20 to-purple-500/20 blur-xl opacity-50 group-hover:opacity-100 transition-opacity duration-500" />
-        <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-black/50 px-4 py-4 shadow-2xl backdrop-blur-sm transition hover:border-white/20">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/10">
-            <ExternalLink className="h-4 w-4 text-neutral-400" />
+      <div className="relative mb-12 overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-6 shadow-2xl backdrop-blur">
+        <div className="absolute -left-32 -top-24 h-64 w-64 rounded-full bg-sky-500/20 blur-3xl" />
+        <div className="absolute -right-28 bottom-0 h-56 w-56 rounded-full bg-purple-500/20 blur-3xl" />
+        <div className="relative space-y-4">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div className="space-y-2">
+              <p className="text-sm font-semibold text-white">Setup a preview</p>
+              <p className="text-sm text-neutral-300">
+                Paste a public GitHub URL to launch preview.new.
+              </p>
+              {!isAuthenticated && (
+                <p className="text-xs text-neutral-400">
+                  Sign in to connect private repos and keep captures tied to your workspace.
+                </p>
+              )}
+            </div>
+            <div className="flex w-full flex-col gap-3 sm:min-w-[320px] sm:flex-row sm:items-center md:min-w-[420px]">
+              <div className="relative w-full">
+                <Github className="absolute left-3 top-3 h-4 w-4 text-neutral-500" />
+                <input
+                  type="text"
+                  value={repoUrlInput}
+                  onChange={(e) => setRepoUrlInput(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleStartPreview()}
+                  placeholder="https://github.com/owner/repo"
+                  className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2.5 pl-10 text-sm text-white placeholder:text-neutral-500 focus:border-white/20 focus:outline-none focus:ring-1 focus:ring-sky-500/50"
+                />
+              </div>
+              <Button
+                onClick={handleStartPreview}
+                disabled={!repoUrlInput.trim() || isNavigating}
+                className="bg-white text-black hover:bg-neutral-200"
+              >
+                {isNavigating ? "Loading…" : "Start"}
+              </Button>
+            </div>
           </div>
-          <input 
-            type="text" 
-            placeholder="Enter a Git repository URL to set up previews..." 
-            className="flex-1 bg-transparent text-sm text-white placeholder:text-neutral-500 focus:outline-none"
-          />
-          <Button variant="default" className="bg-white text-black hover:bg-neutral-200">
-            Continue
-          </Button>
+          {errorMessage && (
+            <p className="text-xs text-red-400">{errorMessage}</p>
+          )}
         </div>
       </div>
 
       <div className="grid gap-8 lg:grid-cols-[1.5fr_1fr]">
         {/* Left Column: Import Git Repository */}
-        <div className="space-y-6">
-          <h2 className="text-xl font-semibold text-white">Import Git Repository</h2>
-          
-          <div className="rounded-xl border border-white/10 bg-neutral-900/30 p-6">
+        <div className="flex flex-col">
+          <h2 className="text-xl font-semibold text-white">Choose a repository</h2>
+
+          <div className="mt-6 flex-1 rounded-xl border border-white/10 bg-neutral-900/30 p-6">
             {!isAuthenticated ? (
                <div className="text-center py-8">
                   <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-white/5">
@@ -206,7 +269,7 @@ export function PreviewDashboard({
                   </div>
                   <h3 className="mb-2 text-lg font-medium text-white">Sign in to continue</h3>
                   <p className="mb-6 text-sm text-neutral-400">
-                    Sign in to cmux to import your repositories and start building previews.
+                    Sign in to preview.new to import your repositories and capture pull requests.
                   </p>
                   <Button asChild className="bg-white text-black hover:bg-neutral-200">
                     <Link href="/handler/sign-in?after_auth_return_to=/preview">
@@ -221,7 +284,7 @@ export function PreviewDashboard({
                   </div>
                   <h3 className="mb-2 text-lg font-medium text-white">Connect to GitHub</h3>
                   <p className="mb-6 text-sm text-neutral-400">
-                    Install the cmux GitHub App to access your repositories.
+                    Install the preview.new GitHub App (cmux) to connect your repositories.
                   </p>
                   <Button
                     onClick={handleInstallGithubApp}
@@ -270,7 +333,7 @@ export function PreviewDashboard({
                         value={repoSearch}
                         onChange={(e) => setRepoSearch(e.target.value)}
                         onKeyDown={(e) => e.key === "Enter" && void handleSearchRepos()}
-                        placeholder="Search..."
+                        placeholder={searchPlaceholder}
                         className="w-full rounded-lg border border-white/10 bg-white/5 pl-9 pr-3 py-2.5 text-sm text-white focus:border-white/20 focus:outline-none focus:ring-1 focus:ring-sky-500/50"
                       />
                    </div>
@@ -327,69 +390,46 @@ export function PreviewDashboard({
           </div>
         </div>
 
-        {/* Right Column: Setup & Benefits */}
-        <div className="space-y-8">
-          
-          <div className="space-y-4">
-            <h3 className="text-lg font-semibold text-white">What is preview.new?</h3>
-            <div className="grid gap-4">
-               <div className="rounded-xl border border-white/10 bg-neutral-900/30 p-4">
-                 <div className="mb-2 flex items-center gap-3">
-                    <div className="rounded-lg bg-sky-500/20 p-2 text-sky-400">
-                      <Zap className="h-5 w-5" />
-                    </div>
-                    <h4 className="font-medium text-white">Automated captures</h4>
-                 </div>
-                 <p className="text-sm text-neutral-400">
-                   Every PR triggers a dedicated VM that boots your dev server and captures screenshots automatically.
-                 </p>
-               </div>
-
-               <div className="rounded-xl border border-white/10 bg-neutral-900/30 p-4">
-                 <div className="mb-2 flex items-center gap-3">
-                    <div className="rounded-lg bg-emerald-500/20 p-2 text-emerald-400">
-                      <Eye className="h-5 w-5" />
-                    </div>
-                    <h4 className="font-medium text-white">Visual verification</h4>
-                 </div>
-                 <p className="text-sm text-neutral-400">
-                   Catch visual regressions and UI bugs before they ship by comparing screenshots across profiles.
-                 </p>
-               </div>
-
-               <div className="rounded-xl border border-white/10 bg-neutral-900/30 p-4">
-                 <div className="mb-2 flex items-center gap-3">
-                    <div className="rounded-lg bg-purple-500/20 p-2 text-purple-400">
-                      <Shield className="h-5 w-5" />
-                    </div>
-                    <h4 className="font-medium text-white">Secure environments</h4>
-                 </div>
-                 <p className="text-sm text-neutral-400">
-                   Environment variables are encrypted and stored securely while maintaining full dev server functionality.
-                 </p>
-               </div>
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            <h3 className="text-lg font-semibold text-white">How it works</h3>
-            <div className="space-y-3">
-              {[
-                "Install GitHub App",
-                "Select repository",
-                "Configure scripts",
-                "Review screenshots",
-              ].map((step, i) => (
-                <div key={step} className="flex items-center gap-3 text-sm text-neutral-400">
-                  <div className="flex h-6 w-6 items-center justify-center rounded-full border border-white/10 bg-white/5 text-xs font-medium">
-                    {i + 1}
-                  </div>
-                  <span>{step}</span>
+        {/* Right Column: What is preview.new? */}
+        <div className="flex flex-col">
+          <h2 className="text-xl font-semibold text-white">What is preview.new?</h2>
+          <div className="mt-6 flex flex-1 flex-col gap-4">
+            <div className="flex-1 rounded-xl border border-white/10 bg-neutral-900/30 p-4">
+              <div className="mb-2 flex items-center gap-3">
+                <div className="rounded-lg bg-sky-500/20 p-2 text-sky-400">
+                  <Zap className="h-5 w-5" />
                 </div>
-              ))}
+                <h4 className="font-medium text-white">Automated captures</h4>
+              </div>
+              <p className="text-sm text-neutral-400">
+                Every PR triggers a dedicated VM that boots your dev server and captures screenshots automatically.
+              </p>
+            </div>
+
+            <div className="flex-1 rounded-xl border border-white/10 bg-neutral-900/30 p-4">
+              <div className="mb-2 flex items-center gap-3">
+                <div className="rounded-lg bg-emerald-500/20 p-2 text-emerald-400">
+                  <Eye className="h-5 w-5" />
+                </div>
+                <h4 className="font-medium text-white">Visual verification</h4>
+              </div>
+              <p className="text-sm text-neutral-400">
+                Catch visual regressions and UI bugs before they ship by comparing screenshots across profiles.
+              </p>
+            </div>
+
+            <div className="flex-1 rounded-xl border border-white/10 bg-neutral-900/30 p-4">
+              <div className="mb-2 flex items-center gap-3">
+                <div className="rounded-lg bg-purple-500/20 p-2 text-purple-400">
+                  <Zap className="h-5 w-5" />
+                </div>
+                <h4 className="font-medium text-white">Isolated VMs</h4>
+              </div>
+              <p className="text-sm text-neutral-400">
+                Each PR spins up a dedicated VM that runs your dev server exactly as it would locally.
+              </p>
             </div>
           </div>
-
         </div>
       </div>
     </div>
