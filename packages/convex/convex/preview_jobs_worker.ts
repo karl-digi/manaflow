@@ -680,6 +680,7 @@ export async function runPreviewJob(
         userId: config.createdByUserId,
         prUrl: run.prUrl,
         environmentId: config.environmentId,
+        newBranch: run.headRef,
       },
     );
 
@@ -1041,11 +1042,15 @@ export async function runPreviewJob(
       stateReason: "Checking out PR commit",
     });
 
+    const checkoutCmd = run.headRef
+      ? ["git", "-C", repoDir, "checkout", "-B", run.headRef, run.headSha]
+      : ["git", "-C", repoDir, "checkout", run.headSha];
+
     const checkoutResponse = await execInstanceInstanceIdExecPost({
       client: morphClient,
       path: { instance_id: instance.id },
       body: {
-        command: ["git", "-C", repoDir, "checkout", run.headSha],
+        command: checkoutCmd,
       },
     });
 

@@ -1731,6 +1731,7 @@ export const createForPreview = internalMutation({
     userId: v.string(),
     prUrl: v.string(),
     environmentId: v.optional(v.id("environments")),
+    newBranch: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
@@ -1744,7 +1745,7 @@ export const createForPreview = internalMutation({
       parentRunId: undefined,
       prompt: `Capture UI screenshots for ${args.prUrl}`,
       agentName: "screenshot-collector",
-      newBranch: undefined,
+      newBranch: args.newBranch,
       status: "pending",
       createdAt: now,
       updatedAt: now,
