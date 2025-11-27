@@ -1397,7 +1397,7 @@ export function PreviewConfigureClient({
                       onFocus={() => setActiveEnvValueIndex(idx)}
                       onBlur={() => setActiveEnvValueIndex((current) => (current === idx ? null : current))}
                       readOnly={shouldMaskValue}
-                      placeholder="value"
+                      placeholder="I9JU23NF394R6HH"
                       className="w-full min-w-0 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 disabled:opacity-60 disabled:cursor-not-allowed"
                     />
                     <button
@@ -1619,7 +1619,7 @@ export function PreviewConfigureClient({
                   disabled={envNone}
                   ref={(el) => { keyInputRefs.current[idx] = el; }}
                   onChange={(e) => { setEnvNone(false); updateEnvVars((prev) => { const next = [...prev]; if (next[idx]) next[idx] = { ...next[idx], name: e.target.value }; return next; }); }}
-                  placeholder="KEY"
+                  placeholder="EXAMPLE_NAME"
                   className={fieldInputClass}
                 />
                 <input
@@ -1630,7 +1630,7 @@ export function PreviewConfigureClient({
                   onFocus={() => setActiveEnvValueIndex(idx)}
                   onBlur={() => setActiveEnvValueIndex((current) => (current === idx ? null : current))}
                   readOnly={shouldMaskValue}
-                  placeholder="value"
+                  placeholder="I9JU23NF394R6HH"
                   className={fieldInputClass}
                 />
                 <button
@@ -1674,21 +1674,21 @@ export function PreviewConfigureClient({
           <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
             Open terminal (<kbd className="px-1 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 text-[10px] font-sans">Ctrl+Shift+`</kbd> or <kbd className="px-1 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 text-[10px] font-sans">Cmd+J</kbd>) and paste:
           </p>
-          {(maintenanceScriptValue || devScriptValue) ? (
-            <div className="rounded-md border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 overflow-hidden">
+          <div className="rounded-md border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 overflow-hidden">
               <div className="flex items-center justify-between px-3 py-1.5 border-b border-neutral-200 dark:border-neutral-800 bg-neutral-100 dark:bg-neutral-800/50">
                 <span className="text-[10px] uppercase tracking-wide text-neutral-500">Commands</span>
-                <button type="button" onClick={handleCopyCommands} className={clsx("p-0.5", commandsCopied ? "text-emerald-500" : "text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300")}>
-                  {commandsCopied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-                </button>
+                {(maintenanceScriptValue || devScriptValue) && (
+                  <button type="button" onClick={handleCopyCommands} className={clsx("p-0.5", commandsCopied ? "text-emerald-500" : "text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300")}>
+                    {commandsCopied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                  </button>
+                )}
               </div>
               <pre className="px-3 py-2 text-[11px] font-mono text-neutral-900 dark:text-neutral-100 overflow-x-auto whitespace-pre-wrap break-all select-all">
-                {[maintenanceScript.trim(), devScript.trim()].filter(Boolean).join(" && ")}
+                {(maintenanceScriptValue || devScriptValue)
+                  ? [maintenanceScript.trim(), devScript.trim()].filter(Boolean).join(" && ")
+                  : <span className="text-neutral-400 italic">Enter scripts above to see commands</span>}
               </pre>
             </div>
-          ) : (
-            <p className="text-[11px] text-neutral-400 italic">Enter scripts above to see commands</p>
-          )}
           <label className="flex items-center gap-1.5 text-[11px] text-neutral-500 dark:text-neutral-400 cursor-pointer hover:text-neutral-700 dark:hover:text-neutral-300">
             <input type="checkbox" checked={runConfirmed} onChange={(e) => setRunConfirmed(e.target.checked)} className={checkboxClass} />
             Proceed once dev script is running
@@ -1743,38 +1743,30 @@ export function PreviewConfigureClient({
 
   const renderPreviewPanel = () => {
     const isVscodeStep = currentStep === 1;
-    const title = isVscodeStep ? "VS Code" : "Browser";
     const placeholder = isVscodeStep ? workspacePlaceholder : browserPlaceholder;
     const iframeKey = isVscodeStep ? vscodePersistKey : browserPersistKey;
 
     return (
-      <div className="h-full flex flex-col rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 shadow-sm overflow-hidden">
-        <div className="flex items-center border-b border-neutral-200 dark:border-neutral-800 px-3 py-2">
-          <h2 className="text-xs font-medium text-neutral-800 dark:text-neutral-100">
-            {title}
-          </h2>
-        </div>
-        <div className="relative flex-1">
-          {placeholder ? (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center text-neutral-500 dark:text-neutral-400">
-              <div className="text-sm font-medium text-neutral-600 dark:text-neutral-200">
-                {placeholder.title}
-              </div>
-              {placeholder.description ? (
-                <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                  {placeholder.description}
-                </p>
-              ) : null}
+      <div className="h-full flex flex-col overflow-hidden relative">
+        {placeholder ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center text-neutral-500 dark:text-neutral-400">
+            <div className="text-sm font-medium text-neutral-600 dark:text-neutral-200">
+              {placeholder.title}
             </div>
-          ) : null}
-          <div
-            className={clsx(
-              "absolute inset-0",
-              placeholder ? "opacity-0" : "opacity-100"
-            )}
-            data-iframe-target={iframeKey}
-          />
-        </div>
+            {placeholder.description ? (
+              <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                {placeholder.description}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+        <div
+          className={clsx(
+            "absolute inset-0",
+            placeholder ? "opacity-0" : "opacity-100"
+          )}
+          data-iframe-target={iframeKey}
+        />
       </div>
     );
   };
@@ -1852,7 +1844,7 @@ export function PreviewConfigureClient({
       </div>
 
       {/* Right: Preview Panel */}
-      <div className="flex-1 flex flex-col bg-neutral-50 dark:bg-neutral-950 overflow-hidden p-4">
+      <div className="flex-1 flex flex-col bg-neutral-950 overflow-hidden">
         {renderPreviewPanel()}
       </div>
     </div>
