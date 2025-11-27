@@ -607,6 +607,7 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
                       userId: previewConfig.createdByUserId,
                       prUrl,
                       environmentId: previewConfig.environmentId,
+                      newBranch: headRef,
                     },
                   );
 
