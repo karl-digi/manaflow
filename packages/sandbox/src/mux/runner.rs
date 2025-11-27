@@ -17,7 +17,7 @@ use tokio::time::MissedTickBehavior;
 
 use crate::mux::commands::MuxCommand;
 use crate::mux::events::MuxEvent;
-use crate::mux::layout::{ClosedTabInfo, PaneContent, PaneExitOutcome, SandboxId};
+use crate::mux::layout::{ClosedTabInfo, PaneContent, PaneExitOutcome, SandboxId, TabId};
 use crate::mux::state::{FocusArea, MuxApp};
 use crate::mux::terminal::{connect_to_sandbox, create_terminal_manager, request_list_sandboxes};
 use crate::mux::ui::ui;
@@ -97,7 +97,7 @@ async fn run_main_loop<B: ratatui::backend::Backend>(
 
         let _ = init_tx.send(MuxEvent::CreateSandboxWithWorkspace {
             workspace_path: initial_workspace,
-            tab_id: None,
+            tab_id: Some(TabId::new().to_string()),
         });
     });
 
@@ -143,12 +143,17 @@ async fn run_app<B: ratatui::backend::Backend>(
                         let event_tx = app.event_tx.clone();
                         let base_url = app.base_url.clone();
                         let workspace_path = workspace_path.clone();
-                        let tab_id = tab_id.clone();
+                        let tab_id_value =
+                            tab_id.clone().unwrap_or_else(|| TabId::new().to_string());
+                        if let Ok(uuid) = uuid::Uuid::parse_str(&tab_id_value) {
+                            app.pending_creation_tab_ids
+                                .push_back(TabId::from_uuid(uuid));
+                        }
                         tokio::spawn(async move {
                             if let Err(error) = create_sandbox_with_workspace(
                                 base_url,
                                 workspace_path,
-                                tab_id,
+                                Some(tab_id_value),
                                 event_tx.clone(),
                             )
                             .await
@@ -233,9 +238,10 @@ fn connect_active_pane_to_sandbox(
     let manager = terminal_manager.clone();
     let event_tx = app.event_tx.clone();
     let sandbox_id = sandbox_id.to_string();
+    let tab_id = app.workspace_manager.active_tab_id();
 
     tokio::spawn(async move {
-        if let Err(e) = connect_to_sandbox(manager, pane_id, sandbox_id, cols, rows).await {
+        if let Err(e) = connect_to_sandbox(manager, pane_id, sandbox_id, tab_id, cols, rows).await {
             let _ = event_tx.send(MuxEvent::Error(format!(
                 "Failed to connect to sandbox: {}",
                 e
@@ -933,6 +939,7 @@ async fn create_sandbox_with_workspace(
 ) -> Result<(), anyhow::Error> {
     let client = reqwest::Client::new();
     let trimmed_base = base_url.trim_end_matches('/').to_string();
+    let tab_id = tab_id.unwrap_or_else(|| TabId::new().to_string());
 
     let dir_name = workspace_path
         .file_name()
@@ -947,7 +954,7 @@ async fn create_sandbox_with_workspace(
     let body = crate::models::CreateSandboxRequest {
         name: Some(dir_name.clone()),
         workspace: None,
-        tab_id: request_tab_id,
+        tab_id: Some(request_tab_id),
         read_only_paths: vec![],
         tmpfs: vec![],
         env: crate::keyring::build_default_env_vars(),

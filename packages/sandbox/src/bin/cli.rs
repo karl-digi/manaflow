@@ -23,6 +23,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
+use uuid::Uuid;
 
 #[cfg(unix)]
 use tokio::signal::unix::{signal, SignalKind};
@@ -320,7 +321,7 @@ async fn run() -> anyhow::Result<()> {
             let body = CreateSandboxRequest {
                 name: Some("interactive".into()),
                 workspace: None,
-                tab_id: None,
+                tab_id: Some(Uuid::new_v4().to_string()),
                 read_only_paths: vec![],
                 tmpfs: vec![],
                 env: build_default_env_vars(),
@@ -429,7 +430,7 @@ async fn run() -> anyhow::Result<()> {
                 let body = CreateSandboxRequest {
                     name: Some("interactive".into()),
                     workspace: None,
-                    tab_id: None,
+                    tab_id: Some(Uuid::new_v4().to_string()),
                     read_only_paths: vec![],
                     tmpfs: vec![],
                     env: build_default_env_vars(),
@@ -530,7 +531,7 @@ async fn run() -> anyhow::Result<()> {
                     let body = CreateSandboxRequest {
                         name: resolved_name,
                         workspace: args.workspace.map(|p| p.to_string_lossy().to_string()),
-                        tab_id: None,
+                        tab_id: Some(Uuid::new_v4().to_string()),
                         read_only_paths: args
                             .read_only_paths
                             .iter()
@@ -549,7 +550,7 @@ async fn run() -> anyhow::Result<()> {
                     let body = CreateSandboxRequest {
                         name: Some("interactive".into()),
                         workspace: None,
-                        tab_id: None,
+                        tab_id: Some(Uuid::new_v4().to_string()),
                         read_only_paths: vec![],
                         tmpfs: vec![],
                         env: build_default_env_vars(),

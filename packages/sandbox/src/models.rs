@@ -225,6 +225,12 @@ pub enum MuxClientMessage {
         command: Option<Vec<String>>,
         #[serde(default = "default_tty")]
         tty: bool,
+        /// Tab identifier for this session (used for routing notifications).
+        #[serde(default)]
+        tab_id: Option<String>,
+        /// Pane identifier for this session (used for diagnostics/UI focus).
+        #[serde(default)]
+        pane_id: Option<String>,
     },
     /// Send input data to a PTY session.
     Input {

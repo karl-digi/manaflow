@@ -162,6 +162,8 @@ pub struct MuxApp<'a> {
     pub show_help: bool,
     // Notifications overlay/state
     pub notifications: NotificationsState,
+    // Pending tab IDs for sandboxes being created (kept in request order)
+    pub pending_creation_tab_ids: VecDeque<crate::mux::layout::TabId>,
 
     // Event channel
     pub event_tx: mpsc::UnboundedSender<MuxEvent>,
@@ -210,6 +212,7 @@ impl<'a> MuxApp<'a> {
             zoomed_pane: None,
             show_help: false,
             notifications: NotificationsState::new(),
+            pending_creation_tab_ids: VecDeque::new(),
             event_tx,
             base_url,
             workspace_path,
@@ -331,32 +334,37 @@ impl<'a> MuxApp<'a> {
     }
 
     pub fn open_notification_target(&mut self, entry: &NotificationEntry) {
-        let mut target_selected = false;
+        let mut sandbox_selected = false;
         if let Some(sandbox_id_str) = &entry.sandbox_id {
             if let Ok(uuid) = Uuid::parse_str(sandbox_id_str) {
                 let sandbox_id = SandboxId::from_uuid(uuid);
                 if self.workspace_manager.has_sandbox(sandbox_id) {
                     self.workspace_manager.select_sandbox(sandbox_id);
                     self.sidebar.select_by_id(sandbox_id_str);
-                    target_selected = true;
+                    sandbox_selected = true;
                 }
             }
         }
 
+        let mut tab_selected = false;
         if let Some(tab_id_str) = &entry.tab_id {
             if let Ok(uuid) = Uuid::parse_str(tab_id_str) {
                 let tab_id = crate::mux::layout::TabId::from_uuid(uuid);
-                if target_selected {
-                    let _ = self
+                if sandbox_selected {
+                    tab_selected = self
                         .workspace_manager
                         .select_tab_in_workspace_for_active(tab_id);
                 } else if self.workspace_manager.select_tab_in_any_workspace(tab_id) {
-                    target_selected = true;
+                    if let Some(active_id) = self.workspace_manager.active_sandbox_id {
+                        self.sidebar.select_by_id(&active_id.to_string());
+                    }
+                    sandbox_selected = true;
+                    tab_selected = true;
                 }
             }
         }
 
-        if target_selected {
+        if sandbox_selected || tab_selected {
             self.focus = FocusArea::MainArea;
         }
 
@@ -566,15 +574,12 @@ impl<'a> MuxApp<'a> {
             // Sandbox management
             MuxCommand::NewSandbox => {
                 self.set_status("Creating new sandbox...");
-                let active_tab = self
-                    .workspace_manager
-                    .active_tab_id()
-                    .map(|id| id.to_string());
+                let tab_id = self.workspace_manager.active_tab_id().unwrap_or_default();
                 let _ = self.event_tx.send(MuxEvent::CreateSandboxWithWorkspace {
                     workspace_path: self.workspace_path.clone(),
-                    tab_id: active_tab,
+                    tab_id: Some(tab_id.to_string()),
                 });
-                self.add_placeholder_sandbox("Creating sandbox");
+                self.add_placeholder_sandbox("Creating sandbox", Some(tab_id));
             }
             MuxCommand::DeleteSandbox => {
                 if let Some(sandbox) = self.sidebar.selected_sandbox() {
@@ -731,10 +736,27 @@ impl<'a> MuxApp<'a> {
                 self.sidebar.sandboxes.push(sandbox.clone());
                 self.sidebar.select_by_id(&sandbox_id_str);
                 self.add_sandbox(&sandbox_id_str, &sandbox.name);
+                if let Some(tab_id) = self.pending_creation_tab_ids.pop_front() {
+                    let _ = self.workspace_manager.set_active_tab_id_for_sandbox(
+                        crate::mux::layout::SandboxId::from_uuid(sandbox.id),
+                        tab_id,
+                    );
+                }
                 self.workspace_manager
                     .select_sandbox(crate::mux::layout::SandboxId::from_uuid(sandbox.id));
                 self.pending_connect = Some(sandbox_id_str.clone());
                 self.set_status(format!("Created sandbox: {}", sandbox.name));
+            }
+            MuxEvent::SandboxTabMapped { sandbox_id, tab_id } => {
+                if let (Ok(sandbox_uuid), Ok(tab_uuid)) =
+                    (Uuid::parse_str(&sandbox_id), Uuid::parse_str(&tab_id))
+                {
+                    let sandbox_id = SandboxId::from_uuid(sandbox_uuid);
+                    let tab_id = crate::mux::layout::TabId::from_uuid(tab_uuid);
+                    let _ = self
+                        .workspace_manager
+                        .set_active_tab_id_for_sandbox(sandbox_id, tab_id);
+                }
             }
             MuxEvent::SandboxDeleted(id) => {
                 self.remove_sandbox_by_id_string(&id);
@@ -784,7 +806,11 @@ impl<'a> MuxApp<'a> {
     }
 
     /// Add a local placeholder sandbox for immediate UI feedback while creation runs.
-    pub fn add_placeholder_sandbox(&mut self, name: impl Into<String>) {
+    pub fn add_placeholder_sandbox(
+        &mut self,
+        name: impl Into<String>,
+        tab_id: Option<crate::mux::layout::TabId>,
+    ) {
         let sandbox_id = SandboxId::new();
         let name = name.into();
         let summary = SandboxSummary {
@@ -807,6 +833,11 @@ impl<'a> MuxApp<'a> {
         let id_str = sandbox_id.to_string();
         self.sidebar.select_by_id(&id_str);
         self.workspace_manager.add_sandbox(sandbox_id, name.clone());
+        if let Some(tab_id) = tab_id {
+            let _ = self
+                .workspace_manager
+                .set_active_tab_id_for_sandbox(sandbox_id, tab_id);
+        }
         self.workspace_manager.select_sandbox(sandbox_id);
         self.pending_placeholder_sandboxes.push_back(sandbox_id);
     }

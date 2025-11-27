@@ -17,6 +17,8 @@ pub enum MuxEvent {
     SandboxRefreshFailed(String),
     /// A sandbox was created.
     SandboxCreated(SandboxSummary),
+    /// Attach tab metadata to a sandbox (used to keep CMUX_TAB_ID aligned with UI tab).
+    SandboxTabMapped { sandbox_id: String, tab_id: String },
     /// A sandbox was deleted.
     SandboxDeleted(String),
     /// Connection to a sandbox changed.

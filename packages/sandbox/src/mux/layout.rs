@@ -1070,6 +1070,17 @@ impl WorkspaceManager {
         }
     }
 
+    /// Override the active tab's ID for a sandbox workspace.
+    pub fn set_active_tab_id_for_sandbox(&mut self, sandbox_id: SandboxId, tab_id: TabId) -> bool {
+        if let Some(ws) = self.workspaces.get_mut(&sandbox_id) {
+            if let Some(tab) = ws.active_tab_mut() {
+                tab.id = tab_id;
+                return true;
+            }
+        }
+        false
+    }
+
     /// Select a tab by ID in the active workspace.
     pub fn select_tab_in_workspace_for_active(&mut self, tab_id: TabId) -> bool {
         if let Some(active_id) = self.active_sandbox_id {

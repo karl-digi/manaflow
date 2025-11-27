@@ -10,7 +10,7 @@ use vte::{Params, Parser, Perform};
 
 use crate::models::{MuxClientMessage, MuxServerMessage, PtySessionId};
 use crate::mux::events::MuxEvent;
-use crate::mux::layout::PaneId;
+use crate::mux::layout::{PaneId, TabId};
 
 /// A single cell in the terminal grid
 #[derive(Debug, Clone)]
@@ -2273,6 +2273,7 @@ pub async fn connect_to_sandbox(
     manager: SharedTerminalManager,
     pane_id: PaneId,
     sandbox_id: String,
+    tab_id: Option<TabId>,
     cols: u16,
     rows: u16,
 ) -> anyhow::Result<()> {
@@ -2280,6 +2281,8 @@ pub async fn connect_to_sandbox(
     establish_mux_connection(manager.clone()).await?;
 
     let session_id = pane_id_to_session_id(pane_id);
+    let tab_id_string = tab_id.map(|id| id.to_string());
+    let pane_id_string = pane_id.to_string();
 
     // Initialize buffer and send attach message
     {
@@ -2300,6 +2303,8 @@ pub async fn connect_to_sandbox(
                 rows,
                 command: None,
                 tty: true,
+                tab_id: tab_id_string,
+                pane_id: Some(pane_id_string),
             });
         } else {
             return Err(anyhow::anyhow!("Mux connection not established"));

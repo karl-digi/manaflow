@@ -731,6 +731,8 @@ fi
         cols: u16,
         rows: u16,
         env: &[EnvVar],
+        tab_id: Option<String>,
+        pane_id: Option<String>,
         output_tx: mpsc::UnboundedSender<MuxServerMessage>,
     ) -> SandboxResult<PtySessionHandle> {
         let system = NativePtySystem::default();
@@ -756,7 +758,8 @@ fi
             cmd.env("SSH_AUTH_SOCK", "/ssh-agent.sock");
         }
         // Apply sandbox-specific env vars
-        for e in env {
+        let session_env = session_env_with_overrides(env, tab_id, pane_id);
+        for e in &session_env {
             cmd.env(&e.key, &e.value);
         }
 
@@ -889,6 +892,30 @@ fn build_effective_env(
         "CMUX_SANDBOX_URL".to_string(),
         format!("http://{}:{}", lease.host, port),
     );
+
+    merged
+        .into_iter()
+        .map(|(key, value)| EnvVar { key, value })
+        .collect()
+}
+
+fn session_env_with_overrides(
+    base_env: &[EnvVar],
+    tab_id: Option<String>,
+    pane_id: Option<String>,
+) -> Vec<EnvVar> {
+    let mut merged: BTreeMap<String, String> = base_env
+        .iter()
+        .map(|env| (env.key.clone(), env.value.clone()))
+        .collect();
+
+    if let Some(id) = tab_id {
+        merged.insert("CMUX_TAB_ID".to_string(), id);
+    }
+
+    if let Some(id) = pane_id {
+        merged.insert("CMUX_PANE_ID".to_string(), id);
+    }
 
     merged
         .into_iter()
@@ -1551,6 +1578,8 @@ impl SandboxService for BubblewrapService {
                             rows,
                             command,
                             tty,
+                            tab_id,
+                            pane_id,
                         } => {
                             debug!(
                                 "mux_attach: attach request session={} sandbox={} tty={}",
@@ -1605,6 +1634,8 @@ impl SandboxService for BubblewrapService {
                                     cols,
                                     rows,
                                     &entry.env,
+                                    tab_id,
+                                    pane_id,
                                     output_tx.clone(),
                                 )
                                 .await
@@ -1972,5 +2003,34 @@ mod tests {
         let double_dash_idx = args.iter().position(|s| s == "--").unwrap();
 
         assert!(wd_idx < double_dash_idx);
+    }
+
+    #[test]
+    fn session_env_overrides_tab_and_pane() {
+        let base_env = vec![
+            EnvVar {
+                key: "PATH".to_string(),
+                value: "/bin".to_string(),
+            },
+            EnvVar {
+                key: "CMUX_TAB_ID".to_string(),
+                value: "old-tab".to_string(),
+            },
+        ];
+
+        let session_env = session_env_with_overrides(
+            &base_env,
+            Some("new-tab".to_string()),
+            Some("pane-1".to_string()),
+        );
+
+        let mut map = std::collections::HashMap::new();
+        for env in session_env {
+            map.insert(env.key, env.value);
+        }
+
+        assert_eq!(map.get("PATH"), Some(&"/bin".to_string()));
+        assert_eq!(map.get("CMUX_TAB_ID"), Some(&"new-tab".to_string()));
+        assert_eq!(map.get("CMUX_PANE_ID"), Some(&"pane-1".to_string()));
     }
 }
