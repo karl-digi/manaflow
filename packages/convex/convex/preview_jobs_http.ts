@@ -1,7 +1,7 @@
 import { env } from "../_shared/convex-env";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import { httpAction, type ActionCtx } from "./_generated/server";
+import { httpAction } from "./_generated/server";
 import { runPreviewJob } from "./preview_jobs_worker";
 import { getWorkerAuth } from "./users/utils/getWorkerAuth";
 
