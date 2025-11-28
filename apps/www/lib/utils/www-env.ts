@@ -13,7 +13,6 @@ export const env = createEnv({
     CMUX_GITHUB_APP_PRIVATE_KEY: z.string().min(1),
     // Morph
     MORPH_API_KEY: z.string().min(1),
-    CONVEX_DEPLOY_KEY: z.string().min(1),
     OPENAI_API_KEY: z.string().min(1).optional(),
     GEMINI_API_KEY: z.string().min(1).optional(),
     ANTHROPIC_API_KEY: z.string().min(1),
