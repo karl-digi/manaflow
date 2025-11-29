@@ -123,4 +123,24 @@ else
 fi
 
 echo ""
+echo "--- Mode Tests ---"
+echo ""
+
+# Test Cursor Blink Mode
+echo "Testing Cursor Blink Mode (CSI ? 12 h/l):"
+echo "  Disabling cursor blink..."
+printf '\033[?12l'
+echo -e "  ${YELLOW}Cursor should now be STEADY (not blinking)${NC}"
+echo "  Press Enter to continue..."
+read -r
+
+echo "  Enabling cursor blink..."
+printf '\033[?12h'
+echo -e "  ${YELLOW}Cursor should now be BLINKING${NC}"
+echo "  Press Enter to continue..."
+read -r
+
+echo -e "  ${GREEN}Cursor blink mode test complete${NC}"
+echo ""
+
 echo "=== Tests Complete ==="

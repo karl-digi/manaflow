@@ -197,6 +197,9 @@ pub struct MuxApp<'a> {
     // Last rendered terminal views per pane for damage-aware drawing
     pub last_terminal_views:
         std::collections::HashMap<PaneId, crate::mux::terminal::TerminalRenderView>,
+
+    /// Cursor blink state for the active terminal pane (set during render)
+    pub cursor_blink: bool,
 }
 
 impl<'a> MuxApp<'a> {
@@ -225,6 +228,7 @@ impl<'a> MuxApp<'a> {
             pending_placeholder_sandboxes: VecDeque::new(),
             needs_initial_sandbox: false,
             last_terminal_views: std::collections::HashMap::new(),
+            cursor_blink: true,
         }
     }
 

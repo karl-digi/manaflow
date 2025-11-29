@@ -1,5 +1,6 @@
 use anyhow::Result;
 use crossterm::{
+    cursor::SetCursorStyle,
     event::{
         DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
         Event, EventStream, KeyCode, KeyEventKind, KeyModifiers, KeyboardEnhancementFlags,
@@ -65,7 +66,7 @@ pub async fn run_mux_tui(base_url: String, workspace_path: Option<PathBuf>) -> R
     result
 }
 
-async fn run_main_loop<B: ratatui::backend::Backend>(
+async fn run_main_loop<B: ratatui::backend::Backend + std::io::Write>(
     terminal: &mut Terminal<B>,
     base_url: String,
     workspace_path: Option<PathBuf>,
@@ -104,7 +105,7 @@ async fn run_main_loop<B: ratatui::backend::Backend>(
     run_app(terminal, app, event_rx, terminal_manager).await
 }
 
-async fn run_app<B: ratatui::backend::Backend>(
+async fn run_app<B: ratatui::backend::Backend + std::io::Write>(
     terminal: &mut Terminal<B>,
     mut app: MuxApp<'_>,
     mut event_rx: mpsc::UnboundedReceiver<MuxEvent>,
@@ -127,6 +128,13 @@ async fn run_app<B: ratatui::backend::Backend>(
             }
             _ = render_tick.tick(), if redraw_needed => {
                 terminal.draw(|f| ui(f, &mut app))?;
+                // Apply cursor style based on terminal's cursor blink mode
+                let cursor_style = if app.cursor_blink {
+                    SetCursorStyle::BlinkingBlock
+                } else {
+                    SetCursorStyle::SteadyBlock
+                };
+                let _ = execute!(terminal.backend_mut(), cursor_style);
                 sync_terminal_sizes(&app, &terminal_manager);
                 redraw_needed = false;
             }

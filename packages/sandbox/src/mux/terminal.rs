@@ -168,6 +168,8 @@ pub struct VirtualTerminal {
     saved_cursor: Option<SavedCursor>,
     /// Cursor visible
     pub cursor_visible: bool,
+    /// Cursor blink enabled
+    pub cursor_blink: bool,
     /// Insert mode (IRM) - when true, characters shift right instead of overwriting
     insert_mode: bool,
     /// Alternate screen buffer
@@ -237,6 +239,7 @@ impl VirtualTerminal {
             max_scrollback: 10000,
             saved_cursor: None,
             cursor_visible: true,
+            cursor_blink: true,
             insert_mode: false,
             alternate_screen: None,
             origin_mode: false,
@@ -1075,6 +1078,11 @@ impl Perform for VirtualTerminal {
                                 // DECAWM - Auto-wrap Mode
                                 self.auto_wrap = enable;
                             }
+                            12 => {
+                                // Cursor blink mode
+                                // h = enable blink, l = disable blink (steady cursor)
+                                self.cursor_blink = enable;
+                            }
                             25 => {
                                 // DECTCEM - Cursor visibility
                                 self.cursor_visible = enable;
@@ -1302,6 +1310,7 @@ pub struct TerminalRenderView {
     pub lines: Arc<[ratatui::text::Line<'static>]>,
     pub cursor: Option<(u16, u16)>,
     pub cursor_visible: bool,
+    pub cursor_blink: bool,
     pub has_content: bool,
     pub changed_lines: Arc<[usize]>,
 }
@@ -1313,6 +1322,7 @@ struct RenderCache {
     lines: Arc<[ratatui::text::Line<'static>]>,
     cursor: Option<(u16, u16)>,
     cursor_visible: bool,
+    cursor_blink: bool,
     has_content: bool,
     changed_lines: Arc<[usize]>,
 }
@@ -1329,6 +1339,7 @@ impl RenderCache {
             lines: self.lines.clone(),
             cursor: self.cursor,
             cursor_visible: self.cursor_visible,
+            cursor_blink: self.cursor_blink,
             has_content: self.has_content,
             changed_lines: self.changed_lines.clone(),
         }
@@ -1563,6 +1574,7 @@ impl TerminalBuffer {
 
         let cursor = self.cursor_position();
         let cursor_visible = self.cursor_visible();
+        let cursor_blink = self.terminal.cursor_blink;
         let lines: Arc<[ratatui::text::Line<'static>]> = lines.into();
 
         // Compute damage vs previous cache (line-level)
@@ -1590,6 +1602,7 @@ impl TerminalBuffer {
             lines: lines.clone(),
             cursor,
             cursor_visible,
+            cursor_blink,
             has_content,
             changed_lines: changed_lines.clone(),
         };
@@ -1599,6 +1612,7 @@ impl TerminalBuffer {
             lines,
             cursor,
             cursor_visible,
+            cursor_blink,
             has_content,
             changed_lines,
         }
@@ -2336,5 +2350,35 @@ mod tests {
         assert_eq!(responses.len(), 1);
         // Should respond as screen-like terminal
         assert_eq!(responses[0], b"\x1b[>41;0;0c");
+    }
+
+    #[test]
+    fn virtual_terminal_cursor_blink_default_enabled() {
+        let term = VirtualTerminal::new(24, 80);
+        // Cursor blink should be enabled by default
+        assert!(term.cursor_blink);
+    }
+
+    #[test]
+    fn virtual_terminal_cursor_blink_disable() {
+        let mut term = VirtualTerminal::new(24, 80);
+        assert!(term.cursor_blink);
+
+        // Disable cursor blink (CSI ? 12 l)
+        term.process(b"\x1b[?12l");
+        assert!(!term.cursor_blink);
+    }
+
+    #[test]
+    fn virtual_terminal_cursor_blink_enable() {
+        let mut term = VirtualTerminal::new(24, 80);
+
+        // First disable
+        term.process(b"\x1b[?12l");
+        assert!(!term.cursor_blink);
+
+        // Then re-enable (CSI ? 12 h)
+        term.process(b"\x1b[?12h");
+        assert!(term.cursor_blink);
     }
 }

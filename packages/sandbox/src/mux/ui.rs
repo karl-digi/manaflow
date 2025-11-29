@@ -394,6 +394,8 @@ fn render_pane(
                                 && cursor_y < inner_area.y + inner_area.height
                             {
                                 f.set_cursor_position((cursor_x, cursor_y));
+                                // Store cursor blink state for post-render cursor style update
+                                app.cursor_blink = view.cursor_blink;
                             }
                         }
                     }
