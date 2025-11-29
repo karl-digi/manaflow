@@ -5,14 +5,16 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-use unicode_width::UnicodeWidthChar;
 use vte::{Params, Parser, Perform};
 
 use crate::models::{MuxClientMessage, MuxServerMessage, PtySessionId};
+use crate::mux::character::{CharacterStyles, Row, TerminalCharacter};
 use crate::mux::events::MuxEvent;
+use crate::mux::grid::Grid;
 use crate::mux::layout::{PaneId, TabId};
 
-/// A single cell in the terminal grid
+/// A single cell in the terminal grid (legacy compatibility type).
+/// This is used for backward compatibility with existing tests and APIs.
 #[derive(Debug, Clone)]
 pub struct Cell {
     pub c: char,
@@ -31,91 +33,14 @@ impl Default for Cell {
     }
 }
 
-/// Virtual terminal that properly handles ANSI escape sequences
-#[derive(Debug, Clone)]
-pub struct VirtualTerminal {
-    /// Grid of cells (rows x cols)
-    pub grid: Vec<Vec<Cell>>,
-    /// Number of rows
-    pub rows: usize,
-    /// Number of columns
-    pub cols: usize,
-    /// Cursor row (0-indexed)
-    pub cursor_row: usize,
-    /// Cursor column (0-indexed)
-    pub cursor_col: usize,
-    /// Current style for new characters
-    pub current_style: Style,
-    /// Scroll offset for viewing history
-    pub scroll_offset: usize,
-    /// Scrollback buffer (lines that scrolled off top)
-    pub scrollback: Vec<Vec<Cell>>,
-    /// Maximum scrollback lines
-    pub max_scrollback: usize,
-    /// Saved cursor position and style
-    saved_cursor: Option<SavedCursor>,
-    /// Scroll region (top, bottom) - 0-indexed, inclusive
-    scroll_region: (usize, usize),
-    /// Cursor visible
-    pub cursor_visible: bool,
-    /// Insert mode (IRM) - when true, characters shift right instead of overwriting
-    insert_mode: bool,
-    /// Alternate screen buffer
-    alternate_screen: Option<Box<AlternateScreen>>,
-    /// Origin mode (DECOM) - cursor positioning relative to scroll region
-    origin_mode: bool,
-    /// Auto-wrap mode (DECAWM)
-    auto_wrap: bool,
-    /// Pending wrap - cursor is at the edge and next char will wrap
-    pending_wrap: bool,
-    /// Tab stops (columns where tabs stop)
-    tab_stops: Vec<usize>,
-    /// Current charset (0 = G0, 1 = G1)
-    charset_index: usize,
-    /// G0 charset mode (false = normal, true = line drawing)
-    g0_charset_line_drawing: bool,
-    /// G1 charset mode (false = normal, true = line drawing)
-    g1_charset_line_drawing: bool,
-    /// Application cursor keys mode (affects arrow key output)
-    pub application_cursor_keys: bool,
-    /// Application keypad mode (affects numpad output)
-    pub application_keypad: bool,
-    /// Bracketed paste mode
-    pub bracketed_paste: bool,
-    /// Mouse tracking mode (1000=X10, 1002=button-event, 1003=any-event)
-    pub mouse_tracking: Option<u16>,
-    /// SGR extended mouse mode (1006) - affects encoding of mouse events
-    pub sgr_mouse_mode: bool,
-    /// Bell triggered flag (for UI notification)
-    pub bell_pending: bool,
-    /// Window title (set via OSC)
-    pub title: Option<String>,
-    /// Last printed character (for REP - repeat)
-    last_printed_char: Option<char>,
-    /// Pending responses to send back to the PTY (e.g., DSR cursor position report)
-    pub pending_responses: Vec<Vec<u8>>,
-}
-
-/// Saved cursor state (DECSC/DECRC)
-#[derive(Debug, Clone)]
-struct SavedCursor {
-    row: usize,
-    col: usize,
-    style: Style,
-    origin_mode: bool,
-    auto_wrap: bool,
-    charset_index: usize,
-    g0_charset_line_drawing: bool,
-    g1_charset_line_drawing: bool,
-}
-
-/// Saved state for alternate screen buffer
-#[derive(Debug, Clone)]
-struct AlternateScreen {
-    grid: Vec<Vec<Cell>>,
-    cursor_row: usize,
-    cursor_col: usize,
-    current_style: Style,
+impl From<&TerminalCharacter> for Cell {
+    fn from(tc: &TerminalCharacter) -> Self {
+        Cell {
+            c: tc.character,
+            style: tc.styles.to_ratatui_style(),
+            wide_spacer: tc.wide_spacer,
+        }
+    }
 }
 
 /// Line drawing character mapping (DEC Special Graphics)
@@ -231,23 +156,86 @@ fn find_url_at_column(line: &str, col: usize) -> Option<String> {
     None
 }
 
+/// Virtual terminal that properly handles ANSI escape sequences.
+/// Uses the optimized Grid structure internally for efficient storage and scrolling.
+#[derive(Debug, Clone)]
+pub struct VirtualTerminal {
+    /// Optimized grid structure with tripartite design
+    pub(crate) internal_grid: Grid,
+    /// Maximum scrollback lines
+    pub max_scrollback: usize,
+    /// Saved cursor position and style
+    saved_cursor: Option<SavedCursor>,
+    /// Cursor visible
+    pub cursor_visible: bool,
+    /// Insert mode (IRM) - when true, characters shift right instead of overwriting
+    insert_mode: bool,
+    /// Alternate screen buffer
+    alternate_screen: Option<Box<AlternateScreen>>,
+    /// Origin mode (DECOM) - cursor positioning relative to scroll region
+    origin_mode: bool,
+    /// Auto-wrap mode (DECAWM)
+    auto_wrap: bool,
+    /// Pending wrap - cursor is at the edge and next char will wrap
+    pending_wrap: bool,
+    /// Tab stops (columns where tabs stop)
+    tab_stops: Vec<usize>,
+    /// Current charset (0 = G0, 1 = G1)
+    charset_index: usize,
+    /// G0 charset mode (false = normal, true = line drawing)
+    g0_charset_line_drawing: bool,
+    /// G1 charset mode (false = normal, true = line drawing)
+    g1_charset_line_drawing: bool,
+    /// Application cursor keys mode (affects arrow key output)
+    pub application_cursor_keys: bool,
+    /// Application keypad mode (affects numpad output)
+    pub application_keypad: bool,
+    /// Bracketed paste mode
+    pub bracketed_paste: bool,
+    /// Mouse tracking mode (1000=X10, 1002=button-event, 1003=any-event)
+    pub mouse_tracking: Option<u16>,
+    /// SGR extended mouse mode (1006) - affects encoding of mouse events
+    pub sgr_mouse_mode: bool,
+    /// Bell triggered flag (for UI notification)
+    pub bell_pending: bool,
+    /// Window title (set via OSC)
+    pub title: Option<String>,
+    /// Last printed character (for REP - repeat)
+    last_printed_char: Option<char>,
+    /// Pending responses to send back to the PTY (e.g., DSR cursor position report)
+    pub pending_responses: Vec<Vec<u8>>,
+}
+
+/// Saved cursor state (DECSC/DECRC)
+#[derive(Debug, Clone)]
+struct SavedCursor {
+    row: usize,
+    col: usize,
+    styles: CharacterStyles,
+    origin_mode: bool,
+    auto_wrap: bool,
+    charset_index: usize,
+    g0_charset_line_drawing: bool,
+    g1_charset_line_drawing: bool,
+}
+
+/// Saved state for alternate screen buffer
+#[derive(Debug, Clone)]
+struct AlternateScreen {
+    grid: Grid,
+    cursor_row: usize,
+    cursor_col: usize,
+    current_styles: CharacterStyles,
+}
+
 impl VirtualTerminal {
     pub fn new(rows: usize, cols: usize) -> Self {
-        let grid = vec![vec![Cell::default(); cols]; rows];
         // Initialize default tab stops every 8 columns
         let tab_stops: Vec<usize> = (0..cols).filter(|&c| c % 8 == 0 && c > 0).collect();
         Self {
-            grid,
-            rows,
-            cols,
-            cursor_row: 0,
-            cursor_col: 0,
-            current_style: Style::default(),
-            scroll_offset: 0,
-            scrollback: Vec::new(),
+            internal_grid: Grid::new(rows, cols),
             max_scrollback: 10000,
             saved_cursor: None,
-            scroll_region: (0, rows.saturating_sub(1)),
             cursor_visible: true,
             insert_mode: false,
             alternate_screen: None,
@@ -270,10 +258,109 @@ impl VirtualTerminal {
         }
     }
 
+    // ===== Property accessors for backward compatibility =====
+
+    /// Get number of rows
+    #[inline]
+    pub fn rows(&self) -> usize {
+        self.internal_grid.rows
+    }
+
+    /// Get number of columns
+    #[inline]
+    pub fn cols(&self) -> usize {
+        self.internal_grid.cols
+    }
+
+    /// Get cursor row
+    #[inline]
+    pub fn cursor_row(&self) -> usize {
+        self.internal_grid.cursor_row
+    }
+
+    /// Get cursor column
+    #[inline]
+    pub fn cursor_col(&self) -> usize {
+        self.internal_grid.cursor_col
+    }
+
+    /// Set cursor row
+    #[inline]
+    pub fn set_cursor_row(&mut self, row: usize) {
+        self.internal_grid.cursor_row = row;
+    }
+
+    /// Set cursor column
+    #[inline]
+    pub fn set_cursor_col(&mut self, col: usize) {
+        self.internal_grid.cursor_col = col;
+    }
+
+    /// Get scroll region
+    #[inline]
+    pub fn scroll_region(&self) -> (usize, usize) {
+        self.internal_grid.scroll_region
+    }
+
+    /// Get current style as ratatui Style
+    pub fn current_style(&self) -> Style {
+        self.internal_grid.current_styles.to_ratatui_style()
+    }
+
+    /// Get scrollback length
+    pub fn scrollback_len(&self) -> usize {
+        self.internal_grid.scrollback_len()
+    }
+
+    // ===== Legacy grid accessor (for tests) =====
+
+    /// Provides legacy Vec<Vec<Cell>> like access for backward compatibility.
+    /// Returns a Cell at the given position.
+    pub fn get_cell(&self, row: usize, col: usize) -> Cell {
+        if let Some(tc) = self.internal_grid.get_char(row, col) {
+            Cell::from(tc)
+        } else {
+            Cell::default()
+        }
+    }
+
+    /// Legacy grid accessor that simulates the old `grid[row][col]` access pattern.
+    /// This exists purely for test compatibility and should not be used in new code.
+    #[cfg(test)]
+    pub fn legacy_grid(&self) -> LegacyGridAccessor<'_> {
+        LegacyGridAccessor { term: self }
+    }
+
+    // ===== Public field accessors for backward compatibility with tests =====
+
+    /// Legacy grid accessor - returns a view that can be indexed like Vec<Vec<Cell>>
+    /// WARNING: This allocates! Use get_cell() for single cell access.
+    pub fn grid_snapshot(&self) -> Vec<Vec<Cell>> {
+        self.internal_grid
+            .viewport
+            .iter()
+            .map(|row| row.columns.iter().map(Cell::from).collect())
+            .collect()
+    }
+
+    /// Legacy scrollback accessor
+    /// WARNING: This allocates!
+    pub fn scrollback_snapshot(&self) -> Vec<Vec<Cell>> {
+        self.internal_grid
+            .lines_above
+            .iter()
+            .map(|row| row.columns.iter().map(Cell::from).collect())
+            .collect()
+    }
+
+    // ===== Tab stop methods =====
+
     /// Initialize default tab stops (every 8 columns)
     #[allow(dead_code)]
     fn reset_tab_stops(&mut self) {
-        self.tab_stops = (0..self.cols).filter(|&c| c % 8 == 0 && c > 0).collect();
+        self.tab_stops = (0..self.internal_grid.cols)
+            .filter(|&c| c % 8 == 0 && c > 0)
+            .collect();
     }
 
     /// Clear all tab stops
@@ -283,24 +370,29 @@ impl VirtualTerminal {
 
     /// Clear tab stop at current column
     fn clear_tab_stop_at_cursor(&mut self) {
-        self.tab_stops.retain(|&c| c != self.cursor_col);
+        self.tab_stops
+            .retain(|&c| c != self.internal_grid.cursor_col);
     }
 
     /// Set tab stop at current column
     fn set_tab_stop_at_cursor(&mut self) {
-        if !self.tab_stops.contains(&self.cursor_col) {
-            self.tab_stops.push(self.cursor_col);
+        if !self.tab_stops.contains(&self.internal_grid.cursor_col) {
+            self.tab_stops.push(self.internal_grid.cursor_col);
             self.tab_stops.sort();
         }
     }
 
     /// Move cursor to next tab stop
     fn tab_forward(&mut self) {
-        if let Some(&next_tab) = self.tab_stops.iter().find(|&&c| c > self.cursor_col) {
-            self.cursor_col = next_tab.min(self.cols - 1);
+        if let Some(&next_tab) = self
+            .tab_stops
+            .iter()
+            .find(|&&c| c > self.internal_grid.cursor_col)
+        {
+            self.internal_grid.cursor_col = next_tab.min(self.internal_grid.cols - 1);
         } else {
             // No more tab stops, go to end of line
-            self.cursor_col = self.cols - 1;
+            self.internal_grid.cursor_col = self.internal_grid.cols - 1;
         }
         self.pending_wrap = false;
     }
@@ -308,10 +400,15 @@ impl VirtualTerminal {
     /// Move cursor to previous tab stop (CBT)
     fn tab_backward(&mut self, n: usize) {
         for _ in 0..n {
-            if let Some(&prev_tab) = self.tab_stops.iter().rev().find(|&&c| c < self.cursor_col) {
-                self.cursor_col = prev_tab;
+            if let Some(&prev_tab) = self
+                .tab_stops
+                .iter()
+                .rev()
+                .find(|&&c| c < self.internal_grid.cursor_col)
+            {
+                self.internal_grid.cursor_col = prev_tab;
             } else {
-                self.cursor_col = 0;
+                self.internal_grid.cursor_col = 0;
             }
         }
         self.pending_wrap = false;
@@ -320,9 +417,9 @@ impl VirtualTerminal {
     /// Save cursor position and attributes (DECSC)
     fn save_cursor(&mut self) {
         self.saved_cursor = Some(SavedCursor {
-            row: self.cursor_row,
-            col: self.cursor_col,
-            style: self.current_style,
+            row: self.internal_grid.cursor_row,
+            col: self.internal_grid.cursor_col,
+            styles: self.internal_grid.current_styles,
             origin_mode: self.origin_mode,
             auto_wrap: self.auto_wrap,
             charset_index: self.charset_index,
@@ -334,9 +431,11 @@ impl VirtualTerminal {
     /// Restore cursor position and attributes (DECRC)
     fn restore_cursor(&mut self) {
         if let Some(saved) = &self.saved_cursor {
-            self.cursor_row = saved.row.min(self.rows.saturating_sub(1));
-            self.cursor_col = saved.col.min(self.cols.saturating_sub(1));
-            self.current_style = saved.style;
+            self.internal_grid.cursor_row =
+                saved.row.min(self.internal_grid.rows.saturating_sub(1));
+            self.internal_grid.cursor_col =
+                saved.col.min(self.internal_grid.cols.saturating_sub(1));
+            self.internal_grid.set_current_styles(saved.styles);
             self.origin_mode = saved.origin_mode;
             self.auto_wrap = saved.auto_wrap;
             self.charset_index = saved.charset_index;
@@ -348,67 +447,10 @@ impl VirtualTerminal {
 
     /// Resize the terminal
     pub fn resize(&mut self, new_rows: usize, new_cols: usize) {
-        if new_rows == self.rows && new_cols == self.cols {
-            return;
-        }
-
-        // Create new grid
-        let mut new_grid = vec![vec![Cell::default(); new_cols]; new_rows];
-
-        // Copy existing content
-        for (row_idx, row) in self.grid.iter().enumerate() {
-            if row_idx >= new_rows {
-                break;
-            }
-            for (col_idx, cell) in row.iter().enumerate() {
-                if col_idx >= new_cols {
-                    break;
-                }
-                new_grid[row_idx][col_idx] = cell.clone();
-            }
-        }
-
-        self.grid = new_grid;
-        self.rows = new_rows;
-        self.cols = new_cols;
-        self.cursor_row = self.cursor_row.min(new_rows.saturating_sub(1));
-        self.cursor_col = self.cursor_col.min(new_cols.saturating_sub(1));
-        self.scroll_region = (0, new_rows.saturating_sub(1));
+        self.internal_grid.resize(new_rows, new_cols);
         // Update tab stops for new width
         self.tab_stops.retain(|&c| c < new_cols);
-        // Fix wide characters that may have been split by the new edge
-        self.fix_wide_chars_at_edge();
-        // Ensure cursor isn't on a wide spacer
-        self.fix_wide_char_at_cursor();
-    }
-
-    /// Resize a grid to current terminal dimensions, used when restoring alternate screen
-    fn resize_grid_to_current(&self, old_grid: Vec<Vec<Cell>>) -> Vec<Vec<Cell>> {
-        let old_rows = old_grid.len();
-        let old_cols = old_grid.first().map(|r| r.len()).unwrap_or(0);
-
-        // If dimensions match, return as-is
-        if old_rows == self.rows && old_cols == self.cols {
-            return old_grid;
-        }
-
-        // Create new grid with current dimensions
-        let mut new_grid = vec![vec![Cell::default(); self.cols]; self.rows];
-
-        // Copy existing content
-        for (row_idx, row) in old_grid.iter().enumerate() {
-            if row_idx >= self.rows {
-                break;
-            }
-            for (col_idx, cell) in row.iter().enumerate() {
-                if col_idx >= self.cols {
-                    break;
-                }
-                new_grid[row_idx][col_idx] = cell.clone();
-            }
-        }
-
-        new_grid
+        self.internal_grid.fix_cursor_on_spacer();
     }
 
     /// Process raw terminal data
@@ -424,80 +466,22 @@ impl VirtualTerminal {
 
     /// Scroll the screen up by one line within the scroll region
     fn scroll_up(&mut self) {
-        let (top, bottom) = self.scroll_region;
-        if top < self.rows && bottom < self.rows && top <= bottom {
-            // Save the top line to scrollback if scrolling the whole screen
-            if top == 0 {
-                let line = self.grid[0].clone();
-                self.scrollback.push(line);
-                if self.scrollback.len() > self.max_scrollback {
-                    self.scrollback.remove(0);
-                }
-            }
-
-            // Shift lines up within scroll region
-            for row in top..bottom {
-                self.grid[row] = self.grid[row + 1].clone();
-            }
-            // Clear the bottom line of scroll region
-            self.grid[bottom] = vec![Cell::default(); self.cols];
-        }
+        self.internal_grid.scroll_up_in_region(1);
     }
 
     /// Scroll the screen down by one line within the scroll region
     fn scroll_down(&mut self) {
-        let (top, bottom) = self.scroll_region;
-        if top < self.rows && bottom < self.rows && top <= bottom {
-            // Shift lines down within scroll region
-            for row in (top + 1..=bottom).rev() {
-                self.grid[row] = self.grid[row - 1].clone();
-            }
-            // Clear the top line of scroll region
-            self.grid[top] = vec![Cell::default(); self.cols];
-        }
+        self.internal_grid.scroll_down_in_region(1);
     }
 
     /// Move cursor to new line, scrolling if necessary
     fn newline(&mut self) {
-        if self.cursor_row >= self.scroll_region.1 {
-            self.scroll_up();
-        } else {
-            self.cursor_row += 1;
-        }
+        self.internal_grid.newline();
     }
 
     /// Carriage return - move cursor to beginning of line
     fn carriage_return(&mut self) {
-        self.cursor_col = 0;
-    }
-
-    /// Fix orphaned wide character cells after cursor movement or editing.
-    /// If cursor lands on a wide spacer, move it to the main character.
-    fn fix_wide_char_at_cursor(&mut self) {
-        if self.cursor_row >= self.rows || self.cursor_col >= self.cols {
-            return;
-        }
-
-        // If cursor is on a wide spacer, move to the main character
-        if self.grid[self.cursor_row][self.cursor_col].wide_spacer && self.cursor_col > 0 {
-            self.cursor_col -= 1;
-        }
-    }
-
-    /// Fix wide characters that are split by the right edge of the terminal.
-    /// Call this after resize operations.
-    fn fix_wide_chars_at_edge(&mut self) {
-        for row in &mut self.grid {
-            if let Some(last_cell) = row.last() {
-                // If the last cell is NOT a spacer but IS a wide character,
-                // it means the spacer would be off-screen - clear it
-                if !last_cell.wide_spacer && last_cell.c.width().unwrap_or(1) > 1 {
-                    if let Some(last) = row.last_mut() {
-                        *last = Cell::default();
-                    }
-                }
-            }
-        }
+        self.internal_grid.cursor_col = 0;
     }
 
     /// Put a character at cursor position and advance
@@ -505,7 +489,7 @@ impl VirtualTerminal {
         // Handle pending wrap from previous character at edge
         if self.pending_wrap {
             self.pending_wrap = false;
-            self.cursor_col = 0;
+            self.internal_grid.cursor_col = 0;
             self.newline();
         }
 
@@ -519,8 +503,10 @@ impl VirtualTerminal {
         // Save for REP (repeat character) command
         self.last_printed_char = Some(display_char);
 
-        // Determine character width (0, 1, or 2)
-        let char_width = display_char.width().unwrap_or(1);
+        // Create the terminal character
+        let character =
+            TerminalCharacter::new(display_char, self.internal_grid.current_shared_styles());
+        let char_width = character.width();
 
         // Handle zero-width characters (combining chars, etc.) - just skip them for now
         if char_width == 0 {
@@ -528,14 +514,15 @@ impl VirtualTerminal {
         }
 
         // For wide characters, check if we have room for both cells
-        // If we're at the last column and it's a wide char, we need to wrap first
-        if char_width == 2 && self.cursor_col + 1 >= self.cols {
+        if char_width == 2 && self.internal_grid.cursor_col + 1 >= self.internal_grid.cols {
             if self.auto_wrap {
                 // Clear the current cell (it would be orphaned) and wrap
-                if self.cursor_row < self.rows && self.cursor_col < self.cols {
-                    self.grid[self.cursor_row][self.cursor_col] = Cell::default();
-                }
-                self.cursor_col = 0;
+                self.internal_grid.set_char(
+                    self.internal_grid.cursor_row,
+                    self.internal_grid.cursor_col,
+                    TerminalCharacter::default(),
+                );
+                self.internal_grid.cursor_col = 0;
                 self.newline();
             } else {
                 // Can't fit, don't print
@@ -543,73 +530,76 @@ impl VirtualTerminal {
             }
         }
 
-        // Defensive bounds check - ensure grid is properly sized
-        if self.cursor_row < self.rows
-            && self.cursor_col < self.cols
-            && self.cursor_row < self.grid.len()
-            && self
-                .grid
-                .get(self.cursor_row)
-                .map(|r| self.cursor_col < r.len())
-                .unwrap_or(false)
-        {
+        let cursor_row = self.internal_grid.cursor_row;
+        let cursor_col = self.internal_grid.cursor_col;
+        let cols = self.internal_grid.cols;
+
+        // Defensive bounds check
+        if cursor_row < self.internal_grid.rows && cursor_col < cols {
             // In insert mode, shift characters right
             if self.insert_mode {
-                let row = &mut self.grid[self.cursor_row];
-                // Shift characters from cursor to end of line right by char_width
-                for i in (self.cursor_col + char_width..self.cols.min(row.len())).rev() {
-                    if i >= char_width && i < row.len() && i - char_width < row.len() {
-                        row[i] = row[i - char_width].clone();
+                self.internal_grid.insert_chars(char_width);
+            }
+
+            // Handle overwriting wide character spacer
+            if let Some(existing) = self.internal_grid.get_char(cursor_row, cursor_col) {
+                if existing.wide_spacer && cursor_col > 0 {
+                    self.internal_grid.set_char(
+                        cursor_row,
+                        cursor_col - 1,
+                        TerminalCharacter::default(),
+                    );
+                }
+            }
+
+            // Handle overwriting a wide character's first cell with a narrow character
+            if char_width == 1 && cursor_col + 1 < cols {
+                if let Some(next) = self.internal_grid.get_char(cursor_row, cursor_col + 1) {
+                    if next.wide_spacer {
+                        self.internal_grid.set_char(
+                            cursor_row,
+                            cursor_col + 1,
+                            TerminalCharacter::default(),
+                        );
                     }
                 }
             }
 
-            // If we're overwriting a wide character spacer, clear the main char too
-            if self.grid[self.cursor_row][self.cursor_col].wide_spacer && self.cursor_col > 0 {
-                self.grid[self.cursor_row][self.cursor_col - 1] = Cell::default();
-            }
-
-            // If we're overwriting a wide character's first cell, clear the spacer
-            if char_width == 1
-                && self.cursor_col + 1 < self.cols
-                && self.grid[self.cursor_row][self.cursor_col + 1].wide_spacer
-            {
-                self.grid[self.cursor_row][self.cursor_col + 1] = Cell::default();
-            }
-
             // Place the character
-            self.grid[self.cursor_row][self.cursor_col] = Cell {
-                c: display_char,
-                style: self.current_style,
-                wide_spacer: false,
-            };
+            self.internal_grid
+                .set_char(cursor_row, cursor_col, character);
 
             // For wide characters, place a spacer in the next cell
-            if char_width == 2 && self.cursor_col + 1 < self.cols {
-                // If the next cell is a wide char's first cell, clear its spacer too
-                if self.cursor_col + 2 < self.cols
-                    && self.grid[self.cursor_row][self.cursor_col + 2].wide_spacer
-                {
-                    self.grid[self.cursor_row][self.cursor_col + 2] = Cell::default();
+            if char_width == 2 && cursor_col + 1 < cols {
+                // Check if next cell would overwrite another wide char
+                if cursor_col + 2 < cols {
+                    if let Some(next_next) = self.internal_grid.get_char(cursor_row, cursor_col + 2)
+                    {
+                        if next_next.wide_spacer {
+                            self.internal_grid.set_char(
+                                cursor_row,
+                                cursor_col + 2,
+                                TerminalCharacter::default(),
+                            );
+                        }
+                    }
                 }
-
-                self.grid[self.cursor_row][self.cursor_col + 1] = Cell {
-                    c: ' ',
-                    style: self.current_style,
-                    wide_spacer: true,
-                };
+                self.internal_grid.set_char(
+                    cursor_row,
+                    cursor_col + 1,
+                    TerminalCharacter::wide_spacer(self.internal_grid.current_shared_styles()),
+                );
             }
 
             // Advance cursor
-            let advance = char_width;
-            if self.cursor_col + advance >= self.cols {
+            if cursor_col + char_width >= cols {
                 // At the edge - set pending wrap if auto-wrap is enabled
                 if self.auto_wrap {
                     self.pending_wrap = true;
                 }
-                self.cursor_col = self.cols - 1;
+                self.internal_grid.cursor_col = cols - 1;
             } else {
-                self.cursor_col += advance;
+                self.internal_grid.cursor_col += char_width;
             }
         }
     }
@@ -626,177 +616,66 @@ impl VirtualTerminal {
     /// Repeat the last printed character n times
     fn repeat_char(&mut self, n: usize) {
         if let Some(c) = self.last_printed_char {
-            let char_width = c.width().unwrap_or(1);
-            if char_width == 0 {
-                return;
-            }
-
             for _ in 0..n {
-                // Directly put the character without line drawing translation (already translated)
-                if self.pending_wrap {
-                    self.pending_wrap = false;
-                    self.cursor_col = 0;
-                    self.newline();
-                }
-
-                // For wide characters, check if we have room
-                if char_width == 2 && self.cursor_col + 1 >= self.cols {
-                    if self.auto_wrap {
-                        if self.cursor_row < self.rows && self.cursor_col < self.cols {
-                            self.grid[self.cursor_row][self.cursor_col] = Cell::default();
-                        }
-                        self.cursor_col = 0;
-                        self.newline();
-                    } else {
-                        continue;
-                    }
-                }
-
-                if self.cursor_row < self.rows && self.cursor_col < self.cols {
-                    if self.insert_mode {
-                        let row = &mut self.grid[self.cursor_row];
-                        for i in (self.cursor_col + char_width..self.cols).rev() {
-                            if i >= char_width {
-                                row[i] = row[i - char_width].clone();
-                            }
-                        }
-                    }
-
-                    self.grid[self.cursor_row][self.cursor_col] = Cell {
-                        c,
-                        style: self.current_style,
-                        wide_spacer: false,
-                    };
-
-                    // For wide characters, place a spacer
-                    if char_width == 2 && self.cursor_col + 1 < self.cols {
-                        self.grid[self.cursor_row][self.cursor_col + 1] = Cell {
-                            c: ' ',
-                            style: self.current_style,
-                            wide_spacer: true,
-                        };
-                    }
-
-                    let advance = char_width;
-                    if self.cursor_col + advance >= self.cols {
-                        if self.auto_wrap {
-                            self.pending_wrap = true;
-                        }
-                        self.cursor_col = self.cols - 1;
-                    } else {
-                        self.cursor_col += advance;
-                    }
-                }
+                // Temporarily disable line drawing since character is already translated
+                let old_g0 = self.g0_charset_line_drawing;
+                let old_g1 = self.g1_charset_line_drawing;
+                self.g0_charset_line_drawing = false;
+                self.g1_charset_line_drawing = false;
+                self.put_char(c);
+                self.g0_charset_line_drawing = old_g0;
+                self.g1_charset_line_drawing = old_g1;
             }
         }
     }
 
     /// Insert n blank characters at cursor position, shifting existing chars right
     fn insert_chars(&mut self, n: usize) {
-        if self.cursor_row < self.rows {
-            let row = &mut self.grid[self.cursor_row];
-            for _ in 0..n {
-                if self.cursor_col < self.cols {
-                    // Remove last character and insert blank at cursor
-                    row.pop();
-                    row.insert(self.cursor_col, Cell::default());
-                }
-            }
-            // Ensure row has correct length
-            while row.len() < self.cols {
-                row.push(Cell::default());
-            }
-        }
+        self.internal_grid.insert_chars(n);
     }
 
     /// Clear from cursor to end of line
     fn clear_to_end_of_line(&mut self) {
-        if self.cursor_row < self.rows {
-            for col in self.cursor_col..self.cols {
-                self.grid[self.cursor_row][col] = Cell::default();
-            }
-        }
+        self.internal_grid.clear_to_end_of_line();
     }
 
     /// Clear from cursor to beginning of line
     fn clear_to_start_of_line(&mut self) {
-        if self.cursor_row < self.rows {
-            for col in 0..=self.cursor_col.min(self.cols - 1) {
-                self.grid[self.cursor_row][col] = Cell::default();
-            }
-        }
+        self.internal_grid.clear_to_start_of_line();
     }
 
     /// Clear entire line
     fn clear_line(&mut self) {
-        if self.cursor_row < self.rows {
-            self.grid[self.cursor_row] = vec![Cell::default(); self.cols];
-        }
+        self.internal_grid.clear_line();
     }
 
     /// Clear from cursor to end of screen
     fn clear_to_end_of_screen(&mut self) {
-        self.clear_to_end_of_line();
-        for row in (self.cursor_row + 1)..self.rows {
-            self.grid[row] = vec![Cell::default(); self.cols];
-        }
+        self.internal_grid.clear_to_end_of_screen();
     }
 
     /// Clear from cursor to beginning of screen
     fn clear_to_start_of_screen(&mut self) {
-        self.clear_to_start_of_line();
-        for row in 0..self.cursor_row {
-            self.grid[row] = vec![Cell::default(); self.cols];
-        }
+        self.internal_grid.clear_to_start_of_screen();
     }
 
     /// Clear entire screen
     fn clear_screen(&mut self) {
-        for row in 0..self.rows {
-            self.grid[row] = vec![Cell::default(); self.cols];
-        }
+        self.internal_grid.clear_screen();
     }
 
     /// Get visible lines for rendering (including scrollback)
-    pub fn visible_lines(&self, height: usize) -> Vec<&Vec<Cell>> {
-        if self.scroll_offset == 0 {
-            // Show current screen
-            self.grid.iter().take(height).collect()
-        } else {
-            // Show scrollback
-            let total_lines = self.scrollback.len() + self.rows;
-            let end = total_lines.saturating_sub(self.scroll_offset);
-            let start = end.saturating_sub(height);
-
-            let mut lines = Vec::new();
-            for i in start..end {
-                if i < self.scrollback.len() {
-                    lines.push(&self.scrollback[i]);
-                } else {
-                    let grid_idx = i - self.scrollback.len();
-                    if grid_idx < self.grid.len() {
-                        lines.push(&self.grid[grid_idx]);
-                    }
-                }
-            }
-            lines
-        }
+    pub fn visible_lines(&self, height: usize, scroll_offset: usize) -> Vec<&Row> {
+        self.internal_grid
+            .visible_lines(scroll_offset)
+            .into_iter()
+            .take(height)
+            .collect()
     }
 
     /// Scroll view up (into history)
-    pub fn scroll_view_up(&mut self, n: usize) {
-        let max_scroll = self.scrollback.len();
-        self.scroll_offset = (self.scroll_offset + n).min(max_scroll);
-    }
-
-    /// Scroll view down (towards current)
-    pub fn scroll_view_down(&mut self, n: usize) {
-        self.scroll_offset = self.scroll_offset.saturating_sub(n);
-    }
-
-    /// Scroll to bottom (current screen)
-    pub fn scroll_to_bottom(&mut self) {
-        self.scroll_offset = 0;
+    pub fn scroll_view_up(&mut self, n: usize) -> usize {
+        self.internal_grid.scroll_view_up(n)
     }
 
     /// Parse SGR (Select Graphic Rendition) parameters
@@ -804,54 +683,49 @@ impl VirtualTerminal {
         let params: Vec<u16> = params.iter().map(|p| p[0]).collect();
 
         if params.is_empty() {
-            self.current_style = Style::default();
+            self.internal_grid
+                .set_current_styles(CharacterStyles::default());
             return;
         }
 
+        let mut styles = self.internal_grid.current_styles;
         let mut i = 0;
         while i < params.len() {
             match params[i] {
-                0 => self.current_style = Style::default(),
-                1 => self.current_style = self.current_style.add_modifier(Modifier::BOLD),
-                2 => self.current_style = self.current_style.add_modifier(Modifier::DIM),
-                3 => self.current_style = self.current_style.add_modifier(Modifier::ITALIC),
-                4 => self.current_style = self.current_style.add_modifier(Modifier::UNDERLINED),
-                5 | 6 => self.current_style = self.current_style.add_modifier(Modifier::SLOW_BLINK),
-                7 => self.current_style = self.current_style.add_modifier(Modifier::REVERSED),
-                8 => self.current_style = self.current_style.add_modifier(Modifier::HIDDEN),
-                9 => self.current_style = self.current_style.add_modifier(Modifier::CROSSED_OUT),
-                22 => {
-                    self.current_style = self
-                        .current_style
-                        .remove_modifier(Modifier::BOLD | Modifier::DIM)
-                }
-                23 => self.current_style = self.current_style.remove_modifier(Modifier::ITALIC),
-                24 => self.current_style = self.current_style.remove_modifier(Modifier::UNDERLINED),
-                25 => self.current_style = self.current_style.remove_modifier(Modifier::SLOW_BLINK),
-                27 => self.current_style = self.current_style.remove_modifier(Modifier::REVERSED),
-                28 => self.current_style = self.current_style.remove_modifier(Modifier::HIDDEN),
-                29 => {
-                    self.current_style = self.current_style.remove_modifier(Modifier::CROSSED_OUT)
-                }
+                0 => styles = CharacterStyles::default(),
+                1 => styles = styles.add_modifier(Modifier::BOLD),
+                2 => styles = styles.add_modifier(Modifier::DIM),
+                3 => styles = styles.add_modifier(Modifier::ITALIC),
+                4 => styles = styles.add_modifier(Modifier::UNDERLINED),
+                5 | 6 => styles = styles.add_modifier(Modifier::SLOW_BLINK),
+                7 => styles = styles.add_modifier(Modifier::REVERSED),
+                8 => styles = styles.add_modifier(Modifier::HIDDEN),
+                9 => styles = styles.add_modifier(Modifier::CROSSED_OUT),
+                22 => styles = styles.remove_modifier(Modifier::BOLD | Modifier::DIM),
+                23 => styles = styles.remove_modifier(Modifier::ITALIC),
+                24 => styles = styles.remove_modifier(Modifier::UNDERLINED),
+                25 => styles = styles.remove_modifier(Modifier::SLOW_BLINK),
+                27 => styles = styles.remove_modifier(Modifier::REVERSED),
+                28 => styles = styles.remove_modifier(Modifier::HIDDEN),
+                29 => styles = styles.remove_modifier(Modifier::CROSSED_OUT),
                 // Foreground colors
-                30 => self.current_style = self.current_style.fg(Color::Black),
-                31 => self.current_style = self.current_style.fg(Color::Red),
-                32 => self.current_style = self.current_style.fg(Color::Green),
-                33 => self.current_style = self.current_style.fg(Color::Yellow),
-                34 => self.current_style = self.current_style.fg(Color::Blue),
-                35 => self.current_style = self.current_style.fg(Color::Magenta),
-                36 => self.current_style = self.current_style.fg(Color::Cyan),
-                37 => self.current_style = self.current_style.fg(Color::Gray),
+                30 => styles = styles.fg(Color::Black),
+                31 => styles = styles.fg(Color::Red),
+                32 => styles = styles.fg(Color::Green),
+                33 => styles = styles.fg(Color::Yellow),
+                34 => styles = styles.fg(Color::Blue),
+                35 => styles = styles.fg(Color::Magenta),
+                36 => styles = styles.fg(Color::Cyan),
+                37 => styles = styles.fg(Color::Gray),
                 38 => {
                     // Extended foreground color
                     if i + 2 < params.len() && params[i + 1] == 5 {
                         // 256 color mode
-                        self.current_style =
-                            self.current_style.fg(Color::Indexed(params[i + 2] as u8));
+                        styles = styles.fg(Color::Indexed(params[i + 2] as u8));
                         i += 2;
                     } else if i + 4 < params.len() && params[i + 1] == 2 {
                         // RGB color mode
-                        self.current_style = self.current_style.fg(Color::Rgb(
+                        styles = styles.fg(Color::Rgb(
                             params[i + 2] as u8,
                             params[i + 3] as u8,
                             params[i + 4] as u8,
@@ -859,26 +733,25 @@ impl VirtualTerminal {
                         i += 4;
                     }
                 }
-                39 => self.current_style = self.current_style.fg(Color::Reset),
+                39 => styles.foreground = None,
                 // Background colors
-                40 => self.current_style = self.current_style.bg(Color::Black),
-                41 => self.current_style = self.current_style.bg(Color::Red),
-                42 => self.current_style = self.current_style.bg(Color::Green),
-                43 => self.current_style = self.current_style.bg(Color::Yellow),
-                44 => self.current_style = self.current_style.bg(Color::Blue),
-                45 => self.current_style = self.current_style.bg(Color::Magenta),
-                46 => self.current_style = self.current_style.bg(Color::Cyan),
-                47 => self.current_style = self.current_style.bg(Color::Gray),
+                40 => styles = styles.bg(Color::Black),
+                41 => styles = styles.bg(Color::Red),
+                42 => styles = styles.bg(Color::Green),
+                43 => styles = styles.bg(Color::Yellow),
+                44 => styles = styles.bg(Color::Blue),
+                45 => styles = styles.bg(Color::Magenta),
+                46 => styles = styles.bg(Color::Cyan),
+                47 => styles = styles.bg(Color::Gray),
                 48 => {
                     // Extended background color
                     if i + 2 < params.len() && params[i + 1] == 5 {
                         // 256 color mode
-                        self.current_style =
-                            self.current_style.bg(Color::Indexed(params[i + 2] as u8));
+                        styles = styles.bg(Color::Indexed(params[i + 2] as u8));
                         i += 2;
                     } else if i + 4 < params.len() && params[i + 1] == 2 {
                         // RGB color mode
-                        self.current_style = self.current_style.bg(Color::Rgb(
+                        styles = styles.bg(Color::Rgb(
                             params[i + 2] as u8,
                             params[i + 3] as u8,
                             params[i + 4] as u8,
@@ -886,29 +759,30 @@ impl VirtualTerminal {
                         i += 4;
                     }
                 }
-                49 => self.current_style = self.current_style.bg(Color::Reset),
+                49 => styles.background = None,
                 // Bright foreground colors
-                90 => self.current_style = self.current_style.fg(Color::DarkGray),
-                91 => self.current_style = self.current_style.fg(Color::LightRed),
-                92 => self.current_style = self.current_style.fg(Color::LightGreen),
-                93 => self.current_style = self.current_style.fg(Color::LightYellow),
-                94 => self.current_style = self.current_style.fg(Color::LightBlue),
-                95 => self.current_style = self.current_style.fg(Color::LightMagenta),
-                96 => self.current_style = self.current_style.fg(Color::LightCyan),
-                97 => self.current_style = self.current_style.fg(Color::White),
+                90 => styles = styles.fg(Color::DarkGray),
+                91 => styles = styles.fg(Color::LightRed),
+                92 => styles = styles.fg(Color::LightGreen),
+                93 => styles = styles.fg(Color::LightYellow),
+                94 => styles = styles.fg(Color::LightBlue),
+                95 => styles = styles.fg(Color::LightMagenta),
+                96 => styles = styles.fg(Color::LightCyan),
+                97 => styles = styles.fg(Color::White),
                 // Bright background colors
-                100 => self.current_style = self.current_style.bg(Color::DarkGray),
-                101 => self.current_style = self.current_style.bg(Color::LightRed),
-                102 => self.current_style = self.current_style.bg(Color::LightGreen),
-                103 => self.current_style = self.current_style.bg(Color::LightYellow),
-                104 => self.current_style = self.current_style.bg(Color::LightBlue),
-                105 => self.current_style = self.current_style.bg(Color::LightMagenta),
-                106 => self.current_style = self.current_style.bg(Color::LightCyan),
-                107 => self.current_style = self.current_style.bg(Color::White),
+                100 => styles = styles.bg(Color::DarkGray),
+                101 => styles = styles.bg(Color::LightRed),
+                102 => styles = styles.bg(Color::LightGreen),
+                103 => styles = styles.bg(Color::LightYellow),
+                104 => styles = styles.bg(Color::LightBlue),
+                105 => styles = styles.bg(Color::LightMagenta),
+                106 => styles = styles.bg(Color::LightCyan),
+                107 => styles = styles.bg(Color::White),
                 _ => {}
             }
             i += 1;
         }
+        self.internal_grid.set_current_styles(styles);
     }
 }
 
@@ -925,7 +799,7 @@ impl Perform for VirtualTerminal {
             }
             // Backspace
             0x08 => {
-                self.cursor_col = self.cursor_col.saturating_sub(1);
+                self.internal_grid.cursor_col = self.internal_grid.cursor_col.saturating_sub(1);
                 self.pending_wrap = false;
             }
             // Tab
@@ -933,7 +807,6 @@ impl Perform for VirtualTerminal {
                 self.tab_forward();
             }
             // Line feed, vertical tab, form feed
-            // Note: In most terminal emulators, LF implies CR as well (onlcr behavior)
             0x0A..=0x0C => {
                 self.newline();
                 self.carriage_return();
@@ -962,15 +835,12 @@ impl Perform for VirtualTerminal {
     fn unhook(&mut self) {}
 
     fn osc_dispatch(&mut self, params: &[&[u8]], _bell_terminated: bool) {
-        // Handle OSC sequences
         if params.is_empty() {
             return;
         }
 
-        // Parse the command number
         let cmd = params[0];
         if let Ok(cmd_str) = std::str::from_utf8(cmd) {
-            // Set window title (OSC 0 or OSC 2)
             if let Ok(0 | 2) = cmd_str.parse::<u8>() {
                 if params.len() > 1 {
                     if let Ok(title) = std::str::from_utf8(params[1]) {
@@ -978,7 +848,6 @@ impl Perform for VirtualTerminal {
                     }
                 }
             }
-            // Other OSC commands (colors, etc.) - ignore for now
         }
     }
 
@@ -989,46 +858,49 @@ impl Perform for VirtualTerminal {
             // Cursor Up
             'A' => {
                 let n = params_vec.first().copied().unwrap_or(1).max(1) as usize;
-                self.cursor_row = self.cursor_row.saturating_sub(n);
+                self.internal_grid.cursor_row = self.internal_grid.cursor_row.saturating_sub(n);
             }
             // Cursor Down
             'B' => {
                 let n = params_vec.first().copied().unwrap_or(1).max(1) as usize;
-                self.cursor_row = (self.cursor_row + n).min(self.rows - 1);
+                self.internal_grid.cursor_row =
+                    (self.internal_grid.cursor_row + n).min(self.internal_grid.rows - 1);
             }
             // Cursor Forward
             'C' => {
                 let n = params_vec.first().copied().unwrap_or(1).max(1) as usize;
-                self.cursor_col = (self.cursor_col + n).min(self.cols - 1);
+                self.internal_grid.cursor_col =
+                    (self.internal_grid.cursor_col + n).min(self.internal_grid.cols - 1);
             }
             // Cursor Back
             'D' => {
                 let n = params_vec.first().copied().unwrap_or(1).max(1) as usize;
-                self.cursor_col = self.cursor_col.saturating_sub(n);
+                self.internal_grid.cursor_col = self.internal_grid.cursor_col.saturating_sub(n);
             }
             // Cursor Next Line
             'E' => {
                 let n = params_vec.first().copied().unwrap_or(1).max(1) as usize;
-                self.cursor_row = (self.cursor_row + n).min(self.rows - 1);
-                self.cursor_col = 0;
+                self.internal_grid.cursor_row =
+                    (self.internal_grid.cursor_row + n).min(self.internal_grid.rows - 1);
+                self.internal_grid.cursor_col = 0;
             }
             // Cursor Previous Line
             'F' => {
                 let n = params_vec.first().copied().unwrap_or(1).max(1) as usize;
-                self.cursor_row = self.cursor_row.saturating_sub(n);
-                self.cursor_col = 0;
+                self.internal_grid.cursor_row = self.internal_grid.cursor_row.saturating_sub(n);
+                self.internal_grid.cursor_col = 0;
             }
             // Cursor Horizontal Absolute
             'G' => {
                 let col = params_vec.first().copied().unwrap_or(1).max(1) as usize;
-                self.cursor_col = (col - 1).min(self.cols - 1);
+                self.internal_grid.cursor_col = (col - 1).min(self.internal_grid.cols - 1);
             }
             // Cursor Position
             'H' | 'f' => {
                 let row = params_vec.first().copied().unwrap_or(1).max(1) as usize;
                 let col = params_vec.get(1).copied().unwrap_or(1).max(1) as usize;
-                self.cursor_row = (row - 1).min(self.rows - 1);
-                self.cursor_col = (col - 1).min(self.cols - 1);
+                self.internal_grid.cursor_row = (row - 1).min(self.internal_grid.rows - 1);
+                self.internal_grid.cursor_col = (col - 1).min(self.internal_grid.cols - 1);
             }
             // Erase in Display
             'J' => {
@@ -1050,32 +922,20 @@ impl Perform for VirtualTerminal {
                     _ => {}
                 }
             }
-            // Insert Lines
+            // Insert Lines (IL) - insert blank lines at cursor, shift lines down
             'L' => {
                 let n = params_vec.first().copied().unwrap_or(1).max(1) as usize;
-                for _ in 0..n {
-                    self.scroll_down();
-                }
+                self.internal_grid.insert_lines_at_cursor(n);
             }
-            // Delete Lines
+            // Delete Lines (DL) - delete lines at cursor, shift lines up
             'M' => {
                 let n = params_vec.first().copied().unwrap_or(1).max(1) as usize;
-                for _ in 0..n {
-                    self.scroll_up();
-                }
+                self.internal_grid.delete_lines_at_cursor(n);
             }
             // Delete Characters
             'P' => {
                 let n = params_vec.first().copied().unwrap_or(1).max(1) as usize;
-                if self.cursor_row < self.rows {
-                    let row = &mut self.grid[self.cursor_row];
-                    for _ in 0..n {
-                        if self.cursor_col < row.len() {
-                            row.remove(self.cursor_col);
-                            row.push(Cell::default());
-                        }
-                    }
-                }
+                self.internal_grid.delete_chars(n);
             }
             // Scroll Up
             'S' => {
@@ -1094,24 +954,17 @@ impl Perform for VirtualTerminal {
             // Erase Characters
             'X' => {
                 let n = params_vec.first().copied().unwrap_or(1).max(1) as usize;
-                if self.cursor_row < self.rows {
-                    for i in 0..n {
-                        let col = self.cursor_col + i;
-                        if col < self.cols {
-                            self.grid[self.cursor_row][col] = Cell::default();
-                        }
-                    }
-                }
+                self.internal_grid.erase_chars(n);
             }
             // Cursor Horizontal Absolute
             '`' => {
                 let col = params_vec.first().copied().unwrap_or(1).max(1) as usize;
-                self.cursor_col = (col - 1).min(self.cols - 1);
+                self.internal_grid.cursor_col = (col - 1).min(self.internal_grid.cols - 1);
             }
             // Vertical Position Absolute
             'd' => {
                 let row = params_vec.first().copied().unwrap_or(1).max(1) as usize;
-                self.cursor_row = (row - 1).min(self.rows - 1);
+                self.internal_grid.cursor_row = (row - 1).min(self.internal_grid.rows - 1);
             }
             // SGR - Select Graphic Rendition
             'm' if intermediates.is_empty() => {
@@ -1126,10 +979,12 @@ impl Perform for VirtualTerminal {
                         self.pending_responses.push(b"\x1b[0n".to_vec());
                     }
                     6 => {
-                        // Cursor Position Report (CPR) - respond with cursor position
-                        // Note: Terminal rows/cols are 1-indexed in the response
-                        let response =
-                            format!("\x1b[{};{}R", self.cursor_row + 1, self.cursor_col + 1);
+                        // Cursor Position Report (CPR)
+                        let response = format!(
+                            "\x1b[{};{}R",
+                            self.internal_grid.cursor_row + 1,
+                            self.internal_grid.cursor_col + 1
+                        );
                         self.pending_responses.push(response.into_bytes());
                     }
                     _ => {}
@@ -1141,14 +996,17 @@ impl Perform for VirtualTerminal {
                 let bottom = params_vec
                     .get(1)
                     .copied()
-                    .unwrap_or(self.rows as u16)
+                    .unwrap_or(self.internal_grid.rows as u16)
                     .max(1) as usize
                     - 1;
-                if top < self.rows && bottom < self.rows && top <= bottom {
-                    self.scroll_region = (top, bottom);
+                if top < self.internal_grid.rows
+                    && bottom < self.internal_grid.rows
+                    && top <= bottom
+                {
+                    self.internal_grid.scroll_region = (top, bottom);
                 }
-                self.cursor_row = 0;
-                self.cursor_col = 0;
+                self.internal_grid.cursor_row = 0;
+                self.internal_grid.cursor_col = 0;
             }
             // Save cursor position (ANSI.SYS style)
             's' => {
@@ -1190,14 +1048,14 @@ impl Perform for VirtualTerminal {
                     for &param in &params_vec {
                         match param {
                             1 => {
-                                // DECCKM - Cursor Keys Mode (application vs normal)
+                                // DECCKM - Cursor Keys Mode
                                 self.application_cursor_keys = enable;
                             }
                             6 => {
                                 // DECOM - Origin Mode
                                 self.origin_mode = enable;
-                                self.cursor_row = 0;
-                                self.cursor_col = 0;
+                                self.internal_grid.cursor_row = 0;
+                                self.internal_grid.cursor_col = 0;
                             }
                             7 => {
                                 // DECAWM - Auto-wrap Mode
@@ -1210,44 +1068,47 @@ impl Perform for VirtualTerminal {
                             1049 => {
                                 // Alternate screen buffer (save cursor + switch)
                                 if enable {
-                                    // Save current screen and switch to alternate
                                     self.alternate_screen = Some(Box::new(AlternateScreen {
-                                        grid: self.grid.clone(),
-                                        cursor_row: self.cursor_row,
-                                        cursor_col: self.cursor_col,
-                                        current_style: self.current_style,
+                                        grid: self.internal_grid.clone(),
+                                        cursor_row: self.internal_grid.cursor_row,
+                                        cursor_col: self.internal_grid.cursor_col,
+                                        current_styles: self.internal_grid.current_styles,
                                     }));
-                                    // Clear the screen for alternate buffer
-                                    self.grid = vec![vec![Cell::default(); self.cols]; self.rows];
-                                    self.cursor_row = 0;
-                                    self.cursor_col = 0;
-                                } else {
-                                    // Restore from alternate screen
-                                    if let Some(saved) = self.alternate_screen.take() {
-                                        // Resize saved grid to current dimensions if needed
-                                        self.grid = self.resize_grid_to_current(saved.grid);
-                                        // Clamp cursor to current dimensions
-                                        self.cursor_row =
-                                            saved.cursor_row.min(self.rows.saturating_sub(1));
-                                        self.cursor_col =
-                                            saved.cursor_col.min(self.cols.saturating_sub(1));
-                                        self.current_style = saved.current_style;
-                                    }
+                                    let rows = self.internal_grid.rows;
+                                    let cols = self.internal_grid.cols;
+                                    self.internal_grid = Grid::new(rows, cols);
+                                } else if let Some(saved) = self.alternate_screen.take() {
+                                    // Resize saved grid to current dimensions if needed
+                                    let mut restored = saved.grid;
+                                    restored
+                                        .resize(self.internal_grid.rows, self.internal_grid.cols);
+                                    self.internal_grid = restored;
+                                    self.internal_grid.cursor_row = saved
+                                        .cursor_row
+                                        .min(self.internal_grid.rows.saturating_sub(1));
+                                    self.internal_grid.cursor_col = saved
+                                        .cursor_col
+                                        .min(self.internal_grid.cols.saturating_sub(1));
+                                    self.internal_grid.set_current_styles(saved.current_styles);
                                 }
                             }
                             47 | 1047 => {
                                 // Alternate screen buffer (without save cursor)
                                 if enable {
                                     self.alternate_screen = Some(Box::new(AlternateScreen {
-                                        grid: self.grid.clone(),
-                                        cursor_row: self.cursor_row,
-                                        cursor_col: self.cursor_col,
-                                        current_style: self.current_style,
+                                        grid: self.internal_grid.clone(),
+                                        cursor_row: self.internal_grid.cursor_row,
+                                        cursor_col: self.internal_grid.cursor_col,
+                                        current_styles: self.internal_grid.current_styles,
                                     }));
-                                    self.grid = vec![vec![Cell::default(); self.cols]; self.rows];
+                                    let rows = self.internal_grid.rows;
+                                    let cols = self.internal_grid.cols;
+                                    self.internal_grid = Grid::new(rows, cols);
                                 } else if let Some(saved) = self.alternate_screen.take() {
-                                    // Resize saved grid to current dimensions if needed
-                                    self.grid = self.resize_grid_to_current(saved.grid);
+                                    let mut restored = saved.grid;
+                                    restored
+                                        .resize(self.internal_grid.rows, self.internal_grid.cols);
+                                    self.internal_grid = restored;
                                 }
                             }
                             2004 => {
@@ -1256,7 +1117,6 @@ impl Perform for VirtualTerminal {
                             }
                             // Mouse tracking modes
                             1000 | 1002 | 1003 => {
-                                // X10 (1000), button-event (1002), any-event (1003) mouse tracking
                                 if enable {
                                     self.mouse_tracking = Some(param);
                                 } else {
@@ -1273,16 +1133,9 @@ impl Perform for VirtualTerminal {
                 } else {
                     // Standard (ANSI) modes
                     for &param in &params_vec {
-                        match param {
-                            4 => {
-                                // IRM - Insert/Replace Mode
-                                self.insert_mode = enable;
-                            }
-                            20 => {
-                                // LNM - Line Feed/New Line Mode
-                                // We always treat LF as LF+CR, so ignore
-                            }
-                            _ => {}
+                        if param == 4 {
+                            // IRM - Insert/Replace Mode
+                            self.insert_mode = enable;
                         }
                     }
                 }
@@ -1311,7 +1164,9 @@ impl Perform for VirtualTerminal {
             }
             // Reset (RIS)
             ([], b'c') => {
-                *self = VirtualTerminal::new(self.rows, self.cols);
+                let rows = self.internal_grid.rows;
+                let cols = self.internal_grid.cols;
+                *self = VirtualTerminal::new(rows, cols);
             }
             // Index - move down one line, scroll if at bottom
             ([], b'D') => {
@@ -1320,7 +1175,7 @@ impl Perform for VirtualTerminal {
             // Next Line
             ([], b'E') => {
                 self.newline();
-                self.cursor_col = 0;
+                self.internal_grid.cursor_col = 0;
             }
             // Horizontal Tab Set (HTS)
             ([], b'H') => {
@@ -1328,19 +1183,17 @@ impl Perform for VirtualTerminal {
             }
             // Reverse Index - move up one line, scroll if at top
             ([], b'M') => {
-                if self.cursor_row == self.scroll_region.0 {
+                if self.internal_grid.cursor_row == self.internal_grid.scroll_region.0 {
                     self.scroll_down();
                 } else {
-                    self.cursor_row = self.cursor_row.saturating_sub(1);
+                    self.internal_grid.cursor_row = self.internal_grid.cursor_row.saturating_sub(1);
                 }
             }
             // G0 charset designations
             ([b'('], b'0') => {
-                // DEC Special Graphics (line drawing)
                 self.g0_charset_line_drawing = true;
             }
             ([b'('], b'B') => {
-                // ASCII (default)
                 self.g0_charset_line_drawing = false;
             }
             // G1 charset designations
@@ -1360,6 +1213,45 @@ impl Perform for VirtualTerminal {
             }
             _ => {}
         }
+    }
+}
+
+/// Legacy accessor for test compatibility that provides grid[row][col] syntax
+#[cfg(test)]
+pub struct LegacyGridAccessor<'a> {
+    term: &'a VirtualTerminal,
+}
+
+#[cfg(test)]
+impl<'a> std::ops::Index<usize> for LegacyGridAccessor<'a> {
+    type Output = LegacyRowAccessor<'a>;
+
+    fn index(&self, row: usize) -> &Self::Output {
+        // Leak a reference to enable the double-index syntax
+        // This is only used in tests so the leak is acceptable
+        let accessor = Box::new(LegacyRowAccessor {
+            term: self.term,
+            row,
+        });
+        Box::leak(accessor)
+    }
+}
+
+#[cfg(test)]
+pub struct LegacyRowAccessor<'a> {
+    term: &'a VirtualTerminal,
+    row: usize,
+}
+
+#[cfg(test)]
+impl<'a> std::ops::Index<usize> for LegacyRowAccessor<'a> {
+    type Output = Cell;
+
+    fn index(&self, col: usize) -> &Self::Output {
+        // Leak a Cell to return a reference
+        // This is only used in tests so the leak is acceptable
+        let cell = Box::new(self.term.get_cell(self.row, col));
+        Box::leak(cell)
     }
 }
 
@@ -1435,6 +1327,7 @@ pub struct TerminalBuffer {
     parser: Parser,
     render_cache: Option<RenderCache>,
     generation: u64,
+    scroll_offset: usize,
 }
 
 impl std::fmt::Debug for TerminalBuffer {
@@ -1459,6 +1352,7 @@ impl TerminalBuffer {
             parser: Parser::new(),
             render_cache: None,
             generation: 0,
+            scroll_offset: 0,
         }
     }
 
@@ -1468,6 +1362,7 @@ impl TerminalBuffer {
             parser: Parser::new(),
             render_cache: None,
             generation: 0,
+            scroll_offset: 0,
         }
     }
 
@@ -1490,28 +1385,30 @@ impl TerminalBuffer {
 
     /// Scroll view up
     pub fn scroll_up(&mut self, n: usize) {
-        self.terminal.scroll_view_up(n);
+        let max_scroll = self.terminal.scrollback_len();
+        self.scroll_offset = (self.scroll_offset + n).min(max_scroll);
         self.mark_dirty();
     }
 
     /// Scroll view down
     pub fn scroll_down(&mut self, n: usize) {
-        self.terminal.scroll_view_down(n);
+        self.scroll_offset = self.scroll_offset.saturating_sub(n);
         self.mark_dirty();
     }
 
     /// Scroll to bottom
     pub fn scroll_to_bottom(&mut self) {
-        self.terminal.scroll_to_bottom();
+        self.scroll_offset = 0;
         self.mark_dirty();
     }
 
     /// Clear the terminal
     pub fn clear(&mut self) {
-        let rows = self.terminal.rows;
-        let cols = self.terminal.cols;
+        let rows = self.terminal.rows();
+        let cols = self.terminal.cols();
         self.terminal = VirtualTerminal::new(rows, cols);
         self.parser = Parser::new();
+        self.scroll_offset = 0;
         self.mark_dirty();
     }
 
@@ -1526,24 +1423,27 @@ impl TerminalBuffer {
             return cache.has_content;
         }
 
-        if !self.terminal.scrollback.is_empty() {
+        if self.terminal.scrollback_len() > 0 {
             return true;
         }
 
-        let default_style = Style::default();
-        self.terminal.grid.iter().any(|row| {
-            row.iter()
-                .any(|cell| cell.c != ' ' || cell.style != default_style)
-        })
+        let default_styles = CharacterStyles::default();
+        for row in self.terminal.internal_grid.viewport_iter() {
+            for cell in row.iter() {
+                if cell.character != ' ' || cell.styles.get() != &default_styles {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Get cursor position (row, col) - returns None if scrolled away from bottom
     pub fn cursor_position(&self) -> Option<(u16, u16)> {
-        // Only show cursor if we're at the bottom (not scrolled back)
-        if self.terminal.scroll_offset == 0 && self.terminal.cursor_visible {
+        if self.scroll_offset == 0 && self.terminal.cursor_visible {
             Some((
-                self.terminal.cursor_row as u16,
-                self.terminal.cursor_col as u16,
+                self.terminal.cursor_row() as u16,
+                self.terminal.cursor_col() as u16,
             ))
         } else {
             None
@@ -1552,7 +1452,7 @@ impl TerminalBuffer {
 
     /// Check if cursor is visible
     pub fn cursor_visible(&self) -> bool {
-        self.terminal.cursor_visible && self.terminal.scroll_offset == 0
+        self.terminal.cursor_visible && self.scroll_offset == 0
     }
 
     /// Check if mouse tracking is enabled
@@ -1567,65 +1467,38 @@ impl TerminalBuffer {
 
     /// Get the number of rows in the terminal grid
     pub fn rows(&self) -> usize {
-        self.terminal.rows
+        self.terminal.rows()
     }
 
     /// Try to extract a URL at the given row and column (0-indexed).
-    /// Returns the URL string if one is found at or near the given position.
-    /// Handles URLs that wrap across multiple lines.
     pub fn url_at_position(&self, row: usize, col: usize) -> Option<String> {
-        tracing::debug!(
-            "url_at_position: row={}, col={}, scroll_offset={}, grid_len={}",
-            row,
-            col,
-            self.terminal.scroll_offset,
-            self.terminal.grid.len()
-        );
-
-        // Only support URL detection when not scrolled (simplifies the logic)
-        if self.terminal.scroll_offset != 0 {
-            tracing::debug!("Skipping URL detection: scrolled");
+        if self.scroll_offset != 0 {
             return None;
         }
 
-        // Bounds check
-        if row >= self.terminal.grid.len() {
-            tracing::debug!(
-                "Row {} out of bounds (grid len: {})",
-                row,
-                self.terminal.grid.len()
-            );
+        if row >= self.terminal.internal_grid.viewport.len() {
             return None;
         }
 
-        let line = &self.terminal.grid[row];
-
-        // Bounds check for column
+        let line = &self.terminal.internal_grid.viewport[row];
         if col >= line.len() {
-            tracing::debug!("Col {} out of bounds (line len: {})", col, line.len());
             return None;
         }
 
-        // Convert current line to string (trimmed of trailing spaces)
-        let line_text: String = line.iter().map(|cell| cell.c).collect();
+        let line_text = line.as_string();
         let line_text = line_text.trim_end();
 
-        // Try to find URL on the current line first
         if let Some(url) = find_url_at_column(line_text, col) {
-            // Check if URL might continue on the next line(s)
-            // (line is full and ends with URL characters)
-            let cols = self.terminal.cols;
+            // Check for multi-line URL continuation
+            let cols = self.terminal.cols();
             if line_text.len() >= cols.saturating_sub(1) && !url.is_empty() {
                 let mut full_url = url.clone();
                 let mut next_row = row + 1;
 
-                // Look for continuation lines
-                while next_row < self.terminal.grid.len() {
-                    let next_line: String =
-                        self.terminal.grid[next_row].iter().map(|c| c.c).collect();
+                while next_row < self.terminal.internal_grid.viewport.len() {
+                    let next_line = self.terminal.internal_grid.viewport[next_row].as_string();
                     let next_line = next_line.trim_end();
 
-                    // Check if this line continues the URL (starts with URL chars, no space)
                     let continuation: String =
                         next_line.chars().take_while(|&c| is_url_char(c)).collect();
 
@@ -1635,7 +1508,6 @@ impl TerminalBuffer {
 
                     full_url.push_str(&continuation);
 
-                    // If this line doesn't fill the terminal width, stop
                     if next_line.len() < cols.saturating_sub(1) {
                         break;
                     }
@@ -1647,115 +1519,32 @@ impl TerminalBuffer {
             return Some(url);
         }
 
-        // Check if this might be a continuation line - look for URL start on previous lines
-        if row > 0 {
-            // Check if previous line ends without a space (potential wrap)
-            let prev_line: String = self.terminal.grid[row - 1].iter().map(|c| c.c).collect();
-            let prev_line = prev_line.trim_end();
-            let cols = self.terminal.cols;
-
-            if prev_line.len() >= cols.saturating_sub(1) {
-                // Look backwards for the URL start
-                let mut start_row = row - 1;
-                while start_row > 0 {
-                    let check_line: String = self.terminal.grid[start_row - 1]
-                        .iter()
-                        .map(|c| c.c)
-                        .collect();
-                    let check_line = check_line.trim_end();
-                    if check_line.len() < cols.saturating_sub(1) {
-                        break;
-                    }
-                    start_row -= 1;
-                }
-
-                // Build the combined text from start_row to current row
-                let mut combined = String::new();
-                for r in start_row..=row {
-                    let l: String = self.terminal.grid[r].iter().map(|c| c.c).collect();
-                    combined.push_str(l.trim_end());
-                }
-
-                // Also include any continuation after current row
-                let mut next_row = row + 1;
-                while next_row < self.terminal.grid.len() {
-                    let next_line: String =
-                        self.terminal.grid[next_row].iter().map(|c| c.c).collect();
-                    let next_line = next_line.trim_end();
-
-                    let continuation: String =
-                        next_line.chars().take_while(|&c| is_url_char(c)).collect();
-
-                    if continuation.is_empty() {
-                        break;
-                    }
-
-                    combined.push_str(&continuation);
-
-                    if next_line.len() < cols.saturating_sub(1) {
-                        break;
-                    }
-                    next_row += 1;
-                }
-
-                // Calculate the column position in the combined string
-                let offset_in_combined = (row - start_row) * cols + col;
-
-                if let Some(url) = find_url_at_column(&combined, offset_in_combined) {
-                    return Some(url);
-                }
-            }
-        }
-
         None
     }
 
     /// Build a cached render view for the given height.
     pub fn render_view(&mut self, height: usize) -> TerminalRenderView {
         if let Some(cache) = &self.render_cache {
-            if cache.is_valid(height, self.generation, self.terminal.scroll_offset) {
+            if cache.is_valid(height, self.generation, self.scroll_offset) {
                 return cache.as_view();
             }
         }
 
-        let cell_lines = self.terminal.visible_lines(height);
-        let mut lines: Vec<ratatui::text::Line<'static>> = Vec::with_capacity(cell_lines.len());
-        let mut has_content = !self.terminal.scrollback.is_empty();
-        let default_style = Style::default();
+        let visible_rows = self.terminal.visible_lines(height, self.scroll_offset);
+        let mut lines: Vec<ratatui::text::Line<'static>> = Vec::with_capacity(visible_rows.len());
+        let mut has_content = self.terminal.scrollback_len() > 0;
+        let default_styles = CharacterStyles::default();
 
-        for cells in cell_lines {
-            let mut spans: Vec<ratatui::text::Span<'static>> = Vec::new();
-            let mut current_style = Style::default();
-            let mut current_text = String::new();
-
-            for cell in cells {
-                if cell.wide_spacer {
-                    continue;
-                }
-
-                if !has_content && (cell.c != ' ' || cell.style != default_style) {
-                    has_content = true;
-                }
-
-                if cell.style == current_style {
-                    current_text.push(cell.c);
-                } else {
-                    if !current_text.is_empty() {
-                        spans.push(ratatui::text::Span::styled(
-                            std::mem::take(&mut current_text),
-                            current_style,
-                        ));
+        for row in visible_rows {
+            if !has_content {
+                for cell in row.iter() {
+                    if cell.character != ' ' || cell.styles.get() != &default_styles {
+                        has_content = true;
+                        break;
                     }
-                    current_style = cell.style;
-                    current_text.push(cell.c);
                 }
             }
-
-            if !current_text.is_empty() {
-                spans.push(ratatui::text::Span::styled(current_text, current_style));
-            }
-
-            lines.push(ratatui::text::Line::from(spans));
+            lines.push(row.to_ratatui_line());
         }
 
         let cursor = self.cursor_position();
@@ -1782,7 +1571,7 @@ impl TerminalBuffer {
 
         let cache = RenderCache {
             height,
-            scroll_offset: self.terminal.scroll_offset,
+            scroll_offset: self.scroll_offset,
             generation: self.generation,
             lines: lines.clone(),
             cursor,
@@ -2105,7 +1894,6 @@ pub async fn establish_mux_connection(manager: SharedTerminalManager) -> anyhow:
     };
 
     // Pre-fetch gh auth status and send to server for caching
-    // This runs in the background so it doesn't block connection setup
     if let Some(tx) = msg_tx_for_cache {
         tokio::spawn(async move {
             let (exit_code, stdout, stderr) =
@@ -2147,8 +1935,6 @@ pub async fn establish_mux_connection(manager: SharedTerminalManager) -> anyhow:
                                     let _ = event_tx_clone.send(MuxEvent::SandboxesRefreshed(sandboxes));
                                 }
                                 MuxServerMessage::Attached { session_id } => {
-                                    // Session is now attached - this is handled via pending_attaches
-                                    // in connect_to_sandbox
                                     let _ = event_tx_clone.send(MuxEvent::StatusMessage {
                                         message: format!("Session {} attached", session_id),
                                     });
@@ -2185,7 +1971,6 @@ pub async fn establish_mux_connection(manager: SharedTerminalManager) -> anyhow:
                                     // Keepalive response, ignore
                                 }
                                 MuxServerMessage::OpenUrl { url, .. } => {
-                                    // Open URL on the host machine (TUI runs on host)
                                     if let Err(e) = open::that(&url) {
                                         let _ = event_tx_clone.send(MuxEvent::Error(format!(
                                             "Failed to open URL {}: {}", url, e
@@ -2213,7 +1998,6 @@ pub async fn establish_mux_connection(manager: SharedTerminalManager) -> anyhow:
                                     stdin,
                                     ..
                                 } => {
-                                    // Run gh command locally and send response back
                                     let mgr = manager_clone.lock().await;
                                     if let Some(sender) = mgr.mux_sender.as_ref() {
                                         let response = run_gh_command(&args, stdin.as_deref()).await;
@@ -2270,7 +2054,6 @@ pub async fn establish_mux_connection(manager: SharedTerminalManager) -> anyhow:
 }
 
 /// Connect a pane to a sandbox terminal via the multiplexed connection.
-/// This sends an Attach message to create a new PTY session for the pane.
 pub async fn connect_to_sandbox(
     manager: SharedTerminalManager,
     pane_id: PaneId,
@@ -2327,7 +2110,6 @@ pub async fn connect_to_sandbox(
 }
 
 /// Request sandbox creation via the multiplexed WebSocket connection.
-/// The server will respond with a SandboxCreated message.
 pub async fn request_create_sandbox(
     manager: SharedTerminalManager,
     name: Option<String>,
@@ -2348,7 +2130,6 @@ pub async fn request_create_sandbox(
 }
 
 /// Request sandbox list via the multiplexed WebSocket connection.
-/// The server will respond with a SandboxList message.
 pub async fn request_list_sandboxes(manager: SharedTerminalManager) -> anyhow::Result<()> {
     // Ensure the multiplexed connection is established
     establish_mux_connection(manager.clone()).await?;
@@ -2363,7 +2144,6 @@ pub async fn request_list_sandboxes(manager: SharedTerminalManager) -> anyhow::R
 }
 
 /// Run a gh command locally on the host machine.
-/// Returns (exit_code, stdout, stderr).
 async fn run_gh_command(args: &[String], stdin: Option<&str>) -> (i32, String, String) {
     use std::process::Stdio;
     use tokio::io::AsyncWriteExt;
@@ -2417,42 +2197,47 @@ mod tests {
     fn virtual_terminal_handles_basic_text() {
         let mut term = VirtualTerminal::new(24, 80);
         term.process(b"Hello, World!");
-        assert_eq!(term.grid[0][0].c, 'H');
-        assert_eq!(term.grid[0][6].c, ' ');
-        assert_eq!(term.grid[0][7].c, 'W');
+        let grid = term.legacy_grid();
+        assert_eq!(grid[0][0].c, 'H');
+        assert_eq!(grid[0][6].c, ' ');
+        assert_eq!(grid[0][7].c, 'W');
     }
 
     #[test]
     fn virtual_terminal_handles_newline() {
         let mut term = VirtualTerminal::new(24, 80);
         term.process(b"Line 1\nLine 2");
-        assert_eq!(term.grid[0][0].c, 'L');
-        assert_eq!(term.grid[1][0].c, 'L');
+        let grid = term.legacy_grid();
+        assert_eq!(grid[0][0].c, 'L');
+        assert_eq!(grid[1][0].c, 'L');
     }
 
     #[test]
     fn virtual_terminal_handles_cursor_movement() {
         let mut term = VirtualTerminal::new(24, 80);
         term.process(b"Hello\x1b[2;1HWorld"); // Move to row 2, col 1
-        assert_eq!(term.grid[0][0].c, 'H');
-        assert_eq!(term.grid[1][0].c, 'W');
+        let grid = term.legacy_grid();
+        assert_eq!(grid[0][0].c, 'H');
+        assert_eq!(grid[1][0].c, 'W');
     }
 
     #[test]
     fn virtual_terminal_handles_colors() {
         let mut term = VirtualTerminal::new(24, 80);
         term.process(b"\x1b[31mRed\x1b[0m");
-        assert_eq!(term.grid[0][0].c, 'R');
-        assert_eq!(term.grid[0][0].style.fg, Some(Color::Red));
-        assert_eq!(term.grid[0][2].style.fg, Some(Color::Red));
+        let grid = term.legacy_grid();
+        assert_eq!(grid[0][0].c, 'R');
+        assert_eq!(grid[0][0].style.fg, Some(Color::Red));
+        assert_eq!(grid[0][2].style.fg, Some(Color::Red));
     }
 
     #[test]
     fn ignores_private_intermediate_sgr() {
         let mut term = VirtualTerminal::new(2, 10);
         term.process(b"\x1b[>4;1mHi");
-        assert_eq!(term.grid[0][0].style, Style::default());
-        assert_eq!(term.grid[0][1].style, Style::default());
+        let grid = term.legacy_grid();
+        assert_eq!(grid[0][0].style, Style::default());
+        assert_eq!(grid[0][1].style, Style::default());
     }
 
     #[test]
@@ -2460,7 +2245,8 @@ mod tests {
         let mut term = VirtualTerminal::new(24, 80);
         term.process(b"Hello");
         term.process(b"\x1b[2J"); // Clear screen
-        assert_eq!(term.grid[0][0].c, ' ');
+        let grid = term.legacy_grid();
+        assert_eq!(grid[0][0].c, ' ');
     }
 
     #[test]
@@ -2468,8 +2254,9 @@ mod tests {
         let mut term = VirtualTerminal::new(3, 80);
         term.process(b"Line 1\nLine 2\nLine 3\nLine 4");
         // Line 1 should have scrolled into scrollback
-        assert_eq!(term.scrollback.len(), 1);
-        assert_eq!(term.scrollback[0][0].c, 'L');
+        let scrollback = term.scrollback_snapshot();
+        assert_eq!(scrollback.len(), 1);
+        assert_eq!(scrollback[0][0].c, 'L');
     }
 
     #[test]
@@ -2477,8 +2264,8 @@ mod tests {
         let mut term = VirtualTerminal::new(24, 80);
         // Move cursor to row 5, col 10 (1-indexed in escape sequence)
         term.process(b"\x1b[5;10H");
-        assert_eq!(term.cursor_row, 4); // 0-indexed
-        assert_eq!(term.cursor_col, 9); // 0-indexed
+        assert_eq!(term.cursor_row(), 4); // 0-indexed
+        assert_eq!(term.cursor_col(), 9); // 0-indexed
 
         // Send DSR request for cursor position (CSI 6 n)
         term.process(b"\x1b[6n");
