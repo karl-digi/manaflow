@@ -7,6 +7,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@cmux/freestyle-openapi-client": "workspace:*",
     "@cmux/morphcloud-openapi-client": "workspace:*",
     "@cmux/convex": "workspace:*",
     "@cmux/shared": "workspace:*",

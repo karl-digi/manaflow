@@ -426,6 +426,19 @@
         "vitest": "3.2.4",
       },
     },
+    "packages/freestyle-openapi-client": {
+      "name": "@cmux/freestyle-openapi-client",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@eslint/js": "^9.34.0",
+        "@hey-api/client-fetch": "^0.13.1",
+        "@hey-api/openapi-ts": "^0.82.1",
+        "@types/node": "^24.9.1",
+        "eslint": "^9.34.0",
+        "typescript": "^5.9.3",
+        "typescript-eslint": "^8.41.0",
+      },
+    },
     "packages/morphcloud-openapi-client": {
       "name": "@cmux/morphcloud-openapi-client",
       "version": "0.1.0",
@@ -496,6 +509,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@cmux/convex": "workspace:*",
+        "@cmux/freestyle-openapi-client": "workspace:*",
         "@cmux/morphcloud-openapi-client": "workspace:*",
         "@cmux/shared": "workspace:*",
         "@cmux/www-openapi-client": "workspace:*",
@@ -784,6 +798,8 @@
     "@cmux/convex": ["@cmux/convex@workspace:packages/convex"],
 
     "@cmux/edge-router": ["@cmux/edge-router@workspace:apps/edge-router"],
+
+    "@cmux/freestyle-openapi-client": ["@cmux/freestyle-openapi-client@workspace:packages/freestyle-openapi-client"],
 
     "@cmux/morphcloud-openapi-client": ["@cmux/morphcloud-openapi-client@workspace:packages/morphcloud-openapi-client"],
 
