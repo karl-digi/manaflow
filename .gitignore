@@ -30,6 +30,7 @@ data/codemirror-merge/
 .env
 .env.production
 .env.codesign
+.env.cmux
 
 # Binary files
 cmux-cli
