@@ -48,13 +48,13 @@ const formatWorkerSocketError = (error: unknown): string => {
     return error;
   }
   if (typeof error === "object") {
-    const maybeMessage =
+    const errorMessage =
       "message" in error && typeof (error as { message?: unknown }).message === "string"
         ? (error as { message?: string }).message
         : undefined;
 
-    if (maybeMessage) {
-      return maybeMessage;
+    if (errorMessage) {
+      return errorMessage;
     }
 
     try {

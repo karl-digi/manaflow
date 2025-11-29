@@ -21,7 +21,7 @@ export const dispatchPreviewJob = httpAction(async (ctx, req) => {
 
   let body: { previewRunId?: string };
   try {
-    body = (await req.json()) as { previewRunId?: string };
+    body = await req.json();
   } catch {
     return jsonResponse({ error: "Invalid JSON" }, 400);
   }
@@ -240,7 +240,7 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
     return jsonResponse({ error: "Missing taskRunId" }, 400);
   }
 
-  const { taskRunId } = body as { taskRunId: string };
+  const { taskRunId } = body;
 
   console.log("[preview-jobs-http] Completing preview job", {
     taskRunId,
