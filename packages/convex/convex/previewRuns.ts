@@ -140,6 +140,69 @@ export const updateStatus = internalMutation({
       patch.startedAt = now;
     }
     await ctx.db.patch(run._id, patch);
+
+    if (run.taskRunId) {
+      try {
+        const taskRun = await ctx.db.get(run.taskRunId);
+        if (!taskRun) {
+          console.error("[previewRuns] Linked task run not found for preview run", {
+            previewRunId: run._id,
+            taskRunId: run.taskRunId,
+          });
+          return;
+        }
+
+        if (!taskRun.isPreviewJob) {
+          return;
+        }
+
+        const isTerminalStatus =
+          args.status === "completed" ||
+          args.status === "failed" ||
+          args.status === "skipped";
+        const existingIsTerminal =
+          taskRun.status === "completed" ||
+          taskRun.status === "failed" ||
+          taskRun.status === "skipped";
+
+        if (!isTerminalStatus && existingIsTerminal) {
+          return;
+        }
+
+        const nextTaskRunStatus =
+          args.status === "failed"
+            ? "failed"
+            : args.status === "skipped"
+              ? "skipped"
+              : args.status === "running"
+                ? "running"
+                : "completed";
+
+        const taskRunPatch: Record<string, unknown> = {
+          status: nextTaskRunStatus,
+          updatedAt: now,
+        };
+
+        if (isTerminalStatus) {
+          taskRunPatch.completedAt = taskRun.completedAt ?? now;
+        }
+
+        await ctx.db.patch(taskRun._id, taskRunPatch);
+
+        if (args.status === "completed" || args.status === "skipped") {
+          await ctx.db.patch(taskRun.taskId, {
+            isCompleted: true,
+            updatedAt: now,
+          });
+        }
+      } catch (error) {
+        console.error("[previewRuns] Failed to sync preview task completion", {
+          previewRunId: run._id,
+          taskRunId: run.taskRunId,
+          error,
+        });
+      }
+    }
   },
 });
 
