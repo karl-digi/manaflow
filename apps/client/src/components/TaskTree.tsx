@@ -1227,7 +1227,7 @@ function TaskRunTreeInner({
     failed: <XCircle className="w-3 h-3 text-red-500" />,
     skipped: <AlertTriangle className="w-3 h-3 text-amber-500" />,
   };
-  const statusIcon = statusIcons[run.status as TaskRunStatus];
+  const statusIcon = statusIcons[run.status];
 
   const shouldHideStatusIcon =
     (isLocalWorkspaceRunEntry || isCloudWorkspaceRunEntry) &&

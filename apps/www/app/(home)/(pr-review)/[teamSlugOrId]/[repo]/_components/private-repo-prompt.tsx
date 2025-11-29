@@ -62,9 +62,9 @@ export function PrivateRepoPrompt({
         return;
       }
 
-      const { installUrl } = (await response.json()) as { installUrl: string };
+      const { installUrl } = await response.json();
 
-      window.location.href = installUrl;
+      window.location.href = installUrl.toString();
     } catch (err) {
       console.error("[PrivateRepoPrompt] Failed to initiate installation", err);
       setError("An unexpected error occurred. Please try again.");

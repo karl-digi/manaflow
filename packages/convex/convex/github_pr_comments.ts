@@ -457,7 +457,7 @@ export const addPrComment = internalAction({
           "[github_pr_comments] Failed to get access token for installation",
           { installationId },
         );
-        return { ok: false as const, error: "Failed to get access token" };
+        return { ok: false, error: "Failed to get access token" };
       }
 
       const repo = parseRepoFullName(repoFullName);
@@ -465,7 +465,7 @@ export const addPrComment = internalAction({
         console.error("[github_pr_comments] Invalid repo full name", {
           repoFullName,
         });
-        return { ok: false as const, error: "Invalid repository name" };
+        return { ok: false, error: "Invalid repository name" };
       }
 
       const octokit = createOctokit(accessToken);
@@ -482,7 +482,7 @@ export const addPrComment = internalAction({
         commentId: data.id,
       });
 
-      return { ok: true as const, commentId: data.id };
+      return { ok: true, commentId: data.id };
     } catch (error) {
       console.error(
         "[github_pr_comments] Unexpected error adding comment",
@@ -494,7 +494,7 @@ export const addPrComment = internalAction({
         },
       );
       return {
-        ok: false as const,
+        ok: false,
         error: error instanceof Error ? error.message : String(error),
       };
     }
@@ -620,7 +620,7 @@ export const postPreviewCommentWithTaskScreenshots = internalAction({
       const octokit = createOctokit(accessToken);
 
       // Get task run to find screenshot set
-      const taskRun: any = await ctx.runQuery(internal.taskRuns.getById, {
+      const taskRun = await ctx.runQuery(internal.taskRuns.getById, {
         id: taskRunId,
       });
 
@@ -643,7 +643,7 @@ export const postPreviewCommentWithTaskScreenshots = internalAction({
       }
 
       // Get team info for the URL
-      const team: any = await ctx.runQuery(internal.teams.getByTeamIdInternal, {
+      const team = await ctx.runQuery(internal.teams.getByTeamIdInternal, {
         teamId: taskRun.teamId,
       });
       const teamSlug: string = team?.slug ?? taskRun.teamId;
@@ -689,7 +689,7 @@ export const postPreviewCommentWithTaskScreenshots = internalAction({
       }
 
       // Post comment to GitHub
-      const { data }: { data: any } = await octokit.rest.issues.createComment({
+      const { data } = await octokit.rest.issues.createComment({
         owner: repo.owner,
         repo: repo.repo,
         issue_number: prNumber,
@@ -780,7 +780,7 @@ export const addScreenshotCommentToPr = internalAction({
             prNumber,
           },
         );
-        return { ok: true as const, skipped: true, reason: "No screenshots found" };
+        return { ok: true, skipped: true, reason: "No screenshots found" };
       }
 
       const body = formatScreenshotComment(screenshots);
@@ -793,10 +793,10 @@ export const addScreenshotCommentToPr = internalAction({
       });
 
       if (result.ok) {
-        return { ok: true as const, commentId: result.commentId };
+        return { ok: true, commentId: result.commentId };
       }
 
-      return { ok: false as const, error: result.error };
+      return { ok: false, error: result?.error ?? "Unknown error" };
     } catch (error) {
       console.error(
         "[github_pr_comments] Unexpected error adding screenshot comment",
@@ -809,7 +809,7 @@ export const addScreenshotCommentToPr = internalAction({
         },
       );
       return {
-        ok: false as const,
+        ok: false,
         error: error instanceof Error ? error.message : String(error),
       };
     }

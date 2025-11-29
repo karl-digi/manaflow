@@ -2,19 +2,16 @@ import { stackServerApp } from "@/lib/utils/stack";
 import { getConvex } from "@/lib/utils/get-convex";
 import { api } from "@cmux/convex/api";
 import { PreviewDashboard } from "@/components/preview/preview-dashboard";
+import {
+  getTeamDisplayName,
+  getTeamSlugOrId,
+  type StackTeam,
+} from "@/lib/team-utils";
 
 export const dynamic = "force-dynamic";
 
 type PageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
-};
-
-type StackTeam = Awaited<ReturnType<typeof stackServerApp.listTeams>>[number] & {
-  slug?: string | null;
-  teamId?: string;
-  id?: string;
-  displayName?: string | null;
-  name?: string | null;
 };
 
 type PreviewConfigListItem = {
@@ -33,14 +30,6 @@ type TeamOption = {
   slugOrId: string;
   displayName: string;
 };
-
-function getTeamSlugOrId(team: StackTeam): string {
-  return team.slug ?? team.teamId ?? team.id ?? "";
-}
-
-function getTeamDisplayName(team: StackTeam): string {
-  return team.displayName ?? team.name ?? getTeamSlugOrId(team);
-}
 
 function serializeProviderConnections(
   connections: Array<{
@@ -117,7 +106,7 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
           teamSlugOrId,
         });
         const serialized = serializeProviderConnections(connections);
-        return [teamSlugOrId, serialized] as const;
+        return [teamSlugOrId, serialized];
       }),
     ),
     Promise.all(

@@ -106,7 +106,7 @@ const ListQuery = z
 
 previewRouter.openapi(
   createRoute({
-    method: "get" as const,
+    method: "get",
     path: "/preview/configs",
     tags: ["Preview"],
     summary: "List preview configurations for a team",
@@ -249,7 +249,7 @@ previewRouter.openapi(
 
 previewRouter.openapi(
   createRoute({
-    method: "get" as const,
+    method: "get",
     path: "/preview/configs/{previewConfigId}/runs",
     tags: ["Preview"],
     summary: "List recent preview runs for a configuration",

@@ -512,14 +512,14 @@ async function handleAllCompleteRequest(
     }
   );
 
-  const statuses = runsForTeam.map((run: any) => ({
+  const statuses = runsForTeam.map((run) => ({
     id: run._id,
     status: run.status,
   }));
 
   const allComplete =
     runsForTeam.length > 0 &&
-    runsForTeam.every((run: any) => run.status === "completed");
+    runsForTeam.every((run) => run.status === "completed");
 
   const response = {
     ok: true,
@@ -585,13 +585,13 @@ async function handleCrownCheckRequest(
       }),
     ]);
 
-  const allRunsFinished = runsForTeam.every((run: any) =>
+  const allRunsFinished = runsForTeam.every((run) =>
     ["completed", "failed"].includes(run.status)
   );
   const allWorkersReported = runsForTeam.every(
-    (run: any) => run.status === "completed"
+    (run) => run.status === "completed"
   );
-  const completedRuns = runsForTeam.filter((run: any) => run.status === "completed");
+  const completedRuns = runsForTeam.filter((run) => run.status === "completed");
 
   const shouldEvaluate =
     allRunsFinished &&
@@ -649,7 +649,7 @@ async function handleCrownCheckRequest(
       projectFullName: task.projectFullName ?? null,
       autoPrEnabled: workspaceSettings?.autoPrEnabled ?? false,
     },
-    runs: runsForTeam.map((run: any) => ({
+    runs: runsForTeam.map((run) => ({
       id: run._id,
       status: run.status as WorkerRunStatus,
       agentName: run.agentName ?? null,
