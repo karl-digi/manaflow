@@ -284,6 +284,13 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
         status: "skipped",
         stateReason: "No screenshots available",
       });
+
+      // Mark the task as complete since preview job is done
+      await ctx.runMutation(internal.tasks.setCompletedInternal, {
+        taskId: taskRun.taskId,
+        isCompleted: true,
+      });
+
       return jsonResponse({
         success: true,
         skipped: true,
@@ -333,6 +340,13 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
           previewRunId: previewRun._id,
           commentUrl: commentResult.commentUrl,
         });
+
+        // Mark the task as complete since preview job is done
+        await ctx.runMutation(internal.tasks.setCompletedInternal, {
+          taskId: taskRun.taskId,
+          isCompleted: true,
+        });
+
         return jsonResponse({
           success: true,
           commentUrl: commentResult.commentUrl,
@@ -358,6 +372,12 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
       await ctx.runMutation(internal.previewRuns.updateStatus, {
         previewRunId: previewRun._id,
         status: "completed",
+      });
+
+      // Mark the task as complete since preview job is done
+      await ctx.runMutation(internal.tasks.setCompletedInternal, {
+        taskId: taskRun.taskId,
+        isCompleted: true,
       });
 
       return jsonResponse({
