@@ -34,6 +34,10 @@ async function markPreviewTaskCompleted(
 
   const taskAlreadyCompleted = task.isCompleted === true;
   if (!taskAlreadyCompleted) {
+    await ctx.runMutation(internal.tasks.setCrownEvaluationStatusInternal, {
+      taskId: task._id,
+      status: "succeeded",
+    });
     await ctx.runMutation(internal.tasks.setCompletedInternal, {
       taskId: task._id,
       isCompleted: true,
