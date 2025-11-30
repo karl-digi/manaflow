@@ -71,7 +71,7 @@ export const CLAUDE_OPUS_4_5_CONFIG: AgentConfig = {
   args: [
     "@anthropic-ai/claude-code@latest",
     "--model",
-    "claude-opus-4-5",
+    "claude-opus-4-5-20251101",
     "--dangerously-skip-permissions",
     "--ide",
     "$PROMPT",
