@@ -852,6 +852,9 @@ exit $EXIT_CODE
 
           const response = await fetch(uploadUrl, {
             method: "POST",
+            headers: {
+              "x-cmux-token": taskRunJwt,
+            },
             body: formData,
           });
 

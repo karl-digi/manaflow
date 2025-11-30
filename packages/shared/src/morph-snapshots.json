@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2025-11-23T09:44:10Z",
+  "updatedAt": "2025-11-29T22:01:05Z",
   "presets": [
     {
       "presetId": "4vcpu_16gb_48gb",
@@ -28,6 +28,26 @@
           "version": 4,
           "snapshotId": "snapshot_svdf7qmg",
           "capturedAt": "2025-11-23T09:45:47Z"
+        },
+        {
+          "version": 5,
+          "snapshotId": "snapshot_4l1fzyvr",
+          "capturedAt": "2025-11-26T20:11:45Z"
+        },
+        {
+          "version": 6,
+          "snapshotId": "snapshot_of44b6xs",
+          "capturedAt": "2025-11-29T07:57:23Z"
+        },
+        {
+          "version": 7,
+          "snapshotId": "snapshot_wpcxzz6p",
+          "capturedAt": "2025-11-29T21:23:40Z"
+        },
+        {
+          "version": 8,
+          "snapshotId": "snapshot_u00k1p82",
+          "capturedAt": "2025-11-29T22:00:34Z"
         }
       ],
       "description": "Great default for day-to-day work. Balanced CPU, memory, and storage."
@@ -58,9 +78,43 @@
           "version": 4,
           "snapshotId": "snapshot_i57mwbv2",
           "capturedAt": "2025-11-23T09:44:10Z"
+        },
+        {
+          "version": 5,
+          "snapshotId": "snapshot_8x6vsofr",
+          "capturedAt": "2025-11-26T20:11:28Z"
+        },
+        {
+          "version": 6,
+          "snapshotId": "snapshot_z9rtr2no",
+          "capturedAt": "2025-11-29T07:56:55Z"
+        },
+        {
+          "version": 7,
+          "snapshotId": "snapshot_vr7uc2h1",
+          "capturedAt": "2025-11-29T21:23:30Z"
+        },
+        {
+          "version": 8,
+          "snapshotId": "snapshot_8b1361wp",
+          "capturedAt": "2025-11-29T22:01:05Z"
         }
       ],
       "description": "Extra headroom for larger codebases or heavier workloads."
+    },
+    {
+      "presetId": "6vcpu_24gb_48gb",
+      "label": "Standard workspace",
+      "cpu": "6 vCPU",
+      "memory": "24 GB RAM",
+      "disk": "48 GB SSD",
+      "versions": [
+        {
+          "version": 1,
+          "snapshotId": "snapshot_pcmfvjra",
+          "capturedAt": "2025-11-18T22:38:55Z"
+        }
+      ]
     }
   ]
 }

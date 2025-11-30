@@ -15,6 +15,7 @@ import {
   devServerRouter,
   environmentsRouter,
   githubInstallStateRouter,
+  githubOAuthTokenRouter,
   healthRouter,
   morphRouter,
   sandboxesRouter,
@@ -22,6 +23,7 @@ import {
   usersRouter,
   iframePreflightRouter,
   workspaceConfigsRouter,
+  previewRouter,
 } from "@/lib/routes/index";
 import { authAnonymousRouter } from "@/lib/routes/auth.anonymous.route";
 import { stackServerApp } from "@/lib/utils/stack";
@@ -114,6 +116,7 @@ app.route("/", githubPrsFilesRouter);
 app.route("/", githubPrsFileContentsRouter);
 app.route("/", githubPrsFileContentsBatchRouter);
 app.route("/", githubInstallStateRouter);
+app.route("/", githubOAuthTokenRouter);
 app.route("/", morphRouter);
 app.route("/", iframePreflightRouter);
 app.route("/", environmentsRouter);
@@ -122,6 +125,7 @@ app.route("/", teamsRouter);
 app.route("/", branchRouter);
 app.route("/", codeReviewRouter);
 app.route("/", workspaceConfigsRouter);
+app.route("/", previewRouter);
 
 // OpenAPI documentation
 app.doc("/doc", {

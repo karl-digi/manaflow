@@ -337,6 +337,7 @@ export type GithubPrsFileContentsBatchBody = {
 
 export type GithubInstallStateResponse = {
     state: string;
+    installUrl: string;
 };
 
 export type GithubInstallStateRequest = {
@@ -348,6 +349,11 @@ export type GithubInstallStateRequest = {
      * Optional URL to redirect to after installation (web flows)
      */
     returnUrl?: string;
+};
+
+export type GithubOAuthTokenResponse = {
+    accessToken: string | null;
+    error: string | null;
 };
 
 export type ResumeTaskRunResponse = {
@@ -378,7 +384,7 @@ export type SetupInstanceBody = {
     instanceId?: string;
     selectedRepos?: Array<string>;
     ttlSeconds?: number;
-    snapshotId?: string | ('snapshot_svdf7qmg' | 'snapshot_i57mwbv2');
+    snapshotId?: string | ('snapshot_u00k1p82' | 'snapshot_8b1361wp' | 'snapshot_pcmfvjra');
 };
 
 export type CreateEnvironmentResponse = {
@@ -637,6 +643,50 @@ export type WorkspaceConfigBody = {
     projectFullName: string;
     maintenanceScript?: string;
     envVarsContent?: string;
+};
+
+export type PreviewConfig = {
+    id: string;
+    repoFullName: string;
+    environmentId?: string | null;
+    repoInstallationId?: number | null;
+    repoDefaultBranch?: string | null;
+    status: 'active' | 'paused' | 'disabled';
+    lastRunAt?: number | null;
+    createdAt: number;
+    updatedAt: number;
+};
+
+export type PreviewConfigListResponse = {
+    configs: Array<PreviewConfig>;
+};
+
+export type PreviewConfigMutationBody = {
+    previewConfigId?: string;
+    teamSlugOrId: string;
+    repoFullName: string;
+    environmentId?: string;
+    repoInstallationId?: number;
+    repoDefaultBranch?: string;
+    status?: 'active' | 'paused' | 'disabled';
+};
+
+export type PreviewRun = {
+    id: string;
+    prNumber: number;
+    prUrl: string;
+    headSha: string;
+    baseSha?: string | null;
+    status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
+    createdAt: number;
+    updatedAt: number;
+    dispatchedAt?: number | null;
+    startedAt?: number | null;
+    completedAt?: number | null;
+};
+
+export type PreviewRunsResponse = {
+    runs: Array<PreviewRun>;
 };
 
 export type GetApiHealthData = {
@@ -1578,6 +1628,29 @@ export type PostApiIntegrationsGithubInstallStateResponses = {
 
 export type PostApiIntegrationsGithubInstallStateResponse = PostApiIntegrationsGithubInstallStateResponses[keyof PostApiIntegrationsGithubInstallStateResponses];
 
+export type GetApiIntegrationsGithubOauthTokenData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/integrations/github/oauth-token';
+};
+
+export type GetApiIntegrationsGithubOauthTokenErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type GetApiIntegrationsGithubOauthTokenResponses = {
+    /**
+     * GitHub OAuth token response
+     */
+    200: GithubOAuthTokenResponse;
+};
+
+export type GetApiIntegrationsGithubOauthTokenResponse = GetApiIntegrationsGithubOauthTokenResponses[keyof GetApiIntegrationsGithubOauthTokenResponses];
+
 export type PostApiMorphTaskRunsByTaskRunIdResumeData = {
     body: ResumeTaskRunBody;
     path: {
@@ -2382,6 +2455,115 @@ export type PostApiWorkspaceConfigsResponses = {
 };
 
 export type PostApiWorkspaceConfigsResponse = PostApiWorkspaceConfigsResponses[keyof PostApiWorkspaceConfigsResponses];
+
+export type GetApiPreviewConfigsData = {
+    body?: never;
+    path?: never;
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/preview/configs';
+};
+
+export type GetApiPreviewConfigsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type GetApiPreviewConfigsResponses = {
+    /**
+     * Configurations fetched
+     */
+    200: PreviewConfigListResponse;
+};
+
+export type GetApiPreviewConfigsResponse = GetApiPreviewConfigsResponses[keyof GetApiPreviewConfigsResponses];
+
+export type PostApiPreviewConfigsData = {
+    body: PreviewConfigMutationBody;
+    path?: never;
+    query?: never;
+    url: '/api/preview/configs';
+};
+
+export type PostApiPreviewConfigsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type PostApiPreviewConfigsResponses = {
+    /**
+     * Configuration saved
+     */
+    200: PreviewConfig;
+};
+
+export type PostApiPreviewConfigsResponse = PostApiPreviewConfigsResponses[keyof PostApiPreviewConfigsResponses];
+
+export type DeleteApiPreviewConfigsByPreviewConfigIdData = {
+    body?: never;
+    path: {
+        previewConfigId: string;
+    };
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/preview/configs/{previewConfigId}';
+};
+
+export type DeleteApiPreviewConfigsByPreviewConfigIdErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Not found
+     */
+    404: unknown;
+};
+
+export type DeleteApiPreviewConfigsByPreviewConfigIdResponses = {
+    /**
+     * Deleted
+     */
+    200: {
+        id: string;
+    };
+};
+
+export type DeleteApiPreviewConfigsByPreviewConfigIdResponse = DeleteApiPreviewConfigsByPreviewConfigIdResponses[keyof DeleteApiPreviewConfigsByPreviewConfigIdResponses];
+
+export type GetApiPreviewConfigsByPreviewConfigIdRunsData = {
+    body?: never;
+    path: {
+        previewConfigId: string;
+    };
+    query: {
+        teamSlugOrId: string;
+        limit?: number;
+    };
+    url: '/api/preview/configs/{previewConfigId}/runs';
+};
+
+export type GetApiPreviewConfigsByPreviewConfigIdRunsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type GetApiPreviewConfigsByPreviewConfigIdRunsResponses = {
+    /**
+     * Runs fetched
+     */
+    200: PreviewRunsResponse;
+};
+
+export type GetApiPreviewConfigsByPreviewConfigIdRunsResponse = GetApiPreviewConfigsByPreviewConfigIdRunsResponses[keyof GetApiPreviewConfigsByPreviewConfigIdRunsResponses];
 
 export type ClientOptions = {
     baseUrl: `${string}://${string}` | (string & {});
