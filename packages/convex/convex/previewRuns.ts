@@ -27,15 +27,35 @@ export const enqueueFromWebhook = internalMutation({
       ? normalizeRepoFullName(args.headRepoFullName)
       : undefined;
 
+    const activeStatuses = new Set(["pending", "running"] as const);
+
+    const existingByPr = await ctx.db
+      .query("previewRuns")
+      .withIndex("by_config_pr", (q) =>
+        q.eq("previewConfigId", args.previewConfigId).eq("prNumber", args.prNumber),
+      )
+      .filter((q) =>
+        q.or(q.eq(q.field("status"), "pending"), q.eq(q.field("status"), "running")),
+      )
+      .order("desc")
+      .first();
+
+    if (existingByPr && activeStatuses.has(existingByPr.status)) {
+      return existingByPr._id;
+    }
+
     const existing = await ctx.db
       .query("previewRuns")
       .withIndex("by_config_head", (q) =>
         q.eq("previewConfigId", args.previewConfigId).eq("headSha", args.headSha),
       )
+      .filter((q) =>
+        q.or(q.eq(q.field("status"), "pending"), q.eq(q.field("status"), "running")),
+      )
       .order("desc")
       .first();
 
-    if (existing && (existing.status === "pending" || existing.status === "running")) {
+    if (existing && activeStatuses.has(existing.status)) {
       return existing._id;
     }
 

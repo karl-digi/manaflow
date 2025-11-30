@@ -10,6 +10,7 @@ import {
   type WorkerRunStatus,
   type WorkerTaskRunResponse,
 } from "@cmux/shared/convex-safe";
+import { enqueueAndSchedulePreviewRun } from "../_shared/previewRuns";
 import { api, internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { httpAction } from "./_generated/server";
@@ -666,6 +667,98 @@ async function handleCrownCheckRequest(
   return jsonResponse(response);
 }
 
+async function maybeStartPreviewRunFromCrown({
+  ctx,
+  task,
+  winnerRunId,
+  teamId,
+  pullRequest,
+}: {
+  ctx: ActionCtx;
+  task: Doc<"tasks">;
+  winnerRunId: Id<"taskRuns">;
+  teamId: string;
+  pullRequest?: { url?: string; number?: number } | null;
+}): Promise<void> {
+  const repoFullName = task.projectFullName;
+  const prUrl = pullRequest?.url ?? null;
+  const prNumberRaw = pullRequest?.number ?? null;
+  const prNumber =
+    prNumberRaw ??
+    (prUrl ? Number(prUrl.match(/\/pull\/(\d+)/)?.[1] ?? 0) : null);
+
+  if (!repoFullName || !prUrl || !prNumber) {
+    console.log("[convex.crown] Skipping preview run creation (missing PR data)", {
+      hasRepo: Boolean(repoFullName),
+      hasPrUrl: Boolean(prUrl),
+      hasPrNumber: Boolean(prNumber),
+    });
+    return;
+  }
+
+  const previewConfig = await ctx.runQuery(internal.previewConfigs.getByTeamAndRepo, {
+    teamId,
+    repoFullName,
+  });
+
+  if (!previewConfig) {
+    console.log("[convex.crown] No preview config found for repo; skipping preview run", {
+      repoFullName,
+      teamId,
+    });
+    return;
+  }
+
+  const winnerRun = await ctx.runQuery(internal.taskRuns.getById, {
+    id: winnerRunId,
+  });
+
+  if (!winnerRun) {
+    console.warn("[convex.crown] Winner run not found when starting preview", {
+      winnerRunId,
+      taskId: task._id,
+    });
+    return;
+  }
+
+  let headSha = winnerRun.screenshotCommitSha ?? undefined;
+
+  if (!headSha && winnerRun.latestScreenshotSetId) {
+    try {
+      const screenshotSet = await ctx.runQuery(internal.github_pr_queries.getScreenshotSet, {
+        screenshotSetId: winnerRun.latestScreenshotSetId,
+      });
+      headSha = screenshotSet?.commitSha ?? undefined;
+    } catch (error) {
+      console.warn("[convex.crown] Failed to load screenshot set for preview run", {
+        winnerRunId,
+        screenshotSetId: winnerRun.latestScreenshotSetId,
+        error,
+      });
+    }
+  }
+
+  if (!headSha) {
+    console.log("[convex.crown] Skipping preview run creation (missing head SHA)", {
+      winnerRunId,
+      taskId: task._id,
+    });
+    return;
+  }
+
+  await enqueueAndSchedulePreviewRun(ctx, {
+    previewConfigId: previewConfig._id,
+    teamId,
+    repoFullName,
+    repoInstallationId: previewConfig.repoInstallationId,
+    prNumber,
+    prUrl,
+    headSha,
+    headRef: winnerRun.newBranch ?? undefined,
+    headRepoFullName: repoFullName,
+  });
+}
+
 export const crownWorkerFinalize = httpAction(async (ctx, req) => {
   const workerAuth = await getWorkerAuth(req, {
     loggerPrefix: "[convex.crown]",
@@ -735,6 +828,22 @@ export const crownWorkerFinalize = httpAction(async (ctx, req) => {
       pullRequestTitle: validation.data.pullRequestTitle,
       pullRequestDescription: validation.data.pullRequestDescription,
     });
+
+    try {
+      await maybeStartPreviewRunFromCrown({
+        ctx,
+        task,
+        winnerRunId: winningId,
+        teamId: workerAuth.payload.teamId,
+        pullRequest: validation.data.pullRequest,
+      });
+    } catch (error) {
+      console.error("[convex.crown] Failed to start preview run from crown finalize", {
+        taskId,
+        winnerRunId,
+        error,
+      });
+    }
 
     return jsonResponse({ ok: true, winnerRunId: winningId });
   } catch (error) {
