@@ -3,7 +3,6 @@
 import { Instance, InstanceStatus, MorphCloudClient } from "morphcloud";
 import { createInterface } from "node:readline/promises";
 import process, { stdin as input, stdout as output } from "node:process";
-import { VM_CLEANUP_COMMANDS } from "../apps/www/lib/routes/sandboxes/cleanup";
 
 const HOURS_THRESHOLD: number = 2;
 const MILLISECONDS_PER_HOUR = 60 * 60 * 1000;
@@ -84,8 +83,6 @@ let failures = 0;
 for (const instance of staleActiveInstances) {
   console.log(`Pausing ${instance.id}...`);
   try {
-    // Kill all dev servers before pausing to avoid port conflicts on resume
-    await instance.exec(VM_CLEANUP_COMMANDS).catch(() => {});
     await instance.pause();
     console.log(`Paused ${instance.id}. Current status: ${instance.status}.`);
   } catch (error) {

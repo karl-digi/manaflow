@@ -3,7 +3,6 @@
 import { Instance, InstanceStatus, MorphCloudClient } from "morphcloud";
 import readline from "node:readline";
 import process from "node:process";
-import { VM_CLEANUP_COMMANDS } from "../apps/www/lib/routes/sandboxes/cleanup";
 
 interface StatusOverride {
   text: string;
@@ -218,8 +217,6 @@ async function pauseSelected(): Promise<void> {
   render();
 
   try {
-    // Kill all dev servers before pausing to avoid port conflicts on resume
-    await instance.exec(VM_CLEANUP_COMMANDS);
     await instance.pause();
     instance.status = InstanceStatus.PAUSED;
     state.statusOverrides.set(instance.id, {

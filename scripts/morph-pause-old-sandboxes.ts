@@ -2,7 +2,6 @@
 
 import { Instance, InstanceStatus, MorphCloudClient } from "morphcloud";
 import process from "node:process";
-import { VM_CLEANUP_COMMANDS } from "../apps/www/lib/routes/sandboxes/cleanup";
 
 const ONE_HOUR_SECONDS = 60 * 60;
 
@@ -32,8 +31,6 @@ async function main(): Promise<void> {
       const sandboxLabel = instance.metadata?.name ?? instance.id;
       process.stdout.write(`Pausing ${sandboxLabel}... `);
       try {
-        // Kill all dev servers before pausing to avoid port conflicts on resume
-        await instance.exec(VM_CLEANUP_COMMANDS).catch(() => {});
         await instance.pause();
         pausedCount += 1;
         console.log("done");
