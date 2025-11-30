@@ -118,7 +118,7 @@ type PreviewRunWithConfig = Doc<"previewRuns"> & {
 
 type PreviewCategoryKey = "in_progress" | "completed";
 
-const PREVIEW_CATEGORY_ORDER: PreviewCategoryKey[] = ["in_progress", "completed"];
+const PREVIEW_CATEGORY_ORDER: PreviewCategoryKey[] = ["completed", "in_progress"];
 
 const PREVIEW_CATEGORY_META: Record<
   PreviewCategoryKey,
