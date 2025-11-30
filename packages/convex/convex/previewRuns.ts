@@ -274,3 +274,44 @@ export const listByConfig = authQuery({
     return runs;
   },
 });
+
+export const listByTeam = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const take = Math.max(1, Math.min(args.limit ?? 50, 100));
+    const runs = await ctx.db
+      .query("previewRuns")
+      .withIndex("by_team_created", (q) => q.eq("teamId", teamId))
+      .order("desc")
+      .take(take);
+
+    // Fetch config info for each run
+    const configIds = [...new Set(runs.map((r) => r.previewConfigId))];
+    const configs = await Promise.all(configIds.map((id) => ctx.db.get(id)));
+    const configMap = new Map(
+      configs.filter(Boolean).map((c) => [c!._id, c!])
+    );
+
+    // Fetch task info for runs with taskRunId
+    const taskRunIds = runs
+      .map((r) => r.taskRunId)
+      .filter((id): id is NonNullable<typeof id> => id !== undefined);
+    const taskRuns = await Promise.all(taskRunIds.map((id) => ctx.db.get(id)));
+    const taskRunMap = new Map(
+      taskRuns.filter(Boolean).map((tr) => [tr!._id, tr!])
+    );
+
+    return runs.map((run) => {
+      const taskRun = run.taskRunId ? taskRunMap.get(run.taskRunId) : null;
+      return {
+        ...run,
+        configRepoFullName: configMap.get(run.previewConfigId)?.repoFullName,
+        taskId: taskRun?.taskId,
+      };
+    });
+  },
+});
