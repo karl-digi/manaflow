@@ -148,7 +148,7 @@ export const updatePreviewStatus = httpAction(async (ctx, req) => {
       previewRunId: previewRunId as Id<"previewRuns">,
       status: status as "running" | "completed" | "failed" | "skipped",
       stateReason,
-      screenshotSetId: screenshotSetId as Id<"previewScreenshotSets"> | undefined,
+      screenshotSetId: screenshotSetId as Id<"taskRunScreenshotSets"> | undefined,
     });
 
     return jsonResponse({ success: true });
@@ -198,8 +198,6 @@ export const createScreenshotSet = httpAction(async (ctx, req) => {
       mimeType: string;
       fileName?: string;
       commitSha?: string;
-      width?: number;
-      height?: number;
     }>;
   };
 
@@ -227,8 +225,6 @@ export const createScreenshotSet = httpAction(async (ctx, req) => {
           mimeType: img.mimeType,
           fileName: img.fileName,
           commitSha: img.commitSha,
-          width: img.width,
-          height: img.height,
         })),
       }
     );
@@ -414,6 +410,7 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
       await ctx.runMutation(internal.previewRuns.updateStatus, {
         previewRunId: previewRun._id,
         status: "completed",
+        screenshotSetId: taskRun.latestScreenshotSetId ?? undefined,
       });
 
       const taskCompletion = await markPreviewTaskCompleted(ctx, taskRun, task);

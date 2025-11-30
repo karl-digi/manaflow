@@ -17,6 +17,9 @@ import type { ActionCtx } from "./_generated/server";
 import { getWorkerAuth } from "./users/utils/getWorkerAuth";
 import type { WorkerAuthContext } from "./users/utils/getWorkerAuth";
 
+type TaskRunDoc = Doc<"taskRuns">;
+type TeamMembershipDoc = Doc<"teamMemberships">;
+
 const JSON_HEADERS = {
   "Content-Type": "application/json",
 };
@@ -85,9 +88,9 @@ async function ensureTeamMembership(
   }
 
   const memberships = await ctx.runQuery(api.teams.listTeamMemberships, {});
-  const hasMembership = memberships.some((membership) => {
-    return membership.teamId === team.uuid;
-  });
+  const hasMembership = memberships.some(
+    (membership: TeamMembershipDoc) => membership.teamId === team.uuid
+  );
 
   if (!hasMembership) {
     console.warn("[convex.crown] User missing membership", {
@@ -512,14 +515,14 @@ async function handleAllCompleteRequest(
     }
   );
 
-  const statuses = runsForTeam.map((run) => ({
+  const statuses = runsForTeam.map((run: TaskRunDoc) => ({
     id: run._id,
     status: run.status,
   }));
 
   const allComplete =
     runsForTeam.length > 0 &&
-    runsForTeam.every((run) => run.status === "completed");
+    runsForTeam.every((run: TaskRunDoc) => run.status === "completed");
 
   const response = {
     ok: true,
@@ -585,13 +588,15 @@ async function handleCrownCheckRequest(
       }),
     ]);
 
-  const allRunsFinished = runsForTeam.every((run) =>
+  const allRunsFinished = runsForTeam.every((run: TaskRunDoc) =>
     ["completed", "failed"].includes(run.status)
   );
   const allWorkersReported = runsForTeam.every(
-    (run) => run.status === "completed"
+    (run: TaskRunDoc) => run.status === "completed"
   );
-  const completedRuns = runsForTeam.filter((run) => run.status === "completed");
+  const completedRuns = runsForTeam.filter(
+    (run: TaskRunDoc) => run.status === "completed"
+  );
 
   const shouldEvaluate =
     allRunsFinished &&
@@ -649,7 +654,7 @@ async function handleCrownCheckRequest(
       projectFullName: task.projectFullName ?? null,
       autoPrEnabled: workspaceSettings?.autoPrEnabled ?? false,
     },
-    runs: runsForTeam.map((run) => ({
+    runs: runsForTeam.map((run: TaskRunDoc) => ({
       id: run._id,
       status: run.status as WorkerRunStatus,
       agentName: run.agentName ?? null,

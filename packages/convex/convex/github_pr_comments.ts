@@ -2,7 +2,7 @@
 import { v } from "convex/values";
 import { fetchInstallationAccessToken } from "../_shared/githubApp";
 import { internal } from "./_generated/api";
-import type { Doc, Id } from "./_generated/dataModel";
+import type { Doc } from "./_generated/dataModel";
 import {
   internalAction,
   type ActionCtx,
@@ -38,7 +38,7 @@ const parseRepoFullName = (
 };
 
 type PreviewRunDoc = Doc<"previewRuns">;
-type ScreenshotSetDoc = Doc<"previewScreenshotSets">;
+type ScreenshotSetDoc = Doc<"taskRunScreenshotSets">;
 
 const COLLAPSE_MARKER = "<!-- cmux-preview-collapsed -->";
 const COLLAPSE_SUMMARY = "Older cmux preview screenshots (latest comment is above)";
@@ -285,7 +285,7 @@ export const postPreviewComment = internalAction({
     installationId: v.number(),
     repoFullName: v.string(),
     prNumber: v.number(),
-    screenshotSetId: v.id("previewScreenshotSets"),
+    screenshotSetId: v.id("taskRunScreenshotSets"),
     previewRunId: v.id("previewRuns"),
   },
   handler: async (ctx, args) => {
@@ -412,16 +412,13 @@ export const postPreviewComment = internalAction({
         commentUrl: data.html_url,
       });
 
-      // Update preview run with comment URL
-      if (data.html_url) {
-        await ctx.runMutation(internal.previewRuns.updateStatus, {
-          previewRunId: args.previewRunId,
-          status: "completed",
-          screenshotSetId,
-          githubCommentUrl: data.html_url,
-          githubCommentId: data.id,
-        });
-      }
+      await ctx.runMutation(internal.previewRuns.updateStatus, {
+        previewRunId: args.previewRunId,
+        status: "completed",
+        screenshotSetId,
+        githubCommentUrl: data.html_url ?? previewRun.githubCommentUrl,
+        githubCommentId: data.id ?? previewRun.githubCommentId,
+      });
 
       await collapseOlderPreviewComments({
         octokit,
@@ -714,32 +711,14 @@ export const postPreviewCommentWithTaskScreenshots = internalAction({
         commentUrl: data.html_url,
       });
 
-      const previewScreenshotSetId = await ctx.runMutation(
-        internal.previewScreenshots.createScreenshotSet,
-        {
-          previewRunId,
-          status: screenshotSet.status as "completed" | "failed" | "skipped",
-          commitSha: screenshotSet.commitSha ?? previewRun.headSha,
-          error: screenshotSet.error,
-          images: screenshotSet.images.map((image) => ({
-            storageId: image.storageId as Id<"_storage">,
-            mimeType: image.mimeType,
-            fileName: image.fileName,
-            commitSha: image.commitSha,
-          })),
-        },
-      );
-
-      // Update preview run with comment URL
-      if (data.html_url) {
-        await ctx.runMutation(internal.previewRuns.updateStatus, {
-          previewRunId,
-          status: screenshotSet.status as "completed" | "failed" | "skipped",
-          stateReason: screenshotSet.error,
-          screenshotSetId: previewScreenshotSetId,
-          githubCommentUrl: data.html_url,
-        });
-      }
+      await ctx.runMutation(internal.previewRuns.updateStatus, {
+        previewRunId,
+        status: screenshotSet.status as "completed" | "failed" | "skipped",
+        stateReason: screenshotSet.error,
+        screenshotSetId: taskRun.latestScreenshotSetId,
+        githubCommentUrl: data.html_url ?? previewRun.githubCommentUrl,
+        githubCommentId: data.id ?? previewRun.githubCommentId,
+      });
 
       return { ok: true, commentId: data.id, commentUrl: data.html_url };
     } catch (error) {

@@ -116,7 +116,7 @@ export const updateStatus = internalMutation({
       v.literal("skipped"),
     ),
     stateReason: v.optional(v.string()),
-    screenshotSetId: v.optional(v.id("previewScreenshotSets")),
+    screenshotSetId: v.optional(v.id("taskRunScreenshotSets")),
     githubCommentUrl: v.optional(v.string()),
     githubCommentId: v.optional(v.number()),
   },
