@@ -1,7 +1,7 @@
 import { env } from "../_shared/convex-env";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import { httpAction } from "./_generated/server";
+import { httpAction, type ActionCtx } from "./_generated/server";
 import { runPreviewJob } from "./preview_jobs_worker";
 import { getWorkerAuth } from "./users/utils/getWorkerAuth";
 
@@ -10,6 +10,40 @@ function jsonResponse(body: unknown, status = 200): Response {
     status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+async function markPreviewTaskCompleted(
+  ctx: ActionCtx,
+  taskRun: Doc<"taskRuns">,
+  task: Doc<"tasks">,
+): Promise<{
+  runStatusUpdated: boolean;
+  taskAlreadyCompleted: boolean;
+}> {
+  const runAlreadyTerminal =
+    taskRun.status === "completed" ||
+    taskRun.status === "failed" ||
+    taskRun.status === "skipped";
+
+  if (!runAlreadyTerminal) {
+    await ctx.runMutation(internal.taskRuns.updateStatus, {
+      id: taskRun._id,
+      status: "completed",
+    });
+  }
+
+  const taskAlreadyCompleted = task.isCompleted === true;
+  if (!taskAlreadyCompleted) {
+    await ctx.runMutation(internal.tasks.setCompletedInternal, {
+      taskId: task._id,
+      isCompleted: true,
+    });
+  }
+
+  return {
+    runStatusUpdated: !runAlreadyTerminal,
+    taskAlreadyCompleted,
+  };
 }
 
 export const dispatchPreviewJob = httpAction(async (ctx, req) => {
@@ -64,6 +98,99 @@ export const dispatchPreviewJob = httpAction(async (ctx, req) => {
       500,
     );
   }
+});
+
+/**
+ * Mark a preview task run and task as completed once screenshots finish.
+ */
+export const completePreviewTask = httpAction(async (ctx, req) => {
+  const workerAuth = await getWorkerAuth(req, { loggerPrefix: "[preview-jobs-http]" });
+  if (!workerAuth) {
+    console.error("[preview-jobs-http] Unauthorized preview task completion request");
+    return jsonResponse({ error: "Unauthorized" }, 401);
+  }
+
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return jsonResponse({ error: "Invalid JSON" }, 400);
+  }
+
+  if (!body || typeof body !== "object" || !("taskRunId" in body)) {
+    return jsonResponse({ error: "Missing taskRunId" }, 400);
+  }
+
+  const { taskRunId } = body as { taskRunId?: string };
+  const logContext = { taskRunId };
+
+  if (!taskRunId) {
+    return jsonResponse({ error: "taskRunId is required" }, 400);
+  }
+
+  const taskRun = await ctx.runQuery(internal.taskRuns.getById, {
+    id: taskRunId as Id<"taskRuns">,
+  });
+
+  if (!taskRun) {
+    console.error("[preview-jobs-http] Task run not found for preview completion", logContext);
+    return jsonResponse({ error: "Task run not found" }, 404);
+  }
+
+  if (
+    taskRun.teamId !== workerAuth.payload.teamId ||
+    taskRun.userId !== workerAuth.payload.userId
+  ) {
+    console.error("[preview-jobs-http] Unauthorized preview task completion attempt", {
+      ...logContext,
+      workerTeamId: workerAuth.payload.teamId,
+      taskRunTeamId: taskRun.teamId,
+    });
+    return jsonResponse({ error: "Unauthorized" }, 401);
+  }
+
+  const task = await ctx.runQuery(internal.tasks.getByIdInternal, {
+    id: taskRun.taskId,
+  });
+
+  if (!task) {
+    console.error("[preview-jobs-http] Task not found for preview completion", {
+      ...logContext,
+      taskId: taskRun.taskId,
+    });
+    return jsonResponse({ error: "Task not found" }, 404);
+  }
+
+  if (
+    task.teamId !== workerAuth.payload.teamId ||
+    task.userId !== workerAuth.payload.userId
+  ) {
+    console.error("[preview-jobs-http] Unauthorized preview task completion attempt (task)", {
+      ...logContext,
+      workerTeamId: workerAuth.payload.teamId,
+      taskTeamId: task.teamId,
+    });
+    return jsonResponse({ error: "Unauthorized" }, 401);
+  }
+
+  const { runStatusUpdated, taskAlreadyCompleted } = await markPreviewTaskCompleted(
+    ctx,
+    taskRun,
+    task,
+  );
+
+  console.log("[preview-jobs-http] Preview task marked complete", {
+    ...logContext,
+    runStatusUpdated,
+    taskAlreadyCompleted,
+  });
+
+  return jsonResponse({
+    ok: true,
+    runStatusUpdated,
+    taskCompleted: true,
+    alreadyCompleted: taskAlreadyCompleted,
+  });
 });
 
 /**
@@ -275,6 +402,18 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
       return jsonResponse({ error: "Task run not found" }, 404);
     }
 
+    const task = await ctx.runQuery(internal.tasks.getByIdInternal, {
+      id: taskRun.taskId,
+    });
+
+    if (!task) {
+      console.error("[preview-jobs-http] Task not found for preview completion", {
+        taskRunId,
+        taskId: taskRun.taskId,
+      });
+      return jsonResponse({ error: "Task not found" }, 404);
+    }
+
     if (!taskRun.latestScreenshotSetId) {
       console.log("[preview-jobs-http] No screenshots found for task run", {
         taskRunId,
@@ -285,16 +424,14 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
         stateReason: "No screenshots available",
       });
 
-      // Mark the task as complete since preview job is done
-      await ctx.runMutation(internal.tasks.setCompletedInternal, {
-        taskId: taskRun.taskId,
-        isCompleted: true,
-      });
+      const taskCompletion = await markPreviewTaskCompleted(ctx, taskRun, task);
 
       return jsonResponse({
         success: true,
         skipped: true,
-        reason: "No screenshots available"
+        reason: "No screenshots available",
+        runStatusUpdated: taskCompletion.runStatusUpdated,
+        alreadyCompleted: taskCompletion.taskAlreadyCompleted,
       });
     }
 
@@ -341,15 +478,13 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
           commentUrl: commentResult.commentUrl,
         });
 
-        // Mark the task as complete since preview job is done
-        await ctx.runMutation(internal.tasks.setCompletedInternal, {
-          taskId: taskRun.taskId,
-          isCompleted: true,
-        });
+        const taskCompletion = await markPreviewTaskCompleted(ctx, taskRun, task);
 
         return jsonResponse({
           success: true,
           commentUrl: commentResult.commentUrl,
+          runStatusUpdated: taskCompletion.runStatusUpdated,
+          alreadyCompleted: taskCompletion.taskAlreadyCompleted,
         });
       } else {
         console.error("[preview-jobs-http] Failed to post GitHub comment", {
@@ -374,16 +509,14 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
         status: "completed",
       });
 
-      // Mark the task as complete since preview job is done
-      await ctx.runMutation(internal.tasks.setCompletedInternal, {
-        taskId: taskRun.taskId,
-        isCompleted: true,
-      });
+      const taskCompletion = await markPreviewTaskCompleted(ctx, taskRun, task);
 
       return jsonResponse({
         success: true,
         skipped: true,
         reason: "No GitHub installation ID",
+        runStatusUpdated: taskCompletion.runStatusUpdated,
+        alreadyCompleted: taskCompletion.taskAlreadyCompleted,
       });
     }
   } catch (error) {
