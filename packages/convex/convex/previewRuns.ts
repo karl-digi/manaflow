@@ -274,3 +274,33 @@ export const listByConfig = authQuery({
     return runs;
   },
 });
+
+export const listByTeam = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const take = Math.max(1, Math.min(args.limit ?? 50, 100));
+    const runs = await ctx.db
+      .query("previewRuns")
+      .withIndex("by_team_created", (q) => q.eq("teamId", teamId))
+      .order("desc")
+      .take(take);
+
+    // Fetch associated configs
+    const configIds = [...new Set(runs.map((r) => r.previewConfigId))];
+    const configs = await Promise.all(configIds.map((id) => ctx.db.get(id)));
+    const configMap = new Map(
+      configs
+        .filter((c): c is NonNullable<typeof c> => c !== null)
+        .map((c) => [c._id, c])
+    );
+
+    return runs.map((run) => ({
+      ...run,
+      config: configMap.get(run.previewConfigId) ?? null,
+    }));
+  },
+});
