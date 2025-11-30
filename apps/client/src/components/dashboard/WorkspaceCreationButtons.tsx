@@ -6,6 +6,10 @@ import {
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { useTheme } from "@/components/theme/use-theme";
+import {
+  CMUX_SH_LIMITED_FEATURES_MESSAGE,
+  useIsCmuxSh,
+} from "@/lib/cmux-sh";
 import { api } from "@cmux/convex/api";
 import type { Id } from "@cmux/convex/dataModel";
 import type {
@@ -31,6 +35,7 @@ export function WorkspaceCreationButtons({
   const { socket } = useSocket();
   const { addTaskToExpand } = useExpandTasks();
   const { theme } = useTheme();
+  const isCmuxSh = useIsCmuxSh();
   const [isCreatingLocal, setIsCreatingLocal] = useState(false);
   const [isCreatingCloud, setIsCreatingCloud] = useState(false);
 
@@ -38,6 +43,11 @@ export function WorkspaceCreationButtons({
   const createTask = useMutation(api.tasks.create);
 
   const handleCreateLocalWorkspace = useCallback(async () => {
+    if (isCmuxSh) {
+      toast.info(CMUX_SH_LIMITED_FEATURES_MESSAGE);
+      return;
+    }
+
     if (!socket) {
       toast.error("Socket not connected");
       return;
@@ -110,9 +120,15 @@ export function WorkspaceCreationButtons({
     teamSlugOrId,
     reserveLocalWorkspace,
     addTaskToExpand,
+    isCmuxSh,
   ]);
 
   const handleCreateCloudWorkspace = useCallback(async () => {
+    if (isCmuxSh) {
+      toast.info(CMUX_SH_LIMITED_FEATURES_MESSAGE);
+      return;
+    }
+
     if (!socket) {
       toast.error("Socket not connected");
       return;
@@ -190,6 +206,7 @@ export function WorkspaceCreationButtons({
     createTask,
     addTaskToExpand,
     theme,
+    isCmuxSh,
   ]);
 
   const canCreateLocal = selectedProject.length > 0 && !isEnvSelected;

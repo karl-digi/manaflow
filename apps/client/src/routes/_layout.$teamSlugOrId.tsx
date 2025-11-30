@@ -4,6 +4,7 @@ import { Sidebar } from "@/components/Sidebar";
 import { SIDEBAR_PRS_DEFAULT_LIMIT } from "@/components/sidebar/const";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { ExpandTasksProvider } from "@/contexts/expand-tasks/ExpandTasksProvider";
+import { CmuxShDesktopBanner } from "@/components/CmuxShDesktopBanner";
 import { cachedGetUser } from "@/lib/cachedGetUser";
 import { setLastTeamSlugOrId } from "@/lib/lastTeam";
 import { stackClientApp } from "@/lib/stack";
@@ -74,6 +75,7 @@ function LayoutComponent() {
   return (
     <ExpandTasksProvider>
       <CommandBar teamSlugOrId={teamSlugOrId} />
+      <CmuxShDesktopBanner />
 
       <div className="flex flex-row grow min-h-0 h-dvh bg-white dark:bg-black">
         <Sidebar tasks={displayTasks} teamSlugOrId={teamSlugOrId} />

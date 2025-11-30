@@ -24,6 +24,10 @@ import { createFakeConvexId } from "@/lib/fakeConvexId";
 import { attachTaskLifecycleListeners } from "@/lib/socket/taskLifecycleListeners";
 import { branchesQueryOptions } from "@/queries/branches";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
+import {
+  CMUX_SH_LIMITED_FEATURES_MESSAGE,
+  useIsCmuxSh,
+} from "@/lib/cmux-sh";
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
 import type {
@@ -105,6 +109,7 @@ function DashboardComponent() {
   const { socket } = useSocket();
   const { theme } = useTheme();
   const { addTaskToExpand } = useExpandTasks();
+  const isCmuxSh = useIsCmuxSh();
 
   const [selectedProject, setSelectedProject] = useState<string[]>(() => {
     const stored = localStorage.getItem(`selectedProject-${teamSlugOrId}`);
@@ -411,6 +416,11 @@ function DashboardComponent() {
   }, [selectedBranch, branchNames, remoteDefaultBranch]);
 
   const handleStartTask = useCallback(async () => {
+    if (isCmuxSh) {
+      toast.info(CMUX_SH_LIMITED_FEATURES_MESSAGE);
+      return;
+    }
+
     if (isStartingTaskRef.current) {
       return;
     }
@@ -579,6 +589,7 @@ function DashboardComponent() {
     selectedProject,
     taskDescription,
     socket,
+    isCmuxSh,
     effectiveSelectedBranch,
     handleTaskDescriptionChange,
     createTask,
@@ -934,6 +945,12 @@ function DashboardComponent() {
     effectiveSelectedBranch,
   ]);
 
+  const startTaskDisabledReason = isCmuxSh
+    ? CMUX_SH_LIMITED_FEATURES_MESSAGE
+    : isStartingTask
+      ? "Starting task..."
+      : undefined;
+
   return (
     <FloatingPane header={<TitleBar title="cmux" />}>
       <div className="flex flex-col grow relative">
@@ -974,6 +991,7 @@ function DashboardComponent() {
               canSubmit={canSubmit}
               onStartTask={handleStartTask}
               isStartingTask={isStartingTask}
+              startTaskDisabledReason={startTaskDisabledReason}
             />
             {shouldShowWorkspaceSetup ? (
               <WorkspaceSetupPanel
@@ -1052,6 +1070,7 @@ type DashboardMainCardProps = {
   canSubmit: boolean;
   onStartTask: () => void;
   isStartingTask: boolean;
+  startTaskDisabledReason?: string;
 };
 
 function DashboardMainCard({
@@ -1081,6 +1100,7 @@ function DashboardMainCard({
   canSubmit,
   onStartTask,
   isStartingTask,
+  startTaskDisabledReason,
 }: DashboardMainCardProps) {
   return (
     <div className="relative bg-white dark:bg-neutral-700/50 border border-neutral-500/15 dark:border-neutral-500/15 rounded-2xl transition-all">
@@ -1119,7 +1139,10 @@ function DashboardMainCard({
           canSubmit={canSubmit}
           onStartTask={onStartTask}
           isStarting={isStartingTask}
-          disabledReason={isStartingTask ? "Starting task..." : undefined}
+          disabledReason={
+            startTaskDisabledReason ??
+            (isStartingTask ? "Starting task..." : undefined)
+          }
         />
       </DashboardInputFooter>
     </div>

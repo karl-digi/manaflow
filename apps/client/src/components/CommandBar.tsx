@@ -11,6 +11,10 @@ import {
   rewriteLocalWorkspaceUrlIfNeeded,
   toProxyWorkspaceUrl,
 } from "@/lib/toProxyWorkspaceUrl";
+import {
+  CMUX_SH_LIMITED_FEATURES_MESSAGE,
+  useIsCmuxSh,
+} from "@/lib/cmux-sh";
 import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
@@ -319,6 +323,7 @@ export function CommandBar({
   const { setTheme, theme } = useTheme();
   const { addTaskToExpand } = useExpandTasks();
   const { socket } = useSocket();
+  const isCmuxSh = useIsCmuxSh();
   const localServeWeb = useLocalVSCodeServeWebQuery();
   const preloadTeamDashboard = useCallback(
     async (targetTeamSlugOrId: string | undefined) => {
@@ -695,6 +700,10 @@ export function CommandBar({
       if (isCreatingLocalWorkspace) {
         return;
       }
+      if (isCmuxSh) {
+        toast.info(CMUX_SH_LIMITED_FEATURES_MESSAGE);
+        return;
+      }
       if (!socket) {
         console.warn(
           "Socket is not connected yet. Please try again momentarily."
@@ -843,6 +852,7 @@ export function CommandBar({
       router,
       socket,
       teamSlugOrId,
+      isCmuxSh,
     ]
   );
 
@@ -858,6 +868,10 @@ export function CommandBar({
   const createCloudWorkspaceFromEnvironment = useCallback(
     async (environmentId: Id<"environments">) => {
       if (isCreatingCloudWorkspace) {
+        return;
+      }
+      if (isCmuxSh) {
+        toast.info(CMUX_SH_LIMITED_FEATURES_MESSAGE);
         return;
       }
       if (!socket) {
@@ -936,12 +950,17 @@ export function CommandBar({
       socket,
       teamSlugOrId,
       theme,
+      isCmuxSh,
     ]
   );
 
   const createCloudWorkspaceFromRepo = useCallback(
     async (projectFullName: string) => {
       if (isCreatingCloudWorkspace) {
+        return;
+      }
+      if (isCmuxSh) {
+        toast.info(CMUX_SH_LIMITED_FEATURES_MESSAGE);
         return;
       }
       if (!socket) {
@@ -1016,6 +1035,7 @@ export function CommandBar({
       socket,
       teamSlugOrId,
       theme,
+      isCmuxSh,
     ]
   );
 
@@ -1311,6 +1331,15 @@ export function CommandBar({
   const handleSelect = useCallback(
     async (value: string) => {
       clearCommandInput();
+      if (
+        isCmuxSh &&
+        (value === "new-task" ||
+          value === "local-workspaces" ||
+          value === "cloud-workspaces")
+      ) {
+        toast.info(CMUX_SH_LIMITED_FEATURES_MESSAGE);
+        return;
+      }
       if (value === "teams:switch") {
         setActivePage("teams");
         return;
@@ -1520,6 +1549,7 @@ export function CommandBar({
       stackUser,
       stackTeams,
       closeCommand,
+      isCmuxSh,
     ]
   );
 
@@ -1535,6 +1565,7 @@ export function CommandBar({
           ["new-task"]
         ),
         className: baseCommandItemClassName,
+        disabled: isCmuxSh,
         execute: () => handleSelect("new-task"),
         renderContent: () => (
           <>
@@ -1553,6 +1584,7 @@ export function CommandBar({
           ["local-workspaces"]
         ),
         className: baseCommandItemClassName,
+        disabled: isCmuxSh,
         execute: () => handleSelect("local-workspaces"),
         renderContent: () => (
           <>
@@ -1571,6 +1603,7 @@ export function CommandBar({
           ["cloud-workspaces"]
         ),
         className: baseCommandItemClassName,
+        disabled: isCmuxSh,
         execute: () => handleSelect("cloud-workspaces"),
         renderContent: () => (
           <>
@@ -1931,7 +1964,7 @@ export function CommandBar({
       : [];
 
     return [...baseEntries, ...taskEntries, ...electronEntries];
-  }, [allTasks, handleSelect, stackUser]);
+  }, [allTasks, handleSelect, stackUser, isCmuxSh]);
 
   const localWorkspaceEntries = useMemo<CommandListEntry[]>(() => {
     return localWorkspaceOptions.map((option) => {
@@ -1944,7 +1977,7 @@ export function CommandBar({
           option.repoBaseName,
         ]),
         className: baseCommandItemClassName,
-        disabled: isCreatingLocalWorkspace,
+        disabled: isCreatingLocalWorkspace || isCmuxSh,
         execute: () => handleLocalWorkspaceSelect(option.fullName),
         renderContent: () => (
           <>
@@ -1960,6 +1993,7 @@ export function CommandBar({
     handleLocalWorkspaceSelect,
     isCreatingLocalWorkspace,
     localWorkspaceOptions,
+    isCmuxSh,
   ]);
 
   const cloudWorkspaceEntries = useMemo<CommandListEntry[]>(() => {
@@ -1972,7 +2006,7 @@ export function CommandBar({
           keywords: option.keywords,
           searchText: buildSearchText(option.name, option.keywords),
           className: baseCommandItemClassName,
-          disabled: isCreatingCloudWorkspace,
+          disabled: isCreatingCloudWorkspace || isCmuxSh,
           execute: () => handleCloudWorkspaceSelect(option),
           renderContent: () => (
             <>
@@ -1993,7 +2027,7 @@ export function CommandBar({
             option.repoBaseName,
           ]),
           className: baseCommandItemClassName,
-          disabled: isCreatingCloudWorkspace,
+          disabled: isCreatingCloudWorkspace || isCmuxSh,
           execute: () => handleCloudWorkspaceSelect(option),
           renderContent: () => (
             <>
@@ -2010,6 +2044,7 @@ export function CommandBar({
     cloudWorkspaceOptions,
     handleCloudWorkspaceSelect,
     isCreatingCloudWorkspace,
+    isCmuxSh,
   ]);
 
   const {

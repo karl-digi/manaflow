@@ -14,6 +14,10 @@ import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { normalizeGitRef } from "@/lib/refWithOrigin";
 import { cn } from "@/lib/utils";
+import {
+  CMUX_SH_LIMITED_FEATURES_MESSAGE,
+  useIsCmuxSh,
+} from "@/lib/cmux-sh";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
@@ -88,6 +92,7 @@ const RestartTaskForm = memo(function RestartTaskForm({
   const { socket } = useSocket();
   const { theme } = useTheme();
   const { addTaskToExpand } = useExpandTasks();
+  const isCmuxSh = useIsCmuxSh();
   const createTask = useMutation(api.tasks.create);
   const navigate = useNavigate();
   const editorApiRef = useRef<EditorApi | null>(null);
@@ -107,6 +112,10 @@ const RestartTaskForm = memo(function RestartTaskForm({
   );
 
   const handleRestartTask = useCallback(async () => {
+    if (isCmuxSh) {
+      toast.info(CMUX_SH_LIMITED_FEATURES_MESSAGE);
+      return;
+    }
     if (!task) {
       toast.error("Task data is still loading. Try again in a moment.");
       return;
@@ -250,6 +259,7 @@ const RestartTaskForm = memo(function RestartTaskForm({
     teamSlugOrId,
     theme,
     focusTask,
+    isCmuxSh,
   ]);
 
   const handleFormSubmit = useCallback(
@@ -265,13 +275,17 @@ const RestartTaskForm = memo(function RestartTaskForm({
     isRestartingTask ||
     (overridePrompt ? !trimmedFollowUp : !trimmedFollowUp && !task?.text) ||
     !socket ||
-    !task;
+    !task ||
+    isCmuxSh;
   const isMac =
     typeof navigator !== "undefined" &&
     navigator.userAgent.toUpperCase().includes("MAC");
   const restartDisabledReason = useMemo(() => {
     if (isRestartingTask) {
       return "Starting follow-up...";
+    }
+    if (isCmuxSh) {
+      return CMUX_SH_LIMITED_FEATURES_MESSAGE;
     }
     if (!task) {
       return "Task data loading...";
@@ -286,7 +300,14 @@ const RestartTaskForm = memo(function RestartTaskForm({
       return "Add follow-up context";
     }
     return undefined;
-  }, [isRestartingTask, overridePrompt, socket, task, trimmedFollowUp]);
+  }, [
+    isRestartingTask,
+    isCmuxSh,
+    overridePrompt,
+    socket,
+    task,
+    trimmedFollowUp,
+  ]);
 
   return (
     <div className="fixed bottom-0 left-0 right-0 z-[var(--z-popover)] border-t border-transparent px-3.5 pb-3.5 pt-2 pointer-events-none">
@@ -614,6 +635,7 @@ function RunDiffPage() {
   const { taskId, teamSlugOrId, runId } = Route.useParams();
   const [diffControls, setDiffControls] = useState<DiffControls | null>(null);
   const { socket } = useSocket();
+  const isCmuxSh = useIsCmuxSh();
   const task = useQuery(api.tasks.getById, {
     teamSlugOrId,
     id: taskId,
@@ -750,6 +772,11 @@ function RunDiffPage() {
   const navigate = useNavigate();
 
   const handleOpenLocalWorkspace = useCallback(() => {
+    if (isCmuxSh) {
+      toast.info(CMUX_SH_LIMITED_FEATURES_MESSAGE);
+      return;
+    }
+
     if (!socket) {
       toast.error("Socket not connected");
       return;
@@ -800,7 +827,15 @@ function RunDiffPage() {
         }
       }
     );
-  }, [socket, teamSlugOrId, primaryRepo, selectedRun?.newBranch, navigate, taskId]);
+  }, [
+    socket,
+    teamSlugOrId,
+    primaryRepo,
+    selectedRun?.newBranch,
+    navigate,
+    taskId,
+    isCmuxSh,
+  ]);
 
   // 404 if selected run is missing
   if (!selectedRun) {
@@ -833,7 +868,9 @@ function RunDiffPage() {
             onCollapseAll={diffControls?.collapseAll}
             onExpandAllChecks={expandAllChecks}
             onCollapseAllChecks={collapseAllChecks}
-            onOpenLocalWorkspace={isWorkspace ? undefined : handleOpenLocalWorkspace}
+            onOpenLocalWorkspace={
+              isWorkspace || isCmuxSh ? undefined : handleOpenLocalWorkspace
+            }
             teamSlugOrId={teamSlugOrId}
           />
           {task?.text && (
