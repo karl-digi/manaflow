@@ -12,15 +12,45 @@ import { MorphCloudClient } from "morphcloud";
 import { randomBytes } from "node:crypto";
 import { determineHttpServiceUpdates } from "./determine-http-service-updates";
 
-const CLEANUP_COMMANDS = [
-  "tmux kill-session -t cmux 2>/dev/null || true",
-  "tmux kill-server 2>/dev/null || true",
-  "git config --global --unset user.name 2>/dev/null || true",
-  "git config --global --unset user.email 2>/dev/null || true",
-  "git config --global --unset credential.helper 2>/dev/null || true",
-  "git credential-cache exit 2>/dev/null || true",
-  "gh auth logout 2>/dev/null || true",
-].join(" && ");
+const DEV_PORTS_TO_CLEAN = [5173, 9776, 9777, 9779] as const;
+const DEV_PORT_LIST = DEV_PORTS_TO_CLEAN.join(" ");
+
+const CLEANUP_COMMANDS = String.raw`tmux kill-session -t cmux 2>/dev/null || true
+tmux kill-server 2>/dev/null || true
+# Kill common dev processes that may survive tmux shutdown and hold ports
+pkill -f 'bun run dev --host 0.0.0.0' 2>/dev/null || true
+pkill -f 'bun run dev --host' 2>/dev/null || true
+pkill -f 'bun run dev' 2>/dev/null || true
+pkill -f 'bunx convex dev' 2>/dev/null || true
+pkill -f 'convex dev' 2>/dev/null || true
+pkill -f 'bun run generate-openapi-client:watch' 2>/dev/null || true
+pkill -f 'pnpm dev:electron' 2>/dev/null || true
+pkill -f 'vite dev' 2>/dev/null || true
+pkill -f 'next dev' 2>/dev/null || true
+for port in ${DEV_PORT_LIST}; do
+  if command -v fuser >/dev/null 2>&1; then
+    fuser -k -TERM "\${port}/tcp" 2>/dev/null || true
+    sleep 0.2
+    fuser -k -KILL "\${port}/tcp" 2>/dev/null || true
+  else
+    pids=""
+    if command -v lsof >/dev/null 2>&1; then
+      pids="$(lsof -ti TCP:\${port} -sTCP:LISTEN 2>/dev/null || true)"
+    elif command -v ss >/dev/null 2>&1; then
+      pids="$(ss -ltnp 2>/dev/null | awk -v p=":\${port}" '$4 ~ p {print $0}' | grep -o "pid=[0-9]*" | cut -d= -f2 | tr '\n' ' ')"
+    fi
+    if [ -n "$pids" ]; then
+      kill $pids 2>/dev/null || true
+      sleep 0.2
+      kill -9 $pids 2>/dev/null || true
+    fi
+  fi
+done
+git config --global --unset user.name 2>/dev/null || true
+git config --global --unset user.email 2>/dev/null || true
+git config --global --unset credential.helper 2>/dev/null || true
+git credential-cache exit 2>/dev/null || true
+gh auth logout 2>/dev/null || true`;
 
 export const environmentsRouter = new OpenAPIHono();
 
