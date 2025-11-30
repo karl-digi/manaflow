@@ -190,26 +190,34 @@ export function PreviewDashboard({
   );
 
   const handleStartPreview = useCallback(async () => {
-    if (!selectedTeamSlugOrIdState) {
-      setErrorMessage("Select a team before continuing.");
-      return;
-    }
-
     const repoName = parseGithubUrl(repoUrlInput);
     if (!repoName) {
       setErrorMessage("Please enter a valid GitHub URL or owner/repo");
       return;
     }
-    const params = new URLSearchParams({ repo: repoName });
-    params.set("team", selectedTeamSlugOrIdState);
-    const configurePath = `/preview/configure?${params.toString()}`;
 
+    // For unauthenticated users, redirect to sign-in without requiring team selection
     if (!isAuthenticated) {
+      const params = new URLSearchParams({ repo: repoName });
+      // Include team if available, otherwise the configure page will handle it after sign-in
+      if (selectedTeamSlugOrIdState) {
+        params.set("team", selectedTeamSlugOrIdState);
+      }
+      const configurePath = `/preview/configure?${params.toString()}`;
       setErrorMessage(null);
       setNavigatingRepo("__url_input__");
       window.location.href = `/handler/sign-in?after_auth_return_to=${encodeURIComponent(configurePath)}`;
       return;
     }
+
+    if (!selectedTeamSlugOrIdState) {
+      setErrorMessage("Select a team before continuing.");
+      return;
+    }
+
+    const params = new URLSearchParams({ repo: repoName });
+    params.set("team", selectedTeamSlugOrIdState);
+    const configurePath = `/preview/configure?${params.toString()}`;
 
     if (!hasGithubAppInstallation) {
       setErrorMessage(null);
@@ -563,7 +571,7 @@ export function PreviewDashboard({
           </div>
           <Button
             onClick={() => void handleStartPreview()}
-            disabled={!repoUrlInput.trim() || navigatingRepo !== null || !selectedTeamSlugOrIdState}
+            disabled={!repoUrlInput.trim() || navigatingRepo !== null || (isAuthenticated && !selectedTeamSlugOrIdState)}
             className="h-10 px-4 rounded-none bg-white text-black hover:bg-neutral-200 text-sm font-medium"
           >
             {navigatingRepo === "__url_input__" ? (
