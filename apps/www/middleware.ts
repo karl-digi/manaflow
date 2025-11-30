@@ -10,6 +10,10 @@ export function middleware(request: NextRequest) {
     return NextResponse.rewrite(new URL("/heatmap", request.url));
   }
 
+  if (hostname === "preview.new" && pathname === "/") {
+    return NextResponse.rewrite(new URL("/preview", request.url));
+  }
+
   // Check if this is a PR review page that requires authentication
   const isPRReviewPage =
     /^\/[^/]+\/[^/]+\/pull\/\d+$/.test(pathname) ||

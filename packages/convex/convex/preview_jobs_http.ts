@@ -130,10 +130,9 @@ export const updatePreviewStatus = httpAction(async (ctx, req) => {
     return jsonResponse({ error: "Missing required fields" }, 400);
   }
 
-  const { previewRunId, status, stateReason, screenshotSetId } = body as {
+  const { previewRunId, status, screenshotSetId } = body as {
     previewRunId: string;
     status: string;
-    stateReason?: string;
     screenshotSetId?: string;
   };
 
@@ -151,8 +150,7 @@ export const updatePreviewStatus = httpAction(async (ctx, req) => {
     await ctx.runMutation(internal.previewRuns.updateStatus, {
       previewRunId: previewRunId as Id<"previewRuns">,
       status: status as "running" | "completed" | "failed" | "skipped",
-      stateReason,
-      screenshotSetId: screenshotSetId as Id<"previewScreenshotSets"> | undefined,
+      screenshotSetId: screenshotSetId as Id<"taskRunScreenshotSets"> | undefined,
     });
 
     return jsonResponse({ success: true });
@@ -202,8 +200,6 @@ export const createScreenshotSet = httpAction(async (ctx, req) => {
       mimeType: string;
       fileName?: string;
       commitSha?: string;
-      width?: number;
-      height?: number;
     }>;
   };
 
@@ -231,8 +227,6 @@ export const createScreenshotSet = httpAction(async (ctx, req) => {
           mimeType: img.mimeType,
           fileName: img.fileName,
           commitSha: img.commitSha,
-          width: img.width,
-          height: img.height,
         })),
       }
     );
@@ -332,7 +326,6 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
       await ctx.runMutation(internal.previewRuns.updateStatus, {
         previewRunId: previewRun._id,
         status: "skipped",
-        stateReason: "No screenshots available",
       });
 
       const taskCompletion = await markPreviewTaskCompleted(ctx, taskRun, task);
@@ -418,6 +411,7 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
       await ctx.runMutation(internal.previewRuns.updateStatus, {
         previewRunId: previewRun._id,
         status: "completed",
+        screenshotSetId: taskRun.latestScreenshotSetId ?? undefined,
       });
 
       const taskCompletion = await markPreviewTaskCompleted(ctx, taskRun, task);

@@ -53,7 +53,6 @@ export const enqueueFromWebhook = internalMutation({
       headRepoFullName,
       headRepoCloneUrl: args.headRepoCloneUrl,
       status: "pending",
-      stateReason: undefined,
       dispatchedAt: undefined,
       startedAt: undefined,
       completedAt: undefined,
@@ -115,8 +114,7 @@ export const updateStatus = internalMutation({
       v.literal("failed"),
       v.literal("skipped"),
     ),
-    stateReason: v.optional(v.string()),
-    screenshotSetId: v.optional(v.id("previewScreenshotSets")),
+    screenshotSetId: v.optional(v.id("taskRunScreenshotSets")),
     githubCommentUrl: v.optional(v.string()),
     githubCommentId: v.optional(v.number()),
   },
@@ -128,7 +126,6 @@ export const updateStatus = internalMutation({
     const now = Date.now();
     const patch: Record<string, unknown> = {
       status: args.status,
-      stateReason: args.stateReason,
       screenshotSetId: args.screenshotSetId,
       githubCommentUrl: args.githubCommentUrl ?? run.githubCommentUrl,
       githubCommentId: args.githubCommentId ?? run.githubCommentId,
@@ -139,37 +136,6 @@ export const updateStatus = internalMutation({
     } else if (args.status === "running" && !run.startedAt) {
       patch.startedAt = now;
     }
-    await ctx.db.patch(run._id, patch);
-  },
-});
-
-export const updateInstanceMetadata = internalMutation({
-  args: {
-    previewRunId: v.id("previewRuns"),
-    morphInstanceId: v.optional(v.string()),
-    morphInstanceStoppedAt: v.optional(v.number()),
-    clearStoppedAt: v.optional(v.boolean()),
-  },
-  handler: async (ctx, args) => {
-    const run = await ctx.db.get(args.previewRunId);
-    if (!run) {
-      throw new Error("Preview run not found");
-    }
-
-    const patch: Record<string, unknown> = {
-      updatedAt: Date.now(),
-    };
-
-    if ("morphInstanceId" in args) {
-      patch.morphInstanceId = args.morphInstanceId;
-    }
-
-    if (args.clearStoppedAt) {
-      patch.morphInstanceStoppedAt = undefined;
-    } else if ("morphInstanceStoppedAt" in args) {
-      patch.morphInstanceStoppedAt = args.morphInstanceStoppedAt;
-    }
-
     await ctx.db.patch(run._id, patch);
   },
 });
