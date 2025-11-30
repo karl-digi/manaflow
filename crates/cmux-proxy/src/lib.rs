@@ -20,7 +20,7 @@ use hyper::service::service_fn;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use std::sync::Arc;
-use tokio::io::{copy_bidirectional, AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
+use tokio::io::{copy_bidirectional_with_sizes, AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Notify;
 use tokio::task::{JoinHandle, JoinSet};
@@ -35,6 +35,11 @@ const HTTP2_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 const HOST_OVERRIDE_HEADER: &str = "X-Cmux-Host-Override";
 const HTTP2_KEEP_ALIVE_INTERVAL_SECS: u64 = 30;
 const HTTP2_KEEP_ALIVE_TIMEOUT_SECS: u64 = 10;
+
+// Buffer sizes for bidirectional copy in tunnels (WebSocket, CONNECT)
+// Use small buffers for low latency - critical for interactive terminals
+// Nagle's algorithm + large buffers = ~40ms+ delay per keystroke
+const TUNNEL_BUFFER_SIZE: usize = 2 * 1024;
 
 trait ClientKeepAliveConfig {
     fn set_pool_max_idle_per_host(&mut self, max: usize);
@@ -307,6 +312,7 @@ where
     // Hyper client for proxying HTTP/1.1
     let mut connector = HttpConnector::new();
     connector.set_connect_timeout(Some(Duration::from_secs(5)));
+    connector.set_nodelay(true); // Critical for low-latency terminals
     let mut client_builder = Client::builder(TokioExecutor::new());
     configure_http_client_builder(&mut client_builder);
     let client: Client<HttpConnector, BoxBody> = client_builder.build(connector);
@@ -363,6 +369,7 @@ where
     // Prepare shared client and shutdown notifier
     let mut connector = HttpConnector::new();
     connector.set_connect_timeout(Some(Duration::from_secs(5)));
+    connector.set_nodelay(true); // Critical for low-latency terminals
     let mut client_builder = Client::builder(TokioExecutor::new());
     configure_http_client_builder(&mut client_builder);
     let client: Client<HttpConnector, BoxBody> = client_builder.build(connector);
@@ -460,6 +467,9 @@ async fn serve_client_stream(
     client: Client<HttpConnector, BoxBody>,
     cfg: ProxyConfig,
 ) -> Result<(), BoxError> {
+    // Set TCP_NODELAY for low-latency responses (critical for interactive terminals)
+    let _ = stream.set_nodelay(true);
+
     let (buffered_stream, client_prefers_http2) = sniff_http2_preface(stream).await?;
     let io = TokioIo::new(buffered_stream);
     let svc_client = client.clone();
@@ -994,7 +1004,13 @@ async fn handle_upgrade(
             Ok((client_upgraded, upstream_upgraded)) => {
                 let mut client_io = TokioIo::new(client_upgraded);
                 let mut upstream_io = TokioIo::new(upstream_upgraded);
-                if let Err(e) = copy_bidirectional(&mut client_io, &mut upstream_io).await {
+                // Use small buffers for low latency (critical for terminal keystrokes)
+                if let Err(e) = copy_bidirectional_with_sizes(
+                    &mut client_io,
+                    &mut upstream_io,
+                    TUNNEL_BUFFER_SIZE,
+                    TUNNEL_BUFFER_SIZE,
+                ).await {
                     warn!(%e, "upgrade tunnel error");
                 }
                 // Try to shutdown both sides
@@ -1046,7 +1062,15 @@ async fn handle_connect(
                 let mut client_io = TokioIo::new(upgraded);
                 match TcpStream::connect(&target).await {
                     Ok(mut upstream) => {
-                        if let Err(e) = copy_bidirectional(&mut client_io, &mut upstream).await {
+                        // Set TCP_NODELAY for low-latency tunneling
+                        let _ = upstream.set_nodelay(true);
+                        // Use small buffers for low latency (critical for terminal keystrokes)
+                        if let Err(e) = copy_bidirectional_with_sizes(
+                            &mut client_io,
+                            &mut upstream,
+                            TUNNEL_BUFFER_SIZE,
+                            TUNNEL_BUFFER_SIZE,
+                        ).await {
                             warn!(%e, "tcp tunnel error");
                         }
                         let _ = client_io.shutdown().await;

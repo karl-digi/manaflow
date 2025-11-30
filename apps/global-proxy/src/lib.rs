@@ -22,7 +22,7 @@ use lol_html::{HtmlRewriter, Settings, element, html_content::ContentType};
 use flate2::read::{GzDecoder, ZlibDecoder};
 use brotli::Decompressor;
 use tokio::{
-    io::{copy_bidirectional, AsyncWriteExt},
+    io::{copy_bidirectional_with_sizes, AsyncWriteExt},
     sync::oneshot,
     task::JoinHandle,
 };
@@ -42,6 +42,11 @@ const GIT_COMMIT: &str = match option_env!("GIT_COMMIT") {
 
 const CSP_FRAME_ANCESTORS_PORT_39378: &str = "frame-ancestors 'self' https://cmux.local http://cmux.local https://www.cmux.sh https://cmux.sh https://www.cmux.dev https://cmux.dev http://localhost:5173;";
 const FORWARD_ALL_WEBSOCKET_HEADERS: bool = true;
+
+// WebSocket tunnel buffer sizes - use minimal buffers for low latency (interactive terminals)
+// Large buffers increase throughput but add latency waiting to fill
+// 2KB is optimal for terminal keystroke latency while still being efficient
+const WS_BUFFER_SIZE: usize = 2 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct ProxyConfig {
@@ -103,12 +108,20 @@ pub async fn spawn_proxy(config: ProxyConfig) -> Result<ProxyHandle, ProxyError>
     listener.set_nonblocking(true)?;
     let local_addr = listener.local_addr()?;
 
+    // Configure HTTPS connector
+    // Note: HTTP/2 would require updating dependencies; sticking with HTTP/1.1 for now
     let https = HttpsConnectorBuilder::new()
         .with_webpki_roots()
         .https_or_http()
         .enable_http1()
         .build();
-    let client: HttpClient = Client::builder().build(https);
+
+    // Configure HTTP client with aggressive connection pooling
+    let client: HttpClient = Client::builder()
+        .pool_idle_timeout(std::time::Duration::from_secs(120)) // Longer keep-alive
+        .pool_max_idle_per_host(64) // More connections per host
+        .retry_canceled_requests(true)
+        .build(https);
 
     let state = Arc::new(AppState {
         client,
@@ -129,7 +142,10 @@ pub async fn spawn_proxy(config: ProxyConfig) -> Result<ProxyHandle, ProxyError>
         }
     });
 
-    let server = hyper::Server::from_tcp(listener)?.serve(make_svc);
+    // Enable TCP_NODELAY on incoming connections for low-latency responses
+    let server = hyper::Server::from_tcp(listener)?
+        .tcp_nodelay(true)
+        .serve(make_svc);
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let graceful = server.with_graceful_shutdown(async move {
         let _ = shutdown_rx.await;
@@ -801,7 +817,8 @@ async fn tunnel_upgraded(
     mut client: Upgraded,
     mut backend: Upgraded,
 ) -> io::Result<()> {
-    let result = copy_bidirectional(&mut client, &mut backend).await;
+    // Use larger buffers (64KB) for better WebSocket throughput
+    let result = copy_bidirectional_with_sizes(&mut client, &mut backend, WS_BUFFER_SIZE, WS_BUFFER_SIZE).await;
     let _ = client.shutdown().await;
     let _ = backend.shutdown().await;
     result.map(|_| ())
@@ -1386,6 +1403,20 @@ fn parse_cmux_host(host: &str) -> Option<(Option<String>, String)> {
         };
         return Some((subdomain, "cmux.app".to_string()));
     }
+
+    // Support plain .localhost domains (e.g., cmuf-orlbz-base-8000.localhost)
+    if host == "localhost" {
+        return Some((None, "localhost".to_string()));
+    }
+    if let Some(prefix) = host.strip_suffix(".localhost") {
+        let subdomain = if prefix.is_empty() {
+            None
+        } else {
+            Some(prefix.to_string())
+        };
+        return Some((subdomain, "localhost".to_string()));
+    }
+
     None
 }
 

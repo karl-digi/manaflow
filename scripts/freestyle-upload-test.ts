@@ -8,7 +8,8 @@ import { appendFileSync, writeFileSync } from "node:fs";
 
 const LOG_FILE = "freestyle-upload-test.log";
 const API_KEY = process.env.FREESTYLE_API_KEY;
-const BASE_URL = process.env.FREESTYLE_API_BASE_URL ?? "https://api.freestyle.sh";
+const BASE_URL =
+  process.env.FREESTYLE_API_BASE_URL ?? "https://api.freestyle.sh";
 
 function log(message: string) {
   const line = message + "\n";
@@ -17,7 +18,10 @@ function log(message: string) {
 }
 
 // Initialize log file
-writeFileSync(LOG_FILE, `Freestyle put_file API Test - ${new Date().toISOString()}\n\n`);
+writeFileSync(
+  LOG_FILE,
+  `Freestyle put_file API Test - ${new Date().toISOString()}\n\n`
+);
 
 if (!API_KEY) {
   log("Error: FREESTYLE_API_KEY environment variable is required");
@@ -33,7 +37,12 @@ async function createVm(): Promise<{ id: string; domains: string[] }> {
   const res = await fetch(`${BASE_URL}/v1/vms`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ template: {} }),
+    body: JSON.stringify({
+      template: {
+        ports: [],
+        // idleTimeoutSeconds: null,
+      },
+    }),
   });
   if (!res.ok) {
     throw new Error(`Failed to create VM: ${res.status} ${await res.text()}`);
@@ -41,7 +50,11 @@ async function createVm(): Promise<{ id: string; domains: string[] }> {
   return res.json();
 }
 
-async function putFile(vmId: string, path: string, content: string): Promise<void> {
+async function putFile(
+  vmId: string,
+  path: string,
+  content: string
+): Promise<void> {
   // filepath needs to be URL encoded (e.g., /tmp/test.txt -> %2Ftmp%2Ftest.txt)
   const encodedPath = encodeURIComponent(path);
   const res = await fetch(`${BASE_URL}/v1/vms/${vmId}/files/${encodedPath}`, {

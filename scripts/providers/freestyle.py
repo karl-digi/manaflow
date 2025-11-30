@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import os
+import shlex
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, override
@@ -89,7 +90,8 @@ class FreestyleInstance(BaseInstance):
         timeout: float | None = None,
     ) -> ExecResponse:
         # Freestyle exec_await takes a command string, not a list
-        command_str = " ".join(command) if len(command) > 1 else command[0]
+        # Use shlex.join for proper shell escaping of arguments
+        command_str = shlex.join(command)
         timeout_ms = int(timeout * 1000) if timeout else None
         request = ExecAwaitRequest(command=command_str)
         if timeout_ms is not None:

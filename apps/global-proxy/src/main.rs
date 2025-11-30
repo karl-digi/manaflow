@@ -33,15 +33,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(_) => Scheme::HTTP,
     };
 
-    let morph_domain_suffix = std::env::var("GLOBAL_PROXY_MORPH_DOMAIN_SUFFIX")
-        .ok()
-        .and_then(normalize_suffix);
+    let morph_domain_suffix = normalize_suffix(
+        std::env::var("GLOBAL_PROXY_MORPH_DOMAIN_SUFFIX")
+            .unwrap_or_else(|_| ".http.cloud.morph.so".to_string())
+    );
     let workspace_domain_suffix = std::env::var("GLOBAL_PROXY_WORKSPACE_DOMAIN_SUFFIX")
         .ok()
         .and_then(normalize_suffix);
-    let freestyle_domain_suffix = std::env::var("GLOBAL_PROXY_FREESTYLE_DOMAIN_SUFFIX")
-        .ok()
-        .and_then(normalize_suffix);
+    let freestyle_domain_suffix = normalize_suffix(
+        std::env::var("GLOBAL_PROXY_FREESTYLE_DOMAIN_SUFFIX")
+            .unwrap_or_else(|_| ".vm.freestyle.sh".to_string())
+    );
+
+    info!(
+        morph = ?morph_domain_suffix,
+        freestyle = ?freestyle_domain_suffix,
+        "domain suffixes configured"
+    );
 
     let handle = spawn_proxy(ProxyConfig {
         bind_addr,

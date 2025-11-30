@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "updatedAt": "2025-11-30T06:30:27Z",
+  "updatedAt": "2025-11-30T20:04:30Z",
   "presets": [
     {
       "presetId": "morph_4vcpu_16gb_48gb",
@@ -86,6 +86,11 @@
           "version": 4,
           "snapshotId": "jnvqx",
           "capturedAt": "2025-11-30T06:30:27Z"
+        },
+        {
+          "version": 5,
+          "snapshotId": "uvslo",
+          "capturedAt": "2025-11-30T20:04:30Z"
         }
       ],
       "description": "Freestyle cloud sandbox environment."
