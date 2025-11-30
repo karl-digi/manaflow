@@ -27,16 +27,27 @@ export const enqueueFromWebhook = internalMutation({
       ? normalizeRepoFullName(args.headRepoFullName)
       : undefined;
 
-    const existing = await ctx.db
+    // Check if there's already a pending/running preview run for this PR
+    // This prevents duplicate preview jobs when:
+    // 1. Multiple webhooks fire for the same PR (e.g., synchronize events)
+    // 2. Crown worker tries to create a preview run while one already exists
+    const existingByPr = await ctx.db
       .query("previewRuns")
-      .withIndex("by_config_head", (q) =>
-        q.eq("previewConfigId", args.previewConfigId).eq("headSha", args.headSha),
+      .withIndex("by_config_pr", (q) =>
+        q.eq("previewConfigId", args.previewConfigId).eq("prNumber", args.prNumber),
       )
       .order("desc")
       .first();
 
-    if (existing && (existing.status === "pending" || existing.status === "running")) {
-      return existing._id;
+    if (existingByPr && (existingByPr.status === "pending" || existingByPr.status === "running")) {
+      console.log("[previewRuns] Returning existing pending/running preview run for PR", {
+        existingRunId: existingByPr._id,
+        prNumber: args.prNumber,
+        existingHeadSha: existingByPr.headSha,
+        newHeadSha: args.headSha,
+        status: existingByPr.status,
+      });
+      return existingByPr._id;
     }
 
     const now = Date.now();
@@ -176,6 +187,27 @@ export const getByTaskRunId = internalQuery({
       .filter((q) => q.eq(q.field("taskRunId"), args.taskRunId))
       .first();
     return run ?? null;
+  },
+});
+
+export const getActiveByConfigAndPr = internalQuery({
+  args: {
+    previewConfigId: v.id("previewConfigs"),
+    prNumber: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const run = await ctx.db
+      .query("previewRuns")
+      .withIndex("by_config_pr", (q) =>
+        q.eq("previewConfigId", args.previewConfigId).eq("prNumber", args.prNumber),
+      )
+      .order("desc")
+      .first();
+
+    if (run && (run.status === "pending" || run.status === "running")) {
+      return run;
+    }
+    return null;
   },
 });
 
