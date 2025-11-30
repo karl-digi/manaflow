@@ -351,6 +351,11 @@ export type GithubInstallStateRequest = {
     returnUrl?: string;
 };
 
+export type GithubOAuthTokenResponse = {
+    accessToken: string | null;
+    error: string | null;
+};
+
 export type ResumeTaskRunResponse = {
     resumed: true;
 };
@@ -1623,6 +1628,29 @@ export type PostApiIntegrationsGithubInstallStateResponses = {
 };
 
 export type PostApiIntegrationsGithubInstallStateResponse = PostApiIntegrationsGithubInstallStateResponses[keyof PostApiIntegrationsGithubInstallStateResponses];
+
+export type GetApiIntegrationsGithubOauthTokenData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/integrations/github/oauth-token';
+};
+
+export type GetApiIntegrationsGithubOauthTokenErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type GetApiIntegrationsGithubOauthTokenResponses = {
+    /**
+     * GitHub OAuth token response
+     */
+    200: GithubOAuthTokenResponse;
+};
+
+export type GetApiIntegrationsGithubOauthTokenResponse = GetApiIntegrationsGithubOauthTokenResponses[keyof GetApiIntegrationsGithubOauthTokenResponses];
 
 export type PostApiMorphTaskRunsByTaskRunIdResumeData = {
     body: ResumeTaskRunBody;

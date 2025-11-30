@@ -674,12 +674,14 @@ export const DashboardInputControls = memo(function DashboardInputControls({
       </div>
 
       <div className="flex items-center justify-end gap-2.5 ml-auto mr-0 pr-1">
-        {/* Cloud/Local Mode Toggle */}
-        <ModeToggleTooltip
-          isCloudMode={isCloudMode}
-          onToggle={onCloudModeToggle}
-          disabled={cloudToggleDisabled}
-        />
+        {/* Cloud/Local Mode Toggle - hidden in web mode (always cloud) */}
+        {!env.NEXT_PUBLIC_WEB_MODE && (
+          <ModeToggleTooltip
+            isCloudMode={isCloudMode}
+            onToggle={onCloudModeToggle}
+            disabled={cloudToggleDisabled}
+          />
+        )}
 
         <button
           className={clsx(

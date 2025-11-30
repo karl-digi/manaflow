@@ -1,3 +1,4 @@
+import { env } from "@/client-env";
 import {
   DashboardInput,
   type EditorApi,
@@ -136,7 +137,9 @@ function DashboardComponent() {
   );
 
   const [taskDescription, setTaskDescription] = useState<string>("");
+  // In web mode, always force cloud mode
   const [isCloudMode, setIsCloudMode] = useState<boolean>(() => {
+    if (env.NEXT_PUBLIC_WEB_MODE) return true;
     const stored = localStorage.getItem("isCloudMode");
     return stored ? JSON.parse(stored) : true;
   });
@@ -726,6 +729,8 @@ function DashboardComponent() {
 
   // Cloud mode toggle handler
   const handleCloudModeToggle = useCallback(() => {
+    // In web mode, always stay in cloud mode
+    if (env.NEXT_PUBLIC_WEB_MODE) return;
     if (isEnvSelected) return; // environment forces cloud mode
     const newMode = !isCloudMode;
     setIsCloudMode(newMode);
