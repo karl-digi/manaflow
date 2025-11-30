@@ -12,21 +12,21 @@ import { MorphCloudClient } from "morphcloud";
 import { randomBytes } from "node:crypto";
 import { determineHttpServiceUpdates } from "./determine-http-service-updates";
 
-const DEFAULT_DEV_PORTS = [3000, 3001, 5173, 8000, 8080, 9000, 9779] as const;
+const WORKSPACE_ROOT = "/root/workspace";
 
-const buildCleanupCommands = (ports: readonly number[] = []): string => {
-  const portCommands = Array.from(new Set([...DEFAULT_DEV_PORTS, ...ports]))
-    .map(
-      (port) =>
-        `(pids=$(lsof -ti :${port} 2>/dev/null || true); if [ -n "$pids" ]; then kill -9 $pids 2>/dev/null || true; fi; true)`,
-    );
+const buildCleanupCommands = (): string => {
+  // Be aggressive inside the isolated workspace: kill tmux windows and any process
+  // tied to orchestrator scripts or files under the workspace, so dev servers can't linger.
+  const killWorkspaceProcs =
+    `(pids=$(lsof -ti +D ${WORKSPACE_ROOT} 2>/dev/null || true); ` +
+    `if [ -n "$pids" ]; then kill -9 $pids 2>/dev/null || true; fi; true)`;
 
   return [
     "tmux kill-session -t cmux 2>/dev/null || true",
     "tmux kill-server 2>/dev/null || true",
     "pkill -f '/tmp/cmux-(devserver|maintenance)\\.sh' 2>/dev/null || true",
     "pkill -f '/var/tmp/cmux-scripts/(dev|maintenance)\\.sh' 2>/dev/null || true",
-    ...portCommands,
+    killWorkspaceProcs,
     "git config --global --unset user.name 2>/dev/null || true",
     "git config --global --unset user.email 2>/dev/null || true",
     "git config --global --unset credential.helper 2>/dev/null || true",
@@ -264,7 +264,7 @@ environmentsRouter.openapi(
         return { dataVaultKey };
       })();
 
-      await instance.exec(buildCleanupCommands(sanitizedPorts));
+      await instance.exec(buildCleanupCommands());
 
       const snapshot = await instance.snapshot();
 
@@ -897,7 +897,7 @@ environmentsRouter.openapi(
         );
       }
 
-      await instance.exec(buildCleanupCommands(environment.exposedPorts ?? []));
+      await instance.exec(buildCleanupCommands());
 
       const snapshot = await instance.snapshot();
 
