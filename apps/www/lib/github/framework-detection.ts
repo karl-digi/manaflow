@@ -1,13 +1,17 @@
 import { createGitHubClient } from "@/lib/github/octokit";
 import { type FrameworkPreset } from "@/components/preview/preview-configure-client";
 
-type PackageJson = {
+export type PackageJson = {
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
   scripts?: Record<string, string>;
 };
 
-function chooseFrameworkFromPackageJson(pkg: PackageJson): FrameworkPreset | null {
+function hasStandaloneViteScript(values: string[]): boolean {
+  return values.some((value) => /\bvite(?=$|\s)/.test(value));
+}
+
+export function chooseFrameworkFromPackageJson(pkg: PackageJson): FrameworkPreset | null {
   const deps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
   const hasAny = (...keys: string[]) => keys.some((key) => deps[key]);
 
@@ -22,15 +26,19 @@ function chooseFrameworkFromPackageJson(pkg: PackageJson): FrameworkPreset | nul
   if (hasAny("vite")) return "vite";
 
   const scripts = pkg.scripts ?? {};
-  const scriptValues = Object.values(scripts);
-  if (scriptValues.some((val) => val.includes("next"))) return "next";
-  if (scriptValues.some((val) => val.includes("nuxt"))) return "nuxt";
-  if (scriptValues.some((val) => val.includes("remix"))) return "remix";
-  if (scriptValues.some((val) => val.includes("astro"))) return "astro";
-  if (scriptValues.some((val) => val.includes("svelte"))) return "sveltekit";
-  if (scriptValues.some((val) => val.includes("ng "))) return "angular";
-  if (scriptValues.some((val) => val.includes("vue"))) return "vue";
-  if (scriptValues.some((val) => val.includes("vite"))) return "vite";
+  const scriptValues = Object.values(scripts).map((val) => val.toLowerCase());
+  const includesScript = (needle: string) =>
+    scriptValues.some((val) => val.includes(needle));
+
+  if (includesScript("next")) return "next";
+  if (includesScript("nuxt")) return "nuxt";
+  if (includesScript("remix")) return "remix";
+  if (includesScript("astro")) return "astro";
+  if (includesScript("svelte")) return "sveltekit";
+  if (scriptValues.some((val) => /(?:^|\s)ng(?:\s|$)/.test(val))) return "angular";
+  if (includesScript("react-scripts")) return "cra";
+  if (includesScript("vue")) return "vue";
+  if (hasStandaloneViteScript(scriptValues)) return "vite";
   return null;
 }
 
