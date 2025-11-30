@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { getTeamId } from "../_shared/team";
+import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery } from "./_generated/server";
 import { authMutation, authQuery, taskIdWithFake } from "./users/utils";
@@ -389,6 +390,29 @@ export const workerFinalize = internalMutation({
         ? { pullRequestDescription: args.pullRequestDescription }
         : {}),
     });
+
+    if (
+      args.pullRequest?.number &&
+      args.pullRequest?.url &&
+      task.projectFullName
+    ) {
+      try {
+        await ctx.scheduler.runAfter(0, internal.previewRuns.enqueueFromCrown, {
+          teamId: args.teamId,
+          repoFullName: task.projectFullName,
+          prNumber: args.pullRequest.number,
+          prUrl: args.pullRequest.url,
+          headRef: winnerRun.newBranch ?? undefined,
+          headSha: winnerRun.commitSha ?? undefined,
+        });
+      } catch (error) {
+        console.error("[crown] Failed to enqueue preview run from crown", {
+          taskId: args.taskId,
+          prNumber: args.pullRequest.number,
+          error,
+        });
+      }
+    }
 
     return args.winnerRunId;
   },
