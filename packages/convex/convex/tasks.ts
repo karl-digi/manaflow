@@ -53,6 +53,7 @@ export const getPinned = authQuery({
         idx.eq("pinned", true).eq("teamId", teamId).eq("userId", userId),
       )
       .filter((q) => q.neq(q.field("isArchived"), true))
+      .filter((q) => q.neq(q.field("isPreview"), true))
       .collect();
 
     return pinnedTasks.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
@@ -167,6 +168,7 @@ export const create = authMutation({
       teamId,
       environmentId: args.environmentId,
       isCloudWorkspace: args.isCloudWorkspace,
+      isPreview: false,
     });
 
     return taskId;
@@ -852,6 +854,7 @@ export const createForPreview = internalMutation({
       teamId: args.teamId,
       environmentId: undefined,
       isCloudWorkspace: undefined,
+      isPreview: true,
     });
     return taskId;
   },

@@ -213,6 +213,23 @@ export const getByTaskRunId = internalQuery({
   },
 });
 
+export const listByTeam = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const take = Math.max(1, Math.min(args.limit ?? 50, 200));
+    const runs = await ctx.db
+      .query("previewRuns")
+      .withIndex("by_team_created", (q) => q.eq("teamId", teamId))
+      .order("desc")
+      .take(take);
+    return runs;
+  },
+});
+
 export const listRecentByConfig = internalQuery({
   args: {
     previewConfigId: v.id("previewConfigs"),
