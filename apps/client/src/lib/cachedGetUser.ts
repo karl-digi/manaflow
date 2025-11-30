@@ -2,6 +2,7 @@ import type { StackClientApp } from "@stackframe/react";
 import { decodeJwt } from "jose";
 
 type User = Awaited<ReturnType<StackClientApp["getUser"]>>;
+const TOKEN_EXPIRY_BUFFER_SECONDS = 30;
 declare global {
   interface Window {
     cachedUser: User | null;
@@ -22,7 +23,10 @@ export async function cachedGetUser(
         return null;
       }
       const jwt = decodeJwt(tokens.accessToken);
-      if (jwt.exp && jwt.exp < Date.now() / 1000) {
+      if (
+        jwt.exp &&
+        jwt.exp < Date.now() / 1000 + TOKEN_EXPIRY_BUFFER_SECONDS
+      ) {
         window.cachedUser = null;
         window.userPromise = null;
         return null;

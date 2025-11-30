@@ -1,6 +1,8 @@
 import { ConvexHttpClient } from "convex/browser";
 import { decodeJwt } from "jose";
 
+const EXPIRY_BUFFER_SECONDS = 30;
+
 interface CacheEntry {
   client: ConvexHttpClient;
   expiry: number;
@@ -76,7 +78,11 @@ class ConvexClientCache {
 
     try {
       const jwt = decodeJwt(accessToken);
-      const expiry = jwt.exp || Date.now() / 1000 + 3600; // default 1h if no exp
+      const rawExpiry = jwt.exp || Date.now() / 1000 + 3600; // default 1h if no exp
+      const expiry = Math.max(
+        rawExpiry - EXPIRY_BUFFER_SECONDS,
+        Date.now() / 1000
+      ); // expire a little early to avoid clock skew
 
       this.cache.set(cacheKey, {
         client,
