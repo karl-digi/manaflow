@@ -18,7 +18,8 @@ function chooseFrameworkFromPackageJson(pkg: PackageJson): FrameworkPreset | nul
   if (hasAny("@sveltejs/kit")) return "sveltekit";
   if (hasAny("@angular/core")) return "angular";
   if (hasAny("react-scripts")) return "cra";
-  if (hasAny("vue", "@vue/cli-service")) return "vue";
+  // Check for Vue before generic Vite - includes Vue CLI and Vite plugin
+  if (hasAny("vue", "@vue/cli-service", "@vitejs/plugin-vue")) return "vue";
   if (hasAny("vite")) return "vite";
 
   const scripts = pkg.scripts ?? {};
@@ -80,6 +81,8 @@ export async function detectFrameworkPreset(repoFullName: string): Promise<Frame
     return pkgGuess;
   }
 
+  // Order matters: check framework-specific configs before generic vite config
+  // since many frameworks (Vue, React, etc.) use Vite as their build tool
   const fileGuesses: Array<[FrameworkPreset, string[]]> = [
     ["next", ["next.config.js", "next.config.ts", "next.config.mjs"]],
     ["nuxt", ["nuxt.config.ts", "nuxt.config.js", "nuxt.config.mjs"]],
@@ -87,8 +90,8 @@ export async function detectFrameworkPreset(repoFullName: string): Promise<Frame
     ["astro", ["astro.config.mjs", "astro.config.ts", "astro.config.js"]],
     ["sveltekit", ["svelte.config.js", "svelte.config.ts"]],
     ["angular", ["angular.json"]],
-    ["vite", ["vite.config.ts", "vite.config.js", "vite.config.mjs"]],
     ["vue", ["vue.config.js", "vue.config.ts"]],
+    ["vite", ["vite.config.ts", "vite.config.js", "vite.config.mjs"]],
   ];
 
   for (const [preset, paths] of fileGuesses) {
