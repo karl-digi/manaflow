@@ -1,6 +1,12 @@
 "use node";
+import { createAnthropic } from "@ai-sdk/anthropic";
+import { createOpenAI } from "@ai-sdk/openai";
+import { generateObject, type LanguageModel } from "ai";
 import { v } from "convex/values";
+import { z } from "zod";
+import { CLOUDFLARE_OPENAI_BASE_URL } from "@cmux/shared";
 import { fetchInstallationAccessToken } from "../_shared/githubApp";
+import { env } from "../_shared/convex-env";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
@@ -54,6 +60,20 @@ type RenderableScreenshotSet = {
   }>;
 };
 
+const PREVIEW_OPENAI_MODEL = "gpt-5-mini";
+const PREVIEW_ANTHROPIC_MODEL = "claude-3-5-sonnet-20241022";
+
+const PreviewNarrativeSchema = z.object({
+  headline: z.string().optional(),
+  story: z.array(z.string()).min(1).optional(),
+  reviewFocus: z.array(z.string()).min(1).optional(),
+  risks: z.array(z.string()).optional(),
+  testIdeas: z.array(z.string()).optional(),
+  imageCaptions: z.array(z.string()).optional(),
+});
+
+type PreviewNarrative = z.infer<typeof PreviewNarrativeSchema>;
+
 const COLLAPSE_MARKER = "<!-- cmux-preview-collapsed -->";
 const COLLAPSE_SUMMARY = "Older cmux preview screenshots (latest comment is above)";
 const MAX_COMMENTS_TO_COLLAPSE = 20;
@@ -67,6 +87,213 @@ const STATUS_SUMMARY_LABEL: Record<ScreenshotSetDoc["status"], string> = {
   failed: "❌ Failed",
   skipped: "⚠️ Skipped",
 };
+const MAX_FILES_FOR_NARRATIVE = 40;
+const MAX_PR_BODY_CHARS = 2_500;
+
+function resolvePreviewModel(): {
+  provider: "openai" | "anthropic";
+  model: LanguageModel;
+} {
+  const openaiKey = env.OPENAI_API_KEY;
+  if (openaiKey) {
+    const openai = createOpenAI({
+      apiKey: openaiKey,
+      baseURL: CLOUDFLARE_OPENAI_BASE_URL,
+    });
+    return { provider: "openai", model: openai(PREVIEW_OPENAI_MODEL) };
+  }
+
+  const anthropicKey = env.ANTHROPIC_API_KEY;
+  if (anthropicKey) {
+    const anthropic = createAnthropic({ apiKey: anthropicKey });
+    return { provider: "anthropic", model: anthropic(PREVIEW_ANTHROPIC_MODEL) };
+  }
+
+  throw new Error(
+    "Preview narrative generation is not configured (missing OpenAI or Anthropic API key)",
+  );
+}
+
+const formatPrBody = (body?: string | null): string => {
+  if (!body) return "";
+  const trimmed = body.trim();
+  if (trimmed.length <= MAX_PR_BODY_CHARS) return trimmed;
+  return `${trimmed.slice(0, MAX_PR_BODY_CHARS)}…`;
+};
+
+async function fetchPrContext({
+  octokit,
+  owner,
+  repo,
+  prNumber,
+  commitSha,
+}: {
+  octokit: Octokit;
+  owner: string;
+  repo: string;
+  prNumber: number;
+  commitSha?: string | null;
+}): Promise<{
+  title?: string;
+  body?: string;
+  changedFiles: string[];
+  headRef?: string;
+  commitMessage?: string;
+}> {
+  let title: string | undefined;
+  let body: string | undefined;
+  let headRef: string | undefined;
+  let commitMessage: string | undefined;
+  const changedFiles: string[] = [];
+
+  try {
+    const { data } = await octokit.rest.pulls.get({
+      owner,
+      repo,
+      pull_number: prNumber,
+    });
+    title = data.title;
+    body = data.body ?? undefined;
+    headRef = data.head?.ref;
+  } catch (error) {
+    console.warn("[github_pr_comments] Failed to fetch PR metadata", {
+      owner,
+      repo,
+      prNumber,
+      error,
+    });
+  }
+
+  try {
+    const files = await octokit.paginate(octokit.rest.pulls.listFiles, {
+      owner,
+      repo,
+      pull_number: prNumber,
+      per_page: 100,
+    });
+    for (const file of files.slice(0, MAX_FILES_FOR_NARRATIVE)) {
+      const status = file.status ? ` (${file.status})` : "";
+      const additions =
+        typeof file.additions === "number" && file.additions > 0
+          ? ` +${file.additions}`
+          : "";
+      const deletions =
+        typeof file.deletions === "number" && file.deletions > 0
+          ? ` -${file.deletions}`
+          : "";
+      const changeSummary =
+        additions || deletions ? `${additions}${deletions}` : "";
+      changedFiles.push(`${file.filename}${status}${changeSummary ? ` [${changeSummary}]` : ""}`);
+    }
+  } catch (error) {
+    console.warn("[github_pr_comments] Failed to fetch PR files", {
+      owner,
+      repo,
+      prNumber,
+      error,
+    });
+  }
+
+  if (commitSha) {
+    try {
+      const { data } = await octokit.rest.repos.getCommit({
+        owner,
+        repo,
+        ref: commitSha,
+      });
+      commitMessage = data.commit?.message;
+    } catch (error) {
+      console.warn("[github_pr_comments] Failed to fetch commit message", {
+        owner,
+        repo,
+        commitSha,
+        error,
+      });
+    }
+  }
+
+  return {
+    title,
+    body: formatPrBody(body),
+    changedFiles,
+    headRef,
+    commitMessage,
+  };
+}
+
+async function generatePreviewNarrative({
+  screenshotSet,
+  prContext,
+  prUrl,
+  workspaceUrl,
+}: {
+  screenshotSet: RenderableScreenshotSet;
+  prContext: Awaited<ReturnType<typeof fetchPrContext>>;
+  prUrl?: string | null;
+  workspaceUrl?: string | null;
+}): Promise<PreviewNarrative | null> {
+  try {
+    const { model, provider } = resolvePreviewModel();
+    const fileList =
+      prContext.changedFiles.length > 0
+        ? prContext.changedFiles.map((f, idx) => `${idx + 1}. ${f}`).join("\n")
+        : "No file list available.";
+    const screenshotCount = screenshotSet.images.length;
+    const prompt = `You are drafting a short code review guide for a PR with captured UI screenshots.
+
+PR Title: ${prContext.title ?? "unknown"}
+Head branch: ${prContext.headRef ?? "unknown"}
+Commit for screenshots: ${screenshotSet.commitSha ?? "unknown"}
+Commit message: ${prContext.commitMessage ?? "n/a"}
+PR URL: ${prUrl ?? "n/a"}
+Workspace URL: ${workspaceUrl ?? "n/a"}
+
+PR Summary (body):
+${prContext.body ?? "<empty>"} 
+
+Changed files (truncated):
+${fileList}
+
+Screenshot context:
+- Count: ${screenshotCount}
+- Captured at: ${formatTimestamp(screenshotSet.capturedAt)}
+
+Write actionable bullets that help a human reviewer:
+- Focus on what the PR is trying to achieve, based on the title/body/files.
+- Call out specific review hotspots or risky areas.
+- If applicable, suggest quick test or verification steps a reviewer can perform.
+- Keep bullets tight and concrete; avoid filler.
+- Do not invent details that aren't implied by the context above.
+
+Respond as JSON matching this schema:
+{
+  "headline": optional short string,
+  "story": required array of bullet strings (what changed, user impact),
+  "reviewFocus": required array of bullet strings (what to inspect closely),
+  "risks": optional array of bullet strings,
+  "testIdeas": optional array of bullet strings,
+  "imageCaptions": optional array of strings (one per screenshot, concise alt text without referencing filenames)
+}
+`;
+
+    const { object } = await generateObject({
+      model,
+      schema: PreviewNarrativeSchema,
+      system:
+        "You are an expert reviewer. Stay concise and actionable. Prefer specific file or area names when available. Never add Markdown headers or code fences; return JSON only.",
+      prompt,
+      ...(provider === "openai" ? {} : { temperature: 0 }),
+      maxRetries: 2,
+    });
+
+    return object;
+  } catch (error) {
+    console.warn("[github_pr_comments] Failed to generate preview narrative", {
+      error,
+    });
+    return null;
+  }
+}
 
 const formatTimestamp = (value?: number | null): string => {
   if (!value) {
@@ -140,6 +367,7 @@ async function renderScreenshotSetMarkdown(
     workspaceUrl?: string | null;
     compact?: boolean;
     includeLinksRow?: boolean;
+    narrative?: PreviewNarrative | null;
   },
 ): Promise<string> {
   const commitLabel = formatCommitLabel(set);
@@ -162,33 +390,76 @@ async function renderScreenshotSetMarkdown(
     lines.push(intro, "");
 
     if (!options?.compact) {
-      lines.push(
-        "**Review story**",
-        "- Screenshots double as evidence; follow them in order to understand the PR's UI flow.",
-        "- Cross-check the intent against the PR description" +
-          (options?.prUrl ? ` ([GitHub PR](${options.prUrl}))` : ""),
-      );
-      if (options?.workspaceUrl) {
-        lines.push("- Use the workspace link to poke at the same surfaces if something looks off.");
+      const narrative = options?.narrative;
+      const storyLines = (narrative?.story ?? []).filter(Boolean);
+      const focusLines = (narrative?.reviewFocus ?? []).filter(Boolean);
+      const riskLines = (narrative?.risks ?? []).filter(Boolean);
+      const testLines = (narrative?.testIdeas ?? []).filter(Boolean);
+
+      if (narrative?.headline) {
+        lines.push(`**${narrative.headline}**`, "");
       }
+
+      if (storyLines.length > 0) {
+        lines.push("**Story**", ...storyLines.map((item) => `- ${item}`), "");
+      }
+
+      if (focusLines.length > 0) {
+        lines.push(
+          "**Review focus**",
+          ...focusLines.map((item) => `- ${item}`),
+          "",
+        );
+      }
+
+      if (riskLines.length > 0) {
+        lines.push(
+          "**Risks / unknowns**",
+          ...riskLines.map((item) => `- ${item}`),
+          "",
+        );
+      }
+
+      if (testLines.length > 0) {
+        lines.push("**Test / verify**", ...testLines.map((item) => `- ${item}`), "");
+      }
+
+      if (
+        !narrative ||
+        (storyLines.length === 0 &&
+          focusLines.length === 0 &&
+          riskLines.length === 0 &&
+          testLines.length === 0)
+      ) {
+        // Fallback guidance when LLM output is unavailable
+        lines.push(
+          "**Review focus**",
+          "- Walk through the screenshots in order; they capture the latest UI flow.",
+          options?.prUrl ? `- Cross-check intent against the PR description (${options.prUrl}).` : "- Cross-check intent against the PR description.",
+          options?.workspaceUrl
+            ? "- Use the workspace link to reproduce the flow and validate interactions."
+            : "- Re-run the flow locally to validate interactions.",
+          "",
+        );
+      }
+
       lines.push(
+        `**Evidence (${count})**`,
         "",
-        "**What to review**",
-        "- Visual regressions (layout, spacing, copy) and state transitions shown below.",
-        "- Accessibility or empty/error states implied by the flow.",
       );
-      if (options?.workspaceUrl) {
-        lines.push("- Re-run the flow in the workspace to validate interactions beyond the static shots.");
-      }
-      lines.push("", `**Evidence (${count})**`, "");
     } else {
       lines.push(`**Evidence (${count})**`, "");
     }
 
+    const imageCaptions = options?.narrative?.imageCaptions ?? [];
     for (const [index, image] of set.images.entries()) {
       const storageUrl = await ctx.storage.getUrl(image.storageId);
       if (!storageUrl) continue;
-      const altText = `Screenshot ${index + 1} for ${commitLabel}`;
+      const altFromNarrative = imageCaptions[index]?.trim();
+      const altText =
+        altFromNarrative && altFromNarrative.length > 0
+          ? altFromNarrative
+          : `Screenshot ${index + 1} for ${commitLabel}`;
       lines.push(`![${altText}](${storageUrl})`, "");
     }
   } else if (set.status === "failed") {
@@ -399,6 +670,19 @@ export const postPreviewComment = internalAction({
         return { ok: false, error: "Preview run not found" };
       }
 
+      // Get screenshot set
+      const screenshotSet = await ctx.runQuery(
+        internal.previewScreenshots.getScreenshotSet,
+        { screenshotSetId },
+      );
+
+      if (!screenshotSet) {
+        console.error("[github_pr_comments] Screenshot set not found", {
+          screenshotSetId,
+        });
+        return { ok: false, error: "Screenshot set not found" };
+      }
+
       const prUrl =
         previewRun.prUrl ||
         `https://github.com/${repoFullName}/pull/${prNumber}`;
@@ -419,18 +703,20 @@ export const postPreviewComment = internalAction({
         }
       }
 
-      // Get screenshot set
-      const screenshotSet = await ctx.runQuery(
-        internal.previewScreenshots.getScreenshotSet,
-        { screenshotSetId },
-      );
+      const prContext = await fetchPrContext({
+        octokit,
+        owner: repo.owner,
+        repo: repo.repo,
+        prNumber,
+        commitSha: screenshotSet.commitSha,
+      });
 
-      if (!screenshotSet) {
-        console.error("[github_pr_comments] Screenshot set not found", {
-          screenshotSetId,
-        });
-        return { ok: false, error: "Screenshot set not found" };
-      }
+      const narrative = await generatePreviewNarrative({
+        screenshotSet,
+        prContext,
+        prUrl,
+        workspaceUrl,
+      });
 
       // Collect previous screenshot sets for this PR so we can collapse them
       const previousRuns =
@@ -464,7 +750,7 @@ export const postPreviewComment = internalAction({
         ctx,
         screenshotSet,
         latestHeading,
-        { prUrl, workspaceUrl },
+        { prUrl, workspaceUrl, narrative },
       );
 
       const linksLine = formatReviewLinks({
@@ -772,6 +1058,7 @@ export const postPreviewCommentWithTaskScreenshots = internalAction({
       });
       const teamSlug: string = team?.slug ?? taskRun.teamId;
       const workspaceUrl: string = `${CMUX_BASE_URL}/${teamSlug}/task/${taskRun.taskId}`;
+      const prUrl = `https://github.com/${repoFullName}/pull/${prNumber}`;
 
       // Get screenshot set from task run
       const screenshotSet = await ctx.runQuery(
@@ -786,7 +1073,36 @@ export const postPreviewCommentWithTaskScreenshots = internalAction({
         return { ok: false, error: "Screenshot set not found" };
       }
 
-      const prUrl = `https://github.com/${repoFullName}/pull/${prNumber}`;
+      const prContext = await fetchPrContext({
+        octokit,
+        owner: repo.owner,
+        repo: repo.repo,
+        prNumber,
+        commitSha: screenshotSet.commitSha,
+      });
+
+      const renderableSet: RenderableScreenshotSet = {
+        status: screenshotSet.status as ScreenshotSetDoc["status"],
+        commitSha: screenshotSet.commitSha,
+        capturedAt: screenshotSet.capturedAt,
+        error: screenshotSet.error,
+        images: screenshotSet.images.map((image) => ({
+          storageId: image.storageId as Id<"_storage">,
+          mimeType: image.mimeType,
+          fileName: image.fileName,
+          commitSha: image.commitSha,
+          width: (image as { width?: number }).width,
+          height: (image as { height?: number }).height,
+        })),
+      };
+
+      const narrative = await generatePreviewNarrative({
+        screenshotSet: renderableSet,
+        prContext,
+        prUrl,
+        workspaceUrl,
+      });
+
       const linksLine = formatReviewLinks({
         prUrl,
         workspaceUrl,
@@ -794,9 +1110,9 @@ export const postPreviewCommentWithTaskScreenshots = internalAction({
       });
       const reviewSection = await renderScreenshotSetMarkdown(
         ctx,
-        screenshotSet,
+        renderableSet,
         "## Preview Story",
-        { prUrl, workspaceUrl },
+        { prUrl, workspaceUrl, narrative },
       );
 
       const commentBody = [linksLine, reviewSection, "---", PREVIEW_SIGNATURE]
