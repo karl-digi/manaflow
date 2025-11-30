@@ -625,15 +625,15 @@ function SettingsComponent() {
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <label className="block text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                      Auto-create PR when crowning a winner
+                      Auto-create pull request for the best diff
                     </label>
                     <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
-                      Automatically create a pull request when you select a
+                      After all agents finish, automatically create a pull request with the
                       winning agent's solution.
                     </p>
                   </div>
                   <Switch
-                    aria-label="Auto-create PR when crowning a winner"
+                    aria-label="Auto-create pull request for the best diff"
                     size="sm"
                     color="primary"
                     isSelected={autoPrEnabled}
