@@ -79,6 +79,18 @@ type FeatureCardProps = {
   description: string;
 };
 
+function GrainOverlay({ opacity = 0.08 }: { opacity?: number }) {
+  return (
+    <div
+      className="pointer-events-none absolute inset-0 mix-blend-overlay"
+      style={{
+        opacity,
+        backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`,
+      }}
+    />
+  );
+}
+
 function FeatureCard({
   icon: _Icon,
   iconBgColor: _iconBgColor,
@@ -87,8 +99,9 @@ function FeatureCard({
   description,
 }: FeatureCardProps) {
   return (
-    <div className="flex items-start rounded-lg border border-white/5 bg-white/5 backdrop-blur-sm p-4">
-      <div>
+    <div className="relative flex items-start rounded-lg border border-white/5 bg-white/[0.01] backdrop-blur-sm p-4 overflow-hidden">
+      <GrainOverlay />
+      <div className="relative">
         <h4 className="text-sm font-medium text-white pb-1">{title}</h4>
         <p className="text-[13px] text-neutral-300/90 leading-tight">
           {description}
@@ -534,7 +547,8 @@ export function PreviewDashboard({
 
   // Repo selection box - only this part, not configured repos
   const repoSelectionBox = !isAuthenticated ? (
-    <div className="flex flex-1 flex-col items-center justify-center rounded-lg border border-white/5 bg-white/[0.02] backdrop-blur-sm px-4 py-10">
+    <div className="relative flex flex-1 flex-col items-center justify-center rounded-lg border border-white/5 bg-white/[0.02] backdrop-blur-sm px-4 py-10 overflow-hidden">
+      <GrainOverlay opacity={0.02} />
       <p className="text-sm text-neutral-300/85 pb-6 max-w-xs text-center">
         Select a Git provider to import a Git Repository
       </p>
@@ -609,7 +623,8 @@ export function PreviewDashboard({
       </div>
     </div>
   ) : !hasGithubAppInstallation ? (
-    <div className="flex flex-1 flex-col items-center justify-center rounded-lg border border-white/5 bg-white/[0.02] backdrop-blur-sm">
+    <div className="relative flex flex-1 flex-col items-center justify-center rounded-lg border border-white/5 bg-white/[0.02] backdrop-blur-sm overflow-hidden">
+      <GrainOverlay opacity={0.02} />
       <Github className="h-6 w-6 text-neutral-500 pb-3" />
       <h3 className="text-base font-medium text-white pb-1.5">
         Connect to GitHub
