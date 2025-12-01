@@ -341,8 +341,12 @@ function DashboardComponent() {
         if (uniqueMissing.length > 0) {
           const label = uniqueMissing.length === 1 ? "model" : "models";
           const verb = uniqueMissing.length === 1 ? "is" : "are";
+          const thisThese = uniqueMissing.length === 1 ? "this" : "these";
+          const actionMessage = env.NEXT_PUBLIC_WEB_MODE
+            ? `Add your API keys in Settings to use ${thisThese} ${label}.`
+            : `Update credentials in Settings to use ${thisThese} ${label}.`;
           toast.warning(
-            `${uniqueMissing.join(", ")} ${verb} not configured and was removed from the selection. Update credentials in Settings to use this ${label}.`
+            `${uniqueMissing.join(", ")} ${verb} not configured and was removed from the selection. ${actionMessage}`
           );
         }
       }

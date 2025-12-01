@@ -123,7 +123,9 @@ export const DashboardInputControls = memo(function DashboardInputControls({
                   Setup required
                 </p>
                 <p className="text-xs text-neutral-300">
-                  Add credentials for this agent in Settings.
+                  {env.NEXT_PUBLIC_WEB_MODE
+                    ? "Add your API key for this agent in Settings."
+                    : "Add credentials for this agent in Settings."}
                 </p>
                 {missingRequirements.length > 0 ? (
                   <ul className="list-disc pl-4 text-xs text-neutral-400">

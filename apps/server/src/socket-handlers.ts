@@ -53,7 +53,10 @@ import { serverLogger } from "./utils/fileLogger";
 import { getGitHubTokenFromKeychain } from "./utils/getGitHubToken";
 import { createDraftPr, fetchPrDetail } from "./utils/githubPr";
 import { getOctokit } from "./utils/octokit";
-import { checkAllProvidersStatus } from "./utils/providerStatus";
+import {
+  checkAllProvidersStatus,
+  checkAllProvidersStatusWebMode,
+} from "./utils/providerStatus";
 import { refreshGitHubData } from "./utils/refreshGitHubData";
 import { runWithAuth, runWithAuthToken } from "./utils/requestContext";
 import { getWwwClient } from "./utils/wwwClient";
@@ -1267,7 +1270,7 @@ export function setupSocketHandlers(
         const teamSlugOrId = requestedTeamSlugOrId || safeTeam;
 
         const convex = getConvex();
-        let taskId: Id<"tasks"> | undefined = providedTaskId;
+        const taskId: Id<"tasks"> | undefined = providedTaskId;
         let taskRunId: Id<"taskRuns"> | null = null;
         let responded = false;
 
@@ -2423,21 +2426,11 @@ ${title}`;
     });
 
     socket.on("check-provider-status", async (callback) => {
-      // In web mode, Docker/local providers are not used - return "ready" status
-      if (env.NEXT_PUBLIC_WEB_MODE) {
-        callback({
-          success: true,
-          providers: [
-            { name: "morph", isAvailable: true },
-          ],
-        });
-        return;
-      }
-
       try {
-        const status = await checkAllProvidersStatus({
-          teamSlugOrId: safeTeam,
-        });
+        // In web mode, only check API keys from Convex (no local files/keychains)
+        const status = env.NEXT_PUBLIC_WEB_MODE
+          ? await checkAllProvidersStatusWebMode({ teamSlugOrId: safeTeam })
+          : await checkAllProvidersStatus({ teamSlugOrId: safeTeam });
         callback({ success: true, ...status });
       } catch (error) {
         serverLogger.error("Error checking provider status:", error);

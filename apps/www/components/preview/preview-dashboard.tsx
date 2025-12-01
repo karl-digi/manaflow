@@ -93,6 +93,7 @@ export function PreviewDashboard({
   const [configs, setConfigs] = useState<PreviewConfigListItem[]>(previewConfigs);
   const [updatingConfigId, setUpdatingConfigId] = useState<string | null>(null);
   const [openingConfigId, setOpeningConfigId] = useState<string | null>(null);
+  const [configPendingDelete, setConfigPendingDelete] = useState<PreviewConfigListItem | null>(null);
 
   // Public URL input state
   const [repoUrlInput, setRepoUrlInput] = useState("");
@@ -153,31 +154,39 @@ export function PreviewDashboard({
     window.location.href = `/preview/configure?${params.toString()}`;
   }, []);
 
-  const handleDeleteConfig = useCallback(
-    async (config: PreviewConfigListItem) => {
-      setUpdatingConfigId(config.id);
-      setConfigError(null);
-      try {
-        const params = new URLSearchParams({ teamSlugOrId: config.teamSlugOrId });
-        const response = await fetch(`/api/preview/configs/${config.id}?${params.toString()}`, {
-          method: "DELETE",
-          headers: { "Content-Type": "application/json" },
-        });
-        if (!response.ok) {
-          throw new Error(await response.text());
-        }
-        setConfigs((previous) => previous.filter((item) => item.id !== config.id));
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Failed to delete preview configuration";
-        console.error("[PreviewDashboard] Failed to delete preview configuration", error);
-        setConfigError(message);
-      } finally {
-        setUpdatingConfigId(null);
+  const handleRequestDelete = useCallback((config: PreviewConfigListItem) => {
+    setConfigError(null);
+    setConfigPendingDelete(config);
+  }, []);
+
+  const handleDeleteConfig = useCallback(async () => {
+    if (!configPendingDelete) return;
+    setUpdatingConfigId(configPendingDelete.id);
+    setConfigError(null);
+    try {
+      const params = new URLSearchParams({ teamSlugOrId: configPendingDelete.teamSlugOrId });
+      const response = await fetch(`/api/preview/configs/${configPendingDelete.id}?${params.toString()}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!response.ok) {
+        throw new Error(await response.text());
       }
-    },
-    []
-  );
+      setConfigs((previous) => previous.filter((item) => item.id !== configPendingDelete.id));
+      setConfigPendingDelete(null);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to delete preview configuration";
+      console.error("[PreviewDashboard] Failed to delete preview configuration", error);
+      setConfigError(message);
+    } finally {
+      setUpdatingConfigId(null);
+    }
+  }, [configPendingDelete]);
+
+  const handleCancelDelete = useCallback(() => {
+    setConfigPendingDelete(null);
+  }, []);
 
   const handleTeamChange = useCallback(
     (nextTeam: string) => {
@@ -190,26 +199,34 @@ export function PreviewDashboard({
   );
 
   const handleStartPreview = useCallback(async () => {
-    if (!selectedTeamSlugOrIdState) {
-      setErrorMessage("Select a team before continuing.");
-      return;
-    }
-
     const repoName = parseGithubUrl(repoUrlInput);
     if (!repoName) {
       setErrorMessage("Please enter a valid GitHub URL or owner/repo");
       return;
     }
-    const params = new URLSearchParams({ repo: repoName });
-    params.set("team", selectedTeamSlugOrIdState);
-    const configurePath = `/preview/configure?${params.toString()}`;
 
+    // For unauthenticated users, redirect to sign-in without requiring team selection
     if (!isAuthenticated) {
+      const params = new URLSearchParams({ repo: repoName });
+      // Include team if available, otherwise the configure page will handle it after sign-in
+      if (selectedTeamSlugOrIdState) {
+        params.set("team", selectedTeamSlugOrIdState);
+      }
+      const configurePath = `/preview/configure?${params.toString()}`;
       setErrorMessage(null);
       setNavigatingRepo("__url_input__");
       window.location.href = `/handler/sign-in?after_auth_return_to=${encodeURIComponent(configurePath)}`;
       return;
     }
+
+    if (!selectedTeamSlugOrIdState) {
+      setErrorMessage("Select a team before continuing.");
+      return;
+    }
+
+    const params = new URLSearchParams({ repo: repoName });
+    params.set("team", selectedTeamSlugOrIdState);
+    const configurePath = `/preview/configure?${params.toString()}`;
 
     if (!hasGithubAppInstallation) {
       setErrorMessage(null);
@@ -559,7 +576,7 @@ export function PreviewDashboard({
         </Link>
 
         <h1 className="text-3xl font-semibold tracking-tight text-white mb-2">
-          Screenshot previews for your PRs
+          Screenshot previews for GitHub PRs
         </h1>
         <p className="text-base text-neutral-400 max-w-2xl">
           preview.new sets up a GitHub agent that takes screenshot previews of your dev server so you
@@ -583,7 +600,7 @@ export function PreviewDashboard({
           </div>
           <Button
             onClick={() => void handleStartPreview()}
-            disabled={!repoUrlInput.trim() || navigatingRepo !== null || !selectedTeamSlugOrIdState}
+            disabled={!repoUrlInput.trim() || navigatingRepo !== null || (isAuthenticated && !selectedTeamSlugOrIdState)}
             className="h-10 px-4 rounded-none bg-white text-black hover:bg-neutral-200 text-sm font-medium"
           >
             {navigatingRepo === "__url_input__" ? (
@@ -595,7 +612,7 @@ export function PreviewDashboard({
         </div>
         {!isAuthenticated && (
           <p className="text-xs text-neutral-500 mt-2">
-            Sign in to connect private repos.
+            You&apos;ll be asked to sign in to continue.
           </p>
         )}
         {errorMessage && (
@@ -744,7 +761,7 @@ export function PreviewDashboard({
                         <TooltipTrigger asChild>
                           <button
                             type="button"
-                            onClick={() => void handleDeleteConfig(config)}
+                            onClick={() => handleRequestDelete(config)}
                             disabled={updatingConfigId === config.id}
                             className="p-1.5 text-red-400 disabled:opacity-50"
                           >
@@ -799,6 +816,58 @@ export function PreviewDashboard({
           </div>
         </div>
       </div>
+
+      {configPendingDelete && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4 py-6"
+          onClick={() => {
+            if (updatingConfigId === configPendingDelete.id) return;
+            handleCancelDelete();
+          }}
+        >
+          <div
+            className="w-full max-w-md rounded-lg border border-white/10 bg-neutral-900 px-6 py-5 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start gap-3">
+              <div className="rounded-full bg-red-500/10 p-2 text-red-400">
+                <Trash2 className="h-5 w-5" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-semibold text-white">Delete configuration?</h3>
+                <p className="mt-1 text-sm text-neutral-400">
+                  Are you sure you want to remove{" "}
+                  <span className="text-white">{configPendingDelete.repoFullName}</span>{" "}
+                  from preview.new? This stops screenshot previews for this repository.
+                </p>
+              </div>
+            </div>
+            {configError && (
+              <p className="mt-3 text-sm text-red-400">{configError}</p>
+            )}
+            <div className="mt-5 flex justify-end gap-3">
+              <Button
+                onClick={handleCancelDelete}
+                disabled={updatingConfigId === configPendingDelete.id}
+                variant="secondary"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={() => void handleDeleteConfig()}
+                disabled={updatingConfigId === configPendingDelete.id}
+                variant="destructive"
+              >
+                {updatingConfigId === configPendingDelete.id ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  "Delete"
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
