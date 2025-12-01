@@ -11,9 +11,9 @@ from pathlib import Path
 from typing import Any, override
 
 from freestyle_client import ApiClient, Configuration, VMApi
+from freestyle_client.models.create_snapshot_request import CreateSnapshotRequest
 from freestyle_client.models.create_vm_request import CreateVmRequest
 from freestyle_client.models.exec_await_request import ExecAwaitRequest
-from freestyle_client.models.fork_vm_request import ForkVmRequest
 from freestyle_client.models.snapshot_info import SnapshotInfo
 from freestyle_client.models.snapshot_vm_request import SnapshotVmRequest
 from freestyle_client.models.snapshot_vm_response import SnapshotVmResponse
@@ -247,50 +247,36 @@ class FreestyleProvider(BaseProvider):
         ttl_seconds: int | None = None,
     ) -> FreestyleInstance:
         # Freestyle doesn't support vcpus/memory configuration yet
-        # Disk can be resized after creation via resize_vm
-        _ = vcpus, memory_mib  # Unused for now
+        _ = vcpus, memory_mib, disk_size_mib  # Unused - disk size is baked into snapshot
 
         vm_api = self._get_vm_api()
 
-        # Fork from the snapshot with wait_for_ready_signal=True
-        # Use dict construction for pydantic model - basedpyright has issues with aliases
+        # Use create_vm with snapshotId instead of fork_vm
+        # (fork_vm endpoint has issues with snapshots created via create_snapshot)
         request_data: dict[str, Any] = {
+            "snapshotId": snapshot_id,
             "waitForReadySignal": True,
             "readySignalTimeoutSeconds": 120,
         }
         if ttl_seconds is not None:
             request_data["idleTimeoutSeconds"] = ttl_seconds
-        request = ForkVmRequest.model_validate(request_data)
+
+        request = CreateVmRequest.model_validate(request_data)
 
         result = await asyncio.to_thread(
-            vm_api.fork_vm,
-            snapshot_id,
+            vm_api.create_vm,
             request,
         )
 
-        instance = FreestyleInstance(
+        return FreestyleInstance(
             result.id,
             vm_api,
             domains=list(result.domains) if result.domains else [],
         )
 
-        # Resize disk if requested
-        if disk_size_mib is not None:
-            from freestyle_client.models.resize_vm_request import ResizeVmRequest
-
-            resize_request = ResizeVmRequest.model_validate({"sizeMb": disk_size_mib})
-            await asyncio.to_thread(
-                vm_api.resize_vm,
-                result.id,
-                resize_request,
-            )
-
-        return instance
-
     async def create_fresh_instance(
         self,
         *,
-        disk_size_mib: int | None = None,
         ttl_seconds: int | None = None,
         ports: list[dict[str, int]] | None = None,
     ) -> FreestyleInstance:
@@ -300,7 +286,6 @@ class FreestyleProvider(BaseProvider):
         fresh VMs have no ready signal mechanism, so we don't wait for one.
 
         Args:
-            disk_size_mib: Optional disk size in MiB.
             ttl_seconds: Optional idle timeout in seconds.
             ports: Optional list of port mappings, e.g. [{"port": 443, "targetPort": 39379}].
                    Only external ports 443 and 8081 are supported.
@@ -310,8 +295,6 @@ class FreestyleProvider(BaseProvider):
         # Fresh VMs don't have init scripts to send ready signals,
         # so we don't wait for one
         template_data: dict[str, Any] = {}
-        if disk_size_mib is not None:
-            template_data["rootfsSizeMb"] = disk_size_mib
         if ttl_seconds is not None:
             template_data["idleTimeoutSeconds"] = ttl_seconds
         if ports is not None:
@@ -330,6 +313,46 @@ class FreestyleProvider(BaseProvider):
             vm_api,
             domains=list(result.domains) if result.domains else [],
         )
+
+    async def create_base_snapshot(
+        self,
+        *,
+        disk_size_mib: int | None = None,
+        name: str | None = None,
+        ports: list[dict[str, int]] | None = None,
+    ) -> FreestyleSnapshot:
+        """Create a base snapshot with specified disk size.
+
+        This uses the Freestyle create_snapshot endpoint which creates a temporary
+        VM, starts it, snapshots it, then deletes the VM. The snapshot will have
+        the specified rootfs size baked in.
+
+        Args:
+            disk_size_mib: Disk size in MiB. Defaults to 16000 (16GB) if not provided.
+            name: Optional name for the snapshot.
+            ports: Optional list of port mappings for the snapshot.
+        """
+        vm_api = self._get_vm_api()
+
+        template_data: dict[str, Any] = {}
+        if disk_size_mib is not None:
+            template_data["rootfsSizeMb"] = disk_size_mib
+        if ports is not None:
+            template_data["ports"] = ports
+
+        template = VmTemplate.model_validate(template_data)
+        request_data: dict[str, Any] = {"template": template}
+        if name is not None:
+            request_data["name"] = name
+
+        request = CreateSnapshotRequest.model_validate(request_data)
+
+        result = await asyncio.to_thread(
+            vm_api.create_snapshot,
+            request,
+        )
+
+        return FreestyleSnapshot(result.snapshot_id)
 
     @override
     async def list_snapshots(self) -> Sequence[FreestyleSnapshot]:

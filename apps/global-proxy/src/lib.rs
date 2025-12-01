@@ -43,10 +43,10 @@ const GIT_COMMIT: &str = match option_env!("GIT_COMMIT") {
 const CSP_FRAME_ANCESTORS_PORT_39378: &str = "frame-ancestors 'self' https://cmux.local http://cmux.local https://www.cmux.sh https://cmux.sh https://www.cmux.dev https://cmux.dev http://localhost:5173;";
 const FORWARD_ALL_WEBSOCKET_HEADERS: bool = true;
 
-// WebSocket tunnel buffer sizes - use minimal buffers for low latency (interactive terminals)
-// Large buffers increase throughput but add latency waiting to fill
-// 2KB is optimal for terminal keystroke latency while still being efficient
-const WS_BUFFER_SIZE: usize = 2 * 1024;
+// WebSocket tunnel buffer sizes - use larger buffers for better throughput
+// TCP_NODELAY handles latency for small packets; buffer size affects bulk transfers
+// 64KB provides good throughput without excessive memory per connection
+const WS_BUFFER_SIZE: usize = 64 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct ProxyConfig {
@@ -108,13 +108,19 @@ pub async fn spawn_proxy(config: ProxyConfig) -> Result<ProxyHandle, ProxyError>
     listener.set_nonblocking(true)?;
     let local_addr = listener.local_addr()?;
 
-    // Configure HTTPS connector
+    // Configure HTTP connector with TCP_NODELAY for low-latency outgoing connections
+    let mut http_connector = HttpConnector::new();
+    http_connector.set_nodelay(true);
+    // Allow the HTTP connector to handle HTTPS URLs (TLS is added by HttpsConnector wrapper)
+    http_connector.enforce_http(false);
+
+    // Configure HTTPS connector wrapping our low-latency HTTP connector
     // Note: HTTP/2 would require updating dependencies; sticking with HTTP/1.1 for now
     let https = HttpsConnectorBuilder::new()
         .with_webpki_roots()
         .https_or_http()
         .enable_http1()
-        .build();
+        .wrap_connector(http_connector);
 
     // Configure HTTP client with aggressive connection pooling
     let client: HttpClient = Client::builder()

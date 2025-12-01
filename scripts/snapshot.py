@@ -2104,7 +2104,7 @@ async def task_install_tmux_conf(ctx: TaskContext) -> None:
     name="configure-memory-protection",
     deps=("install-systemd-units",),
     description="Configure swapfile and systemd resource protections",
-    providers=(ProviderType.MORPH,),  # Freestyle doesn't need swap/zram config
+    providers=(ProviderType.MORPH,),  # Freestyle's 16GB disk can't fit 6GB swap
 )
 async def task_configure_memory_protection(ctx: TaskContext) -> None:
     cmd = textwrap.dedent(
@@ -2943,8 +2943,7 @@ async def provision_and_snapshot_for_freestyle_preset(
     timings = TimingsCollector()
 
     try:
-        # Freestyle creates fresh VMs - no base snapshot needed
-        # Map cmux-proxy port (39379) to external port 443
+        # Create a fresh VM instance
         instance = await provider.create_fresh_instance(
             ttl_seconds=args.ttl_seconds,
             ports=[{"port": 443, "targetPort": 39379}],

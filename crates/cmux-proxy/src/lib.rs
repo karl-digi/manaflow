@@ -37,9 +37,9 @@ const HTTP2_KEEP_ALIVE_INTERVAL_SECS: u64 = 30;
 const HTTP2_KEEP_ALIVE_TIMEOUT_SECS: u64 = 10;
 
 // Buffer sizes for bidirectional copy in tunnels (WebSocket, CONNECT)
-// Use small buffers for low latency - critical for interactive terminals
-// Nagle's algorithm + large buffers = ~40ms+ delay per keystroke
-const TUNNEL_BUFFER_SIZE: usize = 2 * 1024;
+// Use larger buffers for better throughput - TCP_NODELAY handles latency
+// Buffer size primarily affects bulk transfers, not individual keystrokes
+const TUNNEL_BUFFER_SIZE: usize = 64 * 1024;
 
 trait ClientKeepAliveConfig {
     fn set_pool_max_idle_per_host(&mut self, max: usize);
