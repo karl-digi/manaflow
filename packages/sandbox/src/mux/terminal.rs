@@ -3209,31 +3209,9 @@ impl TerminalBuffer {
 
     /// Build a cached render view for the given height.
     pub fn render_view(&mut self, height: usize) -> TerminalRenderView {
-        // Use a static counter to log cache misses only (to avoid log spam)
-        static RENDER_LOG_COUNTER: std::sync::atomic::AtomicU64 =
-            std::sync::atomic::AtomicU64::new(0);
-
         if let Some(cache) = &self.render_cache {
             if cache.is_valid(height, self.generation, self.scroll_offset) {
                 return cache.as_view();
-            }
-        }
-
-        // Cache miss - log this
-        let counter = RENDER_LOG_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let outer_bg = get_outer_bg();
-        let outer_fg = get_outer_fg();
-
-        // Only log first few cache misses after invalidation to avoid spam
-        if counter < 5 || counter % 100 == 0 {
-            if let Ok(mut f) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open("/tmp/dmux-colors.log")
-            {
-                use std::io::Write;
-                let _ = writeln!(f, "[RENDER] Cache miss #{}, gen={}, outer_bg={:?}, outer_fg={:?}, terminal.default_bg={:?}",
-                    counter, self.generation, outer_bg, outer_fg, self.terminal.default_bg_color);
             }
         }
 
@@ -3411,34 +3389,7 @@ impl TerminalManager {
     /// Invalidate render caches for all terminal buffers.
     /// Call this when outer terminal colors change to force re-rendering.
     pub fn invalidate_all_render_caches(&mut self) {
-        let count = self.buffers.len();
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("/tmp/dmux-colors.log")
-        {
-            use std::io::Write;
-            let _ = writeln!(
-                f,
-                "[INVALIDATE] Invalidating {} terminal buffer caches",
-                count
-            );
-        }
-        for (pane_id, buffer) in self.buffers.iter_mut() {
-            if let Ok(mut f) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open("/tmp/dmux-colors.log")
-            {
-                use std::io::Write;
-                let _ = writeln!(
-                    f,
-                    "[INVALIDATE] Marking buffer for pane {:?} dirty (gen {} -> {})",
-                    pane_id,
-                    buffer.generation,
-                    buffer.generation.wrapping_add(1)
-                );
-            }
+        for buffer in self.buffers.values_mut() {
             buffer.mark_dirty();
         }
     }

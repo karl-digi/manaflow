@@ -231,14 +231,6 @@ async fn run_app<B: ratatui::backend::Backend + std::io::Write>(
                         // Theme change signal received - re-query colors from outer terminal
                         // VSCode terminal doesn't respond to OSC 10/11 while in alternate screen,
                         // so we need to leave alt screen, query, then re-enter.
-                        if let Ok(mut f) = std::fs::OpenOptions::new()
-                            .create(true)
-                            .append(true)
-                            .open("/tmp/dmux-colors.log")
-                        {
-                            use std::io::Write;
-                            let _ = writeln!(f, "[RUNNER] ThemeChanged - leaving alt screen to query colors");
-                        }
 
                         // Leave alternate screen and disable raw mode for clean OSC query
                         let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
@@ -257,42 +249,13 @@ async fn run_app<B: ratatui::backend::Backend + std::io::Write>(
                         // Force full terminal redraw
                         let _ = terminal.clear();
 
-                        if let Ok(mut f) = std::fs::OpenOptions::new()
-                            .create(true)
-                            .append(true)
-                            .open("/tmp/dmux-colors.log")
-                        {
-                            use std::io::Write;
-                            let _ = writeln!(
-                                f,
-                                "[RUNNER] Re-queried colors: fg={:?}, bg={:?}",
-                                new_colors.foreground, new_colors.background
-                            );
-                        }
-
                         app.set_status(format!(
                             "Theme updated: bg={:?}",
                             new_colors.background.map(|(r, g, b)| format!("#{:02x}{:02x}{:02x}", r, g, b))
                         ));
 
                         // Invalidate all render caches so terminal buffers re-render with new colors
-                        if let Ok(mut f) = std::fs::OpenOptions::new()
-                            .create(true)
-                            .append(true)
-                            .open("/tmp/dmux-colors.log")
-                        {
-                            use std::io::Write;
-                            let _ = writeln!(f, "[RUNNER] About to call invalidate_all_render_caches...");
-                        }
                         invalidate_all_render_caches(terminal_manager.clone()).await;
-                        if let Ok(mut f) = std::fs::OpenOptions::new()
-                            .create(true)
-                            .append(true)
-                            .open("/tmp/dmux-colors.log")
-                        {
-                            use std::io::Write;
-                            let _ = writeln!(f, "[RUNNER] invalidate_all_render_caches completed");
-                        }
 
                         // Send SIGWINCH to trigger re-render in TUI apps
                         // Note: We don't send SIGUSR1 because most apps don't handle it
