@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { resolveTeamIdLoose } from "../_shared/team";
-import { authQuery } from "./users/utils";
+import { internal } from "./_generated/api";
+import { authMutation, authQuery } from "./users/utils";
 import { internalMutation, internalQuery } from "./_generated/server";
 
 function normalizeRepoFullName(value: string): string {
@@ -432,43 +433,128 @@ export const listByConfig = authQuery({
   },
 });
 
-export const listByTeam = authQuery({
+/**
+ * Create a preview run manually (for local preview scripts).
+ * Follows the same flow as the GitHub webhook handler:
+ * 1. Creates or reuses a preview run
+ * 2. Creates a task and taskRun
+ * 3. Links the taskRun to the preview run
+ *
+ * Requires an existing previewConfig for the repo.
+ */
+export const createManual = authMutation({
   args: {
     teamSlugOrId: v.string(),
-    limit: v.optional(v.number()),
+    repoFullName: v.string(),
+    prNumber: v.number(),
+    prUrl: v.string(),
+    headSha: v.string(),
+    baseSha: v.optional(v.string()),
+    headRef: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
-    const take = Math.max(1, Math.min(args.limit ?? 50, 100));
-    const runs = await ctx.db
+    const repoFullName = normalizeRepoFullName(args.repoFullName);
+
+    // Find the preview config for this repo
+    const config = await ctx.db
+      .query("previewConfigs")
+      .withIndex("by_team_repo", (q) =>
+        q.eq("teamId", teamId).eq("repoFullName", repoFullName),
+      )
+      .first();
+
+    if (!config) {
+      throw new Error(
+        `No preview configuration found for ${repoFullName}. ` +
+        `Please create one first via the cmux UI.`,
+      );
+    }
+
+    // Check for existing pending/running run for this PR (similar to webhook flow)
+    const existingByPr = await ctx.db
       .query("previewRuns")
-      .withIndex("by_team_created", (q) => q.eq("teamId", teamId))
+      .withIndex("by_config_pr", (q) =>
+        q.eq("previewConfigId", config._id).eq("prNumber", args.prNumber),
+      )
       .order("desc")
-      .take(take);
+      .first();
 
-    // Fetch config info for each run
-    const configIds = [...new Set(runs.map((r) => r.previewConfigId))];
-    const configs = await Promise.all(configIds.map((id) => ctx.db.get(id)));
-    const configMap = new Map(
-      configs.filter(Boolean).map((c) => [c!._id, c!])
-    );
+    if (
+      existingByPr &&
+      existingByPr.taskRunId &&
+      (existingByPr.status === "pending" || existingByPr.status === "running")
+    ) {
+      // Return existing run only if it has a taskRun linked
+      return { previewRunId: existingByPr._id, reused: true };
+    }
 
-    // Fetch task info for runs with taskRunId
-    const taskRunIds = runs
-      .map((r) => r.taskRunId)
-      .filter((id): id is NonNullable<typeof id> => id !== undefined);
-    const taskRuns = await Promise.all(taskRunIds.map((id) => ctx.db.get(id)));
-    const taskRunMap = new Map(
-      taskRuns.filter(Boolean).map((tr) => [tr!._id, tr!])
-    );
+    const now = Date.now();
 
-    return runs.map((run) => {
-      const taskRun = run.taskRunId ? taskRunMap.get(run.taskRunId) : null;
-      return {
-        ...run,
-        configRepoFullName: configMap.get(run.previewConfigId)?.repoFullName,
-        taskId: taskRun?.taskId,
-      };
+    // Step 1: Create preview run (following enqueueFromWebhook pattern)
+    const runId = await ctx.db.insert("previewRuns", {
+      previewConfigId: config._id,
+      teamId,
+      repoFullName,
+      repoInstallationId: config.repoInstallationId,
+      prNumber: args.prNumber,
+      prUrl: args.prUrl,
+      headSha: args.headSha,
+      baseSha: args.baseSha,
+      headRef: args.headRef,
+      headRepoFullName: undefined,
+      headRepoCloneUrl: undefined,
+      status: "running", // Start as running since we're doing local capture
+      stateReason: "Manual local preview",
+      dispatchedAt: now,
+      startedAt: now,
+      completedAt: undefined,
+      screenshotSetId: undefined,
+      githubCommentUrl: undefined,
+      createdAt: now,
+      updatedAt: now,
     });
+
+    await ctx.db.patch(config._id, {
+      lastRunAt: now,
+      updatedAt: now,
+    });
+
+    // Step 2: Get user ID from auth context
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error("Authentication required");
+    }
+    const userId = config.createdByUserId;
+
+    // Step 3: Create task for this preview run (following webhook pattern)
+    const taskId = await ctx.runMutation(internal.tasks.createForPreview, {
+      teamId,
+      userId,
+      previewRunId: runId,
+      repoFullName,
+      prNumber: args.prNumber,
+      prUrl: args.prUrl,
+      headSha: args.headSha,
+      baseBranch: config.repoDefaultBranch,
+    });
+
+    // Step 4: Create taskRun (following webhook pattern)
+    const { taskRunId } = await ctx.runMutation(internal.taskRuns.createForPreview, {
+      taskId,
+      teamId,
+      userId,
+      prUrl: args.prUrl,
+      environmentId: config.environmentId,
+      newBranch: args.headRef,
+    });
+
+    // Step 5: Link the taskRun to the preview run
+    await ctx.runMutation(internal.previewRuns.linkTaskRun, {
+      previewRunId: runId,
+      taskRunId,
+    });
+
+    return { previewRunId: runId, reused: false };
   },
 });

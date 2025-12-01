@@ -361,14 +361,23 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
 
     // Post GitHub comment if we have installation ID
     if (previewRun.repoInstallationId) {
+      const team = await ctx.runQuery(internal.teams.getByTeamIdInternal, {
+        teamId: taskRun.teamId,
+      });
+      const teamSlug = team?.slug ?? taskRun.teamId;
+      const workspaceUrl = `https://cmux.sh/${teamSlug}/task/${taskRun.taskId}`;
+      const devServerUrl = `https://cmux.sh/${teamSlug}/task/${taskRun.taskId}/browser`;
+
       const commentResult = await ctx.runAction(
-        internal.github_pr_comments.postPreviewCommentWithTaskScreenshots,
+        internal.github_pr_comments.postPreviewComment,
         {
           installationId: previewRun.repoInstallationId,
           repoFullName: previewRun.repoFullName,
           prNumber: previewRun.prNumber,
-          taskRunId: taskRunId as Id<"taskRuns">,
+          screenshotSetId: taskRun.latestScreenshotSetId,
           previewRunId: previewRun._id,
+          workspaceUrl,
+          devServerUrl,
         }
       );
 
