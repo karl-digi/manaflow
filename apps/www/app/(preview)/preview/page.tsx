@@ -53,7 +53,7 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
 
   if (!user) {
     return (
-      <div className="relative isolate min-h-dvh bg-[#05050a] text-white">
+      <div className="relative isolate min-h-dvh bg-[#05050a] text-white flex justify-center">
         <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_top,_rgba(4,120,255,0.3),_transparent_45%)]" />
 
         <PreviewDashboard
@@ -144,7 +144,7 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
   );
 
   return (
-    <div className="relative isolate min-h-dvh bg-[#05050a] text-white">
+    <div className="relative isolate min-h-dvh bg-[#05050a] text-white flex justify-center">
       <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_top,_rgba(4,120,255,0.3),_transparent_45%)]" />
 
       <PreviewDashboard
