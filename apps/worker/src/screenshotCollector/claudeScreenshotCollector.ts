@@ -264,12 +264,9 @@ If you can't install dependencies/start the dev server, just let me know. Do not
           await logToScreenshotCollector(formatted);
         }
 
-        if (
-          message.type === "result" &&
-          Object.prototype.hasOwnProperty.call(message, "structured_output")
-        ) {
+        if (message.type === "result" && "structured_output" in message) {
           const parsed = screenshotOutputSchema.safeParse(
-            (message as { structured_output?: unknown }).structured_output
+            message.structured_output
           );
           if (parsed.success) {
             structuredOutput = parsed.data;

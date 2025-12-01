@@ -108,7 +108,7 @@ async function renderScreenshotSetMarkdown(
 
   if (set.status === "completed" && set.images.length > 0) {
     // Check if the model detected no UI changes
-    if (set.hasUiChanges === false) {
+    if (!set.hasUiChanges) {
       lines.push(
         `> **No UI changes detected** - The model analyzed this PR and determined there are no visual changes to the UI.`,
         "",
@@ -308,6 +308,14 @@ export const addPrReaction = internalAction({
   },
 });
 
+/**
+ * Unified function to post preview comments to GitHub PRs.
+ *
+ * Options:
+ * - includePreviousRuns: Include collapsible history of previous screenshot sets (default: false)
+ * - workspaceUrl: Optional URL to include a "Open Workspace" link at the top
+ * - previewConfigId: Required when includePreviousRuns is true, used to fetch history
+ */
 export const postPreviewComment = internalAction({
   args: {
     installationId: v.number(),
@@ -315,9 +323,22 @@ export const postPreviewComment = internalAction({
     prNumber: v.number(),
     screenshotSetId: v.id("taskRunScreenshotSets"),
     previewRunId: v.id("previewRuns"),
+    // Options for different behaviors
+    includePreviousRuns: v.optional(v.boolean()),
+    workspaceUrl: v.optional(v.string()),
+    previewConfigId: v.optional(v.id("previewConfigs")),
   },
-  handler: async (ctx, args) => {
-    const { installationId, repoFullName, prNumber, screenshotSetId } = args;
+  handler: async (ctx, args): Promise<{ ok: true; commentId?: number; commentUrl?: string } | { ok: false; error: string }> => {
+    const {
+      installationId,
+      repoFullName,
+      prNumber,
+      screenshotSetId,
+      previewRunId,
+      includePreviousRuns = false,
+      workspaceUrl,
+      previewConfigId,
+    } = args;
 
     try {
       const accessToken = await fetchInstallationAccessToken(installationId);
@@ -339,18 +360,6 @@ export const postPreviewComment = internalAction({
 
       const octokit = createOctokit(accessToken);
 
-      const previewRunPayload = await ctx.runQuery(
-        internal.previewRuns.getRunWithConfig,
-        { previewRunId: args.previewRunId },
-      );
-      const previewRun = previewRunPayload?.run;
-      if (!previewRun) {
-        console.error("[github_pr_comments] Preview run not found", {
-          previewRunId: args.previewRunId,
-        });
-        return { ok: false, error: "Preview run not found" };
-      }
-
       const screenshotSet = await ctx.runQuery(
         internal.previewScreenshots.getScreenshotSet,
         { screenshotSetId },
@@ -363,62 +372,78 @@ export const postPreviewComment = internalAction({
         return { ok: false, error: "Screenshot set not found" };
       }
 
-      const previousRuns =
-        (await ctx.runQuery(internal.previewRuns.listByConfigAndPr, {
-          previewConfigId: previewRun.previewConfigId,
-          prNumber: previewRun.prNumber,
-          limit: MAX_PREVIOUS_SCREENSHOT_SETS + 1,
-        })) ?? [];
+      // Build comment sections
+      const commentSections: string[] = ["## Preview Screenshots"];
 
-      const previousSetEntries: Array<{
-        run: PreviewRunDoc;
-        set: ScreenshotSetDoc;
-      }> = [];
-      for (const run of previousRuns) {
-        if (run._id === previewRun._id) continue;
-        if (!run.screenshotSetId) continue;
-        const priorSet = await ctx.runQuery(
-          internal.previewScreenshots.getScreenshotSet,
-          { screenshotSetId: run.screenshotSetId },
+      // Add workspace link if provided (under the heading)
+      if (workspaceUrl) {
+        commentSections.push(
+          `[Open Workspace](${workspaceUrl}) (expires in 30m) • [Open in GitHub](https://0github.com/${repoFullName}/pull/${prNumber})`,
         );
-        if (!priorSet) continue;
-        previousSetEntries.push({ run, set: priorSet });
-        if (previousSetEntries.length >= MAX_PREVIOUS_SCREENSHOT_SETS) {
-          break;
-        }
       }
 
-      const latestHeading = `### Latest commit ${formatCommitLabel(screenshotSet)}`;
+      // Render the main screenshot section
+      const latestHeading = includePreviousRuns
+        ? `### Latest commit ${formatCommitLabel(screenshotSet)}`
+        : "";
       const latestSection = await renderScreenshotSetMarkdown(
         ctx,
         screenshotSet,
         latestHeading,
       );
 
-      const commentSections: string[] = ["## Preview Screenshots", latestSection];
+      commentSections.push(latestSection);
 
-      if (previousSetEntries.length > 0) {
-        const collapsedSections: string[] = [];
-        for (const entry of previousSetEntries) {
-          const sectionHeading = `#### ${summarizeSet(entry.set, entry.run)}`;
-          collapsedSections.push(
-            await renderScreenshotSetMarkdown(ctx, entry.set, sectionHeading),
+      // Fetch and render previous runs if requested
+      if (includePreviousRuns && previewConfigId) {
+        const previousRuns =
+          (await ctx.runQuery(internal.previewRuns.listByConfigAndPr, {
+            previewConfigId,
+            prNumber,
+            limit: MAX_PREVIOUS_SCREENSHOT_SETS + 1,
+          })) ?? [];
+
+        const previousSetEntries: Array<{
+          run: PreviewRunDoc;
+          set: ScreenshotSetDoc;
+        }> = [];
+        for (const run of previousRuns) {
+          if (run._id === previewRunId) continue;
+          if (!run.screenshotSetId) continue;
+          const priorSet = await ctx.runQuery(
+            internal.previewScreenshots.getScreenshotSet,
+            { screenshotSetId: run.screenshotSetId },
           );
+          if (!priorSet) continue;
+          previousSetEntries.push({ run, set: priorSet });
+          if (previousSetEntries.length >= MAX_PREVIOUS_SCREENSHOT_SETS) {
+            break;
+          }
         }
 
-        const previousBlock = [
-          "<details>",
-          `<summary>Previous preview runs (${previousSetEntries.length})</summary>`,
-          "",
-          collapsedSections.join("\n\n---\n\n"),
-          "",
-          "</details>",
-        ].join("\n");
+        if (previousSetEntries.length > 0) {
+          const collapsedSections: string[] = [];
+          for (const entry of previousSetEntries) {
+            const sectionHeading = `#### ${summarizeSet(entry.set, entry.run)}`;
+            collapsedSections.push(
+              await renderScreenshotSetMarkdown(ctx, entry.set, sectionHeading),
+            );
+          }
 
-        commentSections.push(previousBlock);
+          const previousBlock = [
+            "<details>",
+            `<summary>Previous preview runs (${previousSetEntries.length})</summary>`,
+            "",
+            collapsedSections.join("\n\n---\n\n"),
+            "",
+            "</details>",
+          ].join("\n");
+
+          commentSections.push(previousBlock);
+        }
       }
 
-      commentSections.push("---", COMMENT_SIGNATURE);
+      commentSections.push("---", PREVIEW_SIGNATURE);
       const commentBody = commentSections.join("\n\n");
 
       const { data } = await octokit.rest.issues.createComment({
@@ -437,11 +462,11 @@ export const postPreviewComment = internalAction({
       });
 
       await ctx.runMutation(internal.previewRuns.updateStatus, {
-        previewRunId: args.previewRunId,
-        status: "completed",
+        previewRunId,
+        status: screenshotSet.status as "completed" | "failed" | "skipped",
         screenshotSetId,
-        githubCommentUrl: data.html_url ?? previewRun.githubCommentUrl,
-        githubCommentId: data.id ?? previewRun.githubCommentId,
+        githubCommentUrl: data.html_url,
+        githubCommentId: data.id,
       });
 
       await collapseOlderPreviewComments({
@@ -618,265 +643,6 @@ function formatScreenshotComment(
 
   return markdown;
 }
-
-export const postPreviewCommentWithTaskScreenshots = internalAction({
-  args: {
-    installationId: v.number(),
-    repoFullName: v.string(),
-    prNumber: v.number(),
-    taskRunId: v.id("taskRuns"),
-    previewRunId: v.id("previewRuns"),
-  },
-  handler: async (ctx, args): Promise<{ ok: true; commentId?: number; commentUrl?: string } | { ok: false; error: string }> => {
-    const { installationId, repoFullName, prNumber, taskRunId, previewRunId } = args;
-
-    try {
-      const accessToken = await fetchInstallationAccessToken(installationId);
-      if (!accessToken) {
-        console.error(
-          "[github_pr_comments] Failed to get access token for preview comment",
-          { installationId },
-        );
-        return { ok: false, error: "Failed to get access token" };
-      }
-
-      const repo = parseRepoFullName(repoFullName);
-      if (!repo) {
-        console.error("[github_pr_comments] Invalid repo full name", {
-          repoFullName,
-        });
-        return { ok: false, error: "Invalid repository name" };
-      }
-
-      const octokit = createOctokit(accessToken);
-
-      const taskRun = await ctx.runQuery(internal.taskRuns.getById, {
-        id: taskRunId,
-      });
-
-      if (!taskRun?.latestScreenshotSetId) {
-        console.error("[github_pr_comments] No screenshot set for task run", {
-          taskRunId,
-        });
-        return { ok: false, error: "No screenshot set found" };
-      }
-
-      const previewRun = await ctx.runQuery(internal.previewRuns.getById, {
-        id: previewRunId,
-      });
-
-      if (!previewRun) {
-        console.error("[github_pr_comments] Preview run not found", {
-          previewRunId,
-        });
-        return { ok: false, error: "Preview run not found" };
-      }
-
-      const team = await ctx.runQuery(internal.teams.getByTeamIdInternal, {
-        teamId: taskRun.teamId,
-      });
-      const teamSlug: string = team?.slug ?? taskRun.teamId;
-      const workspaceUrl: string = `${CMUX_BASE_URL}/${teamSlug}/task/${taskRun.taskId}`;
-
-      const screenshotSet = await ctx.runQuery(
-        internal.github_pr_queries.getScreenshotSet,
-        { screenshotSetId: taskRun.latestScreenshotSetId },
-      );
-
-      if (!screenshotSet) {
-        console.error("[github_pr_comments] Screenshot set not found", {
-          screenshotSetId: taskRun.latestScreenshotSetId,
-        });
-        return { ok: false, error: "Screenshot set not found" };
-      }
-
-      const commentLines: string[] = [
-        `[Open Workspace](${workspaceUrl}) (expires in 30m) • [Open in GitHub](https://github.com/${repoFullName}/pull/${prNumber})`,
-        "",
-        "## Preview Screenshots",
-        "",
-      ];
-
-      if (screenshotSet.status === "completed" && screenshotSet.images.length > 0) {
-        const commitShaShort = (screenshotSet.commitSha || "").slice(0, 7);
-        commentLines.push(
-          `Successfully captured ${screenshotSet.images.length} screenshot(s) for commit \`${commitShaShort}\`:`,
-          "",
-        );
-
-        for (const image of screenshotSet.images) {
-          const storageUrl = await ctx.storage.getUrl(image.storageId);
-          if (storageUrl) {
-            const fileName = image.fileName || "screenshot";
-            commentLines.push(...formatScreenshotImageMarkdown(storageUrl, fileName, image.description, { includeHeader: true }));
-          }
-        }
-      } else if (screenshotSet.status === "failed") {
-        commentLines.push(
-          `Failed to capture screenshots: ${screenshotSet.error || "Unknown error"}`,
-          "",
-        );
-      } else if (screenshotSet.status === "skipped") {
-        commentLines.push(
-          `Screenshot capture was skipped: ${screenshotSet.error || "No preview configured"}`,
-          "",
-        );
-      }
-
-      commentLines.push("---", PREVIEW_SIGNATURE);
-      const commentBody = commentLines.join("\n");
-
-      const { data } = await octokit.rest.issues.createComment({
-        owner: repo.owner,
-        repo: repo.repo,
-        issue_number: prNumber,
-        body: commentBody,
-      });
-      console.log("[github_pr_comments] Successfully posted preview comment", {
-        installationId,
-        repoFullName,
-        prNumber,
-        commentId: data.id,
-        commentUrl: data.html_url,
-      });
-
-      await ctx.runMutation(internal.previewRuns.updateStatus, {
-        previewRunId,
-        status: screenshotSet.status as "completed" | "failed" | "skipped",
-        screenshotSetId: taskRun.latestScreenshotSetId,
-        githubCommentUrl: data.html_url ?? previewRun.githubCommentUrl,
-        githubCommentId: data.id ?? previewRun.githubCommentId,
-      });
-
-      await collapseOlderPreviewComments({
-        octokit,
-        owner: repo.owner,
-        repo: repo.repo,
-        prNumber,
-        latestCommentId: data.id,
-      });
-
-      return { ok: true, commentId: data.id, commentUrl: data.html_url };
-    } catch (error) {
-      console.error(
-        "[github_pr_comments] Unexpected error posting preview comment",
-        {
-          installationId,
-          repoFullName,
-          prNumber,
-          taskRunId,
-          error,
-        },
-      );
-      return {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
-  },
-});
-
-export const postPreviewCommentDirect = internalAction({
-  args: {
-    installationId: v.number(),
-    repoFullName: v.string(),
-    prNumber: v.number(),
-    previewRunId: v.id("previewRuns"),
-    screenshotSetId: v.id("taskRunScreenshotSets"),
-  },
-  handler: async (ctx, args): Promise<{ ok: true; commentId?: number; commentUrl?: string } | { ok: false; error: string }> => {
-    const { installationId, repoFullName, prNumber, previewRunId, screenshotSetId } = args;
-
-    try {
-      const accessToken = await fetchInstallationAccessToken(installationId);
-      if (!accessToken) {
-        console.error(
-          "[github_pr_comments] Failed to get access token for preview comment",
-          { installationId },
-        );
-        return { ok: false, error: "Failed to get access token" };
-      }
-
-      const repo = parseRepoFullName(repoFullName);
-      if (!repo) {
-        console.error("[github_pr_comments] Invalid repo full name", {
-          repoFullName,
-        });
-        return { ok: false, error: "Invalid repository name" };
-      }
-
-      const octokit = createOctokit(accessToken);
-
-      const screenshotSet = await ctx.runQuery(
-        internal.previewScreenshots.getScreenshotSet,
-        { screenshotSetId },
-      );
-
-      if (!screenshotSet) {
-        console.error("[github_pr_comments] Screenshot set not found", {
-          screenshotSetId,
-        });
-        return { ok: false, error: "Screenshot set not found" };
-      }
-
-      const commentBody = [
-        await renderScreenshotSetMarkdown(
-          ctx,
-          screenshotSet,
-          "## Preview Screenshots",
-        ),
-        PREVIEW_SIGNATURE,
-      ].join("\n\n---\n\n");
-
-      const { data } = await octokit.rest.issues.createComment({
-        owner: repo.owner,
-        repo: repo.repo,
-        issue_number: prNumber,
-        body: commentBody,
-      });
-
-      console.log("[github_pr_comments] Successfully posted preview comment", {
-        installationId,
-        repoFullName,
-        prNumber,
-        commentId: data.id,
-        commentUrl: data.html_url,
-      });
-
-      await collapseOlderPreviewComments({
-        octokit,
-        owner: repo.owner,
-        repo: repo.repo,
-        prNumber,
-        latestCommentId: data.id,
-      });
-
-      await ctx.runMutation(internal.previewRuns.updateStatus, {
-        previewRunId,
-        status: screenshotSet.status as "completed" | "failed" | "skipped",
-        screenshotSetId,
-        githubCommentUrl: data.html_url,
-        githubCommentId: data.id,
-      });
-
-      return { ok: true, commentId: data.id, commentUrl: data.html_url };
-    } catch (error) {
-      console.error(
-        "[github_pr_comments] Unexpected error posting preview comment",
-        {
-          installationId,
-          repoFullName,
-          prNumber,
-          error,
-        },
-      );
-      return {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
-  },
-});
 
 export const addScreenshotCommentToPr = internalAction({
   args: {

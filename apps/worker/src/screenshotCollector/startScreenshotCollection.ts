@@ -546,7 +546,7 @@ export async function startScreenshotCollection(
       // Write manifest.json with hasUiChanges and image info for local docker workflows
       const manifestPath = path.join(outputDir, "manifest.json");
       const manifest = {
-        hasUiChanges: claudeResult.hasUiChanges ?? true,
+        hasUiChanges: claudeResult.hasUiChanges,
         images: screenshotEntries.map((entry) => ({
           path: entry.path,
           description: entry.description,

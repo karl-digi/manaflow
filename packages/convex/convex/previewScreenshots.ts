@@ -169,6 +169,8 @@ export const triggerGithubComment = internalAction({
       prNumber: previewRun.prNumber,
       screenshotSetId: previewRun.screenshotSetId,
       previewRunId: args.previewRunId,
+      includePreviousRuns: true,
+      previewConfigId: previewRun.previewConfigId,
     });
 
     console.log("[previewScreenshots] GitHub comment posted successfully", {
@@ -292,7 +294,7 @@ export const uploadAndComment = action({
 
       try {
         const commentResult = await ctx.runAction(
-          internal.github_pr_comments.postPreviewCommentDirect,
+          internal.github_pr_comments.postPreviewComment,
           {
             installationId: previewRun.repoInstallationId,
             repoFullName: previewRun.repoFullName,
