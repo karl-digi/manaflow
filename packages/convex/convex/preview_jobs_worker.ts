@@ -1027,9 +1027,11 @@ export async function runPreviewJob(
       status: "running",
     });
 
+    // Use -f (force) to discard any local modifications that would conflict
+    // This is safe because we already stashed changes above
     const checkoutCmd = run.headRef
-      ? ["git", "-C", repoDir, "checkout", "-B", run.headRef, run.headSha]
-      : ["git", "-C", repoDir, "checkout", run.headSha];
+      ? ["git", "-C", repoDir, "checkout", "-f", "-B", run.headRef, run.headSha]
+      : ["git", "-C", repoDir, "checkout", "-f", run.headSha];
 
     const checkoutResponse = await execInstanceInstanceIdExecPost({
       client: morphClient,

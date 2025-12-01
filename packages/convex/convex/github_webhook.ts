@@ -533,8 +533,8 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
             )
           ) {
             const previewConfig = await _ctx.runQuery(
-              internal.previewConfigs.getByTeamAndRepo,
-              { teamId, repoFullName },
+              internal.previewConfigs.getByInstallationAndRepo,
+              { installationId: installation, repoFullName },
             );
 
             if (previewConfig) {
@@ -666,7 +666,7 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
             } else {
               console.log("[preview-jobs] No preview config found for repo", {
                 repoFullName,
-                teamId,
+                installationId: installation,
               });
             }
           }

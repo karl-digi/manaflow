@@ -649,7 +649,7 @@ export type PreviewConfig = {
     id: string;
     repoFullName: string;
     environmentId?: string | null;
-    repoInstallationId?: number | null;
+    repoInstallationId: number;
     repoDefaultBranch?: string | null;
     status: 'active' | 'paused' | 'disabled';
     lastRunAt?: number | null;
@@ -666,7 +666,7 @@ export type PreviewConfigMutationBody = {
     teamSlugOrId: string;
     repoFullName: string;
     environmentId?: string;
-    repoInstallationId?: number;
+    repoInstallationId: number;
     repoDefaultBranch?: string;
     status?: 'active' | 'paused' | 'disabled';
 };
