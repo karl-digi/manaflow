@@ -31,23 +31,28 @@ export const enqueueFromWebhook = internalMutation({
     // This prevents duplicate preview jobs when:
     // 1. Multiple webhooks fire for the same PR (e.g., synchronize events)
     // 2. Crown worker tries to create a preview run while one already exists
-    const existingByPr = await ctx.db
+    // 3. Different teams have configs for the same repo (cross-team duplicate check)
+
+    // First check by repo + prNumber across ALL teams to prevent cross-team duplicates
+    const existingByRepoPr = await ctx.db
       .query("previewRuns")
-      .withIndex("by_config_pr", (q) =>
-        q.eq("previewConfigId", args.previewConfigId).eq("prNumber", args.prNumber),
+      .withIndex("by_repo_pr", (q) =>
+        q.eq("repoFullName", repoFullName).eq("prNumber", args.prNumber),
       )
       .order("desc")
       .first();
 
-    if (existingByPr && (existingByPr.status === "pending" || existingByPr.status === "running")) {
-      console.log("[previewRuns] Returning existing pending/running preview run for PR", {
-        existingRunId: existingByPr._id,
+    if (existingByRepoPr && (existingByRepoPr.status === "pending" || existingByRepoPr.status === "running")) {
+      console.log("[previewRuns] Returning existing pending/running preview run for PR (cross-team check)", {
+        existingRunId: existingByRepoPr._id,
+        existingTeamId: existingByRepoPr.teamId,
+        requestedTeamId: args.teamId,
         prNumber: args.prNumber,
-        existingHeadSha: existingByPr.headSha,
+        existingHeadSha: existingByRepoPr.headSha,
         newHeadSha: args.headSha,
-        status: existingByPr.status,
+        status: existingByRepoPr.status,
       });
-      return existingByPr._id;
+      return existingByRepoPr._id;
     }
 
     const now = Date.now();
@@ -186,31 +191,34 @@ export const enqueueFromTaskRun = internalMutation({
     }
 
     // Check for existing pending/running preview run for this PR
-    const existingByPr = await ctx.db
+    // Use repo + prNumber to catch duplicates across all teams
+    const existingByRepoPr = await ctx.db
       .query("previewRuns")
-      .withIndex("by_config_pr", (q) =>
-        q.eq("previewConfigId", previewConfig._id).eq("prNumber", prNumber),
+      .withIndex("by_repo_pr", (q) =>
+        q.eq("repoFullName", repoFullName).eq("prNumber", prNumber),
       )
       .order("desc")
       .first();
 
-    if (existingByPr && (existingByPr.status === "pending" || existingByPr.status === "running")) {
-      console.log("[previewRuns] Found existing active preview run for PR, linking taskRun", {
+    if (existingByRepoPr && (existingByRepoPr.status === "pending" || existingByRepoPr.status === "running")) {
+      console.log("[previewRuns] Found existing active preview run for PR (cross-team check), linking taskRun", {
         taskRunId: args.taskRunId,
-        existingRunId: existingByPr._id,
+        existingRunId: existingByRepoPr._id,
+        existingTeamId: existingByRepoPr.teamId,
+        requestedTeamId: taskRun.teamId,
         prNumber,
-        status: existingByPr.status,
+        status: existingByRepoPr.status,
       });
 
       // Link this taskRun to the existing preview run if it doesn't have one
-      if (!existingByPr.taskRunId) {
-        await ctx.db.patch(existingByPr._id, {
+      if (!existingByRepoPr.taskRunId) {
+        await ctx.db.patch(existingByRepoPr._id, {
           taskRunId: args.taskRunId,
           updatedAt: Date.now(),
         });
       }
 
-      return { created: true, previewRunId: existingByPr._id, isNew: false };
+      return { created: true, previewRunId: existingByRepoPr._id, isNew: false };
     }
 
     // Extract headSha from newBranch or use a placeholder

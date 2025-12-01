@@ -532,12 +532,17 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
               action,
             )
           ) {
+            // Look up preview config by repo and installation ID
+            // First tries to find a config matching the teamId from providerConnection,
+            // then falls back to any config with matching installation (handles team mismatch)
             const previewConfig = await _ctx.runQuery(
-              internal.previewConfigs.getByTeamAndRepo,
-              { teamId, repoFullName },
+              internal.previewConfigs.getByRepoAndInstallation,
+              { repoFullName, repoInstallationId: installation, teamId },
             );
 
             if (previewConfig) {
+              // Use the teamId from the preview config, not from providerConnection
+              const previewTeamId = previewConfig.teamId;
               const prNumber = Number(prPayload.pull_request?.number ?? 0);
               const prUrl = prPayload.pull_request?.html_url ?? null;
               const headSha = prPayload.pull_request?.head?.sha ?? null;
@@ -563,7 +568,7 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
                     internal.previewRuns.enqueueFromWebhook,
                     {
                       previewConfigId: previewConfig._id,
-                      teamId,
+                      teamId: previewTeamId,
                       repoFullName,
                       repoInstallationId: installation,
                       prNumber,
@@ -607,7 +612,7 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
                     const taskId = await _ctx.runMutation(
                       internal.tasks.createForPreview,
                       {
-                        teamId,
+                        teamId: previewTeamId,
                         userId: previewConfig.createdByUserId,
                         previewRunId: runId,
                         repoFullName,
@@ -622,7 +627,7 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
                       internal.taskRuns.createForPreview,
                       {
                         taskId,
-                        teamId,
+                        teamId: previewTeamId,
                         userId: previewConfig.createdByUserId,
                         prUrl,
                         environmentId: previewConfig.environmentId,
@@ -666,7 +671,7 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
             } else {
               console.log("[preview-jobs] No preview config found for repo", {
                 repoFullName,
-                teamId,
+                installation,
               });
             }
           }

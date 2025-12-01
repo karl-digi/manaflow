@@ -158,3 +158,50 @@ export const getByTeamAndRepo = internalQuery({
     return config ?? null;
   },
 });
+
+export const getByRepoAndInstallation = internalQuery({
+  args: {
+    repoFullName: v.string(),
+    repoInstallationId: v.number(),
+    teamId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const repoFullName = normalizeRepoFullName(args.repoFullName);
+    // Get all preview configs for this repo across all teams
+    const configs = await ctx.db
+      .query("previewConfigs")
+      .withIndex("by_repo", (q) => q.eq("repoFullName", repoFullName))
+      .collect();
+
+    // Filter to configs that match the installation ID
+    const matchingConfigs = configs.filter(
+      (c) => c.repoInstallationId === args.repoInstallationId,
+    );
+
+    if (matchingConfigs.length === 0) {
+      return null;
+    }
+
+    // SECURITY: Verify that the team owning each config has a providerConnection
+    // with this installation. This prevents unauthorized teams from hijacking webhooks.
+    for (const config of matchingConfigs) {
+      // Check if this team has a providerConnection with this installation
+      const teamConnection = await ctx.db
+        .query("providerConnections")
+        .withIndex("by_team", (q) => q.eq("teamId", config.teamId))
+        .filter((q) =>
+          q.eq(q.field("installationId"), args.repoInstallationId),
+        )
+        .first();
+
+      if (teamConnection) {
+        // This team legitimately has access to the installation
+        return config;
+      }
+    }
+
+    // No valid config found - all matching configs are from teams without
+    // legitimate access to this installation
+    return null;
+  },
+});

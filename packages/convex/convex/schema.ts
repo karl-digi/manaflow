@@ -568,7 +568,8 @@ const convexSchema = defineSchema({
     .index("by_team_repo", ["teamId", "repoFullName"])
     .index("by_team", ["teamId", "updatedAt"])
     .index("by_team_status", ["teamId", "status", "updatedAt"])
-    .index("by_environment", ["environmentId"]),
+    .index("by_environment", ["environmentId"])
+    .index("by_repo", ["repoFullName"]),
   previewRuns: defineTable({
     previewConfigId: v.id("previewConfigs"),
     teamId: v.string(),
@@ -601,7 +602,8 @@ const convexSchema = defineSchema({
     .index("by_config_status", ["previewConfigId", "status", "createdAt"])
     .index("by_config_head", ["previewConfigId", "headSha"])
     .index("by_config_pr", ["previewConfigId", "prNumber", "createdAt"])
-    .index("by_team_created", ["teamId", "createdAt"]),
+    .index("by_team_created", ["teamId", "createdAt"])
+    .index("by_repo_pr", ["repoFullName", "prNumber", "createdAt"]),
   crownEvaluations: defineTable({
     taskId: v.id("tasks"),
     evaluatedAt: v.number(),
