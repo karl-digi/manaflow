@@ -125,6 +125,28 @@ type PreviewConfigureClientProps = {
   startAtConfigureEnvironment?: boolean;
 };
 
+type PreviewConfigResponse = {
+  id: string;
+  repoFullName: string;
+  repoDefaultBranch?: string | null;
+};
+
+function isPreviewConfigResponse(value: unknown): value is PreviewConfigResponse {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  const branchValue = candidate.repoDefaultBranch;
+  const isBranchValid =
+    !("repoDefaultBranch" in candidate) ||
+    branchValue === null ||
+    typeof branchValue === "string";
+
+  return typeof candidate.id === "string" &&
+    typeof candidate.repoFullName === "string" &&
+    isBranchValid;
+}
+
 function normalizeVncUrl(url: string): string | null {
   try {
     const target = new URL(url);
@@ -1012,7 +1034,19 @@ export function PreviewConfigureClient({
         throw new Error(await previewResponse.text());
       }
 
-      window.location.href = "/preview";
+      const previewData: unknown = await previewResponse.json();
+      if (!isPreviewConfigResponse(previewData)) {
+        throw new Error("Invalid preview configuration response");
+      }
+
+      const branch = previewData.repoDefaultBranch?.trim() || "main";
+      const redirectUrl = new URL("/preview", window.location.origin);
+      redirectUrl.searchParams.set("createdConfigId", previewData.id);
+      redirectUrl.searchParams.set("repo", previewData.repoFullName);
+      redirectUrl.searchParams.set("branch", branch);
+      redirectUrl.searchParams.set("team", resolvedTeamSlugOrId);
+
+      window.location.href = redirectUrl.toString();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to save configuration";
       setErrorMessage(message);

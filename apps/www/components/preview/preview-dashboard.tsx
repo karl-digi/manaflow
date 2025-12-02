@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   Camera,
+  CheckCircle2,
+  Clock,
   ExternalLink,
   Github,
   Link2,
@@ -15,6 +17,7 @@ import {
   Star,
   Trash2,
   User,
+  X,
 } from "lucide-react";
 import Link from "next/link";
 import clsx from "clsx";
@@ -60,12 +63,20 @@ type TeamOption = {
   displayName: string;
 };
 
+export type PreviewCreationNotice = {
+  configId: string;
+  repoFullName: string;
+  repoDefaultBranch: string;
+  teamName: string;
+};
+
 type PreviewDashboardProps = {
   selectedTeamSlugOrId: string;
   teamOptions: TeamOption[];
   providerConnectionsByTeam: Record<string, ProviderConnection[]>;
   isAuthenticated: boolean;
   previewConfigs: PreviewConfigListItem[];
+  creationNotice?: PreviewCreationNotice | null;
 };
 
 const ADD_INSTALLATION_VALUE = "__add_github_account__";
@@ -76,6 +87,7 @@ export function PreviewDashboard({
   providerConnectionsByTeam,
   isAuthenticated,
   previewConfigs,
+  creationNotice,
 }: PreviewDashboardProps) {
   const [selectedTeamSlugOrIdState, setSelectedTeamSlugOrIdState] = useState(
     () => selectedTeamSlugOrId || teamOptions[0]?.slugOrId || "",
@@ -83,6 +95,9 @@ export function PreviewDashboard({
   const [isInstallingApp, setIsInstallingApp] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
+  const [isCreationNoticeVisible, setIsCreationNoticeVisible] = useState(
+    () => Boolean(creationNotice),
+  );
 
   // Repository selection state
   const [selectedInstallationId, setSelectedInstallationId] = useState<number | null>(null);
@@ -111,10 +126,18 @@ export function PreviewDashboard({
     isAuthenticated &&
     Boolean(selectedTeamSlugOrIdState) &&
     hasGithubAppInstallation;
+  const creationBranchName = creationNotice?.repoDefaultBranch ?? "main";
+  const testPrUrl = creationNotice
+    ? `https://github.com/${creationNotice.repoFullName}/compare/${encodeURIComponent(creationBranchName)}...${encodeURIComponent(creationBranchName)}?quick_pull=1`
+    : null;
 
   useEffect(() => {
     setConfigs(previewConfigs);
   }, [previewConfigs]);
+
+  useEffect(() => {
+    setIsCreationNoticeVisible(Boolean(creationNotice));
+  }, [creationNotice]);
 
   // Parse GitHub URL to extract owner/repo
   const parseGithubUrl = useCallback((input: string): string | null => {
@@ -528,6 +551,49 @@ export function PreviewDashboard({
 
   return (
     <div className="mx-auto w-full max-w-5xl px-6 py-10">
+      {creationNotice && isCreationNoticeVisible && (
+        <div className="mb-8 rounded-xl border border-white/10 bg-white/5 p-4 shadow-lg">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-400">
+                <CheckCircle2 className="h-5 w-5" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm font-semibold text-white">Environment configured</p>
+                <p className="text-sm text-neutral-300">
+                  We set up{" "}
+                  <span className="font-semibold text-white">{creationNotice.repoFullName}</span>{" "}
+                  on {creationNotice.teamName}. Create a quick PR against{" "}
+                  <span className="font-semibold text-white">{creationBranchName}</span> to trigger
+                  your first preview run.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsCreationNoticeVisible(false)}
+              className="rounded-md p-1 text-neutral-400 transition hover:text-white"
+              aria-label="Dismiss setup confirmation"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            {testPrUrl && (
+              <Button asChild className="bg-white text-black hover:bg-neutral-200">
+                <a href={testPrUrl} target="_blank" rel="noreferrer">
+                  Create test PR on GitHub
+                </a>
+              </Button>
+            )}
+            <div className="inline-flex items-center gap-2 text-xs text-neutral-400">
+              <Clock className="h-4 w-4" />
+              <span>Preview jobs usually finish in about 2-5 minutes after the PR opens.</span>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="mb-10">
         <Link

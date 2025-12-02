@@ -31,6 +31,24 @@ type TeamOption = {
   displayName: string;
 };
 
+type PreviewCreationNotice = {
+  configId: string;
+  repoFullName: string;
+  repoDefaultBranch: string;
+  teamName: string;
+};
+
+function getSearchValue(
+  search: Record<string, string | string[] | undefined> | undefined,
+  key: string
+): string | null {
+  if (!search) {
+    return null;
+  }
+  const value = search[key];
+  return Array.isArray(value) ? value[0] ?? null : value ?? null;
+}
+
 function serializeProviderConnections(
   connections: Array<{
     installationId: number;
@@ -50,6 +68,10 @@ function serializeProviderConnections(
 export default async function PreviewLandingPage({ searchParams }: PageProps) {
   const user = await stackServerApp.getUser();
   const resolvedSearch = await searchParams;
+
+  const searchTeam = getSearchValue(resolvedSearch, "team");
+  const createdConfigId = getSearchValue(resolvedSearch, "createdConfigId");
+  const createdBranch = getSearchValue(resolvedSearch, "branch");
 
   if (!user) {
     return (
@@ -77,17 +99,6 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
   if (!accessToken) {
     throw new Error("Missing Stack access token");
   }
-
-  const searchTeam = (() => {
-    if (!resolvedSearch) {
-      return null;
-    }
-    const value = resolvedSearch.team;
-    if (Array.isArray(value)) {
-      return value[0] ?? null;
-    }
-    return value ?? null;
-  })();
 
   const selectedTeam =
     teams.find((team) => getTeamSlugOrId(team) === searchTeam) ?? teams[0];
@@ -143,6 +154,29 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
     providerConnectionsByTeamEntries,
   );
 
+  const creationNotice: PreviewCreationNotice | null = (() => {
+    if (!createdConfigId) {
+      return null;
+    }
+    const matchedConfig = previewConfigs.find(
+      (config) => config.id === createdConfigId,
+    );
+    if (!matchedConfig) {
+      return null;
+    }
+    const preferredBranch =
+      createdBranch?.trim() ||
+      matchedConfig.repoDefaultBranch ||
+      "main";
+
+    return {
+      configId: matchedConfig.id,
+      repoFullName: matchedConfig.repoFullName,
+      repoDefaultBranch: preferredBranch,
+      teamName: matchedConfig.teamName,
+    };
+  })();
+
   return (
     <div className="relative isolate min-h-dvh bg-[#05050a] text-white">
       <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_top,_rgba(4,120,255,0.3),_transparent_45%)]" />
@@ -153,6 +187,7 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
         providerConnectionsByTeam={providerConnectionsByTeam}
         isAuthenticated={true}
         previewConfigs={previewConfigs}
+        creationNotice={creationNotice ?? undefined}
       />
     </div>
   );
