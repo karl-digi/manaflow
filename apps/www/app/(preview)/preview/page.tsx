@@ -89,6 +89,8 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
     return value ?? null;
   })();
 
+  const popupComplete = resolvedSearch?.popup_complete === "true";
+
   const selectedTeam =
     teams.find((team) => getTeamSlugOrId(team) === searchTeam) ?? teams[0];
   const selectedTeamSlugOrId = selectedTeam ? getTeamSlugOrId(selectedTeam) : "";
@@ -153,6 +155,7 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
         providerConnectionsByTeam={providerConnectionsByTeam}
         isAuthenticated={true}
         previewConfigs={previewConfigs}
+        popupComplete={popupComplete}
       />
     </div>
   );

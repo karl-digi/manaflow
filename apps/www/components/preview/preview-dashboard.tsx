@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   Camera,
+  CheckCircle2,
   ExternalLink,
   Github,
   Link2,
@@ -67,6 +68,7 @@ type PreviewDashboardProps = {
   providerConnectionsByTeam: Record<string, ProviderConnection[]>;
   isAuthenticated: boolean;
   previewConfigs: PreviewConfigListItem[];
+  popupComplete?: boolean;
 };
 
 const ADD_INSTALLATION_VALUE = "__add_github_account__";
@@ -139,12 +141,88 @@ function Section({
   );
 }
 
+/**
+ * Shown in popup after GitHub App installation completes.
+ * Sends message to opener and auto-closes after delay.
+ */
+function PopupCompleteView() {
+  const [canClose, setCanClose] = useState(true);
+
+  useEffect(() => {
+    if (window.opener) {
+      try {
+        window.opener.postMessage(
+          { type: "github_app_installed" },
+          window.location.origin
+        );
+      } catch (error) {
+        console.error("[PopupComplete] Failed to post message", error);
+      }
+
+      const timer = setTimeout(() => {
+        try {
+          window.close();
+        } catch (error) {
+          console.error("[PopupComplete] Failed to close popup", error);
+          setCanClose(false);
+        }
+      }, 1500);
+
+      return () => clearTimeout(timer);
+    } else {
+      window.location.href = "/preview";
+    }
+  }, []);
+
+  return (
+    <div className="min-h-dvh text-white flex items-center justify-center px-6">
+      <div className="text-center max-w-md">
+        <div className="mx-auto mb-6 grid place-items-center">
+          <div className="h-14 w-14 rounded-full bg-emerald-500/10 ring-8 ring-emerald-500/5 grid place-items-center">
+            <CheckCircle2 className="h-7 w-7 text-emerald-500" />
+          </div>
+        </div>
+        <h1 className="text-2xl font-semibold">Installation Complete</h1>
+        <p className="mt-2 text-sm text-neutral-400">
+          {canClose
+            ? "Closing this window..."
+            : "You can close this window and return to the previous page."}
+        </p>
+        {!canClose && (
+          <button
+            type="button"
+            onClick={() => window.close()}
+            className="mt-6 inline-flex items-center justify-center gap-2 rounded-lg bg-white px-6 py-3 text-base font-medium text-black transition-colors hover:bg-neutral-200"
+          >
+            Close Window
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Opens a centered popup window */
+function openCenteredPopup(url: string, name: string, width: number, height: number) {
+  const screenLeft = window.screenLeft ?? window.screenX;
+  const screenTop = window.screenTop ?? window.screenY;
+  const screenWidth = window.innerWidth;
+  const screenHeight = window.innerHeight;
+
+  const left = screenLeft + (screenWidth - width) / 2;
+  const top = screenTop + (screenHeight - height) / 2;
+
+  const features = `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`;
+  return window.open(url, name, features);
+}
+
 export function PreviewDashboard({
   selectedTeamSlugOrId,
   teamOptions,
   providerConnectionsByTeam,
   isAuthenticated,
   previewConfigs,
+  popupComplete,
 }: PreviewDashboardProps) {
   const [selectedTeamSlugOrIdState, setSelectedTeamSlugOrIdState] = useState(
     () => selectedTeamSlugOrId || teamOptions[0]?.slugOrId || ""
@@ -446,14 +524,18 @@ export function PreviewDashboard({
     setIsInstallingApp(true);
     setErrorMessage(null);
     try {
-      const currentUrl = window.location.href;
+      // Use popup_complete query param as returnUrl so it can signal the parent window and close
+      const popupCompleteUrl = new URL(
+        "/preview?popup_complete=true",
+        window.location.origin
+      ).toString();
 
       const response = await fetch("/api/integrations/github/install-state", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           teamSlugOrId: selectedTeamSlugOrIdState,
-          returnUrl: currentUrl,
+          returnUrl: popupCompleteUrl,
         }),
       });
       if (!response.ok) {
@@ -461,27 +543,8 @@ export function PreviewDashboard({
       }
       const payload = (await response.json()) as { installUrl: string };
 
-      // Open popup for GitHub App installation
-      // Prefer 1400x970 but constrain to screen size with some padding
-      const preferredWidth = 1400;
-      const preferredHeight = 970;
-      const screenWidth = window.screen.availWidth;
-      const screenHeight = window.screen.availHeight;
-      const width = Math.min(preferredWidth, screenWidth - 40);
-      const height = Math.min(preferredHeight, screenHeight - 40);
-      const left = Math.floor((screenWidth - width) / 2);
-      const top = Math.floor((screenHeight - height) / 2);
-
-      const features = [
-        `width=${width}`,
-        `height=${height}`,
-        `left=${left}`,
-        `top=${top}`,
-        "resizable=yes",
-        "scrollbars=yes",
-      ].join(",");
-
-      const popup = window.open(payload.installUrl, "github-app-install", features);
+      // Open centered popup for GitHub App installation
+      const popup = openCenteredPopup(payload.installUrl, "github-app-install", 1000, 700);
 
       if (!popup) {
         // Popup was blocked - fall back to redirect
@@ -820,6 +883,11 @@ export function PreviewDashboard({
       </div>
     </div>
   );
+
+  // Render popup complete UI if in popup mode
+  if (popupComplete) {
+    return <PopupCompleteView />;
+  }
 
   return (
     <div className="w-full max-w-5xl px-6 py-10 font-sans">
