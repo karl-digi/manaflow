@@ -176,6 +176,38 @@ export function EnvironmentConfiguration({
     [persistConfig]
   );
   const [portsError, setPortsError] = useState<string | null>(null);
+  const envVarsCompletion = useMemo<"empty" | "incomplete" | "complete">(() => {
+    const nonEmptyRows = envVars.filter(
+      (row) => row.name.trim().length > 0 || row.value.trim().length > 0
+    );
+    if (nonEmptyRows.length === 0) {
+      return "empty";
+    }
+    const hasIncompleteRow = nonEmptyRows.some(
+      (row) => row.name.trim().length === 0 || row.value.trim().length === 0
+    );
+    if (hasIncompleteRow) {
+      return "incomplete";
+    }
+    return "complete";
+  }, [envVars]);
+  const maintenanceScriptFilled = maintenanceScript.trim().length > 0;
+  const devSectionFilled =
+    devScript.trim().length > 0 || exposedPorts.trim().length > 0;
+  const defaultAccordionExpandedKeys = useMemo(() => {
+    const keys: string[] = [];
+    if (envVarsCompletion !== "complete") {
+      keys.push("env-vars");
+    }
+    keys.push("install-dependencies");
+    if (!maintenanceScriptFilled) {
+      keys.push("maintenance-script");
+    }
+    if (!devSectionFilled) {
+      keys.push("dev-script");
+    }
+    return keys;
+  }, [devSectionFilled, envVarsCompletion, maintenanceScriptFilled]);
   const keyInputRefs = useRef<Array<HTMLInputElement | null>>([]);
   const [pendingFocusIndex, setPendingFocusIndex] = useState<number | null>(
     null
@@ -1025,12 +1057,7 @@ export function EnvironmentConfiguration({
         <Accordion
           selectionMode="multiple"
           className="px-0"
-          defaultExpandedKeys={[
-            "env-vars",
-            "install-dependencies",
-            "maintenance-script",
-            "dev-script",
-          ]}
+          defaultExpandedKeys={defaultAccordionExpandedKeys}
           itemClasses={{
             trigger: "text-sm cursor-pointer py-3",
             content: "pt-0",
