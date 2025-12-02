@@ -54,7 +54,6 @@ jobs:
     name: Build Docker image (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
     needs: rust-checks
-    environment: sandbox  # Required for self-hosted runner access
     # Only build Docker on main branch push or workflow_dispatch (not PRs)
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     permissions:
@@ -67,7 +66,7 @@ jobs:
           - platform: linux/amd64
             runner: ubuntu-24.04
           - platform: linux/arm64
-            runner: self-hosted  # M4 Mac Mini for native ARM64 builds
+            runner: ubuntu-24.04-arm  # Native ARM64 runner (no QEMU needed)
 
     steps:
       - name: Checkout
