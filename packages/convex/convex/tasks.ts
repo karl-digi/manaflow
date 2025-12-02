@@ -26,6 +26,9 @@ export const get = authQuery({
       q = q.filter((qq) => qq.neq(qq.field("isArchived"), true));
     }
 
+    // Exclude preview tasks from the main tasks list
+    q = q.filter((qq) => qq.neq(qq.field("isPreview"), true));
+
     if (args.projectFullName) {
       q = q.filter((qq) =>
         qq.eq(qq.field("projectFullName"), args.projectFullName),
@@ -38,6 +41,40 @@ export const get = authQuery({
   },
 });
 
+export const getPreviewTasks = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const take = Math.max(1, Math.min(args.limit ?? 50, 100));
+
+    // Get preview tasks using the dedicated index
+    const tasks = await ctx.db
+      .query("tasks")
+      .withIndex("by_team_user_preview", (idx) =>
+        idx.eq("teamId", teamId).eq("userId", userId).eq("isPreview", true),
+      )
+      .filter((q) => q.neq(q.field("isArchived"), true))
+      .collect();
+
+    // Sort: in-progress (not completed) first, then by createdAt desc
+    const sorted = tasks.sort((a, b) => {
+      // In-progress first
+      const aInProgress = !a.isCompleted;
+      const bInProgress = !b.isCompleted;
+      if (aInProgress && !bInProgress) return -1;
+      if (!aInProgress && bInProgress) return 1;
+      // Then by createdAt desc
+      return (b.createdAt ?? 0) - (a.createdAt ?? 0);
+    });
+
+    return sorted.slice(0, take);
+  },
+});
+
 export const getPinned = authQuery({
   args: {
     teamSlugOrId: v.string(),
@@ -46,13 +83,14 @@ export const getPinned = authQuery({
     const userId = ctx.identity.subject;
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
 
-    // Get pinned tasks
+    // Get pinned tasks (excluding archived and preview tasks)
     const pinnedTasks = await ctx.db
       .query("tasks")
       .withIndex("by_pinned", (idx) =>
         idx.eq("pinned", true).eq("teamId", teamId).eq("userId", userId),
       )
       .filter((q) => q.neq(q.field("isArchived"), true))
+      .filter((q) => q.neq(q.field("isPreview"), true))
       .collect();
 
     return pinnedTasks.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
@@ -79,6 +117,9 @@ export const getTasksWithTaskRuns = authQuery({
     } else {
       q = q.filter((qq) => qq.neq(qq.field("isArchived"), true));
     }
+
+    // Exclude preview tasks from the main tasks list
+    q = q.filter((qq) => qq.neq(qq.field("isPreview"), true));
 
     if (args.projectFullName) {
       q = q.filter((qq) =>
@@ -849,6 +890,7 @@ export const createForPreview = internalMutation({
       baseBranch: args.baseBranch,
       worktreePath: undefined,
       isCompleted: false,
+      isPreview: true,
       createdAt: now,
       updatedAt: now,
       images: undefined,
