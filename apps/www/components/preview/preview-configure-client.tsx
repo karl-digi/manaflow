@@ -369,6 +369,10 @@ export function PreviewConfigureClient({
   initialDevScript,
   startAtConfigureEnvironment = false,
 }: PreviewConfigureClientProps) {
+  const initialEnvPrefilled = useMemo(
+    () => Boolean(initialEnvVarsContent && initialEnvVarsContent.trim().length > 0),
+    [initialEnvVarsContent]
+  );
   const initialEnvVars = useMemo(() => {
     const parsed = initialEnvVarsContent
       ? parseEnvBlock(initialEnvVarsContent).map((entry) => ({
@@ -381,10 +385,9 @@ export function PreviewConfigureClient({
   }, [initialEnvVarsContent]);
   const initialHasEnvValues = useMemo(
     () =>
-      initialEnvVars.some(
-        (r) => r.name.trim().length > 0 || r.value.trim().length > 0
-      ),
-    [initialEnvVars]
+      initialEnvPrefilled ||
+      initialEnvVars.some((r) => r.name.trim().length > 0 || r.value.trim().length > 0),
+    [initialEnvPrefilled, initialEnvVars]
   );
   const initialFrameworkConfig =
     FRAMEWORK_PRESETS[initialFrameworkPreset] ?? FRAMEWORK_PRESETS.other;
@@ -413,6 +416,7 @@ export function PreviewConfigureClient({
   const [currentStep, setCurrentStep] = useState<WizardStep>(1);
 
   const [envVars, setEnvVars] = useState<EnvVar[]>(initialEnvVars);
+  const [hasTouchedEnvVars, setHasTouchedEnvVars] = useState(false);
   const [frameworkPreset, setFrameworkPreset] = useState<FrameworkPreset>(
     initialFrameworkPreset
   );
@@ -523,10 +527,9 @@ export function PreviewConfigureClient({
 
   const hasEnvValues = useMemo(
     () =>
-      envVars.some(
-        (r) => r.name.trim().length > 0 || r.value.trim().length > 0
-      ),
-    [envVars]
+      (!hasTouchedEnvVars && initialEnvPrefilled) ||
+      envVars.some((r) => r.name.trim().length > 0 || r.value.trim().length > 0),
+    [envVars, hasTouchedEnvVars, initialEnvPrefilled]
   );
   const maintenanceScriptValue = maintenanceScript.trim();
   const devScriptValue = devScript.trim();
@@ -709,6 +712,7 @@ export function PreviewConfigureClient({
   }, [envVars, instance?.instanceId, resolvedTeamSlugOrId]);
 
   const updateEnvVars = useCallback((updater: (prev: EnvVar[]) => EnvVar[]) => {
+    setHasTouchedEnvVars(true);
     setEnvVars((prev) => updater(prev));
   }, []);
 
@@ -740,17 +744,21 @@ export function PreviewConfigureClient({
     setHasUserEditedScripts(true);
   }, []);
 
-  const handleToggleEnvNone = useCallback((value: boolean) => {
-    setEnvNone(value);
-    setActiveEnvValueIndex(null);
-    if (value) {
-      setAreEnvValuesHidden(true);
-      setEnvVars([{ name: "", value: "", isSecret: true }]);
-      setIsEnvOpen(false);
-    } else {
-      setIsEnvOpen(true);
-    }
-  }, []);
+  const handleToggleEnvNone = useCallback(
+    (value: boolean) => {
+      setHasTouchedEnvVars(true);
+      setEnvNone(value);
+      setActiveEnvValueIndex(null);
+      if (value) {
+        setAreEnvValuesHidden(true);
+        setEnvVars([{ name: "", value: "", isSecret: true }]);
+        setIsEnvOpen(false);
+      } else {
+        setIsEnvOpen(true);
+      }
+    },
+    []
+  );
 
   const handleToggleMaintenanceNone = useCallback((value: boolean) => {
     setMaintenanceNone(value);
