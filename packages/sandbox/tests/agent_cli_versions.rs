@@ -1,13 +1,4 @@
-//! Integration test to verify all coding agent CLIs are properly installed.
-//!
-//! This test runs inside the Docker container and verifies that all CLI tools
-//! can be invoked with --version. This catches issues like:
-//! - Missing binaries
-//! - Broken symlinks
-//! - Accidentally removed vendor directories during image optimization
-
 /// Test that all coding agent CLIs are installed and can print their version.
-/// This test is ignored by default and should be run inside the sandbox container.
 #[test]
 #[ignore = "requires sandbox container environment"]
 fn test_coding_agent_clis_installed() {

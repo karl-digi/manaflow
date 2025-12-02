@@ -188,29 +188,24 @@ RUN bun add -g \
     @google/gemini-cli \
     opencode-ai \
     @sourcegraph/amp && \
-  # Clean up: remove source maps, TypeScript source files, and test files
   find /usr/local/lib/bun/node_modules -name '*.map' -type f -delete && \
   find /usr/local/lib/bun/node_modules -name '*.ts' ! -name '*.d.ts' -type f -delete && \
   find /usr/local/lib/bun/node_modules -type d -name '__tests__' -exec rm -rf {} + 2>/dev/null || true && \
   find /usr/local/lib/bun/node_modules -type d -name 'test' -exec rm -rf {} + 2>/dev/null || true && \
   find /usr/local/lib/bun/node_modules -type d -name 'tests' -exec rm -rf {} + 2>/dev/null || true && \
-  # Remove documentation and examples
   find /usr/local/lib/bun/node_modules -name '*.md' -type f -delete 2>/dev/null || true && \
   find /usr/local/lib/bun/node_modules -type d -name 'docs' -exec rm -rf {} + 2>/dev/null || true && \
   find /usr/local/lib/bun/node_modules -type d -name 'doc' -exec rm -rf {} + 2>/dev/null || true && \
   find /usr/local/lib/bun/node_modules -type d -name 'example' -exec rm -rf {} + 2>/dev/null || true && \
   find /usr/local/lib/bun/node_modules -type d -name 'examples' -exec rm -rf {} + 2>/dev/null || true && \
-  # Remove TypeScript declaration files (not needed at runtime)
   find /usr/local/lib/bun/node_modules -name '*.d.ts' -type f -delete 2>/dev/null || true && \
   find /usr/local/lib/bun/node_modules -name '*.d.ts.map' -type f -delete 2>/dev/null || true && \
-  # Remove other non-essential files
   find /usr/local/lib/bun/node_modules -name 'CHANGELOG*' -type f -delete 2>/dev/null || true && \
   find /usr/local/lib/bun/node_modules -name 'HISTORY*' -type f -delete 2>/dev/null || true && \
   find /usr/local/lib/bun/node_modules -name '.npmignore' -type f -delete 2>/dev/null || true && \
   find /usr/local/lib/bun/node_modules -name '.eslint*' -type f -delete 2>/dev/null || true && \
   find /usr/local/lib/bun/node_modules -name '.prettier*' -type f -delete 2>/dev/null || true && \
   find /usr/local/lib/bun/node_modules -name 'tsconfig*.json' -type f -delete 2>/dev/null || true && \
-  # Remove unused platform-specific packages (only top-level node_modules packages, not vendor dirs)
   arch="$(uname -m)"; \
   if [ "$arch" = "x86_64" ]; then \
     find /usr/local/lib/bun/node_modules -maxdepth 1 -type d -name '*-arm64*' -exec rm -rf {} + 2>/dev/null || true; \
@@ -235,7 +230,6 @@ ENV RUSTUP_HOME=/usr/local/rustup \
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain ${RUST_VERSION} --profile minimal && \
     chmod -R a+w $RUSTUP_HOME $CARGO_HOME && \
-    # Remove docs to save space
     rm -rf $RUSTUP_HOME/toolchains/*/share/doc && \
     rm -rf $RUSTUP_HOME/toolchains/*/share/man
 
@@ -254,8 +248,6 @@ RUN arch="$(uname -m)"; \
     sed -i '$d' /etc/apt/sources.list && \
     rm -rf /var/lib/apt/lists/*
 
-# Docker binaries for Docker-in-Docker support
-# Note: ctr and buildctl are omitted as they're not needed for normal operation (-48MB)
 COPY --from=dind-installer /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=dind-installer --link /usr/local/bin/dockerd /usr/local/bin/dockerd
 COPY --from=dind-installer --link /usr/local/bin/docker-init /usr/local/bin/docker-init
