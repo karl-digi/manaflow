@@ -92,6 +92,30 @@ jobs:
             type=sha,prefix=
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
+      - name: Build image for testing
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/sandbox/Dockerfile
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
+          load: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:test
+
+      - name: Test coding agent CLIs
+        run: |
+          docker run --rm --entrypoint /bin/bash ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:test -c '
+            pids=()
+            claude --version & pids+=($!)
+            codex --version & pids+=($!)
+            gemini --version & pids+=($!)
+            opencode --version & pids+=($!)
+            amp --version & pids+=($!)
+            for pid in "${pids[@]}"; do wait $pid || exit 1; done
+          '
+
       - name: Build and push by digest
         id: build
         uses: docker/build-push-action@v6

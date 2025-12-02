@@ -187,7 +187,37 @@ RUN bun add -g \
     @zed-industries/claude-code-acp \
     @google/gemini-cli \
     opencode-ai \
-    @sourcegraph/amp
+    @sourcegraph/amp && \
+  find /usr/local/lib/bun/node_modules -name '*.map' -type f -delete && \
+  find /usr/local/lib/bun/node_modules -name '*.ts' ! -name '*.d.ts' -type f -delete && \
+  find /usr/local/lib/bun/node_modules -type d -name '__tests__' -exec rm -rf {} + 2>/dev/null || true && \
+  find /usr/local/lib/bun/node_modules -type d -name 'test' -exec rm -rf {} + 2>/dev/null || true && \
+  find /usr/local/lib/bun/node_modules -type d -name 'tests' -exec rm -rf {} + 2>/dev/null || true && \
+  find /usr/local/lib/bun/node_modules -name '*.md' -type f -delete 2>/dev/null || true && \
+  find /usr/local/lib/bun/node_modules -type d -name 'docs' -exec rm -rf {} + 2>/dev/null || true && \
+  find /usr/local/lib/bun/node_modules -type d -name 'doc' -exec rm -rf {} + 2>/dev/null || true && \
+  find /usr/local/lib/bun/node_modules -type d -name 'example' -exec rm -rf {} + 2>/dev/null || true && \
+  find /usr/local/lib/bun/node_modules -type d -name 'examples' -exec rm -rf {} + 2>/dev/null || true && \
+  find /usr/local/lib/bun/node_modules -name '*.d.ts' -type f -delete 2>/dev/null || true && \
+  find /usr/local/lib/bun/node_modules -name '*.d.ts.map' -type f -delete 2>/dev/null || true && \
+  find /usr/local/lib/bun/node_modules -name 'CHANGELOG*' -type f -delete 2>/dev/null || true && \
+  find /usr/local/lib/bun/node_modules -name 'HISTORY*' -type f -delete 2>/dev/null || true && \
+  find /usr/local/lib/bun/node_modules -name '.npmignore' -type f -delete 2>/dev/null || true && \
+  find /usr/local/lib/bun/node_modules -name '.eslint*' -type f -delete 2>/dev/null || true && \
+  find /usr/local/lib/bun/node_modules -name '.prettier*' -type f -delete 2>/dev/null || true && \
+  find /usr/local/lib/bun/node_modules -name 'tsconfig*.json' -type f -delete 2>/dev/null || true && \
+  arch="$(uname -m)"; \
+  if [ "$arch" = "x86_64" ]; then \
+    find /usr/local/lib/bun/node_modules -maxdepth 1 -type d -name '*-arm64*' -exec rm -rf {} + 2>/dev/null || true; \
+    find /usr/local/lib/bun/node_modules -maxdepth 1 -type d -name '*-darwin*' -exec rm -rf {} + 2>/dev/null || true; \
+    find /usr/local/lib/bun/node_modules -maxdepth 1 -type d -name '*-win32*' -exec rm -rf {} + 2>/dev/null || true; \
+  elif [ "$arch" = "aarch64" ]; then \
+    find /usr/local/lib/bun/node_modules -maxdepth 1 -type d -name '*-x64*' -exec rm -rf {} + 2>/dev/null || true; \
+    find /usr/local/lib/bun/node_modules -maxdepth 1 -type d -name '*-darwin*' -exec rm -rf {} + 2>/dev/null || true; \
+    find /usr/local/lib/bun/node_modules -maxdepth 1 -type d -name '*-win32*' -exec rm -rf {} + 2>/dev/null || true; \
+    find /usr/local/lib/bun/node_modules -maxdepth 1 -type d -name '*linux*musl*' -exec rm -rf {} + 2>/dev/null || true; \
+  fi && \
+  rm -rf /root/.bun/install/cache
 
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
   mv /root/.local/bin/uv /usr/local/bin/uv && \
@@ -199,10 +229,12 @@ ENV RUSTUP_HOME=/usr/local/rustup \
     PATH=/usr/local/cargo/bin:$PATH
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain ${RUST_VERSION} --profile minimal && \
-    chmod -R a+w $RUSTUP_HOME $CARGO_HOME
+    chmod -R a+w $RUSTUP_HOME $CARGO_HOME && \
+    rm -rf $RUSTUP_HOME/toolchains/*/share/doc && \
+    rm -rf $RUSTUP_HOME/toolchains/*/share/man
 
-RUN update-alternatives --set iptables /usr/sbin/iptables-legacy || true
-RUN mkdir -p /var/lib/cmux/sandboxes
+RUN update-alternatives --set iptables /usr/sbin/iptables-legacy || true && \
+    mkdir -p /var/lib/cmux/sandboxes
 
 # Install libssl1.1 for compatibility (required by some agent binaries)
 RUN arch="$(uname -m)"; \
@@ -223,8 +255,6 @@ COPY --from=dind-installer --link /usr/local/bin/docker-proxy /usr/local/bin/doc
 COPY --from=dind-installer --link /usr/local/bin/containerd /usr/local/bin/containerd
 COPY --from=dind-installer --link /usr/local/bin/containerd-shim-runc-v2 /usr/local/bin/containerd-shim-runc-v2
 COPY --from=dind-installer --link /usr/local/bin/runc /usr/local/bin/runc
-COPY --from=dind-installer --link /usr/local/bin/ctr /usr/local/bin/ctr
-COPY --from=dind-installer --link /usr/local/bin/buildctl /usr/local/bin/buildctl
 COPY --from=dind-installer --link /usr/local/bin/buildkitd /usr/local/bin/buildkitd
 COPY --from=dind-installer --link /usr/local/lib/docker/cli-plugins/ /usr/local/lib/docker/cli-plugins/
 
@@ -261,8 +291,8 @@ COPY --link packages/sandbox/systemd/dockerd.service /etc/systemd/system/dockerd
 COPY --link packages/sandbox/systemd/buildkitd.service /etc/systemd/system/buildkitd.service
 COPY --link packages/sandbox/systemd/cmux-sandboxd.service /etc/systemd/system/cmux-sandboxd.service
 RUN echo "CMUX_SANDBOX_PORT=46831" > /etc/default/cmux-sandboxd && \
-  { echo "CMUX_DOCKER_MODE=dind"; echo "CMUX_DOCKER_SOCKET=/var/run/docker.sock"; } > /etc/default/cmux-docker
-RUN mkdir -p /etc/systemd/system/multi-user.target.wants && \
+  { echo "CMUX_DOCKER_MODE=dind"; echo "CMUX_DOCKER_SOCKET=/var/run/docker.sock"; } > /etc/default/cmux-docker && \
+  mkdir -p /etc/systemd/system/multi-user.target.wants && \
   ln -s /etc/systemd/system/dockerd.service /etc/systemd/system/multi-user.target.wants/dockerd.service && \
   ln -s /etc/systemd/system/buildkitd.service /etc/systemd/system/multi-user.target.wants/buildkitd.service && \
   ln -s /etc/systemd/system/cmux-sandboxd.service /etc/systemd/system/multi-user.target.wants/cmux-sandboxd.service
