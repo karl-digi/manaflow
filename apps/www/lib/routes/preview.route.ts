@@ -1,11 +1,13 @@
 import { getAccessTokenFromRequest } from "@/lib/utils/auth";
 import { getConvex } from "@/lib/utils/get-convex";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
+import { stackServerAppJs } from "@/lib/utils/stack";
 import { api } from "@cmux/convex/api";
 import type { Doc } from "@cmux/convex/dataModel";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
+import { Octokit } from "octokit";
 
 export const previewRouter = new OpenAPIHono();
 
@@ -287,5 +289,188 @@ previewRouter.openapi(
       limit: query.limit,
     });
     return c.json({ runs: runs.map(formatPreviewRun) });
+  },
+);
+
+// Test PR creation endpoint
+const CreateTestPRBody = z
+  .object({
+    teamSlugOrId: z.string(),
+    previewConfigId: z.string(),
+    repoFullName: z.string(),
+    baseBranch: z.string().optional(),
+  })
+  .openapi("CreateTestPRBody");
+
+const CreateTestPRResponse = z
+  .object({
+    success: z.boolean(),
+    prUrl: z.string().optional(),
+    prNumber: z.number().optional(),
+    error: z.string().optional(),
+  })
+  .openapi("CreateTestPRResponse");
+
+previewRouter.openapi(
+  createRoute({
+    method: "post",
+    path: "/preview/test-pr",
+    tags: ["Preview"],
+    summary: "Create a test PR to verify preview configuration",
+    request: {
+      body: {
+        content: {
+          "application/json": {
+            schema: CreateTestPRBody,
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        description: "Test PR created",
+        content: {
+          "application/json": {
+            schema: CreateTestPRResponse,
+          },
+        },
+      },
+      401: { description: "Unauthorized" },
+      400: { description: "Bad request" },
+      500: { description: "Internal server error" },
+    },
+  }),
+  async (c) => {
+    const user = await stackServerAppJs.getUser({ tokenStore: c.req.raw });
+    if (!user) {
+      return c.json({ success: false, error: "Unauthorized" }, 401);
+    }
+
+    const [{ accessToken }, githubAccount] = await Promise.all([
+      user.getAuthJson(),
+      user.getConnectedAccount("github"),
+    ]);
+
+    if (!accessToken) {
+      return c.json({ success: false, error: "Unauthorized" }, 401);
+    }
+
+    if (!githubAccount) {
+      return c.json(
+        { success: false, error: "GitHub account is not connected" },
+        401,
+      );
+    }
+
+    const { accessToken: githubAccessToken } = await githubAccount.getAccessToken();
+    if (!githubAccessToken) {
+      return c.json(
+        { success: false, error: "GitHub access token unavailable" },
+        401,
+      );
+    }
+
+    const body = c.req.valid("json");
+    const { teamSlugOrId, repoFullName, baseBranch = "main" } = body;
+
+    await verifyTeamAccess({ req: c.req.raw, teamSlugOrId });
+
+    const [owner, repo] = repoFullName.split("/");
+    if (!owner || !repo) {
+      return c.json(
+        { success: false, error: "Invalid repository name" },
+        400,
+      );
+    }
+
+    const octokit = new Octokit({
+      auth: githubAccessToken,
+      request: { timeout: 30_000 },
+    });
+
+    try {
+      // Get the SHA of the base branch
+      const { data: baseBranchData } = await octokit.rest.repos.getBranch({
+        owner,
+        repo,
+        branch: baseBranch,
+      });
+      const baseSha = baseBranchData.commit.sha;
+
+      // Create a unique branch name
+      const timestamp = Date.now();
+      const testBranchName = `cmux-test-preview-${timestamp}`;
+
+      // Create the test branch
+      await octokit.rest.git.createRef({
+        owner,
+        repo,
+        ref: `refs/heads/${testBranchName}`,
+        sha: baseSha,
+      });
+
+      // Create a test file with a timestamp
+      const testFileName = ".cmux-test-preview.md";
+      const testFileContent = `# cmux Preview Test
+
+This is a test file created by cmux to verify the preview configuration.
+
+Created at: ${new Date().toISOString()}
+
+You can safely close or merge this PR after verifying the preview works correctly.
+`;
+
+      await octokit.rest.repos.createOrUpdateFileContents({
+        owner,
+        repo,
+        path: testFileName,
+        message: "test: add cmux preview test file",
+        content: Buffer.from(testFileContent).toString("base64"),
+        branch: testBranchName,
+      });
+
+      // Create the pull request
+      const { data: pr } = await octokit.rest.pulls.create({
+        owner,
+        repo,
+        title: "Test cmux Preview Configuration",
+        head: testBranchName,
+        base: baseBranch,
+        body: `## Test Preview Configuration
+
+This PR was automatically created by cmux to test your preview configuration.
+
+### What to expect
+
+A preview environment will be created for this PR. This typically takes **2-5 minutes**.
+
+Once complete, you'll see a comment on this PR with a link to the preview environment.
+
+### After testing
+
+- If the preview works correctly, you can close this PR
+- The test branch \`${testBranchName}\` will be automatically deleted when the PR is closed
+
+---
+
+*Created by [cmux](https://cmux.sh)*
+`,
+        draft: false,
+      });
+
+      return c.json({
+        success: true,
+        prUrl: pr.html_url,
+        prNumber: pr.number,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("Failed to create test PR:", error);
+      return c.json(
+        { success: false, error: message },
+        500,
+      );
+    }
   },
 );
