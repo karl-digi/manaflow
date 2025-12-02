@@ -2,6 +2,7 @@ import { stackServerApp } from "@/lib/utils/stack";
 import { getConvex } from "@/lib/utils/get-convex";
 import { api } from "@cmux/convex/api";
 import { PreviewDashboard } from "@/components/preview/preview-dashboard";
+import { ConvexClientProvider } from "@/components/providers/convex-client-provider";
 import {
   getTeamDisplayName,
   getTeamSlugOrId,
@@ -56,13 +57,15 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
       <div className="relative isolate min-h-dvh bg-[#05050a] text-white">
         <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_top,_rgba(4,120,255,0.3),_transparent_45%)]" />
 
-        <PreviewDashboard
-          selectedTeamSlugOrId=""
-          teamOptions={[]}
-          providerConnectionsByTeam={{}}
-          isAuthenticated={false}
-          previewConfigs={[]}
-        />
+        <ConvexClientProvider>
+          <PreviewDashboard
+            selectedTeamSlugOrId=""
+            teamOptions={[]}
+            providerConnectionsByTeam={{}}
+            isAuthenticated={false}
+            previewConfigs={[]}
+          />
+        </ConvexClientProvider>
       </div>
     );
   }
@@ -147,13 +150,15 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
     <div className="relative isolate min-h-dvh bg-[#05050a] text-white">
       <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_top,_rgba(4,120,255,0.3),_transparent_45%)]" />
 
-      <PreviewDashboard
-        selectedTeamSlugOrId={selectedTeamSlugOrId}
-        teamOptions={teamOptions}
-        providerConnectionsByTeam={providerConnectionsByTeam}
-        isAuthenticated={true}
-        previewConfigs={previewConfigs}
-      />
+      <ConvexClientProvider>
+        <PreviewDashboard
+          selectedTeamSlugOrId={selectedTeamSlugOrId}
+          teamOptions={teamOptions}
+          providerConnectionsByTeam={providerConnectionsByTeam}
+          isAuthenticated={true}
+          previewConfigs={previewConfigs}
+        />
+      </ConvexClientProvider>
     </div>
   );
 }
