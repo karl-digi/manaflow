@@ -204,6 +204,15 @@
         "wrangler": "^3.80.0",
       },
     },
+    "apps/global-proxy-freestyle": {
+      "name": "global-proxy-freestyle",
+      "version": "0.0.1",
+      "devDependencies": {
+        "@cmux/freestyle-openapi-client": "workspace:*",
+        "@types/bun": "latest",
+        "typescript": "^5.8.2",
+      },
+    },
     "apps/preview-proxy": {
       "name": "bun-react-template",
       "version": "0.1.0",
@@ -3440,6 +3449,8 @@
     "glob-to-regexp": ["glob-to-regexp@0.4.1", "", {}, "sha512-lkX1HJXwyMcprw/5YUZc2s7DrpAiHB21/V+E1rHUrVNokkvB6bqMzT0VfV6/86ZNabt1k14YOIaT7nDvOX3Iiw=="],
 
     "global-agent": ["global-agent@3.0.0", "", { "dependencies": { "boolean": "^3.0.1", "es6-error": "^4.1.1", "matcher": "^3.0.0", "roarr": "^2.15.3", "semver": "^7.3.2", "serialize-error": "^7.0.1" } }, "sha512-PT6XReJ+D07JvGoxQMkT6qji/jVNfX/h364XHZOWeRzy64sSFr+xJ5OX7LI3b4MPQzdL4H8Y8M0xzPpsVMwA8Q=="],
+
+    "global-proxy-freestyle": ["global-proxy-freestyle@workspace:apps/global-proxy-freestyle"],
 
     "globals": ["globals@16.4.0", "", {}, "sha512-ob/2LcVVaVGCYN+r14cnwnoDPUufjiYgSqRhiFD0Q1iI4Odora5RE8Iv1D24hAz5oMophRGkGz+yuvQmmUMnMw=="],
 

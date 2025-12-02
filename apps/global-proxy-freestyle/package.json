@@ -1,0 +1,16 @@
+{
+  "name": "global-proxy-freestyle",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "bun run scripts/deploy.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@cmux/freestyle-openapi-client": "workspace:*",
+    "@types/bun": "latest",
+    "typescript": "^5.8.2"
+  }
+}

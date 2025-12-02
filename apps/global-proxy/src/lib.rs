@@ -1398,6 +1398,19 @@ fn parse_cmux_host(host: &str) -> Option<(Option<String>, String)> {
         return Some((subdomain, "cmux.localhost".to_string()));
     }
 
+    // f.cmux.app - Freestyle-hosted proxy (must be checked before .cmux.app)
+    if host == "f.cmux.app" {
+        return Some((None, "f.cmux.app".to_string()));
+    }
+    if let Some(prefix) = host.strip_suffix(".f.cmux.app") {
+        let subdomain = if prefix.is_empty() {
+            None
+        } else {
+            Some(prefix.to_string())
+        };
+        return Some((subdomain, "f.cmux.app".to_string()));
+    }
+
     if host == "cmux.app" {
         return Some((None, "cmux.app".to_string()));
     }

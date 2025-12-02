@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "updatedAt": "2025-11-30T21:22:32Z",
+  "updatedAt": "2025-12-02T01:10:16Z",
   "presets": [
     {
       "presetId": "morph_4vcpu_16gb_48gb",
@@ -34,6 +34,16 @@
           "version": 5,
           "snapshotId": "snapshot_o8r69mzg",
           "capturedAt": "2025-11-30T00:53:26Z"
+        },
+        {
+          "version": 6,
+          "snapshotId": "snapshot_p8povqrm",
+          "capturedAt": "2025-12-01T04:44:47Z"
+        },
+        {
+          "version": 7,
+          "snapshotId": "snapshot_msqlddau",
+          "capturedAt": "2025-12-02T01:06:36Z"
         }
       ],
       "description": "Great default for day-to-day work. Balanced CPU, memory, and storage."
@@ -70,6 +80,16 @@
           "version": 5,
           "snapshotId": "snapshot_eafaewe0",
           "capturedAt": "2025-11-30T00:52:41Z"
+        },
+        {
+          "version": 6,
+          "snapshotId": "snapshot_wlguicpb",
+          "capturedAt": "2025-12-01T04:44:30Z"
+        },
+        {
+          "version": 7,
+          "snapshotId": "snapshot_p4ezqzh8",
+          "capturedAt": "2025-12-02T01:06:09Z"
         }
       ],
       "description": "Extra headroom for larger codebases or heavier workloads."
@@ -96,6 +116,16 @@
           "version": 6,
           "snapshotId": "gfilg",
           "capturedAt": "2025-11-30T21:22:32Z"
+        },
+        {
+          "version": 7,
+          "snapshotId": "vhbna",
+          "capturedAt": "2025-12-01T04:48:42Z"
+        },
+        {
+          "version": 8,
+          "snapshotId": "teccv",
+          "capturedAt": "2025-12-02T01:10:16Z"
         }
       ],
       "description": "Freestyle cloud sandbox environment."

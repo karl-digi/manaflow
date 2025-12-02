@@ -43,6 +43,7 @@ import typing as t
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -61,21 +62,21 @@ from morphcloud.api import (
 # Support both `python -m scripts.snapshot` and `./scripts/snapshot.py`
 try:
     from .providers import FreestyleProvider, FreestyleInstance
-    from .providers.base import BaseInstance, ExecResponse as ProviderExecResponse, ProviderType
+    from .providers.base import ExecResponse as ProviderExecResponse, ProviderType
 except ImportError:
-    from providers import FreestyleProvider, FreestyleInstance  # type: ignore[import-not-found]
-    from providers.base import BaseInstance, ExecResponse as ProviderExecResponse, ProviderType  # type: ignore[import-not-found]
+    from providers import FreestyleProvider, FreestyleInstance  # type: ignore[import-not-found] # pyright: ignore[reportImplicitRelativeImport]
+    from providers.base import ExecResponse as ProviderExecResponse, ProviderType  # type: ignore[import-not-found] # pyright: ignore[reportImplicitRelativeImport]
 
 
 # Union type for instances from different providers
 # Both Morph Instance and FreestyleInstance implement the same core interface
-ProviderInstance = t.Union[Instance, FreestyleInstance]
+ProviderInstance = Instance | FreestyleInstance
 
 # Union type for exec responses from different providers
-ExecResponseUnion = t.Union[InstanceExecResponse, ProviderExecResponse]
+ExecResponseUnion = InstanceExecResponse | ProviderExecResponse
 
-Command = t.Union[str, t.Sequence[str]]
-TaskFunc = t.Callable[["TaskContext"], t.Awaitable[None]]
+Command = str | Sequence[str]
+TaskFunc = Callable[["TaskContext"], Awaitable[None]]
 
 EXEC_HTTP_PORT = 39375
 EXEC_BINARY_NAME = "cmux-execd"
@@ -2699,7 +2700,7 @@ async def verify_devtools_via_exposed_url(
                     f"Attempt {attempt}/{max_attempts} failed to reach DevTools via Morph: {exc}"
                 )
             else:
-                if response.status_code == httpx.codes.OK:
+                if response.status_code == 200:
                     console.info("DevTools endpoint is reachable via Morph exposed URL")
                     return
                 console.info(
@@ -2995,7 +2996,6 @@ async def provision_and_snapshot_for_freestyle_preset(
 
         # Build verification URLs
         console_url = f"https://{domain}/__console/" if domain else None
-        vscode_url = f"https://{domain}" if domain else None  # Freestyle serves VS Code on root
 
         console.always(f"[{preset.preset_id}] Console: {console_url or 'N/A'}")
 
