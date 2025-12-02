@@ -21,6 +21,7 @@
     "@ai-sdk/google": "^2.0.25",
     "@ai-sdk/openai": "^2.0.58",
     "@asteasolutions/zod-to-openapi": "^8.1.0",
+    "@base-ui-components/react": "^1.0.0-beta.7",
     "@cmux/convex": "workspace:*",
     "@cmux/shared": "workspace:*",
     "@cmux/www-openapi-client": "workspace:*",

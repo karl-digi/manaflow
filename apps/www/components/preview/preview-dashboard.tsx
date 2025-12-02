@@ -23,7 +23,7 @@ import {
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@/components/ui/tooltip-base";
 import { LucideIcon } from "lucide-react";
 import { useOAuthPopup } from "@/hooks/use-oauth-popup";
 
@@ -981,7 +981,7 @@ export function PreviewDashboard({
                   : "Connect GitHub and import a repository to get started."}
               </p>
             ) : (
-              <TooltipProvider delayDuration={100}>
+              <TooltipProvider>
                 <div className="space-y-1.5">
                   {configs.map((config) => (
                     <div
@@ -1018,7 +1018,7 @@ export function PreviewDashboard({
                         </div>
                       </div>
                       <div className="flex items-center gap-1.5">
-                        <Tooltip>
+                        <Tooltip delayDuration={0}>
                           <TooltipTrigger asChild>
                             <button
                               type="button"
@@ -1037,7 +1037,7 @@ export function PreviewDashboard({
                             Edit configuration
                           </TooltipContent>
                         </Tooltip>
-                        <Tooltip>
+                        <Tooltip delayDuration={0}>
                           <TooltipTrigger asChild>
                             <button
                               type="button"
