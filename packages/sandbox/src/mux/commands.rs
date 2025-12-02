@@ -220,8 +220,8 @@ impl MuxCommand {
     /// These help users find commands when they use different terminology.
     pub fn synonyms(&self) -> &'static [&'static str] {
         match self {
-            MuxCommand::ClosePane => &["delete", "remove", "kill", "destroy"],
-            MuxCommand::CloseTab => &["delete", "remove", "kill", "destroy"],
+            MuxCommand::ClosePane => &["delete", "remove", "kill", "destroy", "close"],
+            MuxCommand::CloseTab => &["delete", "remove", "kill", "destroy", "close"],
             MuxCommand::SplitHorizontal => &["divide", "new pane", "hsplit"],
             MuxCommand::SplitVertical => &["divide", "new pane", "vsplit"],
             MuxCommand::ToggleZoom => &["maximize", "fullscreen", "expand"],
@@ -424,7 +424,7 @@ impl MuxCommand {
             // Pane management - use Alt for pane operations
             MuxCommand::SplitHorizontal => Some((KeyModifiers::ALT, KeyCode::Char('-'))),
             MuxCommand::SplitVertical => Some((KeyModifiers::ALT, KeyCode::Char('\\'))),
-            MuxCommand::ClosePane => Some((KeyModifiers::ALT, KeyCode::Char('x'))),
+            MuxCommand::ClosePane => Some((KeyModifiers::ALT, KeyCode::Char('w'))),
             MuxCommand::ToggleZoom => Some((KeyModifiers::ALT, KeyCode::Char('z'))),
 
             // Swap panes
@@ -453,7 +453,9 @@ impl MuxCommand {
 
             // Tab management - all Alt-based
             MuxCommand::NewTab => Some((KeyModifiers::ALT, KeyCode::Char('t'))),
-            MuxCommand::CloseTab => Some((KeyModifiers::ALT, KeyCode::Char('w'))),
+            MuxCommand::CloseTab => {
+                Some((KeyModifiers::ALT | KeyModifiers::SHIFT, KeyCode::Char('W')))
+            }
             MuxCommand::RenameTab => Some((KeyModifiers::ALT, KeyCode::Char('r'))),
             MuxCommand::MoveTabLeft => {
                 Some((KeyModifiers::ALT | KeyModifiers::SHIFT, KeyCode::Char('[')))
@@ -644,6 +646,10 @@ impl PaletteCommand for MuxCommand {
 
     fn is_current(&self) -> bool {
         false
+    }
+
+    fn synonyms(&self) -> &[&str] {
+        MuxCommand::synonyms(self)
     }
 }
 
