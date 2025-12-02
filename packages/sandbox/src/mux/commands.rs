@@ -75,6 +75,10 @@ pub enum MuxCommand {
     ScrollPageDown,
     ScrollToTop,
     ScrollToBottom,
+
+    // Terminal utilities
+    EnableDeltaPager,
+    DisableDeltaPager,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,6 +155,9 @@ impl MuxCommand {
             MuxCommand::ScrollPageDown,
             MuxCommand::ScrollToTop,
             MuxCommand::ScrollToBottom,
+            // Terminal utilities
+            MuxCommand::EnableDeltaPager,
+            MuxCommand::DisableDeltaPager,
         ]
     }
 
@@ -213,6 +220,8 @@ impl MuxCommand {
             MuxCommand::ScrollPageDown => "Scroll Page Down",
             MuxCommand::ScrollToTop => "Scroll to Top",
             MuxCommand::ScrollToBottom => "Scroll to Bottom",
+            MuxCommand::EnableDeltaPager => "Enable Delta Pager",
+            MuxCommand::DisableDeltaPager => "Disable Delta Pager",
         }
     }
 
@@ -244,6 +253,8 @@ impl MuxCommand {
             MuxCommand::ScrollPageDown => &["page down", "scroll down fast"],
             MuxCommand::ScrollToTop => &["beginning", "start", "top"],
             MuxCommand::ScrollToBottom => &["end", "bottom"],
+            MuxCommand::EnableDeltaPager => &["git diff", "syntax highlighting", "pretty diff"],
+            MuxCommand::DisableDeltaPager => &["git diff", "plain diff", "default pager"],
             _ => &[],
         }
     }
@@ -307,6 +318,8 @@ impl MuxCommand {
             MuxCommand::ScrollPageDown => "Scroll down one page",
             MuxCommand::ScrollToTop => "Scroll to the top",
             MuxCommand::ScrollToBottom => "Scroll to the bottom",
+            MuxCommand::EnableDeltaPager => "Use delta for syntax-highlighted git diffs",
+            MuxCommand::DisableDeltaPager => "Use default pager for git diffs",
         }
     }
 
@@ -375,6 +388,8 @@ impl MuxCommand {
             | MuxCommand::ScrollPageDown
             | MuxCommand::ScrollToTop
             | MuxCommand::ScrollToBottom => "General",
+
+            MuxCommand::EnableDeltaPager | MuxCommand::DisableDeltaPager => "Terminal",
         }
     }
 
@@ -496,6 +511,10 @@ impl MuxCommand {
             MuxCommand::ScrollPageDown => Some((KeyModifiers::ALT, KeyCode::PageDown)),
             MuxCommand::ScrollToTop => Some((KeyModifiers::ALT, KeyCode::Home)),
             MuxCommand::ScrollToBottom => Some((KeyModifiers::ALT, KeyCode::End)),
+
+            // Terminal utilities - access via command palette only
+            MuxCommand::EnableDeltaPager => None,
+            MuxCommand::DisableDeltaPager => None,
         }
     }
 

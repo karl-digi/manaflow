@@ -475,22 +475,10 @@ fi
         fs::create_dir_all(&root_home).await?;
 
         let gitconfig = root_home.join(".gitconfig");
+        // Only set safe.directory - don't override user's pager preferences
+        // Users can enable delta via command palette (EnableDeltaPager)
         let content = r#"[safe]
 	directory = *
-
-[core]
-	pager = delta
-
-[interactive]
-	diffFilter = delta --color-only
-
-[delta]
-	navigate = true
-	line-numbers = true
-	side-by-side = false
-
-[merge]
-	conflictStyle = zdiff3
 "#;
         fs::write(&gitconfig, content).await?;
         Ok(())
