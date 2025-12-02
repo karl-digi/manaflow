@@ -210,17 +210,17 @@ RUN bun add -g \
   find /usr/local/lib/bun/node_modules -name '.eslint*' -type f -delete 2>/dev/null || true && \
   find /usr/local/lib/bun/node_modules -name '.prettier*' -type f -delete 2>/dev/null || true && \
   find /usr/local/lib/bun/node_modules -name 'tsconfig*.json' -type f -delete 2>/dev/null || true && \
-  # Remove unused platform-specific binaries (keep only current arch)
+  # Remove unused platform-specific packages (only top-level node_modules packages, not vendor dirs)
   arch="$(uname -m)"; \
   if [ "$arch" = "x86_64" ]; then \
-    find /usr/local/lib/bun/node_modules -type d -name '*-arm64*' -exec rm -rf {} + 2>/dev/null || true; \
-    find /usr/local/lib/bun/node_modules -type d -name '*-darwin*' -exec rm -rf {} + 2>/dev/null || true; \
-    find /usr/local/lib/bun/node_modules -type d -name '*-win32*' -exec rm -rf {} + 2>/dev/null || true; \
+    find /usr/local/lib/bun/node_modules -maxdepth 1 -type d -name '*-arm64*' -exec rm -rf {} + 2>/dev/null || true; \
+    find /usr/local/lib/bun/node_modules -maxdepth 1 -type d -name '*-darwin*' -exec rm -rf {} + 2>/dev/null || true; \
+    find /usr/local/lib/bun/node_modules -maxdepth 1 -type d -name '*-win32*' -exec rm -rf {} + 2>/dev/null || true; \
   elif [ "$arch" = "aarch64" ]; then \
-    find /usr/local/lib/bun/node_modules -type d -name '*-x64*' -exec rm -rf {} + 2>/dev/null || true; \
-    find /usr/local/lib/bun/node_modules -type d -name '*-darwin*' -exec rm -rf {} + 2>/dev/null || true; \
-    find /usr/local/lib/bun/node_modules -type d -name '*-win32*' -exec rm -rf {} + 2>/dev/null || true; \
-    find /usr/local/lib/bun/node_modules -type d -name '*linux*musl*' -exec rm -rf {} + 2>/dev/null || true; \
+    find /usr/local/lib/bun/node_modules -maxdepth 1 -type d -name '*-x64*' -exec rm -rf {} + 2>/dev/null || true; \
+    find /usr/local/lib/bun/node_modules -maxdepth 1 -type d -name '*-darwin*' -exec rm -rf {} + 2>/dev/null || true; \
+    find /usr/local/lib/bun/node_modules -maxdepth 1 -type d -name '*-win32*' -exec rm -rf {} + 2>/dev/null || true; \
+    find /usr/local/lib/bun/node_modules -maxdepth 1 -type d -name '*linux*musl*' -exec rm -rf {} + 2>/dev/null || true; \
   fi && \
   rm -rf /root/.bun/install/cache
 
