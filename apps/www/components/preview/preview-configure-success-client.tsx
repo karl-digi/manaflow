@@ -151,7 +151,7 @@ export function PreviewConfigureSuccessClient({
                 "inline-flex w-full items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-semibold transition",
                 isCreatingPR
                   ? "bg-neutral-200 dark:bg-neutral-800 text-neutral-500 cursor-not-allowed"
-                  : "bg-emerald-600 text-white hover:bg-emerald-700"
+                  : "bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 hover:bg-neutral-800 dark:hover:bg-neutral-200"
               )}
             >
               {isCreatingPR ? (

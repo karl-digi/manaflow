@@ -410,13 +410,12 @@ previewRouter.openapi(
 
       // Create a test HTML page in public/ so it's accessible as a page
       const testFileName = "public/cmux-test-preview.html";
-      const isoTimestamp = new Date(timestamp).toISOString();
       const testFileContent = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>cmux Preview Test</title>
+  <title>cmux - AI Code Review for Every PR</title>
   <style>
     * {
       margin: 0;
@@ -429,78 +428,97 @@ previewRouter.openapi(
       display: flex;
       align-items: center;
       justify-content: center;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: #000;
       padding: 20px;
     }
-    .card {
-      background: white;
-      border-radius: 16px;
-      padding: 48px;
-      max-width: 480px;
+    .container {
+      max-width: 600px;
       width: 100%;
       text-align: center;
-      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
     }
-    .icon {
-      width: 80px;
-      height: 80px;
-      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      margin: 0 auto 24px;
-    }
-    .icon svg {
-      width: 40px;
-      height: 40px;
-      color: white;
-    }
-    h1 {
-      font-size: 28px;
-      font-weight: 700;
-      color: #1f2937;
-      margin-bottom: 12px;
-    }
-    .subtitle {
-      font-size: 16px;
-      color: #6b7280;
-      margin-bottom: 32px;
-      line-height: 1.5;
-    }
-    .info {
-      background: #f3f4f6;
-      border-radius: 8px;
-      padding: 16px;
+    .logo {
+      font-size: 48px;
+      font-weight: 800;
+      color: #fff;
+      letter-spacing: -0.02em;
       margin-bottom: 24px;
     }
-    .info-label {
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: #9ca3af;
-      margin-bottom: 4px;
+    .logo span {
+      background: linear-gradient(135deg, #10b981 0%, #34d399 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
     }
-    .info-value {
+    h1 {
+      font-size: 36px;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 16px;
+      line-height: 1.2;
+    }
+    .subtitle {
+      font-size: 18px;
+      color: #a1a1aa;
+      margin-bottom: 40px;
+      line-height: 1.6;
+    }
+    .features {
+      display: flex;
+      gap: 24px;
+      margin-bottom: 40px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .feature {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #d4d4d8;
       font-size: 14px;
-      color: #374151;
-      font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+    }
+    .feature svg {
+      width: 20px;
+      height: 20px;
+      color: #10b981;
+    }
+    .cta {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: #fff;
+      color: #000;
+      font-size: 16px;
+      font-weight: 600;
+      padding: 16px 32px;
+      border-radius: 8px;
+      text-decoration: none;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+    .cta:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 40px rgba(16, 185, 129, 0.3);
+    }
+    .cta svg {
+      width: 20px;
+      height: 20px;
     }
     .badge {
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      background: #ecfdf5;
-      color: #059669;
-      font-size: 14px;
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      color: #10b981;
+      font-size: 12px;
       font-weight: 500;
-      padding: 8px 16px;
+      padding: 6px 12px;
       border-radius: 9999px;
+      margin-top: 32px;
     }
     .badge::before {
       content: '';
-      width: 8px;
-      height: 8px;
+      width: 6px;
+      height: 6px;
       background: #10b981;
       border-radius: 50%;
       animation: pulse 2s infinite;
@@ -512,21 +530,40 @@ previewRouter.openapi(
   </style>
 </head>
 <body>
-  <div class="card">
-    <div class="icon">
-      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-        <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-      </svg>
-    </div>
-    <h1>Preview Working!</h1>
+  <div class="container">
+    <div class="logo">c<span>mux</span></div>
+    <h1>AI-Powered Preview Environments for Every Pull Request</h1>
     <p class="subtitle">
-      Your cmux preview environment is configured correctly and ready to use.
+      Get instant visual previews and AI code review on every PR.
+      Ship faster with confidence.
     </p>
-    <div class="info">
-      <div class="info-label">Created at</div>
-      <div class="info-value">${isoTimestamp}</div>
+    <div class="features">
+      <div class="feature">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+        </svg>
+        Automatic Screenshots
+      </div>
+      <div class="feature">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+        </svg>
+        AI Code Review
+      </div>
+      <div class="feature">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+        </svg>
+        GitHub Integration
+      </div>
     </div>
-    <span class="badge">Preview Active</span>
+    <a href="https://cmux.dev" class="cta" target="_blank">
+      Try cmux Free
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />
+      </svg>
+    </a>
+    <div class="badge">Preview Environment Active</div>
   </div>
 </body>
 </html>
