@@ -1062,7 +1062,7 @@ export function PreviewDashboard({
                   {configs.map((config) => (
                     <div
                       key={config.id}
-                      className="flex items-center justify-between pl-0 pr-3 py-2.5"
+                      className="flex items-center justify-between pl-0 pr-3 py-1"
                     >
                       <div className="flex items-center gap-2.5 min-w-0">
                         <svg
