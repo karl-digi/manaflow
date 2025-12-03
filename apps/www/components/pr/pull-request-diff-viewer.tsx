@@ -89,6 +89,7 @@ import {
   ReviewCompletionNotificationCard,
   type ReviewCompletionNotificationCardState,
 } from "./review-completion-notification-card";
+import { PrReviewScreenshotGallery } from "./pr-screenshot-gallery";
 import clsx from "clsx";
 import { kitties } from "./kitty";
 import {
@@ -1010,6 +1011,20 @@ export function PullRequestDiffViewer({
     ]
   );
 
+  const screenshotQueryArgs = useMemo(
+    () =>
+      normalizedJobType !== "pull_request" ||
+      prNumber === null ||
+      prNumber === undefined
+        ? ("skip" as const)
+        : {
+            teamSlugOrId,
+            repoFullName,
+            prNumber,
+          },
+    [normalizedJobType, prNumber, repoFullName, teamSlugOrId]
+  );
+
   const prFileOutputs = useConvexQuery(
     api.codeReview.listFileOutputsForPr,
     prQueryArgs
@@ -1017,6 +1032,10 @@ export function PullRequestDiffViewer({
   const comparisonFileOutputs = useConvexQuery(
     api.codeReview.listFileOutputsForComparison,
     comparisonQueryArgs
+  );
+  const prScreenshotSets = useConvexQuery(
+    api.github_pr_queries.listScreenshotSetsForPr,
+    screenshotQueryArgs
   );
 
   const fileOutputs =
@@ -2248,6 +2267,10 @@ export function PullRequestDiffViewer({
           </div>
 
           <div className="flex-1 min-w-0 space-y-3">
+            <PrReviewScreenshotGallery
+              screenshotSets={prScreenshotSets}
+              commitRef={commitRef}
+            />
             {thresholdedFileEntries.map(
               ({ entry, review, diffHeatmap, streamState }) => {
                 const isFocusedFile =
