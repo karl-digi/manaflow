@@ -25,9 +25,10 @@ import { formatEnvVarsContent } from "@cmux/shared/utils/format-env-vars-content
 import clsx from "clsx";
 import {
   FrameworkPresetSelect,
-  FRAMEWORK_PRESETS,
+  getFrameworkPresetConfig,
   type FrameworkPreset,
 } from "./framework-preset-select";
+import type { PackageManager } from "@/lib/github/framework-detection";
 
 const MASKED_ENV_VALUE = "••••••••••••••••";
 
@@ -59,6 +60,7 @@ type PreviewConfigureClientProps = {
   repo: string;
   installationId: string | null;
   initialFrameworkPreset?: FrameworkPreset;
+  initialPackageManager?: PackageManager;
   initialEnvVarsContent?: string | null;
   initialMaintenanceScript?: string | null;
   initialDevScript?: string | null;
@@ -364,6 +366,7 @@ export function PreviewConfigureClient({
   repo,
   installationId: _installationId,
   initialFrameworkPreset = "other",
+  initialPackageManager = "npm",
   initialEnvVarsContent,
   initialMaintenanceScript,
   initialDevScript,
@@ -389,8 +392,10 @@ export function PreviewConfigureClient({
       initialEnvVars.some((r) => r.name.trim().length > 0 || r.value.trim().length > 0),
     [initialEnvPrefilled, initialEnvVars]
   );
-  const initialFrameworkConfig =
-    FRAMEWORK_PRESETS[initialFrameworkPreset] ?? FRAMEWORK_PRESETS.other;
+  const initialFrameworkConfig = getFrameworkPresetConfig(
+    initialFrameworkPreset,
+    initialPackageManager
+  );
   const initialMaintenanceScriptValue =
     initialMaintenanceScript ?? initialFrameworkConfig.maintenanceScript;
   const initialDevScriptValue =
@@ -734,7 +739,7 @@ export function PreviewConfigureClient({
       setFrameworkPreset(preset);
       // Only auto-fill if user hasn't manually edited the scripts
       if (!hasUserEditedScripts) {
-        const presetConfig = FRAMEWORK_PRESETS[preset];
+        const presetConfig = getFrameworkPresetConfig(preset, initialPackageManager);
         setMaintenanceScript(presetConfig.maintenanceScript);
         setDevScript(presetConfig.devScript);
         // Update none states based on whether the preset has scripts
@@ -742,7 +747,7 @@ export function PreviewConfigureClient({
         setDevNone(presetConfig.devScript.trim().length === 0);
       }
     },
-    [hasUserEditedScripts]
+    [hasUserEditedScripts, initialPackageManager]
   );
 
   const handleMaintenanceScriptChange = useCallback((value: string) => {
