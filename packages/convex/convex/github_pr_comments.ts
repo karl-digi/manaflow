@@ -107,21 +107,26 @@ async function renderScreenshotSetMarkdown(
   const lines: string[] = [heading, ""];
 
   if (set.status === "completed" && set.images.length > 0) {
-    // Check if the model detected no UI changes
-    if (!set.hasUiChanges) {
+    // Check if the model explicitly detected no UI changes
+    // hasUiChanges === false means model analyzed and found no UI changes - skip screenshots
+    // hasUiChanges === undefined means not analyzed - show screenshots
+    // hasUiChanges === true means model found UI changes - show screenshots
+    if (set.hasUiChanges === false) {
       lines.push(
         `> **No UI changes detected** - The model analyzed this PR and determined there are no visual changes to the UI.`,
         "",
       );
-    }
-    const count = set.images.length;
-    const intro = `Captured ${count} screenshot${count === 1 ? "" : "s"} for commit ${commitLabel} (${timestamp}).`;
-    lines.push(intro, "");
-    for (const image of set.images) {
-      const storageUrl = await ctx.storage.getUrl(image.storageId);
-      if (!storageUrl) continue;
-      const fileName = image.fileName || "screenshot";
-      lines.push(...formatScreenshotImageMarkdown(storageUrl, fileName, image.description));
+      // Don't render screenshots when model says no UI changes
+    } else {
+      const count = set.images.length;
+      const intro = `Captured ${count} screenshot${count === 1 ? "" : "s"} for commit ${commitLabel} (${timestamp}).`;
+      lines.push(intro, "");
+      for (const image of set.images) {
+        const storageUrl = await ctx.storage.getUrl(image.storageId);
+        if (!storageUrl) continue;
+        const fileName = image.fileName || "screenshot";
+        lines.push(...formatScreenshotImageMarkdown(storageUrl, fileName, image.description));
+      }
     }
   } else if (set.status === "failed") {
     lines.push(
