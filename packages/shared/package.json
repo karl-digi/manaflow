@@ -97,6 +97,10 @@
     "./providers/common/check-docker": {
       "import": "./src/providers/common/check-docker.ts",
       "types": "./src/providers/common/check-docker.ts"
+    },
+    "./screenshots/sanitize-markdown": {
+      "import": "./src/screenshots/sanitize-markdown.ts",
+      "types": "./src/screenshots/sanitize-markdown.ts"
     }
   },
   "dependencies": {

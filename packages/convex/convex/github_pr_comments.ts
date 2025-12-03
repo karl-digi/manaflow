@@ -8,6 +8,11 @@ import {
   type ActionCtx,
 } from "./_generated/server";
 import { Octokit } from "octokit";
+import {
+  sanitizeDescription,
+  sanitizeFileName,
+  validateStorageUrl,
+} from "@cmux/shared/screenshots/sanitize-markdown";
 
 const CMUX_BASE_URL = "https://cmux.sh";
 const UTM_PARAMS = "utm_source=github&utm_medium=pr_comment&utm_campaign=cmux_bot";
@@ -25,7 +30,7 @@ type PreviewRunDoc = Doc<"previewRuns">;
 type ScreenshotSetDoc = Doc<"taskRunScreenshotSets">;
 
 const COLLAPSE_MARKER = "<!-- cmux-preview-collapsed -->";
-const COLLAPSE_SUMMARY = "Older cmux preview screenshots (latest comment is above)";
+const COLLAPSE_SUMMARY = "Older cmux preview screenshots (latest comment is below)";
 const MAX_COMMENTS_TO_COLLAPSE = 20;
 const MAX_PREVIOUS_SCREENSHOT_SETS = 5;
 const NON_UI_CHANGE_PATTERNS = [
@@ -83,6 +88,10 @@ const summarizeSet = (
 /**
  * Formats a single screenshot image into markdown lines.
  * Shared helper to ensure consistent rendering across all codepaths.
+ *
+ * SECURITY: This function sanitizes user-controlled content (fileName, description)
+ * to prevent markdown injection and data exfiltration attacks.
+ * See: packages/shared/src/screenshots/sanitize-markdown.ts
  */
 const formatScreenshotImageMarkdown = (
   storageUrl: string,
@@ -90,14 +99,28 @@ const formatScreenshotImageMarkdown = (
   description?: string,
   options?: { includeHeader?: boolean },
 ): string[] => {
+  // Validate storage URL to prevent external URLs
+  const validatedUrl = validateStorageUrl(storageUrl);
+  if (!validatedUrl) {
+    console.warn("[github_pr_comments] Skipping image with invalid storage URL", {
+      storageUrl,
+      fileName,
+    });
+    return [];
+  }
+
+  // Sanitize user-controlled content to prevent injection
+  const safeFileName = sanitizeFileName(fileName);
+  const safeDescription = sanitizeDescription(description);
+
   const lines: string[] = [];
   if (options?.includeHeader) {
-    lines.push(`### ${fileName}`);
+    lines.push(`### ${safeFileName}`);
   }
-  if (description) {
-    lines.push(`**${description}**`, "");
+  if (safeDescription) {
+    lines.push(`**${safeDescription}**`, "");
   }
-  lines.push(`![${fileName}](${storageUrl})`, "");
+  lines.push(`![${safeFileName}](${validatedUrl})`, "");
   return lines;
 };
 
