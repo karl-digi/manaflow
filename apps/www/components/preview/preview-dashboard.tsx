@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   Camera,
   CheckCircle2,
+  Clock,
   ExternalLink,
   Github,
   Link2,
@@ -14,6 +15,7 @@ import {
   Server,
   Star,
   Trash2,
+  X,
 } from "lucide-react";
 import Link from "next/link";
 import clsx from "clsx";
@@ -73,6 +75,13 @@ type PreviewDashboardProps = {
 };
 
 const ADD_INSTALLATION_VALUE = "__add_github_account__";
+
+type WaitlistProvider = "gitlab" | "bitbucket";
+
+const WAITLIST_PROVIDER_INFO: Record<WaitlistProvider, { name: string; color: string }> = {
+  gitlab: { name: "GitLab", color: "#fc6d26" },
+  bitbucket: { name: "Bitbucket", color: "#0052cc" },
+};
 
 type FeatureCardProps = {
   icon: LucideIcon;
@@ -203,6 +212,121 @@ function PopupCompleteView() {
   );
 }
 
+type WaitlistModalProps = {
+  provider: WaitlistProvider;
+  onClose: () => void;
+};
+
+function WaitlistModal({ provider, onClose }: WaitlistModalProps) {
+  const [email, setEmail] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSubmitted, setIsSubmitted] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const providerInfo = WAITLIST_PROVIDER_INFO[provider];
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email.trim()) return;
+
+    setIsSubmitting(true);
+    setError(null);
+
+    try {
+      const response = await fetch("/api/preview/waitlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), provider }),
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || "Failed to join waitlist");
+      }
+
+      setIsSubmitted(true);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Something went wrong";
+      console.error("[WaitlistModal] Failed to submit", err);
+      setError(message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4 py-6"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md rounded-lg border border-white/10 bg-neutral-900 px-6 py-5 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between">
+          <div className="flex items-start gap-3">
+            <div
+              className="rounded-full p-2"
+              style={{ backgroundColor: `${providerInfo.color}20` }}
+            >
+              <Clock className="h-5 w-5" style={{ color: providerInfo.color }} />
+            </div>
+            <div>
+              <h3 className="text-lg font-semibold text-white">
+                {providerInfo.name} support coming soon
+              </h3>
+              <p className="pt-1 text-sm text-neutral-400">
+                We&apos;re working on {providerInfo.name} integration. Join the waitlist to get notified when it&apos;s ready.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1 text-neutral-500 hover:text-white transition-colors"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {isSubmitted ? (
+          <div className="pt-5 flex items-center gap-2 text-emerald-400">
+            <CheckCircle2 className="h-5 w-5" />
+            <span className="text-sm">You&apos;re on the list! We&apos;ll notify you when {providerInfo.name} is ready.</span>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="pt-5">
+            <div className="flex gap-2">
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="Enter your email"
+                required
+                className="flex-1 h-10 rounded-md border border-white/10 bg-white/5 px-3 text-sm text-white placeholder:text-neutral-500 focus:border-white/20 focus:outline-none"
+              />
+              <Button
+                type="submit"
+                disabled={isSubmitting || !email.trim()}
+                className="h-10 px-4 bg-white text-black hover:bg-neutral-200"
+              >
+                {isSubmitting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  "Join waitlist"
+                )}
+              </Button>
+            </div>
+            {error && (
+              <p className="pt-2 text-sm text-red-400">{error}</p>
+            )}
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /** Opens a centered popup window */
 function openCenteredPopup(
   url: string,
@@ -271,6 +395,9 @@ function PreviewDashboardInner({
 
   // OAuth sign-in with popup
   const { signInWithPopup, signingInProvider } = useOAuthPopup();
+
+  // Waitlist modal state for GitLab/Bitbucket
+  const [waitlistProvider, setWaitlistProvider] = useState<WaitlistProvider | null>(null);
 
   // Public URL input state
   const [repoUrlInput, setRepoUrlInput] = useState("");
@@ -688,61 +815,53 @@ function PreviewDashboardInner({
           Continue with GitHub
         </Button>
         <Button
-          onClick={() => signInWithPopup("gitlab")}
+          onClick={() => setWaitlistProvider("gitlab")}
           disabled={signingInProvider !== null}
           className="w-full h-10 bg-[#fc6d26] text-white hover:bg-[#ff8245] inline-flex items-center justify-center gap-2 disabled:opacity-50"
         >
-          {signingInProvider === "gitlab" ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <svg
-              className="h-4 w-4 shrink-0"
-              viewBox="90 90 200 175"
-              fill="currentColor"
-            >
-              <path d="M282.83,170.73l-.27-.69-26.14-68.22a6.81,6.81,0,0,0-2.69-3.24,7,7,0,0,0-8,.43,7,7,0,0,0-2.32,3.52l-17.65,54H154.29l-17.65-54A6.86,6.86,0,0,0,134.32,99a7,7,0,0,0-8-.43,6.87,6.87,0,0,0-2.69,3.24L97.44,170l-.26.69a48.54,48.54,0,0,0,16.1,56.1l.09.07.24.17,39.82,29.82,19.7,14.91,12,9.06a8.07,8.07,0,0,0,9.76,0l12-9.06,19.7-14.91,40.06-30,.1-.08A48.56,48.56,0,0,0,282.83,170.73Z" />
-            </svg>
-          )}
+          <svg
+            className="h-4 w-4 shrink-0"
+            viewBox="90 90 200 175"
+            fill="currentColor"
+          >
+            <path d="M282.83,170.73l-.27-.69-26.14-68.22a6.81,6.81,0,0,0-2.69-3.24,7,7,0,0,0-8,.43,7,7,0,0,0-2.32,3.52l-17.65,54H154.29l-17.65-54A6.86,6.86,0,0,0,134.32,99a7,7,0,0,0-8-.43,6.87,6.87,0,0,0-2.69,3.24L97.44,170l-.26.69a48.54,48.54,0,0,0,16.1,56.1l.09.07.24.17,39.82,29.82,19.7,14.91,12,9.06a8.07,8.07,0,0,0,9.76,0l12-9.06,19.7-14.91,40.06-30,.1-.08A48.56,48.56,0,0,0,282.83,170.73Z" />
+          </svg>
           Continue with GitLab
         </Button>
         <Button
-          onClick={() => signInWithPopup("bitbucket")}
+          onClick={() => setWaitlistProvider("bitbucket")}
           disabled={signingInProvider !== null}
           className="w-full h-10 bg-[#0052cc] text-white hover:bg-[#006cf2] inline-flex items-center justify-center gap-2 disabled:opacity-50"
         >
-          {signingInProvider === "bitbucket" ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <svg className="h-4 w-4 shrink-0" viewBox="-2 -2 65 59">
-              <defs>
-                <linearGradient
-                  id="bitbucket-grad"
-                  x1="104.953%"
-                  x2="46.569%"
-                  y1="21.921%"
-                  y2="75.234%"
-                >
-                  <stop
-                    offset="7%"
-                    stopColor="currentColor"
-                    stopOpacity="0.4"
-                  />
-                  <stop offset="100%" stopColor="currentColor" />
-                </linearGradient>
-              </defs>
-              <path
-                d="M59.696 18.86h-18.77l-3.15 18.39h-13L9.426 55.47a2.71 2.71 0 001.75.66h40.74a2 2 0 002-1.68l5.78-35.59z"
-                fill="url(#bitbucket-grad)"
-                fillRule="nonzero"
-                transform="translate(-.026 .82)"
-              />
-              <path
-                d="M2 .82a2 2 0 00-2 2.32l8.49 51.54a2.7 2.7 0 00.91 1.61 2.71 2.71 0 001.75.66l15.76-18.88H24.7l-3.47-18.39h38.44l2.7-16.53a2 2 0 00-2-2.32L2 .82z"
-                fill="currentColor"
-                fillRule="nonzero"
-              />
-            </svg>
-          )}
+          <svg className="h-4 w-4 shrink-0" viewBox="-2 -2 65 59">
+            <defs>
+              <linearGradient
+                id="bitbucket-grad"
+                x1="104.953%"
+                x2="46.569%"
+                y1="21.921%"
+                y2="75.234%"
+              >
+                <stop
+                  offset="7%"
+                  stopColor="currentColor"
+                  stopOpacity="0.4"
+                />
+                <stop offset="100%" stopColor="currentColor" />
+              </linearGradient>
+            </defs>
+            <path
+              d="M59.696 18.86h-18.77l-3.15 18.39h-13L9.426 55.47a2.71 2.71 0 001.75.66h40.74a2 2 0 002-1.68l5.78-35.59z"
+              fill="url(#bitbucket-grad)"
+              fillRule="nonzero"
+              transform="translate(-.026 .82)"
+            />
+            <path
+              d="M2 .82a2 2 0 00-2 2.32l8.49 51.54a2.7 2.7 0 00.91 1.61 2.71 2.71 0 001.75.66l15.76-18.88H24.7l-3.47-18.39h38.44l2.7-16.53a2 2 0 00-2-2.32L2 .82z"
+              fill="currentColor"
+              fillRule="nonzero"
+            />
+          </svg>
           Continue with Bitbucket
         </Button>
       </div>
@@ -1223,6 +1342,13 @@ function PreviewDashboardInner({
             </div>
           </div>
         </div>
+      )}
+
+      {waitlistProvider && (
+        <WaitlistModal
+          provider={waitlistProvider}
+          onClose={() => setWaitlistProvider(null)}
+        />
       )}
     </div>
   );

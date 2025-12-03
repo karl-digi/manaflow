@@ -1,5 +1,5 @@
 import { getAccessTokenFromRequest } from "@/lib/utils/auth";
-import { getConvex } from "@/lib/utils/get-convex";
+import { getConvex, getPublicConvex } from "@/lib/utils/get-convex";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { api } from "@cmux/convex/api";
 import type { Doc } from "@cmux/convex/dataModel";
@@ -285,5 +285,55 @@ previewRouter.openapi(
       limit: query.limit,
     });
     return c.json({ runs: runs.map(formatPreviewRun) });
+  },
+);
+
+// Waitlist endpoint for GitLab/Bitbucket preview interest
+const WaitlistBody = z
+  .object({
+    email: z.string().email(),
+    provider: z.enum(["gitlab", "bitbucket"]),
+  })
+  .openapi("PreviewWaitlistBody");
+
+previewRouter.openapi(
+  createRoute({
+    method: "post",
+    path: "/preview/waitlist",
+    tags: ["Preview"],
+    summary: "Join the preview waitlist for GitLab or Bitbucket",
+    request: {
+      body: {
+        content: {
+          "application/json": {
+            schema: WaitlistBody,
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        description: "Successfully joined waitlist",
+        content: {
+          "application/json": {
+            schema: z.object({
+              success: z.boolean(),
+              alreadyRegistered: z.boolean(),
+            }),
+          },
+        },
+      },
+      400: { description: "Invalid request" },
+    },
+  }),
+  async (c) => {
+    const body = c.req.valid("json");
+    const convex = getPublicConvex();
+    const result = await convex.mutation(api.previewWaitlist.join, {
+      email: body.email,
+      provider: body.provider,
+    });
+    return c.json(result);
   },
 );
