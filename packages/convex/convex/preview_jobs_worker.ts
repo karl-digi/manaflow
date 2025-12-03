@@ -812,6 +812,57 @@ export async function runPreviewJob(
         taskRunId,
         instanceId: instance.id,
       });
+
+      // Post initial GitHub comment immediately with workspace links
+      // This allows users to access the workspace while screenshots are still being captured
+      if (run.repoInstallationId) {
+        const team = await ctx.runQuery(internal.teams.getByTeamIdInternal, {
+          teamId: run.teamId,
+        });
+        const teamSlug = team?.slug ?? run.teamId;
+        const workspaceUrl = `https://cmux.sh/${teamSlug}/task/${taskId}`;
+        const devServerUrl = `https://cmux.sh/${teamSlug}/task/${taskId}/browser`;
+
+        console.log("[preview-jobs] Posting initial preview comment with workspace links", {
+          previewRunId,
+          prNumber: run.prNumber,
+          workspaceUrl,
+          devServerUrl,
+        });
+
+        try {
+          const initialCommentResult = await ctx.runAction(
+            internal.github_pr_comments.postInitialPreviewComment,
+            {
+              installationId: run.repoInstallationId,
+              repoFullName: run.repoFullName,
+              prNumber: run.prNumber,
+              previewRunId,
+              workspaceUrl,
+              devServerUrl,
+            }
+          );
+
+          if (initialCommentResult.ok) {
+            console.log("[preview-jobs] Posted initial preview comment", {
+              previewRunId,
+              commentId: initialCommentResult.commentId,
+              commentUrl: initialCommentResult.commentUrl,
+            });
+          } else {
+            console.warn("[preview-jobs] Failed to post initial preview comment", {
+              previewRunId,
+              error: initialCommentResult.error,
+            });
+          }
+        } catch (error) {
+          // Don't fail the preview job if initial comment fails
+          console.error("[preview-jobs] Error posting initial preview comment", {
+            previewRunId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
     }
 
     // Step 2: Fetch latest changes and checkout PR
