@@ -981,13 +981,6 @@ export function PreviewConfigureClient({
     }
   }, [currentConfigStep]);
 
-  const handlePrevConfigStep = useCallback(() => {
-    const currentIndex = ALL_CONFIG_STEPS.indexOf(currentConfigStep);
-    if (currentIndex > 0) {
-      setCurrentConfigStep(ALL_CONFIG_STEPS[currentIndex - 1]);
-    }
-  }, [currentConfigStep]);
-
   // Helper to check if a step is visible (completed or current)
   const isStepVisible = useCallback((step: ConfigStep) => {
     return completedSteps.has(step) || step === currentConfigStep;
@@ -1559,7 +1552,7 @@ export function PreviewConfigureClient({
         {/* Header */}
         <div className="mb-8">
           <h1 className="text-2xl font-semibold text-neutral-900 dark:text-neutral-100 mb-1">
-            Configure Project
+            Configure workspace
           </h1>
           <div className="flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400 pt-2">
             <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="currentColor">
@@ -1580,17 +1573,17 @@ export function PreviewConfigureClient({
         )}
 
         {/* Footer Button */}
-        <div className="flex items-center justify-end mt-8 pt-6 border-t border-neutral-200 dark:border-neutral-800">
+        <div className="mt-8 pt-6 border-t border-neutral-200 dark:border-neutral-800">
           <button
             type="button"
             onClick={handleStartWorkspaceConfig}
             className={clsx(
-              "inline-flex items-center gap-2 rounded-md px-5 py-2.5 text-sm font-semibold transition",
+              "w-full inline-flex items-center justify-center gap-2 rounded-md px-5 py-2.5 text-sm font-semibold transition",
               "bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 hover:bg-neutral-800 dark:hover:bg-neutral-200 cursor-pointer",
               !isWorkspaceReady && "opacity-80"
             )}
           >
-            Next
+            Continue
             <ArrowRight className="w-4 h-4" />
           </button>
         </div>
@@ -1632,47 +1625,32 @@ export function PreviewConfigureClient({
           </div>
         )}
 
-        <div className="flex items-center justify-between gap-3">
-          {currentConfigStep !== "run-scripts" ? (
-            <button
-              type="button"
-              onClick={handlePrevConfigStep}
-              className="inline-flex items-center gap-2 rounded-md border border-neutral-200 dark:border-neutral-800 px-4 py-2 text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-900 transition"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Back
-            </button>
-          ) : (
-            <div />
-          )}
-
-          {!isLastConfigStep ? (
-            <button
-              type="button"
-              onClick={handleNextConfigStep}
-              className="inline-flex items-center gap-2 rounded-md bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 px-4 py-2 text-sm font-semibold hover:bg-neutral-800 dark:hover:bg-neutral-200 transition cursor-pointer"
-            >
-              Next
-              <ArrowRight className="w-4 h-4" />
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={handleSaveConfiguration}
-              disabled={isSaving}
-              className="inline-flex items-center justify-center rounded-md bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 px-4 py-2 text-sm font-semibold hover:bg-neutral-800 dark:hover:bg-neutral-200 transition disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isSaving ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Saving...
-                </>
-              ) : (
-                "Save configuration"
-              )}
-            </button>
-          )}
-        </div>
+        {!isLastConfigStep ? (
+          <button
+            type="button"
+            onClick={handleNextConfigStep}
+            className="w-full inline-flex items-center justify-center gap-2 rounded-md bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 px-4 py-2 text-sm font-semibold hover:bg-neutral-800 dark:hover:bg-neutral-200 transition cursor-pointer"
+          >
+            Continue
+            <ArrowRight className="w-4 h-4" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={handleSaveConfiguration}
+            disabled={isSaving}
+            className="w-full inline-flex items-center justify-center rounded-md bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 px-4 py-2 text-sm font-semibold hover:bg-neutral-800 dark:hover:bg-neutral-200 transition disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isSaving ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Saving...
+              </>
+            ) : (
+              "Save configuration"
+            )}
+          </button>
+        )}
       </div>
     </div>
   );
