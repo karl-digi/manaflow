@@ -475,10 +475,13 @@ fi
         fs::create_dir_all(&root_home).await?;
 
         let gitconfig = root_home.join(".gitconfig");
-        // Only set safe.directory - don't override user's pager preferences
+        // Configure git with safe directory and pager settings
+        // Using 'less -R' enables ANSI color output while keeping alternate screen
         // Users can enable delta via command palette (EnableDeltaPager)
         let content = r#"[safe]
 	directory = *
+[core]
+	pager = less -R
 "#;
         fs::write(&gitconfig, content).await?;
         Ok(())
