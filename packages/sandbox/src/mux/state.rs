@@ -817,12 +817,28 @@ impl<'a> MuxApp<'a> {
                 // Build new list: server sandboxes first (server order), then local placeholders
                 let server_ids: HashSet<_> = sandboxes.iter().map(|s| s.id).collect();
 
-                // Keep local placeholders (Creating status) that aren't yet on server
+                // Collect correlation_ids from server sandboxes - if server has a sandbox
+                // with a matching correlation_id, that placeholder has been "resolved"
+                let server_correlation_ids: HashSet<_> = sandboxes
+                    .iter()
+                    .filter_map(|s| s.correlation_id.as_ref().cloned())
+                    .collect();
+
+                // Keep local placeholders (Creating status) only if:
+                // 1. Their ID isn't in server list (always true for client-generated IDs)
+                // 2. Their correlation_id isn't in server list (meaning server hasn't created it yet)
                 let local_placeholders: Vec<_> = self
                     .sidebar
                     .sandboxes
                     .iter()
-                    .filter(|s| s.status == SandboxStatus::Creating && !server_ids.contains(&s.id))
+                    .filter(|s| {
+                        s.status == SandboxStatus::Creating
+                            && !server_ids.contains(&s.id)
+                            && s.correlation_id
+                                .as_ref()
+                                .map(|cid| !server_correlation_ids.contains(cid))
+                                .unwrap_or(false) // No correlation_id = can't match, drop it
+                    })
                     .cloned()
                     .collect();
 

@@ -60,6 +60,8 @@ struct SandboxHandle {
     network: SandboxNetwork,
     created_at: DateTime<Utc>,
     lease: IpLease,
+    /// Correlation ID for matching placeholders to created sandboxes (from tab_id)
+    correlation_id: Option<String>,
 }
 
 #[derive(Clone)]
@@ -1119,6 +1121,7 @@ impl SandboxService for BubblewrapService {
             network,
             created_at: Utc::now(),
             lease,
+            correlation_id: request.tab_id.clone(),
         };
 
         let entry = SandboxEntry {
@@ -2076,7 +2079,7 @@ impl SandboxHandle {
             workspace: self.workspace.to_string_lossy().to_string(),
             status,
             network: self.network.clone(),
-            correlation_id: None, // Server-side sandboxes never have a correlation ID
+            correlation_id: self.correlation_id.clone(),
         }
     }
 }
