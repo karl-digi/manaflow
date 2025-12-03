@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { resolveTeamIdLoose } from "../_shared/team";
+import { getTeamId } from "../_shared/team";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { authMutation, authQuery } from "./users/utils";
@@ -416,7 +416,7 @@ export const listByConfig = authQuery({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
     const config = await ctx.db.get(args.previewConfigId);
     if (!config || config.teamId !== teamId) {
       throw new Error("Preview configuration not found");
@@ -440,7 +440,7 @@ export const listByTeam = authQuery({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
     const take = Math.max(1, Math.min(args.limit ?? 50, 100));
     const runs = await ctx.db
       .query("previewRuns")
@@ -508,7 +508,7 @@ export const createManual = authMutation({
     headRef: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
     const repoFullName = normalizeRepoFullName(args.repoFullName);
 
     // Find the preview config for this repo

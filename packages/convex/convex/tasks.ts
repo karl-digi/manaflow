@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { resolveTeamIdLoose } from "../_shared/team";
+import { getTeamId, resolveTeamIdLoose } from "../_shared/team";
 import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery } from "./_generated/server";
@@ -47,15 +47,14 @@ export const getPreviewTasks = authQuery({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const userId = ctx.identity.subject;
-    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
     const take = Math.max(1, Math.min(args.limit ?? 50, 100));
 
-    // Get preview tasks using the dedicated index
+    // Get preview tasks using the dedicated index (team-wide, not user-specific)
     const tasks = await ctx.db
       .query("tasks")
-      .withIndex("by_team_user_preview", (idx) =>
-        idx.eq("teamId", teamId).eq("userId", userId).eq("isPreview", true),
+      .withIndex("by_team_preview", (idx) =>
+        idx.eq("teamId", teamId).eq("isPreview", true),
       )
       .filter((q) => q.neq(q.field("isArchived"), true))
       .collect();
@@ -301,10 +300,9 @@ export const getById = authQuery({
       return null;
     }
 
-    const userId = ctx.identity.subject;
-    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
     const task = await ctx.db.get(args.id as Id<"tasks">);
-    if (!task || task.teamId !== teamId || task.userId !== userId) return null;
+    if (!task || task.teamId !== teamId) return null;
 
     if (task.images && task.images.length > 0) {
       const imagesWithUrls = await Promise.all(
@@ -329,13 +327,11 @@ export const getById = authQuery({
 export const getVersions = authQuery({
   args: { teamSlugOrId: v.string(), taskId: v.id("tasks") },
   handler: async (ctx, args) => {
-    const userId = ctx.identity.subject;
-    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
     return await ctx.db
       .query("taskVersions")
       .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
       .filter((q) => q.eq(q.field("teamId"), teamId))
-      .filter((q) => q.eq(q.field("userId"), userId))
       .collect();
   },
 });
