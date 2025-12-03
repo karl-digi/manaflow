@@ -1289,7 +1289,7 @@ export function PreviewConfigureClient({
           }}
         >
           <div
-            className="grid gap-2 text-xs text-neutral-500 items-center pr-10 mb-1"
+            className="grid gap-2 text-xs text-neutral-500 items-center mb-1"
             style={{ gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.5fr) 40px" }}
           >
             <span>Name</span>
@@ -1302,7 +1302,7 @@ export function PreviewConfigureClient({
             return (
               <div
                 key={idx}
-                className="grid gap-2 items-center pr-10 min-h-9"
+                className="grid gap-2 items-center min-h-9"
                 style={{ gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.5fr) 40px" }}
               >
                 <input
