@@ -422,13 +422,18 @@ export type GitProviderErrorType =
  * Structured error for git provider operations.
  */
 export class GitProviderError extends Error {
+  public readonly type: GitProviderErrorType;
+  public readonly provider: GitProviderId;
+
   constructor(
     message: string,
-    public readonly type: GitProviderErrorType,
-    public readonly provider: GitProviderId,
-    public readonly cause?: unknown
+    type: GitProviderErrorType,
+    provider: GitProviderId,
+    cause?: unknown
   ) {
-    super(message);
+    super(message, { cause });
     this.name = "GitProviderError";
+    this.type = type;
+    this.provider = provider;
   }
 }
