@@ -18,6 +18,19 @@ use tokio::time::MissedTickBehavior;
 
 use crate::mux::colors::{query_outer_terminal_colors, spawn_theme_change_listener};
 use crate::mux::commands::MuxCommand;
+
+// DEBUG: Temporary logging for focus debugging
+fn debug_log(msg: &str) {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/dmux-focus-debug.log")
+        .unwrap();
+    let timestamp = chrono::Local::now().format("%H:%M:%S%.3f");
+    writeln!(file, "[{}] {}", timestamp, msg).unwrap();
+}
 use crate::mux::events::MuxEvent;
 use crate::mux::layout::{ClosedTabInfo, PaneContent, PaneExitOutcome, SandboxId, TabId};
 use crate::mux::onboard::{
@@ -388,15 +401,36 @@ fn try_consume_pending_connection(
         return;
     };
 
-    if !app.select_sandbox(&sandbox_id) {
+    debug_log(&format!(
+        "try_consume_pending_connection START: sandbox_id={}..., active_workspace={:?}, sidebar_idx={}",
+        &sandbox_id[..8.min(sandbox_id.len())],
+        app.workspace_manager.active_sandbox_id.map(|id| id.to_string().chars().take(8).collect::<String>()),
+        app.sidebar.selected_index()
+    ));
+
+    // Just verify the sandbox exists, DON'T change selection
+    // Selection was already done SYNC when user pressed the key
+    let sandbox_exists = app
+        .sidebar
+        .sandboxes
+        .iter()
+        .any(|s| s.id.to_string() == sandbox_id);
+    if !sandbox_exists {
+        debug_log("try_consume_pending_connection: sandbox NOT in sidebar list");
         return;
     }
 
-    app.sidebar.select_by_id(&sandbox_id);
+    // NO select_sandbox or select_by_id here - selection is already correct
 
     let Some(pane_id) = app.active_pane_id() else {
+        debug_log("try_consume_pending_connection: NO active_pane_id");
         return;
     };
+
+    debug_log(&format!(
+        "try_consume_pending_connection: active_pane_id={}...",
+        pane_id.to_string().chars().take(8).collect::<String>()
+    ));
 
     if let Some(tab) = app.active_tab_mut() {
         if let Some(pane) = tab.layout.find_pane_mut(pane_id) {
@@ -405,9 +439,18 @@ fn try_consume_pending_connection(
                 ..
             } = &mut pane.content
             {
+                debug_log(&format!(
+                    "try_consume_pending_connection: setting pane sandbox_id from {:?} to {}...",
+                    pane_sandbox
+                        .as_ref()
+                        .map(|s| s.chars().take(8).collect::<String>()),
+                    &sandbox_id[..8.min(sandbox_id.len())]
+                ));
                 *pane_sandbox = Some(sandbox_id.clone());
             }
         }
+    } else {
+        debug_log("try_consume_pending_connection: NO active_tab");
     }
 
     let already_connected = terminal_manager
@@ -416,10 +459,12 @@ fn try_consume_pending_connection(
         .unwrap_or(false);
 
     if already_connected {
+        debug_log("try_consume_pending_connection: already_connected, clearing pending");
         app.pending_connect = None;
         return;
     }
 
+    debug_log("try_consume_pending_connection: calling connect_active_pane_to_sandbox");
     connect_active_pane_to_sandbox(app, terminal_manager, &sandbox_id);
     app.pending_connect = None;
 }
@@ -1077,12 +1122,17 @@ fn remove_selected_sandbox(app: &mut MuxApp<'_>) -> Option<(String, String)> {
         return None;
     }
 
-    let current_index = app
-        .sidebar
-        .selected_index
-        .min(app.sidebar.sandboxes.len().saturating_sub(1));
+    // Get the current selected sandbox by ID
+    let selected_id = app.sidebar.selected_id?;
+    let current_index = app.sidebar.selected_index();
 
-    let sandbox = app.sidebar.sandboxes.remove(current_index);
+    // Find and remove the sandbox from the list
+    let sandbox_pos = app
+        .sidebar
+        .sandboxes
+        .iter()
+        .position(|s| s.id == selected_id)?;
+    let sandbox = app.sidebar.sandboxes.remove(sandbox_pos);
     let sandbox_id = sandbox.id.to_string();
     let sandbox_name = sandbox.name.clone();
     let sandbox_uuid = SandboxId::from_uuid(sandbox.id);
@@ -1097,22 +1147,19 @@ fn remove_selected_sandbox(app: &mut MuxApp<'_>) -> Option<(String, String)> {
     }
 
     if app.sidebar.sandboxes.is_empty() {
-        app.sidebar.selected_index = 0;
+        app.sidebar.selected_id = None;
         app.workspace_manager.active_sandbox_id = None;
         return Some((sandbox_id, sandbox_name));
     }
 
-    let next_index = if current_index < app.sidebar.sandboxes.len() {
-        current_index
-    } else {
-        app.sidebar.sandboxes.len() - 1
-    };
+    // Select the next sandbox (stay at same position, or last if we removed the last)
+    let next_index = current_index.min(app.sidebar.sandboxes.len() - 1);
+    let next_sandbox = &app.sidebar.sandboxes[next_index];
+    let next_id = next_sandbox.id;
+    let next_id_str = next_id.to_string();
 
-    app.sidebar.selected_index = next_index;
-
-    let next_selected_id = app.sidebar.sandboxes[next_index].id.to_string();
-    let _ = app.select_sandbox(&next_selected_id);
-    app.sidebar.select_by_id(&next_selected_id);
+    app.sidebar.select_by_id(next_id);
+    let _ = app.select_sandbox(&next_id_str);
 
     Some((sandbox_id, sandbox_name))
 }

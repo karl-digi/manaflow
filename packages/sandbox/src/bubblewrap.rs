@@ -2076,6 +2076,7 @@ impl SandboxHandle {
             workspace: self.workspace.to_string_lossy().to_string(),
             status,
             network: self.network.clone(),
+            correlation_id: None, // Server-side sandboxes never have a correlation ID
         }
     }
 }
