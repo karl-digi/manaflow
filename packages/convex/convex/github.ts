@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { getTeamId } from "../_shared/team";
+import { gitProviderValidator } from "../_shared/providers";
 import type { Doc } from "./_generated/dataModel";
 import { internalMutation, internalQuery } from "./_generated/server";
 import { authMutation, authQuery } from "./users/utils";
@@ -430,13 +431,13 @@ export const insertRepo = internalMutation({
     org: v.string(),
     name: v.string(),
     gitRemote: v.string(),
-    provider: v.optional(v.string()),
+    provider: v.optional(gitProviderValidator),
     userId: v.string(),
     teamSlugOrId: v.string(),
   },
   handler: async (ctx, args) => {
     const teamId = await getTeamId(ctx, args.teamSlugOrId);
-    const { ...rest } = args;
+    const { teamSlugOrId: _, ...rest } = args;
     return await ctx.db.insert("repos", { ...rest, teamId });
   },
 });
@@ -448,7 +449,7 @@ export const upsertRepo = authMutation({
     org: v.string(),
     name: v.string(),
     gitRemote: v.string(),
-    provider: v.optional(v.string()),
+    provider: v.optional(gitProviderValidator),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
@@ -464,6 +465,8 @@ export const upsertRepo = authMutation({
       .filter((q) => q.eq(q.field("userId"), userId))
       .first();
 
+    const provider = args.provider ?? "github";
+
     if (existing) {
       // Update existing repo
       return await ctx.db.patch(existing._id, {
@@ -471,7 +474,7 @@ export const upsertRepo = authMutation({
         org: args.org,
         name: args.name,
         gitRemote: args.gitRemote,
-        provider: args.provider,
+        provider,
         lastSyncedAt: now,
       });
     } else {
@@ -481,7 +484,7 @@ export const upsertRepo = authMutation({
         org: args.org,
         name: args.name,
         gitRemote: args.gitRemote,
-        provider: args.provider || "github",
+        provider,
         userId,
         teamId,
         lastSyncedAt: now,
@@ -528,7 +531,7 @@ export const bulkInsertRepos = authMutation({
         org: v.string(),
         name: v.string(),
         gitRemote: v.string(),
-        provider: v.optional(v.string()),
+        provider: v.optional(gitProviderValidator),
       })
     ),
   },
@@ -554,7 +557,7 @@ export const bulkInsertRepos = authMutation({
       newRepos.map((repo) =>
         ctx.db.insert("repos", {
           ...repo,
-          provider: repo.provider || "github",
+          provider: repo.provider ?? "github",
           userId,
           teamId,
           lastSyncedAt: now,
@@ -683,7 +686,7 @@ export const replaceAllRepos = authMutation({
         org: v.string(),
         name: v.string(),
         gitRemote: v.string(),
-        provider: v.optional(v.string()),
+        provider: v.optional(gitProviderValidator),
       })
     ),
   },
@@ -703,7 +706,13 @@ export const replaceAllRepos = authMutation({
     const now = Date.now();
     const insertedIds = await Promise.all(
       repos.map((repo) =>
-        ctx.db.insert("repos", { ...repo, userId, teamId, lastSyncedAt: now })
+        ctx.db.insert("repos", {
+          ...repo,
+          provider: repo.provider ?? "github",
+          userId,
+          teamId,
+          lastSyncedAt: now,
+        })
       )
     );
     return insertedIds;
