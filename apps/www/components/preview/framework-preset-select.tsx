@@ -287,9 +287,6 @@ const SelectItem = forwardRef<
         <div className="font-medium text-neutral-900 dark:text-neutral-100">
           {config.name}
         </div>
-        <div className="text-xs text-neutral-500 dark:text-neutral-400">
-          Default: {config.devScript || "Custom"}
-        </div>
       </div>
       <SelectPrimitive.ItemIndicator className="absolute right-3">
         <Check className="h-4 w-4 text-neutral-900 dark:text-neutral-100" />
