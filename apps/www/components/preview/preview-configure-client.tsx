@@ -996,6 +996,11 @@ export function PreviewConfigureClient({
     return completedSteps.has(step);
   }, [completedSteps]);
 
+  // Navigate to a specific step (for going back to completed steps)
+  const handleGoToStep = useCallback((step: ConfigStep) => {
+    setCurrentConfigStep(step);
+  }, []);
+
   // Check if we're on the last step
   const isLastConfigStep = currentConfigStep === ALL_CONFIG_STEPS[ALL_CONFIG_STEPS.length - 1];
 
@@ -1155,8 +1160,8 @@ export function PreviewConfigureClient({
   };
 
   // Shared render function for scripts section
-  const renderScriptsSection = (options?: { compact?: boolean; defaultOpen?: boolean }) => {
-    const { compact = false, defaultOpen = true } = options ?? {};
+  const renderScriptsSection = (options?: { compact?: boolean; defaultOpen?: boolean; showStepBadge?: boolean; stepNumber?: number; isDone?: boolean }) => {
+    const { compact = false, defaultOpen = true, showStepBadge = false, stepNumber = 1, isDone = false } = options ?? {};
     const iconSize = compact ? "h-3.5 w-3.5" : "h-4 w-4";
     const titleSize = compact ? "text-[13px]" : "text-base";
     const contentPadding = compact ? "mt-3 pl-5" : "mt-4 pl-6";
@@ -1171,6 +1176,7 @@ export function PreviewConfigureClient({
           titleSize
         )}>
           <ChevronDown className={clsx(iconSize, "text-neutral-400 transition-transform -rotate-90 group-open:rotate-0")} />
+          {showStepBadge && <StepBadge step={stepNumber} done={isDone} />}
           Maintenance and Dev Scripts
         </summary>
         <div className={clsx(contentPadding, "space-y-4")}>
@@ -1210,8 +1216,8 @@ export function PreviewConfigureClient({
   };
 
   // Shared render function for environment variables section
-  const renderEnvVarsSection = (options?: { compact?: boolean; defaultOpen?: boolean }) => {
-    const { compact = false, defaultOpen = true } = options ?? {};
+  const renderEnvVarsSection = (options?: { compact?: boolean; defaultOpen?: boolean; showStepBadge?: boolean; stepNumber?: number; isDone?: boolean }) => {
+    const { compact = false, defaultOpen = true, showStepBadge = false, stepNumber = 2, isDone = false } = options ?? {};
     const iconSize = compact ? "h-3.5 w-3.5" : "h-4 w-4";
     const titleSize = compact ? "text-[13px]" : "text-base";
     const contentPadding = compact ? "mt-3 pl-5" : "mt-4 pl-6";
@@ -1227,6 +1233,7 @@ export function PreviewConfigureClient({
           titleSize
         )}>
           <ChevronDown className={clsx(iconSize, "text-neutral-400 transition-transform -rotate-90 group-open:rotate-0")} />
+          {showStepBadge && <StepBadge step={stepNumber} done={isDone} />}
           <span>Environment Variables</span>
           <div className="ml-auto flex items-center gap-2">
             <button
@@ -1397,14 +1404,14 @@ export function PreviewConfigureClient({
         {/* Step 1: Scripts (completed from initial setup - collapsed) */}
         {isStepVisible("scripts") && (
           <div>
-            {renderScriptsSection({ compact: true, defaultOpen: !isStepCompleted("scripts") })}
+            {renderScriptsSection({ compact: true, defaultOpen: !isStepCompleted("scripts"), showStepBadge: true, stepNumber: 1, isDone: isStepCompleted("scripts") })}
           </div>
         )}
 
         {/* Step 2: Environment Variables (completed from initial setup - collapsed) */}
         {isStepVisible("env-vars") && (
           <div>
-            {renderEnvVarsSection({ compact: true, defaultOpen: !isStepCompleted("env-vars") })}
+            {renderEnvVarsSection({ compact: true, defaultOpen: !isStepCompleted("env-vars"), showStepBadge: true, stepNumber: 2, isDone: isStepCompleted("env-vars") })}
           </div>
         )}
 
@@ -1413,12 +1420,19 @@ export function PreviewConfigureClient({
           <div>
             <details
               className="group"
-              open={isCurrentStep("run-scripts") || !isStepCompleted("run-scripts")}
-              onToggle={(e) => setIsRunSectionOpen(e.currentTarget.open)}
+              open={isCurrentStep("run-scripts")}
             >
-              <summary className="flex items-center gap-2 cursor-pointer list-none">
+              <summary
+                className="flex items-center gap-2 cursor-pointer list-none"
+                onClick={(e) => {
+                  if (isStepCompleted("run-scripts") && !isCurrentStep("run-scripts")) {
+                    e.preventDefault();
+                    handleGoToStep("run-scripts");
+                  }
+                }}
+              >
                 <ChevronDown className="h-3.5 w-3.5 text-neutral-400 transition-transform -rotate-90 group-open:rotate-0" />
-                <StepBadge step={3} done={runConfirmed || isStepCompleted("run-scripts")} />
+                <StepBadge step={3} done={isStepCompleted("run-scripts")} />
                 <span className="text-[13px] font-medium text-neutral-900 dark:text-neutral-100">
                   Run scripts in VS Code terminal
                 </span>
@@ -1472,6 +1486,18 @@ export function PreviewConfigureClient({
                   />
                   Proceed once dev script is running
                 </label>
+
+                {/* Continue button inside step */}
+                {isCurrentStep("run-scripts") && (
+                  <button
+                    type="button"
+                    onClick={handleNextConfigStep}
+                    className="w-full mt-4 inline-flex items-center justify-center gap-2 rounded-md bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 px-4 py-2 text-sm font-semibold hover:bg-neutral-800 dark:hover:bg-neutral-200 transition cursor-pointer"
+                  >
+                    Continue
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                )}
               </div>
             </details>
           </div>
@@ -1482,12 +1508,19 @@ export function PreviewConfigureClient({
           <div>
             <details
               className="group"
-              open={isCurrentStep("browser-setup") || !isStepCompleted("browser-setup")}
-              onToggle={(e) => setIsBrowserSetupSectionOpen(e.currentTarget.open)}
+              open={isCurrentStep("browser-setup")}
             >
-              <summary className="flex items-center gap-2 cursor-pointer list-none">
+              <summary
+                className="flex items-center gap-2 cursor-pointer list-none"
+                onClick={(e) => {
+                  if (isStepCompleted("browser-setup") && !isCurrentStep("browser-setup")) {
+                    e.preventDefault();
+                    handleGoToStep("browser-setup");
+                  }
+                }}
+              >
                 <ChevronDown className="h-3.5 w-3.5 text-neutral-400 transition-transform -rotate-90 group-open:rotate-0" />
-                <StepBadge step={4} done={browserConfirmed || isStepCompleted("browser-setup")} />
+                <StepBadge step={4} done={isStepCompleted("browser-setup")} />
                 <span className="text-[13px] font-medium text-neutral-900 dark:text-neutral-100">
                   Configure browser
                 </span>
@@ -1519,15 +1552,34 @@ export function PreviewConfigureClient({
                   />
                   Browser is set up properly
                 </label>
+
+                {/* Terminal warning */}
+                <div className="mt-4 rounded-md border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/20 px-3 py-2.5">
+                  <p className="text-[11px] text-amber-800 dark:text-amber-200">
+                    <strong>Note:</strong> Running terminals will be stopped on save. The maintenance and dev scripts run automatically on each preview.
+                  </p>
+                </div>
+
+                {/* Save button inside step */}
+                {isCurrentStep("browser-setup") && (
+                  <button
+                    type="button"
+                    onClick={handleSaveConfiguration}
+                    disabled={isSaving}
+                    className="w-full mt-4 inline-flex items-center justify-center rounded-md bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 px-4 py-2 text-sm font-semibold hover:bg-neutral-800 dark:hover:bg-neutral-200 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isSaving ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Saving...
+                      </>
+                    ) : (
+                      "Save configuration"
+                    )}
+                  </button>
+                )}
               </div>
             </details>
-
-            {/* Terminal warning */}
-            <div className="mt-4 rounded-md border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/20 px-3 py-2.5">
-              <p className="text-[11px] text-amber-800 dark:text-amber-200">
-                <strong>Note:</strong> Running terminals will be stopped on save. The maintenance and dev scripts run automatically on each preview.
-              </p>
-            </div>
           </div>
         )}
       </div>
@@ -1658,6 +1710,23 @@ export function PreviewConfigureClient({
   // Initial setup layout (full page)
   if (layoutPhase === "initial-setup") {
     return renderInitialSetupPanel();
+  }
+
+  // Show loading state if workspace config is requested but VSCode isn't ready
+  if ((layoutPhase === "workspace-config" || layoutPhase === "transitioning") && !isWorkspaceReady) {
+    return (
+      <div className="flex min-h-dvh items-center justify-center bg-white dark:bg-black font-sans">
+        <div className="text-center px-6">
+          <Loader2 className="mx-auto h-8 w-8 animate-spin text-neutral-400" />
+          <h1 className="mt-4 text-lg font-medium text-neutral-900 dark:text-neutral-100">
+            Starting your VS Code workspace...
+          </h1>
+          <p className="mt-2 text-sm text-neutral-500 dark:text-neutral-400">
+            We&apos;ll show the configuration once your environment is ready.
+          </p>
+        </div>
+      </div>
+    );
   }
 
   // Workspace config layout (split with sidebar + preview)
