@@ -475,10 +475,13 @@ fi
         fs::create_dir_all(&root_home).await?;
 
         let gitconfig = root_home.join(".gitconfig");
-        // Only set safe.directory - don't override user's pager preferences
+        // Set safe.directory and configure pager to always show for diffs
         // Users can enable delta via command palette (EnableDeltaPager)
+        // Using 'less -R' without -F ensures pager is used even for small diffs
         let content = r#"[safe]
 	directory = *
+[core]
+	pager = less -R
 "#;
         fs::write(&gitconfig, content).await?;
         Ok(())
