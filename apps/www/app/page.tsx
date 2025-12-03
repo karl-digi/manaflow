@@ -545,10 +545,7 @@ export default async function LandingPage() {
             <Terminal className="h-4 w-4 text-neutral-600" aria-hidden />
             <span className="font-mono">cmux by manaflow</span>
           </div>
-          <div className="flex items-center gap-6">
-            {/* <a className="transition hover:text-white" href="/tutorial">
-              Tutorial
-            </a> */}
+          <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2">
             <a
               className="transition hover:text-white"
               href="https://github.com/manaflow-ai/cmux"
@@ -573,6 +570,18 @@ export default async function LandingPage() {
             >
               Discord
             </a>
+            <Link className="transition hover:text-white" href="/privacy-policy">
+              Privacy
+            </Link>
+            <Link className="transition hover:text-white" href="/terms-of-service">
+              Terms
+            </Link>
+            <Link className="transition hover:text-white" href="/eula">
+              EULA
+            </Link>
+            <Link className="transition hover:text-white" href="/contact">
+              Contact
+            </Link>
           </div>
         </div>
       </footer>
