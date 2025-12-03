@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
@@ -208,6 +208,9 @@ pub struct MuxApp<'a> {
 
     /// Onboarding state for Docker image setup
     pub onboard: Option<OnboardState>,
+
+    /// Sandboxes that have delta pager enabled
+    pub delta_enabled_sandboxes: HashSet<SandboxId>,
 }
 
 impl<'a> MuxApp<'a> {
@@ -239,6 +242,7 @@ impl<'a> MuxApp<'a> {
             cursor_blink: true,
             cursor_color: None,
             onboard: None,
+            delta_enabled_sandboxes: HashSet::new(),
         }
     }
 
@@ -306,6 +310,12 @@ impl<'a> MuxApp<'a> {
     /// Set a status message that will be displayed temporarily.
     pub fn set_status(&mut self, message: impl Into<String>) {
         self.status_message = Some((message.into(), std::time::Instant::now()));
+    }
+
+    /// Check if delta pager is enabled for the current sandbox.
+    pub fn is_delta_enabled(&self) -> bool {
+        self.selected_sandbox_id()
+            .is_some_and(|id| self.delta_enabled_sandboxes.contains(&id))
     }
 
     /// Clear expired status messages.
@@ -658,6 +668,50 @@ impl<'a> MuxApp<'a> {
             | MuxCommand::ScrollToBottom => {
                 // TODO: Forward to active pane
             }
+
+            // Terminal utilities - execute git config silently via exec API
+            MuxCommand::EnableDeltaPager => {
+                if let Some(sandbox_id) = self.selected_sandbox_id() {
+                    // Enable delta with line numbers, navigation, and always-pager mode
+                    let cmd = vec![
+                        "/bin/sh".to_string(),
+                        "-c".to_string(),
+                        "git config --global core.pager 'delta --paging=always' && \
+                         git config --global interactive.diffFilter 'delta --color-only' && \
+                         git config --global delta.navigate true && \
+                         git config --global delta.line-numbers true && \
+                         git config --global delta.paging always"
+                            .to_string(),
+                    ];
+                    let _ = self.event_tx.send(MuxEvent::ExecInSandbox {
+                        sandbox_id: sandbox_id.to_string(),
+                        command: cmd,
+                    });
+                    self.delta_enabled_sandboxes.insert(sandbox_id);
+                    self.set_status("Delta pager enabled");
+                }
+            }
+            MuxCommand::DisableDeltaPager => {
+                if let Some(sandbox_id) = self.selected_sandbox_id() {
+                    let cmd = vec![
+                        "/bin/sh".to_string(),
+                        "-c".to_string(),
+                        "git config --global --unset core.pager; \
+                         git config --global --unset interactive.diffFilter; \
+                         git config --global --unset delta.navigate; \
+                         git config --global --unset delta.line-numbers; \
+                         git config --global --unset delta.paging; \
+                         true"
+                            .to_string(),
+                    ];
+                    let _ = self.event_tx.send(MuxEvent::ExecInSandbox {
+                        sandbox_id: sandbox_id.to_string(),
+                        command: cmd,
+                    });
+                    self.delta_enabled_sandboxes.remove(&sandbox_id);
+                    self.set_status("Delta pager disabled");
+                }
+            }
         }
     }
 
@@ -825,6 +879,12 @@ impl<'a> MuxApp<'a> {
             }
             MuxEvent::Onboard(_) => {
                 // Onboard events are handled in the runner
+            }
+            MuxEvent::SendTerminalInput { .. } => {
+                // Terminal input is handled in the runner
+            }
+            MuxEvent::ExecInSandbox { .. } => {
+                // Exec requests are handled in the runner
             }
         }
     }

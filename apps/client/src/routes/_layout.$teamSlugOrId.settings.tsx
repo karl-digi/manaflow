@@ -625,15 +625,15 @@ function SettingsComponent() {
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <label className="block text-sm font-medium text-neutral-900 dark:text-neutral-100">
-                      Auto pull request for crown winner
+                      Auto-create pull request with the best diff
                     </label>
                     <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
-                      When enabled, cmux automatically creates a pull request
-                      for the winning model’s code diff.
+                      After all agents finish, automatically create a pull request with the
+                      winning agent's solution.
                     </p>
                   </div>
                   <Switch
-                    aria-label="Auto pull request for crown winner"
+                    aria-label="Auto-create pull request with the best diff"
                     size="sm"
                     color="primary"
                     isSelected={autoPrEnabled}

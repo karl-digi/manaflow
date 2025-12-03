@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { SignJWT } from "jose";
 import { env } from "../_shared/convex-env";
-import { resolveTeamIdLoose } from "../_shared/team";
+import { getTeamId, resolveTeamIdLoose } from "../_shared/team";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
   internalMutation,
@@ -66,6 +66,56 @@ function normalizePullRequestRecords(
           ? true
           : undefined,
   }));
+}
+
+/**
+ * Sync the taskRunPullRequests junction table for a taskRun.
+ * This enables efficient lookup of taskRuns when a PR webhook fires.
+ */
+async function syncTaskRunPullRequests(
+  ctx: MutationCtx,
+  taskRunId: Id<"taskRuns">,
+  teamId: string,
+  pullRequests: StoredPullRequestInfo[] | undefined,
+): Promise<void> {
+  // Get existing junction entries for this taskRun
+  const existingEntries = await ctx.db
+    .query("taskRunPullRequests")
+    .withIndex("by_task_run", (q) => q.eq("taskRunId", taskRunId))
+    .collect();
+
+  // Build set of new PR identities (repoFullName + prNumber)
+  const newPrs = new Map<string, { repoFullName: string; prNumber: number }>();
+  for (const pr of pullRequests ?? []) {
+    if (pr.number !== undefined) {
+      const key = `${pr.repoFullName}:${pr.number}`;
+      newPrs.set(key, { repoFullName: pr.repoFullName, prNumber: pr.number });
+    }
+  }
+
+  // Delete entries that no longer exist
+  for (const entry of existingEntries) {
+    const key = `${entry.repoFullName}:${entry.prNumber}`;
+    if (!newPrs.has(key)) {
+      await ctx.db.delete(entry._id);
+    }
+  }
+
+  // Add new entries
+  const existingKeys = new Set(
+    existingEntries.map((e) => `${e.repoFullName}:${e.prNumber}`),
+  );
+  for (const [key, pr] of newPrs) {
+    if (!existingKeys.has(key)) {
+      await ctx.db.insert("taskRunPullRequests", {
+        taskRunId,
+        teamId,
+        repoFullName: pr.repoFullName,
+        prNumber: pr.prNumber,
+        createdAt: Date.now(),
+      });
+    }
+  }
 }
 
 function deriveGeneratedBranchName(branch?: string | null): string | undefined {
@@ -156,16 +206,13 @@ async function collectRunSubtreeIds(
 async function fetchTaskRunsForTask(
   ctx: QueryCtx,
   teamId: string,
-  userId: string,
   taskId: Id<"tasks">,
   includeArchived = true,
 ): Promise<TaskRunWithChildren[]> {
   const runs = await ctx.db
     .query("taskRuns")
     .withIndex("by_task", (q) => q.eq("taskId", taskId))
-    .filter(
-      (q) => q.eq(q.field("teamId"), teamId) && q.eq(q.field("userId"), userId),
-    )
+    .filter((q) => q.eq(q.field("teamId"), teamId))
     .collect();
 
   const environmentSummaries = new Map<
@@ -322,24 +369,19 @@ export const getByTask = authQuery({
       return [];
     }
 
-    const userId = ctx.identity.subject;
-    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
     return await fetchTaskRunsForTask(
       ctx,
       teamId,
-      userId,
       args.taskId as Id<"tasks">,
       args.includeArchived ?? true,
     );
   },
 });
 
-const SYSTEM_BRANCH_USER_ID = "__system__";
-
 async function fetchBranchMetadataForRepo(
   ctx: QueryCtx,
   teamId: string,
-  userId: string,
   repo: string,
 ): Promise<Doc<"branches">[]> {
   const rows = await ctx.db
@@ -348,12 +390,9 @@ async function fetchBranchMetadataForRepo(
     .filter((q) => q.eq(q.field("teamId"), teamId))
     .collect();
 
-  const relevant = rows.filter(
-    (row) => row.userId === userId || row.userId === SYSTEM_BRANCH_USER_ID,
-  );
-
+  // Deduplicate by branch name, preferring rows with known SHA info or recent activity
   const byName = new Map<string, Doc<"branches">>();
-  for (const row of relevant) {
+  for (const row of rows) {
     const existing = byName.get(row.name);
     if (!existing) {
       byName.set(row.name, row);
@@ -428,15 +467,14 @@ export const getRunDiffContext = authQuery({
     runId: v.id("taskRuns"),
   },
   handler: async (ctx, args) => {
-    const userId = ctx.identity.subject;
-    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
 
     const [taskDoc, taskRuns] = await Promise.all([
       ctx.db.get(args.taskId),
-      fetchTaskRunsForTask(ctx, teamId, userId, args.taskId, true),
+      fetchTaskRunsForTask(ctx, teamId, args.taskId, true),
     ]);
 
-    if (!taskDoc || taskDoc.teamId !== teamId || taskDoc.userId !== userId) {
+    if (!taskDoc || taskDoc.teamId !== teamId) {
       return {
         task: null,
         taskRuns,
@@ -470,7 +508,6 @@ export const getRunDiffContext = authQuery({
         const metadata = await fetchBranchMetadataForRepo(
           ctx,
           teamId,
-          userId,
           trimmedProjectFullName,
         );
         if (metadata.length > 0) {
@@ -554,10 +591,9 @@ export const updateSummary = authMutation({
 export const get = authQuery({
   args: { teamSlugOrId: v.string(), id: v.id("taskRuns") },
   handler: async (ctx, args) => {
-    const userId = ctx.identity.subject;
-    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
     const doc = await ctx.db.get(args.id);
-    if (!doc || doc.teamId !== teamId || doc.userId !== userId) {
+    if (!doc || doc.teamId !== teamId) {
       return null;
     }
     // Rewrite morph URLs in networking field
@@ -848,8 +884,7 @@ export const updateVSCodePorts = authMutation({
 export const getByContainerName = authQuery({
   args: { teamSlugOrId: v.string(), containerName: v.string() },
   handler: async (ctx, args) => {
-    const userId = ctx.identity.subject;
-    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
     const run =
       (await ctx.db
         .query("taskRuns")
@@ -857,7 +892,6 @@ export const getByContainerName = authQuery({
           q.eq("vscode.containerName", args.containerName),
         )
         .filter((q) => q.eq(q.field("teamId"), teamId))
-        .filter((q) => q.eq(q.field("userId"), userId))
         .first()) ?? null;
 
     if (!run) {
@@ -1342,6 +1376,11 @@ export const updatePullRequestUrl = authMutation({
           : updates.pullRequestNumber;
     }
     await ctx.db.patch(args.id, updates);
+
+    // Sync the lookup table for PR URL -> taskRun mapping
+    if (normalizedPullRequests) {
+      await syncTaskRunPullRequests(ctx, args.id, teamId, normalizedPullRequests);
+    }
   },
 });
 
@@ -1415,6 +1454,11 @@ export const updatePullRequestState = authMutation({
           : updates.pullRequestNumber;
     }
     await ctx.db.patch(args.id, updates);
+
+    // Sync the lookup table for PR URL -> taskRun mapping
+    if (normalizedPullRequests) {
+      await syncTaskRunPullRequests(ctx, args.id, teamId, normalizedPullRequests);
+    }
   },
 });
 

@@ -20,6 +20,7 @@ import {
   ViteLogo,
   VueLogo,
 } from "@/components/icons/framework-logos";
+import type { PackageManager } from "@/lib/github/framework-detection";
 
 export type FrameworkPreset =
   | "other"
@@ -50,63 +51,86 @@ type FrameworkPresetConfig = {
   icon: FrameworkIconKey;
 };
 
-export const FRAMEWORK_PRESETS: Record<FrameworkPreset, FrameworkPresetConfig> =
-  {
-    other: {
-      name: "Other",
+// Script templates use "start" for frameworks that traditionally use npm start
+type FrameworkScriptTemplate = {
+  name: string;
+  devScriptName: "dev" | "start";
+  icon: FrameworkIconKey;
+};
+
+const FRAMEWORK_SCRIPT_TEMPLATES: Record<FrameworkPreset, FrameworkScriptTemplate> = {
+  other: { name: "Other", devScriptName: "dev", icon: "other" },
+  next: { name: "Next.js", devScriptName: "dev", icon: "next" },
+  vite: { name: "Vite", devScriptName: "dev", icon: "vite" },
+  remix: { name: "Remix", devScriptName: "dev", icon: "remix" },
+  nuxt: { name: "Nuxt", devScriptName: "dev", icon: "nuxt" },
+  sveltekit: { name: "SvelteKit", devScriptName: "dev", icon: "svelte" },
+  angular: { name: "Angular", devScriptName: "start", icon: "angular" },
+  cra: { name: "Create React App", devScriptName: "start", icon: "react" },
+  vue: { name: "Vue", devScriptName: "dev", icon: "vue" },
+};
+
+function getInstallCommand(pm: PackageManager): string {
+  switch (pm) {
+    case "bun":
+      return "bun install";
+    case "pnpm":
+      return "pnpm install";
+    case "yarn":
+      return "yarn install";
+    case "npm":
+    default:
+      return "npm install";
+  }
+}
+
+function getRunCommand(pm: PackageManager, scriptName: string): string {
+  switch (pm) {
+    case "bun":
+      return `bun run ${scriptName}`;
+    case "pnpm":
+      return `pnpm run ${scriptName}`;
+    case "yarn":
+      return `yarn ${scriptName}`;
+    case "npm":
+    default:
+      return `npm run ${scriptName}`;
+  }
+}
+
+export function getFrameworkPresetConfig(
+  preset: FrameworkPreset,
+  packageManager: PackageManager = "npm"
+): FrameworkPresetConfig {
+  const template = FRAMEWORK_SCRIPT_TEMPLATES[preset];
+  if (preset === "other") {
+    return {
+      name: template.name,
       maintenanceScript: "",
       devScript: "",
-      icon: "other",
-    },
-    next: {
-      name: "Next.js",
-      maintenanceScript: "npm install",
-      devScript: "npm run dev",
-      icon: "next",
-    },
-    vite: {
-      name: "Vite",
-      maintenanceScript: "npm install",
-      devScript: "npm run dev",
-      icon: "vite",
-    },
-    remix: {
-      name: "Remix",
-      maintenanceScript: "npm install",
-      devScript: "npm run dev",
-      icon: "remix",
-    },
-    nuxt: {
-      name: "Nuxt",
-      maintenanceScript: "npm install",
-      devScript: "npm run dev",
-      icon: "nuxt",
-    },
-    sveltekit: {
-      name: "SvelteKit",
-      maintenanceScript: "npm install",
-      devScript: "npm run dev",
-      icon: "svelte",
-    },
-    angular: {
-      name: "Angular",
-      maintenanceScript: "npm install",
-      devScript: "npm start",
-      icon: "angular",
-    },
-    cra: {
-      name: "Create React App",
-      maintenanceScript: "npm install",
-      devScript: "npm start",
-      icon: "react",
-    },
-    vue: {
-      name: "Vue",
-      maintenanceScript: "npm install",
-      devScript: "npm run dev",
-      icon: "vue",
-    },
+      icon: template.icon,
+    };
+  }
+  return {
+    name: template.name,
+    maintenanceScript: getInstallCommand(packageManager),
+    devScript: getRunCommand(packageManager, template.devScriptName),
+    icon: template.icon,
   };
+}
+
+// Default presets using npm for backward compatibility
+export const FRAMEWORK_PRESETS: Record<FrameworkPreset, FrameworkPresetConfig> = {
+  other: getFrameworkPresetConfig("other", "npm"),
+  next: getFrameworkPresetConfig("next", "npm"),
+  vite: getFrameworkPresetConfig("vite", "npm"),
+  remix: getFrameworkPresetConfig("remix", "npm"),
+  nuxt: getFrameworkPresetConfig("nuxt", "npm"),
+  sveltekit: getFrameworkPresetConfig("sveltekit", "npm"),
+  angular: getFrameworkPresetConfig("angular", "npm"),
+  cra: getFrameworkPresetConfig("cra", "npm"),
+  vue: getFrameworkPresetConfig("vue", "npm"),
+};
 
 const FRAMEWORK_ICON_META: Record<
   FrameworkIconKey,
@@ -262,9 +286,6 @@ const SelectItem = forwardRef<
       <div className="flex-1">
         <div className="font-medium text-neutral-900 dark:text-neutral-100">
           {config.name}
-        </div>
-        <div className="text-xs text-neutral-500 dark:text-neutral-400">
-          Default: {config.devScript || "Custom"}
         </div>
       </div>
       <SelectPrimitive.ItemIndicator className="absolute right-3">

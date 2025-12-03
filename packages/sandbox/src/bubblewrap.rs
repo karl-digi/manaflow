@@ -475,6 +475,8 @@ fi
         fs::create_dir_all(&root_home).await?;
 
         let gitconfig = root_home.join(".gitconfig");
+        // Only set safe.directory - don't override user's pager preferences
+        // Users can enable delta via command palette (EnableDeltaPager)
         let content = r#"[safe]
 	directory = *
 "#;
@@ -853,6 +855,7 @@ fi
 
         let mut cmd = CommandBuilder::new(&self.nsenter_path);
         cmd.args(nsenter_args(inner_pid, None, &command));
+        cmd.env("HOME", "/root");
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor"); // Enable 24-bit RGB color support
         cmd.env("LANG", "C.UTF-8");
@@ -1386,6 +1389,7 @@ impl SandboxService for BubblewrapService {
         let mut cmd = CommandBuilder::new(&self.nsenter_path);
 
         cmd.args(nsenter_args(entry.inner_pid, None, &target_command));
+        cmd.env("HOME", "/root");
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor"); // Enable 24-bit RGB color support
         cmd.env("LANG", "C.UTF-8");

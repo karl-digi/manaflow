@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { resolveTeamIdLoose } from "../_shared/team";
+import { getTeamId } from "../_shared/team";
 import { authMutation, authQuery } from "./users/utils";
 import { internalQuery } from "./_generated/server";
 
@@ -16,7 +16,7 @@ export const listByTeam = authQuery({
     teamSlugOrId: v.string(),
   },
   handler: async (ctx, args) => {
-    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
     const configs = await ctx.db
       .query("previewConfigs")
       .withIndex("by_team", (q) => q.eq("teamId", teamId))
@@ -32,7 +32,7 @@ export const get = authQuery({
     previewConfigId: v.id("previewConfigs"),
   },
   handler: async (ctx, args) => {
-    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
     const config = await ctx.db.get(args.previewConfigId);
     if (!config || config.teamId !== teamId) {
       return null;
@@ -47,7 +47,7 @@ export const getByRepo = authQuery({
     repoFullName: v.string(),
   },
   handler: async (ctx, args) => {
-    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
     const repoFullName = normalizeRepoFullName(args.repoFullName);
     const config = await ctx.db
       .query("previewConfigs")
@@ -65,7 +65,7 @@ export const remove = authMutation({
     previewConfigId: v.id("previewConfigs"),
   },
   handler: async (ctx, args) => {
-    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
     const config = await ctx.db.get(args.previewConfigId);
     if (!config || config.teamId !== teamId) {
       throw new Error("Preview config not found");
@@ -95,7 +95,7 @@ export const upsert = authMutation({
     if (!userId) {
       throw new Error("Authentication required");
     }
-    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
     const repoFullName = normalizeRepoFullName(args.repoFullName);
     const now = Date.now();
 
