@@ -25,7 +25,7 @@ type PreviewRunDoc = Doc<"previewRuns">;
 type ScreenshotSetDoc = Doc<"taskRunScreenshotSets">;
 
 const COLLAPSE_MARKER = "<!-- cmux-preview-collapsed -->";
-const COLLAPSE_SUMMARY = "Older cmux preview screenshots (latest comment is above)";
+const COLLAPSE_SUMMARY = "Older cmux preview screenshots (latest comment is below)";
 const MAX_COMMENTS_TO_COLLAPSE = 20;
 const MAX_PREVIOUS_SCREENSHOT_SETS = 5;
 const NON_UI_CHANGE_PATTERNS = [

@@ -44,7 +44,18 @@ type SandboxInstance = {
 
 type EnvVar = { name: string; value: string; isSecret: boolean };
 
-type WizardStep = 1 | 2;
+// All configuration steps in order (shown in workspace config sidebar)
+const ALL_CONFIG_STEPS = [
+  "scripts",      // maintenance + dev scripts
+  "env-vars",     // environment variables
+  "run-scripts",  // run scripts in terminal
+  "browser-setup", // browser configuration
+] as const;
+
+type ConfigStep = (typeof ALL_CONFIG_STEPS)[number];
+
+// Phase tracking for the layout transition
+type LayoutPhase = "initial-setup" | "transitioning" | "workspace-config";
 
 type PreviewTeamOption = {
   id: string;
@@ -400,14 +411,7 @@ export function PreviewConfigureClient({
     initialMaintenanceScript ?? initialFrameworkConfig.maintenanceScript;
   const initialDevScriptValue =
     initialDevScript ?? initialFrameworkConfig.devScript;
-  const initialMaintenanceNone =
-    initialMaintenanceScriptValue.trim().length === 0;
-  const initialDevNone = initialDevScriptValue.trim().length === 0;
   const initialEnvComplete = initialHasEnvValues;
-  const initialMaintenanceComplete =
-    initialMaintenanceNone || initialMaintenanceScriptValue.trim().length > 0;
-  const initialDevComplete =
-    initialDevNone || initialDevScriptValue.trim().length > 0;
 
   const [instance, setInstance] = useState<SandboxInstance | null>(null);
   const [isProvisioning, setIsProvisioning] = useState(false);
@@ -418,7 +422,23 @@ export function PreviewConfigureClient({
     [initialTeamSlugOrId, teams]
   );
 
-  const [currentStep, setCurrentStep] = useState<WizardStep>(1);
+  // Layout phase for animation - always start with initial-setup to avoid hydration mismatch
+  const [layoutPhase, setLayoutPhase] = useState<LayoutPhase>("initial-setup");
+
+  // Sync layoutPhase with URL after hydration (runs once on mount)
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const stepParam = url.searchParams.get("step");
+    if (stepParam === "workspace") {
+      setLayoutPhase("workspace-config");
+    }
+  }, []);
+  // Current config step (starts at run-scripts when entering workspace config)
+  const [currentConfigStep, setCurrentConfigStep] = useState<ConfigStep>("run-scripts");
+  // Track which steps have been completed (scripts and env-vars are pre-completed from initial setup)
+  const [completedSteps, setCompletedSteps] = useState<Set<ConfigStep>>(
+    () => new Set(["scripts", "env-vars"] as ConfigStep[])
+  );
 
   const [envVars, setEnvVars] = useState<EnvVar[]>(initialEnvVars);
   const [hasTouchedEnvVars, setHasTouchedEnvVars] = useState(false);
@@ -432,29 +452,9 @@ export function PreviewConfigureClient({
   const [hasUserEditedScripts, setHasUserEditedScripts] = useState(false);
   const [hasCompletedSetup, setHasCompletedSetup] = useState(false);
   const [isWaitingForWorkspace, setIsWaitingForWorkspace] = useState(false);
-  const [isEnvOpen, setIsEnvOpen] = useState(false);
-  const [isBuildOpen, setIsBuildOpen] = useState(false);
   const [envNone, setEnvNone] = useState(false);
-  const [maintenanceNone, setMaintenanceNone] = useState(
-    () => initialMaintenanceNone
-  );
-  const [devNone, setDevNone] = useState(() => initialDevNone);
-  const [runConfirmed, setRunConfirmed] = useState(false);
-  const [browserConfirmed, setBrowserConfirmed] = useState(false);
   const [commandsCopied, setCommandsCopied] = useState(false);
-  const [isEnvSectionOpen, setIsEnvSectionOpen] = useState(
-    () => !initialEnvComplete
-  );
-  const [isMaintenanceSectionOpen, setIsMaintenanceSectionOpen] = useState(
-    () => !initialMaintenanceComplete
-  );
-  const [isDevSectionOpen, setIsDevSectionOpen] = useState(
-    () => !initialDevComplete
-  );
-  const [isRunSectionOpen, setIsRunSectionOpen] = useState(true);
-  const [isBrowserSetupSectionOpen, setIsBrowserSetupSectionOpen] =
-    useState(true);
-
+  const [, setIsEnvSectionOpen] = useState(() => !initialEnvComplete);
   const [areEnvValuesHidden, setAreEnvValuesHidden] = useState(true);
   const [activeEnvValueIndex, setActiveEnvValueIndex] = useState<number | null>(
     null
@@ -484,6 +484,22 @@ export function PreviewConfigureClient({
         window.clearTimeout(copyResetTimeoutRef.current);
       }
     };
+  }, []);
+
+  // Handle browser back/forward navigation
+  useEffect(() => {
+    const handlePopState = () => {
+      const url = new URL(window.location.href);
+      const stepParam = url.searchParams.get("step");
+      if (stepParam === "workspace") {
+        setLayoutPhase("workspace-config");
+      } else {
+        setLayoutPhase("initial-setup");
+      }
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
   const vscodePersistKey = instance?.instanceId
@@ -539,11 +555,7 @@ export function PreviewConfigureClient({
       envVars.some((r) => r.name.trim().length > 0 || r.value.trim().length > 0),
     [envVars, hasTouchedEnvVars, initialEnvPrefilled]
   );
-  const maintenanceScriptValue = maintenanceScript.trim();
-  const devScriptValue = devScript.trim();
   const envDone = envNone || hasEnvValues;
-  const maintenanceDone = maintenanceNone || maintenanceScriptValue.length > 0;
-  const devDone = devNone || devScriptValue.length > 0;
 
   // Collapse env section when entering configure step if it's already satisfied
   useEffect(() => {
@@ -573,15 +585,6 @@ export function PreviewConfigureClient({
     isWorkspaceReady,
     startAtConfigureEnvironment,
   ]);
-
-  const handleEnterConfigureEnvironment = useCallback(() => {
-    if (isWorkspaceReady) {
-      setHasCompletedSetup(true);
-      setIsWaitingForWorkspace(false);
-      return;
-    }
-    setIsWaitingForWorkspace(true);
-  }, [isWorkspaceReady]);
 
   const browserPlaceholder = useMemo(
     () =>
@@ -742,56 +745,19 @@ export function PreviewConfigureClient({
         const presetConfig = getFrameworkPresetConfig(preset, initialPackageManager);
         setMaintenanceScript(presetConfig.maintenanceScript);
         setDevScript(presetConfig.devScript);
-        // Update none states based on whether the preset has scripts
-        setMaintenanceNone(presetConfig.maintenanceScript.trim().length === 0);
-        setDevNone(presetConfig.devScript.trim().length === 0);
       }
     },
     [hasUserEditedScripts, initialPackageManager]
   );
 
   const handleMaintenanceScriptChange = useCallback((value: string) => {
-    setMaintenanceNone(false);
     setMaintenanceScript(value);
     setHasUserEditedScripts(true);
   }, []);
 
   const handleDevScriptChange = useCallback((value: string) => {
-    setDevNone(false);
     setDevScript(value);
     setHasUserEditedScripts(true);
-  }, []);
-
-  const handleToggleEnvNone = useCallback(
-    (value: boolean) => {
-      setHasTouchedEnvVars(true);
-      setEnvNone(value);
-      setActiveEnvValueIndex(null);
-      if (value) {
-        setAreEnvValuesHidden(true);
-        setEnvVars([{ name: "", value: "", isSecret: true }]);
-        setIsEnvOpen(false);
-      } else {
-        setIsEnvOpen(true);
-      }
-    },
-    []
-  );
-
-  const handleToggleMaintenanceNone = useCallback((value: boolean) => {
-    setMaintenanceNone(value);
-    setHasUserEditedScripts(true);
-    if (value) {
-      setMaintenanceScript("");
-    }
-  }, []);
-
-  const handleToggleDevNone = useCallback((value: boolean) => {
-    setDevNone(value);
-    setHasUserEditedScripts(true);
-    if (value) {
-      setDevScript("");
-    }
   }, []);
 
   const handleCopyCommands = useCallback(async () => {
@@ -816,9 +782,6 @@ export function PreviewConfigureClient({
     }
   }, [devScript, maintenanceScript]);
 
-  useEffect(() => {
-    setRunConfirmed(false);
-  }, [maintenanceScriptValue, devScriptValue, maintenanceNone, devNone]);
 
   const handleSaveConfiguration = async () => {
     if (!resolvedTeamSlugOrId) {
@@ -908,24 +871,72 @@ export function PreviewConfigureClient({
     }
   };
 
-  const handleNextStep = () => {
-    if (currentStep === 1) {
-      setIsEnvOpen(false);
-      setIsBuildOpen(false);
-    }
-    if (currentStep < 2) {
-      setCurrentStep((currentStep + 1) as WizardStep);
-    }
-  };
+  // Handle transitioning from initial setup to workspace configuration
+  const handleStartWorkspaceConfig = useCallback(() => {
+    setLayoutPhase("transitioning");
+    // Add search param to track that we're in workspace config phase
+    const url = new URL(window.location.href);
+    url.searchParams.set("step", "workspace");
+    window.history.pushState({}, "", url.toString());
+    // After animation completes, set to workspace-config
+    setTimeout(() => {
+      setLayoutPhase("workspace-config");
+    }, 650); // Match CSS transition duration (600ms + buffer)
+  }, []);
 
-  const handlePrevStep = () => {
-    if (currentStep > 1) {
-      setCurrentStep((currentStep - 1) as WizardStep);
+  // Handle going back to initial setup from workspace config
+  const handleBackToInitialSetup = useCallback(() => {
+    // Remove the step param from URL
+    const url = new URL(window.location.href);
+    url.searchParams.delete("step");
+    window.history.pushState({}, "", url.toString());
+    // Transition back to initial setup
+    setLayoutPhase("initial-setup");
+    setCurrentConfigStep("run-scripts");
+  }, []);
+
+  // Handle next step within workspace configuration
+  const handleNextConfigStep = useCallback(() => {
+    const currentIndex = ALL_CONFIG_STEPS.indexOf(currentConfigStep);
+
+    // Mark current step as completed
+    setCompletedSteps((prev) => new Set([...prev, currentConfigStep]));
+
+    // Move to next step if not at end
+    if (currentIndex < ALL_CONFIG_STEPS.length - 1) {
+      setCurrentConfigStep(ALL_CONFIG_STEPS[currentIndex + 1]);
     }
-  };
+  }, [currentConfigStep]);
+
+  // Helper to check if a step is visible (completed or current)
+  const isStepVisible = useCallback((step: ConfigStep) => {
+    return completedSteps.has(step) || step === currentConfigStep;
+  }, [completedSteps, currentConfigStep]);
+
+  // Helper to check if a step is the current one
+  const isCurrentStep = useCallback((step: ConfigStep) => {
+    return step === currentConfigStep;
+  }, [currentConfigStep]);
+
+  // Helper to check if a step is completed (for collapsing)
+  const isStepCompleted = useCallback((step: ConfigStep) => {
+    return completedSteps.has(step);
+  }, [completedSteps]);
+
+  // Navigate to a specific step (for going back to completed steps)
+  const handleGoToStep = useCallback((step: ConfigStep) => {
+    // Remove from completed set when going back to a step
+    setCompletedSteps((prev) => {
+      const next = new Set(prev);
+      next.delete(step);
+      return next;
+    });
+    setCurrentConfigStep(step);
+  }, []);
 
   // Pre-create iframes during setup so they're ready when user clicks Next
-  useEffect(() => {
+  // Using useLayoutEffect so iframes are created before the mount effect runs
+  useLayoutEffect(() => {
     if (!instance || !persistentIframeManager) return;
 
     // Pre-create VS Code iframe during setup
@@ -955,11 +966,15 @@ export function PreviewConfigureClient({
 
   // Mount iframes to their targets when visible
   useLayoutEffect(() => {
-    if (!instance || !persistentIframeManager || !hasCompletedSetup) return;
+    if (!instance || !persistentIframeManager) return;
+    // Only mount when in workspace-config layout
+    if (layoutPhase === "initial-setup") return;
 
     const cleanupFunctions: Array<() => void> = [];
 
-    if (instance.vscodeUrl && currentStep === 1) {
+    // Show VSCode for steps before browser-setup
+    const showVscode = currentConfigStep !== "browser-setup";
+    if (instance.vscodeUrl && showVscode) {
       const target = document.querySelector(
         `[data-iframe-target="${vscodePersistKey}"]`
       ) as HTMLElement | null;
@@ -970,7 +985,8 @@ export function PreviewConfigureClient({
       }
     }
 
-    if (resolvedVncUrl && currentStep === 2) {
+    // Show browser for browser-setup step
+    if (resolvedVncUrl && currentConfigStep === "browser-setup") {
       const target = document.querySelector(
         `[data-iframe-target="${browserPersistKey}"]`
       ) as HTMLElement | null;
@@ -990,30 +1006,32 @@ export function PreviewConfigureClient({
     browserPersistKey,
     instance,
     persistentIframeManager,
-    currentStep,
-    hasCompletedSetup,
+    currentConfigStep,
+    layoutPhase,
     resolvedVncUrl,
     vscodePersistKey,
   ]);
 
-  // Control iframe visibility based on current step and setup state
+  // Control iframe visibility based on current step and layout phase
   useEffect(() => {
     if (!persistentIframeManager) {
       return;
     }
 
-    // Hide iframes during setup screen, show based on step after setup
-    const workspaceVisible =
-      hasCompletedSetup && currentStep === 1 && Boolean(instance?.vscodeUrl);
-    const browserVisible =
-      hasCompletedSetup && currentStep === 2 && Boolean(resolvedVncUrl);
+    // Only show iframes when in workspace-config layout
+    const inWorkspaceConfig = layoutPhase === "workspace-config";
+    // Show VSCode for steps before browser-setup
+    const showVscode = currentConfigStep !== "browser-setup";
+    const workspaceVisible = inWorkspaceConfig && showVscode && Boolean(instance?.vscodeUrl);
+    // Show browser for browser-setup step
+    const browserVisible = inWorkspaceConfig && currentConfigStep === "browser-setup" && Boolean(resolvedVncUrl);
 
     persistentIframeManager.setVisibility(vscodePersistKey, workspaceVisible);
     persistentIframeManager.setVisibility(browserPersistKey, browserVisible);
   }, [
     browserPersistKey,
-    currentStep,
-    hasCompletedSetup,
+    currentConfigStep,
+    layoutPhase,
     persistentIframeManager,
     resolvedVncUrl,
     instance?.vscodeUrl,
@@ -1041,775 +1059,11 @@ export function PreviewConfigureClient({
     );
   }
 
-  // Show setup screen while provisioning OR until user clicks Next
-  if (!hasCompletedSetup) {
-    const shouldShowWorkspaceLoader =
-      (startAtConfigureEnvironment || isWaitingForWorkspace) && !isWorkspaceReady;
-
-    if (shouldShowWorkspaceLoader) {
-      const loaderTitle = startAtConfigureEnvironment
-        ? "Resuming your VS Code workspace..."
-        : "Starting your VS Code workspace...";
-      const loaderDescription = startAtConfigureEnvironment
-        ? "We'll show the configuration form once your environment is ready."
-        : "We'll open the configuration as soon as the sandbox is ready.";
-
-      return (
-        <div className="flex min-h-dvh items-center justify-center bg-white dark:bg-black font-sans">
-          <div className="text-center px-6">
-            <Loader2 className="mx-auto h-8 w-8 animate-spin text-neutral-400" />
-            <h1 className="mt-4 text-lg font-medium text-neutral-900 dark:text-neutral-100">
-              {loaderTitle}
-            </h1>
-            <p className="mt-2 text-sm text-neutral-500 dark:text-neutral-400">
-              {loaderDescription}
-            </p>
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <div className="min-h-dvh bg-white dark:bg-black font-sans">
-        {/* Main Content */}
-        <div className="max-w-2xl mx-auto px-6 py-10">
-          <div className="mb-3">
-            <Link
-              href="/preview"
-              className="inline-flex items-center gap-1.5 text-xs text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
-            >
-              <ArrowLeft className="h-3 w-3" />
-              Go to preview.new
-            </Link>
-          </div>
-
-          {/* Importing Header */}
-          <div className="mb-8">
-            <h1 className="text-2xl font-semibold text-neutral-900 dark:text-neutral-100 mb-1">
-              Configure Project
-            </h1>
-            <div className="flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400 pt-2">
-              <svg
-                className="h-4 w-4 shrink-0 text-white"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-              >
-                <path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z" />
-              </svg>
-              <span className="font-sans">{repo}</span>
-            </div>
-          </div>
-
-          <div className="space-y-6">
-            {/* Framework Preset */}
-            <FrameworkPresetSelect
-              value={frameworkPreset}
-              onValueChange={handleFrameworkPresetChange}
-            />
-
-            {/* Maintenance and Dev Scripts - Collapsible */}
-            <details
-              className="group"
-              open={isBuildOpen}
-              onToggle={(e) => setIsBuildOpen(e.currentTarget.open)}
-            >
-              <summary className="flex items-center gap-2 cursor-pointer text-base font-semibold text-neutral-900 dark:text-neutral-100 list-none">
-                <ChevronDown className="h-4 w-4 text-neutral-400 transition-transform -rotate-90 group-open:rotate-0" />
-                Maintenance and Dev Scripts
-              </summary>
-              <div className="mt-4 pl-6 space-y-4">
-                <div>
-                  <label className="block text-xs text-neutral-500 dark:text-neutral-400 mb-1.5">
-                    Maintenance Script
-                  </label>
-                  <textarea
-                    value={maintenanceScript ?? ""}
-                    onChange={(e) =>
-                      handleMaintenanceScriptChange(e.target.value)
-                    }
-                    placeholder={
-                      "npm install, bun install, pip install -r requirements.txt"
-                    }
-                    rows={2}
-                    className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-xs font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 resize-none"
-                  />
-                  <p className="text-xs text-neutral-400 mt-1">
-                    Runs after git pull to install dependencies (e.g. npm
-                    install, bun install, pip install -r requirements.txt)
-                  </p>
-                </div>
-                <div>
-                  <label className="block text-xs text-neutral-500 dark:text-neutral-400 mb-1.5">
-                    Dev Script
-                  </label>
-                  <textarea
-                    value={devScript ?? ""}
-                    onChange={(e) => handleDevScriptChange(e.target.value)}
-                    placeholder={
-                      "npm run dev, bun dev, python manage.py runserver"
-                    }
-                    rows={2}
-                    className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-xs font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 resize-none"
-                  />
-                  <p className="text-xs text-neutral-400 mt-1">
-                    Starts the development server (e.g. npm run dev, bun dev,
-                    python manage.py runserver)
-                  </p>
-                </div>
-              </div>
-            </details>
-
-            {/* Environment Variables - Collapsible */}
-            <details
-              className="group"
-              open={isEnvOpen}
-              onToggle={(e) => setIsEnvOpen(e.currentTarget.open)}
-            >
-              <summary className="flex items-center gap-2 cursor-pointer text-base font-semibold text-neutral-900 dark:text-neutral-100 list-none">
-                <ChevronDown className="h-4 w-4 text-neutral-400 transition-transform -rotate-90 group-open:rotate-0" />
-                <span>Environment Variables</span>
-                <div className="ml-auto flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      setActiveEnvValueIndex(null);
-                      setAreEnvValuesHidden((previous) => !previous);
-                    }}
-                    className="text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 transition p-0.5"
-                    aria-label={
-                      areEnvValuesHidden ? "Reveal values" : "Hide values"
-                    }
-                  >
-                    {areEnvValuesHidden ? (
-                      <EyeOff className="h-4 w-4" />
-                    ) : (
-                      <Eye className="h-4 w-4" />
-                    )}
-                  </button>
-                </div>
-              </summary>
-
-              <div
-                className="mt-4 space-y-2 pl-6"
-                onPasteCapture={(e) => {
-                  const text = e.clipboardData?.getData("text") ?? "";
-                  if (text && (/\n/.test(text) || /(=|:)\s*\S/.test(text))) {
-                    e.preventDefault();
-                    const items = parseEnvBlock(text);
-                    if (items.length > 0) {
-                      setEnvNone(false);
-                      updateEnvVars((prev) => {
-                        const map = new Map(
-                          prev
-                            .filter(
-                              (r) =>
-                                r.name.trim().length > 0 ||
-                                r.value.trim().length > 0
-                            )
-                            .map((r) => [r.name, r] as const)
-                        );
-                        for (const it of items) {
-                          if (!it.name) continue;
-                          const existing = map.get(it.name);
-                          if (existing) {
-                            map.set(it.name, { ...existing, value: it.value });
-                          } else {
-                            map.set(it.name, {
-                              name: it.name,
-                              value: it.value,
-                              isSecret: true,
-                            });
-                          }
-                        }
-                        const next = Array.from(map.values());
-                        next.push({ name: "", value: "", isSecret: true });
-                        setPendingFocusIndex(next.length - 1);
-                        return next;
-                      });
-                    }
-                  }
-                }}
-              >
-                <div
-                  className="grid gap-2 text-xs text-neutral-500 dark:text-neutral-500 items-center pr-10 mb-1"
-                  style={{
-                    gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.5fr) 40px",
-                  }}
-                >
-                  <span>Name</span>
-                  <span>Value</span>
-                  <span />
-                </div>
-
-                {envVars.map((row, idx) => {
-                  const rowKey = idx;
-                  const isEditingValue = activeEnvValueIndex === idx;
-                  const shouldMaskValue =
-                    areEnvValuesHidden &&
-                    row.value.trim().length > 0 &&
-                    !isEditingValue;
-                  return (
-                    <div
-                      key={rowKey}
-                      className="grid gap-2 items-center pr-10 min-h-9"
-                      style={{
-                        gridTemplateColumns:
-                          "minmax(0, 1fr) minmax(0, 1.5fr) 40px",
-                      }}
-                    >
-                      <input
-                        type="text"
-                        value={row.name}
-                        disabled={envNone}
-                        ref={(el) => {
-                          keyInputRefs.current[idx] = el;
-                        }}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          setEnvNone(false);
-                          updateEnvVars((prev) => {
-                            const next = [...prev];
-                            const current = next[idx];
-                            if (current) {
-                              next[idx] = { ...current, name: v };
-                            }
-                            return next;
-                          });
-                        }}
-                        placeholder="EXAMPLE_NAME"
-                        className="w-full min-w-0 h-9 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 disabled:opacity-60 disabled:cursor-not-allowed"
-                      />
-                      <input
-                        type={shouldMaskValue ? "password" : "text"}
-                        value={shouldMaskValue ? MASKED_ENV_VALUE : row.value}
-                        disabled={envNone}
-                        onChange={
-                          shouldMaskValue
-                            ? undefined
-                            : (e) => {
-                                const v = e.target.value;
-                                setEnvNone(false);
-                                updateEnvVars((prev) => {
-                                  const next = [...prev];
-                                  const current = next[idx];
-                                  if (current) {
-                                    next[idx] = { ...current, value: v };
-                                  }
-                                  return next;
-                                });
-                              }
-                        }
-                        onFocus={() => setActiveEnvValueIndex(idx)}
-                        onBlur={() =>
-                          setActiveEnvValueIndex((current) =>
-                            current === idx ? null : current
-                          )
-                        }
-                        readOnly={shouldMaskValue}
-                        placeholder="I9JU23NF394R6HH"
-                        className="w-full min-w-0 h-9 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 disabled:opacity-60 disabled:cursor-not-allowed"
-                      />
-                      <button
-                        type="button"
-                        disabled={envNone || envVars.length <= 1}
-                        onClick={() => {
-                          updateEnvVars((prev) => {
-                            const next = prev.filter((_, i) => i !== idx);
-                            return next.length > 0
-                              ? next
-                              : [{ name: "", value: "", isSecret: true }];
-                          });
-                        }}
-                        className={clsx(
-                          "h-9 w-9 rounded-md border border-neutral-200 dark:border-neutral-800 text-neutral-500 dark:text-neutral-400 grid place-items-center",
-                          envNone || envVars.length <= 1
-                            ? "opacity-60 cursor-not-allowed"
-                            : "hover:bg-neutral-50 dark:hover:bg-neutral-900"
-                        )}
-                        aria-label="Remove variable"
-                      >
-                        <Minus className="w-4 h-4" />
-                      </button>
-                    </div>
-                  );
-                })}
-
-                <div className="mt-1">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      updateEnvVars((prev) => [
-                        ...prev,
-                        { name: "", value: "", isSecret: true },
-                      ])
-                    }
-                    disabled={envNone}
-                    className="inline-flex items-center gap-2 h-9 rounded-md border border-neutral-200 dark:border-neutral-800 px-3 text-sm text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-900 transition disabled:opacity-60 disabled:cursor-not-allowed"
-                  >
-                    <Plus className="w-4 h-4" /> Add variable
-                  </button>
-                </div>
-              </div>
-
-              <p className="text-xs text-neutral-400 dark:text-neutral-400 pl-6 mt-4">
-                Tip: Paste a .env file to auto-fill
-              </p>
-            </details>
-          </div>
-
-          {/* Next Button */}
-          <div className="mt-10 pt-6 border-t border-neutral-200 dark:border-neutral-800">
-            <div className="flex items-center justify-end gap-4">
-              <button
-                type="button"
-                onClick={handleEnterConfigureEnvironment}
-                className={clsx(
-                  "inline-flex items-center gap-2 rounded-md px-5 py-2.5 text-sm font-semibold transition",
-                  "bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 hover:bg-neutral-800 dark:hover:bg-neutral-200 cursor-pointer",
-                  !isWorkspaceReady && "opacity-80"
-                )}
-              >
-                Next
-                <ArrowRight className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  const renderStep1Content = () => (
-    <div className="space-y-5">
-      {/* Workspace Info */}
-      <p className="text-[11px] text-neutral-500 dark:text-neutral-400 leading-relaxed">
-        Your workspace root at{" "}
-        <code className="px-1 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 text-[10px] text-neutral-700 dark:text-neutral-300">
-          /root/workspace
-        </code>{" "}
-        maps directly to your repo root.
-      </p>
-
-      {/* Maintenance Script */}
-      <details
-        className="group"
-        open={isMaintenanceSectionOpen}
-        onToggle={(e) => setIsMaintenanceSectionOpen(e.currentTarget.open)}
-      >
-        <summary className="flex items-center gap-2 cursor-pointer list-none">
-          <ChevronDown className="h-3.5 w-3.5 text-neutral-400 transition-transform -rotate-90 group-open:rotate-0" />
-          <StepBadge step={1} done={maintenanceDone} />
-          <span className="text-[13px] font-medium text-neutral-900 dark:text-neutral-100">
-            Maintenance script
-          </span>
-        </summary>
-        <div className="mt-3 ml-6 space-y-2">
-          <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
-            Runs after git pull to install dependencies.
-          </p>
-          <textarea
-            value={maintenanceScript ?? ""}
-            onChange={(e) => handleMaintenanceScriptChange(e.target.value)}
-            placeholder={
-              "npm install, bun install, pip install -r requirements.txt"
-            }
-            disabled={maintenanceNone}
-            rows={2}
-            className="w-full min-w-0 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-2.5 py-1.5 text-[12px] font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 disabled:opacity-60 disabled:cursor-not-allowed resize-none"
-          />
-          <div className="flex items-center justify-end">
-            <label className="flex items-center gap-1.5 text-[10px] text-neutral-400 cursor-pointer hover:text-neutral-600 dark:hover:text-neutral-300">
-              <input
-                type="checkbox"
-                checked={maintenanceNone}
-                onChange={(e) => handleToggleMaintenanceNone(e.target.checked)}
-                className="h-3.5 w-3.5 rounded border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-950 text-emerald-500 focus:ring-2 focus:ring-emerald-500/40"
-              />
-              None
-            </label>
-          </div>
-        </div>
-      </details>
-
-      {/* Dev Script */}
-      <details
-        className="group"
-        open={isDevSectionOpen}
-        onToggle={(e) => setIsDevSectionOpen(e.currentTarget.open)}
-      >
-        <summary className="flex items-center gap-2 cursor-pointer list-none">
-          <ChevronDown className="h-3.5 w-3.5 text-neutral-400 transition-transform -rotate-90 group-open:rotate-0" />
-          <StepBadge step={2} done={devDone} />
-          <span className="text-[13px] font-medium text-neutral-900 dark:text-neutral-100">
-            Dev script
-          </span>
-        </summary>
-        <div className="mt-3 ml-6 space-y-2">
-          <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
-            Starts the development server.
-          </p>
-          <textarea
-            value={devScript ?? ""}
-            onChange={(e) => handleDevScriptChange(e.target.value)}
-            placeholder={"npm run dev, bun dev, python manage.py runserver"}
-            disabled={devNone}
-            rows={2}
-            className="w-full min-w-0 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-2.5 py-1.5 text-[12px] font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 disabled:opacity-60 disabled:cursor-not-allowed resize-none"
-          />
-          <div className="flex items-center justify-end">
-            <label className="flex items-center gap-1.5 text-[10px] text-neutral-400 cursor-pointer hover:text-neutral-600 dark:hover:text-neutral-300">
-              <input
-                type="checkbox"
-                checked={devNone}
-                onChange={(e) => handleToggleDevNone(e.target.checked)}
-                className="h-3.5 w-3.5 rounded border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-950 text-emerald-500 focus:ring-2 focus:ring-emerald-500/40"
-              />
-              None
-            </label>
-          </div>
-        </div>
-      </details>
-
-      {/* Environment Variables */}
-      <details
-        className="group"
-        open={isEnvSectionOpen}
-        onToggle={(e) => setIsEnvSectionOpen(e.currentTarget.open)}
-      >
-        <summary className="flex items-center gap-2 cursor-pointer list-none">
-          <ChevronDown className="h-3.5 w-3.5 text-neutral-400 transition-transform -rotate-90 group-open:rotate-0" />
-          <StepBadge step={3} done={envDone} />
-          <span className="text-[13px] font-medium text-neutral-900 dark:text-neutral-100">
-            Environment variables
-          </span>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.preventDefault();
-              setActiveEnvValueIndex(null);
-              setAreEnvValuesHidden((prev) => !prev);
-            }}
-            className="ml-auto text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 p-0.5"
-            aria-label={areEnvValuesHidden ? "Reveal values" : "Hide values"}
-          >
-            {areEnvValuesHidden ? (
-              <EyeOff className="h-3.5 w-3.5" />
-            ) : (
-              <Eye className="h-3.5 w-3.5" />
-            )}
-          </button>
-        </summary>
-        <div
-          className="mt-3 ml-6 space-y-2"
-          onPasteCapture={(e) => {
-            const text = e.clipboardData?.getData("text") ?? "";
-            if (text && (/\n/.test(text) || /(=|:)\s*\S/.test(text))) {
-              e.preventDefault();
-              const items = parseEnvBlock(text);
-              if (items.length > 0) {
-                setEnvNone(false);
-                updateEnvVars((prev) => {
-                  const map = new Map(
-                    prev
-                      .filter(
-                        (r) =>
-                          r.name.trim().length > 0 || r.value.trim().length > 0
-                      )
-                      .map((r) => [r.name, r] as const)
-                  );
-                  for (const it of items) {
-                    if (!it.name) continue;
-                    const existing = map.get(it.name);
-                    if (existing)
-                      map.set(it.name, { ...existing, value: it.value });
-                    else
-                      map.set(it.name, {
-                        name: it.name,
-                        value: it.value,
-                        isSecret: true,
-                      });
-                  }
-                  const next = Array.from(map.values());
-                  next.push({ name: "", value: "", isSecret: true });
-                  setPendingFocusIndex(next.length - 1);
-                  return next;
-                });
-              }
-            }
-          }}
-        >
-          <div
-            className="grid gap-2 text-[10px] text-neutral-500 items-center min-h-7"
-            style={{
-              gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.5fr) 28px",
-            }}
-          >
-            <span>Key</span>
-            <span>Value</span>
-            <span />
-          </div>
-          {envVars.map((row, idx) => {
-            const isEditingValue = activeEnvValueIndex === idx;
-            const shouldMaskValue =
-              areEnvValuesHidden &&
-              row.value.trim().length > 0 &&
-              !isEditingValue;
-            return (
-              <div
-                key={idx}
-                className="grid gap-2 items-center min-h-7"
-                style={{
-                  gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.5fr) 28px",
-                }}
-              >
-                <input
-                  type="text"
-                  value={row.name}
-                  disabled={envNone}
-                  ref={(el) => {
-                    keyInputRefs.current[idx] = el;
-                  }}
-                  onChange={(e) => {
-                    setEnvNone(false);
-                    updateEnvVars((prev) => {
-                      const next = [...prev];
-                      if (next[idx])
-                        next[idx] = { ...next[idx], name: e.target.value };
-                      return next;
-                    });
-                  }}
-                  placeholder="EXAMPLE_NAME"
-                  className="w-full min-w-0 h-7 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-2.5 text-[12px] font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 disabled:opacity-60 disabled:cursor-not-allowed"
-                />
-                <input
-                  type="text"
-                  value={shouldMaskValue ? MASKED_ENV_VALUE : row.value}
-                  disabled={envNone}
-                  onChange={
-                    shouldMaskValue
-                      ? undefined
-                      : (e) => {
-                          setEnvNone(false);
-                          updateEnvVars((prev) => {
-                            const next = [...prev];
-                            if (next[idx])
-                              next[idx] = {
-                                ...next[idx],
-                                value: e.target.value,
-                              };
-                            return next;
-                          });
-                        }
-                  }
-                  onFocus={() => setActiveEnvValueIndex(idx)}
-                  onBlur={() =>
-                    setActiveEnvValueIndex((current) =>
-                      current === idx ? null : current
-                    )
-                  }
-                  readOnly={shouldMaskValue}
-                  placeholder="I9JU23NF394R6HH"
-                  className="w-full min-w-0 h-7 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-2.5 text-[12px] font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 disabled:opacity-60 disabled:cursor-not-allowed"
-                />
-                <button
-                  type="button"
-                  disabled={envNone || envVars.length <= 1}
-                  onClick={() =>
-                    updateEnvVars((prev) => {
-                      const next = prev.filter((_, i) => i !== idx);
-                      return next.length > 0
-                        ? next
-                        : [{ name: "", value: "", isSecret: true }];
-                    })
-                  }
-                  className={clsx(
-                    "h-7 w-7 rounded border border-neutral-200 dark:border-neutral-800 text-neutral-400 grid place-items-center",
-                    envNone || envVars.length <= 1
-                      ? "opacity-50 cursor-not-allowed"
-                      : "hover:border-neutral-300 dark:hover:border-neutral-700 hover:text-neutral-600 dark:hover:text-neutral-200"
-                  )}
-                  aria-label="Remove"
-                >
-                  <Minus className="w-3 h-3" />
-                </button>
-              </div>
-            );
-          })}
-          <div className="flex items-center justify-between pt-1">
-            <button
-              type="button"
-              disabled={envNone}
-              onClick={() =>
-                updateEnvVars((prev) => [
-                  ...prev,
-                  { name: "", value: "", isSecret: true },
-                ])
-              }
-              className="inline-flex items-center gap-1 text-[11px] text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300 disabled:opacity-50"
-            >
-              <Plus className="w-3 h-3" /> Add variable
-            </button>
-            <label className="flex items-center gap-1.5 text-[10px] text-neutral-400 cursor-pointer hover:text-neutral-600 dark:hover:text-neutral-300">
-              <input
-                type="checkbox"
-                checked={envNone}
-                onChange={(e) => handleToggleEnvNone(e.target.checked)}
-                className="h-3.5 w-3.5 rounded border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-950 text-emerald-500 focus:ring-2 focus:ring-emerald-500/40"
-              />
-              None
-            </label>
-          </div>
-          <p className="text-[10px] text-neutral-400">
-            Tip: Paste .env to auto-fill
-          </p>
-        </div>
-      </details>
-
-      {/* Run Scripts */}
-      <details
-        className="group"
-        open={isRunSectionOpen}
-        onToggle={(e) => setIsRunSectionOpen(e.currentTarget.open)}
-      >
-        <summary className="flex items-center gap-2 cursor-pointer list-none">
-          <ChevronDown className="h-3.5 w-3.5 text-neutral-400 transition-transform -rotate-90 group-open:rotate-0" />
-          <StepBadge step={4} done={runConfirmed} />
-          <span className="text-[13px] font-medium text-neutral-900 dark:text-neutral-100">
-            Run scripts in VS Code terminal
-          </span>
-        </summary>
-        <div className="mt-3 ml-6 space-y-3">
-          <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
-            Open terminal (
-            <kbd className="px-1 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 text-[10px] font-sans">
-              Ctrl+Shift+`
-            </kbd>{" "}
-            or{" "}
-            <kbd className="px-1 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 text-[10px] font-sans">
-              Cmd+J
-            </kbd>
-            ) and paste:
-          </p>
-          <div className="rounded-md border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 overflow-hidden">
-            <div className="flex items-center justify-between px-3 py-1.5 border-b border-neutral-200 dark:border-neutral-800 bg-neutral-100 dark:bg-neutral-800/50">
-              <span className="text-[10px] uppercase tracking-wide text-neutral-500">
-                Commands
-              </span>
-              {(maintenanceScriptValue || devScriptValue) && (
-                <button
-                  type="button"
-                  onClick={handleCopyCommands}
-                  className={clsx(
-                    "p-0.5",
-                    commandsCopied
-                      ? "text-emerald-500"
-                      : "text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300"
-                  )}
-                >
-                  {commandsCopied ? (
-                    <Check className="h-3 w-3" />
-                  ) : (
-                    <Copy className="h-3 w-3" />
-                  )}
-                </button>
-              )}
-            </div>
-            <pre className="px-3 py-2 text-[11px] font-mono text-neutral-900 dark:text-neutral-100 overflow-x-auto whitespace-pre-wrap break-all select-all">
-              {maintenanceScriptValue || devScriptValue ? (
-                [maintenanceScript.trim(), devScript.trim()]
-                  .filter(Boolean)
-                  .join(" && ")
-              ) : (
-                <span className="text-neutral-400 italic">
-                  Enter scripts above to see commands
-                </span>
-              )}
-            </pre>
-          </div>
-          <label className="flex items-center gap-1.5 text-[11px] text-neutral-500 dark:text-neutral-400 cursor-pointer hover:text-neutral-700 dark:hover:text-neutral-300">
-            <input
-              type="checkbox"
-              checked={runConfirmed}
-              onChange={(e) => setRunConfirmed(e.target.checked)}
-              className="h-3.5 w-3.5 rounded border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-950 text-emerald-500 focus:ring-2 focus:ring-emerald-500/40"
-            />
-            Proceed once dev script is running
-          </label>
-        </div>
-      </details>
-    </div>
-  );
-
-  const renderStep2Content = () => (
-    <div className="space-y-5">
-      {/* Browser Setup Info */}
-      <details
-        className="group"
-        open={isBrowserSetupSectionOpen}
-        onToggle={(e) => setIsBrowserSetupSectionOpen(e.currentTarget.open)}
-      >
-        <summary className="flex items-center gap-2 cursor-pointer list-none">
-          <ChevronDown className="h-3.5 w-3.5 text-neutral-400 transition-transform -rotate-90 group-open:rotate-0" />
-          <StepBadge step={5} done={browserConfirmed} />
-          <span className="text-[13px] font-medium text-neutral-900 dark:text-neutral-100">
-            Configure browser
-          </span>
-        </summary>
-        <div className="mt-3 ml-6 space-y-3">
-          <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
-            Use the browser on the right to set up authentication:
-          </p>
-          <ul className="space-y-2 text-[11px] text-neutral-600 dark:text-neutral-400">
-            <li className="flex items-start gap-2">
-              <span className="flex h-4 w-4 items-center justify-center rounded-full bg-neutral-100 dark:bg-neutral-800 text-[10px] text-neutral-500 dark:text-neutral-400 flex-shrink-0 mt-0.5">
-                1
-              </span>
-              <span>Sign in to any dashboards or SaaS tools</span>
-            </li>
-            <li className="flex items-start gap-2">
-              <span className="flex h-4 w-4 items-center justify-center rounded-full bg-neutral-100 dark:bg-neutral-800 text-[10px] text-neutral-500 dark:text-neutral-400 flex-shrink-0 mt-0.5">
-                2
-              </span>
-              <span>Dismiss cookie banners, popups, or MFA prompts</span>
-            </li>
-            <li className="flex items-start gap-2">
-              <span className="flex h-4 w-4 items-center justify-center rounded-full bg-neutral-100 dark:bg-neutral-800 text-[10px] text-neutral-500 dark:text-neutral-400 flex-shrink-0 mt-0.5">
-                3
-              </span>
-              <span>
-                Navigate to your dev server URL (e.g., localhost:3000)
-              </span>
-            </li>
-          </ul>
-          <label className="flex items-center gap-1.5 text-[11px] text-neutral-500 dark:text-neutral-400 cursor-pointer hover:text-neutral-700 dark:hover:text-neutral-300 pt-1">
-            <input
-              type="checkbox"
-              checked={browserConfirmed}
-              onChange={(e) => setBrowserConfirmed(e.target.checked)}
-              className="h-3.5 w-3.5 rounded border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-950 text-emerald-500 focus:ring-2 focus:ring-emerald-500/40"
-            />
-            Browser is set up properly
-          </label>
-        </div>
-      </details>
-
-      {/* Note about terminal */}
-      <div className="rounded-md border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/20 px-3 py-2.5">
-        <p className="text-[11px] text-amber-800 dark:text-amber-200">
-          <strong>Note:</strong> Running terminals will be stopped on save. The
-          maintenance and dev scripts run automatically on each preview.
-        </p>
-      </div>
-    </div>
-  );
-
   const renderPreviewPanel = () => {
-    const isVscodeStep = currentStep === 1;
-    const placeholder = isVscodeStep
-      ? workspacePlaceholder
-      : browserPlaceholder;
-    const iframeKey = isVscodeStep ? vscodePersistKey : browserPersistKey;
+    // Show browser only for browser-setup step, VSCode for others
+    const showBrowser = currentConfigStep === "browser-setup";
+    const placeholder = showBrowser ? browserPlaceholder : workspacePlaceholder;
+    const iframeKey = showBrowser ? browserPersistKey : vscodePersistKey;
 
     return (
       <div className="h-full flex flex-col overflow-hidden relative">
@@ -1836,65 +1090,394 @@ export function PreviewConfigureClient({
     );
   };
 
-  return (
-    <div className="flex h-screen overflow-hidden bg-neutral-50 dark:bg-neutral-950 font-sans text-[15px] leading-6">
-      {/* Left: Configuration Form */}
-      <div className="w-[420px] flex flex-col overflow-hidden border-r border-neutral-200 dark:border-neutral-800 bg-white dark:bg-black">
-        <div className="flex-shrink-0 px-5 pt-4 pb-2">
-          <Link
-            href="/preview"
-            className="inline-flex items-center gap-1 text-[11px] text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100 mb-3"
+  // Shared render function for scripts section
+  const renderScriptsSection = (options?: { compact?: boolean; defaultOpen?: boolean; showStepBadge?: boolean; stepNumber?: number; isDone?: boolean }) => {
+    const { compact = false, defaultOpen = true, showStepBadge = false, stepNumber = 1, isDone = false } = options ?? {};
+    const iconSize = compact ? "h-3.5 w-3.5" : "h-4 w-4";
+    const titleSize = compact ? "text-[13px]" : "text-base";
+    const contentPadding = compact ? "mt-3 pl-5" : "mt-4 pl-6";
+
+    return (
+      <details
+        className="group"
+        open={defaultOpen}
+      >
+        <summary className={clsx(
+          "flex items-center gap-2 cursor-pointer font-semibold text-neutral-900 dark:text-neutral-100 list-none",
+          titleSize
+        )}>
+          <ChevronDown className={clsx(iconSize, "text-neutral-400 transition-transform -rotate-90 group-open:rotate-0")} />
+          {showStepBadge && <StepBadge step={stepNumber} done={isDone} />}
+          Maintenance and Dev Scripts
+        </summary>
+        <div className={clsx(contentPadding, "space-y-4")}>
+          <div>
+            <label className="block text-xs text-neutral-500 dark:text-neutral-400 mb-1.5">
+              Maintenance Script
+            </label>
+            <textarea
+              value={maintenanceScript ?? ""}
+              onChange={(e) => handleMaintenanceScriptChange(e.target.value)}
+              placeholder="npm install, bun install, pip install -r requirements.txt"
+              rows={2}
+              className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-xs font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 resize-none"
+            />
+            <p className="text-xs text-neutral-400 mt-1">
+              Runs after git pull to install dependencies
+            </p>
+          </div>
+          <div>
+            <label className="block text-xs text-neutral-500 dark:text-neutral-400 mb-1.5">
+              Dev Script
+            </label>
+            <textarea
+              value={devScript ?? ""}
+              onChange={(e) => handleDevScriptChange(e.target.value)}
+              placeholder="npm run dev, bun dev, python manage.py runserver"
+              rows={2}
+              className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-xs font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 resize-none"
+            />
+            <p className="text-xs text-neutral-400 mt-1">
+              Starts the development server
+            </p>
+          </div>
+        </div>
+      </details>
+    );
+  };
+
+  // Shared render function for environment variables section
+  const renderEnvVarsSection = (options?: { compact?: boolean; defaultOpen?: boolean; showStepBadge?: boolean; stepNumber?: number; isDone?: boolean }) => {
+    const { compact = false, defaultOpen = true, showStepBadge = false, stepNumber = 2, isDone = false } = options ?? {};
+    const iconSize = compact ? "h-3.5 w-3.5" : "h-4 w-4";
+    const titleSize = compact ? "text-[13px]" : "text-base";
+    const contentPadding = compact ? "mt-3 pl-5" : "mt-4 pl-6";
+
+    return (
+      <details
+        className="group"
+        open={defaultOpen}
+        onToggle={(e) => setIsEnvSectionOpen(e.currentTarget.open)}
+      >
+        <summary className={clsx(
+          "flex items-center gap-2 cursor-pointer font-semibold text-neutral-900 dark:text-neutral-100 list-none",
+          titleSize
+        )}>
+          <ChevronDown className={clsx(iconSize, "text-neutral-400 transition-transform -rotate-90 group-open:rotate-0")} />
+          {showStepBadge && <StepBadge step={stepNumber} done={isDone} />}
+          <span>Environment Variables</span>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                setActiveEnvValueIndex(null);
+                setAreEnvValuesHidden((prev) => !prev);
+              }}
+              className="text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 transition p-0.5"
+              aria-label={areEnvValuesHidden ? "Reveal values" : "Hide values"}
+            >
+              {areEnvValuesHidden ? <EyeOff className={iconSize} /> : <Eye className={iconSize} />}
+            </button>
+          </div>
+        </summary>
+        <div
+          className={clsx(contentPadding, "space-y-2")}
+          onPasteCapture={(e) => {
+            const text = e.clipboardData?.getData("text") ?? "";
+            if (text && (/\n/.test(text) || /(=|:)\s*\S/.test(text))) {
+              e.preventDefault();
+              const items = parseEnvBlock(text);
+              if (items.length > 0) {
+                setEnvNone(false);
+                updateEnvVars((prev) => {
+                  const map = new Map(
+                    prev
+                      .filter((r) => r.name.trim().length > 0 || r.value.trim().length > 0)
+                      .map((r) => [r.name, r] as const)
+                  );
+                  for (const it of items) {
+                    if (!it.name) continue;
+                    const existing = map.get(it.name);
+                    if (existing) map.set(it.name, { ...existing, value: it.value });
+                    else map.set(it.name, { name: it.name, value: it.value, isSecret: true });
+                  }
+                  const next = Array.from(map.values());
+                  next.push({ name: "", value: "", isSecret: true });
+                  setPendingFocusIndex(next.length - 1);
+                  return next;
+                });
+              }
+            }
+          }}
+        >
+          <div
+            className="grid gap-2 text-xs text-neutral-500 items-center mb-1"
+            style={{ gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.5fr) 40px" }}
           >
-            <ArrowLeft className="h-3 w-3" />
-            Go to preview.new
-          </Link>
-          <h1 className="text-base font-semibold text-neutral-900 dark:text-neutral-100 tracking-tight">
-            Configure environment
-          </h1>
+            <span>Name</span>
+            <span>Value</span>
+            <span />
+          </div>
+          {envVars.map((row, idx) => {
+            const isEditingValue = activeEnvValueIndex === idx;
+            const shouldMaskValue = areEnvValuesHidden && row.value.trim().length > 0 && !isEditingValue;
+            return (
+              <div
+                key={idx}
+                className="grid gap-2 items-center min-h-9"
+                style={{ gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.5fr) 40px" }}
+              >
+                <input
+                  type="text"
+                  value={row.name}
+                  disabled={envNone}
+                  ref={(el) => { keyInputRefs.current[idx] = el; }}
+                  onChange={(e) => {
+                    setEnvNone(false);
+                    updateEnvVars((prev) => {
+                      const next = [...prev];
+                      if (next[idx]) next[idx] = { ...next[idx], name: e.target.value };
+                      return next;
+                    });
+                  }}
+                  placeholder="EXAMPLE_NAME"
+                  className="w-full min-w-0 h-9 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 disabled:opacity-60 disabled:cursor-not-allowed"
+                />
+                <input
+                  type={shouldMaskValue ? "password" : "text"}
+                  value={shouldMaskValue ? MASKED_ENV_VALUE : row.value}
+                  disabled={envNone}
+                  onChange={shouldMaskValue ? undefined : (e) => {
+                    setEnvNone(false);
+                    updateEnvVars((prev) => {
+                      const next = [...prev];
+                      if (next[idx]) next[idx] = { ...next[idx], value: e.target.value };
+                      return next;
+                    });
+                  }}
+                  onFocus={() => setActiveEnvValueIndex(idx)}
+                  onBlur={() => setActiveEnvValueIndex((current) => current === idx ? null : current)}
+                  readOnly={shouldMaskValue}
+                  placeholder="I9JU23NF394R6HH"
+                  className="w-full min-w-0 h-9 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 disabled:opacity-60 disabled:cursor-not-allowed"
+                />
+                <button
+                  type="button"
+                  disabled={envNone || envVars.length <= 1}
+                  onClick={() => updateEnvVars((prev) => {
+                    const next = prev.filter((_, i) => i !== idx);
+                    return next.length > 0 ? next : [{ name: "", value: "", isSecret: true }];
+                  })}
+                  className={clsx(
+                    "h-9 w-9 rounded-md border border-neutral-200 dark:border-neutral-800 text-neutral-500 dark:text-neutral-400 grid place-items-center",
+                    envNone || envVars.length <= 1
+                      ? "opacity-60 cursor-not-allowed"
+                      : "hover:bg-neutral-50 dark:hover:bg-neutral-900"
+                  )}
+                  aria-label="Remove variable"
+                >
+                  <Minus className="w-4 h-4" />
+                </button>
+              </div>
+            );
+          })}
+          <div className="mt-1">
+            <button
+              type="button"
+              onClick={() => updateEnvVars((prev) => [...prev, { name: "", value: "", isSecret: true }])}
+              disabled={envNone}
+              className="inline-flex items-center gap-2 h-9 rounded-md border border-neutral-200 dark:border-neutral-800 px-3 text-sm text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-900 transition disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              <Plus className="w-4 h-4" /> Add variable
+            </button>
+          </div>
         </div>
+        <p className={clsx("text-xs text-neutral-400 mt-4", compact ? "pl-5" : "pl-6")}>
+          Tip: Paste a .env file to auto-fill
+        </p>
+      </details>
+    );
+  };
 
-        <div className="flex-1 overflow-y-auto px-5 pb-5">
-          {currentStep === 1 ? renderStep1Content() : renderStep2Content()}
-        </div>
+  // Render the initial setup content (framework, scripts, env vars - all shown at once)
+  const renderInitialSetupContent = () => {
+    return (
+      <div className="space-y-6">
+        {/* Framework Preset */}
+        <FrameworkPresetSelect
+          value={frameworkPreset}
+          onValueChange={handleFrameworkPresetChange}
+        />
 
-        <div className="flex-shrink-0 border-t border-neutral-200 dark:border-neutral-800 p-6 bg-white dark:bg-black">
-          {errorMessage && (
-            <div className="rounded-md bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/50 p-3 mb-4">
-              <p className="text-sm text-red-600 dark:text-red-400">
-                {errorMessage}
-              </p>
-            </div>
-          )}
+        {/* Maintenance and Dev Scripts - Always expanded on initial setup */}
+        {renderScriptsSection({ defaultOpen: true })}
 
-          <div className="flex items-center justify-between gap-3">
-            {currentStep > 1 ? (
+        {/* Environment Variables - Always expanded on initial setup */}
+        {renderEnvVarsSection({ defaultOpen: true })}
+      </div>
+    );
+  };
+
+  // Render all config steps in sidebar (completed ones collapsed, current one expanded, future ones hidden)
+  const renderWorkspaceStepContent = () => {
+    return (
+      <div className="space-y-4">
+        {/* Step 1: Scripts (completed from initial setup - collapsed) */}
+        {isStepVisible("scripts") && (
+          <div>
+            {renderScriptsSection({ compact: true, defaultOpen: !isStepCompleted("scripts"), showStepBadge: true, stepNumber: 1, isDone: isStepCompleted("scripts") })}
+          </div>
+        )}
+
+        {/* Step 2: Environment Variables (completed from initial setup - collapsed) */}
+        {isStepVisible("env-vars") && (
+          <div>
+            {renderEnvVarsSection({ compact: true, defaultOpen: !isStepCompleted("env-vars"), showStepBadge: true, stepNumber: 2, isDone: isStepCompleted("env-vars") })}
+          </div>
+        )}
+
+        {/* Step 3: Run Scripts */}
+        {isStepVisible("run-scripts") && (
+          <div>
+            <details
+              className="group"
+              open={isCurrentStep("run-scripts")}
+            >
+              <summary
+                className={clsx(
+                  "flex items-center gap-2 list-none",
+                  isSaving ? "cursor-not-allowed opacity-60" : "cursor-pointer"
+                )}
+                onClick={(e) => {
+                  if (isSaving) return;
+                  if (isStepCompleted("run-scripts") && !isCurrentStep("run-scripts")) {
+                    e.preventDefault();
+                    handleGoToStep("run-scripts");
+                  }
+                }}
+              >
+                <ChevronDown className="h-3.5 w-3.5 text-neutral-400 transition-transform -rotate-90 group-open:rotate-0" />
+                <StepBadge step={3} done={isStepCompleted("run-scripts") && !isCurrentStep("run-scripts")} />
+                <span className="text-[13px] font-medium text-neutral-900 dark:text-neutral-100">
+                  Run scripts in VS Code terminal
+                </span>
+              </summary>
+              <div className="mt-3 ml-6 space-y-3">
+                <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                  Setup VS Code development environment. Open terminal (
+                  <kbd className="px-1 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 text-[10px] font-sans">
+                    Ctrl+Shift+`
+                  </kbd>{" "}
+                  or{" "}
+                  <kbd className="px-1 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 text-[10px] font-sans">
+                    Cmd+J
+                  </kbd>
+                  ) and paste:
+                </p>
+                <div className="rounded-md border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 overflow-hidden">
+                  <div className="flex items-center justify-between px-3 py-1.5 border-b border-neutral-200 dark:border-neutral-800 bg-neutral-100 dark:bg-neutral-800/50">
+                    <span className="text-[10px] uppercase tracking-wide text-neutral-500">
+                      Commands
+                    </span>
+                    {(maintenanceScript.trim() || devScript.trim()) && (
+                      <button
+                        type="button"
+                        onClick={handleCopyCommands}
+                        className={clsx(
+                          "p-0.5",
+                          commandsCopied
+                            ? "text-emerald-500"
+                            : "text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300"
+                        )}
+                      >
+                        {commandsCopied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                      </button>
+                    )}
+                  </div>
+                  <pre className="px-3 py-2 text-[11px] font-mono text-neutral-900 dark:text-neutral-100 overflow-x-auto whitespace-pre-wrap break-all select-all">
+                    {maintenanceScript.trim() || devScript.trim() ? (
+                      [maintenanceScript.trim(), devScript.trim()].filter(Boolean).join(" && ")
+                    ) : (
+                      <span className="text-neutral-400 italic">No scripts configured</span>
+                    )}
+                  </pre>
+                </div>
+                <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                  Proceed once dev script is running.
+                </p>
+              </div>
+            </details>
+            {/* Continue button outside chevron */}
+            {isCurrentStep("run-scripts") && (
               <button
                 type="button"
-                onClick={handlePrevStep}
-                className="inline-flex items-center gap-2 rounded-md border border-neutral-200 dark:border-neutral-800 px-4 py-2 text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-900 transition"
+                onClick={handleNextConfigStep}
+                className="w-full mt-4 inline-flex items-center justify-center gap-2 rounded-md bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 px-4 py-2 text-sm font-semibold hover:bg-neutral-800 dark:hover:bg-neutral-200 transition cursor-pointer"
               >
-                <ArrowLeft className="w-4 h-4" />
-                Back
-              </button>
-            ) : (
-              <div />
-            )}
-
-            {currentStep < 2 ? (
-              <button
-                type="button"
-                onClick={handleNextStep}
-                className="inline-flex items-center gap-2 rounded-md bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 px-4 py-2 text-sm font-semibold hover:bg-neutral-800 dark:hover:bg-neutral-200 transition cursor-pointer"
-              >
-                Next
+                Continue
                 <ArrowRight className="w-4 h-4" />
               </button>
-            ) : (
+            )}
+          </div>
+        )}
+
+        {/* Step 4: Browser Setup */}
+        {isStepVisible("browser-setup") && (
+          <div>
+            <details
+              className="group"
+              open={isCurrentStep("browser-setup")}
+            >
+              <summary
+                className={clsx(
+                  "flex items-center gap-2 list-none",
+                  isSaving ? "cursor-not-allowed opacity-60" : "cursor-pointer"
+                )}
+                onClick={(e) => {
+                  if (isSaving) return;
+                  if (isStepCompleted("browser-setup") && !isCurrentStep("browser-setup")) {
+                    e.preventDefault();
+                    handleGoToStep("browser-setup");
+                  }
+                }}
+              >
+                <ChevronDown className="h-3.5 w-3.5 text-neutral-400 transition-transform -rotate-90 group-open:rotate-0" />
+                <StepBadge step={4} done={isStepCompleted("browser-setup") && !isCurrentStep("browser-setup")} />
+                <span className="text-[13px] font-medium text-neutral-900 dark:text-neutral-100">
+                  Configure browser
+                </span>
+              </summary>
+              <div className="mt-3 ml-6 space-y-3">
+                <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                  Use the browser on the right to set up authentication:
+                </p>
+                <ul className="space-y-2 text-[11px] text-neutral-600 dark:text-neutral-400">
+                  <li className="flex items-start gap-2">
+                    <span className="flex h-4 w-4 items-center justify-center rounded-full bg-neutral-100 dark:bg-neutral-800 text-[10px] text-neutral-500 dark:text-neutral-400 flex-shrink-0 mt-0.5">1</span>
+                    <span>Sign in to any dashboards or SaaS tools</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="flex h-4 w-4 items-center justify-center rounded-full bg-neutral-100 dark:bg-neutral-800 text-[10px] text-neutral-500 dark:text-neutral-400 flex-shrink-0 mt-0.5">2</span>
+                    <span>Dismiss cookie banners, popups, or MFA prompts</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="flex h-4 w-4 items-center justify-center rounded-full bg-neutral-100 dark:bg-neutral-800 text-[10px] text-neutral-500 dark:text-neutral-400 flex-shrink-0 mt-0.5">3</span>
+                    <span>Navigate to your dev server URL (e.g., localhost:3000)</span>
+                  </li>
+                </ul>
+                <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                  Proceed once browser is set up properly.
+                </p>
+              </div>
+            </details>
+            {/* Save button outside chevron */}
+            {isCurrentStep("browser-setup") && (
               <button
                 type="button"
                 onClick={handleSaveConfiguration}
                 disabled={isSaving}
-                className="inline-flex items-center justify-center rounded-md bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 px-4 py-2 text-sm font-semibold hover:bg-neutral-800 dark:hover:bg-neutral-200 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full mt-4 inline-flex items-center justify-center rounded-md bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 px-4 py-2 text-sm font-semibold hover:bg-neutral-800 dark:hover:bg-neutral-200 transition disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isSaving ? (
                   <>
@@ -1907,8 +1490,195 @@ export function PreviewConfigureClient({
               </button>
             )}
           </div>
+        )}
+      </div>
+    );
+  };
+
+  // Initial setup panel (full page, shows framework, scripts, env vars)
+  const renderInitialSetupPanel = () => (
+    <div className="min-h-dvh bg-white dark:bg-black font-sans">
+      <div className="max-w-2xl mx-auto px-6 py-10">
+        {/* Back to preview.new link */}
+        <div className="mb-3">
+          <Link
+            href="/preview"
+            className="inline-flex items-center gap-1.5 text-xs text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
+          >
+            <ArrowLeft className="h-3 w-3" />
+            Go to preview.new
+          </Link>
+        </div>
+
+        {/* Header */}
+        <div className="mb-8">
+          <h1 className="text-2xl font-semibold text-neutral-900 dark:text-neutral-100 mb-1">
+            Configure workspace
+          </h1>
+          <div className="flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400 pt-2">
+            <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z" />
+            </svg>
+            <span className="font-sans">{repo}</span>
+          </div>
+        </div>
+
+        {/* Content */}
+        {renderInitialSetupContent()}
+
+        {/* Error Message */}
+        {errorMessage && (
+          <div className="rounded-md bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/50 p-3 mt-6">
+            <p className="text-sm text-red-600 dark:text-red-400">{errorMessage}</p>
+          </div>
+        )}
+
+        {/* Footer Button */}
+        <div className="mt-8 pt-6 border-t border-neutral-200 dark:border-neutral-800">
+          <button
+            type="button"
+            onClick={handleStartWorkspaceConfig}
+            className={clsx(
+              "w-full inline-flex items-center justify-center gap-2 rounded-md px-5 py-2.5 text-sm font-semibold transition",
+              "bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 hover:bg-neutral-800 dark:hover:bg-neutral-200 cursor-pointer",
+              !isWorkspaceReady && "opacity-80"
+            )}
+          >
+            Continue
+            <ArrowRight className="w-4 h-4" />
+          </button>
         </div>
       </div>
+    </div>
+  );
+
+  // Workspace config panel (sidebar, shows steps one at a time)
+  const renderWorkspaceConfigPanel = () => (
+    <div className="w-[420px] h-full flex flex-col overflow-hidden border-r border-neutral-200 dark:border-neutral-800 bg-white dark:bg-black">
+      <div className="flex-shrink-0 px-5 pt-4 pb-2">
+        <button
+          type="button"
+          onClick={handleBackToInitialSetup}
+          disabled={isSaving}
+          className={clsx(
+            "inline-flex items-center gap-1 text-[11px] text-neutral-500 dark:text-neutral-400 mb-3",
+            isSaving
+              ? "opacity-50 cursor-not-allowed"
+              : "hover:text-neutral-900 dark:hover:text-neutral-100"
+          )}
+        >
+          <ArrowLeft className="h-3 w-3" />
+          Back to project setup
+        </button>
+        <h1 className="text-base font-semibold text-neutral-900 dark:text-neutral-100 tracking-tight">
+          Configure workspace
+        </h1>
+        <div className="flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400 pt-1">
+          <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z" />
+          </svg>
+          <span className="font-sans text-xs">{repo}</span>
+        </div>
+        <p className="text-[11px] text-neutral-500 dark:text-neutral-400 leading-relaxed pt-3">
+          Your workspace root at{" "}
+          <code className="px-1 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 text-[10px] text-neutral-700 dark:text-neutral-300">
+            /root/workspace
+          </code>{" "}
+          maps directly to your repo root.
+        </p>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-5 pb-5">
+        {renderWorkspaceStepContent()}
+
+        {errorMessage && (
+          <div className="rounded-md bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/50 p-3 mt-4">
+            <p className="text-sm text-red-600 dark:text-red-400">{errorMessage}</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  // Initial setup layout (full page)
+  if (layoutPhase === "initial-setup") {
+    return renderInitialSetupPanel();
+  }
+
+  // Show loading state if VSCode isn't ready (for both transitioning and workspace-config)
+  if (!isWorkspaceReady) {
+    return (
+      <div className="flex min-h-dvh items-center justify-center bg-white dark:bg-black font-sans">
+        <div className="text-center px-6">
+          <Loader2 className="mx-auto h-8 w-8 animate-spin text-neutral-400" />
+          <h1 className="mt-4 text-lg font-medium text-neutral-900 dark:text-neutral-100">
+            Starting your VS Code workspace...
+          </h1>
+          <p className="mt-2 text-sm text-neutral-500 dark:text-neutral-400">
+            We&apos;ll show the configuration once your environment is ready.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // Transitioning layout - animate the final sidebar from center position
+  if (layoutPhase === "transitioning") {
+    return (
+      <div className="flex h-screen overflow-hidden bg-neutral-50 dark:bg-neutral-950 font-sans text-[15px] leading-6">
+        {/* Sidebar content animating from center */}
+        <div className="preview-setup-transitioning h-full flex flex-col overflow-hidden border-r border-neutral-200 dark:border-neutral-800 bg-white dark:bg-black">
+          <div className="flex-shrink-0 px-5 pt-4 pb-2">
+            <button
+              type="button"
+              onClick={handleBackToInitialSetup}
+              disabled={isSaving}
+              className={clsx(
+                "inline-flex items-center gap-1 text-[11px] text-neutral-500 dark:text-neutral-400 mb-3",
+                isSaving
+                  ? "opacity-50 cursor-not-allowed"
+                  : "hover:text-neutral-900 dark:hover:text-neutral-100"
+              )}
+            >
+              <ArrowLeft className="h-3 w-3" />
+              Back to project setup
+            </button>
+            <h1 className="text-base font-semibold text-neutral-900 dark:text-neutral-100 tracking-tight">
+              Configure workspace
+            </h1>
+            <div className="flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400 pt-1">
+              <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z" />
+              </svg>
+              <span className="font-sans text-xs">{repo}</span>
+            </div>
+            <p className="text-[11px] text-neutral-500 dark:text-neutral-400 leading-relaxed pt-3">
+              Your workspace root at{" "}
+              <code className="px-1 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 text-[10px] text-neutral-700 dark:text-neutral-300">
+                /root/workspace
+              </code>{" "}
+              maps directly to your repo root.
+            </p>
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-5 pb-5">
+            {renderWorkspaceStepContent()}
+          </div>
+        </div>
+
+        {/* Preview panel fading in */}
+        <div className="preview-panel-entering flex-1 flex flex-col bg-neutral-950 overflow-hidden">
+          {renderPreviewPanel()}
+        </div>
+      </div>
+    );
+  }
+
+  // Workspace config layout (split with sidebar + preview)
+  return (
+    <div className="flex h-screen overflow-hidden bg-neutral-50 dark:bg-neutral-950 font-sans text-[15px] leading-6">
+      {/* Left: Configuration Form */}
+      {renderWorkspaceConfigPanel()}
 
       {/* Right: Preview Panel */}
       <div className="flex-1 flex flex-col bg-neutral-950 overflow-hidden">
