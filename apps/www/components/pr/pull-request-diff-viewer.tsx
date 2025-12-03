@@ -91,6 +91,7 @@ import {
 } from "./review-completion-notification-card";
 import clsx from "clsx";
 import { kitties } from "./kitty";
+import { PrScreenshotGallery } from "./pr-screenshot-gallery";
 import {
   HEATMAP_MODEL_ANTHROPIC_OPUS_45_QUERY_VALUE,
   HEATMAP_MODEL_ANTHROPIC_QUERY_VALUE,
@@ -1018,6 +1019,38 @@ export function PullRequestDiffViewer({
     api.codeReview.listFileOutputsForComparison,
     comparisonQueryArgs
   );
+
+  const screenshotQueryArgs = useMemo(
+    () =>
+      normalizedJobType !== "pull_request" ||
+      !teamSlugOrId ||
+      typeof prNumber !== "number" ||
+      Number.isNaN(prNumber)
+        ? ("skip" as const)
+        : {
+            teamSlugOrId,
+            repoFullName,
+            prNumber,
+          },
+    [normalizedJobType, teamSlugOrId, repoFullName, prNumber]
+  );
+
+  const screenshotSets = useConvexQuery(
+    api.github_pr_queries.listScreenshotSetsForPr,
+    screenshotQueryArgs
+  );
+
+  const screenshotSetsWithImages = useMemo(() => {
+    if (!screenshotSets) {
+      return [] as FunctionReturnType<
+        typeof api.github_pr_queries.listScreenshotSetsForPr
+      >;
+    }
+
+    return screenshotSets.filter((set) =>
+      set.images.some((image) => Boolean(image.url))
+    );
+  }, [screenshotSets]);
 
   const fileOutputs =
     normalizedJobType === "comparison" ? comparisonFileOutputs : prFileOutputs;
@@ -2248,6 +2281,9 @@ export function PullRequestDiffViewer({
           </div>
 
           <div className="flex-1 min-w-0 space-y-3">
+            {screenshotSetsWithImages.length > 0 ? (
+              <PrScreenshotGallery screenshotSets={screenshotSetsWithImages} />
+            ) : null}
             {thresholdedFileEntries.map(
               ({ entry, review, diffHeatmap, streamState }) => {
                 const isFocusedFile =
