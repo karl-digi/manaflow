@@ -538,84 +538,73 @@ ${trimmed}
 ${useSetE ? `echo "=== ${windowName} Script Completed at $(date) ==="` : ""}
 `;
 
-  const scriptBase64 = stringToBase64(wrappedScript);
   const runtimeDir = "/var/tmp/cmux-scripts";
   const scriptFilePath = `${runtimeDir}/${windowName}.sh`;
+  const launcherScriptPath = `${runtimeDir}/${windowName}-launcher.sh`;
 
-  // Step 1: Create directory (using direct exec, no shell)
-  const mkdirResponse = await execInstanceInstanceIdExecPost({
+  // Create a launcher script that runs INSIDE the VM to handle tmux operations
+  // This matches how the environment orchestrator works - it runs tmux commands
+  // from within a shell process inside the VM, not via exec API
+  const launcherScript = `#!/bin/zsh
+set -eu
+
+# Create the tmux window
+tmux new-window -t cmux: -n '${windowName}' -d
+
+# Send keys to run the script
+tmux send-keys -t cmux:'${windowName}' "zsh '${scriptFilePath}'" C-m
+
+echo "[launcher] Started ${windowName} window"
+`;
+
+  // Build a setup command that writes both scripts and runs the launcher in background
+  // The key insight: Morph exec API doesn't have a TTY, but a background process can
+  // interact with tmux properly. This matches the sandbox orchestrator pattern.
+  const setupCommand = `
+set -eu
+mkdir -p '${runtimeDir}'
+
+# Write the main script
+cat > '${scriptFilePath}' <<'SCRIPT_EOF'
+${wrappedScript}
+SCRIPT_EOF
+chmod +x '${scriptFilePath}'
+
+# Write the launcher script
+cat > '${launcherScriptPath}' <<'LAUNCHER_EOF'
+${launcherScript}
+LAUNCHER_EOF
+chmod +x '${launcherScriptPath}'
+
+# Run the launcher in background (like sandbox orchestrator does with nohup)
+nohup zsh '${launcherScriptPath}' > '${runtimeDir}/${windowName}-launcher.log' 2>&1 &
+LAUNCHER_PID=$!
+
+# Give it a moment to start
+sleep 1
+
+# Verify it started
+if kill -0 $LAUNCHER_PID 2>/dev/null; then
+  echo "[setup] Launcher started (PID: $LAUNCHER_PID)"
+else
+  echo "[setup] Launcher may have completed or failed, check log" >&2
+fi
+`;
+
+  const response = await execInstanceInstanceIdExecPost({
     client: morphClient,
     path: { instance_id: instanceId },
-    body: { command: ["mkdir", "-p", runtimeDir] },
+    body: { command: ["zsh", "-lc", setupCommand] },
   });
 
-  if (mkdirResponse.error || mkdirResponse.data?.exit_code !== 0) {
-    console.warn("[preview-jobs] Failed to create script directory", {
-      previewRunId,
-      windowName,
-      exitCode: mkdirResponse.data?.exit_code,
-      stderr: sliceOutput(mkdirResponse.data?.stderr),
-      error: mkdirResponse.error,
-    });
-    return;
-  }
-
-  // Step 2: Write the script file using base64 decode
-  const writeScriptResponse = await execInstanceInstanceIdExecPost({
-    client: morphClient,
-    path: { instance_id: instanceId },
-    body: {
-      command: ["bash", "-c", `echo '${scriptBase64}' | base64 -d > ${singleQuote(scriptFilePath)} && chmod +x ${singleQuote(scriptFilePath)}`],
-    },
-  });
-
-  if (writeScriptResponse.error || writeScriptResponse.data?.exit_code !== 0) {
-    console.warn("[preview-jobs] Failed to write script file", {
-      previewRunId,
-      windowName,
-      exitCode: writeScriptResponse.data?.exit_code,
-      stderr: sliceOutput(writeScriptResponse.data?.stderr),
-      error: writeScriptResponse.error,
-    });
-    return;
-  }
-
-  // Step 3: Create tmux window (matching orchestrator pattern exactly)
-  // Use -d flag and -t cmux: format like the orchestrator does
-  const createWindowResponse = await execInstanceInstanceIdExecPost({
-    client: morphClient,
-    path: { instance_id: instanceId },
-    body: { command: ["zsh", "-lc", `tmux new-window -t cmux: -n ${singleQuote(windowName)} -d`] },
-  });
-
-  if (createWindowResponse.error || createWindowResponse.data?.exit_code !== 0) {
-    console.warn("[preview-jobs] Failed to create tmux window", {
-      previewRunId,
-      windowName,
-      exitCode: createWindowResponse.data?.exit_code,
-      stderr: sliceOutput(createWindowResponse.data?.stderr),
-      error: createWindowResponse.error,
-    });
-    return;
-  }
-
-  // Step 4: Send keys to run the script (matching orchestrator pattern)
-  // Pattern: zsh 'script.sh' 2>&1 | tee 'log'; echo ${pipestatus[1]} > 'exit-code'
-  const sendKeysCmd = `tmux send-keys -t cmux:${singleQuote(windowName)} "zsh ${singleQuote(scriptFilePath)}" C-m`;
-  const tmuxResponse = await execInstanceInstanceIdExecPost({
-    client: morphClient,
-    path: { instance_id: instanceId },
-    body: { command: ["zsh", "-lc", sendKeysCmd] },
-  });
-
-  if (tmuxResponse.error || tmuxResponse.data?.exit_code !== 0) {
+  if (response.error || response.data?.exit_code !== 0) {
     console.warn("[preview-jobs] Failed to start tmux window", {
       previewRunId,
       windowName,
-      exitCode: tmuxResponse.data?.exit_code,
-      stdout: sliceOutput(tmuxResponse.data?.stdout),
-      stderr: sliceOutput(tmuxResponse.data?.stderr),
-      error: tmuxResponse.error,
+      exitCode: response.data?.exit_code,
+      stdout: sliceOutput(response.data?.stdout),
+      stderr: sliceOutput(response.data?.stderr),
+      error: response.error,
     });
   } else {
     console.log("[preview-jobs] Started tmux window", {
