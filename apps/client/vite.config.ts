@@ -9,9 +9,13 @@ import { relatedProjects } from "@vercel/related-projects";
 
 console.log("got related projects", relatedProjects());
 
-const VERCEL_RELATED_PREVIEW_WWW_ORIGIN = relatedProjects().find(
+const NEXT_PUBLIC_RELATED_WWW_ORIGIN_PREVIEW = relatedProjects().find(
   (p) => p.project.name === "cmux-www"
 )?.preview.branch;
+console.log(
+  "NEXT_PUBLIC_RELATED_WWW_ORIGIN_PREVIEW",
+  NEXT_PUBLIC_RELATED_WWW_ORIGIN_PREVIEW
+);
 
 // Ensure all env is loaded
 await import("./src/client-env.ts");
@@ -53,8 +57,8 @@ export default defineConfig({
     "process.env.NODE_ENV": JSON.stringify(
       process.env.NODE_ENV || "development"
     ),
-    "process.env.NEXT_PUBLIC_VERCEL_RELATED_PREVIEW_WWW_ORIGIN": JSON.stringify(
-      VERCEL_RELATED_PREVIEW_WWW_ORIGIN
+    "process.env.NEXT_PUBLIC_RELATED_WWW_ORIGIN_PREVIEW": JSON.stringify(
+      NEXT_PUBLIC_RELATED_WWW_ORIGIN_PREVIEW
     ),
     global: "globalThis",
   },

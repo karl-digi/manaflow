@@ -2,8 +2,8 @@ import { createEnv } from "@t3-oss/env-core";
 import { z } from "zod";
 
 console.log(
-  "NEXT_PUBLIC_VERCEL_RELATED_PREVIEW_WWW_ORIGIN",
-  NEXT_PUBLIC_VERCEL_RELATED_PREVIEW_WWW_ORIGIN
+  "process.env.NEXT_PUBLIC_RELATED_WWW_ORIGIN_PREVIEW",
+  process.env.NEXT_PUBLIC_RELATED_WWW_ORIGIN_PREVIEW
 );
 
 export const env = createEnv({
@@ -23,7 +23,7 @@ export const env = createEnv({
       .min(1)
       .default(
         () =>
-          process.env.NEXT_PUBLIC_VERCEL_RELATED_PREVIEW_WWW_ORIGIN ||
+          process.env.NEXT_PUBLIC_RELATED_WWW_ORIGIN_PREVIEW ||
           "https://cmux.dev"
       ),
     NEXT_PUBLIC_SERVER_ORIGIN: z.string().optional(),
