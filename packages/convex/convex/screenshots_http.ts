@@ -119,7 +119,14 @@ export const uploadScreenshot = httpAction(async (ctx, req) => {
       commitSha: primaryScreenshot.commitSha,
       screenshotSetId: resolvedScreenshotSetId,
     });
-  } else if (payload.status !== "completed") {
+  } else if (resolvedScreenshotSetId) {
+    // No screenshots but we have a screenshot set (e.g., skipped/no-UI-changes).
+    // Still link the screenshot set to the task run so PR comments can be posted.
+    await ctx.runMutation(internal.taskRuns.updateLatestScreenshotSetId, {
+      id: payload.runId,
+      screenshotSetId: resolvedScreenshotSetId,
+    });
+  } else {
     await ctx.runMutation(internal.taskRuns.clearScreenshotMetadata, {
       id: payload.runId,
     });

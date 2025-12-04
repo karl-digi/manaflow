@@ -695,6 +695,24 @@ export const clearScreenshotMetadata = internalMutation({
   },
 });
 
+/**
+ * Update only the latestScreenshotSetId without modifying other screenshot fields.
+ * Used when a screenshot set is created (e.g., for skipped/no-UI-changes runs)
+ * but there are no actual image files to store.
+ */
+export const updateLatestScreenshotSetId = internalMutation({
+  args: {
+    id: v.id("taskRuns"),
+    screenshotSetId: v.id("taskRunScreenshotSets"),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.id, {
+      latestScreenshotSetId: args.screenshotSetId,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
 // Update worktree path for a task run
 export const updateWorktreePath = authMutation({
   args: {
