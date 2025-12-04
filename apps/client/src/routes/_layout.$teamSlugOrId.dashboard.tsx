@@ -8,6 +8,7 @@ import { DashboardInputFooter } from "@/components/dashboard/DashboardInputFoote
 import { DashboardStartTaskButton } from "@/components/dashboard/DashboardStartTaskButton";
 import { TaskList } from "@/components/dashboard/TaskList";
 import { WorkspaceCreationButtons } from "@/components/dashboard/WorkspaceCreationButtons";
+import { MockGitHubPRComment } from "@/components/dashboard/MockGitHubPRComment";
 import { FloatingPane } from "@/components/floating-pane";
 import { WorkspaceSetupPanel } from "@/components/WorkspaceSetupPanel";
 import { GitHubIcon } from "@/components/icons/github";
@@ -1024,6 +1025,9 @@ function DashboardComponent() {
           <div className="w-full">
             <TaskList teamSlugOrId={teamSlugOrId} />
           </div>
+
+          {/* Mock GitHub PR Comment */}
+          <MockGitHubPRComment />
         </div>
       </div>
     </FloatingPane>
