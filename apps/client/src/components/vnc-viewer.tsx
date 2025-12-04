@@ -34,7 +34,11 @@ interface RFBInstance {
   compressionLevel: number;
   readonly capabilities: { power?: boolean };
   disconnect(): void;
-  sendCredentials(credentials: { username?: string; password?: string; target?: string }): void;
+  sendCredentials(credentials: {
+    username?: string;
+    password?: string;
+    target?: string;
+  }): void;
   sendKey(keysym: number, code: string | null, down?: boolean): void;
   sendCtrlAltDel(): void;
   focus(options?: FocusOptions): void;
@@ -44,11 +48,18 @@ interface RFBInstance {
   machineReboot(): void;
   machineReset(): void;
   addEventListener(type: string, listener: (event: CustomEvent) => void): void;
-  removeEventListener(type: string, listener: (event: CustomEvent) => void): void;
+  removeEventListener(
+    type: string,
+    listener: (event: CustomEvent) => void
+  ): void;
 }
 
 interface RFBConstructor {
-  new (target: HTMLElement, urlOrChannel: string | WebSocket, options?: RFBOptions): RFBInstance;
+  new (
+    target: HTMLElement,
+    urlOrChannel: string | WebSocket,
+    options?: RFBOptions
+  ): RFBInstance;
 }
 
 // Dynamically import RFB to avoid top-level await issues with noVNC
@@ -126,7 +137,10 @@ export interface VncViewerProps {
   /** Called when desktop name is received */
   onDesktopName?: (rfb: RFBInstance, name: string) => void;
   /** Called when capabilities are received */
-  onCapabilities?: (rfb: RFBInstance, capabilities: Record<string, boolean>) => void;
+  onCapabilities?: (
+    rfb: RFBInstance,
+    capabilities: Record<string, boolean>
+  ) => void;
 }
 
 export interface VncViewerHandle {
