@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import clsx from "clsx";
+import * as AlertDialog from "@radix-ui/react-alert-dialog";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import CmuxLogo from "@/components/logo/cmux-logo";
@@ -425,6 +426,23 @@ function PreviewDashboardInner({
   const handleCancelDelete = useCallback(() => {
     setConfigPendingDelete(null);
   }, []);
+
+  const handleDeleteDialogOpenChange = useCallback(
+    (nextOpen: boolean) => {
+      if (
+        !nextOpen &&
+        configPendingDelete &&
+        updatingConfigId === configPendingDelete.id
+      ) {
+        return;
+      }
+
+      if (!nextOpen) {
+        handleCancelDelete();
+      }
+    },
+    [configPendingDelete, handleCancelDelete, updatingConfigId]
+  );
 
   const handleTeamChange = useCallback((nextTeam: string) => {
     setSelectedTeamSlugOrIdState(nextTeam);
@@ -1169,62 +1187,60 @@ function PreviewDashboardInner({
         </div>
       </div>
 
-      {configPendingDelete && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4 py-6"
-          onClick={() => {
-            if (updatingConfigId === configPendingDelete.id) return;
-            handleCancelDelete();
-          }}
-        >
-          <div
-            className="w-full max-w-md rounded-lg border border-white/10 bg-neutral-900 px-6 py-5 shadow-2xl"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="flex items-start gap-3">
-              <div className="rounded-full bg-red-500/10 p-2 text-red-400">
-                <Trash2 className="h-5 w-5" />
+      <AlertDialog.Root
+        open={Boolean(configPendingDelete)}
+        onOpenChange={handleDeleteDialogOpenChange}
+      >
+        {configPendingDelete ? (
+          <AlertDialog.Portal>
+            <AlertDialog.Overlay className="fixed inset-0 z-50 bg-black/70" />
+            <AlertDialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-white/10 bg-neutral-900 px-6 py-5 shadow-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30">
+              <div className="flex items-start gap-3">
+                <div className="rounded-full bg-red-500/10 p-2 text-red-400">
+                  <Trash2 className="h-5 w-5" />
+                </div>
+                <div className="flex-1">
+                  <AlertDialog.Title className="text-lg font-semibold text-white">
+                    Delete configuration?
+                  </AlertDialog.Title>
+                  <AlertDialog.Description className="pt-1 text-sm text-neutral-400">
+                    Are you sure you want to remove{" "}
+                    <span className="text-white">
+                      {configPendingDelete.repoFullName}
+                    </span>{" "}
+                    from preview.new? This stops screenshot previews for this
+                    repository.
+                  </AlertDialog.Description>
+                </div>
               </div>
-              <div className="flex-1">
-                <h3 className="text-lg font-semibold text-white">
-                  Delete configuration?
-                </h3>
-                <p className="pt-1 text-sm text-neutral-400">
-                  Are you sure you want to remove{" "}
-                  <span className="text-white">
-                    {configPendingDelete.repoFullName}
-                  </span>{" "}
-                  from preview.new? This stops screenshot previews for this
-                  repository.
-                </p>
+              {configError && (
+                <p className="pt-3 text-sm text-red-400">{configError}</p>
+              )}
+              <div className="pt-5 flex justify-end gap-3">
+                <AlertDialog.Cancel asChild>
+                  <Button
+                    disabled={updatingConfigId === configPendingDelete.id}
+                    variant="secondary"
+                  >
+                    Cancel
+                  </Button>
+                </AlertDialog.Cancel>
+                <Button
+                  onClick={() => void handleDeleteConfig()}
+                  disabled={updatingConfigId === configPendingDelete.id}
+                  variant="destructive"
+                >
+                  {updatingConfigId === configPendingDelete.id ? (
+                    <Loader2 className="pr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    "Delete"
+                  )}
+                </Button>
               </div>
-            </div>
-            {configError && (
-              <p className="pt-3 text-sm text-red-400">{configError}</p>
-            )}
-            <div className="pt-5 flex justify-end gap-3">
-              <Button
-                onClick={handleCancelDelete}
-                disabled={updatingConfigId === configPendingDelete.id}
-                variant="secondary"
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={() => void handleDeleteConfig()}
-                disabled={updatingConfigId === configPendingDelete.id}
-                variant="destructive"
-              >
-                {updatingConfigId === configPendingDelete.id ? (
-                  <Loader2 className="pr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  "Delete"
-                )}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+            </AlertDialog.Content>
+          </AlertDialog.Portal>
+        ) : null}
+      </AlertDialog.Root>
     </div>
   );
 }
