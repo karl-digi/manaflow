@@ -715,6 +715,47 @@ impl<'a> MuxApp<'a> {
                     self.set_status("Delta pager disabled");
                 }
             }
+            MuxCommand::CopyScrollback => {
+                // Get the active pane's terminal content and copy to clipboard
+                // Extract the text first to avoid borrow conflicts with set_status
+                let result: Result<String, &'static str> = (|| {
+                    let pane_id = self.active_pane_id().ok_or("No active pane")?;
+                    let manager = self
+                        .terminal_manager
+                        .as_ref()
+                        .ok_or("Terminal manager not available")?;
+                    let mut guard = manager
+                        .try_lock()
+                        .map_err(|_| "Could not access terminal")?;
+                    let buffer = guard
+                        .get_buffer_mut(pane_id)
+                        .ok_or("No terminal in active pane")?;
+                    Ok(buffer.get_all_text())
+                })();
+
+                match result {
+                    Ok(text) if text.is_empty() => {
+                        self.set_status("Terminal is empty");
+                    }
+                    Ok(text) => match arboard::Clipboard::new() {
+                        Ok(mut clipboard) => match clipboard.set_text(&text) {
+                            Ok(()) => {
+                                let lines = text.lines().count();
+                                self.set_status(format!("Copied {} lines to clipboard", lines));
+                            }
+                            Err(e) => {
+                                self.set_status(format!("Failed to copy: {}", e));
+                            }
+                        },
+                        Err(e) => {
+                            self.set_status(format!("Clipboard not available: {}", e));
+                        }
+                    },
+                    Err(msg) => {
+                        self.set_status(msg);
+                    }
+                }
+            }
         }
     }
 

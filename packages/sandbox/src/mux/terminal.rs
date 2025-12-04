@@ -3155,6 +3155,29 @@ impl TerminalBuffer {
         self.terminal.rows()
     }
 
+    /// Get all terminal content as plain text (scrollback + viewport).
+    /// Each line is joined with newlines, and trailing whitespace is trimmed.
+    pub fn get_all_text(&self) -> String {
+        let mut lines = Vec::new();
+
+        // Add scrollback lines first
+        for row in &self.terminal.internal_grid.lines_above {
+            lines.push(row.as_string().trim_end().to_string());
+        }
+
+        // Add viewport lines
+        for row in &self.terminal.internal_grid.viewport {
+            lines.push(row.as_string().trim_end().to_string());
+        }
+
+        // Remove trailing empty lines
+        while lines.last().is_some_and(|l| l.is_empty()) {
+            lines.pop();
+        }
+
+        lines.join("\n")
+    }
+
     /// Try to extract a URL at the given row and column (0-indexed).
     pub fn url_at_position(&self, row: usize, col: usize) -> Option<String> {
         if self.scroll_offset != 0 {
