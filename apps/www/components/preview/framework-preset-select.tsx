@@ -1,7 +1,7 @@
 "use client";
 
 import * as SelectPrimitive from "@radix-ui/react-select";
-import { ChevronDown, Check, Sparkles } from "lucide-react";
+import { ChevronDown, Check, Sparkles, Loader2 } from "lucide-react";
 import { forwardRef, type ReactNode } from "react";
 import clsx from "clsx";
 import {
@@ -204,20 +204,23 @@ function FrameworkIconBubble({ preset }: { preset: FrameworkPreset }) {
 type FrameworkPresetSelectProps = {
   value: FrameworkPreset;
   onValueChange: (value: FrameworkPreset) => void;
+  loading?: boolean;
 };
 
 const SelectTrigger = forwardRef<
   HTMLButtonElement,
-  SelectPrimitive.SelectTriggerProps & { preset: FrameworkPreset }
->(({ className, preset, ...props }, ref) => {
+  SelectPrimitive.SelectTriggerProps & { preset: FrameworkPreset; disabled?: boolean }
+>(({ className, preset, disabled, ...props }, ref) => {
   const config = FRAMEWORK_PRESETS[preset];
   return (
     <SelectPrimitive.Trigger
       ref={ref}
+      disabled={disabled}
       className={clsx(
         "flex w-full items-center justify-between rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2.5 text-sm text-neutral-900 dark:text-neutral-100 font-sans",
         "focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700",
         "data-[placeholder]:text-neutral-400",
+        "disabled:opacity-60 disabled:cursor-not-allowed",
         className
       )}
       {...props}
@@ -299,6 +302,7 @@ SelectItem.displayName = "SelectItem";
 export function FrameworkPresetSelect({
   value,
   onValueChange,
+  loading = false,
 }: FrameworkPresetSelectProps) {
   const frameworkOptions = Object.keys(FRAMEWORK_PRESETS) as FrameworkPreset[];
 
@@ -309,14 +313,22 @@ export function FrameworkPresetSelect({
         className="block text-sm font-medium text-neutral-900 dark:text-neutral-100 mb-2"
       >
         Framework Preset
+        {loading && (
+          <span className="ml-2 inline-flex items-center gap-1 text-xs font-normal text-neutral-500 dark:text-neutral-400">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            Detecting...
+          </span>
+        )}
       </label>
       <SelectPrimitive.Root
         value={value}
         onValueChange={(val) => onValueChange(val as FrameworkPreset)}
+        disabled={loading}
       >
         <SelectTrigger
           preset={value}
           aria-labelledby="framework-preset-label"
+          disabled={loading}
         />
         <SelectContent>
           {frameworkOptions.map((preset) => (
