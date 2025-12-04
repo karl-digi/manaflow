@@ -89,6 +89,7 @@ import {
   ReviewCompletionNotificationCard,
   type ReviewCompletionNotificationCardState,
 } from "./review-completion-notification-card";
+import { PrScreenshotGallery } from "./pr-screenshot-gallery";
 import clsx from "clsx";
 import { kitties } from "./kitty";
 import {
@@ -1010,6 +1011,20 @@ export function PullRequestDiffViewer({
     ]
   );
 
+  const screenshotQueryArgs = useMemo(
+    () =>
+      normalizedJobType !== "pull_request" ||
+      typeof prNumber !== "number" ||
+      Number.isNaN(prNumber)
+        ? ("skip" as const)
+        : {
+            teamSlugOrId,
+            repoFullName,
+            prNumber,
+          },
+    [normalizedJobType, prNumber, repoFullName, teamSlugOrId]
+  );
+
   const prFileOutputs = useConvexQuery(
     api.codeReview.listFileOutputsForPr,
     prQueryArgs
@@ -1018,9 +1033,16 @@ export function PullRequestDiffViewer({
     api.codeReview.listFileOutputsForComparison,
     comparisonQueryArgs
   );
+  const latestScreenshotSet = useConvexQuery(
+    api.github_pr_queries.getLatestScreenshotSetForPr,
+    screenshotQueryArgs
+  );
 
   const fileOutputs =
     normalizedJobType === "comparison" ? comparisonFileOutputs : prFileOutputs;
+
+  const isScreenshotLoading =
+    screenshotQueryArgs !== "skip" && latestScreenshotSet === undefined;
 
   const fileOutputIndex = useMemo(() => {
     if (!fileOutputs) {
@@ -2103,6 +2125,8 @@ export function PullRequestDiffViewer({
     return kitties[Math.floor(Math.random() * kitties.length)];
   }, []);
 
+  const resolvedScreenshotSet = latestScreenshotSet ?? null;
+
   const heatmapGradientCss = useMemo(
     () => buildHeatmapGradientStyles(deferredHeatmapColors),
     [deferredHeatmapColors]
@@ -2153,6 +2177,13 @@ export function PullRequestDiffViewer({
         dangerouslySetInnerHTML={{ __html: heatmapGradientCss }}
       />
       <div className="flex flex-col gap-3">
+        {normalizedJobType === "pull_request" &&
+        screenshotQueryArgs !== "skip" ? (
+          <PrScreenshotGallery
+            screenshotSet={resolvedScreenshotSet}
+            isLoading={isScreenshotLoading}
+          />
+        ) : null}
         <div className="flex flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-0">
           <aside
             id={sidebarPanelId}
