@@ -196,29 +196,6 @@ const cmuxAPI = {
         reason?: string;
       }>,
   },
-  ssh: {
-    listSandboxes: () =>
-      ipcRenderer.invoke("cmux:ssh:list-sandboxes") as Promise<{
-        ok: boolean;
-        sandboxes?: Array<{
-          id: string;
-          index: number;
-          name: string;
-          status: string;
-        }>;
-        error?: string;
-      }>,
-    openVscode: (sandboxId: string) =>
-      ipcRenderer.invoke("cmux:ssh:open-vscode", sandboxId) as Promise<{
-        ok: boolean;
-        error?: string;
-      }>,
-    setupConfig: () =>
-      ipcRenderer.invoke("cmux:ssh:setup-config") as Promise<{
-        ok: boolean;
-        error?: string;
-      }>,
-  },
   webContentsView: {
     create: (options: {
       url: string;

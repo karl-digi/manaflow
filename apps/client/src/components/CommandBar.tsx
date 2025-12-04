@@ -40,7 +40,6 @@ import {
   Server,
   Settings,
   Sun,
-  Terminal,
   Users,
 } from "lucide-react";
 import {
@@ -1392,48 +1391,6 @@ export function CommandBar({
           toast.error("Unable to sign out");
           return;
         }
-      } else if (value === "ssh:open-vscode") {
-        try {
-          const cmux =
-            typeof window === "undefined" ? undefined : window.cmux;
-          if (!cmux?.ssh?.listSandboxes || !cmux?.ssh?.openVscode || !cmux?.ssh?.setupConfig) {
-            toast.error("SSH is only available in the desktop app.");
-            return;
-          }
-
-          // First, ensure SSH config is set up
-          const configResult = await cmux.ssh.setupConfig();
-          if (!configResult.ok) {
-            console.error("SSH config setup failed", configResult.error);
-            // Continue anyway - user might have set it up manually
-          }
-
-          // List sandboxes
-          const listResult = await cmux.ssh.listSandboxes();
-          if (!listResult.ok || !listResult.sandboxes) {
-            toast.error(listResult.error || "Failed to list sandboxes");
-            return;
-          }
-
-          if (listResult.sandboxes.length === 0) {
-            toast.info("No sandboxes running. Start a sandbox first.");
-            return;
-          }
-
-          // For now, open VS Code to the first sandbox
-          // TODO: Add a sub-menu to select sandbox if multiple
-          const sandbox = listResult.sandboxes[0];
-          const openResult = await cmux.ssh.openVscode(String(sandbox.index));
-
-          if (openResult.ok) {
-            toast.success(`Opening VS Code SSH to sandbox ${sandbox.index} (${sandbox.name})...`);
-          } else {
-            toast.error(openResult.error || "Failed to open VS Code");
-          }
-        } catch (error) {
-          console.error("SSH open VS Code failed", error);
-          toast.error("Failed to open VS Code SSH connection.");
-        }
       } else if (value === "theme-light") {
         setTheme("light");
       } else if (value === "theme-dark") {
@@ -1967,24 +1924,6 @@ export function CommandBar({
               <>
                 <ClipboardCopy className="h-4 w-4 text-violet-500" />
                 <span className="text-sm">Logs: Copy all</span>
-              </>
-            ),
-          },
-          {
-            value: "ssh:open-vscode",
-            label: "SSH: Open VS Code to Sandbox",
-            keywords: ["ssh", "vscode", "remote", "sandbox", "terminal"],
-            searchText: buildSearchText(
-              "SSH Open VS Code Sandbox",
-              ["ssh", "vscode", "remote", "sandbox", "terminal"],
-              ["ssh:open-vscode"]
-            ),
-            className: baseCommandItemClassName,
-            execute: () => handleSelect("ssh:open-vscode"),
-            renderContent: () => (
-              <>
-                <Terminal className="h-4 w-4 text-green-500" />
-                <span className="text-sm">SSH: Open VS Code to Sandbox</span>
               </>
             ),
           },
