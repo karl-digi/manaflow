@@ -37,7 +37,9 @@ SETTINGS=$(jq -n \
     "scm.defaultViewMode": "tree",
     "git.showPushSuccessNotification": true,
     "git.autorefresh": true,
-    "git.branchCompareWith": "main"
+    "git.branchCompareWith": "main",
+    "claude-dev.alwaysAllowReadOnly": true,
+    "workbench.views.visibility.claude-dev.SidebarProvider": false
   } + (if $theme != "" then {"workbench.colorTheme": $theme} else {} end)')
 
 home="${HOME:-/root}"
