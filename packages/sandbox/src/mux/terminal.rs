@@ -3399,8 +3399,16 @@ impl TerminalManager {
         self.sessions.contains_key(&pane_id)
     }
 
-    /// Send input to a terminal session via the multiplexed connection
-    pub fn send_input(&self, pane_id: PaneId, data: Vec<u8>) -> bool {
+    /// Send input to a terminal session via the multiplexed connection.
+    /// Also scrolls to bottom so the user sees where they're typing.
+    pub fn send_input(&mut self, pane_id: PaneId, data: Vec<u8>) -> bool {
+        // Auto-scroll to bottom when user types - they want to see the cursor
+        if let Some(buffer) = self.buffers.get_mut(&pane_id) {
+            if buffer.scroll_offset() > 0 {
+                buffer.scroll_to_bottom();
+            }
+        }
+
         let session = match self.sessions.get(&pane_id) {
             Some(s) => s,
             None => return false,
@@ -3647,7 +3655,11 @@ pub async fn establish_mux_connection(manager: SharedTerminalManager) -> anyhow:
 
                             match server_msg {
                                 MuxServerMessage::SandboxCreated(summary) => {
-                                    let _ = event_tx_clone.send(MuxEvent::SandboxCreated(summary));
+                                    // No tab_id for server-broadcast events (created by other clients)
+                                    let _ = event_tx_clone.send(MuxEvent::SandboxCreated {
+                                        sandbox: summary,
+                                        tab_id: None,
+                                    });
                                 }
                                 MuxServerMessage::SandboxList { sandboxes } => {
                                     let _ = event_tx_clone.send(MuxEvent::SandboxesRefreshed(sandboxes));

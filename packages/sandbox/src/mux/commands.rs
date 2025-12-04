@@ -489,7 +489,9 @@ impl MuxCommand {
 
             // Sandbox management - use Alt
             MuxCommand::NewSandbox => Some((KeyModifiers::ALT, KeyCode::Char('n'))),
-            MuxCommand::DeleteSandbox => None, // No default keybinding, access via command palette
+            MuxCommand::DeleteSandbox => {
+                Some((KeyModifiers::ALT | KeyModifiers::SHIFT, KeyCode::Char('X')))
+            }
             MuxCommand::RefreshSandboxes => Some((KeyModifiers::ALT, KeyCode::Char('R'))), // Alt+Shift+R
 
             // Session - use Alt
@@ -628,6 +630,12 @@ impl MuxCommand {
                 KeyCode::Char('d') => return Some(MuxCommand::SplitVertical),
                 KeyCode::Char('D') => return Some(MuxCommand::SplitHorizontal),
                 _ => {}
+            }
+
+            // Alt+X (uppercase, meaning Alt+Shift+X) for delete sandbox
+            // Handle this specially because macOS may report Alt+Shift+X as just Alt with 'X'
+            if keycode == KeyCode::Char('X') {
+                return Some(MuxCommand::DeleteSandbox);
             }
         }
 
