@@ -547,13 +547,11 @@ ${useSetE ? `echo "=== ${windowName} Script Completed at $(date) ==="` : ""}
     "-lc",
     [
       `mkdir -p ${CMUX_RUNTIME_DIR}`,
-      `SESSION="cmux"`,
-      `WINDOW=${singleQuote(windowName)}`,
-      `tmux has-session -t "$SESSION" 2>/dev/null || tmux new-session -d -s "$SESSION" -c ${singleQuote(repoDir)}`,
-      `tmux new-window -t "$SESSION" -n "$WINDOW" -c ${singleQuote(repoDir)}`,
+      `tmux has-session -t cmux 2>/dev/null || tmux new-session -d -s cmux -c ${singleQuote(repoDir)}`,
+      `tmux new-window -t cmux -n ${singleQuote(windowName)} -c ${singleQuote(repoDir)}`,
       `echo '${scriptBase64}' | base64 -d > ${singleQuote(scriptPath)}`,
       `chmod +x ${singleQuote(scriptPath)}`,
-      `tmux send-keys -t "$SESSION":"$WINDOW" "zsh ${singleQuote(scriptPath)}" C-m`,
+      `tmux send-keys -t cmux:${singleQuote(windowName)} "zsh ${singleQuote(scriptPath)}" C-m`,
     ].join(" && "),
   ];
 
