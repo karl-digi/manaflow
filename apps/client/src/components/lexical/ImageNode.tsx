@@ -133,7 +133,7 @@ export class ImageNode extends DecoratorNode<React.JSX.Element> {
   }
 
   decorate(_editor: LexicalEditor, _config: EditorConfig): React.JSX.Element {
-    return <ImageComponent src={this.__src} altText={this.__altText} fileName={this.__fileName} />;
+    return <ImageComponent src={this.__src} altText={this.__altText} fileName={this.__fileName} nodeKey={this.__key} />;
   }
 }
 
