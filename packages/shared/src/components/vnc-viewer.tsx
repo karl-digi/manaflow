@@ -699,7 +699,14 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
             return;
           }
           if (code === "Backspace") {
-            handleShortcut("Option+Backspace → Ctrl+W", () => sendCtrlKey(0x0077, "KeyW", true));
+            // Ctrl+Backspace = delete word backwards (works in terminals, VS Code, browsers)
+            // Note: Ctrl+W is the readline binding but it also closes tabs in GUIs
+            handleShortcut("Option+Backspace → Ctrl+Backspace", () => sendCtrlKey(0xff08, "Backspace", true));
+            return;
+          }
+          if (code === "Delete") {
+            // Option+Delete (Fn+Option+Backspace) → Ctrl+Delete = delete word forwards
+            handleShortcut("Option+Delete → Ctrl+Delete", () => sendCtrlKey(0xffff, "Delete", true));
             return;
           }
         }
