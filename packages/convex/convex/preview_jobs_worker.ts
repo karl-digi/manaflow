@@ -581,8 +581,10 @@ ${useSetE ? `echo "=== ${windowName} Script Completed at $(date) ==="` : ""}
   }
 
   // Step 3: Create tmux window and run script
+  // Use -d flag to create window without attaching (works without a terminal)
+  // Use -t cmux: format (trailing colon) to target the session
   const tmuxCommand = [
-    `tmux new-window -t cmux -n ${singleQuote(windowName)} -c ${singleQuote(repoDir)}`,
+    `tmux new-window -t cmux: -n ${singleQuote(windowName)} -c ${singleQuote(repoDir)} -d`,
     `tmux send-keys -t cmux:${singleQuote(windowName)} "zsh ${singleQuote(scriptFilePath)}" C-m`,
   ].join(" && ");
 
