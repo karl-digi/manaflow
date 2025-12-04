@@ -89,6 +89,7 @@ import {
   ReviewCompletionNotificationCard,
   type ReviewCompletionNotificationCardState,
 } from "./review-completion-notification-card";
+import { LatestScreenshotPreview } from "./latest-screenshot-preview";
 import clsx from "clsx";
 import { kitties } from "./kitty";
 import {
@@ -2171,6 +2172,14 @@ export function PullRequestDiffViewer({
                   isLoading={isLoadingFileOutputs}
                 />
               </div>
+              {normalizedJobType === "pull_request" &&
+              typeof prNumber === "number" ? (
+                <LatestScreenshotPreview
+                  teamSlugOrId={teamSlugOrId}
+                  repoFullName={repoFullName}
+                  prNumber={prNumber}
+                />
+              ) : null}
               {notificationCardState ? (
                 <ReviewCompletionNotificationCard
                   state={notificationCardState}

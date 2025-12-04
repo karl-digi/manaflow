@@ -613,3 +613,75 @@ export const createManual = authMutation({
     return { previewRunId: runId, reused: false };
   },
 });
+
+/**
+ * Get the latest screenshot set for a PR (by teamSlugOrId, repoFullName + prNumber).
+ * Returns the most recent screenshot set with images, along with URLs.
+ */
+export const getLatestScreenshotSetForPr = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    repoFullName: v.string(),
+    prNumber: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
+    const repoFullName = normalizeRepoFullName(args.repoFullName);
+
+    // Find all preview runs for this PR in this team
+    // We look for runs with a screenshotSetId
+    const previewRuns = await ctx.db
+      .query("previewRuns")
+      .withIndex("by_team_created", (q) => q.eq("teamId", teamId))
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("repoFullName"), repoFullName),
+          q.eq(q.field("prNumber"), args.prNumber),
+          q.neq(q.field("screenshotSetId"), undefined)
+        )
+      )
+      .order("desc")
+      .take(10);
+
+    // Find the most recent screenshot set from these runs
+    let latestSet: Awaited<ReturnType<typeof ctx.db.get>> = null;
+    let latestCapturedAt = 0;
+
+    for (const run of previewRuns) {
+      if (!run.screenshotSetId) continue;
+      const set = await ctx.db.get(run.screenshotSetId);
+      if (set && set.capturedAt > latestCapturedAt) {
+        latestSet = set;
+        latestCapturedAt = set.capturedAt;
+      }
+    }
+
+    if (!latestSet) {
+      return null;
+    }
+
+    // Generate URLs for the images
+    const imagesWithUrls = await Promise.all(
+      latestSet.images.map(async (img) => {
+        const url = await ctx.storage.getUrl(img.storageId);
+        return {
+          storageId: img.storageId,
+          mimeType: img.mimeType,
+          fileName: img.fileName ?? null,
+          commitSha: img.commitSha ?? null,
+          description: img.description ?? null,
+          url,
+        };
+      })
+    );
+
+    return {
+      _id: latestSet._id,
+      status: latestSet.status,
+      commitSha: latestSet.commitSha ?? null,
+      capturedAt: latestSet.capturedAt,
+      error: latestSet.error ?? null,
+      images: imagesWithUrls,
+    };
+  },
+});
