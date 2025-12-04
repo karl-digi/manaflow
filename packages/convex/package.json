@@ -24,6 +24,10 @@
     "./dataModel": {
       "import": "./convex/_generated/dataModel.d.ts",
       "types": "./convex/_generated/dataModel.d.ts"
+    },
+    "./devAndMaintenanceOrchestrator": {
+      "import": "./_shared/devAndMaintenanceOrchestrator.ts",
+      "types": "./_shared/devAndMaintenanceOrchestrator.ts"
     }
   },
   "dependencies": {
