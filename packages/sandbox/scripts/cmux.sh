@@ -7,6 +7,8 @@ IMAGE_NAME="${IMAGE_NAME:-cmux-sandbox-dev}"
 PORT="${CMUX_SANDBOX_PORT:-46831}"
 CONTAINER_NAME="${CONTAINER_NAME:-cmux-sandbox-dev-run}"
 
+printf "\n\033[44m\033[97m cmux.dev -> Download the Electron app (open source). \033[0m\n\n"
+
 echo "Building ${IMAGE_NAME} from ${ROOT_DIR}/packages/sandbox/Dockerfile"
 docker build -t "${IMAGE_NAME}" -f "${ROOT_DIR}/packages/sandbox/Dockerfile" "${ROOT_DIR}"
 
