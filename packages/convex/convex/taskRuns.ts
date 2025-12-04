@@ -566,6 +566,95 @@ export const getRunDiffContext = authQuery({
   },
 });
 
+export const getLatestScreenshotSetForPr = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    repoFullName: v.string(),
+    prNumber: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
+    const normalizedRepoFullName = args.repoFullName.trim();
+    if (!normalizedRepoFullName) {
+      return null;
+    }
+
+    const prRunLinks = await ctx.db
+      .query("taskRunPullRequests")
+      .withIndex("by_pr", (q) =>
+        q
+          .eq("teamId", teamId)
+          .eq("repoFullName", normalizedRepoFullName)
+          .eq("prNumber", args.prNumber),
+      )
+      .order("desc")
+      .take(50);
+
+    const candidates: Array<{
+      runId: Id<"taskRuns">;
+      set: Doc<"taskRunScreenshotSets">;
+    }> = [];
+
+    for (const link of prRunLinks) {
+      const run = await ctx.db.get(link.taskRunId);
+      if (!run || run.teamId !== teamId) {
+        continue;
+      }
+
+      let setDoc: Doc<"taskRunScreenshotSets"> | null = null;
+
+      if (run.latestScreenshotSetId) {
+        setDoc = await ctx.db.get(run.latestScreenshotSetId);
+      }
+
+      if (!setDoc) {
+        const [latestForRun] = await ctx.db
+          .query("taskRunScreenshotSets")
+          .withIndex("by_run_capturedAt", (q) => q.eq("runId", link.taskRunId))
+          .order("desc")
+          .take(1);
+        if (latestForRun) {
+          setDoc = latestForRun;
+        }
+      }
+
+      if (!setDoc) {
+        continue;
+      }
+
+      candidates.push({ runId: link.taskRunId, set: setDoc });
+    }
+
+    if (candidates.length === 0) {
+      return null;
+    }
+
+    candidates.sort((a, b) => {
+      if (a.set.capturedAt === b.set.capturedAt) {
+        return b.set._creationTime - a.set._creationTime;
+      }
+      return b.set.capturedAt - a.set.capturedAt;
+    });
+
+    const latest = candidates[0]!;
+    const imagesWithUrls = await Promise.all(
+      latest.set.images.map(async (image) => {
+        const url = await ctx.storage.getUrl(image.storageId);
+        return {
+          ...image,
+          url: url ?? undefined,
+        };
+      }),
+    );
+
+    return {
+      ...latest.set,
+      runId: latest.runId,
+      images: imagesWithUrls,
+    };
+  },
+});
+
 // Update task run summary
 export const updateSummary = authMutation({
   args: {

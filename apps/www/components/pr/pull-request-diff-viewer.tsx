@@ -100,6 +100,7 @@ import {
   HEATMAP_MODEL_QUERY_KEY,
   type HeatmapModelQueryValue,
 } from "@/lib/services/code-review/model-config";
+import { LatestPrScreenshots } from "./latest-pr-screenshots";
 
 type PullRequestDiffViewerProps = {
   files: GithubFileChange[];
@@ -2153,6 +2154,13 @@ export function PullRequestDiffViewer({
         dangerouslySetInnerHTML={{ __html: heatmapGradientCss }}
       />
       <div className="flex flex-col gap-3">
+        {normalizedJobType === "pull_request" ? (
+          <LatestPrScreenshots
+            teamSlugOrId={teamSlugOrId}
+            repoFullName={repoFullName}
+            prNumber={prNumber ?? null}
+          />
+        ) : null}
         <div className="flex flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-0">
           <aside
             id={sidebarPanelId}
