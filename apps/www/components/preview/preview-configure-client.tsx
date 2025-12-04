@@ -29,6 +29,7 @@ import {
   type FrameworkPreset,
 } from "./framework-preset-select";
 import type { PackageManager } from "@/lib/github/framework-detection";
+import { VncViewer, type VncConnectionStatus } from "../vnc-viewer";
 
 const MASKED_ENV_VALUE = "••••••••••••••••";
 
@@ -136,6 +137,23 @@ function deriveVncUrl(
   const hostname = `port-39380-${morphHostId}.http.cloud.morph.so`;
   const baseUrl = `https://${hostname}/vnc.html`;
   return normalizeVncUrl(baseUrl);
+}
+
+/**
+ * Derive the VNC websocket URL for direct noVNC/RFB connection.
+ * Returns a wss:// URL pointing to the /websockify endpoint.
+ */
+function deriveVncWebsocketUrl(
+  instanceId?: string,
+  workspaceUrl?: string
+): string | null {
+  const morphHostId = resolveMorphHostId(instanceId, workspaceUrl);
+  if (!morphHostId) {
+    return null;
+  }
+
+  const hostname = `port-39380-${morphHostId}.http.cloud.morph.so`;
+  return `wss://${hostname}/websockify`;
 }
 
 const ensureInitialEnvVars = (initial?: EnvVar[]): EnvVar[] => {
@@ -505,9 +523,6 @@ export function PreviewConfigureClient({
   const vscodePersistKey = instance?.instanceId
     ? `preview-${instance.instanceId}:vscode`
     : "vscode";
-  const browserPersistKey = instance?.instanceId
-    ? `preview-${instance.instanceId}:browser`
-    : "browser";
 
   const selectedTeam = useMemo(
     () =>
@@ -525,12 +540,13 @@ export function PreviewConfigureClient({
     selectedTeamSlugOrIdRef.current = resolvedTeamSlugOrId;
   }, [resolvedTeamSlugOrId]);
 
-  const resolvedVncUrl = useMemo(() => {
-    if (instance?.vncUrl) {
-      return normalizeVncUrl(instance.vncUrl) ?? instance.vncUrl;
-    }
-    return deriveVncUrl(instance?.instanceId, instance?.vscodeUrl);
-  }, [instance?.instanceId, instance?.vncUrl, instance?.vscodeUrl]);
+  // WebSocket URL for direct VNC connection via noVNC/RFB
+  const resolvedVncWebsocketUrl = useMemo(() => {
+    return deriveVncWebsocketUrl(instance?.instanceId, instance?.vscodeUrl);
+  }, [instance?.instanceId, instance?.vscodeUrl]);
+
+  // VNC connection status for the browser panel (may be used for UI indicators in the future)
+  const [_vncStatus, setVncStatus] = useState<VncConnectionStatus>("disconnected");
 
   const workspacePlaceholder = useMemo(
     () =>
@@ -588,7 +604,7 @@ export function PreviewConfigureClient({
 
   const browserPlaceholder = useMemo(
     () =>
-      resolvedVncUrl
+      resolvedVncWebsocketUrl
         ? null
         : {
             title: instance?.instanceId
@@ -598,7 +614,7 @@ export function PreviewConfigureClient({
               ? "We'll embed the browser session as soon as the environment exposes it."
               : "Launch the workspace so the browser agent can stream the preview here.",
           },
-    [instance?.instanceId, resolvedVncUrl]
+    [instance?.instanceId, resolvedVncWebsocketUrl]
   );
 
   const provisionVM = useCallback(async () => {
@@ -934,8 +950,9 @@ export function PreviewConfigureClient({
     setCurrentConfigStep(step);
   }, []);
 
-  // Pre-create iframes during setup so they're ready when user clicks Next
-  // Using useLayoutEffect so iframes are created before the mount effect runs
+  // Pre-create VS Code iframe during setup so it's ready when user clicks Next
+  // Using useLayoutEffect so iframe is created before the mount effect runs
+  // Note: Browser VNC is now handled by VncViewer component, not iframe
   useLayoutEffect(() => {
     if (!instance || !persistentIframeManager) return;
 
@@ -948,23 +965,14 @@ export function PreviewConfigureClient({
         vscodeUrl.toString()
       );
     }
-
-    // Pre-create browser iframe if available
-    if (resolvedVncUrl) {
-      persistentIframeManager.getOrCreateIframe(
-        browserPersistKey,
-        resolvedVncUrl
-      );
-    }
   }, [
     instance,
     persistentIframeManager,
-    resolvedVncUrl,
     vscodePersistKey,
-    browserPersistKey,
   ]);
 
-  // Mount iframes to their targets when visible
+  // Mount VS Code iframe to its target when visible
+  // Note: Browser VNC is now handled by VncViewer component, not iframe
   useLayoutEffect(() => {
     if (!instance || !persistentIframeManager) return;
     // Only mount when in workspace-config layout
@@ -985,34 +993,19 @@ export function PreviewConfigureClient({
       }
     }
 
-    // Show browser for browser-setup step
-    if (resolvedVncUrl && currentConfigStep === "browser-setup") {
-      const target = document.querySelector(
-        `[data-iframe-target="${browserPersistKey}"]`
-      ) as HTMLElement | null;
-      if (target) {
-        cleanupFunctions.push(
-          persistentIframeManager.mountIframe(browserPersistKey, target, {
-            backgroundColor: "#000000",
-          })
-        );
-      }
-    }
-
     return () => {
       cleanupFunctions.forEach((fn) => fn());
     };
   }, [
-    browserPersistKey,
     instance,
     persistentIframeManager,
     currentConfigStep,
     layoutPhase,
-    resolvedVncUrl,
     vscodePersistKey,
   ]);
 
-  // Control iframe visibility based on current step and layout phase
+  // Control VS Code iframe visibility based on current step and layout phase
+  // Note: Browser VNC visibility is now handled by VncViewer component
   useEffect(() => {
     if (!persistentIframeManager) {
       return;
@@ -1023,17 +1016,12 @@ export function PreviewConfigureClient({
     // Show VSCode for steps before browser-setup
     const showVscode = currentConfigStep !== "browser-setup";
     const workspaceVisible = inWorkspaceConfig && showVscode && Boolean(instance?.vscodeUrl);
-    // Show browser for browser-setup step
-    const browserVisible = inWorkspaceConfig && currentConfigStep === "browser-setup" && Boolean(resolvedVncUrl);
 
     persistentIframeManager.setVisibility(vscodePersistKey, workspaceVisible);
-    persistentIframeManager.setVisibility(browserPersistKey, browserVisible);
   }, [
-    browserPersistKey,
     currentConfigStep,
     layoutPhase,
     persistentIframeManager,
-    resolvedVncUrl,
     instance?.vscodeUrl,
     vscodePersistKey,
   ]);
@@ -1063,10 +1051,29 @@ export function PreviewConfigureClient({
     // Show browser only for browser-setup step, VSCode for others
     const showBrowser = currentConfigStep === "browser-setup";
     const placeholder = showBrowser ? browserPlaceholder : workspacePlaceholder;
-    const iframeKey = showBrowser ? browserPersistKey : vscodePersistKey;
+
+    // Loading fallback for VNC viewer
+    const vncLoadingFallback = (
+      <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-neutral-400 border-t-transparent" />
+        <span className="text-sm text-neutral-400">
+          Connecting to browser preview...
+        </span>
+      </div>
+    );
+
+    // Error fallback for VNC viewer
+    const vncErrorFallback = (
+      <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center">
+        <span className="text-sm text-red-400">
+          Failed to connect to browser preview
+        </span>
+      </div>
+    );
 
     return (
       <div className="h-full flex flex-col overflow-hidden relative">
+        {/* Placeholder for VS Code or browser when not available */}
         {placeholder ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center text-neutral-500 dark:text-neutral-400">
             <div className="text-sm font-medium text-neutral-600 dark:text-neutral-200">
@@ -1079,13 +1086,38 @@ export function PreviewConfigureClient({
             ) : null}
           </div>
         ) : null}
-        <div
-          className={clsx(
-            "absolute inset-0",
-            placeholder ? "opacity-0" : "opacity-100"
-          )}
-          data-iframe-target={iframeKey}
-        />
+
+        {/* VS Code iframe (shown for non-browser-setup steps) */}
+        {!showBrowser && (
+          <div
+            className={clsx(
+              "absolute inset-0",
+              placeholder ? "opacity-0" : "opacity-100"
+            )}
+            data-iframe-target={vscodePersistKey}
+          />
+        )}
+
+        {/* VNC Viewer for browser preview (shown for browser-setup step) */}
+        {showBrowser && resolvedVncWebsocketUrl && (
+          <VncViewer
+            url={resolvedVncWebsocketUrl}
+            className={clsx(
+              "absolute inset-0",
+              browserPlaceholder ? "opacity-0" : "opacity-100"
+            )}
+            background="#000000"
+            scaleViewport
+            autoConnect
+            autoReconnect
+            reconnectDelay={1000}
+            maxReconnectDelay={30000}
+            focusOnClick
+            onStatusChange={setVncStatus}
+            loadingFallback={vncLoadingFallback}
+            errorFallback={vncErrorFallback}
+          />
+        )}
       </div>
     );
   };
