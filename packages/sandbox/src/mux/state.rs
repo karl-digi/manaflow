@@ -75,7 +75,7 @@ fn ensure_sandbox_ssh_key(ssh_dir: &std::path::Path) -> Result<std::path::PathBu
 /// Ensures ~/.ssh/config has the sandbox-* host configuration.
 /// Also generates a dedicated passwordless SSH key for sandbox access.
 /// Returns the status of what happened.
-fn ensure_ssh_config_for_sandboxes() -> SshConfigStatus {
+fn ensure_ssh_config_for_sandboxes(base_url: &str) -> SshConfigStatus {
     let home = match std::env::var("HOME") {
         Ok(h) => h,
         Err(_) => return SshConfigStatus::Failed("HOME not set".to_string()),
@@ -134,11 +134,12 @@ Host sandbox-*
     StrictHostKeyChecking no
     UserKnownHostsFile /dev/null
     LogLevel ERROR
-    ProxyCommand {} _ssh-proxy $(echo %n | sed 's/sandbox-//')
+    ProxyCommand {} --base-url {} _ssh-proxy $(echo %n | sed 's/sandbox-//')
 "#,
         binary_name,
         key_path.display(),
-        binary_name
+        binary_name,
+        base_url
     );
 
     let mut file = match std::fs::OpenOptions::new()
@@ -374,7 +375,7 @@ impl<'a> MuxApp<'a> {
     ) -> Self {
         // Pre-generate SSH key for sandbox access so it's included in initial syncs
         // This ensures VS Code SSH works without additional setup
-        let _ = ensure_ssh_config_for_sandboxes();
+        let _ = ensure_ssh_config_for_sandboxes(&base_url);
 
         Self {
             workspace_manager: WorkspaceManager::new(),
@@ -917,7 +918,7 @@ impl<'a> MuxApp<'a> {
                     let remote_path = "/workspace";
 
                     // Ensure SSH config is set up for sandbox-* hosts
-                    let config_status = ensure_ssh_config_for_sandboxes();
+                    let config_status = ensure_ssh_config_for_sandboxes(&self.base_url);
 
                     // Spawn VS Code with Remote-SSH extension
                     // Format: code --remote ssh-remote+<host> <path>
@@ -964,8 +965,10 @@ impl<'a> MuxApp<'a> {
                         .unwrap_or_else(|| "dmux".to_string());
 
                     // Spawn the browser command in background, suppressing output
+                    // Pass base_url via env var so it connects to the same backend
                     match std::process::Command::new(&binary_name)
                         .args(["browser", &sandbox_id.to_string()])
+                        .env("CMUX_SANDBOX_URL", &self.base_url)
                         .stdout(std::process::Stdio::null())
                         .stderr(std::process::Stdio::null())
                         .spawn()
