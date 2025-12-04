@@ -46,7 +46,12 @@ export const createScreenshotSet = internalMutation({
       throw new Error("Task run not found for preview run");
     }
 
-    if (args.status === "completed" && args.images.length === 0) {
+    // Require images for completed status, unless model explicitly detected no UI changes
+    if (
+      args.status === "completed" &&
+      args.hasUiChanges !== false &&
+      args.images.length === 0
+    ) {
       throw new Error(
         "At least one screenshot is required for completed status"
       );

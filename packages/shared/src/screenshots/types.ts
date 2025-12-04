@@ -69,6 +69,7 @@ export const PreviewScreenshotUploadPayloadSchema = z.object({
   images: z.array(PreviewScreenshotStoredImageSchema).optional(),
   error: z.string().optional(),
   commitSha: z.string(),
+  hasUiChanges: z.boolean().optional(),
 });
 export type PreviewScreenshotUploadPayload = z.infer<
   typeof PreviewScreenshotUploadPayloadSchema

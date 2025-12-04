@@ -81,7 +81,8 @@ export const uploadPreviewScreenshot = httpAction(async (ctx, req) => {
     commitSha: image.commitSha,
   }));
 
-  if (payload.status === "completed") {
+  // Require images for completed status, unless model explicitly detected no UI changes
+  if (payload.status === "completed" && payload.hasUiChanges !== false) {
     if (!payload.images || payload.images.length === 0) {
       return jsonResponse(
         { code: 400, message: "At least one screenshot image is required" },
@@ -98,6 +99,7 @@ export const uploadPreviewScreenshot = httpAction(async (ctx, req) => {
       commitSha: payload.commitSha,
       error: payload.error,
       images: storedScreens,
+      hasUiChanges: payload.hasUiChanges,
     },
   );
 
