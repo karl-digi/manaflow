@@ -479,10 +479,11 @@ async function ensureTmuxSession({
   repoDir: string;
   previewRunId: Id<"previewRuns">;
 }): Promise<void> {
+  // Match the orchestrator: create session with -n main for the initial window
   const sessionCmd = [
-    "bash",
+    "zsh",
     "-lc",
-    `tmux has-session -t cmux 2>/dev/null || tmux new-session -d -s cmux -c ${singleQuote(repoDir)}`,
+    `tmux has-session -t cmux 2>/dev/null || tmux new-session -d -s cmux -c ${singleQuote(repoDir)} -n main`,
   ];
   const response = await execInstanceInstanceIdExecPost({
     client: morphClient,
@@ -500,6 +501,11 @@ async function ensureTmuxSession({
   }
 }
 
+// Constants matching the environment orchestrator script
+const CMUX_RUNTIME_DIR = "/var/tmp/cmux-scripts";
+const MAINTENANCE_WINDOW_NAME = "maintenance";
+const DEV_WINDOW_NAME = "dev";
+
 async function runScriptInTmuxWindow({
   morphClient,
   instanceId,
@@ -507,6 +513,7 @@ async function runScriptInTmuxWindow({
   windowName,
   scriptContent,
   previewRunId,
+  useSetE = true,
 }: {
   morphClient: ReturnType<typeof createMorphCloudClient>;
   instanceId: string;
@@ -514,24 +521,39 @@ async function runScriptInTmuxWindow({
   windowName: string;
   scriptContent: string;
   previewRunId: Id<"previewRuns">;
+  useSetE?: boolean;
 }): Promise<void> {
   const trimmed = scriptContent.trim();
   if (!trimmed) {
     return;
   }
 
-  const scriptBase64 = stringToBase64(trimmed);
+  // Create script wrapper matching the environment orchestrator format
+  const setFlags = useSetE ? "set -eux" : "set -ux";
+  const wrappedScript = `#!/bin/zsh
+${setFlags}
+cd ${repoDir}
+
+echo "=== ${windowName} Script Started at $(date) ==="
+${trimmed}
+${useSetE ? `echo "=== ${windowName} Script Completed at $(date) ==="` : ""}
+`;
+
+  const scriptBase64 = stringToBase64(wrappedScript);
+  const scriptPath = `${CMUX_RUNTIME_DIR}/${windowName}.sh`;
+
   const command = [
-    "bash",
+    "zsh",
     "-lc",
     [
-      `SESSION=\"cmux\"`,
+      `mkdir -p ${CMUX_RUNTIME_DIR}`,
+      `SESSION="cmux"`,
       `WINDOW=${singleQuote(windowName)}`,
-      `tmux has-session -t \"$SESSION\" 2>/dev/null || tmux new-session -d -s \"$SESSION\" -c ${singleQuote(repoDir)}`,
-      `tmux new-window -t \"$SESSION\" -n \"$WINDOW\" -c ${singleQuote(repoDir)}`,
-      `echo '${scriptBase64}' | base64 -d > /tmp/cmux-${windowName}.sh`,
-      `chmod +x /tmp/cmux-${windowName}.sh`,
-      `tmux send-keys -t \"$SESSION\":\"$WINDOW\" "bash /tmp/cmux-${windowName}.sh" C-m`,
+      `tmux has-session -t "$SESSION" 2>/dev/null || tmux new-session -d -s "$SESSION" -c ${singleQuote(repoDir)}`,
+      `tmux new-window -t "$SESSION" -n "$WINDOW" -c ${singleQuote(repoDir)}`,
+      `echo '${scriptBase64}' | base64 -d > ${singleQuote(scriptPath)}`,
+      `chmod +x ${singleQuote(scriptPath)}`,
+      `tmux send-keys -t "$SESSION":"$WINDOW" "zsh ${singleQuote(scriptPath)}" C-m`,
     ].join(" && "),
   ];
 
@@ -1164,9 +1186,10 @@ export async function runPreviewJob(
           morphClient,
           instanceId: instance.id,
           repoDir,
-          windowName: "maintenance",
+          windowName: MAINTENANCE_WINDOW_NAME,
           scriptContent: environment.maintenanceScript,
           previewRunId,
+          useSetE: true,
         });
       }
 
@@ -1175,9 +1198,10 @@ export async function runPreviewJob(
           morphClient,
           instanceId: instance.id,
           repoDir,
-          windowName: "devserver",
+          windowName: DEV_WINDOW_NAME,
           scriptContent: environment.devScript,
           previewRunId,
+          useSetE: false, // Dev script runs indefinitely, don't exit on error
         });
       }
 
