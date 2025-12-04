@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import clsx from "clsx";
+import { useNetwork } from "../hooks/use-network";
 
 // RFB type definition (copied from @novnc/novnc types to avoid static imports)
 // The actual module is dynamically imported to avoid top-level await issues
@@ -217,6 +218,8 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
     const [status, setStatus] = useState<VncConnectionStatus>("disconnected");
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
     const [reconnectAttempt, setReconnectAttempt] = useState(0);
+    const network = useNetwork();
+    const isOffline = !network.online;
 
     // Keep urlRef updated
     useEffect(() => {
@@ -445,6 +448,18 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
       currentReconnectDelayRef.current = reconnectDelay;
       connectInternal();
     }, [clearReconnectTimer, reconnectDelay, connectInternal]);
+
+    // Auto-reconnect when network comes back online
+    const prevOnlineRef = useRef(network.online);
+    useEffect(() => {
+      if (network.online && !prevOnlineRef.current) {
+        console.log("[VncViewer] Network back online, reconnecting...");
+        if (status === "error" || status === "disconnected") {
+          connect();
+        }
+      }
+      prevOnlineRef.current = network.online;
+    }, [network.online, status, connect]);
 
     // Public disconnect method
     const disconnect = useCallback(() => {
@@ -924,42 +939,74 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
       () => (
         <div className="absolute inset-0 flex items-center justify-center">
           <div className="flex flex-col items-center gap-3 text-center px-4">
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-red-500/10">
-              <svg
-                className="h-5 w-5 text-red-400"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={2}
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                />
-              </svg>
-            </div>
-            <div className="flex flex-col gap-1">
-              <span className="text-sm font-medium text-neutral-200">
-                Connection failed
-              </span>
-              {errorMessage && (
-                <span className="text-xs text-neutral-400 max-w-[280px]">
-                  {errorMessage}
-                </span>
-              )}
-            </div>
-            <button
-              type="button"
-              onClick={connect}
-              className="mt-1 rounded-md bg-neutral-700 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-600 transition-colors"
-            >
-              Retry connection
-            </button>
+            {isOffline ? (
+              // Network offline state
+              <>
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-amber-500/10">
+                  <svg
+                    className="h-5 w-5 text-amber-400"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M18.364 5.636a9 9 0 010 12.728m0 0l-2.829-2.829m2.829 2.829L21 21M15.536 8.464a5 5 0 010 7.072m0 0l-2.829-2.829m-4.243 2.829a4.978 4.978 0 01-1.414-2.83m-1.414 5.658a9 9 0 01-2.167-9.238m7.824 2.167a1 1 0 111.414 1.414m-1.414-1.414L3 3m8.293 8.293l1.414 1.414"
+                    />
+                  </svg>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <span className="text-sm font-medium text-neutral-200">
+                    Network offline
+                  </span>
+                  <span className="text-xs text-neutral-400 max-w-[280px]">
+                    Check your internet connection. Will reconnect automatically when online.
+                  </span>
+                </div>
+              </>
+            ) : (
+              // Server/connection error state
+              <>
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-red-500/10">
+                  <svg
+                    className="h-5 w-5 text-red-400"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                    />
+                  </svg>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <span className="text-sm font-medium text-neutral-200">
+                    Connection failed
+                  </span>
+                  {errorMessage && (
+                    <span className="text-xs text-neutral-400 max-w-[280px]">
+                      {errorMessage}
+                    </span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={connect}
+                  className="mt-1 rounded-md bg-neutral-700 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-600 transition-colors"
+                >
+                  Retry connection
+                </button>
+              </>
+            )}
           </div>
         </div>
       ),
-      [connect, errorMessage]
+      [connect, errorMessage, isOffline]
     );
 
     // Prevent Electron's context menu so noVNC can handle right-clicks
