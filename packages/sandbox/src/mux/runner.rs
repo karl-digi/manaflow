@@ -363,37 +363,6 @@ fn fallback_terminal_size() -> (u16, u16) {
     (fallback_rows, fallback_cols)
 }
 
-fn connect_active_pane_to_sandbox(
-    app: &MuxApp<'_>,
-    terminal_manager: &crate::mux::terminal::SharedTerminalManager,
-    sandbox_id: &str,
-) {
-    let Some(pane_id) = app.active_pane_id() else {
-        return;
-    };
-
-    if let Ok(guard) = terminal_manager.try_lock() {
-        if guard.is_connected(pane_id) {
-            return;
-        }
-    }
-
-    let (rows, cols) = preferred_size_for_pane(app, pane_id).unwrap_or_else(fallback_terminal_size);
-    let manager = terminal_manager.clone();
-    let event_tx = app.event_tx.clone();
-    let sandbox_id = sandbox_id.to_string();
-    let tab_id = app.workspace_manager.active_tab_id();
-
-    tokio::spawn(async move {
-        if let Err(e) = connect_to_sandbox(manager, pane_id, sandbox_id, tab_id, cols, rows).await {
-            let _ = event_tx.send(MuxEvent::Error(format!(
-                "Failed to connect to sandbox: {}",
-                e
-            )));
-        }
-    });
-}
-
 /// Process all pending sandbox connections from the queue.
 /// This connects terminals for ALL user-created sandboxes, not just the selected one.
 fn try_consume_pending_connection(
@@ -502,7 +471,7 @@ fn connect_sandbox_terminal(
         .get_workspace(sandbox_layout_id)
         .and_then(|ws| ws.active_tab())
         .and_then(|tab| tab.layout.find_pane(pane_id))
-        .and_then(|pane| pane_content_dimensions(pane))
+        .and_then(pane_content_dimensions)
         .unwrap_or_else(fallback_terminal_size);
 
     // Spawn terminal connection
@@ -542,15 +511,6 @@ fn pane_content_dimensions(pane: &crate::mux::layout::Pane) -> Option<(u16, u16)
     }
 
     Some((rows, cols))
-}
-
-fn preferred_size_for_pane(
-    app: &MuxApp<'_>,
-    pane_id: crate::mux::layout::PaneId,
-) -> Option<(u16, u16)> {
-    let tab = app.active_tab()?;
-    let pane = tab.layout.find_pane(pane_id)?;
-    pane_content_dimensions(pane)
 }
 
 fn sync_terminal_sizes(
