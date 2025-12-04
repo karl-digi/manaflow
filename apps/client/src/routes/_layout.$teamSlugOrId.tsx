@@ -37,7 +37,14 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId")({
       );
     });
     if (!teamMembership) {
-      throw redirect({ to: "/team-picker" });
+      // Redirect to no-access page with context about which team was requested
+      throw redirect({
+        to: "/no-access",
+        search: {
+          team: teamSlugOrId,
+          reason: "not-member",
+        },
+      });
     }
   },
   loader: async ({ params }) => {

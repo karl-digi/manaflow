@@ -411,17 +411,23 @@ export const postPreviewComment = internalAction({
       const commentSections: string[] = ["## Preview Screenshots"];
 
       // Build links row (under the heading)
+      // Note: Workspace and Dev Browser require authentication + team membership
+      // Diff Heatmap is accessible to anyone with repo access (uses 0github.com)
       const linkParts: string[] = [];
       if (workspaceUrl) {
-        linkParts.push(`[Open Workspace (1 hr expiry)](${workspaceUrl}?${UTM_PARAMS}&utm_content=workspace)`);
+        linkParts.push(`[Open Workspace (1 hr expiry) 🔐](${workspaceUrl}?${UTM_PARAMS}&utm_content=workspace)`);
       }
       if (devServerUrl) {
-        linkParts.push(`[Open Dev Browser (1 hr expiry)](${devServerUrl}?${UTM_PARAMS}&utm_content=dev_browser)`);
+        linkParts.push(`[Open Dev Browser (1 hr expiry) 🔐](${devServerUrl}?${UTM_PARAMS}&utm_content=dev_browser)`);
       }
       linkParts.push(`[Open Diff Heatmap](https://0github.com/${repoFullName}/pull/${prNumber}?${UTM_PARAMS}&utm_content=diff_heatmap)`);
 
       if (linkParts.length > 0) {
         commentSections.push(linkParts.join(" · "));
+        // Add access note if workspace/browser links are included
+        if (workspaceUrl || devServerUrl) {
+          commentSections.push(`_🔐 Workspace and Dev Browser require [cmux](${CMUX_BASE_URL}?${UTM_PARAMS}&utm_content=access_note) team membership. [Set up cmux](${CMUX_BASE_URL}?${UTM_PARAMS}&utm_content=setup_cta) for your own repos._`);
+        }
       }
 
       // Render the main screenshot section
