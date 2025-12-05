@@ -596,7 +596,7 @@ function MockGitHubPRBrowser() {
               <path d="M7 11V7a5 5 0 0 1 10 0v4" />
             </svg>
             <span className="text-neutral-300 truncate">
-              {activeTab === "github" ? "github.com/manaflow-ai/cmux/pull/1124" : "cmux.sh/workspace/reuse-preview-config"}
+              {activeTab === "github" ? "github.com/manaflow-ai/cmux/pull/1124" : "cmux.sh"}
             </span>
           </div>
         </div>
