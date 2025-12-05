@@ -26,6 +26,55 @@ type UseOpenWithActionsArgs = {
   networking?: NetworkingInfo;
 };
 
+/**
+ * Hook to open a local workspace directory in an editor.
+ * Used for local workspaces where we want to open VS Code directly.
+ */
+export function useOpenInLocalEditor() {
+  const { socket, availableEditors } = useSocket();
+
+  const openInEditor = useCallback(
+    (worktreePath: string): Promise<void> => {
+      return new Promise((resolve, reject) => {
+        if (!socket || !worktreePath) {
+          reject(new Error("Unable to open editor - no socket or path"));
+          return;
+        }
+
+        // Prefer VS Code, fallback to Cursor, then Windsurf
+        let editorToUse: "vscode" | "cursor" | "windsurf" = "vscode";
+        if (availableEditors) {
+          if (availableEditors.vscode) {
+            editorToUse = "vscode";
+          } else if (availableEditors.cursor) {
+            editorToUse = "cursor";
+          } else if (availableEditors.windsurf) {
+            editorToUse = "windsurf";
+          }
+        }
+
+        socket.emit(
+          "open-in-editor",
+          {
+            editor: editorToUse,
+            path: worktreePath,
+          },
+          (response) => {
+            if (response.success) {
+              resolve();
+            } else {
+              reject(new Error(response.error || "Failed to open editor"));
+            }
+          }
+        );
+      });
+    },
+    [socket, availableEditors]
+  );
+
+  return { openInEditor, isAvailable: Boolean(socket) };
+}
+
 export function useOpenWithActions({
   vscodeUrl,
   worktreePath,

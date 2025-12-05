@@ -7,7 +7,7 @@ import {
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { useArchiveTask } from "@/hooks/useArchiveTask";
 import { useResumeMorphWorkspace } from "@/hooks/useMorphWorkspace";
-import { useOpenWithActions } from "@/hooks/useOpenWithActions";
+import { useOpenWithActions, useOpenInLocalEditor } from "@/hooks/useOpenWithActions";
 import { useTaskRename } from "@/hooks/useTaskRename";
 import { isElectron } from "@/lib/electron";
 import { isFakeConvexId } from "@/lib/fakeConvexId";
@@ -512,6 +512,34 @@ function TaskTreeInner({
 
   const { archiveWithUndo, unarchive } = useArchiveTask(teamSlugOrId);
 
+  // Hook for opening local workspaces directly in VS Code
+  const { openInEditor } = useOpenInLocalEditor();
+
+  // Handle click for local workspaces - open VS Code directly
+  const handleLocalWorkspaceClick = useCallback(
+    (event: MouseEvent<HTMLAnchorElement>) => {
+      // Only handle for local workspaces with a worktree path
+      if (!task.isLocalWorkspace || !task.worktreePath) {
+        return; // Let default navigation happen
+      }
+
+      // Don't intercept if modifier keys are pressed
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      // Open VS Code directly
+      openInEditor(task.worktreePath).catch((error) => {
+        console.error("Failed to open local workspace in VS Code:", error);
+        toast.error("Failed to open workspace in VS Code");
+      });
+    },
+    [task.isLocalWorkspace, task.worktreePath, openInEditor]
+  );
+
   const {
     isRenaming,
     renameValue,
@@ -823,6 +851,11 @@ function TaskTreeInner({
                 }
                 if (isRenaming) {
                   event.preventDefault();
+                  return;
+                }
+                // For local workspaces, open VS Code directly instead of navigating
+                if (isLocalWorkspace && task.worktreePath) {
+                  handleLocalWorkspaceClick(event);
                   return;
                 }
                 handleToggle(event);
