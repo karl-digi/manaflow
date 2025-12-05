@@ -600,6 +600,19 @@ class PersistentIframeManager {
       return false;
     }
   }
+
+  reloadIframe(key: string): boolean {
+    const entry = this.iframes.get(key);
+    if (!entry) return false;
+
+    try {
+      entry.iframe.src = entry.url;
+      return true;
+    } catch (error) {
+      console.error(`Failed to reload iframe "${key}"`, error);
+      return false;
+    }
+  }
 }
 
 // Export singleton instance
