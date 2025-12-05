@@ -549,6 +549,8 @@ function DashboardComponent() {
         selectedAgents.length > 0 ? selectedAgents : DEFAULT_AGENTS;
 
       // Create task in Convex with storage IDs and task runs atomically
+      // Note: isCloudWorkspace is NOT set here - that's only for standalone workspaces without agents.
+      // isCloudMode (passed to socket) determines whether agents run in cloud vs local Docker.
       const { taskId, taskRunIds } = await createTask({
         teamSlugOrId,
         text: content?.text || taskDescription, // Use content.text which includes image references
@@ -556,7 +558,6 @@ function DashboardComponent() {
         baseBranch: envSelected ? undefined : branch,
         images: uploadedImages.length > 0 ? uploadedImages : undefined,
         environmentId,
-        isCloudWorkspace: envSelected ? true : isCloudMode,
         selectedAgents: agentsToSpawn,
       });
 

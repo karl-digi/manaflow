@@ -115,14 +115,15 @@ function sanitizeBranchName(input?: string | null): string | null {
   const trimmed = input.trim();
   if (!trimmed) return null;
   let normalized = trimmed;
+  // Strip "cmux/" prefix for display
   if (normalized.startsWith("cmux/")) {
     normalized = normalized.slice("cmux/".length).trim();
     if (!normalized) return null;
   }
-  const idx = normalized.lastIndexOf("-");
-  if (idx <= 0) return normalized;
-  const candidate = normalized.slice(0, idx);
-  return candidate || normalized;
+  // Note: Don't strip the suffix here - generatedBranchName already has it stripped by the backend
+  // (deriveGeneratedBranchName in taskRuns.ts). Only strip for raw branch names that still have
+  // the random suffix (e.g., baseBranch which may be "cmux/fix-bug-abc12").
+  return normalized;
 }
 
 function getTaskBranch(task: TaskWithGeneratedBranch): string | null {
@@ -803,10 +804,6 @@ function TaskTreeInner({
         default:
           return null;
       }
-    }
-
-    if (isLocalWorkspace || isCloudWorkspace) {
-      return null;
     }
 
     return task.isCompleted ? (
