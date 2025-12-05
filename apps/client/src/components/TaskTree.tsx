@@ -805,10 +805,6 @@ function TaskTreeInner({
       }
     }
 
-    if (isLocalWorkspace || isCloudWorkspace) {
-      return null;
-    }
-
     return task.isCompleted ? (
       <CheckCircle className="w-3 h-3 text-green-500" />
     ) : (
