@@ -1107,6 +1107,46 @@ export async function runPreviewJob(
       headSha: run.headSha,
     });
 
+    // Fetch the target branch from origin to ensure we have the latest remote state
+    // This is critical when the local branch exists but is behind origin
+    if (run.headRef) {
+      console.log("[preview-jobs] Fetching target branch from origin", {
+        previewRunId,
+        headRef: run.headRef,
+      });
+
+      const fetchBranchResponse = await execInstanceInstanceIdExecPost({
+        client: morphClient,
+        path: { instance_id: instance.id },
+        body: {
+          command: [
+            "git",
+            "-C",
+            repoDir,
+            "fetch",
+            "origin",
+            `${run.headRef}:refs/remotes/origin/${run.headRef}`,
+          ],
+        },
+      });
+
+      if (fetchBranchResponse.error || fetchBranchResponse.data?.exit_code !== 0) {
+        // Non-fatal: the branch might not exist on origin (e.g., fork PRs)
+        // We already ensured the commit is available via ensureCommitAvailable
+        console.warn("[preview-jobs] Failed to fetch target branch from origin (may not exist)", {
+          previewRunId,
+          headRef: run.headRef,
+          exitCode: fetchBranchResponse.data?.exit_code,
+          stderr: sliceOutput(fetchBranchResponse.data?.stderr),
+        });
+      } else {
+        console.log("[preview-jobs] Fetched target branch from origin", {
+          previewRunId,
+          headRef: run.headRef,
+        });
+      }
+    }
+
     console.log("[preview-jobs] Starting git checkout", {
       previewRunId,
       headSha: run.headSha,
