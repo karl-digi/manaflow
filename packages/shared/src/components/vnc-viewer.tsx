@@ -586,6 +586,9 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
         // Only handle if VNC is focused
         if (!isVncFocused()) return;
 
+        // Don't send keyboard events in view-only mode
+        if (viewOnly) return;
+
         const rfb = rfbRef.current;
         const code = e.code; // Use e.code for reliable key identification
 
@@ -795,7 +798,7 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
       return () => {
         document.removeEventListener("keydown", handleKeyDown, { capture: true });
       };
-    }, [clipboardPaste, sendKeyCombo, sendCtrlKey, isVncFocused]);
+    }, [clipboardPaste, sendKeyCombo, sendCtrlKey, isVncFocused, viewOnly]);
 
     // Fallback: Document-level paste event listener
     // Handles cases where keydown might not fire (e.g., Electron menu triggers paste)
@@ -807,6 +810,8 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
         // Only handle if VNC container has focus
         if (!container.contains(document.activeElement)) return;
         if (!rfbRef.current) return;
+        // Don't paste in view-only mode
+        if (viewOnly) return;
 
         const text =
           e.clipboardData?.getData("text/plain") ||
@@ -822,7 +827,7 @@ export const VncViewer = forwardRef<VncViewerHandle, VncViewerProps>(
       // Capture phase to intercept before other handlers
       document.addEventListener("paste", handleDocumentPaste, { capture: true });
       return () => document.removeEventListener("paste", handleDocumentPaste, { capture: true });
-    }, [clipboardPaste]);
+    }, [clipboardPaste, viewOnly]);
 
     // Focus the canvas
     const focus = useCallback(() => {
