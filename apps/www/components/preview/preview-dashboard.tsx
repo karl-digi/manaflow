@@ -401,6 +401,9 @@ function MockGitHubPRBrowser() {
   const [thumbsUpActive, setThumbsUpActive] = useState(false);
   const [rocketActive, setRocketActive] = useState(false);
 
+  // State for PR merged status
+  const [isPRMerged, setIsPRMerged] = useState(false);
+
   // Toggle expand/collapse for a task (only collapses, doesn't select)
   const toggleTaskExpanded = useCallback((taskId: string) => {
     setExpandedTasks(prev => {
@@ -623,15 +626,19 @@ function MockGitHubPRBrowser() {
               </h1>
             </div>
             <div className="flex items-center gap-2 mt-2">
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-[#238636] text-white">
+              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${isPRMerged ? "bg-[#8957e5]" : "bg-[#238636]"} text-white`}>
                 <svg className="h-3 w-3" viewBox="0 0 16 16" fill="currentColor">
-                  <path d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z" />
+                  {isPRMerged ? (
+                    <path d="M5.45 5.154A4.25 4.25 0 0 0 9.25 7.5h1.378a2.251 2.251 0 1 1 0 1.5H9.25A5.734 5.734 0 0 1 5 7.123v3.505a2.25 2.25 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.95-.218ZM4.25 13.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Zm8.5-4.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5ZM5 3.25a.75.75 0 1 0 0 .005V3.25Z" />
+                  ) : (
+                    <path d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z" />
+                  )}
                 </svg>
-                Merged
+                {isPRMerged ? "Merged" : "Open"}
               </span>
               <span className="text-sm text-[#7d8590]">
                 <a href="https://x.com/austinywang" target="_blank" rel="noopener noreferrer" className="text-[#e6edf3] font-medium hover:text-[#2f81f7] cursor-pointer">austinywang</a>
-                {" merged 14 commits into "}
+                {isPRMerged ? " merged 14 commits into " : " wants to merge 14 commits into "}
                 <span className="px-1.5 py-0.5 rounded-md bg-[#388bfd26] text-[#2f81f7] text-xs font-mono">main</span>
                 {" from "}
                 <span className="px-1.5 py-0.5 rounded-md bg-[#388bfd26] text-[#2f81f7] text-xs font-mono">cmux/reuse-preview...</span>
@@ -735,7 +742,7 @@ function MockGitHubPRBrowser() {
                       <div className="p-4 bg-[#0d1117]">
                         <h3 className="text-base font-semibold text-[#e6edf3] mb-2">Summary</h3>
                         <p className="text-sm text-[#e6edf3] mb-3">
-                          This PR refactors the preview config component to be reusable in the step-by-step wizard flow. The same form components are now shared between the initial setup page and the sidebar wizard.
+                          This PR refactors the preview config component to be reusable in the step-by-step wizard flow. The same form components are now shared between the initial setup page and the sidebar wizard. Feel free to click around and explore. There may be some Easter eggs &#123;-:
                         </p>
                         <h3 className="text-base font-semibold text-[#e6edf3] mb-2">Changes</h3>
                         <ul className="text-sm text-[#e6edf3] list-disc list-inside space-y-1">
@@ -831,17 +838,104 @@ function MockGitHubPRBrowser() {
                     </div>
 
                     <div className="flex items-center gap-1 mt-2">
-                      <button className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-[#30363d] bg-[#21262d] text-xs hover:bg-[#30363d] transition-colors">
+                      <button
+                        onClick={() => setThumbsUpActive(!thumbsUpActive)}
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs transition-colors ${
+                          thumbsUpActive
+                            ? "border-[#2f81f7] bg-[#388bfd1a] text-[#2f81f7]"
+                            : "border-[#30363d] bg-[#21262d] hover:bg-[#30363d]"
+                        }`}
+                      >
                         <span>👍</span>
-                        <span className="text-[#7d8590]">2</span>
+                        <span className={thumbsUpActive ? "text-[#2f81f7]" : "text-[#7d8590]"}>{thumbsUpActive ? 3 : 2}</span>
                       </button>
-                      <button className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-[#30363d] bg-[#21262d] text-xs hover:bg-[#30363d] transition-colors">
+                      <button
+                        onClick={() => setRocketActive(!rocketActive)}
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs transition-colors ${
+                          rocketActive
+                            ? "border-[#2f81f7] bg-[#388bfd1a] text-[#2f81f7]"
+                            : "border-[#30363d] bg-[#21262d] hover:bg-[#30363d]"
+                        }`}
+                      >
                         <span>🚀</span>
-                        <span className="text-[#7d8590]">1</span>
+                        <span className={rocketActive ? "text-[#2f81f7]" : "text-[#7d8590]"}>{rocketActive ? 2 : 1}</span>
                       </button>
                     </div>
                   </div>
                 </div>
+
+                {/* Merge button section - GitHub style */}
+                {!isPRMerged && (
+                  <div className="mt-4 flex gap-4">
+                    {/* PR merge icon */}
+                    <div className="shrink-0 w-10 h-10 rounded-lg bg-[#238636] flex items-center justify-center">
+                      <svg className="h-5 w-5 text-white" viewBox="0 0 16 16" fill="currentColor">
+                        <path d="M5.45 5.154A4.25 4.25 0 0 0 9.25 7.5h1.378a2.251 2.251 0 1 1 0 1.5H9.25A5.734 5.734 0 0 1 5 7.123v3.505a2.25 2.25 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.95-.218ZM4.25 13.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Zm8.5-4.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5ZM5 3.25a.75.75 0 1 0 0 .005V3.25Z" />
+                      </svg>
+                    </div>
+                    {/* Merge card */}
+                    <div className="flex-1 rounded-md border border-[#238636] overflow-hidden">
+                      {/* All checks passed */}
+                      <div className="px-4 py-3 border-b border-[#30363d] flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <svg className="h-5 w-5 text-[#238636]" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                            <circle cx="8" cy="8" r="6" />
+                            <path d="M5 8l2 2 4-4" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                          <div>
+                            <p className="text-sm font-medium text-[#e6edf3]">All checks have passed</p>
+                            <p className="text-xs text-[#7d8590]">1 neutral, 5 successful checks</p>
+                          </div>
+                        </div>
+                        <ChevronDown className="h-4 w-4 text-[#7d8590]" />
+                      </div>
+                      {/* No conflicts */}
+                      <div className="px-4 py-3 border-b border-[#30363d] flex items-center gap-3">
+                        <svg className="h-5 w-5 text-[#238636]" viewBox="0 0 16 16" fill="currentColor">
+                          <path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z" />
+                        </svg>
+                        <div>
+                          <p className="text-sm font-medium text-[#e6edf3]">No conflicts with base branch</p>
+                          <p className="text-xs text-[#7d8590]">Merging can be performed automatically.</p>
+                        </div>
+                      </div>
+                      {/* Merge button row */}
+                      <div className="px-4 py-3 bg-[#161b22] flex items-center gap-3">
+                        <div className="flex">
+                          <button
+                            onClick={() => setIsPRMerged(true)}
+                            className="px-4 py-1.5 bg-[#238636] hover:bg-[#2ea043] text-white text-sm font-medium rounded-l-md transition-colors"
+                          >
+                            Merge pull request
+                          </button>
+                          <button className="px-2 py-1.5 bg-[#238636] hover:bg-[#2ea043] text-white border-l border-[#2ea043] rounded-r-md transition-colors">
+                            <ChevronDown className="h-4 w-4" />
+                          </button>
+                        </div>
+                        <span className="text-xs text-[#7d8590]">
+                          You can also merge this with the command line.{" "}
+                          <span className="text-[#2f81f7] hover:underline cursor-pointer">View command line instructions.</span>
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {isPRMerged && (
+                  <div className="mt-4 flex gap-4">
+                    {/* Purple merge icon */}
+                    <div className="shrink-0 w-10 h-10 rounded-full bg-[#8957e5] flex items-center justify-center">
+                      <svg className="h-5 w-5 text-white" viewBox="0 0 16 16" fill="currentColor">
+                        <path d="M5.45 5.154A4.25 4.25 0 0 0 9.25 7.5h1.378a2.251 2.251 0 1 1 0 1.5H9.25A5.734 5.734 0 0 1 5 7.123v3.505a2.25 2.25 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.95-.218ZM4.25 13.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Zm8.5-4.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5ZM5 3.25a.75.75 0 1 0 0 .005V3.25Z" />
+                      </svg>
+                    </div>
+                    {/* Merged card */}
+                    <div className="flex-1 rounded-md border border-[#8957e5] bg-[#0d1117] p-4">
+                      <p className="text-sm font-semibold text-[#e6edf3]">Pull request successfully merged and closed</p>
+                      <p className="text-sm text-[#7d8590] mt-1">You&apos;re all set — the branch has been merged.</p>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -1056,7 +1150,13 @@ function MockGitHubPRBrowser() {
                             <ChevronRight className="w-3 h-3 text-neutral-500" />
                           )}
                         </span>
-                        <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0" />
+                        {isPRMerged ? (
+                          <svg className="w-3 h-3 text-[#8957e5] shrink-0" viewBox="0 0 16 16" fill="currentColor">
+                            <path d="M5.45 5.154A4.25 4.25 0 0 0 9.25 7.5h1.378a2.251 2.251 0 1 1 0 1.5H9.25A5.734 5.734 0 0 1 5 7.123v3.505a2.25 2.25 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.95-.218ZM4.25 13.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Zm8.5-4.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5ZM5 3.25a.75.75 0 1 0 0 .005V3.25Z" />
+                          </svg>
+                        ) : (
+                          <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0" />
+                        )}
                         <div className="flex flex-col min-w-0 text-left">
                           <span className="truncate">Preview screenshots for PR #1168</span>
                           <span className="text-[11px] text-neutral-500 truncate">main &bull; manaflow-ai/cmux</span>
@@ -1072,7 +1172,13 @@ function MockGitHubPRBrowser() {
                               selectedTaskId === "task-1" && viewMode === "all" ? "bg-neutral-800/50 text-neutral-100" : "text-neutral-300"
                             )}
                           >
-                            <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0" />
+                            {isPRMerged ? (
+                              <svg className="w-3 h-3 text-[#8957e5] shrink-0" viewBox="0 0 16 16" fill="currentColor">
+                                <path d="M5.45 5.154A4.25 4.25 0 0 0 9.25 7.5h1.378a2.251 2.251 0 1 1 0 1.5H9.25A5.734 5.734 0 0 1 5 7.123v3.505a2.25 2.25 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.95-.218ZM4.25 13.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Zm8.5-4.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5ZM5 3.25a.75.75 0 1 0 0 .005V3.25Z" />
+                              </svg>
+                            ) : (
+                              <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0" />
+                            )}
                             <span className="truncate">screenshot-collector</span>
                           </button>
                           <button
@@ -1361,14 +1467,18 @@ function MockGitHubPRBrowser() {
                       <div className="flex"><div className="pr-3 text-[#858585] select-none text-right w-8">10</div><div></div></div>
                       <div className="flex"><div className="pr-3 text-[#858585] select-none text-right w-8">11</div><div className="text-[#6a9955]">## What is cmux?</div></div>
                       <div className="flex"><div className="pr-3 text-[#858585] select-none text-right w-8">12</div><div></div></div>
-                      <div className="flex"><div className="pr-3 text-[#858585] select-none text-right w-8">13</div><div>It&apos;s basically Linear for Claude Code.</div></div>
+                      <div className="flex"><div className="pr-3 text-[#858585] select-none text-right w-8">13</div><div>It&apos;s basically Linear for Claude Code</div></div>
                       <div className="flex"><div className="pr-3 text-[#858585] select-none text-right w-8">14</div><div></div></div>
-                      <div className="flex"><div className="pr-3 text-[#858585] select-none text-right w-8">15</div><div>A universal AI coding agent manager.</div></div>
+                      <div className="flex"><div className="pr-3 text-[#858585] select-none text-right w-8">15</div><div>also supports Codex, Gemini, & more...</div></div>
                       <div className="flex"><div className="pr-3 text-[#858585] select-none text-right w-8">16</div><div></div></div>
-                      <div className="flex"><div className="pr-3 text-[#858585] select-none text-right w-8">17</div><div className="text-[#6a9955]">## About Manaflow</div></div>
+                      <div className="flex"><div className="pr-3 text-[#858585] select-none text-right w-8">17</div><div>it's a universal AI coding agent manager</div></div>
                       <div className="flex"><div className="pr-3 text-[#858585] select-none text-right w-8">18</div><div></div></div>
-                      <div className="flex"><div className="pr-3 text-[#858585] select-none text-right w-8">19</div><div>We build interfaces to manage AI agents.</div></div>
+                      <div className="flex"><div className="pr-3 text-[#858585] select-none text-right w-8">19</div><div>today, preview.new screenshot agent runs on cmux</div></div>
+                      <div className="flex"><div className="pr-3 text-[#858585] select-none text-right w-8">0</div><div></div></div>
+                      <div className="flex"><div className="pr-3 text-[#858585] select-none text-right w-8">19</div><div className="text-[#6a9955]">## About Manaflow</div></div>
                       <div className="flex"><div className="pr-3 text-[#858585] select-none text-right w-8">20</div><div></div></div>
+                      <div className="flex"><div className="pr-3 text-[#858585] select-none text-right w-8">21</div><div>We build interfaces to manage AI agents.</div></div>
+ 
                     </div>
                   </div>
                 </div>
@@ -1721,7 +1831,7 @@ function MockGitHubPRBrowser() {
                         <div className="flex"><div className="pr-4 text-[#858585] select-none text-right w-10">6</div><div>- Browse files in the explorer</div></div>
                         <div className="flex"><div className="pr-4 text-[#858585] select-none text-right w-10">7</div><div>- Check out the git diff view</div></div>
                         <div className="flex"><div className="pr-4 text-[#858585] select-none text-right w-10">8</div><div>- View the browser preview</div></div>
-                        <div className="flex"><div className="pr-4 text-[#858585] select-none text-right w-10">9</div><div>- Switch between tmux sessions</div></div>
+                        <div className="flex"><div className="pr-4 text-[#858585] select-none text-right w-10">9</div><div>- Navigate the terminal</div></div>
                         <div className="flex"><div className="pr-4 text-[#858585] select-none text-right w-10">10</div><div></div></div>
                         <div className="flex"><div className="pr-4 text-[#858585] select-none text-right w-10">11</div><div className="text-[#6a9955]">## What is cmux?</div></div>
                         <div className="flex"><div className="pr-4 text-[#858585] select-none text-right w-10">12</div><div></div></div>
@@ -2073,15 +2183,15 @@ function MockGitHubPRBrowser() {
                       {activeTmuxSession === 2 && (
                         <>
                           <div><span className="text-[#f0883e]">[SERVER]</span> <span className="text-[#8b949e]">[native.refs]</span> <span className="text-[#c9d1d9]">start headRefOrigin/cmux/add-mock-example-to-preview-front-page</span></div>
-                          <div><span className="text-[#f0883e]">[SERVER]</span> <span className="text-[#8b949e]">[native.refs]</span> <span className="text-[#c9d1d9]">M01b6b25bef...d8fcfc524cbc</span></div>
+                          <div><span className="text-[#f0883e]">[SERVER]</span> <span className="text-[#8b949e]">[native.refs]</span> <span className="text-[#c9d1d9]">adfasdfadfa...asdfasdfasdfadsf</span></div>
                           <div><span className="text-[#58a6ff]">[WWW]</span> <span className="text-[#c9d1d9]">Request url: http://localhost:9779/api/iframe/preflight</span></div>
                           <div><span className="text-[#58a6ff]">[WWW]</span> <span className="text-[#7ee787]">--&gt;</span> <span className="text-[#c9d1d9]">OPTIONS /api/iframe/preflight</span> <span className="text-[#7ee787]">204</span> <span className="text-[#8b949e]">0ms</span></div>
                           <div><span className="text-[#58a6ff]">[WWW]</span> <span className="text-[#7ee787]">--&gt;</span> <span className="text-[#c9d1d9]">GET /api/iframe/preflight</span> <span className="text-[#7ee787]">200</span> <span className="text-[#8b949e]">in 41ms</span></div>
                           <div><span className="text-[#58a6ff]">[WWW]</span> <span className="text-[#7ee787]">--&gt;</span> <span className="text-[#c9d1d9]">GET /api/iframe/preflight?url=...morphvn</span> <span className="text-[#7ee787]">200</span> <span className="text-[#8b949e]">in 720ms</span></div>
                           <div className="mt-1" />
                           <div><span className="text-[#a371f7]">[CONVEX-DEV]</span> <span className="text-[#8b949e]">12/5/2025, 9:30:48 AM</span> <span className="text-[#c9d1d9]">[LOG] &apos;preview-jobs-http&apos; Completing preview job</span></div>
-                          <div><span className="text-[#a371f7]">[CONVEX-DEV]</span> <span className="text-[#c9d1d9]">  taskRunId: &apos;kd78pgdxr8fgnq89tvf5hytc6h7wp98d&apos;,</span></div>
-                          <div><span className="text-[#a371f7]">[CONVEX-DEV]</span> <span className="text-[#c9d1d9]">  previewRunId: &apos;rx7cje13yy4kxv34bh59fg82a97xagpt&apos;,</span></div>
+                          <div><span className="text-[#a371f7]">[CONVEX-DEV]</span> <span className="text-[#c9d1d9]">  taskRunId: &apos;adfasdfasdfasdfasdfasdfasdfasdfasdfasdf&apos;,</span></div>
+                          <div><span className="text-[#a371f7]">[CONVEX-DEV]</span> <span className="text-[#c9d1d9]">  previewRunId: &apos;adsfsadfasdfasdfasdfasdf&apos;,</span></div>
                           <div><span className="text-[#a371f7]">[CONVEX-DEV]</span> <span className="text-[#c9d1d9]">  imageCount: 8</span></div>
                           <div className="mt-1" />
                           <div><span className="text-[#a371f7]">[CONVEX-DEV]</span> <span className="text-[#8b949e]">12/5/2025, 9:30:51 AM</span> <span className="text-[#7ee787]">[LOG] Successfully posted preview comment</span></div>
@@ -2090,9 +2200,14 @@ function MockGitHubPRBrowser() {
                           <div className="mt-1" />
                           <div><span className="text-[#79c0ff]">[CLIENT]</span> <span className="text-[#8b949e]">9:33:46 AM</span> <span className="text-[#c9d1d9]">[vite] (client) hmr update /src/index.css</span></div>
                           <div><span className="text-[#79c0ff]">[CLIENT]</span> <span className="text-[#8b949e]">9:34:28 AM</span> <span className="text-[#c9d1d9]">[vite] (client) hmr update /src/components/TaskTree.tsx</span></div>
-                          <div className="mt-1" />
-                          <div><span className="text-[#a371f7]">[CONVEX-DEV]</span> <span className="text-[#8b949e]">12/5/2025, 9:40:44 AM</span> <span className="text-[#c9d1d9]">[LOG] &apos;PR merge handler&apos; Processing PR event</span></div>
-                          <div><span className="text-[#a371f7]">[CONVEX-DEV]</span> <span className="text-[#c9d1d9]">  prNumber: 1189, isMerged: true, action: &apos;closed&apos;</span></div>
+                          {isPRMerged && (
+                            <>
+                              <div className="mt-1" />
+                              <div><span className="text-[#a371f7]">[CONVEX-DEV]</span> <span className="text-[#8b949e]">12/5/2025, 9:40:44 AM</span> <span className="text-[#c9d1d9]">[LOG] &apos;PR merge handler&apos; Processing PR event</span></div>
+                              <div><span className="text-[#a371f7]">[CONVEX-DEV]</span> <span className="text-[#c9d1d9]">  prNumber: 1168, isMerged: true, action: &apos;closed&apos;</span></div>
+                              <div><span className="text-[#a371f7]">[CONVEX-DEV]</span> <span className="text-[#c9d1d9]">  Manaflow is always looking for the very best engineering talent. Please austin[at]manaflow.com to find the perfect fit. </span></div>
+                            </>
+                          )}
                         </>
                       )}
                     </div>
