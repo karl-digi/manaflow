@@ -5,6 +5,7 @@ import { stackServerAppJs } from "@/lib/utils/stack";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { env } from "@/lib/utils/www-env";
 import { api } from "@cmux/convex/api";
+import type { Id } from "@cmux/convex/dataModel";
 import { RESERVED_CMUX_PORT_SET } from "@cmux/shared/utils/reserved-cmux-ports";
 import { parseGithubRepoUrl } from "@cmux/shared/utils/parse-github-repo-url";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
@@ -58,6 +59,7 @@ const StartSandboxResponse = z
     vscodeUrl: z.string(),
     workerUrl: z.string(),
     provider: z.enum(["morph"]).default("morph"),
+    vscodePersisted: z.boolean().optional(),
   })
   .openapi("StartSandboxResponse");
 
@@ -243,6 +245,35 @@ sandboxesRouter.openapi(
         return c.text("VSCode or worker service not found", 500);
       }
 
+      // OPTIMIZATION: Immediately persist VSCode URLs to Convex (status="starting")
+      // This allows frontend to show VSCode iframe while hydration continues
+      let vscodePersisted = false;
+      if (body.taskRunId) {
+        try {
+          await convex.mutation(api.taskRuns.updateVSCodeInstance, {
+            teamSlugOrId: body.teamSlugOrId,
+            id: body.taskRunId as Id<"taskRuns">,
+            vscode: {
+              provider: "morph",
+              containerName: instance.id,
+              status: "starting",
+              url: vscodeService.url,
+              workspaceUrl: `${vscodeService.url}/?folder=/root/workspace`,
+              startedAt: Date.now(),
+            },
+          });
+          vscodePersisted = true;
+          console.log(
+            `[sandboxes.start] Persisted initial VSCode info for ${body.taskRunId}`,
+          );
+        } catch (error) {
+          console.error(
+            "[sandboxes.start] Failed to persist initial VSCode info (non-fatal):",
+            error,
+          );
+        }
+      }
+
       // Get environment variables from the environment if configured
       const environmentEnvVarsContent = await environmentEnvVarsPromise;
 
@@ -341,6 +372,22 @@ sandboxesRouter.openapi(
         return c.text("Failed to hydrate sandbox", 500);
       }
 
+      // Update status to "running" after hydration completes
+      if (body.taskRunId && vscodePersisted) {
+        void convex
+          .mutation(api.taskRuns.updateVSCodeStatus, {
+            teamSlugOrId: body.teamSlugOrId,
+            id: body.taskRunId as Id<"taskRuns">,
+            status: "running",
+          })
+          .catch((error) => {
+            console.error(
+              "[sandboxes.start] Failed to update VSCode status to running:",
+              error,
+            );
+          });
+      }
+
       if (maintenanceScript || devScript) {
         (async () => {
           await runMaintenanceAndDevScripts({
@@ -367,6 +414,7 @@ sandboxesRouter.openapi(
         vscodeUrl: vscodeService.url,
         workerUrl: workerService.url,
         provider: "morph",
+        vscodePersisted,
       });
     } catch (error) {
       if (error instanceof HTTPException) {

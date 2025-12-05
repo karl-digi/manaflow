@@ -77,10 +77,14 @@ export class CmuxVSCodeInstance extends VSCodeInstance {
     this.vscodeBaseUrl = data.vscodeUrl;
     this.workerUrl = data.workerUrl;
     this.provider = data.provider || "morph";
+    const vscodePersisted = data.vscodePersisted ?? false;
 
     const workspaceUrl = this.getWorkspaceUrl(this.vscodeBaseUrl);
     dockerLogger.info(`[CmuxVSCodeInstance] VS Code URL: ${workspaceUrl}`);
     dockerLogger.info(`[CmuxVSCodeInstance] Worker URL: ${this.workerUrl}`);
+    dockerLogger.info(
+      `[CmuxVSCodeInstance] VSCode persisted by www: ${vscodePersisted}`
+    );
 
     // Connect to the worker if available
     if (this.workerUrl) {
@@ -103,6 +107,7 @@ export class CmuxVSCodeInstance extends VSCodeInstance {
       instanceId: this.instanceId,
       taskRunId: this.taskRunId,
       provider: this.provider,
+      vscodePersisted,
     };
   }
 

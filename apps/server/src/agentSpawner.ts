@@ -533,21 +533,28 @@ export async function spawnAgent(
     }
 
     // Update VSCode instance information in Convex (retry on OCC)
-    await retryOnOptimisticConcurrency(() =>
-      getConvex().mutation(api.taskRuns.updateVSCodeInstance, {
-        teamSlugOrId,
-        id: taskRunId,
-        vscode: {
-          provider: vscodeInfo.provider,
-          containerName: vscodeInstance.getName(),
-          status: "running",
-          url: vscodeInfo.url,
-          workspaceUrl: vscodeInfo.workspaceUrl,
-          startedAt: Date.now(),
-          ...(ports ? { ports } : {}),
-        },
-      })
-    );
+    // Skip if www already persisted the VSCode info (cloud mode optimization)
+    if (!vscodeInfo.vscodePersisted) {
+      await retryOnOptimisticConcurrency(() =>
+        getConvex().mutation(api.taskRuns.updateVSCodeInstance, {
+          teamSlugOrId,
+          id: taskRunId,
+          vscode: {
+            provider: vscodeInfo.provider,
+            containerName: vscodeInstance.getName(),
+            status: "running",
+            url: vscodeInfo.url,
+            workspaceUrl: vscodeInfo.workspaceUrl,
+            startedAt: Date.now(),
+            ...(ports ? { ports } : {}),
+          },
+        })
+      );
+    } else {
+      serverLogger.info(
+        `[AgentSpawner] Skipping updateVSCodeInstance - already persisted by www`
+      );
+    }
 
     // Use taskRunId as terminal ID for compatibility
     const terminalId = taskRunId;
