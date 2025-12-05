@@ -395,6 +395,22 @@ export const postPreviewComment = internalAction({
 
       const octokit = createOctokit(accessToken);
 
+      // Check if PR is still open before posting comment
+      const prData = await octokit.rest.pulls.get({
+        owner: repo.owner,
+        repo: repo.repo,
+        pull_number: prNumber,
+      });
+
+      if (prData.data.state !== "open") {
+        console.log("[github_pr_comments] PR is not open, skipping comment", {
+          prNumber,
+          state: prData.data.state,
+          merged: prData.data.merged,
+        });
+        return { ok: false, error: `PR is ${prData.data.state}` };
+      }
+
       const screenshotSet = await ctx.runQuery(
         internal.previewScreenshots.getScreenshotSet,
         { screenshotSetId },
