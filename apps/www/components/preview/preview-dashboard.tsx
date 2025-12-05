@@ -7,7 +7,6 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
-  Circle,
   Code,
   Download,
   ExternalLink,
@@ -19,7 +18,6 @@ import {
   Home,
   Link2,
   Loader2,
-  Maximize2,
   Monitor,
   Pencil,
   Plus,
@@ -369,19 +367,53 @@ const MOCK_SCREENSHOTS: MockScreenshot[] = [
 ];
 
 // Height for both tab contents (consistent across tabs)
-const MOCK_BROWSER_CONTENT_HEIGHT = 829;
+const MOCK_BROWSER_CONTENT_HEIGHT = 705; // Reduced by 15%
 
 function MockGitHubPRBrowser() {
   const [expandedImage, setExpandedImage] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"github" | "workspace">("github");
   const [activePRTab, setActivePRTab] = useState<"conversation" | "commits" | "checks" | "files">("conversation");
 
-  // State for collapsed git diff files
-  const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set(["file3"]));
+  // State for collapsed git diff files (empty = all expanded by default)
+  const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set());
 
   // State for resizable panels (percentages)
   const [leftPanelWidth, setLeftPanelWidth] = useState(55); // Workspace panel width %
   const [topPanelHeight, setTopPanelHeight] = useState(50); // Browser panel height %
+
+  // State for view mode: "all" shows three-panel layout, others show single panel
+  type ViewMode = "all" | "workspace" | "browser" | "gitDiff";
+  const [viewMode, setViewMode] = useState<ViewMode>("all");
+
+  // State for expanded tasks in sidebar (Set allows multiple tasks to be expanded independently)
+  const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set(["task-1"]));
+
+  // State for which task is currently selected/active
+  const [selectedTaskId, setSelectedTaskId] = useState<string>("task-1");
+
+  // Toggle expand/collapse for a task (only collapses, doesn't select)
+  const toggleTaskExpanded = useCallback((taskId: string) => {
+    setExpandedTasks(prev => {
+      const next = new Set(prev);
+      if (next.has(taskId)) {
+        next.delete(taskId);
+      } else {
+        next.add(taskId);
+      }
+      return next;
+    });
+  }, []);
+
+  // Select a task: expands it, sets it as selected, and shows 3-panel view
+  const selectTask = useCallback((taskId: string) => {
+    setExpandedTasks(prev => {
+      const next = new Set(prev);
+      next.add(taskId); // Always expand, never collapse when selecting
+      return next;
+    });
+    setSelectedTaskId(taskId);
+    setViewMode("all");
+  }, []);
 
   // Refs for resize handling
   const containerRef = useRef<HTMLDivElement>(null);
@@ -403,8 +435,8 @@ function MockGitHubPRBrowser() {
   const handleHorizontalResize = useCallback((e: MouseEvent) => {
     if (!isResizingHorizontal.current || !containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
-    // Account for sidebar width (220px)
-    const sidebarWidth = 220;
+    // Account for sidebar width (280px)
+    const sidebarWidth = 280;
     const availableWidth = rect.width - sidebarWidth;
     const relativeX = e.clientX - rect.left - sidebarWidth;
     const newWidth = Math.min(Math.max((relativeX / availableWidth) * 100, 30), 70);
@@ -465,7 +497,7 @@ function MockGitHubPRBrowser() {
   return (
     <div className="pt-12 w-screen relative left-1/2 -translate-x-1/2 px-4">
       {/* Browser window frame - wider than container */}
-      <div className="rounded-xl border border-neutral-700 bg-[#202124] overflow-hidden shadow-2xl max-w-[1400px] mx-auto">
+      <div className="rounded-xl border border-neutral-700 bg-[#202124] overflow-hidden shadow-2xl max-w-[1190px] mx-auto">
         {/* Chrome-style tab bar */}
         <div className="flex items-end h-10 bg-[#202124] pt-2 px-2">
           {/* Traffic lights */}
@@ -956,7 +988,7 @@ function MockGitHubPRBrowser() {
         ) : (
           <div ref={containerRef} className="bg-neutral-900 flex" style={{ height: MOCK_BROWSER_CONTENT_HEIGHT }}>
             {/* Left Sidebar - cmux style */}
-            <div className="w-[220px] bg-neutral-950 border-r border-neutral-800 flex flex-col shrink-0">
+            <div className="w-[280px] bg-neutral-950 border-r border-neutral-800 flex flex-col shrink-0">
               {/* Header with logo */}
               <div className="h-[38px] flex items-center px-3 shrink-0">
                 <CmuxLogo height={28} wordmarkText="cmux.dev" />
@@ -995,73 +1027,251 @@ function MockGitHubPRBrowser() {
                   <div className="pl-2 ml-2 pr-3 py-0.5 text-[12px] font-medium text-neutral-300 cursor-pointer hover:bg-neutral-800/45 rounded-sm mx-1">
                     Previews
                   </div>
-                  <div className="ml-2 pt-px">
-                    {/* Preview task item */}
+                  <div className="ml-2 pt-px space-y-px">
+                    {/* Preview task 1 - Completed (green) */}
                     <div className="space-y-px">
-                      <div className="mx-1 flex items-center gap-2 rounded-sm pl-2 ml-2 pr-3 py-1 text-[13px] text-neutral-100 hover:bg-neutral-800/45 cursor-pointer">
-                        <ChevronDown className="w-3 h-3 text-neutral-500" />
-                        <Circle className="w-3 h-3 text-neutral-400" />
-                        <div className="flex flex-col min-w-0">
+                      <button
+                        onClick={() => toggleTaskExpanded("task-1")}
+                        className="w-full mx-1 flex items-center gap-2 rounded-sm pl-2 ml-2 pr-3 py-1.5 text-[13px] text-neutral-100 hover:bg-neutral-800/45 cursor-pointer"
+                      >
+                        {expandedTasks.has("task-1") ? (
+                          <ChevronDown className="w-3 h-3 text-neutral-500 shrink-0" />
+                        ) : (
+                          <ChevronRight className="w-3 h-3 text-neutral-500 shrink-0" />
+                        )}
+                        <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0" />
+                        <div className="flex flex-col min-w-0 text-left">
                           <span className="truncate">Preview screenshots for PR #1168</span>
                           <span className="text-[11px] text-neutral-500 truncate">main &bull; manaflow-ai/cmux</span>
                         </div>
-                      </div>
+                      </button>
 
-                      {/* screenshot-collector run */}
-                      <div className="ml-4">
-                        <div className="mx-1 flex items-center gap-2 rounded-sm pl-2 ml-2 pr-3 py-1 text-[13px] text-neutral-300 hover:bg-neutral-800/45 cursor-pointer">
-                          <ChevronDown className="w-3 h-3 text-neutral-500" />
-                          <Circle className="w-3 h-3 text-neutral-400" />
-                          <span>screenshot-collector</span>
+                      {expandedTasks.has("task-1") && (
+                        <div className="ml-4">
+                          <button
+                            onClick={() => setViewMode("all")}
+                            className={clsx(
+                              "w-full mx-1 flex items-center gap-2 rounded-sm pl-2 ml-2 pr-3 py-1 text-[13px] text-left",
+                              viewMode === "all" ? "bg-neutral-800/50 text-neutral-100" : "text-neutral-300 hover:bg-neutral-800/30"
+                            )}
+                          >
+                            <div className="w-3 h-3 shrink-0" />
+                            <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0" />
+                            <span className="truncate">screenshot-collector</span>
+                          </button>
+                          <div className="ml-6 space-y-px">
+                            <button
+                              onClick={() => setViewMode("workspace")}
+                              className={clsx(
+                                "w-full flex items-center gap-2 px-2 py-1 text-xs rounded-md cursor-pointer ml-2 text-left",
+                                viewMode === "workspace" ? "bg-neutral-800 text-white" : "hover:bg-neutral-800/45 text-neutral-400"
+                              )}
+                            >
+                              <Code className="w-3 h-3 shrink-0" />
+                              <span>VS Code</span>
+                            </button>
+                            <button
+                              onClick={() => setViewMode("gitDiff")}
+                              className={clsx(
+                                "w-full flex items-center gap-2 px-2 py-1 text-xs rounded-md cursor-pointer ml-2 text-left",
+                                viewMode === "gitDiff" ? "bg-neutral-800 text-white" : "hover:bg-neutral-800/45 text-neutral-400"
+                              )}
+                            >
+                              <GitCompareIcon className="w-3 h-3 shrink-0" />
+                              <span>Git diff</span>
+                            </button>
+                            <button
+                              onClick={() => setViewMode("browser")}
+                              className={clsx(
+                                "w-full flex items-center gap-2 px-2 py-1 text-xs rounded-md cursor-pointer ml-2 text-left",
+                                viewMode === "browser" ? "bg-neutral-800 text-white" : "hover:bg-neutral-800/45 text-neutral-400"
+                              )}
+                            >
+                              <Monitor className="w-3 h-3 shrink-0" />
+                              <span>Browser</span>
+                            </button>
+                          </div>
                         </div>
+                      )}
+                    </div>
 
-                        {/* Detail links */}
-                        <div className="ml-6 space-y-px">
-                          <div className="flex items-center gap-2 px-2 py-1 text-xs rounded-md hover:bg-neutral-800/45 cursor-pointer ml-2">
-                            <Code className="w-3 h-3 text-neutral-400" />
-                            <span className="text-neutral-400">VS Code</span>
-                          </div>
-                          <div className="flex items-center gap-2 px-2 py-1 text-xs rounded-md hover:bg-neutral-800/45 cursor-pointer ml-2">
-                            <GitCompareIcon className="w-3 h-3 text-neutral-400" />
-                            <span className="text-neutral-400">Git diff</span>
-                          </div>
-                          <div className="flex items-center gap-2 px-2 py-1 text-xs rounded-md hover:bg-neutral-800/45 cursor-pointer ml-2">
-                            <Monitor className="w-3 h-3 text-neutral-400" />
-                            <span className="text-neutral-400">Browser</span>
-                          </div>
-                          <div className="flex items-center gap-2 px-2 py-1 text-xs rounded-md hover:bg-neutral-800/45 cursor-pointer ml-2">
-                            <TerminalSquare className="w-3 h-3 text-neutral-400" />
-                            <span className="text-neutral-400">Terminals</span>
+                    {/* Preview task 2 - In Progress (spinning) */}
+                    <div className="space-y-px">
+                      <button
+                        onClick={() => toggleTaskExpanded("task-2")}
+                        className="w-full mx-1 flex items-center gap-2 rounded-sm pl-2 ml-2 pr-3 py-1.5 text-[13px] text-neutral-100 hover:bg-neutral-800/45 cursor-pointer"
+                      >
+                        {expandedTasks.has("task-2") ? (
+                          <ChevronDown className="w-3 h-3 text-neutral-500 shrink-0" />
+                        ) : (
+                          <ChevronRight className="w-3 h-3 text-neutral-500 shrink-0" />
+                        )}
+                        <Loader2 className="w-3 h-3 text-blue-400 animate-spin shrink-0" />
+                        <div className="flex flex-col min-w-0 text-left">
+                          <span className="truncate">Add dark mode toggle PR #1142</span>
+                          <span className="text-[11px] text-neutral-500 truncate">feat/dark-mode &bull; manaflow-ai/cmux</span>
+                        </div>
+                      </button>
+
+                      {expandedTasks.has("task-2") && (
+                        <div className="ml-4">
+                          <button
+                            onClick={() => setViewMode("all")}
+                            className={clsx(
+                              "w-full mx-1 flex items-center gap-2 rounded-sm pl-2 ml-2 pr-3 py-1 text-[13px] text-left",
+                              viewMode === "all" ? "bg-neutral-800/50 text-neutral-100" : "text-neutral-300 hover:bg-neutral-800/30"
+                            )}
+                          >
+                            <div className="w-3 h-3 shrink-0" />
+                            <Loader2 className="w-3 h-3 text-blue-400 animate-spin shrink-0" />
+                            <span className="truncate">claude-code</span>
+                          </button>
+                          <div className="ml-6 space-y-px">
+                            <button
+                              onClick={() => setViewMode("workspace")}
+                              className={clsx(
+                                "w-full flex items-center gap-2 px-2 py-1 text-xs rounded-md cursor-pointer ml-2 text-left",
+                                viewMode === "workspace" ? "bg-neutral-800 text-white" : "hover:bg-neutral-800/45 text-neutral-400"
+                              )}
+                            >
+                              <Code className="w-3 h-3 shrink-0" />
+                              <span>VS Code</span>
+                            </button>
+                            <button
+                              onClick={() => setViewMode("gitDiff")}
+                              className={clsx(
+                                "w-full flex items-center gap-2 px-2 py-1 text-xs rounded-md cursor-pointer ml-2 text-left",
+                                viewMode === "gitDiff" ? "bg-neutral-800 text-white" : "hover:bg-neutral-800/45 text-neutral-400"
+                              )}
+                            >
+                              <GitCompareIcon className="w-3 h-3 shrink-0" />
+                              <span>Git diff</span>
+                            </button>
+                            <button
+                              onClick={() => setViewMode("browser")}
+                              className={clsx(
+                                "w-full flex items-center gap-2 px-2 py-1 text-xs rounded-md cursor-pointer ml-2 text-left",
+                                viewMode === "browser" ? "bg-neutral-800 text-white" : "hover:bg-neutral-800/45 text-neutral-400"
+                              )}
+                            >
+                              <Monitor className="w-3 h-3 shrink-0" />
+                              <span>Browser</span>
+                            </button>
                           </div>
                         </div>
-                      </div>
+                      )}
+                    </div>
+
+                    {/* Preview task 3 - Completed (green) */}
+                    <div className="space-y-px">
+                      <button
+                        onClick={() => toggleTaskExpanded("task-3")}
+                        className="w-full mx-1 flex items-center gap-2 rounded-sm pl-2 ml-2 pr-3 py-1.5 text-[13px] text-neutral-100 hover:bg-neutral-800/45 cursor-pointer"
+                      >
+                        {expandedTasks.has("task-3") ? (
+                          <ChevronDown className="w-3 h-3 text-neutral-500 shrink-0" />
+                        ) : (
+                          <ChevronRight className="w-3 h-3 text-neutral-500 shrink-0" />
+                        )}
+                        <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0" />
+                        <div className="flex flex-col min-w-0 text-left">
+                          <span className="truncate">Fix auth redirect bug PR #1098</span>
+                          <span className="text-[11px] text-neutral-500 truncate">fix/auth-redirect &bull; manaflow-ai/cmux</span>
+                        </div>
+                      </button>
+
+                      {expandedTasks.has("task-3") && (
+                        <div className="ml-4">
+                          <button
+                            onClick={() => setViewMode("all")}
+                            className={clsx(
+                              "w-full mx-1 flex items-center gap-2 rounded-sm pl-2 ml-2 pr-3 py-1 text-[13px] text-left",
+                              viewMode === "all" ? "bg-neutral-800/50 text-neutral-100" : "text-neutral-300 hover:bg-neutral-800/30"
+                            )}
+                          >
+                            <div className="w-3 h-3 shrink-0" />
+                            <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0" />
+                            <span className="truncate">gemini-cli</span>
+                          </button>
+                          <div className="ml-6 space-y-px">
+                            <button
+                              onClick={() => setViewMode("workspace")}
+                              className={clsx(
+                                "w-full flex items-center gap-2 px-2 py-1 text-xs rounded-md cursor-pointer ml-2 text-left",
+                                viewMode === "workspace" ? "bg-neutral-800 text-white" : "hover:bg-neutral-800/45 text-neutral-400"
+                              )}
+                            >
+                              <Code className="w-3 h-3 shrink-0" />
+                              <span>VS Code</span>
+                            </button>
+                            <button
+                              onClick={() => setViewMode("gitDiff")}
+                              className={clsx(
+                                "w-full flex items-center gap-2 px-2 py-1 text-xs rounded-md cursor-pointer ml-2 text-left",
+                                viewMode === "gitDiff" ? "bg-neutral-800 text-white" : "hover:bg-neutral-800/45 text-neutral-400"
+                              )}
+                            >
+                              <GitCompareIcon className="w-3 h-3 shrink-0" />
+                              <span>Git diff</span>
+                            </button>
+                            <button
+                              onClick={() => setViewMode("browser")}
+                              className={clsx(
+                                "w-full flex items-center gap-2 px-2 py-1 text-xs rounded-md cursor-pointer ml-2 text-left",
+                                viewMode === "browser" ? "bg-neutral-800 text-white" : "hover:bg-neutral-800/45 text-neutral-400"
+                              )}
+                            >
+                              <Monitor className="w-3 h-3 shrink-0" />
+                              <span>Browser</span>
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Preview task 4 - Failed (red X) */}
+                    <div className="space-y-px">
+                      <button
+                        onClick={() => toggleTaskExpanded("task-4")}
+                        className="w-full mx-1 flex items-center gap-2 rounded-sm pl-2 ml-2 pr-3 py-1.5 text-[13px] text-neutral-100 hover:bg-neutral-800/45 cursor-pointer"
+                      >
+                        <div className="w-3 h-3 shrink-0" />
+                        <X className="w-3 h-3 text-red-500 shrink-0" />
+                        <div className="flex flex-col min-w-0 text-left">
+                          <span className="truncate">Refactor API routes PR #1087</span>
+                          <span className="text-[11px] text-neutral-500 truncate">refactor/api &bull; manaflow-ai/cmux</span>
+                        </div>
+                      </button>
                     </div>
                   </div>
                 </div>
               </nav>
             </div>
 
-            {/* Main Content Area - horizontal split with resizable panels */}
+            {/* Main Content Area */}
             <div className="flex-1 flex min-w-0 relative">
-              {/* Left: Workspace (VS Code) - resizable width */}
-              <div className="bg-[#1e1e1e] border-r border-[#2d2d2d] flex flex-col min-w-0" style={{ width: `${leftPanelWidth}%` }}>
+              {/* Three-panel layout when viewMode is "all" */}
+              {viewMode === "all" && (
+                <>
+                  {/* Left: Workspace (VS Code) - resizable width */}
+                  <div
+                    className="bg-[#1e1e1e] border-r border-[#2d2d2d] flex flex-col min-w-0"
+                    style={{ width: `${leftPanelWidth}%` }}
+                  >
                 {/* Panel header */}
                 <div className="flex items-center gap-2 px-3 py-1.5 bg-[#252526] border-b border-[#2d2d2d]">
                   <Code className="h-4 w-4 text-[#007acc]" />
                   <span className="text-xs text-[#cccccc]">Workspace</span>
                   <div className="ml-auto flex items-center gap-1">
                     <button className="p-0.5 text-[#858585] hover:text-white hover:bg-[#3c3c3c] rounded">
-                      <Maximize2 className="h-3 w-3" />
-                    </button>
-                    <button className="p-0.5 text-[#858585] hover:text-white hover:bg-[#3c3c3c] rounded">
-                      <X className="h-3 w-3" />
+                      <ExternalLink className="h-3 w-3" />
                     </button>
                   </div>
                 </div>
                 {/* VS Code content */}
                 <div className="flex-1 flex min-h-0">
                   {/* File explorer sidebar */}
-                  <div className="w-[180px] bg-[#252526] border-r border-[#2d2d2d] flex flex-col shrink-0">
+                  <div className="w-[160px] bg-[#252526] border-r border-[#2d2d2d] flex flex-col shrink-0">
                     <div className="px-2 py-1 text-[10px] font-semibold text-[#858585] uppercase tracking-wide">
                       Explorer
                     </div>
@@ -1070,7 +1280,7 @@ function MockGitHubPRBrowser() {
                       <span className="font-semibold">CMUX</span>
                     </div>
                     <div className="flex-1 overflow-y-auto text-[11px]">
-                      {[".cursor", ".devcontainer", ".github", "apps", "configs", "crates", "data", "docs", "docs-ai", "logs", "node_modules", "packages"].map((folder) => (
+                      {[".cursor", ".devcontainer", ".github", "apps", "configs", "crates", "data", "docs", "packages"].map((folder) => (
                         <div key={folder} className="flex items-center gap-1 px-4 py-0.5 text-[#cccccc] hover:bg-[#2a2d2e] cursor-pointer">
                           <ChevronRight className="h-3 w-3 text-[#858585]" />
                           <Folder className="h-3 w-3 text-[#dcb67a]" />
@@ -1118,51 +1328,41 @@ function MockGitHubPRBrowser() {
 
               {/* Right: Browser + Git Diff stacked vertically */}
               <div className="flex flex-col min-w-0 relative" style={{ width: `${100 - leftPanelWidth}%` }}>
-                {/* Browser Panel - Chrome style */}
-                <div className="bg-[#1e1e1e] flex flex-col" style={{ height: `${topPanelHeight}%` }}>
+                {/* Browser Panel */}
+                <div
+                  className="bg-[#1e1e1e] flex flex-col"
+                  style={{ height: `${topPanelHeight}%` }}
+                >
                   {/* Panel header */}
                   <div className="flex items-center gap-2 px-3 py-1.5 bg-[#252526] border-b border-[#2d2d2d]">
                     <Monitor className="h-4 w-4 text-[#858585]" />
                     <span className="text-xs text-[#cccccc]">Browser</span>
                     <div className="ml-auto flex items-center gap-1">
                       <button className="p-0.5 text-[#858585] hover:text-white hover:bg-[#3c3c3c] rounded">
-                        <Maximize2 className="h-3 w-3" />
-                      </button>
-                      <button className="p-0.5 text-[#858585] hover:text-white hover:bg-[#3c3c3c] rounded">
-                        <X className="h-3 w-3" />
+                        <ExternalLink className="h-3 w-3" />
                       </button>
                     </div>
                   </div>
                   {/* Chrome browser inside */}
                   <div className="flex-1 flex flex-col bg-[#202124] overflow-hidden" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}>
                     {/* Chrome tab bar */}
-                    <div className="flex items-end bg-[#35363a] h-[34px] px-2">
-                      {/* Tab */}
-                      <div className="flex items-center gap-1 bg-[#202124] rounded-t-lg px-3 py-1.5 max-w-[200px] mt-auto">
+                    <div className="flex items-end bg-[#35363a] h-[28px] px-2 shrink-0">
+                      <div className="flex items-center gap-1 bg-[#202124] rounded-t-lg px-2 py-1 max-w-[160px] mt-auto">
                         <TabFavicon />
-                        <span className="text-[11px] text-[#e8eaed] truncate">cmux - Manage AI coding ag...</span>
+                        <span className="text-[10px] text-[#e8eaed] truncate">localhost:5173</span>
                         <button className="p-0.5 hover:bg-[#35363a] rounded">
-                          <X className="h-3 w-3 text-[#9aa0a6]" />
+                          <X className="h-2.5 w-2.5 text-[#9aa0a6]" />
                         </button>
                       </div>
-                      <button className="p-1 hover:bg-[#4a4c50] rounded ml-1 mb-1.5">
-                        <Plus className="h-3.5 w-3.5 text-[#9aa0a6]" />
-                      </button>
                     </div>
                     {/* Chrome toolbar */}
-                    <div className="flex items-center gap-2 px-2 py-1.5 bg-[#202124]">
-                      <div className="flex items-center gap-1">
-                        <button className="p-1 hover:bg-[#35363a] rounded">
-                          <ArrowLeft className="h-3.5 w-3.5 text-[#9aa0a6]" />
-                        </button>
-                      </div>
-                      {/* URL bar */}
-                      <div className="flex-1 flex items-center gap-2 px-3 py-1 bg-[#35363a] rounded-full text-[11px]">
-                        <svg className="h-3 w-3 text-[#9aa0a6]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <div className="flex items-center gap-2 px-2 py-1 bg-[#202124] shrink-0">
+                      <div className="flex-1 flex items-center gap-2 px-2 py-0.5 bg-[#35363a] rounded-full text-[10px]">
+                        <svg className="h-2.5 w-2.5 text-[#9aa0a6]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                           <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
                           <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                         </svg>
-                        <span className="text-[#e8eaed]">cmux</span>
+                        <span className="text-[#e8eaed]">localhost:5173</span>
                       </div>
                     </div>
                     {/* Browser content - cmux.dev landing page */}
@@ -1288,19 +1488,19 @@ function MockGitHubPRBrowser() {
                 />
 
                 {/* Git Diff Panel */}
-                <div className="bg-[#1e1e1e] flex flex-col" style={{ height: `${100 - topPanelHeight}%` }}>
+                <div
+                  className="bg-[#1e1e1e] flex flex-col"
+                  style={{ height: `${100 - topPanelHeight}%` }}
+                >
                   <div className="flex items-center justify-between px-3 py-1.5 bg-[#252526] border-b border-[#2d2d2d] shrink-0">
                     <div className="flex items-center gap-2">
                       <GitBranch className="h-4 w-4 text-[#f97316]" />
                       <span className="text-xs text-[#cccccc]">Git Diff</span>
-                      <span className="text-[10px] text-[#858585]">3 files changed</span>
+                      <span className="text-[10px] text-[#858585]">3 files</span>
                     </div>
                     <div className="flex items-center gap-1">
                       <button className="p-0.5 text-[#858585] hover:text-white hover:bg-[#3c3c3c] rounded">
-                        <Maximize2 className="h-3 w-3" />
-                      </button>
-                      <button className="p-0.5 text-[#858585] hover:text-white hover:bg-[#3c3c3c] rounded">
-                        <X className="h-3 w-3" />
+                        <ExternalLink className="h-3 w-3" />
                       </button>
                     </div>
                   </div>
@@ -1325,11 +1525,8 @@ function MockGitHubPRBrowser() {
                         <div className="text-[9px] font-mono">
                           <div className="px-2 py-0.5 text-[#858585] bg-[#1f2733] text-[8px]">@@ -1,12 +1,15 @@</div>
                           <div className="flex"><span className="w-6 text-[#858585] text-right pr-2 select-none bg-[#1e1e1e]">1</span><span className="w-6 text-[#858585] text-right pr-2 select-none bg-[#1e1e1e]">1</span><span className="flex-1 px-2 text-[#cccccc]">import {"{"} useState {"}"} from &quot;react&quot;;</span></div>
-                          <div className="flex"><span className="w-6 text-[#858585] text-right pr-2 select-none bg-[#1e1e1e]">2</span><span className="w-6 text-[#858585] text-right pr-2 select-none bg-[#1e1e1e]">2</span><span className="flex-1 px-2 text-[#cccccc]">import {"{"} useQuery {"}"} from &quot;convex/react&quot;;</span></div>
                           <div className="flex bg-[#f851491a]"><span className="w-6 text-[#ff7b72] text-right pr-2 select-none bg-[#f851494d]">3</span><span className="w-6 text-right pr-2 select-none bg-[#1e1e1e]"></span><span className="flex-1 px-2 text-[#f85149]">-import {"{"} api {"}"} from &quot;@/convex&quot;;</span></div>
                           <div className="flex bg-[#2ea04326]"><span className="w-6 text-right pr-2 select-none bg-[#1e1e1e]"></span><span className="w-6 text-[#7ee787] text-right pr-2 select-none bg-[#3fb9504d]">3</span><span className="flex-1 px-2 text-[#3fb950]">+import {"{"} api {"}"} from &quot;@cmux/convex/api&quot;;</span></div>
-                          <div className="flex bg-[#2ea04326]"><span className="w-6 text-right pr-2 select-none bg-[#1e1e1e]"></span><span className="w-6 text-[#7ee787] text-right pr-2 select-none bg-[#3fb9504d]">4</span><span className="flex-1 px-2 text-[#3fb950]">+import {"{"} isFakeConvexId {"}"} from &quot;@/lib/utils&quot;;</span></div>
-                          <div className="flex"><span className="w-6 text-[#858585] text-right pr-2 select-none bg-[#1e1e1e]">4</span><span className="w-6 text-[#858585] text-right pr-2 select-none bg-[#1e1e1e]">5</span><span className="flex-1 px-2 text-[#cccccc]">import {"{"} TaskTree {"}"} from &quot;./TaskTree&quot;;</span></div>
                           <div className="px-2 py-0.5 text-[#858585] bg-[#1f2733] text-[8px]">... 18 unchanged lines ...</div>
                         </div>
                       )}
@@ -1357,11 +1554,7 @@ function MockGitHubPRBrowser() {
                           <div className="flex bg-[#2ea04326]"><span className="w-6 text-right pr-2 select-none bg-[#1e1e1e]"></span><span className="w-6 text-[#7ee787] text-right pr-2 select-none bg-[#3fb9504d]">1</span><span className="flex-1 px-2 text-[#3fb950]">+export function isFakeConvexId(id: string): boolean {"{"}</span></div>
                           <div className="flex bg-[#2ea04326]"><span className="w-6 text-right pr-2 select-none bg-[#1e1e1e]"></span><span className="w-6 text-[#7ee787] text-right pr-2 select-none bg-[#3fb9504d]">2</span><span className="flex-1 px-2 text-[#3fb950]">+  return id.startsWith(&quot;fake_&quot;);</span></div>
                           <div className="flex bg-[#2ea04326]"><span className="w-6 text-right pr-2 select-none bg-[#1e1e1e]"></span><span className="w-6 text-[#7ee787] text-right pr-2 select-none bg-[#3fb9504d]">3</span><span className="flex-1 px-2 text-[#3fb950]">+{"}"}</span></div>
-                          <div className="flex bg-[#2ea04326]"><span className="w-6 text-right pr-2 select-none bg-[#1e1e1e]"></span><span className="w-6 text-[#7ee787] text-right pr-2 select-none bg-[#3fb9504d]">4</span><span className="flex-1 px-2 text-[#3fb950]">+</span></div>
-                          <div className="flex bg-[#2ea04326]"><span className="w-6 text-right pr-2 select-none bg-[#1e1e1e]"></span><span className="w-6 text-[#7ee787] text-right pr-2 select-none bg-[#3fb9504d]">5</span><span className="flex-1 px-2 text-[#3fb950]">+export function rewriteLocalId(id: string) {"{"}</span></div>
-                          <div className="flex bg-[#2ea04326]"><span className="w-6 text-right pr-2 select-none bg-[#1e1e1e]"></span><span className="w-6 text-[#7ee787] text-right pr-2 select-none bg-[#3fb9504d]">6</span><span className="flex-1 px-2 text-[#3fb950]">+  return id.replace(&quot;fake_&quot;, &quot;&quot;);</span></div>
-                          <div className="flex bg-[#2ea04326]"><span className="w-6 text-right pr-2 select-none bg-[#1e1e1e]"></span><span className="w-6 text-[#7ee787] text-right pr-2 select-none bg-[#3fb9504d]">7</span><span className="flex-1 px-2 text-[#3fb950]">+{"}"}</span></div>
-                          <div className="px-2 py-0.5 text-[#858585] bg-[#1f2733] text-[8px]">... 38 more lines ...</div>
+                          <div className="px-2 py-0.5 text-[#858585] bg-[#1f2733] text-[8px]">... 42 more lines ...</div>
                         </div>
                       )}
                     </div>
@@ -1387,15 +1580,339 @@ function MockGitHubPRBrowser() {
                           <div className="px-2 py-0.5 text-[#858585] bg-[#1f2733] text-[8px]">@@ -1,12 +0,0 @@</div>
                           <div className="flex bg-[#f851491a]"><span className="w-6 text-[#ff7b72] text-right pr-2 select-none bg-[#f851494d]">1</span><span className="w-6 text-right pr-2 select-none bg-[#1e1e1e]"></span><span className="flex-1 px-2 text-[#f85149]">-// Legacy helper functions</span></div>
                           <div className="flex bg-[#f851491a]"><span className="w-6 text-[#ff7b72] text-right pr-2 select-none bg-[#f851494d]">2</span><span className="w-6 text-right pr-2 select-none bg-[#1e1e1e]"></span><span className="flex-1 px-2 text-[#f85149]">-export function oldHelper() {"{"}</span></div>
-                          <div className="flex bg-[#f851491a]"><span className="w-6 text-[#ff7b72] text-right pr-2 select-none bg-[#f851494d]">3</span><span className="w-6 text-right pr-2 select-none bg-[#1e1e1e]"></span><span className="flex-1 px-2 text-[#f85149]">-  return &quot;deprecated&quot;;</span></div>
-                          <div className="flex bg-[#f851491a]"><span className="w-6 text-[#ff7b72] text-right pr-2 select-none bg-[#f851494d]">4</span><span className="w-6 text-right pr-2 select-none bg-[#1e1e1e]"></span><span className="flex-1 px-2 text-[#f85149]">-{"}"}</span></div>
-                          <div className="px-2 py-0.5 text-[#858585] bg-[#1f2733] text-[8px]">... 8 more lines ...</div>
+                          <div className="px-2 py-0.5 text-[#858585] bg-[#1f2733] text-[8px]">... 10 more lines ...</div>
                         </div>
                       )}
                     </div>
                   </div>
                 </div>
               </div>
+            </>
+          )}
+
+              {/* Single panel: Workspace (VS Code) */}
+              {viewMode === "workspace" && (
+                <div className="flex-1 bg-[#1e1e1e] flex flex-col">
+                  {/* Panel header */}
+                  <div className="flex items-center gap-2 px-3 py-1.5 bg-[#252526] border-b border-[#2d2d2d]">
+                    <Code className="h-4 w-4 text-[#007acc]" />
+                    <span className="text-xs text-[#cccccc]">Workspace</span>
+                    <div className="ml-auto flex items-center gap-1">
+                      <button onClick={() => setViewMode("all")} className="p-0.5 text-[#858585] hover:text-white hover:bg-[#3c3c3c] rounded text-[10px]">
+                        Back to all
+                      </button>
+                      <button className="p-0.5 text-[#858585] hover:text-white hover:bg-[#3c3c3c] rounded">
+                        <ExternalLink className="h-3 w-3" />
+                      </button>
+                    </div>
+                  </div>
+                  {/* VS Code content */}
+                  <div className="flex-1 flex min-h-0">
+                    {/* File explorer sidebar */}
+                    <div className="w-[200px] bg-[#252526] border-r border-[#2d2d2d] flex flex-col shrink-0">
+                      <div className="px-2 py-1 text-[10px] font-semibold text-[#858585] uppercase tracking-wide">
+                        Explorer
+                      </div>
+                      <div className="flex items-center gap-1 px-2 py-0.5 text-[11px] text-[#cccccc] bg-[#37373d]">
+                        <ChevronDown className="h-3 w-3" />
+                        <span className="font-semibold">CMUX</span>
+                      </div>
+                      <div className="flex-1 overflow-y-auto text-[11px]">
+                        {[".cursor", ".devcontainer", ".github", "apps", "configs", "crates", "data", "docs", "packages", "scripts", "tests"].map((folder) => (
+                          <div key={folder} className="flex items-center gap-1 px-4 py-0.5 text-[#cccccc] hover:bg-[#2a2d2e] cursor-pointer">
+                            <ChevronRight className="h-3 w-3 text-[#858585]" />
+                            <Folder className="h-3 w-3 text-[#dcb67a]" />
+                            <span>{folder}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    {/* Editor area */}
+                    <div className="flex-1 flex flex-col min-w-0">
+                      {/* Tabs */}
+                      <div className="flex items-center bg-[#252526] border-b border-[#2d2d2d]">
+                        <div className="flex items-center gap-1 px-3 py-1 bg-[#1e1e1e] border-r border-[#2d2d2d] text-[11px] text-[#cccccc]">
+                          <FileText className="h-3 w-3 text-[#858585]" />
+                          <span>LAUNCH.md</span>
+                          <X className="h-3 w-3 ml-1 text-[#858585] hover:text-white" />
+                        </div>
+                      </div>
+                      {/* File content */}
+                      <div className="flex-1 p-4 font-mono text-[12px] text-[#cccccc] overflow-auto">
+                        <div className="flex">
+                          <div className="pr-4 text-[#858585] select-none text-right w-10">1</div>
+                          <div>today we&apos;re launching cmux</div>
+                        </div>
+                        <div className="flex"><div className="pr-4 text-[#858585] select-none text-right w-10">2</div><div></div></div>
+                        <div className="flex"><div className="pr-4 text-[#858585] select-none text-right w-10">3</div><div>it&apos;s basically Linear for Claude Code</div></div>
+                        <div className="flex"><div className="pr-4 text-[#858585] select-none text-right w-10">4</div><div></div></div>
+                        <div className="flex"><div className="pr-4 text-[#858585] select-none text-right w-10">5</div><div>we made Linear for Claude Code</div></div>
+                        <div className="flex"><div className="pr-4 text-[#858585] select-none text-right w-10">6</div><div></div></div>
+                        <div className="flex"><div className="pr-4 text-[#858585] select-none text-right w-10">7</div><div className="text-[#6a9955]">cmux is an open source coding CLI manager</div></div>
+                        <div className="flex"><div className="pr-4 text-[#858585] select-none text-right w-10">8</div><div className="text-[#6a9955]">that spawns Claude Code, Cursor CLI, Codex</div></div>
+                        <div className="flex"><div className="pr-4 text-[#858585] select-none text-right w-10">9</div><div className="text-[#6a9955]">CLI, Gemini CLI, Amp, Opencode, and</div></div>
+                        <div className="flex"><div className="pr-4 text-[#858585] select-none text-right w-10">10</div><div className="text-[#6a9955]">other coding agent CLIs in parallel</div></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Single panel: Browser */}
+              {viewMode === "browser" && (
+                <div className="flex-1 bg-[#1e1e1e] flex flex-col">
+                  {/* Panel header */}
+                  <div className="flex items-center gap-2 px-3 py-1.5 bg-[#252526] border-b border-[#2d2d2d]">
+                    <Monitor className="h-4 w-4 text-[#858585]" />
+                    <span className="text-xs text-[#cccccc]">Browser</span>
+                    <div className="ml-auto flex items-center gap-1">
+                      <button onClick={() => setViewMode("all")} className="p-0.5 text-[#858585] hover:text-white hover:bg-[#3c3c3c] rounded text-[10px]">
+                        Back to all
+                      </button>
+                      <button className="p-0.5 text-[#858585] hover:text-white hover:bg-[#3c3c3c] rounded">
+                        <ExternalLink className="h-3 w-3" />
+                      </button>
+                    </div>
+                  </div>
+                  {/* Chrome browser inside */}
+                  <div className="flex-1 flex flex-col bg-[#202124] overflow-hidden" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}>
+                    {/* Chrome tab bar */}
+                    <div className="flex items-end bg-[#35363a] h-[32px] px-2 shrink-0">
+                      <div className="flex items-center gap-1 bg-[#202124] rounded-t-lg px-3 py-1.5 max-w-[200px] mt-auto">
+                        <TabFavicon />
+                        <span className="text-[11px] text-[#e8eaed] truncate">localhost:5173</span>
+                        <button className="p-0.5 hover:bg-[#35363a] rounded">
+                          <X className="h-3 w-3 text-[#9aa0a6]" />
+                        </button>
+                      </div>
+                    </div>
+                    {/* Chrome toolbar */}
+                    <div className="flex items-center gap-2 px-2 py-1.5 bg-[#202124] shrink-0">
+                      <div className="flex-1 flex items-center gap-2 px-3 py-1 bg-[#35363a] rounded-full text-[11px]">
+                        <svg className="h-3 w-3 text-[#9aa0a6]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                          <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                        </svg>
+                        <span className="text-[#e8eaed]">localhost:5173</span>
+                      </div>
+                    </div>
+                    {/* Browser content - cmux.dev landing page */}
+                    <div className="flex-1 bg-[#030712] overflow-y-auto">
+                      {/* Gradient background */}
+                      <div className="relative">
+                        <div className="absolute inset-0 overflow-hidden">
+                          <div className="absolute inset-x-[-20%] top-[-20%] h-[300px] rounded-full bg-gradient-to-br from-blue-600/30 via-sky-500/20 to-purple-600/10 blur-3xl" />
+                        </div>
+                        {/* Header */}
+                        <div className="relative flex items-center justify-between px-6 py-4">
+                          <CmuxLogo height={28} />
+                          <div className="flex items-center gap-4 text-sm text-neutral-300">
+                            <span>About</span>
+                            <span>Workflow</span>
+                            <span>GitHub</span>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-1 text-sm text-neutral-300">
+                              <Github className="h-4 w-4" />
+                              <span>649</span>
+                            </div>
+                            <button className="px-3 py-1 bg-white text-black text-sm rounded-full flex items-center gap-1.5">
+                              <Download className="w-3 h-3" />
+                              <span>Download</span>
+                            </button>
+                          </div>
+                        </div>
+                        {/* Hero section */}
+                        <div className="relative px-6 py-6">
+                          <div className="grid grid-cols-2 gap-6">
+                            <div className="space-y-4">
+                              <h1 className="text-white text-2xl font-semibold leading-tight">
+                                Universal AI coding agent manager for 10x engineers
+                              </h1>
+                              <p className="text-sm text-neutral-300 leading-relaxed">
+                                cmux is a universal AI coding agent manager that supports Claude Code, Codex, Gemini CLI, Amp, Opencode, and other coding CLIs.
+                              </p>
+                              <p className="text-sm text-neutral-300 leading-relaxed">
+                                Every run spins up an isolated VS Code workspace either in the cloud or in a local Docker container with the git diff view, terminal, and dev server preview ready.
+                              </p>
+                              <div className="flex items-center gap-3 pt-2">
+                                <button className="px-4 py-2 bg-white text-black text-sm rounded-lg flex items-center gap-2 font-medium">
+                                  <svg className="h-4 w-4" viewBox="0 0 16 16" fill="currentColor">
+                                    <path d="M12.665 15.358c-.905.844-1.893.711-2.843.311-1.006-.409-1.93-.427-2.991 0-1.33.551-2.03.391-2.825-.31C-.498 10.886.166 4.078 5.28 3.83c1.246.062 2.114.657 2.843.71 1.09-.213 2.133-.826 3.296-.746 1.393.107 2.446.64 3.138 1.6-2.88 1.662-2.197 5.315.443 6.337-.526 1.333-1.21 2.657-2.345 3.635zM8.03 3.778C7.892 1.794 9.563.16 11.483 0c.268 2.293-2.16 4-3.452 3.777" />
+                                  </svg>
+                                  Download for macOS
+                                </button>
+                                <button className="px-4 py-2 border border-white/10 bg-white/5 text-white text-sm rounded-lg flex items-center gap-2">
+                                  GitHub repo
+                                  <Github className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </div>
+                            {/* Right side - video + features */}
+                            <div className="space-y-3">
+                              <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+                                {/* Video placeholder */}
+                                <div className="bg-neutral-900 rounded-lg aspect-video flex items-center justify-center mb-3">
+                                  <div className="w-12 h-12 rounded-full bg-red-600 flex items-center justify-center">
+                                    <div className="w-0 h-0 border-t-[8px] border-t-transparent border-l-[12px] border-l-white border-b-[8px] border-b-transparent ml-1" />
+                                  </div>
+                                </div>
+                                {/* Feature bullets */}
+                                <div className="space-y-2">
+                                  <div className="flex gap-3">
+                                    <div className="mt-0.5 h-5 w-5 flex-none rounded-full bg-gradient-to-br from-sky-500/80 to-indigo-500/80 text-center text-xs font-semibold leading-5 text-white">
+                                      &bull;
+                                    </div>
+                                    <div>
+                                      <p className="text-sm text-white font-medium">Run multiple agent CLIs side-by-side</p>
+                                      <p className="text-xs text-neutral-400">Claude Code, Codex, Gemini CLI, Amp, and more.</p>
+                                    </div>
+                                  </div>
+                                  <div className="flex gap-3">
+                                    <div className="mt-0.5 h-5 w-5 flex-none rounded-full bg-gradient-to-br from-sky-500/80 to-indigo-500/80 text-center text-xs font-semibold leading-5 text-white">
+                                      &bull;
+                                    </div>
+                                    <div>
+                                      <p className="text-sm text-white font-medium">Dedicated VS Code instance per agent</p>
+                                      <p className="text-xs text-neutral-400">Isolated VS Code, terminal, and git diff view.</p>
+                                    </div>
+                                  </div>
+                                  <div className="flex gap-3">
+                                    <div className="mt-0.5 h-5 w-5 flex-none rounded-full bg-gradient-to-br from-sky-500/80 to-indigo-500/80 text-center text-xs font-semibold leading-5 text-white">
+                                      &bull;
+                                    </div>
+                                    <div>
+                                      <p className="text-sm text-white font-medium">Preview environments for verification</p>
+                                      <p className="text-xs text-neutral-400">Browser previews to verify dev server output.</p>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                          {/* App screenshot preview */}
+                          <div className="mt-6 rounded-lg overflow-hidden border border-white/10 bg-neutral-900 h-[150px]">
+                            <div className="flex h-full">
+                              <div className="w-[100px] bg-neutral-950 border-r border-white/10 p-2">
+                                <div className="text-xs text-neutral-400 space-y-1">
+                                  <div className="flex items-center gap-1.5"><Home className="w-3 h-3" /><span>Home</span></div>
+                                  <div className="flex items-center gap-1.5"><Server className="w-3 h-3" /><span>Environments</span></div>
+                                  <div className="flex items-center gap-1.5"><Settings className="w-3 h-3" /><span>Settings</span></div>
+                                </div>
+                              </div>
+                              <div className="flex-1 bg-neutral-900 p-3">
+                                <div className="text-xs text-neutral-500 text-center">cmux dashboard preview</div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Single panel: Git Diff */}
+              {viewMode === "gitDiff" && (
+                <div className="flex-1 bg-[#1e1e1e] flex flex-col">
+                  <div className="flex items-center justify-between px-3 py-1.5 bg-[#252526] border-b border-[#2d2d2d] shrink-0">
+                    <div className="flex items-center gap-2">
+                      <GitBranch className="h-4 w-4 text-[#f97316]" />
+                      <span className="text-xs text-[#cccccc]">Git Diff</span>
+                      <span className="text-[10px] text-[#858585]">3 files changed</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button onClick={() => setViewMode("all")} className="p-0.5 text-[#858585] hover:text-white hover:bg-[#3c3c3c] rounded text-[10px]">
+                        Back to all
+                      </button>
+                      <button className="p-0.5 text-[#858585] hover:text-white hover:bg-[#3c3c3c] rounded">
+                        <ExternalLink className="h-3 w-3" />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex-1 flex flex-col min-h-0 overflow-y-auto" style={{ scrollbarWidth: "thin", scrollbarColor: "#30363d #1e1e1e" }}>
+                    {/* File 1 - Modified */}
+                    <div className="border-b border-[#2d2d2d]">
+                      <button
+                        onClick={() => toggleFileCollapse("file1")}
+                        className="flex items-center gap-2 px-4 py-2 bg-[#252526] sticky top-0 w-full text-left hover:bg-[#2a2d2e] transition-colors"
+                      >
+                        {collapsedFiles.has("file1") ? (
+                          <ChevronRight className="h-4 w-4 text-[#858585]" />
+                        ) : (
+                          <ChevronDown className="h-4 w-4 text-[#858585]" />
+                        )}
+                        <div className="w-2.5 h-2.5 rounded-full bg-yellow-500" />
+                        <span className="text-sm text-[#cccccc] truncate flex-1">apps/client/src/components/TaskItem.tsx</span>
+                        <span className="text-xs text-[#3fb950]">+28</span>
+                        <span className="text-xs text-[#f85149]">-4</span>
+                      </button>
+                      {!collapsedFiles.has("file1") && (
+                        <div className="text-[11px] font-mono">
+                          <div className="px-4 py-1 text-[#858585] bg-[#1f2733]">@@ -1,12 +1,15 @@</div>
+                          <div className="flex"><span className="w-10 text-[#858585] text-right pr-3 select-none bg-[#1e1e1e]">1</span><span className="w-10 text-[#858585] text-right pr-3 select-none bg-[#1e1e1e]">1</span><span className="flex-1 px-4 text-[#cccccc]">import {"{"} useState {"}"} from &quot;react&quot;;</span></div>
+                          <div className="flex bg-[#f851491a]"><span className="w-10 text-[#ff7b72] text-right pr-3 select-none bg-[#f851494d]">3</span><span className="w-10 text-right pr-3 select-none bg-[#1e1e1e]"></span><span className="flex-1 px-4 text-[#f85149]">-import {"{"} api {"}"} from &quot;@/convex&quot;;</span></div>
+                          <div className="flex bg-[#2ea04326]"><span className="w-10 text-right pr-3 select-none bg-[#1e1e1e]"></span><span className="w-10 text-[#7ee787] text-right pr-3 select-none bg-[#3fb9504d]">3</span><span className="flex-1 px-4 text-[#3fb950]">+import {"{"} api {"}"} from &quot;@cmux/convex/api&quot;;</span></div>
+                          <div className="px-4 py-1 text-[#858585] bg-[#1f2733]">... 18 unchanged lines ...</div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* File 2 - Added */}
+                    <div className="border-b border-[#2d2d2d]">
+                      <button
+                        onClick={() => toggleFileCollapse("file2")}
+                        className="flex items-center gap-2 px-4 py-2 bg-[#252526] sticky top-0 w-full text-left hover:bg-[#2a2d2e] transition-colors"
+                      >
+                        {collapsedFiles.has("file2") ? (
+                          <ChevronRight className="h-4 w-4 text-[#858585]" />
+                        ) : (
+                          <ChevronDown className="h-4 w-4 text-[#858585]" />
+                        )}
+                        <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
+                        <span className="text-sm text-[#cccccc] truncate flex-1">apps/client/src/lib/utils.ts</span>
+                        <span className="text-xs text-[#3fb950]">+45</span>
+                        <span className="text-xs text-[#858585]">-0</span>
+                      </button>
+                      {!collapsedFiles.has("file2") && (
+                        <div className="text-[11px] font-mono">
+                          <div className="px-4 py-1 text-[#858585] bg-[#1f2733]">@@ -0,0 +1,45 @@</div>
+                          <div className="flex bg-[#2ea04326]"><span className="w-10 text-right pr-3 select-none bg-[#1e1e1e]"></span><span className="w-10 text-[#7ee787] text-right pr-3 select-none bg-[#3fb9504d]">1</span><span className="flex-1 px-4 text-[#3fb950]">+export function isFakeConvexId(id: string): boolean {"{"}</span></div>
+                          <div className="flex bg-[#2ea04326]"><span className="w-10 text-right pr-3 select-none bg-[#1e1e1e]"></span><span className="w-10 text-[#7ee787] text-right pr-3 select-none bg-[#3fb9504d]">2</span><span className="flex-1 px-4 text-[#3fb950]">+  return id.startsWith(&quot;fake_&quot;);</span></div>
+                          <div className="flex bg-[#2ea04326]"><span className="w-10 text-right pr-3 select-none bg-[#1e1e1e]"></span><span className="w-10 text-[#7ee787] text-right pr-3 select-none bg-[#3fb9504d]">3</span><span className="flex-1 px-4 text-[#3fb950]">+{"}"}</span></div>
+                          <div className="px-4 py-1 text-[#858585] bg-[#1f2733]">... 42 more lines ...</div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* File 3 - Deleted */}
+                    <div className="border-b border-[#2d2d2d]">
+                      <button
+                        onClick={() => toggleFileCollapse("file3")}
+                        className="flex items-center gap-2 px-4 py-2 bg-[#252526] sticky top-0 w-full text-left hover:bg-[#2a2d2e] transition-colors"
+                      >
+                        {collapsedFiles.has("file3") ? (
+                          <ChevronRight className="h-4 w-4 text-[#858585]" />
+                        ) : (
+                          <ChevronDown className="h-4 w-4 text-[#858585]" />
+                        )}
+                        <div className="w-2.5 h-2.5 rounded-full bg-red-500" />
+                        <span className="text-sm text-[#cccccc] truncate flex-1">apps/client/src/legacy/helpers.ts</span>
+                        <span className="text-xs text-[#858585]">+0</span>
+                        <span className="text-xs text-[#f85149]">-12</span>
+                      </button>
+                      {!collapsedFiles.has("file3") && (
+                        <div className="text-[11px] font-mono">
+                          <div className="px-4 py-1 text-[#858585] bg-[#1f2733]">@@ -1,12 +0,0 @@</div>
+                          <div className="flex bg-[#f851491a]"><span className="w-10 text-[#ff7b72] text-right pr-3 select-none bg-[#f851494d]">1</span><span className="w-10 text-right pr-3 select-none bg-[#1e1e1e]"></span><span className="flex-1 px-4 text-[#f85149]">-// Legacy helper functions</span></div>
+                          <div className="flex bg-[#f851491a]"><span className="w-10 text-[#ff7b72] text-right pr-3 select-none bg-[#f851494d]">2</span><span className="w-10 text-right pr-3 select-none bg-[#1e1e1e]"></span><span className="flex-1 px-4 text-[#f85149]">-export function oldHelper() {"{"}</span></div>
+                          <div className="px-4 py-1 text-[#858585] bg-[#1f2733]">... 10 more lines ...</div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
