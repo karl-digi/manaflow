@@ -1088,6 +1088,47 @@ export async function runPreviewJob(
       });
     }
 
+    // Stash any local changes and pull latest from origin before checkout
+    // This ensures the working directory is clean and up-to-date with origin
+    await stashLocalChanges({
+      morphClient,
+      instanceId: instance.id,
+      repoDir,
+      previewRunId,
+      headSha: run.headSha,
+    });
+
+    // Pull latest changes from origin for the current branch
+    // Use --rebase to avoid merge commits in case there are any unstashed changes
+    console.log("[preview-jobs] Pulling latest from origin", {
+      previewRunId,
+      repoDir,
+    });
+
+    const pullResponse = await execInstanceInstanceIdExecPost({
+      client: morphClient,
+      path: { instance_id: instance.id },
+      body: {
+        command: ["git", "-C", repoDir, "pull", "--rebase", "origin"],
+      },
+    });
+
+    if (pullResponse.error || pullResponse.data?.exit_code !== 0) {
+      // Non-fatal: log warning but continue - we may be in detached HEAD state
+      // or the current branch may not track a remote
+      console.warn("[preview-jobs] Failed to pull from origin (may be expected)", {
+        previewRunId,
+        exitCode: pullResponse.data?.exit_code,
+        stderr: sliceOutput(pullResponse.data?.stderr),
+        stdout: sliceOutput(pullResponse.data?.stdout),
+      });
+    } else {
+      console.log("[preview-jobs] Pulled latest from origin", {
+        previewRunId,
+        stdout: sliceOutput(pullResponse.data?.stdout),
+      });
+    }
+
     await ensureCommitAvailable({
       morphClient,
       instanceId: instance.id,
@@ -1097,14 +1138,6 @@ export async function runPreviewJob(
       previewRunId,
       headRepoCloneUrl: run.headRepoCloneUrl,
       headRef: run.headRef,
-    });
-
-    await stashLocalChanges({
-      morphClient,
-      instanceId: instance.id,
-      repoDir,
-      previewRunId,
-      headSha: run.headSha,
     });
 
     console.log("[preview-jobs] Starting git checkout", {
