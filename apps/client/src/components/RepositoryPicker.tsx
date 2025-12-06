@@ -1,4 +1,3 @@
-import { env } from "@/client-env";
 import { GitHubIcon } from "@/components/icons/github";
 import { GitLabIcon } from "@/components/icons/gitlab";
 import {
@@ -19,6 +18,7 @@ import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { api } from "@cmux/convex/api";
 import { DEFAULT_MORPH_SNAPSHOT_ID, type MorphSnapshotId } from "@cmux/shared";
 import { isElectron } from "@/lib/electron";
+import { postApiIntegrationsGithubInstallState } from "@cmux/www-openapi-client";
 import {
   getApiIntegrationsGithubReposOptions,
   postApiMorphSetupInstanceMutation,
@@ -29,7 +29,7 @@ import {
   useMutation as useRQMutation,
 } from "@tanstack/react-query";
 import { useNavigate, useRouter } from "@tanstack/react-router";
-import { useMutation, useQuery } from "convex/react";
+import { useQuery } from "convex/react";
 import { Check, ChevronDown, Loader2, Settings, X } from "lucide-react";
 import {
   useCallback,
@@ -449,7 +449,6 @@ function RepositoryConnectionsSection({
   const connections = useQuery(api.github.listProviderConnections, {
     teamSlugOrId,
   });
-  const mintState = useMutation(api.github_app.mintInstallState);
   const [connectionDropdownOpen, setConnectionDropdownOpen] = useState(false);
   const [connectionSearch, setConnectionSearch] = useState("");
 
@@ -489,10 +488,6 @@ function RepositoryConnectionsSection({
       match?.installationId ?? activeConnections[0]?.installationId ?? null
     );
   }, [activeConnections, currentLogin]);
-
-  const installNewUrl = env.NEXT_PUBLIC_GITHUB_APP_SLUG
-    ? `https://github.com/apps/${env.NEXT_PUBLIC_GITHUB_APP_SLUG}/installations/new`
-    : null;
 
   useEffect(() => {
     onContextChange({
@@ -584,13 +579,15 @@ function RepositoryConnectionsSection({
   }, [onConnectionsInvalidated]);
 
   const handleInstallApp = useCallback(async () => {
-    if (!installNewUrl) return;
     try {
-      const { state } = await mintState({ teamSlugOrId });
-      const sep = installNewUrl.includes("?") ? "&" : "?";
-      const url = `${installNewUrl}${sep}state=${encodeURIComponent(state)}`;
+      const response = await postApiIntegrationsGithubInstallState({
+        body: { teamSlugOrId },
+      });
+      if (!response.data) {
+        throw new Error("Failed to get install URL");
+      }
       openCenteredPopup(
-        url,
+        response.data.installUrl,
         { name: "github-install" },
         handlePopupClosedRefetch
       );
@@ -598,13 +595,7 @@ function RepositoryConnectionsSection({
       console.error("Failed to start GitHub install:", err);
       alert("Failed to start installation. Please try again.");
     }
-  }, [
-    handlePopupClosedRefetch,
-    installNewUrl,
-    mintState,
-    openCenteredPopup,
-    teamSlugOrId,
-  ]);
+  }, [handlePopupClosedRefetch, openCenteredPopup, teamSlugOrId]);
 
   return (
     <div className="space-y-2">
@@ -714,25 +705,21 @@ function RepositoryConnectionsSection({
                         No connections match your search
                       </div>
                     ) : null}
-                    {installNewUrl ? (
-                      <>
-                        <div className="h-px bg-neutral-200 dark:bg-neutral-800" />
-                        <CommandGroup forceMount>
-                          <CommandItem
-                            value="add-github-account"
-                            forceMount
-                            onSelect={() => {
-                              void handleInstallApp();
-                              setConnectionDropdownOpen(false);
-                            }}
-                            className="flex items-center gap-2"
-                          >
-                            <GitHubIcon className="h-4 w-4 text-neutral-700 dark:text-neutral-200" />
-                            <span>Install GitHub App</span>
-                          </CommandItem>
-                        </CommandGroup>
-                      </>
-                    ) : null}
+                    <div className="h-px bg-neutral-200 dark:bg-neutral-800" />
+                    <CommandGroup forceMount>
+                      <CommandItem
+                        value="add-github-account"
+                        forceMount
+                        onSelect={() => {
+                          void handleInstallApp();
+                          setConnectionDropdownOpen(false);
+                        }}
+                        className="flex items-center gap-2"
+                      >
+                        <GitHubIcon className="h-4 w-4 text-neutral-700 dark:text-neutral-200" />
+                        <span>Install GitHub App</span>
+                      </CommandItem>
+                    </CommandGroup>
                   </>
                 ) : (
                   <>
@@ -741,25 +728,21 @@ function RepositoryConnectionsSection({
                         No connections yet
                       </div>
                     </CommandEmpty>
-                    {installNewUrl ? (
-                      <>
-                        <div className="h-px bg-neutral-200 dark:bg-neutral-800" />
-                        <CommandGroup forceMount>
-                          <CommandItem
-                            value="add-github-account"
-                            forceMount
-                            onSelect={() => {
-                              void handleInstallApp();
-                              setConnectionDropdownOpen(false);
-                            }}
-                            className="flex items-center gap-2"
-                          >
-                            <GitHubIcon className="h-4 w-4 text-neutral-700 dark:text-neutral-200" />
-                            <span>Install GitHub App</span>
-                          </CommandItem>
-                        </CommandGroup>
-                      </>
-                    ) : null}
+                    <div className="h-px bg-neutral-200 dark:bg-neutral-800" />
+                    <CommandGroup forceMount>
+                      <CommandItem
+                        value="add-github-account"
+                        forceMount
+                        onSelect={() => {
+                          void handleInstallApp();
+                          setConnectionDropdownOpen(false);
+                        }}
+                        className="flex items-center gap-2"
+                      >
+                        <GitHubIcon className="h-4 w-4 text-neutral-700 dark:text-neutral-200" />
+                        <span>Install GitHub App</span>
+                      </CommandItem>
+                    </CommandGroup>
                   </>
                 )}
               </CommandList>

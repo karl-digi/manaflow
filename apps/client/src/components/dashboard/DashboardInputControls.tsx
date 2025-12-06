@@ -17,9 +17,10 @@ import { api } from "@cmux/convex/api";
 import type { ProviderStatus, ProviderStatusResponse } from "@cmux/shared";
 import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
 import { parseGithubRepoUrl } from "@cmux/shared";
+import { postApiIntegrationsGithubInstallState } from "@cmux/www-openapi-client";
 import { Link, useRouter } from "@tanstack/react-router";
 import clsx from "clsx";
-import { useAction, useMutation } from "convex/react";
+import { useAction } from "convex/react";
 import { Check, GitBranch, Image, Link2, Mic, Server, X } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -73,7 +74,6 @@ export const DashboardInputControls = memo(function DashboardInputControls({
 }: DashboardInputControlsProps) {
   const router = useRouter();
   const agentSelectRef = useRef<SearchableSelectHandle | null>(null);
-  const mintState = useMutation(api.github_app.mintInstallState);
   const addManualRepo = useAction(api.github_http.addManualRepo);
   const providerStatusMap = useMemo(() => {
     const map = new Map<string, ProviderStatus>();
@@ -520,38 +520,35 @@ export const DashboardInputControls = memo(function DashboardInputControls({
                 <Server className="w-4 h-4 text-neutral-600 dark:text-neutral-300" />
                 <span className="select-none">Create environment</span>
               </Link>
-              {env.NEXT_PUBLIC_GITHUB_APP_SLUG ? (
-                <button
-                  type="button"
-                  onClick={async (e) => {
-                    e.preventDefault();
-                    try {
-                      const slug = env.NEXT_PUBLIC_GITHUB_APP_SLUG!;
-                      const baseUrl = `https://github.com/apps/${slug}/installations/new`;
-                      const { state } = await mintState({ teamSlugOrId });
-                      const sep = baseUrl.includes("?") ? "&" : "?";
-                      const url = `${baseUrl}${sep}state=${encodeURIComponent(
-                        state,
-                      )}`;
-                      const win = openCenteredPopup(
-                        url,
-                        { name: "github-install" },
-                        () => {
-                          router.options.context?.queryClient?.invalidateQueries();
-                        },
-                      );
-                      win?.focus?.();
-                    } catch (err) {
-                      console.error("Failed to start GitHub install:", err);
-                      alert("Failed to start installation. Please try again.");
+              <button
+                type="button"
+                onClick={async (e) => {
+                  e.preventDefault();
+                  try {
+                    const response = await postApiIntegrationsGithubInstallState({
+                      body: { teamSlugOrId },
+                    });
+                    if (!response.data) {
+                      throw new Error("Failed to get install URL");
                     }
-                  }}
-                  className="w-full px-2 h-8 flex items-center gap-2 text-[13.5px] text-neutral-800 dark:text-neutral-200 rounded-md hover:bg-neutral-50 dark:hover:bg-neutral-900"
-                >
-                  <GitHubIcon className="w-4 h-4 text-neutral-600 dark:text-neutral-300" />
-                  <span className="select-none">Add repos from GitHub</span>
-                </button>
-              ) : null}
+                    const win = openCenteredPopup(
+                      response.data.installUrl,
+                      { name: "github-install" },
+                      () => {
+                        router.options.context?.queryClient?.invalidateQueries();
+                      },
+                    );
+                    win?.focus?.();
+                  } catch (err) {
+                    console.error("Failed to start GitHub install:", err);
+                    alert("Failed to start installation. Please try again.");
+                  }
+                }}
+                className="w-full px-2 h-8 flex items-center gap-2 text-[13.5px] text-neutral-800 dark:text-neutral-200 rounded-md hover:bg-neutral-50 dark:hover:bg-neutral-900"
+              >
+                <GitHubIcon className="w-4 h-4 text-neutral-600 dark:text-neutral-300" />
+                <span className="select-none">Add repos from GitHub</span>
+              </button>
               <button
                 type="button"
                 onClick={(e) => {
