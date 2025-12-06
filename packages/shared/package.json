@@ -101,6 +101,26 @@
     "./screenshots/sanitize-markdown": {
       "import": "./src/screenshots/sanitize-markdown.ts",
       "types": "./src/screenshots/sanitize-markdown.ts"
+    },
+    "./components/vnc-viewer": {
+      "import": "./src/components/vnc-viewer.tsx",
+      "types": "./src/components/vnc-viewer.tsx"
+    }
+  },
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0",
+    "@novnc/novnc": "^1.7.0-beta",
+    "clsx": "^2.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "@novnc/novnc": {
+      "optional": true
+    },
+    "clsx": {
+      "optional": true
     }
   },
   "dependencies": {

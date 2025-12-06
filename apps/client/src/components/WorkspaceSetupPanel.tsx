@@ -483,9 +483,9 @@ export function WorkspaceSetupPanel({
                     Add variable
                   </button>
                   <div className="flex items-center gap-2">
-                    {!hasChanges && !saveMutation.isPending ? (
-                      <span className="text-[11px] text-neutral-500 dark:text-neutral-400">
-                        All changes saved
+                    {hasChanges && !saveMutation.isPending ? (
+                      <span className="text-[11px] text-amber-600 dark:text-amber-400">
+                        Unsaved changes
                       </span>
                     ) : null}
                     <Button

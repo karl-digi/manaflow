@@ -203,6 +203,93 @@ async function collectRunSubtreeIds(
   return Array.from(visited);
 }
 
+/**
+ * After a task run status changes, check if all runs are terminal and update the task accordingly.
+ *
+ * Logic:
+ * - If some runs are still pending/running, do nothing (wait for them)
+ * - If all runs are terminal (completed/failed/skipped):
+ *   - If ALL failed/skipped (none completed): mark task as failed
+ *   - If at least one completed: mark task as completed (crown evaluation handles picking winner)
+ */
+async function updateTaskStatusFromRuns(
+  ctx: MutationCtx,
+  taskId: Id<"tasks">,
+  teamId: string,
+  userId: string,
+): Promise<void> {
+  // Query all runs for this task (only root-level runs, not children)
+  const allRuns = await ctx.db
+    .query("taskRuns")
+    .withIndex("by_task", (q) => q.eq("taskId", taskId))
+    .filter((q) =>
+      q.and(
+        q.eq(q.field("teamId"), teamId),
+        q.eq(q.field("userId"), userId),
+        // Only consider root runs (no parent) for task status
+        q.eq(q.field("parentRunId"), undefined),
+      ),
+    )
+    .collect();
+
+  if (allRuns.length === 0) {
+    return;
+  }
+
+  // Check if all runs are in a terminal state
+  const terminalStatuses = ["completed", "failed", "skipped"];
+  const allTerminal = allRuns.every((run) =>
+    terminalStatuses.includes(run.status),
+  );
+
+  if (!allTerminal) {
+    // Some runs are still pending/running, don't update task yet
+    return;
+  }
+
+  // All runs are terminal, aggregate the status
+  const completedRuns = allRuns.filter((run) => run.status === "completed");
+  const failedRuns = allRuns.filter((run) => run.status === "failed");
+
+  const task = await ctx.db.get(taskId);
+  if (!task || task.teamId !== teamId) {
+    return;
+  }
+
+  // Don't update if task is already completed
+  if (task.isCompleted) {
+    return;
+  }
+
+  const now = Date.now();
+
+  if (completedRuns.length === 0) {
+    // ALL runs failed or skipped - no successful runs to crown
+    const errorMessages = failedRuns
+      .map((run) => run.errorMessage)
+      .filter(Boolean);
+    const aggregatedError =
+      failedRuns.length === 1
+        ? errorMessages[0] || "Task run failed"
+        : `All ${failedRuns.length} task run(s) failed`;
+
+    await ctx.db.patch(taskId, {
+      isCompleted: true,
+      crownEvaluationStatus: "error",
+      crownEvaluationError: aggregatedError,
+      updatedAt: now,
+    });
+  } else {
+    // At least one run completed successfully
+    // For single run: just mark completed
+    // For multiple runs: mark completed, crown evaluation will pick winner
+    await ctx.db.patch(taskId, {
+      isCompleted: true,
+      updatedAt: now,
+    });
+  }
+}
+
 async function fetchTaskRunsForTask(
   ctx: QueryCtx,
   teamId: string,
@@ -438,6 +525,11 @@ export const updateStatus = internalMutation({
     exitCode: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.id);
+    if (!run) {
+      throw new Error("Task run not found");
+    }
+
     const now = Date.now();
     const updates: {
       status: typeof args.status;
@@ -457,6 +549,11 @@ export const updateStatus = internalMutation({
     }
 
     await ctx.db.patch(args.id, updates);
+
+    // After updating to a terminal status, check if we should update the task status
+    if (args.status === "completed" || args.status === "failed") {
+      await updateTaskStatusFromRuns(ctx, run.taskId, run.teamId, run.userId);
+    }
   },
 });
 
@@ -716,6 +813,116 @@ export const updateWorktreePath = authMutation({
   },
 });
 
+// Update branch name for a task run (called after branch generation completes)
+export const updateBranch = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    id: v.id("taskRuns"),
+    newBranch: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const doc = await ctx.db.get(args.id);
+    if (!doc || doc.teamId !== teamId || doc.userId !== userId) {
+      throw new Error("Task run not found or unauthorized");
+    }
+    await ctx.db.patch(args.id, {
+      newBranch: args.newBranch,
+      updatedAt: Date.now(),
+    });
+
+    // Also update the task's generatedBranchName if this is the first branch
+    const task = await ctx.db.get(doc.taskId);
+    if (task) {
+      const generatedBranchName = deriveGeneratedBranchName(args.newBranch);
+      if (
+        generatedBranchName &&
+        task.generatedBranchName !== generatedBranchName
+      ) {
+        await ctx.db.patch(doc.taskId, {
+          generatedBranchName,
+        });
+      }
+    }
+  },
+});
+
+// Batch update branch names for multiple task runs
+export const updateBranchBatch = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    updates: v.array(
+      v.object({
+        id: v.id("taskRuns"),
+        newBranch: v.string(),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const now = Date.now();
+
+    let firstGeneratedBranchName: string | undefined;
+
+    for (const update of args.updates) {
+      const doc = await ctx.db.get(update.id);
+      if (!doc || doc.teamId !== teamId || doc.userId !== userId) {
+        throw new Error(`Task run ${update.id} not found or unauthorized`);
+      }
+      await ctx.db.patch(update.id, {
+        newBranch: update.newBranch,
+        updatedAt: now,
+      });
+
+      // Track the first generated branch name to update the task
+      if (!firstGeneratedBranchName) {
+        firstGeneratedBranchName = deriveGeneratedBranchName(update.newBranch);
+        if (firstGeneratedBranchName) {
+          const task = await ctx.db.get(doc.taskId);
+          if (
+            task &&
+            task.generatedBranchName !== firstGeneratedBranchName
+          ) {
+            await ctx.db.patch(doc.taskId, {
+              generatedBranchName: firstGeneratedBranchName,
+            });
+          }
+        }
+      }
+    }
+  },
+});
+
+// Get JWT for an existing task run (used when task runs are pre-created)
+export const getJwt = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    taskRunId: v.id("taskRuns"),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const doc = await ctx.db.get(args.taskRunId);
+    if (!doc || doc.teamId !== teamId || doc.userId !== userId) {
+      throw new Error("Task run not found or unauthorized");
+    }
+
+    const jwt = await new SignJWT({
+      taskRunId: args.taskRunId,
+      teamId,
+      userId,
+    })
+      .setProtectedHeader({ alg: "HS256" })
+      .setIssuedAt()
+      .setExpirationTime("12h")
+      .sign(new TextEncoder().encode(env.CMUX_TASK_RUN_JWT_SECRET));
+
+    return { jwt };
+  },
+});
+
 // Internal query to get a task run by ID
 export const getById = internalQuery({
   args: { id: v.id("taskRuns") },
@@ -762,6 +969,11 @@ export const updateStatusPublic = authMutation({
     }
 
     await ctx.db.patch(args.id, updates);
+
+    // After updating to a terminal status, check if we should update the task status
+    if (args.status === "completed" || args.status === "failed") {
+      await updateTaskStatusFromRuns(ctx, doc.taskId, teamId, userId);
+    }
   },
 });
 
@@ -943,6 +1155,9 @@ export const complete = authMutation({
       completedAt: now,
       updatedAt: now,
     });
+
+    // After marking this run as completed, check if we should update the task status
+    await updateTaskStatusFromRuns(ctx, doc.taskId, teamId, userId);
   },
 });
 
@@ -969,6 +1184,9 @@ export const fail = authMutation({
       completedAt: now,
       updatedAt: now,
     });
+
+    // After marking this run as failed, check if we should update the task status
+    await updateTaskStatusFromRuns(ctx, doc.taskId, teamId, userId);
   },
 });
 
@@ -1106,6 +1324,9 @@ export const workerComplete = internalMutation({
       completedAt: now,
       updatedAt: now,
     });
+
+    // After marking this run as completed, check if we should update the task status
+    await updateTaskStatusFromRuns(ctx, run.taskId, run.teamId, run.userId);
 
     return run;
   },
