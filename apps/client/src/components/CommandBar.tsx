@@ -1,3 +1,4 @@
+import { env } from "@/client-env";
 import { GitHubIcon } from "@/components/icons/github";
 import { useTheme } from "@/components/theme/use-theme";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
@@ -1543,24 +1544,28 @@ export function CommandBar({
           </>
         ),
       },
-      {
-        value: "local-workspaces",
-        label: "New Local Workspace",
-        keywords: ["workspace", "local", "repo"],
-        searchText: buildSearchText(
-          "New Local Workspace",
-          ["workspace", "local"],
-          ["local-workspaces"]
-        ),
-        className: baseCommandItemClassName,
-        execute: () => handleSelect("local-workspaces"),
-        renderContent: () => (
-          <>
-            <FolderPlus className="h-4 w-4 text-neutral-500" />
-            <span className="text-sm">New Local Workspace</span>
-          </>
-        ),
-      },
+      ...(!env.NEXT_PUBLIC_WEB_MODE
+        ? [
+            {
+              value: "local-workspaces",
+              label: "New Local Workspace",
+              keywords: ["workspace", "local", "repo"],
+              searchText: buildSearchText(
+                "New Local Workspace",
+                ["workspace", "local"],
+                ["local-workspaces"]
+              ),
+              className: baseCommandItemClassName,
+              execute: () => handleSelect("local-workspaces"),
+              renderContent: () => (
+                <>
+                  <FolderPlus className="h-4 w-4 text-neutral-500" />
+                  <span className="text-sm">New Local Workspace</span>
+                </>
+              ),
+            },
+          ]
+        : []),
       {
         value: "cloud-workspaces",
         label: "New Cloud Workspace",
