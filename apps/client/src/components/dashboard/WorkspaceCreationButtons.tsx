@@ -3,6 +3,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { env } from "@/client-env";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { useTheme } from "@/components/theme/use-theme";
@@ -195,9 +196,12 @@ export function WorkspaceCreationButtons({
   const canCreateLocal = selectedProject.length > 0 && !isEnvSelected;
   const canCreateCloud = selectedProject.length > 0 && isEnvSelected;
 
-  const SHOW_WORKSPACE_BUTTONS = false;
+  // Hide local workspace buttons in web mode (cmux.sh)
+  const showLocalWorkspace = !env.NEXT_PUBLIC_WEB_MODE;
 
-  if (!SHOW_WORKSPACE_BUTTONS) {
+  // Currently both workspace buttons are hidden if local workspace is disabled
+  // This can be adjusted if cloud workspaces should be shown in web mode
+  if (!showLocalWorkspace) {
     return null;
   }
 

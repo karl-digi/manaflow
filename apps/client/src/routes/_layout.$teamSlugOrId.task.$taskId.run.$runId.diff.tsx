@@ -1,3 +1,4 @@
+import { env } from "@/client-env";
 import { FloatingPane } from "@/components/floating-pane";
 import { type GitDiffViewerProps } from "@/components/git-diff-viewer";
 import { RunDiffSection } from "@/components/RunDiffSection";
@@ -833,7 +834,7 @@ function RunDiffPage() {
             onCollapseAll={diffControls?.collapseAll}
             onExpandAllChecks={expandAllChecks}
             onCollapseAllChecks={collapseAllChecks}
-            onOpenLocalWorkspace={isWorkspace ? undefined : handleOpenLocalWorkspace}
+            onOpenLocalWorkspace={isWorkspace || env.NEXT_PUBLIC_WEB_MODE ? undefined : handleOpenLocalWorkspace}
             teamSlugOrId={teamSlugOrId}
           />
           {task?.text && (
