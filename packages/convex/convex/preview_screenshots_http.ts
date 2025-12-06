@@ -79,6 +79,7 @@ export const uploadPreviewScreenshot = httpAction(async (ctx, req) => {
     mimeType: image.mimeType,
     fileName: image.fileName,
     commitSha: image.commitSha,
+    createdAt: image.createdAt,
   }));
 
   if (payload.status === "completed") {

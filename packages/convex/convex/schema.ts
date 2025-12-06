@@ -337,6 +337,7 @@ const convexSchema = defineSchema({
         fileName: v.optional(v.string()),
         commitSha: v.optional(v.string()),
         description: v.optional(v.string()),
+        createdAt: v.optional(v.number()),
       }),
     ),
     createdAt: v.number(),

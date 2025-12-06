@@ -18,6 +18,7 @@ export const ScreenshotStoredImageSchema = z.object({
   fileName: z.string().optional(),
   commitSha: z.string(),
   description: z.string().optional(),
+  createdAt: z.number().optional(),
 });
 export type ScreenshotStoredImage = z.infer<
   typeof ScreenshotStoredImageSchema

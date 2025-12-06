@@ -148,7 +148,13 @@ async function renderScreenshotSetMarkdown(
       const count = set.images.length;
       const intro = `Captured ${count} screenshot${count === 1 ? "" : "s"} for commit ${commitLabel} (${timestamp}).`;
       lines.push(intro, "");
-      for (const image of set.images) {
+      // Sort images by createdAt (oldest first) to maintain chronological order
+      const sortedImages = [...set.images].sort((a, b) => {
+        const aTime = a.createdAt ?? 0;
+        const bTime = b.createdAt ?? 0;
+        return aTime - bTime;
+      });
+      for (const image of sortedImages) {
         const storageUrl = await ctx.storage.getUrl(image.storageId);
         if (!storageUrl) continue;
         const fileName = image.fileName || "screenshot";
@@ -611,7 +617,7 @@ async function getScreenshotsForPr(
     repoFullName: string;
     prNumber: number;
   },
-): Promise<Array<{ url: string; fileName?: string; description?: string }>> {
+): Promise<Array<{ url: string; fileName?: string; description?: string; createdAt?: number }>> {
   try {
     const taskRuns = await ctx.runQuery(
       internal.github_pr_queries.findTaskRunsForPr,
@@ -626,7 +632,7 @@ async function getScreenshotsForPr(
       return [];
     }
 
-    const screenshots: Array<{ url: string; fileName?: string; description?: string }> = [];
+    const screenshots: Array<{ url: string; fileName?: string; description?: string; createdAt?: number }> = [];
 
     for (const run of taskRuns) {
       if (run.latestScreenshotSetId) {
@@ -644,12 +650,20 @@ async function getScreenshotsForPr(
                 url: image.url,
                 fileName: image.fileName,
                 description: image.description,
+                createdAt: image.createdAt,
               });
             }
           }
         }
       }
     }
+
+    // Sort screenshots by createdAt (oldest first) to maintain chronological order
+    screenshots.sort((a, b) => {
+      const aTime = a.createdAt ?? 0;
+      const bTime = b.createdAt ?? 0;
+      return aTime - bTime;
+    });
 
     return screenshots;
   } catch (error) {
