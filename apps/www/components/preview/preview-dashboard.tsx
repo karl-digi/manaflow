@@ -526,7 +526,7 @@ function MockGitHubPRBrowser() {
             <button
               onClick={() => setActiveTab("github")}
               className={clsx(
-                "relative flex items-center gap-2 px-4 py-2 text-xs font-medium rounded-t-lg transition-colors min-w-[160px]",
+                "relative flex items-center gap-2 px-4 py-2 text-xs font-medium rounded-t-lg transition-colors min-w-[180px]",
                 activeTab === "github"
                   ? "bg-[#292a2d] text-white"
                   : "bg-[#1a1a1d] text-neutral-400 hover:bg-[#242528] hover:text-neutral-300"
@@ -535,8 +535,8 @@ function MockGitHubPRBrowser() {
               <svg className="h-4 w-4 shrink-0" viewBox="0 0 16 16" fill="currentColor">
                 <path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"/>
               </svg>
-              <span className="truncate">GitHub</span>
-              <svg className="h-3.5 w-3.5 ml-auto shrink-0 text-neutral-500 hover:text-white" viewBox="0 0 16 16" fill="currentColor">
+              <span className="truncate flex-1">GitHub</span>
+              <svg className="h-3.5 w-3.5 shrink-0 text-neutral-500 hover:text-white" viewBox="0 0 16 16" fill="currentColor">
                 <path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"/>
               </svg>
               {activeTab === "github" && (
@@ -548,15 +548,15 @@ function MockGitHubPRBrowser() {
             <button
               onClick={() => setActiveTab("workspace")}
               className={clsx(
-                "relative flex items-center gap-1 px-4 py-2 text-xs font-medium rounded-t-lg transition-colors min-w-[160px] ml-1",
+                "relative flex items-center gap-2 px-4 py-2 text-xs font-medium rounded-t-lg transition-colors min-w-[180px] ml-1",
                 activeTab === "workspace"
                   ? "bg-[#292a2d] text-white"
                   : "bg-[#1a1a1d] text-neutral-400 hover:bg-[#242528] hover:text-neutral-300"
               )}
             >
               <TabFavicon className="shrink-0" />
-              <span className="truncate">cmux</span>
-              <svg className="h-3.5 w-3.5 ml-auto shrink-0 text-neutral-500 hover:text-white" viewBox="0 0 16 16" fill="currentColor">
+              <span className="truncate flex-1">cmux</span>
+              <svg className="h-3.5 w-3.5 shrink-0 text-neutral-500 hover:text-white" viewBox="0 0 16 16" fill="currentColor">
                 <path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"/>
               </svg>
               {activeTab === "workspace" && (
@@ -1491,10 +1491,10 @@ function MockGitHubPRBrowser() {
               />
 
               {/* Right: Browser + Git Diff stacked vertically */}
-              <div className="flex flex-col min-w-0 relative" style={{ width: `${100 - leftPanelWidth}%` }}>
+              <div className="flex flex-col min-w-0 relative overflow-hidden" style={{ width: `${100 - leftPanelWidth}%` }}>
                 {/* Browser Panel */}
                 <div
-                  className="bg-[#1e1e1e] flex flex-col"
+                  className="bg-[#1e1e1e] flex flex-col min-h-0 overflow-hidden"
                   style={{ height: `${topPanelHeight}%` }}
                 >
                   {/* Panel header */}
@@ -1503,29 +1503,29 @@ function MockGitHubPRBrowser() {
                     <span className="text-xs text-[#cccccc]">Browser</span>
                   </div>
                   {/* Chrome browser inside */}
-                  <div className="flex-1 flex flex-col bg-[#202124] overflow-hidden" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}>
-                    {/* Chrome tab bar */}
-                    <div className="flex items-end bg-[#35363a] h-[28px] px-2 shrink-0">
-                      <div className="flex items-center gap-1 bg-[#202124] rounded-t-lg px-2 py-1 max-w-[160px] mt-auto">
-                        <TabFavicon />
-                        <span className="text-[10px] text-[#e8eaed] truncate">cmux.dev</span>
-                        <button className="p-0.5 hover:bg-[#35363a] rounded">
-                          <X className="h-2.5 w-2.5 text-[#9aa0a6]" />
+                  <div className="flex-1 flex flex-col bg-[#202124] overflow-hidden min-h-0" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}>
+                    {/* Chrome tab bar - matching outer browser style */}
+                    <div className="flex items-end h-8 bg-[#202124] pt-1.5 px-1.5 shrink-0">
+                      <div className="flex items-center gap-1.5 bg-[#292a2d] rounded-t-lg px-3 py-1.5 min-w-[140px] max-w-[180px]">
+                        <TabFavicon className="shrink-0" />
+                        <span className="text-[10px] text-[#e8eaed] truncate flex-1">cmux.dev</span>
+                        <button className="p-0.5 hover:bg-[#35363a] rounded ml-auto shrink-0">
+                          <X className="h-3 w-3 text-[#9aa0a6]" />
                         </button>
                       </div>
                     </div>
                     {/* Chrome toolbar */}
-                    <div className="flex items-center gap-2 px-2 py-1 bg-[#202124] shrink-0">
-                      <div className="flex-1 flex items-center gap-2 px-2 py-0.5 bg-[#35363a] rounded-full text-[10px]">
-                        <svg className="h-2.5 w-2.5 text-[#9aa0a6]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <div className="flex items-center gap-1.5 px-1.5 py-1 bg-[#292a2d] border-b border-[#3c3c3c] shrink-0">
+                      <div className="flex-1 flex items-center gap-1.5 px-2 py-0.5 bg-[#202124] rounded-full text-[10px]">
+                        <svg className="h-2.5 w-2.5 text-[#9aa0a6] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                           <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
                           <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                         </svg>
-                        <span className="text-[#e8eaed]">localhost:5173</span>
+                        <span className="text-[#e8eaed] truncate">localhost:5173</span>
                       </div>
                     </div>
                     {/* Browser content - cmux.dev landing page */}
-                    <div className="flex-1 bg-[#030712] overflow-y-auto">
+                    <div className="flex-1 bg-[#030712] overflow-y-auto min-h-0">
                       {/* Gradient background */}
                       <div className="relative">
                         <div className="absolute inset-0 overflow-hidden">
@@ -1862,24 +1862,24 @@ function MockGitHubPRBrowser() {
                   </div>
                   {/* Chrome browser inside */}
                   <div className="flex-1 flex flex-col bg-[#202124] overflow-hidden" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}>
-                    {/* Chrome tab bar */}
-                    <div className="flex items-end bg-[#35363a] h-[32px] px-2 shrink-0">
-                      <div className="flex items-center gap-1 bg-[#202124] rounded-t-lg px-3 py-1.5 max-w-[200px] mt-auto">
-                        <TabFavicon />
-                        <span className="text-[11px] text-[#e8eaed] truncate">cmux.dev</span>
-                        <button className="p-0.5 hover:bg-[#35363a] rounded">
-                          <X className="h-3 w-3 text-[#9aa0a6]" />
+                    {/* Chrome tab bar - matching outer browser style */}
+                    <div className="flex items-end h-10 bg-[#202124] pt-2 px-2 shrink-0">
+                      <div className="flex items-center gap-2 bg-[#292a2d] rounded-t-lg px-4 py-2 min-w-[160px] max-w-[200px]">
+                        <TabFavicon className="shrink-0" />
+                        <span className="text-xs text-[#e8eaed] truncate flex-1">cmux.dev</span>
+                        <button className="p-0.5 hover:bg-[#35363a] rounded ml-auto shrink-0">
+                          <X className="h-3.5 w-3.5 text-[#9aa0a6]" />
                         </button>
                       </div>
                     </div>
                     {/* Chrome toolbar */}
-                    <div className="flex items-center gap-2 px-2 py-1.5 bg-[#202124] shrink-0">
-                      <div className="flex-1 flex items-center gap-2 px-3 py-1 bg-[#35363a] rounded-full text-[11px]">
-                        <svg className="h-3 w-3 text-[#9aa0a6]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <div className="flex items-center gap-2 h-10 px-3 bg-[#292a2d] border-b border-[#3c3c3c] shrink-0">
+                      <div className="flex-1 flex items-center gap-2 px-3 py-1.5 bg-[#202124] rounded-full text-sm">
+                        <svg className="h-3.5 w-3.5 text-[#9aa0a6] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                           <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
                           <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                         </svg>
-                        <span className="text-[#e8eaed]">localhost:5173</span>
+                        <span className="text-[#e8eaed] truncate">localhost:5173</span>
                       </div>
                     </div>
                     {/* Browser content - cmux.dev landing page */}
