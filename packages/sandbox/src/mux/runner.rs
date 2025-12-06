@@ -92,6 +92,16 @@ async fn run_main_loop<B: ratatui::backend::Backend + std::io::Write>(
     let terminal_manager = create_terminal_manager(base_url.clone(), event_tx.clone());
     app.set_terminal_manager(terminal_manager.clone());
 
+    // Pre-establish WebSocket connection in background - don't wait for first terminal
+    // This runs in parallel with sandbox creation, so WebSocket is ready when we need it
+    let ws_manager = terminal_manager.clone();
+    tokio::spawn(async move {
+        if let Err(e) = crate::mux::terminal::establish_mux_connection(ws_manager).await {
+            // Non-fatal - will retry when first terminal connects
+            tracing::debug!("Pre-establish WebSocket failed (will retry): {}", e);
+        }
+    });
+
     // Start background task to periodically refresh sandboxes
     let refresh_tx = event_tx.clone();
     let refresh_url = base_url.clone();
@@ -1255,32 +1265,7 @@ async fn create_sandbox_with_workspace(
     let summary: crate::models::SandboxSummary = response.json().await?;
     let sandbox_id = summary.id.to_string();
 
-    let _ = event_tx.send(MuxEvent::StatusMessage {
-        message: format!("Uploading {}...", dir_name),
-    });
-
-    if let Err(error) = upload_workspace(&client, &trimmed_base, &sandbox_id, &workspace_path).await
-    {
-        let _ = event_tx.send(MuxEvent::Error(format!(
-            "Failed to upload workspace: {}",
-            error
-        )));
-    }
-
-    let sync_files = detect_sync_files();
-    if !sync_files.is_empty() {
-        let _ = event_tx.send(MuxEvent::StatusMessage {
-            message: format!("Syncing {} file(s)...", sync_files.len()),
-        });
-
-        if let Err(error) =
-            upload_sync_files_with_list(&client, &trimmed_base, &sandbox_id, sync_files, false)
-                .await
-        {
-            let _ = event_tx.send(MuxEvent::Error(format!("Failed to sync files: {}", error)));
-        }
-    }
-
+    // Send creation events and connect IMMEDIATELY - don't wait for uploads
     let _ = event_tx.send(MuxEvent::SandboxCreated {
         sandbox: summary.clone(),
         tab_id: Some(tab_id.clone()),
@@ -1288,11 +1273,63 @@ async fn create_sandbox_with_workspace(
     let _ = event_tx.send(MuxEvent::StatusMessage {
         message: format!("Created sandbox: {}", sandbox_id),
     });
-    let _ = event_tx.send(MuxEvent::ConnectToSandbox { sandbox_id });
+    let _ = event_tx.send(MuxEvent::ConnectToSandbox {
+        sandbox_id: sandbox_id.clone(),
+    });
 
+    // Refresh sandbox list immediately so it appears in sidebar
     if let Err(error) = refresh_sandboxes(&trimmed_base, &event_tx).await {
         let _ = event_tx.send(MuxEvent::SandboxRefreshFailed(error.to_string()));
     }
+
+    // Run uploads in background - don't block the shell connection
+    let _ = event_tx.send(MuxEvent::StatusMessage {
+        message: format!("Uploading {}...", dir_name),
+    });
+
+    // Spawn workspace upload task - starts immediately to drain the stream
+    let workspace_client = client.clone();
+    let workspace_base = trimmed_base.clone();
+    let workspace_id = sandbox_id.clone();
+    let workspace_event_tx = event_tx.clone();
+    let workspace_dir_name = dir_name.clone();
+    tokio::spawn(async move {
+        if let Err(error) = upload_workspace(
+            &workspace_client,
+            &workspace_base,
+            &workspace_id,
+            &workspace_path,
+        )
+        .await
+        {
+            let _ = workspace_event_tx.send(MuxEvent::Error(format!(
+                "Failed to upload workspace: {}",
+                error
+            )));
+        } else {
+            let _ = workspace_event_tx.send(MuxEvent::StatusMessage {
+                message: format!("✓ {} uploaded", workspace_dir_name),
+            });
+        }
+    });
+
+    // Spawn sync files upload task separately
+    let sync_client = client.clone();
+    let sync_base = trimmed_base.clone();
+    let sync_id = sandbox_id.clone();
+    let sync_event_tx = event_tx.clone();
+    tokio::spawn(async move {
+        let sync_files = detect_sync_files();
+        if !sync_files.is_empty() {
+            if let Err(error) =
+                upload_sync_files_with_list(&sync_client, &sync_base, &sync_id, sync_files, false)
+                    .await
+            {
+                let _ =
+                    sync_event_tx.send(MuxEvent::Error(format!("Failed to sync files: {}", error)));
+            }
+        }
+    });
 
     Ok(())
 }

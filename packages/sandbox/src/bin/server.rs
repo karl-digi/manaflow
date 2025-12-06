@@ -41,12 +41,25 @@ struct Options {
         env = "CMUX_BRIDGE_SOCKET"
     )]
     bridge_socket: PathBuf,
+    /// Enable timing instrumentation (logs to timing.log)
+    #[arg(long, env = "CMUX_TIMING")]
+    timing: bool,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let options = Options::parse();
     let _guard = init_tracing(&options.log_dir);
+
+    // Enable timing if requested
+    if options.timing {
+        cmux_sandbox::timing::enable_timing();
+        let timing_log = options.log_dir.join("timing.log");
+        if let Some(path) = timing_log.to_str() {
+            cmux_sandbox::timing::set_log_path(path);
+        }
+        tracing::info!("timing instrumentation enabled");
+    }
 
     run_server(options).await;
 

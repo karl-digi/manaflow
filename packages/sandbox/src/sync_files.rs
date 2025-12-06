@@ -400,3 +400,164 @@ impl std::io::Write for ChunkedWriter {
         Ok(())
     }
 }
+
+/// Pre-build the sync files tar archive into a buffer.
+/// This can be called before sandbox creation to overlap CPU work with network I/O.
+/// Returns Ok(None) if there are no files to sync, Ok(Some(data)) on success,
+/// or Err(message) if there was an error reading/packaging files.
+pub fn prebuild_sync_files_tar() -> Result<Option<Vec<u8>>, String> {
+    let files_to_upload = detect_sync_files();
+    if files_to_upload.is_empty() {
+        return Ok(None);
+    }
+
+    let mut buffer = Vec::new();
+    {
+        let mut tar = Builder::new(&mut buffer);
+        let temp_dir_name = "__cmux_sync_temp";
+
+        fn ensure_codex_notify(content: &str) -> String {
+            let has_notify = content
+                .lines()
+                .any(|line| line.trim_start().starts_with("notify"));
+            if has_notify {
+                return content.to_string();
+            }
+
+            let notify_block = r#"notify = [
+  "sh",
+  "-c",
+  "echo \"$1\" | jq -r '.[\"last-assistant-message\"] // \"Awaiting input\"' | xargs -I{} cmux-bridge notify \"Codex: {}\"",
+  "--",
+]
+
+"#;
+            format!("{notify_block}{content}")
+        }
+
+        for SyncFileToUpload {
+            host_path,
+            sandbox_path: sandbox_path_str,
+            is_dir,
+        } in files_to_upload
+        {
+            let sandbox_path = Path::new(sandbox_path_str);
+            let rel_sandbox_path = sandbox_path.strip_prefix("/").unwrap_or(sandbox_path);
+            let tar_path = Path::new(temp_dir_name).join(rel_sandbox_path);
+
+            let result: io::Result<()> = if is_dir {
+                tar.append_dir_all(&tar_path, &host_path)
+            } else if sandbox_path_str == "/root/.codex/config.toml" {
+                match fs::read_to_string(&host_path) {
+                    Ok(raw) => {
+                        let merged = ensure_codex_notify(&raw);
+                        let bytes = merged.as_bytes();
+                        let mut header = Header::new_gnu();
+                        if header.set_path(&tar_path).is_err() {
+                            return Err(format!(
+                                "Failed to set tar path for {}",
+                                tar_path.display()
+                            ));
+                        }
+                        header.set_size(bytes.len() as u64);
+                        header.set_mode(0o644);
+                        let mtime = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs();
+                        header.set_mtime(mtime);
+                        header.set_cksum();
+                        tar.append_data(&mut header, &tar_path, bytes)
+                    }
+                    Err(e) => Err(e),
+                }
+            } else {
+                tar.append_path_with_name(&host_path, &tar_path)
+            };
+
+            if let Err(e) = result {
+                return Err(format!(
+                    "Failed to add {} to tar: {}",
+                    host_path.display(),
+                    e
+                ));
+            }
+        }
+
+        if let Err(e) = tar.finish() {
+            return Err(format!("Failed to finalize tar archive: {}", e));
+        }
+    }
+
+    Ok(Some(buffer))
+}
+
+/// Upload pre-built sync files tar and execute the move script.
+pub async fn upload_prebuilt_sync_files(
+    client: &Client,
+    base_url: &str,
+    id: &str,
+    tar_data: Vec<u8>,
+    log_progress: bool,
+) -> anyhow::Result<()> {
+    if log_progress {
+        eprintln!("Syncing auth files...");
+    }
+
+    let url = format!("{}/sandboxes/{}/files", base_url.trim_end_matches('/'), id);
+    let response = client.post(url).body(tar_data).send().await?;
+    if !response.status().is_success() {
+        return Err(anyhow!(
+            "Failed to upload sync files: {}",
+            response.status()
+        ));
+    }
+
+    let move_script = r#"
+        if [ -d /workspace/__cmux_sync_temp ]; then
+            cp -r /workspace/__cmux_sync_temp/root/. /root/ 2>/dev/null || true
+            git config --global --add safe.directory /workspace || true
+            rm -rf /workspace/__cmux_sync_temp
+            # Fix SSH permissions (SSH is picky about this)
+            if [ -d /root/.ssh ]; then
+                chmod 700 /root/.ssh
+                chmod 600 /root/.ssh/* 2>/dev/null || true
+                chmod 644 /root/.ssh/*.pub 2>/dev/null || true
+                chmod 644 /root/.ssh/known_hosts 2>/dev/null || true
+                chmod 644 /root/.ssh/config 2>/dev/null || true
+                # Create authorized_keys from user's public keys for SSH access
+                cat /root/.ssh/*.pub > /root/.ssh/authorized_keys 2>/dev/null || true
+                chmod 600 /root/.ssh/authorized_keys 2>/dev/null || true
+            fi
+        fi
+        # Add container's SSH key to authorized_keys for dmux ssh command
+        # This key is generated in the Docker image and allows the container to SSH into sandboxes
+        CONTAINER_KEY_FILE="/usr/share/cmux/container-ssh.pub"
+        if [ -f "$CONTAINER_KEY_FILE" ]; then
+            mkdir -p /root/.ssh
+            cat "$CONTAINER_KEY_FILE" >> /root/.ssh/authorized_keys 2>/dev/null || true
+            chmod 600 /root/.ssh/authorized_keys 2>/dev/null || true
+        fi
+        # Start sshd for SSH access to sandbox
+        mkdir -p /run/sshd
+        /usr/sbin/sshd 2>/dev/null || true
+    "#;
+
+    let exec_body = ExecRequest {
+        command: vec!["/bin/sh".into(), "-c".into(), move_script.into()],
+        workdir: None,
+        env: Vec::new(),
+    };
+
+    let exec_url = format!("{}/sandboxes/{}/exec", base_url.trim_end_matches('/'), id);
+    let exec_response = client.post(exec_url).json(&exec_body).send().await?;
+
+    if !exec_response.status().is_success() {
+        return Err(anyhow!(
+            "Failed to execute move script: {}",
+            exec_response.status()
+        ));
+    }
+
+    Ok(())
+}

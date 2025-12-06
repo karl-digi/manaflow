@@ -274,6 +274,18 @@ export const DashboardInputControls = memo(function DashboardInputControls({
     };
   }, []);
 
+  // Listen for GitHub install completion message from popup
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      if (event.data?.type === "cmux/github-install-complete") {
+        router.options.context?.queryClient?.invalidateQueries();
+      }
+    };
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [router.options.context?.queryClient]);
+
   const handleImageClick = useCallback(() => {
     // Trigger the file select from ImagePlugin
     const lexicalWindow = window as Window & {
@@ -456,11 +468,6 @@ export const DashboardInputControls = memo(function DashboardInputControls({
     const win = window.open("about:blank", name, features);
     if (win) {
       try {
-        (win as Window & { opener: null | Window }).opener = null;
-      } catch {
-        /* noop */
-      }
-      try {
         win.location.href = url;
       } catch {
         window.open(url, "_blank");
@@ -520,38 +527,45 @@ export const DashboardInputControls = memo(function DashboardInputControls({
                 <Server className="w-4 h-4 text-neutral-600 dark:text-neutral-300" />
                 <span className="select-none">Create environment</span>
               </Link>
-              {env.NEXT_PUBLIC_GITHUB_APP_SLUG ? (
-                <button
-                  type="button"
-                  onClick={async (e) => {
-                    e.preventDefault();
-                    try {
-                      const slug = env.NEXT_PUBLIC_GITHUB_APP_SLUG!;
-                      const baseUrl = `https://github.com/apps/${slug}/installations/new`;
-                      const { state } = await mintState({ teamSlugOrId });
-                      const sep = baseUrl.includes("?") ? "&" : "?";
-                      const url = `${baseUrl}${sep}state=${encodeURIComponent(
-                        state,
-                      )}`;
-                      const win = openCenteredPopup(
-                        url,
-                        { name: "github-install" },
-                        () => {
-                          router.options.context?.queryClient?.invalidateQueries();
-                        },
-                      );
-                      win?.focus?.();
-                    } catch (err) {
-                      console.error("Failed to start GitHub install:", err);
-                      alert("Failed to start installation. Please try again.");
+              <button
+                type="button"
+                onClick={async (e) => {
+                  e.preventDefault();
+                  try {
+                    const slug = env.NEXT_PUBLIC_GITHUB_APP_SLUG;
+                    if (!slug) {
+                      alert("GitHub App not configured. Please contact support.");
+                      return;
                     }
-                  }}
-                  className="w-full px-2 h-8 flex items-center gap-2 text-[13.5px] text-neutral-800 dark:text-neutral-200 rounded-md hover:bg-neutral-50 dark:hover:bg-neutral-900"
-                >
-                  <GitHubIcon className="w-4 h-4 text-neutral-600 dark:text-neutral-300" />
-                  <span className="select-none">Add repos from GitHub</span>
-                </button>
-              ) : null}
+                    const baseUrl = `https://github.com/apps/${slug}/installations/new`;
+                    // For web users, pass returnUrl to connect-complete page which handles popup close
+                    // Include popup=true query param to signal this is a web popup flow
+                    const returnUrl = !isElectron
+                      ? new URL(`/${teamSlugOrId}/connect-complete?popup=true`, window.location.origin).toString()
+                      : undefined;
+                    const { state } = await mintState({ teamSlugOrId, returnUrl });
+                    const sep = baseUrl.includes("?") ? "&" : "?";
+                    const url = `${baseUrl}${sep}state=${encodeURIComponent(
+                      state,
+                    )}`;
+                    const win = openCenteredPopup(
+                      url,
+                      { name: "github-install" },
+                      () => {
+                        router.options.context?.queryClient?.invalidateQueries();
+                      },
+                    );
+                    win?.focus?.();
+                  } catch (err) {
+                    console.error("Failed to start GitHub install:", err);
+                    alert("Failed to start installation. Please try again.");
+                  }
+                }}
+                className="w-full px-2 h-8 flex items-center gap-2 text-[13.5px] text-neutral-800 dark:text-neutral-200 rounded-md hover:bg-neutral-50 dark:hover:bg-neutral-900"
+              >
+                <GitHubIcon className="w-4 h-4 text-neutral-600 dark:text-neutral-300" />
+                <span className="select-none">Add repos from GitHub</span>
+              </button>
               <button
                 type="button"
                 onClick={(e) => {

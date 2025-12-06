@@ -6,6 +6,7 @@ use crate::models::{
 };
 use crate::mux::terminal::VirtualTerminal;
 use crate::service::SandboxService;
+use crate::timing::TimingReport;
 use async_trait::async_trait;
 use axum::body::Body;
 use axum::extract::ws::{Message, WebSocket};
@@ -687,6 +688,7 @@ fi
         command.args(["--", "/bin/sh", "-c", "ip link set lo up && sleep infinity"]);
 
         let mut child = command.spawn()?;
+
         let stdout = child
             .stdout
             .take()
@@ -703,32 +705,52 @@ fi
         Ok((child, status.child_pid))
     }
 
-    async fn configure_network(
+    /// Prepare the host side of the network (veth creation + host config).
+    /// This can run in parallel with bubblewrap spawn since it doesn't need the child PID.
+    async fn prepare_network_host_side(
+        &self,
+        host_if: &str,
+        ns_if: &str,
+        host_cidr: &str,
+    ) -> SandboxResult<()> {
+        // Create veth pair and configure host side in one shell command
+        let script = format!(
+            "{ip} link add {host} type veth peer name {ns} && \
+             {ip} addr add {cidr} dev {host} && \
+             {ip} link set {host} up",
+            ip = self.ip_path,
+            host = host_if,
+            ns = ns_if,
+            cidr = host_cidr
+        );
+        run_command("/bin/sh", &["-c", &script]).await
+    }
+
+    /// Finish network configuration by moving interface to namespace and configuring sandbox side.
+    /// This must run after bubblewrap spawn since it needs the child PID.
+    async fn finish_network_sandbox_side(
         &self,
         pid: u32,
         lease: &IpLease,
-        id: &Uuid,
+        host_if: &str,
+        ns_if: &str,
+        sandbox_cidr: &str,
     ) -> SandboxResult<SandboxNetwork> {
         let formatted_pid = pid.to_string();
-        let (host_if, ns_if) = make_interface_names(id);
-        let host_cidr = format!("{}/{}", lease.host, lease.cidr);
-        let sandbox_cidr = format!("{}/{}", lease.sandbox, lease.cidr);
 
+        // Move interface to sandbox namespace
         run_command(
             &self.ip_path,
-            &[
-                "link", "add", &host_if, "type", "veth", "peer", "name", &ns_if,
-            ],
-        )
-        .await?;
-        run_command(&self.ip_path, &["addr", "add", &host_cidr, "dev", &host_if]).await?;
-        run_command(&self.ip_path, &["link", "set", &host_if, "up"]).await?;
-        run_command(
-            &self.ip_path,
-            &["link", "set", &ns_if, "netns", &formatted_pid],
+            &["link", "set", ns_if, "netns", &formatted_pid],
         )
         .await?;
 
+        // Configure sandbox side - all in one nsenter call
+        let host_ip = lease.host.to_string();
+        let script = format!(
+            "ip addr add {} dev {} && ip link set {} up && ip link set lo up && ip route replace default via {}",
+            sandbox_cidr, ns_if, ns_if, host_ip
+        );
         run_command(
             &self.nsenter_path,
             &[
@@ -736,66 +758,16 @@ fi
                 &formatted_pid,
                 "--net",
                 "--",
-                "ip",
-                "addr",
-                "add",
-                &sandbox_cidr,
-                "dev",
-                &ns_if,
-            ],
-        )
-        .await?;
-
-        run_command(
-            &self.nsenter_path,
-            &[
-                "--target",
-                &formatted_pid,
-                "--net",
-                "--",
-                "ip",
-                "link",
-                "set",
-                &ns_if,
-                "up",
-            ],
-        )
-        .await?;
-        run_command(
-            &self.nsenter_path,
-            &[
-                "--target",
-                &formatted_pid,
-                "--net",
-                "--",
-                "ip",
-                "link",
-                "set",
-                "lo",
-                "up",
-            ],
-        )
-        .await?;
-        run_command(
-            &self.nsenter_path,
-            &[
-                "--target",
-                &formatted_pid,
-                "--net",
-                "--",
-                "ip",
-                "route",
-                "replace",
-                "default",
-                "via",
-                &lease.host.to_string(),
+                "/bin/sh",
+                "-c",
+                &script,
             ],
         )
         .await?;
 
         Ok(SandboxNetwork {
-            host_interface: host_if,
-            sandbox_interface: ns_if,
+            host_interface: host_if.to_string(),
+            sandbox_interface: ns_if.to_string(),
             host_ip: lease.host.to_string(),
             sandbox_ip: lease.sandbox.to_string(),
             cidr: lease.cidr,
@@ -1056,20 +1028,29 @@ fn session_env_with_overrides(
 impl SandboxService for BubblewrapService {
     async fn create(&self, request: CreateSandboxRequest) -> SandboxResult<SandboxSummary> {
         let id = Uuid::new_v4();
+        let mut timing = TimingReport::new("sandbox_create", &id.to_string());
+
         let index = self.next_index.fetch_add(1, Ordering::Relaxed);
         let name = request
             .name
             .clone()
             .unwrap_or_else(|| Self::default_name(&id));
+
+        // Phase: workspace setup
         let workspace = self.resolve_workspace(&request, &id);
+        let workspace_timer = crate::timing::Timer::new("workspace_setup");
         fs::create_dir_all(&workspace).await?;
+        timing.record_timer("workspace_setup", workspace_timer);
 
         let system_dir = self.workspace_root.join(id.to_string()).join("system");
 
+        // Phase: IP allocation
+        let ip_timer = crate::timing::Timer::new("ip_allocation");
         let lease = {
             let mut pool = self.ip_pool.lock().await;
             pool.allocate()?
         };
+        timing.record_timer("ip_allocation", ip_timer);
 
         let effective_env = build_effective_env(
             &request.env,
@@ -1080,20 +1061,32 @@ impl SandboxService for BubblewrapService {
             self.docker.docker_host_env(),
         );
 
-        let (mut child, inner_pid) = match self
-            .spawn_bubblewrap(
-                &request,
-                &effective_env,
-                &workspace,
-                &system_dir,
-                &id,
-                &lease,
-                index,
-            )
-            .await
-        {
+        // Phase: spawn bubblewrap AND prepare network in parallel
+        // Veth creation + host setup don't need the child PID, so run them concurrently
+        let spawn_timer = crate::timing::Timer::new("spawn_and_net_prepare");
+        let (host_if, ns_if) = make_interface_names(&id);
+        let host_cidr = format!("{}/{}", lease.host, lease.cidr);
+
+        let spawn_fut = self.spawn_bubblewrap(
+            &request,
+            &effective_env,
+            &workspace,
+            &system_dir,
+            &id,
+            &lease,
+            index,
+        );
+
+        let net_prepare_fut = self.prepare_network_host_side(&host_if, &ns_if, &host_cidr);
+
+        let (spawn_result, net_prepare_result) = tokio::join!(spawn_fut, net_prepare_fut);
+
+        // Handle spawn result
+        let (mut child, inner_pid) = match spawn_result {
             Ok(res) => res,
             Err(error) => {
+                // Clean up network if it was created
+                let _ = run_command(&self.ip_path, &["link", "del", &host_if]).await;
                 cleanup_overlays(&system_dir).await;
                 let mut pool = self.ip_pool.lock().await;
                 pool.release(&lease);
@@ -1101,10 +1094,29 @@ impl SandboxService for BubblewrapService {
             }
         };
 
-        let network = match self.configure_network(inner_pid, &lease, &id).await {
+        // Handle network prepare result
+        if let Err(error) = net_prepare_result {
+            let _ = child.kill().await;
+            // Clean up veth pair if it was partially created
+            let _ = run_command(&self.ip_path, &["link", "del", &host_if]).await;
+            cleanup_overlays(&system_dir).await;
+            let mut pool = self.ip_pool.lock().await;
+            pool.release(&lease);
+            return Err(error);
+        }
+        timing.record_timer("spawn_and_net_prepare", spawn_timer);
+
+        // Phase: finish network configuration (needs PID, must be sequential)
+        let net_finish_timer = crate::timing::Timer::new("net_finish");
+        let sandbox_cidr = format!("{}/{}", lease.sandbox, lease.cidr);
+        let network = match self
+            .finish_network_sandbox_side(inner_pid, &lease, &host_if, &ns_if, &sandbox_cidr)
+            .await
+        {
             Ok(net) => net,
             Err(error) => {
                 let _ = child.kill().await;
+                let _ = run_command(&self.ip_path, &["link", "del", &host_if]).await;
                 cleanup_overlays(&system_dir).await;
                 {
                     let mut pool = self.ip_pool.lock().await;
@@ -1113,6 +1125,7 @@ impl SandboxService for BubblewrapService {
                 return Err(error);
             }
         };
+        timing.record_timer("net_finish", net_finish_timer);
 
         let handle = SandboxHandle {
             id,
@@ -1132,6 +1145,8 @@ impl SandboxService for BubblewrapService {
             env: effective_env,
         };
 
+        // Phase: finalize
+        let finalize_timer = crate::timing::Timer::new("finalize");
         let summary = {
             let mut child = entry.child.lock().await;
             Self::workspace_summary(&entry, &mut child).await?
@@ -1139,7 +1154,10 @@ impl SandboxService for BubblewrapService {
 
         let mut sandboxes = self.sandboxes.lock().await;
         sandboxes.insert(id, entry);
+        timing.record_timer("finalize", finalize_timer);
+
         info!("created sandbox {id}");
+        timing.finish();
         Ok(summary)
     }
 
