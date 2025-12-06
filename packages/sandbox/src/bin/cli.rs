@@ -215,6 +215,11 @@ struct PruneArgs {
     /// Launch interactive TUI for selecting sandboxes (default when no other options given)
     #[arg(short, long)]
     interactive: bool,
+
+    /// Also scan and clean orphaned sandbox directories from the filesystem/volume
+    /// (directories that exist but aren't tracked by the running server)
+    #[arg(long, alias = "orphans")]
+    volumes: bool,
 }
 
 const ENV_CMUX_NO_ATTACH: &str = "CMUX_NO_ATTACH";
@@ -2157,6 +2162,12 @@ async fn handle_prune(client: &Client, base_url: &str, args: PruneArgs) -> anyho
     use crossterm::terminal::{Clear, ClearType};
     use std::io::Write;
 
+    // If --volumes flag is set, prune orphaned directories from the filesystem
+    if args.volumes {
+        handle_prune_volumes(client, base_url, &args).await?;
+        return Ok(());
+    }
+
     // Fetch all sandboxes
     let url = format!("{}/sandboxes", base_url.trim_end_matches('/'));
     let response = client.get(&url).send().await?;
@@ -2522,6 +2533,457 @@ fn truncate_str(s: &str, max_len: usize) -> String {
     } else {
         format!("{}...", &s[..max_len - 3])
     }
+}
+
+/// Information about a sandbox directory found on disk
+#[derive(Debug, Clone)]
+struct OrphanedDir {
+    /// UUID of the sandbox (directory name)
+    id: String,
+    /// Whether it's a valid UUID
+    is_uuid: bool,
+    /// Disk usage in bytes
+    size_bytes: u64,
+}
+
+impl OrphanedDir {
+    fn format_size(&self) -> String {
+        format_bytes(self.size_bytes)
+    }
+}
+
+/// Format bytes as human-readable string
+fn format_bytes(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+
+    if bytes >= GB {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.1} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
+/// Get the container name for sandbox server
+fn get_container_name() -> String {
+    std::env::var("CMUX_CONTAINER_NAME").unwrap_or_else(|_| DMUX_DEFAULT_CONTAINER.to_string())
+}
+
+/// Scan the sandbox data volume for directories and return info about each
+async fn scan_volume_directories(container_name: &str) -> anyhow::Result<Vec<OrphanedDir>> {
+    // List directories in /var/lib/cmux/sandboxes
+    let output = ProcessCommand::new("docker")
+        .args([
+            "exec",
+            container_name,
+            "sh",
+            "-c",
+            "cd /var/lib/cmux/sandboxes 2>/dev/null && ls -1 2>/dev/null || true",
+        ])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // If container not running or directory doesn't exist, return empty
+        if stderr.contains("No such container")
+            || stderr.contains("not running")
+            || stderr.is_empty()
+        {
+            return Ok(Vec::new());
+        }
+        return Err(anyhow::anyhow!(
+            "Failed to list sandbox directories: {}",
+            stderr
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut dirs = Vec::new();
+
+    for line in stdout.lines() {
+        let dir_name = line.trim();
+        if dir_name.is_empty() {
+            continue;
+        }
+
+        let is_uuid = Uuid::parse_str(dir_name).is_ok();
+
+        // Get disk usage for this directory
+        let size_output = ProcessCommand::new("docker")
+            .args([
+                "exec",
+                container_name,
+                "du",
+                "-sb",
+                &format!("/var/lib/cmux/sandboxes/{}", dir_name),
+            ])
+            .output();
+
+        let size_bytes = match size_output {
+            Ok(out) if out.status.success() => {
+                let size_str = String::from_utf8_lossy(&out.stdout);
+                size_str
+                    .split_whitespace()
+                    .next()
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(0)
+            }
+            _ => 0,
+        };
+
+        dirs.push(OrphanedDir {
+            id: dir_name.to_string(),
+            is_uuid,
+            size_bytes,
+        });
+    }
+
+    Ok(dirs)
+}
+
+/// Delete an orphaned directory from the sandbox volume
+async fn delete_orphaned_dir(container_name: &str, dir_id: &str) -> anyhow::Result<()> {
+    // First unmount any overlays (they may have been left behind)
+    let system_dir = format!("/var/lib/cmux/sandboxes/{}/system", dir_id);
+    for mount_type in ["var-merged", "etc-merged", "usr-merged"] {
+        let _ = ProcessCommand::new("docker")
+            .args([
+                "exec",
+                container_name,
+                "umount",
+                &format!("{}/{}", system_dir, mount_type),
+            ])
+            .output();
+    }
+
+    // Remove the directory
+    let output = ProcessCommand::new("docker")
+        .args([
+            "exec",
+            container_name,
+            "rm",
+            "-rf",
+            &format!("/var/lib/cmux/sandboxes/{}", dir_id),
+        ])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow::anyhow!("Failed to delete directory: {}", stderr));
+    }
+
+    Ok(())
+}
+
+/// Handle pruning orphaned volumes (directories not tracked by server)
+async fn handle_prune_volumes(
+    client: &Client,
+    base_url: &str,
+    args: &PruneArgs,
+) -> anyhow::Result<()> {
+    use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+    use crossterm::execute;
+    use crossterm::terminal::{Clear, ClearType};
+    use std::io::Write;
+
+    let container_name = get_container_name();
+
+    // First check if container is running
+    let status_output = ProcessCommand::new("docker")
+        .args(["inspect", "--format", "{{.State.Status}}", &container_name])
+        .output();
+
+    let container_running = matches!(
+        status_output,
+        Ok(out) if out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == "running"
+    );
+
+    if !container_running {
+        eprintln!(
+            "\x1b[33mWarning:\x1b[0m Container '{}' is not running.",
+            container_name
+        );
+        eprintln!("Start the server with `dmux start` to enable volume pruning.");
+        return Ok(());
+    }
+
+    // Get list of known sandboxes from the server (if reachable)
+    let known_ids: std::collections::HashSet<String> = {
+        let url = format!("{}/sandboxes", base_url.trim_end_matches('/'));
+        match client
+            .get(&url)
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await
+        {
+            Ok(response) => {
+                let sandboxes: Vec<SandboxSummary> =
+                    parse_response(response).await.unwrap_or_default();
+                sandboxes.iter().map(|s| s.id.to_string()).collect()
+            }
+            Err(_) => {
+                eprintln!(
+                    "\x1b[33mWarning:\x1b[0m Could not reach server at {}",
+                    base_url
+                );
+                eprintln!("All directories on disk will be shown as potentially orphaned.\n");
+                std::collections::HashSet::new()
+            }
+        }
+    };
+
+    // Scan the volume for directories
+    println!("Scanning sandbox volume for orphaned directories...");
+    let all_dirs = scan_volume_directories(&container_name).await?;
+
+    if all_dirs.is_empty() {
+        println!("No sandbox directories found on disk.");
+        return Ok(());
+    }
+
+    // Filter to orphaned directories (not tracked by server)
+    let orphaned: Vec<&OrphanedDir> = all_dirs
+        .iter()
+        .filter(|d| !known_ids.contains(&d.id))
+        .collect();
+
+    if orphaned.is_empty() {
+        println!(
+            "No orphaned directories found. All {} directories are tracked by the server.",
+            all_dirs.len()
+        );
+        return Ok(());
+    }
+
+    let total_orphaned_size: u64 = orphaned.iter().map(|d| d.size_bytes).sum();
+    println!(
+        "Found {} orphaned director{} ({} total):\n",
+        orphaned.len(),
+        if orphaned.len() == 1 { "y" } else { "ies" },
+        format_bytes(total_orphaned_size)
+    );
+
+    // Determine mode: interactive TUI, --all, or simple prompt
+    let use_interactive =
+        args.interactive || (!args.all && std::io::stdin().is_terminal() && orphaned.len() > 1);
+
+    let to_delete: Vec<&OrphanedDir> = if args.all {
+        orphaned.clone()
+    } else if use_interactive {
+        // Interactive TUI mode
+        let mut selected: Vec<bool> = vec![false; orphaned.len()];
+        let mut cursor = 0usize;
+        let mut sort_by_size = false; // false = by id, true = by size (largest first)
+
+        enable_raw_mode()?;
+        let _guard = RawModeGuard::new().ok();
+
+        loop {
+            execute!(std::io::stdout(), Clear(ClearType::All))?;
+            print!("\x1b[H");
+
+            println!("\x1b[1mOrphaned Volume Pruner\x1b[0m - Select directories to delete\n");
+            println!(
+                "  \x1b[90mj/k or ↑/↓: navigate | Space: toggle | a: select all | n: select none\x1b[0m"
+            );
+            println!(
+                "  \x1b[90ms: sort by {} | Enter: confirm | q/Esc: cancel\x1b[0m\n",
+                if sort_by_size { "id" } else { "size" }
+            );
+
+            // Get display order
+            let mut display_order: Vec<usize> = (0..orphaned.len()).collect();
+            if sort_by_size {
+                display_order.sort_by(|&a, &b| orphaned[b].size_bytes.cmp(&orphaned[a].size_bytes));
+            }
+
+            println!(
+                "  \x1b[1m{:>3}  {:<38} {:>10}\x1b[0m",
+                "", "DIRECTORY ID", "SIZE"
+            );
+            println!("  {:->3}  {:->38} {:->10}", "", "", "");
+
+            for (display_idx, &dir_idx) in display_order.iter().enumerate() {
+                let dir = orphaned[dir_idx];
+                let is_selected = selected[dir_idx];
+                let is_cursor = display_idx == cursor;
+
+                let checkbox = if is_selected { "[x]" } else { "[ ]" };
+                let cursor_indicator = if is_cursor { ">" } else { " " };
+                let highlight = if is_cursor { "\x1b[7m" } else { "" };
+                let reset = if is_cursor { "\x1b[0m" } else { "" };
+
+                let id_color = if dir.is_uuid { "" } else { "\x1b[33m" };
+
+                println!(
+                    "{}{} {} {}{:<38}\x1b[0m {:>10}{}",
+                    highlight,
+                    cursor_indicator,
+                    checkbox,
+                    id_color,
+                    dir.id,
+                    dir.format_size(),
+                    reset
+                );
+            }
+
+            let selected_count = selected.iter().filter(|&&s| s).count();
+            let selected_size: u64 = selected
+                .iter()
+                .enumerate()
+                .filter(|(_, &s)| s)
+                .map(|(i, _)| orphaned[i].size_bytes)
+                .sum();
+            println!(
+                "\n  \x1b[1m{} director{} selected ({})\x1b[0m",
+                selected_count,
+                if selected_count == 1 { "y" } else { "ies" },
+                format_bytes(selected_size)
+            );
+
+            std::io::stdout().flush()?;
+
+            if event::poll(std::time::Duration::from_millis(100))? {
+                if let Event::Key(key) = event::read()? {
+                    match (key.code, key.modifiers) {
+                        (KeyCode::Char('q'), _)
+                        | (KeyCode::Esc, _)
+                        | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                            disable_raw_mode()?;
+                            println!("\nCancelled.");
+                            return Ok(());
+                        }
+                        (KeyCode::Enter, _) => {
+                            break;
+                        }
+                        (KeyCode::Up, _) | (KeyCode::Char('k'), _) => {
+                            cursor = cursor.saturating_sub(1);
+                        }
+                        (KeyCode::Down, _) | (KeyCode::Char('j'), _) => {
+                            if cursor < orphaned.len() - 1 {
+                                cursor += 1;
+                            }
+                        }
+                        (KeyCode::Char(' '), _) => {
+                            let dir_idx = display_order[cursor];
+                            selected[dir_idx] = !selected[dir_idx];
+                        }
+                        (KeyCode::Char('a'), _) => {
+                            selected.fill(true);
+                        }
+                        (KeyCode::Char('n'), _) => {
+                            selected.fill(false);
+                        }
+                        (KeyCode::Char('s'), _) => {
+                            sort_by_size = !sort_by_size;
+                            cursor = 0;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        disable_raw_mode()?;
+        execute!(std::io::stdout(), Clear(ClearType::All))?;
+        print!("\x1b[H");
+
+        orphaned
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| selected[*i])
+            .map(|(_, d)| *d)
+            .collect()
+    } else {
+        // Simple list and select all
+        println!("  \x1b[1m{:<38} {:>10}\x1b[0m", "DIRECTORY ID", "SIZE");
+        println!("  {:-<38} {:->10}", "", "");
+        for dir in &orphaned {
+            let id_color = if dir.is_uuid { "" } else { "\x1b[33m" };
+            println!(
+                "  {}{:<38}\x1b[0m {:>10}",
+                id_color,
+                dir.id,
+                dir.format_size()
+            );
+        }
+        println!();
+        orphaned.clone()
+    };
+
+    if to_delete.is_empty() {
+        println!("No directories selected for deletion.");
+        return Ok(());
+    }
+
+    let delete_size: u64 = to_delete.iter().map(|d| d.size_bytes).sum();
+    println!(
+        "\nAbout to delete {} director{} ({}):",
+        to_delete.len(),
+        if to_delete.len() == 1 { "y" } else { "ies" },
+        format_bytes(delete_size)
+    );
+    for dir in &to_delete {
+        println!("  - {} ({})", dir.id, dir.format_size());
+    }
+
+    if !args.yes {
+        print!("\nProceed? [y/N] ");
+        std::io::stdout().flush()?;
+
+        let mut confirm = String::new();
+        std::io::stdin().read_line(&mut confirm)?;
+        let confirm = confirm.trim().to_lowercase();
+
+        if confirm != "y" && confirm != "yes" {
+            println!("Cancelled.");
+            return Ok(());
+        }
+    }
+
+    // Delete directories
+    println!();
+    let mut deleted = 0u64;
+    let mut failed = 0;
+
+    for dir in to_delete {
+        match delete_orphaned_dir(&container_name, &dir.id).await {
+            Ok(()) => {
+                println!(
+                    "\x1b[32m✓\x1b[0m Deleted {} ({})",
+                    dir.id,
+                    dir.format_size()
+                );
+                deleted += dir.size_bytes;
+            }
+            Err(e) => {
+                eprintln!("\x1b[31m✗\x1b[0m Failed to delete {}: {}", dir.id, e);
+                failed += 1;
+            }
+        }
+    }
+
+    println!();
+    if failed == 0 {
+        println!(
+            "\x1b[32m✓\x1b[0m Successfully freed {}.",
+            format_bytes(deleted)
+        );
+    } else {
+        println!(
+            "Freed {}, {} director{} failed.",
+            format_bytes(deleted),
+            failed,
+            if failed == 1 { "y" } else { "ies" }
+        );
+    }
+
+    Ok(())
 }
 
 /// Internal SSH proxy command - bridges stdin/stdout to WebSocket for SSH ProxyCommand
