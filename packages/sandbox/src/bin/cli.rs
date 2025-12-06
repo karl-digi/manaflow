@@ -131,6 +131,9 @@ enum Command {
 
     /// Generate SSH config for easy sandbox access (e.g., `ssh sandbox-0`)
     SshConfig,
+
+    /// Interactively select and delete unused sandboxes
+    Prune(PruneArgs),
 }
 
 #[derive(Args, Debug)]
@@ -193,6 +196,25 @@ struct EsctestArgs {
     /// List available test names matching pattern
     #[arg(long)]
     list: bool,
+}
+
+#[derive(Args, Debug)]
+struct PruneArgs {
+    /// Delete all sandboxes without prompting
+    #[arg(long)]
+    all: bool,
+
+    /// Skip confirmation prompt
+    #[arg(short = 'y', long)]
+    yes: bool,
+
+    /// Delete sandboxes older than N days
+    #[arg(long, value_name = "DAYS")]
+    older_than: Option<u64>,
+
+    /// Launch interactive TUI for selecting sandboxes (default when no other options given)
+    #[arg(short, long)]
+    interactive: bool,
 }
 
 const ENV_CMUX_NO_ATTACH: &str = "CMUX_NO_ATTACH";
@@ -704,6 +726,10 @@ async fn run() -> anyhow::Result<()> {
         }
         Command::SshConfig => {
             handle_ssh_config(&client, &cli.base_url).await?;
+        }
+        Command::Prune(args) => {
+            check_server_reachable(&client, &cli.base_url).await?;
+            handle_prune(&client, &cli.base_url, args).await?;
         }
         Command::Sandboxes(cmd) => {
             match cmd {
@@ -2122,6 +2148,380 @@ async fn handle_ssh_config(_client: &Client, _base_url: &str) -> anyhow::Result<
     );
 
     Ok(())
+}
+
+/// Interactive cleanup of unused sandboxes
+async fn handle_prune(client: &Client, base_url: &str, args: PruneArgs) -> anyhow::Result<()> {
+    use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+    use crossterm::execute;
+    use crossterm::terminal::{Clear, ClearType};
+    use std::io::Write;
+
+    // Fetch all sandboxes
+    let url = format!("{}/sandboxes", base_url.trim_end_matches('/'));
+    let response = client.get(&url).send().await?;
+    let sandboxes: Vec<SandboxSummary> = parse_response(response).await?;
+
+    if sandboxes.is_empty() {
+        println!("No sandboxes found.");
+        return Ok(());
+    }
+
+    // Filter by age if --older-than is specified
+    let now = chrono::Utc::now();
+    let filtered_sandboxes: Vec<&SandboxSummary> = if let Some(days) = args.older_than {
+        let cutoff = now - chrono::Duration::days(days as i64);
+        sandboxes.iter().filter(|s| s.created_at < cutoff).collect()
+    } else {
+        sandboxes.iter().collect()
+    };
+
+    if filtered_sandboxes.is_empty() {
+        if args.older_than.is_some() {
+            println!(
+                "No sandboxes older than {} days found.",
+                args.older_than.unwrap()
+            );
+        } else {
+            println!("No sandboxes found.");
+        }
+        return Ok(());
+    }
+
+    // Determine mode: interactive TUI, --all, or simple prompt
+    let use_interactive = args.interactive
+        || (!args.all && args.older_than.is_none() && std::io::stdin().is_terminal());
+
+    let to_delete: Vec<&SandboxSummary> = if args.all || args.older_than.is_some() {
+        // --all or --older-than: select all matching sandboxes
+        filtered_sandboxes
+    } else if use_interactive {
+        // Interactive TUI mode
+        let mut selected: Vec<bool> = vec![false; filtered_sandboxes.len()];
+        let mut cursor = 0usize;
+        let mut sort_by_age = false; // false = by index, true = by age (oldest first)
+
+        enable_raw_mode()?;
+        let _guard = RawModeGuard::new().ok();
+
+        loop {
+            // Clear screen and draw
+            execute!(std::io::stdout(), Clear(ClearType::All))?;
+            print!("\x1b[H"); // Move cursor to top-left
+
+            println!("\x1b[1mSandbox Pruner\x1b[0m - Select sandboxes to delete\n");
+            println!(
+                "  \x1b[90mj/k or ↑/↓: navigate | Space: toggle | a: select all | n: select none\x1b[0m"
+            );
+            println!(
+                "  \x1b[90ms: sort by {} | Enter: confirm | q/Esc: cancel\x1b[0m\n",
+                if sort_by_age { "index" } else { "age" }
+            );
+
+            // Get display order
+            let mut display_order: Vec<usize> = (0..filtered_sandboxes.len()).collect();
+            if sort_by_age {
+                display_order.sort_by(|&a, &b| {
+                    filtered_sandboxes[a]
+                        .created_at
+                        .cmp(&filtered_sandboxes[b].created_at)
+                });
+            }
+
+            println!(
+                "  \x1b[1m{:>3}  {:<5} {:<20} {:<10} AGE\x1b[0m",
+                "", "IDX", "NAME", "STATUS"
+            );
+            println!(
+                "  {:->3}  {:->5} {:->20} {:->10} {:->15}",
+                "", "", "", "", ""
+            );
+
+            for (display_idx, &sandbox_idx) in display_order.iter().enumerate() {
+                let sandbox = filtered_sandboxes[sandbox_idx];
+                let is_selected = selected[sandbox_idx];
+                let is_cursor = display_idx == cursor;
+
+                let checkbox = if is_selected { "[x]" } else { "[ ]" };
+                let cursor_indicator = if is_cursor { ">" } else { " " };
+                let highlight = if is_cursor { "\x1b[7m" } else { "" }; // reverse video
+                let reset = if is_cursor { "\x1b[0m" } else { "" };
+
+                let status_color = match sandbox.status {
+                    cmux_sandbox::models::SandboxStatus::Running => "\x1b[32m",
+                    cmux_sandbox::models::SandboxStatus::Exited => "\x1b[33m",
+                    cmux_sandbox::models::SandboxStatus::Failed => "\x1b[31m",
+                    _ => "\x1b[90m",
+                };
+
+                let age = format_age(now - sandbox.created_at);
+
+                println!(
+                    "{}{} {} {:<5} {:<20} {}{:<10}\x1b[0m {}{}",
+                    highlight,
+                    cursor_indicator,
+                    checkbox,
+                    sandbox.index,
+                    truncate_str(&sandbox.name, 20),
+                    status_color,
+                    format!("{:?}", sandbox.status),
+                    age,
+                    reset
+                );
+            }
+
+            let selected_count = selected.iter().filter(|&&s| s).count();
+            println!(
+                "\n  \x1b[1m{} sandbox{} selected\x1b[0m",
+                selected_count,
+                if selected_count == 1 { "" } else { "es" }
+            );
+
+            std::io::stdout().flush()?;
+
+            // Handle input
+            if event::poll(std::time::Duration::from_millis(100))? {
+                if let Event::Key(key) = event::read()? {
+                    match (key.code, key.modifiers) {
+                        (KeyCode::Char('q'), _)
+                        | (KeyCode::Esc, _)
+                        | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                            disable_raw_mode()?;
+                            println!("\nCancelled.");
+                            return Ok(());
+                        }
+                        (KeyCode::Enter, _) => {
+                            break;
+                        }
+                        (KeyCode::Up, _) | (KeyCode::Char('k'), _) => {
+                            cursor = cursor.saturating_sub(1);
+                        }
+                        (KeyCode::Down, _) | (KeyCode::Char('j'), _) => {
+                            if cursor < filtered_sandboxes.len() - 1 {
+                                cursor += 1;
+                            }
+                        }
+                        (KeyCode::Char(' '), _) => {
+                            let sandbox_idx = display_order[cursor];
+                            selected[sandbox_idx] = !selected[sandbox_idx];
+                        }
+                        (KeyCode::Char('a'), _) => {
+                            selected.fill(true);
+                        }
+                        (KeyCode::Char('n'), _) => {
+                            selected.fill(false);
+                        }
+                        (KeyCode::Char('s'), _) => {
+                            sort_by_age = !sort_by_age;
+                            cursor = 0; // Reset cursor on sort change
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        disable_raw_mode()?;
+        execute!(std::io::stdout(), Clear(ClearType::All))?;
+        print!("\x1b[H");
+
+        // Collect selected sandboxes
+        filtered_sandboxes
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| selected[*i])
+            .map(|(_, s)| *s)
+            .collect()
+    } else {
+        // Simple non-interactive prompt
+        print_sandbox_table(&filtered_sandboxes, now);
+
+        println!("Enter sandbox indices to delete (comma-separated), 'all', or 'none':");
+        print!("> ");
+        std::io::stdout().flush()?;
+
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        let input = input.trim().to_lowercase();
+
+        if input == "none" || input.is_empty() {
+            println!("No sandboxes selected for deletion.");
+            return Ok(());
+        }
+
+        if input == "all" {
+            filtered_sandboxes
+        } else {
+            let mut result = Vec::new();
+            for part in input.split(',') {
+                let part = part.trim();
+                if let Ok(idx) = part.parse::<usize>() {
+                    if let Some(sandbox) = filtered_sandboxes.iter().find(|s| s.index == idx) {
+                        result.push(*sandbox);
+                    } else {
+                        eprintln!("\x1b[33mWarning: No sandbox with index {}\x1b[0m", idx);
+                    }
+                } else {
+                    let matches: Vec<_> = filtered_sandboxes
+                        .iter()
+                        .filter(|s| s.id.to_string().starts_with(part))
+                        .collect();
+                    match matches.len() {
+                        0 => eprintln!("\x1b[33mWarning: No sandbox matching '{}'\x1b[0m", part),
+                        1 => result.push(*matches[0]),
+                        _ => eprintln!(
+                            "\x1b[33mWarning: '{}' matches multiple sandboxes\x1b[0m",
+                            part
+                        ),
+                    }
+                }
+            }
+            result
+        }
+    };
+
+    if to_delete.is_empty() {
+        println!("No sandboxes selected for deletion.");
+        return Ok(());
+    }
+
+    // Confirmation
+    println!(
+        "\nAbout to delete {} sandbox{}:",
+        to_delete.len(),
+        if to_delete.len() == 1 { "" } else { "es" }
+    );
+    for sandbox in &to_delete {
+        println!("  - {} ({})", sandbox.index, sandbox.name);
+    }
+
+    if !args.yes {
+        print!("\nProceed? [y/N] ");
+        std::io::stdout().flush()?;
+
+        let mut confirm = String::new();
+        std::io::stdin().read_line(&mut confirm)?;
+        let confirm = confirm.trim().to_lowercase();
+
+        if confirm != "y" && confirm != "yes" {
+            println!("Cancelled.");
+            return Ok(());
+        }
+    }
+
+    // Delete sandboxes
+    println!();
+    let mut deleted = 0;
+    let mut failed = 0;
+
+    for sandbox in to_delete {
+        let delete_url = format!(
+            "{}/sandboxes/{}",
+            base_url.trim_end_matches('/'),
+            sandbox.id
+        );
+        match client.delete(&delete_url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                println!(
+                    "\x1b[32m✓\x1b[0m Deleted sandbox {} ({})",
+                    sandbox.index, sandbox.name
+                );
+                deleted += 1;
+            }
+            Ok(resp) => {
+                eprintln!(
+                    "\x1b[31m✗\x1b[0m Failed to delete sandbox {}: {}",
+                    sandbox.index,
+                    resp.status()
+                );
+                failed += 1;
+            }
+            Err(e) => {
+                eprintln!(
+                    "\x1b[31m✗\x1b[0m Failed to delete sandbox {}: {}",
+                    sandbox.index, e
+                );
+                failed += 1;
+            }
+        }
+    }
+
+    println!();
+    if failed == 0 {
+        println!(
+            "\x1b[32m✓\x1b[0m Successfully deleted {} sandbox{}.",
+            deleted,
+            if deleted == 1 { "" } else { "es" }
+        );
+    } else {
+        println!(
+            "Deleted {} sandbox{}, {} failed.",
+            deleted,
+            if deleted == 1 { "" } else { "es" },
+            failed
+        );
+    }
+
+    Ok(())
+}
+
+/// Format a duration as a human-readable age string
+fn format_age(duration: chrono::Duration) -> String {
+    let days = duration.num_days();
+    let hours = duration.num_hours() % 24;
+    let minutes = duration.num_minutes() % 60;
+
+    if days > 0 {
+        format!("{}d {}h ago", days, hours)
+    } else if hours > 0 {
+        format!("{}h {}m ago", hours, minutes)
+    } else {
+        format!("{}m ago", minutes)
+    }
+}
+
+/// Print sandboxes in a table format
+fn print_sandbox_table(sandboxes: &[&SandboxSummary], now: chrono::DateTime<chrono::Utc>) {
+    println!();
+    println!(
+        "  \x1b[1m{:<5} {:<38} {:<15} {:<10} AGE\x1b[0m",
+        "INDEX", "ID", "NAME", "STATUS"
+    );
+    println!(
+        "  {:-<5} {:-<38} {:-<15} {:-<10} {:-<15}",
+        "", "", "", "", ""
+    );
+
+    for sandbox in sandboxes {
+        let status_color = match sandbox.status {
+            cmux_sandbox::models::SandboxStatus::Running => "\x1b[32m",
+            cmux_sandbox::models::SandboxStatus::Exited => "\x1b[33m",
+            cmux_sandbox::models::SandboxStatus::Failed => "\x1b[31m",
+            _ => "\x1b[90m",
+        };
+        let age = format_age(now - sandbox.created_at);
+        println!(
+            "  {:<5} {:<38} {:<15} {}{:<10}\x1b[0m {}",
+            sandbox.index,
+            sandbox.id,
+            truncate_str(&sandbox.name, 15),
+            status_color,
+            format!("{:?}", sandbox.status),
+            age
+        );
+    }
+    println!();
+}
+
+/// Truncate a string to a max length, adding ellipsis if needed
+fn truncate_str(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else if max_len <= 3 {
+        s.chars().take(max_len).collect()
+    } else {
+        format!("{}...", &s[..max_len - 3])
+    }
 }
 
 /// Internal SSH proxy command - bridges stdin/stdout to WebSocket for SSH ProxyCommand
