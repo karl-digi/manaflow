@@ -154,13 +154,58 @@ ${changedFiles.map((f) => `- ${f}`).join("\n")}
 Working directory: ${workspaceDir}
 Screenshot output directory: ${outputDir}
 
+## Environment Scripts
+
+The workspace may have maintenance and dev scripts that run automatically. These scripts are managed via tmux windows:
+- **maintenance window**: Runs setup/install scripts (usually completes before you start)
+- **dev window**: Runs the development server (should be running if configured)
+
+### Checking Dev Server Status
+
+Before starting your own dev server, check if one is already running:
+
+1. **Check common dev server ports with curl:**
+   \`\`\`bash
+   # Check common frontend ports
+   curl -s -o /dev/null -w "%{http_code}" http://localhost:3000 2>/dev/null || echo "not running"
+   curl -s -o /dev/null -w "%{http_code}" http://localhost:5173 2>/dev/null || echo "not running"
+   curl -s -o /dev/null -w "%{http_code}" http://localhost:8080 2>/dev/null || echo "not running"
+
+   # You can also check if a port is listening
+   lsof -i :3000 -t 2>/dev/null && echo "port 3000 in use"
+   \`\`\`
+
+2. **Inspect tmux sessions to see running scripts:**
+   \`\`\`bash
+   # List all tmux windows
+   tmux list-windows -t cmux 2>/dev/null
+
+   # Check the dev window output (last 50 lines)
+   tmux capture-pane -t cmux:dev -p -S -50 2>/dev/null
+
+   # Check the maintenance window output
+   tmux capture-pane -t cmux:maintenance -p -S -50 2>/dev/null
+
+   # Attach to see live output (use Ctrl+B then D to detach)
+   # tmux attach -t cmux:dev
+   \`\`\`
+
+3. **If scripts are still running, wait for them:**
+   - The maintenance script writes its exit code to a file when done
+   - The dev script keeps running (it's a long-running server)
+   - Look for "ready" or "listening" messages in the tmux output
+
+## Instructions
+
 Please:
 0. Read CLAUDE.md or AGENTS.md (they may be one level deeper) and install dependencies if needed
-1. Start the development server if needed (check files like README.md, package.json or .devcontainer.json for dev script, explore the repository more if needed. check tmux panes comprehensively to see if the server is running.)
-2. Wait for the server to be ready
-3. Navigate to the pages/components that were modified in the PR
-4. Take full-page screenshots as well as element-specific screenshots of each relevant UI view that was changed
-5. Save every screenshot directly inside ${outputDir} (no subdirectories) with descriptive names like "homepage-${branch}.png"
+1. **Check if a dev server is already running** using the curl commands and tmux inspection above
+2. If no server is running, start the development server (check files like README.md, package.json or .devcontainer.json for dev script, explore the repository more if needed)
+3. If the dev server is starting in the tmux dev window, wait for it to be ready by checking the tmux output
+4. Wait for the server to be ready (use curl to verify it responds)
+5. Navigate to the pages/components that were modified in the PR
+6. Take full-page screenshots as well as element-specific screenshots of each relevant UI view that was changed
+7. Save every screenshot directly inside ${outputDir} (no subdirectories) with descriptive names like "homepage-${branch}.png"
 
 <IMPORTANT>
 Focus on capturing visual changes. If no UI changes are present, just let me know.
