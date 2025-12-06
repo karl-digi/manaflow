@@ -1282,6 +1282,12 @@ async def task_install_base_packages(ctx: TaskContext) -> None:
             ruby-full perl software-properties-common \
             tigervnc-standalone-server tigervnc-common \
             xvfb \
+            xfce4 \
+            xfce4-terminal \
+            dbus-x11 \
+            at-spi2-core \
+            adwaita-icon-theme \
+            tango-icon-theme \
             x11-xserver-utils xterm novnc \
             tmux \
             gh \
@@ -1872,7 +1878,7 @@ async def task_install_repo_dependencies(ctx: TaskContext) -> None:
 @registry.task(
     name="install-service-scripts",
     deps=("upload-repo", "install-base-packages"),
-    description="Install VNC startup script (includes Chrome DevTools)",
+    description="Install VNC startup script (includes Chrome DevTools and XFCE4)",
 )
 async def task_install_service_scripts(ctx: TaskContext) -> None:
     repo = shlex.quote(ctx.remote_repo_root)
@@ -1880,9 +1886,12 @@ async def task_install_service_scripts(ctx: TaskContext) -> None:
         f"""
         install -d /usr/local/lib/cmux
         install -m 0755 {repo}/configs/systemd/bin/cmux-start-chrome /usr/local/lib/cmux/cmux-start-chrome
+        install -m 0755 {repo}/configs/systemd/bin/cmux-start-xfce4 /usr/local/lib/cmux/cmux-start-xfce4
+        install -m 0755 {repo}/configs/systemd/bin/cmux-launch-chrome /usr/local/lib/cmux/cmux-launch-chrome
         install -m 0755 {repo}/configs/systemd/bin/cmux-manage-dockerd /usr/local/lib/cmux/cmux-manage-dockerd
         install -m 0755 {repo}/configs/systemd/bin/cmux-stop-dockerd /usr/local/lib/cmux/cmux-stop-dockerd
         install -m 0755 {repo}/configs/systemd/bin/cmux-configure-memory /usr/local/sbin/cmux-configure-memory
+        install -Dm0644 {repo}/configs/desktop/google-chrome.desktop /usr/share/applications/google-chrome.desktop
         """
     )
     await ctx.run("install-service-scripts", cmd)
@@ -1946,6 +1955,7 @@ async def task_install_systemd_units(ctx: TaskContext) -> None:
         install -Dm0644 {repo}/configs/systemd/cmux-devtools.service /usr/lib/systemd/system/cmux-devtools.service
         install -Dm0644 {repo}/configs/systemd/cmux-xvfb.service /usr/lib/systemd/system/cmux-xvfb.service
         install -Dm0644 {repo}/configs/systemd/cmux-tigervnc.service /usr/lib/systemd/system/cmux-tigervnc.service
+        install -Dm0644 {repo}/configs/systemd/cmux-xfce4.service /usr/lib/systemd/system/cmux-xfce4.service
         install -Dm0644 {repo}/configs/systemd/cmux-vnc-proxy.service /usr/lib/systemd/system/cmux-vnc-proxy.service
         install -Dm0644 {repo}/configs/systemd/cmux-cdp-proxy.service /usr/lib/systemd/system/cmux-cdp-proxy.service
         install -Dm0644 {repo}/configs/systemd/cmux-xterm.service /usr/lib/systemd/system/cmux-xterm.service
@@ -1964,6 +1974,7 @@ async def task_install_systemd_units(ctx: TaskContext) -> None:
         ln -sf /usr/lib/systemd/system/cmux-dockerd.service /etc/systemd/system/cmux.target.wants/cmux-dockerd.service
         ln -sf /usr/lib/systemd/system/cmux-devtools.service /etc/systemd/system/cmux.target.wants/cmux-devtools.service
         ln -sf /usr/lib/systemd/system/cmux-tigervnc.service /etc/systemd/system/cmux.target.wants/cmux-tigervnc.service
+        ln -sf /usr/lib/systemd/system/cmux-xfce4.service /etc/systemd/system/cmux.target.wants/cmux-xfce4.service
         ln -sf /usr/lib/systemd/system/cmux-vnc-proxy.service /etc/systemd/system/cmux.target.wants/cmux-vnc-proxy.service
         ln -sf /usr/lib/systemd/system/cmux-cdp-proxy.service /etc/systemd/system/cmux.target.wants/cmux-cdp-proxy.service
         ln -sf /usr/lib/systemd/system/cmux-xterm.service /etc/systemd/system/cmux.target.wants/cmux-xterm.service

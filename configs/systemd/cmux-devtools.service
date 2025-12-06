@@ -1,15 +1,18 @@
 [Unit]
 Description=Cmux Chrome DevTools browser
-After=cmux-tigervnc.service
-Requires=cmux-tigervnc.service
+After=cmux-xfce4.service
+Requires=cmux-xfce4.service
 
 [Service]
 Type=simple
 Environment=DISPLAY=:1
+Environment=HOME=/root
+Environment=XDG_RUNTIME_DIR=/run/user/0
 Environment=CDP_TARGET_HOST=127.0.0.1
 Environment=CDP_TARGET_PORT=39382
 Environment=CHROME_USER_DATA_DIR=/root/.config/chrome
 ExecStartPre=/bin/mkdir -p /var/log/cmux
+ExecStartPre=/bin/sleep 3
 ExecStart=/usr/local/lib/cmux/cmux-start-chrome
 Restart=always
 RestartSec=3

@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
-# Launch Chrome with a persistent profile for the cmux remote browser.
+# Launch a new Chrome window (for user-initiated launches from desktop)
+# This creates a separate profile so it doesn't conflict with the DevTools instance
 set -euo pipefail
 
 PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
 export PATH
 
 DISPLAY="${DISPLAY:-:1}"
-REMOTE_HOST="${CDP_TARGET_HOST:-127.0.0.1}"
-REMOTE_PORT="${CDP_TARGET_PORT:-39382}"
-USER_DATA_DIR="${CHROME_USER_DATA_DIR:-/root/.config/chrome}"
-START_URL="${CHROME_START_URL:-about:blank}"
+USER_DATA_DIR="/root/.config/chrome-user"
+START_URL="${1:-about:blank}"
 CHROME_BIN="${CHROME_BIN:-}"
 
 choose_chrome_binary() {
@@ -62,7 +61,6 @@ CHROME_PATH="$(choose_chrome_binary)" || {
 
 export DISPLAY
 export HOME=/root
-export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/0}"
 export GOOGLE_API_KEY="cmux-local"
 export GOOGLE_DEFAULT_CLIENT_ID="cmux-local"
 export GOOGLE_DEFAULT_CLIENT_SECRET="cmux-local"
@@ -81,14 +79,8 @@ CHROME_FLAGS=(
   --disable-sync
   --disable-translate
   --disable-infobars
-  --disable-features=ChromeWhatsNewUI,AutofillServerCommunication,AutomationControlled
-  --remote-debugging-address="${REMOTE_HOST}"
-  --remote-debugging-port="${REMOTE_PORT}"
-  --remote-allow-origins=*
-  --test-type
-  --start-fullscreen
-  --window-position=0,0
-  --window-size=1920,1080
+  --disable-features=ChromeWhatsNewUI,AutofillServerCommunication
+  --start-maximized
   --user-data-dir="${USER_DATA_DIR}"
   --password-store=basic
 )

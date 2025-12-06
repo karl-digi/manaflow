@@ -1,0 +1,19 @@
+[Unit]
+Description=Cmux XFCE4 desktop session
+After=cmux-tigervnc.service dbus.service
+Requires=cmux-tigervnc.service
+Wants=dbus.service
+
+[Service]
+Type=simple
+Environment=DISPLAY=:1
+Environment=HOME=/root
+ExecStartPre=/bin/mkdir -p /var/log/cmux
+ExecStart=/usr/local/lib/cmux/cmux-start-xfce4
+Restart=always
+RestartSec=3
+StandardOutput=append:/var/log/cmux/xfce4.log
+StandardError=append:/var/log/cmux/xfce4.log
+
+[Install]
+WantedBy=cmux.target

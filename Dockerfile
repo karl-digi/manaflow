@@ -516,7 +516,12 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   tigervnc-standalone-server \
   tigervnc-common \
   xvfb \
-  fluxbox \
+  xfce4 \
+  xfce4-terminal \
+  dbus-x11 \
+  at-spi2-core \
+  adwaita-icon-theme \
+  tango-icon-theme \
   novnc \
   xauth \
   xdg-utils \
@@ -859,18 +864,23 @@ COPY configs/systemd/cmux-dockerd.service /usr/lib/systemd/system/cmux-dockerd.s
 COPY configs/systemd/cmux-devtools.service /usr/lib/systemd/system/cmux-devtools.service
 COPY configs/systemd/cmux-xvfb.service /usr/lib/systemd/system/cmux-xvfb.service
 COPY configs/systemd/cmux-tigervnc.service /usr/lib/systemd/system/cmux-tigervnc.service
+COPY configs/systemd/cmux-xfce4.service /usr/lib/systemd/system/cmux-xfce4.service
 COPY configs/systemd/cmux-vnc-proxy.service /usr/lib/systemd/system/cmux-vnc-proxy.service
 COPY configs/systemd/cmux-cdp-proxy.service /usr/lib/systemd/system/cmux-cdp-proxy.service
 COPY configs/systemd/cmux-xterm.service /usr/lib/systemd/system/cmux-xterm.service
 COPY configs/systemd/cmux-memory-setup.service /usr/lib/systemd/system/cmux-memory-setup.service
 COPY configs/systemd/bin/configure-openvscode /usr/local/lib/cmux/configure-openvscode
 COPY configs/systemd/bin/cmux-start-chrome /usr/local/lib/cmux/cmux-start-chrome
+COPY configs/systemd/bin/cmux-start-xfce4 /usr/local/lib/cmux/cmux-start-xfce4
+COPY configs/systemd/bin/cmux-launch-chrome /usr/local/lib/cmux/cmux-launch-chrome
 COPY configs/systemd/bin/cmux-manage-dockerd /usr/local/lib/cmux/cmux-manage-dockerd
 COPY configs/systemd/bin/cmux-stop-dockerd /usr/local/lib/cmux/cmux-stop-dockerd
 COPY configs/systemd/bin/cmux-configure-memory /usr/local/sbin/cmux-configure-memory
 COPY --from=builder /usr/local/lib/cmux/cmux-cdp-proxy /usr/local/lib/cmux/cmux-cdp-proxy
 COPY --from=builder /usr/local/lib/cmux/cmux-vnc-proxy /usr/local/lib/cmux/cmux-vnc-proxy
+COPY configs/desktop/google-chrome.desktop /usr/share/applications/google-chrome.desktop
 RUN chmod +x /usr/local/lib/cmux/configure-openvscode /usr/local/lib/cmux/cmux-start-chrome /usr/local/lib/cmux/cmux-cdp-proxy /usr/local/lib/cmux/cmux-vnc-proxy && \
+  chmod +x /usr/local/lib/cmux/cmux-start-xfce4 /usr/local/lib/cmux/cmux-launch-chrome && \
   chmod +x /usr/local/lib/cmux/cmux-manage-dockerd /usr/local/lib/cmux/cmux-stop-dockerd && \
   chmod +x /usr/local/sbin/cmux-configure-memory && \
   touch /usr/local/lib/cmux/dockerd.flag && \
@@ -885,6 +895,7 @@ RUN chmod +x /usr/local/lib/cmux/configure-openvscode /usr/local/lib/cmux/cmux-s
   ln -sf /usr/lib/systemd/system/cmux-dockerd.service /etc/systemd/system/cmux.target.wants/cmux-dockerd.service && \
   ln -sf /usr/lib/systemd/system/cmux-devtools.service /etc/systemd/system/cmux.target.wants/cmux-devtools.service && \
   ln -sf /usr/lib/systemd/system/cmux-tigervnc.service /etc/systemd/system/cmux.target.wants/cmux-tigervnc.service && \
+  ln -sf /usr/lib/systemd/system/cmux-xfce4.service /etc/systemd/system/cmux.target.wants/cmux-xfce4.service && \
   ln -sf /usr/lib/systemd/system/cmux-vnc-proxy.service /etc/systemd/system/cmux.target.wants/cmux-vnc-proxy.service && \
   ln -sf /usr/lib/systemd/system/cmux-cdp-proxy.service /etc/systemd/system/cmux.target.wants/cmux-cdp-proxy.service && \
   ln -sf /usr/lib/systemd/system/cmux-xterm.service /etc/systemd/system/cmux.target.wants/cmux-xterm.service && \
