@@ -256,15 +256,12 @@ async function updateTaskStatusFromRuns(
     return;
   }
 
-  // Don't update if task is already completed
-  if (task.isCompleted) {
-    return;
-  }
-
   const now = Date.now();
 
   if (completedRuns.length === 0) {
     // ALL runs failed or skipped - no successful runs to crown
+    // Update even if task was previously completed (e.g., a run that was
+    // crowned may have later failed, so we need to reflect the error state)
     const errorMessages = failedRuns
       .map((run) => run.errorMessage)
       .filter(Boolean);
@@ -279,8 +276,8 @@ async function updateTaskStatusFromRuns(
       crownEvaluationError: aggregatedError,
       updatedAt: now,
     });
-  } else {
-    // At least one run completed successfully
+  } else if (!task.isCompleted) {
+    // At least one run completed successfully and task isn't yet completed
     // For single run: just mark completed
     // For multiple runs: mark completed, crown evaluation will pick winner
     await ctx.db.patch(taskId, {
