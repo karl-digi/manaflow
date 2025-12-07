@@ -296,7 +296,6 @@ export const createCodingAgentSession = mutation({
       morphVmUrl: args.morphVmUrl,
       task: args.task, // Store full task for UI lookup
       jwtSecret: args.jwtSecret,
-      morphInstanceId: args.morphInstanceId,
       createdAt: now,
       updatedAt: now,
     });
