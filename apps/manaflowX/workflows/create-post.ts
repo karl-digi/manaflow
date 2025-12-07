@@ -14,6 +14,10 @@ export interface RepoConfig {
   gitRemote: string;
   branch: string;
   installationId?: number;
+  scripts?: {
+    maintenanceScript: string;
+    devScript: string;
+  };
 }
 
 type TurnPart = {
@@ -124,6 +128,25 @@ When delegating to the coding agent, ALWAYS include the repo parameter:
 ${post.repoConfig.installationId ? `- installationId: ${post.repoConfig.installationId}` : ""}`
     : ""
 
+  // Build scripts context for the coding agent
+  const scriptsContext = post.repoConfig?.scripts
+    ? `
+
+## Workspace Scripts
+The repository has the following workspace scripts configured:
+
+### Dev Script (run this to start the development environment):
+\`\`\`bash
+${post.repoConfig.scripts.devScript}
+\`\`\`
+
+### Maintenance Script (run this for maintenance tasks like installing dependencies):
+\`\`\`bash
+${post.repoConfig.scripts.maintenanceScript}
+\`\`\`
+`
+    : ""
+
   // Build prompt - if repo is selected, automatically delegate to coding agent
   const autoDelegate = post.repoConfig !== undefined
   const prompt = autoDelegate
@@ -133,9 +156,9 @@ ${post.content}
 
 Since a repository is selected, delegate this task to the coding agent immediately. Use the delegateToCodingAgent tool with:
 - task: The user's request
-- context: Any relevant context about the task
+- context: Include any relevant context about the task${scriptsContext ? ". IMPORTANT: Include the workspace scripts context below so the coding agent knows how to set up and run the dev environment." : ""}
 - agent: "build" (for coding tasks)
-- repo: { gitRemote: "${post.repoConfig!.gitRemote}", branch: "${post.repoConfig!.branch}"${post.repoConfig!.installationId ? `, installationId: ${post.repoConfig!.installationId}` : ""} }`
+- repo: { gitRemote: "${post.repoConfig!.gitRemote}", branch: "${post.repoConfig!.branch}"${post.repoConfig!.installationId ? `, installationId: ${post.repoConfig!.installationId}` : ""} }${scriptsContext}`
     : `Respond to this post:\n\n${post.content}`
 
   try {
