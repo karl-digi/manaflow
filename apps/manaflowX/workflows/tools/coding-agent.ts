@@ -286,6 +286,7 @@ async function cloneRepositoryInVM(
 async function spawnCodingVM(options?: {
   onReady?: (instance: { exec: (cmd: string) => Promise<{ stdout: string; stderr: string }> }) => Promise<void>;
   repo?: RepoCloneConfig;
+  envVars?: Array<{ key: string; value: string }>;
 }): Promise<{
   instanceId: string;
   url: string;
@@ -314,6 +315,34 @@ async function spawnCodingVM(options?: {
   // Clone repository if configuration provided
   if (options?.repo) {
     await cloneRepositoryInVM(instance, options.repo);
+  }
+
+  // Inject environment variables as .env file in workspace
+  if (options?.envVars && options.envVars.length > 0) {
+    console.log(`[coding-agent] Injecting ${options.envVars.length} environment variables`);
+
+    // Build .env file content - each line is KEY=VALUE
+    // We need to escape special characters for shell safety
+    const envContent = options.envVars
+      .filter((env) => env.key.trim() !== "")
+      .map((env) => {
+        // Escape backslashes and double quotes in values
+        const escapedValue = env.value
+          .replace(/\\/g, "\\\\")
+          .replace(/"/g, '\\"')
+          .replace(/\$/g, "\\$")
+          .replace(/`/g, "\\`");
+        return `${env.key}="${escapedValue}"`;
+      })
+      .join("\n");
+
+    // Write .env file to workspace using heredoc for safety
+    const writeEnvCmd = `cat > /workspace/.env << 'ENVEOF'
+${envContent}
+ENVEOF`;
+
+    await instance.exec(writeEnvCmd);
+    console.log(`[coding-agent] Wrote .env file to /workspace/.env`);
   }
 
   const service = instance.networking.httpServices.find(
@@ -417,14 +446,24 @@ The agent will complete the task autonomously and return the results.`,
       .describe(
         "Command to install dependencies (e.g., 'bun install', 'npm install'). If provided, the agent will run this after cloning the repository."
       ),
+    envVars: z
+      .array(z.object({
+        key: z.string(),
+        value: z.string(),
+      }))
+      .optional()
+      .describe(
+        "Environment variables to inject into the VM workspace as a .env file. These are written to /workspace/.env before the task runs."
+      ),
   }),
   execute: async (
-    { task, context, agent, repo, installCommand }: {
+    { task, context, agent, repo, installCommand, envVars }: {
       task: string;
       context?: string;
       agent: "build" | "plan" | "general";
       repo?: { gitRemote: string; branch: string; installationId?: number };
       installCommand?: string;
+      envVars?: Array<{ key: string; value: string }>;
     },
     { toolCallId }: { toolCallId: string }
   ) => {
@@ -519,6 +558,8 @@ The agent will complete the task autonomously and return the results.`,
         },
         // Pass repository config for cloning
         repo: repo,
+        // Pass environment variables for .env injection
+        envVars: envVars,
       });
 
       // Update session with the Morph instance ID

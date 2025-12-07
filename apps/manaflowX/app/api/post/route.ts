@@ -4,8 +4,42 @@ import { NextResponse } from "next/server";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
+import { stackServerApp } from "@/stack/server";
 
 const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
+
+// Environment variable type
+interface EnvVar {
+  key: string;
+  value: string;
+}
+
+// Get the vault secret from environment
+function getVaultSecret(): string {
+  const secret = process.env.STACK_DATA_VAULT_SECRET;
+  if (!secret) {
+    throw new Error("STACK_DATA_VAULT_SECRET environment variable is not set");
+  }
+  return secret;
+}
+
+// Fetch env vars from the Data Vault
+async function fetchEnvVars(userId: string, repoId: string): Promise<EnvVar[]> {
+  try {
+    const store = await stackServerApp.getDataVaultStore("xagi");
+    const key = `env:${userId}:${repoId}`;
+    const value = await store.getValue(key, { secret: getVaultSecret() });
+
+    if (!value) {
+      return [];
+    }
+
+    return JSON.parse(value) as EnvVar[];
+  } catch (error) {
+    console.error("[API] Failed to fetch env vars:", error);
+    return [];
+  }
+}
 
 // Repo config to pass to the workflow
 export interface RepoConfig {
@@ -17,6 +51,7 @@ export interface RepoConfig {
     maintenanceScript: string;
     devScript: string;
   };
+  envVars?: EnvVar[];
 }
 
 // Thread context for replies
@@ -37,6 +72,9 @@ export async function POST(request: Request) {
   console.log("[API] Reply to:", replyTo);
 
   try {
+    // Get the current user for env var lookup
+    const user = await stackServerApp.getUser();
+
     // Fetch full repo details if a repo is selected
     let repoConfig: RepoConfig | undefined;
     if (repoFullName) {
@@ -48,14 +86,23 @@ export async function POST(request: Request) {
       console.log("[API] Got repo from Convex:", repo);
 
       if (repo) {
+        // Fetch env vars for this repo if user is authenticated
+        let envVars: EnvVar[] = [];
+        if (user && repo._id) {
+          console.log("[API] Fetching env vars for user:", user.id, "repo:", repo._id);
+          envVars = await fetchEnvVars(user.id, repo._id);
+          console.log("[API] Found", envVars.length, "environment variables");
+        }
+
         repoConfig = {
           fullName: repo.fullName,
           gitRemote: repo.gitRemote,
           branch: repo.defaultBranch ?? "main",
           installationId: repo.installationId,
           scripts: repo.scripts,
+          envVars: envVars.length > 0 ? envVars : undefined,
         };
-        console.log("[API] Repo config:", repoConfig);
+        console.log("[API] Repo config:", { ...repoConfig, envVars: envVars.length > 0 ? `[${envVars.length} vars]` : undefined });
       } else {
         console.log("[API] Repo not found in database");
       }
