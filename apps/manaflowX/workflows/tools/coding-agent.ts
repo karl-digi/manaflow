@@ -449,7 +449,7 @@ The agent will complete the task autonomously and return the results.`,
 
     try {
       // Get required environment variables
-      const convexSiteUrl = process.env.NEXT_PUBLIC_NEXT_PUBLIC_CONVEX_SITE;
+      const convexSiteUrl = process.env.NEXT_PUBLIC_CONVEX_SITE_URL;
 
       // Generate a random JWT secret for this invocation
       // This secret will be written to the VM and used by the plugin
@@ -457,7 +457,7 @@ The agent will complete the task autonomously and return the results.`,
       const jwtSecret = base64urlEncode(jwtSecretBytes);
 
       if (!convexSiteUrl) {
-        console.warn("[coding-agent] NEXT_PUBLIC_CONVEX_SITE not set, streaming to Convex disabled");
+        console.warn("[coding-agent] NEXT_PUBLIC_CONVEX_SITE_URL not set, streaming to Convex disabled");
       }
 
       // Update progress: Creating session (non-blocking)
@@ -504,6 +504,28 @@ The agent will complete the task autonomously and return the results.`,
             const escapedConfig = JSON.stringify(config).replace(/'/g, "'\"'\"'");
             await instance.exec(`mkdir -p /root/.xagi && echo '${escapedConfig}' > /root/.xagi/config.json`);
             console.log(`[coding-agent] Wrote JWT config to VM`);
+          }
+
+          // Write OpenCode config to use xAI Grok model
+          const xaiApiKey = process.env.XAI_API_KEY;
+          if (xaiApiKey) {
+            const opencodeConfig = {
+              $schema: "https://opencode.ai/config.json",
+              model: "xai/grok-4-1-fast-non-reasoning",
+              provider: {
+                xai: {
+                  options: {
+                    apiKey: xaiApiKey,
+                  },
+                },
+              },
+            };
+
+            const escapedOpencodeConfig = JSON.stringify(opencodeConfig).replace(/'/g, "'\"'\"'");
+            await instance.exec(`mkdir -p /root/.config/opencode && echo '${escapedOpencodeConfig}' > /root/.config/opencode/opencode.json`);
+            console.log(`[coding-agent] Wrote OpenCode config with xAI/grok-4-1-fast-non-reasoning model`);
+          } else {
+            console.warn(`[coding-agent] XAI_API_KEY not set, using default model`);
           }
         },
         // Pass repository config for cloning
@@ -592,6 +614,7 @@ The agent will complete the task autonomously and return the results.`,
         sessionId: session.id,
         convexSessionId, // Include Convex session ID for UI linking
         morphInstanceId: vm.instanceId, // VM instance ID for debugging (URL derived as https://port-4096-{id.replace('_', '-')}.http.cloud.morph.so)
+        path: session.directory, // Working directory path in the VM
         response: textResponse,
         toolsUsed: toolsSummary,
         tokens: response.info.tokens,

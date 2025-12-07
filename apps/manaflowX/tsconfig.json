@@ -40,6 +40,7 @@
     "node_modules",
     "dev-docs",
     "sandbox/worker/grok-code",
-    "sandbox/opencode-plugin"
+    "sandbox/opencode-plugin",
+    "sandbox/mcp"
   ]
 }

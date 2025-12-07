@@ -20,6 +20,11 @@
   }
 }
 
+html,
+body {
+  overscroll-behavior: none;
+}
+
 body {
   color: var(--foreground);
   background: var(--background);
