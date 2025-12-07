@@ -95,6 +95,28 @@ function EyeIcon({ className }: { className?: string }) {
   );
 }
 
+function EyeOffIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24" />
+      <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" />
+      <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61" />
+      <line x1="2" x2="22" y1="2" y2="22" />
+    </svg>
+  );
+}
+
 function ChevronDownIcon({ className }: { className?: string }) {
   return (
     <svg
@@ -110,6 +132,25 @@ function ChevronDownIcon({ className }: { className?: string }) {
       strokeLinejoin="round"
     >
       <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
+}
+
+function LoaderIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
     </svg>
   );
 }
@@ -150,6 +191,7 @@ export const ConfigureWorkspace = forwardRef<ConfigureWorkspaceRef, ConfigureWor
   const [focusedValueIndex, setFocusedValueIndex] = useState<number | null>(null);
 
   // Track loading state for env vars from vault
+  const [loadingEnvVars, setLoadingEnvVars] = useState(true);
   const loadingEnvVarsRef = useRef(false);
 
   // Parse .env content and add to env vars
@@ -225,6 +267,7 @@ export const ConfigureWorkspace = forwardRef<ConfigureWorkspaceRef, ConfigureWor
     if (!repoId || loadingEnvVarsRef.current) return;
 
     loadingEnvVarsRef.current = true;
+    setLoadingEnvVars(true);
 
     fetchEnvVars(repoId)
       .then((vars) => {
@@ -240,6 +283,7 @@ export const ConfigureWorkspace = forwardRef<ConfigureWorkspaceRef, ConfigureWor
       })
       .finally(() => {
         loadingEnvVarsRef.current = false;
+        setLoadingEnvVars(false);
       });
   }, [repoId]);
 
@@ -413,7 +457,7 @@ export const ConfigureWorkspace = forwardRef<ConfigureWorkspaceRef, ConfigureWor
               onClick={() => setShowValues(!showValues)}
               className="flex items-center gap-1 text-xs text-neutral-400 hover:text-neutral-200 transition-colors"
             >
-              <EyeIcon className="h-3.5 w-3.5" />
+              {showValues ? <EyeOffIcon className="h-3.5 w-3.5" /> : <EyeIcon className="h-3.5 w-3.5" />}
               <span>{showValues ? "Hide" : "Reveal"}</span>
             </button>
             <button
@@ -431,61 +475,70 @@ export const ConfigureWorkspace = forwardRef<ConfigureWorkspaceRef, ConfigureWor
         </div>
         {envOpen && (
           <div className="mt-2">
-            {/* Table header */}
-            <div className="grid grid-cols-[1fr_1.5fr_auto] gap-2 mb-2 text-xs text-neutral-500">
-              <span>Key</span>
-              <span>Value</span>
-              <span className="w-7"></span>
-            </div>
-
-            {/* Env var rows */}
-            <div className="space-y-2">
-              {envVars.map((envVar, index) => (
-                <div
-                  key={index}
-                  className="grid grid-cols-[1fr_1.5fr_auto] gap-2 items-center"
-                >
-                  <input
-                    type="text"
-                    value={envVar.key}
-                    onChange={(e) =>
-                      handleEnvVarChange(index, "key", e.target.value)
-                    }
-                    onPaste={(e) => handleKeyPaste(index, e)}
-                    placeholder="EXAMPLE_KEY"
-                    className="w-full bg-neutral-900 border border-neutral-700 rounded px-2.5 py-1.5 text-sm text-neutral-300 placeholder-neutral-600 font-mono focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent"
-                  />
-                  <input
-                    type={showValues || focusedValueIndex === index ? "text" : "password"}
-                    value={envVar.value}
-                    onChange={(e) =>
-                      handleEnvVarChange(index, "value", e.target.value)
-                    }
-                    onFocus={() => setFocusedValueIndex(index)}
-                    onBlur={() => setFocusedValueIndex(null)}
-                    placeholder="secret-value"
-                    className="w-full bg-neutral-900 border border-neutral-700 rounded px-2.5 py-1.5 text-sm text-neutral-300 placeholder-neutral-600 font-mono focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => removeEnvVar(index)}
-                    className="p-1.5 text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800 rounded transition-colors"
-                  >
-                    <MinusIcon className="h-4 w-4" />
-                  </button>
+            {loadingEnvVars ? (
+              <div className="flex items-center justify-center py-6">
+                <LoaderIcon className="h-5 w-5 animate-spin text-neutral-500" />
+                <span className="ml-2 text-sm text-neutral-500">Loading...</span>
+              </div>
+            ) : (
+              <>
+                {/* Table header */}
+                <div className="grid grid-cols-[1fr_1.5fr_auto] gap-2 mb-2 text-xs text-neutral-500">
+                  <span>Key</span>
+                  <span>Value</span>
+                  <span className="w-7"></span>
                 </div>
-              ))}
-            </div>
 
-            {/* Add variable button */}
-            <button
-              type="button"
-              onClick={addEnvVar}
-              className="flex items-center gap-1.5 mt-3 text-sm text-neutral-400 hover:text-neutral-200 transition-colors"
-            >
-              <PlusIcon className="h-4 w-4" />
-              <span>Add variable</span>
-            </button>
+                {/* Env var rows */}
+                <div className="space-y-2">
+                  {envVars.map((envVar, index) => (
+                    <div
+                      key={index}
+                      className="grid grid-cols-[1fr_1.5fr_auto] gap-2 items-center"
+                    >
+                      <input
+                        type="text"
+                        value={envVar.key}
+                        onChange={(e) =>
+                          handleEnvVarChange(index, "key", e.target.value)
+                        }
+                        onPaste={(e) => handleKeyPaste(index, e)}
+                        placeholder="EXAMPLE_KEY"
+                        className="w-full bg-neutral-900 border border-neutral-700 rounded px-2.5 py-1.5 text-sm text-neutral-300 placeholder-neutral-600 font-mono focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent"
+                      />
+                      <input
+                        type={showValues || focusedValueIndex === index ? "text" : "password"}
+                        value={envVar.value}
+                        onChange={(e) =>
+                          handleEnvVarChange(index, "value", e.target.value)
+                        }
+                        onFocus={() => setFocusedValueIndex(index)}
+                        onBlur={() => setFocusedValueIndex(null)}
+                        placeholder="secret-value"
+                        className="w-full bg-neutral-900 border border-neutral-700 rounded px-2.5 py-1.5 text-sm text-neutral-300 placeholder-neutral-600 font-mono focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removeEnvVar(index)}
+                        className="p-1.5 text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800 rounded transition-colors"
+                      >
+                        <MinusIcon className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Add variable button */}
+                <button
+                  type="button"
+                  onClick={addEnvVar}
+                  className="flex items-center gap-1.5 mt-3 text-sm text-neutral-400 hover:text-neutral-200 transition-colors"
+                >
+                  <PlusIcon className="h-4 w-4" />
+                  <span>Add variable</span>
+                </button>
+              </>
+            )}
           </div>
         )}
       </div>
