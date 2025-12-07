@@ -5,6 +5,7 @@ import { Geist, Geist_Mono } from "next/font/google"
 import "./globals.css"
 import ConvexClientProvider from "@/components/ConvexClientProvider"
 import { AppShell } from "@/components/AppShell"
+import { ThemeProvider } from "@/components/ThemeProvider"
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -30,15 +31,17 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body className={`${geistSans.variable} ${geistMono.variable}`}>
-        <StackProvider app={stackClientApp}>
-          <StackTheme>
-            <ConvexClientProvider>
-              <AppShell>{children}</AppShell>
-            </ConvexClientProvider>
-          </StackTheme>
-        </StackProvider>
+        <ThemeProvider>
+          <StackProvider app={stackClientApp}>
+            <StackTheme>
+              <ConvexClientProvider>
+                <AppShell>{children}</AppShell>
+              </ConvexClientProvider>
+            </StackTheme>
+          </StackProvider>
+        </ThemeProvider>
       </body>
     </html>
   )

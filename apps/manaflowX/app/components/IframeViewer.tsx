@@ -65,17 +65,17 @@ export function IframeViewer({
   const [modalOpen, setModalOpen] = useState(false)
 
   return (
-    <div className="border-b border-gray-800">
+    <div className="border-b border-border">
       <button
         onClick={onToggle}
-        className="w-full px-4 py-2 flex items-center justify-between hover:bg-gray-900/50 transition-colors"
+        className="w-full px-4 py-2 flex items-center justify-between hover:bg-accent/50 transition-colors"
       >
         <div className="flex items-center gap-2">
           <span className={color}>{icon}</span>
           <span className={`text-sm font-medium ${color}`}>{title}</span>
         </div>
         <svg
-          className={`w-4 h-4 text-gray-500 transition-transform ${isExpanded ? "rotate-180" : ""}`}
+          className={`w-4 h-4 text-muted-foreground transition-transform ${isExpanded ? "rotate-180" : ""}`}
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -84,7 +84,7 @@ export function IframeViewer({
         </svg>
       </button>
       {isExpanded && (
-        <div className="relative bg-black">
+        <div className="relative bg-background">
           <iframe
             src={url}
             className={`w-full border-0 ${
@@ -100,7 +100,7 @@ export function IframeViewer({
             <Dialog.Root open={modalOpen} onOpenChange={setModalOpen}>
               <Dialog.Trigger asChild>
                 <button
-                  className="px-2 py-1 bg-gray-800/80 hover:bg-gray-700 text-xs text-gray-300 rounded flex items-center gap-1"
+                  className="px-2 py-1 bg-card/80 hover:bg-accent text-xs text-foreground/80 rounded flex items-center gap-1"
                 >
                   <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
@@ -109,9 +109,9 @@ export function IframeViewer({
                 </button>
               </Dialog.Trigger>
               <Dialog.Portal>
-                <Dialog.Overlay className="fixed inset-0 bg-black/80 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 z-50" />
-                <Dialog.Content className="fixed left-[50%] top-[50%] translate-x-[-50%] translate-y-[-50%] w-[95vw] h-[90vh] bg-gray-900 border border-gray-700 rounded-lg shadow-2xl z-50 flex flex-col data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%]">
-                  <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
+                <Dialog.Overlay className="fixed inset-0 bg-background/80 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 z-50" />
+                <Dialog.Content className="fixed left-[50%] top-[50%] translate-x-[-50%] translate-y-[-50%] w-[95vw] h-[90vh] bg-card border border-border rounded-lg shadow-2xl z-50 flex flex-col data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%]">
+                  <div className="flex items-center justify-between px-4 py-3 border-b border-border">
                     <Dialog.Title className={`text-sm font-medium ${color} flex items-center gap-2`}>
                       {icon}
                       {title}
@@ -121,7 +121,7 @@ export function IframeViewer({
                         href={url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="px-2 py-1 bg-gray-800 hover:bg-gray-700 text-xs text-gray-300 rounded flex items-center gap-1"
+                        className="px-2 py-1 bg-card hover:bg-accent text-xs text-foreground/80 rounded flex items-center gap-1"
                       >
                         <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
@@ -130,7 +130,7 @@ export function IframeViewer({
                       </a>
                       <Dialog.Close asChild>
                         <button
-                          className="p-1 text-gray-500 hover:text-white rounded transition-colors"
+                          className="p-1 text-muted-foreground hover:text-foreground rounded transition-colors"
                           aria-label="Close"
                         >
                           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -143,7 +143,7 @@ export function IframeViewer({
                   <Dialog.Description className="sr-only">
                     Full-screen view of {title}
                   </Dialog.Description>
-                  <div className="flex-1 bg-black">
+                  <div className="flex-1 bg-background">
                     <iframe
                       src={url}
                       className="w-full h-full border-0"
@@ -158,7 +158,7 @@ export function IframeViewer({
               href={url}
               target="_blank"
               rel="noopener noreferrer"
-              className="px-2 py-1 bg-gray-800/80 hover:bg-gray-700 text-xs text-gray-300 rounded flex items-center gap-1"
+              className="px-2 py-1 bg-card/80 hover:bg-accent text-xs text-foreground/80 rounded flex items-center gap-1"
             >
               <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />

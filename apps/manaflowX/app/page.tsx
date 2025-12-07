@@ -6,7 +6,14 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { Streamdown } from "streamdown"
 import { api } from "../convex/_generated/api"
 import { embeddableComponents } from "../components/EmbeddableComponents"
-import { useState, useCallback, Suspense, useRef, useEffect, useMemo } from "react"
+import {
+  useState,
+  useCallback,
+  Suspense,
+  useRef,
+  useEffect,
+  useMemo,
+} from "react"
 import { Id } from "../convex/_generated/dataModel"
 import { SessionsByPost } from "../components/SessionView"
 import { CodingAgentSession } from "./components/CodingAgentSession"
@@ -84,24 +91,22 @@ function PostCard({
   return (
     <div
       onClick={onClick}
-      className={`p-4 hover:bg-gray-900/30 transition-colors cursor-pointer border-l-2 ${!showThreadLine ? "border-b border-gray-800" : "pb-0"} ${isSelected ? "bg-gray-900/50 border-l-blue-500" : "border-l-transparent"} ${showThreadLineAbove ? "pt-0" : ""}`}
+      className={`p-4 hover:bg-accent/30 transition-colors cursor-pointer border-l-2 ${!showThreadLine ? "border-b border-border" : "pb-0"} ${isSelected ? "bg-accent/50 border-l-blue-500" : "border-l-transparent"} ${showThreadLineAbove ? "pt-0" : ""}`}
     >
       <div className="flex gap-3">
         <div className="flex-shrink-0 flex flex-col items-center">
           {/* Thread line coming from parent above */}
-          {showThreadLineAbove && (
-            <div className="w-0.5 bg-gray-700 h-4 mb-1" />
-          )}
+          {showThreadLineAbove && <div className="w-0.5 bg-border h-4 mb-1" />}
           {post.author === "Grok" ? (
-            <GrokIcon className="w-10 h-10" />
+            <GrokIcon className="w-10 h-10" size={32} />
           ) : (
-            <div className="w-10 h-10 rounded-full bg-gray-700 flex items-center justify-center text-sm font-bold">
+            <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center text-sm font-bold">
               {post.author[0].toUpperCase()}
             </div>
           )}
           {/* Thread line connecting to reply below */}
           {showThreadLine && (
-            <div className="w-0.5 bg-gray-700 flex-grow mt-1 min-h-[8px]" />
+            <div className="w-0.5 bg-border flex-grow mt-1 min-h-[8px]" />
           )}
         </div>
         <div
@@ -111,19 +116,21 @@ function PostCard({
             <span className="font-bold hover:underline">
               {post.author === "Assistant" ? "Grok" : post.author}
             </span>
-            <span className="text-gray-500 text-sm">
+            <span className="text-muted-foreground text-sm">
               · {new Date(post.createdAt).toLocaleString()}
             </span>
           </div>
           <div className="relative">
             <div
               ref={contentRef}
-              className={`prose prose-invert prose-sm max-w-none ${!isExpanded && needsClamp ? "max-h-[240px] overflow-hidden" : "mb-3"}`}
+              className={`prose dark:prose-invert prose-sm max-w-none ${!isExpanded && needsClamp ? "max-h-[240px] overflow-hidden" : "mb-3"}`}
             >
-              <Streamdown components={embeddableComponents}>{post.content}</Streamdown>
+              <Streamdown components={embeddableComponents}>
+                {post.content}
+              </Streamdown>
             </div>
             {!isExpanded && needsClamp && (
-              <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-black to-transparent pointer-events-none" />
+              <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-background to-transparent pointer-events-none" />
             )}
           </div>
           {needsClamp && (
@@ -137,7 +144,7 @@ function PostCard({
               {isExpanded ? "Show less" : "Show more"}
             </button>
           )}
-          <div className="flex gap-4 text-gray-500 text-sm">
+          <div className="flex gap-4 text-muted-foreground text-sm">
             <button
               onClick={(e) => {
                 e.stopPropagation()
@@ -161,7 +168,9 @@ function PostCard({
               Reply
             </button>
             {post.replyCount > 0 && (
-              <span className="text-gray-400">{post.replyCount} replies</span>
+              <span className="text-muted-foreground">
+                {post.replyCount} replies
+              </span>
             )}
             {onMerge && post.replyTo && (
               <button
@@ -215,8 +224,8 @@ function ReplyComposer({
   }
 
   return (
-    <div className="p-4 border-b border-gray-800 bg-gray-900/50">
-      <div className="text-sm text-gray-500 mb-2 flex items-center gap-1">
+    <div className="p-4 border-b border-border bg-muted/50">
+      <div className="text-sm text-muted-foreground mb-2 flex items-center gap-1">
         Replying to{" "}
         {replyingTo.author === "Grok" || replyingTo.author === "Assistant" ? (
           <>
@@ -228,7 +237,7 @@ function ReplyComposer({
         )}
       </div>
       <textarea
-        className="w-full bg-gray-800 text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none p-3 rounded-lg"
+        className="w-full bg-card text-foreground placeholder-muted-foreground focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none p-3 rounded-lg"
         placeholder="Write your reply..."
         rows={3}
         value={content}
@@ -244,7 +253,7 @@ function ReplyComposer({
       <div className="flex justify-end gap-2 mt-2">
         <button
           onClick={onCancel}
-          className="px-4 py-1.5 text-gray-400 hover:text-white transition-colors"
+          className="px-4 py-1.5 text-muted-foreground hover:text-foreground transition-colors"
         >
           Cancel
         </button>
@@ -296,7 +305,7 @@ function ThreadPanel({
 
   if (!thread) {
     return (
-      <div className="h-full flex items-center justify-center text-gray-500">
+      <div className="h-full flex items-center justify-center text-muted-foreground">
         Loading...
       </div>
     )
@@ -327,11 +336,11 @@ function ThreadPanel({
 
   return (
     <div className="h-full flex flex-col">
-      <div className="h-[55px] px-4 border-b border-gray-800 flex justify-between items-center sticky top-0 bg-black/80 backdrop-blur-md">
+      <div className="h-[55px] px-4 border-b border-border flex justify-between items-center sticky top-0 bg-background/80 backdrop-blur-md">
         <h2 className="text-lg font-bold">Thread</h2>
         <button
           onClick={onClose}
-          className="text-gray-500 hover:text-white transition-colors"
+          className="text-muted-foreground hover:text-foreground transition-colors"
         >
           <svg
             className="w-5 h-5"
@@ -414,7 +423,9 @@ function HomeContent() {
   const [selectedRepo, setSelectedRepo] = useState<string | null>(null)
 
   // Track optimistically submitted posts to show at top of "for you" feed
-  const [optimisticPostIds, setOptimisticPostIds] = useState<Set<string>>(new Set())
+  const [optimisticPostIds, setOptimisticPostIds] = useState<Set<string>>(
+    new Set(),
+  )
 
   // Track displayed posts to show "new posts" indicator instead of jarring updates
   const [displayedPosts, setDisplayedPosts] = useState<Post[]>([])
@@ -487,7 +498,9 @@ function HomeContent() {
   // When changing post, clear the agent panels (they're associated with the previous post)
   const setSelectedThread = useCallback(
     (postId: Id<"posts"> | null) => {
-      router.push(buildUrl({ post: postId, issue: selectedIssue }), { scroll: false })
+      router.push(buildUrl({ post: postId, issue: selectedIssue }), {
+        scroll: false,
+      })
     },
     [router, buildUrl, selectedIssue],
   )
@@ -495,7 +508,9 @@ function HomeContent() {
   // Set selected issue (preserves post selection)
   const setSelectedIssue = useCallback(
     (issueId: Id<"issues"> | null) => {
-      router.push(buildUrl({ post: selectedThread, issue: issueId }), { scroll: false })
+      router.push(buildUrl({ post: selectedThread, issue: issueId }), {
+        scroll: false,
+      })
     },
     [router, buildUrl, selectedThread],
   )
@@ -512,7 +527,13 @@ function HomeContent() {
         { scroll: false },
       )
     },
-    [router, buildUrl, selectedThread, selectedIssue, selectedBrowserAgentSession],
+    [
+      router,
+      buildUrl,
+      selectedThread,
+      selectedIssue,
+      selectedBrowserAgentSession,
+    ],
   )
 
   const setSelectedBrowserAgentSession = useCallback(
@@ -527,7 +548,13 @@ function HomeContent() {
         { scroll: false },
       )
     },
-    [router, buildUrl, selectedThread, selectedIssue, selectedCodingAgentSession],
+    [
+      router,
+      buildUrl,
+      selectedThread,
+      selectedIssue,
+      selectedCodingAgentSession,
+    ],
   )
 
   // Get posts based on active tab (compute before hooks)
@@ -553,7 +580,7 @@ function HomeContent() {
   const liveItems: CuratedItem[] =
     feedTab === "for_you" && curatedItems.length
       ? curatedItems.filter(
-          (item) => !item.post || !optimisticPostIds.has(item.post._id)
+          (item) => !item.post || !optimisticPostIds.has(item.post._id),
         )
       : recentPosts.map((post) => ({ post, parentPost: null }))
 
@@ -595,10 +622,12 @@ function HomeContent() {
   useEffect(() => {
     if (optimisticPostIds.size === 0) return
     const curatedPostIds = new Set(
-      curatedItems.map((item) => item.post?._id).filter(Boolean)
+      curatedItems.map((item) => item.post?._id).filter(Boolean),
     )
     const stillOptimistic = new Set(
-      [...optimisticPostIds].filter((id) => !curatedPostIds.has(id as Id<"posts">))
+      [...optimisticPostIds].filter(
+        (id) => !curatedPostIds.has(id as Id<"posts">),
+      ),
     )
     if (stillOptimistic.size !== optimisticPostIds.size) {
       setOptimisticPostIds(stillOptimistic)
@@ -685,16 +714,16 @@ Make sure all checks pass before merging. If there are any failing checks, fix t
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="flex items-center gap-2">
-          <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+          <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce"></div>
           <div
-            className="w-2 h-2 bg-gray-500 rounded-full animate-bounce"
+            className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce"
             style={{ animationDelay: "0.1s" }}
           ></div>
           <div
-            className="w-2 h-2 bg-gray-600 rounded-full animate-bounce"
+            className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce"
             style={{ animationDelay: "0.2s" }}
           ></div>
-          <p className="ml-2 text-gray-400">Loading...</p>
+          <p className="ml-2 text-muted-foreground">Loading...</p>
         </div>
       </div>
     )
@@ -708,17 +737,17 @@ Make sure all checks pass before merging. If there are any failing checks, fix t
         {/* Main Feed Column */}
         <main
           ref={mainFeedRef}
-          className={`w-full sm:min-w-[450px] max-w-[666px] shrink sm:border-x border-gray-800 min-h-screen`}
+          className={`w-full sm:min-w-[450px] max-w-[666px] shrink sm:border-x border-border min-h-screen`}
         >
-          <div className="sticky top-0 z-10 bg-black/80 backdrop-blur-md border-b border-gray-800">
+          <div className="sticky top-0 z-10 bg-background/80 backdrop-blur-md border-b border-border">
             {/* Feed tabs */}
             <div className="flex h-[53px]">
               <button
                 onClick={() => setFeedTab("for_you")}
-                className={`flex-1 py-3 text-center font-medium transition-colors relative ${
+                className={`flex-1 py-3 text-center font-semibold transition-colors relative ${
                   feedTab === "for_you"
-                    ? "text-white"
-                    : "text-gray-500 hover:text-gray-300"
+                    ? "text-foreground"
+                    : "text-muted-foreground hover:text-foreground/80"
                 }`}
               >
                 For you
@@ -728,10 +757,10 @@ Make sure all checks pass before merging. If there are any failing checks, fix t
               </button>
               <button
                 onClick={() => setFeedTab("recent")}
-                className={`flex-1 py-3 text-center font-medium transition-colors relative ${
+                className={`flex-1 py-3 text-center font-semibold transition-colors relative ${
                   feedTab === "recent"
-                    ? "text-white"
-                    : "text-gray-500 hover:text-gray-300"
+                    ? "text-foreground"
+                    : "text-muted-foreground hover:text-foreground/80"
                 }`}
               >
                 Recent
@@ -742,20 +771,20 @@ Make sure all checks pass before merging. If there are any failing checks, fix t
             </div>
           </div>
 
-          <div className="p-4 border-b border-gray-800">
+          <div className="p-4 border-b border-border">
             <div className="flex gap-4">
               <div className="flex-shrink-0">
                 {viewer === "Grok" ? (
-                  <GrokIcon className="w-10 h-10" />
+                  <GrokIcon className="w-10 h-10" size={32} />
                 ) : (
-                  <div className="w-10 h-10 rounded-full bg-gray-600 flex items-center justify-center text-sm font-bold">
+                  <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center text-sm font-bold">
                     {viewer ? viewer[0].toUpperCase() : "?"}
                   </div>
                 )}
               </div>
               <div className="flex-grow">
                 <TextareaAutosize
-                  className="w-full bg-transparent text-xl placeholder-gray-500 focus:outline-none resize-none py-2"
+                  className="w-full bg-transparent text-xl placeholder-muted-foreground focus:outline-none resize-none py-2"
                   placeholder="What's happening?"
                   minRows={1}
                   maxRows={10}
@@ -794,7 +823,7 @@ Make sure all checks pass before merging. If there are any failing checks, fix t
           {newPostsAvailable > 0 && (
             <button
               onClick={showNewPosts}
-              className="w-full py-3 text-blue-400 hover:bg-blue-500/10 transition-colors border-b border-gray-800 font-medium"
+              className="w-full py-3 text-blue-400 hover:bg-blue-500/10 transition-colors border-b border-border font-medium"
             >
               Show {newPostsAvailable} new post
               {newPostsAvailable > 1 ? "s" : ""}
@@ -815,7 +844,7 @@ Make sure all checks pass before merging. If there are any failing checks, fix t
 
           <div>
             {itemsToShow.length === 0 && optimisticPosts.length === 0 ? (
-              <div className="p-8 text-center text-gray-500">
+              <div className="p-8 text-center text-muted-foreground">
                 {feedTab === "for_you"
                   ? "No curated posts yet. Check back soon or switch to Recent!"
                   : "No posts yet. Share something!"}
@@ -855,7 +884,7 @@ Make sure all checks pass before merging. If there are any failing checks, fix t
 
         {/* Thread Panel - Right Column */}
         {selectedThread && (
-          <aside className="w-[550px] shrink-0 border-r border-gray-800 min-h-screen sticky top-0 h-screen overflow-hidden hidden lg:block">
+          <aside className="w-[550px] shrink-0 border-r border-border min-h-screen sticky top-0 h-screen overflow-hidden hidden lg:block">
             <ThreadPanel
               postId={selectedThread}
               onClose={() => setSelectedThread(null)}
@@ -868,7 +897,7 @@ Make sure all checks pass before merging. If there are any failing checks, fix t
 
         {/* Coding Agent Session Panel - Third Column */}
         {selectedCodingAgentSession && !selectedBrowserAgentSession && (
-          <aside className="w-[500px] shrink border-r border-gray-800 min-h-screen sticky top-0 h-screen overflow-hidden hidden xl:block">
+          <aside className="w-[500px] shrink border-r border-border min-h-screen sticky top-0 h-screen overflow-hidden hidden xl:block">
             <CodingAgentSession
               sessionId={selectedCodingAgentSession}
               onClose={() => setSelectedCodingAgentSession(null)}
@@ -878,7 +907,7 @@ Make sure all checks pass before merging. If there are any failing checks, fix t
 
         {/* Browser Agent Session Panel - Third Column (takes precedence over coding agent) */}
         {selectedBrowserAgentSession && (
-          <aside className="w-[600px] shrink border-r border-gray-800 min-h-screen sticky top-0 h-screen overflow-hidden hidden xl:block">
+          <aside className="w-[600px] shrink border-r border-border min-h-screen sticky top-0 h-screen overflow-hidden hidden xl:block">
             <BrowserAgentSession
               sessionId={selectedBrowserAgentSession}
               onClose={() => setSelectedBrowserAgentSession(null)}
@@ -887,15 +916,17 @@ Make sure all checks pass before merging. If there are any failing checks, fix t
         )}
 
         {/* Issue Detail Panel - Shows when issue is selected and no agent session is active */}
-        {selectedIssue && !selectedCodingAgentSession && !selectedBrowserAgentSession && (
-          <aside className="w-[500px] shrink border-r border-gray-800 min-h-screen sticky top-0 h-screen overflow-hidden hidden xl:block">
-            <IssueDetailPanel
-              issueId={selectedIssue}
-              onClose={() => setSelectedIssue(null)}
-              onIssueClick={setSelectedIssue}
-            />
-          </aside>
-        )}
+        {selectedIssue &&
+          !selectedCodingAgentSession &&
+          !selectedBrowserAgentSession && (
+            <aside className="w-[500px] shrink border-r border-border min-h-screen sticky top-0 h-screen overflow-hidden hidden xl:block">
+              <IssueDetailPanel
+                issueId={selectedIssue}
+                onClose={() => setSelectedIssue(null)}
+                onIssueClick={setSelectedIssue}
+              />
+            </aside>
+          )}
       </div>
 
       {/* Back to top floating pill - only shows when there are new posts and user has scrolled */}
@@ -935,16 +966,16 @@ export default function Home() {
       fallback={
         <div className="min-h-screen flex items-center justify-center">
           <div className="flex items-center gap-2">
-            <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+            <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce"></div>
             <div
-              className="w-2 h-2 bg-gray-500 rounded-full animate-bounce"
+              className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce"
               style={{ animationDelay: "0.1s" }}
             ></div>
             <div
-              className="w-2 h-2 bg-gray-600 rounded-full animate-bounce"
+              className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce"
               style={{ animationDelay: "0.2s" }}
             ></div>
-            <p className="ml-2 text-gray-400">Loading...</p>
+            <p className="ml-2 text-muted-foreground">Loading...</p>
           </div>
         </div>
       }

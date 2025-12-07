@@ -14,7 +14,7 @@ export default function XPage() {
           <h2 className="text-lg font-semibold mb-3">Sign in to continue</h2>
           <Link
             href="/sign-in"
-            className="inline-flex items-center gap-2 bg-white text-black font-medium py-2 px-4 rounded-lg hover:bg-gray-200 transition-colors"
+            className="inline-flex items-center gap-2 bg-foreground text-background font-medium py-2 px-4 rounded-lg hover:bg-foreground/90 transition-colors"
           >
             Sign in
           </Link>
@@ -26,10 +26,10 @@ export default function XPage() {
   return (
     <div className="max-w-2xl mx-auto">
       {/* X Account Connection */}
-      <div className="p-4 border-b border-gray-800">
+      <div className="p-4 border-b border-border">
         <div className="mb-3">
-          <h3 className="font-medium text-white">X Account</h3>
-          <p className="text-sm text-gray-500 mt-0.5">
+          <h3 className="font-medium text-foreground">X Account</h3>
+          <p className="text-sm text-muted-foreground mt-0.5">
             Connect your X account to enable posting and interactions
           </p>
         </div>

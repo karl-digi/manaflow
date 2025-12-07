@@ -126,15 +126,15 @@ function TabItem({ tab, isActive }: { tab: typeof tabs[number]; isActive: boolea
         onMouseLeave={() => setShowTooltip(false)}
       >
         <span
-          className="flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 border-transparent text-gray-600 cursor-not-allowed"
+          className="flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 border-transparent text-muted-foreground/60 cursor-not-allowed"
         >
           {tab.icon}
           {tab.label}
         </span>
         {showTooltip && (
-          <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 px-3 py-1.5 bg-gray-800 text-gray-200 text-xs rounded-lg whitespace-nowrap z-20 shadow-lg border border-gray-700">
+          <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 px-3 py-1.5 bg-card text-muted-foreground text-xs rounded-lg whitespace-nowrap z-20 shadow-lg border border-border">
             {tab.label} MCP coming soon!
-            <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-gray-800 border-l border-t border-gray-700 rotate-45" />
+            <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-card border-l border-t border-border rotate-45" />
           </div>
         )}
       </div>
@@ -146,8 +146,8 @@ function TabItem({ tab, isActive }: { tab: typeof tabs[number]; isActive: boolea
       href={tab.href}
       className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
         isActive
-          ? "border-blue-500 text-white"
-          : "border-transparent text-gray-400 hover:text-gray-200 hover:bg-gray-900/50"
+          ? "border-blue-500 text-foreground"
+          : "border-transparent text-muted-foreground hover:text-foreground/80 hover:bg-accent/50"
       }`}
     >
       {tab.icon}
@@ -166,7 +166,7 @@ export default function AlgorithmLayout({
   return (
     <div className="min-h-screen">
       {/* Header */}
-      <div className="sticky top-0 z-10 bg-black/80 backdrop-blur-sm border-b border-gray-800">
+      <div className="sticky top-0 z-10 bg-background/80 backdrop-blur-sm border-b border-border">
         <div className="px-4 py-4">
           <h1 className="text-xl font-bold">Algorithm</h1>
         </div>

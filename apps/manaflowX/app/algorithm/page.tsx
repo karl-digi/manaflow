@@ -141,7 +141,7 @@ Select posts that help users see what's ready to ship. Return an empty array if 
           <h2 className="text-lg font-semibold mb-3">Sign in to continue</h2>
           <Link
             href="/sign-in"
-            className="inline-flex items-center gap-2 bg-white text-black font-medium py-2 px-4 rounded-lg hover:bg-gray-200 transition-colors"
+            className="inline-flex items-center gap-2 bg-foreground text-background font-medium py-2 px-4 rounded-lg hover:bg-foreground/90 transition-colors"
           >
             Sign in
           </Link>
@@ -153,17 +153,17 @@ Select posts that help users see what's ready to ship. Return an empty array if 
   return (
     <div className="max-w-2xl mx-auto">
       {/* Curator Section */}
-      <div className="p-4 border-b border-gray-800">
-        <h2 className="text-lg font-semibold text-white mb-1">Curator</h2>
-        <p className="text-sm text-gray-400 mb-4">
+      <div className="p-4 border-b border-border">
+        <h2 className="text-lg font-semibold text-foreground mb-1">Curator</h2>
+        <p className="text-sm text-muted-foreground mb-4">
           Scans recent posts and replies, using AI to surface the most interesting content to the curated feed.
         </p>
 
         {/* Curator System Prompt */}
         <div>
           <div className="mb-3">
-            <h3 className="font-medium text-white">System Prompt</h3>
-            <p className="text-sm text-gray-500 mt-0.5">
+            <h3 className="font-medium text-foreground">System Prompt</h3>
+            <p className="text-sm text-muted-foreground mt-0.5">
               Customize how Curator evaluates and selects posts for the feed
             </p>
           </div>
@@ -172,7 +172,7 @@ Select posts that help users see what's ready to ship. Return an empty array if 
             value={curatorPromptValue}
             onChange={(e) => handleCuratorChange(e.target.value)}
             minRows={6}
-            className="w-full bg-gray-900 text-white text-sm p-3 rounded-lg border border-gray-700 focus:border-blue-500 focus:outline-none resize-none font-mono"
+            className="w-full bg-muted text-foreground text-sm p-3 rounded-lg border border-border focus:border-blue-500 focus:outline-none resize-none font-mono"
             placeholder="Enter the system prompt for Curator..."
           />
 
@@ -190,16 +190,16 @@ Select posts that help users see what's ready to ship. Return an empty array if 
 
       {/* Poaster Section */}
       <div className="p-4">
-        <h2 className="text-lg font-semibold text-white mb-1">Poaster</h2>
-        <p className="text-sm text-gray-400 mb-4">
+        <h2 className="text-lg font-semibold text-foreground mb-1">Poaster</h2>
+        <p className="text-sm text-muted-foreground mb-4">
           Monitors your GitHub repos and autonomously posts about interesting PRs or delegates issues to coding agents.
         </p>
 
         {/* Auto Algorithm Control */}
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h3 className="font-medium text-white">Auto Mode</h3>
-            <p className="text-sm text-gray-500 mt-0.5">
+            <h3 className="font-medium text-foreground">Auto Mode</h3>
+            <p className="text-sm text-muted-foreground mt-0.5">
               Post about PRs or solve issues automatically
             </p>
           </div>
@@ -207,7 +207,7 @@ Select posts that help users see what's ready to ship. Return an empty array if 
             onClick={() => toggleAlgorithmEnabled()}
             disabled={monitoredCount === 0}
             className={`w-11 h-6 rounded-full transition-colors relative disabled:opacity-50 disabled:cursor-not-allowed ${
-              isEnabled ? "bg-blue-600" : "bg-gray-700"
+              isEnabled ? "bg-blue-600" : "bg-muted"
             }`}
           >
             <span
@@ -226,7 +226,7 @@ Select posts that help users see what's ready to ship. Return an empty array if 
         )}
 
         {monitoredCount === 0 && (
-          <p className="mb-4 text-sm text-gray-500">
+          <p className="mb-4 text-sm text-muted-foreground">
             Enable monitoring on repos in the GitHub tab first
           </p>
         )}
@@ -234,15 +234,15 @@ Select posts that help users see what's ready to ship. Return an empty array if 
         {/* Run Algorithm */}
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h3 className="font-medium text-white">Run Manually</h3>
-            <p className="text-sm text-gray-500 mt-0.5">
+            <h3 className="font-medium text-foreground">Run Manually</h3>
+            <p className="text-sm text-muted-foreground mt-0.5">
               Post about a PR or start solving an issue now
             </p>
           </div>
           <button
             onClick={handleTestFetch}
             disabled={testStatus.loading || monitoredCount === 0}
-            className="px-3 py-1.5 bg-gray-800 text-white text-sm rounded-lg hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="px-3 py-1.5 bg-card text-foreground text-sm rounded-lg hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {testStatus.loading ? "Running..." : "Run"}
           </button>
@@ -257,8 +257,8 @@ Select posts that help users see what's ready to ship. Return an empty array if 
         {/* Poaster System Prompt */}
         <div>
           <div className="mb-3">
-            <h3 className="font-medium text-white">System Prompt</h3>
-            <p className="text-sm text-gray-500 mt-0.5">
+            <h3 className="font-medium text-foreground">System Prompt</h3>
+            <p className="text-sm text-muted-foreground mt-0.5">
               Customize how Poaster selects PRs and issues to engage with
             </p>
           </div>
@@ -267,7 +267,7 @@ Select posts that help users see what's ready to ship. Return an empty array if 
             value={poasterPromptValue}
             onChange={(e) => handlePoasterChange(e.target.value)}
             minRows={6}
-            className="w-full bg-gray-900 text-white text-sm p-3 rounded-lg border border-gray-700 focus:border-blue-500 focus:outline-none resize-none font-mono"
+            className="w-full bg-muted text-foreground text-sm p-3 rounded-lg border border-border focus:border-blue-500 focus:outline-none resize-none font-mono"
             placeholder="Enter the system prompt for Poaster..."
           />
 
