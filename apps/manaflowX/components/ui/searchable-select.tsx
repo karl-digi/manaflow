@@ -221,7 +221,6 @@ const SearchableSelect = forwardRef<
     setOpen(newOpen);
     if (!newOpen) {
       setHoveredOption(null);
-      setFlyoutOffset(0);
     }
   }, []);
 
