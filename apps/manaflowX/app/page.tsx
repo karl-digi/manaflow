@@ -3,8 +3,9 @@
 import { useQuery, useMutation } from "convex/react";
 import { useUser } from "@stackframe/stack";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { api } from "../convex/_generated/api";
-import { useState } from "react";
+import { useState, useCallback, Suspense } from "react";
 import { Id } from "../convex/_generated/dataModel";
 import { SessionsByPost } from "../components/SessionView";
 
@@ -143,9 +144,11 @@ function ReplyComposer({
 function ThreadPanel({
   postId,
   onClose,
+  onSelectPost,
 }: {
   postId: Id<"posts">;
   onClose: () => void;
+  onSelectPost: (postId: Id<"posts">) => void;
 }) {
   const thread = useQuery(api.posts.getPostThread, { postId });
   const createPost = useMutation(api.posts.createPost);
@@ -167,6 +170,45 @@ function ThreadPanel({
       </div>
     );
   }
+
+  // Build nested structure from flat replies
+  const repliesByParent = new Map<string, Post[]>();
+  for (const reply of thread.replies) {
+    const parentId = reply.replyTo?.toString() ?? thread.root._id.toString();
+    if (!repliesByParent.has(parentId)) {
+      repliesByParent.set(parentId, []);
+    }
+    repliesByParent.get(parentId)!.push(reply);
+  }
+
+  const renderReplies = (parentId: string, depth: number): React.ReactNode => {
+    const replies = repliesByParent.get(parentId) ?? [];
+    if (replies.length === 0) return null;
+
+    return (
+      <div className={depth > 0 ? "pl-4 border-l border-gray-800" : ""}>
+        {replies.map((reply) => (
+          <div key={reply._id}>
+            <PostCard
+              post={reply}
+              onReply={() => setReplyingTo(reply)}
+              onClick={() => onSelectPost(reply._id)}
+              isReply
+              isSelected={reply._id === postId}
+            />
+            {replyingTo?._id === reply._id && (
+              <ReplyComposer
+                replyingTo={reply}
+                onCancel={() => setReplyingTo(null)}
+                onSubmit={handleReply}
+              />
+            )}
+            {renderReplies(reply._id.toString(), depth + 1)}
+          </div>
+        ))}
+      </div>
+    );
+  };
 
   return (
     <div className="h-full flex flex-col">
@@ -190,7 +232,8 @@ function ThreadPanel({
         <PostCard
           post={thread.root}
           onReply={() => setReplyingTo(thread.root)}
-          isSelected
+          onClick={() => onSelectPost(thread.root._id)}
+          isSelected={thread.root._id === postId}
         />
         {replyingTo?._id === thread.root._id && (
           <ReplyComposer
@@ -200,42 +243,36 @@ function ThreadPanel({
           />
         )}
 
-        {/* Show AI sessions for this post */}
+        {/* Show AI sessions for the focused post */}
         <div className="px-4">
-          <SessionsByPost postId={thread.root._id} />
+          <SessionsByPost postId={postId} />
         </div>
 
-        {thread.replies.length > 0 && (
-          <div className="pl-4">
-            {thread.replies.map((reply) => (
-              <div key={reply._id}>
-                <PostCard
-                  post={reply}
-                  onReply={() => setReplyingTo(reply)}
-                  isReply
-                />
-                {replyingTo?._id === reply._id && (
-                  <ReplyComposer
-                    replyingTo={reply}
-                    onCancel={() => setReplyingTo(null)}
-                    onSubmit={handleReply}
-                  />
-                )}
-              </div>
-            ))}
-          </div>
-        )}
+        {/* Render nested replies */}
+        {renderReplies(thread.root._id.toString(), 0)}
       </div>
     </div>
   );
 }
 
-export default function Home() {
+function HomeContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const user = useUser();
   const data = useQuery(api.posts.listPosts, { limit: 20 });
   const [content, setContent] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [selectedThread, setSelectedThread] = useState<Id<"posts"> | null>(null);
+
+  // Get selected post from URL search params
+  const selectedThread = searchParams.get("post") as Id<"posts"> | null;
+
+  const setSelectedThread = useCallback((postId: Id<"posts"> | null) => {
+    if (postId) {
+      router.push(`/?post=${postId}`, { scroll: false });
+    } else {
+      router.push("/", { scroll: false });
+    }
+  }, [router]);
 
   const handleSubmit = async () => {
     if (!content.trim()) return;
@@ -250,7 +287,12 @@ export default function Home() {
       if (!response.ok) {
         throw new Error("Failed to create post");
       }
+      const result = await response.json();
       setContent("");
+      // Focus on the newly created post
+      if (result.postId) {
+        setSelectedThread(result.postId as Id<"posts">);
+      }
     } catch (error) {
       console.error("Failed to create post:", error);
     } finally {
@@ -283,7 +325,7 @@ export default function Home() {
     <div className="min-h-screen bg-black text-white">
       <div className="flex justify-center">
         {/* Main Feed Column */}
-        <main className={`w-full max-w-[600px] border-x border-gray-800 min-h-screen ${selectedThread ? "" : ""}`}>
+        <main className={`w-full max-w-[600px] border-x border-gray-800 min-h-screen`}>
           <div className="sticky top-0 z-10 bg-black/80 backdrop-blur-md border-b border-gray-800 p-4 flex justify-between items-center">
             <h1 className="text-xl font-bold">Feed</h1>
             {!user ? (
@@ -353,10 +395,28 @@ export default function Home() {
             <ThreadPanel
               postId={selectedThread}
               onClose={() => setSelectedThread(null)}
+              onSelectPost={setSelectedThread}
             />
           </aside>
         )}
       </div>
     </div>
+  );
+}
+
+export default function Home() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-black text-white flex items-center justify-center">
+        <div className="flex items-center gap-2">
+          <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+          <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: "0.1s" }}></div>
+          <div className="w-2 h-2 bg-gray-600 rounded-full animate-bounce" style={{ animationDelay: "0.2s" }}></div>
+          <p className="ml-2 text-gray-400">Loading...</p>
+        </div>
+      </div>
+    }>
+      <HomeContent />
+    </Suspense>
   );
 }
