@@ -62,20 +62,6 @@ async function createJWT(payload: Record<string, unknown>, secret: string): Prom
 // Initialize Convex client
 const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
 
-/**
- * Simple hash function for task text - must match codingAgent.ts hashTask
- * Used to match tool calls with coding agent sessions.
- */
-function hashTask(task: string): string {
-  let hash = 0;
-  for (let i = 0; i < task.length; i++) {
-    const char = task.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32bit integer
-  }
-  return hash.toString(36);
-}
-
 // =============================================================================
 // Coding Agent Tool - Delegates tasks to OpenCode running in Morph VMs
 // =============================================================================
@@ -223,6 +209,7 @@ The agent will complete the task autonomously and return the results.`,
 
       // Create a session in Convex to track this coding agent task
       // The JWT secret is stored directly on the session for reliable authentication
+      // The task is stored on the session so the UI can query by it directly
       convexSessionId = await convex.mutation(api.codingAgent.createCodingAgentSession, {
         toolCallId: `tool_${Date.now()}`, // Generate a unique ID
         task,
@@ -231,14 +218,6 @@ The agent will complete the task autonomously and return the results.`,
         jwtSecret, // Store secret directly on session - no taskHash lookup needed
       });
       console.log(`[coding-agent] Created Convex session: ${convexSessionId}`);
-
-      // Link this session to the parent tool call immediately (for "View session" in UI)
-      // This uses the same hash function as registerCodingAgentToolCall
-      await convex.mutation(api.codingAgent.linkCodingAgentSession, {
-        taskHash: hashTask(task),
-        codingAgentSessionId: convexSessionId as Id<"sessions">,
-      });
-      console.log(`[coding-agent] Linked session to parent tool call`);
 
       // Spawn a VM with JWT config written before OpenCode starts
       vm = await spawnCodingVM({
