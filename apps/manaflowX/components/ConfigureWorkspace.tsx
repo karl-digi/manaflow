@@ -2,8 +2,15 @@
 
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useImperativeHandle, forwardRef } from "react";
 import type { Id } from "@/convex/_generated/dataModel";
+
+export interface ConfigureWorkspaceRef {
+  save: () => Promise<void>;
+  hasChanges: boolean;
+  saving: boolean;
+  saved: boolean;
+}
 
 // Icons
 function PlusIcon({ className }: { className?: string }) {
@@ -65,65 +72,6 @@ function EyeIcon({ className }: { className?: string }) {
   );
 }
 
-function SaveIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-      <polyline points="17 21 17 13 7 13 7 21" />
-      <polyline points="7 3 7 8 15 8" />
-    </svg>
-  );
-}
-
-function CheckIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M20 6 9 17l-5-5" />
-    </svg>
-  );
-}
-
-function LoaderIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-    </svg>
-  );
-}
-
 function ChevronDownIcon({ className }: { className?: string }) {
   return (
     <svg
@@ -153,10 +101,8 @@ interface ConfigureWorkspaceProps {
   className?: string;
 }
 
-export function ConfigureWorkspace({
-  repoId,
-  className = "",
-}: ConfigureWorkspaceProps) {
+export const ConfigureWorkspace = forwardRef<ConfigureWorkspaceRef, ConfigureWorkspaceProps>(
+  function ConfigureWorkspace({ repoId, className = "" }, ref) {
   // Fetch existing config
   const existingConfig = useQuery(api.workspaceConfig.getWorkspaceConfig, {
     repoId,
@@ -254,14 +200,22 @@ export function ConfigureWorkspace({
     }
   }, [repoId, setupScript, devScript, updateSetupScripts, updateDevScripts]);
 
+  // Expose save state and function via ref
+  useImperativeHandle(ref, () => ({
+    save: handleSave,
+    hasChanges,
+    saving,
+    saved,
+  }), [handleSave, hasChanges, saving, saved]);
+
   return (
     <div className={`space-y-3 ${className}`}>
       {/* Maintenance Script Section */}
-      <div className="border border-neutral-800 rounded-lg overflow-hidden">
+      <div>
         <button
           type="button"
           onClick={() => setMaintenanceOpen(!maintenanceOpen)}
-          className="w-full px-3 py-2.5 flex items-center justify-between bg-neutral-900/50 hover:bg-neutral-800/50 transition-colors"
+          className="w-full px-1 py-2 flex items-center justify-between hover:bg-neutral-800/30 transition-colors rounded"
         >
           <div className="text-left">
             <h4 className="text-sm font-medium text-neutral-200">
@@ -278,7 +232,7 @@ export function ConfigureWorkspace({
           />
         </button>
         {maintenanceOpen && (
-          <div className="bg-neutral-950 border-t border-neutral-800 p-3 font-mono text-sm">
+          <div className="mt-2 font-mono text-sm">
             <textarea
               value={setupScript}
               onChange={(e) =>
@@ -286,18 +240,18 @@ export function ConfigureWorkspace({
               }
               placeholder={"# e.g.\npnpm install\nuv sync"}
               rows={3}
-              className="w-full bg-transparent text-neutral-300 placeholder-neutral-600 resize-none focus:outline-none"
+              className="w-full bg-neutral-950 border border-neutral-800 rounded-md p-3 text-neutral-300 placeholder-neutral-600 resize-none focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
           </div>
         )}
       </div>
 
       {/* Dev Script Section */}
-      <div className="border border-neutral-800 rounded-lg overflow-hidden">
+      <div>
         <button
           type="button"
           onClick={() => setDevOpen(!devOpen)}
-          className="w-full px-3 py-2.5 flex items-center justify-between bg-neutral-900/50 hover:bg-neutral-800/50 transition-colors"
+          className="w-full px-1 py-2 flex items-center justify-between hover:bg-neutral-800/30 transition-colors rounded"
         >
           <div className="text-left">
             <h4 className="text-sm font-medium text-neutral-200">
@@ -314,24 +268,24 @@ export function ConfigureWorkspace({
           />
         </button>
         {devOpen && (
-          <div className="bg-neutral-950 border-t border-neutral-800 p-3 font-mono text-sm">
+          <div className="mt-2 font-mono text-sm">
             <textarea
               value={devScript}
               onChange={(e) => handleScriptChange(setDevScript)(e.target.value)}
               placeholder={"# e.g.\nnpm run dev"}
               rows={2}
-              className="w-full bg-transparent text-neutral-300 placeholder-neutral-600 resize-none focus:outline-none"
+              className="w-full bg-neutral-950 border border-neutral-800 rounded-md p-3 text-neutral-300 placeholder-neutral-600 resize-none focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
           </div>
         )}
       </div>
 
       {/* Environment Variables Section */}
-      <div className="border border-neutral-800 rounded-lg overflow-hidden">
+      <div>
         <button
           type="button"
           onClick={() => setEnvOpen(!envOpen)}
-          className="w-full px-3 py-2.5 flex items-center justify-between bg-neutral-900/50 hover:bg-neutral-800/50 transition-colors"
+          className="w-full px-1 py-2 flex items-center justify-between hover:bg-neutral-800/30 transition-colors rounded"
         >
           <div className="text-left">
             <h4 className="text-sm font-medium text-neutral-200">
@@ -348,7 +302,7 @@ export function ConfigureWorkspace({
           />
         </button>
         {envOpen && (
-          <div className="border-t border-neutral-800 p-3">
+          <div className="mt-2">
             {/* Reveal button */}
             <div className="flex justify-end mb-2">
               <button
@@ -417,36 +371,8 @@ export function ConfigureWorkspace({
         )}
       </div>
 
-      {/* Save button - only show when there are changes */}
-      {hasChanges && (
-        <div className="flex justify-end pt-2">
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={saving}
-            className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 text-white text-sm font-medium rounded transition-colors"
-          >
-            {saving ? (
-              <>
-                <LoaderIcon className="h-4 w-4 animate-spin" />
-                <span>Saving...</span>
-              </>
-            ) : saved ? (
-              <>
-                <CheckIcon className="h-4 w-4" />
-                <span>Saved</span>
-              </>
-            ) : (
-              <>
-                <SaveIcon className="h-4 w-4" />
-                <span>Save</span>
-              </>
-            )}
-          </button>
-        </div>
-      )}
     </div>
   );
-}
+});
 
 export default ConfigureWorkspace;
