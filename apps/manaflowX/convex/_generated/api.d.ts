@@ -21,7 +21,6 @@ import type * as posts from "../posts.js";
 import type * as sessions from "../sessions.js";
 import type * as twitter from "../twitter.js";
 import type * as users from "../users.js";
-import type * as workspaceConfig from "../workspaceConfig.js";
 
 import type {
   ApiFromModules,
@@ -43,7 +42,6 @@ declare const fullApi: ApiFromModules<{
   sessions: typeof sessions;
   twitter: typeof twitter;
   users: typeof users;
-  workspaceConfig: typeof workspaceConfig;
 }>;
 
 /**

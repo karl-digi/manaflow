@@ -308,45 +308,6 @@ export default defineSchema({
   }).index("by_nonce", ["nonce"]),
 
   // ---------------------------------------------------------------------------
-  // WORKSPACE CONFIG (scripts and settings per repo)
-  // ---------------------------------------------------------------------------
-
-  workspaceConfigs: defineTable({
-    repoId: v.id("repos"),
-
-    // Setup scripts (run once during initial setup)
-    setupScripts: v.array(
-      v.object({
-        name: v.string(),
-        command: v.string(),
-        description: v.optional(v.string()),
-      })
-    ),
-
-    // Dev scripts (run during development)
-    devScripts: v.array(
-      v.object({
-        name: v.string(),
-        command: v.string(),
-        description: v.optional(v.string()),
-      })
-    ),
-
-    // Maintenance scripts (run for maintenance tasks)
-    maintenanceScripts: v.array(
-      v.object({
-        name: v.string(),
-        command: v.string(),
-        description: v.optional(v.string()),
-      })
-    ),
-
-    // Timestamps
-    createdAt: v.number(),
-    updatedAt: v.number(),
-  }).index("by_repoId", ["repoId"]),
-
-  // ---------------------------------------------------------------------------
   // TWITTER OAUTH STATES (for Twitter OAuth 2.0 PKCE flow)
   // ---------------------------------------------------------------------------
 
