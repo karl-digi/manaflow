@@ -501,10 +501,10 @@ export const getMonitoredReposWithInstallation = internalQuery({
 });
 
 // ---------------------------------------------------------------------------
-// ALGORITHM SETTINGS
+// ALGORITHM SETTINGS (unified - supports boolean and string values)
 // ---------------------------------------------------------------------------
 
-// Get algorithm setting by key
+// Get algorithm setting by key (returns boolean, defaults to false)
 export const getAlgorithmSetting = query({
   args: { key: v.string() },
   handler: async (ctx, { key }) => {
@@ -512,7 +512,8 @@ export const getAlgorithmSetting = query({
       .query("algorithmSettings")
       .withIndex("by_key", (q) => q.eq("key", key))
       .first();
-    return setting?.value ?? false;
+    const value = setting?.value;
+    return typeof value === "boolean" ? value : false;
   },
 });
 
@@ -524,11 +525,12 @@ export const getAlgorithmSettingInternal = internalQuery({
       .query("algorithmSettings")
       .withIndex("by_key", (q) => q.eq("key", key))
       .first();
-    return setting?.value ?? false;
+    const value = setting?.value;
+    return typeof value === "boolean" ? value : false;
   },
 });
 
-// Toggle algorithm setting
+// Toggle algorithm setting (boolean)
 export const toggleAlgorithmSetting = mutation({
   args: { key: v.string() },
   handler: async (ctx, { key }) => {
@@ -542,7 +544,7 @@ export const toggleAlgorithmSetting = mutation({
 
     const now = Date.now();
 
-    if (existing) {
+    if (existing && typeof existing.value === "boolean") {
       const newValue = !existing.value;
       await ctx.db.patch(existing._id, { value: newValue, updatedAt: now });
       return { value: newValue };
@@ -558,19 +560,16 @@ export const toggleAlgorithmSetting = mutation({
   },
 });
 
-// ---------------------------------------------------------------------------
-// ALGORITHM TEXT SETTINGS
-// ---------------------------------------------------------------------------
-
-// Get algorithm text setting by key
+// Get algorithm text setting by key (returns string or null)
 export const getAlgorithmTextSetting = query({
   args: { key: v.string() },
   handler: async (ctx, { key }) => {
     const setting = await ctx.db
-      .query("algorithmTextSettings")
+      .query("algorithmSettings")
       .withIndex("by_key", (q) => q.eq("key", key))
       .first();
-    return setting?.value ?? null;
+    const value = setting?.value;
+    return typeof value === "string" ? value : null;
   },
 });
 
@@ -579,14 +578,15 @@ export const getAlgorithmTextSettingInternal = internalQuery({
   args: { key: v.string() },
   handler: async (ctx, { key }) => {
     const setting = await ctx.db
-      .query("algorithmTextSettings")
+      .query("algorithmSettings")
       .withIndex("by_key", (q) => q.eq("key", key))
       .first();
-    return setting?.value ?? null;
+    const value = setting?.value;
+    return typeof value === "string" ? value : null;
   },
 });
 
-// Set algorithm text setting
+// Set algorithm text setting (string)
 export const setAlgorithmTextSetting = mutation({
   args: { key: v.string(), value: v.string() },
   handler: async (ctx, { key, value }) => {
@@ -594,7 +594,7 @@ export const setAlgorithmTextSetting = mutation({
     if (!identity) throw new Error("Not authenticated");
 
     const existing = await ctx.db
-      .query("algorithmTextSettings")
+      .query("algorithmSettings")
       .withIndex("by_key", (q) => q.eq("key", key))
       .first();
 
@@ -603,7 +603,7 @@ export const setAlgorithmTextSetting = mutation({
     if (existing) {
       await ctx.db.patch(existing._id, { value, updatedAt: now });
     } else {
-      await ctx.db.insert("algorithmTextSettings", {
+      await ctx.db.insert("algorithmSettings", {
         key,
         value,
         updatedAt: now,
