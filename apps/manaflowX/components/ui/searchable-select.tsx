@@ -430,7 +430,7 @@ const SearchableSelect = forwardRef<
                           "flex items-center justify-between gap-2 px-2 py-1.5 rounded-md cursor-pointer",
                           "text-neutral-100 hover:bg-neutral-800 transition-colors",
                           "data-[selected=true]:bg-neutral-800",
-                          isSelected && "bg-neutral-800/60 ring-1 ring-neutral-700"
+                          isSelected && "bg-neutral-700/40"
                         )}
                       >
                         <div className="flex items-center gap-2 min-w-0 flex-1">
