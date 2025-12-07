@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "convex/react";
+import { Streamdown } from "streamdown";
 import { api } from "../convex/_generated/api";
 import { Id } from "../convex/_generated/dataModel";
 
@@ -37,8 +38,8 @@ function PartRenderer({ part }: { part: Part }) {
   switch (part.type) {
     case "text":
       return (
-        <div className="whitespace-pre-wrap">
-          {part.text}
+        <div className="prose prose-invert prose-sm max-w-none">
+          <Streamdown>{part.text ?? ""}</Streamdown>
           {!part.isComplete && (
             <span className="inline-block w-2 h-4 bg-gray-400 animate-pulse ml-0.5" />
           )}
@@ -49,8 +50,8 @@ function PartRenderer({ part }: { part: Part }) {
       return (
         <div className="text-gray-400 italic border-l-2 border-gray-600 pl-3 my-2">
           <div className="text-xs text-gray-500 mb-1">Thinking...</div>
-          <div className="whitespace-pre-wrap text-sm">
-            {part.text}
+          <div className="prose prose-invert prose-sm max-w-none opacity-70">
+            <Streamdown>{part.text ?? ""}</Streamdown>
             {!part.isComplete && (
               <span className="inline-block w-2 h-3 bg-gray-500 animate-pulse ml-0.5" />
             )}

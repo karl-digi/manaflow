@@ -12,6 +12,7 @@ import type * as actions from "../actions.js";
 import type * as http from "../http.js";
 import type * as issues from "../issues.js";
 import type * as posts from "../posts.js";
+import type * as sessions from "../sessions.js";
 import type * as users from "../users.js";
 
 import type {
@@ -25,6 +26,7 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   issues: typeof issues;
   posts: typeof posts;
+  sessions: typeof sessions;
   users: typeof users;
 }>;
 
