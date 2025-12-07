@@ -1,3 +1,4 @@
+import { env } from "@/client-env";
 import { GitHubIcon } from "@/components/icons/github";
 import { useTheme } from "@/components/theme/use-theme";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
@@ -877,7 +878,7 @@ export function CommandBar({
         const environmentName = environment?.name ?? "Unknown Environment";
 
         // Create task in Convex without task description (it's just a workspace)
-        const taskId = await createTask({
+        const { taskId } = await createTask({
           teamSlugOrId,
           text: `Cloud Workspace: ${environmentName}`,
           projectFullName: undefined, // No repo for cloud environment workspaces
@@ -957,7 +958,7 @@ export function CommandBar({
         const repoUrl = `https://github.com/${projectFullName}.git`;
 
         // Create task in Convex for repo-based cloud workspace
-        const taskId = await createTask({
+        const { taskId } = await createTask({
           teamSlugOrId,
           text: `Cloud Workspace: ${projectFullName}`,
           projectFullName,
@@ -1543,24 +1544,28 @@ export function CommandBar({
           </>
         ),
       },
-      {
-        value: "local-workspaces",
-        label: "New Local Workspace",
-        keywords: ["workspace", "local", "repo"],
-        searchText: buildSearchText(
-          "New Local Workspace",
-          ["workspace", "local"],
-          ["local-workspaces"]
-        ),
-        className: baseCommandItemClassName,
-        execute: () => handleSelect("local-workspaces"),
-        renderContent: () => (
-          <>
-            <FolderPlus className="h-4 w-4 text-neutral-500" />
-            <span className="text-sm">New Local Workspace</span>
-          </>
-        ),
-      },
+      ...(!env.NEXT_PUBLIC_WEB_MODE
+        ? [
+            {
+              value: "local-workspaces",
+              label: "New Local Workspace",
+              keywords: ["workspace", "local", "repo"],
+              searchText: buildSearchText(
+                "New Local Workspace",
+                ["workspace", "local"],
+                ["local-workspaces"]
+              ),
+              className: baseCommandItemClassName,
+              execute: () => handleSelect("local-workspaces"),
+              renderContent: () => (
+                <>
+                  <FolderPlus className="h-4 w-4 text-neutral-500" />
+                  <span className="text-sm">New Local Workspace</span>
+                </>
+              ),
+            },
+          ]
+        : []),
       {
         value: "cloud-workspaces",
         label: "New Cloud Workspace",

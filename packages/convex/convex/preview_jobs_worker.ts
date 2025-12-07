@@ -479,10 +479,11 @@ async function ensureTmuxSession({
   repoDir: string;
   previewRunId: Id<"previewRuns">;
 }): Promise<void> {
+  // Match the orchestrator: create session with -n main for the initial window
   const sessionCmd = [
-    "bash",
+    "zsh",
     "-lc",
-    `tmux has-session -t cmux 2>/dev/null || tmux new-session -d -s cmux -c ${singleQuote(repoDir)}`,
+    `tmux has-session -t cmux 2>/dev/null || tmux new-session -d -s cmux -c ${singleQuote(repoDir)} -n main`,
   ];
   const response = await execInstanceInstanceIdExecPost({
     client: morphClient,
@@ -500,6 +501,10 @@ async function ensureTmuxSession({
   }
 }
 
+// Constants matching the environment orchestrator script
+const MAINTENANCE_WINDOW_NAME = "maintenance";
+const DEV_WINDOW_NAME = "dev";
+
 async function runScriptInTmuxWindow({
   morphClient,
   instanceId,
@@ -507,6 +512,7 @@ async function runScriptInTmuxWindow({
   windowName,
   scriptContent,
   previewRunId,
+  useSetE = true,
 }: {
   morphClient: ReturnType<typeof createMorphCloudClient>;
   instanceId: string;
@@ -514,31 +520,90 @@ async function runScriptInTmuxWindow({
   windowName: string;
   scriptContent: string;
   previewRunId: Id<"previewRuns">;
+  useSetE?: boolean;
 }): Promise<void> {
   const trimmed = scriptContent.trim();
   if (!trimmed) {
     return;
   }
 
-  const scriptBase64 = stringToBase64(trimmed);
-  const command = [
-    "bash",
-    "-lc",
-    [
-      `SESSION=\"cmux\"`,
-      `WINDOW=${singleQuote(windowName)}`,
-      `tmux has-session -t \"$SESSION\" 2>/dev/null || tmux new-session -d -s \"$SESSION\" -c ${singleQuote(repoDir)}`,
-      `tmux new-window -t \"$SESSION\" -n \"$WINDOW\" -c ${singleQuote(repoDir)}`,
-      `echo '${scriptBase64}' | base64 -d > /tmp/cmux-${windowName}.sh`,
-      `chmod +x /tmp/cmux-${windowName}.sh`,
-      `tmux send-keys -t \"$SESSION\":\"$WINDOW\" "bash /tmp/cmux-${windowName}.sh" C-m`,
-    ].join(" && "),
-  ];
+  // Create script wrapper matching the environment orchestrator format
+  // Source /etc/profile to get system environment variables like RUSTUP_HOME
+  const setFlags = useSetE ? "set -eux" : "set -ux";
+  const wrappedScript = `#!/bin/zsh
+${setFlags}
+
+# Source system profile for environment variables (RUSTUP_HOME, etc.)
+[[ -f /etc/profile ]] && source /etc/profile
+
+cd ${repoDir}
+
+echo "=== ${windowName} Script Started at $(date) ==="
+${trimmed}
+${useSetE ? `echo "=== ${windowName} Script Completed at $(date) ==="` : ""}
+`;
+
+  const runtimeDir = "/var/tmp/cmux-scripts";
+  const runId = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  const scriptFilePath = `${runtimeDir}/${windowName}.sh`;
+  const launcherScriptPath = `${runtimeDir}/${windowName}-launcher.sh`;
+  const logFilePath = `${runtimeDir}/${windowName}_${runId}.log`;
+  const exitCodePath = `${runtimeDir}/${windowName}_${runId}.exit-code`;
+
+  // Create a launcher script that runs INSIDE the VM to handle tmux operations
+  // This matches how the environment orchestrator works - it runs tmux commands
+  // from within a shell process inside the VM, not via exec API
+  const launcherScript = `#!/bin/zsh
+set -eu
+
+# Create the tmux window
+tmux new-window -t cmux: -n '${windowName}' -d
+
+# Send keys to run the script (matching orchestrator pattern exactly)
+# Pattern: zsh 'script.sh' 2>&1 | tee 'log'; echo \${pipestatus[1]} > 'exit-code'
+tmux send-keys -t cmux:'${windowName}' "zsh '${scriptFilePath}' 2>&1 | tee '${logFilePath}'; echo \\\${pipestatus[1]} > '${exitCodePath}'" C-m
+
+echo "[launcher] Started ${windowName} window"
+`;
+
+  // Build a setup command that writes both scripts and runs the launcher in background
+  // The key insight: Morph exec API doesn't have a TTY, but a background process can
+  // interact with tmux properly. This matches the sandbox orchestrator pattern.
+  const setupCommand = `
+set -eu
+mkdir -p '${runtimeDir}'
+
+# Write the main script
+cat > '${scriptFilePath}' <<'SCRIPT_EOF'
+${wrappedScript}
+SCRIPT_EOF
+chmod +x '${scriptFilePath}'
+
+# Write the launcher script
+cat > '${launcherScriptPath}' <<'LAUNCHER_EOF'
+${launcherScript}
+LAUNCHER_EOF
+chmod +x '${launcherScriptPath}'
+
+# Run the launcher in background (like sandbox orchestrator does with nohup)
+nohup zsh '${launcherScriptPath}' > '${runtimeDir}/${windowName}-launcher.log' 2>&1 &
+LAUNCHER_PID=$!
+
+# Give it a moment to start
+sleep 1
+
+# Verify it started
+if kill -0 $LAUNCHER_PID 2>/dev/null; then
+  echo "[setup] Launcher started (PID: $LAUNCHER_PID)"
+else
+  echo "[setup] Launcher may have completed or failed, check log" >&2
+fi
+`;
 
   const response = await execInstanceInstanceIdExecPost({
     client: morphClient,
     path: { instance_id: instanceId },
-    body: { command },
+    body: { command: ["zsh", "-lc", setupCommand] },
   });
 
   if (response.error || response.data?.exit_code !== 0) {
@@ -1023,6 +1088,47 @@ export async function runPreviewJob(
       });
     }
 
+    // Stash any local changes and pull latest from origin before checkout
+    // This ensures the working directory is clean and up-to-date with origin
+    await stashLocalChanges({
+      morphClient,
+      instanceId: instance.id,
+      repoDir,
+      previewRunId,
+      headSha: run.headSha,
+    });
+
+    // Pull latest changes from origin for the current branch
+    // Use --rebase to avoid merge commits in case there are any unstashed changes
+    console.log("[preview-jobs] Pulling latest from origin", {
+      previewRunId,
+      repoDir,
+    });
+
+    const pullResponse = await execInstanceInstanceIdExecPost({
+      client: morphClient,
+      path: { instance_id: instance.id },
+      body: {
+        command: ["git", "-C", repoDir, "pull", "--rebase", "origin"],
+      },
+    });
+
+    if (pullResponse.error || pullResponse.data?.exit_code !== 0) {
+      // Non-fatal: log warning but continue - we may be in detached HEAD state
+      // or the current branch may not track a remote
+      console.warn("[preview-jobs] Failed to pull from origin (may be expected)", {
+        previewRunId,
+        exitCode: pullResponse.data?.exit_code,
+        stderr: sliceOutput(pullResponse.data?.stderr),
+        stdout: sliceOutput(pullResponse.data?.stdout),
+      });
+    } else {
+      console.log("[preview-jobs] Pulled latest from origin", {
+        previewRunId,
+        stdout: sliceOutput(pullResponse.data?.stdout),
+      });
+    }
+
     await ensureCommitAvailable({
       morphClient,
       instanceId: instance.id,
@@ -1032,14 +1138,6 @@ export async function runPreviewJob(
       previewRunId,
       headRepoCloneUrl: run.headRepoCloneUrl,
       headRef: run.headRef,
-    });
-
-    await stashLocalChanges({
-      morphClient,
-      instanceId: instance.id,
-      repoDir,
-      previewRunId,
-      headSha: run.headSha,
     });
 
     console.log("[preview-jobs] Starting git checkout", {
@@ -1164,9 +1262,10 @@ export async function runPreviewJob(
           morphClient,
           instanceId: instance.id,
           repoDir,
-          windowName: "maintenance",
+          windowName: MAINTENANCE_WINDOW_NAME,
           scriptContent: environment.maintenanceScript,
           previewRunId,
+          useSetE: true,
         });
       }
 
@@ -1175,9 +1274,10 @@ export async function runPreviewJob(
           morphClient,
           instanceId: instance.id,
           repoDir,
-          windowName: "devserver",
+          windowName: DEV_WINDOW_NAME,
           scriptContent: environment.devScript,
           previewRunId,
+          useSetE: false, // Dev script runs indefinitely, don't exit on error
         });
       }
 

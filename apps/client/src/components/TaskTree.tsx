@@ -6,11 +6,19 @@ import {
 } from "@/components/ui/tooltip";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { useArchiveTask } from "@/hooks/useArchiveTask";
-import { useResumeMorphWorkspace } from "@/hooks/useMorphWorkspace";
+import {
+  useResumeMorphWorkspace,
+  useRefreshMorphGitHubAuth,
+} from "@/hooks/useMorphWorkspace";
 import { useOpenWithActions } from "@/hooks/useOpenWithActions";
 import { useTaskRename } from "@/hooks/useTaskRename";
 import { isElectron } from "@/lib/electron";
 import { isFakeConvexId } from "@/lib/fakeConvexId";
+import {
+  getTaskRunPersistKey,
+  getTaskRunBrowserPersistKey,
+} from "@/lib/persistent-webview-keys";
+import { persistentIframeManager } from "@/lib/persistentIframeManager";
 import type { AnnotatedTaskRun, TaskRunWithChildren } from "@/types/task";
 import { ContextMenu } from "@base-ui-components/react/context-menu";
 import { api } from "@cmux/convex/api";
@@ -55,6 +63,7 @@ import {
   PinOff,
   Play,
   Plus,
+  RefreshCw,
   TerminalSquare,
   Loader2,
   Trash2,
@@ -106,14 +115,15 @@ function sanitizeBranchName(input?: string | null): string | null {
   const trimmed = input.trim();
   if (!trimmed) return null;
   let normalized = trimmed;
+  // Strip "cmux/" prefix for display
   if (normalized.startsWith("cmux/")) {
     normalized = normalized.slice("cmux/".length).trim();
     if (!normalized) return null;
   }
-  const idx = normalized.lastIndexOf("-");
-  if (idx <= 0) return normalized;
-  const candidate = normalized.slice(0, idx);
-  return candidate || normalized;
+  // Note: Don't strip the suffix here - generatedBranchName already has it stripped by the backend
+  // (deriveGeneratedBranchName in taskRuns.ts). Only strip for raw branch names that still have
+  // the random suffix (e.g., baseBranch which may be "cmux/fix-bug-abc12").
+  return normalized;
 }
 
 function getTaskBranch(task: TaskWithGeneratedBranch): string | null {
@@ -136,21 +146,31 @@ interface SidebarArchiveOverlayProps {
   icon: ReactNode;
   label: string;
   onArchive: () => void;
+  groupName: "task" | "run";
 }
 
 function SidebarArchiveOverlay({
   icon,
   label,
   onArchive,
+  groupName,
 }: SidebarArchiveOverlayProps) {
+  const hoverShow =
+    groupName === "task"
+      ? "group-hover/task:opacity-100 group-hover/task:pointer-events-auto group-data-[focus-visible=true]/task:opacity-100 group-data-[focus-visible=true]/task:pointer-events-auto"
+      : "group-hover/run:opacity-100 group-hover/run:pointer-events-auto group-data-[focus-visible=true]/run:opacity-100 group-data-[focus-visible=true]/run:pointer-events-auto";
+
   return (
-    <div className="relative flex h-4 w-4 items-center justify-center">
+    <div className="flex items-center gap-1">
       <Tooltip delayDuration={0}>
         <TooltipTrigger asChild>
           <button
             type="button"
             aria-label={label}
-            className="peer absolute inset-0 flex items-center justify-center rounded-sm text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-50 opacity-0 pointer-events-none focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover:opacity-100 group-hover:pointer-events-auto group-data-[focus-visible=true]:opacity-100 group-data-[focus-visible=true]:pointer-events-auto focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-400 dark:focus-visible:outline-neutral-500"
+            className={clsx(
+              "flex h-4 w-4 -mr-0.5 items-center justify-center rounded-sm text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-50 opacity-0 pointer-events-none focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-400 dark:focus-visible:outline-neutral-500",
+              hoverShow
+            )}
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
@@ -162,9 +182,9 @@ function SidebarArchiveOverlay({
         </TooltipTrigger>
         <TooltipContent side="right">{label}</TooltipContent>
       </Tooltip>
-      <div className="flex items-center justify-center group-hover:pointer-events-none group-hover:opacity-0 group-data-[focus-visible=true]:pointer-events-none group-data-[focus-visible=true]:opacity-0 peer-focus-visible:pointer-events-none peer-focus-visible:opacity-0">
-        {icon}
-      </div>
+      {icon ? (
+        <div className="flex items-center justify-center">{icon}</div>
+      ) : null}
     </div>
   );
 }
@@ -335,6 +355,8 @@ function TaskTreeInner({
   defaultExpanded = false,
   teamSlugOrId,
 }: TaskTreeProps) {
+  const navigate = useNavigate();
+
   // Get the current route to determine if this task is selected
   const location = useLocation();
   const isTaskSelected = useMemo(
@@ -381,6 +403,20 @@ function TaskTreeInner({
   );
   const hasVisibleRuns = activeRunsFlat.length > 0;
   const showRunNumbers = flattenedRuns.length > 1;
+
+  // For local workspaces, find the run with VSCode to navigate to VSCode view directly
+  const localWorkspaceRunWithVscode = useMemo(() => {
+    if (!task.isLocalWorkspace) {
+      return null;
+    }
+    // Find the first active run with a running VSCode instance
+    return (
+      activeRunsFlat.find(
+        (run) => run.vscode?.status === "running" && run.vscode?.url
+      ) ?? null
+    );
+  }, [task.isLocalWorkspace, activeRunsFlat]);
+
   const runMenuEntries = useMemo(
     () =>
       annotateAgentOrdinals(flattenedRuns).map((run) => ({
@@ -680,10 +716,10 @@ function TaskTreeInner({
     />
   );
   const taskTitleContent = isRenaming ? renameInputElement : taskTitleValue;
-  const canExpand = true;
   const isCrownEvaluating = task.crownEvaluationStatus === "in_progress";
   const isLocalWorkspace = task.isLocalWorkspace;
   const isCloudWorkspace = task.isCloudWorkspace;
+  const canExpand = true;
 
   const taskLeadingIcon = (() => {
     if (isCrownEvaluating) {
@@ -770,10 +806,6 @@ function TaskTreeInner({
       }
     }
 
-    if (isLocalWorkspace || isCloudWorkspace) {
-      return null;
-    }
-
     return task.isCompleted ? (
       <CheckCircle className="w-3 h-3 text-green-500" />
     ) : (
@@ -790,6 +822,7 @@ function TaskTreeInner({
       icon={taskLeadingIcon}
       label="Archive"
       onArchive={handleArchive}
+      groupName="task"
     />
   ) : (
     taskLeadingIcon
@@ -806,7 +839,11 @@ function TaskTreeInner({
               params={{ teamSlugOrId, taskId: task._id }}
               search={{ runId: undefined }}
               activeOptions={{ exact: true }}
-              className="group block"
+              className={clsx(
+                "group/task block",
+                // For local workspaces, manually add active class since we navigate to VSCode sub-route
+                localWorkspaceRunWithVscode && isTaskSelected && "active"
+              )}
               data-focus-visible={isTaskLinkFocusVisible ? "true" : undefined}
               onMouseEnter={handlePrefetch}
               onFocus={handleTaskLinkFocus}
@@ -823,6 +860,20 @@ function TaskTreeInner({
                 }
                 if (isRenaming) {
                   event.preventDefault();
+                  return;
+                }
+                // For local workspaces with active VSCode, expand and navigate to VSCode view
+                if (localWorkspaceRunWithVscode) {
+                  event.preventDefault();
+                  setIsExpanded(true);
+                  void navigate({
+                    to: "/$teamSlugOrId/task/$taskId/run/$runId/vscode",
+                    params: {
+                      teamSlugOrId,
+                      taskId: task._id,
+                      runId: localWorkspaceRunWithVscode._id,
+                    },
+                  });
                   return;
                 }
                 handleToggle(event);
@@ -966,7 +1017,25 @@ function TaskTreeInner({
           </ContextMenu.Portal>
         </ContextMenu.Root>
 
-        {isExpanded ? (
+        {/* For local workspaces, only show VSCode link when expanded */}
+        {isExpanded && localWorkspaceRunWithVscode ? (
+          <TaskRunDetailLink
+            to="/$teamSlugOrId/task/$taskId/run/$runId/vscode"
+            params={{
+              teamSlugOrId,
+              taskId: task._id,
+              runId: localWorkspaceRunWithVscode._id,
+            }}
+            icon={
+              <VSCodeIcon className="w-3 h-3 mr-2 text-neutral-400 grayscale opacity-60" />
+            }
+            label="VS Code"
+            indentLevel={level + 1}
+          />
+        ) : null}
+
+        {/* For non-local workspaces, show normal task runs content */}
+        {isExpanded && !localWorkspaceRunWithVscode ? (
           <TaskRunsContent
             taskId={task._id}
             teamSlugOrId={teamSlugOrId}
@@ -1335,16 +1404,6 @@ function TaskRunTreeInner({
       isLocalWorkspaceRunEntry ||
       isCloudWorkspaceRunEntry);
 
-  const runMetaIcon = shouldShowRunArchiveOverlay ? (
-    <SidebarArchiveOverlay
-      icon={runLeadingIcon}
-      label="Archive"
-      onArchive={handleArchiveRun}
-    />
-  ) : (
-    runLeadingIcon
-  );
-
   const crownIcon = run.isCrowned ? (
     <Tooltip delayDuration={0}>
       <TooltipTrigger asChild>
@@ -1367,16 +1426,28 @@ function TaskRunTreeInner({
     </Tooltip>
   ) : null;
 
-  const leadingContent = crownIcon ? (
+  // Combine crown + status icon, with archive overlay on the left of everything
+  const iconsContent = crownIcon ? (
     <div className="flex items-center gap-1">
       {crownIcon}
-      {runMetaIcon}
+      {runLeadingIcon}
     </div>
   ) : (
-    runMetaIcon
+    runLeadingIcon
   );
 
-  // Generate VSCode URL if available
+  const leadingContent = shouldShowRunArchiveOverlay ? (
+    <SidebarArchiveOverlay
+      icon={iconsContent}
+      label="Archive"
+      onArchive={handleArchiveRun}
+      groupName="run"
+    />
+  ) : (
+    iconsContent
+  );
+
+  // Generate VSCode URL if available - used for "Open with" actions
   const hasActiveVSCode = run.vscode?.status === "running";
   const vscodeUrl = useMemo(
     () => (hasActiveVSCode && run.vscode?.url) || null,
@@ -1418,25 +1489,30 @@ function TaskRunTreeInner({
     });
   }, [resumeWorkspace, run._id, teamSlugOrId]);
 
-  const shouldRenderDiffLink = true;
-  const shouldRenderBrowserLink = run.vscode?.provider === "morph";
-  const shouldRenderTerminalLink = shouldRenderBrowserLink;
+  const refreshGitHubAuth = useRefreshMorphGitHubAuth({
+    taskRunId: run._id,
+    teamSlugOrId,
+  });
+
+  const handleRefreshGitHubAuth = useCallback(() => {
+    if (refreshGitHubAuth.isPending) {
+      return;
+    }
+
+    void refreshGitHubAuth.mutateAsync({
+      path: { taskRunId: run._id },
+      body: { teamSlugOrId },
+    });
+  }, [refreshGitHubAuth, run._id, teamSlugOrId]);
+
   const shouldRenderPullRequestLink = Boolean(
     (run.pullRequestUrl && run.pullRequestUrl !== "pending") ||
       run.pullRequests?.some((pr) => pr.url)
   );
-  const shouldRenderPreviewLink = previewServices.length > 0;
   const hasOpenWithActions = openWithActions.length > 0;
   const hasPortActions = portActions.length > 0;
   const canCopyBranch = Boolean(copyRunBranch);
-  const hasCollapsibleContent =
-    hasChildren ||
-    hasActiveVSCode ||
-    shouldRenderDiffLink ||
-    shouldRenderBrowserLink ||
-    shouldRenderTerminalLink ||
-    shouldRenderPullRequestLink ||
-    shouldRenderPreviewLink;
+  const hasCollapsibleContent = true;
   const [isRunLinkFocusVisible, setIsRunLinkFocusVisible] = useState(false);
   const handleRunLinkFocus = useCallback(
     (event: FocusEvent<HTMLAnchorElement>) => {
@@ -1462,7 +1538,7 @@ function TaskRunTreeInner({
               ...(prev ?? {}),
               runId: run._id,
             })}
-            className="group block"
+            className="group/run block"
             data-focus-visible={isRunLinkFocusVisible ? "true" : undefined}
             activeOptions={{ exact: false }}
             onFocus={handleRunLinkFocus}
@@ -1517,6 +1593,18 @@ function TaskRunTreeInner({
                 >
                   <Play className="w-3.5 h-3.5" />
                   {resumeWorkspace.isPending ? "Resuming…" : "Resume VM"}
+                </ContextMenu.Item>
+              ) : null}
+              {run.vscode?.provider === "morph" ? (
+                <ContextMenu.Item
+                  className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                  onClick={handleRefreshGitHubAuth}
+                  disabled={refreshGitHubAuth.isPending}
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  {refreshGitHubAuth.isPending
+                    ? "Refreshing…"
+                    : "Refresh GitHub auth"}
                 </ContextMenu.Item>
               ) : null}
               {hasOpenWithActions ? (
@@ -1590,16 +1678,14 @@ function TaskRunTreeInner({
         taskId={taskId}
         teamSlugOrId={teamSlugOrId}
         isExpanded={isExpanded}
-        hasActiveVSCode={hasActiveVSCode}
         hasChildren={hasChildren}
-        shouldRenderBrowserLink={shouldRenderBrowserLink}
-        shouldRenderTerminalLink={shouldRenderTerminalLink}
         shouldRenderPullRequestLink={shouldRenderPullRequestLink}
         previewServices={previewServices}
         customPreviews={run.customPreviews || []}
         environmentError={run.environmentError}
         onArchiveToggle={onArchiveToggle}
         showRunNumbers={showRunNumbers}
+        isLocalWorkspace={Boolean(isLocalWorkspaceRunEntry)}
       />
     </div>
   );
@@ -1614,6 +1700,7 @@ interface TaskRunDetailLinkProps {
   className?: string;
   onClick?: (event: MouseEvent<HTMLAnchorElement>) => void;
   trailing?: ReactNode;
+  onReload?: () => void;
 }
 
 function TaskRunDetailLink({
@@ -1625,8 +1712,9 @@ function TaskRunDetailLink({
   className,
   onClick,
   trailing,
+  onReload,
 }: TaskRunDetailLinkProps) {
-  return (
+  const linkElement = (
     <Link
       to={to}
       params={params}
@@ -1645,9 +1733,32 @@ function TaskRunDetailLink({
         <span className="text-neutral-600 dark:text-neutral-400">{label}</span>
       </span>
       {trailing ? (
-        <span className="ml-2 flex shrink-0 items-center">{trailing}</span>
+        <span className="flex shrink-0 items-center">{trailing}</span>
       ) : null}
     </Link>
+  );
+
+  if (!onReload) {
+    return linkElement;
+  }
+
+  return (
+    <ContextMenu.Root>
+      <ContextMenu.Trigger>{linkElement}</ContextMenu.Trigger>
+      <ContextMenu.Portal>
+        <ContextMenu.Positioner className="outline-none z-[var(--z-context-menu)]">
+          <ContextMenu.Popup className="origin-[var(--transform-origin)] rounded-md bg-white dark:bg-neutral-800 py-1 text-neutral-900 dark:text-neutral-100 shadow-lg shadow-gray-200 outline-1 outline-neutral-200 transition-[opacity] data-[ending-style]:opacity-0 dark:shadow-none dark:-outline-offset-1 dark:outline-neutral-700">
+            <ContextMenu.Item
+              className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+              onClick={onReload}
+            >
+              <RefreshCw className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
+              <span>Reload</span>
+            </ContextMenu.Item>
+          </ContextMenu.Popup>
+        </ContextMenu.Positioner>
+      </ContextMenu.Portal>
+    </ContextMenu.Root>
   );
 }
 
@@ -1704,10 +1815,7 @@ interface TaskRunDetailsProps {
   taskId: Id<"tasks">;
   teamSlugOrId: string;
   isExpanded: boolean;
-  hasActiveVSCode: boolean;
   hasChildren: boolean;
-  shouldRenderBrowserLink: boolean;
-  shouldRenderTerminalLink: boolean;
   shouldRenderPullRequestLink: boolean;
   previewServices: PreviewService[];
   customPreviews: Array<{
@@ -1720,6 +1828,7 @@ interface TaskRunDetailsProps {
   };
   onArchiveToggle: (runId: Id<"taskRuns">, archive: boolean) => void;
   showRunNumbers: boolean;
+  isLocalWorkspace: boolean;
 }
 
 function TaskRunDetails({
@@ -1728,16 +1837,14 @@ function TaskRunDetails({
   taskId,
   teamSlugOrId,
   isExpanded,
-  hasActiveVSCode,
   hasChildren,
-  shouldRenderBrowserLink,
-  shouldRenderTerminalLink,
   shouldRenderPullRequestLink,
   previewServices,
   customPreviews,
   environmentError,
   onArchiveToggle,
   showRunNumbers,
+  isLocalWorkspace,
 }: TaskRunDetailsProps) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -1883,6 +1990,18 @@ function TaskRunDetails({
     ]
   );
 
+  const handleReloadVSCode = useCallback(() => {
+    persistentIframeManager.reloadIframe(getTaskRunPersistKey(run._id));
+  }, [run._id]);
+
+  const handleReloadBrowser = useCallback(() => {
+    persistentIframeManager.reloadIframe(getTaskRunBrowserPersistKey(run._id));
+  }, [run._id]);
+
+  const handleReloadTerminals = useCallback(() => {
+    window.location.reload();
+  }, []);
+
   if (!isExpanded) {
     return null;
   }
@@ -1919,24 +2038,49 @@ function TaskRunDetails({
     </Tooltip>
   ) : null;
 
+  // Determine loading/error state for the detail links
+  const isVSCodeReady = run.vscode?.status === "running";
+  const isRunFailed = run.status === "failed";
+
+  // Show error icon with tooltip if run failed, otherwise show loading spinner
+  const statusIndicator = isRunFailed ? (
+    <Tooltip delayDuration={0}>
+      <TooltipTrigger asChild>
+        <XCircle className="w-3 h-3 text-red-500" />
+      </TooltipTrigger>
+      {run.errorMessage ? (
+        <TooltipContent
+          side="right"
+          className="max-w-xs whitespace-pre-wrap break-words"
+        >
+          {run.errorMessage}
+        </TooltipContent>
+      ) : null}
+    </Tooltip>
+  ) : !isVSCodeReady ? (
+    <Loader2 className="w-3 h-3 animate-spin text-neutral-400" />
+  ) : null;
+
+  // For VSCode, combine environment error with status indicator
+  const vscodeTrailing = environmentErrorIndicator || statusIndicator;
+
   return (
     <Fragment>
-      {hasActiveVSCode ? (
-        <TaskRunDetailLink
-          to="/$teamSlugOrId/task/$taskId/run/$runId/vscode"
-          params={{
-            teamSlugOrId,
-            taskId,
-            runId: run._id,
-          }}
-          icon={
-            <VSCodeIcon className="w-3 h-3 mr-2 text-neutral-400 grayscale opacity-60" />
-          }
-          label="VS Code"
-          indentLevel={indentLevel}
-          trailing={environmentErrorIndicator}
-        />
-      ) : null}
+      <TaskRunDetailLink
+        to="/$teamSlugOrId/task/$taskId/run/$runId/vscode"
+        params={{
+          teamSlugOrId,
+          taskId,
+          runId: run._id,
+        }}
+        icon={
+          <VSCodeIcon className="w-3 h-3 mr-2 text-neutral-400 grayscale opacity-60" />
+        }
+        label="VS Code"
+        indentLevel={indentLevel}
+        trailing={vscodeTrailing}
+        onReload={handleReloadVSCode}
+      />
 
       <TaskRunDetailLink
         to="/$teamSlugOrId/task/$taskId/run/$runId/diff"
@@ -1946,23 +2090,27 @@ function TaskRunDetails({
         indentLevel={indentLevel}
       />
 
-      {shouldRenderBrowserLink ? (
+      {!isLocalWorkspace ? (
         <TaskRunDetailLink
           to="/$teamSlugOrId/task/$taskId/run/$runId/browser"
           params={{ teamSlugOrId, taskId, runId: run._id }}
           icon={<Monitor className="w-3 h-3 mr-2 text-neutral-400" />}
           label="Browser"
           indentLevel={indentLevel}
+          trailing={statusIndicator}
+          onReload={handleReloadBrowser}
         />
       ) : null}
 
-      {shouldRenderTerminalLink ? (
+      {!isLocalWorkspace ? (
         <TaskRunDetailLink
           to="/$teamSlugOrId/task/$taskId/run/$runId/terminals"
           params={{ teamSlugOrId, taskId, runId: run._id }}
           icon={<TerminalSquare className="w-3 h-3 mr-2 text-neutral-400" />}
           label="Terminals"
           indentLevel={indentLevel}
+          trailing={statusIndicator}
+          onReload={handleReloadTerminals}
         />
       ) : null}
 
@@ -1989,7 +2137,9 @@ function TaskRunDetails({
                   runId: run._id,
                   previewId: `${service.port}`,
                 }}
-                icon={<ExternalLink className="w-3 h-3 mr-2 text-neutral-400" />}
+                icon={
+                  <ExternalLink className="w-3 h-3 mr-2 text-neutral-400" />
+                }
                 label={`Preview (port ${service.port})`}
                 indentLevel={indentLevel}
                 className="pr-10"
@@ -2023,7 +2173,11 @@ function TaskRunDetails({
                       <Dropdown.Arrow />
                       <Dropdown.Item
                         onClick={() => {
-                          window.open(service.url, "_blank", "noopener,noreferrer");
+                          window.open(
+                            service.url,
+                            "_blank",
+                            "noopener,noreferrer"
+                          );
                         }}
                         className="flex items-center gap-2"
                       >
@@ -2047,7 +2201,9 @@ function TaskRunDetails({
                   runId: run._id,
                   previewId: String(index),
                 }}
-                icon={<ExternalLink className="w-3 h-3 mr-2 text-neutral-400" />}
+                icon={
+                  <ExternalLink className="w-3 h-3 mr-2 text-neutral-400" />
+                }
                 label={preview.url}
                 indentLevel={indentLevel}
                 className="pr-10"
@@ -2081,7 +2237,11 @@ function TaskRunDetails({
                       <Dropdown.Arrow />
                       <Dropdown.Item
                         onClick={() => {
-                          window.open(preview.url, "_blank", "noopener,noreferrer");
+                          window.open(
+                            preview.url,
+                            "_blank",
+                            "noopener,noreferrer"
+                          );
                         }}
                         className="flex items-center gap-2"
                       >
@@ -2089,7 +2249,9 @@ function TaskRunDetails({
                         Open in new tab
                       </Dropdown.Item>
                       <Dropdown.Item
-                        onClick={() => handleRemovePreview(index, currentPreviewId)}
+                        onClick={() =>
+                          handleRemovePreview(index, currentPreviewId)
+                        }
                         className="flex items-center gap-2 text-red-600 dark:text-red-400"
                       >
                         <Trash2 className="w-3.5 h-3.5" />

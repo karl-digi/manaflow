@@ -116,6 +116,17 @@ export type GithubReposResponse = {
     repos: Array<GithubRepo>;
 };
 
+export type FrameworkPreset = 'other' | 'next' | 'vite' | 'remix' | 'nuxt' | 'sveltekit' | 'angular' | 'cra' | 'vue';
+
+export type PackageManager = 'npm' | 'yarn' | 'pnpm' | 'bun';
+
+export type FrameworkDetectionResponse = {
+    framework: FrameworkPreset;
+    packageManager: PackageManager;
+    maintenanceScript: string;
+    devScript: string;
+};
+
 export type GithubPullRequestItem = {
     id: number;
     number: number;
@@ -372,6 +383,14 @@ export type CheckTaskRunPausedBody = {
     teamSlugOrId: string;
 };
 
+export type RefreshGitHubAuthResponse = {
+    refreshed: true;
+};
+
+export type RefreshGitHubAuthBody = {
+    teamSlugOrId: string;
+};
+
 export type SetupInstanceResponse = {
     instanceId: string;
     vscodeUrl: string;
@@ -384,7 +403,7 @@ export type SetupInstanceBody = {
     instanceId?: string;
     selectedRepos?: Array<string>;
     ttlSeconds?: number;
-    snapshotId?: string | ('snapshot_xrlir8y6' | 'snapshot_tst7w0q1' | 'snapshot_pcmfvjra');
+    snapshotId?: string | ('snapshot_st54kpzd' | 'snapshot_6isj88bc' | 'snapshot_pcmfvjra');
 };
 
 export type CreateEnvironmentResponse = {
@@ -491,6 +510,7 @@ export type StartSandboxResponse = {
     vscodeUrl: string;
     workerUrl: string;
     provider?: 'morph';
+    vscodePersisted?: boolean;
 };
 
 export type StartSandboxBody = {
@@ -1117,6 +1137,38 @@ export type GetApiIntegrationsGithubReposResponses = {
 
 export type GetApiIntegrationsGithubReposResponse = GetApiIntegrationsGithubReposResponses[keyof GetApiIntegrationsGithubReposResponses];
 
+export type GetApiIntegrationsGithubFrameworkDetectionData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * Full repository name (owner/repo)
+         */
+        repo: string;
+    };
+    url: '/api/integrations/github/framework-detection';
+};
+
+export type GetApiIntegrationsGithubFrameworkDetectionErrors = {
+    /**
+     * Bad request
+     */
+    400: unknown;
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+};
+
+export type GetApiIntegrationsGithubFrameworkDetectionResponses = {
+    /**
+     * OK
+     */
+    200: FrameworkDetectionResponse;
+};
+
+export type GetApiIntegrationsGithubFrameworkDetectionResponse = GetApiIntegrationsGithubFrameworkDetectionResponses[keyof GetApiIntegrationsGithubFrameworkDetectionResponses];
+
 export type GetApiIntegrationsGithubPrsData = {
     body?: never;
     path?: never;
@@ -1732,6 +1784,51 @@ export type PostApiMorphTaskRunsByTaskRunIdIsPausedResponses = {
 };
 
 export type PostApiMorphTaskRunsByTaskRunIdIsPausedResponse = PostApiMorphTaskRunsByTaskRunIdIsPausedResponses[keyof PostApiMorphTaskRunsByTaskRunIdIsPausedResponses];
+
+export type PostApiMorphTaskRunsByTaskRunIdRefreshGithubAuthData = {
+    body: RefreshGitHubAuthBody;
+    path: {
+        taskRunId: string;
+    };
+    query?: never;
+    url: '/api/morph/task-runs/{taskRunId}/refresh-github-auth';
+};
+
+export type PostApiMorphTaskRunsByTaskRunIdRefreshGithubAuthErrors = {
+    /**
+     * Task run is not backed by a Morph instance
+     */
+    400: unknown;
+    /**
+     * Unauthorized or GitHub not connected
+     */
+    401: unknown;
+    /**
+     * Forbidden - instance does not belong to this team
+     */
+    403: unknown;
+    /**
+     * Task run not found
+     */
+    404: unknown;
+    /**
+     * Instance is paused - resume it first
+     */
+    409: unknown;
+    /**
+     * Failed to refresh GitHub authentication
+     */
+    500: unknown;
+};
+
+export type PostApiMorphTaskRunsByTaskRunIdRefreshGithubAuthResponses = {
+    /**
+     * GitHub authentication refreshed successfully
+     */
+    200: RefreshGitHubAuthResponse;
+};
+
+export type PostApiMorphTaskRunsByTaskRunIdRefreshGithubAuthResponse = PostApiMorphTaskRunsByTaskRunIdRefreshGithubAuthResponses[keyof PostApiMorphTaskRunsByTaskRunIdRefreshGithubAuthResponses];
 
 export type PostApiMorphSetupInstanceData = {
     body: SetupInstanceBody;

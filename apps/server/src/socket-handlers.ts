@@ -46,11 +46,12 @@ import { getRustTime } from "./native/core";
 import type { RealtimeServer } from "./realtime";
 import { RepositoryManager } from "./repositoryManager";
 import type { GitRepoInfo } from "./server";
-import { getPRTitleFromTaskDescription } from "./utils/branchNameGenerator";
+import { generatePRInfoAndBranchNames } from "./utils/branchNameGenerator";
 import { getConvex } from "./utils/convexClient";
 import { ensureRunWorktreeAndBranch } from "./utils/ensureRunWorktree";
 import { serverLogger } from "./utils/fileLogger";
-import { getGitHubTokenFromKeychain } from "./utils/getGitHubToken";
+import { getGitHubOAuthToken } from "./utils/getGitHubToken";
+import { createGitHubApiClient } from "./ghApi";
 import { createDraftPr, fetchPrDetail } from "./utils/githubPr";
 import { getOctokit } from "./utils/octokit";
 import {
@@ -59,6 +60,7 @@ import {
 } from "./utils/providerStatus";
 import { refreshGitHubData } from "./utils/refreshGitHubData";
 import { runWithAuth, runWithAuthToken } from "./utils/requestContext";
+import { extractSandboxStartError } from "./utils/sandboxErrors";
 import { getWwwClient } from "./utils/wwwClient";
 import { getWwwOpenApiModule } from "./utils/wwwOpenApiModule";
 import { DockerVSCodeInstance } from "./vscode/DockerVSCodeInstance";
@@ -591,30 +593,40 @@ export function setupSocketHandlers(
 
         (async () => {
           try {
-            // Generate PR title early from the task description
+            // Determine number of agents to spawn
+            const agentCount = taskData.selectedAgents?.length || 1;
+
+            // Generate PR title and branch names in a single API call
             let generatedTitle: string | null = null;
+            let branchNames: string[] | undefined;
             try {
-              generatedTitle = await getPRTitleFromTaskDescription(
+              const prInfo = await generatePRInfoAndBranchNames(
                 taskData.taskDescription,
+                agentCount,
                 safeTeam
               );
-              // Persist to Convex immediately
+              generatedTitle = prInfo.prTitle;
+              branchNames = prInfo.branchNames;
+
+              // Persist PR title to Convex
               await getConvex().mutation(api.tasks.setPullRequestTitle, {
                 teamSlugOrId: safeTeam,
                 id: taskId,
                 pullRequestTitle: generatedTitle,
               });
               serverLogger.info(
-                `[Server] Saved early PR title: ${generatedTitle}`
+                `[Server] Generated PR title and ${branchNames.length} branch names in single call`
               );
             } catch (e) {
               serverLogger.error(
-                `[Server] Failed generating/saving early PR title:`,
+                `[Server] Failed generating PR info:`,
                 e
               );
             }
 
-            // Spawn all agents in parallel (each will create its own taskRun)
+            // Spawn all agents in parallel
+            // - If taskRunIds provided, uses pre-created runs (fast path)
+            // - If branchNames generated above, passes them to avoid re-generating
             const agentResults = await spawnAllAgents(
               taskId,
               {
@@ -622,7 +634,9 @@ export function setupSocketHandlers(
                 branch: taskData.branch,
                 taskDescription: taskData.taskDescription,
                 prTitle: generatedTitle ?? undefined,
+                branchNames, // Pass pre-generated branch names to avoid second API call
                 selectedAgents: taskData.selectedAgents,
+                taskRunIds: taskData.taskRunIds,
                 isCloudMode: taskData.isCloudMode,
                 images: taskData.images,
                 theme: taskData.theme,
@@ -1349,7 +1363,8 @@ export function setupSocketHandlers(
 
           const data = startRes.data;
           if (!data) {
-            throw new Error("Failed to start sandbox");
+            const errorMessage = extractSandboxStartError(startRes);
+            throw new Error(errorMessage);
           }
 
           const sandboxId = data.instanceId;
@@ -1480,7 +1495,7 @@ export function setupSocketHandlers(
           return;
         }
 
-        const githubToken = await getGitHubTokenFromKeychain();
+        const githubToken = await getGitHubOAuthToken();
         if (!githubToken) {
           callback({
             success: false,
@@ -1593,7 +1608,7 @@ export function setupSocketHandlers(
         const { run, task, branchName, baseBranch } =
           await ensureRunWorktreeAndBranch(taskRunId, safeTeam);
 
-        const githubToken = await getGitHubTokenFromKeychain();
+        const githubToken = await getGitHubOAuthToken();
         if (!githubToken) {
           return callback({
             success: false,
@@ -2140,7 +2155,7 @@ Context:
 Please address the issue mentioned in the comment above.`;
 
         // Create a new task in Convex
-        const taskId = await getConvex().mutation(api.tasks.create, {
+        const { taskId } = await getConvex().mutation(api.tasks.create, {
           teamSlugOrId: safeTeam,
           text: formattedPrompt,
           projectFullName: "manaflow-ai/cmux",
@@ -2231,8 +2246,20 @@ Please address the issue mentioned in the comment above.`;
       try {
         const { repo } = GitHubFetchBranchesSchema.parse(data);
 
-        const { listRemoteBranches } = await import("./native/git.js");
-        const branches = await listRemoteBranches({ repoFullName: repo });
+        // Get OAuth token from Stack Auth for authenticated GitHub API access
+        const githubToken = await getGitHubOAuthToken();
+        if (!githubToken) {
+          callback({
+            success: false,
+            branches: [],
+            error: "GitHub token is not configured. Please connect your GitHub account.",
+          });
+          return;
+        }
+
+        // Use GitHub API with OAuth token for branch listing
+        const ghClient = createGitHubApiClient(githubToken);
+        const branches = await ghClient.getRepoBranchesWithActivity(repo);
         const defaultBranch = branches.find((branch) => branch.isDefault)?.name;
 
         callback({
@@ -2295,7 +2322,7 @@ Please address the issue mentioned in the comment above.`;
           return;
         }
 
-        const githubToken = await getGitHubTokenFromKeychain();
+        const githubToken = await getGitHubOAuthToken();
         if (!githubToken) {
           callback({
             success: false,

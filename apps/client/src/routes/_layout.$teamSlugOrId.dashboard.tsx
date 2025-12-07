@@ -358,8 +358,9 @@ function DashboardComponent() {
 
       if (currentTasks !== undefined) {
         const now = Date.now();
+        const fakeTaskId = createFakeConvexId() as Doc<"tasks">["_id"];
         const optimisticTask = {
-          _id: createFakeConvexId() as Doc<"tasks">["_id"],
+          _id: fakeTaskId,
           _creationTime: now,
           text: args.text,
           description: args.description,
@@ -388,8 +389,35 @@ function DashboardComponent() {
           optimisticTask,
           ...currentTasks,
         ]);
+
+        // Create optimistic task runs if selectedAgents provided
+        if (args.selectedAgents && args.selectedAgents.length > 0) {
+          const optimisticRuns = args.selectedAgents.map((agentName) => ({
+            _id: createFakeConvexId() as Doc<"taskRuns">["_id"],
+            _creationTime: now,
+            taskId: fakeTaskId,
+            prompt: args.text,
+            agentName,
+            status: "pending" as const,
+            createdAt: now,
+            updatedAt: now,
+            userId: "optimistic",
+            teamId: teamSlugOrId,
+            environmentId: args.environmentId,
+            isCloudWorkspace: args.isCloudWorkspace,
+            children: [],
+            environment: null,
+          }));
+
+          // Set the task runs query for this fake task
+          localStore.setQuery(
+            api.taskRuns.getByTask,
+            { teamSlugOrId, taskId: fakeTaskId },
+            optimisticRuns,
+          );
+        }
       }
-    }
+    },
   );
   const generateUploadUrl = useMutation(api.storage.generateUploadUrl);
   const addManualRepo = useAction(api.github_http.addManualRepo);
@@ -516,14 +544,21 @@ function DashboardComponent() {
         editorApiRef.current.clear();
       }
 
-      // Create task in Convex with storage IDs
-      const taskId = await createTask({
+      // Determine which agents to spawn
+      const agentsToSpawn =
+        selectedAgents.length > 0 ? selectedAgents : DEFAULT_AGENTS;
+
+      // Create task in Convex with storage IDs and task runs atomically
+      // Note: isCloudWorkspace is NOT set here - that's only for standalone workspaces without agents.
+      // isCloudMode (passed to socket) determines whether agents run in cloud vs local Docker.
+      const { taskId, taskRunIds } = await createTask({
         teamSlugOrId,
         text: content?.text || taskDescription, // Use content.text which includes image references
         projectFullName: envSelected ? undefined : projectFullName,
         baseBranch: envSelected ? undefined : branch,
         images: uploadedImages.length > 0 ? uploadedImages : undefined,
         environmentId,
+        selectedAgents: agentsToSpawn,
       });
 
       // Hint the sidebar to auto-expand this task once it appears
@@ -535,7 +570,7 @@ function DashboardComponent() {
 
       // For socket.io, we need to send the content text (which includes image references) and the images
       const handleStartTaskAck = (
-        response: TaskAcknowledged | TaskStarted | TaskError
+        response: TaskAcknowledged | TaskStarted | TaskError,
       ) => {
         if ("error" in response) {
           console.error("Task start error:", response.error);
@@ -562,8 +597,9 @@ function DashboardComponent() {
           taskDescription: content?.text || taskDescription, // Use content.text which includes image references
           projectFullName,
           taskId,
-          selectedAgents:
-            selectedAgents.length > 0 ? selectedAgents : undefined,
+          // Pass pre-created task run IDs so server doesn't need to create them
+          taskRunIds,
+          selectedAgents: agentsToSpawn,
           isCloudMode: envSelected ? true : isCloudMode,
           ...(environmentId ? { environmentId } : {}),
           images: images.length > 0 ? images : undefined,

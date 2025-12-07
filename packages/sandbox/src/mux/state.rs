@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
@@ -12,7 +12,160 @@ use crate::mux::onboard::OnboardState;
 use crate::mux::palette::CommandPalette;
 use crate::mux::sidebar::Sidebar;
 use crate::mux::terminal::{SharedTerminalManager, TerminalRenderView};
+use crate::settings::{EditorChoice, Settings};
 use uuid::Uuid;
+
+/// Result of ensuring SSH config is set up for sandboxes.
+enum SshConfigStatus {
+    AlreadyConfigured,
+    JustConfigured,
+    Failed(String),
+}
+
+/// Generates a dedicated passwordless SSH key for sandbox access.
+/// Returns the path to the private key, or an error message.
+fn ensure_sandbox_ssh_key(ssh_dir: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    let key_path = ssh_dir.join("dmux_sandbox_key");
+    let pub_key_path = ssh_dir.join("dmux_sandbox_key.pub");
+
+    // If key already exists, return it
+    if key_path.exists() && pub_key_path.exists() {
+        return Ok(key_path);
+    }
+
+    // Generate a new ed25519 key without passphrase using ssh-keygen
+    let output = std::process::Command::new("ssh-keygen")
+        .args([
+            "-t",
+            "ed25519",
+            "-f",
+            key_path.to_str().unwrap_or(""),
+            "-N",
+            "", // Empty passphrase
+            "-C",
+            "dmux-sandbox-key",
+        ])
+        .output();
+
+    match output {
+        Ok(result) => {
+            if result.status.success() {
+                // Set proper permissions
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ =
+                        std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600));
+                    let _ = std::fs::set_permissions(
+                        &pub_key_path,
+                        std::fs::Permissions::from_mode(0o644),
+                    );
+                }
+                Ok(key_path)
+            } else {
+                Err(format!(
+                    "ssh-keygen failed: {}",
+                    String::from_utf8_lossy(&result.stderr)
+                ))
+            }
+        }
+        Err(e) => Err(format!("couldn't run ssh-keygen: {}", e)),
+    }
+}
+
+/// Ensures ~/.ssh/config has the sandbox-* host configuration.
+/// Also generates a dedicated passwordless SSH key for sandbox access.
+/// Returns the status of what happened.
+fn ensure_ssh_config_for_sandboxes(base_url: &str) -> SshConfigStatus {
+    let home = match std::env::var("HOME") {
+        Ok(h) => h,
+        Err(_) => return SshConfigStatus::Failed("HOME not set".to_string()),
+    };
+
+    let ssh_dir = std::path::Path::new(&home).join(".ssh");
+    let config_path = ssh_dir.join("config");
+
+    // Check if config already has sandbox-* entry
+    if config_path.exists() {
+        match std::fs::read_to_string(&config_path) {
+            Ok(content) => {
+                if content.contains("Host sandbox-*") {
+                    // Config exists, but ensure the key exists too
+                    let _ = ensure_sandbox_ssh_key(&ssh_dir);
+                    return SshConfigStatus::AlreadyConfigured;
+                }
+            }
+            Err(e) => return SshConfigStatus::Failed(format!("couldn't read config: {}", e)),
+        }
+    }
+
+    // Ensure .ssh directory exists with proper permissions
+    if !ssh_dir.exists() {
+        if let Err(e) = std::fs::create_dir_all(&ssh_dir) {
+            return SshConfigStatus::Failed(format!("couldn't create .ssh: {}", e));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&ssh_dir, std::fs::Permissions::from_mode(0o700));
+        }
+    }
+
+    // Generate dedicated SSH key for sandboxes (passwordless)
+    let key_path = match ensure_sandbox_ssh_key(&ssh_dir) {
+        Ok(p) => p,
+        Err(e) => return SshConfigStatus::Failed(format!("couldn't create SSH key: {}", e)),
+    };
+
+    // Get the binary name (cmux or dmux) for ProxyCommand
+    let binary_name = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+        .unwrap_or_else(|| "dmux".to_string());
+
+    // Append the config with IdentityFile pointing to our passwordless key
+    // Note: IdentitiesOnly is NOT set, so SSH agent keys can be used as fallback
+    // if the dedicated key hasn't been synced yet
+    let config_block = format!(
+        r#"
+# SSH config for {} sandboxes (auto-configured)
+Host sandbox-*
+    User root
+    IdentityFile {}
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+    LogLevel ERROR
+    ProxyCommand {} --base-url {} _ssh-proxy $(echo %n | sed 's/sandbox-//')
+"#,
+        binary_name,
+        key_path.display(),
+        binary_name,
+        base_url
+    );
+
+    let mut file = match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&config_path)
+    {
+        Ok(f) => f,
+        Err(e) => return SshConfigStatus::Failed(format!("couldn't open config: {}", e)),
+    };
+
+    use std::io::Write;
+    if let Err(e) = file.write_all(config_block.as_bytes()) {
+        return SshConfigStatus::Failed(format!("couldn't write config: {}", e));
+    }
+
+    // Set proper permissions on config file
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&config_path, std::fs::Permissions::from_mode(0o600));
+    }
+
+    SshConfigStatus::JustConfigured
+}
 
 /// Which area of the UI has focus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -165,8 +318,6 @@ pub struct MuxApp<'a> {
     pub show_help: bool,
     // Notifications overlay/state
     pub notifications: NotificationsState,
-    // Pending tab IDs for sandboxes being created (kept in request order)
-    pub pending_creation_tab_ids: VecDeque<crate::mux::layout::TabId>,
 
     // Event channel
     pub event_tx: mpsc::UnboundedSender<MuxEvent>,
@@ -187,11 +338,8 @@ pub struct MuxApp<'a> {
     // Terminal manager for handling sandbox connections
     pub terminal_manager: Option<SharedTerminalManager>,
 
-    // Sandbox we need to connect to once available
-    pub pending_connect: Option<String>,
-
-    // Locally created placeholder sandboxes awaiting server confirmation
-    pub pending_placeholder_sandboxes: VecDeque<SandboxId>,
+    // Queue of sandboxes that need terminal connections
+    pub pending_connects: std::collections::VecDeque<String>,
 
     // Flag to indicate we need to create a sandbox on startup
     pub needs_initial_sandbox: bool,
@@ -211,6 +359,16 @@ pub struct MuxApp<'a> {
 
     /// Sandboxes that have delta pager enabled
     pub delta_enabled_sandboxes: HashSet<SandboxId>,
+
+    /// Tab IDs of all pending sandbox creations - ALL will get terminal connections.
+    pub pending_creation_tab_ids: HashSet<String>,
+
+    /// The tab_id of the most recently initiated sandbox creation.
+    /// Only this sandbox will steal focus/selection when it completes.
+    pub most_recent_creation_tab_id: Option<String>,
+
+    /// Persistent settings (editor choice, etc.)
+    pub settings: Settings,
 }
 
 impl<'a> MuxApp<'a> {
@@ -219,6 +377,10 @@ impl<'a> MuxApp<'a> {
         event_tx: mpsc::UnboundedSender<MuxEvent>,
         workspace_path: PathBuf,
     ) -> Self {
+        // Pre-generate SSH key for sandbox access so it's included in initial syncs
+        // This ensures VS Code SSH works without additional setup
+        let _ = ensure_ssh_config_for_sandboxes(&base_url);
+
         Self {
             workspace_manager: WorkspaceManager::new(),
             sidebar: Sidebar::new(),
@@ -227,7 +389,6 @@ impl<'a> MuxApp<'a> {
             zoomed_pane: None,
             show_help: false,
             notifications: NotificationsState::new(),
-            pending_creation_tab_ids: VecDeque::new(),
             event_tx,
             base_url,
             workspace_path,
@@ -235,14 +396,16 @@ impl<'a> MuxApp<'a> {
             renaming_tab: false,
             rename_input: None,
             terminal_manager: None,
-            pending_connect: None,
-            pending_placeholder_sandboxes: VecDeque::new(),
+            pending_connects: std::collections::VecDeque::new(),
             needs_initial_sandbox: false,
             last_terminal_views: std::collections::HashMap::new(),
             cursor_blink: true,
             cursor_color: None,
             onboard: None,
             delta_enabled_sandboxes: HashSet::new(),
+            pending_creation_tab_ids: HashSet::new(),
+            most_recent_creation_tab_id: None,
+            settings: Settings::load(),
         }
     }
 
@@ -327,6 +490,56 @@ impl<'a> MuxApp<'a> {
         }
     }
 
+    /// Open the selected sandbox with a specific editor (one-time, doesn't change default).
+    fn open_with_editor(&mut self, editor: EditorChoice) {
+        if let Some(sandbox_id) = self.selected_sandbox_id() {
+            let ssh_host = format!("sandbox-{}", sandbox_id);
+            let remote_path = "/workspace";
+
+            // Ensure SSH config is set up for sandbox-* hosts
+            let config_status = ensure_ssh_config_for_sandboxes(&self.base_url);
+
+            match editor.open(&ssh_host, remote_path) {
+                Ok(msg) => {
+                    let full_msg = match config_status {
+                        SshConfigStatus::AlreadyConfigured => msg,
+                        SshConfigStatus::JustConfigured => {
+                            format!("Configured SSH for sandbox-* hosts. {}", msg)
+                        }
+                        SshConfigStatus::Failed(err) => {
+                            format!("Warning: couldn't configure SSH ({}). {}", err, msg)
+                        }
+                    };
+                    self.set_status(full_msg);
+                }
+                Err(e) => {
+                    self.set_status(e);
+                }
+            }
+        } else {
+            self.set_status("No sandbox selected");
+        }
+    }
+
+    /// Set the default editor and persist to disk.
+    fn set_default_editor(&mut self, editor: EditorChoice) {
+        let label = editor.label().to_string();
+        self.settings.default_editor = editor;
+
+        // Save to disk
+        if let Err(e) = self.settings.save() {
+            self.set_status(format!(
+                "Default editor set to {} (warning: failed to save: {})",
+                label, e
+            ));
+        } else {
+            self.set_status(format!(
+                "Default editor set to {}. Press Alt+E to open.",
+                label
+            ));
+        }
+    }
+
     pub fn open_notifications(&mut self) {
         self.notifications.is_open = true;
         self.focus = FocusArea::Notifications;
@@ -367,7 +580,7 @@ impl<'a> MuxApp<'a> {
                 let sandbox_id = SandboxId::from_uuid(uuid);
                 if self.workspace_manager.has_sandbox(sandbox_id) {
                     self.workspace_manager.select_sandbox(sandbox_id);
-                    self.sidebar.select_by_id(sandbox_id_str);
+                    self.sidebar.select_by_id(uuid);
                     sandbox_selected = true;
                 }
             }
@@ -383,7 +596,7 @@ impl<'a> MuxApp<'a> {
                         .select_tab_in_workspace_for_active(tab_id);
                 } else if self.workspace_manager.select_tab_in_any_workspace(tab_id) {
                     if let Some(active_id) = self.workspace_manager.active_sandbox_id {
-                        self.sidebar.select_by_id(&active_id.to_string());
+                        self.sidebar.select_by_id(active_id.0);
                     }
                     sandbox_selected = true;
                     tab_selected = true;
@@ -580,8 +793,7 @@ impl<'a> MuxApp<'a> {
             MuxCommand::NextSandbox => {
                 if let Some(sandbox_id) = self.workspace_manager.next_sandbox() {
                     // Also update sidebar selection to match
-                    let sandbox_id_str = sandbox_id.to_string();
-                    self.sidebar.select_by_id(&sandbox_id_str);
+                    self.sidebar.select_by_id(sandbox_id.0);
                     if let Some(ws) = self.workspace_manager.active_workspace() {
                         self.set_status(format!("Switched to: {}", ws.name));
                     }
@@ -590,8 +802,7 @@ impl<'a> MuxApp<'a> {
             MuxCommand::PrevSandbox => {
                 if let Some(sandbox_id) = self.workspace_manager.prev_sandbox() {
                     // Also update sidebar selection to match
-                    let sandbox_id_str = sandbox_id.to_string();
-                    self.sidebar.select_by_id(&sandbox_id_str);
+                    self.sidebar.select_by_id(sandbox_id.0);
                     if let Some(ws) = self.workspace_manager.active_workspace() {
                         self.set_status(format!("Switched to: {}", ws.name));
                     }
@@ -601,12 +812,15 @@ impl<'a> MuxApp<'a> {
             // Sandbox management
             MuxCommand::NewSandbox => {
                 self.set_status("Creating new sandbox...");
-                let tab_id = self.workspace_manager.active_tab_id().unwrap_or_default();
+                // Generate a UNIQUE correlation ID for each creation request
+                // Using active_tab_id() was wrong because it's the SAME for all rapid Alt+N presses
+                // which caused HashMap overwrites and broken placeholder correlation
+                let correlation_id = crate::mux::layout::TabId::new();
                 let _ = self.event_tx.send(MuxEvent::CreateSandboxWithWorkspace {
                     workspace_path: self.workspace_path.clone(),
-                    tab_id: Some(tab_id.to_string()),
+                    tab_id: Some(correlation_id.to_string()),
                 });
-                self.add_placeholder_sandbox("Creating sandbox", Some(tab_id));
+                self.add_placeholder_sandbox("Creating sandbox", Some(correlation_id));
             }
             MuxCommand::DeleteSandbox => {
                 if let Some(sandbox) = self.sidebar.selected_sandbox() {
@@ -712,6 +926,144 @@ impl<'a> MuxApp<'a> {
                     self.set_status("Delta pager disabled");
                 }
             }
+            MuxCommand::CopyScrollback => {
+                // Get the active pane's terminal content and copy to clipboard
+                // Extract the text first to avoid borrow conflicts with set_status
+                let result: Result<String, &'static str> = (|| {
+                    let pane_id = self.active_pane_id().ok_or("No active pane")?;
+                    let manager = self
+                        .terminal_manager
+                        .as_ref()
+                        .ok_or("Terminal manager not available")?;
+                    let mut guard = manager
+                        .try_lock()
+                        .map_err(|_| "Could not access terminal")?;
+                    let buffer = guard
+                        .get_buffer_mut(pane_id)
+                        .ok_or("No terminal in active pane")?;
+                    Ok(buffer.get_all_text())
+                })();
+
+                match result {
+                    Ok(text) if text.is_empty() => {
+                        self.set_status("Terminal is empty");
+                    }
+                    Ok(text) => match arboard::Clipboard::new() {
+                        Ok(mut clipboard) => match clipboard.set_text(&text) {
+                            Ok(()) => {
+                                let lines = text.lines().count();
+                                self.set_status(format!("Copied {} lines to clipboard", lines));
+                            }
+                            Err(e) => {
+                                self.set_status(format!("Failed to copy: {}", e));
+                            }
+                        },
+                        Err(e) => {
+                            self.set_status(format!("Clipboard not available: {}", e));
+                        }
+                    },
+                    Err(msg) => {
+                        self.set_status(msg);
+                    }
+                }
+            }
+            MuxCommand::OpenWith => {
+                // This normally opens a submenu in the palette, but if executed directly:
+                self.set_status("Use command palette to choose an editor");
+            }
+            MuxCommand::OpenWithVSCode => {
+                self.open_with_editor(EditorChoice::VSCode);
+            }
+            MuxCommand::OpenWithCursor => {
+                self.open_with_editor(EditorChoice::Cursor);
+            }
+            MuxCommand::OpenWithZed => {
+                self.open_with_editor(EditorChoice::Zed);
+            }
+            MuxCommand::OpenWithWindsurf => {
+                self.open_with_editor(EditorChoice::Windsurf);
+            }
+            MuxCommand::OpenEditor => {
+                if let Some(sandbox_id) = self.selected_sandbox_id() {
+                    let ssh_host = format!("sandbox-{}", sandbox_id);
+                    let remote_path = "/workspace";
+
+                    // Ensure SSH config is set up for sandbox-* hosts
+                    let config_status = ensure_ssh_config_for_sandboxes(&self.base_url);
+
+                    // Use the default editor
+                    match self.settings.default_editor.open(&ssh_host, remote_path) {
+                        Ok(msg) => {
+                            let full_msg = match config_status {
+                                SshConfigStatus::AlreadyConfigured => msg,
+                                SshConfigStatus::JustConfigured => {
+                                    format!("Configured SSH for sandbox-* hosts. {}", msg)
+                                }
+                                SshConfigStatus::Failed(err) => {
+                                    format!("Warning: couldn't configure SSH ({}). {}", err, msg)
+                                }
+                            };
+                            self.set_status(full_msg);
+                        }
+                        Err(e) => {
+                            self.set_status(e);
+                        }
+                    }
+                } else {
+                    self.set_status("No sandbox selected");
+                }
+            }
+            MuxCommand::SetDefaultEditor => {
+                // This normally opens a submenu in the palette, but if executed directly:
+                let current = self.settings.default_editor.label();
+                self.set_status(format!(
+                    "Current editor: {}. For custom: set DMUX_EDITOR='myeditor --remote {{host}} {{path}}'",
+                    current
+                ));
+            }
+            MuxCommand::SetEditorVSCode => {
+                self.set_default_editor(EditorChoice::VSCode);
+            }
+            MuxCommand::SetEditorCursor => {
+                self.set_default_editor(EditorChoice::Cursor);
+            }
+            MuxCommand::SetEditorZed => {
+                self.set_default_editor(EditorChoice::Zed);
+            }
+            MuxCommand::SetEditorWindsurf => {
+                self.set_default_editor(EditorChoice::Windsurf);
+            }
+            MuxCommand::OpenBrowser => {
+                if let Some(sandbox_id) = self.selected_sandbox_id() {
+                    // Get the binary name (cmux or dmux)
+                    let binary_name = std::env::current_exe()
+                        .ok()
+                        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+                        .unwrap_or_else(|| "dmux".to_string());
+
+                    // Spawn the browser command in background, suppressing output
+                    // Pass base_url via env var so it connects to the same backend
+                    match std::process::Command::new(&binary_name)
+                        .args(["browser", &sandbox_id.to_string()])
+                        .env("CMUX_SANDBOX_URL", &self.base_url)
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .spawn()
+                    {
+                        Ok(_) => {
+                            self.set_status(format!(
+                                "Opening browser proxy for sandbox {}",
+                                sandbox_id
+                            ));
+                        }
+                        Err(e) => {
+                            self.set_status(format!("Failed to open browser: {}", e));
+                        }
+                    }
+                } else {
+                    self.set_status("No sandbox selected");
+                }
+            }
         }
     }
 
@@ -753,39 +1105,80 @@ impl<'a> MuxApp<'a> {
             }
             MuxEvent::SandboxesRefreshed(sandboxes) => {
                 let had_active = self.selected_sandbox_id().is_some();
-                // Update sidebar
-                self.sidebar.set_sandboxes(sandboxes.clone());
-                // Sync workspace manager with sandboxes
+
+                // SIMPLIFIED: Server is source of truth for sandbox list.
+                // Just merge server sandboxes with local placeholders.
+                // Selection is preserved by ID (not index) - handled automatically by Sidebar.
+                use std::collections::HashSet;
+
+                // Build new list: server sandboxes first (server order), then local placeholders
+                let server_ids: HashSet<_> = sandboxes.iter().map(|s| s.id).collect();
+
+                // Build a map from correlation_id -> server sandbox UUID for selection transfer
+                let server_by_correlation: std::collections::HashMap<_, _> = sandboxes
+                    .iter()
+                    .filter_map(|s| s.correlation_id.as_ref().map(|cid| (cid.clone(), s.id)))
+                    .collect();
+
+                // If currently selected sandbox is a placeholder being replaced by server,
+                // transfer selection to the server sandbox
+                if let Some(selected_id) = self.sidebar.selected_id {
+                    if let Some(selected_placeholder) = self
+                        .sidebar
+                        .sandboxes
+                        .iter()
+                        .find(|s| s.id == selected_id && s.status == SandboxStatus::Creating)
+                    {
+                        if let Some(cid) = &selected_placeholder.correlation_id {
+                            if let Some(&server_sandbox_id) = server_by_correlation.get(cid) {
+                                // Transfer selection to the server sandbox that replaced the placeholder
+                                self.sidebar.selected_id = Some(server_sandbox_id);
+                            }
+                        }
+                    }
+                }
+
+                // Collect correlation_ids from server sandboxes - if server has a sandbox
+                // with a matching correlation_id, that placeholder has been "resolved"
+                let server_correlation_ids: HashSet<_> =
+                    server_by_correlation.keys().cloned().collect();
+
+                // Keep local placeholders (Creating status) only if:
+                // 1. Their ID isn't in server list (always true for client-generated IDs)
+                // 2. Their correlation_id isn't in server list (meaning server hasn't created it yet)
+                let local_placeholders: Vec<_> = self
+                    .sidebar
+                    .sandboxes
+                    .iter()
+                    .filter(|s| {
+                        s.status == SandboxStatus::Creating
+                            && !server_ids.contains(&s.id)
+                            && s.correlation_id
+                                .as_ref()
+                                .map(|cid| !server_correlation_ids.contains(cid))
+                                .unwrap_or(false) // No correlation_id = can't match, drop it
+                    })
+                    .cloned()
+                    .collect();
+
+                // Server sandboxes + pending placeholders
+                let mut new_list = sandboxes.clone();
+                new_list.extend(local_placeholders);
+
+                // set_sandboxes preserves selection by ID automatically
+                self.sidebar.set_sandboxes(new_list);
+
+                // Sync workspace manager with server sandboxes
                 for sandbox in &sandboxes {
                     let sandbox_id_str = sandbox.id.to_string();
                     self.add_sandbox(&sandbox_id_str, &sandbox.name);
                 }
-                // Re-append pending placeholders so they stay visible during creation
-                for placeholder_id in self.pending_placeholder_sandboxes.iter().copied() {
-                    if self
-                        .sidebar
-                        .sandboxes
-                        .iter()
-                        .any(|sandbox| sandbox.id == placeholder_id.0)
-                    {
-                        continue;
-                    }
-                    if let Some(summary) = self.placeholder_summary(placeholder_id) {
-                        self.sidebar.sandboxes.push(summary);
-                    }
-                }
-                // Ensure selection stays in sync with available sandboxes
-                if let Some(active_id) = self.selected_sandbox_id_string() {
-                    self.sidebar.select_by_id(&active_id);
-                } else if let Some(first) = sandboxes.first() {
-                    let id_str = first.id.to_string();
-                    self.sidebar.select_by_id(&id_str);
-                    self.pending_connect.get_or_insert(id_str);
-                }
 
-                if !had_active {
-                    if let Some(active_id) = self.selected_sandbox_id_string() {
-                        self.pending_connect.get_or_insert(active_id);
+                // Only add to pending_connects on first load (when we had no active sandbox)
+                if !had_active && self.pending_connects.is_empty() {
+                    if let Some(first) = self.sidebar.sandboxes.first() {
+                        let first_id = first.id.to_string();
+                        self.pending_connects.push_back(first_id);
                     }
                 }
             }
@@ -793,29 +1186,96 @@ impl<'a> MuxApp<'a> {
                 self.sidebar.set_error(error.clone());
                 self.set_status(format!("Error: {}", error));
             }
-            MuxEvent::SandboxCreated(sandbox) => {
-                // Drop one placeholder entry to keep the list responsive
-                if let Some(placeholder_id) = self.pending_placeholder_sandboxes.pop_front() {
-                    self.remove_local_sandbox(placeholder_id);
-                }
-                // Add the new sandbox to workspace manager
+            MuxEvent::SandboxCreated { sandbox, tab_id } => {
                 let sandbox_id_str = sandbox.id.to_string();
-                // Keep sidebar in sync immediately without waiting for refresh
-                self.sidebar
-                    .sandboxes
-                    .retain(|existing| existing.id != sandbox.id);
-                self.sidebar.sandboxes.push(sandbox.clone());
-                self.sidebar.select_by_id(&sandbox_id_str);
-                self.add_sandbox(&sandbox_id_str, &sandbox.name);
-                if let Some(tab_id) = self.pending_creation_tab_ids.pop_front() {
-                    let _ = self.workspace_manager.set_active_tab_id_for_sandbox(
-                        crate::mux::layout::SandboxId::from_uuid(sandbox.id),
-                        tab_id,
-                    );
+
+                // Find placeholder by correlation_id directly in the sandbox list
+                // This is the single source of truth - no separate HashMap
+                let mut updated_in_place = false;
+
+                if let Some(tab_id_str) = &tab_id {
+                    // Find placeholder with matching correlation_id
+                    let placeholder_pos = self.sidebar.sandboxes.iter().position(|s| {
+                        s.status == SandboxStatus::Creating
+                            && s.correlation_id.as_ref() == Some(tab_id_str)
+                    });
+
+                    if let Some(pos) = placeholder_pos {
+                        let placeholder_uuid = self.sidebar.sandboxes[pos].id;
+                        let was_selected = self.sidebar.selected_id == Some(placeholder_uuid);
+
+                        // Update the placeholder entry in-place
+                        let entry = &mut self.sidebar.sandboxes[pos];
+                        let old_id = entry.id;
+                        entry.id = sandbox.id;
+                        entry.index = sandbox.index;
+                        entry.name = sandbox.name.clone();
+                        entry.created_at = sandbox.created_at;
+                        entry.workspace = sandbox.workspace.clone();
+                        entry.status = sandbox.status.clone();
+                        entry.network = sandbox.network.clone();
+                        entry.correlation_id = None; // Clear correlation after matching
+                        updated_in_place = true;
+
+                        // Update selection to follow the new ID
+                        if was_selected {
+                            self.sidebar.selected_id = Some(sandbox.id);
+                        }
+
+                        // Update workspace_manager
+                        self.workspace_manager
+                            .remove_sandbox(SandboxId::from_uuid(old_id));
+                        self.add_sandbox(&sandbox_id_str, &sandbox.name);
+                        if was_selected {
+                            self.workspace_manager
+                                .select_sandbox(SandboxId::from_uuid(sandbox.id));
+                        }
+                    }
                 }
-                self.workspace_manager
-                    .select_sandbox(crate::mux::layout::SandboxId::from_uuid(sandbox.id));
-                self.pending_connect = Some(sandbox_id_str.clone());
+
+                // If no placeholder found, just add the sandbox
+                if !updated_in_place {
+                    // Remove duplicate if exists
+                    self.sidebar
+                        .sandboxes
+                        .retain(|existing| existing.id != sandbox.id);
+                    self.sidebar.sandboxes.push(sandbox.clone());
+                    self.add_sandbox(&sandbox_id_str, &sandbox.name);
+                }
+
+                // Map tab_id to sandbox in workspace manager
+                if let Some(tab_id_str) = &tab_id {
+                    if let Ok(tab_uuid) = Uuid::parse_str(tab_id_str) {
+                        let tab_id = crate::mux::layout::TabId::from_uuid(tab_uuid);
+                        let _ = self.workspace_manager.set_active_tab_id_for_sandbox(
+                            crate::mux::layout::SandboxId::from_uuid(sandbox.id),
+                            tab_id,
+                        );
+                    }
+                }
+
+                // Check if this sandbox was user-initiated (tab_id in pending_creation_tab_ids)
+                let is_user_initiated = tab_id
+                    .as_ref()
+                    .is_some_and(|id| self.pending_creation_tab_ids.remove(id));
+
+                if is_user_initiated {
+                    // Add to pending_connects queue - ALL user-initiated sandboxes get terminals
+                    self.pending_connects.push_back(sandbox_id_str.clone());
+                }
+
+                // Only select the MOST RECENT creation (prevents focus jumping)
+                let is_most_recent = tab_id
+                    .as_ref()
+                    .is_some_and(|id| self.most_recent_creation_tab_id.as_ref() == Some(id));
+                if is_most_recent {
+                    self.most_recent_creation_tab_id = None;
+                    // Select the newly created sandbox
+                    self.sidebar.select_by_id(sandbox.id);
+                    self.workspace_manager
+                        .select_sandbox(SandboxId::from_uuid(sandbox.id));
+                }
+
                 self.set_status(format!("Created sandbox: {}", sandbox.name));
             }
             MuxEvent::SandboxTabMapped { sandbox_id, tab_id } => {
@@ -864,8 +1324,8 @@ impl<'a> MuxApp<'a> {
                 self.set_status(message);
             }
             MuxEvent::ConnectToSandbox { sandbox_id } => {
-                // Select the sandbox and update workspace
-                self.select_sandbox(&sandbox_id);
+                // DON'T select here - selection was already done SYNC in add_placeholder_sandbox
+                // The runner handles pending_connect for terminal connection
                 self.set_status(format!("Connecting to sandbox: {}", sandbox_id));
             }
             MuxEvent::ConnectActivePaneToSandbox => {
@@ -890,6 +1350,8 @@ impl<'a> MuxApp<'a> {
     }
 
     /// Add a local placeholder sandbox for immediate UI feedback while creation runs.
+    /// The tab_id is stored as correlation_id on the sandbox itself to match placeholders
+    /// with created sandboxes even when sandbox creation completes out-of-order.
     pub fn add_placeholder_sandbox(
         &mut self,
         name: impl Into<String>,
@@ -897,13 +1359,15 @@ impl<'a> MuxApp<'a> {
     ) {
         let sandbox_id = SandboxId::new();
         let name = name.into();
+        let tab_id_str = tab_id.map(|t| t.to_string());
+
         let summary = SandboxSummary {
             id: sandbox_id.0,
             index: self.sidebar.sandboxes.len(),
             name: name.clone(),
             created_at: Utc::now(),
             workspace: "/workspace".to_string(),
-            status: SandboxStatus::Unknown,
+            status: SandboxStatus::Creating, // Creating status = placeholder
             network: SandboxNetwork {
                 host_interface: "pending".to_string(),
                 sandbox_interface: "pending".to_string(),
@@ -911,26 +1375,34 @@ impl<'a> MuxApp<'a> {
                 sandbox_ip: "0.0.0.0".to_string(),
                 cidr: 24,
             },
+            correlation_id: tab_id_str.clone(), // Stored on sandbox itself - single source of truth
         };
 
         self.sidebar.sandboxes.push(summary);
-        let id_str = sandbox_id.to_string();
-        self.sidebar.select_by_id(&id_str);
         self.workspace_manager.add_sandbox(sandbox_id, name.clone());
+
+        // IMMEDIATELY select the new placeholder - this is SYNC feedback for user's key press
+        // With ID-based selection, just set the selected_id directly
+        self.sidebar.select_by_id(sandbox_id.0);
+        self.workspace_manager.select_sandbox(sandbox_id);
+
         if let Some(tab_id) = tab_id {
             let _ = self
                 .workspace_manager
                 .set_active_tab_id_for_sandbox(sandbox_id, tab_id);
         }
-        self.workspace_manager.select_sandbox(sandbox_id);
-        self.pending_placeholder_sandboxes.push_back(sandbox_id);
-    }
 
-    fn remove_local_sandbox(&mut self, sandbox_id: SandboxId) {
-        self.remove_sandbox_by_id_string(&sandbox_id.to_string());
+        // Track ALL pending creations for terminal connections + the most recent for selection
+        if let Some(ref tid) = tab_id_str {
+            self.pending_creation_tab_ids.insert(tid.clone());
+            self.most_recent_creation_tab_id = Some(tid.clone());
+        }
     }
-
     fn remove_sandbox_by_id_string(&mut self, id: &str) {
+        let removed_uuid = Uuid::parse_str(id).ok();
+        let was_selected = removed_uuid == self.sidebar.selected_id;
+
+        // Find the index of the removed sandbox (for selecting neighbor if needed)
         let removed_index = self
             .sidebar
             .sandboxes
@@ -945,52 +1417,28 @@ impl<'a> MuxApp<'a> {
             .sandboxes
             .retain(|sandbox| sandbox.id.to_string() != id);
 
-        if let Some(pending) = &self.pending_connect {
-            if pending == id {
-                self.pending_connect = None;
-            }
-        }
+        // Remove deleted sandbox from pending_connects queue
+        self.pending_connects.retain(|pending| pending != id);
 
         if self.sidebar.sandboxes.is_empty() {
-            self.sidebar.selected_index = 0;
+            // List is now empty - clear selection
+            self.sidebar.selected_id = None;
             self.workspace_manager.active_sandbox_id = None;
-        } else if let Some(idx) = removed_index {
-            let next_index = if idx < self.sidebar.sandboxes.len() {
-                idx
-            } else {
-                self.sidebar.sandboxes.len() - 1
-            };
-
-            self.sidebar.selected_index = next_index;
-
-            let next_id = self.sidebar.sandboxes[next_index].id.to_string();
-            let _ = self.select_sandbox(&next_id);
-            self.sidebar.select_by_id(&next_id);
+        } else if was_selected {
+            // We removed the currently selected item - select a neighbor
+            if let Some(removed_idx) = removed_index {
+                let next_index = if removed_idx < self.sidebar.sandboxes.len() {
+                    removed_idx
+                } else {
+                    self.sidebar.sandboxes.len() - 1
+                };
+                let next_sandbox = &self.sidebar.sandboxes[next_index];
+                let next_id = next_sandbox.id;
+                self.sidebar.select_by_id(next_id);
+                let _ = self.select_sandbox(&next_id.to_string());
+            }
         }
-    }
-
-    fn placeholder_summary(&self, sandbox_id: SandboxId) -> Option<SandboxSummary> {
-        let name = self
-            .workspace_manager
-            .get_workspace(sandbox_id)
-            .map(|ws| ws.name.clone())
-            .unwrap_or_else(|| "Creating sandbox".to_string());
-
-        Some(SandboxSummary {
-            id: sandbox_id.0,
-            index: self.sidebar.sandboxes.len(),
-            name,
-            created_at: Utc::now(),
-            workspace: "/workspace".to_string(),
-            status: SandboxStatus::Unknown,
-            network: SandboxNetwork {
-                host_interface: "pending".to_string(),
-                sandbox_interface: "pending".to_string(),
-                host_ip: "0.0.0.0".to_string(),
-                sandbox_ip: "0.0.0.0".to_string(),
-                cidr: 24,
-            },
-        })
+        // If we didn't remove the selected item, selection is preserved by ID automatically
     }
 }
 
@@ -1006,13 +1454,21 @@ mod tests {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let mut app = MuxApp::new("http://localhost".to_string(), tx, PathBuf::from("."));
         let sandbox = sample_sandbox("demo");
+        let tab_id = Uuid::new_v4().to_string();
 
-        app.handle_event(MuxEvent::SandboxCreated(sandbox.clone()));
+        // Simulate user-initiated creation by setting the trackers
+        app.pending_creation_tab_ids.insert(tab_id.clone());
+        app.most_recent_creation_tab_id = Some(tab_id.clone());
+
+        app.handle_event(MuxEvent::SandboxCreated {
+            sandbox: sandbox.clone(),
+            tab_id: Some(tab_id),
+        });
 
         assert_eq!(
-            app.pending_connect,
-            Some(sandbox.id.to_string()),
-            "pending_connect should point at the new sandbox"
+            app.pending_connects.back(),
+            Some(&sandbox.id.to_string()),
+            "pending_connects should contain the new sandbox"
         );
         assert_eq!(
             app.selected_sandbox_id_string(),
@@ -1025,6 +1481,30 @@ mod tests {
     }
 
     #[test]
+    fn sandbox_created_without_matching_tab_id_does_not_steal_focus() {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = MuxApp::new("http://localhost".to_string(), tx, PathBuf::from("."));
+        let sandbox = sample_sandbox("demo");
+
+        // Create with a different tab_id than what was initiated
+        let initiated_tab_id = Uuid::new_v4().to_string();
+        app.pending_creation_tab_ids
+            .insert(initiated_tab_id.clone());
+        app.most_recent_creation_tab_id = Some(initiated_tab_id);
+
+        app.handle_event(MuxEvent::SandboxCreated {
+            sandbox: sandbox.clone(),
+            tab_id: Some(Uuid::new_v4().to_string()), // Different tab_id
+        });
+
+        // Should NOT add to pending_connects since this wasn't user-initiated
+        assert!(
+            app.pending_connects.is_empty(),
+            "pending_connects should be empty for non-matching tab_id"
+        );
+    }
+
+    #[test]
     fn refresh_without_selection_queues_connect() {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let mut app = MuxApp::new("http://localhost".to_string(), tx, PathBuf::from("."));
@@ -1032,7 +1512,7 @@ mod tests {
 
         app.handle_event(MuxEvent::SandboxesRefreshed(vec![sandbox.clone()]));
 
-        assert_eq!(app.pending_connect, Some(sandbox.id.to_string()));
+        assert_eq!(app.pending_connects.back(), Some(&sandbox.id.to_string()));
         assert_eq!(
             app.sidebar.selected_sandbox().map(|s| s.id),
             Some(sandbox.id)
@@ -1089,6 +1569,7 @@ mod tests {
                 sandbox_ip: "10.0.0.2".to_string(),
                 cidr: 24,
             },
+            correlation_id: None,
         }
     }
 }

@@ -212,7 +212,7 @@ If you can't install dependencies/start the dev server, just let me know. Do not
         prompt,
         options: {
           // model: "claude-haiku-4-5",
-          model: "claude-sonnet-4-5",
+          model: "claude-opus-4-5",
           // mcpServers: {
           //   "playwright": {
           //     command: "bunx",

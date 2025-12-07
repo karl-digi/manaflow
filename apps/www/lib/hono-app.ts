@@ -1,3 +1,4 @@
+import { normalizeOrigin } from "@cmux/shared";
 import { githubPrsBackfillRepoRouter } from "@/lib/routes/github.prs.backfill-repo.route";
 import { githubPrsBackfillRouter } from "@/lib/routes/github.prs.backfill.route";
 import { githubPrsCodeRouter } from "@/lib/routes/github.prs.code.route";
@@ -14,6 +15,7 @@ import {
   codeReviewRouter,
   devServerRouter,
   environmentsRouter,
+  githubFrameworkDetectionRouter,
   githubInstallStateRouter,
   githubOAuthTokenRouter,
   healthRouter,
@@ -29,10 +31,20 @@ import { authAnonymousRouter } from "@/lib/routes/auth.anonymous.route";
 import { stackServerApp } from "@/lib/utils/stack";
 import { swaggerUI } from "@hono/swagger-ui";
 import { OpenAPIHono } from "@hono/zod-openapi";
+import { relatedProjects } from "@vercel/related-projects";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { prettyJSON } from "hono/pretty-json";
 import { decodeJwt } from "jose";
+import { setupHonoErrorHandler } from "@sentry/node";
+
+// Get client preview URL from related projects for CORS
+const clientPreviewOriginRaw = relatedProjects({ noThrow: true }).find(
+  (p) => p.project.name === "cmux-client",
+)?.preview.branch;
+const clientPreviewOrigin = clientPreviewOriginRaw
+  ? normalizeOrigin(clientPreviewOriginRaw)
+  : undefined;
 
 const app = new OpenAPIHono({
   defaultHook: (result, c) => {
@@ -72,6 +84,7 @@ app.use(
       "http://localhost:9779",
       "https://cmux.sh",
       "https://www.cmux.sh",
+      ...(clientPreviewOrigin ? [clientPreviewOrigin] : []),
     ],
     credentials: true,
     allowHeaders: ["x-stack-auth", "content-type", "authorization"],
@@ -106,6 +119,7 @@ app.route("/", usersRouter);
 app.route("/", booksRouter);
 app.route("/", devServerRouter);
 app.route("/", githubReposRouter);
+app.route("/", githubFrameworkDetectionRouter);
 app.route("/", githubPrsRouter);
 app.route("/", githubPrsBackfillRouter);
 app.route("/", githubPrsBackfillRepoRouter);
@@ -149,6 +163,9 @@ app.notFound((c) => {
     404,
   );
 });
+
+// Sentry error handler - must be before custom error handler
+setupHonoErrorHandler(app);
 
 // Error handler
 app.onError((err, c) => {

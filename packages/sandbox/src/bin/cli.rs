@@ -5,7 +5,9 @@ use cmux_sandbox::models::{
 };
 use cmux_sandbox::{
     build_default_env_vars, extract_api_key_from_output, store_claude_token,
-    sync_files::{upload_sync_files, SYNC_FILES},
+    sync_files::{
+        prebuild_sync_files_tar, upload_prebuilt_sync_files, upload_sync_files, SYNC_FILES,
+    },
     AcpProvider, DEFAULT_HTTP_PORT, DEFAULT_IMAGE, DMUX_DEFAULT_CONTAINER, DMUX_DEFAULT_HTTP_PORT,
     DMUX_DEFAULT_IMAGE,
 };
@@ -89,6 +91,13 @@ enum Command {
     #[command(name = "_internal-proxy", hide = true)]
     InternalProxy { address: String },
 
+    /// Internal helper to proxy SSH through WebSocket to a sandbox (used as SSH ProxyCommand)
+    #[command(name = "_ssh-proxy", hide = true)]
+    SshProxy {
+        /// Sandbox ID or index
+        id: String,
+    },
+
     /// Start the sandbox server container
     Start(StartArgs),
     /// Stop the sandbox server container
@@ -116,6 +125,12 @@ enum Command {
 
     /// Check Docker setup and download sandbox image if needed
     Onboard,
+
+    /// SSH into a sandbox (real SSH, not WebSocket attach)
+    Ssh(SshArgs),
+
+    /// Generate SSH config for easy sandbox access (e.g., `ssh sandbox-0`)
+    SshConfig,
 }
 
 #[derive(Args, Debug)]
@@ -146,6 +161,15 @@ struct AuthArgs {
 enum AuthCommand {
     /// List detected authentication files on the host
     Status,
+}
+
+#[derive(Args, Debug)]
+struct SshArgs {
+    /// Sandbox ID or index
+    id: String,
+    /// Additional SSH arguments (e.g., -L 8080:localhost:8080 for port forwarding)
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    ssh_args: Vec<String>,
 }
 
 #[derive(Args, Debug)]
@@ -384,6 +408,15 @@ async fn run() -> anyhow::Result<()> {
         }
         Command::New(args) => {
             check_server_reachable(&client, &cli.base_url).await?;
+
+            // OPTIMIZATION: Pre-build the sync files tar while waiting for sandbox creation
+            // This overlaps CPU work (tar creation) with network I/O (sandbox creation)
+            let sync_tar_handle = tokio::task::spawn_blocking(prebuild_sync_files_tar);
+
+            // OPTIMIZATION: Start building the workspace tar archive BEFORE sandbox creation
+            // The stream_directory function spawns a blocking task that starts immediately
+            let workspace_body = stream_directory(args.path.clone());
+
             let body = CreateSandboxRequest {
                 name: Some("interactive".into()),
                 workspace: None,
@@ -397,32 +430,94 @@ async fn run() -> anyhow::Result<()> {
             let summary: SandboxSummary = parse_response(response).await?;
             eprintln!("Created sandbox {}", summary.id);
 
-            // Upload directory
-            eprintln!("Uploading directory: {}", args.path.display());
-            let body = stream_directory(args.path.clone());
-            let url = format!(
-                "{}/sandboxes/{}/files",
-                cli.base_url.trim_end_matches('/'),
-                summary.id
-            );
-            let response = client.post(url).body(body).send().await?;
-            if !response.status().is_success() {
-                eprintln!("Failed to upload files: {}", response.status());
-            } else {
-                eprintln!("Files uploaded.");
-            }
+            // OPTIMIZATION: Start uploads in background, attach to shell IMMEDIATELY
+            // User gets a shell while files are still uploading in the background
+            let sandbox_id_for_upload = summary.id.to_string();
+            let base_url_for_upload = cli.base_url.clone();
+            let client_for_upload = client.clone();
+            let path_display = args.path.display().to_string();
 
-            // Upload auth files
-            if let Err(e) =
-                upload_sync_files(&client, &cli.base_url, &summary.id.to_string(), true).await
-            {
-                eprintln!("Warning: Failed to upload auth files: {}", e);
-            }
+            eprintln!("Uploading {} in background...", path_display);
+
+            // Spawn workspace upload task - starts immediately to drain the stream
+            let upload_url = format!(
+                "{}/sandboxes/{}/files",
+                base_url_for_upload.trim_end_matches('/'),
+                sandbox_id_for_upload
+            );
+            let client_for_workspace = client_for_upload.clone();
+            let workspace_upload_handle = tokio::spawn(async move {
+                let response = client_for_workspace
+                    .post(&upload_url)
+                    .body(workspace_body)
+                    .send()
+                    .await;
+                match response {
+                    Ok(resp) if resp.status().is_success() => {
+                        eprintln!("\r\x1b[K\x1b[32m✓\x1b[0m Files uploaded.");
+                    }
+                    Ok(resp) => {
+                        eprintln!(
+                            "\r\x1b[K\x1b[31m✗\x1b[0m Failed to upload files: {}",
+                            resp.status()
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!("\r\x1b[K\x1b[31m✗\x1b[0m Failed to upload files: {}", e);
+                    }
+                }
+            });
+
+            // Spawn auth upload task - waits for tar to be ready first
+            let auth_upload_handle = tokio::spawn(async move {
+                let sync_tar_result = match sync_tar_handle.await {
+                    Ok(result) => result,
+                    Err(e) => {
+                        eprintln!(
+                            "\r\x1b[K\x1b[33m!\x1b[0m Warning: Failed to build auth files tar: {}",
+                            e
+                        );
+                        return;
+                    }
+                };
+                let tar_data = match sync_tar_result {
+                    Ok(Some(data)) => data,
+                    Ok(None) => return, // No files to sync
+                    Err(e) => {
+                        eprintln!(
+                            "\r\x1b[K\x1b[33m!\x1b[0m Warning: Failed to build auth files tar: {}",
+                            e
+                        );
+                        return;
+                    }
+                };
+                if let Err(e) = upload_prebuilt_sync_files(
+                    &client_for_upload,
+                    &base_url_for_upload,
+                    &sandbox_id_for_upload,
+                    tar_data,
+                    false,
+                )
+                .await
+                {
+                    eprintln!(
+                        "\r\x1b[K\x1b[33m!\x1b[0m Warning: Failed to upload auth files: {}",
+                        e
+                    );
+                }
+            });
 
             save_last_sandbox(&summary.id.to_string());
             if should_attach() {
-                handle_ssh(&cli.base_url, &summary.id.to_string()).await?;
+                // Run SSH session, but ensure uploads complete even if SSH exits quickly
+                let ssh_result = handle_ssh(&cli.base_url, &summary.id.to_string()).await;
+                // Wait for background uploads to complete before exiting
+                // (otherwise the runtime shuts down and cancels the background tasks)
+                let _ = tokio::join!(workspace_upload_handle, auth_upload_handle);
+                ssh_result?;
             } else {
+                // In non-interactive mode, wait for uploads to complete before exiting
+                let _ = tokio::join!(workspace_upload_handle, auth_upload_handle);
                 eprintln!(
                     "Skipping interactive shell attach (non-interactive environment detected)."
                 );
@@ -459,6 +554,9 @@ async fn run() -> anyhow::Result<()> {
                 tokio::io::copy(&mut stdin, &mut wi),
                 tokio::io::copy(&mut ri, &mut stdout)
             );
+        }
+        Command::SshProxy { id } => {
+            handle_ssh_proxy(&cli.base_url, &id).await?;
         }
         Command::Proxy { id, port } => {
             handle_proxy(cli.base_url, id, port).await?;
@@ -601,6 +699,12 @@ async fn run() -> anyhow::Result<()> {
         Command::Onboard => {
             handle_onboard().await?;
         }
+        Command::Ssh(args) => {
+            handle_real_ssh(&client, &cli.base_url, &args).await?;
+        }
+        Command::SshConfig => {
+            handle_ssh_config(&client, &cli.base_url).await?;
+        }
         Command::Sandboxes(cmd) => {
             match cmd {
                 SandboxCommand::List => {
@@ -637,6 +741,12 @@ async fn run() -> anyhow::Result<()> {
                     }
                 }
                 SandboxCommand::New(args) => {
+                    // OPTIMIZATION: Pre-build the sync files tar while waiting for sandbox creation
+                    let sync_tar_handle = tokio::task::spawn_blocking(prebuild_sync_files_tar);
+
+                    // OPTIMIZATION: Start building the workspace tar archive BEFORE sandbox creation
+                    let workspace_body = stream_directory(args.path.clone());
+
                     let body = CreateSandboxRequest {
                         name: Some("interactive".into()),
                         workspace: None,
@@ -650,34 +760,96 @@ async fn run() -> anyhow::Result<()> {
                     let summary: SandboxSummary = parse_response(response).await?;
                     eprintln!("Created sandbox {}", summary.id);
 
-                    // Upload directory
-                    eprintln!("Uploading directory: {}", args.path.display());
-                    let body = stream_directory(args.path.clone());
-                    let url = format!(
-                        "{}/sandboxes/{}/files",
-                        cli.base_url.trim_end_matches('/'),
-                        summary.id
-                    );
-                    let response = client.post(url).body(body).send().await?;
-                    if !response.status().is_success() {
-                        eprintln!("Failed to upload files: {}", response.status());
-                    } else {
-                        eprintln!("Files uploaded.");
-                    }
+                    // OPTIMIZATION: Start uploads in background, attach to shell IMMEDIATELY
+                    let sandbox_id_for_upload = summary.id.to_string();
+                    let base_url_for_upload = cli.base_url.clone();
+                    let client_for_upload = client.clone();
+                    let path_display = args.path.display().to_string();
 
-                    // Upload auth files
-                    if let Err(e) =
-                        upload_sync_files(&client, &cli.base_url, &summary.id.to_string(), true)
-                            .await
-                    {
-                        eprintln!("Warning: Failed to upload auth files: {}", e);
-                    }
+                    eprintln!("Uploading {} in background...", path_display);
+
+                    // Spawn workspace upload task - starts immediately to drain the stream
+                    let upload_url = format!(
+                        "{}/sandboxes/{}/files",
+                        base_url_for_upload.trim_end_matches('/'),
+                        sandbox_id_for_upload
+                    );
+                    let client_for_workspace = client_for_upload.clone();
+                    let workspace_upload_handle = tokio::spawn(async move {
+                        let response = client_for_workspace
+                            .post(&upload_url)
+                            .body(workspace_body)
+                            .send()
+                            .await;
+                        match response {
+                            Ok(resp) if resp.status().is_success() => {
+                                eprintln!("\r\x1b[K\x1b[32m✓\x1b[0m Files uploaded.");
+                            }
+                            Ok(resp) => {
+                                eprintln!(
+                                    "\r\x1b[K\x1b[31m✗\x1b[0m Failed to upload files: {}",
+                                    resp.status()
+                                );
+                            }
+                            Err(e) => {
+                                eprintln!("\r\x1b[K\x1b[31m✗\x1b[0m Failed to upload files: {}", e);
+                            }
+                        }
+                    });
+
+                    // Spawn auth upload task - waits for tar to be ready first
+                    let auth_upload_handle = tokio::spawn(async move {
+                        let sync_tar_result = match sync_tar_handle.await {
+                            Ok(result) => result,
+                            Err(e) => {
+                                eprintln!(
+                                    "\r\x1b[K\x1b[33m!\x1b[0m Warning: Failed to build auth files tar: {}",
+                                    e
+                                );
+                                return;
+                            }
+                        };
+                        let tar_data = match sync_tar_result {
+                            Ok(Some(data)) => data,
+                            Ok(None) => return, // No files to sync
+                            Err(e) => {
+                                eprintln!(
+                                    "\r\x1b[K\x1b[33m!\x1b[0m Warning: Failed to build auth files tar: {}",
+                                    e
+                                );
+                                return;
+                            }
+                        };
+                        if let Err(e) = upload_prebuilt_sync_files(
+                            &client_for_upload,
+                            &base_url_for_upload,
+                            &sandbox_id_for_upload,
+                            tar_data,
+                            false,
+                        )
+                        .await
+                        {
+                            eprintln!(
+                                "\r\x1b[K\x1b[33m!\x1b[0m Warning: Failed to upload auth files: {}",
+                                e
+                            );
+                        }
+                    });
 
                     save_last_sandbox(&summary.id.to_string());
                     if should_attach() {
-                        handle_ssh(&cli.base_url, &summary.id.to_string()).await?;
+                        // Run SSH session, but ensure uploads complete even if SSH exits quickly
+                        let ssh_result = handle_ssh(&cli.base_url, &summary.id.to_string()).await;
+                        // Wait for background uploads to complete before exiting
+                        // (otherwise the runtime shuts down and cancels the background tasks)
+                        let _ = tokio::join!(workspace_upload_handle, auth_upload_handle);
+                        ssh_result?;
                     } else {
-                        eprintln!("Skipping interactive shell attach (non-interactive environment detected).");
+                        // In non-interactive mode, wait for uploads to complete before exiting
+                        let _ = tokio::join!(workspace_upload_handle, auth_upload_handle);
+                        eprintln!(
+                            "Skipping interactive shell attach (non-interactive environment detected)."
+                        );
                     }
                 }
                 SandboxCommand::Show { id } => {
@@ -1855,6 +2027,172 @@ async fn handle_onboard() -> anyhow::Result<()> {
             println!("\nSkipping image download. You can download it later with:");
             println!("\n  \x1b[36mdocker pull {}\x1b[0m\n", image_name);
         }
+    }
+
+    Ok(())
+}
+
+/// Handle real SSH to a sandbox (via WebSocket proxy)
+async fn handle_real_ssh(client: &Client, base_url: &str, args: &SshArgs) -> anyhow::Result<()> {
+    let binary_name = if is_dmux() { "dmux" } else { "cmux" };
+
+    // Sync SSH keys and config files to sandbox before connecting
+    // This ensures authorized_keys exists and sshd is running
+    eprintln!("Syncing SSH keys to sandbox {}...", args.id);
+    if let Err(e) = upload_sync_files(client, base_url, &args.id, false).await {
+        eprintln!("Warning: Failed to sync files: {}", e);
+    }
+
+    // Build SSH command with ProxyCommand using our _ssh-proxy
+    let mut ssh_args = vec![
+        "-o".to_string(),
+        "StrictHostKeyChecking=no".to_string(),
+        "-o".to_string(),
+        "UserKnownHostsFile=/dev/null".to_string(),
+        "-o".to_string(),
+        "LogLevel=ERROR".to_string(),
+        "-o".to_string(),
+        format!("ProxyCommand={} _ssh-proxy {}", binary_name, args.id),
+    ];
+
+    // The hostname (doesn't matter since we use ProxyCommand, but SSH requires one)
+    // Must come before any remote command
+    ssh_args.push(format!("root@sandbox-{}", args.id));
+
+    // Add any extra SSH args from user (typically remote commands to execute)
+    for arg in &args.ssh_args {
+        ssh_args.push(arg.clone());
+    }
+
+    eprintln!("Connecting to sandbox {}...", args.id);
+
+    // Execute native SSH with ProxyCommand
+    // Use exec on Unix to replace process and fully inherit terminal for passphrase prompts
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let err = std::process::Command::new("ssh").args(&ssh_args).exec();
+        // exec only returns on error
+        Err(anyhow::anyhow!("Failed to exec ssh: {}", err))
+    }
+
+    #[cfg(not(unix))]
+    {
+        let status = std::process::Command::new("ssh").args(&ssh_args).status()?;
+        if !status.success() {
+            return Err(anyhow::anyhow!("SSH connection failed"));
+        }
+        Ok(())
+    }
+}
+
+/// Generate SSH config for easy sandbox access
+async fn handle_ssh_config(_client: &Client, _base_url: &str) -> anyhow::Result<()> {
+    let binary_name = if is_dmux() { "dmux" } else { "cmux" };
+
+    println!("# SSH config for {} sandboxes", binary_name);
+    println!("# Add this to ~/.ssh/config");
+    println!();
+
+    // Generate a wildcard config for sandbox-* pattern using _ssh-proxy
+    println!("# Wildcard config for all sandboxes (works from macOS shell)");
+    println!("Host sandbox-*");
+    println!("    User root");
+    println!("    StrictHostKeyChecking no");
+    println!("    UserKnownHostsFile /dev/null");
+    println!("    LogLevel ERROR");
+    println!(
+        "    ProxyCommand {} _ssh-proxy $(echo %n | sed 's/sandbox-//')",
+        binary_name
+    );
+    println!();
+
+    eprintln!();
+    eprintln!("Usage examples:");
+    eprintln!("  ssh sandbox-0                           # SSH into sandbox 0");
+    eprintln!("  ssh sandbox-0 -L 8080:localhost:8080    # With port forwarding");
+    eprintln!("  scp sandbox-0:/workspace/file ./        # Copy files");
+    eprintln!("  rsync -avz sandbox-0:/workspace/ ./     # Rsync with sandbox");
+    eprintln!();
+    eprintln!("Or use '{}' directly:", binary_name);
+    eprintln!("  {} ssh <index>              # Direct SSH", binary_name);
+    eprintln!(
+        "  {} ssh <index> -L 8080:localhost:8080  # With port forwarding",
+        binary_name
+    );
+
+    Ok(())
+}
+
+/// Internal SSH proxy command - bridges stdin/stdout to WebSocket for SSH ProxyCommand
+async fn handle_ssh_proxy(base_url: &str, id: &str) -> anyhow::Result<()> {
+    // Build WebSocket URL for the proxy endpoint
+    let ws_url = base_url
+        .replace("http://", "ws://")
+        .replace("https://", "wss://");
+    let proxy_url = format!(
+        "{}/sandboxes/{}/proxy?port=22",
+        ws_url.trim_end_matches('/'),
+        id
+    );
+
+    // Connect to WebSocket
+    let (ws_stream, _) = connect_async(&proxy_url)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to connect to proxy: {}", e))?;
+
+    let (mut ws_write, mut ws_read) = ws_stream.split();
+    let mut stdin = tokio::io::stdin();
+    let mut stdout = tokio::io::stdout();
+
+    // Bridge stdin/stdout to WebSocket
+    let stdin_to_ws = async {
+        let mut buf = [0u8; 8192];
+        loop {
+            match stdin.read(&mut buf).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    if ws_write
+                        .send(Message::Binary(buf[..n].to_vec()))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    };
+
+    let ws_to_stdout = async {
+        while let Some(msg) = ws_read.next().await {
+            match msg {
+                Ok(Message::Binary(data)) => {
+                    if stdout.write_all(&data).await.is_err() {
+                        break;
+                    }
+                    if stdout.flush().await.is_err() {
+                        break;
+                    }
+                }
+                Ok(Message::Text(text)) => {
+                    if stdout.write_all(text.as_bytes()).await.is_err() {
+                        break;
+                    }
+                    if stdout.flush().await.is_err() {
+                        break;
+                    }
+                }
+                Ok(Message::Close(_)) | Err(_) => break,
+                _ => {}
+            }
+        }
+    };
+
+    tokio::select! {
+        _ = stdin_to_ws => {}
+        _ = ws_to_stdout => {}
     }
 
     Ok(())

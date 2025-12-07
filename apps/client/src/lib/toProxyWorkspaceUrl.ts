@@ -142,6 +142,26 @@ export function toMorphVncUrl(sourceUrl: string): string | null {
   return vncUrl.toString();
 }
 
+/**
+ * Convert a workspace URL to a VNC websocket URL for direct noVNC/RFB connection.
+ * This returns a wss:// URL pointing to the /websockify endpoint.
+ */
+export function toMorphVncWebsocketUrl(sourceUrl: string): string | null {
+  const components = parseMorphUrl(sourceUrl);
+
+  if (!components) {
+    return null;
+  }
+
+  const wsUrl = createMorphPortUrl(components, 39380);
+  wsUrl.protocol = "wss:";
+  wsUrl.pathname = "/websockify";
+  wsUrl.search = "";
+  wsUrl.hash = "";
+
+  return wsUrl.toString();
+}
+
 export function toMorphXtermBaseUrl(sourceUrl: string): string | null {
   const components = parseMorphUrl(sourceUrl);
 
