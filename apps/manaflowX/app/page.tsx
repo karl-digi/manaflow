@@ -423,7 +423,7 @@ function HomeContent() {
       <div className="flex justify-center">
         {/* Main Feed Column */}
         <main
-          className={`w-full max-w-[600px] border-x border-gray-800 min-h-screen`}
+          className={`w-full sm:min-w-[450px] max-w-[666px] shrink sm:border-x border-gray-800 min-h-screen`}
         >
           <div className="sticky top-0 z-10 bg-black/80 backdrop-blur-md border-b border-gray-800 h-[60px] px-4 flex justify-between items-center">
             <h1 className="text-xl font-bold">Feed</h1>
@@ -501,7 +501,7 @@ function HomeContent() {
 
         {/* Thread Panel - Right Column */}
         {selectedThread && (
-          <aside className="w-[550px] border-r border-gray-800 min-h-screen sticky top-0 h-screen overflow-hidden hidden lg:block">
+          <aside className="w-[550px] shrink-0 border-r border-gray-800 min-h-screen sticky top-0 h-screen overflow-hidden hidden lg:block">
             <ThreadPanel
               postId={selectedThread}
               onClose={() => setSelectedThread(null)}
@@ -514,7 +514,7 @@ function HomeContent() {
 
         {/* Coding Agent Session Panel - Third Column */}
         {selectedCodingAgentSession && !selectedBrowserAgentSession && (
-          <aside className="w-[500px] border-r border-gray-800 min-h-screen sticky top-0 h-screen overflow-hidden hidden xl:block">
+          <aside className="w-[500px] shrink border-r border-gray-800 min-h-screen sticky top-0 h-screen overflow-hidden hidden xl:block">
             <CodingAgentSession
               sessionId={selectedCodingAgentSession}
               onClose={() => setSelectedCodingAgentSession(null)}
@@ -524,7 +524,7 @@ function HomeContent() {
 
         {/* Browser Agent Session Panel - Third Column (takes precedence over coding agent) */}
         {selectedBrowserAgentSession && (
-          <aside className="w-[600px] border-r border-gray-800 min-h-screen sticky top-0 h-screen overflow-hidden hidden xl:block">
+          <aside className="w-[600px] shrink border-r border-gray-800 min-h-screen sticky top-0 h-screen overflow-hidden hidden xl:block">
             <BrowserAgentSession
               sessionId={selectedBrowserAgentSession}
               onClose={() => setSelectedBrowserAgentSession(null)}
