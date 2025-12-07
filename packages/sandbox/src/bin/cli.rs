@@ -2544,11 +2544,25 @@ struct OrphanedDir {
     is_uuid: bool,
     /// Disk usage in bytes
     size_bytes: u64,
+    /// Modification time (Unix timestamp in seconds)
+    modified_time: i64,
 }
 
 impl OrphanedDir {
     fn format_size(&self) -> String {
         format_bytes(self.size_bytes)
+    }
+
+    fn format_time(&self) -> String {
+        use chrono::{TimeZone, Utc};
+        if self.modified_time == 0 {
+            return "unknown".to_string();
+        }
+        let dt = Utc.timestamp_opt(self.modified_time, 0);
+        match dt {
+            chrono::LocalResult::Single(dt) => dt.format("%Y-%m-%d %H:%M").to_string(),
+            _ => "invalid".to_string(),
+        }
     }
 }
 
@@ -2618,15 +2632,11 @@ async fn scan_volume_directories(container_name: &str) -> anyhow::Result<Vec<Orp
 
         let is_uuid = Uuid::parse_str(dir_name).is_ok();
 
+        let dir_path = format!("/var/lib/cmux/sandboxes/{}", dir_name);
+
         // Get disk usage for this directory
         let size_output = ProcessCommand::new("docker")
-            .args([
-                "exec",
-                container_name,
-                "du",
-                "-sb",
-                &format!("/var/lib/cmux/sandboxes/{}", dir_name),
-            ])
+            .args(["exec", container_name, "du", "-sb", &dir_path])
             .output();
 
         let size_bytes = match size_output {
@@ -2641,10 +2651,24 @@ async fn scan_volume_directories(container_name: &str) -> anyhow::Result<Vec<Orp
             _ => 0,
         };
 
+        // Get modification time using stat
+        let stat_output = ProcessCommand::new("docker")
+            .args(["exec", container_name, "stat", "-c", "%Y", &dir_path])
+            .output();
+
+        let modified_time = match stat_output {
+            Ok(out) if out.status.success() => {
+                let time_str = String::from_utf8_lossy(&out.stdout);
+                time_str.trim().parse::<i64>().unwrap_or(0)
+            }
+            _ => 0,
+        };
+
         dirs.push(OrphanedDir {
             id: dir_name.to_string(),
             is_uuid,
             size_bytes,
+            modified_time,
         });
     }
 
@@ -2685,6 +2709,32 @@ async fn delete_orphaned_dir(container_name: &str, dir_id: &str) -> anyhow::Resu
     Ok(())
 }
 
+/// Sort mode for prune TUI
+#[derive(Clone, Copy, PartialEq)]
+enum PruneSortMode {
+    Date, // Oldest first (default)
+    Size, // Largest first
+    Id,   // Alphabetical
+}
+
+impl PruneSortMode {
+    fn next(self) -> Self {
+        match self {
+            PruneSortMode::Date => PruneSortMode::Size,
+            PruneSortMode::Size => PruneSortMode::Id,
+            PruneSortMode::Id => PruneSortMode::Date,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            PruneSortMode::Date => "date",
+            PruneSortMode::Size => "size",
+            PruneSortMode::Id => "id",
+        }
+    }
+}
+
 /// Handle pruning orphaned volumes (directories not tracked by server)
 async fn handle_prune_volumes(
     client: &Client,
@@ -2693,7 +2743,13 @@ async fn handle_prune_volumes(
 ) -> anyhow::Result<()> {
     use crossterm::event::{self, Event, KeyCode, KeyModifiers};
     use crossterm::execute;
-    use crossterm::terminal::{Clear, ClearType};
+    use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
+    use ratatui::backend::CrosstermBackend;
+    use ratatui::layout::{Constraint, Direction, Layout};
+    use ratatui::style::{Color, Modifier, Style};
+    use ratatui::text::{Line, Span};
+    use ratatui::widgets::{Block, Borders, Paragraph, Row, Table};
+    use ratatui::Terminal;
     use std::io::Write;
 
     let container_name = get_container_name();
@@ -2713,7 +2769,11 @@ async fn handle_prune_volumes(
             "\x1b[33mWarning:\x1b[0m Container '{}' is not running.",
             container_name
         );
-        eprintln!("Start the server with `dmux start` to enable volume pruning.");
+        let cmd = if is_dmux() { "dmux" } else { "cmux" };
+        eprintln!(
+            "Start the server with `{} start` to enable volume pruning.",
+            cmd
+        );
         return Ok(());
     }
 
@@ -2752,88 +2812,55 @@ async fn handle_prune_volumes(
     }
 
     // Filter to orphaned directories (not tracked by server)
-    let orphaned: Vec<&OrphanedDir> = all_dirs
-        .iter()
+    let mut orphaned: Vec<OrphanedDir> = all_dirs
+        .into_iter()
         .filter(|d| !known_ids.contains(&d.id))
         .collect();
 
     if orphaned.is_empty() {
-        println!(
-            "No orphaned directories found. All {} directories are tracked by the server.",
-            all_dirs.len()
-        );
+        println!("No orphaned directories found. All directories are tracked by the server.");
         return Ok(());
     }
 
+    // Sort by date (oldest first) by default
+    orphaned.sort_by_key(|d| d.modified_time);
+
     let total_orphaned_size: u64 = orphaned.iter().map(|d| d.size_bytes).sum();
-    println!(
-        "Found {} orphaned director{} ({} total):\n",
-        orphaned.len(),
-        if orphaned.len() == 1 { "y" } else { "ies" },
-        format_bytes(total_orphaned_size)
-    );
 
     // Determine mode: interactive TUI, --all, or simple prompt
     let use_interactive = args.interactive || (!args.all && std::io::stdin().is_terminal());
 
     let to_delete: Vec<&OrphanedDir> = if args.all {
-        orphaned.clone()
+        orphaned.iter().collect()
     } else if use_interactive {
-        // Interactive TUI mode
+        // Interactive TUI mode with proper ratatui
         let mut selected: Vec<bool> = vec![false; orphaned.len()];
         let mut cursor = 0usize;
-        let mut sort_by_size = false; // false = by id, true = by size (largest first)
+        let mut sort_mode = PruneSortMode::Date;
+        let mut scroll_offset = 0usize;
+        let mut cancelled = false;
 
+        // Setup terminal
         enable_raw_mode()?;
-        let _guard = RawModeGuard::new().ok();
+        let mut stdout = std::io::stdout();
+        execute!(stdout, EnterAlternateScreen)?;
+        let backend = CrosstermBackend::new(stdout);
+        let mut terminal = Terminal::new(backend)?;
 
         loop {
-            execute!(std::io::stdout(), Clear(ClearType::All))?;
-            print!("\x1b[H");
-
-            println!("\x1b[1mOrphaned Volume Pruner\x1b[0m - Select directories to delete\n");
-            println!(
-                "  \x1b[90mj/k or ↑/↓: navigate | Space: toggle | a: select all | n: select none\x1b[0m"
-            );
-            println!(
-                "  \x1b[90ms: sort by {} | Enter: confirm | q/Esc: cancel\x1b[0m\n",
-                if sort_by_size { "id" } else { "size" }
-            );
-
-            // Get display order
+            // Compute display order based on sort mode
             let mut display_order: Vec<usize> = (0..orphaned.len()).collect();
-            if sort_by_size {
-                display_order.sort_by(|&a, &b| orphaned[b].size_bytes.cmp(&orphaned[a].size_bytes));
-            }
-
-            println!(
-                "  \x1b[1m{:>3}  {:<38} {:>10}\x1b[0m",
-                "", "DIRECTORY ID", "SIZE"
-            );
-            println!("  {:->3}  {:->38} {:->10}", "", "", "");
-
-            for (display_idx, &dir_idx) in display_order.iter().enumerate() {
-                let dir = orphaned[dir_idx];
-                let is_selected = selected[dir_idx];
-                let is_cursor = display_idx == cursor;
-
-                let checkbox = if is_selected { "[x]" } else { "[ ]" };
-                let cursor_indicator = if is_cursor { ">" } else { " " };
-                let highlight = if is_cursor { "\x1b[7m" } else { "" };
-                let reset = if is_cursor { "\x1b[0m" } else { "" };
-
-                let id_color = if dir.is_uuid { "" } else { "\x1b[33m" };
-
-                println!(
-                    "{}{} {} {}{:<38}\x1b[0m {:>10}{}",
-                    highlight,
-                    cursor_indicator,
-                    checkbox,
-                    id_color,
-                    dir.id,
-                    dir.format_size(),
-                    reset
-                );
+            match sort_mode {
+                PruneSortMode::Date => {
+                    display_order.sort_by_key(|&i| orphaned[i].modified_time);
+                }
+                PruneSortMode::Size => {
+                    display_order
+                        .sort_by(|&a, &b| orphaned[b].size_bytes.cmp(&orphaned[a].size_bytes));
+                }
+                PruneSortMode::Id => {
+                    display_order.sort_by(|&a, &b| orphaned[a].id.cmp(&orphaned[b].id));
+                }
             }
 
             let selected_count = selected.iter().filter(|&&s| s).count();
@@ -2843,24 +2870,164 @@ async fn handle_prune_volumes(
                 .filter(|(_, &s)| s)
                 .map(|(i, _)| orphaned[i].size_bytes)
                 .sum();
-            println!(
-                "\n  \x1b[1m{} director{} selected ({})\x1b[0m",
-                selected_count,
-                if selected_count == 1 { "y" } else { "ies" },
-                format_bytes(selected_size)
-            );
 
-            std::io::stdout().flush()?;
+            terminal.draw(|f| {
+                let chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Length(3), // Header
+                        Constraint::Length(2), // Help
+                        Constraint::Min(5),    // Table
+                        Constraint::Length(2), // Status
+                    ])
+                    .split(f.area());
 
-            if event::poll(std::time::Duration::from_millis(100))? {
+                // Header
+                let header = Paragraph::new(Line::from(vec![
+                    Span::styled(
+                        "Orphaned Volume Pruner",
+                        Style::default().add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw(" - "),
+                    Span::raw(format!(
+                        "{} directories ({} total)",
+                        orphaned.len(),
+                        format_bytes(total_orphaned_size)
+                    )),
+                ]))
+                .block(Block::default().borders(Borders::BOTTOM));
+                f.render_widget(header, chunks[0]);
+
+                // Help text
+                let next_sort = sort_mode.next().label();
+                let help = Paragraph::new(Line::from(vec![
+                    Span::styled("j/k", Style::default().fg(Color::Cyan)),
+                    Span::raw(": navigate  "),
+                    Span::styled("Space", Style::default().fg(Color::Cyan)),
+                    Span::raw(": toggle  "),
+                    Span::styled("a", Style::default().fg(Color::Cyan)),
+                    Span::raw("/"),
+                    Span::styled("n", Style::default().fg(Color::Cyan)),
+                    Span::raw(": all/none  "),
+                    Span::styled("s", Style::default().fg(Color::Cyan)),
+                    Span::raw(format!(": sort by {}  ", next_sort)),
+                    Span::styled("Enter", Style::default().fg(Color::Green)),
+                    Span::raw(": confirm  "),
+                    Span::styled("q", Style::default().fg(Color::Red)),
+                    Span::raw(": cancel"),
+                ]));
+                f.render_widget(help, chunks[1]);
+
+                // Table
+                let table_area = chunks[2];
+                let visible_rows = table_area.height.saturating_sub(2) as usize; // Account for header/borders
+
+                // Adjust scroll to keep cursor visible
+                let scroll = if cursor < scroll_offset {
+                    cursor
+                } else if cursor >= scroll_offset + visible_rows {
+                    cursor.saturating_sub(visible_rows) + 1
+                } else {
+                    scroll_offset
+                };
+
+                let header_row = Row::new(vec!["", "", "ID", "Modified", "Size"])
+                    .style(Style::default().add_modifier(Modifier::BOLD))
+                    .height(1);
+
+                let rows: Vec<Row> = display_order
+                    .iter()
+                    .enumerate()
+                    .skip(scroll)
+                    .take(visible_rows)
+                    .map(|(display_idx, &dir_idx)| {
+                        let dir = &orphaned[dir_idx];
+                        let is_selected = selected[dir_idx];
+                        let is_cursor = display_idx == cursor;
+
+                        let cursor_char = if is_cursor { ">" } else { " " };
+                        let checkbox = if is_selected { "[x]" } else { "[ ]" };
+
+                        let base_style = if !dir.is_uuid {
+                            Style::default().fg(Color::Yellow)
+                        } else {
+                            Style::default()
+                        };
+
+                        let row_style = if is_cursor {
+                            base_style.bg(Color::DarkGray)
+                        } else {
+                            base_style
+                        };
+
+                        Row::new(vec![
+                            cursor_char.to_string(),
+                            checkbox.to_string(),
+                            dir.id.clone(),
+                            dir.format_time(),
+                            dir.format_size(),
+                        ])
+                        .style(row_style)
+                    })
+                    .collect();
+
+                let widths = [
+                    Constraint::Length(1),  // Cursor
+                    Constraint::Length(3),  // Checkbox
+                    Constraint::Length(36), // ID
+                    Constraint::Length(16), // Date
+                    Constraint::Length(10), // Size
+                ];
+
+                let sort_indicator = match sort_mode {
+                    PruneSortMode::Date => " (sorted by date ↑)",
+                    PruneSortMode::Size => " (sorted by size ↓)",
+                    PruneSortMode::Id => " (sorted by id)",
+                };
+
+                let table = Table::new(rows, widths).header(header_row).block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(format!("Directories{}", sort_indicator)),
+                );
+
+                f.render_widget(table, table_area);
+
+                // Status bar
+                let status = Paragraph::new(Line::from(vec![
+                    Span::styled(
+                        format!(
+                            "{} director{} selected",
+                            selected_count,
+                            if selected_count == 1 { "y" } else { "ies" }
+                        ),
+                        Style::default().add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw(format!(" ({})", format_bytes(selected_size))),
+                ]));
+                f.render_widget(status, chunks[3]);
+            })?;
+
+            // Update scroll_offset for next iteration
+            scroll_offset = if cursor < scroll_offset {
+                cursor
+            } else if cursor
+                >= scroll_offset + (terminal.size()?.height as usize).saturating_sub(10)
+            {
+                cursor.saturating_sub((terminal.size()?.height as usize).saturating_sub(10)) + 1
+            } else {
+                scroll_offset
+            };
+
+            // Handle input
+            if event::poll(std::time::Duration::from_millis(50))? {
                 if let Event::Key(key) = event::read()? {
                     match (key.code, key.modifiers) {
                         (KeyCode::Char('q'), _)
                         | (KeyCode::Esc, _)
                         | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                            disable_raw_mode()?;
-                            println!("\nCancelled.");
-                            return Ok(());
+                            cancelled = true;
+                            break;
                         }
                         (KeyCode::Enter, _) => {
                             break;
@@ -2884,8 +3051,7 @@ async fn handle_prune_volumes(
                             selected.fill(false);
                         }
                         (KeyCode::Char('s'), _) => {
-                            sort_by_size = !sort_by_size;
-                            cursor = 0;
+                            sort_mode = sort_mode.next();
                         }
                         _ => {}
                     }
@@ -2893,31 +3059,45 @@ async fn handle_prune_volumes(
             }
         }
 
+        // Cleanup terminal
         disable_raw_mode()?;
-        execute!(std::io::stdout(), Clear(ClearType::All))?;
-        print!("\x1b[H");
+        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+        terminal.show_cursor()?;
+
+        if cancelled {
+            println!("Cancelled.");
+            return Ok(());
+        }
 
         orphaned
             .iter()
             .enumerate()
             .filter(|(i, _)| selected[*i])
-            .map(|(_, d)| *d)
+            .map(|(_, d)| d)
             .collect()
     } else {
-        // Simple list and select all
-        println!("  \x1b[1m{:<38} {:>10}\x1b[0m", "DIRECTORY ID", "SIZE");
-        println!("  {:-<38} {:->10}", "", "");
+        // Simple list mode (non-interactive)
+        println!(
+            "Found {} orphaned director{} ({} total):\n",
+            orphaned.len(),
+            if orphaned.len() == 1 { "y" } else { "ies" },
+            format_bytes(total_orphaned_size)
+        );
+        println!(
+            "  {:<36}  {:>16}  {:>10}",
+            "DIRECTORY ID", "MODIFIED", "SIZE"
+        );
+        println!("  {:-<36}  {:->16}  {:->10}", "", "", "");
         for dir in &orphaned {
-            let id_color = if dir.is_uuid { "" } else { "\x1b[33m" };
             println!(
-                "  {}{:<38}\x1b[0m {:>10}",
-                id_color,
+                "  {:<36}  {:>16}  {:>10}",
                 dir.id,
+                dir.format_time(),
                 dir.format_size()
             );
         }
         println!();
-        orphaned.clone()
+        orphaned.iter().collect()
     };
 
     if to_delete.is_empty() {
