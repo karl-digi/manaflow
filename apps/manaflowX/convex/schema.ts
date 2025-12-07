@@ -448,8 +448,6 @@ export default defineSchema({
         files: v.optional(v.number()),
       })
     ),
-    morphVmUrl: v.optional(v.string()),
-
     // Timestamps
     createdAt: v.number(),
     updatedAt: v.number(),

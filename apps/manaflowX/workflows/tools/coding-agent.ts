@@ -399,22 +399,13 @@ The agent will complete the task autonomously and return the results.`,
         repo: repo,
       });
 
-      // Update the session with VM info for debugging
-      if (convexSessionId) {
-        await convex.mutation(api.codingAgent.updateSessionVmInfo, {
-          sessionId: convexSessionId as Id<"sessions">,
-          morphInstanceId: vm.instanceId,
-          morphVmUrl: vm.url,
-        });
-        console.log(`[coding-agent] Updated session with VM URL: ${vm.url}`);
-      }
-
       // Update session with the Morph instance ID
       await convex.mutation(api.codingAgent.updateCodingAgentSessionInstance, {
         sessionId: convexSessionId as Id<"sessions">,
         morphInstanceId: vm.instanceId,
       });
-      console.log(`[coding-agent] Updated session with instance ID: ${vm.instanceId}`);
+      // Log the VM URL (derived from instance ID: https://port-4096-{id.replace('_', '-')}.http.cloud.morph.so)
+      console.log(`[coding-agent] Updated session with instance ID: ${vm.instanceId} (VM URL: ${vm.url})`);
 
       // Create OpenCode client using the official SDK
       const opencode = createOpencodeClient({
@@ -464,8 +455,7 @@ The agent will complete the task autonomously and return the results.`,
         success: true,
         sessionId: session.id,
         convexSessionId, // Include Convex session ID for UI linking
-        morphInstanceId: vm.instanceId, // VM instance ID for debugging
-        morphVmUrl: vm.url, // VM URL for debugging
+        morphInstanceId: vm.instanceId, // VM instance ID for debugging (URL derived as https://port-4096-{id.replace('_', '-')}.http.cloud.morph.so)
         response: textResponse,
         toolsUsed: toolsSummary,
         tokens: response.info.tokens,
