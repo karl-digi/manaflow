@@ -417,7 +417,7 @@ const SearchableSelect = forwardRef<
             ) : (
               <>
                 {sectionLabel ? (
-                  <div className="px-3 py-2 text-xs font-medium text-neutral-500 select-none">
+                  <div className="px-3 pt-2 pb-1 text-xs font-medium text-neutral-500 select-none">
                     {sectionLabel}
                   </div>
                 ) : null}

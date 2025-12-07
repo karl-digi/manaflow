@@ -39,6 +39,15 @@ function LoaderIcon({ className }: { className?: string }) {
   );
 }
 
+function PlusIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M5 12h14" />
+      <path d="M12 5v14" />
+    </svg>
+  );
+}
+
 // Flyout content wrapper with save button in header
 function ConfigureFlyout({ repoId, repoName }: { repoId: Id<"repos">; repoName: string }) {
   const configRef = useRef<ConfigureWorkspaceRef>(null);
@@ -196,15 +205,15 @@ export function RepoPickerDropdown({
     [onRepoSelect]
   );
 
-  // Header with "Add repos from GitHub" button
-  const header = installNewUrl ? (
+  // Footer with "Add repos from GitHub" button
+  const footer = installNewUrl ? (
     <div className="p-1">
       <button
         type="button"
         onClick={handleInstallApp}
         className="w-full px-2 h-8 flex items-center gap-2 text-[13.5px] text-neutral-200 rounded-md hover:bg-neutral-800 transition-colors"
       >
-        <GitHubIcon className="w-4 h-4 text-neutral-400" />
+        <PlusIcon className="w-4 h-4 text-neutral-400" />
         <span className="select-none">Add repos from GitHub</span>
       </button>
     </div>
@@ -237,7 +246,7 @@ export function RepoPickerDropdown({
       loading={repos === undefined}
       showSearch
       searchPlaceholder="Search for a GitHub repo..."
-      header={header}
+      footer={footer}
       sectionLabel="Repositories"
       closeOnSelect={false}
       renderOptionFlyout={renderOptionFlyout}
