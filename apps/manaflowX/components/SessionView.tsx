@@ -508,7 +508,7 @@ export function SessionView({
     <div className="border border-border rounded-lg overflow-hidden mb-4">
       <button
         onClick={() => setIsExpanded(!isExpanded)}
-        className="bg-card px-4 py-2 border-b border-border flex justify-between items-center w-full hover:bg-accent/50 transition-colors"
+        className={`bg-card px-4 py-2 flex justify-between items-center w-full hover:bg-accent/50 ${isExpanded ? "border-b border-border" : ""}`}
       >
         <div className="flex items-center gap-2">
           <svg
