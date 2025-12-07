@@ -13,6 +13,8 @@ import { CodingAgentSession } from "./components/CodingAgentSession"
 import { BrowserAgentSession } from "./components/BrowserAgentSession"
 import { RepoPickerDropdown } from "@/components/RepoPickerDropdown"
 import { GrokIcon } from "@/components/GrokIcon"
+import { IssueDetailPanel } from "@/components/IssueDetailPanel"
+import TextareaAutosize from "react-textarea-autosize"
 
 type Post = {
   _id: Id<"posts">
@@ -55,12 +57,28 @@ function PostCard({
   const contentRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    if (contentRef.current) {
-      // Check if content exceeds 10 lines (approximate line height is ~20px for prose-sm)
-      const lineHeight = 20
-      const maxHeight = lineHeight * 10
-      setNeedsClamp(contentRef.current.scrollHeight > maxHeight)
+    const el = contentRef.current
+    if (!el) return
+
+    let measured = false
+
+    // Check height after content renders - only measure once per content change
+    const checkHeight = () => {
+      if (measured) return
+      const scrollHeight = el.scrollHeight
+      // Only mark as measured once we have meaningful content
+      if (scrollHeight > 0) {
+        measured = true
+        setNeedsClamp(scrollHeight > 240)
+      }
     }
+
+    // Use ResizeObserver to detect when Streamdown finishes rendering
+    const observer = new ResizeObserver(checkHeight)
+    observer.observe(el)
+    checkHeight() // Initial check
+
+    return () => observer.disconnect()
   }, [post.content])
 
   return (
@@ -97,11 +115,16 @@ function PostCard({
               · {new Date(post.createdAt).toLocaleString()}
             </span>
           </div>
-          <div
-            ref={contentRef}
-            className={`prose prose-invert prose-sm max-w-none mb-3 ${!isExpanded && needsClamp ? "line-clamp-[10]" : ""}`}
-          >
-            <Streamdown components={embeddableComponents}>{post.content}</Streamdown>
+          <div className="relative">
+            <div
+              ref={contentRef}
+              className={`prose prose-invert prose-sm max-w-none ${!isExpanded && needsClamp ? "max-h-[240px] overflow-hidden" : "mb-3"}`}
+            >
+              <Streamdown components={embeddableComponents}>{post.content}</Streamdown>
+            </div>
+            {!isExpanded && needsClamp && (
+              <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-black to-transparent pointer-events-none" />
+            )}
           </div>
           {needsClamp && (
             <button
@@ -431,8 +454,9 @@ function HomeContent() {
     window.scrollTo({ top: 0, behavior: "smooth" })
   }
 
-  // Get selected post and agent sessions from URL search params
+  // Get selected post, issue, and agent sessions from URL search params
   const selectedThread = searchParams.get("post") as Id<"posts"> | null
+  const selectedIssue = searchParams.get("issue") as Id<"issues"> | null
   const selectedCodingAgentSession = searchParams.get(
     "codingAgent",
   ) as Id<"sessions"> | null
@@ -444,11 +468,13 @@ function HomeContent() {
   const buildUrl = useCallback(
     (params: {
       post?: Id<"posts"> | null
+      issue?: Id<"issues"> | null
       codingAgent?: Id<"sessions"> | null
       browserAgent?: Id<"sessions"> | null
     }) => {
       const urlParams = new URLSearchParams()
       if (params.post) urlParams.set("post", params.post)
+      if (params.issue) urlParams.set("issue", params.issue)
       if (params.codingAgent) urlParams.set("codingAgent", params.codingAgent)
       if (params.browserAgent)
         urlParams.set("browserAgent", params.browserAgent)
@@ -461,9 +487,17 @@ function HomeContent() {
   // When changing post, clear the agent panels (they're associated with the previous post)
   const setSelectedThread = useCallback(
     (postId: Id<"posts"> | null) => {
-      router.push(buildUrl({ post: postId }), { scroll: false })
+      router.push(buildUrl({ post: postId, issue: selectedIssue }), { scroll: false })
     },
-    [router, buildUrl],
+    [router, buildUrl, selectedIssue],
+  )
+
+  // Set selected issue (preserves post selection)
+  const setSelectedIssue = useCallback(
+    (issueId: Id<"issues"> | null) => {
+      router.push(buildUrl({ post: selectedThread, issue: issueId }), { scroll: false })
+    },
+    [router, buildUrl, selectedThread],
   )
 
   const setSelectedCodingAgentSession = useCallback(
@@ -471,13 +505,14 @@ function HomeContent() {
       router.push(
         buildUrl({
           post: selectedThread,
+          issue: selectedIssue,
           codingAgent: sessionId,
           browserAgent: selectedBrowserAgentSession,
         }),
         { scroll: false },
       )
     },
-    [router, buildUrl, selectedThread, selectedBrowserAgentSession],
+    [router, buildUrl, selectedThread, selectedIssue, selectedBrowserAgentSession],
   )
 
   const setSelectedBrowserAgentSession = useCallback(
@@ -485,13 +520,14 @@ function HomeContent() {
       router.push(
         buildUrl({
           post: selectedThread,
+          issue: selectedIssue,
           codingAgent: selectedCodingAgentSession,
           browserAgent: sessionId,
         }),
         { scroll: false },
       )
     },
-    [router, buildUrl, selectedThread, selectedCodingAgentSession],
+    [router, buildUrl, selectedThread, selectedIssue, selectedCodingAgentSession],
   )
 
   // Get posts based on active tab (compute before hooks)
@@ -715,10 +751,11 @@ Make sure all checks pass before merging. If there are any failing checks, fix t
                 )}
               </div>
               <div className="flex-grow">
-                <textarea
+                <TextareaAutosize
                   className="w-full bg-transparent text-xl placeholder-gray-500 focus:outline-none resize-none py-2"
                   placeholder="What's happening?"
-                  rows={3}
+                  minRows={1}
+                  maxRows={10}
                   value={content}
                   onChange={(e) => setContent(e.target.value)}
                   onKeyDown={(e) => {
@@ -730,7 +767,7 @@ Make sure all checks pass before merging. If there are any failing checks, fix t
                 />
               </div>
             </div>
-            <div className="flex justify-between items-center mt-2 border-t border-gray-800 pt-3">
+            <div className="flex justify-between items-center mt-2 pt-3">
               <div className="flex gap-2 items-center">
                 {/* Repo picker dropdown */}
                 {user && (
@@ -842,6 +879,17 @@ Make sure all checks pass before merging. If there are any failing checks, fix t
             <BrowserAgentSession
               sessionId={selectedBrowserAgentSession}
               onClose={() => setSelectedBrowserAgentSession(null)}
+            />
+          </aside>
+        )}
+
+        {/* Issue Detail Panel - Shows when issue is selected and no agent session is active */}
+        {selectedIssue && !selectedCodingAgentSession && !selectedBrowserAgentSession && (
+          <aside className="w-[500px] shrink border-r border-gray-800 min-h-screen sticky top-0 h-screen overflow-hidden hidden xl:block">
+            <IssueDetailPanel
+              issueId={selectedIssue}
+              onClose={() => setSelectedIssue(null)}
+              onIssueClick={setSelectedIssue}
             />
           </aside>
         )}

@@ -11,7 +11,7 @@ const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
 
 export const createIssueTool = tool({
   description:
-    "Create a new issue for tracking bugs, features, tasks, epics, or chores. Returns the issue ID and short ID. If a repository is relevant to this issue, include the repo config so the coding agent knows where to work.",
+    "Create a new issue for tracking bugs, features, tasks, epics, or chores. Returns the issue ID, short ID, and a link to view the issue. If a repository is relevant to this issue, include the repo config so the coding agent knows where to work.",
   inputSchema: z.object({
     title: z.string().describe("Title of the issue"),
     description: z.string().optional().describe("Detailed description"),
@@ -56,12 +56,15 @@ export const createIssueTool = tool({
       gitBranch,
       installationId,
     });
-    return result;
+    return {
+      ...result,
+      url: `/issue/${result.shortId}`,
+    };
   },
 });
 
 export const updateIssueTool = tool({
-  description: "Update an existing issue's fields",
+  description: "Update an existing issue's fields. Returns the updated issue with a link.",
   inputSchema: z.object({
     shortId: z.string().describe("Short ID of the issue (e.g., x-a1b2)"),
     title: z.string().optional().describe("New title"),
@@ -86,7 +89,7 @@ export const updateIssueTool = tool({
     const issue = await convex.query(api.issues.getIssueByShortId, { shortId });
     if (!issue) throw new Error(`Issue ${shortId} not found`);
 
-    return await convex.mutation(api.issues.updateIssue, {
+    const result = await convex.mutation(api.issues.updateIssue, {
       issueId: issue._id,
       title,
       description,
@@ -95,11 +98,16 @@ export const updateIssueTool = tool({
       assignee,
       labels,
     });
+    return {
+      ...result,
+      shortId,
+      url: `/issue/${shortId}`,
+    };
   },
 });
 
 export const closeIssueTool = tool({
-  description: "Close an issue with an optional reason",
+  description: "Close an issue with an optional reason. Returns a link to the closed issue.",
   inputSchema: z.object({
     shortId: z.string().describe("Short ID of the issue (e.g., x-a1b2)"),
     reason: z.string().optional().describe("Reason for closing"),
@@ -108,15 +116,20 @@ export const closeIssueTool = tool({
     const issue = await convex.query(api.issues.getIssueByShortId, { shortId });
     if (!issue) throw new Error(`Issue ${shortId} not found`);
 
-    return await convex.mutation(api.issues.closeIssue, {
+    const result = await convex.mutation(api.issues.closeIssue, {
       issueId: issue._id,
       reason,
     });
+    return {
+      ...result,
+      shortId,
+      url: `/issue/${shortId}`,
+    };
   },
 });
 
 export const reopenIssueTool = tool({
-  description: "Reopen a closed issue",
+  description: "Reopen a closed issue. Returns a link to the reopened issue.",
   inputSchema: z.object({
     shortId: z.string().describe("Short ID of the issue (e.g., x-a1b2)"),
   }),
@@ -124,14 +137,19 @@ export const reopenIssueTool = tool({
     const issue = await convex.query(api.issues.getIssueByShortId, { shortId });
     if (!issue) throw new Error(`Issue ${shortId} not found`);
 
-    return await convex.mutation(api.issues.reopenIssue, {
+    const result = await convex.mutation(api.issues.reopenIssue, {
       issueId: issue._id,
     });
+    return {
+      ...result,
+      shortId,
+      url: `/issue/${shortId}`,
+    };
   },
 });
 
 export const listIssuesTool = tool({
-  description: "List issues with optional filters",
+  description: "List issues with optional filters. Each issue includes a link.",
   inputSchema: z.object({
     status: z
       .enum(["open", "in_progress", "closed"])
@@ -161,13 +179,14 @@ export const listIssuesTool = tool({
       priority: i.priority,
       assignee: i.assignee,
       labels: i.labels,
+      url: `/issue/${i.shortId}`,
     }));
   },
 });
 
 export const listReadyIssuesTool = tool({
   description:
-    "List issues that are ready to work on (open with no blocking dependencies)",
+    "List issues that are ready to work on (open with no blocking dependencies). Each issue includes a link.",
   inputSchema: z.object({
     assignee: z.string().optional().describe("Filter by assignee"),
     limit: z.number().optional().describe("Max results (default: 10)"),
@@ -183,12 +202,13 @@ export const listReadyIssuesTool = tool({
       priority: i.priority,
       type: i.type,
       assignee: i.assignee,
+      url: `/issue/${i.shortId}`,
     }));
   },
 });
 
 export const searchIssuesTool = tool({
-  description: "Search issues by text in title, description, or short ID",
+  description: "Search issues by text in title, description, or short ID. Each issue includes a link.",
   inputSchema: z.object({
     query: z.string().describe("Search query"),
     status: z
@@ -209,12 +229,13 @@ export const searchIssuesTool = tool({
       status: i.status,
       type: i.type,
       description: i.description?.slice(0, 200),
+      url: `/issue/${i.shortId}`,
     }));
   },
 });
 
 export const getIssueTool = tool({
-  description: "Get detailed information about a specific issue",
+  description: "Get detailed information about a specific issue. Includes a link to view the issue.",
   inputSchema: z.object({
     shortId: z.string().describe("Short ID of the issue (e.g., x-a1b2)"),
   }),
@@ -228,18 +249,19 @@ export const getIssueTool = tool({
 
     return {
       ...issue,
+      url: `/issue/${shortId}`,
       blockedBy: deps.dependsOn
         .filter((d) => d.dependency.type === "blocks")
-        .map((d) => d.issue?.shortId),
+        .map((d) => ({ shortId: d.issue?.shortId, url: `/issue/${d.issue?.shortId}` })),
       blocking: deps.blockedBy
         .filter((d) => d.dependency.type === "blocks")
-        .map((d) => d.issue?.shortId),
+        .map((d) => ({ shortId: d.issue?.shortId, url: `/issue/${d.issue?.shortId}` })),
     };
   },
 });
 
 export const addIssueLabelTool = tool({
-  description: "Add a label to an issue",
+  description: "Add a label to an issue. Returns a link to the issue.",
   inputSchema: z.object({
     shortId: z.string().describe("Short ID of the issue"),
     label: z.string().describe("Label to add"),
@@ -248,15 +270,20 @@ export const addIssueLabelTool = tool({
     const issue = await convex.query(api.issues.getIssueByShortId, { shortId });
     if (!issue) throw new Error(`Issue ${shortId} not found`);
 
-    return await convex.mutation(api.issues.addIssueLabel, {
+    const result = await convex.mutation(api.issues.addIssueLabel, {
       issueId: issue._id,
       label,
     });
+    return {
+      ...result,
+      shortId,
+      url: `/issue/${shortId}`,
+    };
   },
 });
 
 export const removeIssueLabelTool = tool({
-  description: "Remove a label from an issue",
+  description: "Remove a label from an issue. Returns a link to the issue.",
   inputSchema: z.object({
     shortId: z.string().describe("Short ID of the issue"),
     label: z.string().describe("Label to remove"),
@@ -265,16 +292,21 @@ export const removeIssueLabelTool = tool({
     const issue = await convex.query(api.issues.getIssueByShortId, { shortId });
     if (!issue) throw new Error(`Issue ${shortId} not found`);
 
-    return await convex.mutation(api.issues.removeIssueLabel, {
+    const result = await convex.mutation(api.issues.removeIssueLabel, {
       issueId: issue._id,
       label,
     });
+    return {
+      ...result,
+      shortId,
+      url: `/issue/${shortId}`,
+    };
   },
 });
 
 export const addIssueDependencyTool = tool({
   description:
-    "Add a dependency between issues. The 'from' issue depends on 'to' issue.",
+    "Add a dependency between issues. The 'from' issue depends on 'to' issue. Returns links to both issues.",
   inputSchema: z.object({
     fromShortId: z.string().describe("Short ID of the dependent issue"),
     toShortId: z.string().describe("Short ID of the blocking issue"),
@@ -294,16 +326,21 @@ export const addIssueDependencyTool = tool({
     if (!fromIssue) throw new Error(`Issue ${fromShortId} not found`);
     if (!toIssue) throw new Error(`Issue ${toShortId} not found`);
 
-    return await convex.mutation(api.issues.addIssueDependency, {
+    const dependencyId = await convex.mutation(api.issues.addIssueDependency, {
       fromIssue: fromIssue._id,
       toIssue: toIssue._id,
       type,
     });
+    return {
+      dependencyId,
+      fromIssue: { shortId: fromShortId, url: `/issue/${fromShortId}` },
+      toIssue: { shortId: toShortId, url: `/issue/${toShortId}` },
+    };
   },
 });
 
 export const removeIssueDependencyTool = tool({
-  description: "Remove a dependency between issues",
+  description: "Remove a dependency between issues. Returns links to both issues.",
   inputSchema: z.object({
     fromShortId: z.string().describe("Short ID of the dependent issue"),
     toShortId: z.string().describe("Short ID of the blocking issue"),
@@ -319,10 +356,15 @@ export const removeIssueDependencyTool = tool({
     if (!fromIssue) throw new Error(`Issue ${fromShortId} not found`);
     if (!toIssue) throw new Error(`Issue ${toShortId} not found`);
 
-    return await convex.mutation(api.issues.removeIssueDependency, {
+    await convex.mutation(api.issues.removeIssueDependency, {
       fromIssue: fromIssue._id,
       toIssue: toIssue._id,
     });
+    return {
+      success: true,
+      fromIssue: { shortId: fromShortId, url: `/issue/${fromShortId}` },
+      toIssue: { shortId: toShortId, url: `/issue/${toShortId}` },
+    };
   },
 });
 

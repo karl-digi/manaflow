@@ -152,8 +152,44 @@ Select posts that help users see what's ready to ship. Return an empty array if 
 
   return (
     <div className="max-w-2xl mx-auto">
-      {/* Poaster Section */}
+      {/* Curator Section */}
       <div className="p-4 border-b border-gray-800">
+        <h2 className="text-lg font-semibold text-white mb-1">Curator</h2>
+        <p className="text-sm text-gray-400 mb-4">
+          Scans recent posts and replies, using AI to surface the most interesting content to the curated feed.
+        </p>
+
+        {/* Curator System Prompt */}
+        <div>
+          <div className="mb-3">
+            <h3 className="font-medium text-white">System Prompt</h3>
+            <p className="text-sm text-gray-500 mt-0.5">
+              Customize how Curator evaluates and selects posts for the feed
+            </p>
+          </div>
+
+          <TextareaAutosize
+            value={curatorPromptValue}
+            onChange={(e) => handleCuratorChange(e.target.value)}
+            minRows={6}
+            className="w-full bg-gray-900 text-white text-sm p-3 rounded-lg border border-gray-700 focus:border-blue-500 focus:outline-none resize-none font-mono"
+            placeholder="Enter the system prompt for Curator..."
+          />
+
+          <div className="flex justify-end mt-3">
+            <button
+              onClick={handleCuratorSave}
+              disabled={isCuratorSaving || !hasCuratorChanges || !curatorPromptValue.trim()}
+              className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {isCuratorSaving ? "Saving..." : "Save"}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Poaster Section */}
+      <div className="p-4">
         <h2 className="text-lg font-semibold text-white mb-1">Poaster</h2>
         <p className="text-sm text-gray-400 mb-4">
           Monitors your GitHub repos and autonomously posts about interesting PRs or delegates issues to coding agents.
@@ -242,42 +278,6 @@ Select posts that help users see what's ready to ship. Return an empty array if 
               className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               {isPoasterSaving ? "Saving..." : "Save"}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Curator Section */}
-      <div className="p-4">
-        <h2 className="text-lg font-semibold text-white mb-1">Curator</h2>
-        <p className="text-sm text-gray-400 mb-4">
-          Scans recent posts and replies, using AI to surface the most interesting content to the curated feed.
-        </p>
-
-        {/* Curator System Prompt */}
-        <div>
-          <div className="mb-3">
-            <h3 className="font-medium text-white">System Prompt</h3>
-            <p className="text-sm text-gray-500 mt-0.5">
-              Customize how Curator evaluates and selects posts for the feed
-            </p>
-          </div>
-
-          <TextareaAutosize
-            value={curatorPromptValue}
-            onChange={(e) => handleCuratorChange(e.target.value)}
-            minRows={6}
-            className="w-full bg-gray-900 text-white text-sm p-3 rounded-lg border border-gray-700 focus:border-blue-500 focus:outline-none resize-none font-mono"
-            placeholder="Enter the system prompt for Curator..."
-          />
-
-          <div className="flex justify-end mt-3">
-            <button
-              onClick={handleCuratorSave}
-              disabled={isCuratorSaving || !hasCuratorChanges || !curatorPromptValue.trim()}
-              className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              {isCuratorSaving ? "Saving..." : "Save"}
             </button>
           </div>
         </div>
