@@ -161,6 +161,7 @@ const SearchableSelect = forwardRef<
   const [search, setSearch] = useState("");
   const [hoveredOption, setHoveredOption] = useState<string | null>(null);
   const [flyoutOffset, setFlyoutOffset] = useState(0);
+  const [maxFlyoutOffset, setMaxFlyoutOffset] = useState(500);
   const dropdownRef = useRef<HTMLDivElement | null>(null);
 
   // Close on Escape
@@ -171,6 +172,15 @@ const SearchableSelect = forwardRef<
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
+
+  // Track dropdown height for max offset
+  useEffect(() => {
+    if (!open) return;
+    const dropdownContainer = dropdownRef.current;
+    if (dropdownContainer) {
+      setMaxFlyoutOffset(dropdownContainer.getBoundingClientRect().height - 40);
+    }
   }, [open]);
 
   // Calculate offset for selected item - update whenever selection changes or dropdown opens
@@ -186,6 +196,7 @@ const SearchableSelect = forwardRef<
         const dropdownRect = dropdownContainer.getBoundingClientRect();
         const itemRect = selectedItem.getBoundingClientRect();
         setFlyoutOffset(itemRect.top - dropdownRect.top);
+        setMaxFlyoutOffset(dropdownRect.height - 40);
       }
     };
 
@@ -225,6 +236,7 @@ const SearchableSelect = forwardRef<
         const dropdownRect = dropdownContainer.getBoundingClientRect();
         const itemRect = target.getBoundingClientRect();
         setFlyoutOffset(itemRect.top - dropdownRect.top);
+        setMaxFlyoutOffset(dropdownRect.height - 40);
       }
     }
   }, [value.length]);
@@ -442,7 +454,7 @@ const SearchableSelect = forwardRef<
           {flyoutContent && (
             <div
               className="shrink-0"
-              style={{ marginTop: Math.max(0, flyoutOffset) }}
+              style={{ marginTop: Math.max(0, Math.min(flyoutOffset, maxFlyoutOffset)) }}
             >
               {flyoutContent}
             </div>
