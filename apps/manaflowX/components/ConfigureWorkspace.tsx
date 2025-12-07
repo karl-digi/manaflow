@@ -439,10 +439,6 @@ export function ConfigureWorkspace({
 
   return (
     <div className={`space-y-3 ${className}`}>
-      <h3 className="text-sm font-medium text-neutral-200 mb-4">
-        Configure Workspace
-      </h3>
-
       {/* Environment Variables (UI only, not saved) */}
       <CollapsibleSection
         title="Environment Variables"

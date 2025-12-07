@@ -44,6 +44,8 @@ export interface SearchableSelectProps {
   sectionLabel?: string;
   /** Whether to close the dropdown after selecting an option in singleSelect mode (default: true) */
   closeOnSelect?: boolean;
+  /** Render a flyout panel when hovering over an option */
+  renderOptionFlyout?: (value: string) => ReactNode;
 }
 
 function normalizeOptions(options: SelectOption[]): SelectOptionObject[] {
@@ -91,6 +93,25 @@ function ChevronDownIcon({ className }: { className?: string }) {
   );
 }
 
+function ChevronRightIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="m9 18 6-6-6-6" />
+    </svg>
+  );
+}
+
 function LoaderIcon({ className }: { className?: string }) {
   return (
     <svg
@@ -129,6 +150,7 @@ const SearchableSelect = forwardRef<
     searchPlaceholder = "Search...",
     sectionLabel,
     closeOnSelect = true,
+    renderOptionFlyout,
   },
   ref
 ) {
@@ -137,6 +159,9 @@ const SearchableSelect = forwardRef<
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const [search, setSearch] = useState("");
+  const [hoveredOption, setHoveredOption] = useState<string | null>(null);
+  const [flyoutOffset, setFlyoutOffset] = useState(0);
+  const dropdownRef = useRef<HTMLDivElement | null>(null);
 
   // Close on Escape
   useEffect(() => {
@@ -147,6 +172,62 @@ const SearchableSelect = forwardRef<
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
+
+  // Calculate offset for selected item - update whenever selection changes or dropdown opens
+  useEffect(() => {
+    if (!open || value.length === 0) return;
+
+    const dropdownContainer = dropdownRef.current;
+
+    const updateOffset = () => {
+      if (!dropdownContainer) return;
+      const selectedItem = dropdownContainer.querySelector(`[data-selected-value="${value[0]}"]`);
+      if (selectedItem) {
+        const dropdownRect = dropdownContainer.getBoundingClientRect();
+        const itemRect = selectedItem.getBoundingClientRect();
+        setFlyoutOffset(itemRect.top - dropdownRect.top);
+      }
+    };
+
+    // Initial calculation with small delay for DOM render
+    const timer = setTimeout(updateOffset, 0);
+
+    // Also listen for scroll events on the list to update position
+    const listEl = dropdownContainer?.querySelector('[cmdk-list]');
+    if (listEl) {
+      listEl.addEventListener('scroll', updateOffset);
+      return () => {
+        clearTimeout(timer);
+        listEl.removeEventListener('scroll', updateOffset);
+      };
+    }
+
+    return () => clearTimeout(timer);
+  }, [open, value]);
+
+  // Handle open state changes
+  const handleOpenChange = useCallback((newOpen: boolean) => {
+    setOpen(newOpen);
+    if (!newOpen) {
+      setHoveredOption(null);
+      setFlyoutOffset(0);
+    }
+  }, []);
+
+  // Handle hover on option - only track hover and update offset if nothing selected
+  const handleOptionHover = useCallback((optValue: string, event: React.MouseEvent) => {
+    setHoveredOption(optValue);
+    // Only update offset on hover if nothing is selected yet
+    if (value.length === 0) {
+      const target = event.currentTarget as HTMLElement;
+      const dropdownContainer = dropdownRef.current;
+      if (dropdownContainer && target) {
+        const dropdownRect = dropdownContainer.getBoundingClientRect();
+        const itemRect = target.getBoundingClientRect();
+        setFlyoutOffset(itemRect.top - dropdownRect.top);
+      }
+    }
+  }, [value.length]);
 
   // Display content for trigger button
   const displayContent = useMemo(() => {
@@ -212,7 +293,12 @@ const SearchableSelect = forwardRef<
     (val: string): void => {
       setSearch("");
       if (singleSelect) {
-        onChange([val]);
+        // Toggle selection - if already selected, unselect it
+        if (value.includes(val)) {
+          onChange([]);
+        } else {
+          onChange([val]);
+        }
         if (closeOnSelect) {
           setOpen(false);
         }
@@ -228,8 +314,12 @@ const SearchableSelect = forwardRef<
     [onChange, singleSelect, value, closeOnSelect]
   );
 
+  // Get flyout content: if something is selected, always show that; otherwise show hovered
+  const flyoutTarget = value.length > 0 ? value[0] : hoveredOption;
+  const flyoutContent = flyoutTarget ? renderOptionFlyout?.(flyoutTarget) : null;
+
   return (
-    <Popover.Root open={open} onOpenChange={setOpen}>
+    <Popover.Root open={open} onOpenChange={handleOpenChange}>
       <Popover.Trigger asChild>
         <button
           ref={triggerRef}
@@ -259,11 +349,15 @@ const SearchableSelect = forwardRef<
           align="start"
           side="bottom"
           sideOffset={4}
-          className={clsx(
-            "z-50 rounded-lg border border-neutral-700 bg-neutral-900 p-0 shadow-xl outline-none w-[300px]",
-            "data-[state=closed]:animate-out data-[state=closed]:fade-out-0"
-          )}
+          className="z-50 outline-none flex items-start gap-1"
         >
+          <div
+            ref={dropdownRef}
+            className={clsx(
+              "rounded-lg border border-neutral-700 bg-neutral-900 p-0 shadow-xl w-[300px]",
+              "data-[state=closed]:animate-out data-[state=closed]:fade-out-0"
+            )}
+          >
           <Command loop shouldFilter={false} className="text-[13.5px]">
             {showSearch ? (
               <div className="border-b border-neutral-800 p-2">
@@ -297,11 +391,14 @@ const SearchableSelect = forwardRef<
                 ) : (
                   filteredOptions.map((opt) => {
                     const isSelected = value.includes(opt.value);
+                    const hasFlyout = !!renderOptionFlyout;
                     return (
                       <Command.Item
                         key={opt.value}
                         value={`${opt.label} ${opt.value}`}
                         onSelect={() => onSelectValue(opt.value)}
+                        onMouseEnter={(e) => handleOptionHover(opt.value, e)}
+                        data-selected-value={isSelected ? opt.value : undefined}
                         className={clsx(
                           "flex items-center justify-between gap-2 px-2 py-1.5 rounded-md cursor-pointer",
                           "text-neutral-100 hover:bg-neutral-800 transition-colors",
@@ -318,9 +415,14 @@ const SearchableSelect = forwardRef<
                             {opt.label}
                           </span>
                         </div>
-                        {isSelected ? (
-                          <CheckIcon className="h-4 w-4 text-neutral-100 shrink-0" />
-                        ) : null}
+                        <div className="flex items-center gap-1">
+                          {isSelected ? (
+                            <CheckIcon className="h-4 w-4 text-neutral-100 shrink-0" />
+                          ) : null}
+                          {hasFlyout ? (
+                            <ChevronRightIcon className="h-3 w-3 text-neutral-500 shrink-0" />
+                          ) : null}
+                        </div>
                       </Command.Item>
                     );
                   })
@@ -334,6 +436,17 @@ const SearchableSelect = forwardRef<
               {footer}
             </div>
           ) : null}
+          </div>
+
+          {/* Flyout panel - rendered next to the dropdown, aligned with hovered item */}
+          {flyoutContent && (
+            <div
+              className="shrink-0"
+              style={{ marginTop: Math.max(0, flyoutOffset) }}
+            >
+              {flyoutContent}
+            </div>
+          )}
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>
