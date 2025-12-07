@@ -471,7 +471,7 @@ export const setRepoMonitoring = mutation({
   },
 });
 
-// Internal query to get monitored repos with their installation IDs (for prMonitor action)
+// Internal query to get monitored repos with their installation IDs (for githubMonitor action)
 export const getMonitoredReposWithInstallation = internalQuery({
   args: {},
   handler: async (ctx) => {

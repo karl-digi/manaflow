@@ -16,14 +16,15 @@ import type * as actions from "../actions.js";
 import type * as codingAgent from "../codingAgent.js";
 import type * as crons from "../crons.js";
 import type * as github from "../github.js";
+import type * as githubMonitor from "../githubMonitor.js";
 import type * as github_app from "../github_app.js";
 import type * as http from "../http.js";
 import type * as issues from "../issues.js";
 import type * as posts from "../posts.js";
-import type * as prMonitor from "../prMonitor.js";
 import type * as sessions from "../sessions.js";
 import type * as twitter from "../twitter.js";
 import type * as users from "../users.js";
+import type * as workflowQueue from "../workflowQueue.js";
 
 import type {
   ApiFromModules,
@@ -40,14 +41,15 @@ declare const fullApi: ApiFromModules<{
   codingAgent: typeof codingAgent;
   crons: typeof crons;
   github: typeof github;
+  githubMonitor: typeof githubMonitor;
   github_app: typeof github_app;
   http: typeof http;
   issues: typeof issues;
   posts: typeof posts;
-  prMonitor: typeof prMonitor;
   sessions: typeof sessions;
   twitter: typeof twitter;
   users: typeof users;
+  workflowQueue: typeof workflowQueue;
 }>;
 
 /**

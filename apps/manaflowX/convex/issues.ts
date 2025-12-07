@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { mutation, query, internalMutation, internalQuery } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
 
 // =============================================================================
@@ -1076,5 +1076,94 @@ export const listIssuesWithDependencies = query({
       blockedByCount: blockedByCount[issue._id] || 0,
       blocksCount: blocksCount[issue._id] || 0,
     }));
+  },
+});
+
+// =============================================================================
+// INTERNAL MUTATIONS (for GitHub integration)
+// =============================================================================
+
+// Check if a GitHub issue already exists in our system
+export const getIssueByGitHub = internalQuery({
+  args: {
+    githubRepo: v.string(),
+    githubIssueNumber: v.number(),
+  },
+  handler: async (ctx, { githubRepo, githubIssueNumber }) => {
+    return await ctx.db
+      .query("issues")
+      .withIndex("by_github_issue", (q) =>
+        q.eq("githubRepo", githubRepo).eq("githubIssueNumber", githubIssueNumber)
+      )
+      .first();
+  },
+});
+
+// Create an issue from GitHub (internal mutation for githubMonitor)
+export const createIssueFromGitHub = internalMutation({
+  args: {
+    title: v.string(),
+    description: v.optional(v.string()),
+    type: v.optional(
+      v.union(
+        v.literal("bug"),
+        v.literal("feature"),
+        v.literal("task"),
+        v.literal("epic"),
+        v.literal("chore")
+      )
+    ),
+    priority: v.optional(v.number()),
+    labels: v.optional(v.array(v.string())),
+    // GitHub-specific fields
+    githubIssueUrl: v.string(),
+    githubIssueNumber: v.number(),
+    githubRepo: v.string(),
+    // Repo config for workflow execution
+    gitRemote: v.string(),
+    gitBranch: v.string(),
+    installationId: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const shortId = generateShortId();
+
+    const issueId = await ctx.db.insert("issues", {
+      shortId,
+      title: args.title,
+      description: args.description,
+      status: "open",
+      priority: args.priority ?? 2,
+      type: args.type ?? "task",
+      assignee: "Grok", // Assigned to the AI agent
+      labels: args.labels ?? ["github"],
+      isCompacted: false,
+      // GitHub fields
+      githubIssueUrl: args.githubIssueUrl,
+      githubIssueNumber: args.githubIssueNumber,
+      githubRepo: args.githubRepo,
+      // Repo config
+      gitRemote: args.gitRemote,
+      gitBranch: args.gitBranch,
+      installationId: args.installationId,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await ctx.db.insert("issueEvents", {
+      issue: issueId,
+      type: "created",
+      data: {
+        title: args.title,
+        type: args.type ?? "task",
+        shortId,
+        source: "github",
+        githubUrl: args.githubIssueUrl,
+      },
+      actor: "Grok",
+      createdAt: now,
+    });
+
+    return { issueId, shortId };
   },
 });

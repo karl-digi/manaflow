@@ -76,7 +76,7 @@ function GitHubContent() {
   const repos = useQuery(api.github.getReposSortedByActivity)
   const monitoredRepos = useQuery(api.github.getMonitoredRepos)
   const toggleMonitoring = useMutation(api.github.toggleRepoMonitoring)
-  const testFetchPR = useAction(api.prMonitor.testFetchAndPostPR)
+  const testFetchPR = useAction(api.githubMonitor.testFetchAndPostPR)
   const mintState = useMutation(api.github_app.mintInstallState)
 
   // Algorithm settings
@@ -179,13 +179,13 @@ function GitHubContent() {
 
   return (
     <div className="max-w-2xl mx-auto">
-      {/* Auto-Post Control */}
+      {/* Auto Algorithm Control */}
       <div className="p-4 border-b border-gray-800">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="font-medium text-white">PR Auto-Post</h3>
+            <h3 className="font-medium text-white">Auto Algorithm</h3>
             <p className="text-sm text-gray-500 mt-0.5">
-              Post interesting PRs to feed every minute
+              Post about PRs or solve issues automatically
             </p>
           </div>
           <button
@@ -211,13 +211,13 @@ function GitHubContent() {
         )}
       </div>
 
-      {/* Manual Test */}
+      {/* Run Algorithm */}
       <div className="p-4 border-b border-gray-800">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="font-medium text-white">Manual Post</h3>
+            <h3 className="font-medium text-white">Run Algorithm</h3>
             <p className="text-sm text-gray-500 mt-0.5">
-              Fetch and post a PR now
+              Post about a PR or start solving an issue now
             </p>
           </div>
           <button
@@ -225,7 +225,7 @@ function GitHubContent() {
             disabled={testStatus.loading || monitoredCount === 0}
             className="px-3 py-1.5 bg-gray-800 text-white text-sm rounded-lg hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            {testStatus.loading ? "Posting..." : "Post PR"}
+            {testStatus.loading ? "Running..." : "Run"}
           </button>
         </div>
 

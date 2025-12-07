@@ -3,11 +3,11 @@ import { internal } from "./_generated/api";
 
 const crons = cronJobs();
 
-// Run PR monitor every minute (will check if enabled before running)
+// Run GitHub monitor every minute (will check if enabled before running)
 crons.interval(
-  "pr-monitor",
+  "github-monitor",
   { minutes: 1 },
-  internal.prMonitor.cronFetchAndPostPR
+  internal.githubMonitor.cronFetchAndPostPR
 );
 
 export default crons;

@@ -15,16 +15,24 @@ function GeneralContent() {
   const [isSaving, setIsSaving] = useState(false)
   const [hasChanges, setHasChanges] = useState(false)
 
-  const defaultPrompt = `You are curating a developer feed. Look at these open Pull Requests and pick the MOST INTERESTING one to share with the community.
+  const defaultPrompt = `You are curating a developer feed and deciding how to engage with the codebase. You have two options:
 
-Consider:
-- Is it a significant feature or important bug fix?
-- Does the title suggest something notable?
-- Is it from an active/interesting project?
-- Avoid drafts unless they look really interesting
-- Prefer PRs with meaningful labels (bug, feature, enhancement) over chores/docs
+1. **Post about a PR** - Share an interesting Pull Request with the community
+2. **Solve an Issue** - Pick an issue to work on and delegate to a coding agent
 
-Pick ONE PR that has NOT been posted yet and write an engaging tweet about it. The tweet should be concise and make developers want to check out the PR.`
+IMPORTANT: Aim for roughly 50/50 balance between these actions over time. Alternate between them - if you'd normally pick a PR, consider if there's a good issue to solve instead, and vice versa. Both actions are equally valuable.
+
+For PRs, look for:
+- Significant features or important bug fixes
+- PRs that look ready to merge or need review
+- Interesting technical changes
+
+For Issues, look for:
+- Tractable bugs or features that can realistically be solved
+- Well-defined issues with clear requirements
+- Issues that would provide clear value when fixed
+
+Pick the most interesting item from whichever category you choose. Write engaging content that makes developers want to check it out.`
 
   // Initialize prompt value when data loads
   useEffect(() => {
