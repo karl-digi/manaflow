@@ -11,6 +11,12 @@ import { Id } from "../../convex/_generated/dataModel";
 import { fetchInstallationAccessToken } from "../../convex/_shared/githubApp";
 
 // =============================================================================
+// Progress Stage Types
+// =============================================================================
+
+type ProgressStage = "creating_session" | "starting_vm" | "vm_ready" | "sending_task" | "running" | "completed" | "error";
+
+// =============================================================================
 // JWT Helper Functions
 // =============================================================================
 
@@ -62,6 +68,95 @@ async function createJWT(payload: Record<string, unknown>, secret: string): Prom
 
 // Initialize Convex client
 const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
+
+// =============================================================================
+// Background Progress Queue
+// =============================================================================
+// Maintains ordering of progress updates while not blocking the main execution
+
+type ProgressUpdate = {
+  parentSessionId: Id<"sessions">;
+  toolCallId: string;
+  stage: ProgressStage;
+  message: string;
+  extra?: { sessionId?: string; instanceId?: string };
+};
+
+class ProgressQueue {
+  private queue: ProgressUpdate[] = [];
+  private processing = false;
+  private flushPromise: Promise<void> | null = null;
+
+  // Add update to queue and start processing if not already running
+  enqueue(update: ProgressUpdate): void {
+    this.queue.push(update);
+    if (!this.processing) {
+      this.processQueue();
+    }
+  }
+
+  // Process queue items sequentially in the background
+  private async processQueue(): Promise<void> {
+    if (this.processing) return;
+    this.processing = true;
+
+    while (this.queue.length > 0) {
+      const update = this.queue.shift()!;
+      try {
+        await convex.mutation(api.sessions.updateToolProgress, {
+          sessionId: update.parentSessionId,
+          toolCallId: update.toolCallId,
+          progress: {
+            stage: update.stage,
+            message: update.message,
+            ...update.extra,
+          },
+        });
+      } catch (error) {
+        // Log but don't fail - progress updates are not critical
+        console.warn(`[coding-agent] Failed to update progress:`, error);
+      }
+    }
+
+    this.processing = false;
+  }
+
+  // Wait for all pending updates to complete (call at end of tool execution)
+  async flush(): Promise<void> {
+    if (this.queue.length === 0 && !this.processing) {
+      return;
+    }
+    // Wait for current processing to finish
+    while (this.processing || this.queue.length > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+}
+
+// Global progress queue instance
+const progressQueue = new ProgressQueue();
+
+// Helper to update progress in Convex (non-blocking)
+function updateProgress(
+  parentSessionId: Id<"sessions"> | null,
+  toolCallId: string,
+  stage: ProgressStage,
+  message: string,
+  extra?: { sessionId?: string; instanceId?: string }
+): void {
+  if (!parentSessionId) {
+    console.log(`[coding-agent] Progress (no parent): ${stage} - ${message}`);
+    return;
+  }
+
+  progressQueue.enqueue({
+    parentSessionId,
+    toolCallId,
+    stage,
+    message,
+    extra,
+  });
+}
 
 // =============================================================================
 // Repository Cloning Helpers
@@ -335,14 +430,22 @@ The agent will complete the task autonomously and return the results.`,
       .optional()
       .describe("Repository to clone into the VM workspace. If not provided, no repository will be cloned."),
   }),
-  execute: async ({ task, context, agent, repo }: {
-    task: string;
-    context?: string;
-    agent: "build" | "plan" | "general";
-    repo?: { gitRemote: string; branch: string; installationId?: number };
-  }) => {
+  execute: async (
+    { task, context, agent, repo }: {
+      task: string;
+      context?: string;
+      agent: "build" | "plan" | "general";
+      repo?: { gitRemote: string; branch: string; installationId?: number };
+    },
+    { toolCallId }: { toolCallId: string }
+  ) => {
     let vm: Awaited<ReturnType<typeof spawnCodingVM>> | null = null;
     let convexSessionId: string | null = null;
+
+    // Look up the parent session ID for progress updates
+    const parentSessionId = await convex.query(api.codingAgent.getParentSessionForToolCall, {
+      toolCallId,
+    });
 
     try {
       // Get required environment variables
@@ -357,6 +460,9 @@ The agent will complete the task autonomously and return the results.`,
         console.warn("[coding-agent] NEXT_PUBLIC_CONVEX_SITE not set, streaming to Convex disabled");
       }
 
+      // Update progress: Creating session (non-blocking)
+      updateProgress(parentSessionId, toolCallId, "creating_session", "Creating tracking session...");
+
       // Create a session in Convex to track this coding agent task
       // The JWT secret is stored directly on the session for reliable authentication
       // The task is stored on the session so the UI can query by it directly
@@ -368,6 +474,11 @@ The agent will complete the task autonomously and return the results.`,
         jwtSecret, // Store secret directly on session - no taskHash lookup needed
       });
       console.log(`[coding-agent] Created Convex session: ${convexSessionId}`);
+
+      // Update progress: Session created, now starting VM (non-blocking)
+      updateProgress(parentSessionId, toolCallId, "starting_vm", "Starting sandboxed VM...", {
+        sessionId: convexSessionId,
+      });
 
       // Spawn a VM with JWT config written before OpenCode starts
       vm = await spawnCodingVM({
@@ -407,6 +518,12 @@ The agent will complete the task autonomously and return the results.`,
       // Log the VM URL (derived from instance ID: https://port-4096-{id.replace('_', '-')}.http.cloud.morph.so)
       console.log(`[coding-agent] Updated session with instance ID: ${vm.instanceId} (VM URL: ${vm.url})`);
 
+      // Update progress: VM ready (non-blocking)
+      updateProgress(parentSessionId, toolCallId, "vm_ready", "VM ready, creating OpenCode session...", {
+        sessionId: convexSessionId,
+        instanceId: vm.instanceId,
+      });
+
       // Create OpenCode client using the official SDK
       const opencode = createOpencodeClient({
         baseUrl: vm.url,
@@ -431,8 +548,21 @@ The agent will complete the task autonomously and return the results.`,
         ? `${task}\n\nContext:\n${context}`
         : task;
 
+      // Update progress: Sending task (non-blocking)
+      updateProgress(parentSessionId, toolCallId, "sending_task", "Sending task to coding agent...", {
+        sessionId: convexSessionId,
+        instanceId: vm.instanceId,
+      });
+
       // Send the prompt and wait for response
       console.log(`[coding-agent] Sending task to agent...`);
+
+      // Update progress: Running (non-blocking)
+      updateProgress(parentSessionId, toolCallId, "running", "Coding agent is working...", {
+        sessionId: convexSessionId,
+        instanceId: vm.instanceId,
+      });
+
       const promptResponse = await opencode.session.prompt({
         path: { id: session.id },
         body: {
@@ -451,6 +581,12 @@ The agent will complete the task autonomously and return the results.`,
       const textResponse = extractTextFromParts(response.parts);
       const toolsSummary = extractToolSummary(response.parts);
 
+      // Update progress: Completed (non-blocking)
+      updateProgress(parentSessionId, toolCallId, "completed", "Task completed successfully", {
+        sessionId: convexSessionId,
+        instanceId: vm.instanceId,
+      });
+
       const result = {
         success: true,
         sessionId: session.id,
@@ -467,12 +603,21 @@ The agent will complete the task autonomously and return the results.`,
       return result;
     } catch (error) {
       console.error(`[coding-agent] Error:`, error);
+
+      // Update progress: Error (non-blocking)
+      updateProgress(parentSessionId, toolCallId, "error", error instanceof Error ? error.message : String(error), {
+        sessionId: convexSessionId ?? undefined,
+      });
+
       return {
         success: false,
         convexSessionId, // Include even on error for debugging
         error: error instanceof Error ? error.message : String(error),
       };
     } finally {
+      // Flush any pending progress updates before returning
+      await progressQueue.flush();
+
       // TODO: Re-enable cleanup after debugging
       // Always cleanup the VM
       // if (vm) {
