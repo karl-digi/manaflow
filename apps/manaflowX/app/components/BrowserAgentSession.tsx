@@ -108,13 +108,20 @@ function ToolCallPart({ part }: { part: TurnPart }) {
 
   const status = part.toolStatus || "pending"
 
+  // Highlight chrome MCP tools with a cyan border
+  const isChromeTool = part.toolName?.startsWith("chrome_")
+
   return (
-    <div className="bg-gray-800/50 border border-gray-700 rounded-lg my-2 overflow-hidden">
+    <div className={`bg-gray-800/50 border rounded-lg my-2 overflow-hidden ${
+      isChromeTool ? "border-cyan-600" : "border-gray-700"
+    }`}>
       <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-700">
         <span className={statusColors[status]}>
           {statusIcons[status]}
         </span>
-        <span className="font-mono text-sm text-blue-400">{part.toolName}</span>
+        <span className={`font-mono text-sm ${isChromeTool ? "text-cyan-400" : "text-blue-400"}`}>
+          {part.toolName}
+        </span>
         {part.toolTitle && (
           <span className="text-gray-400 text-sm truncate">{part.toolTitle}</span>
         )}
@@ -267,14 +274,14 @@ function TurnMessage({ turn }: { turn: Turn }) {
 // Main Component
 // =============================================================================
 
-interface CodingAgentSessionProps {
+interface BrowserAgentSessionProps {
   sessionId: Id<"sessions">
   onClose?: () => void
 }
 
-export function CodingAgentSession({ sessionId, onClose }: CodingAgentSessionProps) {
+export function BrowserAgentSession({ sessionId, onClose }: BrowserAgentSessionProps) {
   const data = useQuery(api.codingAgent.getCodingAgentSession, { sessionId })
-  const [vncExpanded, setVncExpanded] = useState(false)
+  const [vncExpanded, setVncExpanded] = useState(true)
   const [workspaceExpanded, setWorkspaceExpanded] = useState(false)
   const [vscodeExpanded, setVscodeExpanded] = useState(false)
 
@@ -294,11 +301,18 @@ export function CodingAgentSession({ sessionId, onClose }: CodingAgentSessionPro
 
   const { session, turns } = data
 
+  // Get morphInstanceId from session data
+  const morphInstanceId = session.morphInstanceId
+
   const statusColors: Record<string, string> = {
     active: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
     completed: "bg-green-500/20 text-green-400 border-green-500/30",
     failed: "bg-red-500/20 text-red-400 border-red-500/30",
   }
+
+  const instanceSlug = morphInstanceId?.replace('_', '-')
+  const vmUrl = instanceSlug ? `https://port-4096-${instanceSlug}.http.cloud.morph.so` : null
+  const vscodeUrl = instanceSlug ? `https://code-server-${instanceSlug}.http.cloud.morph.so/?folder=/root/workspace` : null
 
   return (
     <div className="h-full flex flex-col bg-black">
@@ -306,10 +320,10 @@ export function CodingAgentSession({ sessionId, onClose }: CodingAgentSessionPro
       <div className="flex-shrink-0 p-4 border-b border-gray-800 bg-black/80 backdrop-blur-md">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
-            <svg className="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+            <svg className="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
             </svg>
-            <span className="font-medium text-white">Coding Agent</span>
+            <span className="font-medium text-white">Browser Agent</span>
           </div>
           {onClose && (
             <button
@@ -345,16 +359,28 @@ export function CodingAgentSession({ sessionId, onClose }: CodingAgentSessionPro
           </div>
         )}
 
+        {!morphInstanceId && (
+          <div className="mt-2 flex items-center gap-2 p-2 bg-gray-900/50 border border-gray-700 rounded-lg">
+            <svg className="w-4 h-4 text-yellow-400 animate-pulse flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span className="text-xs text-gray-400">Waiting for VM to start...</span>
+          </div>
+        )}
       </div>
 
-      {/* Iframe Viewers - VM Workspace, VS Code, Live Browser */}
-      {session.morphInstanceId && (() => {
-        const instanceSlug = session.morphInstanceId.replace('_', '-')
-        const vmUrl = `https://port-4096-${instanceSlug}.http.cloud.morph.so`
-        const vncUrl = `https://novnc-${instanceSlug}.http.cloud.morph.so/vnc.html?autoconnect=true&resize=scale`
-        const vscodeUrl = `https://code-server-${instanceSlug}.http.cloud.morph.so/?folder=/root/workspace`
-        return (
-          <>
+      {/* Iframe Viewers - Live Browser, VM Workspace, VS Code */}
+      {morphInstanceId && (
+        <>
+          <IframeViewer
+            url={`https://novnc-${instanceSlug}.http.cloud.morph.so/vnc.html?autoconnect=true&resize=scale`}
+            title="Live Browser View"
+            icon={VNCIcon}
+            color="text-cyan-400"
+            isExpanded={vncExpanded}
+            onToggle={() => setVncExpanded(!vncExpanded)}
+          />
+          {vmUrl && (
             <IframeViewer
               url={vmUrl}
               title="VM Workspace"
@@ -363,6 +389,8 @@ export function CodingAgentSession({ sessionId, onClose }: CodingAgentSessionPro
               isExpanded={workspaceExpanded}
               onToggle={() => setWorkspaceExpanded(!workspaceExpanded)}
             />
+          )}
+          {vscodeUrl && (
             <IframeViewer
               url={vscodeUrl}
               title="VS Code"
@@ -371,17 +399,9 @@ export function CodingAgentSession({ sessionId, onClose }: CodingAgentSessionPro
               isExpanded={vscodeExpanded}
               onToggle={() => setVscodeExpanded(!vscodeExpanded)}
             />
-            <IframeViewer
-              url={vncUrl}
-              title="Live Browser View"
-              icon={VNCIcon}
-              color="text-cyan-400"
-              isExpanded={vncExpanded}
-              onToggle={() => setVncExpanded(!vncExpanded)}
-            />
-          </>
-        )
-      })()}
+          )}
+        </>
+      )}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -410,4 +430,4 @@ export function CodingAgentSession({ sessionId, onClose }: CodingAgentSessionPro
   )
 }
 
-export default CodingAgentSession
+export default BrowserAgentSession

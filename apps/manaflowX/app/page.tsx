@@ -3,6 +3,7 @@
 import { useQuery, useMutation } from "convex/react"
 import { useUser } from "@stackframe/stack"
 import Link from "next/link"
+import Image from "next/image"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Streamdown } from "streamdown"
 import { api } from "../convex/_generated/api"
@@ -10,8 +11,10 @@ import { useState, useCallback, Suspense } from "react"
 import { Id } from "../convex/_generated/dataModel"
 import { SessionsByPost } from "../components/SessionView"
 import { CodingAgentSession } from "./components/CodingAgentSession"
+import { BrowserAgentSession } from "./components/BrowserAgentSession"
 import { RepoPickerDropdown } from "@/components/RepoPickerDropdown"
 import { ConnectXButton } from "@/components/ConnectXButton"
+import { GrokIcon } from "@/components/GrokIcon"
 
 type Post = {
   _id: Id<"posts">
@@ -47,13 +50,25 @@ function PostCard({
     >
       <div className="flex gap-3">
         <div className="flex-shrink-0">
-          <div className="w-10 h-10 rounded-full bg-gray-700 flex items-center justify-center text-sm font-bold">
-            {post.author[0].toUpperCase()}
-          </div>
+          {post.author === "Grok" ? (
+            <Image
+              src="/image.png"
+              alt="Grok"
+              width={40}
+              height={40}
+              className="rounded-full"
+            />
+          ) : (
+            <div className="w-10 h-10 rounded-full bg-gray-700 flex items-center justify-center text-sm font-bold">
+              {post.author[0].toUpperCase()}
+            </div>
+          )}
         </div>
         <div className="flex-grow min-w-0">
           <div className="flex items-center gap-2 mb-1 flex-wrap">
-            <span className="font-bold hover:underline">{post.author}</span>
+            <span className="font-bold hover:underline">
+              {post.author === "Assistant" ? "Grok" : post.author}
+            </span>
             <span className="text-gray-500 text-sm">
               · {new Date(post.createdAt).toLocaleString()}
             </span>
@@ -117,7 +132,10 @@ function ReplyComposer({
   return (
     <div className="p-4 border-b border-gray-800 bg-gray-900/50">
       <div className="text-sm text-gray-500 mb-2">
-        Replying to <span className="text-blue-400">@{replyingTo.author}</span>
+        Replying to{" "}
+        <span className="text-blue-400">
+          @{replyingTo.author === "Assistant" ? "Grok" : replyingTo.author}
+        </span>
       </div>
       <textarea
         className="w-full bg-gray-800 text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none p-3 rounded-lg"
@@ -157,11 +175,13 @@ function ThreadPanel({
   onClose,
   onSelectPost,
   onCodingAgentSessionSelect,
+  onBrowserAgentSessionSelect,
 }: {
   postId: Id<"posts">
   onClose: () => void
   onSelectPost: (postId: Id<"posts">) => void
   onCodingAgentSessionSelect?: (sessionId: Id<"sessions"> | null) => void
+  onBrowserAgentSessionSelect?: (sessionId: Id<"sessions"> | null) => void
 }) {
   const thread = useQuery(api.posts.getPostThread, { postId })
   const createPost = useMutation(api.posts.createPost)
@@ -266,6 +286,7 @@ function ThreadPanel({
           <SessionsByPost
             postId={postId}
             onCodingAgentSessionSelect={onCodingAgentSessionSelect}
+            onBrowserAgentSessionSelect={onBrowserAgentSessionSelect}
           />
         </div>
 
@@ -283,21 +304,68 @@ function HomeContent() {
   const data = useQuery(api.posts.listPosts, { limit: 20 })
   const [content, setContent] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [selectedCodingAgentSession, setSelectedCodingAgentSession] = useState<Id<"sessions"> | null>(null)
   const [selectedRepo, setSelectedRepo] = useState<string | null>(null)
 
-  // Get selected post from URL search params
+  // Get selected post and agent sessions from URL search params
   const selectedThread = searchParams.get("post") as Id<"posts"> | null
+  const selectedCodingAgentSession = searchParams.get(
+    "codingAgent",
+  ) as Id<"sessions"> | null
+  const selectedBrowserAgentSession = searchParams.get(
+    "browserAgent",
+  ) as Id<"sessions"> | null
 
+  // Build URL with params, omitting null values
+  const buildUrl = useCallback(
+    (params: {
+      post?: Id<"posts"> | null
+      codingAgent?: Id<"sessions"> | null
+      browserAgent?: Id<"sessions"> | null
+    }) => {
+      const urlParams = new URLSearchParams()
+      if (params.post) urlParams.set("post", params.post)
+      if (params.codingAgent) urlParams.set("codingAgent", params.codingAgent)
+      if (params.browserAgent) urlParams.set("browserAgent", params.browserAgent)
+      const queryString = urlParams.toString()
+      return queryString ? `/?${queryString}` : "/"
+    },
+    [],
+  )
+
+  // When changing post, clear the agent panels (they're associated with the previous post)
   const setSelectedThread = useCallback(
     (postId: Id<"posts"> | null) => {
-      if (postId) {
-        router.push(`/?post=${postId}`, { scroll: false })
-      } else {
-        router.push("/", { scroll: false })
-      }
+      router.push(buildUrl({ post: postId }), { scroll: false })
     },
-    [router],
+    [router, buildUrl],
+  )
+
+  const setSelectedCodingAgentSession = useCallback(
+    (sessionId: Id<"sessions"> | null) => {
+      router.push(
+        buildUrl({
+          post: selectedThread,
+          codingAgent: sessionId,
+          browserAgent: selectedBrowserAgentSession,
+        }),
+        { scroll: false },
+      )
+    },
+    [router, buildUrl, selectedThread, selectedBrowserAgentSession],
+  )
+
+  const setSelectedBrowserAgentSession = useCallback(
+    (sessionId: Id<"sessions"> | null) => {
+      router.push(
+        buildUrl({
+          post: selectedThread,
+          codingAgent: selectedCodingAgentSession,
+          browserAgent: sessionId,
+        }),
+        { scroll: false },
+      )
+    },
+    [router, buildUrl, selectedThread, selectedCodingAgentSession],
   )
 
   const handleSubmit = async () => {
@@ -438,16 +506,27 @@ function HomeContent() {
               onClose={() => setSelectedThread(null)}
               onSelectPost={setSelectedThread}
               onCodingAgentSessionSelect={setSelectedCodingAgentSession}
+              onBrowserAgentSessionSelect={setSelectedBrowserAgentSession}
             />
           </aside>
         )}
 
         {/* Coding Agent Session Panel - Third Column */}
-        {selectedCodingAgentSession && (
+        {selectedCodingAgentSession && !selectedBrowserAgentSession && (
           <aside className="w-[500px] border-r border-gray-800 min-h-screen sticky top-0 h-screen overflow-hidden hidden xl:block">
             <CodingAgentSession
               sessionId={selectedCodingAgentSession}
               onClose={() => setSelectedCodingAgentSession(null)}
+            />
+          </aside>
+        )}
+
+        {/* Browser Agent Session Panel - Third Column (takes precedence over coding agent) */}
+        {selectedBrowserAgentSession && (
+          <aside className="w-[600px] border-r border-gray-800 min-h-screen sticky top-0 h-screen overflow-hidden hidden xl:block">
+            <BrowserAgentSession
+              sessionId={selectedBrowserAgentSession}
+              onClose={() => setSelectedBrowserAgentSession(null)}
             />
           </aside>
         )}
@@ -479,6 +558,4 @@ export default function Home() {
       <HomeContent />
     </Suspense>
   )
-
-
 }

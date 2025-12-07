@@ -4,7 +4,7 @@ import { streamText, stepCountIs } from "ai"
 import { ConvexHttpClient } from "convex/browser"
 import { api } from "../convex/_generated/api"
 import { Id } from "../convex/_generated/dataModel"
-import { issueTools, codingAgentTools } from "./tools"
+import { issueTools, codingAgentTools, browserAgentTools } from "./tools"
 
 const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
 
@@ -44,7 +44,12 @@ type TurnPart = {
 }
 
 // Generate an AI reply to an existing post
-export async function handleReplyToPost(postId: string, content: string, repoConfig?: RepoConfig) {
+export async function handleReplyToPost(
+  postId: string,
+  content: string,
+  repoConfig?: RepoConfig,
+  issueId?: string
+) {
   "use workflow"
 
   const reply = await generateStreamingReply({
@@ -53,11 +58,30 @@ export async function handleReplyToPost(postId: string, content: string, repoCon
     repoConfig,
   })
 
+  // If this was triggered for an issue, mark it as closed
+  if (issueId) {
+    await closeIssueOnCompletion(issueId)
+  }
+
   return {
     postId,
     replyPostId: reply.postId,
     sessionId: reply.sessionId,
     status: "published",
+  }
+}
+
+// Close the issue when the workflow completes
+async function closeIssueOnCompletion(issueId: string) {
+  "use step"
+  try {
+    await convex.mutation(api.issues.closeIssue, {
+      issueId: issueId as Id<"issues">,
+      reason: "Workflow completed - PR created",
+    })
+    console.log(`Closed issue ${issueId} after workflow completion`)
+  } catch (error) {
+    console.error(`Failed to close issue ${issueId}:`, error)
   }
 }
 
@@ -108,10 +132,12 @@ async function generateStreamingReply(post: {
     status: "streaming",
   })
 
-  // Issue tools + coding agent tools - don't let the agent create posts (it would create duplicates)
+  // Issue tools + coding agent tools + browser agent tools
+  // Don't let the agent create posts (it would create duplicates)
   const allTools = {
     ...issueTools,
     ...codingAgentTools,
+    ...browserAgentTools,
   }
 
   let currentParts: TurnPart[] = []
@@ -164,7 +190,7 @@ Since a repository is selected, delegate this task to the coding agent immediate
   try {
     const result = streamText({
       model: xai("grok-4-1-fast-non-reasoning"),
-      system: `You are an AI assistant with access to an issue tracking system, a post activity stream, and coding agents.
+      system: `You are an AI assistant with access to an issue tracking system, a post activity stream, coding agents, and browser automation.
 
 You can:
 - Create, update, close, and search issues
@@ -172,10 +198,14 @@ You can:
 - Find ready work (issues with no blockers)
 - Create and reply to posts in the activity stream
 - Delegate coding tasks to a remote coding agent (use delegateToCodingAgent)
+- Delegate browser automation tasks to a browser agent (use delegateToBrowserAgent)
 
 When users mention bugs, features, tasks, or work items, consider creating or updating issues.
 When users ask about status or progress, use the issue tools to look up information.
 When users ask you to write code, run tests, modify files, or perform any coding task, use the delegateToCodingAgent tool.
+When users ask you to interact with websites, scrape data, fill forms, or perform browser automation, use the delegateToBrowserAgent tool.
+
+You can chain tools together. For example, after delegateToCodingAgent returns a morphInstanceId and path, you can pass those to delegateToBrowserAgent to run browser tests on the same VM.
 
 Keep responses concise and helpful.${repoContext}`,
       prompt,
@@ -291,11 +321,29 @@ Keep responses concise and helpful.${repoContext}`,
           if (chunk.toolName === "delegateToCodingAgent") {
             const input = chunk.input as { task?: string }
             if (input.task) {
-              await convex.mutation(api.codingAgent.registerCodingAgentToolCall, {
-                toolCallId: chunk.toolCallId,
-                parentSessionId: sessionId,
-                task: input.task,
-              })
+              await convex.mutation(
+                api.codingAgent.registerCodingAgentToolCall,
+                {
+                  toolCallId: chunk.toolCallId,
+                  parentSessionId: sessionId,
+                  task: input.task,
+                },
+              )
+            }
+          }
+
+          // Register browser agent tool calls for immediate UI linking
+          if (chunk.toolName === "delegateToBrowserAgent") {
+            const input = chunk.input as { task?: string }
+            if (input.task) {
+              await convex.mutation(
+                api.codingAgent.registerCodingAgentToolCall,
+                {
+                  toolCallId: chunk.toolCallId,
+                  parentSessionId: sessionId,
+                  task: input.task,
+                },
+              )
             }
           }
         } else if (chunk.type === "tool-result") {
@@ -354,7 +402,7 @@ Keep responses concise and helpful.${repoContext}`,
     // Create a reply post with the generated text
     const replyPostId = await convex.mutation(api.posts.createPost, {
       content: finalText || "[No response generated]",
-      author: "Assistant",
+      author: "Grok",
       replyTo: post.id,
     })
 
