@@ -1,6 +1,6 @@
 "use client"
 
-import { useQuery, useMutation } from "convex/react"
+import { useQuery } from "convex/react"
 import { useUser } from "@stackframe/stack"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
@@ -179,15 +179,23 @@ function ThreadPanel({
   onBrowserAgentSessionSelect?: (sessionId: Id<"sessions"> | null) => void
 }) {
   const thread = useQuery(api.posts.getPostThread, { postId })
-  const createPost = useMutation(api.posts.createPost)
   const [replyingTo, setReplyingTo] = useState<Post | null>(null)
 
   const handleReply = async (content: string) => {
     if (!replyingTo) return
-    await createPost({
-      content,
-      replyTo: replyingTo._id,
-    })
+    try {
+      // Call the workflow API to create reply post and generate AI reply
+      const response = await fetch("/api/post", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content, replyTo: replyingTo._id }),
+      })
+      if (!response.ok) {
+        throw new Error("Failed to create reply")
+      }
+    } catch (error) {
+      console.error("Failed to create reply:", error)
+    }
     setReplyingTo(null)
   }
 
@@ -214,9 +222,9 @@ function ThreadPanel({
     if (replies.length === 0) return null
 
     return (
-      <div className={depth > 0 ? "pl-4 border-l border-gray-800" : ""}>
+      <div className="ml-4 border-l border-gray-800">
         {replies.map((reply) => (
-          <div key={reply._id}>
+          <div key={reply._id} className="pl-4">
             <PostCard
               post={reply}
               onReply={() => setReplyingTo(reply)}
@@ -231,6 +239,12 @@ function ThreadPanel({
                 onSubmit={handleReply}
               />
             )}
+            {/* Show AI sessions for this post */}
+            <SessionsByPost
+              postId={reply._id}
+              onCodingAgentSessionSelect={onCodingAgentSessionSelect}
+              onBrowserAgentSessionSelect={onBrowserAgentSessionSelect}
+            />
             {renderReplies(reply._id.toString(), depth + 1)}
           </div>
         ))}
@@ -276,10 +290,10 @@ function ThreadPanel({
           />
         )}
 
-        {/* Show AI sessions for the focused post */}
+        {/* Show AI sessions for the root post */}
         <div className="px-4">
           <SessionsByPost
-            postId={postId}
+            postId={thread.root._id}
             onCodingAgentSessionSelect={onCodingAgentSessionSelect}
             onBrowserAgentSessionSelect={onBrowserAgentSessionSelect}
           />
