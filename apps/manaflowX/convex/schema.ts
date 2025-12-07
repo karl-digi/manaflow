@@ -2,9 +2,11 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
 // =============================================================================
-// XAGI SCHEMA - Task Feed for Human-AI Collaboration
+// XAGI SCHEMA - Beads-inspired Issue Tracker + Twitter-style Posts
 // =============================================================================
-// Core concept: Tasks appear in feed → algorithm curates → humans review
+// Two core concepts:
+// - Posts: ephemeral activity stream (Twitter-like)
+// - Issues: persistent problems/features (Beads-like)
 // =============================================================================
 
 export default defineSchema({
@@ -46,115 +48,137 @@ export default defineSchema({
     .index("by_email", ["primaryEmail"]),
 
   // ---------------------------------------------------------------------------
-  // TASKS (the "tweets" - core content unit)
+  // POSTS (Twitter-style activity stream)
   // ---------------------------------------------------------------------------
+  // Ephemeral, agent updates, permission requests, notes
+  // Threading supported via replyTo/threadRoot
 
-  tasks: defineTable({
+  posts: defineTable({
     // Content
-    title: v.string(),
     content: v.string(), // Markdown
-    summary: v.optional(v.string()), // Short summary for feed
-
-    // Type of review needed
-    type: v.union(
-      v.literal("code_review"),
-      v.literal("approval"),
-      v.literal("verification"),
-      v.literal("decision"),
-      v.literal("triage"),
-      v.literal("feedback"),
-      v.literal("discussion")
-    ),
-
-    // Status
-    status: v.union(
-      v.literal("pending"),
-      v.literal("in_review"),
-      v.literal("approved"),
-      v.literal("rejected"),
-      v.literal("changes_requested"),
-      v.literal("completed"),
-      v.literal("archived")
-    ),
-
-    // Priority
-    priority: v.union(
-      v.literal("critical"),
-      v.literal("high"),
-      v.literal("medium"),
-      v.literal("low")
-    ),
-    urgencyScore: v.number(), // 0-100, for ranking
 
     // Author
-    authorId: v.optional(v.id("users")),
+    author: v.string(), // agent name or user display name
+    authorId: v.optional(v.id("users")), // null for agents
 
-    // Tree structure
-    parentId: v.optional(v.id("tasks")),
-    threadRootId: v.optional(v.id("tasks")),
-    path: v.optional(v.string()), // Materialized path for subtree queries
-    depth: v.number(),
-    childCount: v.number(),
-    descendantCount: v.number(),
+    // Threading
+    replyTo: v.optional(v.id("posts")), // Direct parent
+    threadRoot: v.optional(v.id("posts")), // Root of thread (for easy queries)
+    depth: v.number(), // 0 for root posts
 
-    // Quote
-    quotedTaskId: v.optional(v.id("tasks")),
-
-    // Attachments
-    attachments: v.array(
-      v.object({
-        type: v.union(v.literal("file"), v.literal("code"), v.literal("image"), v.literal("link")),
-        url: v.string(),
-        name: v.string(),
-        metadata: v.optional(v.any()),
-      })
-    ),
-
-    // Code context
-    codeContext: v.optional(
-      v.object({
-        language: v.string(),
-        filePath: v.string(),
-        diff: v.optional(v.string()),
-        lineStart: v.optional(v.number()),
-        lineEnd: v.optional(v.number()),
-      })
-    ),
-
-    // Tags
-    tags: v.array(v.string()),
+    // Optional link to issue
+    issue: v.optional(v.id("issues")),
 
     // Stats (denormalized)
     replyCount: v.number(),
-    reactionCount: v.number(),
-    viewCount: v.number(),
-
-    // Assignment
-    assigneeId: v.optional(v.id("users")),
 
     // Timestamps
-    dueAt: v.optional(v.number()),
-    expiresAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
-    completedAt: v.optional(v.number()),
   })
-    .index("by_status", ["status", "createdAt"])
-    .index("by_type", ["type"])
-    .index("by_priority", ["priority", "urgencyScore"])
-    .index("by_author", ["authorId", "createdAt"])
-    .index("by_assignee", ["assigneeId", "status"])
-    .index("by_parent", ["parentId", "createdAt"])
-    .index("by_thread_root", ["threadRootId", "depth", "createdAt"])
-    .index("by_path", ["path"])
+    .index("by_thread", ["threadRoot", "createdAt"])
+    .index("by_replyTo", ["replyTo", "createdAt"])
+    .index("by_issue", ["issue", "createdAt"])
+    .index("by_author", ["author", "createdAt"])
     .index("by_created", ["createdAt"]),
 
   // ---------------------------------------------------------------------------
-  // REACTIONS
+  // ISSUES (Beads-style persistent problems/features)
+  // ---------------------------------------------------------------------------
+  // Long-lived, tracked, dependencies, lifecycle
+
+  issues: defineTable({
+    // Human-readable short ID (like bd-a1b2)
+    shortId: v.string(),
+
+    // Content
+    title: v.string(),
+    description: v.optional(v.string()),
+
+    // Status lifecycle
+    status: v.union(
+      v.literal("open"),
+      v.literal("in_progress"),
+      v.literal("closed")
+    ),
+
+    // Priority (0 = highest, 4 = lowest, like Beads)
+    priority: v.number(),
+
+    // Type
+    type: v.union(
+      v.literal("bug"),
+      v.literal("feature"),
+      v.literal("task"),
+      v.literal("epic"),
+      v.literal("chore")
+    ),
+
+    // Assignment
+    assignee: v.optional(v.string()),
+
+    // Labels (flexible tagging)
+    labels: v.array(v.string()),
+
+    // Hierarchical issues (epic -> sub-issues)
+    parentIssue: v.optional(v.id("issues")),
+
+    // Closure info
+    closedAt: v.optional(v.number()),
+    closedReason: v.optional(v.string()),
+
+    // Compaction (memory decay)
+    isCompacted: v.boolean(),
+    compactedSummary: v.optional(v.string()),
+
+    // Timestamps
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_shortId", ["shortId"])
+    .index("by_status", ["status", "createdAt"])
+    .index("by_status_priority", ["status", "priority"])
+    .index("by_assignee", ["assignee", "status"])
+    .index("by_parent", ["parentIssue"])
+    .index("by_type", ["type", "status"]),
+
+  // ---------------------------------------------------------------------------
+  // DEPENDENCIES (issue relationships, Beads-style)
+  // ---------------------------------------------------------------------------
+
+  dependencies: defineTable({
+    fromIssue: v.id("issues"), // The issue that depends
+    toIssue: v.id("issues"), // The issue it depends on
+    type: v.union(
+      v.literal("blocks"), // Hard blocker - affects ready work
+      v.literal("related"), // Soft link for reference
+      v.literal("parent_child"), // Hierarchical relationship
+      v.literal("discovered_from") // Found during work on another issue
+    ),
+    createdAt: v.number(),
+  })
+    .index("by_from", ["fromIssue"])
+    .index("by_to", ["toIssue"])
+    .index("by_from_type", ["fromIssue", "type"]),
+
+  // ---------------------------------------------------------------------------
+  // ISSUE EVENTS (audit trail for issues)
+  // ---------------------------------------------------------------------------
+
+  issueEvents: defineTable({
+    issue: v.id("issues"),
+    type: v.string(), // "created", "updated", "closed", "reopened", etc.
+    data: v.any(), // JSON blob with change details
+    actor: v.optional(v.string()), // who made the change
+    createdAt: v.number(),
+  }).index("by_issue", ["issue", "createdAt"]),
+
+  // ---------------------------------------------------------------------------
+  // REACTIONS (for posts)
   // ---------------------------------------------------------------------------
 
   reactions: defineTable({
-    taskId: v.id("tasks"),
+    postId: v.id("posts"),
     userId: v.id("users"),
     type: v.union(
       v.literal("agree"),
@@ -165,43 +189,24 @@ export default defineSchema({
     ),
     createdAt: v.number(),
   })
-    .index("by_task", ["taskId"])
-    .index("by_user_task", ["userId", "taskId"]),
+    .index("by_post", ["postId"])
+    .index("by_user_post", ["userId", "postId"]),
 
   // ---------------------------------------------------------------------------
-  // COMMENTS
+  // FEED (algorithm output for personalized feeds)
   // ---------------------------------------------------------------------------
 
-  comments: defineTable({
-    taskId: v.id("tasks"),
-    authorId: v.id("users"),
-    content: v.string(),
-    parentCommentId: v.optional(v.id("comments")),
-    mentions: v.array(v.id("users")),
-    createdAt: v.number(),
-    updatedAt: v.number(),
-  })
-    .index("by_task", ["taskId", "createdAt"])
-    .index("by_parent", ["parentCommentId"]),
-
-  // ---------------------------------------------------------------------------
-  // FEED (the core algorithm output)
-  // ---------------------------------------------------------------------------
-
-  // Materialized feed items per user
   feedItems: defineTable({
     userId: v.id("users"),
-    taskId: v.id("tasks"),
+    postId: v.id("posts"),
 
     // Algorithm scores (0-100)
-    relevanceScore: v.number(), // How relevant to user
-    urgencyScore: v.number(), // Time sensitivity
-    expertiseMatch: v.number(), // Matches user expertise
-    finalScore: v.number(), // Combined ranking score
+    relevanceScore: v.number(),
+    urgencyScore: v.number(),
+    finalScore: v.number(),
 
-    // Why shown (for transparency/debugging)
+    // Why shown
     reason: v.union(
-      v.literal("expertise_match"),
       v.literal("assigned"),
       v.literal("trending"),
       v.literal("urgent"),
@@ -212,41 +217,13 @@ export default defineSchema({
     // State
     seen: v.boolean(),
     dismissed: v.boolean(),
-    interactedAt: v.optional(v.number()),
 
     createdAt: v.number(),
     expiresAt: v.number(),
   })
     .index("by_user_feed", ["userId", "dismissed", "finalScore"])
-    .index("by_user_created", ["userId", "createdAt"])
-    .index("by_task", ["taskId"])
+    .index("by_post", ["postId"])
     .index("by_expires", ["expiresAt"]),
-
-  // Engagement signals (for training/improving the algorithm)
-  engagementSignals: defineTable({
-    userId: v.id("users"),
-    taskId: v.id("tasks"),
-
-    action: v.union(
-      v.literal("view"),
-      v.literal("expand"),
-      v.literal("dwell"),
-      v.literal("react"),
-      v.literal("comment"),
-      v.literal("review"),
-      v.literal("dismiss"),
-      v.literal("bookmark"),
-      v.literal("share")
-    ),
-
-    dwellTimeSeconds: v.optional(v.number()),
-    feedPosition: v.optional(v.number()),
-    sourceScreen: v.string(),
-
-    createdAt: v.number(),
-  })
-    .index("by_user", ["userId", "createdAt"])
-    .index("by_task", ["taskId"]),
 
   // ---------------------------------------------------------------------------
   // NOTIFICATIONS
@@ -256,38 +233,25 @@ export default defineSchema({
     userId: v.id("users"),
 
     type: v.union(
-      v.literal("task_assigned"),
-      v.literal("task_mentioned"),
-      v.literal("task_completed"),
-      v.literal("task_urgent"),
-      v.literal("review_requested"),
-      v.literal("review_received"),
+      v.literal("issue_assigned"),
+      v.literal("issue_mentioned"),
+      v.literal("issue_completed"),
+      v.literal("permission_requested"),
       v.literal("reply_received"),
-      v.literal("reply_in_thread"),
-      v.literal("comment_received"),
-      v.literal("reaction_received"),
-      v.literal("quoted")
+      v.literal("reaction_received")
     ),
 
     // References
-    taskId: v.optional(v.id("tasks")),
-    parentTaskId: v.optional(v.id("tasks")),
-    threadRootId: v.optional(v.id("tasks")),
+    postId: v.optional(v.id("posts")),
+    issueId: v.optional(v.id("issues")),
     actorId: v.optional(v.id("users")),
-    commentId: v.optional(v.id("comments")),
 
     // Content
     title: v.string(),
     body: v.optional(v.string()),
-    preview: v.optional(v.string()),
-
-    // Grouping
-    groupKey: v.optional(v.string()),
-    groupCount: v.number(),
 
     // State
     read: v.boolean(),
-    seen: v.boolean(),
     archived: v.boolean(),
 
     createdAt: v.number(),

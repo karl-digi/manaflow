@@ -1,3 +1,6 @@
 [submodule "dev-docs/vercel-workflow"]
 	path = dev-docs/vercel-workflow
 	url = https://github.com/vercel/workflow.git
+[submodule "dev-docs/beads"]
+	path = dev-docs/beads
+	url = https://github.com/steveyegge/beads

@@ -10,7 +10,8 @@
 
 import type * as actions from "../actions.js";
 import type * as http from "../http.js";
-import type * as myFunctions from "../myFunctions.js";
+import type * as issues from "../issues.js";
+import type * as posts from "../posts.js";
 import type * as users from "../users.js";
 
 import type {
@@ -22,7 +23,8 @@ import type {
 declare const fullApi: ApiFromModules<{
   actions: typeof actions;
   http: typeof http;
-  myFunctions: typeof myFunctions;
+  issues: typeof issues;
+  posts: typeof posts;
   users: typeof users;
 }>;
 
