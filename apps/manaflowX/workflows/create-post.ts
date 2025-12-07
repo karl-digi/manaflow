@@ -59,6 +59,7 @@ export async function handleReplyToPost(
   })
 
   // If this was triggered for an issue, mark it as closed
+  // The coding agent tool awaits completion, so the workflow waits for the work to finish
   if (issueId) {
     await closeIssueOnCompletion(issueId)
   }

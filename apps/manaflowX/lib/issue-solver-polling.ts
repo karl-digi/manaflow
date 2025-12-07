@@ -30,6 +30,10 @@ interface Issue {
   priority: number;
   type: string;
   labels: string[];
+  // Optional repo config (for issues linked to a specific repo)
+  gitRemote?: string;
+  gitBranch?: string;
+  installationId?: number;
 }
 
 // Use Grok to select the best issue to work on
@@ -122,13 +126,6 @@ async function processOpenIssues() {
 
     console.log(`[issue-solver] Found ${openIssues.length} open issues, asking Grok to select one`);
 
-    // Get the workspace repo (where coding agent does work)
-    const workspaceRepo = await convex.query(api.github.getDefaultMonitoredRepo, {});
-    if (!workspaceRepo) {
-      console.log("[issue-solver] No workspace repo configured");
-      return;
-    }
-
     // Use Grok to select the best issue
     const selectedIssue = await selectIssueWithGrok(openIssues as Issue[]);
     if (!selectedIssue) {
@@ -149,20 +146,41 @@ async function processOpenIssues() {
     const issue = selectedIssue;
     console.log(`[issue-solver] Claimed issue ${issue.shortId}: ${issue.title}`);
 
+    // Determine repo config: use issue's repo if available, otherwise fall back to workspace repo
+    let repoConfig: RepoConfig | undefined;
+
+    if (issue.gitRemote) {
+      // Issue has its own repo config
+      console.log(`[issue-solver] Using issue's repo: ${issue.gitRemote}`);
+      repoConfig = {
+        fullName: issue.gitRemote.replace(/^https:\/\/github\.com\//, "").replace(/\.git$/, ""),
+        gitRemote: issue.gitRemote,
+        branch: issue.gitBranch || "main",
+        installationId: issue.installationId,
+      };
+    } else {
+      // Fall back to workspace repo (optional)
+      const workspaceRepo = await convex.query(api.github.getDefaultMonitoredRepo, {});
+      if (workspaceRepo) {
+        console.log(`[issue-solver] Using workspace repo: ${workspaceRepo.fullName}`);
+        repoConfig = {
+          fullName: workspaceRepo.fullName,
+          gitRemote: workspaceRepo.gitRemote,
+          branch: workspaceRepo.defaultBranch || "main",
+          installationId: workspaceRepo.installationId,
+        };
+      } else {
+        console.log("[issue-solver] No repo attached to issue and no workspace repo configured");
+        // Continue without repo - the workflow can still handle non-coding tasks
+      }
+    }
+
     // Build the task message for the coding agent
     const taskMessage = `Work on issue ${issue.shortId}: ${issue.title}
 
 ${issue.description || "No description provided."}
 
-Please analyze this issue and implement a solution. When done, create a PR for review.`;
-
-    // Workspace repo config for the coding agent
-    const repoConfig: RepoConfig = {
-      fullName: workspaceRepo.fullName,
-      gitRemote: workspaceRepo.gitRemote,
-      branch: workspaceRepo.defaultBranch || "main",
-      installationId: workspaceRepo.installationId,
-    };
+Please analyze this issue and implement a solution.${repoConfig ? " When done, create a PR for review." : ""}`;
 
     // Create a post for the task
     const postId = await convex.mutation(api.posts.createPost, {

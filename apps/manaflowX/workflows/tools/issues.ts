@@ -11,7 +11,7 @@ const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
 
 export const createIssueTool = tool({
   description:
-    "Create a new issue for tracking bugs, features, tasks, epics, or chores. Returns the issue ID and short ID.",
+    "Create a new issue for tracking bugs, features, tasks, epics, or chores. Returns the issue ID and short ID. If a repository is relevant to this issue, include the repo config so the coding agent knows where to work.",
   inputSchema: z.object({
     title: z.string().describe("Title of the issue"),
     description: z.string().optional().describe("Detailed description"),
@@ -30,8 +30,21 @@ export const createIssueTool = tool({
       .array(z.string())
       .optional()
       .describe("Labels/tags for categorization"),
+    // Optional repo config for workflow execution
+    gitRemote: z
+      .string()
+      .optional()
+      .describe("Git remote URL (e.g., https://github.com/owner/repo.git)"),
+    gitBranch: z
+      .string()
+      .optional()
+      .describe("Git branch to work on (default: main)"),
+    installationId: z
+      .number()
+      .optional()
+      .describe("GitHub App installation ID for authentication"),
   }),
-  execute: async ({ title, description, type, priority, assignee, labels }) => {
+  execute: async ({ title, description, type, priority, assignee, labels, gitRemote, gitBranch, installationId }) => {
     const result = await convex.mutation(api.issues.createIssue, {
       title,
       description,
@@ -39,6 +52,9 @@ export const createIssueTool = tool({
       priority,
       assignee,
       labels,
+      gitRemote,
+      gitBranch,
+      installationId,
     });
     return result;
   },

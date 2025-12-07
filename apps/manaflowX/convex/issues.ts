@@ -325,6 +325,10 @@ export const createIssue = mutation({
     assignee: v.optional(v.string()),
     labels: v.optional(v.array(v.string())),
     parentIssue: v.optional(v.id("issues")),
+    // Optional repo config for workflow execution
+    gitRemote: v.optional(v.string()),
+    gitBranch: v.optional(v.string()),
+    installationId: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
@@ -359,6 +363,10 @@ export const createIssue = mutation({
       labels: args.labels ?? [],
       parentIssue: args.parentIssue,
       isCompacted: false,
+      // Optional repo config
+      gitRemote: args.gitRemote,
+      gitBranch: args.gitBranch,
+      installationId: args.installationId,
       createdAt: now,
       updatedAt: now,
     });
