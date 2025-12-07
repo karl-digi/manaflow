@@ -386,11 +386,11 @@ The agent uses Chrome DevTools Protocol (CDP) via MCP for browser control.`,
       });
 
       // Write JWT config to VM (works for both new and existing VMs)
-      if (jwtSecret && convexSiteUrl && convexSessionId) {
-        const apiKey = process.env.MORPH_API_KEY!;
-        const client = new MorphCloudClient({ apiKey });
-        const instance = await client.instances.get({ instanceId: vm.instanceId });
+      const morphApiKey = process.env.MORPH_API_KEY!;
+      const client = new MorphCloudClient({ apiKey: morphApiKey });
+      const instance = await client.instances.get({ instanceId: vm.instanceId });
 
+      if (jwtSecret && convexSiteUrl && convexSessionId) {
         const now = Math.floor(Date.now() / 1000);
         const jwt = await createJWT(
           {
@@ -409,6 +409,28 @@ The agent uses Chrome DevTools Protocol (CDP) via MCP for browser control.`,
         const escapedConfig = JSON.stringify(config).replace(/'/g, "'\"'\"'");
         await instance.exec(`mkdir -p /root/.xagi && echo '${escapedConfig}' > /root/.xagi/config.json`);
         console.log(`[browser-agent] Wrote JWT config to VM`);
+      }
+
+      // Write OpenCode config to use xAI Grok model
+      const xaiApiKey = process.env.XAI_API_KEY;
+      if (xaiApiKey) {
+        const opencodeConfig = {
+          $schema: "https://opencode.ai/config.json",
+          model: "xai/grok-4-1-fast-non-reasoning",
+          provider: {
+            xai: {
+              options: {
+                apiKey: xaiApiKey,
+              },
+            },
+          },
+        };
+
+        const escapedOpencodeConfig = JSON.stringify(opencodeConfig).replace(/'/g, "'\"'\"'");
+        await instance.exec(`mkdir -p /root/.config/opencode && echo '${escapedOpencodeConfig}' > /root/.config/opencode/opencode.json`);
+        console.log(`[browser-agent] Wrote OpenCode config with xAI/grok-4-1-fast-non-reasoning model`);
+      } else {
+        console.warn(`[browser-agent] XAI_API_KEY not set, using default model`);
       }
 
       // Update session with the Morph instance ID
@@ -455,6 +477,26 @@ The agent uses Chrome DevTools Protocol (CDP) via MCP for browser control.`,
       }
       console.log(`[browser-agent] Chrome DevTools MCP added successfully`);
 
+      // Add the Convex upload MCP server for image uploads
+      const uploadMcpResult = await opencode.mcp.add({
+        body: {
+          name: "convex-upload",
+          config: {
+            type: "local",
+            command: ["bun", "/root/mcp/convex-upload.ts"],
+            enabled: true,
+            timeout: 30000,
+          },
+        },
+      });
+
+      if (uploadMcpResult.error) {
+        // Non-fatal - log warning but continue
+        console.warn(`[browser-agent] Failed to add Convex upload MCP: ${JSON.stringify(uploadMcpResult.error)}`);
+      } else {
+        console.log(`[browser-agent] Convex upload MCP added successfully`);
+      }
+
       // Create a session
       const sessionResponse = await opencode.session.create({
         body: {
@@ -472,13 +514,27 @@ The agent uses Chrome DevTools Protocol (CDP) via MCP for browser control.`,
       // Build the prompt with browser-specific instructions
       let fullPrompt = `You have access to a Chrome browser via the Chrome DevTools MCP.
 
-Available browser tools (prefixed with "chrome_"):
-- chrome_navigate: Navigate to a URL
-- chrome_screenshot: Take a screenshot of the page
-- chrome_click: Click an element by selector
-- chrome_fill: Fill an input field
-- chrome_evaluate: Execute JavaScript in the page context
-- chrome_get_content: Get page HTML content
+Available browser tools:
+- navigate_page: Navigate to a URL
+- take_screenshot: Take a screenshot of the page
+- click: Click an element by selector
+- fill: Fill an input field
+- evaluate_script: Execute JavaScript in the page context (use this to get page HTML/content)
+- list_pages: List open browser pages
+- new_page: Open a new page
+- select_page: Switch to a different page
+- wait_for: Wait for an element or condition
+
+Available image tools:
+- upload_image: Upload a screenshot to get a permanent public URL.
+
+IMPORTANT INSTRUCTIONS:
+1. Complete the requested task using the browser tools.
+2. When finished, ALWAYS take a final screenshot of the result using take_screenshot.
+3. Upload the screenshot using upload_image to get a permanent URL.
+4. In your final response, include the uploaded image using markdown syntax: ![description](url)
+
+This allows the user to see visual proof of the completed task.
 
 `;
 

@@ -3,6 +3,7 @@
 import { useQuery } from "convex/react"
 import { useState } from "react"
 import { Streamdown } from "streamdown"
+import * as Dialog from "@radix-ui/react-dialog"
 import { api } from "../../convex/_generated/api"
 import { Id } from "../../convex/_generated/dataModel"
 
@@ -278,6 +279,7 @@ function VNCViewer({ morphInstanceId, isExpanded, onToggle }: {
   isExpanded: boolean;
   onToggle: () => void;
 }) {
+  const [modalOpen, setModalOpen] = useState(false)
   const instanceSlug = morphInstanceId.replace('_', '-')
   const vncUrl = `https://novnc-${instanceSlug}.http.cloud.morph.so/vnc.html?autoconnect=true&resize=scale`
 
@@ -311,17 +313,78 @@ function VNCViewer({ morphInstanceId, isExpanded, onToggle }: {
             title="Browser VNC View"
             allow="clipboard-read; clipboard-write"
           />
-          <a
-            href={vncUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="absolute top-2 right-2 px-2 py-1 bg-gray-800/80 hover:bg-gray-700 text-xs text-gray-300 rounded flex items-center gap-1"
-          >
-            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-            </svg>
-            Open in new tab
-          </a>
+          <div className="absolute top-2 right-2 flex items-center gap-1">
+            <Dialog.Root open={modalOpen} onOpenChange={setModalOpen}>
+              <Dialog.Trigger asChild>
+                <button
+                  className="px-2 py-1 bg-gray-800/80 hover:bg-gray-700 text-xs text-gray-300 rounded flex items-center gap-1"
+                >
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                  </svg>
+                  Expand
+                </button>
+              </Dialog.Trigger>
+              <Dialog.Portal>
+                <Dialog.Overlay className="fixed inset-0 bg-black/80 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 z-50" />
+                <Dialog.Content className="fixed left-[50%] top-[50%] translate-x-[-50%] translate-y-[-50%] w-[95vw] h-[90vh] bg-gray-900 border border-gray-700 rounded-lg shadow-2xl z-50 flex flex-col data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%]">
+                  <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
+                    <Dialog.Title className="text-sm font-medium text-cyan-400 flex items-center gap-2">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                      </svg>
+                      Live Browser View
+                    </Dialog.Title>
+                    <div className="flex items-center gap-2">
+                      <a
+                        href={vncUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-2 py-1 bg-gray-800 hover:bg-gray-700 text-xs text-gray-300 rounded flex items-center gap-1"
+                      >
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                        </svg>
+                        Open in new tab
+                      </a>
+                      <Dialog.Close asChild>
+                        <button
+                          className="p-1 text-gray-500 hover:text-white rounded transition-colors"
+                          aria-label="Close"
+                        >
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </Dialog.Close>
+                    </div>
+                  </div>
+                  <Dialog.Description className="sr-only">
+                    Full-screen view of the browser VNC session
+                  </Dialog.Description>
+                  <div className="flex-1 bg-black">
+                    <iframe
+                      src={vncUrl}
+                      className="w-full h-full border-0"
+                      title="Browser VNC View (Expanded)"
+                      allow="clipboard-read; clipboard-write"
+                    />
+                  </div>
+                </Dialog.Content>
+              </Dialog.Portal>
+            </Dialog.Root>
+            <a
+              href={vncUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-2 py-1 bg-gray-800/80 hover:bg-gray-700 text-xs text-gray-300 rounded flex items-center gap-1"
+            >
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+              </svg>
+              Open in new tab
+            </a>
+          </div>
         </div>
       )}
     </div>

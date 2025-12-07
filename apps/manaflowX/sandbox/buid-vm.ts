@@ -332,6 +332,25 @@ EOF`);
   const pluginVerify = await instance.exec("cat /root/workspace/.opencode/plugin/convex-sync.ts | head -20");
   console.log("Plugin installed:", pluginVerify.stdout ? "OK" : "Failed");
 
+  // Install MCP SDK for convex-upload MCP server
+  console.log("Installing MCP SDK...");
+  const mcpSdkInstall = await instance.exec(
+    "bun add -g @modelcontextprotocol/sdk",
+    { timeout: 120000 }
+  );
+  console.log("MCP SDK install:", mcpSdkInstall.stdout || "OK");
+
+  // Copy the Convex upload MCP server
+  console.log("Installing Convex upload MCP server...");
+  await instance.exec("mkdir -p /root/mcp");
+  const mcpPath = join(__dirname, "mcp/convex-upload.ts");
+  const mcpSsh = await instance.ssh();
+  await mcpSsh.putFile(mcpPath, "/root/mcp/convex-upload.ts");
+  mcpSsh.dispose();
+  await instance.exec("chmod +x /root/mcp/convex-upload.ts");
+  const mcpVerify = await instance.exec("cat /root/mcp/convex-upload.ts | head -20");
+  console.log("MCP server installed:", mcpVerify.stdout ? "OK" : "Failed");
+
   // Pre-fetch models.json to avoid Bun macro issue
   console.log("Pre-fetching models.json...");
   await instance.exec(

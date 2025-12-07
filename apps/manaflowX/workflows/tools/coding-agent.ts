@@ -505,6 +505,28 @@ The agent will complete the task autonomously and return the results.`,
             await instance.exec(`mkdir -p /root/.xagi && echo '${escapedConfig}' > /root/.xagi/config.json`);
             console.log(`[coding-agent] Wrote JWT config to VM`);
           }
+
+          // Write OpenCode config to use xAI Grok model
+          const xaiApiKey = process.env.XAI_API_KEY;
+          if (xaiApiKey) {
+            const opencodeConfig = {
+              $schema: "https://opencode.ai/config.json",
+              model: "xai/grok-4-1-fast-non-reasoning",
+              provider: {
+                xai: {
+                  options: {
+                    apiKey: xaiApiKey,
+                  },
+                },
+              },
+            };
+
+            const escapedOpencodeConfig = JSON.stringify(opencodeConfig).replace(/'/g, "'\"'\"'");
+            await instance.exec(`mkdir -p /root/.config/opencode && echo '${escapedOpencodeConfig}' > /root/.config/opencode/opencode.json`);
+            console.log(`[coding-agent] Wrote OpenCode config with xAI/grok-4-1-fast-non-reasoning model`);
+          } else {
+            console.warn(`[coding-agent] XAI_API_KEY not set, using default model`);
+          }
         },
         // Pass repository config for cloning
         repo: repo,

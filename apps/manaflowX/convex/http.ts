@@ -672,4 +672,89 @@ http.route({
   }),
 });
 
+// =============================================================================
+// Image Upload Endpoint (for browser-agent screenshots)
+// =============================================================================
+
+/**
+ * Image Upload Endpoint
+ * Receives base64-encoded image data and stores it in Convex storage.
+ * URL: https://your-convex-url.convex.site/upload_image
+ *
+ * Request body:
+ * - data: base64-encoded image data
+ * - filename: optional filename
+ * - mimeType: optional mime type (defaults to image/png)
+ *
+ * Response:
+ * - url: public URL to the uploaded image
+ * - storageId: Convex storage ID
+ */
+http.route({
+  path: "/upload_image",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const body = await request.json() as {
+        data: string;
+        filename?: string;
+        mimeType?: string;
+      };
+
+      if (!body.data) {
+        return new Response(
+          JSON.stringify({ success: false, error: "Missing image data" }),
+          { status: 400, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      const mimeType = body.mimeType || "image/png";
+      const filename = body.filename || `screenshot-${Date.now()}.png`;
+
+      // Decode base64 data
+      // Handle data URL format (data:image/png;base64,xxxx) or raw base64
+      let base64Data = body.data;
+      if (base64Data.includes(",")) {
+        base64Data = base64Data.split(",")[1]!;
+      }
+
+      const binaryData = Uint8Array.from(atob(base64Data), (c) => c.charCodeAt(0));
+      const blob = new Blob([binaryData], { type: mimeType });
+
+      // Store in Convex storage
+      const storageId = await ctx.storage.store(blob);
+
+      // Get the public URL
+      const url = await ctx.storage.getUrl(storageId);
+
+      if (!url) {
+        return new Response(
+          JSON.stringify({ success: false, error: "Failed to get storage URL" }),
+          { status: 500, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      console.log(`[upload_image] Stored image: ${filename} -> ${storageId}`);
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          url,
+          storageId,
+          filename,
+          mimeType,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error("[upload_image] Error:", errorMessage);
+      return new Response(
+        JSON.stringify({ success: false, error: errorMessage }),
+        { status: 500, headers: { "Content-Type": "application/json" } }
+      );
+    }
+  }),
+});
+
 export default http;
