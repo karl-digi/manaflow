@@ -90,7 +90,7 @@ interface RepoCloneConfig {
 // Get GitHub access token for cloning private repos
 async function getGitHubAccessToken(installationId: number): Promise<string | null> {
   const appId = process.env.GITHUB_APP_ID;
-  const privateKey = process.env.GITHUB_PRIVATE_KEY;
+  const privateKey = process.env.GITHUB_APP_PRIVATE_KEY;
 
   if (!appId || !privateKey) {
     console.warn("[coding-agent] GitHub App credentials not configured");
@@ -107,6 +107,11 @@ function buildAuthenticatedRemoteUrl(gitRemote: string, accessToken: string): st
   url.username = "x-access-token";
   url.password = accessToken;
   return url.toString();
+}
+
+// Safely quote a string for shell usage (single quotes with escaping)
+function singleQuote(str: string): string {
+  return `'${str.replace(/'/g, "'\"'\"'")}'`;
 }
 
 // Clone repository and checkout branch in the VM
@@ -126,6 +131,17 @@ async function cloneRepositoryInVM(
     if (accessToken) {
       cloneUrl = buildAuthenticatedRemoteUrl(gitRemote, accessToken);
       console.log(`[coding-agent] Using authenticated clone URL`);
+
+      // Set up gh CLI auth and git credential helper in the VM
+      console.log(`[coding-agent] Setting up gh auth in VM`);
+      const ghAuthRes = await instance.exec(
+        `bash -lc "printf %s ${singleQuote(accessToken)} | gh auth login --with-token && gh auth setup-git 2>&1"`
+      );
+      if (ghAuthRes.stderr && ghAuthRes.stderr.includes("error")) {
+        console.warn(`[coding-agent] gh auth setup warning: ${ghAuthRes.stderr}`);
+      } else {
+        console.log(`[coding-agent] gh auth setup completed`);
+      }
     } else {
       console.warn(`[coding-agent] Could not get access token, attempting public clone`);
     }
@@ -344,7 +360,7 @@ The agent will complete the task autonomously and return the results.`,
 
     try {
       // Get required environment variables
-      const convexSiteUrl = process.env.CONVEX_SITE_URL;
+      const convexSiteUrl = process.env.NEXT_PUBLIC_CONVEX_SITE;
 
       // Generate a random JWT secret for this invocation
       // This secret will be written to the VM and used by the plugin
@@ -352,7 +368,7 @@ The agent will complete the task autonomously and return the results.`,
       const jwtSecret = base64urlEncode(jwtSecretBytes);
 
       if (!convexSiteUrl) {
-        console.warn("[coding-agent] CONVEX_SITE_URL not set, streaming to Convex disabled");
+        console.warn("[coding-agent] NEXT_PUBLIC_CONVEX_SITE not set, streaming to Convex disabled");
       }
 
       // Create a session in Convex to track this coding agent task
