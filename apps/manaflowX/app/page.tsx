@@ -7,11 +7,11 @@ import { api } from "../convex/_generated/api";
 import { useState, useCallback } from "react";
 import { RepositoryPicker } from "@/components/RepositoryPicker";
 
-async function triggerSignupWorkflow(email: string) {
-  const response = await fetch("/api/signup", {
+async function triggerPostWorkflow(content: string) {
+  const response = await fetch("/api/post", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ content }),
   });
   return response.json();
 }
@@ -34,7 +34,7 @@ export default function Home() {
     setIsSubmitting(true);
     try {
       // Trigger the Workflow DevKit workflow
-      await triggerSignupWorkflow(content);
+      await triggerPostWorkflow(content);
       // Also create a task in Convex
       await startWorkflow({ content });
       setContent("");
@@ -96,6 +96,12 @@ export default function Home() {
               rows={3}
               value={content}
               onChange={(e) => setContent(e.target.value)}
+              onKeyDown={(e) => {
+                if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                  e.preventDefault();
+                  handleSubmit();
+                }
+              }}
             />
             {/* Selected repos display */}
             {selectedRepos.length > 0 && (

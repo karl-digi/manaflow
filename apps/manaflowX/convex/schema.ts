@@ -9,30 +9,41 @@ import { v } from "convex/values";
 
 export default defineSchema({
   // ---------------------------------------------------------------------------
-  // USERS
+  // USERS (synced from Stack Auth via webhooks)
   // ---------------------------------------------------------------------------
 
   users: defineTable({
-    // Convex auth token identifier
-    tokenIdentifier: v.string(),
+    userId: v.string(), // Stack Auth user ID
 
-    // Profile
-    username: v.string(),
-    displayName: v.string(),
-    avatarUrl: v.optional(v.string()),
+    // Basic identity
+    primaryEmail: v.optional(v.string()),
+    primaryEmailVerified: v.optional(v.boolean()),
+    displayName: v.optional(v.string()),
+    profileImageUrl: v.optional(v.string()),
 
-    // Expertise (used by feed algorithm)
-    expertise: v.array(v.string()), // ["typescript", "react", "ml"]
+    // Selected team
+    selectedTeamId: v.optional(v.string()),
+    selectedTeamDisplayName: v.optional(v.string()),
+    selectedTeamProfileImageUrl: v.optional(v.string()),
 
-    // Stats
-    tasksReviewed: v.number(),
-    reputation: v.number(),
+    // Security flags
+    hasPassword: v.optional(v.boolean()),
 
+    // Timestamps from Stack
+    signedUpAtMillis: v.optional(v.number()),
+    lastActiveAtMillis: v.optional(v.number()),
+
+    // Metadata
+    clientMetadata: v.optional(v.any()),
+    clientReadOnlyMetadata: v.optional(v.any()),
+    serverMetadata: v.optional(v.any()),
+
+    // Local bookkeeping
     createdAt: v.number(),
     updatedAt: v.number(),
   })
-    .index("by_token", ["tokenIdentifier"])
-    .index("by_username", ["username"]),
+    .index("by_userId", ["userId"])
+    .index("by_email", ["primaryEmail"]),
 
   // ---------------------------------------------------------------------------
   // TASKS (the "tweets" - core content unit)
