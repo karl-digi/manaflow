@@ -26,16 +26,16 @@ export default function SessionPage({
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="flex items-center gap-2">
-          <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+          <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce"></div>
           <div
-            className="w-2 h-2 bg-gray-500 rounded-full animate-bounce"
+            className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce"
             style={{ animationDelay: "0.1s" }}
           ></div>
           <div
-            className="w-2 h-2 bg-gray-600 rounded-full animate-bounce"
+            className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce"
             style={{ animationDelay: "0.2s" }}
           ></div>
-          <p className="ml-2 text-gray-400">Loading session...</p>
+          <p className="ml-2 text-muted-foreground">Loading session...</p>
         </div>
       </div>
     )
@@ -45,7 +45,7 @@ export default function SessionPage({
   if (session === null) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-4">
-        <div className="text-gray-400">Session not found</div>
+        <div className="text-muted-foreground">Session not found</div>
         <button
           onClick={() => router.push("/")}
           className="text-blue-400 hover:text-blue-300 transition-colors"
@@ -62,7 +62,7 @@ export default function SessionPage({
   return (
     <div className="min-h-screen">
       <div className="flex justify-center">
-        <main className="w-full max-w-[800px] border-x border-gray-800 min-h-screen">
+        <main className="w-full max-w-[800px] border-x border-border min-h-screen">
           {isBrowserAgent ? (
             <BrowserAgentSession
               sessionId={sessionId as Id<"sessions">}

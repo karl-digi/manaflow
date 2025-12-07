@@ -273,7 +273,7 @@ const SearchableSelect = forwardRef<
     }
     if (value.length === 0) {
       return (
-        <span className="text-neutral-400 truncate select-none">
+        <span className="text-muted-foreground truncate select-none">
           {placeholder}
         </span>
       );
@@ -358,10 +358,10 @@ const SearchableSelect = forwardRef<
           type="button"
           disabled={disabled}
           className={clsx(
-            "relative inline-flex h-7 items-center rounded-md border border-neutral-700 bg-neutral-900 px-2.5 pr-6 text-sm text-neutral-100 transition-colors outline-none",
-            "hover:bg-neutral-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500",
+            "relative inline-flex h-7 items-center rounded-md border border-border bg-card px-2.5 pr-6 text-sm text-foreground transition-colors outline-none",
+            "hover:bg-accent/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500",
             "disabled:cursor-not-allowed disabled:opacity-60",
-            "aria-expanded:bg-neutral-800",
+            "aria-expanded:bg-accent/50",
             className
           )}
         >
@@ -373,7 +373,7 @@ const SearchableSelect = forwardRef<
             ) : null}
             {displayContent}
           </span>
-          <ChevronDownIcon className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-neutral-500" />
+          <ChevronDownIcon className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
         </button>
       </Popover.Trigger>
       <Popover.Portal>
@@ -387,43 +387,43 @@ const SearchableSelect = forwardRef<
           <div
             ref={dropdownRef}
             className={clsx(
-              "rounded-lg border border-neutral-700 bg-neutral-900 p-0 shadow-xl w-[300px]",
+              "rounded-lg border border-border bg-card p-0 shadow-xl w-[300px]",
               "data-[state=closed]:animate-out data-[state=closed]:fade-out-0"
             )}
           >
           <Command loop shouldFilter={false} className="text-[13.5px]">
             {showSearch ? (
-              <div className="border-b border-neutral-800 p-2">
+              <div className="border-b border-border p-2">
                 <Command.Input
                   placeholder={searchPlaceholder}
                   value={search}
                   onValueChange={setSearch}
                   className={clsx(
-                    "w-full bg-transparent px-1 py-1 text-sm text-white",
-                    "placeholder-neutral-500 focus:outline-none"
+                    "w-full bg-transparent px-1 py-1 text-sm text-foreground",
+                    "placeholder-muted-foreground focus:outline-none"
                   )}
                 />
               </div>
             ) : null}
             {header ? (
-              <div className="border-b border-neutral-800">
+              <div className="border-b border-border">
                 {header}
               </div>
             ) : null}
             {loading ? (
               <div className="flex items-center justify-center py-8">
-                <LoaderIcon className="h-5 w-5 animate-spin text-neutral-400" />
+                <LoaderIcon className="h-5 w-5 animate-spin text-muted-foreground" />
               </div>
             ) : (
               <>
                 {sectionLabel ? (
-                  <div className="px-3 pt-2 pb-1 text-xs font-medium text-neutral-500 select-none">
+                  <div className="px-3 pt-2 pb-1 text-xs font-medium text-muted-foreground select-none">
                     {sectionLabel}
                   </div>
                 ) : null}
                 <Command.List className="max-h-[18rem] overflow-y-auto p-1">
                 {filteredOptions.length === 0 ? (
-                  <Command.Empty className="px-3 py-4 text-center text-neutral-500">
+                  <Command.Empty className="px-3 py-4 text-center text-muted-foreground">
                     No options found
                   </Command.Empty>
                 ) : (
@@ -444,9 +444,9 @@ const SearchableSelect = forwardRef<
                         data-selected-value={isSelected ? opt.value : undefined}
                         className={clsx(
                           "flex items-center justify-between gap-2 px-2 py-1.5 rounded-md cursor-pointer",
-                          "text-neutral-100 hover:bg-neutral-800 transition-colors",
-                          "data-[selected=true]:bg-neutral-800",
-                          isSelected && "bg-neutral-700/40"
+                          "text-foreground hover:bg-accent/50 transition-colors",
+                          "data-[selected=true]:bg-accent/50",
+                          isSelected && "bg-accent/50"
                         )}
                       >
                         <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -461,10 +461,10 @@ const SearchableSelect = forwardRef<
                         </div>
                         <div className="flex items-center gap-1">
                           {isSelected ? (
-                            <CheckIcon className="h-4 w-4 text-neutral-100 shrink-0" />
+                            <CheckIcon className="h-4 w-4 text-foreground shrink-0" />
                           ) : null}
                           {showChevron ? (
-                            <ChevronRightIcon className="h-3 w-3 text-neutral-500 shrink-0" />
+                            <ChevronRightIcon className="h-3 w-3 text-muted-foreground shrink-0" />
                           ) : null}
                         </div>
                       </Command.Item>
@@ -476,7 +476,7 @@ const SearchableSelect = forwardRef<
             )}
           </Command>
           {footer ? (
-            <div className="border-t border-neutral-800 bg-neutral-900">
+            <div className="border-t border-border bg-card">
               {footer}
             </div>
           ) : null}

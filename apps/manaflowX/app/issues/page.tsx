@@ -37,7 +37,7 @@ type IssueWithGraph = Issue & {
 const statusColors: Record<Issue["status"], string> = {
   open: "bg-green-500/20 text-green-400 border-green-500/30",
   in_progress: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
-  closed: "bg-gray-500/20 text-gray-400 border-gray-500/30",
+  closed: "bg-muted-foreground/20 text-muted-foreground border-muted-foreground/30",
 }
 
 const typeIcons: Record<Issue["type"], React.ReactNode> = {
@@ -62,7 +62,7 @@ const typeIcons: Record<Issue["type"], React.ReactNode> = {
     </svg>
   ),
   chore: (
-    <svg className="w-4 h-4 text-gray-400" fill="currentColor" viewBox="0 0 20 20">
+    <svg className="w-4 h-4 text-muted-foreground" fill="currentColor" viewBox="0 0 20 20">
       <path fillRule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
     </svg>
   ),
@@ -74,7 +74,7 @@ const priorityColors = [
   "text-orange-400",
   "text-yellow-400",
   "text-blue-400",
-  "text-gray-500",
+  "text-muted-foreground",
 ]
 
 function IssueCard({
@@ -95,15 +95,15 @@ function IssueCard({
   return (
     <div
       onClick={onClick}
-      className={`p-4 border-b border-gray-800 hover:bg-gray-900/30 transition-colors cursor-pointer ${
-        isSelected ? "bg-gray-900/50 border-l-2 border-l-blue-500" : ""
+      className={`p-4 border-b border-border hover:bg-accent/30 transition-colors cursor-pointer ${
+        isSelected ? "bg-accent/50 border-l-2 border-l-blue-500" : ""
       }`}
     >
       <div className="flex items-start gap-3">
         <div className="flex-shrink-0 mt-0.5">{typeIcons[issue.type]}</div>
         <div className="flex-grow min-w-0">
           <div className="flex items-center gap-2 mb-1 flex-wrap">
-            <span className="text-gray-500 text-sm font-mono">{issue.shortId}</span>
+            <span className="text-muted-foreground text-sm font-mono">{issue.shortId}</span>
             <span className={`text-xs px-2 py-0.5 rounded-full border ${statusColors[issue.status]}`}>
               {issue.status.replace("_", " ")}
             </span>
@@ -121,13 +121,13 @@ function IssueCard({
               </span>
             )}
           </div>
-          <h3 className="text-white font-medium mb-2">{issue.title}</h3>
+          <h3 className="text-foreground font-medium mb-2">{issue.title}</h3>
           <div className="flex items-center gap-3 text-sm">
             <span className={priorityColors[issue.priority]}>
               P{issue.priority}: {priorityLabels[issue.priority]}
             </span>
             {issue.assignee && (
-              <span className="text-gray-500">
+              <span className="text-muted-foreground">
                 → {issue.assignee}
               </span>
             )}
@@ -136,13 +136,13 @@ function IssueCard({
                 {issue.labels.slice(0, 3).map((label) => (
                   <span
                     key={label}
-                    className="text-xs px-2 py-0.5 rounded bg-gray-800 text-gray-400"
+                    className="text-xs px-2 py-0.5 rounded bg-card text-muted-foreground"
                   >
                     {label}
                   </span>
                 ))}
                 {issue.labels.length > 3 && (
-                  <span className="text-xs text-gray-500">+{issue.labels.length - 3}</span>
+                  <span className="text-xs text-muted-foreground">+{issue.labels.length - 3}</span>
                 )}
               </div>
             )}
@@ -225,8 +225,8 @@ function IssueTreeNode({
   return (
     <div>
       <div
-        className={`group flex items-center py-1.5 hover:bg-gray-800/50 cursor-pointer ${
-          isSelected ? "bg-gray-800/70" : ""
+        className={`group flex items-center py-1.5 hover:bg-accent/50 cursor-pointer ${
+          isSelected ? "bg-accent/70" : ""
         }`}
         style={{ paddingLeft: "8px" }}
         onClick={() => onSelect(issue._id)}
@@ -237,7 +237,7 @@ function IssueTreeNode({
             e.stopPropagation()
             if (hasChildren) toggleExpand(issue._id)
           }}
-          className="w-4 h-4 flex items-center justify-center flex-shrink-0 text-gray-600"
+          className="w-4 h-4 flex items-center justify-center flex-shrink-0 text-muted-foreground"
         >
           {hasChildren ? (
             <svg
@@ -248,12 +248,12 @@ function IssueTreeNode({
               <path d="M6 6L14 10L6 14V6Z" />
             </svg>
           ) : (
-            <span className="w-1 h-1 rounded-full bg-gray-700" />
+            <span className="w-1 h-1 rounded-full bg-muted" />
           )}
         </button>
 
         {/* ID */}
-        <span className="text-sm text-gray-500 ml-1 font-mono">
+        <span className="text-sm text-muted-foreground ml-1 font-mono">
           {issue.shortId}
         </span>
 
@@ -271,7 +271,7 @@ function IssueTreeNode({
         {/* Title */}
         <span
           className={`text-base font-medium ml-1.5 truncate ${
-            issue.status === "closed" ? "text-gray-500 line-through" : "text-gray-300"
+            issue.status === "closed" ? "text-muted-foreground line-through" : "text-foreground/80"
           }`}
         >
           {issue.title}
@@ -327,7 +327,7 @@ function IssueTreeView({
   return (
     <div className="py-1">
       {issues.length === 0 ? (
-        <div className="p-8 text-center text-gray-500 text-sm">No issues found.</div>
+        <div className="p-8 text-center text-muted-foreground text-sm">No issues found.</div>
       ) : (
         tree.map((node) => (
           <IssueTreeNode
@@ -356,7 +356,7 @@ function IssueDetailPanel({
 
   if (!issueData) {
     return (
-      <div className="h-full flex items-center justify-center text-gray-500">
+      <div className="h-full flex items-center justify-center text-muted-foreground">
         Loading...
       </div>
     )
@@ -366,14 +366,14 @@ function IssueDetailPanel({
 
   return (
     <div className="h-full flex flex-col">
-      <div className="p-4 border-b border-gray-800 flex justify-between items-center sticky top-0 bg-black/80 backdrop-blur-md">
+      <div className="p-4 border-b border-border flex justify-between items-center sticky top-0 bg-background/80 backdrop-blur-md">
         <div className="flex items-center gap-2">
           {typeIcons[issue.type]}
-          <span className="text-gray-500 font-mono">{issue.shortId}</span>
+          <span className="text-muted-foreground font-mono">{issue.shortId}</span>
         </div>
         <button
           onClick={onClose}
-          className="text-gray-500 hover:text-white transition-colors"
+          className="text-muted-foreground hover:text-foreground transition-colors"
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -398,15 +398,15 @@ function IssueDetailPanel({
         {/* Description */}
         {issue.description && (
           <div>
-            <h3 className="text-gray-400 text-sm font-medium mb-2">Description</h3>
-            <p className="text-gray-300 whitespace-pre-wrap">{issue.description}</p>
+            <h3 className="text-muted-foreground text-sm font-medium mb-2">Description</h3>
+            <p className="text-foreground/80 whitespace-pre-wrap">{issue.description}</p>
           </div>
         )}
 
         {issue.isCompacted && issue.compactedSummary && (
-          <div className="p-3 bg-gray-900 rounded-lg border border-gray-800">
-            <div className="text-xs text-gray-500 mb-1">Compacted Summary</div>
-            <p className="text-gray-300">{issue.compactedSummary}</p>
+          <div className="p-3 bg-muted rounded-lg border border-border">
+            <div className="text-xs text-muted-foreground mb-1">Compacted Summary</div>
+            <p className="text-foreground/80">{issue.compactedSummary}</p>
           </div>
         )}
 
@@ -416,7 +416,7 @@ function IssueDetailPanel({
             {/* Blocked by */}
             {dependencies.dependsOn.length > 0 && (
               <div>
-                <h3 className="text-gray-400 text-sm font-medium mb-2 flex items-center gap-2">
+                <h3 className="text-muted-foreground text-sm font-medium mb-2 flex items-center gap-2">
                   <svg className="w-4 h-4 text-red-400" fill="currentColor" viewBox="0 0 20 20">
                     <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
                   </svg>
@@ -427,14 +427,14 @@ function IssueDetailPanel({
                     depIssue && (
                       <div
                         key={dependency._id}
-                        className="p-2 bg-gray-900 rounded border border-gray-800 flex items-center gap-2"
+                        className="p-2 bg-muted rounded border border-border flex items-center gap-2"
                       >
-                        <span className="text-gray-500 font-mono text-sm">{depIssue.shortId}</span>
+                        <span className="text-muted-foreground font-mono text-sm">{depIssue.shortId}</span>
                         <span className={`text-xs px-1.5 py-0.5 rounded ${statusColors[depIssue.status]}`}>
                           {depIssue.status}
                         </span>
-                        <span className="text-gray-300 truncate flex-1">{depIssue.title}</span>
-                        <span className="text-xs text-gray-500">{dependency.type}</span>
+                        <span className="text-foreground/80 truncate flex-1">{depIssue.title}</span>
+                        <span className="text-xs text-muted-foreground">{dependency.type}</span>
                       </div>
                     )
                   ))}
@@ -445,7 +445,7 @@ function IssueDetailPanel({
             {/* Blocking */}
             {dependencies.blockedBy.length > 0 && (
               <div>
-                <h3 className="text-gray-400 text-sm font-medium mb-2 flex items-center gap-2">
+                <h3 className="text-muted-foreground text-sm font-medium mb-2 flex items-center gap-2">
                   <svg className="w-4 h-4 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                   </svg>
@@ -456,14 +456,14 @@ function IssueDetailPanel({
                     blockedIssue && (
                       <div
                         key={dependency._id}
-                        className="p-2 bg-gray-900 rounded border border-gray-800 flex items-center gap-2"
+                        className="p-2 bg-muted rounded border border-border flex items-center gap-2"
                       >
-                        <span className="text-gray-500 font-mono text-sm">{blockedIssue.shortId}</span>
+                        <span className="text-muted-foreground font-mono text-sm">{blockedIssue.shortId}</span>
                         <span className={`text-xs px-1.5 py-0.5 rounded ${statusColors[blockedIssue.status]}`}>
                           {blockedIssue.status}
                         </span>
-                        <span className="text-gray-300 truncate flex-1">{blockedIssue.title}</span>
-                        <span className="text-xs text-gray-500">{dependency.type}</span>
+                        <span className="text-foreground/80 truncate flex-1">{blockedIssue.title}</span>
+                        <span className="text-xs text-muted-foreground">{dependency.type}</span>
                       </div>
                     )
                   ))}
@@ -476,12 +476,12 @@ function IssueDetailPanel({
         {/* Labels */}
         {issue.labels.length > 0 && (
           <div>
-            <h3 className="text-gray-400 text-sm font-medium mb-2">Labels</h3>
+            <h3 className="text-muted-foreground text-sm font-medium mb-2">Labels</h3>
             <div className="flex flex-wrap gap-2">
               {issue.labels.map((label) => (
                 <span
                   key={label}
-                  className="px-2 py-1 rounded bg-gray-800 text-gray-300 text-sm"
+                  className="px-2 py-1 rounded bg-card text-foreground/80 text-sm"
                 >
                   {label}
                 </span>
@@ -493,16 +493,16 @@ function IssueDetailPanel({
         {/* Timeline */}
         {events.length > 0 && (
           <div>
-            <h3 className="text-gray-400 text-sm font-medium mb-2">Activity</h3>
+            <h3 className="text-muted-foreground text-sm font-medium mb-2">Activity</h3>
             <div className="space-y-2">
               {events.slice(0, 10).map((event) => (
                 <div key={event._id} className="flex items-start gap-2 text-sm">
-                  <div className="w-2 h-2 bg-gray-600 rounded-full mt-1.5"></div>
+                  <div className="w-2 h-2 bg-muted rounded-full mt-1.5"></div>
                   <div className="flex-1">
-                    <span className="text-gray-400">
+                    <span className="text-muted-foreground">
                       {event.type.replace(/_/g, " ")}
                     </span>
-                    <span className="text-gray-600 ml-2">
+                    <span className="text-muted-foreground ml-2">
                       {new Date(event.createdAt).toLocaleString()}
                     </span>
                   </div>
@@ -676,16 +676,16 @@ function IssuesContent() {
   return (
     <div className="h-screen overflow-hidden">
       <div className="flex justify-center h-full">
-        <main className="w-full max-w-[1200px] border-x border-gray-800 h-full flex flex-col">
+        <main className="w-full max-w-[1200px] border-x border-border h-full flex flex-col">
           {/* Header */}
-          <div className="flex-shrink-0 bg-black/80 backdrop-blur-md border-b border-gray-800 z-10">
+          <div className="flex-shrink-0 bg-background/80 backdrop-blur-md border-b border-border z-10">
             <div className="px-4 pt-4 pb-2 flex justify-between items-center gap-4">
-              <h1 className="text-base font-semibold text-white flex-shrink-0">Issues</h1>
+              <h1 className="text-base font-semibold text-foreground flex-shrink-0">Issues</h1>
               {/* Search input */}
               <form onSubmit={handleSearchSubmit} className="flex-1 max-w-md">
                 <div className="relative">
                   <svg
-                    className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500"
+                    className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -702,13 +702,13 @@ function IssuesContent() {
                     placeholder="Search issues..."
                     value={searchInput}
                     onChange={(e) => setSearchInput(e.target.value)}
-                    className="w-full bg-gray-900 border border-gray-800 rounded-lg pl-10 pr-8 py-1.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                    className="w-full bg-muted border border-border rounded-lg pl-10 pr-8 py-1.5 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                   />
                   {searchInput && (
                     <button
                       type="button"
                       onClick={clearSearch}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground/80"
                     >
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -719,7 +719,7 @@ function IssuesContent() {
               </form>
               <div className="flex items-center gap-3">
                 {issueStats && (
-                  <div className="flex items-center gap-3 text-xs text-gray-500">
+                  <div className="flex items-center gap-3 text-xs text-muted-foreground">
                     <span className="flex items-center gap-1.5">
                       <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
                       {issueStats.byStatus.open}
@@ -735,11 +735,11 @@ function IssuesContent() {
                   </div>
                 )}
                 {/* View mode toggle */}
-                <div className="flex items-center rounded-md bg-gray-900 p-0.5">
+                <div className="flex items-center rounded-md bg-muted p-0.5">
                   <button
                     onClick={() => updateFilter("view", "tree")}
                     className={`p-1 rounded transition-colors ${
-                      viewMode === "tree" ? "bg-gray-800 text-white" : "text-gray-500 hover:text-gray-300"
+                      viewMode === "tree" ? "bg-card text-foreground" : "text-muted-foreground hover:text-foreground/80"
                     }`}
                     title="Tree view"
                   >
@@ -750,7 +750,7 @@ function IssuesContent() {
                   <button
                     onClick={() => updateFilter("view", "list")}
                     className={`p-1 rounded transition-colors ${
-                      viewMode === "list" ? "bg-gray-800 text-white" : "text-gray-500 hover:text-gray-300"
+                      viewMode === "list" ? "bg-card text-foreground" : "text-muted-foreground hover:text-foreground/80"
                     }`}
                     title="Card view"
                   >
@@ -773,20 +773,20 @@ function IssuesContent() {
                       onClick={() => updateFilter("status", status)}
                       className={`px-3 py-1 text-sm font-medium transition-colors relative ${
                         statusFilter === status
-                          ? "text-white"
-                          : "text-gray-500 hover:text-gray-300"
+                          ? "text-foreground"
+                          : "text-muted-foreground hover:text-foreground/80"
                       }`}
                     >
                       {status === "all" ? "All issues" : status === "in_progress" ? "In Progress" : status.charAt(0).toUpperCase() + status.slice(1)}
                       {statusFilter === status && (
-                        <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-white rounded-full" />
+                        <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-foreground rounded-full" />
                       )}
                     </button>
                   )
                 )}
               </div>
 
-              <div className="h-4 w-px bg-gray-800 mx-1" />
+              <div className="h-4 w-px bg-border mx-1" />
 
               {/* Quick filters */}
               <div className="flex items-center gap-1.5">
@@ -795,10 +795,10 @@ function IssuesContent() {
                   className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md transition-all ${
                     statusFilter === "ready"
                       ? "bg-green-500/15 text-green-400 ring-1 ring-green-500/30"
-                      : "text-gray-500 hover:text-gray-300 hover:bg-gray-800/50"
+                      : "text-muted-foreground hover:text-foreground/80 hover:bg-accent/50"
                   }`}
                 >
-                  <div className={`w-1.5 h-1.5 rounded-full ${statusFilter === "ready" ? "bg-green-400" : "bg-gray-600"}`} />
+                  <div className={`w-1.5 h-1.5 rounded-full ${statusFilter === "ready" ? "bg-green-400" : "bg-muted-foreground"}`} />
                   Ready
                 </button>
                 <button
@@ -806,15 +806,15 @@ function IssuesContent() {
                   className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md transition-all ${
                     statusFilter === "blocked"
                       ? "bg-red-500/15 text-red-400 ring-1 ring-red-500/30"
-                      : "text-gray-500 hover:text-gray-300 hover:bg-gray-800/50"
+                      : "text-muted-foreground hover:text-foreground/80 hover:bg-accent/50"
                   }`}
                 >
-                  <div className={`w-1.5 h-1.5 rounded-full ${statusFilter === "blocked" ? "bg-red-400" : "bg-gray-600"}`} />
+                  <div className={`w-1.5 h-1.5 rounded-full ${statusFilter === "blocked" ? "bg-red-400" : "bg-muted-foreground"}`} />
                   Blocked
                 </button>
               </div>
 
-              <div className="h-4 w-px bg-gray-800 mx-1" />
+              <div className="h-4 w-px bg-border mx-1" />
 
               {/* Type dropdown-style pills */}
               <div className="flex items-center gap-1">
@@ -833,8 +833,8 @@ function IssuesContent() {
                                 ? "bg-blue-500/15 text-blue-400 ring-1 ring-blue-500/30"
                                 : type === "epic"
                                   ? "bg-orange-500/15 text-orange-400 ring-1 ring-orange-500/30"
-                                  : "bg-gray-500/15 text-gray-400 ring-1 ring-gray-500/30"
-                          : "text-gray-500 hover:text-gray-300 hover:bg-gray-800/50"
+                                  : "bg-muted-foreground/15 text-muted-foreground ring-1 ring-muted-foreground/30"
+                          : "text-muted-foreground hover:text-foreground/80 hover:bg-accent/50"
                       }`}
                       title={type.charAt(0).toUpperCase() + type.slice(1)}
                     >
@@ -850,7 +850,7 @@ function IssuesContent() {
           <div className="flex-1 overflow-y-auto">
             {/* Search results indicator */}
             {searchQuery && (
-              <div className="px-4 py-2 border-b border-gray-800 text-sm text-gray-400 flex items-center justify-between">
+              <div className="px-4 py-2 border-b border-border text-sm text-muted-foreground flex items-center justify-between">
                 <span>
                   Search results for &quot;{searchQuery}&quot;
                   {searchResults && ` (${searchResults.length} found)`}
@@ -864,11 +864,11 @@ function IssuesContent() {
               </div>
             )}
             {loading ? (
-              <div className="p-8 text-center text-gray-500">
+              <div className="p-8 text-center text-muted-foreground">
                 <div className="flex items-center justify-center gap-2">
-                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-                  <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: "0.1s" }}></div>
-                  <div className="w-2 h-2 bg-gray-600 rounded-full animate-bounce" style={{ animationDelay: "0.2s" }}></div>
+                  <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce"></div>
+                  <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: "0.1s" }}></div>
+                  <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: "0.2s" }}></div>
                 </div>
               </div>
             ) : viewMode === "tree" && graphData && !searchQuery ? (
@@ -878,7 +878,7 @@ function IssuesContent() {
                 selectedId={selectedIssue}
               />
             ) : issues.length === 0 ? (
-              <div className="p-8 text-center text-gray-500">
+              <div className="p-8 text-center text-muted-foreground">
                 {searchQuery ? `No issues found for "${searchQuery}"` : "No issues found matching the current filters."}
               </div>
             ) : (
@@ -898,7 +898,7 @@ function IssuesContent() {
 
         {/* Issue Detail Panel */}
         {selectedIssue && (
-          <aside className="w-[500px] border-r border-gray-800 h-full overflow-y-auto hidden lg:block">
+          <aside className="w-[500px] border-r border-border h-full overflow-y-auto hidden lg:block">
             <IssueDetailPanel
               issueId={selectedIssue}
               onClose={() => setSelectedIssue(null)}
@@ -916,10 +916,10 @@ export default function IssuesPage() {
       fallback={
         <div className="min-h-screen flex items-center justify-center">
           <div className="flex items-center gap-2">
-            <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-            <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: "0.1s" }}></div>
-            <div className="w-2 h-2 bg-gray-600 rounded-full animate-bounce" style={{ animationDelay: "0.2s" }}></div>
-            <p className="ml-2 text-gray-400">Loading...</p>
+            <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce"></div>
+            <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: "0.1s" }}></div>
+            <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: "0.2s" }}></div>
+            <p className="ml-2 text-muted-foreground">Loading...</p>
           </div>
         </div>
       }

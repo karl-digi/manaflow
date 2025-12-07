@@ -2,6 +2,12 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
+import { useTheme } from "next-themes"
+import { useSyncExternalStore } from "react"
+
+const emptySubscribe = () => () => {}
+const getServerSnapshot = () => false
+const getClientSnapshot = () => true
 
 const navItems = [
   {
@@ -50,9 +56,11 @@ const navItems = [
 
 export function Sidebar() {
   const pathname = usePathname()
+  const { theme, setTheme } = useTheme()
+  const mounted = useSyncExternalStore(emptySubscribe, getClientSnapshot, getServerSnapshot)
 
   return (
-    <aside className="w-[68px] 2xl:w-[275px] shrink-0 h-screen sticky top-0 flex flex-col border-r border-gray-800 py-2 px-2 2xl:px-4">
+    <aside className="w-[68px] 2xl:w-[275px] shrink-0 h-screen sticky top-0 flex flex-col border-r border-border py-2 px-2 2xl:px-4">
       <nav className="flex flex-col gap-1 mt-2">
         {navItems.map((item) => {
           const isActive = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href)
@@ -62,20 +70,48 @@ export function Sidebar() {
               href={item.href}
               className={`flex items-center gap-4 px-3 py-3 rounded-full transition-colors ${
                 isActive
-                  ? "font-bold bg-gray-900"
-                  : "hover:bg-gray-900/50"
+                  ? "font-bold bg-accent"
+                  : "hover:bg-accent/50"
               }`}
             >
-              <span className={isActive ? "text-white" : "text-gray-400"}>
+              <span className={isActive ? "text-foreground" : "text-muted-foreground"}>
                 {item.icon}
               </span>
-              <span className={`hidden 2xl:block text-xl ${isActive ? "text-white" : "text-gray-400"}`}>
+              <span className={`hidden 2xl:block text-xl ${isActive ? "text-foreground" : "text-muted-foreground"}`}>
                 {item.label}
               </span>
             </Link>
           )
         })}
       </nav>
+
+      <div className="mt-auto mb-4 flex justify-center 2xl:justify-start 2xl:px-3">
+        <button
+          onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+          className="p-3 rounded-full transition-colors hover:bg-accent/50 text-muted-foreground"
+          aria-label="Toggle theme"
+        >
+          {mounted && theme === "dark" ? (
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"
+              />
+            </svg>
+          ) : (
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"
+              />
+            </svg>
+          )}
+        </button>
+      </div>
     </aside>
   )
 }

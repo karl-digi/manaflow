@@ -31,16 +31,16 @@ export default function IssueByShortIdPage({
   return (
     <div className="min-h-screen flex items-center justify-center">
       <div className="flex items-center gap-2">
-        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+        <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce"></div>
         <div
-          className="w-2 h-2 bg-gray-500 rounded-full animate-bounce"
+          className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce"
           style={{ animationDelay: "0.1s" }}
         ></div>
         <div
-          className="w-2 h-2 bg-gray-600 rounded-full animate-bounce"
+          className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce"
           style={{ animationDelay: "0.2s" }}
         ></div>
-        <p className="ml-2 text-gray-400">
+        <p className="ml-2 text-muted-foreground">
           {issue === null ? "Issue not found..." : `Loading issue ${shortId}...`}
         </p>
       </div>

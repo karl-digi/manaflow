@@ -26,10 +26,10 @@ export default function XPage() {
   return (
     <div className="max-w-2xl mx-auto">
       {/* X Account Connection */}
-      <div className="p-4 border-b border-gray-800">
+      <div className="p-4 border-b border-border">
         <div className="mb-3">
-          <h3 className="font-medium text-white">X Account</h3>
-          <p className="text-sm text-gray-500 mt-0.5">
+          <h3 className="font-medium text-foreground">X Account</h3>
+          <p className="text-sm text-muted-foreground mt-0.5">
             Connect your X account to enable posting and interactions
           </p>
         </div>

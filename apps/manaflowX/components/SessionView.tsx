@@ -96,7 +96,7 @@ function BrowserAgentToolCallPart({
 
   return (
     <div
-      className={`my-2 bg-gray-800 rounded-lg p-3 pr-4 border border-cyan-600 hover:border-cyan-500 ${
+      className={`my-2 bg-card rounded-lg p-3 pr-4 border border-cyan-600 hover:border-cyan-500 ${
         canClick ? "cursor-pointer" : ""
       }`}
       onClick={() => {
@@ -121,7 +121,7 @@ function BrowserAgentToolCallPart({
         <svg className="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
         </svg>
-        <span className="text-xs text-gray-500">
+        <span className="text-xs text-muted-foreground">
           {progress ? (
             <span className="flex items-center gap-1">
               {part.toolStatus === "running" && (
@@ -148,21 +148,21 @@ function BrowserAgentToolCallPart({
         )}
       </div>
       {progress && progress.message && part.toolStatus === "running" && (
-        <div className="text-xs text-gray-400 mb-2 flex items-center gap-2">
+        <div className="text-xs text-muted-foreground mb-2 flex items-center gap-2">
           <span className="w-1 h-1 bg-blue-400 rounded-full animate-pulse" />
           {progress.message}
         </div>
       )}
       {part.toolInput !== undefined && (
         <details className="text-xs">
-          <summary className="text-gray-500 cursor-pointer hover:text-gray-300">Input</summary>
-          <pre className="mt-1 p-2 bg-gray-900 rounded overflow-x-auto text-gray-300">
+          <summary className="text-muted-foreground cursor-pointer hover:text-foreground/80">Input</summary>
+          <pre className="mt-1 p-2 bg-muted rounded overflow-x-auto text-foreground/80">
             {JSON.stringify(part.toolInput, null, 2)}
           </pre>
         </details>
       )}
       {canClick && (
-        <div className="text-xs mt-2 text-gray-400">
+        <div className="text-xs mt-2 text-muted-foreground">
           Click to view session
         </div>
       )}
@@ -208,7 +208,7 @@ function CodingAgentToolCallPart({
 
   return (
     <div
-      className={`my-2 bg-gray-800 rounded-lg p-3 pr-4 border border-purple-600 hover:border-purple-500 ${
+      className={`my-2 bg-card rounded-lg p-3 pr-4 border border-purple-600 hover:border-purple-500 ${
         sessionId ? "cursor-pointer" : ""
       }`}
       onClick={() => {
@@ -233,7 +233,7 @@ function CodingAgentToolCallPart({
         <svg className="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
         </svg>
-        <span className="text-xs text-gray-500">
+        <span className="text-xs text-muted-foreground">
           {progress ? (
             <span className="flex items-center gap-1">
               {part.toolStatus === "running" && (
@@ -260,21 +260,21 @@ function CodingAgentToolCallPart({
         )}
       </div>
       {progress && progress.message && part.toolStatus === "running" && (
-        <div className="text-xs text-gray-400 mb-2 flex items-center gap-2">
+        <div className="text-xs text-muted-foreground mb-2 flex items-center gap-2">
           <span className="w-1 h-1 bg-blue-400 rounded-full animate-pulse" />
           {progress.message}
         </div>
       )}
       {part.toolInput !== undefined && (
         <details className="text-xs">
-          <summary className="text-gray-500 cursor-pointer hover:text-gray-300">Input</summary>
-          <pre className="mt-1 p-2 bg-gray-900 rounded overflow-x-auto text-gray-300">
+          <summary className="text-muted-foreground cursor-pointer hover:text-foreground/80">Input</summary>
+          <pre className="mt-1 p-2 bg-muted rounded overflow-x-auto text-foreground/80">
             {JSON.stringify(part.toolInput, null, 2)}
           </pre>
         </details>
       )}
       {sessionId && (
-        <div className="text-xs mt-2 text-gray-400">Click to view coding agent session details</div>
+        <div className="text-xs mt-2 text-muted-foreground">Click to view coding agent session details</div>
       )}
     </div>
   );
@@ -292,22 +292,22 @@ function PartRenderer({
   switch (part.type) {
     case "text":
       return (
-        <div className="prose prose-invert prose-sm max-w-none">
+        <div className="prose dark:prose-invert prose-sm max-w-none">
           <Streamdown components={embeddableComponents}>{part.text ?? ""}</Streamdown>
           {!part.isComplete && (
-            <span className="inline-block w-2 h-4 bg-gray-400 animate-pulse ml-0.5" />
+            <span className="inline-block w-2 h-4 bg-muted-foreground animate-pulse ml-0.5" />
           )}
         </div>
       );
 
     case "reasoning":
       return (
-        <div className="text-gray-400 italic border-l-2 border-gray-600 pl-3 my-2">
-          <div className="text-xs text-gray-500 mb-1">Thinking...</div>
-          <div className="prose prose-invert prose-sm max-w-none opacity-70">
+        <div className="text-muted-foreground italic border-l-2 border-border pl-3 my-2">
+          <div className="text-xs text-muted-foreground mb-1">Thinking...</div>
+          <div className="prose dark:prose-invert prose-sm max-w-none opacity-70">
             <Streamdown components={embeddableComponents}>{part.text ?? ""}</Streamdown>
             {!part.isComplete && (
-              <span className="inline-block w-2 h-3 bg-gray-500 animate-pulse ml-0.5" />
+              <span className="inline-block w-2 h-3 bg-muted-foreground animate-pulse ml-0.5" />
             )}
           </div>
         </div>
@@ -326,7 +326,7 @@ function PartRenderer({
 
       // Regular tool call rendering
       return (
-        <div className="my-2 bg-gray-800 rounded-lg p-3 pr-4 border border-gray-700">
+        <div className="my-2 bg-card rounded-lg p-3 pr-4 border border-border">
           <div className="flex items-center gap-2 mb-2">
             <div className={`w-2 h-2 rounded-full ${
               part.toolStatus === "pending" ? "bg-yellow-500" :
@@ -335,7 +335,7 @@ function PartRenderer({
               "bg-red-500"
             }`} />
             <span className="text-sm font-mono text-blue-400">{part.toolName}</span>
-            <span className="text-xs text-gray-500">
+            <span className="text-xs text-muted-foreground">
               {part.toolStatus === "pending" && "Preparing..."}
               {part.toolStatus === "running" && "Running..."}
               {part.toolStatus === "completed" && "Completed"}
@@ -344,20 +344,20 @@ function PartRenderer({
           </div>
           {part.toolInput !== undefined && (
             <details className="text-xs">
-              <summary className="text-gray-500 cursor-pointer hover:text-gray-300">
+              <summary className="text-muted-foreground cursor-pointer hover:text-foreground/80">
                 Input
               </summary>
-              <pre className="mt-1 p-2 bg-gray-900 rounded overflow-x-auto text-gray-300">
+              <pre className="mt-1 p-2 bg-muted rounded overflow-x-auto text-foreground/80">
                 {JSON.stringify(part.toolInput, null, 2)}
               </pre>
             </details>
           )}
           {part.toolOutput && (
             <details className="text-xs mt-2">
-              <summary className="text-gray-500 cursor-pointer hover:text-gray-300">
+              <summary className="text-muted-foreground cursor-pointer hover:text-foreground/80">
                 Output
               </summary>
-              <pre className="mt-1 p-2 bg-gray-900 rounded overflow-x-auto text-gray-300 max-h-40 overflow-y-auto">
+              <pre className="mt-1 p-2 bg-muted rounded overflow-x-auto text-foreground/80 max-h-40 overflow-y-auto">
                 {part.toolOutput.length > 500
                   ? part.toolOutput.slice(0, 500) + "..."
                   : part.toolOutput}
@@ -371,7 +371,7 @@ function PartRenderer({
     case "step_finish":
       if (part.stepTokens) {
         return (
-          <div className="text-xs text-gray-600 my-1">
+          <div className="text-xs text-muted-foreground my-1">
             Step: {part.stepTokens.input} in / {part.stepTokens.output} out tokens
           </div>
         );
@@ -425,16 +425,16 @@ function TurnView({
   const hasError = turn.status === "error";
 
   return (
-    <div className={`py-3 pr-4 ${isUser ? "bg-gray-900/30" : ""}`}>
+    <div className={`py-3 pr-4 ${isUser ? "bg-muted/30" : ""}`}>
       <div className="flex gap-3">
         <div className="flex-shrink-0 pl-2">
           {isAssistant ? (
-            <div className="w-8 h-8 rounded-full bg-black border border-gray-700 flex items-center justify-center">
-              <GrokIcon size={20} className="text-white" />
+            <div className="w-8 h-8 rounded-full bg-background border border-border flex items-center justify-center">
+              <GrokIcon size={20} className="text-foreground" />
             </div>
           ) : (
             <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${
-              isUser ? "bg-blue-600" : "bg-gray-600"
+              isUser ? "bg-blue-600" : "bg-muted"
             }`}>
               {isUser ? "U" : turn.role[0].toUpperCase()}
             </div>
@@ -453,7 +453,7 @@ function TurnView({
               <span className="text-xs text-red-400">Error: {turn.error.message}</span>
             )}
           </div>
-          <div className="text-gray-200">
+          <div className="text-foreground">
             {turn.parts.map((part, idx) => (
               <PartRenderer
                 key={idx}
@@ -463,14 +463,14 @@ function TurnView({
               />
             ))}
             {turn.parts.length === 0 && isStreaming && (
-              <span className="text-gray-500 flex items-center gap-2">
-                <span className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-pulse" />
+              <span className="text-muted-foreground flex items-center gap-2">
+                <span className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-pulse" />
                 Generating response...
               </span>
             )}
           </div>
           {turn.tokens && turn.status === "complete" && (
-            <div className="text-xs text-gray-600 mt-2">
+            <div className="text-xs text-muted-foreground mt-2">
               {turn.tokens.input} input / {turn.tokens.output} output tokens
             </div>
           )}
@@ -494,8 +494,8 @@ export function SessionView({
 
   if (!data) {
     return (
-      <div className="p-4 text-gray-500 flex items-center gap-2">
-        <span className="w-2 h-2 bg-gray-500 rounded-full animate-pulse" />
+      <div className="p-4 text-muted-foreground flex items-center gap-2">
+        <span className="w-2 h-2 bg-muted-foreground rounded-full animate-pulse" />
         Loading session...
       </div>
     );
@@ -507,14 +507,14 @@ export function SessionView({
   const sortedTurns = [...turns].sort((a, b) => a.order - b.order);
 
   return (
-    <div className="border border-gray-800 rounded-lg overflow-hidden mb-4">
+    <div className="border border-border rounded-lg overflow-hidden mb-4">
       <button
         onClick={() => setIsExpanded(!isExpanded)}
-        className="bg-gray-900 px-4 py-2 border-b border-gray-800 flex justify-between items-center w-full hover:bg-gray-800 transition-colors"
+        className="bg-card px-4 py-2 border-b border-border flex justify-between items-center w-full hover:bg-accent/50 transition-colors"
       >
         <div className="flex items-center gap-2">
           <svg
-            className={`w-4 h-4 text-gray-500 transition-transform ${isExpanded ? "rotate-90" : ""}`}
+            className={`w-4 h-4 text-muted-foreground transition-transform ${isExpanded ? "rotate-90" : ""}`}
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -533,17 +533,17 @@ export function SessionView({
           }`} />
           <span className="text-sm font-medium capitalize">{session.status}</span>
           {session.model && (
-            <span className="text-xs text-gray-500">· {session.model}</span>
+            <span className="text-xs text-muted-foreground">· {session.model}</span>
           )}
         </div>
         {session.tokens && (
-          <div className="text-xs text-gray-500">
+          <div className="text-xs text-muted-foreground">
             {session.tokens.input + session.tokens.output} total tokens
           </div>
         )}
       </button>
       {isExpanded && (
-        <div className="divide-y divide-gray-800">
+        <div className="divide-y divide-border">
           {sortedTurns.map((turn) => (
             <TurnView
               key={turn._id}

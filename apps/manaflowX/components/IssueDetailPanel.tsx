@@ -25,7 +25,7 @@ type Issue = {
 const statusColors: Record<Issue["status"], string> = {
   open: "bg-green-500/20 text-green-400 border-green-500/30",
   in_progress: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
-  closed: "bg-gray-500/20 text-gray-400 border-gray-500/30",
+  closed: "bg-muted-foreground/20 text-muted-foreground border-muted-foreground/30",
 }
 
 const typeIcons: Record<Issue["type"], React.ReactNode> = {
@@ -50,7 +50,7 @@ const typeIcons: Record<Issue["type"], React.ReactNode> = {
     </svg>
   ),
   chore: (
-    <svg className="w-4 h-4 text-gray-400" fill="currentColor" viewBox="0 0 20 20">
+    <svg className="w-4 h-4 text-muted-foreground" fill="currentColor" viewBox="0 0 20 20">
       <path fillRule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
     </svg>
   ),
@@ -62,7 +62,7 @@ const priorityColors = [
   "text-orange-400",
   "text-yellow-400",
   "text-blue-400",
-  "text-gray-500",
+  "text-muted-foreground",
 ]
 
 interface IssueDetailPanelProps {
@@ -81,7 +81,7 @@ export function IssueDetailPanel({
 
   if (!issueData) {
     return (
-      <div className="h-full flex items-center justify-center text-gray-500">
+      <div className="h-full flex items-center justify-center text-muted-foreground">
         Loading...
       </div>
     )
@@ -91,14 +91,14 @@ export function IssueDetailPanel({
 
   return (
     <div className="h-full flex flex-col">
-      <div className="p-4 border-b border-gray-800 flex justify-between items-center sticky top-0 bg-black/80 backdrop-blur-md">
+      <div className="p-4 border-b border-border flex justify-between items-center sticky top-0 bg-background/80 backdrop-blur-md">
         <div className="flex items-center gap-2">
           {typeIcons[issue.type]}
-          <span className="text-gray-500 font-mono">{issue.shortId}</span>
+          <span className="text-muted-foreground font-mono">{issue.shortId}</span>
         </div>
         <button
           onClick={onClose}
-          className="text-gray-500 hover:text-white transition-colors"
+          className="text-muted-foreground hover:text-foreground transition-colors"
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -123,15 +123,15 @@ export function IssueDetailPanel({
         {/* Description */}
         {issue.description && (
           <div>
-            <h3 className="text-gray-400 text-sm font-medium mb-2">Description</h3>
-            <p className="text-gray-300 whitespace-pre-wrap">{issue.description}</p>
+            <h3 className="text-muted-foreground text-sm font-medium mb-2">Description</h3>
+            <p className="text-foreground/80 whitespace-pre-wrap">{issue.description}</p>
           </div>
         )}
 
         {issue.isCompacted && issue.compactedSummary && (
-          <div className="p-3 bg-gray-900 rounded-lg border border-gray-800">
-            <div className="text-xs text-gray-500 mb-1">Compacted Summary</div>
-            <p className="text-gray-300">{issue.compactedSummary}</p>
+          <div className="p-3 bg-card rounded-lg border border-border">
+            <div className="text-xs text-muted-foreground mb-1">Compacted Summary</div>
+            <p className="text-foreground/80">{issue.compactedSummary}</p>
           </div>
         )}
 
@@ -141,7 +141,7 @@ export function IssueDetailPanel({
             {/* Blocked by */}
             {dependencies.dependsOn.length > 0 && (
               <div>
-                <h3 className="text-gray-400 text-sm font-medium mb-2 flex items-center gap-2">
+                <h3 className="text-muted-foreground text-sm font-medium mb-2 flex items-center gap-2">
                   <svg className="w-4 h-4 text-red-400" fill="currentColor" viewBox="0 0 20 20">
                     <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
                   </svg>
@@ -153,14 +153,14 @@ export function IssueDetailPanel({
                       <div
                         key={dependency._id}
                         onClick={() => onIssueClick?.(depIssue._id)}
-                        className={`p-2 bg-gray-900 rounded border border-gray-800 flex items-center gap-2 ${onIssueClick ? "cursor-pointer hover:bg-gray-800/50" : ""}`}
+                        className={`p-2 bg-card rounded border border-border flex items-center gap-2 ${onIssueClick ? "cursor-pointer hover:bg-accent/50" : ""}`}
                       >
-                        <span className="text-gray-500 font-mono text-sm">{depIssue.shortId}</span>
+                        <span className="text-muted-foreground font-mono text-sm">{depIssue.shortId}</span>
                         <span className={`text-xs px-1.5 py-0.5 rounded ${statusColors[depIssue.status]}`}>
                           {depIssue.status}
                         </span>
-                        <span className="text-gray-300 truncate flex-1">{depIssue.title}</span>
-                        <span className="text-xs text-gray-500">{dependency.type}</span>
+                        <span className="text-foreground/80 truncate flex-1">{depIssue.title}</span>
+                        <span className="text-xs text-muted-foreground">{dependency.type}</span>
                       </div>
                     )
                   ))}
@@ -171,7 +171,7 @@ export function IssueDetailPanel({
             {/* Blocking */}
             {dependencies.blockedBy.length > 0 && (
               <div>
-                <h3 className="text-gray-400 text-sm font-medium mb-2 flex items-center gap-2">
+                <h3 className="text-muted-foreground text-sm font-medium mb-2 flex items-center gap-2">
                   <svg className="w-4 h-4 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                   </svg>
@@ -183,14 +183,14 @@ export function IssueDetailPanel({
                       <div
                         key={dependency._id}
                         onClick={() => onIssueClick?.(blockedIssue._id)}
-                        className={`p-2 bg-gray-900 rounded border border-gray-800 flex items-center gap-2 ${onIssueClick ? "cursor-pointer hover:bg-gray-800/50" : ""}`}
+                        className={`p-2 bg-card rounded border border-border flex items-center gap-2 ${onIssueClick ? "cursor-pointer hover:bg-accent/50" : ""}`}
                       >
-                        <span className="text-gray-500 font-mono text-sm">{blockedIssue.shortId}</span>
+                        <span className="text-muted-foreground font-mono text-sm">{blockedIssue.shortId}</span>
                         <span className={`text-xs px-1.5 py-0.5 rounded ${statusColors[blockedIssue.status]}`}>
                           {blockedIssue.status}
                         </span>
-                        <span className="text-gray-300 truncate flex-1">{blockedIssue.title}</span>
-                        <span className="text-xs text-gray-500">{dependency.type}</span>
+                        <span className="text-foreground/80 truncate flex-1">{blockedIssue.title}</span>
+                        <span className="text-xs text-muted-foreground">{dependency.type}</span>
                       </div>
                     )
                   ))}
@@ -203,12 +203,12 @@ export function IssueDetailPanel({
         {/* Labels */}
         {issue.labels.length > 0 && (
           <div>
-            <h3 className="text-gray-400 text-sm font-medium mb-2">Labels</h3>
+            <h3 className="text-muted-foreground text-sm font-medium mb-2">Labels</h3>
             <div className="flex flex-wrap gap-2">
               {issue.labels.map((label) => (
                 <span
                   key={label}
-                  className="px-2 py-1 rounded bg-gray-800 text-gray-300 text-sm"
+                  className="px-2 py-1 rounded bg-card text-foreground/80 text-sm"
                 >
                   {label}
                 </span>
@@ -220,16 +220,16 @@ export function IssueDetailPanel({
         {/* Timeline */}
         {events.length > 0 && (
           <div>
-            <h3 className="text-gray-400 text-sm font-medium mb-2">Activity</h3>
+            <h3 className="text-muted-foreground text-sm font-medium mb-2">Activity</h3>
             <div className="space-y-2">
               {events.slice(0, 10).map((event) => (
                 <div key={event._id} className="flex items-start gap-2 text-sm">
-                  <div className="w-2 h-2 bg-gray-600 rounded-full mt-1.5"></div>
+                  <div className="w-2 h-2 bg-border rounded-full mt-1.5"></div>
                   <div className="flex-1">
-                    <span className="text-gray-400">
+                    <span className="text-muted-foreground">
                       {event.type.replace(/_/g, " ")}
                     </span>
-                    <span className="text-gray-600 ml-2">
+                    <span className="text-muted-foreground/60 ml-2">
                       {new Date(event.createdAt).toLocaleString()}
                     </span>
                   </div>
