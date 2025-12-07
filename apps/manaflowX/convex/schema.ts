@@ -91,6 +91,9 @@ export default defineSchema({
     // Human-readable short ID (like bd-a1b2)
     shortId: v.string(),
 
+    // Owner (Stack Auth user ID) - determines which user's algorithm processes this
+    userId: v.optional(v.string()),
+
     // Content
     title: v.string(),
     description: v.optional(v.string()),
@@ -150,7 +153,8 @@ export default defineSchema({
     .index("by_assignee", ["assignee", "status"])
     .index("by_parent", ["parentIssue"])
     .index("by_type", ["type", "status"])
-    .index("by_github_issue", ["githubRepo", "githubIssueNumber"]),
+    .index("by_github_issue", ["githubRepo", "githubIssueNumber"])
+    .index("by_userId_status", ["userId", "status"]),
 
   // ---------------------------------------------------------------------------
   // DEPENDENCIES (issue relationships, Beads-style)
@@ -856,14 +860,15 @@ export default defineSchema({
     .index("by_coding_agent_session", ["codingAgentSessionId"]),
 
   // ---------------------------------------------------------------------------
-  // ALGORITHM SETTINGS (global settings for algorithm features)
+  // ALGORITHM SETTINGS (per-user settings for the autonomous agent)
   // ---------------------------------------------------------------------------
 
   algorithmSettings: defineTable({
-    key: v.string(), // Setting key (e.g., "prMonitorEnabled", "grokSystemPrompt")
-    value: v.union(v.boolean(), v.string()), // Setting value (boolean or string)
+    userId: v.string(), // Stack Auth user ID
+    enabled: v.boolean(), // Whether the autonomous agent is enabled for this user
+    prompt: v.optional(v.string()), // Custom system prompt for the agent
     updatedAt: v.number(),
-  }).index("by_key", ["key"]),
+  }).index("by_userId", ["userId"]),
 
   // ---------------------------------------------------------------------------
   // WORKFLOW QUEUE (for triggering workflows from Convex actions)
