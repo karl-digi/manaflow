@@ -187,10 +187,13 @@ const SearchableSelect = forwardRef<
   useEffect(() => {
     if (!open || value.length === 0) return;
 
-    const dropdownContainer = dropdownRef.current;
+    let scrollListener: (() => void) | null = null;
+    let listEl: Element | null = null;
 
     const updateOffset = () => {
+      const dropdownContainer = dropdownRef.current;
       if (!dropdownContainer) return;
+
       const selectedItem = dropdownContainer.querySelector(`[data-selected-value="${value[0]}"]`);
       if (selectedItem) {
         const dropdownRect = dropdownContainer.getBoundingClientRect();
@@ -198,22 +201,30 @@ const SearchableSelect = forwardRef<
         setFlyoutOffset(itemRect.top - dropdownRect.top);
         setMaxFlyoutOffset(dropdownRect.height - 40);
       }
+
+      // Set up scroll listener if not already done
+      if (!scrollListener) {
+        listEl = dropdownContainer.querySelector('[cmdk-list]');
+        if (listEl) {
+          scrollListener = updateOffset;
+          listEl.addEventListener('scroll', scrollListener);
+        }
+      }
     };
 
-    // Initial calculation with small delay for DOM render
-    const timer = setTimeout(updateOffset, 0);
+    // Run multiple times to ensure DOM is ready
+    const timer1 = setTimeout(updateOffset, 0);
+    const timer2 = setTimeout(updateOffset, 50);
+    const timer3 = setTimeout(updateOffset, 100);
 
-    // Also listen for scroll events on the list to update position
-    const listEl = dropdownContainer?.querySelector('[cmdk-list]');
-    if (listEl) {
-      listEl.addEventListener('scroll', updateOffset);
-      return () => {
-        clearTimeout(timer);
-        listEl.removeEventListener('scroll', updateOffset);
-      };
-    }
-
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+      clearTimeout(timer3);
+      if (listEl && scrollListener) {
+        listEl.removeEventListener('scroll', scrollListener);
+      }
+    };
   }, [open, value]);
 
   // Handle open state changes
@@ -402,7 +413,12 @@ const SearchableSelect = forwardRef<
                 ) : (
                   filteredOptions.map((opt) => {
                     const isSelected = value.includes(opt.value);
-                    const hasFlyout = !!renderOptionFlyout;
+                    // Show chevron only when this item's flyout is actually visible
+                    // Flyout shows for: selected item, or hovered item when nothing selected
+                    const showChevron = renderOptionFlyout && (
+                      isSelected ||
+                      (hoveredOption === opt.value && value.length === 0)
+                    );
                     return (
                       <Command.Item
                         key={opt.value}
@@ -413,7 +429,8 @@ const SearchableSelect = forwardRef<
                         className={clsx(
                           "flex items-center justify-between gap-2 px-2 py-1.5 rounded-md cursor-pointer",
                           "text-neutral-100 hover:bg-neutral-800 transition-colors",
-                          "data-[selected=true]:bg-neutral-800"
+                          "data-[selected=true]:bg-neutral-800",
+                          isSelected && "bg-neutral-800/60 ring-1 ring-neutral-700"
                         )}
                       >
                         <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -430,7 +447,7 @@ const SearchableSelect = forwardRef<
                           {isSelected ? (
                             <CheckIcon className="h-4 w-4 text-neutral-100 shrink-0" />
                           ) : null}
-                          {hasFlyout ? (
+                          {showChevron ? (
                             <ChevronRightIcon className="h-3 w-3 text-neutral-500 shrink-0" />
                           ) : null}
                         </div>
