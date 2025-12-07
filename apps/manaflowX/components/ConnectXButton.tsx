@@ -1,8 +1,7 @@
 "use client";
 
-import { useQuery, useMutation, useAction } from "convex/react";
-import { api } from "@/convex/_generated/api";
-import { useCallback, useEffect, useState } from "react";
+import { useUser } from "@stackframe/stack";
+import { useCallback, useState } from "react";
 
 // X (Twitter) icon component
 function XIcon({ className }: { className?: string }) {
@@ -22,86 +21,75 @@ interface ConnectXButtonProps {
   className?: string;
 }
 
+// Scopes needed for X API access
+// Reference: https://docs.x.com/x-api/fundamentals/authentication/oauth-2-0/authorization-code
+const X_SCOPES = ["tweet.read", "users.read", "offline.access"];
+
 export function ConnectXButton({ className = "" }: ConnectXButtonProps) {
-  const twitterConnection = useQuery(api.twitter.getTwitterConnection);
-  const mintOAuthState = useMutation(api.twitter.mintTwitterOAuthState);
-  const disconnectTwitter = useMutation(api.twitter.disconnectTwitter);
-  const testConnection = useAction(api.twitter.testTwitterConnection);
+  const user = useUser();
   const [isConnecting, setIsConnecting] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<string | null>(null);
+  const [xUserInfo, setXUserInfo] = useState<{
+    username: string;
+    name: string;
+    profile_image_url?: string;
+  } | null>(null);
 
-  // Get X OAuth client ID from env
-  const clientId = process.env.NEXT_PUBLIC_X_CLIENT_ID;
-  const convexSiteUrl = process.env.NEXT_PUBLIC_CONVEX_SITE_URL;
-  const redirectUri = convexSiteUrl ? `${convexSiteUrl}/twitter_callback` : null;
+  // Use Stack Auth's connected account for X
+  // Reference: Stack Auth OAuth docs - https://docs.stack-auth.com/docs/apps/oauth
+  const xAccount = user?.useConnectedAccount("x");
+  const accessTokenResult = xAccount?.useAccessToken();
 
-  // Handle connect X account
+  // Handle connect X account via Stack Auth
   const handleConnect = useCallback(async () => {
-    if (!clientId || !redirectUri) {
-      alert("X OAuth not configured");
-      return;
-    }
+    if (!user) return;
 
     setIsConnecting(true);
     try {
-      const returnUrl = window.location.href;
-      const { state, codeChallenge, codeChallengeMethod } = await mintOAuthState({ returnUrl });
-
-      // Build authorization URL
-      // Reference: https://docs.x.com/resources/fundamentals/authentication/oauth-2-0/authorization-code
-      const params = new URLSearchParams({
-        response_type: "code",
-        client_id: clientId,
-        redirect_uri: redirectUri,
-        scope: "tweet.read users.read offline.access",
-        state,
-        code_challenge: codeChallenge,
-        code_challenge_method: codeChallengeMethod,
+      // This will redirect to X OAuth flow via Stack Auth
+      // Reference: Stack Auth OAuth docs - user.getConnectedAccount with { or: 'redirect' }
+      await user.getConnectedAccount("x", {
+        or: "redirect",
+        scopes: X_SCOPES,
       });
-
-      const authUrl = `https://x.com/i/oauth2/authorize?${params.toString()}`;
-
-      // Open in a centered popup
-      const width = 600;
-      const height = 700;
-      const left = Math.max(0, (window.outerWidth - width) / 2 + window.screenX);
-      const top = Math.max(0, (window.outerHeight - height) / 2 + window.screenY);
-      const features = `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`;
-
-      window.open(authUrl, "twitter-oauth", features);
     } catch (err) {
-      console.error("Failed to start X OAuth:", err);
-      alert("Failed to start connection. Please try again.");
+      console.error("Failed to connect X account:", err);
       setIsConnecting(false);
     }
-  }, [clientId, redirectUri, mintOAuthState]);
+  }, [user]);
 
-  // Handle disconnect
-  const handleDisconnect = useCallback(async () => {
-    if (!confirm("Are you sure you want to disconnect your X account?")) {
+  // Handle test connection - fetch user profile via server-side proxy (avoids CORS)
+  const handleTestConnection = useCallback(async () => {
+    if (!accessTokenResult?.accessToken) {
+      setTestResult("No access token available");
       return;
     }
 
-    try {
-      await disconnectTwitter();
-      setTestResult(null);
-    } catch (err) {
-      console.error("Failed to disconnect X:", err);
-      alert("Failed to disconnect. Please try again.");
-    }
-  }, [disconnectTwitter]);
-
-  // Handle test connection
-  const handleTestConnection = useCallback(async () => {
     setIsTesting(true);
     setTestResult(null);
+
     try {
-      const result = await testConnection();
-      if (result.success && result.user) {
-        setTestResult(`API Test OK: @${result.user.username} (${result.user.name})`);
+      // Call our API route which proxies to X API (avoids CORS issues)
+      const response = await fetch("/api/x/test", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ accessToken: accessTokenResult.accessToken }),
+      });
+
+      const data = await response.json();
+
+      if (data.success && data.user) {
+        setXUserInfo({
+          username: data.user.username,
+          name: data.user.name,
+          profile_image_url: data.user.profile_image_url,
+        });
+        setTestResult(`API Test OK: @${data.user.username} (${data.user.name})`);
       } else {
-        setTestResult(`API Test Failed: ${result.error || "Unknown error"}`);
+        setTestResult(`API Test Failed: ${data.error || "Unknown error"}`);
       }
     } catch (err) {
       console.error("Test connection failed:", err);
@@ -109,61 +97,32 @@ export function ConnectXButton({ className = "" }: ConnectXButtonProps) {
     } finally {
       setIsTesting(false);
     }
-  }, [testConnection]);
+  }, [accessTokenResult?.accessToken]);
 
-  // Listen for popup completion message
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      const expectedOrigin = process.env.NEXT_PUBLIC_APP_URL || window.location.origin;
-      if (event.origin !== expectedOrigin) return;
-
-      if (event.data?.type === "twitter-oauth-complete") {
-        setIsConnecting(false);
-        if (!event.data.success && event.data.error) {
-          alert(`Connection failed: ${event.data.error}`);
-        }
-      }
-    };
-
-    window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
-  }, []);
-
-  // Not configured
-  if (!clientId || !redirectUri) {
+  // No user logged in
+  if (!user) {
     return null;
   }
 
-  // Loading state
-  if (twitterConnection === undefined) {
-    return (
-      <button
-        disabled
-        className={`flex items-center gap-2 px-3 py-1.5 text-sm rounded-full bg-neutral-800 text-neutral-400 ${className}`}
-      >
-        <XIcon className="w-4 h-4" />
-        <span>Loading...</span>
-      </button>
-    );
-  }
-
   // Connected state
-  if (twitterConnection) {
+  if (xAccount) {
     return (
       <div className={`flex flex-col gap-1 ${className}`}>
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-full bg-neutral-800 text-neutral-200">
-            {twitterConnection.twitterProfileImageUrl ? (
+            {xUserInfo?.profile_image_url ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={twitterConnection.twitterProfileImageUrl}
-                alt={twitterConnection.twitterUsername || "X"}
+                src={xUserInfo.profile_image_url}
+                alt={xUserInfo.username || "X"}
                 className="w-5 h-5 rounded-full"
               />
             ) : (
               <XIcon className="w-4 h-4" />
             )}
-            <span>@{twitterConnection.twitterUsername}</span>
+            <span>
+              {xUserInfo ? `@${xUserInfo.username}` : "X Connected"}
+            </span>
           </div>
           <button
             onClick={handleTestConnection}
@@ -172,15 +131,11 @@ export function ConnectXButton({ className = "" }: ConnectXButtonProps) {
           >
             {isTesting ? "Testing..." : "Test API"}
           </button>
-          <button
-            onClick={handleDisconnect}
-            className="text-xs text-neutral-500 hover:text-red-400 transition-colors"
-          >
-            Disconnect
-          </button>
         </div>
         {testResult && (
-          <span className={`text-xs ${testResult.includes("OK") ? "text-green-400" : "text-red-400"}`}>
+          <span
+            className={`text-xs ${testResult.includes("OK") ? "text-green-400" : "text-red-400"}`}
+          >
             {testResult}
           </span>
         )}
