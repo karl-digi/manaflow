@@ -320,21 +320,13 @@ export const deleteRepo = mutation({
   },
 });
 
-// Update scripts for a repo
+// Update scripts for a repo (env vars stored in Stack Auth Data Vault, not here)
 export const updateRepoScripts = mutation({
   args: {
     repoId: v.id("repos"),
     scripts: v.object({
       maintenanceScript: v.string(),
       devScript: v.string(),
-      envVars: v.optional(
-        v.array(
-          v.object({
-            key: v.string(),
-            value: v.string(),
-          })
-        )
-      ),
     }),
   },
   handler: async (ctx, { repoId, scripts }) => {

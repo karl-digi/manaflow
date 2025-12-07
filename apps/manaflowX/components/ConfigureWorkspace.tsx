@@ -2,7 +2,7 @@
 
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { useState, useCallback, useEffect, useImperativeHandle, forwardRef } from "react";
+import { useState, useCallback, useEffect, useImperativeHandle, forwardRef, useRef } from "react";
 import type { Id } from "@/convex/_generated/dataModel";
 
 export interface ConfigureWorkspaceRef {
@@ -10,6 +10,29 @@ export interface ConfigureWorkspaceRef {
   hasChanges: boolean;
   saving: boolean;
   saved: boolean;
+}
+
+// Fetch env vars from the Data Vault
+async function fetchEnvVars(repoId: string): Promise<{ key: string; value: string }[]> {
+  const response = await fetch(`/api/vault/env-vars?repoId=${repoId}`);
+  if (!response.ok) {
+    console.error("Failed to fetch env vars:", await response.text());
+    return [];
+  }
+  const data = await response.json();
+  return data.envVars || [];
+}
+
+// Save env vars to the Data Vault
+async function saveEnvVars(repoId: string, envVars: { key: string; value: string }[]): Promise<void> {
+  const response = await fetch("/api/vault/env-vars", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ repoId, envVars }),
+  });
+  if (!response.ok) {
+    throw new Error("Failed to save env vars");
+  }
 }
 
 // Icons
@@ -126,6 +149,9 @@ export const ConfigureWorkspace = forwardRef<ConfigureWorkspaceRef, ConfigureWor
   // Track which value input is currently focused (to show it even in hidden mode)
   const [focusedValueIndex, setFocusedValueIndex] = useState<number | null>(null);
 
+  // Track loading state for env vars from vault
+  const loadingEnvVarsRef = useRef(false);
+
   // Parse .env content and add to env vars
   const parseEnvContent = useCallback((content: string) => {
     const lines = content.split("\n");
@@ -179,26 +205,43 @@ export const ConfigureWorkspace = forwardRef<ConfigureWorkspaceRef, ConfigureWor
     }
   }, [envVars, parseEnvContent]);
 
-  // Load from existing repo scripts
+  // Load scripts from Convex
   useEffect(() => {
     if (repo?.scripts) {
       setMaintenanceScript(repo.scripts.maintenanceScript || "");
       setDevScript(repo.scripts.devScript || "");
-      if (repo.scripts.envVars && repo.scripts.envVars.length > 0) {
-        setEnvVars(repo.scripts.envVars);
-      } else {
-        setEnvVars([{ key: "", value: "" }]);
-      }
     } else {
       // Reset to defaults when no scripts exist
       setMaintenanceScript("");
       setDevScript("");
-      setEnvVars([{ key: "", value: "" }]);
     }
     // Reset change tracking when loading new data
     setHasChanges(false);
     setSaved(false);
   }, [repo?.scripts]);
+
+  // Load env vars from the Data Vault
+  useEffect(() => {
+    if (!repoId || loadingEnvVarsRef.current) return;
+
+    loadingEnvVarsRef.current = true;
+
+    fetchEnvVars(repoId)
+      .then((vars) => {
+        if (vars.length > 0) {
+          setEnvVars(vars);
+        } else {
+          setEnvVars([{ key: "", value: "" }]);
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to load env vars:", err);
+        setEnvVars([{ key: "", value: "" }]);
+      })
+      .finally(() => {
+        loadingEnvVarsRef.current = false;
+      });
+  }, [repoId]);
 
   // Track changes
   const handleScriptChange = useCallback(
@@ -242,16 +285,23 @@ export const ConfigureWorkspace = forwardRef<ConfigureWorkspaceRef, ConfigureWor
     try {
       // Filter out empty env vars before saving
       const filteredEnvVars = envVars.filter(
-        (env) => env.key.trim() !== "" || env.value.trim() !== ""
+        (env) => env.key.trim() !== ""
       );
-      await updateRepoScripts({
-        repoId,
-        scripts: {
-          maintenanceScript,
-          devScript,
-          envVars: filteredEnvVars.length > 0 ? filteredEnvVars : undefined,
-        },
-      });
+
+      // Save scripts to Convex and env vars to Data Vault in parallel
+      await Promise.all([
+        // Save scripts to Convex (no longer includes envVars)
+        updateRepoScripts({
+          repoId,
+          scripts: {
+            maintenanceScript,
+            devScript,
+          },
+        }),
+        // Save env vars to Data Vault (encrypted)
+        saveEnvVars(repoId, filteredEnvVars),
+      ]);
+
       setHasChanges(false);
       setSaved(true);
       // Reset saved indicator after 2 seconds
@@ -343,39 +393,42 @@ export const ConfigureWorkspace = forwardRef<ConfigureWorkspaceRef, ConfigureWor
 
       {/* Environment Variables Section */}
       <div>
-        <button
-          type="button"
-          onClick={() => setEnvOpen(!envOpen)}
-          className="w-full px-1 py-2 flex items-center justify-between hover:bg-neutral-800/30 transition-colors rounded"
-        >
-          <div className="text-left">
+        <div className="w-full px-1 py-2 flex items-center justify-between">
+          <button
+            type="button"
+            onClick={() => setEnvOpen(!envOpen)}
+            className="flex-1 text-left hover:bg-neutral-800/30 transition-colors rounded -m-1 p-1"
+          >
             <h4 className="text-sm font-medium text-neutral-200">
               Environment variables
             </h4>
             <p className="text-xs text-neutral-500 mt-0.5">
               Injected when scripts run. Paste from .env files.
             </p>
-          </div>
+          </button>
           <div className="flex items-center gap-2 shrink-0 ml-2">
-            {/* Reveal button - stop propagation to prevent toggle */}
+            {/* Reveal button */}
             <button
               type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setShowValues(!showValues);
-              }}
+              onClick={() => setShowValues(!showValues)}
               className="flex items-center gap-1 text-xs text-neutral-400 hover:text-neutral-200 transition-colors"
             >
               <EyeIcon className="h-3.5 w-3.5" />
               <span>{showValues ? "Hide" : "Reveal"}</span>
             </button>
-            <ChevronDownIcon
-              className={`h-4 w-4 text-neutral-500 transition-transform ${
-                envOpen ? "" : "-rotate-90"
-              }`}
-            />
+            <button
+              type="button"
+              onClick={() => setEnvOpen(!envOpen)}
+              className="p-1 -m-1 hover:bg-neutral-800/30 rounded transition-colors"
+            >
+              <ChevronDownIcon
+                className={`h-4 w-4 text-neutral-500 transition-transform ${
+                  envOpen ? "" : "-rotate-90"
+                }`}
+              />
+            </button>
           </div>
-        </button>
+        </div>
         {envOpen && (
           <div className="mt-2">
             {/* Table header */}

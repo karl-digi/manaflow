@@ -161,8 +161,11 @@ const SearchableSelect = forwardRef<
   const [search, setSearch] = useState("");
   const [hoveredOption, setHoveredOption] = useState<string | null>(null);
   const [flyoutOffset, setFlyoutOffset] = useState(0);
-  const [maxFlyoutOffset, setMaxFlyoutOffset] = useState(500);
   const dropdownRef = useRef<HTMLDivElement | null>(null);
+
+  // Flyout height constant (must match ConfigureFlyout max-h)
+  const FLYOUT_HEIGHT = 500;
+  const VIEWPORT_PADDING = 16;
 
   // Close on Escape
   useEffect(() => {
@@ -174,14 +177,19 @@ const SearchableSelect = forwardRef<
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
-  // Track dropdown height for max offset
-  useEffect(() => {
-    if (!open) return;
+  // Calculate safe flyout offset that keeps it within viewport
+  const calculateSafeOffset = useCallback((desiredOffset: number) => {
     const dropdownContainer = dropdownRef.current;
-    if (dropdownContainer) {
-      setMaxFlyoutOffset(dropdownContainer.getBoundingClientRect().height - 40);
-    }
-  }, [open]);
+    if (!dropdownContainer) return desiredOffset;
+
+    const dropdownRect = dropdownContainer.getBoundingClientRect();
+    // Max offset that keeps flyout within viewport
+    const maxSafeOffset = Math.max(0, window.innerHeight - dropdownRect.top - FLYOUT_HEIGHT - VIEWPORT_PADDING);
+    // Also don't let it go below the dropdown itself
+    const maxDropdownOffset = dropdownRect.height - 40;
+
+    return Math.max(0, Math.min(desiredOffset, maxSafeOffset, maxDropdownOffset));
+  }, [FLYOUT_HEIGHT, VIEWPORT_PADDING]);
 
   // Calculate offset for selected item - update whenever selection changes or dropdown opens
   useEffect(() => {
@@ -198,8 +206,8 @@ const SearchableSelect = forwardRef<
       if (selectedItem) {
         const dropdownRect = dropdownContainer.getBoundingClientRect();
         const itemRect = selectedItem.getBoundingClientRect();
-        setFlyoutOffset(itemRect.top - dropdownRect.top);
-        setMaxFlyoutOffset(dropdownRect.height - 40);
+        const desiredOffset = itemRect.top - dropdownRect.top;
+        setFlyoutOffset(calculateSafeOffset(desiredOffset));
       }
 
       // Set up scroll listener if not already done
@@ -225,7 +233,7 @@ const SearchableSelect = forwardRef<
         listEl.removeEventListener('scroll', scrollListener);
       }
     };
-  }, [open, value]);
+  }, [open, value, calculateSafeOffset]);
 
   // Handle open state changes
   const handleOpenChange = useCallback((newOpen: boolean) => {
@@ -245,11 +253,11 @@ const SearchableSelect = forwardRef<
       if (dropdownContainer && target) {
         const dropdownRect = dropdownContainer.getBoundingClientRect();
         const itemRect = target.getBoundingClientRect();
-        setFlyoutOffset(itemRect.top - dropdownRect.top);
-        setMaxFlyoutOffset(dropdownRect.height - 40);
+        const desiredOffset = itemRect.top - dropdownRect.top;
+        setFlyoutOffset(calculateSafeOffset(desiredOffset));
       }
     }
-  }, [value.length]);
+  }, [value.length, calculateSafeOffset]);
 
   // Display content for trigger button
   const displayContent = useMemo(() => {
@@ -471,7 +479,7 @@ const SearchableSelect = forwardRef<
           {flyoutContent && (
             <div
               className="shrink-0"
-              style={{ marginTop: Math.max(0, Math.min(flyoutOffset, maxFlyoutOffset)) }}
+              style={{ marginTop: flyoutOffset }}
             >
               {flyoutContent}
             </div>
