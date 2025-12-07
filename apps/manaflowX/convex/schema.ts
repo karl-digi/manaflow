@@ -246,6 +246,13 @@ export default defineSchema({
     connectionId: v.optional(v.id("providerConnections")),
     lastSyncedAt: v.optional(v.number()),
     lastPushedAt: v.optional(v.number()),
+    // Scripts for workspace setup (env vars stored in Stack Auth Data Vault)
+    scripts: v.optional(
+      v.object({
+        maintenanceScript: v.string(),
+        devScript: v.string(),
+      })
+    ),
   })
     .index("by_org", ["org"])
     .index("by_gitRemote", ["gitRemote"])

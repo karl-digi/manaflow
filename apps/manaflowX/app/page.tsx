@@ -10,6 +10,8 @@ import { useState, useCallback, Suspense } from "react"
 import { Id } from "../convex/_generated/dataModel"
 import { SessionsByPost } from "../components/SessionView"
 import { CodingAgentSession } from "./components/CodingAgentSession"
+import { RepoPickerDropdown } from "@/components/RepoPickerDropdown"
+import { ConnectXButton } from "@/components/ConnectXButton"
 
 type Post = {
   _id: Id<"posts">
@@ -282,6 +284,7 @@ function HomeContent() {
   const [content, setContent] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [selectedCodingAgentSession, setSelectedCodingAgentSession] = useState<Id<"sessions"> | null>(null)
+  const [selectedRepo, setSelectedRepo] = useState<string | null>(null)
 
   // Get selected post from URL search params
   const selectedThread = searchParams.get("post") as Id<"posts"> | null
@@ -386,7 +389,18 @@ function HomeContent() {
                 />
               </div>
             </div>
-            <div className="flex justify-end mt-2 border-t border-gray-800 pt-3">
+            <div className="flex justify-between items-center mt-2 border-t border-gray-800 pt-3">
+              <div className="flex gap-2 items-center">
+                {/* Repo picker dropdown */}
+                {user && (
+                  <RepoPickerDropdown
+                    selectedRepo={selectedRepo}
+                    onRepoSelect={setSelectedRepo}
+                  />
+                )}
+                {/* Connect X account button */}
+                {user && <ConnectXButton />}
+              </div>
               <button
                 disabled={!content.trim() || isSubmitting}
                 onClick={handleSubmit}
@@ -465,4 +479,6 @@ export default function Home() {
       <HomeContent />
     </Suspense>
   )
+
+
 }

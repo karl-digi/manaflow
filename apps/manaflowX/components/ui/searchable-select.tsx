@@ -38,10 +38,15 @@ export interface SearchableSelectProps {
   showSearch?: boolean;
   disabled?: boolean;
   leftIcon?: ReactNode;
+  header?: ReactNode;
   footer?: ReactNode;
   searchPlaceholder?: string;
   /** Section label shown above the options list (e.g. "Repositories") */
   sectionLabel?: string;
+  /** Whether to close the dropdown after selecting an option in singleSelect mode (default: true) */
+  closeOnSelect?: boolean;
+  /** Render a flyout panel when hovering over an option */
+  renderOptionFlyout?: (value: string) => ReactNode;
 }
 
 function normalizeOptions(options: SelectOption[]): SelectOptionObject[] {
@@ -89,6 +94,25 @@ function ChevronDownIcon({ className }: { className?: string }) {
   );
 }
 
+function ChevronRightIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="m9 18 6-6-6-6" />
+    </svg>
+  );
+}
+
 function LoaderIcon({ className }: { className?: string }) {
   return (
     <svg
@@ -123,9 +147,12 @@ const SearchableSelect = forwardRef<
     showSearch = true,
     disabled = false,
     leftIcon,
+    header,
     footer,
     searchPlaceholder = "Search...",
     sectionLabel,
+    closeOnSelect = true,
+    renderOptionFlyout,
   },
   ref
 ) {
@@ -134,6 +161,13 @@ const SearchableSelect = forwardRef<
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const [search, setSearch] = useState("");
+  const [hoveredOption, setHoveredOption] = useState<string | null>(null);
+  const [flyoutOffset, setFlyoutOffset] = useState(0);
+  const dropdownRef = useRef<HTMLDivElement | null>(null);
+
+  // Flyout height constant (must match ConfigureFlyout max-h)
+  const FLYOUT_HEIGHT = 500;
+  const VIEWPORT_PADDING = 16;
 
   // Close on Escape
   useEffect(() => {
@@ -144,6 +178,88 @@ const SearchableSelect = forwardRef<
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
+
+  // Calculate safe flyout offset that keeps it within viewport
+  const calculateSafeOffset = useCallback((desiredOffset: number) => {
+    const dropdownContainer = dropdownRef.current;
+    if (!dropdownContainer) return desiredOffset;
+
+    const dropdownRect = dropdownContainer.getBoundingClientRect();
+    // Max offset that keeps flyout within viewport
+    const maxSafeOffset = Math.max(0, window.innerHeight - dropdownRect.top - FLYOUT_HEIGHT - VIEWPORT_PADDING);
+    // Also don't let it go below the dropdown itself
+    const maxDropdownOffset = dropdownRect.height - 40;
+
+    return Math.max(0, Math.min(desiredOffset, maxSafeOffset, maxDropdownOffset));
+  }, [FLYOUT_HEIGHT, VIEWPORT_PADDING]);
+
+  // Calculate offset for selected item - update whenever selection changes or dropdown opens
+  useEffect(() => {
+    if (!open || value.length === 0) return;
+
+    let scrollListener: (() => void) | null = null;
+    let listEl: Element | null = null;
+
+    const updateOffset = () => {
+      const dropdownContainer = dropdownRef.current;
+      if (!dropdownContainer) return;
+
+      const selectedItem = dropdownContainer.querySelector(`[data-selected-value="${value[0]}"]`);
+      if (selectedItem) {
+        const dropdownRect = dropdownContainer.getBoundingClientRect();
+        const itemRect = selectedItem.getBoundingClientRect();
+        const desiredOffset = itemRect.top - dropdownRect.top;
+        setFlyoutOffset(calculateSafeOffset(desiredOffset));
+      }
+
+      // Set up scroll listener if not already done
+      if (!scrollListener) {
+        listEl = dropdownContainer.querySelector('[cmdk-list]');
+        if (listEl) {
+          scrollListener = updateOffset;
+          listEl.addEventListener('scroll', scrollListener);
+        }
+      }
+    };
+
+    // Run multiple times to ensure DOM is ready
+    const timer1 = setTimeout(updateOffset, 0);
+    const timer2 = setTimeout(updateOffset, 50);
+    const timer3 = setTimeout(updateOffset, 100);
+
+    return () => {
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+      clearTimeout(timer3);
+      if (listEl && scrollListener) {
+        listEl.removeEventListener('scroll', scrollListener);
+      }
+    };
+  }, [open, value, calculateSafeOffset]);
+
+  // Handle open state changes
+  const handleOpenChange = useCallback((newOpen: boolean) => {
+    setOpen(newOpen);
+    if (!newOpen) {
+      setHoveredOption(null);
+    }
+  }, []);
+
+  // Handle hover on option - only track hover and update offset if nothing selected
+  const handleOptionHover = useCallback((optValue: string, event: React.MouseEvent) => {
+    setHoveredOption(optValue);
+    // Only update offset on hover if nothing is selected yet
+    if (value.length === 0) {
+      const target = event.currentTarget as HTMLElement;
+      const dropdownContainer = dropdownRef.current;
+      if (dropdownContainer && target) {
+        const dropdownRect = dropdownContainer.getBoundingClientRect();
+        const itemRect = target.getBoundingClientRect();
+        const desiredOffset = itemRect.top - dropdownRect.top;
+        setFlyoutOffset(calculateSafeOffset(desiredOffset));
+      }
+    }
+  }, [value.length, calculateSafeOffset]);
 
   // Display content for trigger button
   const displayContent = useMemo(() => {
@@ -209,8 +325,15 @@ const SearchableSelect = forwardRef<
     (val: string): void => {
       setSearch("");
       if (singleSelect) {
-        onChange([val]);
-        setOpen(false);
+        // Toggle selection - if already selected, unselect it
+        if (value.includes(val)) {
+          onChange([]);
+        } else {
+          onChange([val]);
+        }
+        if (closeOnSelect) {
+          setOpen(false);
+        }
         return;
       }
       // Toggle selection for multi-select
@@ -220,11 +343,15 @@ const SearchableSelect = forwardRef<
         onChange([...value, val]);
       }
     },
-    [onChange, singleSelect, value]
+    [onChange, singleSelect, value, closeOnSelect]
   );
 
+  // Get flyout content: if something is selected, always show that; otherwise show hovered
+  const flyoutTarget = value.length > 0 ? value[0] : hoveredOption;
+  const flyoutContent = flyoutTarget ? renderOptionFlyout?.(flyoutTarget) : null;
+
   return (
-    <Popover.Root open={open} onOpenChange={setOpen}>
+    <Popover.Root open={open} onOpenChange={handleOpenChange}>
       <Popover.Trigger asChild>
         <button
           ref={triggerRef}
@@ -254,11 +381,16 @@ const SearchableSelect = forwardRef<
           align="start"
           side="bottom"
           sideOffset={4}
-          className={clsx(
-            "z-50 rounded-lg border border-neutral-700 bg-neutral-900 p-0 shadow-xl outline-none w-[300px]",
-            "data-[state=closed]:animate-out data-[state=closed]:fade-out-0"
-          )}
+          collisionPadding={16}
+          className="z-50 outline-none flex items-start gap-1"
         >
+          <div
+            ref={dropdownRef}
+            className={clsx(
+              "rounded-lg border border-neutral-700 bg-neutral-900 p-0 shadow-xl w-[300px]",
+              "data-[state=closed]:animate-out data-[state=closed]:fade-out-0"
+            )}
+          >
           <Command loop shouldFilter={false} className="text-[13.5px]">
             {showSearch ? (
               <div className="border-b border-neutral-800 p-2">
@@ -267,10 +399,15 @@ const SearchableSelect = forwardRef<
                   value={search}
                   onValueChange={setSearch}
                   className={clsx(
-                    "w-full rounded-md border border-neutral-700 bg-neutral-800 px-3 py-2 text-sm text-white",
-                    "placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    "w-full bg-transparent px-1 py-1 text-sm text-white",
+                    "placeholder-neutral-500 focus:outline-none"
                   )}
                 />
+              </div>
+            ) : null}
+            {header ? (
+              <div className="border-b border-neutral-800">
+                {header}
               </div>
             ) : null}
             {loading ? (
@@ -280,7 +417,7 @@ const SearchableSelect = forwardRef<
             ) : (
               <>
                 {sectionLabel ? (
-                  <div className="px-3 py-2 text-xs font-medium text-neutral-500 select-none">
+                  <div className="px-3 pt-2 pb-1 text-xs font-medium text-neutral-500 select-none">
                     {sectionLabel}
                   </div>
                 ) : null}
@@ -292,15 +429,24 @@ const SearchableSelect = forwardRef<
                 ) : (
                   filteredOptions.map((opt) => {
                     const isSelected = value.includes(opt.value);
+                    // Show chevron only when this item's flyout is actually visible
+                    // Flyout shows for: selected item, or hovered item when nothing selected
+                    const showChevron = renderOptionFlyout && (
+                      isSelected ||
+                      (hoveredOption === opt.value && value.length === 0)
+                    );
                     return (
                       <Command.Item
                         key={opt.value}
                         value={`${opt.label} ${opt.value}`}
                         onSelect={() => onSelectValue(opt.value)}
+                        onMouseEnter={(e) => handleOptionHover(opt.value, e)}
+                        data-selected-value={isSelected ? opt.value : undefined}
                         className={clsx(
                           "flex items-center justify-between gap-2 px-2 py-1.5 rounded-md cursor-pointer",
                           "text-neutral-100 hover:bg-neutral-800 transition-colors",
-                          "data-[selected=true]:bg-neutral-800"
+                          "data-[selected=true]:bg-neutral-800",
+                          isSelected && "bg-neutral-700/40"
                         )}
                       >
                         <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -313,9 +459,14 @@ const SearchableSelect = forwardRef<
                             {opt.label}
                           </span>
                         </div>
-                        {isSelected ? (
-                          <CheckIcon className="h-4 w-4 text-neutral-100 shrink-0" />
-                        ) : null}
+                        <div className="flex items-center gap-1">
+                          {isSelected ? (
+                            <CheckIcon className="h-4 w-4 text-neutral-100 shrink-0" />
+                          ) : null}
+                          {showChevron ? (
+                            <ChevronRightIcon className="h-3 w-3 text-neutral-500 shrink-0" />
+                          ) : null}
+                        </div>
                       </Command.Item>
                     );
                   })
@@ -329,6 +480,17 @@ const SearchableSelect = forwardRef<
               {footer}
             </div>
           ) : null}
+          </div>
+
+          {/* Flyout panel - rendered next to the dropdown, aligned with hovered item */}
+          {flyoutContent && (
+            <div
+              className="shrink-0"
+              style={{ marginTop: flyoutOffset }}
+            >
+              {flyoutContent}
+            </div>
+          )}
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>
