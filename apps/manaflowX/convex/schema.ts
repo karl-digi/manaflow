@@ -448,9 +448,6 @@ export default defineSchema({
         files: v.optional(v.number()),
       })
     ),
-
-    // Morph VM instance info (for debugging)
-    morphInstanceId: v.optional(v.string()),
     morphVmUrl: v.optional(v.string()),
 
     // Timestamps
