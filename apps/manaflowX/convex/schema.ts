@@ -844,4 +844,14 @@ export default defineSchema({
     .index("by_task_hash", ["taskHash"])
     .index("by_parent_session", ["parentSessionId"])
     .index("by_coding_agent_session", ["codingAgentSessionId"]),
+
+  // ---------------------------------------------------------------------------
+  // ALGORITHM SETTINGS (global settings for algorithm features)
+  // ---------------------------------------------------------------------------
+
+  algorithmSettings: defineTable({
+    key: v.string(), // Setting key (e.g., "prMonitorEnabled")
+    value: v.boolean(), // Setting value
+    updatedAt: v.number(),
+  }).index("by_key", ["key"]),
 });

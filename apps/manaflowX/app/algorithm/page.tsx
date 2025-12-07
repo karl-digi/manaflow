@@ -79,6 +79,10 @@ function AlgorithmContent() {
   const toggleMonitoring = useMutation(api.github.toggleRepoMonitoring)
   const testFetchPR = useAction(api.prMonitor.testFetchAndPostPR)
 
+  // Algorithm settings
+  const prMonitorEnabled = useQuery(api.github.getAlgorithmSetting, { key: "prMonitorEnabled" })
+  const toggleAlgorithmSetting = useMutation(api.github.toggleAlgorithmSetting)
+
   const [testStatus, setTestStatus] = useState<{
     loading: boolean
     result?: { success: boolean; message: string; pr?: { title: string; url: string; repo: string } }
@@ -161,13 +165,52 @@ function AlgorithmContent() {
           </div>
         </div>
 
+        {/* Auto-Post Settings */}
+        <div className="mb-8 p-4 bg-gray-900 rounded-lg border border-gray-800">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="font-semibold text-white">GitHub PR Auto-Post</h2>
+              <p className="text-sm text-gray-400">
+                Automatically post interesting PRs to the feed every minute
+              </p>
+            </div>
+            <button
+              onClick={() => toggleAlgorithmSetting({ key: "prMonitorEnabled" })}
+              disabled={monitoredCount === 0}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-900 disabled:opacity-50 disabled:cursor-not-allowed ${
+                prMonitorEnabled ? "bg-blue-600" : "bg-gray-600"
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                  prMonitorEnabled ? "translate-x-6" : "translate-x-1"
+                }`}
+              />
+            </button>
+          </div>
+
+          {prMonitorEnabled && (
+            <div className="p-3 rounded-lg bg-blue-900/20 border border-blue-700/50">
+              <p className="text-sm text-blue-400">
+                Auto-posting is enabled. Grok will curate and post PRs from monitored repos every minute.
+              </p>
+            </div>
+          )}
+
+          {monitoredCount === 0 && (
+            <p className="text-sm text-yellow-500 mt-2">
+              Select at least one repo to monitor first
+            </p>
+          )}
+        </div>
+
         {/* Test PR Fetch */}
         <div className="mb-8 p-4 bg-gray-900 rounded-lg border border-gray-800">
           <div className="flex items-center justify-between mb-3">
             <div>
               <h2 className="font-semibold text-white">Test PR Fetch</h2>
               <p className="text-sm text-gray-400">
-                Fetch PRs from monitored repos and post one to the feed
+                Manually fetch PRs from monitored repos and post one to the feed
               </p>
             </div>
             <button

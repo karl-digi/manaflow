@@ -14,6 +14,7 @@ import type * as _shared_githubApp from "../_shared/githubApp.js";
 import type * as _shared_twitterApi from "../_shared/twitterApi.js";
 import type * as actions from "../actions.js";
 import type * as codingAgent from "../codingAgent.js";
+import type * as crons from "../crons.js";
 import type * as github from "../github.js";
 import type * as github_app from "../github_app.js";
 import type * as http from "../http.js";
@@ -37,6 +38,7 @@ declare const fullApi: ApiFromModules<{
   "_shared/twitterApi": typeof _shared_twitterApi;
   actions: typeof actions;
   codingAgent: typeof codingAgent;
+  crons: typeof crons;
   github: typeof github;
   github_app: typeof github_app;
   http: typeof http;

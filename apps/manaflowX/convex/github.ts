@@ -475,17 +475,10 @@ export const setRepoMonitoring = mutation({
 export const getMonitoredReposWithInstallation = internalQuery({
   args: {},
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return [];
-
-    const userId = identity.subject;
-
-    // Get all monitored repos
+    // Get ALL monitored repos (not user-specific, for cron job)
     const repos = await ctx.db
       .query("repos")
-      .withIndex("by_userId_monitored", (q) =>
-        q.eq("userId", userId).eq("isMonitored", true)
-      )
+      .filter((q) => q.eq(q.field("isMonitored"), true))
       .collect();
 
     // Get installation IDs for each repo
@@ -504,5 +497,63 @@ export const getMonitoredReposWithInstallation = internalQuery({
     );
 
     return reposWithInstallation.filter((r) => r.installationId !== undefined);
+  },
+});
+
+// ---------------------------------------------------------------------------
+// ALGORITHM SETTINGS
+// ---------------------------------------------------------------------------
+
+// Get algorithm setting by key
+export const getAlgorithmSetting = query({
+  args: { key: v.string() },
+  handler: async (ctx, { key }) => {
+    const setting = await ctx.db
+      .query("algorithmSettings")
+      .withIndex("by_key", (q) => q.eq("key", key))
+      .first();
+    return setting?.value ?? false;
+  },
+});
+
+// Internal query to get algorithm setting (for cron job)
+export const getAlgorithmSettingInternal = internalQuery({
+  args: { key: v.string() },
+  handler: async (ctx, { key }) => {
+    const setting = await ctx.db
+      .query("algorithmSettings")
+      .withIndex("by_key", (q) => q.eq("key", key))
+      .first();
+    return setting?.value ?? false;
+  },
+});
+
+// Toggle algorithm setting
+export const toggleAlgorithmSetting = mutation({
+  args: { key: v.string() },
+  handler: async (ctx, { key }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Not authenticated");
+
+    const existing = await ctx.db
+      .query("algorithmSettings")
+      .withIndex("by_key", (q) => q.eq("key", key))
+      .first();
+
+    const now = Date.now();
+
+    if (existing) {
+      const newValue = !existing.value;
+      await ctx.db.patch(existing._id, { value: newValue, updatedAt: now });
+      return { value: newValue };
+    } else {
+      // Create with true (toggled from default false)
+      await ctx.db.insert("algorithmSettings", {
+        key,
+        value: true,
+        updatedAt: now,
+      });
+      return { value: true };
+    }
   },
 });
