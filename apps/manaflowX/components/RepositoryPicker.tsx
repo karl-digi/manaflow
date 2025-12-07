@@ -141,6 +141,24 @@ export function RepositoryPicker({
     onReposSelected?.(selectedRepos);
   }, [selectedRepos, onReposSelected]);
 
+  // Listen for popup completion message from GitHub App installation
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      // Verify origin matches our app
+      const expectedOrigin = process.env.NEXT_PUBLIC_APP_URL || window.location.origin;
+      if (event.origin !== expectedOrigin) return;
+
+      if (event.data?.type === "github-app-installed" && event.data?.success) {
+        // The Convex queries will auto-update when the server-side data changes,
+        // but we can close the dropdown if it was open
+        setIsConnectionDropdownOpen(false);
+      }
+    };
+
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, []);
+
   // Format time ago (memoized with current time)
   const [now] = useState(() => Date.now());
   const formatTimeAgo = useCallback(

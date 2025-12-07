@@ -116,7 +116,41 @@ http.route({
     const state = url.searchParams.get("state");
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "https://localhost:3000";
 
-    // Helper for redirects
+    // Helper to close popup and notify opener window
+    const popupResponse = (
+      success: boolean,
+      returnUrl?: string
+    ): Response => {
+      const targetUrl = new URL(returnUrl || "/", baseUrl).toString();
+      const html = `<!DOCTYPE html>
+<html>
+<head><title>GitHub App Setup</title></head>
+<body>
+<script>
+(function() {
+  var success = ${success};
+  var returnUrl = ${JSON.stringify(targetUrl)};
+
+  if (window.opener) {
+    // Notify the opener window
+    window.opener.postMessage({ type: 'github-app-installed', success: success }, ${JSON.stringify(baseUrl)});
+    window.close();
+  } else {
+    // Fallback if no opener (direct navigation)
+    window.location.href = returnUrl;
+  }
+})();
+</script>
+<noscript><a href="${targetUrl}">Click here to continue</a></noscript>
+</body>
+</html>`;
+      return new Response(html, {
+        status: 200,
+        headers: { "Content-Type": "text/html" },
+      });
+    };
+
+    // Helper for redirects (fallback for non-popup flows)
     const redirect = (path: string) =>
       new Response(null, {
         status: 302,
@@ -270,8 +304,8 @@ http.route({
       }
     }
 
-    // Redirect back to the app
-    return redirect(payload.returnUrl || "/");
+    // Notify opener window and close popup (or redirect if not in popup)
+    return popupResponse(true, payload.returnUrl);
   }),
 });
 
