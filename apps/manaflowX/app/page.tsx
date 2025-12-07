@@ -646,7 +646,7 @@ function HomeContent() {
                 />
               </div>
             </div>
-            <div className="flex justify-between items-center mt-2 border-t border-gray-800 pt-3">
+            <div className="flex justify-between items-center mt-2 pt-3">
               <div className="flex gap-2 items-center">
                 {/* Repo picker dropdown */}
                 {user && (
