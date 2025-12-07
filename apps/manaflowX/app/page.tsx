@@ -83,7 +83,9 @@ function PostCard({
             <div className="w-0.5 bg-gray-700 flex-grow mt-1 min-h-[8px]" />
           )}
         </div>
-        <div className={`flex-grow min-w-0 ${showThreadLineAbove ? "pt-4" : ""} ${showThreadLine ? "pb-4" : ""}`}>
+        <div
+          className={`flex-grow min-w-0 ${showThreadLineAbove ? "pt-4" : ""} ${showThreadLine ? "pb-4" : ""}`}
+        >
           <div className="flex items-center gap-2 mb-1 flex-wrap">
             <span className="font-bold hover:underline">
               {post.author === "Assistant" ? "Grok" : post.author}
@@ -164,11 +166,16 @@ function ReplyComposer({
 
   return (
     <div className="p-4 border-b border-gray-800 bg-gray-900/50">
-      <div className="text-sm text-gray-500 mb-2">
+      <div className="text-sm text-gray-500 mb-2 flex items-center gap-1">
         Replying to{" "}
-        <span className="text-blue-400">
-          @{replyingTo.author === "Assistant" ? "Grok" : replyingTo.author}
-        </span>
+        {replyingTo.author === "Grok" || replyingTo.author === "Assistant" ? (
+          <>
+            <GrokIcon className="w-4 h-4 inline" />
+            <span className="text-blue-400">@Grok</span>
+          </>
+        ) : (
+          <span className="text-blue-400">@{replyingTo.author}</span>
+        )}
       </div>
       <textarea
         className="w-full bg-gray-800 text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none p-3 rounded-lg"
@@ -413,7 +420,8 @@ function HomeContent() {
       const urlParams = new URLSearchParams()
       if (params.post) urlParams.set("post", params.post)
       if (params.codingAgent) urlParams.set("codingAgent", params.codingAgent)
-      if (params.browserAgent) urlParams.set("browserAgent", params.browserAgent)
+      if (params.browserAgent)
+        urlParams.set("browserAgent", params.browserAgent)
       const queryString = urlParams.toString()
       return queryString ? `/?${queryString}` : "/"
     },
@@ -458,12 +466,13 @@ function HomeContent() {
 
   // Get posts based on active tab (compute before hooks)
   const recentPosts = recentData?.posts ?? []
-  const curatedItems: CuratedItem[] = curatedData?.items
-    .filter((item: CuratedItem) => item.post !== null)
-    .map((item: CuratedItem) => ({
-      post: item.post,
-      parentPost: item.parentPost,
-    })) ?? []
+  const curatedItems: CuratedItem[] =
+    curatedData?.items
+      .filter((item: CuratedItem) => item.post !== null)
+      .map((item: CuratedItem) => ({
+        post: item.post,
+        parentPost: item.parentPost,
+      })) ?? []
 
   // For "for you" tab, use curated items; for "recent" tab, convert to simple items
   const liveItems: CuratedItem[] =
@@ -477,14 +486,18 @@ function HomeContent() {
 
     if (isInitialLoad.current) {
       // First load - just set the posts
-      setDisplayedPosts(liveItems.map((item) => item.post).filter(Boolean) as Post[])
+      setDisplayedPosts(
+        liveItems.map((item) => item.post).filter(Boolean) as Post[],
+      )
       isInitialLoad.current = false
       return
     }
 
     // Check if there are new posts at the top
     const displayedIds = new Set(displayedPosts.map((p) => p._id))
-    const newPosts = liveItems.filter((item) => item.post && !displayedIds.has(item.post._id))
+    const newPosts = liveItems.filter(
+      (item) => item.post && !displayedIds.has(item.post._id),
+    )
 
     if (newPosts.length > 0) {
       // Show indicator instead of immediately updating
@@ -500,7 +513,9 @@ function HomeContent() {
   }, [feedTab])
 
   const showNewPosts = () => {
-    setDisplayedPosts(liveItems.map((item) => item.post).filter(Boolean) as Post[])
+    setDisplayedPosts(
+      liveItems.map((item) => item.post).filter(Boolean) as Post[],
+    )
     setNewPostsAvailable(0)
     // Scroll to top
     window.scrollTo({ top: 0, behavior: "smooth" })
@@ -511,7 +526,9 @@ function HomeContent() {
 
   // Filter live items to only show displayed posts (for scroll preservation)
   const itemsToShow: CuratedItem[] = displayedPosts.length
-    ? liveItems.filter((item) => item.post && displayedPostIds.has(item.post._id))
+    ? liveItems.filter(
+        (item) => item.post && displayedPostIds.has(item.post._id),
+      )
     : liveItems
 
   const handleSubmit = async () => {
@@ -604,9 +621,13 @@ function HomeContent() {
           <div className="p-4 border-b border-gray-800">
             <div className="flex gap-4">
               <div className="flex-shrink-0">
-                <div className="w-10 h-10 rounded-full bg-gray-600 flex items-center justify-center text-sm font-bold">
-                  {viewer ? viewer[0].toUpperCase() : "?"}
-                </div>
+                {viewer === "Grok" ? (
+                  <GrokIcon className="w-10 h-10" />
+                ) : (
+                  <div className="w-10 h-10 rounded-full bg-gray-600 flex items-center justify-center text-sm font-bold">
+                    {viewer ? viewer[0].toUpperCase() : "?"}
+                  </div>
+                )}
               </div>
               <div className="flex-grow">
                 <textarea
@@ -650,7 +671,8 @@ function HomeContent() {
               onClick={showNewPosts}
               className="w-full py-3 text-blue-400 hover:bg-blue-500/10 transition-colors border-b border-gray-800 font-medium"
             >
-              Show {newPostsAvailable} new post{newPostsAvailable > 1 ? "s" : ""}
+              Show {newPostsAvailable} new post
+              {newPostsAvailable > 1 ? "s" : ""}
             </button>
           )}
 
@@ -727,11 +749,15 @@ function HomeContent() {
       </div>
 
       {/* Back to top floating pill - only shows when there are new posts and user has scrolled */}
-      {showBackToTop && newPostsAvailable > 0 && feedCenter !== null && (
+      {feedCenter !== null && (
         <button
           onClick={scrollToTop}
           style={{ left: feedCenter }}
-          className="fixed top-[70px] -translate-x-1/2 bg-blue-500 hover:bg-blue-600 text-white font-medium py-2 px-4 rounded-full shadow-lg transition-all flex items-center gap-2 z-50"
+          className={`fixed top-[70px] -translate-x-1/2 bg-blue-500 hover:bg-blue-600 text-white font-medium py-2 px-4 rounded-full shadow-lg transition-all duration-300 flex items-center gap-2 z-50 ${
+            showBackToTop && newPostsAvailable > 0
+              ? "opacity-100"
+              : "opacity-0 pointer-events-none"
+          }`}
         >
           <svg
             className="w-4 h-4"
