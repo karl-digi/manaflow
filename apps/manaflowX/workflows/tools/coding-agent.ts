@@ -10,20 +10,6 @@ import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 
 // =============================================================================
-// Hash Function (must match convex/codingAgent.ts)
-// =============================================================================
-
-function hashTask(task: string): string {
-  let hash = 0;
-  for (let i = 0; i < task.length; i++) {
-    const char = task.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32bit integer
-  }
-  return hash.toString(36);
-}
-
-// =============================================================================
 // JWT Helper Functions
 // =============================================================================
 
@@ -210,7 +196,7 @@ The agent will complete the task autonomously and return the results.`,
 
     try {
       // Get required environment variables
-      const convexSiteUrl = process.env.CONVEX_SITE_URL;
+      const convexSiteUrl = process.env.NEXT_PUBLIC_CONVEX_SITE_URL;
 
       // Generate a random JWT secret for this invocation
       // This secret will be written to the VM and used by the plugin
@@ -222,22 +208,15 @@ The agent will complete the task autonomously and return the results.`,
       }
 
       // Create a session in Convex to track this coding agent task
+      // The JWT secret is stored directly on the session for reliable authentication
       convexSessionId = await convex.mutation(api.codingAgent.createCodingAgentSession, {
         toolCallId: `tool_${Date.now()}`, // Generate a unique ID
         task,
         context,
         agent,
+        jwtSecret, // Store secret directly on session - no taskHash lookup needed
       });
       console.log(`[coding-agent] Created Convex session: ${convexSessionId}`);
-
-      // Link this session to the parent tool call for immediate UI visibility
-      // Also store the JWT secret so the HTTP endpoint can verify incoming JWTs
-      const taskHash = hashTask(task);
-      await convex.mutation(api.codingAgent.linkCodingAgentSession, {
-        taskHash,
-        codingAgentSessionId: convexSessionId as Id<"sessions">,
-        jwtSecret,
-      });
 
       // Spawn a VM with JWT config written before OpenCode starts
       vm = await spawnCodingVM({
@@ -266,6 +245,13 @@ The agent will complete the task autonomously and return the results.`,
           }
         },
       });
+
+      // Update session with the Morph instance ID
+      await convex.mutation(api.codingAgent.updateCodingAgentSessionInstance, {
+        sessionId: convexSessionId as Id<"sessions">,
+        morphInstanceId: vm.instanceId,
+      });
+      console.log(`[coding-agent] Updated session with instance ID: ${vm.instanceId}`);
 
       // Create OpenCode client using the official SDK
       const opencode = createOpencodeClient({
