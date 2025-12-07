@@ -83,7 +83,6 @@ type ProgressUpdate = {
 class ProgressQueue {
   private queue: ProgressUpdate[] = [];
   private processing = false;
-  private flushPromise: Promise<void> | null = null;
 
   // Add update to queue and start processing if not already running
   enqueue(update: ProgressUpdate): void {
@@ -199,7 +198,7 @@ async function cloneRepositoryInVM(
   config: RepoCloneConfig
 ): Promise<void> {
   const { gitRemote, branch, installationId } = config;
-  const workspacePath = "/workspace";
+  const workspacePath = "/root/workspace";
 
   console.log(`[coding-agent] Cloning repository: ${gitRemote} branch: ${branch}`);
 
@@ -227,7 +226,8 @@ async function cloneRepositoryInVM(
   }
 
   // Remove existing workspace contents (the VM may have a placeholder)
-  await instance.exec(`rm -rf ${workspacePath}/*`);
+  // Use rm -rf on the directory and recreate it to ensure hidden files are also removed
+  await instance.exec(`rm -rf ${workspacePath} && mkdir -p ${workspacePath}`);
 
   // Clone with depth 1 (shallow clone for speed)
   // Pattern from cmux: git clone --depth 1 "${repoUrl}" "${originPath}"
@@ -337,12 +337,15 @@ async function spawnCodingVM(options?: {
       .join("\n");
 
     // Write .env file to workspace using heredoc for safety
-    const writeEnvCmd = `cat > /workspace/.env << 'ENVEOF'
+    const writeEnvCmd = `cat > /root/workspace/.env << 'ENVEOF'
 ${envContent}
 ENVEOF`;
 
     await instance.exec(writeEnvCmd);
-    console.log(`[coding-agent] Wrote .env file to /workspace/.env`);
+
+    // Verify the .env file was written
+    const verifyResult = await instance.exec(`cat /root/workspace/.env`);
+    console.log(`[coding-agent] Wrote .env file to /root/workspace/.env (${verifyResult.stdout.split('\n').length} lines)`);
   }
 
   const service = instance.networking.httpServices.find(
