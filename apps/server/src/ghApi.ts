@@ -1,4 +1,4 @@
-import { getGitHubTokenFromKeychain } from "./utils/getGitHubToken";
+import { getGitHubOAuthToken } from "./utils/getGitHubToken";
 
 interface GitHubApiError extends Error {
   status?: number;
@@ -140,11 +140,11 @@ export function createGitHubApiClient(token: string) {
 }
 
 // Helper functions for common GitHub API operations
-// Uses getGitHubTokenFromKeychain which tries Stack Auth OAuth first, then falls back to gh CLI
+// Uses getGitHubOAuthToken which gets the OAuth token from Stack Auth
 export const ghApi = {
   // Fetch with GitHub authentication
   async fetchGitHub(path: string, options: RequestInit = {}): Promise<Response> {
-    const token = await getGitHubTokenFromKeychain();
+    const token = await getGitHubOAuthToken();
 
     if (!token) {
       const error = new Error("No GitHub authentication found") as GitHubApiError;
@@ -158,7 +158,7 @@ export const ghApi = {
 
   // Fetch all pages from GitHub API
   async fetchAllPages<T>(path: string): Promise<T[]> {
-    const token = await getGitHubTokenFromKeychain();
+    const token = await getGitHubOAuthToken();
 
     if (!token) {
       const error = new Error("No GitHub authentication found") as GitHubApiError;
@@ -172,7 +172,7 @@ export const ghApi = {
 
   // Get current user
   async getUser(): Promise<string> {
-    const token = await getGitHubTokenFromKeychain();
+    const token = await getGitHubOAuthToken();
 
     if (!token) {
       const error = new Error("No GitHub authentication found") as GitHubApiError;
@@ -186,7 +186,7 @@ export const ghApi = {
 
   // Get user repos
   async getUserRepos(): Promise<string[]> {
-    const token = await getGitHubTokenFromKeychain();
+    const token = await getGitHubOAuthToken();
 
     if (!token) {
       const error = new Error("No GitHub authentication found") as GitHubApiError;
@@ -200,7 +200,7 @@ export const ghApi = {
 
   // Get user organizations
   async getUserOrgs(): Promise<string[]> {
-    const token = await getGitHubTokenFromKeychain();
+    const token = await getGitHubOAuthToken();
 
     if (!token) {
       const error = new Error("No GitHub authentication found") as GitHubApiError;
@@ -214,7 +214,7 @@ export const ghApi = {
 
   // Get organization repos
   async getOrgRepos(org: string): Promise<string[]> {
-    const token = await getGitHubTokenFromKeychain();
+    const token = await getGitHubOAuthToken();
 
     if (!token) {
       const error = new Error("No GitHub authentication found") as GitHubApiError;
@@ -228,7 +228,7 @@ export const ghApi = {
 
   // Get repo branches
   async getRepoBranches(repo: string): Promise<string[]> {
-    const token = await getGitHubTokenFromKeychain();
+    const token = await getGitHubOAuthToken();
 
     if (!token) {
       const error = new Error("No GitHub authentication found") as GitHubApiError;
@@ -247,7 +247,7 @@ export const ghApi = {
     lastActivityAt?: number;
     isDefault?: boolean;
   }[]> {
-    const token = await getGitHubTokenFromKeychain();
+    const token = await getGitHubOAuthToken();
 
     if (!token) {
       const error = new Error("No GitHub authentication found") as GitHubApiError;

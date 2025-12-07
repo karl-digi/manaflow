@@ -2,7 +2,7 @@ import { api } from "@cmux/convex/api";
 import { createGitHubApiClient, ghApi } from "../ghApi";
 import { getConvex } from "./convexClient";
 import { serverLogger } from "./fileLogger";
-import { getGitHubTokenFromKeychain } from "./getGitHubToken";
+import { getGitHubOAuthToken } from "./getGitHubToken";
 
 export async function refreshGitHubData({
   teamSlugOrId,
@@ -92,7 +92,7 @@ export async function refreshBranchesForRepo(
 ) {
   try {
     // Get OAuth token for authenticated GitHub API access
-    const githubToken = await getGitHubTokenFromKeychain();
+    const githubToken = await getGitHubOAuthToken();
     if (!githubToken) {
       serverLogger.info(
         "No GitHub authentication found, skipping branch refresh"
