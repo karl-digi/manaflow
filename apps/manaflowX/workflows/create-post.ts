@@ -44,7 +44,8 @@ export async function handleReplyToPost(
   postId: string,
   content: string,
   repoConfig?: RepoConfig,
-, issueId?: string) {
+  issueId?: string
+) {
   "use workflow"
 
   const reply = await generateStreamingReply({
