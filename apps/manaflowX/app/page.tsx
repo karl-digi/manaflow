@@ -5,6 +5,7 @@ import { useUser } from "@stackframe/stack";
 import Link from "next/link";
 import { api } from "../convex/_generated/api";
 import { useState } from "react";
+import { RepoPickerDropdown } from "@/components/RepoPickerDropdown";
 
 async function triggerPostWorkflow(content: string) {
   const response = await fetch("/api/post", {
@@ -21,6 +22,7 @@ export default function Home() {
   const startWorkflow = useAction(api.actions.startWorkflow);
   const [content, setContent] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [selectedRepo, setSelectedRepo] = useState<string | null>(null);
 
   const handleSubmit = async () => {
     if (!content.trim()) return;
@@ -97,9 +99,14 @@ export default function Home() {
               }}
             />
             <div className="flex justify-between items-center mt-2 border-t border-gray-800 pt-3">
-              <div className="flex gap-2 text-blue-400">
-                {/* Icons placeholder */}
-                <div className="w-5 h-5 rounded hover:bg-blue-900/20 cursor-pointer transition-colors" />
+              <div className="flex gap-2 items-center">
+                {/* Repo picker dropdown */}
+                {user && (
+                  <RepoPickerDropdown
+                    selectedRepo={selectedRepo}
+                    onRepoSelect={setSelectedRepo}
+                  />
+                )}
               </div>
               <button
                 disabled={!content.trim() || isSubmitting}
