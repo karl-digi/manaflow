@@ -264,7 +264,7 @@ EOF`);
   // Install global CLI tools
   console.log("Installing global CLI tools...");
   const globalInstall = await instance.exec(
-    "bun add -g @anthropic-ai/claude-code @anthropic-ai/claude-code-sdk @google/gemini-cli@preview chrome-devtools-mcp",
+    "bun add -g @anthropic-ai/claude-code @anthropic-ai/claude-agent-sdk @google/gemini-cli@preview chrome-devtools-mcp",
     { timeout: 300000 }
   );
   console.log("Global install stdout:", globalInstall.stdout);
