@@ -387,7 +387,7 @@ export const ConfigureWorkspace = forwardRef<ConfigureWorkspaceRef, ConfigureWor
           />
         </button>
         {maintenanceOpen && (
-          <div className="mt-2 font-mono text-sm">
+          <div className="mt-2 font-mono text-xs">
             <textarea
               value={maintenanceScript}
               onChange={(e) =>
@@ -423,7 +423,7 @@ export const ConfigureWorkspace = forwardRef<ConfigureWorkspaceRef, ConfigureWor
           />
         </button>
         {devOpen && (
-          <div className="mt-2 font-mono text-sm">
+          <div className="mt-2 font-mono text-xs">
             <textarea
               value={devScript}
               onChange={(e) => handleScriptChange(setDevScript)(e.target.value)}
