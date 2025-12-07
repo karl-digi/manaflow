@@ -524,10 +524,13 @@ function IssuesContent() {
   const statusFilterParam = searchParams.get("status") as StatusFilter | null
   const typeFilterParam = searchParams.get("type") as TypeFilter | null
   const viewModeParam = searchParams.get("view") as ViewMode | null
+  const searchQueryParam = searchParams.get("search") || ""
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(statusFilterParam || "all")
   const [typeFilter, setTypeFilter] = useState<TypeFilter>(typeFilterParam || "all")
   const [viewMode, setViewMode] = useState<ViewMode>(viewModeParam || "tree")
+  const [searchQuery, setSearchQuery] = useState(searchQueryParam)
+  const [searchInput, setSearchInput] = useState(searchQueryParam)
 
   // Fetch issues based on filter - use graph query for tree view
   const regularIssues = useQuery(
@@ -562,6 +565,20 @@ function IssuesContent() {
   const blockedIssuesData = useQuery(
     api.issues.listBlockedIssues,
     viewMode === "list" && statusFilter === "blocked" ? { limit: 100 } : "skip"
+  )
+
+  // Search query - when active, overrides other filters
+  const searchResults = useQuery(
+    api.issues.searchIssues,
+    searchQuery
+      ? {
+          query: searchQuery,
+          limit: 50,
+          status: statusFilter === "all" || statusFilter === "ready" || statusFilter === "blocked"
+            ? undefined
+            : statusFilter,
+        }
+      : "skip"
   )
 
   // Get issue stats for the header
@@ -599,12 +616,39 @@ function IssuesContent() {
     [router, searchParams]
   )
 
+  const updateSearch = useCallback(
+    (query: string) => {
+      const params = new URLSearchParams(searchParams.toString())
+      if (query.trim()) {
+        params.set("search", query.trim())
+      } else {
+        params.delete("search")
+      }
+      router.push(`/issues?${params.toString()}`, { scroll: false })
+      setSearchQuery(query.trim())
+    },
+    [router, searchParams]
+  )
+
+  const handleSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    updateSearch(searchInput)
+  }
+
+  const clearSearch = () => {
+    setSearchInput("")
+    updateSearch("")
+  }
+
   type IssueWithDeps = Issue & { blockedByCount: number; blocksCount: number }
 
   // Determine which issues to show
   let issues: IssueWithDeps[] = []
 
-  if (statusFilter === "ready" && readyIssues) {
+  // If searching, use search results
+  if (searchQuery && searchResults) {
+    issues = searchResults.map((i) => ({ ...i, blockedByCount: 0, blocksCount: 0 }))
+  } else if (statusFilter === "ready" && readyIssues) {
     issues = readyIssues.map((i) => ({ ...i, blockedByCount: 0, blocksCount: 0 }))
   } else if (statusFilter === "blocked" && blockedIssuesData) {
     issues = blockedIssuesData.map((b) => ({
@@ -616,13 +660,14 @@ function IssuesContent() {
     issues = regularIssues
   }
 
-  // Apply type filter for ready/blocked views
-  if ((statusFilter === "ready" || statusFilter === "blocked") && typeFilter !== "all") {
+  // Apply type filter for ready/blocked views (also for search)
+  if ((statusFilter === "ready" || statusFilter === "blocked" || searchQuery) && typeFilter !== "all") {
     issues = issues.filter((i) => i.type === typeFilter)
   }
 
-  const loading =
-    viewMode === "tree"
+  const loading = searchQuery
+    ? !searchResults
+    : viewMode === "tree"
       ? !graphData
       : (statusFilter === "ready" && !readyIssues) ||
         (statusFilter === "blocked" && !blockedIssuesData) ||
@@ -634,8 +679,44 @@ function IssuesContent() {
         <main className="w-full max-w-[1200px] border-x border-gray-800 h-full flex flex-col">
           {/* Header */}
           <div className="flex-shrink-0 bg-black/80 backdrop-blur-md border-b border-gray-800 z-10">
-            <div className="px-4 pt-4 pb-2 flex justify-between items-center">
-              <h1 className="text-base font-semibold text-white">Issues</h1>
+            <div className="px-4 pt-4 pb-2 flex justify-between items-center gap-4">
+              <h1 className="text-base font-semibold text-white flex-shrink-0">Issues</h1>
+              {/* Search input */}
+              <form onSubmit={handleSearchSubmit} className="flex-1 max-w-md">
+                <div className="relative">
+                  <svg
+                    className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                    />
+                  </svg>
+                  <input
+                    type="text"
+                    placeholder="Search issues..."
+                    value={searchInput}
+                    onChange={(e) => setSearchInput(e.target.value)}
+                    className="w-full bg-gray-900 border border-gray-800 rounded-lg pl-10 pr-8 py-1.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                  {searchInput && (
+                    <button
+                      type="button"
+                      onClick={clearSearch}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+              </form>
               <div className="flex items-center gap-3">
                 {issueStats && (
                   <div className="flex items-center gap-3 text-xs text-gray-500">
@@ -767,6 +848,21 @@ function IssuesContent() {
 
           {/* Issue List */}
           <div className="flex-1 overflow-y-auto">
+            {/* Search results indicator */}
+            {searchQuery && (
+              <div className="px-4 py-2 border-b border-gray-800 text-sm text-gray-400 flex items-center justify-between">
+                <span>
+                  Search results for &quot;{searchQuery}&quot;
+                  {searchResults && ` (${searchResults.length} found)`}
+                </span>
+                <button
+                  onClick={clearSearch}
+                  className="text-blue-400 hover:text-blue-300 text-xs"
+                >
+                  Clear search
+                </button>
+              </div>
+            )}
             {loading ? (
               <div className="p-8 text-center text-gray-500">
                 <div className="flex items-center justify-center gap-2">
@@ -775,7 +871,7 @@ function IssuesContent() {
                   <div className="w-2 h-2 bg-gray-600 rounded-full animate-bounce" style={{ animationDelay: "0.2s" }}></div>
                 </div>
               </div>
-            ) : viewMode === "tree" && graphData ? (
+            ) : viewMode === "tree" && graphData && !searchQuery ? (
               <IssueTreeView
                 issues={graphData.issues}
                 onSelect={setSelectedIssue}
@@ -783,7 +879,7 @@ function IssuesContent() {
               />
             ) : issues.length === 0 ? (
               <div className="p-8 text-center text-gray-500">
-                No issues found matching the current filters.
+                {searchQuery ? `No issues found for "${searchQuery}"` : "No issues found matching the current filters."}
               </div>
             ) : (
               issues.map((issue) => (

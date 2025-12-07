@@ -13,6 +13,8 @@ import { CodingAgentSession } from "./components/CodingAgentSession"
 import { BrowserAgentSession } from "./components/BrowserAgentSession"
 import { RepoPickerDropdown } from "@/components/RepoPickerDropdown"
 import { GrokIcon } from "@/components/GrokIcon"
+import { IssueDetailPanel } from "@/components/IssueDetailPanel"
+import TextareaAutosize from "react-textarea-autosize"
 
 type Post = {
   _id: Id<"posts">
@@ -36,6 +38,7 @@ type CuratedItem = {
 function PostCard({
   post,
   onReply,
+  onMerge,
   onClick,
   isSelected = false,
   showThreadLine = false,
@@ -43,6 +46,7 @@ function PostCard({
 }: {
   post: Post
   onReply: () => void
+  onMerge?: () => void
   onClick?: () => void
   isSelected?: boolean
   showThreadLine?: boolean // Line going down from avatar (parent post)
@@ -53,12 +57,28 @@ function PostCard({
   const contentRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    if (contentRef.current) {
-      // Check if content exceeds 10 lines (approximate line height is ~20px for prose-sm)
-      const lineHeight = 20
-      const maxHeight = lineHeight * 10
-      setNeedsClamp(contentRef.current.scrollHeight > maxHeight)
+    const el = contentRef.current
+    if (!el) return
+
+    let measured = false
+
+    // Check height after content renders - only measure once per content change
+    const checkHeight = () => {
+      if (measured) return
+      const scrollHeight = el.scrollHeight
+      // Only mark as measured once we have meaningful content
+      if (scrollHeight > 0) {
+        measured = true
+        setNeedsClamp(scrollHeight > 240)
+      }
     }
+
+    // Use ResizeObserver to detect when Streamdown finishes rendering
+    const observer = new ResizeObserver(checkHeight)
+    observer.observe(el)
+    checkHeight() // Initial check
+
+    return () => observer.disconnect()
   }, [post.content])
 
   return (
@@ -95,11 +115,16 @@ function PostCard({
               · {new Date(post.createdAt).toLocaleString()}
             </span>
           </div>
-          <div
-            ref={contentRef}
-            className={`prose prose-invert prose-sm max-w-none mb-3 ${!isExpanded && needsClamp ? "line-clamp-[10]" : ""}`}
-          >
-            <Streamdown components={embeddableComponents}>{post.content}</Streamdown>
+          <div className="relative">
+            <div
+              ref={contentRef}
+              className={`prose prose-invert prose-sm max-w-none ${!isExpanded && needsClamp ? "max-h-[240px] overflow-hidden" : "mb-3"}`}
+            >
+              <Streamdown components={embeddableComponents}>{post.content}</Streamdown>
+            </div>
+            {!isExpanded && needsClamp && (
+              <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-black to-transparent pointer-events-none" />
+            )}
           </div>
           {needsClamp && (
             <button
@@ -137,6 +162,30 @@ function PostCard({
             </button>
             {post.replyCount > 0 && (
               <span className="text-gray-400">{post.replyCount} replies</span>
+            )}
+            {onMerge && post.replyTo && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onMerge()
+                }}
+                className="hover:text-green-400 transition-colors flex items-center gap-1 ml-auto"
+              >
+                <svg
+                  className="w-4 h-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
+                  />
+                </svg>
+                Merge
+              </button>
             )}
           </div>
         </div>
@@ -278,7 +327,7 @@ function ThreadPanel({
 
   return (
     <div className="h-full flex flex-col">
-      <div className="h-[60px] px-4 border-b border-gray-800 flex justify-between items-center sticky top-0 bg-black/80 backdrop-blur-md">
+      <div className="h-[55px] px-4 border-b border-gray-800 flex justify-between items-center sticky top-0 bg-black/80 backdrop-blur-md">
         <h2 className="text-lg font-bold">Thread</h2>
         <button
           onClick={onClose}
@@ -364,6 +413,9 @@ function HomeContent() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [selectedRepo, setSelectedRepo] = useState<string | null>(null)
 
+  // Track optimistically submitted posts to show at top of "for you" feed
+  const [optimisticPostIds, setOptimisticPostIds] = useState<Set<string>>(new Set())
+
   // Track displayed posts to show "new posts" indicator instead of jarring updates
   const [displayedPosts, setDisplayedPosts] = useState<Post[]>([])
   const [newPostsAvailable, setNewPostsAvailable] = useState(0)
@@ -402,8 +454,9 @@ function HomeContent() {
     window.scrollTo({ top: 0, behavior: "smooth" })
   }
 
-  // Get selected post and agent sessions from URL search params
+  // Get selected post, issue, and agent sessions from URL search params
   const selectedThread = searchParams.get("post") as Id<"posts"> | null
+  const selectedIssue = searchParams.get("issue") as Id<"issues"> | null
   const selectedCodingAgentSession = searchParams.get(
     "codingAgent",
   ) as Id<"sessions"> | null
@@ -415,11 +468,13 @@ function HomeContent() {
   const buildUrl = useCallback(
     (params: {
       post?: Id<"posts"> | null
+      issue?: Id<"issues"> | null
       codingAgent?: Id<"sessions"> | null
       browserAgent?: Id<"sessions"> | null
     }) => {
       const urlParams = new URLSearchParams()
       if (params.post) urlParams.set("post", params.post)
+      if (params.issue) urlParams.set("issue", params.issue)
       if (params.codingAgent) urlParams.set("codingAgent", params.codingAgent)
       if (params.browserAgent)
         urlParams.set("browserAgent", params.browserAgent)
@@ -432,9 +487,17 @@ function HomeContent() {
   // When changing post, clear the agent panels (they're associated with the previous post)
   const setSelectedThread = useCallback(
     (postId: Id<"posts"> | null) => {
-      router.push(buildUrl({ post: postId }), { scroll: false })
+      router.push(buildUrl({ post: postId, issue: selectedIssue }), { scroll: false })
     },
-    [router, buildUrl],
+    [router, buildUrl, selectedIssue],
+  )
+
+  // Set selected issue (preserves post selection)
+  const setSelectedIssue = useCallback(
+    (issueId: Id<"issues"> | null) => {
+      router.push(buildUrl({ post: selectedThread, issue: issueId }), { scroll: false })
+    },
+    [router, buildUrl, selectedThread],
   )
 
   const setSelectedCodingAgentSession = useCallback(
@@ -442,13 +505,14 @@ function HomeContent() {
       router.push(
         buildUrl({
           post: selectedThread,
+          issue: selectedIssue,
           codingAgent: sessionId,
           browserAgent: selectedBrowserAgentSession,
         }),
         { scroll: false },
       )
     },
-    [router, buildUrl, selectedThread, selectedBrowserAgentSession],
+    [router, buildUrl, selectedThread, selectedIssue, selectedBrowserAgentSession],
   )
 
   const setSelectedBrowserAgentSession = useCallback(
@@ -456,13 +520,14 @@ function HomeContent() {
       router.push(
         buildUrl({
           post: selectedThread,
+          issue: selectedIssue,
           codingAgent: selectedCodingAgentSession,
           browserAgent: sessionId,
         }),
         { scroll: false },
       )
     },
-    [router, buildUrl, selectedThread, selectedCodingAgentSession],
+    [router, buildUrl, selectedThread, selectedIssue, selectedCodingAgentSession],
   )
 
   // Get posts based on active tab (compute before hooks)
@@ -475,10 +540,18 @@ function HomeContent() {
         parentPost: item.parentPost,
       })) ?? []
 
+  // Optimistic posts rendered separately at top of "for you" feed
+  const optimisticPosts: Post[] =
+    feedTab === "for_you"
+      ? recentPosts.filter((post) => optimisticPostIds.has(post._id))
+      : []
+
   // For "for you" tab, use curated items; for "recent" tab, convert to simple items
   const liveItems: CuratedItem[] =
     feedTab === "for_you" && curatedItems.length
-      ? curatedItems
+      ? curatedItems.filter(
+          (item) => !item.post || !optimisticPostIds.has(item.post._id)
+        )
       : recentPosts.map((post) => ({ post, parentPost: null }))
 
   // Handle new posts without scroll jump
@@ -494,17 +567,19 @@ function HomeContent() {
       return
     }
 
-    // Check if there are new posts at the top
+    // Check if there are new posts at the top (excluding optimistic posts)
     const displayedIds = new Set(displayedPosts.map((p) => p._id))
     const newPosts = liveItems.filter(
-      (item) => item.post && !displayedIds.has(item.post._id),
+      (item) =>
+        item.post &&
+        !displayedIds.has(item.post._id) &&
+        !optimisticPostIds.has(item.post._id),
     )
 
     if (newPosts.length > 0) {
-      // Show indicator instead of immediately updating
       setNewPostsAvailable(newPosts.length)
     }
-  }, [liveItems, displayedPosts])
+  }, [liveItems, displayedPosts, optimisticPostIds])
 
   // Reset when tab changes
   useEffect(() => {
@@ -513,13 +588,29 @@ function HomeContent() {
     setNewPostsAvailable(0)
   }, [feedTab])
 
+  // Remove optimistic posts once they appear in curated feed
+  useEffect(() => {
+    if (optimisticPostIds.size === 0) return
+    const curatedPostIds = new Set(
+      curatedItems.map((item) => item.post?._id).filter(Boolean)
+    )
+    const stillOptimistic = new Set(
+      [...optimisticPostIds].filter((id) => !curatedPostIds.has(id as Id<"posts">))
+    )
+    if (stillOptimistic.size !== optimisticPostIds.size) {
+      setOptimisticPostIds(stillOptimistic)
+    }
+  }, [curatedItems, optimisticPostIds])
+
   const showNewPosts = () => {
     setDisplayedPosts(
       liveItems.map((item) => item.post).filter(Boolean) as Post[],
     )
     setNewPostsAvailable(0)
-    // Scroll to top
-    window.scrollTo({ top: 0, behavior: "smooth" })
+    // Scroll to top after state update is rendered
+    setTimeout(() => {
+      window.scrollTo({ top: 0, behavior: "instant" })
+    }, 50)
   }
 
   // Create a map of displayed post IDs for quick lookup
@@ -547,14 +638,43 @@ function HomeContent() {
       }
       const result = await response.json()
       setContent("")
-      // Focus on the newly created post
+      // Focus on the newly created post and add to optimistic list for "for you" feed
       if (result.postId) {
         setSelectedThread(result.postId as Id<"posts">)
+        // Add to optimistic posts so it appears at top of "for you" feed
+        setOptimisticPostIds((prev) => new Set([...prev, result.postId]))
       }
     } catch (error) {
       console.error("Failed to create post:", error)
     } finally {
       setIsSubmitting(false)
+    }
+  }
+
+  const handleMerge = async (post: Post) => {
+    const mergeInstructions = `Merge the PR for this thread. Follow these steps:
+
+1. First, merge main into this branch and fix any conflicts that arise
+2. Run the CI checks and ensure all GitHub Actions pass
+3. Use the gh CLI to merge the PR (e.g., \`gh pr merge --squash\`)
+
+Make sure all checks pass before merging. If there are any failing checks, fix them first.`
+
+    try {
+      const response = await fetch("/api/post", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: mergeInstructions, replyTo: post._id }),
+      })
+      if (!response.ok) {
+        throw new Error("Failed to create merge post")
+      }
+      const result = await response.json()
+      if (result.postId) {
+        setSelectedThread(result.postId as Id<"posts">)
+      }
+    } catch (error) {
+      console.error("Failed to create merge post:", error)
     }
   }
 
@@ -631,10 +751,11 @@ function HomeContent() {
                 )}
               </div>
               <div className="flex-grow">
-                <textarea
+                <TextareaAutosize
                   className="w-full bg-transparent text-xl placeholder-gray-500 focus:outline-none resize-none py-2"
                   placeholder="What's happening?"
-                  rows={3}
+                  minRows={1}
+                  maxRows={10}
                   value={content}
                   onChange={(e) => setContent(e.target.value)}
                   onKeyDown={(e) => {
@@ -677,8 +798,20 @@ function HomeContent() {
             </button>
           )}
 
+          {/* Optimistic posts - user's own submissions shown immediately */}
+          {optimisticPosts.map((post) => (
+            <PostCard
+              key={`optimistic-${post._id}`}
+              post={post}
+              onClick={() => setSelectedThread(post._id)}
+              onReply={() => setSelectedThread(post._id)}
+              onMerge={() => handleMerge(post)}
+              isSelected={selectedThread === post._id}
+            />
+          ))}
+
           <div>
-            {itemsToShow.length === 0 ? (
+            {itemsToShow.length === 0 && optimisticPosts.length === 0 ? (
               <div className="p-8 text-center text-gray-500">
                 {feedTab === "for_you"
                   ? "No curated posts yet. Check back soon or switch to Recent!"
@@ -697,6 +830,7 @@ function HomeContent() {
                         post={item.parentPost}
                         onClick={() => setSelectedThread(item.parentPost!._id)}
                         onReply={() => setSelectedThread(item.parentPost!._id)}
+                        onMerge={() => handleMerge(item.parentPost!)}
                         isSelected={selectedThread === item.parentPost!._id}
                         showThreadLine
                       />
@@ -705,6 +839,7 @@ function HomeContent() {
                       post={post}
                       onClick={() => setSelectedThread(post._id)}
                       onReply={() => setSelectedThread(post._id)}
+                      onMerge={() => handleMerge(post)}
                       isSelected={selectedThread === post._id}
                       showThreadLineAbove={hasParent}
                     />
@@ -744,6 +879,17 @@ function HomeContent() {
             <BrowserAgentSession
               sessionId={selectedBrowserAgentSession}
               onClose={() => setSelectedBrowserAgentSession(null)}
+            />
+          </aside>
+        )}
+
+        {/* Issue Detail Panel - Shows when issue is selected and no agent session is active */}
+        {selectedIssue && !selectedCodingAgentSession && !selectedBrowserAgentSession && (
+          <aside className="w-[500px] shrink border-r border-gray-800 min-h-screen sticky top-0 h-screen overflow-hidden hidden xl:block">
+            <IssueDetailPanel
+              issueId={selectedIssue}
+              onClose={() => setSelectedIssue(null)}
+              onIssueClick={setSelectedIssue}
             />
           </aside>
         )}
