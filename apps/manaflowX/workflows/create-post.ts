@@ -18,7 +18,8 @@ export interface RepoConfig {
     maintenanceScript: string;
     devScript: string;
   };
-  envVars?: Array<{ key: string; value: string }>;
+  repoId?: string;  // Convex repo ID for env var lookup
+  userId?: string;  // User ID for env var lookup
 }
 
 // Thread context for replies
@@ -202,10 +203,9 @@ ${post.repoConfig.scripts.maintenanceScript}
   const autoDelegate = post.repoConfig !== undefined
   let prompt: string
   if (autoDelegate) {
-    // Build envVars instruction if present
-    const envVarsInstruction = post.repoConfig?.envVars && post.repoConfig.envVars.length > 0
-      ? `\n- envVars: ${JSON.stringify(post.repoConfig.envVars)}`
-      : ""
+    // Build repo object with repoId and userId for env var lookup
+    const repoIdInstruction = post.repoConfig?.repoId ? `, repoId: "${post.repoConfig.repoId}"` : ""
+    const userIdInstruction = post.repoConfig?.userId ? `, userId: "${post.repoConfig.userId}"` : ""
 
     prompt = `The user has selected the repository "${post.repoConfig!.fullName}" and sent this message:
 
@@ -215,7 +215,7 @@ Since a repository is selected, delegate this task to the coding agent immediate
 - task: The user's request
 - context: Include any relevant context about the task${scriptsContext ? ". IMPORTANT: Include the workspace scripts context below so the coding agent knows how to set up and run the dev environment." : ""}
 - agent: "build" (for coding tasks)
-- repo: { gitRemote: "${post.repoConfig!.gitRemote}", branch: "${post.repoConfig!.branch}"${post.repoConfig!.installationId ? `, installationId: ${post.repoConfig!.installationId}` : ""} }${envVarsInstruction}${scriptsContext}`
+- repo: { gitRemote: "${post.repoConfig!.gitRemote}", branch: "${post.repoConfig!.branch}"${post.repoConfig!.installationId ? `, installationId: ${post.repoConfig!.installationId}` : ""}${repoIdInstruction}${userIdInstruction} }${scriptsContext}`
   } else if (post.threadContext) {
     prompt = `${threadContextStr}\n\n${post.content}\n\nRespond to this message in the context of the conversation above.`
   } else {

@@ -7,6 +7,49 @@ import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import { fetchInstallationAccessToken } from "../../convex/_shared/githubApp";
 import { getLatestSnapshotId } from "./vm-snapshots";
+import { StackServerApp } from "@stackframe/stack";
+
+// =============================================================================
+// Stack Auth Data Vault - for fetching env vars
+// =============================================================================
+
+const stackServerApp = new StackServerApp({
+  tokenStore: "nextjs-cookie",
+  urls: {
+    home: process.env.NEXT_PUBLIC_STACK_URL || "http://localhost:3000",
+  },
+});
+
+interface EnvVar {
+  key: string;
+  value: string;
+}
+
+async function fetchEnvVarsFromVault(userId: string, repoId: string): Promise<EnvVar[]> {
+  const secret = process.env.STACK_DATA_VAULT_SECRET;
+  if (!secret) {
+    console.warn("[coding-agent] STACK_DATA_VAULT_SECRET not set, skipping env vars");
+    return [];
+  }
+
+  try {
+    const store = await stackServerApp.getDataVaultStore("xagi");
+    const key = `env:${userId}:${repoId}`;
+    const value = await store.getValue(key, { secret });
+
+    if (!value) {
+      console.log(`[coding-agent] No env vars found for user:${userId} repo:${repoId}`);
+      return [];
+    }
+
+    const envVars = JSON.parse(value) as EnvVar[];
+    console.log(`[coding-agent] Fetched ${envVars.length} env vars from vault`);
+    return envVars;
+  } catch (error) {
+    console.error("[coding-agent] Failed to fetch env vars from vault:", error);
+    return [];
+  }
+}
 
 // =============================================================================
 // Progress Stage Types
@@ -440,6 +483,14 @@ The agent will complete the task autonomously and return the results.`,
           .number()
           .optional()
           .describe("GitHub App installation ID for private repos"),
+        repoId: z
+          .string()
+          .optional()
+          .describe("Convex repo ID for fetching env vars from vault"),
+        userId: z
+          .string()
+          .optional()
+          .describe("User ID for fetching env vars from vault"),
       })
       .optional()
       .describe("Repository to clone into the VM workspace. If not provided, no repository will be cloned."),
@@ -449,24 +500,14 @@ The agent will complete the task autonomously and return the results.`,
       .describe(
         "Command to install dependencies (e.g., 'bun install', 'npm install'). If provided, the agent will run this after cloning the repository."
       ),
-    envVars: z
-      .array(z.object({
-        key: z.string(),
-        value: z.string(),
-      }))
-      .optional()
-      .describe(
-        "Environment variables to inject into the VM workspace as a .env file. These are written to /workspace/.env before the task runs."
-      ),
   }),
   execute: async (
-    { task, context, agent, repo, installCommand, envVars }: {
+    { task, context, agent, repo, installCommand }: {
       task: string;
       context?: string;
       agent: "build" | "plan" | "general";
-      repo?: { gitRemote: string; branch: string; installationId?: number };
+      repo?: { gitRemote: string; branch: string; installationId?: number; repoId?: string; userId?: string };
       installCommand?: string;
-      envVars?: Array<{ key: string; value: string }>;
     },
     { toolCallId }: { toolCallId: string }
   ) => {
@@ -510,6 +551,12 @@ The agent will complete the task autonomously and return the results.`,
       updateProgress(parentSessionId, toolCallId, "starting_vm", "Starting sandboxed VM...", {
         sessionId: convexSessionId,
       });
+
+      // Fetch env vars from vault if we have repoId and userId
+      let envVars: EnvVar[] = [];
+      if (repo?.repoId && repo?.userId) {
+        envVars = await fetchEnvVarsFromVault(repo.userId, repo.repoId);
+      }
 
       // Spawn a VM with JWT config written before OpenCode starts
       vm = await spawnCodingVM({
@@ -561,8 +608,8 @@ The agent will complete the task autonomously and return the results.`,
         },
         // Pass repository config for cloning
         repo: repo,
-        // Pass environment variables for .env injection
-        envVars: envVars,
+        // Pass environment variables fetched from vault
+        envVars,
       });
 
       // Update session with the Morph instance ID
@@ -648,9 +695,9 @@ ${installCommand}
 
       const response = promptResponse.data;
 
-      // Extract results
-      const textResponse = extractTextFromParts(response.parts);
-      const toolsSummary = extractToolSummary(response.parts);
+      // Extract results (handle undefined parts gracefully)
+      const textResponse = extractTextFromParts(response.parts ?? []);
+      const toolsSummary = extractToolSummary(response.parts ?? []);
 
       // Update progress: Completed (non-blocking)
       updateProgress(parentSessionId, toolCallId, "completed", "Task completed successfully", {
