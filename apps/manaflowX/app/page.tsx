@@ -571,8 +571,10 @@ function HomeContent() {
       liveItems.map((item) => item.post).filter(Boolean) as Post[],
     )
     setNewPostsAvailable(0)
-    // Scroll to top
-    window.scrollTo({ top: 0, behavior: "smooth" })
+    // Scroll to top after state update is rendered
+    setTimeout(() => {
+      window.scrollTo({ top: 0, behavior: "instant" })
+    }, 50)
   }
 
   // Create a map of displayed post IDs for quick lookup
