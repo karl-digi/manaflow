@@ -268,6 +268,7 @@ export const createCodingAgentSession = mutation({
       agent: args.agent,
       title: `Task: ${args.task.slice(0, 50)}...`,
       jwtSecret: args.jwtSecret,
+      morphInstanceId: args.morphInstanceId,
       createdAt: now,
       updatedAt: now,
     });
@@ -390,6 +391,23 @@ export const upsertTurnFromHook = internalMutation({
 
       return turnId;
     }
+  },
+});
+
+/**
+ * Update the Morph instance ID for a coding agent session.
+ * Called after the VM is spawned.
+ */
+export const updateCodingAgentSessionInstance = mutation({
+  args: {
+    sessionId: v.id("sessions"),
+    morphInstanceId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.sessionId, {
+      morphInstanceId: args.morphInstanceId,
+      updatedAt: Date.now(),
+    });
   },
 });
 

@@ -425,6 +425,9 @@ export default defineSchema({
     // OpenCode SDK specific fields
     // -------------------------------------------------------------------------
 
+    // Morph VM instance ID (for accessing the running VM)
+    morphInstanceId: v.optional(v.string()),
+
     // External session ID from OpenCode
     externalSessionId: v.optional(v.string()),
 

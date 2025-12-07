@@ -7,6 +7,7 @@ import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../../convex/_generated/api";
+import { Id } from "../../convex/_generated/dataModel";
 
 // =============================================================================
 // JWT Helper Functions
@@ -244,6 +245,13 @@ The agent will complete the task autonomously and return the results.`,
           }
         },
       });
+
+      // Update session with the Morph instance ID
+      await convex.mutation(api.codingAgent.updateCodingAgentSessionInstance, {
+        sessionId: convexSessionId as Id<"sessions">,
+        morphInstanceId: vm.instanceId,
+      });
+      console.log(`[coding-agent] Updated session with instance ID: ${vm.instanceId}`);
 
       // Create OpenCode client using the official SDK
       const opencode = createOpencodeClient({
