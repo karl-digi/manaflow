@@ -5,6 +5,7 @@ import { useUser } from "@stackframe/stack"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Streamdown } from "streamdown"
 import { api } from "../convex/_generated/api"
+import { embeddableComponents } from "../components/EmbeddableComponents"
 import { useState, useCallback, Suspense, useRef, useEffect } from "react"
 import { Id } from "../convex/_generated/dataModel"
 import { SessionsByPost } from "../components/SessionView"
@@ -98,7 +99,7 @@ function PostCard({
             ref={contentRef}
             className={`prose prose-invert prose-sm max-w-none mb-3 ${!isExpanded && needsClamp ? "line-clamp-[10]" : ""}`}
           >
-            <Streamdown>{post.content}</Streamdown>
+            <Streamdown components={embeddableComponents}>{post.content}</Streamdown>
           </div>
           {needsClamp && (
             <button
