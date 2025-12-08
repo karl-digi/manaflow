@@ -1,7 +1,8 @@
 "use client"
 
 import { useQuery } from "convex/react"
-import { useUser } from "@stackframe/stack"
+import { useUser, SignIn } from "@stackframe/stack"
+import * as Dialog from "@radix-ui/react-dialog"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Streamdown } from "streamdown"
 import { api } from "../convex/_generated/api"
@@ -303,16 +304,24 @@ function ReplyComposer({
   replyingTo,
   onCancel,
   onSubmit,
+  user,
+  onShowSignIn,
 }: {
   replyingTo: Post
   onCancel: () => void
   onSubmit: (content: string) => void
+  user: ReturnType<typeof useUser>
+  onShowSignIn: () => void
 }) {
   const [content, setContent] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   const handleSubmit = async () => {
     if (!content.trim()) return
+    if (!user) {
+      onShowSignIn()
+      return
+    }
     setIsSubmitting(true)
     await onSubmit(content)
     setContent("")
@@ -371,12 +380,16 @@ function ThreadPanel({
   onSelectPost,
   onCodingAgentSessionSelect,
   onBrowserAgentSessionSelect,
+  user,
+  onShowSignIn,
 }: {
   postId: Id<"posts">
   onClose: () => void
   onSelectPost: (postId: Id<"posts">) => void
   onCodingAgentSessionSelect?: (sessionId: Id<"sessions"> | null) => void
   onBrowserAgentSessionSelect?: (sessionId: Id<"sessions"> | null) => void
+  user: ReturnType<typeof useUser>
+  onShowSignIn: () => void
 }) {
   const thread = useQuery(api.posts.getPostThread, { postId })
   const [replyingTo, setReplyingTo] = useState<Post | null>(null)
@@ -433,7 +446,7 @@ function ThreadPanel({
   return (
     <div className="h-full flex flex-col">
       <div className="h-[55px] px-4 border-b border-border flex justify-between items-center sticky top-0 bg-background/80 backdrop-blur-md">
-        <h2 className="text-lg font-bold">Thread</h2>
+        <h2 className="font-semibold">Thread</h2>
         <button
           onClick={onClose}
           className="text-muted-foreground hover:text-foreground transition-colors"
@@ -465,6 +478,8 @@ function ThreadPanel({
             replyingTo={thread.root}
             onCancel={() => setReplyingTo(null)}
             onSubmit={handleReply}
+            user={user}
+            onShowSignIn={onShowSignIn}
           />
         )}
 
@@ -491,6 +506,8 @@ function ThreadPanel({
                 replyingTo={reply}
                 onCancel={() => setReplyingTo(null)}
                 onSubmit={handleReply}
+                user={user}
+                onShowSignIn={onShowSignIn}
               />
             )}
             <div className="px-4">
@@ -517,6 +534,7 @@ function HomeContent() {
   const [content, setContent] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [selectedRepo, setSelectedRepo] = useState<string | null>(null)
+  const [showSignInModal, setShowSignInModal] = useState(false)
 
   // Track optimistically submitted posts to show at top of "for you" feed
   const [optimisticPostIds, setOptimisticPostIds] = useState<Set<string>>(
@@ -780,6 +798,11 @@ function HomeContent() {
   }
 
   const handleMerge = async (post: Post) => {
+    if (!user) {
+      setShowSignInModal(true)
+      return
+    }
+
     const mergeInstructions = `Merge the PR for this thread. Follow these steps:
 
 1. First, merge main into this branch and fix any conflicts that arise
@@ -907,7 +930,13 @@ Make sure all checks pass before merging. If there are any failing checks, fix t
               </div>
               <button
                 disabled={!content.trim() || isSubmitting}
-                onClick={handleSubmit}
+                onClick={() => {
+                  if (!user) {
+                    setShowSignInModal(true)
+                    return
+                  }
+                  handleSubmit()
+                }}
                 className="bg-blue-500 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-1.5 px-4 rounded-full transition-colors"
               >
                 {isSubmitting ? "Posting..." : "Post"}
@@ -987,6 +1016,8 @@ Make sure all checks pass before merging. If there are any failing checks, fix t
               onSelectPost={setSelectedThread}
               onCodingAgentSessionSelect={setSelectedCodingAgentSession}
               onBrowserAgentSessionSelect={setSelectedBrowserAgentSession}
+              user={user}
+              onShowSignIn={() => setShowSignInModal(true)}
             />
           </aside>
         )}
@@ -1052,6 +1083,36 @@ Make sure all checks pass before merging. If there are any failing checks, fix t
           {newPostsAvailable} new post{newPostsAvailable > 1 ? "s" : ""}
         </button>
       )}
+
+      {/* Sign-in modal */}
+      <Dialog.Root open={showSignInModal} onOpenChange={setShowSignInModal}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 bg-background/80 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 z-50" />
+          <Dialog.Content className="fixed left-[50%] top-[50%] translate-x-[-50%] translate-y-[-50%] w-full max-w-md bg-card border border-border rounded-xl shadow-2xl z-50 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%]">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+              <Dialog.Title className="text-lg font-semibold text-foreground">
+                Sign in to post
+              </Dialog.Title>
+              <Dialog.Close asChild>
+                <button
+                  className="p-1 text-muted-foreground hover:text-foreground rounded transition-colors"
+                  aria-label="Close"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </Dialog.Close>
+            </div>
+            <Dialog.Description className="sr-only">
+              Sign in or create an account to post
+            </Dialog.Description>
+            <div className="p-4">
+              <SignIn />
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
     </div>
   )
 }
