@@ -102,9 +102,15 @@ export function PersistentIframe({
   const [, forceRender] = useState(0);
   const loadTimeoutRef = useRef<number | null>(null);
   const preflightErrorRef = useRef<string | null>(null);
+  const previousSrcRef = useRef<string | null>(null);
 
+  // Only reset to loading when the src actually changes (not on initial mount with same src)
+  // This prevents unnecessary flickering when the component re-renders
   useEffect(() => {
-    setStatus("loading");
+    if (previousSrcRef.current !== null && previousSrcRef.current !== src) {
+      setStatus("loading");
+    }
+    previousSrcRef.current = src;
   }, [persistKey, src]);
 
   const clearLoadTimeout = useCallback(() => {

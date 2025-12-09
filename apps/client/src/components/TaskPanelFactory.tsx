@@ -231,35 +231,9 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
     };
   }, []);
 
-  // Control iframe wrapper visibility based on this panel's expansion state
-  useEffect(() => {
-    if (typeof document === "undefined" || !type) return;
-
-    // Find the container div for this panel's content
-    const container = document.querySelector(`[data-panel-position="${position}"]`);
-    if (!container) return;
-
-    // Find any iframe target within this panel
-    const iframeTarget = container.querySelector('[data-iframe-target]') as HTMLElement;
-    if (!iframeTarget) return;
-
-    const iframeKey = iframeTarget.getAttribute('data-iframe-target');
-    if (!iframeKey) return;
-
-    // Find the corresponding iframe wrapper
-    const wrapper = document.querySelector(`[data-iframe-key="${iframeKey}"]`) as HTMLElement;
-    if (!wrapper) return;
-
-    if (isAnyPanelExpanded && !isExpanded) {
-      // Another panel is expanded - hide this iframe
-      wrapper.style.visibility = "hidden";
-      wrapper.style.pointerEvents = "none";
-    } else {
-      // This panel is expanded OR no panel is expanded - show iframe
-      wrapper.style.visibility = "visible";
-      wrapper.style.pointerEvents = "auto";
-    }
-  }, [type, position, isExpanded, isAnyPanelExpanded]);
+  // NOTE: iframe wrapper visibility is now controlled solely by PersistentIframe component
+  // via isExpanded and isAnyPanelExpanded props. Removed duplicate visibility management
+  // here to prevent flickering caused by competing useEffect hooks.
 
   const handleDragStart = useCallback((e: React.DragEvent) => {
     e.dataTransfer.effectAllowed = "move";

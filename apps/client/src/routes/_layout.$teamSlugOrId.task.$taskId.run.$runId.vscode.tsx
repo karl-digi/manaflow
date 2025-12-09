@@ -3,7 +3,7 @@ import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { convexQuery } from "@convex-dev/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "convex/react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import z from "zod";
 import type { PersistentIframeStatus } from "@/components/persistent-iframe";
 import { PersistentWebView } from "@/components/persistent-webview";
@@ -100,8 +100,18 @@ function VSCodeComponent() {
 
   const [iframeStatus, setIframeStatus] =
     useState<PersistentIframeStatus>("loading");
+  const previousWorkspaceUrlRef = useRef<string | null>(null);
+
+  // Only reset to loading when the workspaceUrl actually changes (not on re-renders)
+  // This prevents unnecessary flickering, especially for local workspaces
   useEffect(() => {
-    setIframeStatus("loading");
+    if (
+      previousWorkspaceUrlRef.current !== null &&
+      previousWorkspaceUrlRef.current !== workspaceUrl
+    ) {
+      setIframeStatus("loading");
+    }
+    previousWorkspaceUrlRef.current = workspaceUrl;
   }, [workspaceUrl]);
 
   const onLoad = useCallback(() => {
