@@ -3,14 +3,12 @@ import {
   ANTHROPIC_API_KEY,
   OPENAI_API_KEY,
   OPENROUTER_API_KEY,
+  XAI_API_KEY,
 } from "../../apiKeys";
 import { checkOpencodeRequirements } from "./check-requirements";
 import { startOpenCodeCompletionDetector } from "./completion-detector";
 
-import {
-  getOpencodeEnvironment,
-  getOpencodeEnvironmentSkipAuth,
-} from "./environment";
+import { getOpencodeEnvironment } from "./environment";
 
 export const OPENCODE_GROK_CODE_CONFIG: AgentConfig = {
   name: "opencode/grok-code",
@@ -20,11 +18,11 @@ export const OPENCODE_GROK_CODE_CONFIG: AgentConfig = {
     "--prompt",
     "$PROMPT",
     "--model",
-    "opencode/grok-code",
+    "xai/grok-3-fast",
   ],
-  environment: getOpencodeEnvironmentSkipAuth,
+  environment: getOpencodeEnvironment,
   checkRequirements: checkOpencodeRequirements,
-  apiKeys: [],
+  apiKeys: [XAI_API_KEY],
   completionDetector: startOpenCodeCompletionDetector,
 };
 

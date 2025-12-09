@@ -777,6 +777,10 @@ function SettingsComponent() {
                               return {
                                 url: "https://cursor.com/dashboard?tab=integrations",
                               };
+                            case "XAI_API_KEY":
+                              return {
+                                url: "https://console.x.ai/",
+                              };
                             default:
                               return null;
                           }
