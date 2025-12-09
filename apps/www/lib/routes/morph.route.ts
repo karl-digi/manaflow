@@ -928,3 +928,103 @@ morphRouter.openapi(
     }
   }
 );
+
+// =============================================================================
+// List Morph Instances
+// =============================================================================
+
+const ListInstancesQuery = z
+  .object({
+    teamId: z.string().optional(),
+  })
+  .openapi("ListInstancesQuery");
+
+const InstanceInfo = z
+  .object({
+    id: z.string(),
+    status: z.string(),
+    createdAt: z.string().optional(),
+    metadata: z
+      .object({
+        app: z.string().optional(),
+        userId: z.string().optional(),
+        teamId: z.string().optional(),
+      })
+      .optional(),
+  })
+  .openapi("InstanceInfo");
+
+const ListInstancesResponse = z.array(InstanceInfo).openapi("ListInstancesResponse");
+
+morphRouter.openapi(
+  createRoute({
+    method: "get" as const,
+    path: "/morph/instances",
+    tags: ["Morph"],
+    summary: "List Morph instances for the authenticated user",
+    request: {
+      query: ListInstancesQuery,
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: ListInstancesResponse,
+          },
+        },
+        description: "List of Morph instances",
+      },
+      401: { description: "Unauthorized" },
+      500: { description: "Failed to list instances" },
+    },
+  }),
+  async (c) => {
+    const accessToken = await getAccessTokenFromRequest(c.req.raw);
+    if (!accessToken) {
+      return c.text("Unauthorized", 401);
+    }
+
+    const { teamId } = c.req.valid("query");
+
+    try {
+      const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
+
+      // List all instances from Morph
+      const instances = await client.instances.list();
+
+      // Filter instances that belong to cmux and optionally by team
+      const filteredInstances = instances.filter((instance) => {
+        const meta = instance.metadata as
+          | { app?: string; teamId?: string; userId?: string }
+          | undefined;
+
+        // Only show cmux instances
+        if (meta?.app !== "cmux-dev") {
+          return false;
+        }
+
+        // Filter by team if specified
+        if (teamId && meta?.teamId !== teamId) {
+          return false;
+        }
+
+        return true;
+      });
+
+      // Map to response format
+      const response = filteredInstances.map((instance) => ({
+        id: instance.id,
+        status: instance.status,
+        createdAt: (instance as unknown as { created?: string }).created,
+        metadata: instance.metadata as
+          | { app?: string; userId?: string; teamId?: string }
+          | undefined,
+      }));
+
+      return c.json(response);
+    } catch (error) {
+      console.error("[morph.list-instances] Failed to list instances:", error);
+      return c.text("Failed to list instances", 500);
+    }
+  }
+);
