@@ -172,7 +172,7 @@ struct AuthArgs {
 
 #[derive(Subcommand, Debug)]
 enum AuthCommand {
-    /// Login via browser (Stack Auth)
+    /// Login via browser
     Login,
     /// Logout and clear stored credentials
     Logout,
@@ -1941,8 +1941,20 @@ async fn handle_exec_request(
 // =============================================================================
 
 /// CMUX API base URL (for cmux-specific endpoints like /api/sandboxes)
+/// Debug builds use localhost, release builds use production
 fn get_cmux_api_url() -> String {
-    std::env::var("CMUX_API_URL").unwrap_or_else(|_| "https://cmux.sh".to_string())
+    std::env::var("CMUX_API_URL").unwrap_or_else(|_| {
+        #[cfg(debug_assertions)]
+        {
+            // Dev server (apps/www runs on port 9779)
+            "http://localhost:9779".to_string()
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            // Production
+            "https://cmux.sh".to_string()
+        }
+    })
 }
 
 /// Auth provider API base URL (for authentication endpoints)
@@ -1950,15 +1962,36 @@ fn get_auth_api_url() -> String {
     std::env::var("AUTH_API_URL").unwrap_or_else(|_| "https://api.stack-auth.com".to_string())
 }
 
-/// Auth project ID
+/// Auth project ID - dev for debug builds, prod for release builds
 fn get_auth_project_id() -> String {
-    std::env::var("STACK_PROJECT_ID").unwrap_or_else(|_| "a]7Li4]:V-|0GTq$G[gY".to_string())
+    std::env::var("STACK_PROJECT_ID").unwrap_or_else(|_| {
+        #[cfg(debug_assertions)]
+        {
+            // Dev Stack Auth project
+            "1467bed0-8522-45ee-a8d8-055de324118c".to_string()
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            // Prod Stack Auth project
+            "8a877114-b905-47c5-8b64-3a2d90679577".to_string()
+        }
+    })
 }
 
-/// Auth publishable client key
+/// Auth publishable client key - dev for debug builds, prod for release builds
 fn get_auth_publishable_key() -> String {
-    std::env::var("STACK_PUBLISHABLE_CLIENT_KEY")
-        .unwrap_or_else(|_| "pck_tqsy12xgs4m6yfb4dgjrmjv78mpjy3jk8n2h55bf6ndr0".to_string())
+    std::env::var("STACK_PUBLISHABLE_CLIENT_KEY").unwrap_or_else(|_| {
+        #[cfg(debug_assertions)]
+        {
+            // Dev Stack Auth key
+            "pck_pt4nwry6sdskews2pxk4g2fbe861ak2zvaf3mqendspa0".to_string()
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            // Prod Stack Auth key
+            "pck_8761mjjmyqc84e1e8ga3rn0k1nkggmggwa3pyzzgntv70".to_string()
+        }
+    })
 }
 
 /// CLI auth initiation response
@@ -2314,7 +2347,13 @@ async fn get_user_info(client: &Client, refresh_token: &str) -> anyhow::Result<S
         .await?;
 
     if !response.status().is_success() {
-        return Err(anyhow::anyhow!("Failed to refresh token"));
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(anyhow::anyhow!(
+            "Failed to refresh token: {} - {}",
+            status,
+            body
+        ));
     }
 
     let token_response: TokenRefreshResponse = response.json().await?;
@@ -2334,7 +2373,13 @@ async fn get_user_info(client: &Client, refresh_token: &str) -> anyhow::Result<S
         .await?;
 
     if !response.status().is_success() {
-        return Err(anyhow::anyhow!("Failed to get user info"));
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(anyhow::anyhow!(
+            "Failed to get user info: {} - {}",
+            status,
+            body
+        ));
     }
 
     let user_info: StackUserInfo = response.json().await?;
@@ -2358,8 +2403,8 @@ fn handle_auth_logout() -> anyhow::Result<()> {
 
 /// Handle `cmux auth status` - show current auth state and files
 async fn handle_auth_status() -> anyhow::Result<()> {
-    // Show Stack Auth status
-    println!("\x1b[1mStack Auth Status:\x1b[0m");
+    // Show auth status
+    println!("\x1b[1mAuthentication Status:\x1b[0m");
 
     if let Some(refresh_token) = get_stack_refresh_token() {
         let client = Client::builder().timeout(Duration::from_secs(10)).build()?;
@@ -2377,8 +2422,9 @@ async fn handle_auth_status() -> anyhow::Result<()> {
                     println!("  User ID: {}", id);
                 }
             }
-            Err(_) => {
-                println!("  Status: \x1b[33mToken may be expired\x1b[0m");
+            Err(e) => {
+                println!("  Status: \x1b[33mSession expired or invalid\x1b[0m");
+                println!("  Error: {}", e);
                 println!("  Try 'cmux auth login' to re-authenticate.");
             }
         }
