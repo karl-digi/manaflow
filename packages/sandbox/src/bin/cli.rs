@@ -4,7 +4,8 @@ use cmux_sandbox::models::{
     CreateSandboxRequest, EnvVar, ExecRequest, ExecResponse, NotificationLogEntry, SandboxSummary,
 };
 use cmux_sandbox::{
-    build_default_env_vars, extract_api_key_from_output, store_claude_token,
+    build_default_env_vars, delete_stack_refresh_token, extract_api_key_from_output,
+    get_stack_refresh_token, store_claude_token, store_stack_refresh_token,
     sync_files::{
         prebuild_sync_files_tar, upload_prebuilt_sync_files, upload_sync_files, SYNC_FILES,
     },
@@ -159,8 +160,14 @@ struct AuthArgs {
 
 #[derive(Subcommand, Debug)]
 enum AuthCommand {
-    /// List detected authentication files on the host
+    /// Login via browser (Stack Auth)
+    Login,
+    /// Logout and clear stored credentials
+    Logout,
+    /// Show current authentication state
     Status,
+    /// Print the current access token (for debugging)
+    Token,
 }
 
 #[derive(Args, Debug)]
@@ -669,25 +676,17 @@ async fn run() -> anyhow::Result<()> {
             }
         }
         Command::Auth(args) => match args.command {
+            AuthCommand::Login => {
+                handle_auth_login().await?;
+            }
+            AuthCommand::Logout => {
+                handle_auth_logout()?;
+            }
             AuthCommand::Status => {
-                let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-                let home_path = PathBuf::from(home);
-                println!(
-                    "Checking for authentication files in {}:",
-                    home_path.display()
-                );
-                println!("{:<25} {:<50} {:<10}", "NAME", "PATH", "STATUS");
-                println!("{}", "-".repeat(85));
-
-                for def in SYNC_FILES {
-                    let path = home_path.join(def.host_path);
-                    let status = if path.exists() {
-                        "\x1b[32mFound\x1b[0m"
-                    } else {
-                        "\x1b[90mMissing\x1b[0m"
-                    };
-                    println!("{:<25} {:<50} {}", def.name, def.host_path, status);
-                }
+                handle_auth_status().await?;
+            }
+            AuthCommand::Token => {
+                handle_auth_token().await?;
             }
         },
         Command::SetupClaude => {
@@ -1877,6 +1876,355 @@ async fn handle_exec_request(
     let response = client.post(url).json(&body).send().await?;
     let result: ExecResponse = parse_response(response).await?;
     print_json(&result)?;
+    Ok(())
+}
+
+// =============================================================================
+// Stack Auth CLI Authentication
+// =============================================================================
+
+/// Stack Auth API base URL
+fn get_stack_api_url() -> String {
+    std::env::var("CMUX_API_URL").unwrap_or_else(|_| "https://cmux.sh".to_string())
+}
+
+/// Stack Auth project ID
+fn get_stack_project_id() -> String {
+    std::env::var("STACK_PROJECT_ID")
+        .unwrap_or_else(|_| "a]7Li4]:V-|0GTq$G[gY".to_string())
+}
+
+/// Stack Auth publishable client key
+fn get_stack_publishable_key() -> String {
+    std::env::var("STACK_PUBLISHABLE_CLIENT_KEY")
+        .unwrap_or_else(|_| "pck_tqsy12xgs4m6yfb4dgjrmjv78mpjy3jk8n2h55bf6ndr0".to_string())
+}
+
+/// CLI auth initiation response
+#[derive(serde::Deserialize, Debug)]
+struct CliAuthInitResponse {
+    polling_code: String,
+    login_code: String,
+}
+
+/// CLI auth poll response
+#[derive(serde::Deserialize, Debug)]
+struct CliAuthPollResponse {
+    status: String,
+    #[serde(default)]
+    refresh_token: Option<String>,
+}
+
+/// Token refresh response
+#[derive(serde::Deserialize, Debug)]
+struct TokenRefreshResponse {
+    access_token: String,
+}
+
+/// User info from Stack Auth
+#[derive(serde::Deserialize, Debug)]
+struct StackUserInfo {
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    display_name: Option<String>,
+    #[serde(default)]
+    primary_email: Option<String>,
+}
+
+/// Handle `cmux auth login` - browser-based Stack Auth flow
+async fn handle_auth_login() -> anyhow::Result<()> {
+    let api_url = get_stack_api_url();
+    let project_id = get_stack_project_id();
+    let publishable_key = get_stack_publishable_key();
+
+    // Check if already logged in
+    if get_stack_refresh_token().is_some() {
+        eprintln!("\x1b[33mYou are already logged in.\x1b[0m");
+        eprintln!("Run 'cmux auth logout' first if you want to re-authenticate.");
+        return Ok(());
+    }
+
+    eprintln!("Starting authentication...");
+
+    let client = Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()?;
+
+    // Step 1: Initiate CLI auth flow
+    let init_url = format!("{}/api/v1/auth/cli", api_url);
+    let init_body = serde_json::json!({
+        "expires_in_millis": 600000  // 10 minutes
+    });
+
+    let response = client
+        .post(&init_url)
+        .header("x-stack-project-id", &project_id)
+        .header("x-stack-publishable-client-key", &publishable_key)
+        .header("Content-Type", "application/json")
+        .json(&init_body)
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        return Err(anyhow::anyhow!(
+            "Failed to initiate auth: {} - {}",
+            status,
+            text
+        ));
+    }
+
+    let init_response: CliAuthInitResponse = response.json().await?;
+
+    // Step 2: Open browser
+    let auth_url = format!(
+        "{}/handler/cli-auth-confirm?login_code={}",
+        api_url, init_response.login_code
+    );
+
+    eprintln!("\nOpening browser to complete authentication...");
+    eprintln!("If browser doesn't open, visit:\n  {}\n", auth_url);
+
+    if let Err(e) = open::that(&auth_url) {
+        eprintln!("Failed to open browser: {}", e);
+        eprintln!("Please open the URL manually.");
+    }
+
+    // Step 3: Poll for completion
+    eprintln!("Waiting for authentication... (press Ctrl+C to cancel)");
+
+    let poll_url = format!("{}/api/v1/auth/cli/poll", api_url);
+    let mut attempts = 0;
+    let max_attempts = 120; // 10 minutes at 5 second intervals
+
+    loop {
+        attempts += 1;
+        if attempts > max_attempts {
+            return Err(anyhow::anyhow!("Authentication timed out"));
+        }
+
+        tokio::time::sleep(Duration::from_secs(5)).await;
+
+        let poll_body = serde_json::json!({
+            "polling_code": init_response.polling_code
+        });
+
+        let response = client
+            .post(&poll_url)
+            .header("x-stack-project-id", &project_id)
+            .header("x-stack-publishable-client-key", &publishable_key)
+            .header("Content-Type", "application/json")
+            .json(&poll_body)
+            .send()
+            .await;
+
+        let response = match response {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("Poll request failed: {}. Retrying...", e);
+                continue;
+            }
+        };
+
+        if !response.status().is_success() {
+            // Keep polling on non-success (could be pending)
+            continue;
+        }
+
+        let poll_response: CliAuthPollResponse = match response.json().await {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+
+        match poll_response.status.as_str() {
+            "success" => {
+                if let Some(refresh_token) = poll_response.refresh_token {
+                    // Store the refresh token
+                    store_stack_refresh_token(&refresh_token)
+                        .map_err(|e| anyhow::anyhow!("Failed to store token: {}", e))?;
+
+                    eprintln!("\n\x1b[32m✓ Authentication successful!\x1b[0m");
+                    eprintln!("  Refresh token stored securely.");
+
+                    // Try to get user info
+                    if let Ok(user_info) = get_user_info(&client, &refresh_token).await {
+                        if let Some(email) = user_info.primary_email {
+                            eprintln!("  Logged in as: {}", email);
+                        } else if let Some(name) = user_info.display_name {
+                            eprintln!("  Logged in as: {}", name);
+                        }
+                    }
+
+                    return Ok(());
+                } else {
+                    return Err(anyhow::anyhow!(
+                        "Authentication succeeded but no refresh token returned"
+                    ));
+                }
+            }
+            "expired" => {
+                return Err(anyhow::anyhow!(
+                    "Authentication expired. Please try again."
+                ));
+            }
+            _ => {
+                // Still pending, continue polling
+                eprint!(".");
+            }
+        }
+    }
+}
+
+/// Get user info using a refresh token
+async fn get_user_info(client: &Client, refresh_token: &str) -> anyhow::Result<StackUserInfo> {
+    let api_url = get_stack_api_url();
+    let project_id = get_stack_project_id();
+    let publishable_key = get_stack_publishable_key();
+
+    // First get an access token
+    let refresh_url = format!("{}/api/v1/auth/sessions/current/refresh", api_url);
+    let response = client
+        .post(&refresh_url)
+        .header("x-stack-project-id", &project_id)
+        .header("x-stack-publishable-client-key", &publishable_key)
+        .header("x-stack-refresh-token", refresh_token)
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        return Err(anyhow::anyhow!("Failed to refresh token"));
+    }
+
+    let token_response: TokenRefreshResponse = response.json().await?;
+
+    // Now get user info
+    let user_url = format!("{}/api/v1/users/me", api_url);
+    let response = client
+        .get(&user_url)
+        .header("x-stack-project-id", &project_id)
+        .header("x-stack-publishable-client-key", &publishable_key)
+        .header("Authorization", format!("Bearer {}", token_response.access_token))
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        return Err(anyhow::anyhow!("Failed to get user info"));
+    }
+
+    let user_info: StackUserInfo = response.json().await?;
+    Ok(user_info)
+}
+
+/// Handle `cmux auth logout` - clear stored credentials
+fn handle_auth_logout() -> anyhow::Result<()> {
+    let had_token = get_stack_refresh_token().is_some();
+
+    delete_stack_refresh_token()
+        .map_err(|e| anyhow::anyhow!("Failed to delete token: {}", e))?;
+
+    if had_token {
+        eprintln!("\x1b[32m✓ Logged out successfully.\x1b[0m");
+    } else {
+        eprintln!("No credentials found. Already logged out.");
+    }
+
+    Ok(())
+}
+
+/// Handle `cmux auth status` - show current auth state and files
+async fn handle_auth_status() -> anyhow::Result<()> {
+    // Show Stack Auth status
+    println!("\x1b[1mStack Auth Status:\x1b[0m");
+
+    if let Some(refresh_token) = get_stack_refresh_token() {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()?;
+
+        match get_user_info(&client, &refresh_token).await {
+            Ok(user_info) => {
+                println!("  Status: \x1b[32mLogged in\x1b[0m");
+                if let Some(email) = user_info.primary_email {
+                    println!("  Email: {}", email);
+                }
+                if let Some(name) = user_info.display_name {
+                    println!("  Name: {}", name);
+                }
+                if let Some(id) = user_info.id {
+                    println!("  User ID: {}", id);
+                }
+            }
+            Err(_) => {
+                println!("  Status: \x1b[33mToken may be expired\x1b[0m");
+                println!("  Try 'cmux auth login' to re-authenticate.");
+            }
+        }
+    } else {
+        println!("  Status: \x1b[90mNot logged in\x1b[0m");
+        println!("  Run 'cmux auth login' to authenticate.");
+    }
+
+    // Show auth files status
+    println!("\n\x1b[1mAuthentication Files:\x1b[0m");
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    let home_path = PathBuf::from(home);
+
+    println!("{:<25} {:<50} {:<10}", "NAME", "PATH", "STATUS");
+    println!("{}", "-".repeat(85));
+
+    for def in SYNC_FILES {
+        let path = home_path.join(def.host_path);
+        let status = if path.exists() {
+            "\x1b[32mFound\x1b[0m"
+        } else {
+            "\x1b[90mMissing\x1b[0m"
+        };
+        println!("{:<25} {:<50} {}", def.name, def.host_path, status);
+    }
+
+    Ok(())
+}
+
+/// Handle `cmux auth token` - print current access token
+async fn handle_auth_token() -> anyhow::Result<()> {
+    let refresh_token = get_stack_refresh_token().ok_or_else(|| {
+        anyhow::anyhow!("Not logged in. Run 'cmux auth login' first.")
+    })?;
+
+    let api_url = get_stack_api_url();
+    let project_id = get_stack_project_id();
+    let publishable_key = get_stack_publishable_key();
+
+    let client = Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()?;
+
+    let refresh_url = format!("{}/api/v1/auth/sessions/current/refresh", api_url);
+    let response = client
+        .post(&refresh_url)
+        .header("x-stack-project-id", &project_id)
+        .header("x-stack-publishable-client-key", &publishable_key)
+        .header("x-stack-refresh-token", &refresh_token)
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        return Err(anyhow::anyhow!(
+            "Failed to refresh token: {} - {}. Try 'cmux auth login' to re-authenticate.",
+            status,
+            text
+        ));
+    }
+
+    let token_response: TokenRefreshResponse = response.json().await?;
+
+    // Print just the token (useful for piping)
+    println!("{}", token_response.access_token);
+
     Ok(())
 }
 
