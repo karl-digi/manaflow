@@ -264,7 +264,7 @@ sandboxesRouter.openapi(
       const parsedRepoUrl = body.repoUrl ? parseGithubRepoUrl(body.repoUrl) : null;
 
       // Load workspace config if we're in cloud mode with a repository (not an environment)
-      let workspaceConfig: { maintenanceScript?: string; envVarsContent?: string } | null = null;
+      let workspaceConfig: { maintenanceScript?: string; envVarsContent?: string; additionalInfo?: string } | null = null;
       if (parsedRepoUrl && !body.environmentId) {
         try {
           const config = await convex.query(api.workspaceConfigs.get, {
@@ -278,10 +278,12 @@ sandboxesRouter.openapi(
             workspaceConfig = {
               maintenanceScript: config.maintenanceScript ?? undefined,
               envVarsContent: envVarsContent ?? undefined,
+              additionalInfo: config.additionalInfo ?? undefined,
             };
             console.log(`[sandboxes.start] Loaded workspace config for ${parsedRepoUrl.fullName}`, {
               hasMaintenanceScript: Boolean(workspaceConfig.maintenanceScript),
               hasEnvVars: Boolean(workspaceConfig.envVarsContent),
+              hasAdditionalInfo: Boolean(workspaceConfig.additionalInfo),
             });
           }
         } catch (error) {
@@ -456,6 +458,7 @@ sandboxesRouter.openapi(
         await hydrateWorkspace({
           instance,
           repo: repoConfig,
+          additionalInfo: workspaceConfig?.additionalInfo,
         });
       } catch (error) {
         console.error(`[sandboxes.start] Hydration failed:`, error);

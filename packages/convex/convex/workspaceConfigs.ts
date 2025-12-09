@@ -54,12 +54,14 @@ export const upsert = authMutation({
     projectFullName: v.string(),
     maintenanceScript: v.optional(v.string()),
     dataVaultKey: v.optional(v.string()),
+    additionalInfo: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
     const projectFullName = normalizeProjectFullName(args.projectFullName);
     const maintenanceScript = normalizeScript(args.maintenanceScript);
+    const additionalInfo = normalizeScript(args.additionalInfo);
     const now = Date.now();
 
     if (!userId) {
@@ -81,6 +83,7 @@ export const upsert = authMutation({
       await ctx.db.patch(existing._id, {
         maintenanceScript,
         dataVaultKey: args.dataVaultKey ?? existing.dataVaultKey,
+        additionalInfo,
         updatedAt: now,
       });
       return existing._id;
@@ -91,6 +94,7 @@ export const upsert = authMutation({
       projectFullName,
       maintenanceScript,
       dataVaultKey: args.dataVaultKey,
+      additionalInfo,
       createdAt: now,
       updatedAt: now,
       userId,

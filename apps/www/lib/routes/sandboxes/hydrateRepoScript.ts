@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import { execSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, lstatSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 
 interface HydrateConfig {
@@ -261,6 +261,79 @@ function hydrateSubdirectories(workspacePath: string) {
   }
 }
 
+/**
+ * Resolves a file path to its canonical (real) path if it's a symlink.
+ * Returns the original path if it's not a symlink or doesn't exist.
+ */
+function resolveRealPath(filePath: string): string {
+  try {
+    if (!existsSync(filePath)) {
+      return filePath;
+    }
+    const stats = lstatSync(filePath);
+    if (stats.isSymbolicLink()) {
+      return realpathSync(filePath);
+    }
+    return filePath;
+  } catch {
+    return filePath;
+  }
+}
+
+/**
+ * Appends additional info to CLAUDE.md, AGENTS.md, and GEMINI.md files.
+ * Handles symlinks by only appending once if multiple files point to the same target.
+ */
+function appendAdditionalInfo(workspacePath: string, additionalInfo: string) {
+  if (!additionalInfo || additionalInfo.trim().length === 0) {
+    log("No additional info to append");
+    return;
+  }
+
+  const mdFiles = ["CLAUDE.md", "AGENTS.md", "GEMINI.md"];
+  const processedRealPaths = new Set<string>();
+
+  for (const fileName of mdFiles) {
+    const filePath = join(workspacePath, fileName);
+
+    // Skip if file doesn't exist
+    if (!existsSync(filePath)) {
+      log(`${fileName} not found, skipping`, "debug");
+      continue;
+    }
+
+    // Resolve real path (handles symlinks)
+    const realPath = resolveRealPath(filePath);
+
+    // Skip if we've already processed this file (avoids duplicate appends for symlinks)
+    if (processedRealPaths.has(realPath)) {
+      log(`${fileName} is a symlink to already-processed file, skipping`, "debug");
+      continue;
+    }
+
+    processedRealPaths.add(realPath);
+
+    try {
+      // Read existing content
+      const existingContent = readFileSync(realPath, "utf-8");
+
+      // Check if additional info is already appended (by looking for our marker)
+      const marker = "\n\n<!-- CMUX Additional Info -->\n";
+      if (existingContent.includes(marker)) {
+        log(`${fileName} already contains additional info, skipping`, "debug");
+        continue;
+      }
+
+      // Append additional info with a marker
+      const newContent = existingContent + marker + additionalInfo.trim() + "\n";
+      writeFileSync(realPath, newContent, "utf-8");
+      log(`Appended additional info to ${fileName}`);
+    } catch (error) {
+      log(`Failed to append to ${fileName}: ${error}`, "error");
+    }
+  }
+}
+
 async function main() {
   try {
     const config = getConfig();
@@ -305,6 +378,12 @@ async function main() {
       // Handle multiple repos case
       log("Hydrating multiple repositories");
       hydrateSubdirectories(config.workspacePath);
+    }
+
+    // Append additional info to CLAUDE.md, AGENTS.md, GEMINI.md if provided
+    const additionalInfo = process.env.CMUX_ADDITIONAL_INFO;
+    if (additionalInfo) {
+      appendAdditionalInfo(config.workspacePath, additionalInfo);
     }
 
     log("Hydration completed successfully");

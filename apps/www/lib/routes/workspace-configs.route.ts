@@ -15,6 +15,7 @@ const WorkspaceConfigResponse = z
     projectFullName: z.string(),
     maintenanceScript: z.string().optional(),
     envVarsContent: z.string(),
+    additionalInfo: z.string().optional(),
     updatedAt: z.number().optional(),
   })
   .openapi("WorkspaceConfigResponse");
@@ -32,6 +33,7 @@ const WorkspaceConfigBody = z
     projectFullName: z.string(),
     maintenanceScript: z.string().optional(),
     envVarsContent: z.string().default(""),
+    additionalInfo: z.string().optional(),
   })
   .openapi("WorkspaceConfigBody");
 
@@ -94,6 +96,7 @@ workspaceConfigsRouter.openapi(
       projectFullName: config.projectFullName,
       maintenanceScript: config.maintenanceScript ?? undefined,
       envVarsContent,
+      additionalInfo: config.additionalInfo ?? undefined,
       updatedAt: config.updatedAt,
     });
   },
@@ -170,12 +173,14 @@ workspaceConfigsRouter.openapi(
       projectFullName: body.projectFullName,
       maintenanceScript: body.maintenanceScript,
       dataVaultKey,
+      additionalInfo: body.additionalInfo,
     });
 
     return c.json({
       projectFullName: body.projectFullName,
       maintenanceScript: body.maintenanceScript,
       envVarsContent,
+      additionalInfo: body.additionalInfo,
       updatedAt: Date.now(),
     });
   },

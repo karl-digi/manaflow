@@ -672,6 +672,7 @@ export type WorkspaceConfigResponse = {
     projectFullName: string;
     maintenanceScript?: string;
     envVarsContent: string;
+    additionalInfo?: string;
     updatedAt?: number;
 } | null;
 
@@ -680,6 +681,7 @@ export type WorkspaceConfigBody = {
     projectFullName: string;
     maintenanceScript?: string;
     envVarsContent?: string;
+    additionalInfo?: string;
 };
 
 export type PreviewConfig = {

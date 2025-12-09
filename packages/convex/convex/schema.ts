@@ -559,6 +559,8 @@ const convexSchema = defineSchema({
     projectFullName: v.string(),
     maintenanceScript: v.optional(v.string()),
     dataVaultKey: v.optional(v.string()),
+    /** Additional context appended to CLAUDE.md, AGENTS.md, GEMINI.md */
+    additionalInfo: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
     userId: v.string(),

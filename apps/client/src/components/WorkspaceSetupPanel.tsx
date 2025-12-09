@@ -44,6 +44,7 @@ export function WorkspaceSetupPanel({
   const saveMutation = useRQMutation(postApiWorkspaceConfigsMutation());
 
   const [maintenanceScript, setMaintenanceScript] = useState("");
+  const [additionalInfo, setAdditionalInfo] = useState("");
   const [envVars, setEnvVars] = useState<EnvVar[]>(() =>
     ensureInitialEnvVars(),
   );
@@ -52,9 +53,10 @@ export function WorkspaceSetupPanel({
     null,
   );
 
-  const originalConfigRef = useRef<{ script: string; envContent: string }>({
+  const originalConfigRef = useRef<{ script: string; envContent: string; additionalInfo: string }>({
     script: "",
     envContent: "",
+    additionalInfo: "",
   });
 
   const hasInitializedFromServerRef = useRef(false);
@@ -67,8 +69,9 @@ export function WorkspaceSetupPanel({
   useEffect(() => {
     if (!projectFullName) return;
     setMaintenanceScript("");
+    setAdditionalInfo("");
     setEnvVars(ensureInitialEnvVars());
-    originalConfigRef.current = { script: "", envContent: "" };
+    originalConfigRef.current = { script: "", envContent: "", additionalInfo: "" };
     hasInitializedFromServerRef.current = false;
   }, [projectFullName]);
 
@@ -86,6 +89,7 @@ export function WorkspaceSetupPanel({
     if (configQuery.data === undefined) return;
     const data = configQuery.data;
     const nextScript = (data?.maintenanceScript ?? "").toString();
+    const nextAdditionalInfo = (data?.additionalInfo ?? "").toString();
     const envContent = data?.envVarsContent ?? "";
     const parsedEnvVars =
       envContent.trim().length > 0
@@ -104,10 +108,12 @@ export function WorkspaceSetupPanel({
     );
 
     setMaintenanceScript(nextScript);
+    setAdditionalInfo(nextAdditionalInfo);
     setEnvVars(ensureInitialEnvVars(parsedEnvVars));
     originalConfigRef.current = {
       script: nextScript.trim(),
       envContent: normalizedEnvContent,
+      additionalInfo: nextAdditionalInfo.trim(),
     };
 
     if (!hasInitializedFromServerRef.current) {
@@ -144,13 +150,16 @@ export function WorkspaceSetupPanel({
   }, [envVars]);
 
   const normalizedScript = maintenanceScript.trim();
+  const normalizedAdditionalInfo = additionalInfo.trim();
   const hasChanges =
     normalizedScript !== originalConfigRef.current.script ||
-    currentEnvContent !== originalConfigRef.current.envContent;
+    currentEnvContent !== originalConfigRef.current.envContent ||
+    normalizedAdditionalInfo !== originalConfigRef.current.additionalInfo;
 
   const isConfigured =
     originalConfigRef.current.script.length > 0 ||
-    originalConfigRef.current.envContent.length > 0;
+    originalConfigRef.current.envContent.length > 0 ||
+    originalConfigRef.current.additionalInfo.length > 0;
   const shouldShowSetupWarning = !configQuery.isPending && !isConfigured;
 
   const handleSave = useCallback(() => {
@@ -158,6 +167,9 @@ export function WorkspaceSetupPanel({
 
     const scriptToSave = normalizedScript.length
       ? normalizedScript
+      : undefined;
+    const additionalInfoToSave = normalizedAdditionalInfo.length
+      ? normalizedAdditionalInfo
       : undefined;
 
     saveMutation.mutate(
@@ -167,6 +179,7 @@ export function WorkspaceSetupPanel({
           projectFullName,
           maintenanceScript: scriptToSave,
           envVarsContent: currentEnvContent,
+          additionalInfo: additionalInfoToSave,
         },
       },
       {
@@ -174,6 +187,7 @@ export function WorkspaceSetupPanel({
           originalConfigRef.current = {
             script: normalizedScript,
             envContent: currentEnvContent,
+            additionalInfo: normalizedAdditionalInfo,
           };
           toast.success("Workspace setup saved");
         },
@@ -186,6 +200,7 @@ export function WorkspaceSetupPanel({
   }, [
     currentEnvContent,
     normalizedScript,
+    normalizedAdditionalInfo,
     projectFullName,
     saveMutation,
     teamSlugOrId,
@@ -463,8 +478,8 @@ export function WorkspaceSetupPanel({
                   </div>
                 </div>
 
-                {/* Save Button - Full Width at Bottom */}
-                <div className="flex items-start justify-between gap-2 pt-1 pb-1">
+                {/* Add variable button */}
+                <div className="pt-0.5">
                   <button
                     type="button"
                     className="inline-flex items-center gap-1 text-[11px] text-neutral-500 transition-colors hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200"
@@ -482,6 +497,33 @@ export function WorkspaceSetupPanel({
                     <Plus className="h-3.5 w-3.5" />
                     Add variable
                   </button>
+                </div>
+
+                {/* Additional Info Section */}
+                <div className="space-y-1 pt-1">
+                  <div className="flex flex-col gap-0.5">
+                    <p className="text-xs font-medium text-neutral-900 dark:text-neutral-100">
+                      Additional info
+                    </p>
+                    <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                      Appended to CLAUDE.md, AGENTS.md, and GEMINI.md when your
+                      workspace starts. Include login credentials, API keys, or
+                      other context your coding agents need.
+                    </p>
+                  </div>
+
+                  <TextareaAutosize
+                    value={additionalInfo}
+                    onChange={(e) => setAdditionalInfo(e.target.value)}
+                    placeholder={`# e.g.\n\nLogin credentials:\n- Username: test@example.com\n- Password: test123\n\nAPI keys for local development are available in .env.local`}
+                    minRows={3}
+                    maxRows={50}
+                    className="w-full rounded-md border border-neutral-200 bg-white px-2 py-1.5 text-[11px] font-mono text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:border-neutral-400 resize-none dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100 dark:placeholder:text-neutral-600 dark:focus:border-neutral-600"
+                  />
+                </div>
+
+                {/* Save Button - Full Width at Bottom */}
+                <div className="flex items-end justify-end gap-2 pt-1 pb-1">
                   <div className="flex items-center gap-2">
                     {hasChanges && !saveMutation.isPending ? (
                       <span className="text-[11px] text-amber-600 dark:text-amber-400">
