@@ -26,7 +26,6 @@ import json
 import os
 import shutil
 import shlex
-import socket
 import ssl
 import subprocess
 import sys
@@ -34,29 +33,32 @@ import tarfile
 import tempfile
 import textwrap
 import traceback
-import time
 import typing as t
-import urllib.error
 import urllib.parse
-import urllib.request
-from dataclasses import dataclass, field
+
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 import dotenv
 import httpx
 import paramiko
-from morphcloud.api import (
-    ApiError,
-    Instance,
-    InstanceExecResponse,
-    MorphCloudClient,
-    Snapshot,
+from morphcloud.api import ApiError, Instance, MorphCloudClient, Snapshot
+
+from snapshot import (
+    TaskRegistry,
+    TaskContext,
+    Console,
+    ResourceProfile,
+    TimingsCollector,
+    HttpExecClient,
+    run_task_graph,
+    format_dependency_graph,
 )
 
-
-Command = t.Union[str, t.Sequence[str]]
-TaskFunc = t.Callable[["TaskContext"], t.Awaitable[None]]
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 
 EXEC_HTTP_PORT = 39375
 EXEC_BINARY_NAME = "cmux-execd"
@@ -75,6 +77,31 @@ VNC_PROXY_BINARY_NAME = "cmux-vnc-proxy"
 MORPH_SNAPSHOT_MANIFEST_PATH = (
     Path(__file__).resolve().parent.parent / "packages/shared/src/morph-snapshots.json"
 )
+CURRENT_MANIFEST_SCHEMA_VERSION = 1
+
+# ---------------------------------------------------------------------------
+# IDE Provider Configuration
+# ---------------------------------------------------------------------------
+
+IDE_PROVIDER_CODER = "coder"
+IDE_PROVIDER_OPENVSCODE = "openvscode"
+DEFAULT_IDE_PROVIDER = IDE_PROVIDER_OPENVSCODE
+
+# Module-level IDE provider setting (set from args before task graph runs)
+_ide_provider: str = DEFAULT_IDE_PROVIDER
+
+
+def set_ide_provider(provider: str) -> None:
+    global _ide_provider
+    _ide_provider = provider
+
+
+def get_ide_provider() -> str:
+    return _ide_provider
+
+# ---------------------------------------------------------------------------
+# Manifest types and helpers
+# ---------------------------------------------------------------------------
 
 
 class MorphSnapshotVersionEntry(t.TypedDict):
@@ -138,9 +165,6 @@ class SnapshotRunResult:
         self.instance_id = instance_id
 
 
-CURRENT_MANIFEST_SCHEMA_VERSION = 1
-
-
 def _iso_timestamp() -> str:
     return (
         datetime.now(tz=timezone.utc)
@@ -150,10 +174,7 @@ def _iso_timestamp() -> str:
     )
 
 
-def _coalesce_str(
-    value: t.Any,
-    default: str,
-) -> str:
+def _coalesce_str(value: t.Any, default: str) -> str:
     if isinstance(value, str) and value:
         return value
     return default
@@ -214,7 +235,7 @@ def _load_manifest(console: Console) -> MorphSnapshotManifestEntry:
         }
     try:
         raw_manifest = json.loads(MORPH_SNAPSHOT_MANIFEST_PATH.read_text())
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise RuntimeError(
             f"Failed to read morph snapshot manifest at {MORPH_SNAPSHOT_MANIFEST_PATH}: {exc}"
         ) from exc
@@ -279,6 +300,11 @@ def _update_manifest_with_snapshot(
     updated_manifest["schemaVersion"] = CURRENT_MANIFEST_SCHEMA_VERSION
     updated_manifest["updatedAt"] = captured_at
     return updated_manifest
+
+
+# ---------------------------------------------------------------------------
+# Preset helpers
+# ---------------------------------------------------------------------------
 
 
 def _render_verification_table(
@@ -381,260 +407,37 @@ def _build_preset_plans(args: argparse.Namespace) -> tuple[SnapshotPresetPlan, .
     )
     return (standard_plan, boosted_plan)
 
-@dataclass(slots=True)
-class ResourceProfile:
-    name: str
+
+def _build_resource_profile(
+    vcpus: int,
+    memory_mib: int,
+) -> ResourceProfile:
+    cpu_period = 100_000
     cpu_quota: int | None = None
-    cpu_period: int | None = None
-    cpu_weight: int | None = None
+    if vcpus > 0:
+        cpu_quota = max(int(vcpus * cpu_period * 0.9), cpu_period)
+
     memory_high: int | None = None
     memory_max: int | None = None
-    io_weight: int | None = None
+    memory_bytes = memory_mib * 1024 * 1024
+    if memory_bytes > 0:
+        memory_high = max(memory_bytes * 9 // 10, 1)
+        memory_max = max(memory_bytes * 95 // 100, memory_high)
+
+    return ResourceProfile(
+        name="cmux-provision",
+        cpu_quota=cpu_quota,
+        cpu_period=cpu_quota and cpu_period,
+        cpu_weight=80,
+        memory_high=memory_high,
+        memory_max=memory_max,
+        io_weight=200,
+    )
 
 
-dotenv.load_dotenv()
-
-
-class Console:
-    def __init__(self) -> None:
-        self.quiet = False
-
-    def info(self, value: str) -> None:
-        if not self.quiet:
-            print(value)
-
-    def always(self, value: str) -> None:
-        print(value)
-
-
-class TimingsCollector:
-    def __init__(self) -> None:
-        self._entries: list[tuple[str, float]] = []
-
-    def add(self, label: str, duration: float) -> None:
-        self._entries.append((label, duration))
-
-    def summary(self) -> list[str]:
-        if not self._entries:
-            return []
-
-        lines: list[str] = []
-        task_timings: dict[str, float] = {}
-        layer_timings: list[tuple[str, float, list[str]]] = []
-
-        # Separate task and layer timings
-        for label, duration in self._entries:
-            if label.startswith("task:"):
-                task_name = label[5:]
-                task_timings[task_name] = duration
-            elif label.startswith("layer:"):
-                layer_tasks = label[6:].split("+")
-                layer_timings.append((label[6:], duration, layer_tasks))
-
-        # Show layer-by-layer breakdown
-        if layer_timings:
-            lines.append("Parallel Execution Layers:")
-            for layer_name, layer_duration, tasks in layer_timings:
-                lines.append(f"\n  Layer (wall time: {layer_duration:.2f}s):")
-                for task_name in sorted(tasks):
-                    task_duration = task_timings.get(task_name, 0.0)
-                    lines.append(f"    ├─ {task_name}: {task_duration:.2f}s")
-
-        # Calculate totals
-        total_wall_time = sum(d for label, d in self._entries if label.startswith("layer:"))
-        total_cpu_time = sum(task_timings.values())
-
-        lines.append(f"\nTotal wall time: {total_wall_time:.2f}s")
-        lines.append(f"Total CPU time: {total_cpu_time:.2f}s")
-        if total_wall_time > 0:
-            parallelism = total_cpu_time / total_wall_time
-            lines.append(f"Effective parallelism: {parallelism:.2f}x")
-
-        return lines
-
-
-
-async def _run_command(
-    ctx: "TaskContext",
-    label: str,
-    command: Command,
-    *,
-    timeout: float | None = None,
-) -> InstanceExecResponse:
-    ctx.console.info(f"[{label}] running...")
-    command_parts = _shell_command(command)
-    attempts = 0
-    max_attempts = 3
-    while True:
-        attempts += 1
-        try:
-            result = await ctx.instance.aexec(
-                command_parts,
-                timeout=timeout,
-            )
-        except (httpx.HTTPError, OSError, socket.error) as exc:
-            if attempts < max_attempts:
-                delay = min(2**attempts, 8)
-                ctx.console.info(
-                    f"[{label}] retrying after remote exec failure ({exc}) "
-                    f"(attempt {attempts}/{max_attempts}) in {delay}s"
-                )
-                await asyncio.sleep(delay)
-                continue
-            raise
-        stdout_lines = result.stdout.splitlines()
-        stderr_lines = result.stderr.splitlines()
-        for line in stdout_lines:
-            ctx.console.info(f"[{label}] {line}")
-        for line in stderr_lines:
-            ctx.console.info(f"[{label}][stderr] {line}")
-        exit_code = result.exit_code
-        if exit_code not in (0, None):
-            error_parts = [f"{label} failed with exit code {exit_code}"]
-            if result.stdout.strip():
-                error_parts.append(f"stdout:\n{result.stdout.rstrip()}")
-            if result.stderr.strip():
-                error_parts.append(f"stderr:\n{result.stderr.rstrip()}")
-            raise RuntimeError("\n".join(error_parts))
-        return result
-
-
-@dataclass(slots=True)
-class TaskContext:
-    instance: Instance
-    repo_root: Path
-    remote_repo_root: str
-    remote_repo_tar: str
-    exec_service_url: str
-    console: Console
-    timings: TimingsCollector
-    resource_profile: ResourceProfile | None = None
-    cgroup_path: str | None = None
-    exec_client: HttpExecClient | None = field(default=None, init=False)
-    environment_prelude: str = field(default="", init=False)
-
-    def __post_init__(self) -> None:
-        exports = textwrap.dedent(
-            """
-            export RUSTUP_HOME=/usr/local/rustup
-            export CARGO_HOME=/usr/local/cargo
-            export NVM_DIR=/root/.nvm
-            export GOPATH=/usr/local/go-workspace
-            export GOMODCACHE="${GOPATH}/pkg/mod"
-            export GOCACHE=/usr/local/go-cache
-            export PATH="/root/.local/bin:/usr/local/cargo/bin:/usr/local/go/bin:${GOPATH}/bin:/usr/local/bin:$PATH"
-            """
-        ).strip()
-        self.environment_prelude = exports
-
-    async def run(
-        self,
-        label: str,
-        command: Command,
-        *,
-        timeout: float | None = None,
-    ) -> InstanceExecResponse:
-        command_with_env = self._apply_environment(command)
-        command_to_run = (
-            _wrap_command_with_cgroup(self.cgroup_path, command_with_env)
-            if self.cgroup_path
-            else command_with_env
-        )
-        if self.exec_client is not None:
-            try:
-                return await self.exec_client.run(
-                    label,
-                    command_to_run,
-                    timeout=timeout,
-                )
-            except Exception as exc:
-                # Best-effort: capture recent exec daemon logs to aid debugging.
-                log_tail = await self._collect_execd_log()
-                if log_tail:
-                    raise RuntimeError(
-                        f"{exc}\n\ncmux-execd.log (tail):\n{log_tail}".rstrip()
-                    ) from exc
-                raise
-        return await _run_command(self, label, command_to_run, timeout=timeout)
-
-    async def run_via_ssh(
-        self,
-        label: str,
-        command: Command,
-        *,
-        timeout: float | None = None,
-        use_cgroup: bool = True,
-    ) -> InstanceExecResponse:
-        command_with_env = self._apply_environment(command)
-        command_to_run = (
-            _wrap_command_with_cgroup(self.cgroup_path, command_with_env)
-            if use_cgroup and self.cgroup_path
-            else command_with_env
-        )
-        return await _run_command(self, label, command_to_run, timeout=timeout)
-
-    def _apply_environment(self, command: Command) -> Command:
-        if not self.environment_prelude:
-            return command
-        if isinstance(command, str):
-            return f"{self.environment_prelude}\n{command}"
-        quoted = " ".join(shlex.quote(str(part)) for part in command)
-        return f"{self.environment_prelude}\n{quoted}"
-
-    async def _collect_execd_log(self) -> str | None:
-        """Best-effort tail of the exec daemon log without using the exec service."""
-        log_path = "/var/log/cmux-execd.log"
-        try:
-            result = await self.instance.aexec(
-                ["bash", "-lc", f'if [ -f {log_path} ]; then tail -n 200 {log_path}; fi'],
-                timeout=5,
-            )
-        except Exception:
-            return None
-        if result.exit_code not in (0, None):
-            return None
-        output = result.stdout.strip()
-        return output or None
-
-
-@dataclass(frozen=True)
-class TaskDefinition:
-    name: str
-    func: TaskFunc
-    dependencies: tuple[str, ...]
-    description: str | None = None
-
-
-class TaskRegistry:
-    def __init__(self) -> None:
-        self._tasks: dict[str, TaskDefinition] = {}
-
-    def task(
-        self,
-        *,
-        name: str,
-        deps: t.Iterable[str] = (),
-        description: str | None = None,
-    ) -> t.Callable[[TaskFunc], TaskFunc]:
-        def decorator(func: TaskFunc) -> TaskFunc:
-            if name in self._tasks:
-                raise ValueError(f"Task '{name}' already registered")
-            self._tasks[name] = TaskDefinition(
-                name=name,
-                func=func,
-                dependencies=tuple(deps),
-                description=description,
-            )
-            return func
-
-        return decorator
-
-    @property
-    def tasks(self) -> dict[str, TaskDefinition]:
-        return dict(self._tasks)
-
-
-registry = TaskRegistry()
+# ---------------------------------------------------------------------------
+# Notifications
+# ---------------------------------------------------------------------------
 
 
 def send_macos_notification(console: Console, title: str, message: str) -> None:
@@ -645,7 +448,7 @@ def send_macos_notification(console: Console, title: str, message: str) -> None:
     script = f"display notification {json.dumps(message, ensure_ascii=False)} with title {json.dumps(title, ensure_ascii=False)}"
     try:
         subprocess.run(["osascript", "-e", script], check=False)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         console.info(f"Failed to send macOS notification: {exc}")
 
 
@@ -662,8 +465,12 @@ def send_scary_notification(message: str) -> None:
     try:
         subprocess.run(["osascript", "-e", script], check=False)
     except Exception:
-        # Intentionally ignore secondary failures to avoid masking the root error
         pass
+
+
+# ---------------------------------------------------------------------------
+# Git / repo helpers
+# ---------------------------------------------------------------------------
 
 
 def _exec_git(repo_root: Path, args: list[str]) -> str | None:
@@ -726,6 +533,11 @@ def create_repo_archive(repo_root: Path) -> Path:
     return tmp_path
 
 
+# ---------------------------------------------------------------------------
+# Instance helpers
+# ---------------------------------------------------------------------------
+
+
 async def _expose_standard_ports(
     instance: Instance,
     console: Console,
@@ -765,178 +577,13 @@ def _stop_instance(instance: Instance, console: Console) -> None:
         console.info(f"Stopping instance {instance.id}...")
         instance.stop()
         console.info(f"Instance {instance.id} stopped")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         console.always(f"Failed to stop instance {instance.id}: {exc}")
 
 
-def _shell_command(command: Command) -> list[str]:
-    if isinstance(command, str):
-        script = f"set -euo pipefail\n{command}"
-        return ["bash", "-lc", script]
-    return list(command)
-
-
-def _wrap_command_with_cgroup(cgroup_path: str, command: Command) -> Command:
-    cgroup = shlex.quote(cgroup_path)
-    prelude = textwrap.dedent(
-        f"""
-        if [ -d {cgroup} ] && [ -w {cgroup}/cgroup.procs ]; then
-            printf '%d\\n' $$ > {cgroup}/cgroup.procs || true
-        fi
-        """
-    ).strip()
-    if isinstance(command, str):
-        return f"{prelude}\n{command}"
-    quoted = " ".join(shlex.quote(str(part)) for part in command)
-    return f"{prelude}\n{quoted}"
-
-
-class HttpExecClient:
-    def __init__(self, base_url: str, console: Console) -> None:
-        self._base_url = base_url.rstrip("/")
-        self._console = console
-        parsed = urllib.parse.urlparse(self._base_url)
-        self._ssl_context: ssl.SSLContext | None
-        if parsed.scheme == "https":
-            self._ssl_context = ssl.create_default_context()
-        else:
-            self._ssl_context = None
-
-    async def wait_ready(
-        self,
-        *,
-        retries: int = 20,
-        delay: float = 0.5,
-    ) -> None:
-        for attempt in range(1, retries + 1):
-            try:
-                await asyncio.to_thread(self._check_health)
-                return
-            except Exception:
-                if attempt == retries:
-                    break
-                await asyncio.sleep(delay)
-        raise RuntimeError("exec service did not become ready")
-
-    def _check_health(self) -> None:
-        url = urllib.parse.urljoin(f"{self._base_url}/", "healthz")
-        request = urllib.request.Request(url, method="GET")
-        kwargs: dict[str, t.Any] = {"timeout": 5}
-        if self._ssl_context is not None:
-            kwargs["context"] = self._ssl_context
-        with urllib.request.urlopen(request, **kwargs) as response:
-            status = response.getcode()
-            if status != 200:
-                raise RuntimeError(f"unexpected health status {status}")
-
-    async def run(
-        self,
-        label: str,
-        command: Command,
-        *,
-        timeout: float | None,
-    ) -> InstanceExecResponse:
-        return await asyncio.to_thread(
-            self._run_sync,
-            label,
-            command,
-            timeout,
-        )
-
-    def _run_sync(
-        self,
-        label: str,
-        command: Command,
-        timeout: float | None,
-    ) -> InstanceExecResponse:
-        exec_cmd = _shell_command(command)
-        command_str = exec_cmd if isinstance(exec_cmd, str) else shlex.join(exec_cmd)
-        url = urllib.parse.urljoin(f"{self._base_url}/", "exec")
-        payload: dict[str, t.Any] = {"command": command_str}
-        if timeout is not None:
-            payload["timeout_ms"] = max(int(timeout * 1000), 1)
-        data = json.dumps(payload).encode("utf-8")
-        headers = {"Content-Type": "application/json"}
-        request = urllib.request.Request(url, data=data, headers=headers, method="POST")
-        kwargs: dict[str, t.Any] = {}
-        if timeout is not None:
-            kwargs["timeout"] = max(timeout + 5, 30.0)
-        if self._ssl_context is not None:
-            kwargs["context"] = self._ssl_context
-
-        try:
-            response = urllib.request.urlopen(request, **kwargs)
-        except urllib.error.URLError as exc:
-            raise RuntimeError(f"exec service request failed: {exc}") from exc
-
-        stdout_parts: list[str] = []
-        stderr_parts: list[str] = []
-        exit_code: int | None = None
-        try:
-            status = response.getcode()
-            if status != 200:
-                body = response.read().decode("utf-8", "replace")
-                raise RuntimeError(
-                    f"exec service returned status {status}: {body.strip()}"
-                )
-            for raw_line in response:
-                line = raw_line.decode("utf-8", "replace").rstrip("\r\n")
-                if not line:
-                    continue
-                try:
-                    event = json.loads(line)
-                except json.JSONDecodeError:
-                    stderr_parts.append(f"invalid exec response: {line}")
-                    self._console.info(
-                        f"[{label}][stderr] invalid exec response: {line}"
-                    )
-                    continue
-                event_type = event.get("type")
-                if event_type == "stdout":
-                    data_value = str(event.get("data", ""))
-                    stdout_parts.append(data_value)
-                    for sub_line in data_value.splitlines():
-                        self._console.info(f"[{label}] {sub_line}")
-                elif event_type == "stderr":
-                    data_value = str(event.get("data", ""))
-                    stderr_parts.append(data_value)
-                    for sub_line in data_value.splitlines():
-                        self._console.info(f"[{label}][stderr] {sub_line}")
-                elif event_type == "exit":
-                    try:
-                        exit_code = int(event.get("code", 0))
-                    except (TypeError, ValueError):
-                        exit_code = 1
-                elif event_type == "error":
-                    message = str(event.get("message", ""))
-                    stderr_parts.append(message)
-                    self._console.info(f"[{label}][stderr] {message}")
-                else:
-                    stderr_parts.append(f"unknown event type: {line}")
-                    self._console.info(f"[{label}][stderr] unknown event: {line}")
-        finally:
-            response.close()
-
-        stdout_text = "".join(stdout_parts)
-        stderr_text = "".join(stderr_parts)
-        if exit_code is None:
-            self._console.info(
-                f"[{label}] Warning: exec service did not report exit code, assuming success"
-            )
-            exit_code = 0
-        if exit_code not in (0, None):
-            # downstream code expects non-zero exit to raise
-            error_parts = [f"{label} failed with exit code {exit_code}"]
-            if stdout_text.strip():
-                error_parts.append(f"stdout:\n{stdout_text.rstrip()}")
-            if stderr_text.strip():
-                error_parts.append(f"stderr:\n{stderr_text.rstrip()}")
-            raise RuntimeError("\n".join(error_parts))
-        return InstanceExecResponse(
-            exit_code=exit_code,
-            stdout=stdout_text,
-            stderr=stderr_text,
-        )
+# ---------------------------------------------------------------------------
+# Exec binary build and setup
+# ---------------------------------------------------------------------------
 
 
 def _parse_go_target(target: str) -> tuple[str, str]:
@@ -977,7 +624,7 @@ def _build_exec_binary_sync(repo_root: Path, console: Console) -> Path:
     target = os.environ.get(EXEC_BUILD_TARGET_ENV, DEFAULT_EXEC_BUILD_TARGET)
     try:
         goos, goarch = _parse_go_target(target)
-    except ValueError as exc:  # noqa: F841
+    except ValueError as exc:
         raise RuntimeError(str(exc)) from exc
     output_dir = repo_root / EXEC_BUILD_OUTPUT_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1012,6 +659,7 @@ def _build_exec_binary_sync(repo_root: Path, console: Console) -> Path:
         )
     console.info(f"Built exec binary at {binary_path}")
     return binary_path
+
 
 async def setup_exec_service(
     ctx: TaskContext,
@@ -1081,6 +729,15 @@ async def setup_exec_service(
     return client
 
 
+# ---------------------------------------------------------------------------
+# Task registry and task definitions
+# ---------------------------------------------------------------------------
+
+dotenv.load_dotenv()
+
+registry = TaskRegistry()
+
+
 @registry.task(
     name="build-setup-exec-binary",
     description="Build and setup exec binary",
@@ -1096,32 +753,6 @@ async def build_exec_binary(ctx: TaskContext) -> None:
     await setup_exec_service(ctx, binary_path=exec_binary_path, service_url=ctx.exec_service_url)
     ctx.console.info("Exec service setup complete")
 
-
-def _build_resource_profile(
-    vcpus: int,
-    memory_mib: int,
-) -> ResourceProfile:
-    cpu_period = 100_000
-    cpu_quota: int | None = None
-    if vcpus > 0:
-        cpu_quota = max(int(vcpus * cpu_period * 0.9), cpu_period)
-
-    memory_high: int | None = None
-    memory_max: int | None = None
-    memory_bytes = memory_mib * 1024 * 1024
-    if memory_bytes > 0:
-        memory_high = max(memory_bytes * 9 // 10, 1)
-        memory_max = max(memory_bytes * 95 // 100, memory_high)
-
-    return ResourceProfile(
-        name="cmux-provision",
-        cpu_quota=cpu_quota,
-        cpu_period=cpu_quota and cpu_period,
-        cpu_weight=80,
-        memory_high=memory_high,
-        memory_max=memory_max,
-        io_weight=200,
-    )
 
 @registry.task(
     name="configure-provisioning-cgroup",
@@ -1233,7 +864,7 @@ async def task_apt_bootstrap(ctx: TaskContext) -> None:
     cmd = textwrap.dedent(
         """
         set -eux
-        
+
         # Configure APT for parallel downloads (16 parallel to saturate 2gbps)
         cat > /etc/apt/apt.conf.d/99parallel << 'EOF'
         Acquire::Queue-Mode "host";
@@ -1241,13 +872,13 @@ async def task_apt_bootstrap(ctx: TaskContext) -> None:
         Acquire::http::Pipeline-Depth "10";
         Acquire::https::Pipeline-Depth "10";
         EOF
-        
+
         # Update and install core utilities needed for source setup
         DEBIAN_FRONTEND=noninteractive apt-get update
         DEBIAN_FRONTEND=noninteractive apt-get install -y \
             ca-certificates curl wget jq git gnupg lsb-release \
             tar unzip xz-utils zip bzip2 gzip htop lsof
-        
+
         # Setup GitHub CLI repository
         install -m 0755 -d /usr/share/keyrings
         curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
@@ -1256,7 +887,7 @@ async def task_apt_bootstrap(ctx: TaskContext) -> None:
         arch="$(dpkg --print-architecture)"
         echo "deb [arch=${arch} signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
             > /etc/apt/sources.list.d/github-cli.list
-        
+
         rm -rf /var/lib/apt/lists/*
         """
     )
@@ -1272,10 +903,10 @@ async def task_install_base_packages(ctx: TaskContext) -> None:
     cmd = textwrap.dedent(
         """
         set -eux
-        
+
         # Single apt-get update to pick up all configured sources
         DEBIAN_FRONTEND=noninteractive apt-get update
-        
+
         # Install all packages in parallel in a single command
         DEBIAN_FRONTEND=noninteractive apt-get install -y \
             build-essential make pkg-config g++ libssl-dev \
@@ -1283,13 +914,14 @@ async def task_install_base_packages(ctx: TaskContext) -> None:
             tigervnc-standalone-server tigervnc-common \
             xvfb \
             x11-xserver-utils xterm novnc \
+            dbus-x11 openbox \
             tmux \
             gh \
             zsh \
             zsh-autosuggestions \
             ripgrep
 
-        
+
         # Download and install Chrome
         arch="$(dpkg --print-architecture)"
         case "${arch}" in
@@ -1309,7 +941,7 @@ async def task_install_base_packages(ctx: TaskContext) -> None:
         DEBIAN_FRONTEND=noninteractive apt-get install -y ./chrome.deb || true
         DEBIAN_FRONTEND=noninteractive apt-get install -yf
         rm -f chrome.deb
-        
+
         # Clean up
         rm -rf /var/lib/apt/lists/*
         """
@@ -1571,6 +1203,9 @@ async def task_install_rust_toolchain(ctx: TaskContext) -> None:
     description="Install OpenVSCode server",
 )
 async def task_install_openvscode(ctx: TaskContext) -> None:
+    if get_ide_provider() != IDE_PROVIDER_OPENVSCODE:
+        ctx.console.info("Skipping install-openvscode (IDE provider is not openvscode)")
+        return
     cmd = textwrap.dedent(
         """
         set -eux
@@ -1590,6 +1225,52 @@ async def task_install_openvscode(ctx: TaskContext) -> None:
         """
     )
     await ctx.run("install-openvscode", cmd)
+
+
+@registry.task(
+    name="install-coder",
+    deps=("apt-bootstrap",),
+    description="Install Coder (code-server)",
+)
+async def task_install_coder(ctx: TaskContext) -> None:
+    if get_ide_provider() != IDE_PROVIDER_CODER:
+        ctx.console.info("Skipping install-coder (IDE provider is not coder)")
+        return
+    cmd = textwrap.dedent(
+        """
+        set -eux
+        CODER_RELEASE="$(curl -fsSL https://api.github.com/repos/coder/code-server/releases/latest | jq -r '.tag_name' | sed 's|^v||')"
+        arch="$(dpkg --print-architecture)"
+        case "${arch}" in
+          amd64) ARCH="amd64" ;;
+          arm64) ARCH="arm64" ;;
+          *) echo "Unsupported architecture ${arch}" >&2; exit 1 ;;
+        esac
+        mkdir -p /app/code-server
+        url="https://github.com/coder/code-server/releases/download/v${CODER_RELEASE}/code-server-${CODER_RELEASE}-linux-${ARCH}.tar.gz"
+        curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/code-server.tar.gz "${url}" || \
+          curl -fSL4 --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/code-server.tar.gz "${url}"
+        tar xf /tmp/code-server.tar.gz -C /app/code-server --strip-components=1
+        rm -f /tmp/code-server.tar.gz
+
+        # Create code-server config directory and config.yaml
+        mkdir -p /root/.config/code-server
+        cat > /root/.config/code-server/config.yaml << 'EOF'
+bind-addr: 0.0.0.0:39378
+auth: none
+cert: false
+EOF
+
+        # Create code-server user settings to disable welcome screen
+        mkdir -p /root/.code-server/User
+        cat > /root/.code-server/User/settings.json << 'EOF'
+{
+  "workbench.startupEditor": "none"
+}
+EOF
+        """
+    )
+    await ctx.run("install-coder", cmd)
 
 
 @registry.task(
@@ -1617,85 +1298,97 @@ async def task_package_vscode_extension(ctx: TaskContext) -> None:
 
 
 @registry.task(
-    name="install-openvscode-extensions",
-    deps=("install-openvscode", "package-vscode-extension"),
-    description="Preinstall language extensions for OpenVSCode",
+    name="install-ide-extensions",
+    deps=("install-openvscode", "install-coder", "package-vscode-extension"),
+    description="Preinstall language extensions for the IDE",
 )
-async def task_install_openvscode_extensions(ctx: TaskContext) -> None:
+async def task_install_ide_extensions(ctx: TaskContext) -> None:
+    ide_provider = get_ide_provider()
+    if ide_provider == IDE_PROVIDER_CODER:
+        server_root = "/app/code-server"
+        bin_path = f"{server_root}/bin/code-server"
+        extensions_dir = "/root/.code-server/extensions"
+        user_data_dir = "/root/.code-server"
+    else:
+        server_root = "/app/openvscode-server"
+        bin_path = f"{server_root}/bin/openvscode-server"
+        extensions_dir = "/root/.openvscode-server/extensions"
+        user_data_dir = "/root/.openvscode-server/data"
+
     cmd = textwrap.dedent(
-        """
+        f"""
         set -eux
         export HOME=/root
-        server_root="/app/openvscode-server"
-        bin_path="${server_root}/bin/openvscode-server"
-        if [ ! -x "${bin_path}" ]; then
-          echo "OpenVSCode binary not found at ${bin_path}" >&2
+        server_root="{server_root}"
+        bin_path="{bin_path}"
+        if [ ! -x "${{bin_path}}" ]; then
+          echo "IDE binary not found at ${{bin_path}}" >&2
           exit 1
         fi
-        extensions_dir="/root/.openvscode-server/extensions"
-        user_data_dir="/root/.openvscode-server/data"
-        mkdir -p "${extensions_dir}" "${user_data_dir}"
+        extensions_dir="{extensions_dir}"
+        user_data_dir="{user_data_dir}"
+        mkdir -p "${{extensions_dir}}" "${{user_data_dir}}"
         cmux_vsix="/tmp/cmux-vscode-extension.vsix"
-        if [ ! -f "${cmux_vsix}" ]; then
-          echo "cmux extension package missing at ${cmux_vsix}" >&2
+        if [ ! -f "${{cmux_vsix}}" ]; then
+          echo "cmux extension package missing at ${{cmux_vsix}}" >&2
           exit 1
         fi
-        install_from_file() {
+        install_from_file() {{
           local package_path="$1"
-          "${bin_path}" \
-            --install-extension "${package_path}" \
-            --force \
-            --extensions-dir "${extensions_dir}" \
-            --user-data-dir "${user_data_dir}"
-        }
-        install_from_file "${cmux_vsix}"
-        rm -f "${cmux_vsix}"
+          "${{bin_path}}" \\
+            --install-extension "${{package_path}}" \\
+            --force \\
+            --extensions-dir "${{extensions_dir}}" \\
+            --user-data-dir "${{user_data_dir}}"
+        }}
+        install_from_file "${{cmux_vsix}}"
+        rm -f "${{cmux_vsix}}"
         download_dir="$(mktemp -d)"
-        cleanup() {
-          rm -rf "${download_dir}"
-        }
+        cleanup() {{
+          rm -rf "${{download_dir}}"
+        }}
         trap cleanup EXIT
-        download_extension() {
+        download_extension() {{
           local publisher="$1"
           local name="$2"
           local version="$3"
           local destination="$4"
-          local tmpfile="${destination}.download"
-          local curl_stderr="${tmpfile}.stderr"
-          local url="https://marketplace.visualstudio.com/_apis/public/gallery/publishers/${publisher}/vsextensions/${name}/${version}/vspackage"
+          local tmpfile="${{destination}}.download"
+          local curl_stderr="${{tmpfile}}.stderr"
+          local url="https://marketplace.visualstudio.com/_apis/public/gallery/publishers/${{publisher}}/vsextensions/${{name}}/${{version}}/vspackage"
           local attempt=1
           local max_attempts=3
-          while [ "${attempt}" -le "${max_attempts}" ]; do
-            if curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o "${tmpfile}" "${url}" 2>"${curl_stderr}"; then
-              rm -f "${curl_stderr}"
+          while [ "${{attempt}}" -le "${{max_attempts}}" ]; do
+            if curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o "${{tmpfile}}" "${{url}}" 2>"${{curl_stderr}}"; then
+              rm -f "${{curl_stderr}}"
               break
             fi
-            echo "Download attempt ${attempt}/${max_attempts} failed for ${publisher}.${name}@${version}; retrying..." >&2
-            if [ -s "${curl_stderr}" ]; then
-              cat "${curl_stderr}" >&2
+            echo "Download attempt ${{attempt}}/${{max_attempts}} failed for ${{publisher}}.${{name}}@${{version}}; retrying..." >&2
+            if [ -s "${{curl_stderr}}" ]; then
+              cat "${{curl_stderr}}" >&2
             fi
-            rm -f "${tmpfile}"
+            rm -f "${{tmpfile}}"
             attempt=$((attempt + 1))
             sleep $((attempt * 2))
           done
-          if [ "${attempt}" -gt "${max_attempts}" ]; then
-            echo "Failed to download ${publisher}.${name}@${version} after ${max_attempts} attempts" >&2
-            if [ -s "${curl_stderr}" ]; then
-              cat "${curl_stderr}" >&2
+          if [ "${{attempt}}" -gt "${{max_attempts}}" ]; then
+            echo "Failed to download ${{publisher}}.${{name}}@${{version}} after ${{max_attempts}} attempts" >&2
+            if [ -s "${{curl_stderr}}" ]; then
+              cat "${{curl_stderr}}" >&2
             fi
-            rm -f "${curl_stderr}"
+            rm -f "${{curl_stderr}}"
             return 1
           fi
-          if gzip -t "${tmpfile}" >/dev/null 2>&1; then
-            gunzip -c "${tmpfile}" > "${destination}"
-            rm -f "${tmpfile}"
+          if gzip -t "${{tmpfile}}" >/dev/null 2>&1; then
+            gunzip -c "${{tmpfile}}" > "${{destination}}"
+            rm -f "${{tmpfile}}"
           else
-            mv "${tmpfile}" "${destination}"
+            mv "${{tmpfile}}" "${{destination}}"
           fi
-        }
+        }}
         while IFS='|' read -r publisher name version; do
-          [ -z "${publisher}" ] && continue
-          download_extension "${publisher}" "${name}" "${version}" "${download_dir}/${publisher}.${name}.vsix" &
+          [ -z "${{publisher}}" ] && continue
+          download_extension "${{publisher}}" "${{name}}" "${{version}}" "${{download_dir}}/${{publisher}}.${{name}}.vsix" &
         done <<'EXTENSIONS'
         anthropic|claude-code|2.0.27
         openai|chatgpt|0.5.27
@@ -1705,15 +1398,15 @@ async def task_install_openvscode_extensions(ctx: TaskContext) -> None:
         ms-python|debugpy|2025.14.0
         EXTENSIONS
         wait
-        set -- "${download_dir}"/*.vsix
+        set -- "${{download_dir}}"/*.vsix
         for vsix in "$@"; do
-          if [ -f "${vsix}" ]; then
-            install_from_file "${vsix}"
+          if [ -f "${{vsix}}" ]; then
+            install_from_file "${{vsix}}"
           fi
         done
         """
     )
-    await ctx.run("install-openvscode-extensions", cmd)
+    await ctx.run("install-ide-extensions", cmd)
 
 
 @registry.task(
@@ -1729,8 +1422,6 @@ async def task_install_cursor(ctx: TaskContext) -> None:
         """
     )
     await ctx.run("install-cursor-cli", cmd)
-
-
 
 
 @registry.task(
@@ -1782,7 +1473,7 @@ if [ -s /etc/profile.d/nvm.sh ]; then
   . /etc/profile.d/nvm.sh
 fi
 
-alias code='/app/openvscode-server/bin/openvscode-server'
+alias code='/usr/local/bin/code'
 alias c='code'
 alias g='git'
 
@@ -1829,6 +1520,23 @@ EOF
         """
     )
     await ctx.run("configure-zsh", cmd)
+
+
+@registry.task(
+    name="configure-openbox",
+    deps=("upload-repo", "install-base-packages"),
+    description="Install openbox configuration for desktop menu",
+)
+async def task_configure_openbox(ctx: TaskContext) -> None:
+    repo = shlex.quote(ctx.remote_repo_root)
+    cmd = textwrap.dedent(
+        f"""
+        set -eux
+        mkdir -p /root/.config/openbox
+        install -Dm0644 {repo}/configs/openbox/menu.xml /root/.config/openbox/menu.xml
+        """
+    )
+    await ctx.run("configure-openbox", cmd)
 
 
 @registry.task(
@@ -1921,8 +1629,7 @@ async def task_build_cdp_proxy(ctx: TaskContext) -> None:
     name="install-systemd-units",
     deps=(
         "upload-repo",
-        "install-openvscode",
-        "install-openvscode-extensions",
+        "install-ide-extensions",
         "install-service-scripts",
         "build-worker",
         "build-cdp-proxy",
@@ -1933,24 +1640,40 @@ async def task_build_cdp_proxy(ctx: TaskContext) -> None:
 )
 async def task_install_systemd_units(ctx: TaskContext) -> None:
     repo = shlex.quote(ctx.remote_repo_root)
+    ide_provider = get_ide_provider()
+
+    # Determine IDE-specific service and configure script
+    if ide_provider == IDE_PROVIDER_CODER:
+        ide_service = "cmux-coder.service"
+        ide_configure_script = "configure-coder"
+        ide_env_file = "ide.env.coder"
+    else:
+        ide_service = "cmux-openvscode.service"
+        ide_configure_script = "configure-openvscode"
+        ide_env_file = "ide.env.openvscode"
+
     cmd = textwrap.dedent(
         f"""
         set -euo pipefail
 
         install -d /usr/local/lib/cmux
+        install -d /etc/cmux
         install -Dm0644 {repo}/configs/systemd/cmux.target /usr/lib/systemd/system/cmux.target
-        install -Dm0644 {repo}/configs/systemd/cmux-openvscode.service /usr/lib/systemd/system/cmux-openvscode.service
+        install -Dm0644 {repo}/configs/systemd/{ide_service} /usr/lib/systemd/system/cmux-ide.service
         install -Dm0644 {repo}/configs/systemd/cmux-worker.service /usr/lib/systemd/system/cmux-worker.service
         install -Dm0644 {repo}/configs/systemd/cmux-proxy.service /usr/lib/systemd/system/cmux-proxy.service
         install -Dm0644 {repo}/configs/systemd/cmux-dockerd.service /usr/lib/systemd/system/cmux-dockerd.service
         install -Dm0644 {repo}/configs/systemd/cmux-devtools.service /usr/lib/systemd/system/cmux-devtools.service
         install -Dm0644 {repo}/configs/systemd/cmux-xvfb.service /usr/lib/systemd/system/cmux-xvfb.service
         install -Dm0644 {repo}/configs/systemd/cmux-tigervnc.service /usr/lib/systemd/system/cmux-tigervnc.service
+        install -Dm0644 {repo}/configs/systemd/cmux-openbox.service /usr/lib/systemd/system/cmux-openbox.service
         install -Dm0644 {repo}/configs/systemd/cmux-vnc-proxy.service /usr/lib/systemd/system/cmux-vnc-proxy.service
         install -Dm0644 {repo}/configs/systemd/cmux-cdp-proxy.service /usr/lib/systemd/system/cmux-cdp-proxy.service
         install -Dm0644 {repo}/configs/systemd/cmux-xterm.service /usr/lib/systemd/system/cmux-xterm.service
         install -Dm0644 {repo}/configs/systemd/cmux-memory-setup.service /usr/lib/systemd/system/cmux-memory-setup.service
-        install -Dm0755 {repo}/configs/systemd/bin/configure-openvscode /usr/local/lib/cmux/configure-openvscode
+        install -Dm0755 {repo}/configs/systemd/bin/{ide_configure_script} /usr/local/lib/cmux/{ide_configure_script}
+        install -Dm0644 {repo}/configs/systemd/{ide_env_file} /etc/cmux/ide.env
+        install -Dm0755 {repo}/configs/systemd/bin/code /usr/local/bin/code
         touch /usr/local/lib/cmux/dockerd.flag
         mkdir -p /var/log/cmux
         mkdir -p /root/workspace
@@ -1958,12 +1681,13 @@ async def task_install_systemd_units(ctx: TaskContext) -> None:
         mkdir -p /etc/systemd/system/cmux.target.wants
         mkdir -p /etc/systemd/system/swap.target.wants
         ln -sf /usr/lib/systemd/system/cmux.target /etc/systemd/system/multi-user.target.wants/cmux.target
-        ln -sf /usr/lib/systemd/system/cmux-openvscode.service /etc/systemd/system/cmux.target.wants/cmux-openvscode.service
+        ln -sf /usr/lib/systemd/system/cmux-ide.service /etc/systemd/system/cmux.target.wants/cmux-ide.service
         ln -sf /usr/lib/systemd/system/cmux-worker.service /etc/systemd/system/cmux.target.wants/cmux-worker.service
         ln -sf /usr/lib/systemd/system/cmux-proxy.service /etc/systemd/system/cmux.target.wants/cmux-proxy.service
         ln -sf /usr/lib/systemd/system/cmux-dockerd.service /etc/systemd/system/cmux.target.wants/cmux-dockerd.service
         ln -sf /usr/lib/systemd/system/cmux-devtools.service /etc/systemd/system/cmux.target.wants/cmux-devtools.service
         ln -sf /usr/lib/systemd/system/cmux-tigervnc.service /etc/systemd/system/cmux.target.wants/cmux-tigervnc.service
+        ln -sf /usr/lib/systemd/system/cmux-openbox.service /etc/systemd/system/cmux.target.wants/cmux-openbox.service
         ln -sf /usr/lib/systemd/system/cmux-vnc-proxy.service /etc/systemd/system/cmux.target.wants/cmux-vnc-proxy.service
         ln -sf /usr/lib/systemd/system/cmux-cdp-proxy.service /etc/systemd/system/cmux.target.wants/cmux-cdp-proxy.service
         ln -sf /usr/lib/systemd/system/cmux-xterm.service /etc/systemd/system/cmux.target.wants/cmux-xterm.service
@@ -2015,6 +1739,7 @@ async def task_install_tmux_conf(ctx: TaskContext) -> None:
         """
     )
     await ctx.run("install-tmux-conf", cmd)
+
 
 @registry.task(
     name="configure-memory-protection",
@@ -2240,6 +1965,7 @@ PROFILE
     deps=(
         "configure-memory-protection",
         "configure-envctl",
+        "configure-openbox",
         "install-prompt-wrapper",
         "install-tmux-conf",
         "install-collect-scripts",
@@ -2248,44 +1974,6 @@ PROFILE
 )
 async def task_cleanup_build_artifacts(ctx: TaskContext) -> None:
     await cleanup_instance_disk(ctx)
-
-
-async def run_task_graph(registry: TaskRegistry, ctx: TaskContext) -> None:
-    remaining = registry.tasks
-    completed: set[str] = set()
-    while remaining:
-        ready = [
-            name
-            for name, task in remaining.items()
-            if all(dep in completed for dep in task.dependencies)
-        ]
-        if not ready:
-            unresolved = ", ".join(remaining)
-            raise RuntimeError(f"Dependency cycle detected: {unresolved}")
-        tasks_to_run = [remaining[name] for name in ready]
-        for task in tasks_to_run:
-            ctx.console.info(f"→ starting task {task.name}")
-        start = time.perf_counter()
-        await asyncio.gather(
-            *(_run_task_with_timing(ctx, task) for task in tasks_to_run)
-        )
-        duration = time.perf_counter() - start
-        layer_label = f"layer:{'+'.join(ready)}"
-        ctx.timings.add(layer_label, duration)
-        ctx.console.info(
-            f"✓ Layer completed in {duration:.2f}s (tasks: {', '.join(ready)})"
-        )
-        for task in tasks_to_run:
-            completed.add(task.name)
-            remaining.pop(task.name, None)
-
-
-async def _run_task_with_timing(ctx: TaskContext, task: TaskDefinition) -> None:
-    start = time.perf_counter()
-    await task.func(ctx)
-    duration = time.perf_counter() - start
-    ctx.timings.add(f"task:{task.name}", duration)
-    ctx.console.info(f"✓ {task.name} completed in {duration:.2f}s")
 
 
 @registry.task(
@@ -2380,13 +2068,13 @@ async def task_check_vscode(ctx: TaskContext) -> None:
         """
         for attempt in $(seq 1 15); do
           if curl -fsS -o /dev/null http://127.0.0.1:39378/; then
-            echo "VS Code endpoint is reachable"
+            echo "IDE endpoint is reachable"
             exit 0
           fi
           sleep 2
         done
-        echo "ERROR: VS Code endpoint not reachable after 30s" >&2
-        systemctl status cmux-openvscode.service --no-pager || true
+        echo "ERROR: IDE endpoint not reachable after 30s" >&2
+        systemctl status cmux-ide.service --no-pager || true
         exit 1
         """
     )
@@ -2399,20 +2087,22 @@ async def task_check_vscode(ctx: TaskContext) -> None:
     description="Verify VS Code endpoint is accessible through cmux-proxy",
 )
 async def task_check_vscode_via_proxy(ctx: TaskContext) -> None:
+    ide_provider = get_ide_provider()
+    log_file = "coder.log" if ide_provider == IDE_PROVIDER_CODER else "openvscode.log"
     cmd = textwrap.dedent(
-        """
+        f"""
         for attempt in $(seq 1 15); do
           if curl -fsS -H 'X-Cmux-Port-Internal: 39378' http://127.0.0.1:39379/ >/dev/null; then
-            echo "VS Code endpoint is reachable via cmux-proxy"
+            echo "IDE endpoint is reachable via cmux-proxy"
             exit 0
           fi
           sleep 2
         done
-        echo "ERROR: VS Code endpoint via cmux-proxy not reachable after 30s" >&2
+        echo "ERROR: IDE endpoint via cmux-proxy not reachable after 30s" >&2
         systemctl status cmux-proxy.service --no-pager || true
-        systemctl status cmux-openvscode.service --no-pager || true
+        systemctl status cmux-ide.service --no-pager || true
         tail -n 80 /var/log/cmux/cmux-proxy.log || true
-        tail -n 80 /var/log/cmux/openvscode.log || true
+        tail -n 80 /var/log/cmux/{log_file} || true
         exit 1
         """
     )
@@ -2457,7 +2147,7 @@ async def task_check_vnc(ctx: TaskContext) -> None:
           echo "cmux-vnc-proxy binary missing" >&2
           exit 1
         fi
-        
+
         # Verify VNC endpoint is accessible
         sleep 5
         for attempt in $(seq 1 15); do
@@ -2527,7 +2217,7 @@ async def task_check_devtools(ctx: TaskContext) -> None:
         """
         # Verify Chrome is installed
         google-chrome --version
-        
+
         # Verify DevTools endpoint is accessible
         sleep 5
         for attempt in $(seq 1 45); do
@@ -2547,6 +2237,7 @@ async def task_check_devtools(ctx: TaskContext) -> None:
         """
     )
     await ctx.run("check-devtools", cmd)
+
 
 @registry.task(
     name="check-worker",
@@ -2573,6 +2264,11 @@ async def task_check_worker(ctx: TaskContext) -> None:
         """
     )
     await ctx.run("check-worker", cmd)
+
+
+# ---------------------------------------------------------------------------
+# Cleanup and verification helpers
+# ---------------------------------------------------------------------------
 
 
 async def verify_devtools_via_exposed_url(
@@ -2711,6 +2407,11 @@ async def report_disk_usage(ctx: TaskContext) -> None:
     await ctx.run("disk-usage-summary", disk_script)
 
 
+# ---------------------------------------------------------------------------
+# Main provisioning flow
+# ---------------------------------------------------------------------------
+
+
 async def provision_and_snapshot_for_preset(
     args: argparse.Namespace,
     *,
@@ -2735,6 +2436,7 @@ async def provision_and_snapshot_for_preset(
         ttl_seconds=args.ttl_seconds,
         ttl_action=args.ttl_action,
     )
+    await instance.aset_wake_on(wake_on_http=True)
     started_instances.append(instance)
     await _await_instance_ready(instance, console=console)
     console.always(
@@ -2820,6 +2522,9 @@ async def provision_and_snapshot_for_preset(
 
 
 async def provision_and_snapshot(args: argparse.Namespace) -> None:
+    # Set the IDE provider before running tasks
+    set_ide_provider(args.ide_provider)
+
     console = Console()
     client = MorphCloudClient()
     started_instances: list[Instance] = []
@@ -2843,7 +2548,8 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
     console.always(
         "Starting snapshot runs for presets "
         f"{', '.join(plan.preset_id for plan in preset_plans)} "
-        f"from base snapshot {args.snapshot_id}"
+        f"from base snapshot {args.snapshot_id} "
+        f"(IDE provider: {args.ide_provider})"
     )
 
     preset_order: dict[str, int] = {
@@ -2880,7 +2586,7 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
                     f"[{result.preset.preset_id}] Instance {result.instance_id} "
                     "will pause in ~10 minutes (TTL set)."
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 console.always(
                     f"[{result.preset.preset_id}] Failed to set TTL on instance "
                     f"{result.instance_id}: {exc}"
@@ -2901,66 +2607,6 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
         console.always(
             f"[{result.preset.preset_id}] Snapshot {result.snapshot.id} captured at {result.captured_at}"
         )
-
-
-def format_dependency_graph(registry: TaskRegistry) -> str:
-    tasks = registry.tasks
-    if not tasks:
-        return ""
-
-    children: dict[str, list[str]] = {name: [] for name in tasks}
-    for task in tasks.values():
-        for dependency in task.dependencies:
-            children.setdefault(dependency, []).append(task.name)
-    for child_list in children.values():
-        child_list.sort()
-
-    roots = sorted(
-        name for name, definition in tasks.items() if not definition.dependencies
-    )
-
-    lines: list[str] = []
-
-    def render_node(
-        node: str,
-        prefix: str,
-        is_last: bool,
-        path: set[str],
-    ) -> None:
-        connector = "└─" if is_last else "├─"
-        lines.append(f"{prefix}{connector} {node}")
-        if node in path:
-            lines.append(f"{prefix}   ↻ cycle")
-            return
-        descendants = children.get(node, [])
-        if not descendants:
-            return
-        next_prefix = f"{prefix}   " if is_last else f"{prefix}│  "
-        next_path = set(path)
-        next_path.add(node)
-        for index, child in enumerate(descendants):
-            render_node(child, next_prefix, index == len(descendants) - 1, next_path)
-
-    for root_index, root in enumerate(roots):
-        if root_index:
-            lines.append("")
-        lines.append(root)
-        descendants = children.get(root, [])
-        for index, child in enumerate(descendants):
-            render_node(child, "", index == len(descendants) - 1, {root})
-
-    orphaned = sorted(
-        name
-        for name in tasks
-        if name not in roots
-        and all(name not in children.get(other, []) for other in tasks)
-    )
-    for orphan in orphaned:
-        if lines:
-            lines.append("")
-        lines.append(orphan)
-
-    return "\n".join(lines)
 
 
 def parse_args() -> argparse.Namespace:
@@ -3042,6 +2688,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Require manual verification (VS Code/VNC) before snapshotting each preset",
     )
+    parser.add_argument(
+        "--ide-provider",
+        choices=(IDE_PROVIDER_CODER, IDE_PROVIDER_OPENVSCODE),
+        default=DEFAULT_IDE_PROVIDER,
+        help=f"IDE provider to install (default: {DEFAULT_IDE_PROVIDER})",
+    )
     return parser.parse_args()
 
 
@@ -3054,7 +2706,7 @@ def main() -> None:
         return
     try:
         asyncio.run(provision_and_snapshot(args))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         traceback.print_exc()
         send_scary_notification(f"Snapshot run failed: {exc}")
         raise

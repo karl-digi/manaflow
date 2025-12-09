@@ -33,6 +33,8 @@ interface DashboardInputControlsProps {
   branchOptions: string[];
   selectedBranch: string[];
   onBranchChange: (branches: string[]) => void;
+  onBranchSearchChange?: (search: string) => void;
+  isBranchSearchLoading?: boolean;
   selectedAgents: string[];
   onAgentChange: (agents: string[]) => void;
   isCloudMode: boolean;
@@ -60,6 +62,8 @@ export const DashboardInputControls = memo(function DashboardInputControls({
   branchOptions,
   selectedBranch,
   onBranchChange,
+  onBranchSearchChange,
+  isBranchSearchLoading = false,
   selectedAgents,
   onAgentChange,
   isCloudMode,
@@ -652,6 +656,9 @@ export const DashboardInputControls = memo(function DashboardInputControls({
                   options={branchOptions}
                   value={selectedBranch}
                   onChange={onBranchChange}
+                  onSearchChange={onBranchSearchChange}
+                  searchLoading={isBranchSearchLoading}
+                  disableClientFilter
                   placeholder="Branch"
                   singleSelect={true}
                   className="rounded-2xl"

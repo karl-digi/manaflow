@@ -3,6 +3,15 @@ set -euo pipefail
 
 mkdir -p /var/log/cmux
 
+# Create code-server config directory and config.yaml
+mkdir -p /root/.config/code-server
+cat > /root/.config/code-server/config.yaml << 'EOF'
+bind-addr: 0.0.0.0:39378
+auth: none
+cert: false
+EOF
+
+# Determine color theme based on VSCODE_THEME env var
 color=""
 case "${VSCODE_THEME:-}" in
   dark)
@@ -42,13 +51,10 @@ SETTINGS=$(jq -n \
   } + (if $theme != "" then {"workbench.colorTheme": $theme} else {} end)')
 
 home="${HOME:-/root}"
-user_base="${home}/.openvscode-server"
-user_dir="${user_base}/data/User"
-default_profile_dir="${user_base}/data/User/profiles/default-profile"
-machine_dir="${user_base}/data/Machine"
+user_dir="${home}/.code-server/User"
+machine_dir="${home}/.code-server/Machine"
 
-mkdir -p "${user_dir}" "${default_profile_dir}" "${machine_dir}"
+mkdir -p "${user_dir}" "${machine_dir}"
 
 printf '%s' "$SETTINGS" > "${user_dir}/settings.json"
-printf '%s' "$SETTINGS" > "${default_profile_dir}/settings.json"
 printf '%s' "$SETTINGS" > "${machine_dir}/settings.json"

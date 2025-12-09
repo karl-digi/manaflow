@@ -6,7 +6,6 @@ import {
   ArchiveTaskSchema,
   GitFullDiffRequestSchema,
   GitHubCreateDraftPrSchema,
-  GitHubFetchBranchesSchema,
   GitHubFetchReposSchema,
   GitHubMergeBranchSchema,
   GitHubSyncPrStateSchema,
@@ -51,7 +50,6 @@ import { getConvex } from "./utils/convexClient";
 import { ensureRunWorktreeAndBranch } from "./utils/ensureRunWorktree";
 import { serverLogger } from "./utils/fileLogger";
 import { getGitHubOAuthToken } from "./utils/getGitHubToken";
-import { createGitHubApiClient } from "./ghApi";
 import { createDraftPr, fetchPrDetail } from "./utils/githubPr";
 import { getOctokit } from "./utils/octokit";
 import {
@@ -2242,43 +2240,7 @@ Please address the issue mentioned in the comment above.`;
       }
     });
 
-    socket.on("github-fetch-branches", async (data, callback) => {
-      try {
-        const { repo } = GitHubFetchBranchesSchema.parse(data);
-
-        // Get OAuth token from Stack Auth for authenticated GitHub API access
-        const githubToken = await getGitHubOAuthToken();
-        if (!githubToken) {
-          callback({
-            success: false,
-            branches: [],
-            error: "GitHub token is not configured. Please connect your GitHub account.",
-          });
-          return;
-        }
-
-        // Use GitHub API with OAuth token for branch listing
-        const ghClient = createGitHubApiClient(githubToken);
-        const branches = await ghClient.getRepoBranchesWithActivity(repo);
-        const defaultBranch = branches.find((branch) => branch.isDefault)?.name;
-
-        callback({
-          success: true,
-          branches,
-          defaultBranch,
-        });
-        return;
-      } catch (error) {
-        serverLogger.error("Error fetching branches:", error);
-        callback({
-          success: false,
-          branches: [],
-          error: error instanceof Error ? error.message : "Unknown error",
-        });
-      }
-    });
-
-    // Create a draft PR for a crowned run: commits, pushes, then creates a draft PR
+// Create a draft PR for a crowned run: commits, pushes, then creates a draft PR
     socket.on("github-create-draft-pr", async (data, callback) => {
       try {
         const { taskRunId } = GitHubCreateDraftPrSchema.parse(data);
