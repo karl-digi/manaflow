@@ -19,7 +19,8 @@ use hyper::{
     server::conn::AddrStream,
     service::{make_service_fn, service_fn},
 };
-use hyper_rustls::HttpsConnectorBuilder;
+use hyper_rustls::{ConfigBuilderExt, HttpsConnector};
+use rustls::ClientConfig;
 use lol_html::{HtmlRewriter, Settings, element, html_content::ContentType};
 use tokio::{
     io::{AsyncWriteExt, copy_bidirectional},
@@ -100,11 +101,23 @@ pub async fn spawn_proxy(config: ProxyConfig) -> Result<ProxyHandle, ProxyError>
     listener.set_nonblocking(true)?;
     let local_addr = listener.local_addr()?;
 
-    let https = HttpsConnectorBuilder::new()
+    // Build a custom TLS config that explicitly advertises HTTP/1.1 via ALPN.
+    // This is necessary because WebSocket upgrade requires HTTP/1.1 - it doesn't
+    // work over HTTP/2 since the Connection/Upgrade headers are stripped.
+    // If ALPN is empty (the default for enable_http1() without enable_http2()),
+    // the server may choose HTTP/2, breaking WebSocket connections.
+    let mut tls_config = ClientConfig::builder()
+        .with_safe_defaults()
         .with_webpki_roots()
-        .https_or_http()
-        .enable_http1()
-        .build();
+        .with_no_client_auth();
+    tls_config.alpn_protocols = vec![b"http/1.1".to_vec()];
+
+    // Create HttpConnector that allows http:// URLs (for local backend)
+    let mut http_connector = HttpConnector::new();
+    http_connector.enforce_http(false);
+
+    // Create HttpsConnector from the HTTP connector and TLS config
+    let https: HttpsConnector<HttpConnector> = (http_connector, tls_config).into();
     let client: HttpClient = Client::builder().build(https);
 
     let state = Arc::new(AppState {
