@@ -23,10 +23,7 @@ import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { createFakeConvexId } from "@/lib/fakeConvexId";
 import { attachTaskLifecycleListeners } from "@/lib/socket/taskLifecycleListeners";
-import {
-  getApiIntegrationsGithubDefaultBranchOptions,
-  getApiIntegrationsGithubBranchesOptions,
-} from "@/queries/branches";
+import { getApiIntegrationsGithubBranchesOptions } from "@/queries/branches";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
@@ -38,10 +35,11 @@ import type {
 } from "@cmux/shared";
 import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
 import { convexQuery } from "@convex-dev/react-query";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useAction, useMutation } from "convex/react";
 import { Server as ServerIcon } from "lucide-react";
+import { useDebouncedValue } from "@mantine/hooks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -199,82 +197,60 @@ function DashboardComponent() {
     [selectedProject]
   );
 
-  // Track if branch selector is open and the search query
-  const [branchSelectorOpen, setBranchSelectorOpen] = useState(false);
+  // Branch search state with debouncing for server-side search
   const [branchSearch, setBranchSearch] = useState("");
+  const [debouncedBranchSearch] = useDebouncedValue(branchSearch, 300);
 
-  // Fast query to get just the default branch (single API call)
-  const defaultBranchQuery = useQuery({
-    ...getApiIntegrationsGithubDefaultBranchOptions({
-      query: { repo: selectedProject[0] || "" },
-    }),
-    staleTime: 60_000, // Default branch rarely changes
-    enabled: !!selectedProject[0] && !isEnvSelected,
-  });
+  // Immediately use empty string when cleared, otherwise use debounced value
+  // This prevents delay when user clears the search
+  const effectiveBranchSearch = branchSearch === "" ? "" : debouncedBranchSearch;
 
-  // Full branches query - only runs when selector is open
+  // Branches query - uses GraphQL to get default branch AND branches in a single API call
+  // Server-side search via GitHub GraphQL API (prefix match)
+  // Each search term is cached separately by React Query
   const branchesQuery = useQuery({
     ...getApiIntegrationsGithubBranchesOptions({
       query: {
         repo: selectedProject[0] || "",
-        search: branchSearch || undefined,
+        limit: 5,
+        search: effectiveBranchSearch || undefined,
       },
     }),
-    staleTime: 10_000,
-    enabled: !!selectedProject[0] && !isEnvSelected && branchSelectorOpen,
+    staleTime: 30_000,
+    enabled: !!selectedProject[0] && !isEnvSelected,
+    // Keep previous data visible while fetching new search results
+    // This prevents "No options" flash and button skeleton during search
+    placeholderData: keepPreviousData,
   });
 
-  const branchSummary = useMemo(() => {
-    // If we have branches loaded, use them
-    const branchData = branchesQuery.data;
-    if (branchData?.branches && branchData.branches.length > 0) {
-      const names = branchData.branches.map((branch) => branch.name);
-      const fromResponse = branchData.defaultBranch?.trim();
-      const flaggedDefault = branchData.branches.find(
-        (branch) => branch.isDefault
-      )?.name;
-      const normalizedFromResponse =
-        fromResponse && names.includes(fromResponse) ? fromResponse : undefined;
-      const normalizedFlagged =
-        flaggedDefault && names.includes(flaggedDefault)
-          ? flaggedDefault
-          : undefined;
+  // Show loading in search input when search is pending or fetching
+  const isBranchSearchLoading =
+    branchSearch !== "" &&
+    (branchSearch !== effectiveBranchSearch || branchesQuery.isFetching);
 
-      return {
-        names,
-        defaultName: normalizedFromResponse ?? normalizedFlagged,
-      };
-    }
+  // Extract branch names and default branch from the query
+  const branchNames = useMemo(
+    () => branchesQuery.data?.branches?.map((branch) => branch.name) ?? [],
+    [branchesQuery.data]
+  );
 
-    // Otherwise, use just the default branch from the fast query
-    const defaultBranch = defaultBranchQuery.data?.defaultBranch;
-    if (defaultBranch) {
-      return {
-        names: [defaultBranch],
-        defaultName: defaultBranch,
-      };
-    }
+  const defaultBranchName = branchesQuery.data?.defaultBranch ?? null;
 
-    return {
-      names: [] as string[],
-      defaultName: undefined as string | undefined,
-    };
-  }, [branchesQuery.data, defaultBranchQuery.data]);
-
-  const branchNames = branchSummary.names;
-
-  // Callbacks for branch selector events
-  const handleBranchSelectorOpen = useCallback((open: boolean) => {
-    setBranchSelectorOpen(open);
-    if (!open) {
-      // Reset search when closing
-      setBranchSearch("");
-    }
-  }, []);
-
+  // Handle branch search changes from SearchableSelect
   const handleBranchSearchChange = useCallback((search: string) => {
     setBranchSearch(search);
   }, []);
+
+  // Show toast if branches query fails
+  useEffect(() => {
+    if (branchesQuery.isError) {
+      const err = branchesQuery.error;
+      const message =
+        err instanceof Error ? err.message : "Failed to load branches";
+      toast.error("Failed to load branches", { description: message });
+    }
+  }, [branchesQuery.isError, branchesQuery.error]);
+
   // Callback for project selection changes
   const handleProjectChange = useCallback(
     (newProjects: string[]) => {
@@ -466,19 +442,15 @@ function DashboardComponent() {
   const generateUploadUrl = useMutation(api.storage.generateUploadUrl);
   const addManualRepo = useAction(api.github_http.addManualRepo);
 
-  // Use the stable default branch from the fast query for fallback selection
-  // This prevents search results from changing the effective selection
-  const stableDefaultBranch = defaultBranchQuery.data?.defaultBranch;
-
   const effectiveSelectedBranch = useMemo(() => {
     if (selectedBranch.length > 0) {
       return selectedBranch;
     }
-    // Use the stable default branch from the fast query, not from search results
-    if (stableDefaultBranch) {
-      return [stableDefaultBranch];
+    // Use the default branch from the response
+    if (defaultBranchName) {
+      return [defaultBranchName];
     }
-    // Fallback to common default branch names if fast query hasn't loaded yet
+    // Fallback to common default branch names if query hasn't loaded yet
     if (branchNames.length === 0) {
       return [];
     }
@@ -489,7 +461,7 @@ function DashboardComponent() {
       return ["master"];
     }
     return [];
-  }, [selectedBranch, stableDefaultBranch, branchNames]);
+  }, [selectedBranch, defaultBranchName, branchNames]);
 
   const handleStartTask = useCallback(async () => {
     if (isStartingTaskRef.current) {
@@ -1052,14 +1024,14 @@ function DashboardComponent() {
               branchOptions={branchOptions}
               selectedBranch={effectiveSelectedBranch}
               onBranchChange={handleBranchChange}
-              onBranchSelectorOpen={handleBranchSelectorOpen}
               onBranchSearchChange={handleBranchSearchChange}
+              isBranchSearchLoading={isBranchSearchLoading}
               selectedAgents={selectedAgents}
               onAgentChange={handleAgentChange}
               isCloudMode={isCloudMode}
               onCloudModeToggle={handleCloudModeToggle}
               isLoadingProjects={reposByOrgQuery.isLoading}
-              isLoadingBranches={branchesQuery.isPending || (branchSelectorOpen && branchesQuery.isFetching)}
+              isLoadingBranches={branchesQuery.isFetching && effectiveSelectedBranch.length === 0}
               teamSlugOrId={teamSlugOrId}
               cloudToggleDisabled={isEnvSelected}
               branchDisabled={isEnvSelected || !selectedProject[0]}
@@ -1132,8 +1104,8 @@ type DashboardMainCardProps = {
   branchOptions: string[];
   selectedBranch: string[];
   onBranchChange: (newBranches: string[]) => void;
-  onBranchSelectorOpen?: (open: boolean) => void;
-  onBranchSearchChange?: (search: string) => void;
+  onBranchSearchChange: (search: string) => void;
+  isBranchSearchLoading: boolean;
   selectedAgents: string[];
   onAgentChange: (newAgents: string[]) => void;
   isCloudMode: boolean;
@@ -1163,8 +1135,8 @@ function DashboardMainCard({
   branchOptions,
   selectedBranch,
   onBranchChange,
-  onBranchSelectorOpen,
   onBranchSearchChange,
+  isBranchSearchLoading,
   selectedAgents,
   onAgentChange,
   isCloudMode,
@@ -1201,8 +1173,8 @@ function DashboardMainCard({
           branchOptions={branchOptions}
           selectedBranch={selectedBranch}
           onBranchChange={onBranchChange}
-          onBranchSelectorOpen={onBranchSelectorOpen}
           onBranchSearchChange={onBranchSearchChange}
+          isBranchSearchLoading={isBranchSearchLoading}
           selectedAgents={selectedAgents}
           onAgentChange={onAgentChange}
           isCloudMode={isCloudMode}
