@@ -1,3 +1,4 @@
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use chrono::SecondsFormat;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use cmux_sandbox::models::{
@@ -12,6 +13,7 @@ use cmux_sandbox::{
     AcpProvider, DEFAULT_HTTP_PORT, DEFAULT_IMAGE, DMUX_DEFAULT_CONTAINER, DMUX_DEFAULT_HTTP_PORT,
     DMUX_DEFAULT_IMAGE,
 };
+use sha2::{Digest, Sha256};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use futures::{SinkExt, StreamExt};
 use ignore::WalkBuilder;
@@ -132,6 +134,10 @@ enum Command {
 
     /// Generate SSH config for easy sandbox access (e.g., `ssh sandbox-0`)
     SshConfig,
+
+    /// Manage SSH keys for sandbox access
+    #[command(subcommand)]
+    SshKeys(SshKeysCommand),
 }
 
 #[derive(Args, Debug)]
@@ -168,6 +174,36 @@ enum AuthCommand {
     Status,
     /// Print the current access token (for debugging)
     Token,
+}
+
+#[derive(Subcommand, Debug)]
+enum SshKeysCommand {
+    /// List registered SSH keys
+    #[command(alias = "ls")]
+    List,
+    /// Add an SSH key
+    Add(SshKeysAddArgs),
+    /// Remove an SSH key by fingerprint or ID
+    #[command(alias = "rm")]
+    Remove {
+        /// Fingerprint (SHA256:...) or key ID to remove
+        fingerprint_or_id: String,
+    },
+}
+
+#[derive(Args, Debug)]
+struct SshKeysAddArgs {
+    /// Path to the SSH public key file (default: auto-detect ~/.ssh/id_*.pub)
+    #[arg(value_name = "PATH")]
+    path: Option<PathBuf>,
+
+    /// Import keys from connected GitHub account
+    #[arg(long)]
+    from_github: bool,
+
+    /// Name for the key (default: hostname)
+    #[arg(long, short)]
+    name: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -704,6 +740,17 @@ async fn run() -> anyhow::Result<()> {
         Command::SshConfig => {
             handle_ssh_config(&client, &cli.base_url).await?;
         }
+        Command::SshKeys(cmd) => match cmd {
+            SshKeysCommand::List => {
+                handle_ssh_keys_list().await?;
+            }
+            SshKeysCommand::Add(args) => {
+                handle_ssh_keys_add(args).await?;
+            }
+            SshKeysCommand::Remove { fingerprint_or_id } => {
+                handle_ssh_keys_remove(&fingerprint_or_id).await?;
+            }
+        },
         Command::Sandboxes(cmd) => {
             match cmd {
                 SandboxCommand::List => {
@@ -2224,6 +2271,451 @@ async fn handle_auth_token() -> anyhow::Result<()> {
 
     // Print just the token (useful for piping)
     println!("{}", token_response.access_token);
+
+    Ok(())
+}
+
+// =============================================================================
+// SSH Keys Management
+// =============================================================================
+
+/// Response type for SSH key listing
+#[derive(serde::Deserialize, Debug)]
+struct SshKeyInfo {
+    id: String,
+    name: String,
+    fingerprint: String,
+    source: String,
+    #[serde(rename = "createdAt")]
+    created_at: i64,
+}
+
+/// Response type for SSH key creation
+#[derive(serde::Deserialize, Debug)]
+struct CreateSshKeyResponse {
+    id: String,
+    fingerprint: String,
+}
+
+/// Response type for GitHub import
+#[derive(serde::Deserialize, Debug)]
+struct ImportGithubKeysResponse {
+    imported: u32,
+    keys: Vec<CreateSshKeyResponse>,
+}
+
+/// Get an access token from the stored refresh token
+async fn get_access_token() -> anyhow::Result<String> {
+    let refresh_token = get_stack_refresh_token().ok_or_else(|| {
+        anyhow::anyhow!("Not logged in. Run 'cmux auth login' first.")
+    })?;
+
+    let api_url = get_stack_api_url();
+    let project_id = get_stack_project_id();
+    let publishable_key = get_stack_publishable_key();
+
+    let client = Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()?;
+
+    let refresh_url = format!("{}/api/v1/auth/sessions/current/refresh", api_url);
+    let response = client
+        .post(&refresh_url)
+        .header("x-stack-project-id", &project_id)
+        .header("x-stack-publishable-client-key", &publishable_key)
+        .header("x-stack-refresh-token", &refresh_token)
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        return Err(anyhow::anyhow!(
+            "Failed to refresh token: {} - {}. Try 'cmux auth login' to re-authenticate.",
+            status,
+            text
+        ));
+    }
+
+    let token_response: TokenRefreshResponse = response.json().await?;
+    Ok(token_response.access_token)
+}
+
+/// Compute SSH key fingerprint from a public key string.
+/// Format: 'SHA256:base64...'
+fn compute_ssh_fingerprint(public_key: &str) -> anyhow::Result<String> {
+    // SSH public key format: "type base64-blob comment"
+    let parts: Vec<&str> = public_key.split_whitespace().collect();
+    if parts.len() < 2 {
+        return Err(anyhow::anyhow!("Invalid SSH public key format"));
+    }
+
+    let key_type = parts[0];
+    let key_blob = parts[1];
+
+    // Validate key type
+    let valid_types = [
+        "ssh-rsa",
+        "ssh-dss",
+        "ssh-ed25519",
+        "ecdsa-sha2-nistp256",
+        "ecdsa-sha2-nistp384",
+        "ecdsa-sha2-nistp521",
+        "sk-ssh-ed25519@openssh.com",
+        "sk-ecdsa-sha2-nistp256@openssh.com",
+    ];
+
+    if !valid_types.contains(&key_type) {
+        return Err(anyhow::anyhow!("Unsupported SSH key type: {}", key_type));
+    }
+
+    // Decode base64 blob and compute SHA256 hash
+    let binary_data = BASE64
+        .decode(key_blob)
+        .map_err(|_| anyhow::anyhow!("Invalid base64 in SSH public key"))?;
+
+    let mut hasher = Sha256::new();
+    hasher.update(&binary_data);
+    let hash = hasher.finalize();
+
+    // Convert to base64 without padding (matches ssh-keygen output)
+    let base64_hash = BASE64.encode(hash);
+    let base64_hash = base64_hash.trim_end_matches('=');
+
+    Ok(format!("SHA256:{}", base64_hash))
+}
+
+/// Find an SSH public key file in the default locations
+fn find_ssh_public_key() -> Option<PathBuf> {
+    let home = std::env::var("HOME").ok()?;
+    let ssh_dir = PathBuf::from(home).join(".ssh");
+
+    // Check common key types in order of preference
+    let key_files = ["id_ed25519.pub", "id_rsa.pub", "id_ecdsa.pub"];
+
+    for key_file in key_files {
+        let path = ssh_dir.join(key_file);
+        if path.exists() {
+            return Some(path);
+        }
+    }
+
+    None
+}
+
+/// Get the hostname for default key name
+fn get_hostname() -> String {
+    std::env::var("HOSTNAME")
+        .or_else(|_| std::env::var("HOST"))
+        .or_else(|_| {
+            std::process::Command::new("hostname")
+                .output()
+                .ok()
+                .and_then(|output| {
+                    if output.status.success() {
+                        String::from_utf8(output.stdout)
+                            .ok()
+                            .map(|s| s.trim().to_string())
+                    } else {
+                        None
+                    }
+                })
+                .ok_or(std::env::VarError::NotPresent)
+        })
+        .unwrap_or_else(|_| "my-laptop".to_string())
+}
+
+/// Format a timestamp as a human-readable relative time
+fn format_relative_time(timestamp_ms: i64) -> String {
+    let now = chrono::Utc::now().timestamp_millis();
+    let diff_secs = (now - timestamp_ms) / 1000;
+
+    if diff_secs < 60 {
+        "just now".to_string()
+    } else if diff_secs < 3600 {
+        let mins = diff_secs / 60;
+        format!("{} minute{} ago", mins, if mins == 1 { "" } else { "s" })
+    } else if diff_secs < 86400 {
+        let hours = diff_secs / 3600;
+        format!("{} hour{} ago", hours, if hours == 1 { "" } else { "s" })
+    } else {
+        let days = diff_secs / 86400;
+        format!("{} day{} ago", days, if days == 1 { "" } else { "s" })
+    }
+}
+
+/// Handle `cmux ssh-keys list` - list registered SSH keys
+async fn handle_ssh_keys_list() -> anyhow::Result<()> {
+    let access_token = get_access_token().await?;
+    let api_url = get_stack_api_url();
+
+    let client = Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()?;
+
+    let url = format!("{}/api/user/ssh-keys", api_url);
+    let response = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", access_token))
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        return Err(anyhow::anyhow!("Failed to list SSH keys: {} - {}", status, text));
+    }
+
+    let keys: Vec<SshKeyInfo> = response.json().await?;
+
+    if keys.is_empty() {
+        println!("No SSH keys registered.");
+        println!("\nAdd a key with: cmux ssh-keys add");
+        return Ok(());
+    }
+
+    // Print header
+    println!(
+        "{:<20} {:<45} {:<10} {}",
+        "NAME", "FINGERPRINT", "SOURCE", "CREATED"
+    );
+    println!("{}", "-".repeat(90));
+
+    // Print keys
+    for key in keys {
+        // Truncate fingerprint for display
+        let fingerprint_display = if key.fingerprint.len() > 43 {
+            format!("{}...", &key.fingerprint[..40])
+        } else {
+            key.fingerprint.clone()
+        };
+
+        println!(
+            "{:<20} {:<45} {:<10} {}",
+            truncate_string(&key.name, 18),
+            fingerprint_display,
+            key.source,
+            format_relative_time(key.created_at)
+        );
+    }
+
+    Ok(())
+}
+
+/// Truncate a string to fit in a column
+fn truncate_string(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..max_len.saturating_sub(3)])
+    }
+}
+
+/// Handle `cmux ssh-keys add` - add an SSH key
+async fn handle_ssh_keys_add(args: SshKeysAddArgs) -> anyhow::Result<()> {
+    // Handle --from-github flag
+    if args.from_github {
+        return handle_ssh_keys_import_github().await;
+    }
+
+    // Get the public key file path
+    let key_path = match args.path {
+        Some(path) => {
+            if !path.exists() {
+                return Err(anyhow::anyhow!("SSH public key file not found: {}", path.display()));
+            }
+            path
+        }
+        None => {
+            find_ssh_public_key().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No SSH public key found.\n\
+                     \n\
+                     Looked in ~/.ssh/ for: id_ed25519.pub, id_rsa.pub, id_ecdsa.pub\n\
+                     \n\
+                     Generate a new key with: ssh-keygen -t ed25519\n\
+                     Or specify a path: cmux ssh-keys add /path/to/key.pub"
+                )
+            })?
+        }
+    };
+
+    eprintln!("Found SSH public key at {}", key_path.display());
+
+    // Read the public key
+    let public_key = std::fs::read_to_string(&key_path)
+        .map_err(|e| anyhow::anyhow!("Failed to read SSH key: {}", e))?;
+    let public_key = public_key.trim();
+
+    // Compute fingerprint
+    let fingerprint = compute_ssh_fingerprint(public_key)?;
+    eprintln!("Fingerprint: {}", fingerprint);
+
+    // Get key name
+    let key_name = if let Some(name) = args.name {
+        name
+    } else {
+        let default_name = get_hostname();
+        eprintln!();
+
+        // Use dialoguer for interactive prompt
+        use dialoguer::Input;
+        let name: String = Input::new()
+            .with_prompt("Key name")
+            .default(default_name)
+            .interact_text()?;
+        name
+    };
+
+    // Get access token and make API request
+    let access_token = get_access_token().await?;
+    let api_url = get_stack_api_url();
+
+    let client = Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()?;
+
+    let url = format!("{}/api/user/ssh-keys", api_url);
+    let body = serde_json::json!({
+        "publicKey": public_key,
+        "name": key_name
+    });
+
+    let response = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", access_token))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let text = response.text().await.unwrap_or_default();
+        if status.as_u16() == 409 {
+            return Err(anyhow::anyhow!("SSH key with this fingerprint already exists"));
+        }
+        return Err(anyhow::anyhow!("Failed to add SSH key: {} - {}", status, text));
+    }
+
+    let result: CreateSshKeyResponse = response.json().await?;
+
+    eprintln!("\n\x1b[32m✓ SSH key registered successfully\x1b[0m");
+    eprintln!("  ID: {}", result.id);
+    eprintln!("  Fingerprint: {}", result.fingerprint);
+
+    Ok(())
+}
+
+/// Handle `cmux ssh-keys add --from-github` - import keys from GitHub
+async fn handle_ssh_keys_import_github() -> anyhow::Result<()> {
+    eprintln!("Importing SSH keys from connected GitHub account...");
+
+    let access_token = get_access_token().await?;
+    let api_url = get_stack_api_url();
+
+    let client = Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()?;
+
+    let url = format!("{}/api/user/ssh-keys/import-github", api_url);
+    let response = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", access_token))
+        .send()
+        .await?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let text = response.text().await.unwrap_or_default();
+        if status.as_u16() == 400 && text.contains("not connected") {
+            return Err(anyhow::anyhow!(
+                "GitHub account not connected.\n\
+                 \n\
+                 Please connect your GitHub account at https://cmux.sh/settings"
+            ));
+        }
+        return Err(anyhow::anyhow!("Failed to import GitHub keys: {} - {}", status, text));
+    }
+
+    let result: ImportGithubKeysResponse = response.json().await?;
+
+    if result.imported == 0 {
+        eprintln!("\x1b[33mNo new keys to import.\x1b[0m");
+        eprintln!("Either you have no SSH keys on GitHub or they're already registered.");
+    } else {
+        eprintln!("\n\x1b[32m✓ Imported {} SSH key{} from GitHub\x1b[0m",
+            result.imported,
+            if result.imported == 1 { "" } else { "s" }
+        );
+        for key in &result.keys {
+            eprintln!("  • {}", key.fingerprint);
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle `cmux ssh-keys remove` - remove an SSH key
+async fn handle_ssh_keys_remove(fingerprint_or_id: &str) -> anyhow::Result<()> {
+    let access_token = get_access_token().await?;
+    let api_url = get_stack_api_url();
+
+    let client = Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()?;
+
+    // First, list keys to find the one to delete
+    let list_url = format!("{}/api/user/ssh-keys", api_url);
+    let list_response = client
+        .get(&list_url)
+        .header("Authorization", format!("Bearer {}", access_token))
+        .send()
+        .await?;
+
+    if !list_response.status().is_success() {
+        let status = list_response.status();
+        let text = list_response.text().await.unwrap_or_default();
+        return Err(anyhow::anyhow!("Failed to list SSH keys: {} - {}", status, text));
+    }
+
+    let keys: Vec<SshKeyInfo> = list_response.json().await?;
+
+    // Find the key by fingerprint or ID
+    let key_to_delete = keys.iter().find(|k| {
+        k.id == fingerprint_or_id ||
+        k.fingerprint == fingerprint_or_id ||
+        k.fingerprint.ends_with(fingerprint_or_id)
+    });
+
+    let key = match key_to_delete {
+        Some(k) => k,
+        None => {
+            return Err(anyhow::anyhow!(
+                "SSH key not found: {}\n\
+                 \n\
+                 Use 'cmux ssh-keys list' to see registered keys.",
+                fingerprint_or_id
+            ));
+        }
+    };
+
+    // Delete the key
+    let delete_url = format!("{}/api/user/ssh-keys/{}", api_url, key.id);
+    let delete_response = client
+        .delete(&delete_url)
+        .header("Authorization", format!("Bearer {}", access_token))
+        .send()
+        .await?;
+
+    if !delete_response.status().is_success() {
+        let status = delete_response.status();
+        let text = delete_response.text().await.unwrap_or_default();
+        return Err(anyhow::anyhow!("Failed to delete SSH key: {} - {}", status, text));
+    }
+
+    eprintln!("\x1b[32m✓ SSH key removed: {}\x1b[0m", key.name);
+    eprintln!("  Fingerprint: {}", key.fingerprint);
 
     Ok(())
 }
