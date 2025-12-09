@@ -558,6 +558,12 @@ function DashboardComponent() {
         )
       );
 
+      // Save the prompt for up-arrow recall before clearing
+      const promptText = content?.text?.trim() || taskDescription.trim();
+      if (promptText) {
+        localStorage.setItem("cmux-previous-prompt", promptText);
+      }
+
       // Clear input after successful task creation
       setTaskDescription("");
       // Force editor to clear

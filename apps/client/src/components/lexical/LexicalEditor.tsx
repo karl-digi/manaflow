@@ -21,6 +21,7 @@ import clsx from "clsx";
 import type { Id } from "@cmux/convex/dataModel";
 import {
   $createParagraphNode,
+  $createTextNode,
   $getRoot,
   $getSelection,
   $isRangeSelection,
@@ -30,6 +31,9 @@ import {
   KEY_ENTER_COMMAND,
   type SerializedEditorState,
 } from "lexical";
+
+// Storage key for the previous prompt
+const PREVIOUS_PROMPT_KEY = "cmux-previous-prompt";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { EditorStatePlugin } from "./EditorStatePlugin";
 import { ImageNode } from "./ImageNode";
@@ -136,6 +140,53 @@ function KeyboardCommandPlugin({ onSubmit }: { onSubmit?: () => void }) {
       COMMAND_PRIORITY_HIGH
     );
 
+    // Handle ArrowUp to restore previous prompt when editor is empty
+    const unregisterArrowUp = editor.registerCommand(
+      KEY_DOWN_COMMAND,
+      (event: KeyboardEvent) => {
+        if (event.key !== "ArrowUp") {
+          return false;
+        }
+
+        // Check if editor is empty
+        let isEmpty = false;
+        editor.getEditorState().read(() => {
+          const root = $getRoot();
+          const children = root.getChildren();
+          isEmpty =
+            children.length === 0 ||
+            (children.length === 1 && children[0].getTextContent().trim() === "");
+        });
+
+        if (!isEmpty) {
+          return false;
+        }
+
+        // Check for previous prompt
+        const previousPrompt = localStorage.getItem(PREVIOUS_PROMPT_KEY);
+        if (!previousPrompt) {
+          return false;
+        }
+
+        event.preventDefault();
+
+        // Restore the previous prompt
+        editor.update(() => {
+          const root = $getRoot();
+          root.clear();
+          const paragraph = $createParagraphNode();
+          const textNode = $createTextNode(previousPrompt);
+          paragraph.append(textNode);
+          root.append(paragraph);
+          // Move cursor to end
+          paragraph.selectEnd();
+        });
+
+        return true;
+      },
+      COMMAND_PRIORITY_HIGH
+    );
+
     // Map Ctrl+J to a soft line break (newline)
     const unregisterCtrlJ = editor.registerCommand(
       KEY_DOWN_COMMAND,
@@ -202,6 +253,7 @@ function KeyboardCommandPlugin({ onSubmit }: { onSubmit?: () => void }) {
 
     return () => {
       unregisterEnter();
+      unregisterArrowUp();
       unregisterCtrlJ();
       unregisterPlainPaste();
     };
