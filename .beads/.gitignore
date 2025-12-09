@@ -9,6 +9,7 @@ daemon.lock
 daemon.log
 daemon.pid
 bd.sock
+bd.sock.*
 
 # Merge artifacts
 beads.base.jsonl
