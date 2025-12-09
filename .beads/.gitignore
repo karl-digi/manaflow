@@ -20,3 +20,5 @@ beads.left.meta.json
 !issues.jsonl
 !metadata.json
 !config.json
+
+.beads/bd.sock.startlock
