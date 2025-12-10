@@ -63,6 +63,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { LucideIcon } from "lucide-react";
 import { useOAuthPopup } from "@/hooks/use-oauth-popup";
+import { PreviewItemButton } from "./preview-item-button";
+import { BlinkingCursor } from "./blinking-cursor";
 
 type ProviderConnection = {
   id: string;
@@ -155,17 +157,9 @@ function CmuxMarkIcon({
       aria-hidden
     >
       <defs>
-        <linearGradient
-          id={gradId}
-          x1="64"
-          y1="64"
-          x2="38964"
-          y2="64"
-          gradientUnits="userSpaceOnUse"
-        >
-          <stop stopColor="#00D4FF" />
-          <stop offset="0.0120866" stopColor="#7C3AED" />
-          <stop offset="0.024529" stopColor="#7C3AED" />
+        <linearGradient id={gradId} x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stopColor="#00D4FF" />
+          <stop offset="100%" stopColor="#7C3AED" />
         </linearGradient>
         <filter
           id={glowId}
@@ -1766,46 +1760,15 @@ function MockGitHubPRBrowser() {
                   <div className="pt-px space-y-px">
                     {/* Preview task 1 - PR #1168 */}
                     <div className="space-y-px">
-                      <button
+                      <PreviewItemButton
+                        title="Preview screenshots for PR #1168"
+                        subtitle="main • manaflow-ai/cmux"
+                        isExpanded={expandedTasks.has("task-1")}
+                        isSelected={selectedTaskId === "task-1"}
+                        isPRMerged={isPRMerged}
+                        onToggleExpand={() => toggleTaskExpanded("task-1")}
                         onClick={() => selectTask("task-1")}
-                        className={clsx(
-                          "w-full flex items-center gap-2 px-2 py-1.5 text-[13px] text-neutral-100 hover:bg-neutral-800/45 cursor-pointer",
-                          selectedTaskId === "task-1" && "bg-neutral-800/30"
-                        )}
-                      >
-                        <span
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleTaskExpanded("task-1");
-                          }}
-                          className="shrink-0"
-                        >
-                          {expandedTasks.has("task-1") ? (
-                            <ChevronDown className="w-3 h-3 text-neutral-500" />
-                          ) : (
-                            <ChevronRight className="w-3 h-3 text-neutral-500" />
-                          )}
-                        </span>
-                        {isPRMerged ? (
-                          <svg
-                            className="w-3 h-3 text-[#8957e5] shrink-0"
-                            viewBox="0 0 16 16"
-                            fill="currentColor"
-                          >
-                            <path d="M5.45 5.154A4.25 4.25 0 0 0 9.25 7.5h1.378a2.251 2.251 0 1 1 0 1.5H9.25A5.734 5.734 0 0 1 5 7.123v3.505a2.25 2.25 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.95-.218ZM4.25 13.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Zm8.5-4.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5ZM5 3.25a.75.75 0 1 0 0 .005V3.25Z" />
-                          </svg>
-                        ) : (
-                          <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0" />
-                        )}
-                        <div className="flex flex-col min-w-0 text-left">
-                          <span className="truncate">
-                            Preview screenshots for PR #1168
-                          </span>
-                          <span className="text-[11px] text-neutral-500 truncate">
-                            main &bull; manaflow-ai/cmux
-                          </span>
-                        </div>
-                      </button>
+                      />
 
                       {expandedTasks.has("task-1") && (
                         <div>
@@ -1818,20 +1781,20 @@ function MockGitHubPRBrowser() {
                                 : "text-neutral-300"
                             )}
                           >
+                            <span className="truncate flex-1">
+                              screenshot-collector
+                            </span>
                             {isPRMerged ? (
                               <svg
-                                className="w-3 h-3 text-[#8957e5] shrink-0"
+                                className="w-3 h-3 text-[#8957e5] shrink-0 ml-auto"
                                 viewBox="0 0 16 16"
                                 fill="currentColor"
                               >
                                 <path d="M5.45 5.154A4.25 4.25 0 0 0 9.25 7.5h1.378a2.251 2.251 0 1 1 0 1.5H9.25A5.734 5.734 0 0 1 5 7.123v3.505a2.25 2.25 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.95-.218ZM4.25 13.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Zm8.5-4.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5ZM5 3.25a.75.75 0 1 0 0 .005V3.25Z" />
                               </svg>
                             ) : (
-                              <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0" />
+                              <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0 ml-auto" />
                             )}
-                            <span className="truncate">
-                              screenshot-collector
-                            </span>
                           </button>
                           <button
                             onClick={() => {
@@ -1903,36 +1866,14 @@ function MockGitHubPRBrowser() {
 
                     {/* Preview task 2 - PR #1142 */}
                     <div className="space-y-px">
-                      <button
+                      <PreviewItemButton
+                        title="Preview screenshots for PR #1142"
+                        subtitle="feat/dark-mode • manaflow-ai/cmux"
+                        isExpanded={expandedTasks.has("task-2")}
+                        isSelected={selectedTaskId === "task-2"}
+                        onToggleExpand={() => toggleTaskExpanded("task-2")}
                         onClick={() => selectTask("task-2")}
-                        className={clsx(
-                          "w-full flex items-center gap-2 px-2 py-1.5 text-[13px] text-neutral-100 hover:bg-neutral-800/45 cursor-pointer",
-                          selectedTaskId === "task-2" && "bg-neutral-800/30"
-                        )}
-                      >
-                        <span
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleTaskExpanded("task-2");
-                          }}
-                          className="shrink-0"
-                        >
-                          {expandedTasks.has("task-2") ? (
-                            <ChevronDown className="w-3 h-3 text-neutral-500" />
-                          ) : (
-                            <ChevronRight className="w-3 h-3 text-neutral-500" />
-                          )}
-                        </span>
-                        <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0" />
-                        <div className="flex flex-col min-w-0 text-left">
-                          <span className="truncate">
-                            Preview screenshots for PR #1142
-                          </span>
-                          <span className="text-[11px] text-neutral-500 truncate">
-                            feat/dark-mode &bull; manaflow-ai/cmux
-                          </span>
-                        </div>
-                      </button>
+                      />
 
                       {expandedTasks.has("task-2") && (
                         <div>
@@ -1945,10 +1886,10 @@ function MockGitHubPRBrowser() {
                                 : "text-neutral-300"
                             )}
                           >
-                            <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0" />
-                            <span className="truncate">
+                            <span className="truncate flex-1">
                               screenshot-collector
                             </span>
+                            <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0 ml-auto" />
                           </button>
                           <button
                             onClick={() => {
@@ -2020,36 +1961,14 @@ function MockGitHubPRBrowser() {
 
                     {/* Preview task 3 - PR #1098 */}
                     <div className="space-y-px">
-                      <button
+                      <PreviewItemButton
+                        title="Preview screenshots for PR #1098"
+                        subtitle="fix/auth-redirect • manaflow-ai/cmux"
+                        isExpanded={expandedTasks.has("task-3")}
+                        isSelected={selectedTaskId === "task-3"}
+                        onToggleExpand={() => toggleTaskExpanded("task-3")}
                         onClick={() => selectTask("task-3")}
-                        className={clsx(
-                          "w-full flex items-center gap-2 px-2 py-1.5 text-[13px] text-neutral-100 hover:bg-neutral-800/45 cursor-pointer",
-                          selectedTaskId === "task-3" && "bg-neutral-800/30"
-                        )}
-                      >
-                        <span
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleTaskExpanded("task-3");
-                          }}
-                          className="shrink-0"
-                        >
-                          {expandedTasks.has("task-3") ? (
-                            <ChevronDown className="w-3 h-3 text-neutral-500" />
-                          ) : (
-                            <ChevronRight className="w-3 h-3 text-neutral-500" />
-                          )}
-                        </span>
-                        <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0" />
-                        <div className="flex flex-col min-w-0 text-left">
-                          <span className="truncate">
-                            Preview screenshots for PR #1098
-                          </span>
-                          <span className="text-[11px] text-neutral-500 truncate">
-                            fix/auth-redirect &bull; manaflow-ai/cmux
-                          </span>
-                        </div>
-                      </button>
+                      />
 
                       {expandedTasks.has("task-3") && (
                         <div>
@@ -2062,10 +1981,10 @@ function MockGitHubPRBrowser() {
                                 : "text-neutral-300"
                             )}
                           >
-                            <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0" />
-                            <span className="truncate">
+                            <span className="truncate flex-1">
                               screenshot-collector
                             </span>
+                            <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0 ml-auto" />
                           </button>
                           <button
                             onClick={() => {
@@ -2546,21 +2465,6 @@ function MockGitHubPRBrowser() {
                                   <div className="rounded-xl border border-white/10 bg-white/5 p-2">
                                     {/* Mini browser with YouTube video */}
                                     <div className="rounded-lg overflow-hidden border border-neutral-700 mb-2">
-                                      {/* Mini browser tab bar */}
-                                      <div className="flex items-center bg-[#35363a] h-[16px] px-1">
-                                        <div className="flex items-center gap-0.5 bg-[#202124] rounded-t px-1 py-0.5">
-                                          <div className="w-1.5 h-1.5 rounded-full bg-red-500" />
-                                          <span className="text-[6px] text-[#e8eaed] truncate">
-                                            YouTube
-                                          </span>
-                                        </div>
-                                      </div>
-                                      {/* Mini browser toolbar */}
-                                      <div className="flex items-center px-1 py-0.5 bg-[#202124]">
-                                        <div className="flex-1 px-1 py-0.5 bg-[#35363a] rounded text-[5px] text-[#9aa0a6] truncate">
-                                          youtube.com/watch?v=YtQTKSM_wsA
-                                        </div>
-                                      </div>
                                       {/* Video content */}
                                       <a
                                         href="https://www.youtube.com/watch?v=YtQTKSM_wsA"
@@ -3234,21 +3138,6 @@ function MockGitHubPRBrowser() {
                               <div className="rounded-xl border border-white/10 bg-white/5 p-3">
                                 {/* Mini browser with YouTube video */}
                                 <div className="rounded-lg overflow-hidden border border-neutral-700 mb-3">
-                                  {/* Mini browser tab bar */}
-                                  <div className="flex items-center bg-[#35363a] h-[20px] px-1.5">
-                                    <div className="flex items-center gap-1 bg-[#202124] rounded-t px-2 py-0.5">
-                                      <div className="w-2 h-2 rounded-full bg-red-500" />
-                                      <span className="text-[8px] text-[#e8eaed] truncate">
-                                        YouTube
-                                      </span>
-                                    </div>
-                                  </div>
-                                  {/* Mini browser toolbar */}
-                                  <div className="flex items-center px-1.5 py-1 bg-[#202124]">
-                                    <div className="flex-1 px-2 py-0.5 bg-[#35363a] rounded text-[8px] text-[#9aa0a6] truncate">
-                                      youtube.com/watch?v=YtQTKSM_wsA
-                                    </div>
-                                  </div>
                                   {/* Video content */}
                                   <a
                                     href="https://www.youtube.com/watch?v=YtQTKSM_wsA"
@@ -3614,7 +3503,7 @@ function MockGitHubPRBrowser() {
                           <div className="mt-2" />
                           <div className="flex items-center text-[#c9d1d9]">
                             <span className="text-[#f0883e]">&gt;</span>
-                            <span className="ml-1 animate-pulse">█</span>
+                            <BlinkingCursor />
                           </div>
                         </>
                       )}
@@ -3648,10 +3537,11 @@ function MockGitHubPRBrowser() {
                             === Maintenance Script Completed at 09:41 ===
                           </div>
                           <div className="mt-2" />
-                          <div className="text-[#c9d1d9]">root 0:b;270;0t</div>
                           <div className="flex items-center text-[#c9d1d9]">
-                            <span className="text-[#8b949e]">$</span>
-                            <span className="ml-1 animate-pulse">█</span>
+                            <span className="text-[#8b949e]">
+                              root@localhost:~#
+                            </span>
+                            <BlinkingCursor />
                           </div>
                         </>
                       )}
