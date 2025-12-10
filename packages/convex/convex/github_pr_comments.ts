@@ -527,9 +527,6 @@ export const postInitialPreviewComment = internalAction({
         githubCommentId: data.id,
       });
 
-      // Collapse older preview comments now that we've posted a new one.
-      // This is the only place we collapse - NOT in updatePreviewComment - to avoid
-      // race conditions when multiple preview runs complete concurrently.
       await collapseOlderPreviewComments({
         octokit,
         owner: repo.owner,
@@ -762,11 +759,6 @@ export const updatePreviewComment = internalAction({
         screenshotSetId,
       });
 
-      // NOTE: We intentionally do NOT collapse older comments here.
-      // Collapsing is done only when posting the initial comment (postInitialPreviewComment).
-      // Running collapse on update causes race conditions when multiple preview runs complete
-      // concurrently - each update would try to collapse comments, potentially collapsing
-      // comments that are still being updated by other concurrent runs.
 
       return { ok: true };
     } catch (error) {
