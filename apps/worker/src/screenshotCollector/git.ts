@@ -151,13 +151,28 @@ async function tryFetchBranch(
   }
 }
 
-async function tryDeepen(workspaceDir: string): Promise<boolean> {
+async function tryDeepen(
+  workspaceDir: string,
+  depth: number
+): Promise<boolean> {
   try {
-    await runCommandCapture("git", ["fetch", "--deepen=100"], {
+    await runCommandCapture("git", ["fetch", `--deepen=${depth}`], {
       cwd: workspaceDir,
     });
     return true;
   } catch {
+    return false;
+  }
+}
+
+async function tryUnshallow(workspaceDir: string): Promise<boolean> {
+  try {
+    await runCommandCapture("git", ["fetch", "--unshallow"], {
+      cwd: workspaceDir,
+    });
+    return true;
+  } catch {
+    // May fail if already unshallowed or other issues
     return false;
   }
 }
@@ -257,9 +272,20 @@ export async function resolveMergeBase(
     mergeBase = await tryMergeBase();
   }
 
-  // If still no merge base, try deepening the shallow clone
+  // If still no merge base, try progressively deepening the shallow clone
+  // This handles very old PRs where the common ancestor is far back in history
+  const deepenAmounts = [100, 500, 2000];
+  for (const depth of deepenAmounts) {
+    if (mergeBase) {
+      break;
+    }
+    await tryDeepen(workspaceDir, depth);
+    mergeBase = await tryMergeBase();
+  }
+
+  // Last resort: fully unshallow the repository
   if (!mergeBase) {
-    await tryDeepen(workspaceDir);
+    await tryUnshallow(workspaceDir);
     mergeBase = await tryMergeBase();
   }
 

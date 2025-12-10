@@ -14,6 +14,10 @@ export function proxy(request: NextRequest) {
     return NextResponse.rewrite(new URL("/preview", request.url));
   }
 
+  if (hostname === "manaflow.com" && pathname === "/") {
+    return NextResponse.rewrite(new URL("/manaflow", request.url));
+  }
+
   // Check if this is a PR review page that requires authentication
   const isPRReviewPage =
     /^\/[^/]+\/[^/]+\/pull\/\d+$/.test(pathname) ||

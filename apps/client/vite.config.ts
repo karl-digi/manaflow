@@ -29,7 +29,10 @@ const SentryVitePlugin = process.env.SENTRY_AUTH_TOKEN
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
-    tsconfigPaths(),
+    tsconfigPaths({
+      // Only scan from apps/client to avoid dev-docs submodules with unresolved tsconfig extends
+      root: import.meta.dirname,
+    }),
     tanstackRouter({
       target: "react",
       autoCodeSplitting: true,

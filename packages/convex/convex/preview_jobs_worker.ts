@@ -785,6 +785,40 @@ export async function runPreviewJob(
     status: "running",
   });
 
+  // Post initial GitHub comment early with diff heatmap link
+  // This gives users immediate feedback while screenshots are being captured
+  if (run.repoInstallationId) {
+    try {
+      const initialCommentResult = await ctx.runAction(
+        internal.github_pr_comments.postInitialPreviewComment,
+        {
+          installationId: run.repoInstallationId,
+          repoFullName: run.repoFullName,
+          prNumber: run.prNumber,
+          previewRunId,
+        },
+      );
+
+      if (initialCommentResult.ok) {
+        console.log("[preview-jobs] Posted initial GitHub comment", {
+          previewRunId,
+          commentId: initialCommentResult.commentId,
+        });
+      } else {
+        console.warn("[preview-jobs] Failed to post initial GitHub comment", {
+          previewRunId,
+          error: initialCommentResult.error,
+        });
+      }
+    } catch (error) {
+      // Log but don't fail the preview job if initial comment fails
+      console.warn("[preview-jobs] Error posting initial GitHub comment", {
+        previewRunId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   try {
     // Generate JWT for screenshot upload authentication if we have a taskRunId
     const previewJwt = taskRunId
@@ -1323,6 +1357,9 @@ export async function runPreviewJob(
       const screenshotPayload: WorkerRunTaskScreenshots = {
         token: previewJwt,
         convexUrl,
+        // Pass environment scripts so Claude knows how to install deps and run dev server
+        installCommand: environment.maintenanceScript ?? undefined,
+        devCommand: environment.devScript ?? undefined,
       };
 
       try {
