@@ -527,6 +527,17 @@ export const postInitialPreviewComment = internalAction({
         githubCommentId: data.id,
       });
 
+      // Collapse older preview comments when posting a new initial comment.
+      // This is the correct place to do this - when a NEW comment is created,
+      // not when updating an existing comment (which would cause race conditions).
+      await collapseOlderPreviewComments({
+        octokit,
+        owner: repo.owner,
+        repo: repo.repo,
+        prNumber,
+        latestCommentId: data.id,
+      });
+
       return { ok: true, commentId: data.id, commentUrl: data.html_url };
     } catch (error) {
       console.error(
@@ -751,14 +762,10 @@ export const updatePreviewComment = internalAction({
         screenshotSetId,
       });
 
-      // Collapse older preview comments
-      await collapseOlderPreviewComments({
-        octokit,
-        owner: repo.owner,
-        repo: repo.repo,
-        prNumber,
-        latestCommentId: commentId,
-      });
+      // NOTE: We intentionally do NOT collapse older comments here.
+      // Collapsing should only happen when posting the initial comment (in postInitialPreviewComment),
+      // not when updating an existing comment. This prevents race conditions where multiple
+      // concurrent preview runs could cause all comments to be marked as older.
 
       return { ok: true };
     } catch (error) {
