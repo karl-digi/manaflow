@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2025-12-05T00:13:30Z",
+  "updatedAt": "2025-12-10T05:09:05Z",
   "presets": [
     {
       "presetId": "4vcpu_16gb_48gb",
@@ -98,6 +98,36 @@
           "version": 18,
           "snapshotId": "snapshot_st54kpzd",
           "capturedAt": "2025-12-05T00:13:32Z"
+        },
+        {
+          "version": 19,
+          "snapshotId": "snapshot_11n06bp8",
+          "capturedAt": "2025-12-09T07:14:58Z"
+        },
+        {
+          "version": 20,
+          "snapshotId": "snapshot_xsue4hev",
+          "capturedAt": "2025-12-09T07:26:37Z"
+        },
+        {
+          "version": 21,
+          "snapshotId": "snapshot_m6kqy7mx",
+          "capturedAt": "2025-12-09T22:46:52Z"
+        },
+        {
+          "version": 22,
+          "snapshotId": "snapshot_d214mmqt",
+          "capturedAt": "2025-12-09T23:52:34Z"
+        },
+        {
+          "version": 23,
+          "snapshotId": "snapshot_vkfzdrxw",
+          "capturedAt": "2025-12-10T01:26:47Z"
+        },
+        {
+          "version": 24,
+          "snapshotId": "snapshot_eezx6d0u",
+          "capturedAt": "2025-12-10T05:09:22Z"
         }
       ],
       "description": "Great default for day-to-day work. Balanced CPU, memory, and storage."
@@ -198,6 +228,36 @@
           "version": 18,
           "snapshotId": "snapshot_6isj88bc",
           "capturedAt": "2025-12-05T00:13:30Z"
+        },
+        {
+          "version": 19,
+          "snapshotId": "snapshot_jzej4jlj",
+          "capturedAt": "2025-12-09T07:14:39Z"
+        },
+        {
+          "version": 20,
+          "snapshotId": "snapshot_1jpawdk6",
+          "capturedAt": "2025-12-09T07:26:17Z"
+        },
+        {
+          "version": 21,
+          "snapshotId": "snapshot_ab7gxmih",
+          "capturedAt": "2025-12-09T22:45:58Z"
+        },
+        {
+          "version": 22,
+          "snapshotId": "snapshot_8ypfo3lq",
+          "capturedAt": "2025-12-09T23:52:34Z"
+        },
+        {
+          "version": 23,
+          "snapshotId": "snapshot_jqe2lrhp",
+          "capturedAt": "2025-12-10T01:26:21Z"
+        },
+        {
+          "version": 24,
+          "snapshotId": "snapshot_8mklccsm",
+          "capturedAt": "2025-12-10T05:09:05Z"
         }
       ],
       "description": "Extra headroom for larger codebases or heavier workloads."

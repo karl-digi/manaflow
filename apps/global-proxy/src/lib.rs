@@ -19,8 +19,9 @@ use hyper::{
     server::conn::AddrStream,
     service::{make_service_fn, service_fn},
 };
-use hyper_rustls::HttpsConnectorBuilder;
+use hyper_rustls::{ConfigBuilderExt, HttpsConnector};
 use lol_html::{HtmlRewriter, Settings, element, html_content::ContentType};
+use rustls::ClientConfig;
 use tokio::{
     io::{AsyncWriteExt, copy_bidirectional},
     sync::oneshot,
@@ -88,7 +89,10 @@ pub enum ProxyError {
 }
 
 struct AppState {
+    /// HTTP client for regular requests (supports HTTP/2 for performance)
     client: HttpClient,
+    /// HTTP client for WebSocket connections (HTTP/1.1 only, required for upgrade)
+    ws_client: HttpClient,
     backend_host: String,
     backend_scheme: Scheme,
     morph_domain_suffix: Option<String>,
@@ -100,15 +104,34 @@ pub async fn spawn_proxy(config: ProxyConfig) -> Result<ProxyHandle, ProxyError>
     listener.set_nonblocking(true)?;
     let local_addr = listener.local_addr()?;
 
-    let https = HttpsConnectorBuilder::new()
+    // HTTP/1.1-only client for regular requests (matches original behavior)
+    // Note: hyper has issues with HTTP/2 to morph backend, so we stick with HTTP/1.1
+    let mut http_connector = HttpConnector::new();
+    http_connector.enforce_http(false);
+    let mut tls_config = ClientConfig::builder()
+        .with_safe_defaults()
         .with_webpki_roots()
-        .https_or_http()
-        .enable_http1()
-        .build();
+        .with_no_client_auth();
+    tls_config.alpn_protocols = vec![b"http/1.1".to_vec()];
+    let https: HttpsConnector<HttpConnector> = (http_connector, tls_config).into();
     let client: HttpClient = Client::builder().build(https);
+
+    // HTTP/1.1-only client for WebSocket connections.
+    // WebSocket upgrade requires HTTP/1.1 - it doesn't work over HTTP/2 since
+    // the Connection/Upgrade headers are hop-by-hop and get stripped.
+    let mut ws_http_connector = HttpConnector::new();
+    ws_http_connector.enforce_http(false);
+    let mut ws_tls_config = ClientConfig::builder()
+        .with_safe_defaults()
+        .with_webpki_roots()
+        .with_no_client_auth();
+    ws_tls_config.alpn_protocols = vec![b"http/1.1".to_vec()];
+    let ws_https: HttpsConnector<HttpConnector> = (ws_http_connector, ws_tls_config).into();
+    let ws_client: HttpClient = Client::builder().build(ws_https);
 
     let state = Arc::new(AppState {
         client,
+        ws_client,
         backend_host: config.backend_host,
         backend_scheme: config.backend_scheme,
         morph_domain_suffix: config.morph_domain_suffix,
@@ -342,8 +365,36 @@ async fn forward_request(
     target: Target,
     behavior: ProxyBehavior,
 ) -> Response<Body> {
-    if is_upgrade_request(&req) {
-        return handle_websocket(state, req, target, behavior).await;
+    match check_upgrade_request(&req) {
+        UpgradeCheck::NativeUpgrade => {
+            // Ensure upgrade headers are present for hyper's upgrade mechanism to work.
+            // Use insert() to handle cases where Connection: keep-alive was set instead.
+            req.headers_mut()
+                .insert(CONNECTION, HeaderValue::from_static("Upgrade"));
+            req.headers_mut()
+                .insert(UPGRADE, HeaderValue::from_static("websocket"));
+            return handle_websocket(state, req, target, behavior).await;
+        }
+        UpgradeCheck::FallbackDetection => {
+            // WebSocket detected via Sec-WebSocket-Key, but Connection/Upgrade headers
+            // are missing. This typically happens when requests come through HTTP/2 load
+            // balancers that strip hop-by-hop headers. Unfortunately, hyper's upgrade
+            // mechanism requires these headers at parse time to create the OnUpgrade
+            // extension. Without it, we cannot complete the client-side upgrade.
+            warn!(
+                "WebSocket request detected via Sec-WebSocket-Key but missing Connection/Upgrade headers - upgrade not possible"
+            );
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .header("content-type", "text/plain")
+                .body(Body::from(
+                    "WebSocket upgrade failed: Connection and Upgrade headers are required. \
+                     This may occur when requests are proxied through HTTP/2 without proper \
+                     WebSocket support.",
+                ))
+                .unwrap();
+        }
+        UpgradeCheck::NotUpgrade => {}
     }
 
     let (scheme, host, port_opt) = match target {
@@ -585,8 +636,18 @@ async fn handle_websocket(
             .insert(name.clone(), value.clone());
     }
 
+    // Ensure WebSocket upgrade headers are correctly set for the backend connection.
+    // The client request is guaranteed to have these headers (we check for NativeUpgrade),
+    // but we use insert() to ensure they're set correctly (e.g., not Connection: keep-alive).
+    backend_request
+        .headers_mut()
+        .insert(CONNECTION, HeaderValue::from_static("Upgrade"));
+    backend_request
+        .headers_mut()
+        .insert(UPGRADE, HeaderValue::from_static("websocket"));
+
     let (backend_stream, backend_headers) =
-        match connect_upstream_websocket(state.client.clone(), backend_request).await {
+        match connect_upstream_websocket(state.ws_client.clone(), backend_request).await {
             Ok(result) => result,
             Err(response) => return response,
         };
@@ -680,10 +741,24 @@ fn scope_from_cmux_subdomain(subdomain: &str) -> Option<String> {
     }
 }
 
-fn is_upgrade_request(req: &Request<Body>) -> bool {
+/// Result of checking if a request is an upgrade request.
+enum UpgradeCheck {
+    /// Not an upgrade request.
+    NotUpgrade,
+    /// Upgrade request with proper Connection/Upgrade headers (hyper created OnUpgrade).
+    NativeUpgrade,
+    /// WebSocket detected via Sec-WebSocket-Key but missing Connection/Upgrade headers.
+    /// This happens when HTTP/2 load balancers strip hop-by-hop headers.
+    /// hyper won't have created the OnUpgrade extension, so upgrade will fail.
+    FallbackDetection,
+}
+
+fn check_upgrade_request(req: &Request<Body>) -> UpgradeCheck {
     if req.method() == Method::CONNECT {
-        return true;
+        return UpgradeCheck::NativeUpgrade;
     }
+
+    // HTTP/1.1 style upgrade: Connection: Upgrade + Upgrade: websocket
     let has_conn_upgrade = req
         .headers()
         .get(CONNECTION)
@@ -691,7 +766,20 @@ fn is_upgrade_request(req: &Request<Body>) -> bool {
         .map(|v| v.to_ascii_lowercase().contains("upgrade"))
         .unwrap_or(false);
     let has_upgrade_hdr = req.headers().get(UPGRADE).is_some();
-    has_conn_upgrade && has_upgrade_hdr
+    if has_conn_upgrade && has_upgrade_hdr {
+        return UpgradeCheck::NativeUpgrade;
+    }
+
+    // HTTP/2 fallback: When requests come through HTTP/2 load balancers (like Cloud Run),
+    // the hop-by-hop headers (Connection, Upgrade) are stripped. However, the WebSocket-specific
+    // headers (Sec-WebSocket-Key, Sec-WebSocket-Version) are preserved.
+    // NOTE: In this case, hyper won't have created the OnUpgrade extension at parse time,
+    // so we cannot complete the upgrade. We detect this to return a clear error.
+    if req.headers().get("sec-websocket-key").is_some() {
+        return UpgradeCheck::FallbackDetection;
+    }
+
+    UpgradeCheck::NotUpgrade
 }
 
 async fn connect_upstream_websocket(

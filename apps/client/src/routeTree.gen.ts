@@ -23,6 +23,7 @@ import { Route as LayoutTeamPickerRouteImport } from './routes/_layout.team-pick
 import { Route as LayoutProfileRouteImport } from './routes/_layout.profile'
 import { Route as LayoutDebugRouteImport } from './routes/_layout.debug'
 import { Route as LayoutTeamSlugOrIdRouteImport } from './routes/_layout.$teamSlugOrId'
+import { Route as TeamSlugOrIdFeedRouteImport } from './routes/$teamSlugOrId.feed'
 import { Route as LayoutTeamSlugOrIdWorkspacesRouteImport } from './routes/_layout.$teamSlugOrId.workspaces'
 import { Route as LayoutTeamSlugOrIdSettingsRouteImport } from './routes/_layout.$teamSlugOrId.settings'
 import { Route as LayoutTeamSlugOrIdPrsRouteImport } from './routes/_layout.$teamSlugOrId.prs'
@@ -116,6 +117,11 @@ const LayoutTeamSlugOrIdRoute = LayoutTeamSlugOrIdRouteImport.update({
   id: '/$teamSlugOrId',
   path: '/$teamSlugOrId',
   getParentRoute: () => LayoutRoute,
+} as any)
+const TeamSlugOrIdFeedRoute = TeamSlugOrIdFeedRouteImport.update({
+  id: '/$teamSlugOrId/feed',
+  path: '/$teamSlugOrId/feed',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const LayoutTeamSlugOrIdWorkspacesRoute =
   LayoutTeamSlugOrIdWorkspacesRouteImport.update({
@@ -268,6 +274,7 @@ export interface FileRoutesByFullPath {
   '/electron-web-contents': typeof ElectronWebContentsRoute
   '/monaco-single-buffer': typeof MonacoSingleBufferRoute
   '/sign-in': typeof SignInRoute
+  '/$teamSlugOrId/feed': typeof TeamSlugOrIdFeedRoute
   '/$teamSlugOrId': typeof LayoutTeamSlugOrIdRouteWithChildren
   '/debug': typeof LayoutDebugRoute
   '/profile': typeof LayoutProfileRoute
@@ -307,6 +314,7 @@ export interface FileRoutesByTo {
   '/electron-web-contents': typeof ElectronWebContentsRoute
   '/monaco-single-buffer': typeof MonacoSingleBufferRoute
   '/sign-in': typeof SignInRoute
+  '/$teamSlugOrId/feed': typeof TeamSlugOrIdFeedRoute
   '/$teamSlugOrId': typeof LayoutTeamSlugOrIdRouteWithChildren
   '/debug': typeof LayoutDebugRoute
   '/profile': typeof LayoutProfileRoute
@@ -346,6 +354,7 @@ export interface FileRoutesById {
   '/electron-web-contents': typeof ElectronWebContentsRoute
   '/monaco-single-buffer': typeof MonacoSingleBufferRoute
   '/sign-in': typeof SignInRoute
+  '/$teamSlugOrId/feed': typeof TeamSlugOrIdFeedRoute
   '/_layout/$teamSlugOrId': typeof LayoutTeamSlugOrIdRouteWithChildren
   '/_layout/debug': typeof LayoutDebugRoute
   '/_layout/profile': typeof LayoutProfileRoute
@@ -387,6 +396,7 @@ export interface FileRouteTypes {
     | '/electron-web-contents'
     | '/monaco-single-buffer'
     | '/sign-in'
+    | '/$teamSlugOrId/feed'
     | '/$teamSlugOrId'
     | '/debug'
     | '/profile'
@@ -426,6 +436,7 @@ export interface FileRouteTypes {
     | '/electron-web-contents'
     | '/monaco-single-buffer'
     | '/sign-in'
+    | '/$teamSlugOrId/feed'
     | '/$teamSlugOrId'
     | '/debug'
     | '/profile'
@@ -464,6 +475,7 @@ export interface FileRouteTypes {
     | '/electron-web-contents'
     | '/monaco-single-buffer'
     | '/sign-in'
+    | '/$teamSlugOrId/feed'
     | '/_layout/$teamSlugOrId'
     | '/_layout/debug'
     | '/_layout/profile'
@@ -505,6 +517,7 @@ export interface RootRouteChildren {
   ElectronWebContentsRoute: typeof ElectronWebContentsRoute
   MonacoSingleBufferRoute: typeof MonacoSingleBufferRoute
   SignInRoute: typeof SignInRoute
+  TeamSlugOrIdFeedRoute: typeof TeamSlugOrIdFeedRoute
   HandlerSplatRoute: typeof HandlerSplatRoute
 }
 
@@ -607,6 +620,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/$teamSlugOrId'
       preLoaderRoute: typeof LayoutTeamSlugOrIdRouteImport
       parentRoute: typeof LayoutRoute
+    }
+    '/$teamSlugOrId/feed': {
+      id: '/$teamSlugOrId/feed'
+      path: '/$teamSlugOrId/feed'
+      fullPath: '/$teamSlugOrId/feed'
+      preLoaderRoute: typeof TeamSlugOrIdFeedRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/_layout/$teamSlugOrId/workspaces': {
       id: '/_layout/$teamSlugOrId/workspaces'
@@ -915,6 +935,7 @@ const rootRouteChildren: RootRouteChildren = {
   ElectronWebContentsRoute: ElectronWebContentsRoute,
   MonacoSingleBufferRoute: MonacoSingleBufferRoute,
   SignInRoute: SignInRoute,
+  TeamSlugOrIdFeedRoute: TeamSlugOrIdFeedRoute,
   HandlerSplatRoute: HandlerSplatRoute,
 }
 export const routeTree = rootRouteImport

@@ -1379,6 +1379,7 @@ export function CommandBar({
           }
         }
       } else if (value === "sign-out") {
+        closeCommand();
         try {
           if (stackUser) {
             await stackUser.signOut({
@@ -1390,8 +1391,8 @@ export function CommandBar({
         } catch (error) {
           console.error("Sign out failed", error);
           toast.error("Unable to sign out");
-          return;
         }
+        return;
       } else if (value === "theme-light") {
         setTheme("light");
       } else if (value === "theme-dark") {

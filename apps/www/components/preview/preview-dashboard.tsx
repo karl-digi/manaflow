@@ -365,9 +365,6 @@ const MOCK_SCREENSHOTS: MockScreenshot[] = [
   },
 ];
 
-// Height for both tab contents (consistent across tabs)
-const MOCK_BROWSER_CONTENT_HEIGHT = 705; // Reduced by 15%
-
 function MockGitHubPRBrowser() {
   const [expandedImage, setExpandedImage] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"github" | "workspace">("github");
@@ -507,9 +504,9 @@ function MockGitHubPRBrowser() {
   }, []);
 
   return (
-    <div className="pt-12 w-screen relative left-1/2 -translate-x-1/2 px-4">
+    <div className="pt-12 pb-4 h-dvh w-screen relative left-1/2 -translate-x-1/2 px-4 flex flex-col">
       {/* Browser window frame - wider than container */}
-      <div className="rounded-xl border border-neutral-700 bg-[#202124] overflow-hidden shadow-2xl max-w-[1190px] mx-auto">
+      <div className="rounded-xl border border-neutral-700 bg-[#202124] overflow-hidden shadow-2xl max-w-[1190px] mx-auto flex-1 flex flex-col min-h-0">
         {/* Chrome-style tab bar */}
         <div className="flex items-end h-10 bg-[#202124] pt-2 px-2">
           {/* Traffic lights */}
@@ -602,7 +599,7 @@ function MockGitHubPRBrowser() {
 
         {/* Content area - conditionally render based on active tab */}
         {activeTab === "github" ? (
-          <div className="bg-[#0d1117] flex flex-col" style={{ height: MOCK_BROWSER_CONTENT_HEIGHT }}>
+          <div className="bg-[#0d1117] flex flex-col flex-1 min-h-0">
 
           {/* GitHub header */}
           <div className="bg-[#010409] border-b border-[#30363d] px-4 py-3 shrink-0">
@@ -1088,7 +1085,7 @@ function MockGitHubPRBrowser() {
           </div>
         </div>
         ) : (
-          <div ref={containerRef} className="bg-neutral-900 flex" style={{ height: MOCK_BROWSER_CONTENT_HEIGHT }}>
+          <div ref={containerRef} className="bg-neutral-900 flex flex-1 min-h-0">
             {/* Left Sidebar - cmux style */}
             <div className="w-[280px] bg-neutral-950 border-r border-neutral-800 flex flex-col shrink-0">
               {/* Header with logo */}

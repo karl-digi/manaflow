@@ -57,3 +57,5 @@ apps/www/scripts/pr-review/pr-review-inject.bundle.js
 apps/www/scripts/pr-review/evals/data/
 !apps/www/scripts/pr-review/evals/data/**/*.annotated.diff
 apps/www/scripts/pr-review/evals/results/
+
+.local_version
