@@ -393,6 +393,8 @@ def _build_preset_plans(args: argparse.Namespace) -> tuple[SnapshotPresetPlan, .
         memory_mib=args.standard_memory,
         disk_size_mib=args.standard_disk_size,
     )
+    if getattr(args, "standard_only", False):
+        return (standard_plan,)
     boosted_plan = SnapshotPresetPlan(
         preset_id=_preset_id_from_resources(
             args.boosted_vcpus, args.boosted_memory, args.boosted_disk_size
@@ -2716,6 +2718,11 @@ def parse_args() -> argparse.Namespace:
         choices=(IDE_PROVIDER_CODER, IDE_PROVIDER_OPENVSCODE),
         default=DEFAULT_IDE_PROVIDER,
         help=f"IDE provider to install (default: {DEFAULT_IDE_PROVIDER})",
+    )
+    parser.add_argument(
+        "--standard-only",
+        action="store_true",
+        help="Only build the standard preset (skip boosted)",
     )
     return parser.parse_args()
 
