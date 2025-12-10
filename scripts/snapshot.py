@@ -919,7 +919,10 @@ async def task_install_base_packages(ctx: TaskContext) -> None:
             gh \
             zsh \
             zsh-autosuggestions \
-            ripgrep
+            ripgrep \
+            adwaita-icon-theme \
+            gnome-themes-extra \
+            gtk2-engines-pixbuf
 
 
         # Download and install Chrome
@@ -1533,13 +1536,6 @@ async def task_configure_openbox(ctx: TaskContext) -> None:
         f"""
         set -eux
 
-        # Install GTK theme packages for proper native widget styling (select dropdowns, etc.)
-        DEBIAN_FRONTEND=noninteractive apt-get update
-        DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            adwaita-icon-theme \
-            gnome-themes-extra \
-            gtk2-engines-pixbuf
-
         # Install openbox menu configuration
         mkdir -p /root/.config/openbox
         install -Dm0644 {repo}/configs/openbox/menu.xml /root/.config/openbox/menu.xml
@@ -1561,8 +1557,6 @@ async def task_configure_openbox(ctx: TaskContext) -> None:
 GTK_THEME=Adwaita
 GTK2_RC_FILES=/etc/gtk-2.0/gtkrc
 EOF
-
-        rm -rf /var/lib/apt/lists/*
         """
     )
     await ctx.run("configure-openbox", cmd)
