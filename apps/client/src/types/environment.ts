@@ -24,6 +24,7 @@ export interface EnvironmentConfigDraft {
   maintenanceScript: string;
   devScript: string;
   exposedPorts: string;
+  screenshotAgentPromptContext: string;
 }
 
 export interface EnvironmentDraftMetadata {
@@ -38,4 +39,5 @@ export const createEmptyEnvironmentConfig = (): EnvironmentConfigDraft => ({
   maintenanceScript: "",
   devScript: "",
   exposedPorts: "",
+  screenshotAgentPromptContext: "",
 });

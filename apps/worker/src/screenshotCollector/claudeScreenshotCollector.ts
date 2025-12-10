@@ -94,6 +94,8 @@ type BranchBaseOptions = {
   installCommand?: string;
   /** Command to start the dev server (e.g., "bun run dev", "npm run dev") */
   devCommand?: string;
+  /** Additional context/notes to inject into the prompt (e.g., test credentials, navigation hints) */
+  screenshotAgentPromptContext?: string;
 };
 
 type BranchCaptureOptions =
@@ -143,6 +145,7 @@ export async function captureScreenshotsForBranch(
     auth,
     installCommand,
     devCommand,
+    screenshotAgentPromptContext,
   } = options;
   const outputDir = normalizeScreenshotOutputDir(requestedOutputDir);
   const useTaskRunJwt = isTaskRunJwtAuth(auth);
@@ -171,6 +174,16 @@ The user did not provide installation or dev commands. You will need to discover
     return "\n" + parts.join("\n");
   })();
 
+  const additionalContextSection = screenshotAgentPromptContext?.trim()
+    ? `
+
+<ADDITIONAL_CONTEXT>
+The user has provided the following additional notes/context for this screenshot capture:
+
+${screenshotAgentPromptContext.trim()}
+</ADDITIONAL_CONTEXT>`
+    : "";
+
   const prompt = `You are a screenshot collector for pull request reviews. Your job is to determine if a PR contains UI changes and, if so, capture screenshots of those changes.
 
 <PR_CONTEXT>
@@ -185,7 +198,7 @@ ${changedFiles.map((f) => `- ${f}`).join("\n")}
 Working directory: ${workspaceDir}
 Screenshot output directory: ${outputDir}
 ${devInstructions}
-</ENVIRONMENT>
+</ENVIRONMENT>${additionalContextSection}
 
 <PHASE_1_ANALYSIS>
 First, analyze the changed files to determine if this PR contains UI changes.
@@ -536,6 +549,8 @@ export async function claudeCodeCapturePRScreenshots(
               pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
               installCommand: options.installCommand,
               devCommand: options.devCommand,
+              screenshotAgentPromptContext:
+                options.screenshotAgentPromptContext,
             }
           : {
               workspaceDir,
@@ -548,6 +563,8 @@ export async function claudeCodeCapturePRScreenshots(
               pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
               installCommand: options.installCommand,
               devCommand: options.devCommand,
+              screenshotAgentPromptContext:
+                options.screenshotAgentPromptContext,
             }
       );
       allScreenshots.push(...beforeScreenshots.screenshots);
@@ -576,6 +593,7 @@ export async function claudeCodeCapturePRScreenshots(
             pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
             installCommand: options.installCommand,
             devCommand: options.devCommand,
+            screenshotAgentPromptContext: options.screenshotAgentPromptContext,
           }
         : {
             workspaceDir,
@@ -588,6 +606,7 @@ export async function claudeCodeCapturePRScreenshots(
             pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
             installCommand: options.installCommand,
             devCommand: options.devCommand,
+            screenshotAgentPromptContext: options.screenshotAgentPromptContext,
           }
     );
     allScreenshots.push(...afterScreenshots.screenshots);

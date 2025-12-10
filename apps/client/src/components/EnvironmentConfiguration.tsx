@@ -132,6 +132,10 @@ export function EnvironmentConfiguration({
   const [exposedPorts, setExposedPorts] = useState(
     () => persistedState?.exposedPorts ?? initialExposedPorts
   );
+  const [screenshotAgentPromptContext, setScreenshotAgentPromptContext] =
+    useState(
+      () => persistedState?.screenshotAgentPromptContext ?? ""
+    );
   const persistConfig = useCallback(
     (partial: Partial<EnvironmentConfigDraft>) => {
       onPersistStateChange?.(partial);
@@ -173,6 +177,13 @@ export function EnvironmentConfiguration({
     (value: string) => {
       setExposedPorts(value);
       persistConfig({ exposedPorts: value });
+    },
+    [persistConfig]
+  );
+  const updateScreenshotAgentPromptContext = useCallback(
+    (value: string) => {
+      setScreenshotAgentPromptContext(value);
+      persistConfig({ screenshotAgentPromptContext: value });
     },
     [persistConfig]
   );
@@ -555,6 +566,10 @@ export function EnvironmentConfiguration({
       );
     } else {
       // Create a new environment
+      const requestScreenshotAgentPromptContext =
+        screenshotAgentPromptContext.trim().length > 0
+          ? screenshotAgentPromptContext.trim()
+          : undefined;
       createEnvironmentMutation.mutate(
         {
           body: {
@@ -567,6 +582,7 @@ export function EnvironmentConfiguration({
             devScript: requestDevScript,
             exposedPorts: ports.length > 0 ? ports : undefined,
             description: undefined,
+            screenshotAgentPromptContext: requestScreenshotAgentPromptContext,
           },
         },
         {
@@ -1258,18 +1274,43 @@ export function EnvironmentConfiguration({
             aria-label="Browser setup"
             title="Browser setup"
           >
-            <div className="space-y-2 pb-4 text-xs text-neutral-600 dark:text-neutral-400">
-              <p>
-                Prepare the embedded browser so the browser agent can capture screenshots, finish authentication flows, and verify previews before you save this environment.
-              </p>
-              <ul className="list-disc space-y-1 pl-5">
-                <li>Sign in to SaaS tools or dashboards that require persistent sessions.</li>
-                <li>Clear cookie banners, popups, or MFA prompts that could block automation.</li>
-                <li>Load staging URLs and confirm pages render without certificate or CSP warnings.</li>
-              </ul>
-              <p className="text-[11px] text-neutral-500 dark:text-neutral-500">
-                Tip: the split-view toggle (first icon above the preview) keeps VS Code and the browser visible side-by-side while you configure things.
-              </p>
+            <div className="space-y-4 pb-4">
+              <div className="text-xs text-neutral-600 dark:text-neutral-400">
+                <p>
+                  Prepare the embedded browser so the browser agent can capture screenshots, finish authentication flows, and verify previews before you save this environment.
+                </p>
+                <ul className="list-disc space-y-1 pl-5 mt-2">
+                  <li>Sign in to SaaS tools or dashboards that require persistent sessions.</li>
+                  <li>Clear cookie banners, popups, or MFA prompts that could block automation.</li>
+                  <li>Load staging URLs and confirm pages render without certificate or CSP warnings.</li>
+                </ul>
+                <p className="text-[11px] text-neutral-500 dark:text-neutral-500 mt-2">
+                  Tip: the split-view toggle (first icon above the preview) keeps VS Code and the browser visible side-by-side while you configure things.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-neutral-800 dark:text-neutral-200">
+                  Screenshot agent notes (optional)
+                </label>
+                <TextareaAutosize
+                  value={screenshotAgentPromptContext}
+                  onChange={(e) =>
+                    updateScreenshotAgentPromptContext(e.target.value)
+                  }
+                  placeholder={`Examples:
+• Test credentials: username "demo@example.com", password "test123"
+• Navigate to /dashboard after login to capture the main view
+• The app uses a loading spinner - wait for it to disappear
+• Skip the cookie consent banner by clicking "Accept All"`}
+                  minRows={4}
+                  maxRows={10}
+                  className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 resize-none"
+                />
+                <p className="text-xs text-neutral-500 dark:text-neutral-500">
+                  Provide additional context for the screenshot agent, such as test credentials, authentication steps, or navigation hints.
+                </p>
+              </div>
             </div>
           </AccordionItem>
         </Accordion>

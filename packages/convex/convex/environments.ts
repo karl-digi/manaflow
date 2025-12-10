@@ -63,6 +63,7 @@ export const create = authMutation({
     maintenanceScript: v.optional(v.string()),
     devScript: v.optional(v.string()),
     exposedPorts: v.optional(v.array(v.number())),
+    screenshotAgentPromptContext: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
@@ -83,6 +84,9 @@ export const create = authMutation({
     };
     const maintenanceScript = normalizeScript(args.maintenanceScript);
     const devScript = normalizeScript(args.devScript);
+    const screenshotAgentPromptContext = normalizeScript(
+      args.screenshotAgentPromptContext
+    );
 
     const environmentId = await ctx.db.insert("environments", {
       name: args.name,
@@ -95,6 +99,7 @@ export const create = authMutation({
       maintenanceScript,
       devScript,
       exposedPorts: sanitizedPorts.length > 0 ? sanitizedPorts : undefined,
+      screenshotAgentPromptContext,
       createdAt,
       updatedAt: createdAt,
     });
@@ -122,6 +127,7 @@ export const update = authMutation({
     description: v.optional(v.string()),
     maintenanceScript: v.optional(v.string()),
     devScript: v.optional(v.string()),
+    screenshotAgentPromptContext: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
@@ -136,6 +142,7 @@ export const update = authMutation({
       description?: string;
       maintenanceScript?: string;
       devScript?: string;
+      screenshotAgentPromptContext?: string;
       updatedAt: number;
     } = {
       updatedAt: Date.now(),
@@ -159,6 +166,12 @@ export const update = authMutation({
       const trimmedDevScript = args.devScript.trim();
       updates.devScript =
         trimmedDevScript.length > 0 ? trimmedDevScript : undefined;
+    }
+
+    if (args.screenshotAgentPromptContext !== undefined) {
+      const trimmedPromptContext = args.screenshotAgentPromptContext.trim();
+      updates.screenshotAgentPromptContext =
+        trimmedPromptContext.length > 0 ? trimmedPromptContext : undefined;
     }
 
     await ctx.db.patch(args.id, updates);

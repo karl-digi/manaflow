@@ -190,6 +190,8 @@ export const WorkerStartScreenshotCollectionSchema = z.object({
   installCommand: z.string().optional(),
   /** Command to start the dev server (e.g., "bun run dev") */
   devCommand: z.string().optional(),
+  /** Additional context/notes to inject into the screenshot agent's prompt */
+  screenshotAgentPromptContext: z.string().optional(),
 });
 
 export const WorkerRunTaskScreenshotsSchema = z.object({
@@ -200,6 +202,8 @@ export const WorkerRunTaskScreenshotsSchema = z.object({
   installCommand: z.string().optional(),
   /** Command to start the dev server (e.g., "bun run dev") */
   devCommand: z.string().optional(),
+  /** Additional context/notes to inject into the screenshot agent's prompt */
+  screenshotAgentPromptContext: z.string().optional(),
 });
 
 // Server to Worker Events
