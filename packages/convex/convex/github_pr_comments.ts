@@ -381,7 +381,7 @@ export const postInitialPreviewComment = internalAction({
       const commentSections: string[] = ["## Preview Screenshots"];
 
       // Add diff heatmap link (available immediately)
-      const heatmapUrl = `https://github.com/${repoFullName}/pull/${prNumber}?${UTM_PARAMS}&utm_content=diff_heatmap`;
+      const heatmapUrl = `https://0github.com/${repoFullName}/pull/${prNumber}?${UTM_PARAMS}&utm_content=diff_heatmap`;
       commentSections.push(`<a href="${heatmapUrl}" target="_blank">Open Diff Heatmap</a>`);
 
       // Show loading state for screenshots
@@ -512,7 +512,7 @@ export const updatePreviewComment = internalAction({
       if (devServerUrl) {
         linkParts.push(`<a href="${devServerUrl}?${UTM_PARAMS}&utm_content=dev_browser" target="_blank">Open Dev Browser (1 hr expiry)</a>`);
       }
-      linkParts.push(`<a href="https://github.com/${repoFullName}/pull/${prNumber}?${UTM_PARAMS}&utm_content=diff_heatmap" target="_blank">Open Diff Heatmap</a>`);
+      linkParts.push(`<a href="https://0github.com/${repoFullName}/pull/${prNumber}?${UTM_PARAMS}&utm_content=diff_heatmap" target="_blank">Open Diff Heatmap</a>`);
 
       if (linkParts.length > 0) {
         commentSections.push(linkParts.join(" · "));
@@ -712,7 +712,7 @@ export const postPreviewComment = internalAction({
       if (devServerUrl) {
         linkParts.push(`<a href="${devServerUrl}?${UTM_PARAMS}&utm_content=dev_browser" target="_blank">Open Dev Browser (1 hr expiry)</a>`);
       }
-      linkParts.push(`<a href="https://github.com/${repoFullName}/pull/${prNumber}?${UTM_PARAMS}&utm_content=diff_heatmap" target="_blank">Open Diff Heatmap</a>`);
+      linkParts.push(`<a href="https://0github.com/${repoFullName}/pull/${prNumber}?${UTM_PARAMS}&utm_content=diff_heatmap" target="_blank">Open Diff Heatmap</a>`);
 
       if (linkParts.length > 0) {
         commentSections.push(linkParts.join(" · "));
