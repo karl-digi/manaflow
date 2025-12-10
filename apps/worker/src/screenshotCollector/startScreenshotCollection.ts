@@ -17,6 +17,12 @@ import {
   normalizeScreenshotOutputDir,
   type ClaudeCodeAuthConfig,
 } from "./claudeScreenshotCollector";
+import { runRemoteScreenshotCollector } from "./remoteScreenshotCollector";
+
+// Feature flag to use remote screenshot collector
+// When enabled, the script is fetched from the www server and executed locally
+// This allows updating the screenshot logic without rebuilding the Morph worker image
+const USE_REMOTE_COLLECTOR = process.env.CMUX_USE_REMOTE_SCREENSHOT_COLLECTOR === "true";
 
 export interface StartScreenshotCollectionOptions {
   anthropicApiKey?: string | null;
@@ -448,21 +454,37 @@ export async function startScreenshotCollection(
   );
 
   await logToScreenshotCollector(`Claude collector output dir: ${outputDir}`);
+  await logToScreenshotCollector(`Using remote collector: ${USE_REMOTE_COLLECTOR}`);
 
   try {
-    const claudeResult = await claudeCodeCapturePRScreenshots({
-      workspaceDir,
-      changedFiles: textFiles,
-      prTitle,
-      prDescription: prDescription ?? "",
-      baseBranch,
-      headBranch,
-      outputDir,
-      pathToClaudeCodeExecutable: "/root/.bun/bin/claude",
-      installCommand: options.installCommand ?? undefined,
-      devCommand: options.devCommand ?? undefined,
-      ...claudeAuth,
-    });
+    // Determine which collector to use based on feature flag
+    const claudeResult = USE_REMOTE_COLLECTOR
+      ? await runRemoteScreenshotCollector({
+          workspaceDir,
+          changedFiles: textFiles,
+          prTitle,
+          prDescription: prDescription ?? "",
+          baseBranch,
+          headBranch,
+          outputDir,
+          auth: claudeAuth.auth,
+          pathToClaudeCodeExecutable: "/root/.bun/bin/claude",
+          installCommand: options.installCommand ?? undefined,
+          devCommand: options.devCommand ?? undefined,
+        })
+      : await claudeCodeCapturePRScreenshots({
+          workspaceDir,
+          changedFiles: textFiles,
+          prTitle,
+          prDescription: prDescription ?? "",
+          baseBranch,
+          headBranch,
+          outputDir,
+          pathToClaudeCodeExecutable: "/root/.bun/bin/claude",
+          installCommand: options.installCommand ?? undefined,
+          devCommand: options.devCommand ?? undefined,
+          ...claudeAuth,
+        });
 
     if (claudeResult.status === "completed") {
       const collectedScreenshots = claudeResult.screenshots ?? [];

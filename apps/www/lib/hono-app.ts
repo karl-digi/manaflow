@@ -22,6 +22,7 @@ import {
   healthRouter,
   morphRouter,
   sandboxesRouter,
+  scriptsRouter,
   teamsRouter,
   usersRouter,
   iframePreflightRouter,
@@ -142,6 +143,7 @@ app.route("/", branchRouter);
 app.route("/", codeReviewRouter);
 app.route("/", workspaceConfigsRouter);
 app.route("/", previewRouter);
+app.route("/", scriptsRouter);
 
 // OpenAPI documentation
 app.doc("/doc", {

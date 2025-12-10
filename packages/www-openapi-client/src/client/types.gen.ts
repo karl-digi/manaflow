@@ -726,6 +726,21 @@ export type PreviewRunsResponse = {
     runs: Array<PreviewRun>;
 };
 
+export type ScriptResponse = {
+    /**
+     * The TypeScript source code of the script
+     */
+    script: string;
+    /**
+     * Version hash of the script for cache invalidation
+     */
+    version: string;
+};
+
+export type ScriptError = {
+    error: string;
+};
+
 export type GetApiHealthData = {
     body?: never;
     path?: never;
@@ -2742,6 +2757,36 @@ export type GetApiPreviewConfigsByPreviewConfigIdRunsResponses = {
 };
 
 export type GetApiPreviewConfigsByPreviewConfigIdRunsResponse = GetApiPreviewConfigsByPreviewConfigIdRunsResponses[keyof GetApiPreviewConfigsByPreviewConfigIdRunsResponses];
+
+export type GetApiScriptsByScriptNameData = {
+    body?: never;
+    path: {
+        /**
+         * Name of the script to fetch
+         */
+        scriptName: string;
+    };
+    query?: never;
+    url: '/api/scripts/{scriptName}';
+};
+
+export type GetApiScriptsByScriptNameErrors = {
+    /**
+     * Script not found
+     */
+    404: ScriptError;
+};
+
+export type GetApiScriptsByScriptNameError = GetApiScriptsByScriptNameErrors[keyof GetApiScriptsByScriptNameErrors];
+
+export type GetApiScriptsByScriptNameResponses = {
+    /**
+     * Script fetched successfully
+     */
+    200: ScriptResponse;
+};
+
+export type GetApiScriptsByScriptNameResponse = GetApiScriptsByScriptNameResponses[keyof GetApiScriptsByScriptNameResponses];
 
 export type ClientOptions = {
     baseUrl: `${string}://${string}` | (string & {});
