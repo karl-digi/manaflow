@@ -217,17 +217,10 @@ async function openMultiDiffEditor(
     );
 
     if (existingTab) {
-      // Try to activate the existing tab first to preserve position
-      // This helps maintain scroll position and user context
-      const tabGroup = vscode.window.tabGroups.all.find((g) =>
-        g.tabs.includes(existingTab)
-      );
-      if (tabGroup) {
-        // Make sure the tab is active before updating
-        await vscode.commands.executeCommand(
-          "workbench.action.focusActiveEditorGroup"
-        );
-      }
+      // Tab already exists - close it first to avoid duplicates
+      // Then we'll re-open with fresh content below
+      log("Multi-diff tab already exists, closing before refresh");
+      await vscode.window.tabGroups.close(existingTab, false);
     }
 
     // Store the current URI
@@ -289,13 +282,14 @@ async function setupDefaultTerminal() {
     return;
   }
 
-  // if an existing editor is called "bash", early return
-  const activeEditors = vscode.window.visibleTextEditors;
-  for (const editor of activeEditors) {
-    if (editor.document.fileName === "bash") {
-      log("Bash editor already exists, skipping terminal setup");
-      return;
-    }
+  // Check if "Default Session" terminal tab already exists
+  const tabs = vscode.window.tabGroups.all.flatMap((g) => g.tabs);
+  const existingDefaultSessionTab = tabs.find(
+    (tab) => tab.label === "Default Session"
+  );
+  if (existingDefaultSessionTab) {
+    log("Default Session tab already exists, skipping terminal setup");
+    return;
   }
 
   isSetupComplete = true; // Set this BEFORE creating UI elements to prevent race conditions
@@ -330,23 +324,7 @@ async function setupDefaultTerminal() {
   }, 500); // 500ms delay to ensure tmux session is ready
 
   log("Created terminal successfully");
-
-  // After terminal is created, ensure the terminal is active and move to right group
-  setTimeout(async () => {
-    // Focus on the terminal tab
-    terminal.show();
-
-    // Move the active editor (terminal) to the right group
-    log("Moving terminal editor to right group");
-    await vscode.commands.executeCommand(
-      "workbench.action.moveEditorToRightGroup"
-    );
-
-    // Ensure terminal has focus
-    // await vscode.commands.executeCommand("workbench.action.terminal.focus");
-
-    log("Terminal setup complete");
-  }, 100);
+  log("Terminal setup complete");
 }
 
 function connectToWorker() {
