@@ -213,8 +213,8 @@ If no UI changes exist: Set hasUiChanges=false, take ZERO screenshots, and expla
 If UI changes exist, capture screenshots:
 
 1. Read CLAUDE.md or AGENTS.md (may be one level deeper) and install dependencies if needed
-2. Start the dev server. Check tmux panes first to see if already running. Look for instructions in README.md, CLAUDE.md, or framework-specific files (package.json, Makefile, Gemfile, composer.json, requirements.txt, etc.). Use dev_command above if provided.
-3. Wait for the server to be ready (curl -s -o /dev/null -w "%{http_code}" http://localhost:PORT should return 200)
+2. Run tmux ls to check if the dev server is running. Dev server should be running on default. Otherwise, start the dev server. Look for instructions in README.md, CLAUDE.md, or framework-specific files (package.json, Makefile, Gemfile, composer.json, requirements.txt, etc.). Use dev_command above if provided.
+3. Look for a list of ports you need to check in the repo. Wait for the server to be ready (curl -s -o /dev/null -w "%{http_code}" http://localhost:PORT should return 200)
 4. Navigate to the pages/components modified in the PR
 5. Capture screenshots of the changes, including:
    - The default/resting state of changed components
@@ -224,7 +224,7 @@ If UI changes exist, capture screenshots:
    - Responsive layouts if the PR includes responsive changes
 6. Save screenshots to ${outputDir} with descriptive names like "component-state-${branch}.png"
 7. After taking a screenshot, always open the image to verify that the capture is expected
-8. If the screenshot seems outdated, clear build caches, restart the dev server, and retake the screenshot
+8. Only if necessary, take it as a last resort to clear build cache and restart the dev server
 9. Delete any screenshot files from the filesystem that you do not want included
 </PHASE_2_CAPTURE>
 
