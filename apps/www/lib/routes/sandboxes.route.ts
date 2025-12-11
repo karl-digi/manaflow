@@ -1023,11 +1023,10 @@ sandboxesRouter.openapi(
       }
 
       // Return SSH connection info via WebSocket tunnel
-      // The ws-ssh-proxy service listens on port 8080 inside the VM and is exposed via HTTPS
-      // TODO: Update to port 22221 once new snapshots are deployed
+      // The ws-ssh-proxy service listens on port 22221 inside the VM and is exposed via HTTPS
       // Convert morphvm_abc123 to morphvm-abc123 for the URL
       const instanceIdForUrl = morphInstanceId.replace("_", "-");
-      const websocketUrl = `wss://port-8080-${instanceIdForUrl}.http.cloud.morph.so`;
+      const websocketUrl = `wss://port-22221-${instanceIdForUrl}.http.cloud.morph.so`;
       return c.json({
         morphInstanceId,
         websocketUrl,
