@@ -259,6 +259,8 @@ WRONG PAGE: Screenshotting pages unrelated to the PR. Only capture components/pa
 DUPLICATE SCREENSHOTS: Taking multiple identical screenshots. Each screenshot should show something distinct.
 
 INCOMPLETE CAPTURE: Missing important UI elements. Ensure full components are visible and not cut off.
+
+MODIFYING CODE: NEVER edit, fix, or modify any code in the repository. Your job is ONLY to capture screenshots of the UI as it currently exists. If there are errors, bugs, or broken UI, screenshot them anyway - the screenshots must truthfully represent the current state of the code in this branch. Do NOT attempt to fix any issues you encounter.
 </CRITICAL_MISTAKES>
 
 <OUTPUT_REQUIREMENTS>
@@ -331,6 +333,23 @@ INCOMPLETE CAPTURE: Missing important UI elements. Ensure full components are vi
                 "http://0.0.0.0:39382",
               ],
             },
+          },
+          hooks: {
+            PreToolUse: [
+              {
+                matcher: "Edit|Write|NotebookEdit",
+                hooks: [
+                  async () => ({
+                    hookSpecificOutput: {
+                      hookEventName: "PreToolUse" as const,
+                      permissionDecision: "deny" as const,
+                      permissionDecisionReason:
+                        "File editing is not allowed. Your job is ONLY to capture screenshots of the UI as it currently exists. Do NOT modify any code.",
+                    },
+                  }),
+                ],
+              },
+            ],
           },
           allowDangerouslySkipPermissions: true,
           permissionMode: "bypassPermissions",
