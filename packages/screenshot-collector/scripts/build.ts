@@ -53,20 +53,7 @@ async function main() {
   console.log(`\nBuild successful!`);
   console.log(`  Output: ${OUTPUT_FILE}`);
   console.log(`  Size: ${(stats.size / 1024).toFixed(2)} KB`);
-
-  // Also copy to www public assets for serving
-  const wwwPublicDir = path.resolve(ROOT_DIR, "../../apps/www/public/scripts");
-  const wwwOutputFile = path.join(wwwPublicDir, "screenshot-collector.js");
-
-  try {
-    await fs.mkdir(wwwPublicDir, { recursive: true });
-    await fs.copyFile(OUTPUT_FILE, wwwOutputFile);
-    console.log(`  Copied to: ${wwwOutputFile}`);
-  } catch (error) {
-    console.warn(
-      `  Warning: Could not copy to www public dir: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
+  console.log(`\nThe script will be uploaded to GitHub releases via CI.`);
 }
 
 main().catch((error) => {

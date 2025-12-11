@@ -1,5 +1,5 @@
 /**
- * Remote screenshot collector that fetches the bundled script from the www server
+ * Remote screenshot collector that fetches the bundled script from GitHub releases
  * and executes it locally. This eliminates the need to rebuild the Morph worker image
  * when making changes to the screenshot collection logic.
  */
@@ -7,16 +7,26 @@
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
 import { log } from "../logger";
 import { logToScreenshotCollector } from "./logger";
 
 const SCRIPT_CACHE_DIR = "/tmp/cmux-scripts";
 const SCRIPT_NAME = "screenshot-collector.js";
 
-// Default to production URL, can be overridden via environment variable
-const getScriptBaseUrl = (): string => {
-  return process.env.CMUX_SCRIPT_BASE_URL || "https://www.cmux.dev";
+// GitHub repository for downloading the script
+const GITHUB_REPO = "manaflow-ai/cmux";
+
+/**
+ * Get the download URL for the screenshot collector script.
+ * Uses GitHub releases "latest" redirect which automatically resolves to the most recent release.
+ * Can be overridden via CMUX_SCRIPT_URL environment variable for testing.
+ */
+const getScriptDownloadUrl = (): string => {
+  if (process.env.CMUX_SCRIPT_URL) {
+    return process.env.CMUX_SCRIPT_URL;
+  }
+  // GitHub's "latest" download URL follows redirects to the most recent release
+  return `https://github.com/${GITHUB_REPO}/releases/latest/download/${SCRIPT_NAME}`;
 };
 
 interface FetchScriptResult {
@@ -47,15 +57,14 @@ async function saveCachedEtag(etag: string): Promise<void> {
 }
 
 /**
- * Fetch the screenshot collector script from the www server.
+ * Fetch the screenshot collector script from GitHub releases.
  * Uses ETag-based caching to avoid re-downloading if the script hasn't changed.
  */
 async function fetchScript(): Promise<FetchScriptResult> {
   await ensureCacheDir();
   const scriptPath = await getCachedScriptPath();
   const cachedEtag = await getCachedEtag();
-  const baseUrl = getScriptBaseUrl();
-  const scriptUrl = `${baseUrl}/api/scripts/screenshot-collector`;
+  const scriptUrl = getScriptDownloadUrl();
 
   await logToScreenshotCollector(`Fetching screenshot collector script from ${scriptUrl}`);
 
