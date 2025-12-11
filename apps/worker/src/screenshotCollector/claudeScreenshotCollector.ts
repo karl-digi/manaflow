@@ -1,4 +1,8 @@
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import {
+  query,
+  type HookInput,
+  type HookJSONOutput,
+} from "@anthropic-ai/claude-agent-sdk";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { z } from "zod";
@@ -261,6 +265,24 @@ DUPLICATE SCREENSHOTS: Taking multiple identical screenshots. Each screenshot sh
 INCOMPLETE CAPTURE: Missing important UI elements. Ensure full components are visible and not cut off.
 </CRITICAL_MISTAKES>
 
+<CODE_MODIFICATION_POLICY>
+CRITICAL: You are strictly FORBIDDEN from modifying any source code in the repository.
+
+- DO NOT use the Edit or Write tools to modify any files in the repository
+- DO NOT fix bugs, errors, or type issues in the code
+- DO NOT update dependencies or configuration files
+- DO NOT create new source files
+
+Your screenshots must be TRUTHFUL to the current state of the code in this branch, even if there are errors or issues. If the UI has bugs, broken styles, or error states - capture them exactly as they appear. The purpose of these screenshots is to document the actual state of the PR, not an idealized or fixed version.
+
+If the dev server fails to start or the application has runtime errors:
+1. Report the failure in your output
+2. Set hasUiChanges based on whether the changed files SHOULD have UI impact
+3. Do not attempt to fix the issues
+
+The only files you may create are screenshots in the designated output directory.
+</CODE_MODIFICATION_POLICY>
+
 <OUTPUT_REQUIREMENTS>
 - Set hasUiChanges to true only if the PR modifies UI-rendering code AND you captured screenshots
 - Set hasUiChanges to false if the PR has no UI changes (with zero screenshots)
@@ -355,6 +377,44 @@ INCOMPLETE CAPTURE: Missing important UI elements. Ensure full components are vi
           },
           stderr: (data) =>
             logToScreenshotCollector(`[claude-code-stderr] ${data}`),
+          hooks: {
+            PreToolUse: [
+              {
+                matcher: "Edit|Write",
+                hooks: [
+                  async (
+                    input: HookInput,
+                    _toolUseID: string | undefined
+                  ): Promise<HookJSONOutput> => {
+                    const toolName =
+                      "tool_name" in input ? input.tool_name : "unknown";
+                    const toolInput =
+                      "tool_input" in input
+                        ? (input.tool_input as Record<string, unknown>)
+                        : {};
+                    const filePath =
+                      typeof toolInput.file_path === "string"
+                        ? toolInput.file_path
+                        : "unknown";
+
+                    // Allow writing to the screenshot output directory
+                    if (filePath.startsWith(outputDir)) {
+                      return {};
+                    }
+
+                    await logToScreenshotCollector(
+                      `[hook] Blocked ${toolName} tool attempting to modify: ${filePath}`
+                    );
+
+                    return {
+                      decision: "block",
+                      reason: `File modifications are not allowed. You are a screenshot collector and must not modify any source code. The screenshots must be truthful to the current state of the code in the branch. File: ${filePath}`,
+                    };
+                  },
+                ],
+              },
+            ],
+          },
         },
       })) {
         // Format and log all message types
