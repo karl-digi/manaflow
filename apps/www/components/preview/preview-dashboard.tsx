@@ -400,6 +400,31 @@ function MockGitHubPRBrowser() {
   // State for PR merged status
   const [isPRMerged, setIsPRMerged] = useState(false);
 
+  // State for responsive scaling
+  const [scale, setScale] = useState(1);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  // Calculate scale based on container width
+  useEffect(() => {
+    const calculateScale = () => {
+      if (!wrapperRef.current) return;
+      const containerWidth = wrapperRef.current.offsetWidth;
+      // The browser is designed for 1190px width
+      const targetWidth = 1190;
+      // Add some padding (32px total for px-4 on each side)
+      const availableWidth = containerWidth - 32;
+      if (availableWidth < targetWidth) {
+        setScale(availableWidth / targetWidth);
+      } else {
+        setScale(1);
+      }
+    };
+
+    calculateScale();
+    window.addEventListener("resize", calculateScale);
+    return () => window.removeEventListener("resize", calculateScale);
+  }, []);
+
   // Toggle expand/collapse for a task (only collapses, doesn't select)
   const toggleTaskExpanded = useCallback((taskId: string) => {
     setExpandedTasks(prev => {
@@ -503,10 +528,22 @@ function MockGitHubPRBrowser() {
     document.body.classList.add("select-none");
   }, []);
 
+  // Calculate the height needed for the scaled browser
+  const scaledHeight = scale < 1 ? `calc((100dvh - 48px) * ${scale} + 48px)` : "100dvh";
+
   return (
-    <div className="pt-12 pb-4 h-dvh w-screen relative left-1/2 -translate-x-1/2 px-4 flex flex-col">
-      {/* Browser window frame - wider than container */}
-      <div className="rounded-xl border border-neutral-700 bg-[#202124] overflow-hidden shadow-2xl max-w-[1190px] mx-auto flex-1 flex flex-col min-h-0">
+    <div ref={wrapperRef} className="pt-12 pb-4 w-full relative flex flex-col" style={{ height: scaledHeight }}>
+      {/* Browser window frame - scales down on smaller screens */}
+      <div
+        className="rounded-xl border border-neutral-700 bg-[#202124] overflow-hidden shadow-2xl flex-1 flex flex-col min-h-0"
+        style={{
+          width: 1190,
+          transformOrigin: "top center",
+          transform: `scale(${scale})`,
+          marginLeft: "auto",
+          marginRight: "auto",
+        }}
+      >
         {/* Chrome-style tab bar */}
         <div className="flex items-end h-10 bg-[#202124] pt-2 px-2">
           {/* Traffic lights */}
