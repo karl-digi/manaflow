@@ -74,10 +74,10 @@ jobs:
             --title "Host Screenshot Collector v${VERSION}" \
             --notes "Automated release of host-screenshot-collector
 
-Version: ${VERSION}
-Commit: ${GITHUB_SHA}
+          Version: ${VERSION}
+          Commit: ${GITHUB_SHA}
 
-This release contains the bundled screenshot collector script that runs inside Morph sandbox environments." \
+          This release contains the bundled screenshot collector script that runs inside Morph sandbox environments." \
             packages/host-screenshot-collector/dist/index.js
 
           RELEASE_URL=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url -q '.url')
