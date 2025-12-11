@@ -64,7 +64,6 @@ import { LucideIcon } from "lucide-react";
 import { useOAuthPopup } from "@/hooks/use-oauth-popup";
 import { PreviewItemButton } from "./preview-item-button";
 import { BlinkingCursor } from "./blinking-cursor";
-import { VSCodeIcon } from "@/components/icons/vscode-icon";
 
 type ProviderConnection = {
   id: string;
@@ -679,7 +678,7 @@ function MockGitHubPRBrowser() {
 
   // State for expanded tasks in sidebar (Set allows multiple tasks to be expanded independently)
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(
-    new Set(["task-1"])
+    new Set(["task-1", "task-1-run"])
   );
 
   // State for which task is currently selected/active
@@ -708,11 +707,13 @@ function MockGitHubPRBrowser() {
     });
   }, []);
 
-  // Select a task: expands it, sets it as selected, and shows 3-panel view
+  // Select a task: expands it and its run, sets it as selected, and shows 3-panel view
   const selectTask = useCallback((taskId: string) => {
+    const runId = `${taskId}-run`;
     setExpandedTasks((prev) => {
       const next = new Set(prev);
-      next.add(taskId); // Always expand, never collapse when selecting
+      next.add(taskId); // Expand the task
+      next.add(runId); // Also expand the screenshot-collector/run
       return next;
     });
     setSelectedTaskId(taskId);
@@ -811,7 +812,7 @@ function MockGitHubPRBrowser() {
   return (
     <div className="pt-12 pb-4 h-dvh w-screen relative left-1/2 -translate-x-1/2 px-4 flex flex-col">
       {/* Browser window frame - Chrome Dark Mode style */}
-      <div className="rounded-2xl border border-[#35363A] bg-[#202124] overflow-hidden shadow-2xl w-full flex-1 flex flex-col min-h-0 max-w-[1400px] lg:max-w-[1800px] mx-auto">
+      <div className="rounded-2xl border border-[#35363A] bg-[#202124] overflow-hidden shadow-2xl w-full flex-1 flex flex-col min-h-0 max-w-[700px] md:max-w-[850px] lg:max-w-[1100px] xl:max-w-[1400px] 2xl:max-w-[1600px] mx-auto">
         {/* Tab strip */}
         <div className="flex items-end h-[38px] bg-[#202124] px-2 select-none">
           {/* Traffic lights */}
@@ -1944,14 +1945,15 @@ function MockGitHubPRBrowser() {
                               "w-full flex items-center py-[3px] pr-2 text-[13px] text-neutral-100 hover:bg-neutral-800/45 cursor-pointer rounded-sm mt-px",
                               selectedTaskId === "task-1" && viewMode === "all" ? "bg-neutral-800/50" : "text-neutral-300"
                             )}
-                            style={{ paddingLeft: "22px" }}
+                            style={{ paddingLeft: "28px" }}
                           >
                             <button
-                              onClick={(e) => { e.stopPropagation(); toggleTaskExpanded("task-1-run"); }}
-                              className="shrink-0 grid place-content-center rounded cursor-default transition-colors size-4 mr-1"
+                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleTaskExpanded("task-1-run"); }}
+                              onMouseDown={(e) => e.stopPropagation()}
+                              className="shrink-0 grid place-content-center rounded cursor-default transition-colors size-4 mr-2"
                             >
                               <ChevronRight className={clsx(
-                                "w-3 h-3 text-neutral-500 transition-transform",
+                                "w-3 h-3 text-neutral-500 transition-transform pointer-events-none",
                                 expandedTasks.has("task-1-run") && "rotate-90"
                               )} />
                             </button>
@@ -1967,71 +1969,55 @@ function MockGitHubPRBrowser() {
                             ) : (
                               <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0 ml-auto" />
                             )}
-                          </button>
-                          <button
-                            onClick={() => {
-                              setSelectedTaskId("task-1");
-                              setViewMode("workspace");
-                            }}
-                            className={clsx(
-                              "w-full flex items-center gap-2 px-2 pl-10 py-1 text-xs cursor-pointer text-left hover:bg-neutral-800/45",
-                              selectedTaskId === "task-1" &&
-                                viewMode === "workspace"
-                                ? "bg-neutral-800 text-white"
-                                : "text-neutral-400"
-                            )}
-                          >
-                            <VSCodeIcon className="w-3 h-3 shrink-0 text-neutral-400" />
-                            <span>VS Code</span>
-                          </button>
-                          <button
-                            onClick={() => {
-                              setSelectedTaskId("task-1");
-                              setViewMode("gitDiff");
-                            }}
-                            className={clsx(
-                              "w-full flex items-center gap-2 px-2 pl-10 py-1 text-xs cursor-pointer text-left hover:bg-neutral-800/45",
-                              selectedTaskId === "task-1" &&
-                                viewMode === "gitDiff"
-                                ? "bg-neutral-800 text-white"
-                                : "text-neutral-400"
-                            )}
-                          >
-                            <GitCompareIcon className="w-3 h-3 shrink-0" />
-                            <span>Git diff</span>
-                          </button>
-                          <button
-                            onClick={() => {
-                              setSelectedTaskId("task-1");
-                              setViewMode("browser");
-                            }}
-                            className={clsx(
-                              "w-full flex items-center gap-2 px-2 pl-10 py-1 text-xs cursor-pointer text-left hover:bg-neutral-800/45",
-                              selectedTaskId === "task-1" &&
-                                viewMode === "browser"
-                                ? "bg-neutral-800 text-white"
-                                : "text-neutral-400"
-                            )}
-                          >
-                            <Monitor className="w-3 h-3 shrink-0" />
-                            <span>Browser</span>
-                          </button>
-                          <button
-                            onClick={() => {
-                              setSelectedTaskId("task-1");
-                              setViewMode("terminals");
-                            }}
-                            className={clsx(
-                              "w-full flex items-center gap-2 px-2 pl-10 py-1 text-xs cursor-pointer text-left hover:bg-neutral-800/45",
-                              selectedTaskId === "task-1" &&
-                                viewMode === "terminals"
-                                ? "bg-neutral-800 text-white"
-                                : "text-neutral-400"
-                            )}
-                          >
-                            <TerminalSquare className="w-3 h-3 shrink-0" />
-                            <span>Terminals</span>
-                          </button>
+                          </div>
+                          {expandedTasks.has("task-1-run") && (
+                            <>
+                              <button
+                                onClick={() => { setSelectedTaskId("task-1"); setViewMode("workspace"); }}
+                                className={clsx(
+                                  "w-full flex items-center gap-2 px-2 py-1 text-xs cursor-pointer text-left hover:bg-neutral-800/45 rounded-sm mt-px",
+                                  selectedTaskId === "task-1" && viewMode === "workspace" ? "bg-neutral-800/65 text-white" : "text-neutral-400"
+                                )}
+                                style={{ paddingLeft: "48px" }}
+                              >
+                                <VSCodeIcon className="w-3 h-3 shrink-0 grayscale opacity-60" />
+                                <span>VS Code</span>
+                              </button>
+                              <button
+                                onClick={() => { setSelectedTaskId("task-1"); setViewMode("gitDiff"); }}
+                                className={clsx(
+                                  "w-full flex items-center gap-2 px-2 py-1 text-xs cursor-pointer text-left hover:bg-neutral-800/45 rounded-sm mt-px",
+                                  selectedTaskId === "task-1" && viewMode === "gitDiff" ? "bg-neutral-800/65 text-white" : "text-neutral-400"
+                                )}
+                                style={{ paddingLeft: "48px" }}
+                              >
+                                <GitCompareIcon className="w-3 h-3 shrink-0" />
+                                <span>Git diff</span>
+                              </button>
+                              <button
+                                onClick={() => { setSelectedTaskId("task-1"); setViewMode("browser"); }}
+                                className={clsx(
+                                  "w-full flex items-center gap-2 px-2 py-1 text-xs cursor-pointer text-left hover:bg-neutral-800/45 rounded-sm mt-px",
+                                  selectedTaskId === "task-1" && viewMode === "browser" ? "bg-neutral-800/65 text-white" : "text-neutral-400"
+                                )}
+                                style={{ paddingLeft: "48px" }}
+                              >
+                                <Monitor className="w-3 h-3 shrink-0" />
+                                <span>Browser</span>
+                              </button>
+                              <button
+                                onClick={() => { setSelectedTaskId("task-1"); setViewMode("terminals"); }}
+                                className={clsx(
+                                  "w-full flex items-center gap-2 px-2 py-1 text-xs cursor-pointer text-left hover:bg-neutral-800/45 rounded-sm mt-px",
+                                  selectedTaskId === "task-1" && viewMode === "terminals" ? "bg-neutral-800/65 text-white" : "text-neutral-400"
+                                )}
+                                style={{ paddingLeft: "48px" }}
+                              >
+                                <TerminalSquare className="w-3 h-3 shrink-0" />
+                                <span>Terminals</span>
+                              </button>
+                            </>
+                          )}
                         </div>
                       )}
                     </div>
@@ -2045,26 +2031,7 @@ function MockGitHubPRBrowser() {
                         isSelected={selectedTaskId === "task-2"}
                         onToggleExpand={() => toggleTaskExpanded("task-2")}
                         onClick={() => selectTask("task-2")}
-                        className={clsx(
-                          "w-full flex items-center py-[3px] pr-2 text-[13px] text-neutral-100 hover:bg-neutral-800/45 cursor-pointer rounded-sm",
-                          selectedTaskId === "task-2" && "bg-neutral-800/30"
-                        )}
-                        style={{ paddingLeft: "6px" }}
-                      >
-                        <button
-                          onClick={(e) => { e.stopPropagation(); toggleTaskExpanded("task-2"); }}
-                          className="shrink-0 grid place-content-center rounded cursor-default transition-colors size-4 mr-1"
-                        >
-                          <ChevronRight className={clsx(
-                            "w-3 h-3 text-neutral-500 transition-transform",
-                            expandedTasks.has("task-2") && "rotate-90"
-                          )} />
-                        </button>
-                        <div className="flex-1 min-w-0 flex items-center gap-2">
-                          <span className="truncate font-medium">Preview screenshots for PR #1142</span>
-                          <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0 ml-auto" />
-                        </div>
-                      </div>
+                      />
 
                       {expandedTasks.has("task-2") && (
                         <div>
@@ -2076,14 +2043,15 @@ function MockGitHubPRBrowser() {
                                 ? "bg-neutral-800/50"
                                 : "text-neutral-300"
                             )}
-                            style={{ paddingLeft: "22px" }}
+                            style={{ paddingLeft: "28px" }}
                           >
                             <button
-                              onClick={(e) => { e.stopPropagation(); toggleTaskExpanded("task-2-run"); }}
-                              className="shrink-0 grid place-content-center rounded cursor-default transition-colors size-4 mr-1"
+                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleTaskExpanded("task-2-run"); }}
+                              onMouseDown={(e) => e.stopPropagation()}
+                              className="shrink-0 grid place-content-center rounded cursor-default transition-colors size-4 mr-2"
                             >
                               <ChevronRight className={clsx(
-                                "w-3 h-3 text-neutral-500 transition-transform",
+                                "w-3 h-3 text-neutral-500 transition-transform pointer-events-none",
                                 expandedTasks.has("task-2-run") && "rotate-90"
                               )} />
                             </button>
@@ -2151,26 +2119,7 @@ function MockGitHubPRBrowser() {
                         isSelected={selectedTaskId === "task-3"}
                         onToggleExpand={() => toggleTaskExpanded("task-3")}
                         onClick={() => selectTask("task-3")}
-                        className={clsx(
-                          "w-full flex items-center py-[3px] pr-2 text-[13px] text-neutral-100 hover:bg-neutral-800/45 cursor-pointer rounded-sm",
-                          selectedTaskId === "task-3" && "bg-neutral-800/30"
-                        )}
-                        style={{ paddingLeft: "6px" }}
-                      >
-                        <button
-                          onClick={(e) => { e.stopPropagation(); toggleTaskExpanded("task-3"); }}
-                          className="shrink-0 grid place-content-center rounded cursor-default transition-colors size-4 mr-1"
-                        >
-                          <ChevronRight className={clsx(
-                            "w-3 h-3 text-neutral-500 transition-transform",
-                            expandedTasks.has("task-3") && "rotate-90"
-                          )} />
-                        </button>
-                        <div className="flex-1 min-w-0 flex items-center gap-2">
-                          <span className="truncate font-medium">Preview screenshots for PR #1098</span>
-                          <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0 ml-auto" />
-                        </div>
-                      </div>
+                      />
 
                       {expandedTasks.has("task-3") && (
                         <div>
@@ -2182,14 +2131,15 @@ function MockGitHubPRBrowser() {
                                 ? "bg-neutral-800/50"
                                 : "text-neutral-300"
                             )}
-                            style={{ paddingLeft: "22px" }}
+                            style={{ paddingLeft: "28px" }}
                           >
                             <button
-                              onClick={(e) => { e.stopPropagation(); toggleTaskExpanded("task-3-run"); }}
-                              className="shrink-0 grid place-content-center rounded cursor-default transition-colors size-4 mr-1"
+                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleTaskExpanded("task-3-run"); }}
+                              onMouseDown={(e) => e.stopPropagation()}
+                              className="shrink-0 grid place-content-center rounded cursor-default transition-colors size-4 mr-2"
                             >
                               <ChevronRight className={clsx(
-                                "w-3 h-3 text-neutral-500 transition-transform",
+                                "w-3 h-3 text-neutral-500 transition-transform pointer-events-none",
                                 expandedTasks.has("task-3-run") && "rotate-90"
                               )} />
                             </button>
@@ -2264,7 +2214,7 @@ function MockGitHubPRBrowser() {
                   >
                     {/* Panel header */}
                     <div className="flex items-center gap-2 px-3 py-1.5 bg-[#252526] border-b border-[#2d2d2d]">
-                      <VSCodeIcon className="h-4 w-4 text-neutral-400" />
+                      <VSCodeIcon className="h-4 w-4 grayscale opacity-60" />
                       <span className="text-xs text-[#cccccc]">Workspace</span>
                     </div>
                     {/* VS Code content */}
@@ -2755,7 +2705,7 @@ function MockGitHubPRBrowser() {
                 <div className="flex-1 bg-[#1e1e1e] flex flex-col">
                   {/* Panel header */}
                   <div className="flex items-center gap-2 px-3 py-1.5 bg-[#252526] border-b border-[#2d2d2d]">
-                    <VSCodeIcon className="h-4 w-4 text-neutral-400" />
+                    <VSCodeIcon className="h-4 w-4 grayscale opacity-60" />
                     <span className="text-xs text-[#cccccc]">Workspace</span>
                     <div className="ml-auto flex items-center gap-1">
                       <button
