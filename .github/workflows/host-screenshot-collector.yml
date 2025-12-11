@@ -85,13 +85,10 @@ jobs:
           echo "Release URL: ${RELEASE_URL}"
 
   sync-to-convex:
-    name: Sync to Convex
+    name: Sync to Convex (Production)
     needs: build-and-release
     runs-on: ubuntu-latest
     environment: electron
-    strategy:
-      matrix:
-        environment: [production, staging]
     steps:
       - name: Download release artifact
         env:
@@ -105,19 +102,22 @@ jobs:
             --pattern "index.js" \
             --dir /tmp/release-artifact
 
-      - name: Sync to Convex (${{ matrix.environment }})
+      - name: Sync to Convex
         env:
           VERSION: ${{ needs.build-and-release.outputs.version }}
           RELEASE_URL: ${{ needs.build-and-release.outputs.release_url }}
-          CONVEX_URL: ${{ matrix.environment == 'production' && secrets.NEXT_PUBLIC_CONVEX_URL || secrets.CONVEX_URL_STAGING }}
-          IS_STAGING: ${{ matrix.environment == 'staging' && 'true' || 'false' }}
+          NEXT_PUBLIC_CONVEX_URL: ${{ secrets.NEXT_PUBLIC_CONVEX_URL }}
         run: |
+          # Convert .convex.cloud to .convex.site for HTTP actions
+          CONVEX_SITE_URL="${NEXT_PUBLIC_CONVEX_URL/.convex.cloud/.convex.site}"
+          echo "Using Convex site URL: ${CONVEX_SITE_URL}"
+
           # Upload the file to Convex via HTTP endpoint
-          curl -X POST "${CONVEX_URL}/api/host-screenshot-collector/sync" \
+          curl -X POST "${CONVEX_SITE_URL}/api/host-screenshot-collector/sync" \
             -H "Content-Type: application/octet-stream" \
             -H "X-Version: ${VERSION}" \
             -H "X-Commit-SHA: ${GITHUB_SHA}" \
-            -H "X-Is-Staging: ${IS_STAGING}" \
+            -H "X-Is-Staging: false" \
             -H "X-Release-URL: ${RELEASE_URL}" \
             --data-binary @/tmp/release-artifact/index.js \
             --fail-with-body
