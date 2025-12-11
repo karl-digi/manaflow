@@ -1860,9 +1860,6 @@ export async function runPreviewJob(
           }
         }
 
-        // Determine final status for screenshot set
-        // If collector says "completed" but hasUiChanges=false and no images, treat as "skipped"
-        // This avoids the validation error in createScreenshotSet which requires images for "completed"
         let finalStatus = collectorResult.status;
         let finalError = collectorResult.error || collectorResult.reason;
         if (
@@ -1874,7 +1871,6 @@ export async function runPreviewJob(
           finalError = finalError || "No UI changes detected - screenshots skipped";
         }
 
-        // Create screenshot set (even for failed/skipped status)
         console.log("[preview-jobs] Creating screenshot set", {
           previewRunId,
           status: finalStatus,
