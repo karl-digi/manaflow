@@ -504,9 +504,9 @@ function MockGitHubPRBrowser() {
   }, []);
 
   return (
-    <div className="pt-12 pb-4 h-dvh w-screen relative left-1/2 -translate-x-1/2 px-4 flex flex-col">
-      {/* Browser window frame - wider than container */}
-      <div className="rounded-xl border border-neutral-700 bg-[#202124] overflow-hidden shadow-2xl max-w-[1190px] mx-auto flex-1 flex flex-col min-h-0">
+    <div className="pt-6 sm:pt-12 pb-4 h-dvh w-screen relative left-1/2 -translate-x-1/2 px-2 sm:px-4 flex flex-col">
+      {/* Browser window frame - responsive width */}
+      <div className="rounded-xl border border-neutral-700 bg-[#202124] overflow-hidden shadow-2xl w-full max-w-[95vw] sm:max-w-[90vw] lg:max-w-[1190px] mx-auto flex-1 flex flex-col min-h-0">
         {/* Chrome-style tab bar */}
         <div className="flex items-end h-10 bg-[#202124] pt-2 px-2">
           {/* Traffic lights */}
@@ -1087,7 +1087,7 @@ function MockGitHubPRBrowser() {
         ) : (
           <div ref={containerRef} className="bg-neutral-900 flex flex-1 min-h-0">
             {/* Left Sidebar - cmux style */}
-            <div className="w-[280px] bg-neutral-950 border-r border-neutral-800 flex flex-col shrink-0">
+            <div className="w-[180px] sm:w-[220px] lg:w-[280px] bg-neutral-950 border-r border-neutral-800 flex flex-col shrink-0">
               {/* Header with logo */}
               <div className="h-[38px] flex items-center px-3 shrink-0">
                 <CmuxLogo height={28} wordmarkText="cmux" />
@@ -1408,7 +1408,7 @@ function MockGitHubPRBrowser() {
                 {/* VS Code content */}
                 <div className="flex-1 flex min-h-0">
                   {/* File explorer sidebar */}
-                  <div className="w-[160px] bg-[#252526] border-r border-[#2d2d2d] flex flex-col shrink-0">
+                  <div className="w-[100px] sm:w-[130px] lg:w-[160px] bg-[#252526] border-r border-[#2d2d2d] flex flex-col shrink-0">
                     <div className="px-2 py-1 text-[10px] font-semibold text-[#858585] uppercase tracking-wide">
                       Explorer
                     </div>
@@ -1775,7 +1775,7 @@ function MockGitHubPRBrowser() {
                   {/* VS Code content */}
                   <div className="flex-1 flex min-h-0">
                     {/* File explorer sidebar */}
-                    <div className="w-[200px] bg-[#252526] border-r border-[#2d2d2d] flex flex-col shrink-0">
+                    <div className="w-[120px] sm:w-[160px] lg:w-[200px] bg-[#252526] border-r border-[#2d2d2d] flex flex-col shrink-0">
                       <div className="px-2 py-1 text-[10px] font-semibold text-[#858585] uppercase tracking-wide">
                         Explorer
                       </div>
