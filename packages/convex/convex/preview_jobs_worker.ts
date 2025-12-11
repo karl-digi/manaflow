@@ -338,6 +338,61 @@ async function writeStringToMorph({
 }
 
 /**
+ * Read a file from Morph VM and return as base64
+ */
+async function readFileFromMorph({
+  morphClient,
+  instanceId,
+  filePath,
+}: {
+  morphClient: ReturnType<typeof createMorphCloudClient>;
+  instanceId: string;
+  filePath: string;
+}): Promise<{ base64: string; size: number } | null> {
+  // Use base64 to read the file content (works for binary files like images)
+  const response = await execInstanceInstanceIdExecPost({
+    client: morphClient,
+    path: { instance_id: instanceId },
+    body: {
+      command: ["base64", "-w", "0", filePath],
+    },
+  });
+
+  if (response.error || response.data?.exit_code !== 0) {
+    return null;
+  }
+
+  const base64 = response.data?.stdout?.trim() || "";
+  if (!base64) {
+    return null;
+  }
+
+  // Calculate approximate size from base64 length
+  const size = Math.floor((base64.length * 3) / 4);
+  return { base64, size };
+}
+
+/**
+ * Get MIME type from file extension
+ */
+function getMimeTypeFromPath(filePath: string): string {
+  const ext = filePath.split(".").pop()?.toLowerCase();
+  switch (ext) {
+    case "png":
+      return "image/png";
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "webp":
+      return "image/webp";
+    case "gif":
+      return "image/gif";
+    default:
+      return "image/png";
+  }
+}
+
+/**
  * Download and run the screenshot collector via Morph exec
  */
 async function runScreenshotCollector({
@@ -1746,8 +1801,107 @@ export async function runPreviewJob(
           error: collectorResult.error,
         });
 
-        // TODO: Upload screenshots to Convex storage if needed
-        // For now, the collector handles this via the taskRunJwt auth
+        // Upload screenshots to Convex storage and create screenshot set
+        const uploadedImages: Array<{
+          storageId: Id<"_storage">;
+          mimeType: string;
+          fileName?: string;
+          commitSha?: string;
+          description?: string;
+        }> = [];
+
+        if (collectorResult.status === "completed" && collectorResult.screenshots && collectorResult.screenshots.length > 0) {
+          console.log("[preview-jobs] Uploading screenshots to Convex storage", {
+            previewRunId,
+            screenshotCount: collectorResult.screenshots.length,
+          });
+
+          for (const screenshot of collectorResult.screenshots) {
+            try {
+              // Read the screenshot file from Morph VM
+              const fileData = await readFileFromMorph({
+                morphClient,
+                instanceId: instance.id,
+                filePath: screenshot.path,
+              });
+
+              if (!fileData) {
+                console.warn("[preview-jobs] Failed to read screenshot file", {
+                  previewRunId,
+                  path: screenshot.path,
+                });
+                continue;
+              }
+
+              // Convert base64 to binary and upload to Convex storage
+              const binaryData = Uint8Array.from(atob(fileData.base64), (c) => c.charCodeAt(0));
+              const mimeType = getMimeTypeFromPath(screenshot.path);
+              const blob = new Blob([binaryData], { type: mimeType });
+              const storageId = await ctx.storage.store(blob);
+
+              // Extract filename from path
+              const fileName = screenshot.path.split("/").pop() || "screenshot.png";
+
+              uploadedImages.push({
+                storageId,
+                mimeType,
+                fileName,
+                commitSha: run.headSha,
+                description: screenshot.description,
+              });
+
+              console.log("[preview-jobs] Uploaded screenshot", {
+                previewRunId,
+                path: screenshot.path,
+                storageId,
+                size: fileData.size,
+              });
+            } catch (uploadError) {
+              console.error("[preview-jobs] Failed to upload screenshot", {
+                previewRunId,
+                path: screenshot.path,
+                error: uploadError instanceof Error ? uploadError.message : String(uploadError),
+              });
+            }
+          }
+        }
+
+        // Create screenshot set (even for failed/skipped status)
+        console.log("[preview-jobs] Creating screenshot set", {
+          previewRunId,
+          status: collectorResult.status,
+          imageCount: uploadedImages.length,
+          hasUiChanges: collectorResult.hasUiChanges,
+        });
+
+        try {
+          await ctx.runMutation(internal.previewScreenshots.createScreenshotSet, {
+            previewRunId,
+            status: collectorResult.status,
+            commitSha: run.headSha,
+            error: collectorResult.error || collectorResult.reason,
+            hasUiChanges: collectorResult.hasUiChanges,
+            images: uploadedImages,
+          });
+
+          console.log("[preview-jobs] Screenshot set created, triggering GitHub comment update", {
+            previewRunId,
+          });
+
+          // Trigger GitHub comment update
+          await ctx.runAction(internal.previewScreenshots.triggerGithubComment, {
+            previewRunId,
+          });
+
+          console.log("[preview-jobs] GitHub comment update triggered", {
+            previewRunId,
+          });
+        } catch (screenshotSetError) {
+          console.error("[preview-jobs] Failed to create screenshot set or update GitHub comment", {
+            previewRunId,
+            error: screenshotSetError instanceof Error ? screenshotSetError.message : String(screenshotSetError),
+          });
+        }
       }
 
       console.log("[preview-jobs] Screenshot collection completed via Morph exec", {
