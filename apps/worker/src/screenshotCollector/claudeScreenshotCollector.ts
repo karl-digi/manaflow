@@ -1,4 +1,8 @@
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import {
+  query,
+  type HookInput,
+  type HookJSONOutput,
+} from "@anthropic-ai/claude-agent-sdk";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { z } from "zod";
@@ -225,9 +229,14 @@ If no UI changes exist: Set hasUiChanges=false, take ZERO screenshots, and expla
 <PHASE_2_CAPTURE>
 If UI changes exist, capture screenshots:
 
-1. Read CLAUDE.md or AGENTS.md (may be one level deeper) and install dependencies if needed
-2. Start the dev server. Check tmux panes first to see if already running. Look for instructions in README.md, CLAUDE.md, or framework-specific files (package.json, Makefile, Gemfile, composer.json, requirements.txt, etc.). Use dev_command above if provided.
-3. Wait for the server to be ready (curl -s -o /dev/null -w "%{http_code}" http://localhost:PORT should return 200)
+1. FIRST, check if the dev server is ALREADY RUNNING:
+   - Run \`tmux list-windows\` and \`tmux capture-pane -p -t <window>\` to see running processes and their logs
+   - Check if there's a dev server process starting up or already running in any tmux window
+   - The dev server is typically started automatically in this environment - BE PATIENT and monitor the logs
+   - If you see the server is starting/compiling, WAIT for it to finish - do NOT kill it or restart it
+   - Use \`ss -tlnp | grep LISTEN\` to see what ports have servers listening
+2. ONLY if no server is running anywhere: Read CLAUDE.md, README.md, or package.json for setup instructions. Install dependencies if needed, then start the dev server.
+3. BE PATIENT - servers can take time to compile. Monitor tmux logs to see progress. A response from curl (even 404) means the server is up. Do NOT restart the server if it's still compiling.
 4. Navigate to the pages/components modified in the PR
 5. Capture screenshots of the changes, including:
    - The default/resting state of changed components
@@ -237,7 +246,7 @@ If UI changes exist, capture screenshots:
    - Responsive layouts if the PR includes responsive changes
 6. Save screenshots to ${outputDir} with descriptive names like "component-state-${branch}.png"
 7. After taking a screenshot, always open the image to verify that the capture is expected
-8. If the screenshot seems outdated, clear build caches, restart the dev server, and retake the screenshot
+8. If screenshot seems outdated, refresh the page and take the screenshot again.
 9. Delete any screenshot files from the filesystem that you do not want included
 </PHASE_2_CAPTURE>
 
@@ -268,6 +277,29 @@ DUPLICATE SCREENSHOTS: Taking multiple identical screenshots. Each screenshot sh
 
 INCOMPLETE CAPTURE: Missing important UI elements. Ensure full components are visible and not cut off.
 </CRITICAL_MISTAKES>
+
+<CODE_MODIFICATION_POLICY>
+Your screenshots must be TRUTHFUL to the current state of the code in this branch.
+
+ALLOWED modifications (for environment setup only):
+- Creating mock environment variable files (e.g., .env.local with placeholder API keys)
+- Creating minimal configuration files required to start the dev server
+- Writing temporary test data files if needed to render UI states
+
+FORBIDDEN modifications:
+- DO NOT fix bugs, syntax errors, or type issues in the source code
+- DO NOT "improve" or refactor any existing code
+- DO NOT update dependencies or package.json
+- DO NOT modify the actual application source files
+
+The principle: You may CREATE files needed to RUN the app, but you must NOT MODIFY files that affect WHAT the app displays. If the UI has bugs, broken styles, or error states - capture them exactly as they appear. The purpose is to document the actual state of the PR, not an idealized or fixed version.
+
+If the dev server fails to start due to missing env vars or config:
+1. Try creating minimal mock files to get it running
+2. If it still fails, report the failure in your output
+3. Set hasUiChanges based on whether the changed files SHOULD have UI impact
+4. Never modify source code to fix the issues
+</CODE_MODIFICATION_POLICY>
 
 <OUTPUT_REQUIREMENTS>
 - Set hasUiChanges to true only if the PR modifies UI-rendering code AND you captured screenshots
@@ -363,6 +395,71 @@ INCOMPLETE CAPTURE: Missing important UI elements. Ensure full components are vi
           },
           stderr: (data) =>
             logToScreenshotCollector(`[claude-code-stderr] ${data}`),
+          hooks: {
+            PreToolUse: [
+              {
+                matcher: "Edit|Write",
+                hooks: [
+                  async (
+                    input: HookInput,
+                    _toolUseID: string | undefined
+                  ): Promise<HookJSONOutput> => {
+                    const toolName =
+                      "tool_name" in input ? input.tool_name : "unknown";
+                    const toolInput =
+                      "tool_input" in input
+                        ? (input.tool_input as Record<string, unknown>)
+                        : {};
+                    const filePath =
+                      typeof toolInput.file_path === "string"
+                        ? toolInput.file_path
+                        : "unknown";
+
+                    // Allow writing to the screenshot output directory
+                    if (filePath.startsWith(outputDir)) {
+                      return {};
+                    }
+
+                    // Allow creating environment/config files for setup
+                    const fileName = path.basename(filePath);
+                    const isEnvFile = fileName.startsWith(".env");
+                    const isLocalConfig =
+                      fileName.endsWith(".local.json") ||
+                      fileName.endsWith(".local.yaml") ||
+                      fileName.endsWith(".local.yml") ||
+                      fileName.endsWith(".local.ts") ||
+                      fileName.endsWith(".local.js");
+                    const isMockDataFile =
+                      filePath.includes("/mock/") ||
+                      filePath.includes("/mocks/") ||
+                      filePath.includes("/fixtures/") ||
+                      fileName.startsWith("mock-") ||
+                      fileName.startsWith("test-data");
+
+                    // Only allow Write (creating new files), not Edit (modifying existing)
+                    if (
+                      toolName === "Write" &&
+                      (isEnvFile || isLocalConfig || isMockDataFile)
+                    ) {
+                      await logToScreenshotCollector(
+                        `[hook] Allowing ${toolName} for setup file: ${filePath}`
+                      );
+                      return {};
+                    }
+
+                    await logToScreenshotCollector(
+                      `[hook] Blocked ${toolName} tool attempting to modify: ${filePath}`
+                    );
+
+                    return {
+                      decision: "block",
+                      reason: `Source code modifications are not allowed. You may only CREATE environment files (.env*), local config files (*.local.json/yaml/ts/js), or mock data files. You must NOT modify existing source files. Screenshots must be truthful to the current state of the code. Blocked file: ${filePath}`,
+                    };
+                  },
+                ],
+              },
+            ],
+          },
         },
       })) {
         // Format and log all message types
