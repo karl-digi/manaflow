@@ -1,5 +1,6 @@
 import { getAccessTokenFromRequest } from "@/lib/utils/auth";
 import { getConvex } from "@/lib/utils/get-convex";
+import { generateGitHubInstallationToken } from "@/lib/utils/github-app-token";
 import { selectGitIdentity } from "@/lib/utils/gitIdentity";
 import { stackServerAppJs } from "@/lib/utils/stack";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
@@ -429,8 +430,50 @@ sandboxesRouter.openapi(
         return c.text("Failed to resolve GitHub credentials", 401);
       }
 
-      // Sandboxes run as the requesting user, so prefer their OAuth scope over GitHub App installation tokens.
-      await configureGithubAccess(instance, githubAccessToken);
+      // Try to use GitHub App installation token for better permission scope.
+      // The user's OAuth token from Stack Auth may not have 'repo' scope needed for private repos.
+      let gitAuthToken = githubAccessToken;
+      if (parsedRepoUrl) {
+        try {
+          // Look up GitHub App installation for the repo's owner
+          const connections = await convex.query(api.github.listProviderConnections, {
+            teamSlugOrId: body.teamSlugOrId,
+          });
+          const targetConnection = connections.find(
+            (co) =>
+              co.isActive &&
+              co.accountLogin?.toLowerCase() === parsedRepoUrl.owner.toLowerCase()
+          );
+          if (targetConnection) {
+            console.log(
+              `[sandboxes.start] Found GitHub App installation ${targetConnection.installationId} for ${parsedRepoUrl.owner}`
+            );
+            const appToken = await generateGitHubInstallationToken({
+              installationId: targetConnection.installationId,
+              repositories: [parsedRepoUrl.fullName],
+              permissions: {
+                contents: "write",
+                metadata: "read",
+              },
+            });
+            gitAuthToken = appToken;
+            console.log(
+              `[sandboxes.start] Using GitHub App token for git authentication`
+            );
+          } else {
+            console.log(
+              `[sandboxes.start] No GitHub App installation found for ${parsedRepoUrl.owner}, using user OAuth token`
+            );
+          }
+        } catch (error) {
+          console.error(
+            `[sandboxes.start] Failed to get GitHub App token, falling back to user OAuth:`,
+            error
+          );
+        }
+      }
+
+      await configureGithubAccess(instance, gitAuthToken);
 
       let repoConfig: HydrateRepoConfig | undefined;
       if (body.repoUrl) {
