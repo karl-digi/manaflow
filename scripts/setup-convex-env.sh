@@ -96,20 +96,9 @@ else
 fi
 
 # Read the GitHub private key properly (multi-line)
+# Note: PKCS#1 to PKCS#8 conversion is now handled at runtime in Convex
+# (see packages/convex/_shared/githubApp.ts wrapPkcs1InPkcs8 function)
 GITHUB_PRIVATE_KEY=$(sed -n '/^CMUX_GITHUB_APP_PRIVATE_KEY=/,/-----END.*KEY-----/p' "$ENV_FILE" | sed 's/^CMUX_GITHUB_APP_PRIVATE_KEY="//' | sed 's/"$//')
-
-# Convert PKCS#1 (RSA PRIVATE KEY) to PKCS#8 (PRIVATE KEY) if needed
-# Web Crypto API's subtle.importKey("pkcs8", ...) requires PKCS#8 format
-if [[ "$GITHUB_PRIVATE_KEY" == *"BEGIN RSA PRIVATE KEY"* ]]; then
-  echo "Converting GitHub private key from PKCS#1 to PKCS#8 format..."
-  GITHUB_PRIVATE_KEY=$(echo "$GITHUB_PRIVATE_KEY" | openssl pkcs8 -topk8 -inform PEM -outform PEM -nocrypt 2>&1)
-  if [[ "$GITHUB_PRIVATE_KEY" != *"BEGIN PRIVATE KEY"* ]]; then
-    echo "Error: Failed to convert private key to PKCS#8 format"
-    echo "$GITHUB_PRIVATE_KEY"
-    exit 1
-  fi
-  echo "Private key converted to PKCS#8 format"
-fi
 
 # Set INSTALL_STATE_SECRET based on mode
 if [ "$MODE" = "production" ]; then
