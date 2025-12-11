@@ -223,7 +223,10 @@ async function collapseOlderPreviewComments({
   prNumber: number;
   latestCommentId: number;
 }): Promise<void> {
-  let collapsedCount = 0;
+  // First, collect all cmux comments to find the truly latest one
+  // This prevents race conditions where two agents might collapse each other's comments
+  const cmuxComments: Array<{ id: number; body: string; createdAt: Date }> = [];
+
   const iterator = octokit.paginate.iterator(
     octokit.rest.issues.listComments,
     {
@@ -236,40 +239,70 @@ async function collapseOlderPreviewComments({
 
   for await (const { data } of iterator) {
     for (const comment of data) {
-      if (collapsedCount >= MAX_COMMENTS_TO_COLLAPSE) {
-        return;
-      }
       const { body } = comment;
       if (!body) continue;
-      if (comment.id === latestCommentId) continue;
       const hasSignature = COMMENT_SIGNATURE_MATCHERS.some((signature) =>
         body.includes(signature),
       );
       if (!hasSignature) continue;
+      cmuxComments.push({
+        id: comment.id,
+        body,
+        createdAt: new Date(comment.created_at),
+      });
+    }
+  }
 
-      const nextBody = collapseCommentBody(body);
-      if (nextBody === body) continue;
+  if (cmuxComments.length === 0) {
+    return;
+  }
 
-      try {
-        await octokit.rest.issues.updateComment({
-          owner,
-          repo,
-          comment_id: comment.id,
-          body: nextBody,
-        });
-        collapsedCount += 1;
-        console.log("[github_pr_comments] Collapsed previous preview comment", {
+  // Find the truly latest cmux comment by creation time
+  // This handles race conditions: even if we passed latestCommentId, another agent
+  // may have created a newer comment in the meantime
+  const trulyLatestComment = cmuxComments.reduce((latest, current) =>
+    current.createdAt > latest.createdAt ? current : latest
+  );
+
+  console.log("[github_pr_comments] Collapsing older preview comments", {
+    totalCmuxComments: cmuxComments.length,
+    trulyLatestCommentId: trulyLatestComment.id,
+    passedLatestCommentId: latestCommentId,
+  });
+
+  // Collapse all comments except the truly latest one
+  let collapsedCount = 0;
+  for (const comment of cmuxComments) {
+    if (collapsedCount >= MAX_COMMENTS_TO_COLLAPSE) {
+      break;
+    }
+    // Never collapse the truly latest comment, regardless of what latestCommentId was passed
+    if (comment.id === trulyLatestComment.id) continue;
+    // Already collapsed
+    if (comment.body.includes(COLLAPSE_MARKER)) continue;
+
+    const nextBody = collapseCommentBody(comment.body);
+    if (nextBody === comment.body) continue;
+
+    try {
+      await octokit.rest.issues.updateComment({
+        owner,
+        repo,
+        comment_id: comment.id,
+        body: nextBody,
+      });
+      collapsedCount += 1;
+      console.log("[github_pr_comments] Collapsed previous preview comment", {
+        commentId: comment.id,
+      });
+    } catch (error) {
+      console.error(
+        "[github_pr_comments] Failed to collapse previous preview comment",
+        {
           commentId: comment.id,
-        });
-      } catch (error) {
-        console.error(
-          "[github_pr_comments] Failed to collapse previous preview comment",
-          {
-            commentId: comment.id,
-            error,
-          },
-        );
-      }
+          error,
+        },
+      );
     }
   }
 }
