@@ -434,6 +434,20 @@
         "vitest": "3.2.4",
       },
     },
+    "packages/host-screenshot-collector": {
+      "name": "@cmux/host-screenshot-collector",
+      "version": "0.1.0",
+      "dependencies": {
+        "@anthropic-ai/claude-agent-sdk": "^0.1.54",
+        "zod": "^4.1.12",
+      },
+      "devDependencies": {
+        "@types/node": "^24.9.1",
+      },
+      "peerDependencies": {
+        "typescript": "^5.9.3",
+      },
+    },
     "packages/morphcloud-openapi-client": {
       "name": "@cmux/morphcloud-openapi-client",
       "version": "0.1.0",
@@ -478,7 +492,6 @@
       "name": "cmux-vscode-extension",
       "version": "0.0.1",
       "dependencies": {
-        "socket.io": "^4.8.1",
         "socket.io-client": "^4.6.1",
       },
       "devDependencies": {
@@ -801,6 +814,8 @@
     "@cmux/convex": ["@cmux/convex@workspace:packages/convex"],
 
     "@cmux/edge-router": ["@cmux/edge-router@workspace:apps/edge-router"],
+
+    "@cmux/host-screenshot-collector": ["@cmux/host-screenshot-collector@workspace:packages/host-screenshot-collector"],
 
     "@cmux/morphcloud-openapi-client": ["@cmux/morphcloud-openapi-client@workspace:packages/morphcloud-openapi-client"],
 
