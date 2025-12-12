@@ -2677,7 +2677,7 @@ function HeatmapThresholdControl({
           </button>
         </div>
       </div>
-      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <div className="mt-4 grid grid-cols-1 gap-4">
         <div className="space-y-2">
           <p className="text-xs font-semibold text-neutral-700">Model</p>
           <div className="relative">
