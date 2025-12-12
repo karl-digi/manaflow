@@ -1745,8 +1745,8 @@ async def task_install_systemd_units(ctx: TaskContext) -> None:
         ln -sf /usr/lib/systemd/system/cmux-xterm.service /etc/systemd/system/cmux.target.wants/cmux-xterm.service
         ln -sf /usr/lib/systemd/system/cmux-memory-setup.service /etc/systemd/system/multi-user.target.wants/cmux-memory-setup.service
         ln -sf /usr/lib/systemd/system/cmux-memory-setup.service /etc/systemd/system/swap.target.wants/cmux-memory-setup.service
-        systemctl daemon-reload
-        systemctl enable cmux.target
+        systemctl daemon-reload || true
+        systemctl enable cmux.target || true
         chown root:root /usr/local
         chown root:root /usr/local/bin
         chmod 0755 /usr/local
