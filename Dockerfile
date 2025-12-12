@@ -209,12 +209,28 @@ RUN curl -fsSL https://bun.sh/install | bash && \
   bun --version && \
   bunx --version
 
-# Install IDE (coder or openvscode based on IDE_PROVIDER build arg)
+# Install IDE (coder, openvscode, or manaflow based on IDE_PROVIDER build arg)
 RUN --mount=type=secret,id=github_token,required=false <<'EOF'
 set -eux
 arch="$(dpkg --print-architecture)"
 
-if [ "${IDE_PROVIDER}" = "openvscode" ]; then
+if [ "${IDE_PROVIDER}" = "cmux-code" ]; then
+  # Install cmux-code (our VSCode fork with OpenVSIX marketplace)
+  CMUX_CODE_RELEASE="${CMUX_CODE_RELEASE:-0.1.0}"
+  echo "CMUX_CODE_RELEASE=${CMUX_CODE_RELEASE}"
+  if [ "$arch" = "amd64" ]; then
+    ARCH="x64"
+  elif [ "$arch" = "arm64" ]; then
+    ARCH="arm64"
+  fi
+  mkdir -p /app/cmux-code
+  url="https://github.com/manaflow-ai/vscode-1/releases/download/v${CMUX_CODE_RELEASE}/vscode-server-linux-${ARCH}-web.tar.gz"
+  echo "Downloading: $url"
+  github-curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/cmux-code.tar.gz "$url" \
+    || github-curl -4 -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/cmux-code.tar.gz "$url"
+  tar xf /tmp/cmux-code.tar.gz -C /app/cmux-code/ --strip-components=1
+  rm -rf /tmp/cmux-code.tar.gz
+elif [ "${IDE_PROVIDER}" = "openvscode" ]; then
   # Install openvscode-server
   if [ -z "${CODE_RELEASE:-}" ]; then
     CODE_RELEASE=$(github-curl -sX GET "https://api.github.com/repos/gitpod-io/openvscode-server/releases/latest" \
@@ -365,7 +381,18 @@ WORKDIR /cmux/packages/vscode-extension
 RUN bun run package && cp cmux-vscode-extension-0.0.1.vsix /tmp/cmux-vscode-extension-0.0.1.vsix
 
 # Install VS Code extensions (keep the .vsix for copying to runtime-base)
-RUN /app/openvscode-server/bin/openvscode-server --install-extension /tmp/cmux-vscode-extension-0.0.1.vsix
+# Note: This uses the IDE installed in builder-base for the builder's native arch.
+# The runtime stage will re-install for the target arch.
+RUN <<EOF
+set -eux
+if [ "${IDE_PROVIDER}" = "cmux-code" ]; then
+  /app/cmux-code/bin/code-server-oss --install-extension /tmp/cmux-vscode-extension-0.0.1.vsix
+elif [ "${IDE_PROVIDER}" = "openvscode" ]; then
+  /app/openvscode-server/bin/openvscode-server --install-extension /tmp/cmux-vscode-extension-0.0.1.vsix
+else
+  /app/code-server/bin/code-server --install-extension /tmp/cmux-vscode-extension-0.0.1.vsix
+fi
+EOF
 
 # Stage 2b: Worker build stage
 FROM builder-base AS builder
@@ -768,12 +795,28 @@ COPY --from=builder /builtins /builtins
 COPY --from=builder /cmux/node_modules/.bun /cmux/node_modules/.bun
 COPY --from=builder /usr/local/bin/wait-for-docker.sh /usr/local/bin/wait-for-docker.sh
 
-# Install IDE for target platform (coder or openvscode based on IDE_PROVIDER)
+# Install IDE for target platform (coder, openvscode, or cmux-code based on IDE_PROVIDER)
 RUN --mount=type=secret,id=github_token,required=false <<EOF
 set -eux
 arch="\$(dpkg --print-architecture)"
 
-if [ "${IDE_PROVIDER}" = "openvscode" ]; then
+if [ "${IDE_PROVIDER}" = "cmux-code" ]; then
+  # Install cmux-code (our VSCode fork with OpenVSIX marketplace)
+  CMUX_CODE_RELEASE="${CMUX_CODE_RELEASE:-0.1.0}"
+  echo "CMUX_CODE_RELEASE=\${CMUX_CODE_RELEASE}"
+  if [ "\$arch" = "amd64" ]; then
+    ARCH="x64"
+  elif [ "\$arch" = "arm64" ]; then
+    ARCH="arm64"
+  fi
+  mkdir -p /app/cmux-code
+  url="https://github.com/manaflow-ai/vscode-1/releases/download/v\${CMUX_CODE_RELEASE}/vscode-server-linux-\${ARCH}-web.tar.gz"
+  echo "Downloading: \$url"
+  github-curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/cmux-code.tar.gz "\$url" \
+    || github-curl -4 -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/cmux-code.tar.gz "\$url"
+  tar xf /tmp/cmux-code.tar.gz -C /app/cmux-code/ --strip-components=1
+  rm -rf /tmp/cmux-code.tar.gz
+elif [ "${IDE_PROVIDER}" = "openvscode" ]; then
   # Install openvscode-server
   CODE_RELEASE_VAL="${CODE_RELEASE:-}"
   if [ -z "\${CODE_RELEASE_VAL}" ]; then
@@ -838,7 +881,12 @@ RUN <<EOF
 set -eux
 export HOME=/root
 
-if [ "${IDE_PROVIDER}" = "openvscode" ]; then
+if [ "${IDE_PROVIDER}" = "cmux-code" ]; then
+  server_root="/app/cmux-code"
+  bin_path="\${server_root}/bin/code-server-oss"
+  extensions_dir="/root/.vscode-server-oss/extensions"
+  user_data_dir="/root/.vscode-server-oss/data"
+elif [ "${IDE_PROVIDER}" = "openvscode" ]; then
   server_root="/app/openvscode-server"
   bin_path="\${server_root}/bin/openvscode-server"
   extensions_dir="/root/.openvscode-server/extensions"
@@ -951,6 +999,7 @@ RUN mkdir -p /usr/local/lib/cmux /etc/cmux
 COPY configs/systemd/cmux.target /usr/lib/systemd/system/cmux.target
 COPY configs/systemd/cmux-openvscode.service /usr/lib/systemd/system/cmux-openvscode.service
 COPY configs/systemd/cmux-coder.service /usr/lib/systemd/system/cmux-coder.service
+COPY configs/systemd/cmux-cmux-code.service /usr/lib/systemd/system/cmux-cmux-code.service
 COPY configs/systemd/cmux-worker.service /usr/lib/systemd/system/cmux-worker.service
 COPY configs/systemd/cmux-proxy.service /usr/lib/systemd/system/cmux-proxy.service
 COPY configs/systemd/cmux-dockerd.service /usr/lib/systemd/system/cmux-dockerd.service
@@ -963,6 +1012,7 @@ COPY configs/systemd/cmux-xterm.service /usr/lib/systemd/system/cmux-xterm.servi
 COPY configs/systemd/cmux-memory-setup.service /usr/lib/systemd/system/cmux-memory-setup.service
 COPY configs/systemd/bin/configure-openvscode /usr/local/lib/cmux/configure-openvscode
 COPY configs/systemd/bin/configure-coder /usr/local/lib/cmux/configure-coder
+COPY configs/systemd/bin/configure-cmux-code /usr/local/lib/cmux/configure-cmux-code
 COPY configs/systemd/bin/code /usr/local/bin/code
 COPY configs/systemd/bin/cmux-start-chrome /usr/local/lib/cmux/cmux-start-chrome
 COPY configs/systemd/bin/cmux-manage-dockerd /usr/local/lib/cmux/cmux-manage-dockerd
@@ -970,13 +1020,14 @@ COPY configs/systemd/bin/cmux-stop-dockerd /usr/local/lib/cmux/cmux-stop-dockerd
 COPY configs/systemd/bin/cmux-configure-memory /usr/local/sbin/cmux-configure-memory
 COPY configs/systemd/ide.env.coder /etc/cmux/ide.env.coder
 COPY configs/systemd/ide.env.openvscode /etc/cmux/ide.env.openvscode
+COPY configs/systemd/ide.env.cmux-code /etc/cmux/ide.env.cmux-code
 COPY --from=builder /usr/local/lib/cmux/cmux-cdp-proxy /usr/local/lib/cmux/cmux-cdp-proxy
 COPY --from=builder /usr/local/lib/cmux/cmux-vnc-proxy /usr/local/lib/cmux/cmux-vnc-proxy
 
 # Configure IDE service based on IDE_PROVIDER
 RUN <<EOF
 set -eux
-chmod +x /usr/local/lib/cmux/configure-openvscode /usr/local/lib/cmux/configure-coder /usr/local/lib/cmux/cmux-start-chrome /usr/local/lib/cmux/cmux-cdp-proxy /usr/local/lib/cmux/cmux-vnc-proxy
+chmod +x /usr/local/lib/cmux/configure-openvscode /usr/local/lib/cmux/configure-coder /usr/local/lib/cmux/configure-cmux-code /usr/local/lib/cmux/cmux-start-chrome /usr/local/lib/cmux/cmux-cdp-proxy /usr/local/lib/cmux/cmux-vnc-proxy
 chmod +x /usr/local/lib/cmux/cmux-manage-dockerd /usr/local/lib/cmux/cmux-stop-dockerd
 chmod +x /usr/local/sbin/cmux-configure-memory
 chmod +x /usr/local/bin/code
@@ -987,7 +1038,10 @@ mkdir -p /etc/systemd/system/cmux.target.wants
 mkdir -p /etc/systemd/system/swap.target.wants
 
 # Copy the correct IDE env file based on provider
-if [ "${IDE_PROVIDER}" = "openvscode" ]; then
+if [ "${IDE_PROVIDER}" = "cmux-code" ]; then
+  cp /etc/cmux/ide.env.cmux-code /etc/cmux/ide.env
+  IDE_SERVICE="cmux-cmux-code.service"
+elif [ "${IDE_PROVIDER}" = "openvscode" ]; then
   cp /etc/cmux/ide.env.openvscode /etc/cmux/ide.env
   IDE_SERVICE="cmux-openvscode.service"
 else
@@ -1016,7 +1070,15 @@ EOF
 # Create IDE user settings based on provider
 RUN <<EOF
 set -eux
-if [ "${IDE_PROVIDER}" = "openvscode" ]; then
+if [ "${IDE_PROVIDER}" = "cmux-code" ]; then
+  # cmux-code settings (includes workspace trust and secondary sidebar settings)
+  mkdir -p /root/.vscode-server-oss/data/User
+  echo '{"workbench.startupEditor": "none", "workbench.secondarySideBar.defaultVisibility": "hidden", "security.workspace.trust.enabled": false, "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"], "telemetry.telemetryLevel": "off", "update.mode": "none"}' > /root/.vscode-server-oss/data/User/settings.json
+  mkdir -p /root/.vscode-server-oss/data/User/profiles/default-profile
+  echo '{"workbench.startupEditor": "none", "workbench.secondarySideBar.defaultVisibility": "hidden", "security.workspace.trust.enabled": false, "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"], "telemetry.telemetryLevel": "off", "update.mode": "none"}' > /root/.vscode-server-oss/data/User/profiles/default-profile/settings.json
+  mkdir -p /root/.vscode-server-oss/data/Machine
+  echo '{"workbench.startupEditor": "none", "workbench.secondarySideBar.defaultVisibility": "hidden", "security.workspace.trust.enabled": false, "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"], "telemetry.telemetryLevel": "off", "update.mode": "none"}' > /root/.vscode-server-oss/data/Machine/settings.json
+elif [ "${IDE_PROVIDER}" = "openvscode" ]; then
   mkdir -p /root/.openvscode-server/data/User
   echo '{"workbench.startupEditor": "none", "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"]}' > /root/.openvscode-server/data/User/settings.json
   mkdir -p /root/.openvscode-server/data/User/profiles/default-profile
