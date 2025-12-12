@@ -86,7 +86,7 @@ CURRENT_MANIFEST_SCHEMA_VERSION = 1
 IDE_PROVIDER_CODER = "coder"
 IDE_PROVIDER_OPENVSCODE = "openvscode"
 IDE_PROVIDER_CMUX_CODE = "cmux-code"
-DEFAULT_IDE_PROVIDER = IDE_PROVIDER_OPENVSCODE
+DEFAULT_IDE_PROVIDER = IDE_PROVIDER_CMUX_CODE
 
 # Module-level IDE provider setting (set from args before task graph runs)
 _ide_provider: str = DEFAULT_IDE_PROVIDER
@@ -1757,7 +1757,8 @@ async def task_install_systemd_units(ctx: TaskContext) -> None:
         fi
         systemctl restart ssh
         systemctl is-active --quiet ssh
-        systemctl start cmux.target || true
+        systemctl start cmux.target 2>/dev/null || true
+        exit 0
         """
     )
     await ctx.run("install-systemd-units", cmd)
