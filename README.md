@@ -1,5 +1,5 @@
 <h1 align="center">cmux</h1>
-<p align="center">Open source Claude Code manager that supports Codex/Gemini/Cursor/OpenCode/Amp CLI</p>
+<p align="center">Open source Claude Code web/Codex Cloud/Devin alternative</p>
 
 <p align="center">
   <a href="https://www.cmux.dev/direct-download-macos">
