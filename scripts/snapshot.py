@@ -1307,7 +1307,8 @@ async def task_install_cmux_code(ctx: TaskContext) -> None:
   "workbench.secondarySideBar.defaultVisibility": "hidden",
   "security.workspace.trust.enabled": false,
   "telemetry.telemetryLevel": "off",
-  "update.mode": "none"
+  "update.mode": "none",
+  "extensions.verifySignature": false
 }
 EOF
         """

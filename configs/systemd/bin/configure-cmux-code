@@ -42,7 +42,8 @@ SETTINGS=$(jq -n \
     "git.autorefresh": true,
     "git.branchCompareWith": "main",
     "telemetry.telemetryLevel": "off",
-    "update.mode": "none"
+    "update.mode": "none",
+    "extensions.verifySignature": false
   } + (if $theme != "" then {"workbench.colorTheme": $theme} else {} end)')
 
 home="${HOME:-/root}"
