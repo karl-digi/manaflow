@@ -3020,7 +3020,18 @@ async fn handle_ssh_exec(
     let status = std::process::Command::new("ssh").args(&ssh_args).status()?;
 
     if !status.success() {
-        std::process::exit(status.code().unwrap_or(1));
+        let exit_code = status.code().unwrap_or(1);
+        // Exit code 255 typically means SSH connection failure
+        if exit_code == 255 {
+            eprintln!(
+                "Error: SSH connection failed (exit code 255). The instance may be paused or unreachable."
+            );
+            eprintln!(
+                "Hint: Resume the instance with: morphcloud instance resume {}",
+                args.id
+            );
+        }
+        std::process::exit(exit_code);
     }
 
     Ok(())
