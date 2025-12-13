@@ -1,4 +1,34 @@
 import { z } from "zod";
+import {
+  DEFAULT_TOOLTIP_LANGUAGE,
+  type TooltipLanguageValue,
+} from "./model-config";
+
+const LANGUAGE_NAME_MAP: Record<string, string> = {
+  en: "English",
+  "zh-Hans": "Simplified Chinese",
+  "zh-Hant": "Traditional Chinese",
+  ja: "Japanese",
+  ko: "Korean",
+  es: "Spanish",
+  fr: "French",
+  de: "German",
+  pt: "Portuguese",
+  ru: "Russian",
+  hi: "Hindi",
+  bn: "Bengali",
+  te: "Telugu",
+  mr: "Marathi",
+  ta: "Tamil",
+  gu: "Gujarati",
+  kn: "Kannada",
+  ml: "Malayalam",
+  pa: "Punjabi",
+  ar: "Arabic",
+  vi: "Vietnamese",
+  th: "Thai",
+  id: "Indonesian",
+};
 
 const heatmapLineSchema = z.object({
   line: z.string(),
@@ -47,16 +77,15 @@ export function parseAcceptLanguage(acceptLanguage: string | null | undefined): 
 export function buildHeatmapPrompt(
   filePath: string,
   formattedDiff: readonly string[],
-  options?: HeatmapPromptOptions
+  tooltipLanguage: TooltipLanguageValue = DEFAULT_TOOLTIP_LANGUAGE
 ): string {
   const diffBody =
     formattedDiff.length > 0 ? formattedDiff.join("\n") : "(no diff)";
-
-  // Add language instruction if specified
-  const languageInstruction = options?.language
-    ? `\n- IMPORTANT: Write all shouldReviewWhy comments in ${options.language} language. The hints must be in ${options.language}.`
-    : "";
-
+  const languageName = LANGUAGE_NAME_MAP[tooltipLanguage] ?? "English";
+  const languageInstruction =
+    tooltipLanguage !== DEFAULT_TOOLTIP_LANGUAGE
+      ? `\n- IMPORTANT: Write ALL shouldReviewWhy explanations in ${languageName}. The mostImportantWord should remain as it appears in the code (do not translate code identifiers).`
+      : "";
   return `You are preparing a review heatmap for the file "${filePath}".
 Return structured data matching the provided schema. Rules:
 - Keep the original diff text in the "line" field; it may begin with "+", "-", or " ".

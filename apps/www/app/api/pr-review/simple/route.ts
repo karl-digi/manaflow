@@ -3,8 +3,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { stackServerApp } from "@/lib/utils/stack";
 import { runSimpleAnthropicReviewStream } from "@/lib/services/code-review/run-simple-anthropic-review";
 import { isRepoPublic } from "@/lib/github/check-repo-visibility";
-import { parseModelConfigFromUrlSearchParams } from "@/lib/services/code-review/model-config";
-import { parseAcceptLanguage } from "@/lib/services/code-review/heatmap-shared";
+import {
+  HEATMAP_MODEL_QUERY_KEY,
+  parseModelConfigFromUrlSearchParams,
+  parseTooltipLanguageFromUrlSearchParams,
+} from "@/lib/services/code-review/model-config";
+import { trackHeatmapReviewRequested } from "@/lib/analytics/track-heatmap-review";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -43,10 +47,7 @@ export async function GET(request: NextRequest) {
     const repoFullName = parseRepoFullName(searchParams.get("repoFullName"));
     const prNumber = parsePrNumber(searchParams.get("prNumber"));
     const modelConfig = parseModelConfigFromUrlSearchParams(searchParams);
-    // Get language from query param (preferred) or Accept-Language header
-    const languageParam = searchParams.get("lang") ?? searchParams.get("language");
-    const acceptLanguageHeader = request.headers.get("Accept-Language");
-    const language = languageParam ?? parseAcceptLanguage(acceptLanguageHeader);
+    const tooltipLanguage = parseTooltipLanguageFromUrlSearchParams(searchParams);
 
     if (!repoFullName || prNumber === null) {
       return NextResponse.json(
@@ -91,6 +92,20 @@ export async function GET(request: NextRequest) {
     }
 
     const prIdentifier = `https://github.com/${repoFullName.owner}/${repoFullName.repo}/pull/${prNumber}`;
+    const repoFullNameStr = `${repoFullName.owner}/${repoFullName.repo}`;
+    const modelQueryValue =
+      searchParams.get(HEATMAP_MODEL_QUERY_KEY) ?? "default";
+
+    // Track analytics (fire and forget - don't block the request)
+    trackHeatmapReviewRequested({
+      repo: repoFullNameStr,
+      pullNumber: prNumber,
+      language: tooltipLanguage,
+      model: modelQueryValue,
+      userId: user.id ?? undefined,
+    }).catch((error) => {
+      console.error("[simple-review][api] Failed to track analytics", error);
+    });
 
     const encoder = new TextEncoder();
     const abortController = new AbortController();
@@ -121,7 +136,7 @@ export async function GET(request: NextRequest) {
             prIdentifier,
             githubToken: normalizedGithubToken,
             modelConfig,
-            language,
+            tooltipLanguage,
             signal: abortController.signal,
             onEvent: async (event) => {
               switch (event.type) {

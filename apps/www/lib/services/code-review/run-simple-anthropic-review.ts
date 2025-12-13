@@ -17,7 +17,11 @@ import {
   getInstallationForRepo,
 } from "@/lib/utils/github-app-token";
 import { checkRepoVisibility } from "@/lib/github/check-repo-visibility";
-import { getDefaultHeatmapModelConfig } from "./model-config";
+import {
+  getDefaultHeatmapModelConfig,
+  DEFAULT_TOOLTIP_LANGUAGE,
+  type TooltipLanguageValue,
+} from "./model-config";
 
 const SIMPLE_REVIEW_INSTRUCTIONS = `Dannotate every modified/deleted/added line of this diff with a "fake" comment at the end of each line.
 
@@ -125,8 +129,7 @@ export type SimpleReviewStreamOptions = {
   prIdentifier: string;
   githubToken?: string | null;
   modelConfig?: ModelConfig;
-  /** BCP-47 language tag for review comments (e.g., "ja", "zh-CN"). If not set, defaults to English. */
-  language?: string | null;
+  tooltipLanguage?: TooltipLanguageValue;
   onChunk?: (chunk: string) => void | Promise<void>;
   onEvent?: (event: SimpleReviewParsedEvent) => void | Promise<void>;
   signal?: AbortSignal;
@@ -295,7 +298,7 @@ export async function runSimpleAnthropicReviewStream(
     prIdentifier,
     githubToken: providedGithubToken = null,
     modelConfig,
-    language,
+    tooltipLanguage = DEFAULT_TOOLTIP_LANGUAGE,
     onChunk,
     signal,
   } = options;
@@ -389,7 +392,7 @@ export async function runSimpleAnthropicReviewStream(
           signal.addEventListener("abort", handleAbort);
         }
 
-        const prompt = buildFilePrompt(prLabel, file.filePath, file.diffText, language);
+        const prompt = buildFilePrompt(prLabel, file.filePath, file.diffText, tooltipLanguage);
 
         try {
           const modelInstance =
@@ -593,18 +596,44 @@ function createSemaphore(limit: number) {
   };
 }
 
+const LANGUAGE_NAME_MAP: Record<string, string> = {
+  en: "English",
+  "zh-Hans": "Simplified Chinese",
+  "zh-Hant": "Traditional Chinese",
+  ja: "Japanese",
+  ko: "Korean",
+  es: "Spanish",
+  fr: "French",
+  de: "German",
+  pt: "Portuguese",
+  ru: "Russian",
+  hi: "Hindi",
+  bn: "Bengali",
+  te: "Telugu",
+  mr: "Marathi",
+  ta: "Tamil",
+  gu: "Gujarati",
+  kn: "Kannada",
+  ml: "Malayalam",
+  pa: "Punjabi",
+  ar: "Arabic",
+  vi: "Vietnamese",
+  th: "Thai",
+  id: "Indonesian",
+};
+
 function buildFilePrompt(
   prLabel: string,
   filePath: string,
   diffText: string,
-  language?: string | null
+  tooltipLanguage: TooltipLanguageValue
 ): string {
   const strippedDiff = stripLeadingTrailingCodeFences(diffText);
-  // Add language instruction if specified (non-English)
-  const languageInstruction = language && language.toLowerCase() !== "en"
-    ? `\n\nIMPORTANT: Write all comments (the "<comment>" part) in ${language} language.`
-    : "";
-
+  const languageName = LANGUAGE_NAME_MAP[tooltipLanguage] ?? "English";
+  const languageInstruction =
+    tooltipLanguage !== DEFAULT_TOOLTIP_LANGUAGE
+      ? `\n\nIMPORTANT: Write ALL comments (the "<comment>" part) in ${languageName}. The mostImportantWord should remain as it appears in the code (do not translate code identifiers).`
+      : "";
   return `You are reviewing a GitHub diff for ${prLabel}
 File path: ${filePath}
 
