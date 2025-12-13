@@ -62,7 +62,7 @@ enum Command {
     Openapi,
 
     /// List known sandboxes (alias for 'sandboxes list')
-    Ls,
+    Ls(LsArgs),
 
     /// Attach to a shell in the sandbox (SSH-like)
     #[command(alias = "a")]
@@ -183,6 +183,13 @@ struct BrowserArgs {
     /// Team slug or ID (optional for cloud sandboxes)
     #[arg(long, short = 't', env = "CMUX_TEAM")]
     team: Option<String>,
+}
+
+#[derive(Args, Debug)]
+struct LsArgs {
+    /// Show all sandboxes, including paused/stopped (default: only ready/running)
+    #[arg(long, short = 'a')]
+    all: bool,
 }
 
 #[derive(Args, Debug)]
@@ -728,9 +735,17 @@ async fn run() -> anyhow::Result<()> {
                 handle_real_ssh(&long_client, &api_url, "", &ssh_args).await?;
             }
         }
-        Command::Ls => {
+        Command::Ls(args) => {
             // Unified listing of both cloud and local sandboxes
             let mut entries: Vec<(String, String, String, String)> = vec![];
+
+            // Helper to check if a status should be shown (ready/running by default)
+            let is_active_status = |status: &str| -> bool {
+                matches!(
+                    status.to_lowercase().as_str(),
+                    "running" | "ready" | "active"
+                )
+            };
 
             // Try to list local sandboxes (might fail if daemon not running)
             let local_sandboxes: Vec<SandboxSummary> =
@@ -748,7 +763,10 @@ async fn run() -> anyhow::Result<()> {
                 let id = format!("l_{}", &sandbox.id.to_string()[..8]);
                 let status = format!("{:?}", sandbox.status).to_lowercase();
                 let created = sandbox.created_at.format("%Y-%m-%d %H:%M").to_string();
-                entries.push((id, "local".to_string(), status, created));
+                // Filter by status unless --all is passed
+                if args.all || is_active_status(&status) {
+                    entries.push((id, "local".to_string(), status, created));
+                }
             }
 
             // Try to list cloud VMs (might fail if not authenticated)
@@ -771,6 +789,10 @@ async fn run() -> anyhow::Result<()> {
                                 let id = format!("c_{}", display_id);
                                 let status =
                                     instance["status"].as_str().unwrap_or("unknown").to_string();
+                                // Filter by status unless --all is passed
+                                if !args.all && !is_active_status(&status) {
+                                    continue;
+                                }
                                 let created = instance["createdAt"]
                                     .as_i64()
                                     .map(|ts| {
@@ -788,7 +810,12 @@ async fn run() -> anyhow::Result<()> {
             }
 
             if entries.is_empty() {
-                println!("No sandboxes found.");
+                if args.all {
+                    println!("No sandboxes found.");
+                } else {
+                    println!("No running sandboxes found.");
+                    println!("Use --all to show paused/stopped sandboxes.");
+                }
                 println!("\nCreate a cloud VM with: cmux new");
                 println!("Create a local sandbox with: cmux new --local");
             } else {
