@@ -560,6 +560,55 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
               });
 
               if (prNumber && prUrl && headSha) {
+                const alreadyProcessed = await _ctx.runQuery(
+                  internal.previewRuns.hasProcessedPullRequest,
+                  {
+                    previewConfigId: previewConfig._id,
+                    prNumber,
+                  },
+                );
+
+                if (!alreadyProcessed) {
+                  // Check if user has preview quota remaining before creating preview run
+                  const quotaResult = await _ctx.runAction(
+                    internal.preview_quota_actions.checkPreviewQuota,
+                    { userId: previewConfig.createdByUserId },
+                  );
+
+                  if (!quotaResult.allowed) {
+                    console.log("[preview-jobs] User exceeded preview quota, posting paywall comment", {
+                      repoFullName,
+                      prNumber,
+                      userId: previewConfig.createdByUserId,
+                      usedRuns: quotaResult.usedRuns,
+                      limit: quotaResult.limit,
+                    });
+
+                    // Post paywall comment to PR
+                    await _ctx.runAction(
+                      internal.github_pr_comments.postPaywallComment,
+                      {
+                        installationId: installation,
+                        repoFullName,
+                        prNumber,
+                        usedRuns: quotaResult.usedRuns,
+                        limit: quotaResult.limit,
+                      },
+                    );
+
+                    // Skip creating the preview run - user needs to subscribe
+                    break;
+                  }
+
+                  console.log("[preview-jobs] User has preview quota remaining", {
+                    repoFullName,
+                    prNumber,
+                    userId: previewConfig.createdByUserId,
+                    remainingRuns: quotaResult.remainingRuns,
+                    isPaid: quotaResult.isPaid,
+                  });
+                }
+
                 try {
                   // Use previewConfig.teamId instead of connection's teamId
                   // The previewConfig was set up with a specific team, so we should use that
@@ -568,6 +617,7 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
                     {
                       previewConfigId: previewConfig._id,
                       teamId: previewConfig.teamId,
+                      createdByUserId: previewConfig.createdByUserId,
                       repoFullName,
                       repoInstallationId: installation,
                       prNumber,
