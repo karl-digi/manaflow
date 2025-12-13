@@ -5,7 +5,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
 DMUX="${ROOT_DIR}/packages/sandbox/target/release/dmux"
-DEV_PID=""
 SANDBOX_ID=""
 
 # Set base URL for dmux (dev server runs on 46831, not dmux's default 46833)
@@ -30,44 +29,26 @@ cleanup() {
         log_info "Deleting sandbox ${SANDBOX_ID}..."
         curl -sf -X DELETE "http://localhost:46831/sandboxes/${SANDBOX_ID}" || true
     fi
-
-    # Kill dev server if we started it
-    if [[ -n "${DEV_PID}" ]]; then
-        log_info "Stopping dev server (PID ${DEV_PID})..."
-        kill "${DEV_PID}" 2>/dev/null || true
-        wait "${DEV_PID}" 2>/dev/null || true
-    fi
 }
 trap cleanup EXIT
 
-# Build dmux if needed
-if [[ ! -f "${DMUX}" ]]; then
-    log_info "Building dmux..."
-    (cd "${ROOT_DIR}/packages/sandbox" && cargo build --release --bin dmux)
-fi
+# Always rebuild and reload to ensure we're testing current branch code
+log_info "Rebuilding and reloading dev environment..."
+"${SCRIPT_DIR}/../reload.sh"
 
-# Check if dev server is already running
-if curl -sf "http://localhost:46831/healthz" >/dev/null 2>&1; then
-    log_info "Dev server already running"
-else
-    log_info "Starting dev server..."
-    (cd "${ROOT_DIR}" && ./scripts/dev.sh) &
-    DEV_PID=$!
-
-    # Wait for health check
-    log_info "Waiting for dev server to be ready..."
-    for i in $(seq 1 120); do
-        if curl -sf "http://localhost:46831/healthz" >/dev/null 2>&1; then
-            log_info "Dev server ready after ${i}s"
-            break
-        fi
-        if [[ $i -eq 120 ]]; then
-            log_error "Dev server failed to start after 120s"
-            exit 1
-        fi
-        sleep 1
-    done
-fi
+# Wait for health check after reload
+log_info "Waiting for dev server to be ready..."
+for i in $(seq 1 30); do
+    if curl -sf "http://localhost:46831/healthz" >/dev/null 2>&1; then
+        log_info "Dev server ready after ${i}s"
+        break
+    fi
+    if [[ $i -eq 30 ]]; then
+        log_error "Dev server failed to start after reload"
+        exit 1
+    fi
+    sleep 1
+done
 
 # ============================================================================
 # LOCAL SANDBOX TESTS
