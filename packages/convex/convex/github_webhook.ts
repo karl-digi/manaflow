@@ -560,31 +560,38 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
               });
 
               if (prNumber && prUrl && headSha) {
-                const alreadyProcessed = await _ctx.runQuery(
-                  internal.previewRuns.hasProcessedPullRequest,
-                  {
-                    previewConfigId: previewConfig._id,
-                    prNumber,
-                  },
+                // ALWAYS check quota before creating any preview run
+                // This blocks ALL new screenshot captures when user is over quota
+                const quotaResult = await _ctx.runAction(
+                  internal.preview_quota_actions.checkPreviewQuota,
+                  { userId: previewConfig.createdByUserId },
                 );
 
-                if (!alreadyProcessed) {
-                  // Check if user has preview quota remaining before creating preview run
-                  const quotaResult = await _ctx.runAction(
-                    internal.preview_quota_actions.checkPreviewQuota,
-                    { userId: previewConfig.createdByUserId },
+                if (!quotaResult.allowed) {
+                  console.log("[preview-jobs] User exceeded preview quota", {
+                    repoFullName,
+                    prNumber,
+                    userId: previewConfig.createdByUserId,
+                    usedRuns: quotaResult.usedRuns,
+                    limit: quotaResult.limit,
+                  });
+
+                  // Check if we've already posted a paywall comment for this PR
+                  const hasExistingPaywallRun = await _ctx.runQuery(
+                    internal.previewRuns.hasPaywallRunForPullRequest,
+                    {
+                      previewConfigId: previewConfig._id,
+                      prNumber,
+                    },
                   );
 
-                  if (!quotaResult.allowed) {
-                    console.log("[preview-jobs] User exceeded preview quota, posting paywall comment", {
+                  if (!hasExistingPaywallRun) {
+                    // Post paywall comment to PR (only once per PR)
+                    console.log("[preview-jobs] Posting paywall comment to PR", {
                       repoFullName,
                       prNumber,
-                      userId: previewConfig.createdByUserId,
-                      usedRuns: quotaResult.usedRuns,
-                      limit: quotaResult.limit,
                     });
 
-                    // Post paywall comment to PR
                     await _ctx.runAction(
                       internal.github_pr_comments.postPaywallComment,
                       {
@@ -596,18 +603,46 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
                       },
                     );
 
-                    // Skip creating the preview run - user needs to subscribe
-                    break;
+                    // Create a skipped preview run with paywall reason for tracking
+                    await _ctx.runMutation(
+                      internal.previewRuns.enqueueFromWebhook,
+                      {
+                        previewConfigId: previewConfig._id,
+                        teamId: previewConfig.teamId,
+                        createdByUserId: previewConfig.createdByUserId,
+                        repoFullName,
+                        repoInstallationId: installation,
+                        prNumber,
+                        prUrl,
+                        prTitle,
+                        prDescription,
+                        headSha,
+                        baseSha,
+                        headRef,
+                        headRepoFullName,
+                        headRepoCloneUrl,
+                        status: "skipped",
+                        stateReason: "paywall",
+                      },
+                    );
+                  } else {
+                    console.log("[preview-jobs] Paywall comment already posted for this PR, skipping silently", {
+                      repoFullName,
+                      prNumber,
+                    });
                   }
 
-                  console.log("[preview-jobs] User has preview quota remaining", {
-                    repoFullName,
-                    prNumber,
-                    userId: previewConfig.createdByUserId,
-                    remainingRuns: quotaResult.remainingRuns,
-                    isPaid: quotaResult.isPaid,
-                  });
+                  // Skip creating the preview run and VM workflow - user needs to subscribe
+                  break;
                 }
+
+                console.log("[preview-jobs] User has preview quota remaining", {
+                  repoFullName,
+                  prNumber,
+                  userId: previewConfig.createdByUserId,
+                  remainingRuns: quotaResult.remainingRuns,
+                  isPaid: quotaResult.isPaid,
+                });
 
                 try {
                   // Use previewConfig.teamId instead of connection's teamId

@@ -593,6 +593,28 @@ export const hasProcessedPullRequest = internalQuery({
   },
 });
 
+/**
+ * Check if there's already a paywall-blocked run for this PR.
+ * Used to avoid posting duplicate paywall comments.
+ */
+export const hasPaywallRunForPullRequest = internalQuery({
+  args: {
+    previewConfigId: v.id("previewConfigs"),
+    prNumber: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const runs = await ctx.db
+      .query("previewRuns")
+      .withIndex("by_config_pr", (q) =>
+        q.eq("previewConfigId", args.previewConfigId).eq("prNumber", args.prNumber),
+      )
+      .order("desc")
+      .take(50);
+
+    return runs.some((run) => run.stateReason === PREVIEW_PAYWALL_STATE_REASON);
+  },
+});
+
 export const getUniquePullRequestCountByUser = internalQuery({
   args: {
     userId: v.string(),
