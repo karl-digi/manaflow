@@ -590,18 +590,43 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
                     console.log("[preview-jobs] Posting paywall comment to PR", {
                       repoFullName,
                       prNumber,
+                      installationId: installation,
+                      usedRuns: quotaResult.usedRuns,
+                      limit: quotaResult.limit,
                     });
 
-                    await _ctx.runAction(
-                      internal.github_pr_comments.postPaywallComment,
-                      {
-                        installationId: installation,
+                    try {
+                      const paywallResult = await _ctx.runAction(
+                        internal.github_pr_comments.postPaywallComment,
+                        {
+                          installationId: installation,
+                          repoFullName,
+                          prNumber,
+                          usedRuns: quotaResult.usedRuns,
+                          limit: quotaResult.limit,
+                        },
+                      );
+
+                      if (paywallResult.ok) {
+                        console.log("[preview-jobs] Paywall comment posted successfully", {
+                          repoFullName,
+                          prNumber,
+                          commentId: paywallResult.commentId,
+                        });
+                      } else {
+                        console.error("[preview-jobs] Failed to post paywall comment", {
+                          repoFullName,
+                          prNumber,
+                          error: paywallResult.error,
+                        });
+                      }
+                    } catch (paywallError) {
+                      console.error("[preview-jobs] Error posting paywall comment", {
                         repoFullName,
                         prNumber,
-                        usedRuns: quotaResult.usedRuns,
-                        limit: quotaResult.limit,
-                      },
-                    );
+                        error: paywallError instanceof Error ? paywallError.message : String(paywallError),
+                      });
+                    }
 
                     // Create a skipped preview run with paywall reason for tracking
                     await _ctx.runMutation(
