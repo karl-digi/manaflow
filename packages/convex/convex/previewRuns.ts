@@ -20,25 +20,23 @@ async function countUniquePullRequestsForUser(
 ): Promise<number> {
   const maxUnique = Math.max(1, cap);
   const unique = new Set<string>();
-  let cursor: string | null = null;
 
-  while (unique.size < maxUnique) {
-    const results = await ctx.db
-      .query("previewRuns")
-      .withIndex("by_user_created", (q) => q.eq("createdByUserId", userId))
-      .order("desc")
-      .paginate({ cursor, numItems: 200 });
+  // Fetch enough runs to reliably count unique PRs up to the cap.
+  // If a user has 10 unique PRs averaging ~5 runs each, we need ~50 runs.
+  // Using 500 gives us margin for heavy users while avoiding pagination
+  // (Convex doesn't allow multiple paginated queries in a single function).
+  const runs = await ctx.db
+    .query("previewRuns")
+    .withIndex("by_user_created", (q) => q.eq("createdByUserId", userId))
+    .order("desc")
+    .take(500);
 
-    for (const run of results.page) {
-      if (run.stateReason === PREVIEW_PAYWALL_STATE_REASON) {
-        continue;
-      }
-      unique.add(`${run.repoFullName}#${run.prNumber}`);
-      if (unique.size >= maxUnique) break;
+  for (const run of runs) {
+    if (run.stateReason === PREVIEW_PAYWALL_STATE_REASON) {
+      continue;
     }
-
-    cursor = results.continueCursor;
-    if (!cursor) break;
+    unique.add(`${run.repoFullName}#${run.prNumber}`);
+    if (unique.size >= maxUnique) break;
   }
 
   return unique.size;
