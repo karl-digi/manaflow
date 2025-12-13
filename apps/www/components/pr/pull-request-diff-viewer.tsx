@@ -100,7 +100,7 @@ import {
   HEATMAP_MODEL_QUERY_KEY,
   HEATMAP_LANGUAGE_QUERY_KEY,
   TOOLTIP_LANGUAGE_OPTIONS,
-  DEFAULT_TOOLTIP_LANGUAGE,
+  detectBrowserLanguage,
   type HeatmapModelQueryValue,
   type TooltipLanguageValue,
 } from "@/lib/services/code-review/model-config";
@@ -590,7 +590,7 @@ export function PullRequestDiffViewer({
   const [tooltipLanguagePreference, setTooltipLanguagePreference] =
     useLocalStorage<TooltipLanguageValue>({
       key: "cmux-tooltip-language",
-      defaultValue: DEFAULT_TOOLTIP_LANGUAGE,
+      defaultValue: detectBrowserLanguage(),
     });
   const heatmapModelPreferenceRef = useRef<HeatmapModelOptionValue>(
     heatmapModelPreference

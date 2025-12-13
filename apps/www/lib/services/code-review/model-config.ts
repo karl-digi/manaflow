@@ -39,6 +39,73 @@ export type TooltipLanguageValue =
 
 export const DEFAULT_TOOLTIP_LANGUAGE: TooltipLanguageValue = "en";
 
+// Map browser language codes to supported tooltip languages
+// Handles both full codes (e.g., "zh-Hans") and base codes (e.g., "zh" -> "zh-Hans")
+const BROWSER_LANGUAGE_MAP: Record<string, TooltipLanguageValue> = {
+  // Direct mappings for supported languages
+  en: "en",
+  "zh-hans": "zh-Hans",
+  "zh-hant": "zh-Hant",
+  "zh-cn": "zh-Hans",
+  "zh-tw": "zh-Hant",
+  "zh-hk": "zh-Hant",
+  "zh-sg": "zh-Hans",
+  zh: "zh-Hans", // Default Chinese to Simplified
+  ja: "ja",
+  ko: "ko",
+  es: "es",
+  fr: "fr",
+  de: "de",
+  pt: "pt",
+  ru: "ru",
+  hi: "hi",
+  bn: "bn",
+  te: "te",
+  mr: "mr",
+  ta: "ta",
+  gu: "gu",
+  kn: "kn",
+  ml: "ml",
+  pa: "pa",
+  ar: "ar",
+  vi: "vi",
+  th: "th",
+  id: "id",
+};
+
+/**
+ * Detects the user's preferred language from the browser and maps it to a supported tooltip language.
+ * Falls back to English if no supported language is detected.
+ * This should only be called on the client side.
+ */
+export function detectBrowserLanguage(): TooltipLanguageValue {
+  if (typeof navigator === "undefined") {
+    return DEFAULT_TOOLTIP_LANGUAGE;
+  }
+
+  // Get browser languages in order of preference
+  const browserLanguages = navigator.languages ?? [navigator.language];
+
+  for (const lang of browserLanguages) {
+    if (!lang) continue;
+
+    const normalized = lang.toLowerCase();
+
+    // Try exact match first (e.g., "zh-Hans", "zh-TW")
+    if (normalized in BROWSER_LANGUAGE_MAP) {
+      return BROWSER_LANGUAGE_MAP[normalized];
+    }
+
+    // Try base language code (e.g., "en-US" -> "en")
+    const baseCode = normalized.split("-")[0];
+    if (baseCode in BROWSER_LANGUAGE_MAP) {
+      return BROWSER_LANGUAGE_MAP[baseCode];
+    }
+  }
+
+  return DEFAULT_TOOLTIP_LANGUAGE;
+}
+
 export function normalizeTooltipLanguage(
   raw: string | null | undefined
 ): TooltipLanguageValue {
