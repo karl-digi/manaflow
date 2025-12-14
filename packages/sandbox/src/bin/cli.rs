@@ -1802,12 +1802,14 @@ async fn handle_browser_unified(
             let _ = std::fs::create_dir_all(&user_data);
 
             eprintln!("Launching Chrome with SOCKS proxy...");
-            eprintln!("  All ports forwarded - browse to http://127.0.0.1:<any-port>");
+            eprintln!("  All ports forwarded - browse to http://localhost:<any-port>");
 
+            // Use same flags as local browser, but with SOCKS5 instead of HTTP proxy
+            // The <-loopback> bypass list disables the implicit localhost bypass
             let mut chrome_child = match tokio::process::Command::new(chrome_bin)
                 .arg(format!("--proxy-server=socks5://127.0.0.1:{}", socks_port))
-                .arg("--proxy-bypass-list=") // Empty = don't bypass anything, including localhost
-                .arg("--host-resolver-rules=MAP localhost 127.0.0.1") // Force IPv4 for localhost
+                .arg("--proxy-bypass-list=<-loopback>")
+                .arg("--host-resolver-rules=MAP localhost 127.0.0.1")
                 .arg(format!("--user-data-dir={}", user_data.display()))
                 .arg("--no-first-run")
                 .arg("http://localhost:8000")
