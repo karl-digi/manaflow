@@ -1,7 +1,10 @@
 import { TaskTree } from "@/components/TaskTree";
 import { TaskTreeSkeleton } from "@/components/TaskTreeSkeleton";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
-import { disableDragPointerEvents, restoreDragPointerEvents } from "@/lib/drag-pointer-events";
+import {
+  disableDragPointerEvents,
+  restoreDragPointerEvents,
+} from "@/lib/drag-pointer-events";
 import { isElectron } from "@/lib/electron";
 import { type Doc } from "@cmux/convex/dataModel";
 import { api } from "@cmux/convex/api";
@@ -147,7 +150,7 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
       const clientX = e.clientX;
       const newWidth = Math.min(
         Math.max(clientX - containerLeft, MIN_WIDTH),
-        MAX_WIDTH
+        MAX_WIDTH,
       );
       setWidth(newWidth);
     });
@@ -183,7 +186,7 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
       window.addEventListener("mousemove", onMouseMove);
       window.addEventListener("mouseup", stopResizing);
     },
-    [onMouseMove, stopResizing]
+    [onMouseMove, stopResizing],
   );
 
   useEffect(() => {
@@ -198,15 +201,17 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
   return (
     <div
       ref={containerRef}
-      className="relative bg-neutral-50 dark:bg-black flex flex-col shrink-0 h-dvh grow pr-1 min-w-[75vw] snap-start snap-always md:min-w-0 md:snap-align-none"
-      style={{
-        display: isHidden ? "none" : "flex",
-        width: undefined,
-        minWidth: undefined,
-        maxWidth: undefined,
-        userSelect: isResizing ? ("none" as const) : undefined,
-        "--sidebar-width": `${width}px`,
-      } as CSSProperties}
+      className="relative bg-neutral-50 dark:bg-black flex flex-col shrink-0 h-dvh grow pr-1 w-[75vw] snap-start snap-always md:w-auto md:snap-align-none"
+      style={
+        {
+          display: isHidden ? "none" : "flex",
+          width: undefined,
+          minWidth: undefined,
+          maxWidth: undefined,
+          userSelect: isResizing ? ("none" as const) : undefined,
+          "--sidebar-width": `${width}px`,
+        } as CSSProperties
+      }
     >
       <div
         className={`h-[38px] flex items-center pr-1.5 shrink-0 ${isElectron ? "" : "pl-3"}`}
@@ -291,7 +296,9 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
                         <TaskTree
                           key={task._id}
                           task={task}
-                          defaultExpanded={expandTaskIds?.includes(task._id) ?? false}
+                          defaultExpanded={
+                            expandTaskIds?.includes(task._id) ?? false
+                          }
                           teamSlugOrId={teamSlugOrId}
                         />
                       ))}
@@ -309,7 +316,9 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
                       <TaskTree
                         key={task._id}
                         task={task}
-                        defaultExpanded={expandTaskIds?.includes(task._id) ?? false}
+                        defaultExpanded={
+                          expandTaskIds?.includes(task._id) ?? false
+                        }
                         teamSlugOrId={teamSlugOrId}
                       />
                     ))}
