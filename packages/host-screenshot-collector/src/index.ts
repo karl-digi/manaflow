@@ -3,7 +3,6 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { z } from "zod";
 
-import { log } from "../logger";
 import { logToScreenshotCollector } from "./logger";
 import { formatClaudeMessage } from "./claudeMessageFormatter";
 
@@ -90,6 +89,10 @@ type BranchBaseOptions = {
   prDescription: string;
   outputDir: string;
   pathToClaudeCodeExecutable?: string;
+  /** Command to install dependencies (e.g., "bun install", "npm install") */
+  installCommand?: string;
+  /** Command to start the dev server (e.g., "bun run dev", "npm run dev") */
+  devCommand?: string;
 };
 
 type BranchCaptureOptions =
@@ -123,6 +126,15 @@ function isTaskRunJwtAuth(
   return "taskRunJwt" in auth;
 }
 
+function log(
+  level: "INFO" | "WARN" | "ERROR",
+  message: string,
+  data?: Record<string, unknown>
+): void {
+  const logData = data ? ` ${JSON.stringify(data)}` : "";
+  console.log(`[${level}] ${message}${logData}`);
+}
+
 export async function captureScreenshotsForBranch(
   options: BranchCaptureOptions
 ): Promise<{
@@ -137,38 +149,133 @@ export async function captureScreenshotsForBranch(
     branch,
     outputDir: requestedOutputDir,
     auth,
+    installCommand,
+    devCommand,
   } = options;
   const outputDir = normalizeScreenshotOutputDir(requestedOutputDir);
   const useTaskRunJwt = isTaskRunJwtAuth(auth);
   const providedApiKey = !useTaskRunJwt ? auth.anthropicApiKey : undefined;
 
-  const prompt = `I need you to take screenshots of the UI changes in this pull request.
+  const devInstructions = (() => {
+    if (!installCommand && !devCommand) {
+      return `
+The user did not provide installation or dev commands. You will need to discover them by reading README.md, package.json, .devcontainer.json, or other configuration files.`;
+    }
+    const parts = ["The user provided the following commands:"];
+    if (installCommand) {
+      parts.push(`<install_command>\n${installCommand}\n</install_command>`);
+    } else {
+      parts.push(
+        "(No install command provided - check README.md or package.json)"
+      );
+    }
+    if (devCommand) {
+      parts.push(`<dev_command>\n${devCommand}\n</dev_command>`);
+    } else {
+      parts.push(
+        "(No dev command provided - check README.md or package.json)"
+      );
+    }
+    return "\n" + parts.join("\n");
+  })();
 
-PR Title: ${prTitle}
-PR Description: ${prDescription || "No description provided"}
+  const prompt = `You are a screenshot collector for pull request reviews. Your job is to determine if a PR contains UI changes and, if so, capture screenshots of those changes.
 
-Current branch: ${branch}
-Files changed in this PR:
+<PR_CONTEXT>
+Title: ${prTitle}
+Description: ${prDescription || "No description provided"}
+Branch: ${branch}
+Files changed:
 ${changedFiles.map((f) => `- ${f}`).join("\n")}
+</PR_CONTEXT>
 
+<ENVIRONMENT>
 Working directory: ${workspaceDir}
 Screenshot output directory: ${outputDir}
+${devInstructions}
+</ENVIRONMENT>
 
-Please:
-0. Read CLAUDE.md or AGENTS.md (they may be one level deeper) and install dependencies if needed
-1. Start the development server if needed (check files like README.md, package.json or .devcontainer.json for dev script, explore the repository more if needed. check tmux panes comprehensively to see if the server is running.)
-2. Wait for the server to be ready
-3. Navigate to the pages/components that were modified in the PR
-4. Take full-page screenshots as well as element-specific screenshots of each relevant UI view that was changed
-5. Save every screenshot directly inside ${outputDir} (no subdirectories) with descriptive names like "homepage-${branch}.png"
+<PHASE_1_ANALYSIS>
+First, analyze the changed files to determine if this PR contains UI changes.
 
-<IMPORTANT>
-Focus on capturing visual changes. If no UI changes are present, just let me know.
-When providing structured_output, set hasUiChanges to true if you saw UI changes and false otherwise. Include every screenshot you saved with the absolute file path (or a path relative to ${outputDir}) and a short description of what the screenshot shows. The paths must match the files you saved.
-Do not close the browser after you're done, since I will want to click around the final page you navigated to.
-Do not create summary documents.
-If you can't install dependencies/start the dev server, just let me know. Do not create fake html mocks. We must take screenshots of the actual ground truth UI.
-</IMPORTANT>`;
+IMPORTANT: Base your decision on the ACTUAL FILES CHANGED, not the PR title or description. PR descriptions can be misleading or incomplete. If the diff contains UI-affecting code, there ARE UI changes regardless of what the description says.
+
+UI changes ARE present if the PR modifies code that affects what users see in the browser:
+- Frontend components or templates (any framework: React, Vue, Rails ERB, PHP Blade, Django templates, etc.)
+- Stylesheets (CSS, SCSS, Tailwind, styled-components, etc.)
+- Markup or template files (HTML, JSX, ERB, Twig, Jinja, Handlebars, etc.)
+- Client-side JavaScript/TypeScript that affects rendering
+- UI states like loading indicators, error messages, empty states, or toasts
+- Accessibility attributes, ARIA labels, or semantic markup
+
+UI changes are NOT present if the PR only modifies:
+- Server-side logic that doesn't change what's rendered (API handlers, database queries, background jobs)
+- Configuration files (unless they affect theming or UI behavior)
+- Tests, documentation, or build scripts
+- Type definitions or interfaces for non-UI code
+
+If no UI changes exist: Set hasUiChanges=false, take ZERO screenshots, and explain why. Do not start the dev server or open a browser.
+</PHASE_1_ANALYSIS>
+
+<PHASE_2_CAPTURE>
+If UI changes exist, capture screenshots:
+
+1. FIRST, check if the dev server is ALREADY RUNNING:
+   - Run \`tmux list-windows\` and \`tmux capture-pane -p -t <window>\` to see running processes and their logs
+   - Check if there's a dev server process starting up or already running in any tmux window
+   - The dev server is typically started automatically in this environment - BE PATIENT and monitor the logs
+   - If you see the server is starting/compiling, WAIT for it to finish - do NOT kill it or restart it
+   - Use \`ss -tlnp | grep LISTEN\` to see what ports have servers listening
+2. ONLY if no server is running anywhere: Read CLAUDE.md, README.md, or package.json for setup instructions. Install dependencies if needed, then start the dev server.
+3. BE PATIENT - servers can take time to compile. Monitor tmux logs to see progress. A response from curl (even 404) means the server is up. Do NOT restart the server if it's still compiling.
+4. Navigate to the pages/components modified in the PR
+5. Capture screenshots of the changes, including:
+   - The default/resting state of changed components
+   - Interactive states: hover, focus, active, disabled
+   - Conditional states: loading, error, empty, success (if the PR modifies these!)
+   - Hidden UI: modals, dropdowns, tooltips, accordions
+   - Responsive layouts if the PR includes responsive changes
+6. Save screenshots to ${outputDir} with descriptive names like "component-state-${branch}.png"
+7. After taking a screenshot, always open the image to verify that the capture is expected
+8. If screenshot seems outdated, refresh the page and take the screenshot again.
+9. Delete any screenshot files from the filesystem that you do not want included
+</PHASE_2_CAPTURE>
+
+<WHAT_TO_CAPTURE>
+Screenshot the UI states that the PR actually modifies. Be intentional:
+
+- If the PR changes a loading spinner → screenshot the loading state
+- If the PR changes error handling UI → screenshot the error state
+- If the PR changes a skeleton loader → screenshot the skeleton
+- If the PR changes hover styles → screenshot the hover state
+- If the PR changes a modal → open and screenshot the modal
+
+Don't screenshot loading/error states incidentally while waiting for the "real" UI. Screenshot them when they ARE the change.
+</WHAT_TO_CAPTURE>
+
+<CRITICAL_MISTAKES>
+Avoid these failure modes:
+
+FALSE POSITIVE: Taking screenshots when the PR has no UI changes. Backend-only, config, or test changes = hasUiChanges=false, zero screenshots.
+
+FALSE NEGATIVE: Failing to capture screenshots when UI changes exist. If React components, CSS, or templates changed, you MUST capture them.
+
+FAKE UI: Creating mock HTML files instead of screenshotting the real app. Never fabricate UIs. If the dev server won't start, report the failure.
+
+WRONG PAGE: Screenshotting pages unrelated to the PR. Only capture components/pages that the changed files actually render.
+
+DUPLICATE SCREENSHOTS: Taking multiple identical screenshots. Each screenshot should show something distinct.
+
+INCOMPLETE CAPTURE: Missing important UI elements. Ensure full components are visible and not cut off.
+</CRITICAL_MISTAKES>
+
+<OUTPUT_REQUIREMENTS>
+- Set hasUiChanges to true only if the PR modifies UI-rendering code AND you captured screenshots
+- Set hasUiChanges to false if the PR has no UI changes (with zero screenshots)
+- Include every screenshot path with a description of what it shows
+- Do not close the browser when done
+- Do not create summary documents
+</OUTPUT_REQUIREMENTS>`;
 
   await logToScreenshotCollector(
     `Starting Claude Agent with browser MCP for branch: ${branch}`
@@ -440,6 +547,8 @@ export async function claudeCodeCapturePRScreenshots(
               outputDir,
               auth: { taskRunJwt: auth.taskRunJwt },
               pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
+              installCommand: options.installCommand,
+              devCommand: options.devCommand,
             }
           : {
               workspaceDir,
@@ -450,6 +559,8 @@ export async function claudeCodeCapturePRScreenshots(
               outputDir,
               auth: { anthropicApiKey: auth.anthropicApiKey },
               pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
+              installCommand: options.installCommand,
+              devCommand: options.devCommand,
             }
       );
       allScreenshots.push(...beforeScreenshots.screenshots);
@@ -476,6 +587,8 @@ export async function claudeCodeCapturePRScreenshots(
             outputDir,
             auth: { taskRunJwt: auth.taskRunJwt },
             pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
+            installCommand: options.installCommand,
+            devCommand: options.devCommand,
           }
         : {
             workspaceDir,
@@ -486,6 +599,8 @@ export async function claudeCodeCapturePRScreenshots(
             outputDir,
             auth: { anthropicApiKey: auth.anthropicApiKey },
             pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
+            installCommand: options.installCommand,
+            devCommand: options.devCommand,
           }
     );
     allScreenshots.push(...afterScreenshots.screenshots);
@@ -521,4 +636,70 @@ export async function claudeCodeCapturePRScreenshots(
       error: message,
     };
   }
+}
+
+// Re-export utilities
+export { logToScreenshotCollector } from "./logger";
+export { formatClaudeMessage } from "./claudeMessageFormatter";
+
+// CLI entry point - runs when executed directly
+const cliOptionsSchema = z.object({
+  workspaceDir: z.string(),
+  changedFiles: z.array(z.string()),
+  prTitle: z.string(),
+  prDescription: z.string(),
+  baseBranch: z.string(),
+  headBranch: z.string(),
+  outputDir: z.string(),
+  pathToClaudeCodeExecutable: z.string().optional(),
+  installCommand: z.string().optional(),
+  devCommand: z.string().optional(),
+  auth: z.union([
+    z.object({ taskRunJwt: z.string() }),
+    z.object({ anthropicApiKey: z.string() }),
+  ]),
+});
+
+async function main() {
+  const optionsJson = process.env.SCREENSHOT_OPTIONS;
+  if (!optionsJson) {
+    console.error("SCREENSHOT_OPTIONS environment variable is required");
+    process.exit(1);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(optionsJson);
+  } catch (error) {
+    console.error("Failed to parse SCREENSHOT_OPTIONS as JSON:", error);
+    process.exit(1);
+  }
+
+  const validated = cliOptionsSchema.safeParse(parsed);
+  if (!validated.success) {
+    console.error("Invalid SCREENSHOT_OPTIONS:", validated.error.format());
+    process.exit(1);
+  }
+
+  const options = validated.data;
+  const result = await claudeCodeCapturePRScreenshots(options as CaptureScreenshotsOptions);
+
+  // Output result as JSON to stdout
+  console.log(JSON.stringify(result));
+}
+
+// Check if running as CLI (not imported as module)
+// Support various filename patterns: index.js, index.mjs, screenshot-collector.mjs, etc.
+const scriptPath = process.argv[1] ?? "";
+const isRunningAsCli =
+  import.meta.url === `file://${scriptPath}` ||
+  scriptPath.endsWith("/index.js") ||
+  scriptPath.endsWith("/index.mjs") ||
+  scriptPath.includes("screenshot-collector");
+
+if (isRunningAsCli) {
+  main().catch((error) => {
+    console.error("CLI execution failed:", error);
+    process.exit(1);
+  });
 }

@@ -198,14 +198,15 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
   return (
     <div
       ref={containerRef}
-      className="relative bg-neutral-50 dark:bg-black flex flex-col shrink-0 h-dvh grow pr-1"
+      className="relative bg-neutral-50 dark:bg-black flex flex-col shrink-0 h-dvh grow pr-1 min-w-[75vw] snap-start snap-always md:min-w-0 md:snap-align-none"
       style={{
         display: isHidden ? "none" : "flex",
-        width: `${width}px`,
-        minWidth: `${width}px`,
-        maxWidth: `${width}px`,
+        width: undefined,
+        minWidth: undefined,
+        maxWidth: undefined,
         userSelect: isResizing ? ("none" as const) : undefined,
-      }}
+        "--sidebar-width": `${width}px`,
+      } as CSSProperties}
     >
       <div
         className={`h-[38px] flex items-center pr-1.5 shrink-0 ${isElectron ? "" : "pl-3"}`}

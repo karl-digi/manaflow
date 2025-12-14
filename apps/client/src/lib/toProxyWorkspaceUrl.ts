@@ -2,6 +2,7 @@ import {
   LOCAL_VSCODE_PLACEHOLDER_HOST,
   isLoopbackHostname,
 } from "@cmux/shared";
+import { env } from "../client-env";
 
 const MORPH_HOST_REGEX = /^port-(\d+)-morphvm-([^.]+)\.http\.cloud\.morph\.so$/;
 
@@ -115,6 +116,11 @@ export function toProxyWorkspaceUrl(
     return normalizedUrl;
   }
 
+  // In web mode, use the Morph URLs directly without proxy rewriting
+  if (env.NEXT_PUBLIC_WEB_MODE) {
+    return normalizedUrl;
+  }
+
   const scope = "base"; // Default scope
   const proxiedUrl = new URL(components.url.toString());
   proxiedUrl.hostname = `cmux-${components.morphId}-${scope}-${components.port}.cmux.app`;
@@ -167,6 +173,15 @@ export function toMorphXtermBaseUrl(sourceUrl: string): string | null {
 
   if (!components) {
     return null;
+  }
+
+  // In web mode, use the Morph URLs directly without proxy rewriting
+  if (env.NEXT_PUBLIC_WEB_MODE) {
+    const morphUrl = createMorphPortUrl(components, 39383);
+    morphUrl.pathname = "/";
+    morphUrl.search = "";
+    morphUrl.hash = "";
+    return morphUrl.toString();
   }
 
   const scope = "base";
