@@ -3965,6 +3965,100 @@ async fn run_gh_command(args: &[String], stdin: Option<&str>) -> (i32, String, S
     }
 }
 
+/// Filter DA (Device Attributes) queries from terminal output.
+///
+/// This removes DA1 and DA2 query sequences from the output before forwarding
+/// to clients. When applications like tmux send DA queries, we handle them
+/// locally via VirtualTerminal and don't want them reaching the user's terminal,
+/// which would cause duplicate responses and garbage characters.
+///
+/// Filtered sequences:
+/// - DA1: ESC [ c or ESC [ 0 c
+/// - DA2: ESC [ > c or ESC [ > 0 c
+pub fn filter_da_queries(data: &[u8]) -> Vec<u8> {
+    let mut result = Vec::with_capacity(data.len());
+    let mut i = 0;
+
+    while i < data.len() {
+        // Check for ESC
+        if data[i] == 0x1b {
+            // Check for CSI (ESC [)
+            if i + 1 < data.len() && data[i + 1] == b'[' {
+                // Try to match DA1 or DA2 query patterns
+                let mut j = i + 2;
+                let mut is_da2 = false;
+
+                // Check for '>' (DA2 marker)
+                if j < data.len() && data[j] == b'>' {
+                    is_da2 = true;
+                    j += 1;
+                }
+
+                // Skip optional '0' parameter
+                if j < data.len() && data[j] == b'0' {
+                    j += 1;
+                }
+
+                // Check for final 'c' (DA query terminator)
+                if j < data.len() && data[j] == b'c' {
+                    // This is a DA1 or DA2 query - skip it
+                    i = j + 1;
+                    continue;
+                }
+
+                // Check for '?' intermediate (DA1 response) followed by params and 'c'
+                // These are responses, not queries, but they get echoed too
+                if !is_da2 && i + 2 < data.len() && data[i + 2] == b'?' {
+                    // Scan for the final 'c' of DA1 response
+                    let mut k = i + 3;
+                    while k < data.len() {
+                        if data[k] == b'c' {
+                            // Found DA1 response - skip it
+                            i = k + 1;
+                            break;
+                        }
+                        // Only valid characters in DA response: digits and semicolons
+                        if !data[k].is_ascii_digit() && data[k] != b';' {
+                            break;
+                        }
+                        k += 1;
+                    }
+                    if i == k + 1 {
+                        continue;
+                    }
+                }
+
+                // Check for '>' intermediate followed by params and 'c' (DA2 response)
+                if i + 2 < data.len() && data[i + 2] == b'>' {
+                    // Scan for the final 'c' of DA2 response
+                    let mut k = i + 3;
+                    while k < data.len() {
+                        if data[k] == b'c' {
+                            // Found DA2 response - skip it
+                            i = k + 1;
+                            break;
+                        }
+                        // Only valid characters in DA response: digits and semicolons
+                        if !data[k].is_ascii_digit() && data[k] != b';' {
+                            break;
+                        }
+                        k += 1;
+                    }
+                    if i == k + 1 {
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // Not a DA sequence, copy the byte
+        result.push(data[i]);
+        i += 1;
+    }
+
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6089,5 +6183,76 @@ mod tests {
         term.process(b"\x1b[6 q");
         assert_eq!(term.cursor_style, 6);
         assert!(!term.cursor_blink);
+    }
+
+    #[test]
+    fn filter_da_queries_removes_da1_query() {
+        // DA1 query: ESC [ c
+        let input = b"hello\x1b[cworld";
+        let filtered = filter_da_queries(input);
+        assert_eq!(filtered, b"helloworld");
+    }
+
+    #[test]
+    fn filter_da_queries_removes_da1_query_with_param() {
+        // DA1 query with 0 param: ESC [ 0 c
+        let input = b"hello\x1b[0cworld";
+        let filtered = filter_da_queries(input);
+        assert_eq!(filtered, b"helloworld");
+    }
+
+    #[test]
+    fn filter_da_queries_removes_da2_query() {
+        // DA2 query: ESC [ > c
+        let input = b"hello\x1b[>cworld";
+        let filtered = filter_da_queries(input);
+        assert_eq!(filtered, b"helloworld");
+    }
+
+    #[test]
+    fn filter_da_queries_removes_da2_query_with_param() {
+        // DA2 query with 0 param: ESC [ > 0 c
+        let input = b"hello\x1b[>0cworld";
+        let filtered = filter_da_queries(input);
+        assert_eq!(filtered, b"helloworld");
+    }
+
+    #[test]
+    fn filter_da_queries_removes_da1_response() {
+        // DA1 response: ESC [ ? 1 ; 2 c (VT100 style)
+        let input = b"hello\x1b[?1;2cworld";
+        let filtered = filter_da_queries(input);
+        assert_eq!(filtered, b"helloworld");
+    }
+
+    #[test]
+    fn filter_da_queries_removes_da2_response() {
+        // DA2 response: ESC [ > 0 ; 276 ; 0 c
+        let input = b"hello\x1b[>0;276;0cworld";
+        let filtered = filter_da_queries(input);
+        assert_eq!(filtered, b"helloworld");
+    }
+
+    #[test]
+    fn filter_da_queries_preserves_other_csi() {
+        // SGR sequence should be preserved: ESC [ 31 m (red text)
+        let input = b"hello\x1b[31mworld";
+        let filtered = filter_da_queries(input);
+        assert_eq!(filtered, b"hello\x1b[31mworld");
+    }
+
+    #[test]
+    fn filter_da_queries_preserves_plain_text() {
+        let input = b"hello world";
+        let filtered = filter_da_queries(input);
+        assert_eq!(filtered, b"hello world");
+    }
+
+    #[test]
+    fn filter_da_queries_removes_multiple() {
+        // Multiple DA queries
+        let input = b"\x1b[chello\x1b[>cworld\x1b[?1;2c!";
+        let filtered = filter_da_queries(input);
+        assert_eq!(filtered, b"helloworld!");
     }
 }

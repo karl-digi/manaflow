@@ -4,7 +4,7 @@ use crate::models::{
     CreateSandboxRequest, EnvVar, ExecRequest, ExecResponse, HostEvent, MuxClientMessage,
     MuxServerMessage, PtySessionId, SandboxNetwork, SandboxStatus, SandboxSummary,
 };
-use crate::mux::terminal::VirtualTerminal;
+use crate::mux::terminal::{filter_da_queries, VirtualTerminal};
 use crate::service::SandboxService;
 use crate::timing::TimingReport;
 use async_trait::async_trait;
@@ -1547,8 +1547,16 @@ impl SandboxService for BubblewrapService {
                                 }
                             }
 
-                            // Forward the original PTY output to WebSocket
-                            if socket.send(Message::Binary(d.into())).await.is_err() {
+                            // Filter DA queries/responses from output before forwarding to client.
+                            // We handle these locally via VirtualTerminal, so we don't want them
+                            // reaching the user's terminal (which would respond and cause garbage).
+                            let filtered = filter_da_queries(&d);
+                            if filtered.is_empty() {
+                                continue;
+                            }
+
+                            // Forward filtered PTY output to WebSocket
+                            if socket.send(Message::Binary(filtered.into())).await.is_err() {
                                 break;
                             }
                         }
