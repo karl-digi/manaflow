@@ -792,6 +792,7 @@ export const upsertFileOutputFromCallback = mutation({
     codexReviewOutput: v.any(),
     sandboxInstanceId: v.optional(v.string()),
     commitRef: v.optional(v.string()),
+    tooltipLanguage: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const job = await ctx.db.get(args.jobId);
@@ -835,6 +836,7 @@ export const upsertFileOutputFromCallback = mutation({
         comparisonBaseRef: job.comparisonBaseRef,
         comparisonHeadOwner: job.comparisonHeadOwner,
         comparisonHeadRef: job.comparisonHeadRef,
+        tooltipLanguage: args.tooltipLanguage,
         updatedAt: now,
       });
     } else {
@@ -855,6 +857,7 @@ export const upsertFileOutputFromCallback = mutation({
         sandboxInstanceId,
         filePath: args.filePath,
         codexReviewOutput: args.codexReviewOutput,
+        tooltipLanguage: args.tooltipLanguage,
         createdAt: now,
         updatedAt: now,
       });
