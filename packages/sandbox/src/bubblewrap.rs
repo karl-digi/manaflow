@@ -4,7 +4,7 @@ use crate::models::{
     CreateSandboxRequest, EnvVar, ExecRequest, ExecResponse, HostEvent, MuxClientMessage,
     MuxServerMessage, PtySessionId, SandboxNetwork, SandboxStatus, SandboxSummary,
 };
-use crate::mux::terminal::{filter_da_queries, VirtualTerminal};
+use crate::mux::terminal::{DaFilter, VirtualTerminal};
 use crate::service::SandboxService;
 use crate::timing::TimingReport;
 use async_trait::async_trait;
@@ -1501,6 +1501,8 @@ impl SandboxService for BubblewrapService {
 
         // Create VirtualTerminal for escape sequence processing
         let mut vterm = VirtualTerminal::new(rows as usize, cols as usize);
+        // Stateful DA filter to handle sequences split across chunks
+        let mut da_filter = DaFilter::new();
 
         let mut ticker = tokio::time::interval(std::time::Duration::from_millis(100));
 
@@ -1558,9 +1560,10 @@ impl SandboxService for BubblewrapService {
                             }
 
                             // Filter DA queries/responses from output before forwarding to client.
+                            // Uses stateful filter to handle sequences split across chunks.
                             // We handle these locally via VirtualTerminal, so we don't want them
                             // reaching the user's terminal (which would respond and cause garbage).
-                            let filtered = filter_da_queries(&d);
+                            let filtered = da_filter.filter(&d);
                             if filtered.is_empty() {
                                 continue;
                             }

@@ -3965,97 +3965,164 @@ async fn run_gh_command(args: &[String], stdin: Option<&str>) -> (i32, String, S
     }
 }
 
-/// Filter DA (Device Attributes) queries from terminal output.
+/// Stateful filter for DA (Device Attributes) sequences.
 ///
-/// This removes DA1 and DA2 query sequences from the output before forwarding
-/// to clients. When applications like tmux send DA queries, we handle them
-/// locally via VirtualTerminal and don't want them reaching the user's terminal,
-/// which would cause duplicate responses and garbage characters.
+/// This filter removes DA1 and DA2 query/response sequences from terminal output
+/// before forwarding to clients. It handles sequences that may be split across
+/// multiple chunks by buffering incomplete escape sequences.
 ///
 /// Filtered sequences:
-/// - DA1: ESC [ c or ESC [ 0 c
-/// - DA2: ESC [ > c or ESC [ > 0 c
-pub fn filter_da_queries(data: &[u8]) -> Vec<u8> {
-    let mut result = Vec::with_capacity(data.len());
-    let mut i = 0;
+/// - DA1 query: ESC [ c or ESC [ 0 c
+/// - DA2 query: ESC [ > c or ESC [ > 0 c
+/// - DA1 response: ESC [ ? params c
+/// - DA2 response: ESC [ > params c
+#[derive(Default)]
+pub struct DaFilter {
+    /// Buffer for incomplete escape sequences
+    buffer: Vec<u8>,
+    /// Current parsing state
+    state: DaFilterState,
+}
 
-    while i < data.len() {
-        // Check for ESC
-        if data[i] == 0x1b {
-            // Check for CSI (ESC [)
-            if i + 1 < data.len() && data[i + 1] == b'[' {
-                // Try to match DA1 or DA2 query patterns
-                let mut j = i + 2;
-                let mut is_da2 = false;
+#[derive(Default, Clone, Copy, PartialEq)]
+enum DaFilterState {
+    #[default]
+    Normal,
+    /// Saw ESC (0x1b)
+    Escape,
+    /// Saw ESC [
+    Csi,
+    /// Saw ESC [ ? (DA1 response)
+    CsiQuestion,
+    /// Saw ESC [ > (DA2 query/response)
+    CsiGreater,
+    /// In DA1/DA2 params (digits and semicolons)
+    InParams,
+}
 
-                // Check for '>' (DA2 marker)
-                if j < data.len() && data[j] == b'>' {
-                    is_da2 = true;
-                    j += 1;
-                }
+impl DaFilter {
+    pub fn new() -> Self {
+        Self::default()
+    }
 
-                // Skip optional '0' parameter
-                if j < data.len() && data[j] == b'0' {
-                    j += 1;
-                }
+    /// Process a chunk of data, returning filtered output.
+    /// Call this for each chunk of PTY output.
+    pub fn filter(&mut self, data: &[u8]) -> Vec<u8> {
+        let mut result = Vec::with_capacity(data.len());
 
-                // Check for final 'c' (DA query terminator)
-                if j < data.len() && data[j] == b'c' {
-                    // This is a DA1 or DA2 query - skip it
-                    i = j + 1;
-                    continue;
-                }
-
-                // Check for '?' intermediate (DA1 response) followed by params and 'c'
-                // These are responses, not queries, but they get echoed too
-                if !is_da2 && i + 2 < data.len() && data[i + 2] == b'?' {
-                    // Scan for the final 'c' of DA1 response
-                    let mut k = i + 3;
-                    while k < data.len() {
-                        if data[k] == b'c' {
-                            // Found DA1 response - skip it
-                            i = k + 1;
-                            break;
-                        }
-                        // Only valid characters in DA response: digits and semicolons
-                        if !data[k].is_ascii_digit() && data[k] != b';' {
-                            break;
-                        }
-                        k += 1;
-                    }
-                    if i == k + 1 {
-                        continue;
+        for &byte in data {
+            match self.state {
+                DaFilterState::Normal => {
+                    if byte == 0x1b {
+                        // Start of potential escape sequence
+                        self.buffer.clear();
+                        self.buffer.push(byte);
+                        self.state = DaFilterState::Escape;
+                    } else {
+                        result.push(byte);
                     }
                 }
 
-                // Check for '>' intermediate followed by params and 'c' (DA2 response)
-                if i + 2 < data.len() && data[i + 2] == b'>' {
-                    // Scan for the final 'c' of DA2 response
-                    let mut k = i + 3;
-                    while k < data.len() {
-                        if data[k] == b'c' {
-                            // Found DA2 response - skip it
-                            i = k + 1;
-                            break;
-                        }
-                        // Only valid characters in DA response: digits and semicolons
-                        if !data[k].is_ascii_digit() && data[k] != b';' {
-                            break;
-                        }
-                        k += 1;
+                DaFilterState::Escape => {
+                    self.buffer.push(byte);
+                    if byte == b'[' {
+                        self.state = DaFilterState::Csi;
+                    } else {
+                        // Not a CSI sequence, flush buffer
+                        result.extend(&self.buffer);
+                        self.buffer.clear();
+                        self.state = DaFilterState::Normal;
                     }
-                    if i == k + 1 {
-                        continue;
+                }
+
+                DaFilterState::Csi => {
+                    self.buffer.push(byte);
+                    match byte {
+                        b'?' => self.state = DaFilterState::CsiQuestion,
+                        b'>' => self.state = DaFilterState::CsiGreater,
+                        b'0' => self.state = DaFilterState::InParams,
+                        b'c' => {
+                            // DA1 query: ESC [ c - filter it out
+                            self.buffer.clear();
+                            self.state = DaFilterState::Normal;
+                        }
+                        // Any other character means it's not a DA sequence
+                        _ => {
+                            result.extend(&self.buffer);
+                            self.buffer.clear();
+                            self.state = DaFilterState::Normal;
+                        }
+                    }
+                }
+
+                DaFilterState::CsiQuestion => {
+                    self.buffer.push(byte);
+                    if byte == b'c' {
+                        // DA1 response: ESC [ ? params c - filter it out
+                        self.buffer.clear();
+                        self.state = DaFilterState::Normal;
+                    } else if byte.is_ascii_digit() || byte == b';' {
+                        // Continue accumulating params
+                    } else {
+                        // Not a DA1 response, flush buffer
+                        result.extend(&self.buffer);
+                        self.buffer.clear();
+                        self.state = DaFilterState::Normal;
+                    }
+                }
+
+                DaFilterState::CsiGreater => {
+                    self.buffer.push(byte);
+                    if byte == b'c' {
+                        // DA2 query/response: ESC [ > c or ESC [ > params c - filter it out
+                        self.buffer.clear();
+                        self.state = DaFilterState::Normal;
+                    } else if byte.is_ascii_digit() || byte == b';' {
+                        // Continue accumulating params (DA2 response)
+                    } else {
+                        // Not a DA2 sequence, flush buffer
+                        result.extend(&self.buffer);
+                        self.buffer.clear();
+                        self.state = DaFilterState::Normal;
+                    }
+                }
+
+                DaFilterState::InParams => {
+                    self.buffer.push(byte);
+                    if byte == b'c' {
+                        // DA1 query with param: ESC [ 0 c - filter it out
+                        self.buffer.clear();
+                        self.state = DaFilterState::Normal;
+                    } else if byte.is_ascii_digit() || byte == b';' {
+                        // Continue accumulating params
+                    } else {
+                        // Not a DA sequence, flush buffer
+                        result.extend(&self.buffer);
+                        self.buffer.clear();
+                        self.state = DaFilterState::Normal;
                     }
                 }
             }
         }
 
-        // Not a DA sequence, copy the byte
-        result.push(data[i]);
-        i += 1;
+        result
     }
 
+    /// Flush any remaining buffered data.
+    /// Call this when the stream ends to ensure no data is lost.
+    pub fn flush(&mut self) -> Vec<u8> {
+        let result = std::mem::take(&mut self.buffer);
+        self.state = DaFilterState::Normal;
+        result
+    }
+}
+
+/// Stateless filter for DA queries (for simple cases where sequences won't be split).
+/// For streaming use cases, prefer `DaFilter` which handles split sequences.
+pub fn filter_da_queries(data: &[u8]) -> Vec<u8> {
+    let mut filter = DaFilter::new();
+    let mut result = filter.filter(data);
+    result.extend(filter.flush());
     result
 }
 
@@ -6254,5 +6321,84 @@ mod tests {
         let input = b"\x1b[chello\x1b[>cworld\x1b[?1;2c!";
         let filtered = filter_da_queries(input);
         assert_eq!(filtered, b"helloworld!");
+    }
+
+    #[test]
+    fn da_filter_handles_split_da1_query() {
+        // DA1 query split across two chunks: ESC [ | c
+        let mut filter = DaFilter::new();
+        let chunk1 = filter.filter(b"hello\x1b[");
+        let chunk2 = filter.filter(b"cworld");
+        let flush = filter.flush();
+        let mut result = chunk1;
+        result.extend(chunk2);
+        result.extend(flush);
+        assert_eq!(result, b"helloworld");
+    }
+
+    #[test]
+    fn da_filter_handles_split_da2_query() {
+        // DA2 query split: ESC | [ > c
+        let mut filter = DaFilter::new();
+        let chunk1 = filter.filter(b"hello\x1b");
+        let chunk2 = filter.filter(b"[>cworld");
+        let flush = filter.flush();
+        let mut result = chunk1;
+        result.extend(chunk2);
+        result.extend(flush);
+        assert_eq!(result, b"helloworld");
+    }
+
+    #[test]
+    fn da_filter_handles_split_da1_response() {
+        // DA1 response split: ESC [ ? 1 | ; 2 c
+        let mut filter = DaFilter::new();
+        let chunk1 = filter.filter(b"hello\x1b[?1");
+        let chunk2 = filter.filter(b";2cworld");
+        let flush = filter.flush();
+        let mut result = chunk1;
+        result.extend(chunk2);
+        result.extend(flush);
+        assert_eq!(result, b"helloworld");
+    }
+
+    #[test]
+    fn da_filter_handles_split_da2_response() {
+        // DA2 response split: ESC [ > 0 ; 276 | ; 0 c
+        let mut filter = DaFilter::new();
+        let chunk1 = filter.filter(b"hello\x1b[>0;276");
+        let chunk2 = filter.filter(b";0cworld");
+        let flush = filter.flush();
+        let mut result = chunk1;
+        result.extend(chunk2);
+        result.extend(flush);
+        assert_eq!(result, b"helloworld");
+    }
+
+    #[test]
+    fn da_filter_flushes_incomplete_non_da_sequence() {
+        // Incomplete non-DA sequence should be flushed
+        let mut filter = DaFilter::new();
+        let chunk1 = filter.filter(b"hello\x1b[31");
+        let chunk2 = filter.filter(b"mworld");
+        let flush = filter.flush();
+        let mut result = chunk1;
+        result.extend(chunk2);
+        result.extend(flush);
+        // ESC [ 31 m is SGR red, should be preserved
+        assert_eq!(result, b"hello\x1b[31mworld");
+    }
+
+    #[test]
+    fn da_filter_handles_lone_esc_at_end() {
+        // ESC at end of chunk, followed by non-CSI
+        let mut filter = DaFilter::new();
+        let chunk1 = filter.filter(b"hello\x1b");
+        let chunk2 = filter.filter(b"Oworld"); // ESC O is SS3, not CSI
+        let flush = filter.flush();
+        let mut result = chunk1;
+        result.extend(chunk2);
+        result.extend(flush);
+        assert_eq!(result, b"hello\x1bOworld");
     }
 }
