@@ -9,8 +9,11 @@ import {
 } from "./_generated/server";
 import { Octokit } from "octokit";
 import {
+  sanitizeCodeContent,
   sanitizeDescription,
   sanitizeFileName,
+  sanitizeFilePath,
+  sanitizeLanguage,
   validateStorageUrl,
 } from "@cmux/shared/screenshots/sanitize-markdown";
 
@@ -124,6 +127,50 @@ const formatScreenshotImageMarkdown = (
   return lines;
 };
 
+/**
+ * Formats code annotations into markdown.
+ * Code annotations provide context for what code changes led to the screenshots.
+ *
+ * SECURITY: This function sanitizes user-controlled content (filePath, language, content, description)
+ * to prevent markdown injection attacks.
+ */
+const formatCodeAnnotationsMarkdown = (
+  annotations: Array<{
+    filePath: string;
+    language?: string;
+    content: string;
+    description?: string;
+  }>,
+): string[] => {
+  if (!annotations || annotations.length === 0) {
+    return [];
+  }
+
+  const lines: string[] = [
+    "<details>",
+    "<summary>Code changes that led to these screenshots</summary>",
+    "",
+  ];
+
+  for (const annotation of annotations) {
+    const safeFilePath = sanitizeFilePath(annotation.filePath);
+    const safeLanguage = sanitizeLanguage(annotation.language);
+    const safeContent = sanitizeCodeContent(annotation.content);
+    const safeDescription = sanitizeDescription(annotation.description);
+
+    lines.push(`#### \`${safeFilePath}\``);
+    if (safeDescription) {
+      lines.push(`> ${safeDescription}`, "");
+    }
+    // Use diff language for syntax highlighting if not specified
+    const lang = safeLanguage || "diff";
+    lines.push(`\`\`\`${lang}`, safeContent, "```", "");
+  }
+
+  lines.push("</details>", "");
+  return lines;
+};
+
 async function renderScreenshotSetMarkdown(
   ctx: ActionCtx,
   set: ScreenshotSetDoc,
@@ -153,6 +200,11 @@ async function renderScreenshotSetMarkdown(
         if (!storageUrl) continue;
         const fileName = image.fileName || "screenshot";
         lines.push(...formatScreenshotImageMarkdown(storageUrl, fileName, image.description));
+      }
+
+      // Add code annotations if present - these provide context for what code changes led to the screenshots
+      if (set.codeAnnotations && set.codeAnnotations.length > 0) {
+        lines.push(...formatCodeAnnotationsMarkdown(set.codeAnnotations));
       }
     }
   } else if (set.status === "failed") {

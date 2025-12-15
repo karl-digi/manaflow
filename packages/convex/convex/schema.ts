@@ -340,6 +340,21 @@ const convexSchema = defineSchema({
         description: v.optional(v.string()),
       }),
     ),
+    // Code annotations provide context for what code changes led to these screenshots
+    codeAnnotations: v.optional(
+      v.array(
+        v.object({
+          // File path of the changed file
+          filePath: v.string(),
+          // Programming language for syntax highlighting (e.g., "typescript", "css")
+          language: v.optional(v.string()),
+          // The code diff or snippet that explains the screenshot
+          content: v.string(),
+          // Optional description of what this code change does
+          description: v.optional(v.string()),
+        }),
+      ),
+    ),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

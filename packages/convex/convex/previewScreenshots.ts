@@ -30,6 +30,17 @@ export const createScreenshotSet = internalMutation({
         description: v.optional(v.string()),
       })
     ),
+    // Code annotations provide context for what code changes led to the screenshots
+    codeAnnotations: v.optional(
+      v.array(
+        v.object({
+          filePath: v.string(),
+          language: v.optional(v.string()),
+          content: v.string(),
+          description: v.optional(v.string()),
+        }),
+      ),
+    ),
   },
   handler: async (ctx, args): Promise<Id<"taskRunScreenshotSets">> => {
     const previewRun = await ctx.db.get(args.previewRunId);
@@ -70,6 +81,7 @@ export const createScreenshotSet = internalMutation({
         hasUiChanges: args.hasUiChanges,
         screenshots,
         error: args.error,
+        codeAnnotations: args.codeAnnotations,
       }
     );
 

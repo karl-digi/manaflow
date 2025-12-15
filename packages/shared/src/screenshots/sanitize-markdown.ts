@@ -241,3 +241,68 @@ export function sanitizeFileName(
 
   return escapeFilenameForMarkdown(truncated);
 }
+
+/**
+ * Sanitizes a file path for safe inclusion in markdown.
+ * File paths should only contain alphanumeric characters, slashes, dots, underscores, and hyphens.
+ *
+ * @param filePath - User-provided file path
+ * @param maxLength - Maximum length (default: 200 characters)
+ * @returns Sanitized file path safe for markdown
+ */
+export function sanitizeFilePath(
+  filePath: string | undefined | null,
+  maxLength = 200
+): string {
+  if (!filePath) return "unknown";
+
+  // Truncate to prevent abuse
+  const truncated =
+    filePath.length > maxLength ? filePath.slice(0, maxLength) + "..." : filePath;
+
+  return escapeFilenameForMarkdown(truncated);
+}
+
+/**
+ * Sanitizes code content for safe inclusion in markdown code blocks.
+ * Code blocks use triple backticks, so we need to escape any existing triple backticks.
+ *
+ * @param content - Code content to sanitize
+ * @param maxLength - Maximum length (default: 5000 characters)
+ * @returns Sanitized code content safe for code blocks
+ */
+export function sanitizeCodeContent(
+  content: string | undefined | null,
+  maxLength = 5000
+): string {
+  if (!content) return "";
+
+  // Truncate to prevent abuse via extremely long code blocks
+  let truncated = content;
+  if (content.length > maxLength) {
+    truncated = content.slice(0, maxLength) + "\n... (truncated)";
+  }
+
+  // Escape triple backticks by replacing them with escaped version
+  // This prevents breaking out of the code block
+  return truncated.replaceAll("```", "\\`\\`\\`");
+}
+
+/**
+ * Sanitizes a programming language identifier for code blocks.
+ * Only allows alphanumeric characters, plus, hash, and hyphen (e.g., "c++", "c#", "objective-c").
+ *
+ * @param language - Language identifier
+ * @returns Sanitized language identifier or empty string if invalid
+ */
+export function sanitizeLanguage(
+  language: string | undefined | null
+): string {
+  if (!language) return "";
+
+  // Only allow safe characters in language identifiers
+  const sanitized = language.replace(/[^a-zA-Z0-9+#-]/g, "");
+
+  // Limit length to prevent abuse
+  return sanitized.slice(0, 30);
+}

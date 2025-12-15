@@ -672,6 +672,17 @@ export const recordScreenshotResult = internalMutation({
       ),
     ),
     error: v.optional(v.string()),
+    // Code annotations provide context for what code changes led to the screenshots
+    codeAnnotations: v.optional(
+      v.array(
+        v.object({
+          filePath: v.string(),
+          language: v.optional(v.string()),
+          content: v.string(),
+          description: v.optional(v.string()),
+        }),
+      ),
+    ),
   },
   handler: async (ctx, args) => {
     const task = await ctx.db.get(args.taskId);
@@ -701,6 +712,7 @@ export const recordScreenshotResult = internalMutation({
         fileName: screenshot.fileName,
         description: screenshot.description,
       })),
+      codeAnnotations: args.codeAnnotations,
       createdAt: now,
       updatedAt: now,
     });

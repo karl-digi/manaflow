@@ -98,6 +98,7 @@ export const uploadPreviewScreenshot = httpAction(async (ctx, req) => {
       commitSha: payload.commitSha,
       error: payload.error,
       images: storedScreens,
+      codeAnnotations: payload.codeAnnotations,
     },
   );
 

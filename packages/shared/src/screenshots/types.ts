@@ -23,6 +23,19 @@ export type ScreenshotStoredImage = z.infer<
   typeof ScreenshotStoredImageSchema
 >;
 
+// Code annotation provides context for what code changes led to the screenshots
+export const CodeAnnotationSchema = z.object({
+  // File path of the changed file
+  filePath: z.string(),
+  // Programming language for syntax highlighting (e.g., "typescript", "css")
+  language: z.string().optional(),
+  // The code diff or snippet that explains the screenshot
+  content: z.string(),
+  // Optional description of what this code change does
+  description: z.string().optional(),
+});
+export type CodeAnnotation = z.infer<typeof CodeAnnotationSchema>;
+
 export const ScreenshotUploadPayloadSchema = z.object({
   taskId: typedZid("tasks"),
   runId: typedZid("taskRuns"),
@@ -71,6 +84,8 @@ export const PreviewScreenshotUploadPayloadSchema = z.object({
   images: z.array(PreviewScreenshotStoredImageSchema).optional(),
   error: z.string().optional(),
   commitSha: z.string(),
+  // Code annotations provide context for what code changes led to these screenshots
+  codeAnnotations: z.array(CodeAnnotationSchema).optional(),
 });
 export type PreviewScreenshotUploadPayload = z.infer<
   typeof PreviewScreenshotUploadPayloadSchema
