@@ -718,8 +718,8 @@ export const githubWebhook = httpAction(async (_ctx, req) => {
                   } else {
                     // Create task and taskRun for screenshot collection
                     // The existing worker infrastructure will pick this up and process it
-                    // Note: createdByUserId may be undefined for older preview configs
-                    const userId = previewConfig.createdByUserId ?? conn?.connectedByUserId;
+                    // Use the userId from the connection (who installed the GitHub App)
+                    const userId = conn?.connectedByUserId;
                     if (!userId) {
                       console.error("[preview-jobs] No userId available for preview task creation", {
                         repoFullName,

@@ -1197,14 +1197,15 @@ export async function runPreviewJob(
       prNumber: run.prNumber,
     });
 
-    // Get userId from config or run (config.createdByUserId is now optional)
-    const userId = config.createdByUserId ?? run.createdByUserId;
+    // Get userId from the environment (who created it)
+    const userId = environment.userId;
     if (!userId) {
       console.error("[preview-jobs] No userId available for preview task creation", {
         previewRunId,
         repoFullName: run.repoFullName,
         prNumber: run.prNumber,
         teamId: run.teamId,
+        environmentId: environment._id,
       });
       throw new Error("No userId available for preview task creation");
     }
@@ -1314,7 +1315,6 @@ export async function runPreviewJob(
       ? await new SignJWT({
           taskRunId,
           teamId: run.teamId,
-          userId: config.createdByUserId,
         })
           .setProtectedHeader({ alg: "HS256" })
           .setIssuedAt()

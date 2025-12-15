@@ -19,8 +19,6 @@ const convexSchema = defineSchema({
     serverMetadata: v.optional(v.any()),
     // Timestamp from Stack (created_at_millis)
     createdAtMillis: v.optional(v.number()),
-    // Subscription flags
-    hasPreviewSubscription: v.optional(v.boolean()), // Team has paid preview subscription
     // Local bookkeeping
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -449,7 +447,8 @@ const convexSchema = defineSchema({
     .index("by_team_pr", ["teamId", "repoFullName", "prNumber", "createdAt"]),
 
   automatedCodeReviewFileOutputs: defineTable({
-    jobId: v.id("automatedCodeReviewJobs"),
+    // Optional for streaming results that don't have an associated job
+    jobId: v.optional(v.id("automatedCodeReviewJobs")),
     teamId: v.optional(v.string()),
     repoFullName: v.string(),
     prNumber: v.optional(v.number()),
@@ -465,6 +464,9 @@ const convexSchema = defineSchema({
     sandboxInstanceId: v.optional(v.string()),
     filePath: v.string(),
     codexReviewOutput: v.any(),
+    // Language used for tooltip/comment generation (e.g., "en", "zh-Hant", "ja")
+    // Optional for backward compatibility with existing records
+    tooltipLanguage: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -477,11 +479,25 @@ const convexSchema = defineSchema({
       "commitRef",
       "createdAt",
     ])
+    .index("by_team_repo_pr_lang", [
+      "teamId",
+      "repoFullName",
+      "prNumber",
+      "tooltipLanguage",
+      "createdAt",
+    ])
     .index("by_team_repo_comparison_commit", [
       "teamId",
       "repoFullName",
       "comparisonSlug",
       "commitRef",
+      "createdAt",
+    ])
+    .index("by_team_repo_comparison_lang", [
+      "teamId",
+      "repoFullName",
+      "comparisonSlug",
+      "tooltipLanguage",
       "createdAt",
     ]),
 
@@ -569,7 +585,6 @@ const convexSchema = defineSchema({
   }).index("by_team_user_repo", ["teamId", "userId", "projectFullName"]),
   previewConfigs: defineTable({
     teamId: v.string(),
-    createdByUserId: v.optional(v.string()),
     repoFullName: v.string(),
     repoProvider: v.optional(v.literal("github")),
     repoInstallationId: v.number(),
@@ -594,7 +609,6 @@ const convexSchema = defineSchema({
   previewRuns: defineTable({
     previewConfigId: v.id("previewConfigs"),
     teamId: v.string(),
-    createdByUserId: v.optional(v.string()),
     repoFullName: v.string(),
     repoInstallationId: v.optional(v.number()),
     prNumber: v.number(),
@@ -627,8 +641,7 @@ const convexSchema = defineSchema({
     .index("by_config_status", ["previewConfigId", "status", "createdAt"])
     .index("by_config_head", ["previewConfigId", "headSha"])
     .index("by_config_pr", ["previewConfigId", "prNumber", "createdAt"])
-    .index("by_team_created", ["teamId", "createdAt"])
-    .index("by_user_created", ["createdByUserId", "createdAt"]),
+    .index("by_team_created", ["teamId", "createdAt"]),
   crownEvaluations: defineTable({
     taskId: v.id("tasks"),
     evaluatedAt: v.number(),

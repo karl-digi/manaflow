@@ -32,8 +32,9 @@ type PreviewSubscriptionClientProps = {
 };
 
 // Product ID configured in Stack Auth dashboard
+// Product: "product-2", Item: "preview-new-subscription"
 const PREVIEW_PRO_PRODUCT_ID =
-  process.env.NEXT_PUBLIC_PREVIEW_PAYWALL_PRODUCT_ID ?? "preview-pro";
+  process.env.NEXT_PUBLIC_PREVIEW_PAYWALL_PRODUCT_ID ?? "product-2";
 
 const FEATURES = [
   {
@@ -176,7 +177,7 @@ export function PreviewSubscriptionClient({
             </div>
             <div className="text-right">
               <div className="flex items-baseline gap-0.5">
-                <span className="text-3xl font-bold text-white">$29</span>
+                <span className="text-3xl font-bold text-white">$30</span>
                 <span className="text-sm text-neutral-500">/mo</span>
               </div>
             </div>

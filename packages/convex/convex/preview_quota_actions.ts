@@ -2,15 +2,20 @@
 
 import { v } from "convex/values";
 import { PREVIEW_PAYWALL_FREE_PR_LIMIT } from "../_shared/preview-paywall";
+import { stackServerAppJs } from "../_shared/stackServerAppJs";
 import { internal } from "./_generated/api";
 import { internalAction } from "./_generated/server";
 import type { PreviewQuotaResult } from "./preview_quota";
+
+// Stack Auth item ID for preview subscription
+// Reference: Stack Auth docs - team.getItem() returns Item with nonNegativeQuantity
+const PREVIEW_SUBSCRIPTION_ITEM_ID = "preview-new-subscription";
 
 /**
  * Check if a team has preview quota remaining
  *
  * Flow:
- * 1. First check if team has an active preview subscription
+ * 1. First check if team has an active preview subscription via Stack Auth
  * 2. If no subscription, check free tier limit (10 unique PRs per team)
  * 3. Return whether the team can run another preview
  */
@@ -19,18 +24,30 @@ export const checkPreviewQuota = internalAction({
     teamId: v.string(),
   },
   handler: async (ctx, { teamId }): Promise<PreviewQuotaResult> => {
-    // Step 1: Check if team has an active preview subscription
-    const team = await ctx.runQuery(internal.teams.getByIdInternal, { teamId });
-
-    if (team?.hasPreviewSubscription) {
-      console.log("[preview_quota] Team has active preview subscription", {
+    // Step 1: Check if team has an active preview subscription via Stack Auth
+    try {
+      const team = await stackServerAppJs.getTeam(teamId);
+      if (team) {
+        const item = await team.getItem(PREVIEW_SUBSCRIPTION_ITEM_ID);
+        if (item.nonNegativeQuantity > 0) {
+          console.log("[preview_quota] Team has active preview subscription", {
+            teamId,
+            itemId: PREVIEW_SUBSCRIPTION_ITEM_ID,
+            quantity: item.quantity,
+          });
+          return {
+            allowed: true,
+            remainingRuns: Number.MAX_SAFE_INTEGER,
+            isPaid: true,
+          };
+        }
+      }
+    } catch (error) {
+      // Log but don't fail - fall through to free tier check
+      console.error("[preview_quota] Failed to check Stack Auth subscription", {
         teamId,
+        error,
       });
-      return {
-        allowed: true,
-        remainingRuns: Number.MAX_SAFE_INTEGER,
-        isPaid: true,
-      };
     }
 
     // Step 2: Check free tier limit

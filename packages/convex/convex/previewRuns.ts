@@ -46,7 +46,6 @@ export const enqueueFromWebhook = internalMutation({
   args: {
     previewConfigId: v.id("previewConfigs"),
     teamId: v.string(),
-    createdByUserId: v.optional(v.string()), // Deprecated: no longer used for quota, kept for backwards compat
     repoFullName: v.string(),
     repoInstallationId: v.optional(v.number()),
     prNumber: v.number(),
@@ -117,7 +116,6 @@ export const enqueueFromWebhook = internalMutation({
     const runId = await ctx.db.insert("previewRuns", {
       previewConfigId: args.previewConfigId,
       teamId: args.teamId,
-      createdByUserId: args.createdByUserId,
       repoFullName,
       repoInstallationId: args.repoInstallationId,
       prNumber: args.prNumber,
@@ -305,7 +303,6 @@ export const enqueueFromTaskRun = internalMutation({
     const runId = await ctx.db.insert("previewRuns", {
       previewConfigId: previewConfig._id,
       teamId: taskRun.teamId,
-      createdByUserId: taskRun.userId,
       repoFullName,
       repoInstallationId: previewConfig.repoInstallationId,
       prNumber,
@@ -709,7 +706,6 @@ export const createManual = authMutation({
     const runId = await ctx.db.insert("previewRuns", {
       previewConfigId: config._id,
       teamId,
-      createdByUserId: config.createdByUserId,
       repoFullName,
       repoInstallationId: config.repoInstallationId,
       prNumber: args.prNumber,
@@ -742,8 +738,7 @@ export const createManual = authMutation({
     if (!identity) {
       throw new Error("Authentication required");
     }
-    // Use config.createdByUserId if available, otherwise fall back to authenticated user
-    const userId = config.createdByUserId ?? identity.subject;
+    const userId = identity.subject;
 
     // Step 3: Create task for this preview run (following webhook pattern)
     const taskId = await ctx.runMutation(internal.tasks.createForPreview, {
