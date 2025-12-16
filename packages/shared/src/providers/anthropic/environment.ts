@@ -188,6 +188,7 @@ exit 0`;
     },
     env: {
       CLAUDE_CODE_ENABLE_TELEMETRY: 0,
+      CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: 1,
       ANTHROPIC_BASE_URL: "https://www.cmux.dev/api/anthropic",
       ANTHROPIC_CUSTOM_HEADERS: `x-cmux-token:${ctx.taskRunJwt}`,
     },
