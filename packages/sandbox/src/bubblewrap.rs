@@ -792,6 +792,7 @@ fi
     /// Start X11 stack (Xvfb + openbox + x11vnc + Chrome) inside a sandbox namespace.
     /// This runs the processes inside the sandbox using nsenter.
     /// Uses timeouts to prevent hanging if commands block.
+    /// Returns error if critical components (Xvfb, x11vnc) fail to start.
     async fn start_x11_stack(
         &self,
         inner_pid: u32,
@@ -803,14 +804,14 @@ fi
         let cmd_timeout = Duration::from_secs(5);
         let x11_display = format!(":{}", display_number);
 
-        // Helper to run nsenter command with timeout
+        // Helper to run nsenter command with timeout, returns error message on failure
         async fn run_nsenter_with_timeout(
             nsenter_path: &str,
             pid: u32,
             cmd: &[String],
             timeout_duration: Duration,
             name: &str,
-        ) -> bool {
+        ) -> Result<(), String> {
             let result = timeout(
                 timeout_duration,
                 Command::new(nsenter_path)
@@ -825,20 +826,19 @@ fi
                         let stderr = String::from_utf8_lossy(&output.stderr);
                         debug!("{} start warning: {}", name, stderr);
                     }
-                    true
+                    // Command executed (backgrounded process started)
+                    Ok(())
                 }
-                Ok(Err(e)) => {
-                    debug!("{} command error: {}", name, e);
-                    false
-                }
+                Ok(Err(e)) => Err(format!("{} command error: {}", name, e)),
                 Err(_) => {
-                    debug!("{} command timed out", name);
-                    false
+                    // Timeout is expected for backgrounded processes
+                    debug!("{} command timed out (expected for backgrounded process)", name);
+                    Ok(())
                 }
             }
         }
 
-        // Start Xvfb (virtual framebuffer)
+        // Start Xvfb (virtual framebuffer) - CRITICAL
         let xvfb_cmd = vec![
             "/bin/sh".to_string(),
             "-c".to_string(),
@@ -854,27 +854,53 @@ fi
             cmd_timeout,
             "Xvfb",
         )
-        .await;
+        .await
+        .map_err(|e| SandboxError::Internal(e))?;
 
         // Wait briefly for Xvfb to start
         sleep(Duration::from_millis(200)).await;
 
-        // Start openbox window manager
+        // Verify Xvfb is running by checking if we can list processes
+        let verify_cmd = vec![
+            "/bin/sh".to_string(),
+            "-c".to_string(),
+            format!("pgrep -f 'Xvfb {}'", x11_display),
+        ];
+        let verify_result = timeout(
+            cmd_timeout,
+            Command::new(&self.nsenter_path)
+                .args(nsenter_args(inner_pid, None, &verify_cmd))
+                .output(),
+        )
+        .await;
+
+        let xvfb_running = matches!(verify_result, Ok(Ok(ref output)) if output.status.success());
+        if !xvfb_running {
+            return Err(SandboxError::Internal(format!(
+                "Xvfb failed to start on display {}",
+                x11_display
+            )));
+        }
+
+        // Start openbox window manager - non-critical
         let openbox_cmd = vec![
             "/bin/sh".to_string(),
             "-c".to_string(),
             format!("DISPLAY={} openbox &", x11_display),
         ];
-        run_nsenter_with_timeout(
+        if let Err(e) = run_nsenter_with_timeout(
             &self.nsenter_path,
             inner_pid,
             &openbox_cmd,
             cmd_timeout,
             "openbox",
         )
-        .await;
+        .await
+        {
+            warn!("openbox failed to start (non-critical): {}", e);
+        }
 
-        // Start x11vnc to expose the display
+        // Start x11vnc to expose the display - CRITICAL
         let vnc_cmd = vec![
             "/bin/sh".to_string(),
             "-c".to_string(),
@@ -890,9 +916,33 @@ fi
             cmd_timeout,
             "x11vnc",
         )
+        .await
+        .map_err(|e| SandboxError::Internal(e))?;
+
+        // Brief wait then verify x11vnc is running
+        sleep(Duration::from_millis(200)).await;
+        let verify_vnc_cmd = vec![
+            "/bin/sh".to_string(),
+            "-c".to_string(),
+            format!("pgrep -f 'x11vnc.*{}'", vnc_port),
+        ];
+        let verify_vnc_result = timeout(
+            cmd_timeout,
+            Command::new(&self.nsenter_path)
+                .args(nsenter_args(inner_pid, None, &verify_vnc_cmd))
+                .output(),
+        )
         .await;
 
-        // Start Chrome with remote debugging (if installed)
+        let vnc_running = matches!(verify_vnc_result, Ok(Ok(ref output)) if output.status.success());
+        if !vnc_running {
+            return Err(SandboxError::Internal(format!(
+                "x11vnc failed to start on port {}",
+                vnc_port
+            )));
+        }
+
+        // Start Chrome with remote debugging (if installed) - non-critical
         let chrome_cmd = vec![
             "/bin/sh".to_string(),
             "-c".to_string(),
@@ -908,14 +958,17 @@ fi
                 x11_display, cdp_port, display_number
             ),
         ];
-        run_nsenter_with_timeout(
+        if let Err(e) = run_nsenter_with_timeout(
             &self.nsenter_path,
             inner_pid,
             &chrome_cmd,
             cmd_timeout,
             "Chrome",
         )
-        .await;
+        .await
+        {
+            debug!("Chrome failed to start (non-critical, may not be installed): {}", e);
+        }
 
         info!(
             x11_display = %x11_display,
@@ -1299,17 +1352,33 @@ impl SandboxService for BubblewrapService {
         let display_number = (10 + index) as u16;
         let vnc_port = 5900 + display_number;
         let cdp_port = 9222 + index as u16;
-        let display = Some(SandboxDisplay {
-            display_number,
-            vnc_port,
-            cdp_port,
-        });
-        info!(
-            display_number = display_number,
-            vnc_port = vnc_port,
-            cdp_port = cdp_port,
-            "sandbox display configured"
-        );
+
+        // Phase: start X11 stack (Xvfb + openbox + x11vnc) inside the sandbox
+        // Only set display field if X11 stack starts successfully
+        let x11_timer = crate::timing::Timer::new("x11_stack");
+        let display = match self
+            .start_x11_stack(inner_pid, display_number, vnc_port, cdp_port)
+            .await
+        {
+            Ok(()) => {
+                info!(
+                    display_number = display_number,
+                    vnc_port = vnc_port,
+                    cdp_port = cdp_port,
+                    "sandbox display configured"
+                );
+                Some(SandboxDisplay {
+                    display_number,
+                    vnc_port,
+                    cdp_port,
+                })
+            }
+            Err(e) => {
+                warn!("X11 stack failed for sandbox {id}: {e} - display will be unavailable");
+                None
+            }
+        };
+        timing.record_timer("x11_stack", x11_timer);
 
         let handle = SandboxHandle {
             id,
@@ -1320,7 +1389,7 @@ impl SandboxService for BubblewrapService {
             created_at: Utc::now(),
             lease,
             correlation_id: request.tab_id.clone(),
-            display: display.clone(),
+            display,
         };
 
         let entry = SandboxEntry {
@@ -1329,17 +1398,6 @@ impl SandboxService for BubblewrapService {
             inner_pid,
             env: effective_env,
         };
-
-        // Phase: start X11 stack (Xvfb + openbox + x11vnc) inside the sandbox
-        let x11_timer = crate::timing::Timer::new("x11_stack");
-        if let Err(e) = self
-            .start_x11_stack(inner_pid, display_number, vnc_port, cdp_port)
-            .await
-        {
-            warn!("failed to start X11 stack for sandbox {id}: {e}");
-            // X11 failure is non-fatal - sandbox still works for terminal use
-        }
-        timing.record_timer("x11_stack", x11_timer);
 
         // Phase: finalize
         let finalize_timer = crate::timing::Timer::new("finalize");
