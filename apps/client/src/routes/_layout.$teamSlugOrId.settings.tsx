@@ -800,6 +800,11 @@ function SettingsComponent() {
                                   >
                                     {key.displayName}
                                   </label>
+                                  {providerInfo?.helpText && (
+                                    <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+                                      {providerInfo.helpText}
+                                    </p>
+                                  )}
                                   {usedModels.length > 0 && (
                                     <div className="mt-1 space-y-1">
                                       <div className="flex items-center gap-2 min-w-0">
@@ -846,11 +851,6 @@ function SettingsComponent() {
                                     </div>
                                   )}
                                 </div>
-                                {providerInfo?.helpText && (
-                                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-                                    {providerInfo.helpText}
-                                  </p>
-                                )}
                                 {providerInfo?.url && (
                                   <a
                                     href={providerInfo.url}
