@@ -1,4 +1,5 @@
 {
+  "$comment": "DEPRECATED: This package will be removed in favor of the official morphcloud npm package",
   "name": "@cmux/morphcloud-openapi-client",
   "version": "0.1.0",
   "private": true,
