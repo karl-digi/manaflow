@@ -3,7 +3,8 @@
   "updatedAt": "2025-12-16T07:55:53Z",
   "presets": [
     {
-      "presetId": "4vcpu_16gb_48gb",
+      "presetId": "morph_4vcpu_16gb_48gb",
+      "provider": "morph",
       "label": "Standard workspace",
       "cpu": "4 vCPU",
       "memory": "16 GB RAM",
@@ -188,7 +189,8 @@
       "description": "Great default for day-to-day work. Balanced CPU, memory, and storage."
     },
     {
-      "presetId": "8vcpu_32gb_48gb",
+      "presetId": "morph_8vcpu_32gb_48gb",
+      "provider": "morph",
       "label": "Performance workspace",
       "cpu": "8 vCPU",
       "memory": "32 GB RAM",
@@ -373,7 +375,8 @@
       "description": "Extra headroom for larger codebases or heavier workloads."
     },
     {
-      "presetId": "6vcpu_24gb_48gb",
+      "presetId": "morph_6vcpu_24gb_48gb",
+      "provider": "morph",
       "label": "Standard workspace",
       "cpu": "6 vCPU",
       "memory": "24 GB RAM",

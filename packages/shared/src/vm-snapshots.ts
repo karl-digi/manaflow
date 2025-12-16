@@ -168,10 +168,9 @@ const defaultFreestylePreset = FREESTYLE_SNAPSHOT_PRESETS.find(
 
 export type FreestyleSnapshotId = string;
 
-export const DEFAULT_FREESTYLE_SNAPSHOT_ID: FreestyleSnapshotId =
-  defaultFreestylePreset?.id ?? (() => {
-    throw new Error("No Freestyle presets with versions found in the manifest");
-  })();
+// Freestyle presets are optional (integration is still in progress)
+export const DEFAULT_FREESTYLE_SNAPSHOT_ID: FreestyleSnapshotId | null =
+  defaultFreestylePreset?.id ?? null;
 
 export const DEFAULT_FREESTYLE_PRESET = defaultFreestylePreset;
 

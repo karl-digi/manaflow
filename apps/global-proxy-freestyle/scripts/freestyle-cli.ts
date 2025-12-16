@@ -84,10 +84,13 @@ switch (command) {
     let snapshotId: string;
     if (snapshotArg !== -1 && process.argv[snapshotArg + 1]) {
       snapshotId = process.argv[snapshotArg + 1];
-    } else {
+    } else if (DEFAULT_FREESTYLE_SNAPSHOT_ID) {
       snapshotId = DEFAULT_FREESTYLE_SNAPSHOT_ID;
       const latestVersion = DEFAULT_FREESTYLE_PRESET?.latestVersion;
       console.log(`Using latest snapshot: v${latestVersion?.version} (${snapshotId})`);
+    } else {
+      console.error("No default Freestyle snapshot available. Please specify --snapshot <id>");
+      process.exit(1);
     }
 
     let timeout: number | undefined;
