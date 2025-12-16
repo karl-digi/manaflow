@@ -1330,7 +1330,7 @@ export async function runPreviewJob(
         headSha: run.headSha,
       },
       ttlSeconds: 3600,
-      ttlAction: "stop",
+      ttlAction: "pause",
       readinessTimeoutMs: 5 * 60 * 1000,
     });
 
