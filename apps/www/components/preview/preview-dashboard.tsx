@@ -105,6 +105,7 @@ type TeamOption = {
 
 type PreviewPaywallState = {
   isBlocked: boolean;
+  hasPaid: boolean;
   usedRuns: number;
   freeLimit: number;
   productId: string;
@@ -4417,15 +4418,21 @@ function PreviewDashboardInner({
                   setOpeningCheckout(true);
                   void (async () => {
                     try {
-                      const checkoutUrl = await stackUser.createCheckoutUrl({
-                        productId: paywall.productId,
-                        returnUrl: window.location.href,
+                      // Use team-level checkout via API route
+                      const response = await fetch("/api/preview/checkout", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          productId: paywall.productId,
+                          teamSlugOrId: selectedTeamSlugOrIdState,
+                        }),
                       });
-                      window.open(
-                        checkoutUrl,
-                        "_blank",
-                        "noopener,noreferrer"
-                      );
+                      if (!response.ok) {
+                        const text = await response.text();
+                        throw new Error(text || "Failed to create checkout session");
+                      }
+                      const { checkoutUrl } = await response.json();
+                      window.location.href = checkoutUrl;
                     } catch (error) {
                       console.error(
                         "[PreviewDashboard] Failed to create checkout URL",

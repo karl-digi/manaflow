@@ -24,6 +24,9 @@ export const metadata: Metadata = {
 
 export const dynamic = "force-dynamic";
 
+// Item ID for checking team subscription (must match backend in preview_quota_actions.ts)
+const PREVIEW_SUBSCRIPTION_ITEM_ID = "preview-team-subscription";
+
 type PageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
@@ -79,6 +82,35 @@ export default async function PreviewSubscriptionPage({ searchParams }: PageProp
       console.error("[PreviewSubscriptionPage] Failed to get quota info", { error });
     }
   }
+
+  // Check subscription status for each team using Stack Auth
+  // Reference: Stack Auth API - GET /payments/items/{customer_type}/{customer_id}/{item_id}
+  // Returns: { id, display_name, quantity } where quantity can be negative
+  const teamSubscriptionStatus: Record<string, boolean> = {};
+  await Promise.all(
+    teams.map(async (team) => {
+      const teamSlugOrId = getTeamSlugOrId(team);
+      try {
+        const item = await team.getItem(PREVIEW_SUBSCRIPTION_ITEM_ID);
+        console.log("[PreviewSubscriptionPage] getItem response:", {
+          teamSlugOrId,
+          itemId: PREVIEW_SUBSCRIPTION_ITEM_ID,
+          item,
+        });
+        // SDK may return quantity or nonNegativeQuantity depending on version
+        const quantity = (item as { quantity?: number; nonNegativeQuantity?: number }).quantity
+          ?? (item as { nonNegativeQuantity?: number }).nonNegativeQuantity
+          ?? 0;
+        teamSubscriptionStatus[teamSlugOrId] = quantity > 0;
+      } catch (error) {
+        console.error("[PreviewSubscriptionPage] Failed to check team subscription", {
+          teamSlugOrId,
+          error,
+        });
+        teamSubscriptionStatus[teamSlugOrId] = false;
+      }
+    })
+  );
 
   const teamOptions = teams.map((team) => ({
     slugOrId: getTeamSlugOrId(team),
@@ -139,6 +171,7 @@ export default async function PreviewSubscriptionPage({ searchParams }: PageProp
       <PreviewSubscriptionClient
         selectedTeamSlugOrId={selectedTeamSlugOrId}
         teamOptions={teamOptions}
+        teamSubscriptionStatus={teamSubscriptionStatus}
         usedRuns={usedRuns}
         remainingRuns={remainingRuns}
         freeLimit={freeLimit}

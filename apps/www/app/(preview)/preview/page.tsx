@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import { waitUntil } from "@vercel/functions";
 import { stackServerApp } from "@/lib/utils/stack";
 import { getConvex } from "@/lib/utils/get-convex";
-import { env } from "@/lib/utils/www-env";
 import { api } from "@cmux/convex/api";
 import { PreviewDashboard } from "@/components/preview/preview-dashboard";
 import {
@@ -54,6 +53,7 @@ type TeamOption = {
 
 type PreviewPaywallState = {
   isBlocked: boolean;
+  hasPaid: boolean;
   usedRuns: number;
   freeLimit: number;
   productId: string;
@@ -209,8 +209,9 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
 
   const convex = getConvex({ accessToken });
 
-  const paywallProductId =
-    env.NEXT_PUBLIC_PREVIEW_PAYWALL_PRODUCT_ID ?? "preview-pro";
+  const paywallProductId = "preview-pro";
+  // Item ID for checking team subscription (must match backend in preview_quota_actions.ts)
+  const PREVIEW_SUBSCRIPTION_ITEM_ID = "preview-team-subscription";
 
   let paywall: PreviewPaywallState | null = null;
   try {
@@ -221,14 +222,28 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
     let hasPaid = false;
     let paymentCheckFailed = false;
     try {
-      const products = await user.listProducts({ limit: 100 });
-      hasPaid = products.some(
-        (product) => product.id === paywallProductId && product.quantity > 0,
-      );
+      // Check team-level subscription using Stack Auth's team.getItem() API
+      // Reference: Stack Auth API - GET /payments/items/{customer_type}/{customer_id}/{item_id}
+      // Returns: { id, display_name, quantity } where quantity can be negative
+      if (selectedTeam) {
+        const item = await selectedTeam.getItem(PREVIEW_SUBSCRIPTION_ITEM_ID);
+        console.log("[PreviewLandingPage] getItem response:", {
+          teamSlugOrId: selectedTeamSlugOrId,
+          itemId: PREVIEW_SUBSCRIPTION_ITEM_ID,
+          item,
+        });
+        // SDK may return quantity or nonNegativeQuantity depending on version
+        const quantity = (item as { quantity?: number; nonNegativeQuantity?: number }).quantity
+          ?? (item as { nonNegativeQuantity?: number }).nonNegativeQuantity
+          ?? 0;
+        hasPaid = quantity > 0;
+      }
     } catch (error) {
       paymentCheckFailed = true;
-      console.error("[PreviewLandingPage] Failed to check Stack products", {
+      console.error("[PreviewLandingPage] Failed to check team subscription", {
         error,
+        teamSlugOrId: selectedTeamSlugOrId,
+        itemId: PREVIEW_SUBSCRIPTION_ITEM_ID,
       });
     }
 
@@ -237,6 +252,7 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
         !paymentCheckFailed &&
         !hasPaid &&
         quotaInfo.remainingRuns <= 0,
+      hasPaid,
       usedRuns: quotaInfo.usedRuns,
       freeLimit: quotaInfo.freeLimit,
       productId: paywallProductId,

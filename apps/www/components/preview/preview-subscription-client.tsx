@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   Camera,
   Check,
+  CheckCircle2,
   Clock,
   Infinity,
   Loader2,
@@ -25,16 +26,16 @@ type TeamOption = {
 type PreviewSubscriptionClientProps = {
   selectedTeamSlugOrId: string;
   teamOptions: TeamOption[];
+  /** Map of teamSlugOrId -> isSubscribed (checked via Stack Auth team.getItem) */
+  teamSubscriptionStatus: Record<string, boolean>;
   usedRuns: number;
   remainingRuns: number;
   freeLimit: number;
   userEmail?: string | null;
 };
 
-// Product ID configured in Stack Auth dashboard
-// Product: "product-2", Item: "preview-new-subscription"
-const PREVIEW_PRO_PRODUCT_ID =
-  process.env.NEXT_PUBLIC_PREVIEW_PAYWALL_PRODUCT_ID ?? "product-2";
+// Product ID configured in Stack Auth dashboard (for checkout)
+const PREVIEW_PRO_PRODUCT_ID = "preview-pro";
 
 const FEATURES = [
   {
@@ -62,6 +63,7 @@ const FEATURES = [
 export function PreviewSubscriptionClient({
   selectedTeamSlugOrId,
   teamOptions,
+  teamSubscriptionStatus,
   usedRuns,
   remainingRuns,
   freeLimit,
@@ -71,6 +73,7 @@ export function PreviewSubscriptionClient({
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const isCurrentTeamSubscribed = teamSubscriptionStatus[selectedTeam] ?? false;
   const quotaExceeded = remainingRuns <= 0;
   const usagePercent = Math.min(100, (usedRuns / freeLimit) * 100);
 
@@ -120,10 +123,12 @@ export function PreviewSubscriptionClient({
           <CmuxLogo height={28} wordmarkText="preview" />
         </div>
         <h1 className="text-[2rem] font-semibold tracking-tight text-white leading-tight mb-3">
-          Upgrade to Pro
+          {isCurrentTeamSubscribed ? "You're on Pro" : "Upgrade to Pro"}
         </h1>
         <p className="text-base text-neutral-400 leading-relaxed">
-          Unlock unlimited screenshot previews for your GitHub pull requests.
+          {isCurrentTeamSubscribed
+            ? "Your team has unlimited screenshot previews for GitHub pull requests."
+            : "Unlock unlimited screenshot previews for your GitHub pull requests."}
         </p>
       </div>
 
@@ -134,27 +139,42 @@ export function PreviewSubscriptionClient({
           <span
             className={clsx(
               "text-sm font-medium",
-              quotaExceeded ? "text-red-400" : "text-white"
+              isCurrentTeamSubscribed
+                ? "text-emerald-400"
+                : quotaExceeded
+                  ? "text-red-400"
+                  : "text-white"
             )}
           >
-            {usedRuns} / {freeLimit} free PRs
+            {isCurrentTeamSubscribed ? (
+              <span className="flex items-center gap-1.5">
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                Unlimited PRs
+              </span>
+            ) : (
+              `${usedRuns} / ${freeLimit} free PRs`
+            )}
           </span>
         </div>
-        <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
-          <div
-            className={clsx(
-              "h-full rounded-full transition-all duration-500",
-              quotaExceeded
-                ? "bg-gradient-to-r from-red-500 to-red-400"
-                : "bg-gradient-to-r from-blue-500 to-blue-400"
+        {!isCurrentTeamSubscribed && (
+          <>
+            <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+              <div
+                className={clsx(
+                  "h-full rounded-full transition-all duration-500",
+                  quotaExceeded
+                    ? "bg-gradient-to-r from-red-500 to-red-400"
+                    : "bg-gradient-to-r from-blue-500 to-blue-400"
+                )}
+                style={{ width: `${usagePercent}%` }}
+              />
+            </div>
+            {quotaExceeded && (
+              <p className="text-sm text-red-400/90 mt-2">
+                Free tier limit reached. Subscribe to continue.
+              </p>
             )}
-            style={{ width: `${usagePercent}%` }}
-          />
-        </div>
-        {quotaExceeded && (
-          <p className="text-sm text-red-400/90 mt-2">
-            Free tier limit reached. Subscribe to continue.
-          </p>
+          </>
         )}
       </div>
 
@@ -195,11 +215,14 @@ export function PreviewSubscriptionClient({
                   onChange={(e) => setSelectedTeam(e.target.value)}
                   className="w-full appearance-none rounded-lg border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-white focus:border-white/20 focus:outline-none focus:ring-1 focus:ring-white/10 pr-10 cursor-pointer transition-colors hover:bg-white/[0.07]"
                 >
-                  {teamOptions.map((team) => (
-                    <option key={team.slugOrId} value={team.slugOrId}>
-                      {team.displayName}
-                    </option>
-                  ))}
+                  {teamOptions.map((team) => {
+                    const isSubscribed = teamSubscriptionStatus[team.slugOrId] ?? false;
+                    return (
+                      <option key={team.slugOrId} value={team.slugOrId}>
+                        {team.displayName}{isSubscribed ? " ✓" : ""}
+                      </option>
+                    );
+                  })}
                 </select>
                 <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3">
                   <svg
@@ -242,25 +265,32 @@ export function PreviewSubscriptionClient({
           </ul>
 
           {/* CTA button */}
-          <button
-            onClick={handleCheckout}
-            disabled={isCheckingOut}
-            className={clsx(
-              "w-full h-11 rounded-lg font-medium text-sm transition-all duration-200",
-              "bg-white text-neutral-900 hover:bg-neutral-100",
-              "disabled:opacity-60 disabled:cursor-not-allowed",
-              "flex items-center justify-center gap-2"
-            )}
-          >
-            {isCheckingOut ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Redirecting to checkout...
-              </>
-            ) : (
-              "Subscribe to Pro"
-            )}
-          </button>
+          {isCurrentTeamSubscribed ? (
+            <div className="w-full h-11 rounded-lg font-medium text-sm bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center gap-2">
+              <CheckCircle2 className="h-4 w-4" />
+              Subscribed
+            </div>
+          ) : (
+            <button
+              onClick={handleCheckout}
+              disabled={isCheckingOut}
+              className={clsx(
+                "w-full h-11 rounded-lg font-medium text-sm transition-all duration-200",
+                "bg-white text-neutral-900 hover:bg-neutral-100",
+                "disabled:opacity-60 disabled:cursor-not-allowed",
+                "flex items-center justify-center gap-2"
+              )}
+            >
+              {isCheckingOut ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Redirecting to checkout...
+                </>
+              ) : (
+                "Subscribe to Pro"
+              )}
+            </button>
+          )}
 
           {error && (
             <p className="text-sm text-red-400 mt-3 text-center">{error}</p>

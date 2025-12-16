@@ -9,7 +9,7 @@ import type { PreviewQuotaResult } from "./preview_quota";
 
 // Stack Auth item ID for preview subscription
 // Reference: Stack Auth docs - team.getItem() returns Item with nonNegativeQuantity
-const PREVIEW_SUBSCRIPTION_ITEM_ID = "preview-new-subscription";
+const PREVIEW_SUBSCRIPTION_ITEM_ID = "preview-team-subscription";
 
 /**
  * Check if a team has preview quota remaining
