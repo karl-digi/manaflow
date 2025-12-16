@@ -918,8 +918,7 @@ async def task_install_base_packages(ctx: TaskContext) -> None:
             gh \
             zsh \
             zsh-autosuggestions \
-            ripgrep \
-            openssh-server
+            ripgrep
 
 
         # Download and install Chrome
@@ -947,54 +946,6 @@ async def task_install_base_packages(ctx: TaskContext) -> None:
         """
     )
     await ctx.run("install-base-packages", cmd)
-
-
-@registry.task(
-    name="configure-sshd",
-    deps=("install-base-packages",),
-    description="Configure OpenSSH server on port 22 (used by Morph SSH gateway)",
-)
-async def task_configure_sshd(ctx: TaskContext) -> None:
-    cmd = textwrap.dedent(
-        """
-        set -eux
-
-        # openssh-server is installed by install-base-packages
-        # Generate host keys if they don't exist
-        ssh-keygen -A
-
-        # Configure sshd on port 22 (Morph handles SSH access via per-instance tokens)
-        cat > /etc/ssh/sshd_config.d/cmux.conf << 'EOF'
-Port 22
-PermitRootLogin prohibit-password
-PubkeyAuthentication yes
-PasswordAuthentication no
-AuthorizedKeysFile .ssh/authorized_keys
-EOF
-
-        # Create /root/.ssh directory with correct permissions
-        mkdir -p /root/.ssh
-        chmod 700 /root/.ssh
-        touch /root/.ssh/authorized_keys
-        chmod 600 /root/.ssh/authorized_keys
-
-        # Ensure sshd is enabled and will start on boot
-        systemctl enable ssh
-        systemctl restart ssh
-
-        # Verify sshd is running on port 22
-        sleep 2
-        if ! ss -tlnp | grep -q ':22 '; then
-            echo "ERROR: sshd not listening on port 22" >&2
-            systemctl status ssh --no-pager || true
-            journalctl -u ssh --no-pager -n 50 || true
-            exit 1
-        fi
-
-        echo "sshd configured and running on port 22"
-        """
-    )
-    await ctx.run("configure-sshd", cmd)
 
 
 @registry.task(
@@ -1469,8 +1420,8 @@ async def task_install_ide_extensions(ctx: TaskContext) -> None:
           [ -z "${{publisher}}" ] && continue
           download_extension "${{publisher}}" "${{name}}" "${{version}}" "${{download_dir}}/${{publisher}}.${{name}}.vsix" &
         done <<'EXTENSIONS'
-        {extensions_blob}
-        EXTENSIONS
+{extensions_blob}
+EXTENSIONS
         wait
         set -- "${{download_dir}}"/*.vsix
         for vsix in "$@"; do
@@ -1544,114 +1495,9 @@ async def task_setup_claude_oauth_wrappers(ctx: TaskContext) -> None:
     This allows cmux to inject CLAUDE_CODE_OAUTH_TOKEN at runtime without needing
     to set it as an environment variable (which doesn't work due to OAuth check timing).
     """
-    cmd = textwrap.dedent(
-        r'''
-        set -eux
-
-        # Create the env file directory
-        mkdir -p /etc/claude-code
-        touch /etc/claude-code/env
-        chmod 644 /etc/claude-code/env
-
-        # Add bun global bin to PATH (where bun add -g installs binaries)
-        export PATH="/root/.bun/bin:$PATH"
-
-        # Find the real claude binary location
-        CLAUDE_PATH="$(which claude 2>/dev/null || true)"
-        if [ -z "$CLAUDE_PATH" ]; then
-            echo "claude not found in PATH, skipping wrapper setup"
-            exit 0
-        fi
-
-        echo "Found claude at: $CLAUDE_PATH"
-        CLAUDE_DIR="$(dirname "$CLAUDE_PATH")"
-        echo "Claude directory: $CLAUDE_DIR"
-
-        # If claude is already a wrapper (not a symlink), skip
-        if [ -f "$CLAUDE_PATH" ] && ! [ -L "$CLAUDE_PATH" ]; then
-            if head -1 "$CLAUDE_PATH" 2>/dev/null | grep -q "^#!/bin/bash"; then
-                echo "claude already appears to be a wrapper, skipping"
-                exit 0
-            fi
-        fi
-
-        # Move claude to claude-real (works for both symlinks and regular files)
-        mv "$CLAUDE_DIR/claude" "$CLAUDE_DIR/claude-real"
-
-        # Create claude wrapper that calls the real binary
-        cat > "$CLAUDE_DIR/claude" << WRAPPER
-#!/bin/bash
-# Source claude-code env vars if file exists
-if [ -f /etc/claude-code/env ]; then
-    set -a
-    source /etc/claude-code/env
-    set +a
-fi
-exec "$CLAUDE_DIR/claude-real" "\$@"
-WRAPPER
-        chmod +x "$CLAUDE_DIR/claude"
-
-        # Setup bunx wrapper if bunx exists (used by cmux to run claude-code)
-        BUNX_PATH="$(which bunx 2>/dev/null || true)"
-        if [ -n "$BUNX_PATH" ]; then
-            echo "Found bunx at: $BUNX_PATH"
-            BUNX_DIR="$(dirname "$BUNX_PATH")"
-
-            # Only wrap if it's a symlink (not already wrapped)
-            if [ -L "$BUNX_PATH" ]; then
-                mv "$BUNX_DIR/bunx" "$BUNX_DIR/bunx-real"
-                cat > "$BUNX_DIR/bunx" << WRAPPER
-#!/bin/bash
-# If running claude-code (with or without version suffix), source env vars
-case "\$1" in
-    @anthropic-ai/claude-code|@anthropic-ai/claude-code@*|claude-code|claude-code@*)
-        if [ -f /etc/claude-code/env ]; then
-            set -a
-            source /etc/claude-code/env
-            set +a
-        fi
-        ;;
-esac
-exec "$BUNX_DIR/bunx-real" "\$@"
-WRAPPER
-                chmod +x "$BUNX_DIR/bunx"
-            fi
-        fi
-
-        # Setup npx wrapper if npx exists
-        NPX_PATH="$(which npx 2>/dev/null || true)"
-        if [ -n "$NPX_PATH" ]; then
-            echo "Found npx at: $NPX_PATH"
-            NPX_DIR="$(dirname "$NPX_PATH")"
-
-            # Only wrap if it's a symlink (not already wrapped)
-            if [ -L "$NPX_PATH" ]; then
-                mv "$NPX_DIR/npx" "$NPX_DIR/npx-real"
-                cat > "$NPX_DIR/npx" << WRAPPER
-#!/bin/bash
-# If running claude-code (with or without version suffix), source env vars
-case "\$1" in
-    @anthropic-ai/claude-code|@anthropic-ai/claude-code@*|claude-code|claude-code@*)
-        if [ -f /etc/claude-code/env ]; then
-            set -a
-            source /etc/claude-code/env
-            set +a
-        fi
-        ;;
-esac
-exec "$NPX_DIR/npx-real" "\$@"
-WRAPPER
-                chmod +x "$NPX_DIR/npx"
-            fi
-        fi
-
-        echo "Claude OAuth wrappers setup complete"
-        echo "claude wrapper:"
-        ls -la "$CLAUDE_DIR/claude" "$CLAUDE_DIR/claude-real" 2>/dev/null || true
-        cat "$CLAUDE_DIR/claude"
-        '''
-    )
-    await ctx.run("setup-claude-oauth-wrappers", cmd)
+    script_path = Path(__file__).parent.parent / "configs" / "setup-claude-oauth-wrappers.sh"
+    script_content = script_path.read_text()
+    await ctx.run("setup-claude-oauth-wrappers", script_content)
 
 
 @registry.task(
@@ -2247,7 +2093,7 @@ async def task_check_envctl(ctx: TaskContext) -> None:
 @registry.task(
     name="check-ssh-service",
     deps=("configure-memory-protection", "cleanup-build-artifacts"),
-    description="Verify SSH service is active on port 22",
+    description="Verify SSH service is active",
 )
 async def task_check_ssh_service(ctx: TaskContext) -> None:
     cmd = textwrap.dedent(
@@ -2267,15 +2113,6 @@ async def task_check_ssh_service(ctx: TaskContext) -> None:
           journalctl -u ssh --no-pager -n 50 || true
           exit 1
         fi
-
-        # Verify sshd is listening on port 22
-        if ! ss -tlnp | grep -q ':22 '; then
-          echo "ERROR: sshd not listening on port 22" >&2
-          ss -tlnp | grep ssh || true
-          cat /etc/ssh/sshd_config.d/cmux.conf || true
-          exit 1
-        fi
-        echo "sshd is listening on port 22"
         """
     )
     await ctx.run("check-ssh-service", cmd)
@@ -2628,326 +2465,6 @@ async def report_disk_usage(ctx: TaskContext) -> None:
         """
     ).strip()
     await ctx.run("disk-usage-summary", disk_script)
-
-
-# ---------------------------------------------------------------------------
-# Sandboxd-based snapshot tasks (alternative to IDE/worker/execd)
-# ---------------------------------------------------------------------------
-
-
-@registry.task(
-    name="install-bubblewrap-deps",
-    deps=("apt-bootstrap",),
-    description="Install bubblewrap and sandbox networking dependencies",
-)
-async def task_install_bubblewrap_deps(ctx: TaskContext) -> None:
-    cmd = textwrap.dedent(
-        """
-        set -eux
-        DEBIAN_FRONTEND=noninteractive apt-get update
-        DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            bubblewrap \
-            iproute2 \
-            iptables \
-            iputils-ping \
-            uidmap \
-            fuse-overlayfs \
-            util-linux
-
-        # Configure iptables to use legacy mode (required for MASQUERADE)
-        update-alternatives --set iptables /usr/sbin/iptables-legacy || true
-        update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy || true
-
-        rm -rf /var/lib/apt/lists/*
-        """
-    )
-    await ctx.run("install-bubblewrap-deps", cmd)
-
-
-@registry.task(
-    name="configure-sandbox-networking",
-    deps=("install-bubblewrap-deps",),
-    description="Configure IP forwarding and iptables NAT for sandbox networking",
-)
-async def task_configure_sandbox_networking(ctx: TaskContext) -> None:
-    cmd = textwrap.dedent(
-        """
-        set -euo pipefail
-
-        # Enable IP forwarding permanently
-        cat > /etc/sysctl.d/99-cmux-sandbox.conf << 'EOF'
-net.ipv4.ip_forward = 1
-EOF
-        sysctl -p /etc/sysctl.d/99-cmux-sandbox.conf
-
-        # Set up NAT for sandbox subnet (10.201.0.0/16)
-        if ! iptables -t nat -C POSTROUTING -s 10.201.0.0/16 ! -d 10.201.0.0/16 -j MASQUERADE 2>/dev/null; then
-            iptables -t nat -A POSTROUTING -s 10.201.0.0/16 ! -d 10.201.0.0/16 -j MASQUERADE
-        fi
-
-        # Make iptables rules persistent
-        mkdir -p /etc/iptables
-        iptables-save > /etc/iptables/rules.v4 || true
-        """
-    )
-    await ctx.run("configure-sandbox-networking", cmd)
-
-
-@registry.task(
-    name="build-sandbox-binaries",
-    deps=("upload-repo", "install-rust-toolchain"),
-    description="Build cmux-sandboxd, cmux, and cmux-bridge binaries",
-)
-async def task_build_sandbox_binaries(ctx: TaskContext) -> None:
-    repo = shlex.quote(ctx.remote_repo_root)
-    cmd = textwrap.dedent(
-        f"""
-        set -euo pipefail
-        export RUSTUP_HOME=/usr/local/rustup
-        export CARGO_HOME=/usr/local/cargo
-        export PATH="${{CARGO_HOME}}/bin:$PATH"
-
-        cd {repo}/packages/sandbox
-
-        # Build all sandbox binaries in release mode
-        cargo build --release \
-            --bin cmux-sandboxd \
-            --bin cmux \
-            --bin cmux-bridge
-
-        # Install binaries to /usr/local/bin
-        install -m 0755 target/release/cmux-sandboxd /usr/local/bin/cmux-sandboxd
-        install -m 0755 target/release/cmux /usr/local/bin/cmux
-        install -m 0755 target/release/cmux-bridge /usr/local/bin/cmux-bridge
-
-        # Create symlinks for bridge integrations
-        ln -sf /usr/local/bin/cmux-bridge /usr/local/bin/open-url
-        ln -sf /usr/local/bin/cmux-bridge /usr/local/bin/xdg-open
-
-        # Verify installation
-        /usr/local/bin/cmux-sandboxd --version || echo "cmux-sandboxd installed"
-        /usr/local/bin/cmux --version
-        /usr/local/bin/cmux-bridge --version || echo "cmux-bridge installed"
-        """
-    )
-    await ctx.run("build-sandbox-binaries", cmd, timeout=60 * 45)
-
-
-@registry.task(
-    name="install-sandbox-systemd-service",
-    deps=("build-sandbox-binaries", "configure-sandbox-networking", "ensure-docker"),
-    description="Install and enable cmux-sandboxd systemd service",
-)
-async def task_install_sandbox_systemd_service(ctx: TaskContext) -> None:
-    repo = shlex.quote(ctx.remote_repo_root)
-    cmd = textwrap.dedent(
-        f"""
-        set -euo pipefail
-
-        # Create required directories
-        install -d -m 0755 /var/lib/cmux/sandboxes
-        install -d -m 0755 /var/log/cmux
-        install -d -m 0755 /var/run/cmux
-
-        # Install systemd service file
-        install -Dm0644 {repo}/packages/sandbox/systemd/cmux-sandboxd.service \
-            /usr/lib/systemd/system/cmux-sandboxd.service
-
-        # Create environment file
-        cat > /etc/default/cmux-sandboxd << 'EOF'
-CMUX_SANDBOX_PORT=46831
-EOF
-
-        # Create Docker mode environment file
-        cat > /etc/default/cmux-docker << 'EOF'
-CMUX_DOCKER_MODE=host
-CMUX_DOCKER_SOCKET=/var/run/docker.sock
-EOF
-
-        # Enable service
-        systemctl daemon-reload
-        systemctl enable cmux-sandboxd.service
-
-        # Start service now
-        systemctl start cmux-sandboxd.service || true
-
-        # Verify service started
-        sleep 3
-        if systemctl is-active --quiet cmux-sandboxd; then
-            echo "cmux-sandboxd service is running"
-        else
-            echo "Warning: cmux-sandboxd service failed to start (may work after snapshot resume)"
-            systemctl status cmux-sandboxd --no-pager || true
-        fi
-        """
-    )
-    await ctx.run("install-sandbox-systemd-service", cmd)
-
-
-@registry.task(
-    name="install-sandbox-agent-configs",
-    deps=("upload-repo",),
-    description="Install agent notification hook configurations",
-)
-async def task_install_sandbox_agent_configs(ctx: TaskContext) -> None:
-    repo = shlex.quote(ctx.remote_repo_root)
-    cmd = textwrap.dedent(
-        f"""
-        set -euo pipefail
-
-        # Create the agent config directory
-        install -d -m 0755 /usr/share/cmux/agent-config
-
-        # Copy agent configurations
-        if [ -d {repo}/packages/sandbox/agent-config ]; then
-            cp -r {repo}/packages/sandbox/agent-config/* /usr/share/cmux/agent-config/
-            echo "Installed agent configs to /usr/share/cmux/agent-config/"
-            ls -la /usr/share/cmux/agent-config/
-        else
-            echo "Warning: agent-config directory not found at {repo}/packages/sandbox/agent-config"
-        fi
-        """
-    )
-    await ctx.run("install-sandbox-agent-configs", cmd)
-
-
-@registry.task(
-    name="install-sandboxd-vnc-stack",
-    deps=(
-        "install-base-packages",
-        "build-cdp-proxy",
-        "install-service-scripts",
-        "configure-openbox",
-    ),
-    description="Install VNC stack systemd services for sandboxd snapshot",
-)
-async def task_install_sandboxd_vnc_stack(ctx: TaskContext) -> None:
-    repo = shlex.quote(ctx.remote_repo_root)
-    cmd = textwrap.dedent(
-        f"""
-        set -euo pipefail
-
-        # Install VNC-related systemd services
-        install -Dm0644 {repo}/configs/systemd/cmux-tigervnc.service /usr/lib/systemd/system/cmux-tigervnc.service
-        install -Dm0644 {repo}/configs/systemd/cmux-openbox.service /usr/lib/systemd/system/cmux-openbox.service
-        install -Dm0644 {repo}/configs/systemd/cmux-vnc-proxy.service /usr/lib/systemd/system/cmux-vnc-proxy.service
-        install -Dm0644 {repo}/configs/systemd/cmux-cdp-proxy.service /usr/lib/systemd/system/cmux-cdp-proxy.service
-        install -Dm0644 {repo}/configs/systemd/cmux-devtools.service /usr/lib/systemd/system/cmux-devtools.service
-        install -Dm0644 {repo}/configs/systemd/cmux-memory-setup.service /usr/lib/systemd/system/cmux-memory-setup.service
-
-        # Create symlinks for auto-start
-        mkdir -p /etc/systemd/system/multi-user.target.wants
-        ln -sf /usr/lib/systemd/system/cmux-tigervnc.service /etc/systemd/system/multi-user.target.wants/cmux-tigervnc.service
-        ln -sf /usr/lib/systemd/system/cmux-openbox.service /etc/systemd/system/multi-user.target.wants/cmux-openbox.service
-        ln -sf /usr/lib/systemd/system/cmux-vnc-proxy.service /etc/systemd/system/multi-user.target.wants/cmux-vnc-proxy.service
-        ln -sf /usr/lib/systemd/system/cmux-cdp-proxy.service /etc/systemd/system/multi-user.target.wants/cmux-cdp-proxy.service
-        ln -sf /usr/lib/systemd/system/cmux-devtools.service /etc/systemd/system/multi-user.target.wants/cmux-devtools.service
-        ln -sf /usr/lib/systemd/system/cmux-memory-setup.service /etc/systemd/system/multi-user.target.wants/cmux-memory-setup.service
-
-        mkdir -p /var/log/cmux
-
-        systemctl daemon-reload
-
-        # Start VNC stack
-        systemctl start cmux-tigervnc.service || true
-        systemctl start cmux-openbox.service || true
-        systemctl start cmux-vnc-proxy.service || true
-        systemctl start cmux-devtools.service || true
-        systemctl start cmux-cdp-proxy.service || true
-        """
-    )
-    await ctx.run("install-sandboxd-vnc-stack", cmd)
-
-
-@registry.task(
-    name="check-sandbox-service",
-    deps=("install-sandbox-systemd-service",),
-    description="Verify cmux-sandboxd installation and service",
-)
-async def task_check_sandbox_service(ctx: TaskContext) -> None:
-    cmd = textwrap.dedent(
-        """
-        set -euo pipefail
-
-        # Verify binaries exist and are executable
-        test -x /usr/local/bin/cmux-sandboxd
-        test -x /usr/local/bin/cmux
-        test -x /usr/local/bin/cmux-bridge
-
-        # Verify bubblewrap is available
-        bwrap --version
-
-        # Verify iptables-legacy is configured
-        iptables --version
-
-        # Verify IP forwarding is enabled
-        sysctl net.ipv4.ip_forward | grep -q "= 1"
-
-        # Verify service is enabled
-        systemctl is-enabled cmux-sandboxd
-
-        # Check if service is active (may not be running yet)
-        if systemctl is-active --quiet cmux-sandboxd; then
-            echo "cmux-sandboxd service is running"
-
-            # Try to reach the API
-            for attempt in $(seq 1 10); do
-                if curl -fsS -o /dev/null http://127.0.0.1:46831/sandboxes 2>/dev/null; then
-                    echo "cmux-sandboxd API is reachable"
-                    break
-                fi
-                sleep 2
-            done
-        else
-            echo "cmux-sandboxd service not yet running (will start on boot)"
-        fi
-
-        echo "Sandbox service validation passed"
-        """
-    )
-    await ctx.run("check-sandbox-service", cmd)
-
-
-@registry.task(
-    name="check-sandboxd-vnc-stack",
-    deps=("install-sandboxd-vnc-stack",),
-    description="Verify VNC stack for sandboxd snapshot",
-)
-async def task_check_sandboxd_vnc_stack(ctx: TaskContext) -> None:
-    cmd = textwrap.dedent(
-        """
-        set -euo pipefail
-
-        # Verify VNC binaries
-        vncserver -version
-        test -x /usr/local/lib/cmux/cmux-vnc-proxy
-        test -x /usr/local/lib/cmux/cmux-cdp-proxy
-
-        # Verify Chrome
-        google-chrome --version || chromium --version || true
-
-        # Wait for VNC endpoint
-        for attempt in $(seq 1 15); do
-            if curl -fsS -o /dev/null http://127.0.0.1:39380/vnc.html 2>/dev/null; then
-                echo "VNC endpoint is reachable"
-                break
-            fi
-            sleep 2
-        done
-
-        # Wait for DevTools endpoint
-        for attempt in $(seq 1 30); do
-            if curl -fsS -o /dev/null http://127.0.0.1:39381/json/version 2>/dev/null; then
-                echo "DevTools endpoint is reachable"
-                break
-            fi
-            sleep 2
-        done
-
-        echo "VNC stack validation passed"
-        """
-    )
-    await ctx.run("check-sandboxd-vnc-stack", cmd)
 
 
 # ---------------------------------------------------------------------------
