@@ -24,6 +24,9 @@ pub struct CreateSandboxRequest {
     pub tmpfs: Vec<String>,
     #[serde(default)]
     pub env: Vec<EnvVar>,
+    /// Optional template ID to initialize sandbox from (pre-configured filesystem)
+    #[serde(default)]
+    pub template_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, ToSchema, PartialEq, Eq)]
@@ -372,6 +375,38 @@ pub enum MuxServerMessage {
 
 fn default_tty() -> bool {
     true
+}
+
+// ============================================================================
+// Template Models (filesystem snapshots for pre-configured sandbox environments)
+// ============================================================================
+
+/// Summary information about a template.
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+pub struct TemplateSummary {
+    /// Unique template identifier (e.g., "tpl_abc123")
+    pub id: String,
+    /// Human-readable name for the template
+    pub name: String,
+    /// Optional description of what's included in the template
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Size of the template archive in bytes
+    pub size_bytes: u64,
+    /// When the template was created
+    pub created_at: DateTime<Utc>,
+}
+
+/// Request to create a template from a running sandbox.
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+pub struct CreateTemplateRequest {
+    /// Sandbox ID to create template from
+    pub sandbox_id: String,
+    /// Name for the new template
+    pub name: String,
+    /// Optional description
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 /// Helper module for base64 encoding/decoding of byte vectors in JSON.

@@ -10,6 +10,7 @@ use cmux_sandbox::models::{
 };
 use cmux_sandbox::notifications::NotificationStore;
 use cmux_sandbox::service::{GhAuthCache, GhResponseRegistry, HostEventSender, SandboxService};
+use cmux_sandbox::templates::TemplateStore;
 use cmux_sandbox::DEFAULT_HTTP_PORT;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
@@ -31,6 +32,13 @@ struct Options {
     /// Directory used for sandbox workspaces
     #[arg(long, default_value = "/var/lib/cmux/sandboxes")]
     data_dir: PathBuf,
+    /// Directory used for filesystem templates (persisted snapshots)
+    #[arg(
+        long,
+        default_value = "/var/lib/cmux/templates",
+        env = "CMUX_TEMPLATES_DIR"
+    )]
+    templates_dir: PathBuf,
     /// Directory used for logs
     #[arg(long, default_value = "/var/log/cmux", env = "CMUX_SANDBOX_LOG_DIR")]
     log_dir: PathBuf,
@@ -123,13 +131,23 @@ async fn run_server(options: Options) {
     let gh_auth_cache: GhAuthCache = Arc::new(Mutex::new(None));
     let notifications = NotificationStore::new();
 
-    let service = build_service(&options).await;
+    // Template store for filesystem snapshots
+    let templates = match TemplateStore::new(options.templates_dir.clone()).await {
+        Ok(store) => Arc::new(store),
+        Err(e) => {
+            tracing::error!("failed to initialize template store: {e}");
+            panic!("failed to initialize template store: {e}");
+        }
+    };
+
+    let service = build_service(&options, templates.clone()).await;
     let app = build_router(
         service,
         host_event_tx.clone(),
         gh_responses.clone(),
         gh_auth_cache.clone(),
         notifications.clone(),
+        templates,
     );
 
     // Start the unified Unix socket listener for bridge requests from sandboxes
@@ -232,8 +250,11 @@ fn parse_bind_ip(bind: &str) -> IpAddr {
     }
 }
 
-async fn build_service(options: &Options) -> Arc<dyn SandboxService> {
-    match BubblewrapService::new(options.data_dir.clone(), options.port).await {
+async fn build_service(
+    options: &Options,
+    templates: Arc<TemplateStore>,
+) -> Arc<dyn SandboxService> {
+    match BubblewrapService::new(options.data_dir.clone(), options.port, templates).await {
         Ok(service) => Arc::new(service),
         Err(error) => {
             tracing::error!(

@@ -11,6 +11,7 @@ pub mod palette;
 pub mod service;
 pub mod settings;
 pub mod sync_files;
+pub mod templates;
 pub mod terminal_guard;
 pub mod timing;
 

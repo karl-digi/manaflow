@@ -3,6 +3,7 @@ use crate::models::{
     CreateSandboxRequest, ExecRequest, ExecResponse, GhResponse, HostEvent, SandboxSummary,
 };
 use crate::notifications::NotificationStore;
+use crate::templates::TemplateStore;
 use async_trait::async_trait;
 use axum::body::Body;
 use axum::extract::ws::WebSocket;
@@ -64,6 +65,7 @@ pub struct AppState {
     pub gh_responses: GhResponseRegistry,
     pub gh_auth_cache: GhAuthCache,
     pub notifications: NotificationStore,
+    pub templates: Arc<TemplateStore>,
 }
 
 impl AppState {
@@ -73,6 +75,7 @@ impl AppState {
         gh_responses: GhResponseRegistry,
         gh_auth_cache: GhAuthCache,
         notifications: NotificationStore,
+        templates: Arc<TemplateStore>,
     ) -> Self {
         Self {
             service,
@@ -80,6 +83,7 @@ impl AppState {
             gh_responses,
             gh_auth_cache,
             notifications,
+            templates,
         }
     }
 }

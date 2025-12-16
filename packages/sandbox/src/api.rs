@@ -1,10 +1,12 @@
 use crate::errors::{ErrorBody, SandboxError, SandboxResult};
 use crate::models::{
-    CreateSandboxRequest, ExecRequest, ExecResponse, HealthResponse, HostEvent, NotificationLevel,
-    NotificationLogEntry, NotificationRequest, OpenUrlRequest, SandboxSummary,
+    CreateSandboxRequest, CreateTemplateRequest, ExecRequest, ExecResponse, HealthResponse,
+    HostEvent, NotificationLevel, NotificationLogEntry, NotificationRequest, OpenUrlRequest,
+    SandboxSummary, TemplateSummary,
 };
 use crate::notifications::NotificationStore;
 use crate::service::{AppState, GhResponseRegistry, HostEventSender, SandboxService};
+use crate::templates::TemplateStore;
 use axum::body::Body;
 use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{DefaultBodyLimit, Path, Query, State};
@@ -14,7 +16,7 @@ use axum::routing::{any, get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 use std::sync::Arc;
-use utoipa::OpenApi as UtoipaOpenApi;
+use utoipa::{OpenApi as UtoipaOpenApi, ToSchema};
 use utoipa_swagger_ui::SwaggerUi;
 use uuid::Uuid;
 
@@ -49,6 +51,11 @@ fn default_tty() -> bool {
         open_url_post,
         list_notifications,
         send_notification,
+        list_templates,
+        create_template,
+        get_template,
+        rename_template,
+        delete_template,
     ),
     components(schemas(
         CreateSandboxRequest,
@@ -62,9 +69,15 @@ fn default_tty() -> bool {
         NotificationRequest,
         NotificationLogEntry,
         NotificationLevel,
-        OpenUrlRequest
+        OpenUrlRequest,
+        TemplateSummary,
+        CreateTemplateRequest,
+        RenameTemplateRequest
     )),
-    tags((name = "sandboxes", description = "Manage bubblewrap-based sandboxes"))
+    tags(
+        (name = "sandboxes", description = "Manage bubblewrap-based sandboxes"),
+        (name = "templates", description = "Manage filesystem templates for sandboxes")
+    )
 )]
 pub struct ApiDoc;
 
@@ -74,6 +87,7 @@ pub fn build_router(
     gh_responses: GhResponseRegistry,
     gh_auth_cache: crate::service::GhAuthCache,
     notifications: NotificationStore,
+    templates: Arc<TemplateStore>,
 ) -> Router {
     let state = AppState::new(
         service,
@@ -81,6 +95,7 @@ pub fn build_router(
         gh_responses,
         gh_auth_cache,
         notifications,
+        templates,
     );
     let openapi = ApiDoc::openapi();
     let swagger_routes: Router<AppState> =
@@ -105,6 +120,14 @@ pub fn build_router(
         .route(
             "/notifications",
             get(list_notifications).post(send_notification),
+        )
+        // Templates - filesystem snapshots for sandboxes
+        .route("/templates", get(list_templates).post(create_template))
+        .route(
+            "/templates/{id}",
+            get(get_template)
+                .patch(rename_template)
+                .delete(delete_template),
         )
         .merge(swagger_routes)
         .with_state(state)
@@ -391,6 +414,145 @@ async fn delete_sandbox(
     }
 }
 
+// ============================================================================
+// Template endpoints
+// ============================================================================
+
+#[utoipa::path(
+    get,
+    path = "/templates",
+    tag = "templates",
+    responses((status = 200, description = "List of templates", body = [TemplateSummary]))
+)]
+async fn list_templates(
+    State(state): State<AppState>,
+) -> SandboxResult<Json<Vec<TemplateSummary>>> {
+    let templates = state.templates.list().await?;
+    Ok(Json(templates))
+}
+
+#[utoipa::path(
+    post,
+    path = "/templates",
+    tag = "templates",
+    request_body = CreateTemplateRequest,
+    responses(
+        (status = 201, description = "Template created", body = TemplateSummary),
+        (status = 404, description = "Sandbox not found", body = ErrorBody),
+        (status = 400, description = "Bad request", body = ErrorBody)
+    )
+)]
+async fn create_template(
+    State(state): State<AppState>,
+    Json(request): Json<CreateTemplateRequest>,
+) -> SandboxResult<(StatusCode, Json<TemplateSummary>)> {
+    // Get the sandbox to find its system directory
+    let sandbox = state
+        .service
+        .get(request.sandbox_id.clone())
+        .await?
+        .ok_or_else(|| SandboxError::NotFound(Uuid::nil()))?;
+
+    // The sandbox's overlay directories are at /var/lib/cmux/sandboxes/<uuid>/system
+    // This contains {usr,etc,var}-upper and root-merged which hold all changes made in the sandbox
+    let system_dir = std::path::PathBuf::from("/var/lib/cmux/sandboxes")
+        .join(sandbox.id.to_string())
+        .join("system");
+
+    let template = state
+        .templates
+        .create_from_sandbox(&system_dir, request.name, request.description)
+        .await?;
+
+    Ok((StatusCode::CREATED, Json(template)))
+}
+
+#[utoipa::path(
+    get,
+    path = "/templates/{id}",
+    tag = "templates",
+    params(
+        ("id" = String, Path, description = "Template identifier")
+    ),
+    responses(
+        (status = 200, description = "Template detail", body = TemplateSummary),
+        (status = 404, description = "Template not found", body = ErrorBody)
+    )
+)]
+async fn get_template(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> SandboxResult<Json<TemplateSummary>> {
+    match state.templates.get(&id).await? {
+        Some(template) => Ok(Json(template)),
+        None => Err(SandboxError::Internal(format!(
+            "template '{}' not found",
+            id
+        ))),
+    }
+}
+
+/// Request to rename a template
+#[derive(Debug, Deserialize, ToSchema)]
+struct RenameTemplateRequest {
+    /// New name for the template
+    name: String,
+}
+
+#[utoipa::path(
+    patch,
+    path = "/templates/{id}",
+    tag = "templates",
+    params(
+        ("id" = String, Path, description = "Template identifier")
+    ),
+    request_body = RenameTemplateRequest,
+    responses(
+        (status = 200, description = "Template renamed", body = TemplateSummary),
+        (status = 404, description = "Template not found", body = ErrorBody)
+    )
+)]
+async fn rename_template(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(request): Json<RenameTemplateRequest>,
+) -> SandboxResult<Json<TemplateSummary>> {
+    match state.templates.rename(&id, &request.name).await? {
+        Some(template) => Ok(Json(template)),
+        None => Err(SandboxError::Internal(format!(
+            "template '{}' not found",
+            id
+        ))),
+    }
+}
+
+#[utoipa::path(
+    delete,
+    path = "/templates/{id}",
+    tag = "templates",
+    params(
+        ("id" = String, Path, description = "Template identifier")
+    ),
+    responses(
+        (status = 200, description = "Template deleted"),
+        (status = 404, description = "Template not found", body = ErrorBody)
+    )
+)]
+async fn delete_template(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> SandboxResult<StatusCode> {
+    let deleted = state.templates.delete(&id).await?;
+    if deleted {
+        Ok(StatusCode::OK)
+    } else {
+        Err(SandboxError::Internal(format!(
+            "template '{}' not found",
+            id
+        )))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -487,24 +649,27 @@ mod tests {
         }
     }
 
-    fn make_test_router() -> Router {
+    async fn make_test_router() -> Router {
         use std::collections::HashMap;
         let (host_event_tx, _) = tokio::sync::broadcast::channel(16);
         let gh_responses = Arc::new(Mutex::new(HashMap::new()));
         let gh_auth_cache = Arc::new(Mutex::new(None));
         let notifications = NotificationStore::new();
+        let temp_dir = std::env::temp_dir().join(format!("cmux-test-{}", Uuid::new_v4()));
+        let templates = Arc::new(TemplateStore::new(temp_dir).await.unwrap());
         build_router(
             Arc::new(MockService::default()),
             host_event_tx,
             gh_responses,
             gh_auth_cache,
             notifications,
+            templates,
         )
     }
 
     #[tokio::test]
     async fn serves_openapi_document() {
-        let app = make_test_router();
+        let app = make_test_router().await;
         let response = app
             .oneshot(
                 Request::builder()
@@ -520,7 +685,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_endpoint_returns_summary() {
-        let app = make_test_router();
+        let app = make_test_router().await;
         let request = CreateSandboxRequest {
             name: Some("demo".into()),
             workspace: None,
@@ -528,6 +693,7 @@ mod tests {
             read_only_paths: Vec::new(),
             tmpfs: Vec::new(),
             env: Vec::new(),
+            template_id: None,
         };
 
         let response = app

@@ -1,7 +1,8 @@
 use chrono::SecondsFormat;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use cmux_sandbox::models::{
-    CreateSandboxRequest, EnvVar, ExecRequest, ExecResponse, NotificationLogEntry, SandboxSummary,
+    CreateSandboxRequest, CreateTemplateRequest, EnvVar, ExecRequest, ExecResponse,
+    NotificationLogEntry, SandboxSummary, TemplateSummary,
 };
 use cmux_sandbox::{
     build_default_env_vars, cache_access_token, clear_cached_access_token, clear_default_team,
@@ -162,6 +163,41 @@ enum Command {
 
     /// Open sandbox in Zed via SSH Remote
     Zed(IdeArgs),
+
+    /// Manage filesystem templates for sandboxes
+    #[command(subcommand, alias = "tpl")]
+    Template(TemplateCommand),
+}
+
+#[derive(Subcommand, Debug)]
+enum TemplateCommand {
+    /// List available templates
+    #[command(alias = "ls")]
+    List,
+    /// Create a template (drops into a fresh sandbox if no sandbox ID provided)
+    Create(TemplateCreateArgs),
+    /// Rename a template
+    Rename {
+        /// Template ID to rename
+        id: String,
+        /// New name for the template
+        #[arg(long, short = 'n')]
+        name: String,
+    },
+    /// Delete a template
+    Delete { id: String },
+}
+
+#[derive(Args, Debug)]
+struct TemplateCreateArgs {
+    /// Sandbox ID to create template from (if not provided, creates a fresh sandbox)
+    sandbox_id: Option<String>,
+    /// Name for the template (auto-generated if not provided)
+    #[arg(long, short = 'n')]
+    name: Option<String>,
+    /// Description for the template
+    #[arg(long, short = 'd')]
+    description: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -604,6 +640,7 @@ async fn run() -> anyhow::Result<()> {
                     read_only_paths: vec![],
                     tmpfs: vec![],
                     env: build_default_env_vars(),
+                    template_id: None,
                 };
                 let url = format!("{}/sandboxes", cli.base_url.trim_end_matches('/'));
                 let response = client.post(url).json(&body).send().await?;
@@ -920,6 +957,7 @@ async fn run() -> anyhow::Result<()> {
                     read_only_paths: vec![],
                     tmpfs: vec![],
                     env: build_default_env_vars(),
+                    template_id: None,
                 };
                 let url = format!("{}/sandboxes", cli.base_url.trim_end_matches('/'));
                 let response = client.post(url).json(&body).send().await?;
@@ -1048,6 +1086,9 @@ async fn run() -> anyhow::Result<()> {
             let api_url = get_cmux_api_url();
             handle_ide(&client, &cli.base_url, &api_url, "zed", &args).await?;
         }
+        Command::Template(cmd) => {
+            handle_template_command(&client, &cli.base_url, cmd).await?;
+        }
         Command::Sandboxes(cmd) => {
             match cmd {
                 SandboxCommand::List => {
@@ -1069,6 +1110,7 @@ async fn run() -> anyhow::Result<()> {
                             .collect(),
                         tmpfs: args.tmpfs,
                         env: args.env,
+                        template_id: None,
                     };
 
                     let url = format!("{}/sandboxes", cli.base_url.trim_end_matches('/'));
@@ -1097,6 +1139,7 @@ async fn run() -> anyhow::Result<()> {
                         read_only_paths: vec![],
                         tmpfs: vec![],
                         env: build_default_env_vars(),
+                        template_id: None,
                     };
                     let url = format!("{}/sandboxes", cli.base_url.trim_end_matches('/'));
                     let response = client.post(url).json(&body).send().await?;
@@ -1911,6 +1954,10 @@ async fn handle_server_start(opts: &StartArgs) -> anyhow::Result<()> {
 
     let docker_volume = format!("{}-sandbox-docker:/var/lib/docker", volume_prefix);
     let data_volume = format!("{}-sandbox-data:/var/lib/cmux/sandboxes", volume_prefix);
+    let templates_volume = format!(
+        "{}-sandbox-templates:/var/lib/cmux/templates",
+        volume_prefix
+    );
     let port_mapping = format!("{}:{}", port, port);
     let port_env = format!("CMUX_SANDBOX_PORT={}", port);
     let docker_mode_env = format!("CMUX_DOCKER_MODE={}", docker_mode.as_str());
@@ -1946,6 +1993,8 @@ async fn handle_server_start(opts: &StartArgs) -> anyhow::Result<()> {
         docker_volume.clone(),
         "-v".into(),
         data_volume.clone(),
+        "-v".into(),
+        templates_volume.clone(),
     ];
 
     // Add SSH agent forwarding if SSH_AUTH_SOCK is set and socket exists
@@ -1983,6 +2032,8 @@ async fn handle_server_start(opts: &StartArgs) -> anyhow::Result<()> {
     docker_args.push(port.clone());
     docker_args.push("--data-dir".into());
     docker_args.push("/var/lib/cmux/sandboxes".into());
+    docker_args.push("--templates-dir".into());
+    docker_args.push("/var/lib/cmux/templates".into());
 
     let status = tokio::process::Command::new("docker")
         .args(&docker_args)
@@ -3309,6 +3360,236 @@ async fn handle_vm_list(args: VmListArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Handle `cmux template` subcommands
+async fn handle_template_command(
+    client: &Client,
+    base_url: &str,
+    cmd: TemplateCommand,
+) -> anyhow::Result<()> {
+    let base = base_url.trim_end_matches('/');
+
+    match cmd {
+        TemplateCommand::List => {
+            let url = format!("{}/templates", base);
+            let response = client.get(&url).send().await?;
+            let templates: Vec<TemplateSummary> = parse_response(response).await?;
+
+            if templates.is_empty() {
+                eprintln!("\x1b[33mNo templates found.\x1b[0m");
+                eprintln!();
+                eprintln!("\x1b[36mTemplates are reusable sandbox configurations.\x1b[0m");
+                eprintln!("Create one with: \x1b[1mdmux template create\x1b[0m");
+                eprintln!();
+                eprintln!("This will drop you into a fresh sandbox where you can:");
+                eprintln!("  • Install dependencies (apt, npm, pip, etc.)");
+                eprintln!("  • Configure your development environment");
+                eprintln!("  • Set up tools and editors");
+                eprintln!();
+                eprintln!("When you exit, the sandbox state will be saved as a template.");
+            } else {
+                println!("{:<15} {:<25} {:<12} CREATED", "ID", "NAME", "SIZE");
+                println!("{}", "-".repeat(80));
+                for t in templates {
+                    let size = format_bytes(t.size_bytes);
+                    let created = t.created_at.to_rfc3339_opts(SecondsFormat::Secs, true);
+                    println!("{:<15} {:<25} {:<12} {}", t.id, t.name, size, created);
+                }
+            }
+        }
+        TemplateCommand::Create(args) => {
+            match args.sandbox_id {
+                Some(sandbox_id) => {
+                    // Create template from existing sandbox
+                    let url = format!("{}/templates", base);
+                    let name = args.name.unwrap_or_else(|| {
+                        format!("template-{}", chrono::Utc::now().format("%Y%m%d-%H%M%S"))
+                    });
+                    let request = CreateTemplateRequest {
+                        sandbox_id: sandbox_id.clone(),
+                        name: name.clone(),
+                        description: args.description.clone(),
+                    };
+                    eprintln!(
+                        "Creating template '{}' from sandbox '{}'...",
+                        name, sandbox_id
+                    );
+                    let response = client.post(&url).json(&request).send().await?;
+                    let template: TemplateSummary = parse_response(response).await?;
+                    eprintln!("\x1b[32m✓ Template created!\x1b[0m");
+                    println!();
+                    println!("  ID:          {}", template.id);
+                    println!("  Name:        {}", template.name);
+                    println!("  Size:        {}", format_bytes(template.size_bytes));
+                    if let Some(desc) = &template.description {
+                        println!("  Description: {}", desc);
+                    }
+                    println!();
+                    eprintln!(
+                        "To rename: \x1b[1mdmux template rename {} --name <new-name>\x1b[0m",
+                        template.id
+                    );
+                }
+                None => {
+                    // Create fresh sandbox and drop into it
+                    eprintln!("\x1b[36m╭─────────────────────────────────────────────────────────────╮\x1b[0m");
+                    eprintln!("\x1b[36m│\x1b[0m  \x1b[1mCreating a new template\x1b[0m                                    \x1b[36m│\x1b[0m");
+                    eprintln!("\x1b[36m╰─────────────────────────────────────────────────────────────╯\x1b[0m");
+                    eprintln!();
+                    eprintln!("A fresh sandbox will be created for you to configure.");
+                    eprintln!();
+                    eprintln!("\x1b[33mInside the sandbox, you can:\x1b[0m");
+                    eprintln!("  • Install system packages:  \x1b[2mapt install <package>\x1b[0m");
+                    eprintln!(
+                        "  • Install Node.js deps:     \x1b[2mnpm install -g <package>\x1b[0m"
+                    );
+                    eprintln!("  • Install Python packages:  \x1b[2mpip install <package>\x1b[0m");
+                    eprintln!("  • Configure tools & editors");
+                    eprintln!("  • Set up environment variables in ~/.bashrc or ~/.profile");
+                    eprintln!();
+                    eprintln!("\x1b[33mWhen you're done:\x1b[0m");
+                    eprintln!("  Type \x1b[1mexit\x1b[0m to leave the sandbox.");
+                    eprintln!("  You'll be prompted to save the template.");
+                    eprintln!();
+
+                    // Create sandbox
+                    let body = CreateSandboxRequest {
+                        name: Some("template-setup".into()),
+                        workspace: None,
+                        tab_id: Some(Uuid::new_v4().to_string()),
+                        read_only_paths: vec![],
+                        tmpfs: vec![],
+                        env: build_default_env_vars(),
+                        template_id: None,
+                    };
+                    let url = format!("{}/sandboxes", base);
+                    let response = client.post(&url).json(&body).send().await?;
+                    let summary: SandboxSummary = parse_response(response).await?;
+                    eprintln!("\x1b[32m✓ Sandbox created: {}\x1b[0m", summary.id);
+                    eprintln!();
+                    eprintln!("\x1b[2mConnecting...\x1b[0m");
+                    eprintln!();
+
+                    // Attach to sandbox
+                    save_last_sandbox(&summary.id.to_string());
+                    let ssh_result = handle_ssh(base_url, &summary.id.to_string()).await;
+
+                    // After SSH exits, prompt to save as template
+                    eprintln!();
+                    eprintln!("\x1b[36m╭─────────────────────────────────────────────────────────────╮\x1b[0m");
+                    eprintln!("\x1b[36m│\x1b[0m  \x1b[1mSave sandbox as template?\x1b[0m                                  \x1b[36m│\x1b[0m");
+                    eprintln!("\x1b[36m╰─────────────────────────────────────────────────────────────╯\x1b[0m");
+                    eprintln!();
+
+                    // Prompt for template name
+                    let default_name = args.name.unwrap_or_else(|| {
+                        format!("template-{}", chrono::Utc::now().format("%Y%m%d-%H%M%S"))
+                    });
+
+                    eprint!("Template name [\x1b[2m{}\x1b[0m]: ", default_name);
+                    std::io::Write::flush(&mut std::io::stderr())?;
+
+                    let mut input = String::new();
+                    std::io::stdin().read_line(&mut input)?;
+                    let template_name = input.trim();
+                    let template_name = if template_name.is_empty() {
+                        default_name
+                    } else {
+                        template_name.to_string()
+                    };
+
+                    // Create the template
+                    let create_url = format!("{}/templates", base);
+                    let request = CreateTemplateRequest {
+                        sandbox_id: summary.id.to_string(),
+                        name: template_name.clone(),
+                        description: args.description.clone(),
+                    };
+                    eprintln!();
+                    eprintln!("Creating template '{}'...", template_name);
+                    let create_response = client.post(&create_url).json(&request).send().await?;
+                    let template: TemplateSummary = parse_response(create_response).await?;
+
+                    eprintln!("\x1b[32m✓ Template saved!\x1b[0m");
+                    println!();
+                    println!("  ID:          {}", template.id);
+                    println!("  Name:        {}", template.name);
+                    println!("  Size:        {}", format_bytes(template.size_bytes));
+                    if let Some(desc) = &template.description {
+                        println!("  Description: {}", desc);
+                    }
+                    println!();
+                    eprintln!(
+                        "To use this template: \x1b[1mdmux new --template {}\x1b[0m",
+                        template.id
+                    );
+                    eprintln!("To rename:            \x1b[1mdmux template rename {} --name <new-name>\x1b[0m", template.id);
+
+                    // Clean up the sandbox
+                    let delete_url = format!("{}/sandboxes/{}", base, summary.id);
+                    let _ = client.delete(&delete_url).send().await;
+
+                    // Propagate SSH errors if any
+                    ssh_result?;
+                }
+            }
+        }
+        TemplateCommand::Rename { id, name } => {
+            #[derive(Serialize)]
+            struct RenameRequest {
+                name: String,
+            }
+            let url = format!("{}/templates/{}", base, id);
+            let request = RenameRequest { name: name.clone() };
+            let response = client.patch(&url).json(&request).send().await?;
+            if response.status().is_success() {
+                eprintln!("\x1b[32m✓ Template renamed to '{}'\x1b[0m", name);
+            } else {
+                let status = response.status();
+                let text = response.text().await.unwrap_or_default();
+                return Err(anyhow::anyhow!(
+                    "Failed to rename template: {} - {}",
+                    status,
+                    text
+                ));
+            }
+        }
+        TemplateCommand::Delete { id } => {
+            let url = format!("{}/templates/{}", base, id);
+            let response = client.delete(&url).send().await?;
+            if response.status().is_success() {
+                eprintln!("\x1b[32m✓ Deleted template '{}'\x1b[0m", id);
+            } else {
+                let status = response.status();
+                let text = response.text().await.unwrap_or_default();
+                return Err(anyhow::anyhow!(
+                    "Failed to delete template: {} - {}",
+                    status,
+                    text
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Format bytes in human-readable form
+fn format_bytes(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+
+    if bytes >= GB {
+        format!("{:.1}GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1}MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.1}KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{}B", bytes)
+    }
+}
+
 /// Handle `cmux team list` - list user's teams
 async fn handle_team_list(args: TeamListArgs) -> anyhow::Result<()> {
     let client = Client::builder().timeout(Duration::from_secs(30)).build()?;
@@ -4165,6 +4446,7 @@ async fn handle_esctest(client: &Client, base_url: &str, args: EsctestArgs) -> a
         read_only_paths: vec![],
         tmpfs: vec![],
         env: build_default_env_vars(),
+        template_id: None,
     };
     let url = format!("{}/sandboxes", base_url.trim_end_matches('/'));
     let response = client.post(url).json(&body).send().await?;
