@@ -34,6 +34,18 @@
 
 set -e
 
+# Load .env file early so CMUX_PORT_RANGE can be configured there
+if [ -f .env ]; then
+    echo "Loading .env file"
+    # Support quoted/multiline values (e.g., PEM keys) safely
+    # by sourcing the file with export-all mode.
+    set -a
+    # shellcheck disable=SC1091
+    . .env
+    set +a
+    echo "Loaded .env file"
+fi
+
 # Port range configuration (can be overridden via --port-range or CMUX_PORT_RANGE env)
 # Auto-detect from directory name if not set (e.g., cmux3 -> range 3)
 if [[ -z "${CMUX_PORT_RANGE:-}" ]]; then
@@ -45,17 +57,6 @@ if [[ -z "${CMUX_PORT_RANGE:-}" ]]; then
     fi
 else
     PORT_RANGE="${CMUX_PORT_RANGE}"
-fi
-
-if [ -f .env ]; then
-    echo "Loading .env file"
-    # Support quoted/multiline values (e.g., PEM keys) safely
-    # by sourcing the file with export-all mode.
-    set -a
-    # shellcheck disable=SC1091
-    . .env
-    set +a
-    echo "Loaded .env file"
 fi
 
 # Detect if we're running inside a devcontainer
