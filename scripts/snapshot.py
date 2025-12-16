@@ -872,8 +872,22 @@ async def task_apt_bootstrap(ctx: TaskContext) -> None:
         Acquire::https::Pipeline-Depth "10";
         EOF
 
-        # Update and install core utilities needed for source setup
-        DEBIAN_FRONTEND=noninteractive apt-get update
+        # Wait for any existing apt processes to finish (from base snapshot)
+        # Use retry loop instead of fuser since psmisc may not be installed
+        for attempt in $(seq 1 30); do
+            if DEBIAN_FRONTEND=noninteractive apt-get update 2>&1; then
+                echo "apt-get update succeeded"
+                break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+                echo "apt-get update failed after 30 attempts" >&2
+                exit 1
+            fi
+            echo "Waiting for apt lock (attempt $attempt/30)..."
+            sleep 2
+        done
+
+        # Install core utilities needed for source setup
         DEBIAN_FRONTEND=noninteractive apt-get install -y \
             ca-certificates curl wget jq git gnupg lsb-release \
             tar unzip xz-utils zip bzip2 gzip htop lsof
@@ -919,7 +933,18 @@ async def task_install_base_packages(ctx: TaskContext) -> None:
             zsh \
             zsh-autosuggestions \
             ripgrep \
-            openssh-server
+            openssh-server \
+            bubblewrap \
+            iproute2 \
+            iptables \
+            iputils-ping \
+            uidmap \
+            fuse-overlayfs \
+            util-linux
+
+        # Configure iptables to use legacy mode (required for sandbox MASQUERADE)
+        update-alternatives --set iptables /usr/sbin/iptables-legacy || true
+        update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy || true
 
 
         # Download and install Chrome
@@ -1007,9 +1032,8 @@ async def task_ensure_docker(ctx: TaskContext) -> None:
         """
         set -euo pipefail
 
-        echo "[docker] ensuring Docker APT repository"
-        DEBIAN_FRONTEND=noninteractive apt-get update
-        DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl
+        echo "[docker] setting up Docker APT repository"
+        # ca-certificates and curl already installed by apt-bootstrap
         os_release="/etc/os-release"
         if [ ! -f "$os_release" ]; then
           echo "Missing /etc/os-release; unable to determine distribution" >&2
@@ -2636,37 +2660,8 @@ async def report_disk_usage(ctx: TaskContext) -> None:
 
 
 @registry.task(
-    name="install-bubblewrap-deps",
-    deps=("apt-bootstrap",),
-    description="Install bubblewrap and sandbox networking dependencies",
-)
-async def task_install_bubblewrap_deps(ctx: TaskContext) -> None:
-    cmd = textwrap.dedent(
-        """
-        set -eux
-        DEBIAN_FRONTEND=noninteractive apt-get update
-        DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            bubblewrap \
-            iproute2 \
-            iptables \
-            iputils-ping \
-            uidmap \
-            fuse-overlayfs \
-            util-linux
-
-        # Configure iptables to use legacy mode (required for MASQUERADE)
-        update-alternatives --set iptables /usr/sbin/iptables-legacy || true
-        update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy || true
-
-        rm -rf /var/lib/apt/lists/*
-        """
-    )
-    await ctx.run("install-bubblewrap-deps", cmd)
-
-
-@registry.task(
     name="configure-sandbox-networking",
-    deps=("install-bubblewrap-deps",),
+    deps=("install-base-packages",),
     description="Configure IP forwarding and iptables NAT for sandbox networking",
 )
 async def task_configure_sandbox_networking(ctx: TaskContext) -> None:
