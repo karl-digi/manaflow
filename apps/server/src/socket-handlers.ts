@@ -1049,7 +1049,9 @@ export function setupSocketHandlers(
             throw new Error("VS Code serve-web proxy is not ready");
           }
 
-          const folderForUrl = resolvedWorkspacePath.replace(/\\/g, "/");
+          // Use /root/workspace as the folder path since Docker mounts
+          // the host workspace to /root/workspace inside the container
+          const folderForUrl = "/root/workspace";
           const placeholderWorkspaceUrl =
             buildPlaceholderWorkspaceUrl(folderForUrl);
           const now = Date.now();
