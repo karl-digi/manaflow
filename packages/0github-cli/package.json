@@ -1,0 +1,21 @@
+{
+  "name": "@cmux/0github-cli",
+  "version": "0.0.1",
+  "type": "module",
+  "bin": {
+    "0github": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "bun build src/cli.ts --outdir dist --target node",
+    "dev": "bun run src/cli.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "typescript": "^5.7.2"
+  }
+}
