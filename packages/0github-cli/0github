@@ -8,4 +8,4 @@ while [ -h "$SOURCE" ]; do
   [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
 done
 SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
-exec bun run "$SCRIPT_DIR/src/cli.ts" "$@"
+exec bun run "$SCRIPT_DIR/src/cli.tsx" "$@"

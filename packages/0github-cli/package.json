@@ -6,16 +6,19 @@
     "0github": "./dist/cli.js"
   },
   "scripts": {
-    "build": "bun build src/cli.ts --outdir dist --target node",
-    "dev": "bun run src/cli.ts",
+    "build": "bun build src/cli.tsx --outdir dist --target node",
+    "dev": "bun run src/cli.tsx",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "chalk": "^5.3.0",
-    "commander": "^12.1.0"
+    "commander": "^12.1.0",
+    "ink": "^6.0.0",
+    "react": "^19.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.1",
+    "@types/react": "^19.0.0",
     "typescript": "^5.7.2"
   }
 }

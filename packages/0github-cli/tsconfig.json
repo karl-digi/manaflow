@@ -10,7 +10,9 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "declaration": true,
-    "noEmit": true
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "react"
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]
