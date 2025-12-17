@@ -13,6 +13,7 @@ type IframeEntry = {
   url: string;
   lastUsed: number;
   isVisible: boolean;
+  isLoaded: boolean;
   allow?: string;
   sandbox?: string;
 };
@@ -152,6 +153,13 @@ class PersistentIframeManager {
         existing.sandbox = options.sandbox;
       }
       if (existing.url !== url) {
+        // URL changed, reset loaded state and track new load
+        existing.isLoaded = false;
+        const handleLoad = () => {
+          existing.isLoaded = true;
+          existing.iframe.removeEventListener("load", handleLoad);
+        };
+        existing.iframe.addEventListener("load", handleLoad);
         existing.iframe.src = url;
         existing.url = url;
       }
@@ -197,8 +205,6 @@ class PersistentIframeManager {
       iframe.setAttribute("sandbox", options.sandbox);
     }
 
-    iframe.src = url;
-
     wrapper.appendChild(iframe);
 
     // Add to container
@@ -212,9 +218,20 @@ class PersistentIframeManager {
       url,
       lastUsed: Date.now(),
       isVisible: false,
+      isLoaded: false,
       allow: options?.allow,
       sandbox: options?.sandbox,
     };
+
+    // Track when iframe finishes loading
+    const handleLoad = () => {
+      entry.isLoaded = true;
+      iframe.removeEventListener("load", handleLoad);
+    };
+    iframe.addEventListener("load", handleLoad);
+
+    // Set src after adding load listener to ensure we catch the event
+    iframe.src = url;
 
     this.iframes.set(key, entry);
     this.moveIframeOffscreen(entry);
@@ -436,6 +453,13 @@ class PersistentIframeManager {
   ): Promise<void> {
     return new Promise((resolve, reject) => {
       const iframe = this.getOrCreateIframe(key, url, options);
+      const entry = this.iframes.get(key);
+
+      // Check if already loaded using our tracking
+      if (entry?.isLoaded) {
+        resolve();
+        return;
+      }
 
       const handleLoad = () => {
         iframe.removeEventListener("load", handleLoad);
@@ -448,11 +472,6 @@ class PersistentIframeManager {
         iframe.removeEventListener("error", handleError);
         reject(new Error(`Failed to load iframe: ${url}`));
       };
-
-      if (iframe.contentWindow && iframe.src === url) {
-        resolve();
-        return;
-      }
 
       iframe.addEventListener("load", handleLoad);
       iframe.addEventListener("error", handleError);
@@ -606,12 +625,26 @@ class PersistentIframeManager {
     if (!entry) return false;
 
     try {
+      entry.isLoaded = false;
+      const handleLoad = () => {
+        entry.isLoaded = true;
+        entry.iframe.removeEventListener("load", handleLoad);
+      };
+      entry.iframe.addEventListener("load", handleLoad);
       entry.iframe.src = entry.url;
       return true;
     } catch (error) {
       console.error(`Failed to reload iframe "${key}"`, error);
       return false;
     }
+  }
+
+  /**
+   * Check if an iframe has finished loading
+   */
+  isIframeLoaded(key: string): boolean {
+    const entry = this.iframes.get(key);
+    return entry?.isLoaded ?? false;
   }
 }
 
