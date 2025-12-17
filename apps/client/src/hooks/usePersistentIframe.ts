@@ -80,8 +80,14 @@ export function usePersistentIframe({
       // Get or create the iframe
       const iframe = persistentIframeManager.getOrCreateIframe(key, url, { allow, sandbox });
 
-      // Set up load handlers if not already loaded
-      if (!iframe.contentWindow || iframe.src !== url) {
+      // Check if the iframe has already loaded its content
+      const alreadyLoaded = persistentIframeManager.isIframeLoaded(key);
+
+      if (alreadyLoaded) {
+        // Iframe has already loaded, call onLoad immediately
+        onLoad?.();
+      } else {
+        // Set up load handlers for when the iframe finishes loading
         const handleLoad = () => {
           iframe.removeEventListener("load", handleLoad);
           iframe.removeEventListener("error", handleError);
@@ -96,9 +102,6 @@ export function usePersistentIframe({
 
         iframe.addEventListener("load", handleLoad);
         iframe.addEventListener("error", handleError);
-      } else if (!preload) {
-        // Already loaded and not from preload
-        onLoad?.();
       }
 
       // Mount the iframe (returns cleanup function)
@@ -124,7 +127,7 @@ export function usePersistentIframe({
         cleanupRef.current = null;
       }
     };
-  }, [key, url, className, style, allow, sandbox, onLoad, onError, preload]);
+  }, [key, url, className, style, allow, sandbox, onLoad, onError]);
 
   const handlePreload = useCallback(() => {
     return persistentIframeManager.preloadIframe(key, url, { allow, sandbox });
@@ -135,13 +138,8 @@ export function usePersistentIframe({
   }, [key]);
 
   const handleIsLoaded = useCallback(() => {
-    try {
-      const iframe = persistentIframeManager.getOrCreateIframe(key, url, { allow, sandbox });
-      return iframe.contentWindow !== null && iframe.src === url;
-    } catch {
-      return false;
-    }
-  }, [key, url, allow, sandbox]);
+    return persistentIframeManager.isIframeLoaded(key);
+  }, [key]);
 
   return {
     containerRef,
