@@ -1448,9 +1448,10 @@ function TaskRunTreeInner({
   );
 
   // Generate VSCode URL if available - used for "Open with" actions
+  // Use workspaceUrl which includes the correct folder path for local workspaces
   const hasActiveVSCode = run.vscode?.status === "running";
   const vscodeUrl = useMemo(
-    () => (hasActiveVSCode && run.vscode?.url) || null,
+    () => (hasActiveVSCode && run.vscode?.workspaceUrl) || null,
     [hasActiveVSCode, run]
   );
 

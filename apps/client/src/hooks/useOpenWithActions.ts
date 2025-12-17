@@ -54,12 +54,12 @@ export function useOpenWithActions({
     (editor: EditorType): Promise<void> => {
       return new Promise((resolve, reject) => {
         if (editor === "vscode-remote" && vscodeUrl) {
+          // Rewrite the URL for local serve-web if needed, preserving existing folder param
           const normalizedUrl = rewriteLocalWorkspaceUrlIfNeeded(
             vscodeUrl,
             localServeWebOrigin,
           );
-          const vscodeUrlWithWorkspace = `${normalizedUrl}?folder=/root/workspace`;
-          window.open(vscodeUrlWithWorkspace, "_blank", "noopener,noreferrer");
+          window.open(normalizedUrl, "_blank", "noopener,noreferrer");
           resolve();
         } else if (
           socket &&
