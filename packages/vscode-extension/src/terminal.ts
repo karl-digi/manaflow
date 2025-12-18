@@ -807,11 +807,48 @@ class CmuxTerminalManager {
   }
 
   /**
+   * Check if there are queued PTYs waiting to be restored.
+   */
+  hasQueuedTerminals(): boolean {
+    return this._restoreQueue.length > 0;
+  }
+
+  /**
    * Get a queued PTY to restore, if any.
    * Used by provideTerminalProfile to reuse existing PTYs on startup.
    */
   popRestoreQueue(): TerminalInfo | undefined {
     return this._restoreQueue.shift();
+  }
+
+  /**
+   * Create terminals for all queued PTYs except the last one.
+   * This maintains correct tab order when the last terminal is returned via profile provider.
+   */
+  drainAllButLast(): void {
+    if (this._restoreQueue.length <= 1) {
+      return; // Nothing to drain, or only one item (will be handled by popRestoreQueue)
+    }
+
+    console.log(`[cmux] Creating ${this._restoreQueue.length - 1} terminals (keeping last for profile)`);
+    while (this._restoreQueue.length > 1) {
+      const info = this._restoreQueue.shift()!;
+      if (this._terminals.has(info.id)) {
+        console.log(`[cmux] Terminal ${info.id} already exists, skipping`);
+        continue;
+      }
+      this._createTerminalForPty(info, false, true); // Don't focus, is restore
+    }
+    // Note: _restoreInProgress will be set to false after the last terminal is created
+    // via popRestoreQueue -> trackPendingTerminal -> handleTerminalOpened
+  }
+
+  /**
+   * Mark restore as complete. Called after last terminal is handled.
+   */
+  markRestoreComplete(): void {
+    console.log('[cmux] Restore complete');
+    this._restoreInProgress = false;
   }
 
   /**
@@ -867,6 +904,11 @@ class CmuxTerminalManager {
     console.log(`[cmux] Setting up tracking for terminal ${terminal.name} (${pending.id})`);
     this._pendingTerminalSetup.delete(terminal.name);
     this._pendingCreations.delete(pending.id);
+
+    // If this was the last restore and queue is empty, mark restore complete
+    if (this._restoreInProgress && this._restoreQueue.length === 0) {
+      this.markRestoreComplete();
+    }
 
     // Skip if already tracked (shouldn't happen, but be safe)
     if (this._terminals.has(pending.id)) {
@@ -962,27 +1004,29 @@ class CmuxTerminalProfileProvider implements vscode.TerminalProfileProvider {
 
     const config = getConfig();
 
-    // Check if there's a queued PTY to restore from state_sync
-    // This reuses existing PTYs on page refresh instead of creating new ones
-    const queuedPty = terminalManager.popRestoreQueue();
-    if (queuedPty) {
-      console.log(`[cmux] provideTerminalProfile: restoring queued PTY ${queuedPty.id} (${queuedPty.name})`);
-      // Skip initial resize to avoid shell prompt redraw on reconnect
-      const pty = new CmuxPseudoterminal(config.serverUrl, queuedPty.id, true);
+    // Check if there are queued PTYs to restore from state_sync
+    // To maintain correct tab order, we create all terminals EXCEPT the last one
+    // via createTerminal (synchronously), then return the last one as a profile.
+    // This ensures order: T1, T2, ..., Tn-1 created first, Tn returned as profile.
+    if (terminalManager.hasQueuedTerminals()) {
+      // Create all but last terminal directly (maintains order)
+      terminalManager.drainAllButLast();
 
-      // Track this terminal with its pty - when terminal opens, we'll set up
-      // proper tracking without creating a duplicate WebSocket connection
-      terminalManager.trackPendingTerminal(queuedPty, pty);
+      // Pop the last terminal and return it as a profile
+      const lastPty = terminalManager.popRestoreQueue();
+      if (lastPty) {
+        console.log(`[cmux] provideTerminalProfile: restoring last queued PTY ${lastPty.id} (${lastPty.name})`);
+        // Skip initial resize to avoid shell prompt redraw on reconnect
+        const pty = new CmuxPseudoterminal(config.serverUrl, lastPty.id, true);
 
-      // Drain remaining items SYNCHRONOUSLY to ensure consistent ordering
-      // This creates all remaining terminals in index order before VSCode
-      // can call provideTerminalProfile again and cause race conditions
-      terminalManager.drainRestoreQueue();
+        // Track this terminal with its pty
+        terminalManager.trackPendingTerminal(lastPty, pty);
 
-      return new vscode.TerminalProfile({
-        name: queuedPty.name,
-        pty,
-      });
+        return new vscode.TerminalProfile({
+          name: lastPty.name,
+          pty,
+        });
+      }
     }
 
     // Queue is empty - check if restore is still in progress
