@@ -281,6 +281,89 @@
       // Load existing sessions on start
       loadSessions();
 
+      // Connect to event WebSocket for real-time updates
+      connectEventSocket();
+
+      function connectEventSocket() {
+        const wsUrl = new URL("/ws", location.origin);
+        wsUrl.protocol = location.protocol === "https:" ? "wss:" : "ws:";
+
+        const eventSocket = new WebSocket(wsUrl);
+
+        eventSocket.onmessage = (event) => {
+          try {
+            const msg = JSON.parse(event.data);
+            handleServerEvent(msg);
+          } catch (err) {
+            console.error("Failed to parse event:", err);
+          }
+        };
+
+        eventSocket.onclose = () => {
+          // Reconnect after a delay
+          setTimeout(connectEventSocket, 2000);
+        };
+
+        eventSocket.onerror = (err) => {
+          console.error("Event socket error:", err);
+        };
+      }
+
+      function handleServerEvent(event) {
+        switch (event.type) {
+          case "pty_created": {
+            const info = event.terminal;
+            if (!sessions.has(info.id)) {
+              addSession(info);
+              updateEmptyState();
+              // Auto-activate if it's the first session
+              if (sessions.size === 1) {
+                activateSession(info.id);
+              }
+            }
+            break;
+          }
+          case "pty_deleted": {
+            const ptyId = event.pty_id;
+            if (sessions.has(ptyId)) {
+              removeSession(ptyId, true);
+            }
+            break;
+          }
+          case "pty_updated": {
+            const info = event.terminal;
+            if (sessions.has(info.id)) {
+              updateSessionInfo(info);
+            }
+            break;
+          }
+          case "state_sync": {
+            // Full state sync - reconcile with server
+            const serverSessions = event.terminals || [];
+            sessionCountEl.textContent = `${serverSessions.length} session${serverSessions.length !== 1 ? 's' : ''}`;
+
+            // Remove sessions that no longer exist
+            for (const [id] of sessions) {
+              if (!serverSessions.find(s => s.id === id)) {
+                removeSession(id, false);
+              }
+            }
+
+            // Add/update sessions
+            for (const info of serverSessions) {
+              if (!sessions.has(info.id)) {
+                addSession(info);
+              } else {
+                updateSessionInfo(info);
+              }
+            }
+
+            updateEmptyState();
+            break;
+          }
+        }
+      }
+
       async function loadSessions() {
         try {
           const res = await fetch("/sessions");
