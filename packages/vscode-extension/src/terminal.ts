@@ -700,7 +700,7 @@ class CmuxTerminalManager {
    * Create a PTY via HTTP and return a Pseudoterminal for it.
    * Used by TerminalProfileProvider for synchronous terminal creation.
    */
-  async createPtyAndGetTerminal(): Promise<{ pty: vscode.Pseudoterminal; name: string } | null> {
+  async createPtyAndGetTerminal(): Promise<{ pty: vscode.Pseudoterminal; name: string; id: string } | null> {
     const config = getConfig();
     const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '/home/vscode';
 
