@@ -241,6 +241,12 @@ export default async function LandingPage() {
                 </MacDownloadLink>
                 <Link
                   className="inline-flex items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-white transition hover:border-white/30 hover:bg-white/10"
+                  href="/"
+                >
+                  Try web version
+                </Link>
+                <Link
+                  className="inline-flex items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-white transition hover:border-white/30 hover:bg-white/10"
                   href="https://github.com/manaflow-ai/cmux"
                 >
                   See GitHub repo
