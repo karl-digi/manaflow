@@ -442,6 +442,10 @@ class CmuxTerminalManager {
   private _disposables: { dispose: () => void }[] = [];
   private _initialized = false;
 
+  // Pending DELETE operations - cancelled on dispose() to prevent deletion during page refresh
+  private _pendingDeletes = new Map<string, ReturnType<typeof setTimeout>>();
+  private _isDeactivating = false;
+
   // Track initial sync state
   private _initialSyncDone = false;
   private _initialSyncPromise: Promise<void>;
@@ -687,17 +691,36 @@ class CmuxTerminalManager {
     // Show terminal with appropriate focus
     terminal.show(!shouldFocus); // preserveFocus = true means don't steal focus
 
-    // Listen for terminal close - clean up local state only
-    // PTYs persist on the server (like tmux) - they are only deleted when:
-    // 1. User types 'exit' in shell (PTY process ends, server broadcasts pty_deleted)
-    // 2. Server explicitly deletes them
-    // This allows terminals to survive page refresh/reconnection
+    // Listen for terminal close
     const closeListener = vscode.window.onDidCloseTerminal((closedTerminal) => {
       if (closedTerminal === terminal) {
-        console.log(`[cmux] Terminal for PTY ${info.id} closed (local cleanup only)`);
+        console.log(`[cmux] Terminal for PTY ${info.id} closed`);
         this._terminals.delete(info.id);
         closeListener.dispose();
         pty.dispose();
+
+        // Skip delete if server already deleted this PTY
+        if (managed.disposingFromServer) {
+          console.log(`[cmux] PTY ${info.id} was deleted by server, skipping DELETE`);
+          return;
+        }
+
+        // Schedule DELETE with short delay - cancelled on dispose() during page refresh
+        // This allows user-initiated closes to delete, while preserving PTYs on refresh
+        const deleteTimeout = setTimeout(async () => {
+          this._pendingDeletes.delete(info.id);
+          if (this._isDeactivating) {
+            console.log(`[cmux] Deactivating, skipping DELETE for PTY ${info.id}`);
+            return;
+          }
+          try {
+            console.log(`[cmux] Deleting PTY ${info.id} on server`);
+            await fetch(`${config.serverUrl}/sessions/${info.id}`, { method: 'DELETE' });
+          } catch (err) {
+            console.error(`[cmux] Failed to delete PTY ${info.id}:`, err);
+          }
+        }, 50);
+        this._pendingDeletes.set(info.id, deleteTimeout);
       }
     });
     this._disposables.push(closeListener);
@@ -851,6 +874,8 @@ class CmuxTerminalManager {
       return;
     }
 
+    const config = getConfig();
+
     // Create managed terminal entry using the existing pty (don't create a new one!)
     const managed: ManagedTerminal = {
       terminal,
@@ -859,20 +884,51 @@ class CmuxTerminalManager {
     };
     this._terminals.set(pending.id, managed);
 
-    // Set up close listener - clean up local state only
-    // PTYs persist on the server (like tmux)
+    // Set up close listener
     const closeListener = vscode.window.onDidCloseTerminal((closedTerminal) => {
       if (closedTerminal === terminal) {
-        console.log(`[cmux] Terminal ${pending.id} closed (local cleanup only)`);
+        console.log(`[cmux] Terminal ${pending.id} closed`);
         this._terminals.delete(pending.id);
         closeListener.dispose();
         pending.pty.dispose();
+
+        // Skip delete if server already deleted this PTY
+        if (managed.disposingFromServer) {
+          console.log(`[cmux] PTY ${pending.id} was deleted by server, skipping DELETE`);
+          return;
+        }
+
+        // Schedule DELETE with short delay - cancelled on dispose() during page refresh
+        const deleteTimeout = setTimeout(async () => {
+          this._pendingDeletes.delete(pending.id);
+          if (this._isDeactivating) {
+            console.log(`[cmux] Deactivating, skipping DELETE for PTY ${pending.id}`);
+            return;
+          }
+          try {
+            console.log(`[cmux] Deleting PTY ${pending.id} on server`);
+            await fetch(`${config.serverUrl}/sessions/${pending.id}`, { method: 'DELETE' });
+          } catch (err) {
+            console.error(`[cmux] Failed to delete PTY ${pending.id}:`, err);
+          }
+        }, 50);
+        this._pendingDeletes.set(pending.id, deleteTimeout);
       }
     });
     this._disposables.push(closeListener);
   }
 
   dispose(): void {
+    // Mark as deactivating first - this prevents pending deletes from executing
+    this._isDeactivating = true;
+
+    // Cancel all pending DELETE operations to preserve PTYs during page refresh
+    for (const [ptyId, timeout] of this._pendingDeletes) {
+      console.log(`[cmux] Cancelling pending DELETE for PTY ${ptyId}`);
+      clearTimeout(timeout);
+    }
+    this._pendingDeletes.clear();
+
     for (const d of this._disposables) {
       d.dispose();
     }
