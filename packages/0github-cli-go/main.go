@@ -77,32 +77,49 @@ func getScoreStyle(score int) lipgloss.Style {
 	}
 }
 
-// highlightToken finds and highlights a specific token in the code
-func highlightToken(code string, token *string, score int) string {
+// highlightCodeWithToken applies syntax highlighting and highlights a specific token
+func highlightCodeWithToken(code string, lang string, token *string, score int) string {
+	// If no token to highlight or low score, just do syntax highlighting
 	if token == nil || *token == "" || score <= 10 {
+		if lang != "" {
+			return highlightLine(code, lang)
+		}
 		return code
 	}
 
-	style := getScoreStyle(score)
-
-	// Find the token in the code (case-sensitive first, then case-insensitive)
+	// Find the token position in raw code
 	idx := strings.Index(code, *token)
 	if idx == -1 {
 		// Try case-insensitive
 		lowerCode := strings.ToLower(code)
 		lowerToken := strings.ToLower(*token)
 		idx = strings.Index(lowerCode, lowerToken)
-		if idx == -1 {
-			return code
-		}
 	}
 
-	// Highlight the token
+	if idx == -1 {
+		// Token not found, just syntax highlight
+		if lang != "" {
+			return highlightLine(code, lang)
+		}
+		return code
+	}
+
+	// Split code into parts
 	before := code[:idx]
-	highlighted := style.Render(code[idx : idx+len(*token)])
+	tokenText := code[idx : idx+len(*token)]
 	after := code[idx+len(*token):]
 
-	return before + highlighted + after
+	// Syntax highlight each part
+	if lang != "" {
+		before = highlightLine(before, lang)
+		after = highlightLine(after, lang)
+	}
+
+	// Apply score-based highlight to token (on top of any syntax highlighting)
+	style := getScoreStyle(score)
+	highlightedToken := style.Render(tokenText)
+
+	return before + highlightedToken + after
 }
 
 func getStatusColor(status string, maxScore int) lipgloss.Color {
@@ -702,14 +719,14 @@ func (m model) renderDiffView(width, height int) string {
 			changeStyle = dimStyle
 		}
 
-		// Code - highlight the important token directly
+		// Code - syntax highlight + highlight the important token
 		code := line.CodeLine
 		if code == "" {
 			code = line.DiffLine
 		}
 
-		// Highlight the most important word with score-based color
-		code = highlightToken(code, line.MostImportantWord, line.Score)
+		// Apply syntax highlighting and token highlight together
+		code = highlightCodeWithToken(code, lang, line.MostImportantWord, line.Score)
 
 		// Truncate if needed (be careful with ANSI codes)
 		maxCodeLen := width - 16
