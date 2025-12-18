@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { render, Box, Text, useInput, useApp, useStdout } from "ink";
 import { program } from "commander";
 import chalk from "chalk";
+import { highlight } from "cli-highlight";
 
 const API_BASE_URL = process.env.ZERO_GITHUB_API_URL ?? "https://0github.com";
+
+const MIN_SIDEBAR_WIDTH = 36;
 
 // Types
 interface LineData {
@@ -116,6 +119,68 @@ function parseGitHubPrUrl(input: string): {
   return null;
 }
 
+// Get language from file extension for syntax highlighting
+function getLanguageFromPath(filePath: string): string | undefined {
+  const ext = filePath.split(".").pop()?.toLowerCase();
+  const langMap: Record<string, string> = {
+    ts: "typescript",
+    tsx: "typescript",
+    js: "javascript",
+    jsx: "javascript",
+    py: "python",
+    rb: "ruby",
+    rs: "rust",
+    go: "go",
+    java: "java",
+    c: "c",
+    cpp: "cpp",
+    h: "c",
+    hpp: "cpp",
+    cs: "csharp",
+    php: "php",
+    swift: "swift",
+    kt: "kotlin",
+    scala: "scala",
+    sh: "bash",
+    bash: "bash",
+    zsh: "bash",
+    yml: "yaml",
+    yaml: "yaml",
+    json: "json",
+    xml: "xml",
+    html: "html",
+    css: "css",
+    scss: "scss",
+    less: "less",
+    sql: "sql",
+    md: "markdown",
+    dockerfile: "dockerfile",
+    makefile: "makefile",
+    toml: "toml",
+    ini: "ini",
+    vue: "vue",
+    svelte: "svelte",
+  };
+  return ext ? langMap[ext] : undefined;
+}
+
+// Syntax highlight a line of code
+function highlightCode(code: string, language?: string): string {
+  if (!language || !code.trim()) return code;
+  try {
+    // Strip the diff prefix (+/-/space) for highlighting, then restore
+    const prefix = code.match(/^[+\- ]/)?.[0] || "";
+    const codeWithoutPrefix = code.slice(prefix.length);
+    const highlighted = highlight(codeWithoutPrefix, {
+      language,
+      ignoreIllegals: true,
+    });
+    return prefix + highlighted;
+  } catch {
+    return code;
+  }
+}
+
 // Color helpers
 function getScoreColor(score: number): string {
   if (score <= 10) return "gray";
@@ -140,11 +205,11 @@ interface FileListProps {
   files: FileData[];
   selectedIndex: number;
   height: number;
+  isFocused: boolean;
 }
 
-function FileList({ files, selectedIndex, height }: FileListProps) {
-  // Calculate scroll offset to keep selected item visible
-  const visibleItems = height - 2;
+function FileList({ files, selectedIndex, height, isFocused }: FileListProps) {
+  const visibleItems = height - 3;
   const scrollOffset = Math.max(
     0,
     Math.min(selectedIndex - Math.floor(visibleItems / 2), files.length - visibleItems)
@@ -153,15 +218,22 @@ function FileList({ files, selectedIndex, height }: FileListProps) {
   const visibleFiles = files.slice(scrollOffset, scrollOffset + visibleItems);
 
   return (
-    <Box flexDirection="column" width={40} borderStyle="single" borderColor="gray">
-      <Box paddingX={1}>
-        <Text bold color="cyan">Files ({files.length})</Text>
+    <Box
+      flexDirection="column"
+      width={MIN_SIDEBAR_WIDTH}
+      minWidth={MIN_SIDEBAR_WIDTH}
+      borderStyle="single"
+      borderColor={isFocused ? "cyan" : "gray"}
+    >
+      <Box paddingX={1} justifyContent="space-between">
+        <Text bold color={isFocused ? "cyan" : "white"}>
+          {isFocused ? "▶ " : "  "}Files ({files.length})
+        </Text>
       </Box>
       {visibleFiles.map((file, i) => {
         const actualIndex = scrollOffset + i;
         const isSelected = actualIndex === selectedIndex;
         const fileName = file.filePath.split("/").pop() || file.filePath;
-        const dirPath = file.filePath.split("/").slice(0, -1).join("/");
 
         let statusIcon = "○";
         let statusColor: string = "gray";
@@ -172,22 +244,27 @@ function FileList({ files, selectedIndex, height }: FileListProps) {
           statusIcon = "●";
           statusColor = file.maxScore > 60 ? "red" : file.maxScore > 30 ? "yellow" : "green";
         } else if (file.status === "skipped") {
-          statusIcon = "○";
+          statusIcon = "⊘";
           statusColor = "gray";
         } else if (file.status === "error") {
           statusIcon = "✗";
           statusColor = "red";
         }
 
+        const maxNameLen = MIN_SIDEBAR_WIDTH - 10;
+        const displayName = fileName.length > maxNameLen
+          ? fileName.slice(0, maxNameLen - 1) + "…"
+          : fileName.padEnd(maxNameLen);
+
         return (
           <Box key={file.filePath} paddingX={1}>
             <Text
-              backgroundColor={isSelected ? "blue" : undefined}
+              backgroundColor={isSelected ? (isFocused ? "blue" : "gray") : undefined}
               color={isSelected ? "white" : undefined}
             >
               <Text color={statusColor}>{statusIcon}</Text>
               {" "}
-              <Text bold={isSelected}>{fileName.slice(0, 28).padEnd(28)}</Text>
+              <Text bold={isSelected}>{displayName}</Text>
               {file.maxScore > 0 && (
                 <Text color={getScoreColor(file.maxScore)} dimColor={!isSelected}>
                   {String(file.maxScore).padStart(3)}
@@ -197,6 +274,11 @@ function FileList({ files, selectedIndex, height }: FileListProps) {
           </Box>
         );
       })}
+      {files.length === 0 && (
+        <Box paddingX={1}>
+          <Text dimColor>No files yet...</Text>
+        </Box>
+      )}
       {files.length > visibleItems && (
         <Box paddingX={1}>
           <Text dimColor>
@@ -216,14 +298,32 @@ interface DiffViewProps {
   scrollOffset: number;
   height: number;
   showTooltips: boolean;
+  isFocused: boolean;
 }
 
-function DiffView({ file, scrollOffset, height, showTooltips }: DiffViewProps) {
-  const visibleLines = height - 3;
+function DiffView({ file, scrollOffset, height, showTooltips, isFocused }: DiffViewProps) {
+  const visibleLines = height - 4;
+
+  // Get language for syntax highlighting
+  const language = file ? getLanguageFromPath(file.filePath) : undefined;
+
+  // Memoize highlighted lines
+  const highlightedLines = useMemo(() => {
+    if (!file || !language) return null;
+    return file.lines.map((line) => ({
+      ...line,
+      highlightedCode: highlightCode(line.codeLine || line.diffLine || "", language),
+    }));
+  }, [file, language]);
 
   if (!file) {
     return (
-      <Box flexDirection="column" flexGrow={1} borderStyle="single" borderColor="gray">
+      <Box
+        flexDirection="column"
+        flexGrow={1}
+        borderStyle="single"
+        borderColor={isFocused ? "cyan" : "gray"}
+      >
         <Box paddingX={1}>
           <Text dimColor>Select a file to view diff</Text>
         </Box>
@@ -233,9 +333,16 @@ function DiffView({ file, scrollOffset, height, showTooltips }: DiffViewProps) {
 
   if (file.status === "skipped") {
     return (
-      <Box flexDirection="column" flexGrow={1} borderStyle="single" borderColor="gray">
+      <Box
+        flexDirection="column"
+        flexGrow={1}
+        borderStyle="single"
+        borderColor={isFocused ? "cyan" : "gray"}
+      >
         <Box paddingX={1}>
-          <Text bold color="cyan">{file.filePath}</Text>
+          <Text bold color={isFocused ? "cyan" : "white"}>
+            {isFocused ? "▶ " : "  "}{file.filePath}
+          </Text>
         </Box>
         <Box paddingX={1} paddingY={1}>
           <Text dimColor>Skipped: {file.skipReason || "unknown reason"}</Text>
@@ -246,9 +353,16 @@ function DiffView({ file, scrollOffset, height, showTooltips }: DiffViewProps) {
 
   if (file.status === "pending") {
     return (
-      <Box flexDirection="column" flexGrow={1} borderStyle="single" borderColor="gray">
+      <Box
+        flexDirection="column"
+        flexGrow={1}
+        borderStyle="single"
+        borderColor={isFocused ? "cyan" : "gray"}
+      >
         <Box paddingX={1}>
-          <Text bold color="cyan">{file.filePath}</Text>
+          <Text bold color={isFocused ? "cyan" : "white"}>
+            {isFocused ? "▶ " : "  "}{file.filePath}
+          </Text>
         </Box>
         <Box paddingX={1} paddingY={1}>
           <Text dimColor>Waiting...</Text>
@@ -257,20 +371,29 @@ function DiffView({ file, scrollOffset, height, showTooltips }: DiffViewProps) {
     );
   }
 
-  const visibleFileLines = file.lines.slice(scrollOffset, scrollOffset + visibleLines);
+  const linesToRender = highlightedLines || file.lines;
+  const visibleFileLines = linesToRender.slice(scrollOffset, scrollOffset + visibleLines);
 
   return (
-    <Box flexDirection="column" flexGrow={1} borderStyle="single" borderColor="gray">
+    <Box
+      flexDirection="column"
+      flexGrow={1}
+      borderStyle="single"
+      borderColor={isFocused ? "cyan" : "gray"}
+    >
       <Box paddingX={1} justifyContent="space-between">
-        <Text bold color="cyan">{file.filePath}</Text>
+        <Text bold color={isFocused ? "cyan" : "white"}>
+          {isFocused ? "▶ " : "  "}{file.filePath}
+        </Text>
         <Text dimColor>
           {file.lines.length} lines
           {file.maxScore > 0 && (
             <Text color={getScoreColor(file.maxScore)}> (max: {file.maxScore})</Text>
           )}
+          {language && <Text color="gray"> [{language}]</Text>}
         </Text>
       </Box>
-      <Box flexDirection="column" paddingX={1}>
+      <Box flexDirection="column" paddingX={1} overflow="hidden">
         {visibleFileLines.map((line, i) => {
           const actualIndex = scrollOffset + i;
           const oldNum = line.oldLineNumber?.toString().padStart(4) || "    ";
@@ -289,14 +412,12 @@ function DiffView({ file, scrollOffset, height, showTooltips }: DiffViewProps) {
           const scoreBg = getScoreBgColor(line.score);
           const scoreText = line.score > 0 ? String(line.score).padStart(3) : "   ";
 
-          // Truncate line to fit
-          const maxLineLen = 120;
-          let displayLine = line.diffLine || line.codeLine || "";
-          if (displayLine.length > maxLineLen) {
-            displayLine = displayLine.slice(0, maxLineLen - 1) + "…";
-          }
+          // Use highlighted code if available
+          const displayCode = "highlightedCode" in line
+            ? (line as typeof line & { highlightedCode: string }).highlightedCode
+            : (line.codeLine || line.diffLine || "");
 
-          // Use unique key combining index and line numbers
+          // Unique key
           const lineKey = `${actualIndex}-${line.oldLineNumber ?? "x"}-${line.newLineNumber ?? "x"}`;
 
           return (
@@ -312,9 +433,7 @@ function DiffView({ file, scrollOffset, height, showTooltips }: DiffViewProps) {
                 <Text dimColor>{scoreText}</Text>
               )}
               <Text> </Text>
-              <Text color={line.score > 50 ? getScoreColor(line.score) : undefined}>
-                {displayLine}
-              </Text>
+              <Text>{displayCode}</Text>
               {showTooltips && line.score > 0 && line.shouldReviewWhy && (
                 <Text dimColor italic> # {line.shouldReviewWhy}</Text>
               )}
@@ -329,7 +448,7 @@ function DiffView({ file, scrollOffset, height, showTooltips }: DiffViewProps) {
             {scrollOffset + visibleLines < file.lines.length ? "↓" : " "}
             {" "}
             Lines {scrollOffset + 1}-{Math.min(scrollOffset + visibleLines, file.lines.length)}/{file.lines.length}
-            {" "}(j/k or ↑/↓ to scroll, J/K for page)
+            {isFocused && " (j/k scroll, J/K page, [/] files)"}
           </Text>
         </Box>
       )}
@@ -344,27 +463,38 @@ interface StatusBarProps {
   fileCount: number;
   totalLines: number;
   highScoreCount: number;
+  activePane: "files" | "diff";
 }
 
-function StatusBar({ prUrl, isComplete, error, fileCount, totalLines, highScoreCount }: StatusBarProps) {
+function StatusBar({
+  prUrl,
+  isComplete,
+  error,
+  fileCount,
+  totalLines,
+  highScoreCount,
+  activePane,
+}: StatusBarProps) {
   return (
     <Box paddingX={1} justifyContent="space-between">
       <Text>
         <Text bold color="cyan">0github</Text>
         <Text dimColor> | </Text>
         <Text>{prUrl}</Text>
+        <Text dimColor> | </Text>
+        <Text color="cyan">[{activePane === "files" ? "FILES" : "DIFF"}]</Text>
       </Text>
       <Text>
         {error ? (
           <Text color="red">Error: {error}</Text>
         ) : isComplete ? (
           <Text color="green">
-            Complete | {fileCount} files | {totalLines} lines | {highScoreCount} flagged (≥50)
+            {fileCount} files | {totalLines} lines | {highScoreCount} flagged
           </Text>
         ) : (
           <Text color="yellow">Loading...</Text>
         )}
-        <Text dimColor> | q: quit | Tab: switch pane | t: toggle tooltips</Text>
+        <Text dimColor> | Tab: switch | t: tooltips | q: quit</Text>
       </Text>
     </Box>
   );
@@ -551,7 +681,7 @@ function App({ owner, repo, prNumber, showTooltips: initialShowTooltips }: AppPr
         setSelectedFileIndex(0);
       } else if (input === "G") {
         setSelectedFileIndex(filesArray.length - 1);
-      } else if (key.return) {
+      } else if (key.return || input === "l" || key.rightArrow) {
         setActivePane("diff");
       }
     } else {
@@ -580,14 +710,14 @@ function App({ owner, repo, prNumber, showTooltips: initialShowTooltips }: AppPr
         }
       } else if (input === "h" || key.leftArrow) {
         setActivePane("files");
-      } else if (input === "l" || key.rightArrow) {
-        // Stay in diff
       } else if (input === "]") {
         // Next file
-        setSelectedFileIndex((i) => Math.min(i + 1, filesArray.length - 1));
+        const nextIndex = Math.min(selectedFileIndex + 1, filesArray.length - 1);
+        setSelectedFileIndex(nextIndex);
       } else if (input === "[") {
         // Prev file
-        setSelectedFileIndex((i) => Math.max(i - 1, 0));
+        const prevIndex = Math.max(selectedFileIndex - 1, 0);
+        setSelectedFileIndex(prevIndex);
       }
     }
   });
@@ -599,12 +729,14 @@ function App({ owner, repo, prNumber, showTooltips: initialShowTooltips }: AppPr
           files={filesArray}
           selectedIndex={selectedFileIndex}
           height={height - 2}
+          isFocused={activePane === "files"}
         />
         <DiffView
           file={selectedFile}
           scrollOffset={diffScrollOffset}
           height={height - 2}
           showTooltips={showTooltips}
+          isFocused={activePane === "diff"}
         />
       </Box>
       <StatusBar
@@ -614,6 +746,7 @@ function App({ owner, repo, prNumber, showTooltips: initialShowTooltips }: AppPr
         fileCount={filesArray.filter((f) => f.status !== "skipped").length}
         totalLines={totalLines}
         highScoreCount={highScoreCount}
+        activePane={activePane}
       />
     </Box>
   );
@@ -642,7 +775,8 @@ program
       console.log(chalk.dim("  j/k or ↑/↓  - Navigate"));
       console.log(chalk.dim("  J/K         - Page up/down"));
       console.log(chalk.dim("  Tab         - Switch between file list and diff"));
-      console.log(chalk.dim("  Enter       - View selected file"));
+      console.log(chalk.dim("  Enter/l/→   - Focus diff view"));
+      console.log(chalk.dim("  h/←         - Focus file list"));
       console.log(chalk.dim("  [/]         - Prev/next file (in diff view)"));
       console.log(chalk.dim("  t           - Toggle tooltips"));
       console.log(chalk.dim("  g/G         - Go to top/bottom"));

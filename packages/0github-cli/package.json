@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "chalk": "^5.3.0",
+    "cli-highlight": "^2.1.11",
     "commander": "^12.1.0",
     "ink": "^6.0.0",
     "react": "^19.0.0"
