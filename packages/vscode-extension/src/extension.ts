@@ -2,6 +2,7 @@ import type { ClientToServerEvents, ServerToClientEvents } from "@cmux/shared";
 import { execSync } from "node:child_process";
 import { io, Socket } from "socket.io-client";
 import * as vscode from "vscode";
+import { activateTerminal, deactivateTerminal } from "./terminal";
 
 // Create output channel for cmux logs
 const outputChannel = vscode.window.createOutputChannel("cmux");
@@ -373,6 +374,9 @@ export function activate(context: vscode.ExtensionContext) {
   console.log("[cmux] activate() called");
   log("[cmux] activate() called");
 
+  // Activate terminal module (PTY backend)
+  activateTerminal(context);
+
   // Register command to show output
   const showOutputCommand = vscode.commands.registerCommand(
     "cmux.showOutput",
@@ -468,6 +472,9 @@ export function activate(context: vscode.ExtensionContext) {
 export function deactivate() {
   log("cmux extension is now deactivated!");
   isSetupComplete = false;
+
+  // Deactivate terminal module
+  deactivateTerminal();
 
   // Clean up file watcher and timer
   if (fileWatcher) {

@@ -71,12 +71,12 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
   export CXX_x86_64_unknown_linux_gnu=x86_64-linux-gnu-g++ && \
   cargo install --path crates/cmux-env --target x86_64-unknown-linux-gnu --locked --force && \
   cargo install --path crates/cmux-proxy --target x86_64-unknown-linux-gnu --locked --force && \
-  cargo install --path crates/cmux-xterm --target x86_64-unknown-linux-gnu --locked --force; \
+  cargo install --path crates/cmux-pty --target x86_64-unknown-linux-gnu --locked --force; \
   else \
   # Build natively for the requested platform (e.g., arm64 on Apple Silicon)
   cargo install --path crates/cmux-env --locked --force && \
   cargo install --path crates/cmux-proxy --locked --force && \
-  cargo install --path crates/cmux-xterm --locked --force; \
+  cargo install --path crates/cmux-pty --locked --force; \
   fi
 
 # Stage 2: Build base stage (runs natively on ARM64, cross-compiles to x86_64)
@@ -569,6 +569,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   git \
   python3 \
   bash \
+  zsh \
   nano \
   net-tools \
   lsof \
@@ -1011,17 +1012,21 @@ RUN chmod +x /usr/local/bin/cmux-collect-relevant-diff.sh \
 COPY --from=rust-builder /usr/local/cargo/bin/envctl /usr/local/bin/envctl
 COPY --from=rust-builder /usr/local/cargo/bin/envd /usr/local/bin/envd
 COPY --from=rust-builder /usr/local/cargo/bin/cmux-proxy /usr/local/bin/cmux-proxy
-COPY --from=rust-builder /usr/local/cargo/bin/cmux-xterm-server /usr/local/bin/cmux-xterm-server
+COPY --from=rust-builder /usr/local/cargo/bin/cmux-pty /usr/local/bin/cmux-pty
 
 # Configure envctl/envd runtime defaults
-RUN chmod +x /usr/local/bin/envctl /usr/local/bin/envd /usr/local/bin/cmux-proxy /usr/local/bin/cmux-xterm-server && \
+RUN chmod +x /usr/local/bin/envctl /usr/local/bin/envd /usr/local/bin/cmux-proxy /usr/local/bin/cmux-pty && \
   envctl --version && \
   envctl install-hook bash && \
   echo '[ -f ~/.bashrc ] && . ~/.bashrc' > /root/.profile && \
   echo '[ -f ~/.bashrc ] && . ~/.bashrc' > /root/.bash_profile && \
   mkdir -p /run/user/0 && \
   chmod 700 /run/user/0 && \
-  echo 'export XDG_RUNTIME_DIR=/run/user/0' >> /root/.bashrc
+  echo 'export XDG_RUNTIME_DIR=/run/user/0' >> /root/.bashrc && \
+  echo 'export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"' >> /root/.bashrc && \
+  echo 'export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"' >> /root/.zshrc && \
+  printf 'export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"\n' > /etc/profile.d/local-bin.sh && \
+  chmod +x /etc/profile.d/local-bin.sh
 
 # Install tmux configuration for better mouse scrolling behavior
 COPY configs/tmux.conf /etc/tmux.conf
@@ -1046,7 +1051,7 @@ COPY configs/systemd/cmux-xvfb.service /usr/lib/systemd/system/cmux-xvfb.service
 COPY configs/systemd/cmux-tigervnc.service /usr/lib/systemd/system/cmux-tigervnc.service
 COPY configs/systemd/cmux-vnc-proxy.service /usr/lib/systemd/system/cmux-vnc-proxy.service
 COPY configs/systemd/cmux-cdp-proxy.service /usr/lib/systemd/system/cmux-cdp-proxy.service
-COPY configs/systemd/cmux-xterm.service /usr/lib/systemd/system/cmux-xterm.service
+COPY configs/systemd/cmux-pty.service /usr/lib/systemd/system/cmux-pty.service
 COPY configs/systemd/cmux-memory-setup.service /usr/lib/systemd/system/cmux-memory-setup.service
 COPY configs/systemd/bin/configure-openvscode /usr/local/lib/cmux/configure-openvscode
 COPY configs/systemd/bin/configure-coder /usr/local/lib/cmux/configure-coder
@@ -1098,7 +1103,9 @@ ln -sf /usr/lib/systemd/system/cmux-devtools.service /etc/systemd/system/cmux.ta
 ln -sf /usr/lib/systemd/system/cmux-tigervnc.service /etc/systemd/system/cmux.target.wants/cmux-tigervnc.service
 ln -sf /usr/lib/systemd/system/cmux-vnc-proxy.service /etc/systemd/system/cmux.target.wants/cmux-vnc-proxy.service
 ln -sf /usr/lib/systemd/system/cmux-cdp-proxy.service /etc/systemd/system/cmux.target.wants/cmux-cdp-proxy.service
-ln -sf /usr/lib/systemd/system/cmux-xterm.service /etc/systemd/system/cmux.target.wants/cmux-xterm.service
+ln -sf /usr/lib/systemd/system/cmux-pty.service /etc/systemd/system/cmux.target.wants/cmux-pty.service
+ln -sf /usr/lib/systemd/system/cmux-pty.service /etc/systemd/system/multi-user.target.wants/cmux-pty.service
+ln -sf /usr/lib/systemd/system/${IDE_SERVICE} /etc/systemd/system/multi-user.target.wants/${IDE_SERVICE}
 ln -sf /usr/lib/systemd/system/cmux-memory-setup.service /etc/systemd/system/multi-user.target.wants/cmux-memory-setup.service
 ln -sf /usr/lib/systemd/system/cmux-memory-setup.service /etc/systemd/system/swap.target.wants/cmux-memory-setup.service
 mkdir -p /opt/app/overlay/upper /opt/app/overlay/work
@@ -1112,23 +1119,23 @@ if [ "${IDE_PROVIDER}" = "cmux-code" ]; then
   # cmux-code settings (includes workspace trust, secondary sidebar, and OpenVSIX compatibility settings)
   # extensions.verifySignature: false is required because OpenVSIX marketplace doesn't support extension signatures
   mkdir -p /root/.vscode-server-oss/data/User
-  echo '{"workbench.startupEditor": "none", "workbench.secondarySideBar.defaultVisibility": "hidden", "security.workspace.trust.enabled": false, "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"], "telemetry.telemetryLevel": "off", "update.mode": "none", "extensions.verifySignature": false}' > /root/.vscode-server-oss/data/User/settings.json
+  echo '{"workbench.startupEditor": "none", "workbench.secondarySideBar.defaultVisibility": "hidden", "security.workspace.trust.enabled": false, "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"], "terminal.integrated.scrollback": 100000, "telemetry.telemetryLevel": "off", "update.mode": "none", "extensions.verifySignature": false}' > /root/.vscode-server-oss/data/User/settings.json
   mkdir -p /root/.vscode-server-oss/data/User/profiles/default-profile
-  echo '{"workbench.startupEditor": "none", "workbench.secondarySideBar.defaultVisibility": "hidden", "security.workspace.trust.enabled": false, "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"], "telemetry.telemetryLevel": "off", "update.mode": "none", "extensions.verifySignature": false}' > /root/.vscode-server-oss/data/User/profiles/default-profile/settings.json
+  echo '{"workbench.startupEditor": "none", "workbench.secondarySideBar.defaultVisibility": "hidden", "security.workspace.trust.enabled": false, "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"], "terminal.integrated.scrollback": 100000, "telemetry.telemetryLevel": "off", "update.mode": "none", "extensions.verifySignature": false}' > /root/.vscode-server-oss/data/User/profiles/default-profile/settings.json
   mkdir -p /root/.vscode-server-oss/data/Machine
-  echo '{"workbench.startupEditor": "none", "workbench.secondarySideBar.defaultVisibility": "hidden", "security.workspace.trust.enabled": false, "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"], "telemetry.telemetryLevel": "off", "update.mode": "none", "extensions.verifySignature": false}' > /root/.vscode-server-oss/data/Machine/settings.json
+  echo '{"workbench.startupEditor": "none", "workbench.secondarySideBar.defaultVisibility": "hidden", "security.workspace.trust.enabled": false, "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"], "terminal.integrated.scrollback": 100000, "telemetry.telemetryLevel": "off", "update.mode": "none", "extensions.verifySignature": false}' > /root/.vscode-server-oss/data/Machine/settings.json
 elif [ "${IDE_PROVIDER}" = "openvscode" ]; then
   mkdir -p /root/.openvscode-server/data/User
-  echo '{"workbench.startupEditor": "none", "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"]}' > /root/.openvscode-server/data/User/settings.json
+  echo '{"workbench.startupEditor": "none", "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"], "terminal.integrated.scrollback": 100000}' > /root/.openvscode-server/data/User/settings.json
   mkdir -p /root/.openvscode-server/data/User/profiles/default-profile
-  echo '{"workbench.startupEditor": "none", "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"]}' > /root/.openvscode-server/data/User/profiles/default-profile/settings.json
+  echo '{"workbench.startupEditor": "none", "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"], "terminal.integrated.scrollback": 100000}' > /root/.openvscode-server/data/User/profiles/default-profile/settings.json
   mkdir -p /root/.openvscode-server/data/Machine
-  echo '{"workbench.startupEditor": "none", "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"]}' > /root/.openvscode-server/data/Machine/settings.json
+  echo '{"workbench.startupEditor": "none", "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"], "terminal.integrated.scrollback": 100000}' > /root/.openvscode-server/data/Machine/settings.json
 else
   # Coder settings are already created during IDE installation
   mkdir -p /root/.code-server/User /root/.code-server/Machine
-  echo '{"workbench.startupEditor": "none", "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"]}' > /root/.code-server/User/settings.json
-  echo '{"workbench.startupEditor": "none", "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"]}' > /root/.code-server/Machine/settings.json
+  echo '{"workbench.startupEditor": "none", "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"], "terminal.integrated.scrollback": 100000}' > /root/.code-server/User/settings.json
+  echo '{"workbench.startupEditor": "none", "terminal.integrated.macOptionClickForcesSelection": true, "terminal.integrated.shell.linux": "bash", "terminal.integrated.shellArgs.linux": ["-l"], "terminal.integrated.scrollback": 100000}' > /root/.code-server/Machine/settings.json
 fi
 EOF
 
@@ -1140,7 +1147,7 @@ EOF
 # 39380: VNC websocket proxy (noVNC)
 # 39381: Chrome DevTools (CDP)
 # 39382: Chrome DevTools target
-# 39383: cmux-xterm server
+# 39383: cmux-pty server
 EXPOSE 39375 39377 39378 39379 39380 39381 39382 39383
 
 ENV container=docker

@@ -1575,7 +1575,7 @@ async def task_configure_zsh(ctx: TaskContext) -> None:
         autosuggestions="/usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh"
         cat > /root/.zshrc <<EOF
 export SHELL="${zsh_path}"
-export PATH="/usr/local/bin:/usr/local/cargo/bin:\$HOME/.local/bin:\$PATH"
+export PATH="/usr/local/bin:/usr/local/cargo/bin:\$HOME/.local/bin:\$HOME/.bun/bin:\$PATH"
 export XDG_RUNTIME_DIR="/run/user/0"
 export NVM_DIR="\$HOME/.nvm"
 if [ -s /etc/profile.d/nvm.sh ]; then
@@ -1621,7 +1621,7 @@ EOF
         cat <<'EOF' > /etc/profile.d/cmux-paths.sh
 export RUSTUP_HOME=/usr/local/rustup
 export CARGO_HOME=/usr/local/cargo
-export PATH="/usr/local/bin:/usr/local/cargo/bin:$HOME/.local/bin:$PATH"
+export PATH="/usr/local/bin:/usr/local/cargo/bin:$HOME/.local/bin:$HOME/.bun/bin:$PATH"
 EOF
         if ! grep -q "alias g='git'" /root/.bashrc 2>/dev/null; then
           echo "alias g='git'" >> /root/.bashrc

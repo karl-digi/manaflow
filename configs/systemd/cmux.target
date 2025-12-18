@@ -1,7 +1,7 @@
 [Unit]
 Description=Cmux Services Target
 Requires=cmux-ide.service cmux-worker.service cmux-devtools.service cmux-vnc-proxy.service cmux-tigervnc.service
-Wants=cmux-dockerd.service cmux-devtools.service cmux-vnc-proxy.service cmux-cdp-proxy.service cmux-tigervnc.service
+Wants=cmux-dockerd.service cmux-devtools.service cmux-vnc-proxy.service cmux-cdp-proxy.service cmux-tigervnc.service cmux-pty.service
 After=cmux-ide.service cmux-dockerd.service cmux-devtools.service cmux-vnc-proxy.service cmux-tigervnc.service
 
 [Install]
