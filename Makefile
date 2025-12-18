@@ -4,7 +4,7 @@ DEVCONTAINER_DIR := .devcontainer
 COMPOSE_FILE := docker-compose.convex.yml
 PROJECT_NAME := cmux-convex
 
-.PHONY: convex-up convex-down convex-restart convex-clean convex-init convex-init-prod convex-clear-prod convex-fresh dev
+.PHONY: convex-up convex-down convex-restart convex-clean convex-init convex-init-prod convex-clear-prod convex-fresh dev sync-upstream-tags
 
 convex-up:
 	cd $(DEVCONTAINER_DIR) && COMPOSE_PROJECT_NAME=$(PROJECT_NAME) docker compose -f $(COMPOSE_FILE) up -d
@@ -47,3 +47,6 @@ convex-fresh: convex-clean convex-up
 
 dev:
 	./scripts/dev.sh --skip-docker --show-compose-logs --skip-convex
+
+sync-upstream-tags:
+	./scripts/sync-upstream-tags.sh
