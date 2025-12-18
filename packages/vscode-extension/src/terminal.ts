@@ -438,6 +438,9 @@ class CmuxTerminalManager {
   private _disposables: { dispose: () => void }[] = [];
   private _initialized = false;
 
+  // Flag to prevent deleting PTYs on server during extension deactivation/page refresh
+  private _isDeactivating = false;
+
   // Track initial sync state
   private _initialSyncDone = false;
   private _initialSyncPromise: Promise<void>;
@@ -677,13 +680,15 @@ class CmuxTerminalManager {
     const closeListener = vscode.window.onDidCloseTerminal(async (closedTerminal) => {
       if (closedTerminal === terminal) {
         const wasDisposingFromServer = managed.disposingFromServer;
-        console.log(`[cmux] Terminal for PTY ${info.id} closed (fromServer: ${wasDisposingFromServer})`);
+        const isDeactivating = this._isDeactivating;
+        console.log(`[cmux] Terminal for PTY ${info.id} closed (fromServer: ${wasDisposingFromServer}, deactivating: ${isDeactivating})`);
         this._terminals.delete(info.id);
         closeListener.dispose();
         pty.dispose();
 
-        // Only delete on server if this was a user-initiated close (not from pty_deleted event)
-        if (!wasDisposingFromServer) {
+        // Only delete on server if this was a user-initiated close
+        // Skip deletion if: from server event OR extension is deactivating (page refresh)
+        if (!wasDisposingFromServer && !isDeactivating) {
           try {
             await fetch(`${config.serverUrl}/sessions/${info.id}`, {
               method: 'DELETE',
@@ -812,11 +817,13 @@ class CmuxTerminalManager {
       const closeListener = vscode.window.onDidCloseTerminal(async (closedTerminal) => {
         if (closedTerminal === terminal) {
           const wasDisposingFromServer = managed.disposingFromServer;
-          console.log(`[cmux] HTTP-created terminal ${ptyId} closed (fromServer: ${wasDisposingFromServer})`);
+          const isDeactivating = this._isDeactivating;
+          console.log(`[cmux] HTTP-created terminal ${ptyId} closed (fromServer: ${wasDisposingFromServer}, deactivating: ${isDeactivating})`);
           this._terminals.delete(ptyId);
           closeListener.dispose();
 
-          if (!wasDisposingFromServer) {
+          // Skip deletion if: from server event OR extension is deactivating (page refresh)
+          if (!wasDisposingFromServer && !isDeactivating) {
             try {
               await fetch(`${config.serverUrl}/sessions/${ptyId}`, { method: 'DELETE' });
               console.log(`[cmux] Deleted PTY session ${ptyId} on server`);
@@ -831,10 +838,18 @@ class CmuxTerminalManager {
   }
 
   dispose(): void {
+    // Set flag to prevent deleting PTYs on server during deactivation
+    // This allows terminals to persist across page refreshes
+    this._isDeactivating = true;
+
     for (const d of this._disposables) {
       d.dispose();
     }
     this._ptyClient.dispose();
+  }
+
+  get isDeactivating(): boolean {
+    return this._isDeactivating;
   }
 }
 
