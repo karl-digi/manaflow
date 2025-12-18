@@ -422,6 +422,10 @@ class CmuxTerminalManager {
   // Used to set up close listener when VSCode creates the terminal
   private _httpCreatedTerminals = new Map<string, string>();
 
+  // Queue of PTYs to restore - provideTerminalProfile consumes these
+  // This allows VSCode to create terminals via profile provider while reusing existing PTYs
+  private _restoreQueue: TerminalInfo[] = [];
+
   private _ptyClient: PtyClient;
   private _disposables: { dispose: () => void }[] = [];
   private _initialized = false;
@@ -539,8 +543,16 @@ class CmuxTerminalManager {
         continue;
       }
 
-      // Create terminal for this PTY
-      this._createTerminalForPty(info, false); // Don't focus on sync
+      // On initial sync, queue terminals for provideTerminalProfile to consume
+      // This lets VSCode create terminals via profile provider while reusing existing PTYs
+      if (!this._initialSyncDone) {
+        console.log(`[cmux] Queueing PTY ${info.id} for restore`);
+        this._restoreQueue.push(info);
+        this._pendingCreations.add(info.id);
+      } else {
+        // After initial sync, create terminals directly (for reconnection scenarios)
+        this._createTerminalForPty(info, false);
+      }
     }
 
     // Remove terminals that no longer exist on server
@@ -556,7 +568,7 @@ class CmuxTerminalManager {
     if (!this._initialSyncDone) {
       this._initialSyncDone = true;
       this._resolveInitialSync();
-      console.log('[cmux] Initial state sync complete');
+      console.log(`[cmux] Initial state sync complete, ${this._restoreQueue.length} terminals queued`);
     }
   }
 
@@ -763,6 +775,22 @@ class CmuxTerminalManager {
   }
 
   /**
+   * Get a queued PTY to restore, if any.
+   * Used by provideTerminalProfile to reuse existing PTYs on startup.
+   */
+  popRestoreQueue(): TerminalInfo | undefined {
+    return this._restoreQueue.shift();
+  }
+
+  /**
+   * Track a terminal restored via provideTerminalProfile.
+   * Sets up name → ID mapping so we can add close listener when terminal opens.
+   */
+  trackRestoredTerminal(info: TerminalInfo): void {
+    this._httpCreatedTerminals.set(info.name, info.id);
+  }
+
+  /**
    * Handle terminal open event for HTTP-created terminals.
    * Sets up close listener since these bypass _createTerminalForPty.
    */
@@ -814,9 +842,6 @@ class CmuxTerminalManager {
 
 let terminalManager: CmuxTerminalManager;
 let initializationPromise: Promise<void> | null = null;
-// Set to true after initial sync if terminals were restored from server
-// Used to skip the automatic provideTerminalProfile call on startup
-let skipNextAutoCreate = false;
 
 class CmuxTerminalProfileProvider implements vscode.TerminalProfileProvider {
   async provideTerminalProfile(
@@ -835,15 +860,26 @@ class CmuxTerminalProfileProvider implements vscode.TerminalProfileProvider {
       }
     }
 
-    // Skip auto-creation on startup if terminals were restored from state_sync
-    // This prevents creating a duplicate terminal when VSCode restores terminal panel state
-    if (skipNextAutoCreate) {
-      console.log('[cmux] provideTerminalProfile: skipping auto-create, terminals restored from server');
-      skipNextAutoCreate = false;
-      return undefined;
+    const config = getConfig();
+
+    // Check if there's a queued PTY to restore from state_sync
+    // This reuses existing PTYs on page refresh instead of creating new ones
+    const queuedPty = terminalManager.popRestoreQueue();
+    if (queuedPty) {
+      console.log(`[cmux] provideTerminalProfile: restoring queued PTY ${queuedPty.id} (${queuedPty.name})`);
+      const pty = new CmuxPseudoterminal(config.serverUrl, queuedPty.id);
+
+      // Track this terminal - the profile provider bypasses _createTerminalForPty
+      // so we need to set up tracking when the terminal opens
+      terminalManager.trackRestoredTerminal(queuedPty);
+
+      return new vscode.TerminalProfile({
+        name: queuedPty.name,
+        pty,
+      });
     }
 
-    // Create a new terminal when explicitly requested by user
+    // No queued PTYs - create a new terminal
     const result = await terminalManager.createPtyAndGetTerminal();
     if (!result) {
       console.error('[cmux] Failed to create PTY for profile');
@@ -881,13 +917,6 @@ export function activateTerminal(context: vscode.ExtensionContext) {
     console.log('[cmux] Initialization complete');
     initializationPromise = null; // Clear once done
     await terminalManager.waitForInitialSync();
-
-    // If terminals were restored from server, skip the next auto-create
-    // This prevents VSCode from creating a duplicate terminal on startup
-    if (terminalManager.hasTerminals()) {
-      console.log('[cmux] Terminals restored from server, will skip next auto-create');
-      skipNextAutoCreate = true;
-    }
   }).catch((err) => {
     console.error('[cmux] Initialization failed:', err);
     initializationPromise = null; // Clear on error too
