@@ -120,10 +120,11 @@ class CmuxPseudoterminal implements vscode.Pseudoterminal {
           return;
         }
 
-        // Try to parse as JSON control message (exit events come as JSON through binary channel)
-        if (text.startsWith('{')) {
+        // Control messages are prefixed with \x00 to distinguish from regular PTY output
+        if (text.startsWith('\x00')) {
           try {
-            const msg: PTYMessage = JSON.parse(text);
+            const jsonText = text.slice(1); // Remove the null byte prefix
+            const msg: PTYMessage = JSON.parse(jsonText);
             if (msg.type === 'exit') {
               const exitCode = msg.exit_code ?? msg.exitCode ?? 0;
               console.log(`[cmux] PTY ${this.ptyId} received exit event, code: ${exitCode}`);
@@ -136,9 +137,10 @@ class CmuxPseudoterminal implements vscode.Pseudoterminal {
               console.error('[cmux] PTY error:', msg);
               return;
             }
-            // If parsed but not a control message, fall through to write as output
           } catch {
-            // Not JSON, treat as raw terminal output
+            // Malformed control message, ignore
+            console.error('[cmux] Failed to parse control message');
+            return;
           }
         }
 

@@ -618,7 +618,9 @@ async fn spawn_pty_reader(
     );
 
     // Send exit event to terminal-specific subscribers
-    let exit_msg = serde_json::to_string(&ServerEvent::Exit { exit_code }).unwrap_or_default();
+    // Prefix with \x00 to distinguish control messages from regular PTY output
+    let exit_json = serde_json::to_string(&ServerEvent::Exit { exit_code }).unwrap_or_default();
+    let exit_msg = format!("\x00{}", exit_json);
     let _ = session.output_tx.send(exit_msg);
 
     // Clean up: remove session from state and broadcast deletion
