@@ -371,20 +371,6 @@
         }
       ],
       "description": "Extra headroom for larger codebases or heavier workloads."
-    },
-    {
-      "presetId": "6vcpu_24gb_48gb",
-      "label": "Standard workspace",
-      "cpu": "6 vCPU",
-      "memory": "24 GB RAM",
-      "disk": "48 GB SSD",
-      "versions": [
-        {
-          "version": 1,
-          "snapshotId": "snapshot_pcmfvjra",
-          "capturedAt": "2025-11-18T22:38:55Z"
-        }
-      ]
     }
   ]
 }
