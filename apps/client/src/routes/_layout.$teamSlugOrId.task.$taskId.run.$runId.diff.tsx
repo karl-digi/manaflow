@@ -15,6 +15,7 @@ import { useSocket } from "@/contexts/socket/use-socket";
 import { normalizeGitRef } from "@/lib/refWithOrigin";
 import { cn } from "@/lib/utils";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
+import { parseReviewHeatmap, type ReviewHeatmapLine } from "@/lib/heatmap";
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
 import type { TaskAcknowledged, TaskStarted, TaskError, CreateLocalWorkspaceResponse } from "@cmux/shared";
@@ -22,7 +23,7 @@ import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { convexQuery } from "@convex-dev/react-query";
 import { Switch } from "@heroui/react";
-import { useQuery as useRQ } from "@tanstack/react-query";
+import { useQuery as useRQ, useMutation as useRQMutation } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
 import { Command } from "lucide-react";
@@ -30,6 +31,7 @@ import {
   Suspense,
   memo,
   useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -42,6 +44,7 @@ import type { EditorApi } from "@/components/dashboard/DashboardInput";
 import LexicalEditor from "@/components/lexical/LexicalEditor";
 import { useCombinedWorkflowData, WorkflowRunsSection } from "@/components/WorkflowRunsSection";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
+import { postApiCodeReviewStartMutation } from "@cmux/www-openapi-client/react-query";
 
 const paramsSchema = z.object({
   taskId: typedZid("tasks"),
@@ -628,6 +631,43 @@ function RunDiffPage() {
     return taskRuns?.find((run) => run._id === runId);
   }, [runId, taskRuns]);
 
+  // Heatmap review state - automatically fetched on page load
+  const [heatmapByFile, setHeatmapByFile] = useState<Map<string, ReviewHeatmapLine[]> | undefined>(undefined);
+  const [heatmapFetchAttempted, setHeatmapFetchAttempted] = useState(false);
+
+  // Query workspace settings for heatmap threshold
+  const workspaceSettingsQuery = useRQ({
+    ...convexQuery(api.workspaceSettings.get, { teamSlugOrId }),
+    enabled: Boolean(teamSlugOrId),
+  });
+  const workspaceSettings = workspaceSettingsQuery.data as {
+    heatmapThreshold?: number;
+  } | null | undefined;
+  const heatmapThreshold = workspaceSettings?.heatmapThreshold ?? 0;
+
+  // Code review mutation for automatic heatmap fetching
+  const codeReviewMutation = useRQMutation({
+    ...postApiCodeReviewStartMutation(),
+    onSuccess: (data) => {
+      const reviewOutput = data.job?.codeReviewOutput;
+      if (reviewOutput) {
+        const heatmapData = new Map<string, ReviewHeatmapLine[]>();
+        for (const [filePath, fileData] of Object.entries(reviewOutput)) {
+          const parsed = parseReviewHeatmap(fileData);
+          if (parsed.length > 0) {
+            heatmapData.set(filePath, parsed);
+          }
+        }
+        if (heatmapData.size > 0) {
+          setHeatmapByFile(heatmapData);
+        }
+      }
+    },
+    onError: (error) => {
+      console.error("Heatmap review failed:", error);
+    },
+  });
+
   const runDiffContextQuery = useRQ({
     ...convexQuery(api.taskRuns.getRunDiffContext, {
       teamSlugOrId,
@@ -804,6 +844,38 @@ function RunDiffPage() {
     );
   }, [socket, teamSlugOrId, primaryRepo, selectedRun?.newBranch, navigate, taskId]);
 
+  // Automatically trigger heatmap review when page loads with required data
+  useEffect(() => {
+    // Only attempt once per page load
+    if (heatmapFetchAttempted) return;
+    // Need repo, branch refs to fetch heatmap
+    if (!primaryRepo || !selectedRun?.newBranch || !task?.baseBranch) return;
+    // Don't re-fetch if we already have data
+    if (heatmapByFile !== undefined) return;
+    // Don't trigger if mutation is already pending
+    if (codeReviewMutation.isPending) return;
+
+    setHeatmapFetchAttempted(true);
+    const githubLink = `https://github.com/${primaryRepo}`;
+
+    codeReviewMutation.mutate({
+      body: {
+        teamSlugOrId,
+        githubLink,
+        headCommitRef: selectedRun.newBranch,
+        baseCommitRef: task.baseBranch,
+      },
+    });
+  }, [
+    heatmapFetchAttempted,
+    primaryRepo,
+    selectedRun?.newBranch,
+    task?.baseBranch,
+    heatmapByFile,
+    codeReviewMutation,
+    teamSlugOrId,
+  ]);
+
   // 404 if selected run is missing
   if (!selectedRun) {
     return (
@@ -895,6 +967,8 @@ function RunDiffPage() {
                       onControlsChange={setDiffControls}
                       classNames={gitDiffViewerClassNames}
                       metadataByRepo={metadataByRepo}
+                      heatmapByFile={heatmapByFile}
+                      heatmapThreshold={heatmapThreshold}
                     />
                   ) : (
                     <div className="flex h-full items-center justify-center p-6 text-sm text-neutral-600 dark:text-neutral-300">

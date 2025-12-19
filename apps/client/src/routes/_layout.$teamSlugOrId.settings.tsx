@@ -97,6 +97,23 @@ function SettingsComponent() {
   const [originalContainerSettingsData, setOriginalContainerSettingsData] =
     useState<typeof containerSettingsData>(null);
 
+  // Heatmap settings state
+  const [heatmapModel, setHeatmapModel] = useState<string>("gpt-4o-mini");
+  const [originalHeatmapModel, setOriginalHeatmapModel] = useState<string>("gpt-4o-mini");
+  const [heatmapThreshold, setHeatmapThreshold] = useState<number>(0);
+  const [originalHeatmapThreshold, setOriginalHeatmapThreshold] = useState<number>(0);
+  const [heatmapColors, setHeatmapColors] = useState<{
+    line: { start: string; end: string };
+    token: { start: string; end: string };
+  }>({
+    line: { start: "#fefce8", end: "#f8e1c9" },
+    token: { start: "#fde047", end: "#ffa270" },
+  });
+  const [originalHeatmapColors, setOriginalHeatmapColors] = useState<typeof heatmapColors>({
+    line: { start: "#fefce8", end: "#f8e1c9" },
+    token: { start: "#fde047", end: "#ffa270" },
+  });
+
   // Get all required API keys from agent configs
   const apiKeys = Array.from(
     new Map(
@@ -171,7 +188,7 @@ function SettingsComponent() {
     return "";
   };
 
-  // Initialize worktree path when data loads
+  // Initialize worktree path and heatmap settings when data loads
   useEffect(() => {
     if (workspaceSettings !== undefined) {
       setWorktreePath(workspaceSettings?.worktreePath || "");
@@ -182,6 +199,28 @@ function SettingsComponent() {
       const effective = enabled === undefined ? false : Boolean(enabled);
       setAutoPrEnabled(effective);
       setOriginalAutoPrEnabled(effective);
+
+      // Initialize heatmap settings
+      const settings = workspaceSettings as unknown as {
+        heatmapModel?: string;
+        heatmapThreshold?: number;
+        heatmapColors?: {
+          line: { start: string; end: string };
+          token: { start: string; end: string };
+        };
+      };
+      if (settings?.heatmapModel) {
+        setHeatmapModel(settings.heatmapModel);
+        setOriginalHeatmapModel(settings.heatmapModel);
+      }
+      if (settings?.heatmapThreshold !== undefined) {
+        setHeatmapThreshold(settings.heatmapThreshold);
+        setOriginalHeatmapThreshold(settings.heatmapThreshold);
+      }
+      if (settings?.heatmapColors) {
+        setHeatmapColors(settings.heatmapColors);
+        setOriginalHeatmapColors(settings.heatmapColors);
+      }
     }
   }, [workspaceSettings]);
 
@@ -281,11 +320,20 @@ function SettingsComponent() {
     // Auto PR toggle changes
     const autoPrChanged = autoPrEnabled !== originalAutoPrEnabled;
 
+    // Heatmap settings changes
+    const heatmapModelChanged = heatmapModel !== originalHeatmapModel;
+    const heatmapThresholdChanged = heatmapThreshold !== originalHeatmapThreshold;
+    const heatmapColorsChanged =
+      JSON.stringify(heatmapColors) !== JSON.stringify(originalHeatmapColors);
+
     return (
       worktreePathChanged ||
       autoPrChanged ||
       apiKeysChanged ||
-      containerSettingsChanged
+      containerSettingsChanged ||
+      heatmapModelChanged ||
+      heatmapThresholdChanged ||
+      heatmapColorsChanged
     );
   };
 
@@ -296,18 +344,28 @@ function SettingsComponent() {
       let savedCount = 0;
       let deletedCount = 0;
 
-      // Save worktree path / auto PR if changed
-      if (
+      // Save worktree path / auto PR / heatmap settings if changed
+      const workspaceSettingsChanged =
         worktreePath !== originalWorktreePath ||
-        autoPrEnabled !== originalAutoPrEnabled
-      ) {
+        autoPrEnabled !== originalAutoPrEnabled ||
+        heatmapModel !== originalHeatmapModel ||
+        heatmapThreshold !== originalHeatmapThreshold ||
+        JSON.stringify(heatmapColors) !== JSON.stringify(originalHeatmapColors);
+
+      if (workspaceSettingsChanged) {
         await convex.mutation(api.workspaceSettings.update, {
           teamSlugOrId,
           worktreePath: worktreePath || undefined,
           autoPrEnabled,
+          heatmapModel,
+          heatmapThreshold,
+          heatmapColors,
         });
         setOriginalWorktreePath(worktreePath);
         setOriginalAutoPrEnabled(autoPrEnabled);
+        setOriginalHeatmapModel(heatmapModel);
+        setOriginalHeatmapThreshold(heatmapThreshold);
+        setOriginalHeatmapColors(heatmapColors);
       }
 
       // Save container settings if changed
@@ -675,6 +733,146 @@ function SettingsComponent() {
                     isSelected={autoPrEnabled}
                     onValueChange={setAutoPrEnabled}
                   />
+                </div>
+              </div>
+            </div>
+
+            {/* Heatmap Review Settings */}
+            <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
+              <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
+                <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                  Diff Heatmap Review
+                </h2>
+              </div>
+              <div className="p-4 space-y-6">
+                {/* Model Selector */}
+                <div>
+                  <label
+                    htmlFor="heatmapModel"
+                    className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2"
+                  >
+                    Review Model
+                  </label>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
+                    Select the AI model used to analyze diffs and highlight areas that need attention.
+                  </p>
+                  <select
+                    id="heatmapModel"
+                    value={heatmapModel}
+                    onChange={(e) => setHeatmapModel(e.target.value)}
+                    className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 text-sm"
+                  >
+                    <option value="gpt-4o-mini">GPT-4o Mini (Fast, Cost-effective)</option>
+                    <option value="gpt-4o">GPT-4o (Balanced)</option>
+                    <option value="claude-3-5-haiku-latest">Claude 3.5 Haiku (Fast)</option>
+                    <option value="claude-sonnet-4-20250514">Claude Sonnet 4 (Balanced)</option>
+                    <option value="claude-opus-4-20250514">Claude Opus 4 (Most Accurate)</option>
+                  </select>
+                </div>
+
+                {/* Threshold Slider */}
+                <div>
+                  <label
+                    htmlFor="heatmapThreshold"
+                    className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2"
+                  >
+                    Visibility Threshold: {Math.round(heatmapThreshold * 100)}%
+                  </label>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
+                    Only show highlights for lines with a review score above this threshold.
+                  </p>
+                  <input
+                    type="range"
+                    id="heatmapThreshold"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    value={heatmapThreshold}
+                    onChange={(e) => setHeatmapThreshold(Number.parseFloat(e.target.value))}
+                    className="w-full h-2 bg-neutral-200 dark:bg-neutral-700 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                  />
+                </div>
+
+                {/* Color Settings */}
+                <div>
+                  <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2">
+                    Heatmap Colors
+                  </label>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
+                    Customize the gradient colors for line and token highlighting.
+                  </p>
+                  <div className="grid grid-cols-2 gap-4">
+                    {/* Line Background Colors */}
+                    <div className="space-y-2">
+                      <span className="text-xs font-medium text-neutral-600 dark:text-neutral-400">Line Background</span>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-neutral-500 dark:text-neutral-400 w-10">Low</label>
+                        <input
+                          type="color"
+                          value={heatmapColors.line.start}
+                          onChange={(e) => setHeatmapColors((prev) => ({
+                            ...prev,
+                            line: { ...prev.line, start: e.target.value }
+                          }))}
+                          className="w-8 h-8 rounded border border-neutral-300 dark:border-neutral-600 cursor-pointer"
+                        />
+                        <span className="text-xs font-mono text-neutral-500">{heatmapColors.line.start}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-neutral-500 dark:text-neutral-400 w-10">High</label>
+                        <input
+                          type="color"
+                          value={heatmapColors.line.end}
+                          onChange={(e) => setHeatmapColors((prev) => ({
+                            ...prev,
+                            line: { ...prev.line, end: e.target.value }
+                          }))}
+                          className="w-8 h-8 rounded border border-neutral-300 dark:border-neutral-600 cursor-pointer"
+                        />
+                        <span className="text-xs font-mono text-neutral-500">{heatmapColors.line.end}</span>
+                      </div>
+                    </div>
+                    {/* Token Highlight Colors */}
+                    <div className="space-y-2">
+                      <span className="text-xs font-medium text-neutral-600 dark:text-neutral-400">Token Highlight</span>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-neutral-500 dark:text-neutral-400 w-10">Low</label>
+                        <input
+                          type="color"
+                          value={heatmapColors.token.start}
+                          onChange={(e) => setHeatmapColors((prev) => ({
+                            ...prev,
+                            token: { ...prev.token, start: e.target.value }
+                          }))}
+                          className="w-8 h-8 rounded border border-neutral-300 dark:border-neutral-600 cursor-pointer"
+                        />
+                        <span className="text-xs font-mono text-neutral-500">{heatmapColors.token.start}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-neutral-500 dark:text-neutral-400 w-10">High</label>
+                        <input
+                          type="color"
+                          value={heatmapColors.token.end}
+                          onChange={(e) => setHeatmapColors((prev) => ({
+                            ...prev,
+                            token: { ...prev.token, end: e.target.value }
+                          }))}
+                          className="w-8 h-8 rounded border border-neutral-300 dark:border-neutral-600 cursor-pointer"
+                        />
+                        <span className="text-xs font-mono text-neutral-500">{heatmapColors.token.end}</span>
+                      </div>
+                    </div>
+                  </div>
+                  {/* Preview Gradient */}
+                  <div className="mt-4">
+                    <span className="text-xs text-neutral-500 dark:text-neutral-400">Preview</span>
+                    <div
+                      className="mt-1 h-4 rounded"
+                      style={{
+                        background: `linear-gradient(to right, ${heatmapColors.line.start}, ${heatmapColors.line.end})`
+                      }}
+                    />
+                  </div>
                 </div>
               </div>
             </div>
