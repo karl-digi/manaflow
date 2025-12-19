@@ -270,12 +270,27 @@ export async function startCodeReviewJob({
 
   const backgroundTask = (async () => {
     try {
+      // For comparison jobs, always use heatmap strategy (Morph doesn't support branch comparisons)
+      const effectiveStrategy = jobType === "comparison" ? "heatmap" : strategy;
+
       // Fork based on strategy
-      if (strategy === "heatmap") {
+      if (effectiveStrategy === "heatmap") {
         console.info("[code-review] Starting heatmap review (no Morph)", {
           jobId: job.jobId,
           strategy: "heatmap",
+          jobType,
         });
+
+        // Build comparison config if this is a comparison job
+        const comparisonConfig = payload.comparison
+          ? {
+              owner: payload.comparison.base.owner,
+              repo: payload.comparison.base.repo,
+              base: payload.comparison.base.ref,
+              head: payload.comparison.head.ref,
+            }
+          : undefined;
+
         await runHeatmapReview({
           jobId: job.jobId,
           teamId: job.teamId ?? undefined,
@@ -285,11 +300,12 @@ export async function startCodeReviewJob({
           callbackToken,
           githubAccessToken,
           modelConfig: payload.modelConfig,
+          comparison: comparisonConfig,
         });
       } else {
         console.info("[code-review] Starting automated PR review (Morph)", {
           jobId: job.jobId,
-          strategy,
+          strategy: effectiveStrategy,
         });
         await startAutomatedPrReview(reviewConfig);
       }

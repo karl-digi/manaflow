@@ -631,9 +631,10 @@ function RunDiffPage() {
     return taskRuns?.find((run) => run._id === runId);
   }, [runId, taskRuns]);
 
-  // Heatmap review state - automatically fetched on page load
+  // Heatmap review state - automatically fetched via streaming Convex subscription
   const [heatmapByFile, setHeatmapByFile] = useState<Map<string, ReviewHeatmapLine[]> | undefined>(undefined);
-  const [heatmapFetchAttempted, setHeatmapFetchAttempted] = useState(false);
+  const [heatmapJobStarted, setHeatmapJobStarted] = useState(false);
+  const [comparisonSlug, setComparisonSlug] = useState<string | null>(null);
 
   // Query workspace settings for heatmap threshold
   const workspaceSettingsQuery = useRQ({
@@ -645,26 +646,53 @@ function RunDiffPage() {
   } | null | undefined;
   const heatmapThreshold = workspaceSettings?.heatmapThreshold ?? 0;
 
-  // Code review mutation for automatic heatmap fetching
+  // Code review mutation to start the heatmap job
   const codeReviewMutation = useRQMutation({
     ...postApiCodeReviewStartMutation(),
     onSuccess: (data) => {
+      console.log("[heatmap] Mutation success", {
+        jobId: data.job?.jobId,
+        state: data.job?.state,
+        comparisonSlug: data.job?.comparisonSlug,
+        hasCodeReviewOutput: Boolean(data.job?.codeReviewOutput),
+      });
+
+      // Store comparison slug for subscription
+      if (data.job?.comparisonSlug) {
+        setComparisonSlug(data.job.comparisonSlug);
+      }
+      // Check if we already have output (from a completed deduplicated job)
+      // The codeReviewOutput shape is: { strategy, reviewType, files: Array<{ filePath, lines }>, ... }
       const reviewOutput = data.job?.codeReviewOutput;
-      if (reviewOutput) {
+      if (reviewOutput && typeof reviewOutput === "object") {
+        console.log("[heatmap] Processing codeReviewOutput from completed job", reviewOutput);
         const heatmapData = new Map<string, ReviewHeatmapLine[]>();
-        for (const [filePath, fileData] of Object.entries(reviewOutput)) {
-          const parsed = parseReviewHeatmap(fileData);
-          if (parsed.length > 0) {
-            heatmapData.set(filePath, parsed);
+        const files = (reviewOutput as { files?: unknown }).files;
+        if (Array.isArray(files)) {
+          console.log("[heatmap] Found files array with", files.length, "entries");
+          for (const fileEntry of files) {
+            if (typeof fileEntry === "object" && fileEntry !== null) {
+              const filePath = (fileEntry as { filePath?: unknown }).filePath;
+              if (typeof filePath === "string") {
+                const parsed = parseReviewHeatmap(fileEntry);
+                console.log("[heatmap] Parsed", filePath, "got", parsed.length, "lines");
+                if (parsed.length > 0) {
+                  heatmapData.set(filePath, parsed);
+                }
+              }
+            }
           }
+        } else {
+          console.log("[heatmap] No files array found in codeReviewOutput");
         }
         if (heatmapData.size > 0) {
+          console.log("[heatmap] Setting heatmapByFile with", heatmapData.size, "files");
           setHeatmapByFile(heatmapData);
         }
       }
     },
     onError: (error) => {
-      console.error("Heatmap review failed:", error);
+      console.error("[heatmap] Mutation failed:", error);
     },
   });
 
@@ -774,6 +802,45 @@ function RunDiffPage() {
     };
   }, [primaryRepo, baseBranchMetadata]);
 
+  // Subscribe to streaming file outputs from Convex
+  const fileOutputs = useQuery(
+    api.codeReview.listFileOutputsForComparison,
+    comparisonSlug && primaryRepo
+      ? {
+          teamSlugOrId,
+          repoFullName: primaryRepo,
+          comparisonSlug,
+        }
+      : "skip"
+  );
+
+  // Update heatmap as file outputs stream in
+  // Using a ref to track previous file count to avoid unnecessary re-renders
+  const prevFileOutputsLengthRef = useRef(0);
+  useEffect(() => {
+    const currentLength = fileOutputs?.length ?? 0;
+    // Only process if we have new files
+    if (currentLength === 0 || currentLength === prevFileOutputsLengthRef.current) {
+      return;
+    }
+    prevFileOutputsLengthRef.current = currentLength;
+
+    console.log("[heatmap] fileOutputs update", { count: currentLength });
+
+    const heatmapData = new Map<string, ReviewHeatmapLine[]>();
+    if (fileOutputs) {
+      for (const output of fileOutputs) {
+        const parsed = parseReviewHeatmap(output.codexReviewOutput);
+        if (parsed.length > 0) {
+          heatmapData.set(output.filePath, parsed);
+        }
+      }
+    }
+    if (heatmapData.size > 0) {
+      setHeatmapByFile(heatmapData);
+    }
+  }, [fileOutputs]);
+
   const restartAgents = useMemo(() => {
     const previousAgents = collectAgentNamesFromRuns(taskRuns);
     if (previousAgents.length > 0) {
@@ -844,37 +911,78 @@ function RunDiffPage() {
     );
   }, [socket, teamSlugOrId, primaryRepo, selectedRun?.newBranch, navigate, taskId]);
 
-  // Automatically trigger heatmap review when page loads with required data
-  useEffect(() => {
-    // Only attempt once per page load
-    if (heatmapFetchAttempted) return;
-    // Need repo, branch refs to fetch heatmap
-    if (!primaryRepo || !selectedRun?.newBranch || !task?.baseBranch) return;
-    // Don't re-fetch if we already have data
-    if (heatmapByFile !== undefined) return;
-    // Don't trigger if mutation is already pending
-    if (codeReviewMutation.isPending) return;
+  // Handler to trigger heatmap review
+  const triggerHeatmapReview = useCallback((force = false) => {
+    if (!primaryRepo || !selectedRun?.newBranch) {
+      console.warn("[heatmap] Cannot trigger: missing primaryRepo or newBranch", {
+        primaryRepo,
+        newBranch: selectedRun?.newBranch,
+      });
+      return;
+    }
 
-    setHeatmapFetchAttempted(true);
+    // Get the repo owner for comparison context
+    const [repoOwner, repoName] = primaryRepo.split("/");
+    if (!repoOwner || !repoName) {
+      console.warn("[heatmap] Cannot trigger: invalid repo format", { primaryRepo });
+      return;
+    }
+
+    // Use task.baseBranch or default to "main"
+    const baseBranch = task?.baseBranch || "main";
     const githubLink = `https://github.com/${primaryRepo}`;
+    const comparisonSlugValue = `${baseBranch}...${selectedRun.newBranch}`;
+
+    console.log("[heatmap] Triggering heatmap review", {
+      primaryRepo,
+      baseBranch,
+      headBranch: selectedRun.newBranch,
+      comparisonSlug: comparisonSlugValue,
+      force,
+    });
+
+    setHeatmapJobStarted(true);
+    // Set comparisonSlug immediately to start subscription
+    setComparisonSlug(comparisonSlugValue);
 
     codeReviewMutation.mutate({
       body: {
         teamSlugOrId,
         githubLink,
         headCommitRef: selectedRun.newBranch,
-        baseCommitRef: task.baseBranch,
+        baseCommitRef: baseBranch,
+        force,
+        comparison: {
+          slug: comparisonSlugValue,
+          base: {
+            owner: repoOwner,
+            repo: repoName,
+            ref: baseBranch,
+            label: `${repoOwner}:${baseBranch}`,
+          },
+          head: {
+            owner: repoOwner,
+            repo: repoName,
+            ref: selectedRun.newBranch,
+            label: `${repoOwner}:${selectedRun.newBranch}`,
+          },
+        },
       },
     });
-  }, [
-    heatmapFetchAttempted,
-    primaryRepo,
-    selectedRun?.newBranch,
-    task?.baseBranch,
-    heatmapByFile,
-    codeReviewMutation,
-    teamSlugOrId,
-  ]);
+  }, [primaryRepo, selectedRun?.newBranch, task?.baseBranch, teamSlugOrId, codeReviewMutation]);
+
+  // Auto-trigger disabled - heatmap review only runs when user clicks the button
+  // To re-enable: uncomment the useEffect below
+  // const triggerHeatmapReviewRef = useRef(triggerHeatmapReview);
+  // triggerHeatmapReviewRef.current = triggerHeatmapReview;
+  // useEffect(() => {
+  //   if (heatmapJobStarted) return;
+  //   if (!primaryRepo || !selectedRun?.newBranch) return;
+  //   if (heatmapByFile !== undefined) return;
+  //   if (codeReviewMutation.isPending) return;
+  //   console.log("[heatmap] Auto-triggering heatmap review");
+  //   triggerHeatmapReviewRef.current(false);
+  // }, [heatmapJobStarted, primaryRepo, selectedRun?.newBranch, heatmapByFile, codeReviewMutation.isPending]);
 
   // 404 if selected run is missing
   if (!selectedRun) {
@@ -920,6 +1028,46 @@ function RunDiffPage() {
               </div>
             </div>
           )}
+          {/* Heatmap review status and manual trigger */}
+          <div className="mb-2 px-3.5 flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              className="!h-7 text-xs"
+              onClick={() => {
+                setHeatmapJobStarted(false);
+                setHeatmapByFile(undefined);
+                setComparisonSlug(null);
+                triggerHeatmapReview(false);
+              }}
+              disabled={codeReviewMutation.isPending || !primaryRepo || !selectedRun?.newBranch}
+            >
+              {codeReviewMutation.isPending ? "Running..." : heatmapByFile ? "Re-run Heatmap" : "Run Heatmap"}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="!h-7 text-xs text-neutral-500"
+              onClick={() => {
+                setHeatmapJobStarted(false);
+                setHeatmapByFile(undefined);
+                setComparisonSlug(null);
+                triggerHeatmapReview(true);
+              }}
+              disabled={codeReviewMutation.isPending || !primaryRepo || !selectedRun?.newBranch}
+            >
+              Force Restart
+            </Button>
+            <span className="text-xs text-neutral-500 dark:text-neutral-400">
+              {heatmapByFile
+                ? `${heatmapByFile.size} files analyzed`
+                : comparisonSlug
+                  ? `Streaming: ${fileOutputs?.length ?? 0} files`
+                  : heatmapJobStarted
+                    ? "Starting..."
+                    : "Not started"}
+            </span>
+          </div>
           <div className="bg-white dark:bg-neutral-900 flex-1 min-h-0 flex flex-col">
             {pullRequests && pullRequests.length > 0 && (
               <Suspense fallback={null}>

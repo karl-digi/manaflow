@@ -6,17 +6,23 @@ import { CLOUDFLARE_OPENAI_BASE_URL } from "@cmux/shared";
 import { getConvex } from "@/lib/utils/get-convex";
 import {
   collectPrDiffs,
+  collectComparisonDiffs,
   mapWithConcurrency,
 } from "@/scripts/pr-review-heatmap";
 import { formatUnifiedDiffWithLineNumbers } from "@/scripts/pr-review/diff-utils";
 import type { ModelConfig } from "./run-simple-anthropic-review";
-import { getDefaultHeatmapModelConfig } from "./model-config";
 import {
   buildHeatmapPrompt,
   heatmapSchema,
-  summarizeHeatmapStreamChunk,
   type HeatmapLine,
 } from "./heatmap-shared";
+
+interface HeatmapComparisonConfig {
+  owner: string;
+  repo: string;
+  base: string;
+  head: string;
+}
 
 interface HeatmapReviewConfig {
   jobId: string;
@@ -28,6 +34,8 @@ interface HeatmapReviewConfig {
   githubAccessToken?: string | null;
   modelConfig?: ModelConfig;
   tooltipLanguage?: string;
+  /** If provided, use branch comparison instead of PR diff */
+  comparison?: HeatmapComparisonConfig;
 }
 
 // Placeholder sandbox ID for heatmap strategy (no Morph VM used)
@@ -55,12 +63,6 @@ export async function runHeatmapReview(
   const jobStart = Date.now();
 
   try {
-    // Fetch PR diffs via GitHub API
-    console.info("[heatmap-review] Fetching PR diffs from GitHub", {
-      jobId: config.jobId,
-      prUrl: config.prUrl,
-    });
-
     const githubToken =
       config.githubAccessToken ??
       process.env.GITHUB_TOKEN ??
@@ -73,12 +75,80 @@ export async function runHeatmapReview(
       );
     }
 
-    const { metadata, fileDiffs } = await collectPrDiffs({
-      prIdentifier: config.prUrl,
-      includePaths: [],
-      maxFiles: null,
-      githubToken,
-    });
+    // Fetch diffs - either from PR or branch comparison
+    let fileDiffs: { filePath: string; diffText: string }[];
+    let reviewMetadata: {
+      type: "pr" | "comparison";
+      url: string;
+      repo: string;
+      title: string | null;
+      prNumber?: number;
+      baseRef: string;
+      headRef: string;
+    };
+
+    if (config.comparison) {
+      // Branch comparison mode - use GitHub Compare API
+      console.info("[heatmap-review] Fetching branch comparison diffs from GitHub", {
+        jobId: config.jobId,
+        owner: config.comparison.owner,
+        repo: config.comparison.repo,
+        base: config.comparison.base,
+        head: config.comparison.head,
+      });
+
+      const { metadata, fileDiffs: comparisonDiffs } = await collectComparisonDiffs({
+        owner: config.comparison.owner,
+        repo: config.comparison.repo,
+        base: config.comparison.base,
+        head: config.comparison.head,
+        includePaths: [],
+        maxFiles: null,
+        githubToken,
+      });
+
+      fileDiffs = comparisonDiffs;
+      reviewMetadata = {
+        type: "comparison",
+        url: metadata.compareUrl,
+        repo: `${metadata.owner}/${metadata.repo}`,
+        title: `${metadata.baseRef}...${metadata.headRef}`,
+        baseRef: metadata.baseRef,
+        headRef: metadata.headRef,
+      };
+
+      console.info("[heatmap-review] Comparison metadata", {
+        jobId: config.jobId,
+        aheadBy: metadata.aheadBy,
+        behindBy: metadata.behindBy,
+        totalCommits: metadata.totalCommits,
+        fileCount: fileDiffs.length,
+      });
+    } else {
+      // PR mode - use PR API
+      console.info("[heatmap-review] Fetching PR diffs from GitHub", {
+        jobId: config.jobId,
+        prUrl: config.prUrl,
+      });
+
+      const { metadata, fileDiffs: prDiffs } = await collectPrDiffs({
+        prIdentifier: config.prUrl,
+        includePaths: [],
+        maxFiles: null,
+        githubToken,
+      });
+
+      fileDiffs = prDiffs;
+      reviewMetadata = {
+        type: "pr",
+        url: metadata.prUrl,
+        repo: `${metadata.owner}/${metadata.repo}`,
+        title: metadata.title,
+        prNumber: metadata.number,
+        baseRef: metadata.baseRefName,
+        headRef: metadata.headRefName,
+      };
+    }
 
     // Sort files alphabetically by path
     const sortedFiles = [...fileDiffs].sort((a, b) =>
@@ -94,25 +164,32 @@ export async function runHeatmapReview(
       apiKey: openAiApiKey,
       baseURL: CLOUDFLARE_OPENAI_BASE_URL,
     });
-    const defaultModelConfig = getDefaultHeatmapModelConfig();
+    // Default to a fine-tuned OpenAI model for heatmap reviews
+    const OPENAI_FALLBACK_MODEL = "ft:gpt-4.1-2025-04-14:lawrence:cmux-heatmap-dense-4-1:CahKn54r";
     const selectedModel = (() => {
-      const resolvedConfig = config.modelConfig ?? defaultModelConfig;
+      const resolvedConfig = config.modelConfig;
+      if (!resolvedConfig) {
+        console.info("[heatmap-review] Using default OpenAI model", {
+          jobId: config.jobId,
+          model: OPENAI_FALLBACK_MODEL,
+        });
+        return OPENAI_FALLBACK_MODEL;
+      }
       if (resolvedConfig.provider !== "openai") {
         console.warn(
-          "[heatmap-review] Ignoring unsupported model provider override",
+          "[heatmap-review] Ignoring unsupported model provider override, falling back to OpenAI",
           {
             provider: resolvedConfig.provider,
             jobId: config.jobId,
+            fallbackModel: OPENAI_FALLBACK_MODEL,
           }
         );
-        return defaultModelConfig.model;
+        return OPENAI_FALLBACK_MODEL;
       }
-      if (config.modelConfig) {
-        console.info("[heatmap-review] Using OpenAI model override", {
-          jobId: config.jobId,
-          model: resolvedConfig.model,
-        });
-      }
+      console.info("[heatmap-review] Using OpenAI model override", {
+        jobId: config.jobId,
+        model: resolvedConfig.model,
+      });
       return resolvedConfig.model;
     })();
     const allResults: Array<{ filePath: string; lines: HeatmapLine[] }> = [];
@@ -142,37 +219,9 @@ export async function runHeatmapReview(
           maxRetries: 2,
         });
 
-        let lastLineCount = 0;
-        let reasoningStarted = false;
-
-        for await (const chunk of stream.fullStream) {
-          const { lineCount, textDelta } = summarizeHeatmapStreamChunk(chunk);
-
-          if (lineCount !== null && lineCount > lastLineCount) {
-            lastLineCount = lineCount;
-            console.info(
-              `[heatmap-review] [${index + 1}/${sortedFiles.length}] ${file.filePath}: ${lastLineCount} lines generated so far`
-            );
-          }
-
-          if (textDelta) {
-            if (!reasoningStarted) {
-              reasoningStarted = true;
-              console.info(
-                `[heatmap-review] [${index + 1}/${sortedFiles.length}] ${file.filePath}: reasoning stream started`
-              );
-            }
-            const collapsed = textDelta.replace(/\s+/g, " ").trim();
-            if (collapsed.length > 0) {
-              const snippet =
-                collapsed.length > 200
-                  ? `${collapsed.slice(0, 197)}...`
-                  : collapsed;
-              console.info(
-                `[heatmap-review] [${index + 1}/${sortedFiles.length}] ${file.filePath}: reasoning chunk "${snippet}"`
-              );
-            }
-          }
+        // Consume the stream without verbose logging
+        for await (const _chunk of stream.fullStream) {
+          // Stream is consumed to completion
         }
 
         const result = await stream.object;
@@ -230,12 +279,23 @@ export async function runHeatmapReview(
     // Build final code review output
     const codeReviewOutput = {
       strategy: "heatmap",
-      pr: {
-        url: metadata.prUrl,
-        number: metadata.number,
-        repo: `${metadata.owner}/${metadata.repo}`,
-        title: metadata.title,
-      },
+      reviewType: reviewMetadata.type,
+      pr: reviewMetadata.type === "pr"
+        ? {
+            url: reviewMetadata.url,
+            number: reviewMetadata.prNumber,
+            repo: reviewMetadata.repo,
+            title: reviewMetadata.title,
+          }
+        : undefined,
+      comparison: reviewMetadata.type === "comparison"
+        ? {
+            url: reviewMetadata.url,
+            repo: reviewMetadata.repo,
+            baseRef: reviewMetadata.baseRef,
+            headRef: reviewMetadata.headRef,
+          }
+        : undefined,
       files: allResults,
       failures,
     };
