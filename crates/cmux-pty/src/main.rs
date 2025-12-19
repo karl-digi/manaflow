@@ -2,6 +2,10 @@
 //!
 //! Server-authoritative model: The server is the source of truth for all terminal state.
 //! Clients subscribe to state changes and mirror the server state.
+//!
+//! Also provides a CLI client for managing PTY sessions (tmux-like interface).
+
+mod cli;
 
 use std::{
     collections::HashMap,
@@ -22,6 +26,7 @@ use axum::{
     routing::{delete, get, patch, post},
     Router,
 };
+use clap::{Parser, Subcommand};
 use futures::{SinkExt, StreamExt};
 use parking_lot::{Mutex, RwLock};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
@@ -30,6 +35,107 @@ use tokio::sync::broadcast;
 use tower_http::cors::CorsLayer;
 use tracing::{error, info, warn};
 use uuid::Uuid;
+
+// =============================================================================
+// CLI Argument Parsing
+// =============================================================================
+
+#[derive(Parser)]
+#[command(name = "cmux-pty")]
+#[command(about = "PTY server and client for terminal session management")]
+#[command(version)]
+struct Cli {
+    /// Server URL for client commands
+    #[arg(short = 'S', long, env = "CMUX_PTY_URL", default_value = "http://localhost:39383")]
+    server: String,
+
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Run the PTY server
+    Server {
+        /// Host to bind to
+        #[arg(long, env = "PTY_SERVER_HOST", default_value = "0.0.0.0")]
+        host: String,
+
+        /// Port to listen on
+        #[arg(short, long, env = "PTY_SERVER_PORT", default_value = "39383")]
+        port: u16,
+    },
+
+    /// List all sessions
+    #[command(visible_alias = "ls")]
+    List {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Create a new session
+    New {
+        /// Session name
+        #[arg(short, long)]
+        name: Option<String>,
+
+        /// Shell to use
+        #[arg(short, long)]
+        shell: Option<String>,
+
+        /// Working directory
+        #[arg(short, long)]
+        cwd: Option<String>,
+
+        /// Create session but don't attach
+        #[arg(short, long)]
+        detached: bool,
+    },
+
+    /// Attach to a session
+    Attach {
+        /// Session ID, name, or index
+        session: String,
+    },
+
+    /// Kill one or more sessions
+    Kill {
+        /// Session IDs, names, or indices
+        sessions: Vec<String>,
+    },
+
+    /// Send keys to a session
+    SendKeys {
+        /// Session ID, name, or index
+        session: String,
+
+        /// Keys to send (supports Enter, Tab, C-c, etc.)
+        keys: Vec<String>,
+    },
+
+    /// Capture pane content
+    CapturePane {
+        /// Session ID, name, or index
+        session: String,
+
+        /// Print without trailing newline
+        #[arg(short, long)]
+        print: bool,
+    },
+
+    /// Resize a session
+    Resize {
+        /// Session ID, name, or index
+        session: String,
+
+        /// Number of columns
+        cols: u16,
+
+        /// Number of rows
+        rows: u16,
+    },
+}
 
 // =============================================================================
 // Constants
@@ -898,6 +1004,84 @@ async fn delete_session(
     })))
 }
 
+async fn capture_session(
+    State(state): State<Arc<AppState>>,
+    Path(session_id): Path<String>,
+) -> Result<impl IntoResponse, ServerError> {
+    let sessions = state.sessions.read();
+    let session = sessions
+        .get(&session_id)
+        .ok_or_else(|| ServerError::SessionNotFound(session_id.clone()))?;
+
+    let content = session.get_scrollback();
+
+    Ok(Json(serde_json::json!({
+        "content": content,
+        "length": content.len()
+    })))
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ResizeRequest {
+    cols: u16,
+    rows: u16,
+}
+
+async fn resize_session(
+    State(state): State<Arc<AppState>>,
+    Path(session_id): Path<String>,
+    Json(request): Json<ResizeRequest>,
+) -> Result<impl IntoResponse, ServerError> {
+    let sessions = state.sessions.read();
+    let session = sessions
+        .get(&session_id)
+        .ok_or_else(|| ServerError::SessionNotFound(session_id.clone()))?;
+
+    session
+        .resize(request.cols, request.rows)
+        .map_err(|e| ServerError::PtySpawnError(e.to_string()))?;
+
+    let info = session.to_info();
+
+    // Broadcast update
+    let mut changes = HashMap::new();
+    changes.insert("cols".to_string(), serde_json::json!(request.cols));
+    changes.insert("rows".to_string(), serde_json::json!(request.rows));
+
+    drop(sessions); // Release lock before broadcast
+    state.broadcast_event(ServerEvent::PtyUpdated {
+        terminal: info.clone(),
+        changes,
+    });
+
+    Ok(Json(info))
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct InputRequest {
+    data: String,
+}
+
+async fn send_input(
+    State(state): State<Arc<AppState>>,
+    Path(session_id): Path<String>,
+    Json(request): Json<InputRequest>,
+) -> Result<impl IntoResponse, ServerError> {
+    let sessions = state.sessions.read();
+    let session = sessions
+        .get(&session_id)
+        .ok_or_else(|| ServerError::SessionNotFound(session_id.clone()))?;
+
+    session
+        .write_input(&request.data)
+        .map_err(|e| ServerError::PtySpawnError(e.to_string()))?;
+
+    Ok(Json(serde_json::json!({
+        "status": "ok",
+        "bytes": request.data.len()
+    })))
+}
+
 // =============================================================================
 // WebSocket Handlers
 // =============================================================================
@@ -1302,6 +1486,56 @@ async fn handle_terminal_websocket(
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let cli = Cli::parse();
+
+    match cli.command {
+        // Server mode
+        Some(Commands::Server { host, port }) => {
+            run_server(&host, port).await
+        }
+
+        // No command = server mode (for backwards compatibility)
+        None => {
+            let host = env::var("PTY_SERVER_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
+            let port: u16 = env::var("PTY_SERVER_PORT")
+                .unwrap_or_else(|_| "39383".to_string())
+                .parse()
+                .context("Invalid PTY_SERVER_PORT")?;
+            run_server(&host, port).await
+        }
+
+        // Client commands
+        Some(Commands::List { json }) => {
+            cli::cmd_list(&cli.server, json).await
+        }
+
+        Some(Commands::New { name, shell, cwd, detached }) => {
+            cli::cmd_new(&cli.server, name, shell, cwd, detached).await
+        }
+
+        Some(Commands::Attach { session }) => {
+            cli::cmd_attach(&cli.server, &session).await
+        }
+
+        Some(Commands::Kill { sessions }) => {
+            cli::cmd_kill(&cli.server, &sessions).await
+        }
+
+        Some(Commands::SendKeys { session, keys }) => {
+            cli::cmd_send_keys(&cli.server, &session, &keys).await
+        }
+
+        Some(Commands::CapturePane { session, print }) => {
+            cli::cmd_capture_pane(&cli.server, &session, print).await
+        }
+
+        Some(Commands::Resize { session, cols, rows }) => {
+            cli::cmd_resize(&cli.server, &session, cols, rows).await
+        }
+    }
+}
+
+async fn run_server(host: &str, port: u16) -> Result<()> {
     // Debug output to ensure binary is running
     eprintln!("[pty-server] Starting...");
     std::io::Write::flush(&mut std::io::stderr()).ok();
@@ -1328,17 +1562,14 @@ async fn main() -> Result<()> {
         .route("/sessions", post(create_session))
         .route("/sessions/:session_id", patch(update_session))
         .route("/sessions/:session_id", delete(delete_session))
+        .route("/sessions/:session_id/capture", get(capture_session))
+        .route("/sessions/:session_id/resize", post(resize_session))
+        .route("/sessions/:session_id/input", post(send_input))
         // WebSocket endpoints
         .route("/ws", get(websocket_events))
         .route("/sessions/:session_id/ws", get(websocket_terminal))
         .layer(CorsLayer::permissive())
         .with_state(state);
-
-    let host = env::var("PTY_SERVER_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
-    let port: u16 = env::var("PTY_SERVER_PORT")
-        .unwrap_or_else(|_| "9998".to_string())
-        .parse()
-        .context("Invalid PTY_SERVER_PORT")?;
 
     let addr = format!("{}:{}", host, port);
     info!("Starting PTY server on {}", addr);
@@ -1635,6 +1866,144 @@ mod tests {
             MAX_SCROLLBACK,
             scrollback.len()
         );
+
+        session.kill();
+    }
+
+    /// Test capture endpoint returns scrollback content
+    #[tokio::test]
+    async fn test_capture_endpoint() {
+        let state = Arc::new(AppState::new());
+
+        let request = CreateSessionRequest {
+            shell: "/bin/sh".to_string(),
+            cwd: "/tmp".to_string(),
+            ..Default::default()
+        };
+
+        let (session, reader) = create_pty_session_inner(&state, &request).unwrap();
+        let session_id = session.id.clone();
+
+        {
+            let mut sessions = state.sessions.write();
+            sessions.insert(session_id.clone(), session.clone());
+        }
+
+        tokio::spawn(spawn_pty_reader(session.clone(), reader, state.clone()));
+
+        // Write something to generate scrollback
+        session.write_input("echo hello\n").unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+        // Test capture endpoint
+        let app = Router::new()
+            .route("/sessions/:session_id/capture", get(capture_session))
+            .with_state(state.clone());
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/sessions/{}/capture", session_id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        session.kill();
+    }
+
+    /// Test resize endpoint
+    #[tokio::test]
+    async fn test_resize_endpoint() {
+        let state = Arc::new(AppState::new());
+
+        let request = CreateSessionRequest {
+            shell: "/bin/sh".to_string(),
+            cwd: "/tmp".to_string(),
+            cols: 80,
+            rows: 24,
+            ..Default::default()
+        };
+
+        let (session, reader) = create_pty_session_inner(&state, &request).unwrap();
+        let session_id = session.id.clone();
+
+        {
+            let mut sessions = state.sessions.write();
+            sessions.insert(session_id.clone(), session.clone());
+        }
+
+        tokio::spawn(spawn_pty_reader(session.clone(), reader, state.clone()));
+
+        // Test resize endpoint
+        let app = Router::new()
+            .route("/sessions/:session_id/resize", post(resize_session))
+            .with_state(state.clone());
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/sessions/{}/resize", session_id))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"cols": 120, "rows": 40}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Verify dimensions changed
+        assert_eq!(*session.cols.read(), 120);
+        assert_eq!(*session.rows.read(), 40);
+
+        session.kill();
+    }
+
+    /// Test input endpoint
+    #[tokio::test]
+    async fn test_input_endpoint() {
+        let state = Arc::new(AppState::new());
+
+        let request = CreateSessionRequest {
+            shell: "/bin/sh".to_string(),
+            cwd: "/tmp".to_string(),
+            ..Default::default()
+        };
+
+        let (session, reader) = create_pty_session_inner(&state, &request).unwrap();
+        let session_id = session.id.clone();
+
+        {
+            let mut sessions = state.sessions.write();
+            sessions.insert(session_id.clone(), session.clone());
+        }
+
+        tokio::spawn(spawn_pty_reader(session.clone(), reader, state.clone()));
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // Test input endpoint
+        let app = Router::new()
+            .route("/sessions/:session_id/input", post(send_input))
+            .with_state(state.clone());
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/sessions/{}/input", session_id))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"data": "echo test\n"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
 
         session.kill();
     }

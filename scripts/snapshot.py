@@ -1984,7 +1984,7 @@ async def task_build_cmux_proxy(ctx: TaskContext) -> None:
 @registry.task(
     name="build-cmux-pty",
     deps=("upload-repo", "install-rust-toolchain"),
-    description="Build cmux-pty-server binary via cargo install",
+    description="Build cmux-pty binary (server + CLI) via cargo install",
 )
 async def task_build_cmux_pty(ctx: TaskContext) -> None:
     repo = shlex.quote(ctx.remote_repo_root)
