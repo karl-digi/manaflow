@@ -78,6 +78,7 @@ export function TaskRunGitDiffPanel({ task, selectedRun, teamSlugOrId, taskId, s
   );
 
   const screenshotSets = runDiffContext?.screenshotSets ?? [];
+  const previewRunStatus = runDiffContext?.previewRunStatus ?? null;
   const screenshotSetsLoading = runDiffContext === undefined && screenshotSets.length === 0;
 
   if (!selectedRun || !normalizedHeadBranch) {
@@ -122,6 +123,7 @@ export function TaskRunGitDiffPanel({ task, selectedRun, teamSlugOrId, taskId, s
         <RunScreenshotGallery
           screenshotSets={screenshotSets}
           highlightedSetId={selectedRun?.latestScreenshotSetId ?? null}
+          previewRunStatus={previewRunStatus}
         />
       )}
       <MonacoGitDiffViewer diffs={allDiffs} />

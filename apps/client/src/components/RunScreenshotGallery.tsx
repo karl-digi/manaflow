@@ -9,8 +9,11 @@ import {
 import { formatDistanceToNow } from "date-fns";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
+  Camera,
   ChevronLeft,
   ChevronRight,
+  ImageOff,
+  Loader2,
   Maximize2,
   RotateCcw,
   X,
@@ -21,6 +24,7 @@ import { cn } from "@/lib/utils";
 import type { Id } from "@cmux/convex/dataModel";
 
 type ScreenshotStatus = "completed" | "failed" | "skipped";
+type PreviewRunStatus = "pending" | "running" | "completed" | "failed" | "skipped";
 
 interface ScreenshotImage {
   storageId: Id<"_storage">;
@@ -28,6 +32,7 @@ interface ScreenshotImage {
   fileName?: string | null;
   commitSha?: string | null;
   url?: string | null;
+  description?: string | null;
 }
 
 interface RunScreenshotSet {
@@ -35,15 +40,22 @@ interface RunScreenshotSet {
   taskId: Id<"tasks">;
   runId: Id<"taskRuns">;
   status: ScreenshotStatus;
+  hasUiChanges?: boolean | null;
   commitSha?: string | null;
   capturedAt: number;
   error?: string | null;
   images: ScreenshotImage[];
 }
 
+interface PreviewRunStatusInfo {
+  status: PreviewRunStatus;
+  stateReason: string | null;
+}
+
 interface RunScreenshotGalleryProps {
   screenshotSets: RunScreenshotSet[];
   highlightedSetId?: Id<"taskRunScreenshotSets"> | null;
+  previewRunStatus?: PreviewRunStatusInfo | null;
 }
 
 const MIN_ZOOM = 0.2;
@@ -70,7 +82,13 @@ const getImageKey = (
 ) => `${setId}:${image.storageId}:${indexInSet}`;
 
 export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
-  const { screenshotSets, highlightedSetId } = props;
+  const { screenshotSets, highlightedSetId, previewRunStatus } = props;
+
+  // Check if screenshot agent is currently running
+  const isScreenshotAgentRunning =
+    previewRunStatus?.status === "pending" ||
+    previewRunStatus?.status === "running";
+
   const sortedScreenshotSets = useMemo(
     () =>
       [...screenshotSets].sort((a, b) => {
@@ -420,20 +438,31 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
     };
   }, [goNext, goPrev, isSlideshowOpen]);
 
-  if (sortedScreenshotSets.length === 0) {
+  // Show section if we have screenshots OR if screenshot agent is running
+  if (sortedScreenshotSets.length === 0 && !isScreenshotAgentRunning) {
     return null;
   }
 
   return (
     <section className="border-b border-neutral-200 bg-neutral-50/60 dark:border-neutral-800 dark:bg-neutral-950/40">
       <div className="px-3.5 pt-3 pb-2 flex items-center justify-between gap-3">
-        <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-          Screenshots
-        </h2>
-        <span className="text-xs text-neutral-600 dark:text-neutral-400">
-          {sortedScreenshotSets.length}{" "}
-          {sortedScreenshotSets.length === 1 ? "capture" : "captures"}
-        </span>
+        <div className="flex items-center gap-2">
+          <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+            Screenshots
+          </h2>
+          {isScreenshotAgentRunning && (
+            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 text-xs font-medium rounded-full bg-sky-100/80 text-sky-700 dark:bg-sky-900/60 dark:text-sky-300">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              {previewRunStatus?.status === "pending" ? "Pending" : "Capturing"}
+            </span>
+          )}
+        </div>
+        {sortedScreenshotSets.length > 0 && (
+          <span className="text-xs text-neutral-600 dark:text-neutral-400">
+            {sortedScreenshotSets.length}{" "}
+            {sortedScreenshotSets.length === 1 ? "capture" : "captures"}
+          </span>
+        )}
       </div>
       <div className="px-3.5 pb-4 space-y-4">
         {currentEntry ? (
@@ -603,6 +632,25 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
             </Dialog.Portal>
           </Dialog.Root>
         ) : null}
+        {/* Show loading placeholder when agent is running but no screenshots yet */}
+        {isScreenshotAgentRunning && sortedScreenshotSets.length === 0 && (
+          <article className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950/70 p-3">
+            <div className="flex items-center gap-3">
+              <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-sky-50 dark:bg-sky-950/50">
+                <Camera className="h-5 w-5 text-sky-500 dark:text-sky-400" />
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                  Screenshot agent is running
+                </p>
+                <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                  {previewRunStatus?.stateReason || "Analyzing changes and capturing screenshots..."}
+                </p>
+              </div>
+              <Loader2 className="h-5 w-5 text-sky-500 animate-spin" />
+            </div>
+          </article>
+        )}
         {sortedScreenshotSets.map((set) => {
           const capturedAtDate = new Date(set.capturedAt);
           const relativeCapturedAt = formatDistanceToNow(capturedAtDate, {
@@ -610,6 +658,9 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
           });
           const shortCommit = set.commitSha?.slice(0, 12);
           const isHighlighted = effectiveHighlight === set._id;
+
+          // Check if model determined no UI changes
+          const hasNoUiChanges = set.hasUiChanges === false;
 
           return (
             <article
@@ -629,6 +680,11 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                 >
                   {STATUS_LABELS[set.status]}
                 </span>
+                {hasNoUiChanges && (
+                  <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-amber-100/80 text-amber-700 dark:bg-amber-900/60 dark:text-amber-300">
+                    No UI changes
+                  </span>
+                )}
                 {isHighlighted && (
                   <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-emerald-100/80 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300">
                     Latest
@@ -645,19 +701,32 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                     {shortCommit.toLowerCase()}
                   </span>
                 )}
-                {set.images.length > 0 && (
+                {set.images.length > 0 && !hasNoUiChanges && (
                   <span className="text-xs text-neutral-500 dark:text-neutral-500">
                     {set.images.length}{" "}
                     {set.images.length === 1 ? "image" : "images"}
                   </span>
                 )}
               </div>
-              {set.error && (
+              {set.error && set.status !== "skipped" && (
                 <p className="mt-2 text-xs text-rose-600 dark:text-rose-400">
                   {set.error}
                 </p>
               )}
-              {set.images.length > 0 ? (
+              {/* Show "No UI changes" message when model detected no visual changes */}
+              {hasNoUiChanges ? (
+                <div className="mt-3 flex items-start gap-3 rounded-lg border border-amber-200/60 bg-amber-50/50 p-3 dark:border-amber-800/40 dark:bg-amber-950/30">
+                  <ImageOff className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-400" />
+                  <div>
+                    <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
+                      No UI changes detected
+                    </p>
+                    <p className="mt-0.5 text-xs text-amber-700/80 dark:text-amber-300/80">
+                      The model analyzed this PR and determined there are no visual changes to the UI.
+                    </p>
+                  </div>
+                </div>
+              ) : set.images.length > 0 ? (
                 <div className="mt-3 flex gap-3 overflow-x-auto pb-1">
                   {set.images.map((image, indexInSet) => {
                     const displayName = image.fileName ?? "Screenshot";
@@ -697,13 +766,32 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                         <div className="absolute top-2 right-2 text-neutral-600 opacity-0 transition group-hover:opacity-100 dark:text-neutral-300">
                           <Maximize2 className="h-3.5 w-3.5" />
                         </div>
-                        <div className="border-t border-neutral-200 px-2 py-1 text-xs text-neutral-600 dark:border-neutral-700 dark:text-neutral-300 truncate">
-                          {humanIndex !== null ? `${humanIndex}. ` : ""}
-                          {displayName}
+                        <div className="border-t border-neutral-200 px-2 py-1.5 dark:border-neutral-700">
+                          <div className="text-xs text-neutral-600 dark:text-neutral-300 truncate">
+                            {humanIndex !== null ? `${humanIndex}. ` : ""}
+                            {displayName}
+                          </div>
+                          {image.description && (
+                            <p className="mt-0.5 text-[10px] leading-tight text-neutral-500 dark:text-neutral-400 line-clamp-2">
+                              {image.description}
+                            </p>
+                          )}
                         </div>
                       </button>
                     );
                   })}
+                </div>
+              ) : set.status === "skipped" ? (
+                <div className="mt-3 flex items-start gap-3 rounded-lg border border-neutral-200/60 bg-neutral-50/50 p-3 dark:border-neutral-700/40 dark:bg-neutral-900/30">
+                  <ImageOff className="mt-0.5 h-4 w-4 flex-shrink-0 text-neutral-500 dark:text-neutral-400" />
+                  <div>
+                    <p className="text-sm font-medium text-neutral-700 dark:text-neutral-200">
+                      Screenshot capture skipped
+                    </p>
+                    <p className="mt-0.5 text-xs text-neutral-500 dark:text-neutral-400">
+                      {set.error || "No UI-impacting changes were detected, so screenshots were skipped."}
+                    </p>
+                  </div>
                 </div>
               ) : (
                 <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">

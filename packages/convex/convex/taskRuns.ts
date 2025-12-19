@@ -614,14 +614,15 @@ export const getRunDiffContext = authQuery({
       }
     }
 
+    const runDoc = await ctx.db.get(args.runId);
+    // Prevent leaking data for runs outside the authenticated task/team
+    const isAuthorizedRun =
+      runDoc &&
+      runDoc.teamId === teamId &&
+      runDoc.taskId === args.taskId;
+
     const screenshotSets = await (async () => {
-      const runDoc = await ctx.db.get(args.runId);
-      // Prevent leaking screenshots for runs outside the authenticated task/team
-      if (
-        !runDoc ||
-        runDoc.teamId !== teamId ||
-        runDoc.taskId !== args.taskId
-      ) {
+      if (!isAuthorizedRun) {
         return [];
       }
 
@@ -653,11 +654,34 @@ export const getRunDiffContext = authQuery({
       );
     })();
 
+    // Get previewRun status if this run is a preview job
+    const previewRunStatus = await (async () => {
+      if (!isAuthorizedRun || !runDoc.isPreviewJob) {
+        return null;
+      }
+
+      // Find previewRun linked to this taskRun
+      const previewRun = await ctx.db
+        .query("previewRuns")
+        .filter((q) => q.eq(q.field("taskRunId"), args.runId))
+        .first();
+
+      if (!previewRun) {
+        return null;
+      }
+
+      return {
+        status: previewRun.status,
+        stateReason: previewRun.stateReason ?? null,
+      };
+    })();
+
     return {
       task: taskWithImages,
       taskRuns,
       branchMetadataByRepo,
       screenshotSets,
+      previewRunStatus,
     };
   },
 });
