@@ -177,6 +177,8 @@ interface PanelFactoryProps {
   } | null;
   isMorphProvider?: boolean;
   isBrowserBusy?: boolean;
+  // Hide non-essential panels during workspace loading
+  hideNonEssentialPanels?: boolean;
   // Additional components
   TaskRunChatPane?: React.ComponentType<TaskRunChatPaneProps>;
   PersistentWebView?: React.ComponentType<PersistentWebViewProps>;
@@ -564,12 +566,15 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
         selectedRun,
         isMorphProvider,
         isBrowserBusy,
+        hideNonEssentialPanels,
         PersistentWebView,
         WorkspaceLoadingIndicator,
         TASK_RUN_IFRAME_ALLOW,
         TASK_RUN_IFRAME_SANDBOX,
       } = props;
 
+      // Hide browser panel during workspace loading for local/cloud workspaces
+      if (hideNonEssentialPanels) return null;
       if (!PersistentWebView || !WorkspaceLoadingIndicator) return null;
       const shouldShowBrowserLoader = Boolean(selectedRun) && isMorphProvider && (!browserUrl || !browserPersistKey);
 
@@ -622,7 +627,9 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
     }
 
     case "gitDiff": {
-      const { task, selectedRun, TaskRunGitDiffPanel, teamSlugOrId, taskId } = props;
+      const { task, selectedRun, TaskRunGitDiffPanel, teamSlugOrId, taskId, hideNonEssentialPanels } = props;
+      // Hide git diff panel during workspace loading for local/cloud workspaces
+      if (hideNonEssentialPanels) return null;
       if (!TaskRunGitDiffPanel || !teamSlugOrId || !taskId) return null;
 
       return panelWrapper(
@@ -654,6 +661,11 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
 export const RenderPanel = React.memo(RenderPanelComponent, (prevProps, nextProps) => {
   // Always re-render if type or position changes
   if (prevProps.type !== nextProps.type || prevProps.position !== nextProps.position) {
+    return false;
+  }
+
+  // Re-render if hideNonEssentialPanels changes (affects browser and gitDiff panels)
+  if (prevProps.hideNonEssentialPanels !== nextProps.hideNonEssentialPanels) {
     return false;
   }
 

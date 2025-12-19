@@ -654,6 +654,10 @@ function TaskDetailPage() {
     [activePanelPositions]
   );
 
+  // Hide non-essential panels during workspace loading for local/cloud workspaces
+  const isWorkspace = task?.isLocalWorkspace || task?.isCloudWorkspace;
+  const hideNonEssentialPanels = isWorkspace && isEditorBusy;
+
   const panelProps = useMemo(
     () => ({
       task: task ?? null,
@@ -678,6 +682,7 @@ function TaskDetailPage() {
       browserPlaceholder,
       isMorphProvider,
       isBrowserBusy,
+      hideNonEssentialPanels,
       TaskRunChatPane,
       PersistentWebView,
       WorkspaceLoadingIndicator,
@@ -712,6 +717,7 @@ function TaskDetailPage() {
       browserPlaceholder,
       isMorphProvider,
       isBrowserBusy,
+      hideNonEssentialPanels,
       handlePanelClose,
       teamSlugOrId,
       taskId,
