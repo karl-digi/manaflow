@@ -179,6 +179,7 @@ function SettingsComponent() {
       setWorktreePath(workspaceSettings?.worktreePath || "");
       setOriginalWorktreePath(workspaceSettings?.worktreePath || "");
       const enabled =
+        workspaceSettings !== null &&
         "autoPrEnabled" in workspaceSettings &&
         typeof workspaceSettings.autoPrEnabled === "boolean"
           ? workspaceSettings.autoPrEnabled

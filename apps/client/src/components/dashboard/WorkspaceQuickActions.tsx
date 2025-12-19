@@ -1,3 +1,4 @@
+import { env } from "@/client-env";
 import {
   Tooltip,
   TooltipContent,
@@ -265,7 +266,8 @@ export function WorkspaceQuickActions({
     navigate,
   ]);
 
-  const canCreateLocal = selectedProject.length > 0 && !isEnvSelected;
+  const isWebMode = env.NEXT_PUBLIC_WEB_MODE;
+  const canCreateLocal = selectedProject.length > 0 && !isEnvSelected && !isWebMode;
   const canCreateCloud = selectedProject.length > 0;
   const isCreating = isCreatingLocal || isCreatingCloud;
 
@@ -310,7 +312,9 @@ export function WorkspaceQuickActions({
           </button>
         </TooltipTrigger>
         <TooltipContent side="bottom">
-          {canCreateLocal ? (
+          {isWebMode ? (
+            <p>Local workspaces require the desktop app</p>
+          ) : canCreateLocal ? (
             <p>Create a local workspace</p>
           ) : (
             <p>Select a repository to create a local workspace</p>
