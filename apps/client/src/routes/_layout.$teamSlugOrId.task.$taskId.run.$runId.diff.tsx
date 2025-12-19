@@ -837,6 +837,7 @@ function RunDiffPage() {
             onCollapseAllChecks={collapseAllChecks}
             onOpenLocalWorkspace={isWorkspace ? undefined : handleOpenLocalWorkspace}
             teamSlugOrId={teamSlugOrId}
+            pullRequests={pullRequests}
           />
           {task?.text && (
             <div className="mb-2 px-3.5">

@@ -1,6 +1,7 @@
 import { OpenEditorSplitButton } from "@/components/OpenEditorSplitButton";
 import { Dropdown } from "@/components/ui/dropdown";
 import { MergeButton, type MergeMethod } from "@/components/ui/merge-button";
+import { useCombinedWorkflowData, WorkflowRunsBadge } from "@/components/WorkflowRunsSection";
 import { useSocketSuspense } from "@/contexts/socket/use-socket";
 import { isElectron } from "@/lib/electron";
 import { cn } from "@/lib/utils";
@@ -59,6 +60,12 @@ import type {
   SocketMutationErrorInstance,
 } from "./task-detail-header.mutations";
 
+type PullRequestInfo = {
+  repoFullName: string;
+  number: number;
+  url?: string;
+};
+
 interface TaskDetailHeaderProps {
   task?: Doc<"tasks"> | null;
   taskRuns?: TaskRunWithChildren[] | null;
@@ -73,6 +80,8 @@ interface TaskDetailHeaderProps {
   onPanelSettings?: () => void;
   onOpenLocalWorkspace?: () => void;
   teamSlugOrId: string;
+  /** Pull requests associated with the selected run (for showing checks badge) */
+  pullRequests?: PullRequestInfo[];
 }
 
 const ENABLE_MERGE_BUTTON = false;
@@ -197,6 +206,31 @@ function AdditionsAndDeletions({
   );
 }
 
+/** Wrapper component that fetches and displays the checks badge for a single PR */
+function ChecksBadgeForPR({
+  teamSlugOrId,
+  repoFullName,
+  prNumber,
+}: {
+  teamSlugOrId: string;
+  repoFullName: string;
+  prNumber: number;
+}) {
+  const workflowData = useCombinedWorkflowData({
+    teamSlugOrId,
+    repoFullName,
+    prNumber,
+    headSha: undefined,
+  });
+
+  return (
+    <WorkflowRunsBadge
+      allRuns={workflowData.allRuns}
+      isLoading={workflowData.isLoading}
+    />
+  );
+}
+
 export function TaskDetailHeader({
   task,
   taskRuns,
@@ -209,6 +243,7 @@ export function TaskDetailHeader({
   onPanelSettings,
   onOpenLocalWorkspace,
   teamSlugOrId,
+  pullRequests,
 }: TaskDetailHeaderProps) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -314,6 +349,16 @@ export function TaskDetailHeader({
                 repos={repoDiffTargets}
                 defaultBaseRef={normalizedBaseBranch || undefined}
                 defaultHeadRef={normalizedHeadBranch || undefined}
+              />
+            </Suspense>
+          )}
+          {/* Show checks badge for PR-associated runs */}
+          {pullRequests && pullRequests.length > 0 && (
+            <Suspense fallback={null}>
+              <ChecksBadgeForPR
+                teamSlugOrId={teamSlugOrId}
+                repoFullName={pullRequests[0].repoFullName}
+                prNumber={pullRequests[0].number}
               />
             </Suspense>
           )}
