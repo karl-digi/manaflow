@@ -2,6 +2,7 @@ import { gitDiffQueryOptions } from "@/queries/git-diff";
 import { useQueries } from "@tanstack/react-query";
 import { useMemo, type ComponentProps } from "react";
 import { GitDiffViewer } from "./git-diff-viewer";
+import { HeatmapDiffViewer, type HeatmapData } from "./heatmap";
 import type { ReplaceDiffEntry } from "@cmux/shared/diff-types";
 
 export interface RunDiffSectionProps {
@@ -19,6 +20,14 @@ export interface RunDiffSectionProps {
       lastKnownMergeCommitSha?: string;
     }
   >;
+  /** Enable heatmap visualization */
+  showHeatmap?: boolean;
+  /** Heatmap data for diff visualization */
+  heatmapData?: HeatmapData[];
+  /** Whether heatmap data is loading */
+  isHeatmapLoading?: boolean;
+  /** Width of heatmap sidebar (default: 220) */
+  heatmapSidebarWidth?: number;
 }
 
 function applyRepoPrefix(
@@ -48,6 +57,10 @@ export function RunDiffSection(props: RunDiffSectionProps) {
     additionalRepoFullNames,
     withRepoPrefix,
     metadataByRepo,
+    showHeatmap,
+    heatmapData,
+    isHeatmapLoading,
+    heatmapSidebarWidth,
   } = props;
 
   const repoFullNames = useMemo(() => {
@@ -129,6 +142,22 @@ export function RunDiffSection(props: RunDiffSectionProps) {
           No changes to display
         </div>
       </div>
+    );
+  }
+
+  // Use HeatmapDiffViewer when heatmap is enabled
+  if (showHeatmap) {
+    return (
+      <HeatmapDiffViewer
+        key={`heatmap:${repoFullNames.join("|")}:${ref1}:${ref2}`}
+        diffs={combinedDiffs}
+        onControlsChange={onControlsChange}
+        classNames={classNames}
+        heatmapData={heatmapData}
+        isHeatmapLoading={isHeatmapLoading}
+        showHeatmapSidebar={true}
+        sidebarWidth={heatmapSidebarWidth}
+      />
     );
   }
 

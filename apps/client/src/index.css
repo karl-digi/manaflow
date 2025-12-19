@@ -520,3 +520,140 @@ pre,
     max-width: var(--sidebar-width) !important;
   }
 }
+
+/* ================================
+   Heatmap Styles
+   ================================ */
+
+/* Character highlight wrapper */
+.cmux-heatmap-char {
+  display: inline-block;
+  padding: 0 0.05rem;
+}
+
+.cmux-heatmap-char-wrapper {
+  display: inline-block;
+  cursor: help;
+}
+
+/* Heatmap focus state - light mode */
+.cmux-heatmap-focus td.diff-gutter,
+.cmux-heatmap-focus td.diff-code {
+  background-color: rgba(14, 165, 233, 0.12);
+  outline: 2px solid rgba(14, 165, 233, 0.4);
+  outline-offset: -1px;
+}
+
+/* Heatmap focus state - dark mode */
+.dark .cmux-heatmap-focus td.diff-gutter,
+.dark .cmux-heatmap-focus td.diff-code {
+  background-color: rgba(2, 132, 199, 0.25);
+  outline: 2px solid rgba(125, 211, 252, 0.55);
+  outline-offset: -1px;
+}
+
+.cmux-heatmap-focus {
+  scroll-margin-top: 96px;
+  scroll-margin-bottom: 96px;
+}
+
+/* Heatmap gutter indicator */
+.cmux-heatmap-gutter {
+  display: inline-flex;
+  cursor: help;
+}
+
+/* File heatmap bar in file list */
+.cmux-heatmap-file-bar {
+  height: 4px;
+  border-radius: 2px;
+  transition: all 150ms ease;
+}
+
+.cmux-heatmap-file-bar:hover {
+  height: 6px;
+}
+
+/* Heatmap minimap in sidebar */
+.cmux-heatmap-minimap {
+  width: 4px;
+  min-width: 4px;
+  border-radius: 2px;
+  transition: width 150ms ease;
+}
+
+.cmux-heatmap-minimap:hover {
+  width: 8px;
+}
+
+/* Heatmap tooltip */
+.cmux-heatmap-tooltip {
+  max-width: 320px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.cmux-heatmap-tooltip-score {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Heatmap threshold slider */
+.cmux-heatmap-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+  width: 100%;
+}
+
+.cmux-heatmap-slider::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(to right, #fefce8, #f59e0b);
+}
+
+.dark .cmux-heatmap-slider::-webkit-slider-runnable-track {
+  background: linear-gradient(to right, #422006, #c2410c);
+}
+
+.cmux-heatmap-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: white;
+  border: 2px solid #f59e0b;
+  margin-top: -5px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+
+.dark .cmux-heatmap-slider::-webkit-slider-thumb {
+  background: #1f2937;
+  border-color: #c2410c;
+}
+
+.cmux-heatmap-slider::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(to right, #fefce8, #f59e0b);
+}
+
+.dark .cmux-heatmap-slider::-moz-range-track {
+  background: linear-gradient(to right, #422006, #c2410c);
+}
+
+.cmux-heatmap-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: white;
+  border: 2px solid #f59e0b;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+
+.dark .cmux-heatmap-slider::-moz-range-thumb {
+  background: #1f2937;
+  border-color: #c2410c;
+}
