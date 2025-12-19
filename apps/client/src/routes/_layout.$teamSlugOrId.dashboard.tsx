@@ -7,7 +7,7 @@ import { DashboardInputControls } from "@/components/dashboard/DashboardInputCon
 import { DashboardInputFooter } from "@/components/dashboard/DashboardInputFooter";
 import { DashboardStartTaskButton } from "@/components/dashboard/DashboardStartTaskButton";
 import { TaskList } from "@/components/dashboard/TaskList";
-import { WorkspaceCreationButtons } from "@/components/dashboard/WorkspaceCreationButtons";
+import { WorkspaceQuickActions } from "@/components/dashboard/WorkspaceQuickActions";
 import { FloatingPane } from "@/components/floating-pane";
 import { WorkspaceSetupPanel } from "@/components/WorkspaceSetupPanel";
 import { GitHubIcon } from "@/components/icons/github";
@@ -1003,12 +1003,8 @@ function DashboardComponent() {
         {/* Main content area */}
         <div className="flex-1 flex flex-col pt-32 pb-0">
           <div className="w-full max-w-4xl min-w-0 mx-auto px-4">
-            {/* Workspace Creation Buttons */}
-            <WorkspaceCreationButtons
-              teamSlugOrId={teamSlugOrId}
-              selectedProject={selectedProject}
-              isEnvSelected={isEnvSelected}
-            />
+            {/* Workspace Quick Actions */}
+            <WorkspaceQuickActions teamSlugOrId={teamSlugOrId} />
 
             <DashboardMainCard
               editorApiRef={editorApiRef}
