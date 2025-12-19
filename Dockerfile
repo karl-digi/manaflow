@@ -1053,6 +1053,7 @@ COPY configs/systemd/cmux-vnc-proxy.service /usr/lib/systemd/system/cmux-vnc-pro
 COPY configs/systemd/cmux-cdp-proxy.service /usr/lib/systemd/system/cmux-cdp-proxy.service
 COPY configs/systemd/cmux-pty.service /usr/lib/systemd/system/cmux-pty.service
 COPY configs/systemd/cmux-memory-setup.service /usr/lib/systemd/system/cmux-memory-setup.service
+COPY configs/systemd/cmux-ide.service.template /usr/lib/systemd/system/cmux-ide.service.template
 COPY configs/systemd/bin/configure-openvscode /usr/local/lib/cmux/configure-openvscode
 COPY configs/systemd/bin/configure-coder /usr/local/lib/cmux/configure-coder
 COPY configs/systemd/bin/configure-cmux-code /usr/local/lib/cmux/configure-cmux-code
@@ -1093,9 +1094,9 @@ else
 fi
 
 ln -sf /usr/lib/systemd/system/cmux.target /etc/systemd/system/multi-user.target.wants/cmux.target
-# Create cmux-ide.service alias so systemd can find the unit when cmux.target requires it
-ln -sf /usr/lib/systemd/system/${IDE_SERVICE} /etc/systemd/system/cmux-ide.service
-ln -sf /usr/lib/systemd/system/${IDE_SERVICE} /etc/systemd/system/cmux.target.wants/cmux-ide.service
+# Generate cmux-ide.service from template (proper systemd proxy unit instead of symlink)
+sed "s/@IDE_SERVICE@/${IDE_SERVICE}/g" /usr/lib/systemd/system/cmux-ide.service.template > /usr/lib/systemd/system/cmux-ide.service
+ln -sf /usr/lib/systemd/system/cmux-ide.service /etc/systemd/system/cmux.target.wants/cmux-ide.service
 ln -sf /usr/lib/systemd/system/cmux-worker.service /etc/systemd/system/cmux.target.wants/cmux-worker.service
 ln -sf /usr/lib/systemd/system/cmux-proxy.service /etc/systemd/system/cmux.target.wants/cmux-proxy.service
 ln -sf /usr/lib/systemd/system/cmux-dockerd.service /etc/systemd/system/cmux.target.wants/cmux-dockerd.service
