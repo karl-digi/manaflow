@@ -1100,10 +1100,10 @@ ln -sf /usr/lib/systemd/system/cmux-ide.service /etc/systemd/system/cmux.target.
 ln -sf /usr/lib/systemd/system/cmux-worker.service /etc/systemd/system/cmux.target.wants/cmux-worker.service
 ln -sf /usr/lib/systemd/system/cmux-proxy.service /etc/systemd/system/cmux.target.wants/cmux-proxy.service
 ln -sf /usr/lib/systemd/system/cmux-dockerd.service /etc/systemd/system/cmux.target.wants/cmux-dockerd.service
-ln -sf /usr/lib/systemd/system/cmux-devtools.service /etc/systemd/system/cmux.target.wants/cmux-devtools.service
+# Note: cmux-devtools.service not enabled in Docker (requires cmux-openbox.service which is not available)
 ln -sf /usr/lib/systemd/system/cmux-tigervnc.service /etc/systemd/system/cmux.target.wants/cmux-tigervnc.service
 ln -sf /usr/lib/systemd/system/cmux-vnc-proxy.service /etc/systemd/system/cmux.target.wants/cmux-vnc-proxy.service
-ln -sf /usr/lib/systemd/system/cmux-cdp-proxy.service /etc/systemd/system/cmux.target.wants/cmux-cdp-proxy.service
+# Note: cmux-cdp-proxy.service not enabled in Docker (requires cmux-devtools.service)
 ln -sf /usr/lib/systemd/system/cmux-pty.service /etc/systemd/system/cmux.target.wants/cmux-pty.service
 ln -sf /usr/lib/systemd/system/cmux-pty.service /etc/systemd/system/multi-user.target.wants/cmux-pty.service
 ln -sf /usr/lib/systemd/system/${IDE_SERVICE} /etc/systemd/system/multi-user.target.wants/${IDE_SERVICE}

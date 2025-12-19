@@ -58,11 +58,6 @@ pub struct ResizeRequest {
     pub rows: u16,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InputRequest {
-    pub data: String,
-}
-
 // =============================================================================
 // Client
 // =============================================================================
@@ -138,12 +133,6 @@ impl PtyClient {
 
         let session: SessionInfo = resp.json().await.context("Failed to parse response")?;
         Ok(session)
-    }
-
-    /// Get a specific session
-    pub async fn get_session(&self, session_id: &str) -> Result<Option<SessionInfo>> {
-        let sessions = self.list_sessions().await?;
-        Ok(sessions.into_iter().find(|s| s.id == session_id || s.name == session_id))
     }
 
     /// Kill/delete a session
