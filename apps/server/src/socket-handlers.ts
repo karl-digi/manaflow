@@ -37,7 +37,7 @@ import * as path from "node:path";
 import { promisify } from "node:util";
 import z from "zod";
 import { spawnAllAgents } from "./agentSpawner";
-import { stopContainersForRuns } from "./archiveTask";
+import { getLocalWorkspacePathsFromTree, stopContainersForRuns } from "./archiveTask";
 import { execWithEnv } from "./execWithEnv";
 import { getGitDiff } from "./diffs/gitDiff";
 import { GitDiffManager } from "./gitDiff";
@@ -872,6 +872,22 @@ export function setupSocketHandlers(
         let responded = false;
 
         const convex = getConvex();
+
+        // Resource limit: prevent too many concurrent local workspaces to avoid
+        // file descriptor exhaustion and memory issues
+        const MAX_LOCAL_WORKSPACES = parseInt(process.env.CMUX_MAX_LOCAL_WORKSPACES ?? "20", 10);
+        const activeWatchers = gitDiffManager.getActiveWatcherCount();
+        if (activeWatchers >= MAX_LOCAL_WORKSPACES) {
+          serverLogger.warn(
+            `Local workspace limit reached: ${activeWatchers}/${MAX_LOCAL_WORKSPACES} active workspaces. ` +
+            `Archive some tasks to free up resources.`
+          );
+          callback({
+            success: false,
+            error: `Too many local workspaces (${activeWatchers}/${MAX_LOCAL_WORKSPACES}). Please archive some tasks to free up resources.`,
+          });
+          return;
+        }
 
         try {
           if (!taskId || !taskRunId || !workspaceName) {
@@ -2441,6 +2457,27 @@ ${title}`;
           return;
         }
 
+        // Get task runs tree for cleanup
+        const convex = getConvex();
+        const tree = await convex.query(api.taskRuns.getByTask, {
+          teamSlugOrId: safeTeam,
+          taskId,
+        });
+
+        // Clean up file watchers for local workspaces to prevent file descriptor leaks
+        const localWorkspacePaths = getLocalWorkspacePathsFromTree(tree);
+        for (const workspacePath of localWorkspacePaths) {
+          try {
+            gitDiffManager.unwatchWorkspace(workspacePath);
+            serverLogger.info(`Cleaned up file watcher for local workspace: ${workspacePath}`);
+          } catch (watcherError) {
+            serverLogger.warn(
+              `Failed to clean up file watcher for ${workspacePath}:`,
+              watcherError
+            );
+          }
+        }
+
         // Stop/pause all containers via helper (handles querying + logging)
         const results = await stopContainersForRuns(taskId, safeTeam);
 
@@ -2450,11 +2487,11 @@ ${title}`;
 
         if (failed > 0) {
           serverLogger.warn(
-            `Archived task ${taskId}: ${successful} containers stopped, ${failed} failed`
+            `Archived task ${taskId}: ${successful} containers stopped, ${failed} failed, ${localWorkspacePaths.length} file watchers cleaned`
           );
         } else {
           serverLogger.info(
-            `Successfully archived task ${taskId}: all ${successful} containers stopped`
+            `Successfully archived task ${taskId}: ${successful} containers stopped, ${localWorkspacePaths.length} file watchers cleaned`
           );
         }
 

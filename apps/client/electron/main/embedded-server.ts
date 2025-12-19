@@ -64,6 +64,9 @@ function createIPCRealtimeServer(): RealtimeServer {
     middlewares: Array<(packet: unknown[], next: () => void) => void>;
   }
 
+  // Track cleanup listeners to avoid adding multiple
+  const cleanupListeners = new WeakSet<Electron.WebContents>();
+
   // Handle IPC connection from renderer
   ipcMain.handle(
     "socket:connect",
@@ -79,6 +82,30 @@ function createIPCRealtimeServer(): RealtimeServer {
 
       sockets.set(socketId, ipcSocket);
       webContentsToSocketId.set(event.sender.id, socketId);
+
+      // Clean up socket when webContents is destroyed to prevent memory leaks
+      if (!cleanupListeners.has(event.sender)) {
+        cleanupListeners.add(event.sender);
+        event.sender.once("destroyed", () => {
+          const existingSocketId = webContentsToSocketId.get(event.sender.id);
+          if (existingSocketId) {
+            const socket = sockets.get(existingSocketId);
+            if (socket) {
+              // Trigger disconnect handlers before cleanup
+              const handlers = socket.handlers.get("disconnect") || [];
+              handlers.forEach((handler) => {
+                try {
+                  handler();
+                } catch (err) {
+                  console.error("[IPC] Error in disconnect handler:", err);
+                }
+              });
+            }
+            sockets.delete(existingSocketId);
+            webContentsToSocketId.delete(event.sender.id);
+          }
+        });
+      }
 
       // Create a RealtimeSocket wrapper for the server handlers
       const realtimeSocket: RealtimeSocket = {
@@ -159,6 +186,30 @@ function createIPCRealtimeServer(): RealtimeServer {
 
       sockets.set(socketId, ipcSocket);
       webContentsToSocketId.set(event.sender.id, socketId);
+
+      // Clean up socket when webContents is destroyed to prevent memory leaks
+      if (!cleanupListeners.has(event.sender)) {
+        cleanupListeners.add(event.sender);
+        event.sender.once("destroyed", () => {
+          const existingSocketId = webContentsToSocketId.get(event.sender.id);
+          if (existingSocketId) {
+            const socket = sockets.get(existingSocketId);
+            if (socket) {
+              // Trigger disconnect handlers before cleanup
+              const handlers = socket.handlers.get("disconnect") || [];
+              handlers.forEach((handler) => {
+                try {
+                  handler();
+                } catch (err) {
+                  console.error("[IPC] Error in disconnect handler:", err);
+                }
+              });
+            }
+            sockets.delete(existingSocketId);
+            webContentsToSocketId.delete(event.sender.id);
+          }
+        });
+      }
 
       // Notify connection handlers to wire server-side listeners
       const realtimeSocket: RealtimeSocket = {

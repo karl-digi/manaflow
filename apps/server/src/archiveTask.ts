@@ -12,6 +12,32 @@ const execAsync = promisify(exec);
 
 export type VSCodeProvider = "docker" | "morph" | "daytona" | "other";
 
+/**
+ * Extract local workspace paths from a task runs tree.
+ * Used for cleanup of file watchers when archiving tasks.
+ */
+export function getLocalWorkspacePathsFromTree(
+  tree: FunctionReturnType<typeof api.taskRuns.getByTask>
+): string[] {
+  const paths: string[] = [];
+  const walk = (nodes: unknown): void => {
+    if (!Array.isArray(nodes)) return;
+    for (const n of nodes) {
+      if (typeof n === "object" && n !== null) {
+        const isLocal = Reflect.get(Object(n), "isLocalWorkspace");
+        const worktreePath = Reflect.get(Object(n), "worktreePath");
+        if (isLocal === true && typeof worktreePath === "string" && worktreePath.length > 0) {
+          paths.push(worktreePath);
+        }
+        const children = Reflect.get(Object(n), "children");
+        walk(children);
+      }
+    }
+  };
+  walk(tree);
+  return paths;
+}
+
 export interface StopResult {
   success: boolean;
   containerName: string;

@@ -155,10 +155,28 @@ export class GitDiffManager {
     if (watcher) {
       watcher.close();
       this.watchers.delete(workspacePath);
+      serverLogger.info(`Closed file watcher for ${workspacePath}. Active watchers: ${this.watchers.size}`);
     }
   }
 
+  /**
+   * Get the number of active file watchers.
+   * Used to enforce resource limits on concurrent local workspaces.
+   */
+  getActiveWatcherCount(): number {
+    return this.watchers.size;
+  }
+
+  /**
+   * Get all currently watched workspace paths.
+   * Useful for debugging and resource tracking.
+   */
+  getWatchedPaths(): string[] {
+    return Array.from(this.watchers.keys());
+  }
+
   dispose(): void {
+    serverLogger.info(`Disposing GitDiffManager with ${this.watchers.size} active watchers`);
     for (const watcher of this.watchers.values()) {
       watcher.close();
     }
