@@ -14,7 +14,7 @@ const MILLISECONDS_PER_HOUR = 60 * 60 * 1000;
 
 /**
  * Pauses all Morph instances that have been running for more than 20 hours.
- * Called by the daily cron job at 5 AM Pacific Time.
+ * Called by the daily cron job at 4 AM Pacific Time.
  */
 export const pauseOldMorphInstances = internalAction({
   args: {},
