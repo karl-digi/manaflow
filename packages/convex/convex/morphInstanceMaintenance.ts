@@ -11,6 +11,7 @@ import {
 
 const HOURS_THRESHOLD = 20;
 const MILLISECONDS_PER_HOUR = 60 * 60 * 1000;
+const BATCH_SIZE = 5;
 
 /**
  * Pauses all Morph instances that have been running for more than 20 hours.
@@ -74,38 +75,48 @@ export const pauseOldMorphInstances = internalAction({
     let successCount = 0;
     let failureCount = 0;
 
-    // Process instances sequentially to avoid rate limiting
-    for (const instance of staleActiveInstances) {
-      const ageHours = Math.floor(
-        (now - instance.created * 1000) / MILLISECONDS_PER_HOUR
-      );
+    // Process instances in batches to balance speed and rate limiting
+    for (let i = 0; i < staleActiveInstances.length; i += BATCH_SIZE) {
+      const batch = staleActiveInstances.slice(i, i + BATCH_SIZE);
       console.log(
-        `[morphInstanceMaintenance] Pausing ${instance.id} (${ageHours}h old)...`
+        `[morphInstanceMaintenance] Processing batch ${Math.floor(i / BATCH_SIZE) + 1} (${batch.length} instances)`
       );
 
-      try {
-        const pauseResponse = await pauseInstanceInstanceInstanceIdPausePost({
-          client: morphClient,
-          path: { instance_id: instance.id },
-        });
+      const results = await Promise.allSettled(
+        batch.map(async (instance: InstanceModel) => {
+          const ageHours = Math.floor(
+            (now - instance.created * 1000) / MILLISECONDS_PER_HOUR
+          );
+          console.log(
+            `[morphInstanceMaintenance] Pausing ${instance.id} (${ageHours}h old)...`
+          );
 
-        if (pauseResponse.error) {
+          const pauseResponse = await pauseInstanceInstanceInstanceIdPausePost({
+            client: morphClient,
+            path: { instance_id: instance.id },
+          });
+
+          if (pauseResponse.error) {
+            throw new Error(JSON.stringify(pauseResponse.error));
+          }
+
+          console.log(`[morphInstanceMaintenance] Paused ${instance.id}`);
+          return instance.id;
+        })
+      );
+
+      for (let j = 0; j < results.length; j++) {
+        const result = results[j];
+        const instance = batch[j];
+        if (result.status === "fulfilled") {
+          successCount++;
+        } else {
           failureCount++;
           console.error(
             `[morphInstanceMaintenance] Failed to pause ${instance.id}:`,
-            pauseResponse.error
+            result.reason
           );
-        } else {
-          successCount++;
-          console.log(`[morphInstanceMaintenance] Paused ${instance.id}`);
         }
-      } catch (error) {
-        failureCount++;
-        const message = error instanceof Error ? error.message : String(error);
-        console.error(
-          `[morphInstanceMaintenance] Error pausing ${instance.id}:`,
-          message
-        );
       }
     }
 
