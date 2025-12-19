@@ -19,7 +19,6 @@ export const env = createEnv({
     ANTHROPIC_API_KEY: z.string().min(1).optional(),
     MORPH_API_KEY: z.string().min(1).optional(),
     CMUX_IS_STAGING: z.string().optional(),
-    CONVEX_IS_PRODUCTION: z.string().optional(),
   },
   runtimeEnv: process.env,
   emptyStringAsUndefined: true,
