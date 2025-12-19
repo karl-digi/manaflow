@@ -1011,6 +1011,15 @@ function DashboardComponent() {
               isEnvSelected={isEnvSelected}
             />
 
+            {/* Workspace Quick Actions - create workspaces without a task */}
+            <div className="mb-2 px-1">
+              <WorkspaceQuickActions
+                teamSlugOrId={teamSlugOrId}
+                selectedProject={selectedProject}
+                isEnvSelected={isEnvSelected}
+              />
+            </div>
+
             <DashboardMainCard
               editorApiRef={editorApiRef}
               onTaskDescriptionChange={handleTaskDescriptionChange}
@@ -1041,15 +1050,6 @@ function DashboardComponent() {
               onStartTask={handleStartTask}
               isStartingTask={isStartingTask}
             />
-
-            {/* Workspace Quick Actions - create workspaces without a task */}
-            <div className="mt-2 px-1">
-              <WorkspaceQuickActions
-                teamSlugOrId={teamSlugOrId}
-                selectedProject={selectedProject}
-                isEnvSelected={isEnvSelected}
-              />
-            </div>
 
             {shouldShowWorkspaceSetup ? (
               <WorkspaceSetupPanel

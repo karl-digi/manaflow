@@ -273,10 +273,6 @@ export function WorkspaceQuickActions({
 
   return (
     <div className={clsx("flex items-center gap-2", className)}>
-      <span className="text-xs text-neutral-500 dark:text-neutral-400">
-        Quick actions:
-      </span>
-
       {/* Local Workspace Button */}
       <Tooltip>
         <TooltipTrigger asChild>
@@ -289,15 +285,15 @@ export function WorkspaceQuickActions({
               canCreateLocal
                 ? [
                     "bg-white dark:bg-transparent",
-                    "text-neutral-700 dark:text-neutral-300",
-                    "border-neutral-200 dark:border-neutral-600",
+                    "text-neutral-700 dark:text-neutral-400",
+                    "border-neutral-200 dark:border-neutral-700",
                     "hover:bg-neutral-50 dark:hover:bg-neutral-800",
-                    "hover:border-neutral-300 dark:hover:border-neutral-500",
+                    "hover:border-neutral-300 dark:hover:border-neutral-600",
                   ]
                 : [
                     "bg-neutral-50 dark:bg-transparent",
-                    "text-neutral-400 dark:text-neutral-500",
-                    "border-neutral-100 dark:border-neutral-700",
+                    "text-neutral-400 dark:text-neutral-600",
+                    "border-neutral-100 dark:border-neutral-800",
                     "cursor-not-allowed",
                   ],
               isCreatingLocal && "cursor-wait"
@@ -334,15 +330,15 @@ export function WorkspaceQuickActions({
               canCreateCloud
                 ? [
                     "bg-white dark:bg-transparent",
-                    "text-neutral-700 dark:text-neutral-300",
-                    "border-neutral-200 dark:border-neutral-600",
+                    "text-neutral-700 dark:text-neutral-400",
+                    "border-neutral-200 dark:border-neutral-700",
                     "hover:bg-neutral-50 dark:hover:bg-neutral-800",
-                    "hover:border-neutral-300 dark:hover:border-neutral-500",
+                    "hover:border-neutral-300 dark:hover:border-neutral-600",
                   ]
                 : [
                     "bg-neutral-50 dark:bg-transparent",
-                    "text-neutral-400 dark:text-neutral-500",
-                    "border-neutral-100 dark:border-neutral-700",
+                    "text-neutral-400 dark:text-neutral-600",
+                    "border-neutral-100 dark:border-neutral-800",
                     "cursor-not-allowed",
                   ],
               isCreatingCloud && "cursor-wait"
