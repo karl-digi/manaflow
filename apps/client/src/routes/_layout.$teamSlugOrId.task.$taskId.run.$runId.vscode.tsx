@@ -63,10 +63,16 @@ export const Route = createFileRoute(
       ]);
       if (result) {
         const workspaceUrl = result.vscode?.workspaceUrl;
+        // Only use local serve-web for truly local workspaces (provider === "other")
+        // Docker workspaces should use the Docker-forwarded URL directly
+        const shouldUseLocalServeWeb = result.vscode?.provider === "other";
         await preloadTaskRunIframes([
           {
             url: workspaceUrl
-              ? toProxyWorkspaceUrl(workspaceUrl, localServeWeb.baseUrl)
+              ? toProxyWorkspaceUrl(
+                  workspaceUrl,
+                  shouldUseLocalServeWeb ? localServeWeb.baseUrl : null
+                )
               : "",
             taskRunId: opts.params.runId,
           },
