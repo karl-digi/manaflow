@@ -1054,6 +1054,7 @@ COPY configs/systemd/cmux-cdp-proxy.service /usr/lib/systemd/system/cmux-cdp-pro
 COPY configs/systemd/cmux-pty.service /usr/lib/systemd/system/cmux-pty.service
 COPY configs/systemd/cmux-memory-setup.service /usr/lib/systemd/system/cmux-memory-setup.service
 COPY configs/systemd/cmux-ide.service.template /usr/lib/systemd/system/cmux-ide.service.template
+COPY configs/systemd/cmux.target.docker.drop-in.conf /usr/lib/systemd/system/cmux.target.docker.drop-in.conf
 COPY configs/systemd/bin/configure-openvscode /usr/local/lib/cmux/configure-openvscode
 COPY configs/systemd/bin/configure-coder /usr/local/lib/cmux/configure-coder
 COPY configs/systemd/bin/configure-cmux-code /usr/local/lib/cmux/configure-cmux-code
@@ -1079,7 +1080,11 @@ touch /usr/local/lib/cmux/dockerd.flag
 mkdir -p /var/log/cmux
 mkdir -p /etc/systemd/system/multi-user.target.wants
 mkdir -p /etc/systemd/system/cmux.target.wants
+mkdir -p /etc/systemd/system/cmux.target.d
 mkdir -p /etc/systemd/system/swap.target.wants
+
+# Install Docker-specific drop-in for cmux.target (removes cmux-devtools.service from Requires)
+cp /usr/lib/systemd/system/cmux.target.docker.drop-in.conf /etc/systemd/system/cmux.target.d/10-docker.conf
 
 # Copy the correct IDE env file based on provider
 if [ "${IDE_PROVIDER}" = "cmux-code" ]; then
@@ -1100,10 +1105,10 @@ ln -sf /usr/lib/systemd/system/cmux-ide.service /etc/systemd/system/cmux.target.
 ln -sf /usr/lib/systemd/system/cmux-worker.service /etc/systemd/system/cmux.target.wants/cmux-worker.service
 ln -sf /usr/lib/systemd/system/cmux-proxy.service /etc/systemd/system/cmux.target.wants/cmux-proxy.service
 ln -sf /usr/lib/systemd/system/cmux-dockerd.service /etc/systemd/system/cmux.target.wants/cmux-dockerd.service
-ln -sf /usr/lib/systemd/system/cmux-devtools.service /etc/systemd/system/cmux.target.wants/cmux-devtools.service
+# Note: cmux-devtools.service not enabled in Docker (requires cmux-openbox.service which is not available)
 ln -sf /usr/lib/systemd/system/cmux-tigervnc.service /etc/systemd/system/cmux.target.wants/cmux-tigervnc.service
 ln -sf /usr/lib/systemd/system/cmux-vnc-proxy.service /etc/systemd/system/cmux.target.wants/cmux-vnc-proxy.service
-ln -sf /usr/lib/systemd/system/cmux-cdp-proxy.service /etc/systemd/system/cmux.target.wants/cmux-cdp-proxy.service
+# Note: cmux-cdp-proxy.service not enabled in Docker (requires cmux-devtools.service)
 ln -sf /usr/lib/systemd/system/cmux-pty.service /etc/systemd/system/cmux.target.wants/cmux-pty.service
 ln -sf /usr/lib/systemd/system/cmux-pty.service /etc/systemd/system/multi-user.target.wants/cmux-pty.service
 ln -sf /usr/lib/systemd/system/${IDE_SERVICE} /etc/systemd/system/multi-user.target.wants/${IDE_SERVICE}
