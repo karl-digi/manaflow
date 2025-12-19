@@ -302,9 +302,10 @@ async function setupDefaultTerminal() {
   const hasCmuxPty = await waitForCmuxPtyTerminal("cmux", 5000);
 
   if (hasCmuxPty) {
-    // cmux-pty is handling the terminal - no need to create tmux terminal
-    // The CmuxTerminalManager will have already created the terminal in editor pane
-    log("cmux-pty is managing 'cmux' terminal, skipping tmux setup");
+    // cmux-pty has the terminal - trigger VSCode to create it via provideTerminalProfile
+    log("cmux-pty is managing 'cmux' terminal, triggering terminal creation in editor");
+    // This command triggers VSCode to call our provideTerminalProfile
+    await vscode.commands.executeCommand("workbench.action.createTerminalEditor");
   } else {
     // Fall back to tmux-based terminal
     log("cmux-pty not available, falling back to tmux");
