@@ -895,7 +895,7 @@ function SettingsComponent() {
                                     }
                                     rows={4}
                                     className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 font-mono text-xs resize-y"
-                                    placeholder='{"token": "...", ...}'
+                                    placeholder='{"tokens": {"id_token": "...", "access_token": "...", "refresh_token": "...", "account_id": "..."}, "last_refresh": "..."}'
                                   />
                                 </div>
                               ) : (
