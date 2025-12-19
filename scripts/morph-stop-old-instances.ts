@@ -49,14 +49,9 @@ async function main(): Promise<void> {
     (instance) => instance.status === InstanceStatus.PAUSED
   );
 
-  const stoppedOld = oldInstances.filter(
-    (instance) => instance.status === InstanceStatus.STOPPED
-  );
-
   console.log(`Found ${oldInstances.length} instances older than ${MAX_AGE_DAYS} days:`);
   console.log(`  - ${activeOld.length} active (ready/pending)`);
   console.log(`  - ${pausedOld.length} paused`);
-  console.log(`  - ${stoppedOld.length} already stopped`);
 
   // Target all non-stopped instances
   const instancesToStop = [...activeOld, ...pausedOld];
