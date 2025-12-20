@@ -1,17 +1,20 @@
 import { gitDiffQueryOptions } from "@/queries/git-diff";
 import { useQueries } from "@tanstack/react-query";
-import { useMemo, useRef, type ComponentProps } from "react";
-import { GitDiffViewer, GitDiffViewerWithHeatmap } from "./git-diff-viewer";
-import type { HeatmapColorSettings } from "@/components/heatmap-diff-viewer";
+import { useMemo, useRef } from "react";
 import type { ReplaceDiffEntry } from "@cmux/shared/diff-types";
-import type { ReviewHeatmapLine } from "@/lib/heatmap";
+import {
+  GitDiffHeatmapReviewViewer,
+  type StreamFileState,
+} from "@/components/heatmap-diff-viewer";
+import type { HeatmapColorSettings } from "@/components/heatmap-diff-viewer/heatmap-gradient";
+import type { HeatmapModelOptionValue, TooltipLanguageValue } from "@/lib/heatmap-settings";
+import type { DiffViewerControls } from "@/components/heatmap-diff-viewer";
 
-export interface RunDiffSectionProps {
+export interface RunDiffHeatmapReviewSectionProps {
   repoFullName: string;
   ref1: string;
   ref2: string;
-  classNames?: ComponentProps<typeof GitDiffViewer>["classNames"];
-  onControlsChange?: ComponentProps<typeof GitDiffViewer>["onControlsChange"];
+  onControlsChange?: (controls: DiffViewerControls) => void;
   additionalRepoFullNames?: string[];
   withRepoPrefix?: boolean;
   metadataByRepo?: Record<
@@ -21,14 +24,19 @@ export interface RunDiffSectionProps {
       lastKnownMergeCommitSha?: string;
     }
   >;
-  /** Use the heatmap-enabled diff viewer (GitHub style) */
-  useHeatmapViewer?: boolean;
-  /** Heatmap data keyed by file path */
-  heatmapByFile?: Map<string, ReviewHeatmapLine[]>;
-  /** Heatmap threshold for filtering entries (0-1) */
-  heatmapThreshold?: number;
-  /** Custom heatmap colors */
-  heatmapColors?: HeatmapColorSettings;
+  heatmapThreshold: number;
+  heatmapColors: HeatmapColorSettings;
+  heatmapModel: HeatmapModelOptionValue;
+  heatmapTooltipLanguage: TooltipLanguageValue;
+  streamStateByFile?: Map<string, StreamFileState>;
+  fileOutputs?: Array<{
+    filePath: string;
+    codexReviewOutput: unknown;
+  }>;
+  onHeatmapThresholdChange?: (next: number) => void;
+  onHeatmapColorsChange?: (next: HeatmapColorSettings) => void;
+  onHeatmapModelChange?: (next: HeatmapModelOptionValue) => void;
+  onHeatmapTooltipLanguageChange?: (next: TooltipLanguageValue) => void;
 }
 
 function applyRepoPrefix(
@@ -48,20 +56,27 @@ function applyRepoPrefix(
   };
 }
 
-export function RunDiffSection(props: RunDiffSectionProps) {
+export function RunDiffHeatmapReviewSection(
+  props: RunDiffHeatmapReviewSectionProps,
+) {
   const {
     repoFullName,
     ref1,
     ref2,
-    classNames,
     onControlsChange,
     additionalRepoFullNames,
     withRepoPrefix,
     metadataByRepo,
-    useHeatmapViewer = true, // Default to heatmap viewer
-    heatmapByFile,
     heatmapThreshold,
     heatmapColors,
+    heatmapModel,
+    heatmapTooltipLanguage,
+    streamStateByFile,
+    fileOutputs,
+    onHeatmapThresholdChange,
+    onHeatmapColorsChange,
+    onHeatmapModelChange,
+    onHeatmapTooltipLanguageChange,
   } = props;
 
   const repoFullNames = useMemo(() => {
@@ -92,8 +107,6 @@ export function RunDiffSection(props: RunDiffSectionProps) {
     })),
   });
 
-  // IMPORTANT: Refs must be declared before any early returns (React hooks rule)
-  // These refs maintain stable combinedDiffs reference to prevent infinite loops
   const combinedDiffsRef = useRef<ReplaceDiffEntry[]>([]);
   const prevDepsRef = useRef<{
     queryData: Array<ReplaceDiffEntry[] | undefined>;
@@ -101,45 +114,8 @@ export function RunDiffSection(props: RunDiffSectionProps) {
     shouldPrefix: boolean;
   }>({ queryData: [], repoFullNames: [], shouldPrefix: false });
 
-  const isPending = queries.some(
-    (query) => query.isPending || query.isFetching,
-  );
-  const firstError = queries.find((query) => query.isError);
-
-  if (!canFetch) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-neutral-500 dark:text-neutral-400 text-sm select-none">
-          Missing repository or branch information for diff.
-        </div>
-      </div>
-    );
-  }
-
-  if (isPending) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-neutral-500 dark:text-neutral-400 text-sm select-none">
-          Loading diffs...
-        </div>
-      </div>
-    );
-  }
-
-  if (firstError) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-red-500 dark:text-red-400 text-sm select-none">
-          Failed to load diffs.
-          <pre>{JSON.stringify(firstError.error)}</pre>
-        </div>
-      </div>
-    );
-  }
-
   const shouldPrefix = withRepoPrefix ?? repoFullNames.length > 1;
 
-  // Check if any dependencies have actually changed
   const currentQueryData = queries.map((q) => q.data);
   const depsChanged =
     currentQueryData.length !== prevDepsRef.current.queryData.length ||
@@ -173,26 +149,22 @@ export function RunDiffSection(props: RunDiffSectionProps) {
     );
   }
 
-  if (useHeatmapViewer) {
-    return (
-      <GitDiffViewerWithHeatmap
-        key={`heatmap:${repoFullNames.join("|")}:${ref1}:${ref2}`}
-        diffs={combinedDiffs}
-        heatmapByFile={heatmapByFile}
-        heatmapThreshold={heatmapThreshold}
-        heatmapColors={heatmapColors}
-        onControlsChange={onControlsChange}
-        classNames={classNames}
-      />
-    );
-  }
-
   return (
-    <GitDiffViewer
-      key={`${repoFullNames.join("|")}:${ref1}:${ref2}`}
+    <GitDiffHeatmapReviewViewer
       diffs={combinedDiffs}
+      fileOutputs={fileOutputs}
+      streamStateByFile={streamStateByFile}
+      primaryRepoFullName={repoFullName}
+      shouldPrefixDiffs={shouldPrefix}
+      heatmapThreshold={heatmapThreshold}
+      heatmapColors={heatmapColors}
+      heatmapModel={heatmapModel}
+      heatmapTooltipLanguage={heatmapTooltipLanguage}
+      onHeatmapThresholdChange={onHeatmapThresholdChange}
+      onHeatmapColorsChange={onHeatmapColorsChange}
+      onHeatmapModelChange={onHeatmapModelChange}
+      onHeatmapTooltipLanguageChange={onHeatmapTooltipLanguageChange}
       onControlsChange={onControlsChange}
-      classNames={classNames}
     />
   );
 }

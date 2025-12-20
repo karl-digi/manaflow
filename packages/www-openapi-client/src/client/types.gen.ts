@@ -420,7 +420,7 @@ export type SetupInstanceBody = {
     instanceId?: string;
     selectedRepos?: Array<string>;
     ttlSeconds?: number;
-    snapshotId?: string | ('snapshot_969sg31m' | 'snapshot_3izgxkir' | 'snapshot_pcmfvjra');
+    snapshotId?: string | ('snapshot_adpauztr' | 'snapshot_r0bk3bi9' | 'snapshot_pcmfvjra');
 };
 
 export type InstanceInfo = {
@@ -719,6 +719,12 @@ export type CodeReviewStartBody = {
             label: string;
         };
     };
+    fileDiffs?: Array<{
+        filePath: string;
+        diffText: string;
+    }>;
+    heatmapModel?: string;
+    tooltipLanguage?: string;
 };
 
 export type WorkspaceConfigResponse = {

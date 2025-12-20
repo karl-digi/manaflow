@@ -23,6 +23,17 @@ export const update = authMutation({
     teamSlugOrId: v.string(),
     worktreePath: v.optional(v.string()),
     autoPrEnabled: v.optional(v.boolean()),
+    crownModel: v.optional(v.string()),
+    crownSystemPrompt: v.optional(v.string()),
+    heatmapModel: v.optional(v.string()),
+    heatmapThreshold: v.optional(v.number()),
+    heatmapTooltipLanguage: v.optional(v.string()),
+    heatmapColors: v.optional(
+      v.object({
+        line: v.object({ start: v.string(), end: v.string() }),
+        token: v.object({ start: v.string(), end: v.string() }),
+      })
+    ),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
@@ -39,6 +50,15 @@ export const update = authMutation({
       const updates: {
         worktreePath?: string;
         autoPrEnabled?: boolean;
+        crownModel?: string;
+        crownSystemPrompt?: string;
+        heatmapModel?: string;
+        heatmapThreshold?: number;
+        heatmapTooltipLanguage?: string;
+        heatmapColors?: {
+          line: { start: string; end: string };
+          token: { start: string; end: string };
+        };
         updatedAt: number;
       } = { updatedAt: now };
 
@@ -48,12 +68,36 @@ export const update = authMutation({
       if (args.autoPrEnabled !== undefined) {
         updates.autoPrEnabled = args.autoPrEnabled;
       }
+      if (args.crownModel !== undefined) {
+        updates.crownModel = args.crownModel;
+      }
+      if (args.crownSystemPrompt !== undefined) {
+        updates.crownSystemPrompt = args.crownSystemPrompt;
+      }
+      if (args.heatmapModel !== undefined) {
+        updates.heatmapModel = args.heatmapModel;
+      }
+      if (args.heatmapThreshold !== undefined) {
+        updates.heatmapThreshold = args.heatmapThreshold;
+      }
+      if (args.heatmapTooltipLanguage !== undefined) {
+        updates.heatmapTooltipLanguage = args.heatmapTooltipLanguage;
+      }
+      if (args.heatmapColors !== undefined) {
+        updates.heatmapColors = args.heatmapColors;
+      }
 
       await ctx.db.patch(existing._id, updates);
     } else {
       await ctx.db.insert("workspaceSettings", {
         worktreePath: args.worktreePath,
         autoPrEnabled: args.autoPrEnabled,
+        crownModel: args.crownModel,
+        crownSystemPrompt: args.crownSystemPrompt,
+        heatmapModel: args.heatmapModel,
+        heatmapThreshold: args.heatmapThreshold,
+        heatmapTooltipLanguage: args.heatmapTooltipLanguage,
+        heatmapColors: args.heatmapColors,
         nextLocalWorkspaceSequence: 0,
         createdAt: now,
         updatedAt: now,
