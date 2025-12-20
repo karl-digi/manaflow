@@ -442,9 +442,85 @@ const SearchableSelect = forwardRef<
     }
     const q = search.trim().toLowerCase();
     if (!q) return normOptions;
-    return normOptions.filter((o) =>
-      `${o.label} ${o.value}`.toLowerCase().includes(q)
-    );
+
+    // Filter and score options for better ranking
+    const scoredOptions: Array<{ opt: SelectOptionObject; score: number }> = [];
+
+    for (const o of normOptions) {
+      // Keep headings in filtered results (they'll be filtered out by children later)
+      if (o.heading) {
+        scoredOptions.push({ opt: o, score: -1 }); // Headings get special score
+        continue;
+      }
+
+      const labelLower = o.label.toLowerCase();
+      const valueLower = o.value.toLowerCase();
+      const combined = `${labelLower} ${valueLower}`;
+
+      if (!combined.includes(q)) {
+        continue; // No match at all
+      }
+
+      // Calculate score - lower is better (will sort ascending)
+      let score = 100; // Base score for any match
+
+      // For labels like "owner/repo", extract the repo name
+      const slashIndex = labelLower.lastIndexOf("/");
+      const namePart = slashIndex >= 0 ? labelLower.slice(slashIndex + 1) : labelLower;
+
+      // Exact match on name part (highest priority)
+      if (namePart === q) {
+        score = 0;
+      }
+      // Name part starts with query
+      else if (namePart.startsWith(q)) {
+        score = 10;
+      }
+      // Full label starts with query
+      else if (labelLower.startsWith(q)) {
+        score = 20;
+      }
+      // Name part contains query
+      else if (namePart.includes(q)) {
+        score = 30;
+      }
+      // Label contains query somewhere
+      else if (labelLower.includes(q)) {
+        score = 40;
+      }
+      // Only value matches
+      else {
+        score = 50;
+      }
+
+      scoredOptions.push({ opt: o, score });
+    }
+
+    // Sort by score (ascending), keeping original order for equal scores
+    scoredOptions.sort((a, b) => {
+      // Headings stay at original positions relative to their children
+      if (a.score === -1 || b.score === -1) return 0;
+      return a.score - b.score;
+    });
+
+    // Filter out headings that have no matching children after them
+    const result: SelectOptionObject[] = [];
+    for (let i = 0; i < scoredOptions.length; i++) {
+      const item = scoredOptions[i];
+      if (item.opt.heading) {
+        // Check if there are any non-heading items after this heading
+        const hasChildren = scoredOptions.slice(i + 1).some(
+          (s) => !s.opt.heading && s.score !== -1
+        );
+        if (hasChildren) {
+          result.push(item.opt);
+        }
+      } else {
+        result.push(item.opt);
+      }
+    }
+
+    return result;
   }, [normOptions, search, disableClientFilter]);
 
   const listRef = useRef<HTMLDivElement | null>(null);
