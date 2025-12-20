@@ -884,19 +884,28 @@ function SettingsComponent() {
                             <div className="md:w-[min(100%,480px)] md:flex-shrink-0 self-start">
                               {key.envVar === "CODEX_AUTH_JSON" ? (
                                 <div className="relative">
-                                  <textarea
-                                    id={key.envVar}
-                                    value={apiKeyValues[key.envVar] || ""}
-                                    onChange={(e) =>
-                                      handleApiKeyChange(
-                                        key.envVar,
-                                        e.target.value
-                                      )
-                                    }
-                                    rows={4}
-                                    className={`w-full px-3 py-2 pr-10 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 font-mono text-xs resize-y ${!showKeys[key.envVar] && apiKeyValues[key.envVar] ? "blur-sm select-none" : ""}`}
-                                    placeholder='{"tokens": {"id_token": "...", "access_token": "...", "refresh_token": "...", "account_id": "..."}, "last_refresh": "..."}'
-                                  />
+                                  {showKeys[key.envVar] ? (
+                                    <textarea
+                                      id={key.envVar}
+                                      value={apiKeyValues[key.envVar] || ""}
+                                      onChange={(e) =>
+                                        handleApiKeyChange(
+                                          key.envVar,
+                                          e.target.value
+                                        )
+                                      }
+                                      rows={4}
+                                      className="w-full px-3 py-2 pr-10 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 font-mono text-xs resize-y"
+                                      placeholder='{"tokens": {"id_token": "...", "access_token": "...", "refresh_token": "...", "account_id": "..."}, "last_refresh": "..."}'
+                                    />
+                                  ) : (
+                                    <div
+                                      onClick={() => toggleShowKey(key.envVar)}
+                                      className="w-full px-3 py-2 pr-10 border border-neutral-300 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 font-mono text-xs cursor-pointer min-h-[6rem]"
+                                    >
+                                      {apiKeyValues[key.envVar] ? "••••••••••••••••••••••••••••••••" : <span className="text-neutral-400">{"Click to edit"}</span>}
+                                    </div>
+                                  )}
                                   <button
                                     type="button"
                                     onClick={() => toggleShowKey(key.envVar)}
