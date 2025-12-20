@@ -28,8 +28,11 @@ function spawnAsync(
       stderr += data.toString();
     });
 
-    proc.on("close", (code) => {
-      resolve({ stdout, stderr, exitCode: code ?? 0 });
+    proc.on("close", (code, signal) => {
+      // If code is null, the process was killed by a signal - treat as failure
+      // Using exit code 1 for signalled processes (Unix convention is 128+signum but we don't need that precision)
+      const exitCode = code !== null ? code : 1;
+      resolve({ stdout, stderr, exitCode });
     });
 
     proc.on("error", (err) => {
