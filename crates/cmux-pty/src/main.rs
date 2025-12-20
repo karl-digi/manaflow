@@ -428,10 +428,6 @@ impl PtySession {
     fn set_metadata(&self, metadata: Option<serde_json::Value>) {
         *self.metadata.write() = metadata;
     }
-
-    fn get_metadata(&self) -> Option<serde_json::Value> {
-        self.metadata.read().clone()
-    }
 }
 
 // =============================================================================

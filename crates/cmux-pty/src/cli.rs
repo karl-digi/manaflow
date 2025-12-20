@@ -327,10 +327,10 @@ impl PtyClient {
 
                         // Convert key event to bytes
                         let data = key_event_to_bytes(&key_event);
-                        if !data.is_empty() {
-                            if ws_sender.send(Message::Binary(data)).await.is_err() {
-                                break 'input Ok(false);
-                            }
+                        if !data.is_empty()
+                            && ws_sender.send(Message::Binary(data)).await.is_err()
+                        {
+                            break 'input Ok(false);
                         }
                     }
                     Event::Resize(cols, rows) => {
@@ -416,29 +416,26 @@ fn key_event_to_bytes(key: &event::KeyEvent) -> Vec<u8> {
 
     // Handle Ctrl+key combinations
     if key.modifiers.contains(KeyModifiers::CONTROL) {
-        match key.code {
-            Char(c) => {
-                let c = c.to_ascii_lowercase();
-                if c >= 'a' && c <= 'z' {
-                    return vec![(c as u8) - b'a' + 1];
-                }
-                if c == '[' {
-                    return vec![0x1b]; // ESC
-                }
-                if c == '\\' {
-                    return vec![0x1c];
-                }
-                if c == ']' {
-                    return vec![0x1d];
-                }
-                if c == '^' {
-                    return vec![0x1e];
-                }
-                if c == '_' {
-                    return vec![0x1f];
-                }
+        if let Char(c) = key.code {
+            let c = c.to_ascii_lowercase();
+            if c.is_ascii_lowercase() {
+                return vec![(c as u8) - b'a' + 1];
             }
-            _ => {}
+            if c == '[' {
+                return vec![0x1b]; // ESC
+            }
+            if c == '\\' {
+                return vec![0x1c];
+            }
+            if c == ']' {
+                return vec![0x1d];
+            }
+            if c == '^' {
+                return vec![0x1e];
+            }
+            if c == '_' {
+                return vec![0x1f];
+            }
         }
     }
 
