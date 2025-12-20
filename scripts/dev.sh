@@ -5,6 +5,7 @@
 # Usage: ./scripts/dev.sh [options]
 #
 # Options:
+#   --docker                Force build Docker image and Rust components
 #   --force-docker-build    Force rebuild the Docker image (overrides --skip-docker)
 #   --skip-docker[=BOOL]    Skip Docker image build (default: true)
 #   --skip-convex[=BOOL]    Skip Convex backend (default: true)
@@ -62,9 +63,15 @@ SKIP_CONVEX="${SKIP_CONVEX:-true}"
 RUN_ELECTRON=false
 SKIP_DOCKER_BUILD="${SKIP_DOCKER_BUILD:-true}"
 CONVEX_AGENT_MODE=false
+BUILD_DOCKER_AND_RUST=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --docker)
+            BUILD_DOCKER_AND_RUST=true
+            FORCE_DOCKER_BUILD=true
+            shift
+            ;;
         --force-docker-build)
             FORCE_DOCKER_BUILD=true
             shift
@@ -177,6 +184,13 @@ if [ -n "${EFFECTIVE_GITHUB_TOKEN}" ]; then
     export GITHUB_TOKEN="${EFFECTIVE_GITHUB_TOKEN}"
     export DOCKER_BUILDKIT="${DOCKER_BUILDKIT:-1}"
     DOCKER_BUILD_ARGS+=(--build-arg GITHUB_TOKEN --secret id=github_token,env=GITHUB_TOKEN)
+fi
+
+# Build Rust sandbox CLI if --docker flag is used
+if [ "$BUILD_DOCKER_AND_RUST" = "true" ]; then
+    echo -e "Building Rust sandbox CLI (dmux)..."
+    (cd "$APP_DIR/packages/sandbox" && cargo build --bin dmux) || exit 1
+    echo -e "Rust sandbox CLI built successfully"
 fi
 
 if [ "$IS_DEVCONTAINER" = "true" ]; then
