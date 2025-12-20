@@ -2,7 +2,7 @@ import { env } from "@/client-env";
 import { Dropdown } from "@/components/ui/dropdown";
 import { Link } from "@tanstack/react-router";
 import clsx from "clsx";
-import { FolderPlus, Plus, Server } from "lucide-react";
+import { Cloud, Monitor, Plus } from "lucide-react";
 import { useCallback } from "react";
 
 interface SidebarWorkspacesSectionProps {
@@ -26,8 +26,13 @@ export function SidebarWorkspacesSection({
     openCommandBarWithPage("cloud-workspaces");
   }, []);
 
+  // Hide entire workspaces section in web mode
+  if (env.NEXT_PUBLIC_WEB_MODE) {
+    return null;
+  }
+
   return (
-    <div className="flex items-center justify-between ml-2 pr-2">
+    <div className="flex items-center justify-between ml-2">
       <Link
         to="/$teamSlugOrId/workspaces"
         params={{ teamSlugOrId }}
@@ -46,9 +51,8 @@ export function SidebarWorkspacesSection({
       <Dropdown.Root>
         <Dropdown.Trigger
           className={clsx(
-            "p-1 rounded flex items-center justify-center",
+            "p-1 flex items-center justify-center",
             "text-neutral-500 dark:text-neutral-400",
-            "hover:bg-neutral-200/60 dark:hover:bg-neutral-700/60",
             "hover:text-neutral-700 dark:hover:text-neutral-200",
             "transition-colors"
           )}
@@ -64,7 +68,7 @@ export function SidebarWorkspacesSection({
                   onClick={handleLocalWorkspace}
                   className="flex items-center gap-2"
                 >
-                  <FolderPlus className="w-3.5 h-3.5 text-neutral-500 dark:text-neutral-400" />
+                  <Monitor className="w-3.5 h-3.5 text-neutral-500 dark:text-neutral-400" />
                   <span>Local Workspace</span>
                 </Dropdown.Item>
               )}
@@ -72,7 +76,7 @@ export function SidebarWorkspacesSection({
                 onClick={handleCloudWorkspace}
                 className="flex items-center gap-2"
               >
-                <Server className="w-3.5 h-3.5 text-neutral-500 dark:text-neutral-400" />
+                <Cloud className="w-3.5 h-3.5 text-neutral-500 dark:text-neutral-400" />
                 <span>Cloud Workspace</span>
               </Dropdown.Item>
             </Dropdown.Popup>

@@ -28,7 +28,7 @@ import { useMutation, useQuery } from "convex/react";
 import {
   Bug,
   ClipboardCopy,
-  FolderPlus,
+  Cloud,
   GitPullRequest,
   Home,
   LogOut,
@@ -1580,7 +1580,7 @@ export function CommandBar({
               execute: () => handleSelect("local-workspaces"),
               renderContent: () => (
                 <>
-                  <FolderPlus className="h-4 w-4 text-neutral-500" />
+                  <Monitor className="h-4 w-4 text-neutral-500" />
                   <span className="text-sm">New Local Workspace</span>
                 </>
               ),
@@ -1600,7 +1600,7 @@ export function CommandBar({
         execute: () => handleSelect("cloud-workspaces"),
         renderContent: () => (
           <>
-            <Server className="h-4 w-4 text-neutral-500" />
+            <Cloud className="h-4 w-4 text-neutral-500" />
             <span className="text-sm">New Cloud Workspace</span>
           </>
         ),
