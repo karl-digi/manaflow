@@ -833,6 +833,14 @@ func TestWalrusOperatorHighlighting(t *testing.T) {
 			score:    70,
 			wantFind: ":=",
 		},
+		{
+			// Real case from tinygrad/tinygrad#8435 - no space before :=
+			name:     "walrus operator no space - tinygrad#8435 line 109",
+			codeLine: "      g.graphs.append(new_sink_js:=uop_to_json(new_sink))  # membership check logic changed significantly",
+			token:    "walrus",
+			score:    65,
+			wantFind: ":=",
+		},
 	}
 
 	for _, tt := range tests {
