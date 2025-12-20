@@ -2,6 +2,7 @@ import { env } from "@/client-env";
 import { ContainerSettings } from "@/components/ContainerSettings";
 import { FloatingPane } from "@/components/floating-pane";
 import { ProviderStatusSettings } from "@/components/provider-status-settings";
+import { ShellHistorySettings } from "@/components/ShellHistorySettings";
 import { useTheme } from "@/components/theme/use-theme";
 import { TitleBar } from "@/components/TitleBar";
 import { api } from "@cmux/convex/api";
@@ -1005,6 +1006,11 @@ function SettingsComponent() {
                   />
                 </div>
               </div>
+            )}
+
+            {/* Shell History Settings - hidden in web mode */}
+            {!env.NEXT_PUBLIC_WEB_MODE && (
+              <ShellHistorySettings teamSlugOrId={teamSlugOrId} />
             )}
 
             {/* Notifications */}
