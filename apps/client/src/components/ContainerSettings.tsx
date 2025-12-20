@@ -46,7 +46,8 @@ export function ContainerSettings({
       onDataChange?.(newData);
       isInitialized.current = true;
     }
-  }, [settings, onDataChange]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- onDataChange is intentionally excluded to prevent infinite loop
+  }, [settings]);
 
   const updateFormData = (newData: typeof formData) => {
     setFormData(newData);
