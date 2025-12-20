@@ -377,6 +377,8 @@ function SettingsComponent() {
     try {
       let savedCount = 0;
       let deletedCount = 0;
+      let workspaceSettingsSaved = false;
+      let containerSettingsSaved = false;
 
       // Save worktree path / auto PR / heatmap settings if changed
       const workspaceSettingsChanged =
@@ -403,6 +405,7 @@ function SettingsComponent() {
         setOriginalHeatmapThreshold(heatmapThreshold);
         setOriginalHeatmapTooltipLanguage(heatmapTooltipLanguage);
         setOriginalHeatmapColors(heatmapColors);
+        workspaceSettingsSaved = true;
       }
 
       // Save container settings if changed
@@ -417,6 +420,7 @@ function SettingsComponent() {
           ...containerSettingsData,
         });
         setOriginalContainerSettingsData(containerSettingsData);
+        containerSettingsSaved = true;
       }
 
       for (const key of apiKeys) {
@@ -451,8 +455,20 @@ function SettingsComponent() {
       // After successful save, hide all API key inputs
       setShowKeys({});
 
-      if (savedCount > 0 || deletedCount > 0) {
+      const hasAnySaves =
+        savedCount > 0 ||
+        deletedCount > 0 ||
+        workspaceSettingsSaved ||
+        containerSettingsSaved;
+
+      if (hasAnySaves) {
         const actions = [];
+        if (workspaceSettingsSaved) {
+          actions.push("updated workspace settings");
+        }
+        if (containerSettingsSaved) {
+          actions.push("updated container settings");
+        }
         if (savedCount > 0) {
           actions.push(`saved ${savedCount} key${savedCount > 1 ? "s" : ""}`);
         }
