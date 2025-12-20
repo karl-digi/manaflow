@@ -127,8 +127,8 @@ async function checkPtySessionAlive(
         }
         return false;
       }
-      const sessions = (await response.json()) as PtySessionInfo[];
-      const session = sessions.find((s) => s.id === sessionId);
+      const result = (await response.json()) as { sessions: PtySessionInfo[] };
+      const session = result.sessions.find((s) => s.id === sessionId);
       if (session) {
         return session.alive;
       }
