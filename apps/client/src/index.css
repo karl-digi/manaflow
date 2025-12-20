@@ -752,6 +752,9 @@ pre,
 /* Prevent diff content from being blocked by sticky headers when scrolling */
 .diff {
   scroll-margin-top: 48px;
+  /* Ensure diff table renders below sticky headers */
+  position: relative;
+  z-index: 1;
 }
 
 .diff-hunk {
@@ -760,6 +763,12 @@ pre,
 
 .diff-decoration {
   scroll-margin-top: 48px;
+}
+
+/* Ensure hunk header decorations don't overlap with file headers */
+.diff-decoration-content {
+  position: relative;
+  z-index: 2;
 }
 
 /* Heatmap character highlight styles */
