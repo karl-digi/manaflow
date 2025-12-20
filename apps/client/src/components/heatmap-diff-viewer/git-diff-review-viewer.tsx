@@ -18,7 +18,6 @@ import {
   FolderOpen,
   Loader2,
 } from "lucide-react";
-import { useClipboard } from "@mantine/hooks";
 import {
   computeNewLineNumber,
   computeOldLineNumber,
@@ -722,9 +721,6 @@ function HeatmapThresholdControl({
   onChange,
   colors,
   onColorsChange,
-  onCopyStyles,
-  onLoadConfig,
-  copyStatus,
   selectedModel,
   onModelChange,
   selectedLanguage,
@@ -734,9 +730,6 @@ function HeatmapThresholdControl({
   onChange: (next: number) => void;
   colors: HeatmapColorSettings;
   onColorsChange: (next: HeatmapColorSettings) => void;
-  onCopyStyles: () => void;
-  onLoadConfig: () => void;
-  copyStatus: boolean;
   selectedModel: HeatmapModelOptionValue;
   onModelChange: (next: HeatmapModelOptionValue) => void;
   selectedLanguage: TooltipLanguageValue;
@@ -882,22 +875,6 @@ function HeatmapThresholdControl({
             </div>
           );
         })}
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={onCopyStyles}
-            className="inline-flex items-center justify-center rounded border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800"
-          >
-            {copyStatus ? "Copied!" : "Copy config"}
-          </button>
-          <button
-            type="button"
-            onClick={onLoadConfig}
-            className="inline-flex items-center justify-center rounded border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-500 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800"
-          >
-            Load config
-          </button>
-        </div>
       </div>
       <div className="mt-4 grid grid-cols-1 gap-4">
         <div className="space-y-2">
@@ -1342,7 +1319,6 @@ export function GitDiffHeatmapReviewViewer({
   );
 
   const deferredHeatmapThreshold = useDeferredValue(heatmapThreshold);
-  const clipboard = useClipboard({ timeout: 2000 });
   const emptyStreamStateMap = useMemo(
     () => new Map<string, StreamFileState>(),
     []
@@ -2232,33 +2208,6 @@ export function GitDiffHeatmapReviewViewer({
         (state) => state.status === "pending"
       ));
 
-  const handleCopyHeatmapConfig = useCallback(() => {
-    const compact = JSON.stringify(effectiveHeatmapColors);
-    clipboard.copy(compact);
-  }, [clipboard, effectiveHeatmapColors]);
-
-  const handlePromptLoadColors = useCallback(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    const existing = JSON.stringify(effectiveHeatmapColors, null, 2);
-    const input = window.prompt(
-      "Paste heatmap color configuration JSON",
-      existing
-    );
-    if (input === null) {
-      return;
-    }
-    try {
-      const parsed = JSON.parse(input);
-      const normalized = normalizeHeatmapColors(parsed);
-      onHeatmapColorsChange?.(normalized);
-    } catch (error) {
-      console.error("[heatmap-colors] Invalid configuration", error);
-      window.alert?.("Invalid configuration. Please verify the JSON content.");
-    }
-  }, [effectiveHeatmapColors, onHeatmapColorsChange]);
-
   if (totalFileCount === 0) {
     return (
       <div className="border border-neutral-200 bg-white p-8 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300">
@@ -2294,9 +2243,6 @@ export function GitDiffHeatmapReviewViewer({
               onChange={(next) => onHeatmapThresholdChange?.(next)}
               colors={effectiveHeatmapColors}
               onColorsChange={(next) => onHeatmapColorsChange?.(next)}
-              onCopyStyles={handleCopyHeatmapConfig}
-              onLoadConfig={handlePromptLoadColors}
-              copyStatus={clipboard.copied}
               selectedModel={effectiveHeatmapModel}
               onModelChange={(next) => onHeatmapModelChange?.(next)}
               selectedLanguage={effectiveTooltipLanguage}

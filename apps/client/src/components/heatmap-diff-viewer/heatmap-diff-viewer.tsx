@@ -889,25 +889,24 @@ export const HeatmapDiffViewer = memo(function HeatmapDiffViewerComponent({
               </span>
             </div>
 
-            {isLoading ? (
-              <Tooltip delayDuration={300}>
-                <TooltipTrigger asChild>
-                  <span className="inline-flex items-center">
-                    <Loader2 className="h-3.5 w-3.5 text-sky-500 animate-spin flex-shrink-0" />
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent
-                  side="bottom"
-                  align="start"
-                  showArrow={false}
-                  className="rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-xs text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
-                >
-                  AI review in progress...
-                </TooltipContent>
-              </Tooltip>
-            ) : null}
-
             <div className="flex items-center gap-2 text-[13px] font-medium">
+              {isLoading ? (
+                <Tooltip delayDuration={300}>
+                  <TooltipTrigger asChild>
+                    <span className="inline-flex items-center">
+                      <Loader2 className="h-3.5 w-3.5 text-sky-500 animate-spin flex-shrink-0" />
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent
+                    side="bottom"
+                    align="start"
+                    showArrow={false}
+                    className="rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-xs text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
+                  >
+                    AI review in progress...
+                  </TooltipContent>
+                </Tooltip>
+              ) : null}
               <span className="text-emerald-600 dark:text-emerald-400">
                 +{additions}
               </span>
