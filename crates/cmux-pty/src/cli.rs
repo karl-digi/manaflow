@@ -307,7 +307,9 @@ impl PtyClient {
                         // Check for detach sequence: Ctrl+B, D
                         if detach_prefix.load(std::sync::atomic::Ordering::SeqCst) {
                             detach_prefix.store(false, std::sync::atomic::Ordering::SeqCst);
-                            if key_event.code == KeyCode::Char('d') || key_event.code == KeyCode::Char('D') {
+                            if key_event.code == KeyCode::Char('d')
+                                || key_event.code == KeyCode::Char('D')
+                            {
                                 break 'input Ok(true); // Detach requested
                             }
                             // Not 'd', send both Ctrl+B and this key
@@ -327,8 +329,7 @@ impl PtyClient {
 
                         // Convert key event to bytes
                         let data = key_event_to_bytes(&key_event);
-                        if !data.is_empty()
-                            && ws_sender.send(Message::Binary(data)).await.is_err()
+                        if !data.is_empty() && ws_sender.send(Message::Binary(data)).await.is_err()
                         {
                             break 'input Ok(false);
                         }
@@ -494,8 +495,10 @@ pub async fn cmd_list(server: &str, json: bool) -> Result<()> {
     }
 
     // Print header
-    println!("{:<4} {:<36} {:<20} {:<8} {:<10} {:<6}",
-             "IDX", "ID", "NAME", "SIZE", "SHELL", "PID");
+    println!(
+        "{:<4} {:<36} {:<20} {:<8} {:<10} {:<6}",
+        "IDX", "ID", "NAME", "SIZE", "SHELL", "PID"
+    );
     println!("{}", "-".repeat(90));
 
     for session in sessions {
@@ -607,7 +610,9 @@ fn process_key_string(s: &str) -> String {
         if c == 'C' && chars.peek() == Some(&'-') {
             chars.next(); // consume '-'
             if let Some(key) = chars.next() {
-                let ctrl_char = (key.to_ascii_lowercase() as u8).wrapping_sub(b'a').wrapping_add(1);
+                let ctrl_char = (key.to_ascii_lowercase() as u8)
+                    .wrapping_sub(b'a')
+                    .wrapping_add(1);
                 result.push(ctrl_char as char);
                 continue;
             }

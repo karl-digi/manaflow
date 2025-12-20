@@ -46,7 +46,12 @@ use uuid::Uuid;
 #[command(version)]
 struct Cli {
     /// Server URL for client commands
-    #[arg(short = 'S', long, env = "CMUX_PTY_URL", default_value = "http://localhost:39383")]
+    #[arg(
+        short = 'S',
+        long,
+        env = "CMUX_PTY_URL",
+        default_value = "http://localhost:39383"
+    )]
     server: String,
 
     #[command(subcommand)]
@@ -1514,9 +1519,7 @@ async fn main() -> Result<()> {
 
     match cli.command {
         // Server mode
-        Some(Commands::Server { host, port }) => {
-            run_server(&host, port).await
-        }
+        Some(Commands::Server { host, port }) => run_server(&host, port).await,
 
         // No command = server mode (for backwards compatibility)
         None => {
@@ -1529,21 +1532,18 @@ async fn main() -> Result<()> {
         }
 
         // Client commands
-        Some(Commands::List { json }) => {
-            cli::cmd_list(&cli.server, json).await
-        }
+        Some(Commands::List { json }) => cli::cmd_list(&cli.server, json).await,
 
-        Some(Commands::New { name, shell, cwd, detached }) => {
-            cli::cmd_new(&cli.server, name, shell, cwd, detached).await
-        }
+        Some(Commands::New {
+            name,
+            shell,
+            cwd,
+            detached,
+        }) => cli::cmd_new(&cli.server, name, shell, cwd, detached).await,
 
-        Some(Commands::Attach { session }) => {
-            cli::cmd_attach(&cli.server, &session).await
-        }
+        Some(Commands::Attach { session }) => cli::cmd_attach(&cli.server, &session).await,
 
-        Some(Commands::Kill { sessions }) => {
-            cli::cmd_kill(&cli.server, &sessions).await
-        }
+        Some(Commands::Kill { sessions }) => cli::cmd_kill(&cli.server, &sessions).await,
 
         Some(Commands::SendKeys { session, keys }) => {
             cli::cmd_send_keys(&cli.server, &session, &keys).await
@@ -1553,9 +1553,11 @@ async fn main() -> Result<()> {
             cli::cmd_capture_pane(&cli.server, &session, print).await
         }
 
-        Some(Commands::Resize { session, cols, rows }) => {
-            cli::cmd_resize(&cli.server, &session, cols, rows).await
-        }
+        Some(Commands::Resize {
+            session,
+            cols,
+            rows,
+        }) => cli::cmd_resize(&cli.server, &session, cols, rows).await,
     }
 }
 

@@ -1234,10 +1234,17 @@ export function hasCmuxPtyTerminal(name: string): boolean {
 export async function waitForCmuxPtyTerminal(name: string, maxWaitMs: number = 10000): Promise<boolean> {
   if (!terminalManager) return false;
 
-  // Wait for initial sync to complete
+  // Wait for initial sync to complete (with timeout to avoid hanging if PTY server is down)
+  const syncTimeout = 5000; // 5 seconds
   try {
-    await terminalManager.waitForInitialSync();
+    await Promise.race([
+      terminalManager.waitForInitialSync(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Initial sync timeout')), syncTimeout)
+      )
+    ]);
   } catch {
+    // Timeout or connection failure - fall back to tmux
     return false;
   }
 
