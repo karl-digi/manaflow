@@ -79,40 +79,19 @@ export const enqueueFromWebhook = internalMutation({
       updatedAt: now,
     });
 
-    // Supersede any older pending runs for this PR (they have stale commits)
-    // This ensures only the latest commit's preview run will execute
-    const pendingRuns = await ctx.db
-      .query("previewRuns")
-      .withIndex("by_config_pr", (q) =>
-        q.eq("previewConfigId", args.previewConfigId).eq("prNumber", args.prNumber),
-      )
-      .collect();
-
-    let supersededCount = 0;
-    for (const run of pendingRuns) {
-      if (run._id !== runId && run.status === "pending") {
-        await ctx.db.patch(run._id, {
-          status: "superseded",
-          stateReason: "Newer commit pushed to PR",
-          completedAt: now,
-          updatedAt: now,
-        });
-        supersededCount++;
-      }
-    }
-
-    if (supersededCount > 0) {
-      console.log("[previewRuns] Superseded older pending runs for PR", {
-        newRunId: runId,
-        prNumber: args.prNumber,
-        headSha: args.headSha,
-        supersededCount,
-      });
-    }
+    // Note: Cancellation of previous runs (both pending AND running) is handled by the caller
+    // via cancelPreviousPreviewsForPr action. This mutation just creates the new run.
+    // The action handles stopping Morph instances and posting GitHub comments.
 
     await ctx.db.patch(args.previewConfigId, {
       lastRunAt: now,
       updatedAt: now,
+    });
+
+    console.log("[previewRuns] Created new preview run for commit", {
+      runId,
+      prNumber: args.prNumber,
+      headSha: args.headSha,
     });
 
     return runId;
@@ -301,35 +280,7 @@ export const enqueueFromTaskRun = internalMutation({
       updatedAt: now,
     });
 
-    // Supersede any older pending runs for this PR (they have stale commits)
-    const pendingRuns = await ctx.db
-      .query("previewRuns")
-      .withIndex("by_config_pr", (q) =>
-        q.eq("previewConfigId", previewConfig._id).eq("prNumber", prNumber),
-      )
-      .collect();
-
-    let supersededCount = 0;
-    for (const run of pendingRuns) {
-      if (run._id !== runId && run.status === "pending") {
-        await ctx.db.patch(run._id, {
-          status: "superseded",
-          stateReason: "Newer commit pushed to PR",
-          completedAt: now,
-          updatedAt: now,
-        });
-        supersededCount++;
-      }
-    }
-
-    if (supersededCount > 0) {
-      console.log("[previewRuns] Superseded older pending runs for PR (from task run)", {
-        newRunId: runId,
-        prNumber,
-        headSha,
-        supersededCount,
-      });
-    }
+    // Note: Cancellation of previous runs is handled by the caller via cancelPreviousPreviewsForPr action
 
     await ctx.db.patch(previewConfig._id, {
       lastRunAt: now,
@@ -760,24 +711,8 @@ export const createManual = authMutation({
       updatedAt: now,
     });
 
-    // Supersede any older pending runs for this PR (they have stale commits)
-    const pendingRuns = await ctx.db
-      .query("previewRuns")
-      .withIndex("by_config_pr", (q) =>
-        q.eq("previewConfigId", config._id).eq("prNumber", args.prNumber),
-      )
-      .collect();
-
-    for (const run of pendingRuns) {
-      if (run._id !== runId && run.status === "pending") {
-        await ctx.db.patch(run._id, {
-          status: "superseded",
-          stateReason: "Newer commit pushed to PR",
-          completedAt: now,
-          updatedAt: now,
-        });
-      }
-    }
+    // Note: For manual runs, we don't cancel other runs since this is user-initiated
+    // and starts immediately in "running" state
 
     await ctx.db.patch(config._id, {
       lastRunAt: now,

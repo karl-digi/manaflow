@@ -520,6 +520,7 @@ export const updateStatus = internalMutation({
       v.literal("running"),
       v.literal("completed"),
       v.literal("failed"),
+      v.literal("cancelled"),
     ),
     exitCode: v.optional(v.number()),
   },
@@ -540,7 +541,7 @@ export const updateStatus = internalMutation({
       updatedAt: now,
     };
 
-    if (args.status === "completed" || args.status === "failed") {
+    if (args.status === "completed" || args.status === "failed" || args.status === "cancelled") {
       updates.completedAt = now;
       if (args.exitCode !== undefined) {
         updates.exitCode = args.exitCode;
@@ -550,7 +551,7 @@ export const updateStatus = internalMutation({
     await ctx.db.patch(args.id, updates);
 
     // After updating to a terminal status, check if we should update the task status
-    if (args.status === "completed" || args.status === "failed") {
+    if (args.status === "completed" || args.status === "failed" || args.status === "cancelled") {
       await updateTaskStatusFromRuns(ctx, run.taskId, run.teamId, run.userId);
     }
   },

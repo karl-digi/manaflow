@@ -96,8 +96,149 @@ export const stopPreviewInstance = internalAction({
   },
 });
 
-// Retry delay when waiting for another preview run to complete (30 seconds)
-const DISPATCH_RETRY_DELAY_MS = 30_000;
+/**
+ * Cancels all running/pending preview runs for a PR except the specified one.
+ * This is called when a new commit is pushed to ensure only the latest commit's preview runs.
+ *
+ * For each cancelled run:
+ * 1. Stops the Morph instance (if running)
+ * 2. Posts/updates GitHub comment with cancellation notice
+ * 3. Marks the run as "superseded"
+ */
+export const cancelPreviousPreviewsForPr = internalAction({
+  args: {
+    previewConfigId: v.id("previewConfigs"),
+    prNumber: v.number(),
+    newHeadSha: v.string(),
+    exceptRunId: v.id("previewRuns"),
+    installationId: v.optional(v.number()),
+    repoFullName: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const { previewConfigId, prNumber, newHeadSha, exceptRunId, installationId, repoFullName } = args;
+
+    // Get all active runs for this PR
+    const runs = await ctx.runQuery(internal.previewRuns.listByConfigAndPr, {
+      previewConfigId,
+      prNumber,
+      limit: 20,
+    });
+
+    const runsToCancel = runs.filter(
+      (r) => r._id !== exceptRunId && (r.status === "pending" || r.status === "running"),
+    );
+
+    if (runsToCancel.length === 0) {
+      console.log("[preview-jobs] No runs to cancel for PR", {
+        previewConfigId,
+        prNumber,
+        newHeadSha: newHeadSha.slice(0, 7),
+      });
+      return { cancelledCount: 0 };
+    }
+
+    console.log("[preview-jobs] Cancelling previous preview runs for PR", {
+      previewConfigId,
+      prNumber,
+      newHeadSha: newHeadSha.slice(0, 7),
+      runsToCancel: runsToCancel.map((r) => ({
+        id: r._id,
+        headSha: r.headSha.slice(0, 7),
+        status: r.status,
+      })),
+    });
+
+    let cancelledCount = 0;
+
+    for (const run of runsToCancel) {
+      try {
+        // Step 1: Stop the Morph instance if the run is actively running
+        if (run.status === "running" && run.taskRunId) {
+          try {
+            await ctx.runAction(internal.preview_jobs.stopPreviewInstance, {
+              previewRunId: run._id,
+            });
+            console.log("[preview-jobs] Stopped Morph instance for cancelled run", {
+              previewRunId: run._id,
+              headSha: run.headSha.slice(0, 7),
+            });
+          } catch (stopError) {
+            console.error("[preview-jobs] Failed to stop Morph instance for cancelled run", {
+              previewRunId: run._id,
+              error: stopError instanceof Error ? stopError.message : String(stopError),
+            });
+            // Continue with cancellation even if stop fails
+          }
+        }
+
+        // Step 2: Post/update GitHub comment with cancellation notice
+        if (installationId) {
+          try {
+            await ctx.runAction(internal.github_pr_comments.postCancellationComment, {
+              installationId,
+              repoFullName,
+              prNumber,
+              previewRunId: run._id,
+              cancelledHeadSha: run.headSha,
+              newHeadSha,
+              existingCommentId: run.githubCommentId,
+            });
+          } catch (commentError) {
+            console.error("[preview-jobs] Failed to post cancellation comment", {
+              previewRunId: run._id,
+              error: commentError instanceof Error ? commentError.message : String(commentError),
+            });
+            // Continue with cancellation even if comment fails
+          }
+        }
+
+        // Step 3: Mark the run as superseded
+        await ctx.runMutation(internal.previewRuns.updateStatus, {
+          previewRunId: run._id,
+          status: "superseded",
+        });
+
+        // Also mark any associated task run as cancelled
+        if (run.taskRunId) {
+          try {
+            await ctx.runMutation(internal.taskRuns.updateStatus, {
+              id: run.taskRunId,
+              status: "cancelled",
+            });
+          } catch (taskRunError) {
+            console.error("[preview-jobs] Failed to mark task run as cancelled", {
+              previewRunId: run._id,
+              taskRunId: run.taskRunId,
+              error: taskRunError instanceof Error ? taskRunError.message : String(taskRunError),
+            });
+          }
+        }
+
+        cancelledCount++;
+        console.log("[preview-jobs] Cancelled preview run", {
+          previewRunId: run._id,
+          headSha: run.headSha.slice(0, 7),
+          previousStatus: run.status,
+        });
+      } catch (error) {
+        console.error("[preview-jobs] Failed to cancel preview run", {
+          previewRunId: run._id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    console.log("[preview-jobs] Finished cancelling previous preview runs", {
+      previewConfigId,
+      prNumber,
+      newHeadSha: newHeadSha.slice(0, 7),
+      cancelledCount,
+      totalAttempted: runsToCancel.length,
+    });
+
+    return { cancelledCount };
+  },
+});
 
 export const requestDispatch = internalAction({
   args: {
@@ -144,29 +285,8 @@ export const requestDispatch = internalAction({
       return;
     }
 
-    // Check if there's a RUNNING preview run for this PR (not just pending)
-    // If another run is actively running, wait for it to complete before starting
-    const runningRun = await ctx.runQuery(internal.previewRuns.getRunningByConfigAndPr, {
-      previewConfigId: payload.config._id,
-      prNumber: payload.run.prNumber,
-    });
-
-    if (runningRun && runningRun._id !== args.previewRunId) {
-      console.log("[preview-jobs] Another preview run is running for this PR; will retry later", {
-        previewRunId: args.previewRunId,
-        runningRunId: runningRun._id,
-        runningHeadSha: runningRun.headSha?.slice(0, 7),
-        prNumber: payload.run.prNumber,
-        retryInMs: DISPATCH_RETRY_DELAY_MS,
-      });
-      // Re-schedule dispatch to try again later
-      await ctx.scheduler.runAfter(
-        DISPATCH_RETRY_DELAY_MS,
-        internal.preview_jobs.requestDispatch,
-        { previewRunId: args.previewRunId },
-      );
-      return;
-    }
+    // Note: We no longer wait for running jobs - cancelPreviousPreviewsForPr handles stopping them
+    // This dispatch should proceed immediately since the caller already cancelled previous runs
 
     try {
       await ctx.runMutation(internal.previewRuns.markDispatched, {
