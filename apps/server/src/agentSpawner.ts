@@ -676,6 +676,44 @@ export async function spawnAgent(
             `[AgentSpawner] Running maintenance script for ${projectFullName} via cmux-pty`
           );
 
+          // Write maintenance script to a file first (like cloud mode does)
+          const CMUX_RUNTIME_DIR = "/var/tmp/cmux-scripts";
+          const maintenanceScriptPath = `${CMUX_RUNTIME_DIR}/maintenance.sh`;
+          const maintenanceScriptContent = `#!/bin/zsh
+set -eu
+
+cd /root/workspace
+
+echo "=== Maintenance Script Started at \\$(date) ==="
+${workspaceConfig.maintenanceScript}
+echo "=== Maintenance Script Completed at \\$(date) ==="
+`;
+
+          // Create directory and write script file using heredoc
+          const writeScriptCommand = `mkdir -p ${CMUX_RUNTIME_DIR} && cat > ${maintenanceScriptPath} <<'MAINTENANCE_SCRIPT_EOF'
+${maintenanceScriptContent}
+MAINTENANCE_SCRIPT_EOF
+chmod +x ${maintenanceScriptPath}`;
+
+          const writeScriptResult = await workerExec({
+            workerSocket,
+            command: "bash",
+            args: ["-c", writeScriptCommand],
+            cwd: "/root/workspace",
+            env: {},
+            timeout: 10000,
+          });
+
+          if (writeScriptResult.exitCode !== 0) {
+            serverLogger.error(
+              `[AgentSpawner] Failed to write maintenance script file`,
+              { exitCode: writeScriptResult.exitCode, stdout: writeScriptResult.stdout, stderr: writeScriptResult.stderr }
+            );
+            return;
+          }
+
+          serverLogger.info(`[AgentSpawner] Wrote maintenance script to ${maintenanceScriptPath}`);
+
           // Create a cmux-pty session for the maintenance script
           const createResult = await workerExec({
             workerSocket,
@@ -696,15 +734,11 @@ export async function spawnAgent(
 
           serverLogger.info(`[AgentSpawner] Created maintenance PTY session`);
 
-          // Build and send the maintenance script command
-          const scriptPreamble = "set -euo pipefail";
-          const maintenancePayload = `${scriptPreamble}\n${workspaceConfig.maintenanceScript}`;
-
-          serverLogger.info(`[AgentSpawner] Sending maintenance script via send-keys...`);
+          // Send command to run the script file
           const sendResult = await workerExec({
             workerSocket,
             command: "cmux-pty",
-            args: ["send-keys", "maintenance", maintenancePayload, "Enter"],
+            args: ["send-keys", "maintenance", maintenanceScriptPath, "Enter"],
             cwd: "/root/workspace",
             env: {},
             timeout: 10000,
