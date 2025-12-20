@@ -62,6 +62,7 @@ import {
   selectSuggestedItems,
   useSuggestionHistory,
 } from "./command-bar/useSuggestionHistory";
+import { COMMAND_BAR_OPEN_EVENT } from "./command-bar/events";
 import clsx from "clsx";
 
 interface CommandBarProps {
@@ -460,6 +461,16 @@ export function CommandBar({
     }
     closeCommand();
   }, [activePage, clearCommandInput, closeCommand, search, setActivePage]);
+
+  const toggleCommandPalette = useCallback(() => {
+    if (openRef.current) {
+      closeCommand();
+      return;
+    }
+    setOpenedWithShift(false);
+    captureFocusBeforeOpen();
+    setOpen(true);
+  }, [captureFocusBeforeOpen, closeCommand]);
 
   useEffect(() => {
     if (!open) return;
@@ -1043,13 +1054,7 @@ export function CommandBar({
     if (isElectron) {
       const off = window.cmux.on("shortcut:cmd-k", () => {
         // Only handle Cmd+K (no shift/ctrl variations)
-        if (openRef.current) {
-          closeCommand();
-          return;
-        }
-        setOpenedWithShift(false);
-        captureFocusBeforeOpen();
-        setOpen(true);
+        toggleCommandPalette();
       });
       return () => {
         // Unsubscribe if available
@@ -1068,18 +1073,23 @@ export function CommandBar({
         !e.ctrlKey
       ) {
         e.preventDefault();
-        if (openRef.current) {
-          closeCommand();
-          return;
-        }
-        setOpenedWithShift(false);
-        captureFocusBeforeOpen();
-        setOpen(true);
+        toggleCommandPalette();
       }
     };
     document.addEventListener("keydown", down);
     return () => document.removeEventListener("keydown", down);
-  }, [captureFocusBeforeOpen, closeCommand]);
+  }, [toggleCommandPalette]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleOpenEvent = () => {
+      toggleCommandPalette();
+    };
+    window.addEventListener(COMMAND_BAR_OPEN_EVENT, handleOpenEvent);
+    return () => {
+      window.removeEventListener(COMMAND_BAR_OPEN_EVENT, handleOpenEvent);
+    };
+  }, [toggleCommandPalette]);
 
   // Track and restore focus across open/close, including iframes/webviews.
   useEffect(() => {

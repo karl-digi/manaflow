@@ -10,6 +10,7 @@ import { TaskList } from "@/components/dashboard/TaskList";
 import { WorkspaceCreationButtons } from "@/components/dashboard/WorkspaceCreationButtons";
 import { FloatingPane } from "@/components/floating-pane";
 import { WorkspaceSetupPanel } from "@/components/WorkspaceSetupPanel";
+import { openCommandBar } from "@/components/command-bar/events";
 import { GitHubIcon } from "@/components/icons/github";
 import { useTheme } from "@/components/theme/use-theme";
 import { TitleBar } from "@/components/TitleBar";
@@ -38,7 +39,7 @@ import { convexQuery } from "@convex-dev/react-query";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useAction, useMutation } from "convex/react";
-import { Server as ServerIcon } from "lucide-react";
+import { Search, Server as ServerIcon } from "lucide-react";
 import { useDebouncedValue } from "@mantine/hooks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -96,6 +97,27 @@ const parseStoredAgentSelection = (stored: string | null): string[] => {
     return [];
   }
 };
+
+function DashboardCommandCenter() {
+  const handleOpenCommandBar = useCallback(() => {
+    openCommandBar();
+  }, []);
+
+  return (
+    <button
+      type="button"
+      onClick={handleOpenCommandBar}
+      aria-label="Open command menu (Cmd+K)"
+      className="group flex h-6 w-[220px] max-w-[70vw] items-center gap-2 rounded-md border border-neutral-200/70 bg-white/80 px-2 text-xs text-neutral-500 shadow-sm transition hover:border-neutral-300 hover:bg-white hover:text-neutral-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-300/60 dark:border-neutral-700/60 dark:bg-neutral-900/70 dark:text-neutral-400 dark:hover:border-neutral-600 dark:hover:bg-neutral-900 dark:hover:text-neutral-200 dark:focus-visible:ring-neutral-600/60 sm:w-[260px]"
+    >
+      <Search className="h-3.5 w-3.5 text-neutral-400 dark:text-neutral-500" />
+      <span className="truncate">Search or run a command</span>
+      <span className="ml-auto flex items-center gap-1 rounded border border-neutral-200/70 bg-neutral-50 px-1.5 py-0.5 text-[10px] font-medium text-neutral-500 dark:border-neutral-700/60 dark:bg-neutral-800 dark:text-neutral-300">
+        Cmd+K
+      </span>
+    </button>
+  );
+}
 
 function DashboardComponent() {
   const { teamSlugOrId } = Route.useParams();
@@ -998,7 +1020,9 @@ function DashboardComponent() {
   ]);
 
   return (
-    <FloatingPane header={<TitleBar title="cmux" />}>
+    <FloatingPane
+      header={<TitleBar title="cmux" centerContent={<DashboardCommandCenter />} />}
+    >
       <div className="flex flex-col grow relative">
         {/* Main content area */}
         <div className="flex-1 flex flex-col pt-32 pb-0">

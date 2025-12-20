@@ -3,10 +3,13 @@ import type { CSSProperties, ReactNode } from "react";
 export function TitleBar({
   title,
   actions,
+  centerContent,
 }: {
   title: string;
   actions?: ReactNode;
+  centerContent?: ReactNode;
 }) {
+  const hasCenterContent = Boolean(centerContent);
   return (
     <div
       className="min-h-[24px] border-b border-neutral-200/70 dark:border-neutral-800/50 flex items-center justify-center relative select-none"
@@ -19,9 +22,24 @@ export function TitleBar({
       />
 
       {/* Title */}
-      <div className="flex items-center text-xs font-medium text-neutral-900 dark:text-neutral-100">
-        <span>{title}</span>
-      </div>
+      {hasCenterContent ? (
+        <div className="absolute inset-y-0 left-20 flex items-center text-xs font-medium text-neutral-900 dark:text-neutral-100">
+          <span>{title}</span>
+        </div>
+      ) : (
+        <div className="flex items-center text-xs font-medium text-neutral-900 dark:text-neutral-100">
+          <span>{title}</span>
+        </div>
+      )}
+
+      {hasCenterContent ? (
+        <div
+          className="absolute inset-y-0 left-1/2 flex items-center -translate-x-1/2"
+          style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
+        >
+          {centerContent}
+        </div>
+      ) : null}
 
       {actions ? (
         <div
