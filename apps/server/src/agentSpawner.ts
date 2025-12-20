@@ -9,6 +9,7 @@ import type {
   WorkerCreateTerminal,
   WorkerTerminalFailed,
 } from "@cmux/shared/worker-schemas";
+import { parseGithubRepoUrl } from "@cmux/shared/utils/parse-github-repo-url";
 import { parse as parseDotenv } from "dotenv";
 import { sanitizeTmuxSessionName } from "./sanitizeTmuxSessionName";
 import {
@@ -605,6 +606,23 @@ export async function spawnAgent(
       `[AgentSpawner] Preparing to send terminal creation command for ${agent.name}`
     );
 
+    // Start fetching workspace config early (for maintenance script) - runs in parallel with worker connection
+    const workspaceConfigPromise = (async () => {
+      if (options.isCloudMode || !options.repoUrl) return null;
+      const parsedRepo = parseGithubRepoUrl(options.repoUrl);
+      if (!parsedRepo) return null;
+      try {
+        const config = await getConvex().query(api.workspaceConfigs.get, {
+          teamSlugOrId,
+          projectFullName: parsedRepo.fullName,
+        });
+        return { config, projectFullName: parsedRepo.fullName };
+      } catch (error) {
+        serverLogger.warn(`[AgentSpawner] Failed to fetch workspace config`, error);
+        return null;
+      }
+    })();
+
     // Wait for worker connection if not already connected
     if (!vscodeInstance.isWorkerConnected()) {
       serverLogger.info(`[AgentSpawner] Waiting for worker connection...`);
@@ -641,6 +659,87 @@ export async function spawnAgent(
     }
     if (!vscodeInstance.isWorkerConnected()) {
       throw new Error("Worker socket not available");
+    }
+
+    // Run maintenance script for Docker containers in a cmux-pty session (fire-and-forget)
+    if (!options.isCloudMode && vscodeInstance instanceof DockerVSCodeInstance) {
+      void (async () => {
+        try {
+          // Use pre-fetched workspace config
+          const workspaceConfigResult = await workspaceConfigPromise;
+          if (!workspaceConfigResult?.config?.maintenanceScript?.trim()) {
+            return;
+          }
+
+          const { config: workspaceConfig, projectFullName } = workspaceConfigResult;
+          serverLogger.info(
+            `[AgentSpawner] Running maintenance script for ${projectFullName} via cmux-pty`
+          );
+
+          // Create a cmux-pty session for the maintenance script
+          const createResult = await workerExec({
+            workerSocket,
+            command: "cmux-pty",
+            args: ["new", "--name", "maintenance", "--cwd", "/root/workspace", "--detached"],
+            cwd: "/root/workspace",
+            env: {},
+            timeout: 10000,
+          });
+
+          if (createResult.exitCode !== 0) {
+            serverLogger.error(
+              `[AgentSpawner] Failed to create maintenance PTY session`,
+              { exitCode: createResult.exitCode, stdout: createResult.stdout, stderr: createResult.stderr }
+            );
+            return;
+          }
+
+          serverLogger.info(`[AgentSpawner] Created maintenance PTY session`);
+
+          // Build and send the maintenance script command
+          const scriptPreamble = "set -euo pipefail";
+          const maintenancePayload = `${scriptPreamble}\n${workspaceConfig.maintenanceScript}`;
+
+          serverLogger.info(`[AgentSpawner] Sending maintenance script via send-keys...`);
+          const sendResult = await workerExec({
+            workerSocket,
+            command: "cmux-pty",
+            args: ["send-keys", "maintenance", maintenancePayload, "Enter"],
+            cwd: "/root/workspace",
+            env: {},
+            timeout: 10000,
+          });
+
+          if (sendResult.exitCode !== 0) {
+            serverLogger.error(
+              `[AgentSpawner] Failed to send maintenance script to PTY`,
+              { exitCode: sendResult.exitCode, stdout: sendResult.stdout, stderr: sendResult.stderr }
+            );
+            await getConvex().mutation(api.taskRuns.updateEnvironmentError, {
+              teamSlugOrId,
+              id: runId,
+              maintenanceError: `Failed to send maintenance script: ${sendResult.stderr || sendResult.stdout}`,
+              devError: undefined,
+            });
+          } else {
+            serverLogger.info(
+              `[AgentSpawner] Maintenance script sent to PTY for ${projectFullName}`
+            );
+            // Clear any previous error (script is now running in PTY)
+            await getConvex().mutation(api.taskRuns.updateEnvironmentError, {
+              teamSlugOrId,
+              id: runId,
+              maintenanceError: undefined,
+              devError: undefined,
+            });
+          }
+        } catch (error) {
+          serverLogger.error(
+            `[AgentSpawner] Failed to run maintenance script`,
+            error
+          );
+        }
+      })();
     }
 
     const actualCommand = agent.command;

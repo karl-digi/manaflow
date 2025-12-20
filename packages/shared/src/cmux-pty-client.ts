@@ -82,7 +82,8 @@ export class CmuxPtyClient {
       throw new Error(`Failed to list PTY sessions: ${error}`);
     }
 
-    return response.json();
+    const result = await response.json();
+    return result.sessions;
   }
 
   /**
@@ -97,7 +98,7 @@ export class CmuxPtyClient {
    * Create a new PTY session
    */
   async createSession(
-    options: CreatePtySessionOptions = {}
+    options: CreatePtySessionOptions = {},
   ): Promise<PtySessionInfo> {
     const response = await fetch(`${this.baseUrl}/sessions`, {
       method: "POST",
@@ -126,7 +127,7 @@ export class CmuxPtyClient {
    */
   async updateSession(
     sessionId: string,
-    options: UpdatePtySessionOptions
+    options: UpdatePtySessionOptions,
   ): Promise<PtySessionInfo> {
     const response = await fetch(`${this.baseUrl}/sessions/${sessionId}`, {
       method: "PATCH",
@@ -161,7 +162,7 @@ export class CmuxPtyClient {
    */
   async resizeSession(
     sessionId: string,
-    options: ResizePtyOptions
+    options: ResizePtyOptions,
   ): Promise<void> {
     const response = await fetch(
       `${this.baseUrl}/sessions/${sessionId}/resize`,
@@ -169,7 +170,7 @@ export class CmuxPtyClient {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(options),
-      }
+      },
     );
 
     if (!response.ok) {
@@ -188,7 +189,7 @@ export class CmuxPtyClient {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ data }),
-      }
+      },
     );
 
     if (!response.ok) {
@@ -205,7 +206,7 @@ export class CmuxPtyClient {
       `${this.baseUrl}/sessions/${sessionId}/capture`,
       {
         method: "GET",
-      }
+      },
     );
 
     if (!response.ok) {
@@ -265,7 +266,7 @@ export const DEFAULT_PTY_SERVER_URL = "http://localhost:39383";
  * Create a new CmuxPtyClient instance
  */
 export function createPtyClient(
-  baseUrl: string = DEFAULT_PTY_SERVER_URL
+  baseUrl: string = DEFAULT_PTY_SERVER_URL,
 ): CmuxPtyClient {
   return new CmuxPtyClient(baseUrl);
 }
