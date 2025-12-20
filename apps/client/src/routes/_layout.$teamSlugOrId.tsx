@@ -2,6 +2,7 @@ import { CmuxComments } from "@/components/cmux-comments";
 import { CommandBar } from "@/components/CommandBar";
 import { Sidebar } from "@/components/Sidebar";
 import { SIDEBAR_PRS_DEFAULT_LIMIT } from "@/components/sidebar/const";
+import { CommandBarProvider } from "@/contexts/command-bar/CommandBarContext";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { ExpandTasksProvider } from "@/contexts/expand-tasks/ExpandTasksProvider";
 import { cachedGetUser } from "@/lib/cachedGetUser";
@@ -72,8 +73,9 @@ function LayoutComponent() {
   const displayTasks = tasks === undefined ? undefined : recentTasks;
 
   return (
-    <ExpandTasksProvider>
-      <CommandBar teamSlugOrId={teamSlugOrId} />
+    <CommandBarProvider>
+      <ExpandTasksProvider>
+        <CommandBar teamSlugOrId={teamSlugOrId} />
 
       <div className="flex flex-row grow min-h-0 h-dvh bg-white dark:bg-black overflow-x-auto snap-x snap-mandatory md:overflow-x-visible md:snap-none">
         <Sidebar tasks={displayTasks} teamSlugOrId={teamSlugOrId} />
@@ -113,7 +115,8 @@ function LayoutComponent() {
       >
         Add Debug Note
       </button>
-    </ExpandTasksProvider>
+      </ExpandTasksProvider>
+    </CommandBarProvider>
   );
 }
 

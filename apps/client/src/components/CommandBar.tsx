@@ -1,6 +1,7 @@
 import { env } from "@/client-env";
 import { GitHubIcon } from "@/components/icons/github";
 import { useTheme } from "@/components/theme/use-theme";
+import { useCommandBar } from "@/contexts/command-bar/useCommandBar";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { isElectron } from "@/lib/electron";
@@ -285,8 +286,25 @@ export function CommandBar({
   teamSlugOrId,
   stateResetDelayMs = 30_000,
 }: CommandBarProps) {
-  const [open, setOpen] = useState(false);
+  const { isOpen: contextOpen, setIsOpen: setContextOpen } = useCommandBar();
+  const [open, setOpenInternal] = useState(false);
   const [search, setSearch] = useState("");
+
+  // Sync context state with local state
+  const setOpen = useCallback(
+    (value: boolean) => {
+      setOpenInternal(value);
+      setContextOpen(value);
+    },
+    [setContextOpen]
+  );
+
+  // Listen for external open requests from context
+  useEffect(() => {
+    if (contextOpen && !open) {
+      setOpenInternal(true);
+    }
+  }, [contextOpen, open]);
   const [openedWithShift, setOpenedWithShift] = useState(false);
   const clearCommandInput = useCallback(() => {
     setSearch("");
@@ -1079,7 +1097,7 @@ export function CommandBar({
     };
     document.addEventListener("keydown", down);
     return () => document.removeEventListener("keydown", down);
-  }, [captureFocusBeforeOpen, closeCommand]);
+  }, [captureFocusBeforeOpen, closeCommand, setOpen]);
 
   // Track and restore focus across open/close, including iframes/webviews.
   useEffect(() => {
