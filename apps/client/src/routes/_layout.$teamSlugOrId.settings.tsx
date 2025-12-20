@@ -96,6 +96,7 @@ function SettingsComponent() {
   } | null>(null);
   const [originalContainerSettingsData, setOriginalContainerSettingsData] =
     useState<typeof containerSettingsData>(null);
+  const originalContainerSettingsDataRef = useRef<typeof containerSettingsData>(null);
 
   // Heatmap settings state
   const [heatmapModel, setHeatmapModel] = useState<string>("anthropic-opus-4-5");
@@ -323,11 +324,12 @@ function SettingsComponent() {
       minContainersToKeep: number;
     }) => {
       setContainerSettingsData(data);
-      if (!originalContainerSettingsData) {
+      if (!originalContainerSettingsDataRef.current) {
+        originalContainerSettingsDataRef.current = data;
         setOriginalContainerSettingsData(data);
       }
     },
-    [originalContainerSettingsData]
+    []
   );
 
   // Check if there are any changes
@@ -416,6 +418,7 @@ function SettingsComponent() {
           teamSlugOrId,
           ...containerSettingsData,
         });
+        originalContainerSettingsDataRef.current = containerSettingsData;
         setOriginalContainerSettingsData(containerSettingsData);
       }
 
