@@ -215,7 +215,7 @@ export class CmuxPtyClient {
     }
 
     const result = await response.json();
-    return result.screen;
+    return result.content;
   }
 
   /**
