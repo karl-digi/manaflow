@@ -96,6 +96,9 @@ export const stopPreviewInstance = internalAction({
   },
 });
 
+// Retry delay when waiting for another preview run to complete (30 seconds)
+const DISPATCH_RETRY_DELAY_MS = 30_000;
+
 export const requestDispatch = internalAction({
   args: {
     previewRunId: v.id("previewRuns"),
@@ -122,29 +125,46 @@ export const requestDispatch = internalAction({
       status: payload.run.status,
     });
 
-    // Check if there's already an active preview run for this PR
-    // Skip dispatch if another run is already running (prevents duplicate jobs)
-    const activeRun = await ctx.runQuery(internal.previewRuns.getActiveByConfigAndPr, {
-      previewConfigId: payload.config._id,
-      prNumber: payload.run.prNumber,
-    });
-
-    if (activeRun && activeRun._id !== args.previewRunId) {
-      console.log("[preview-jobs] Another preview run is already active for this PR; skipping dispatch", {
+    // Skip if this run was superseded by a newer commit
+    if (payload.run.status === "superseded") {
+      console.log("[preview-jobs] Preview run was superseded by newer commit; skipping dispatch", {
         previewRunId: args.previewRunId,
-        activeRunId: activeRun._id,
-        activeStatus: activeRun.status,
-        prNumber: payload.run.prNumber,
+        headSha: payload.run.headSha?.slice(0, 7),
+        stateReason: payload.run.stateReason,
       });
       return;
     }
 
-    // Also skip if this specific run is not pending (e.g., already running or completed)
+    // Skip if this specific run is not pending (e.g., already running or completed)
     if (payload.run.status !== "pending") {
       console.log("[preview-jobs] Preview run is not pending; skipping dispatch", {
         previewRunId: args.previewRunId,
         status: payload.run.status,
       });
+      return;
+    }
+
+    // Check if there's a RUNNING preview run for this PR (not just pending)
+    // If another run is actively running, wait for it to complete before starting
+    const runningRun = await ctx.runQuery(internal.previewRuns.getRunningByConfigAndPr, {
+      previewConfigId: payload.config._id,
+      prNumber: payload.run.prNumber,
+    });
+
+    if (runningRun && runningRun._id !== args.previewRunId) {
+      console.log("[preview-jobs] Another preview run is running for this PR; will retry later", {
+        previewRunId: args.previewRunId,
+        runningRunId: runningRun._id,
+        runningHeadSha: runningRun.headSha?.slice(0, 7),
+        prNumber: payload.run.prNumber,
+        retryInMs: DISPATCH_RETRY_DELAY_MS,
+      });
+      // Re-schedule dispatch to try again later
+      await ctx.scheduler.runAfter(
+        DISPATCH_RETRY_DELAY_MS,
+        internal.preview_jobs.requestDispatch,
+        { previewRunId: args.previewRunId },
+      );
       return;
     }
 

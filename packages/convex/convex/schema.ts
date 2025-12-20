@@ -637,6 +637,7 @@ const convexSchema = defineSchema({
       v.literal("completed"),
       v.literal("failed"),
       v.literal("skipped"),
+      v.literal("superseded"), // Newer commit arrived; this run was skipped
     ),
     stateReason: v.optional(v.string()),
     dispatchedAt: v.optional(v.number()),
