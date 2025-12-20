@@ -146,6 +146,8 @@ interface TaskTreeProps {
   // When true, expand the task node on initial mount
   defaultExpanded?: boolean;
   teamSlugOrId: string;
+  // Whether this task has unread notifications (show a dot indicator)
+  hasUnreadNotification?: boolean;
 }
 
 interface SidebarArchiveOverlayProps {
@@ -360,6 +362,7 @@ function TaskTreeInner({
   level = 0,
   defaultExpanded = false,
   teamSlugOrId,
+  hasUnreadNotification = false,
 }: TaskTreeProps) {
   const navigate = useNavigate();
 
@@ -824,14 +827,24 @@ function TaskTreeInner({
     (Boolean(taskLeadingIcon) || isLocalWorkspace || isCloudWorkspace);
 
   const taskMetaIcon = shouldShowTaskArchiveOverlay ? (
-    <SidebarArchiveOverlay
-      icon={taskLeadingIcon}
-      label="Archive"
-      onArchive={handleArchive}
-      groupName="task"
-    />
+    <div className="flex items-center gap-1.5">
+      {hasUnreadNotification && (
+        <span className="size-2 rounded-full bg-blue-500 flex-shrink-0" />
+      )}
+      <SidebarArchiveOverlay
+        icon={taskLeadingIcon}
+        label="Archive"
+        onArchive={handleArchive}
+        groupName="task"
+      />
+    </div>
   ) : (
-    taskLeadingIcon
+    <div className="flex items-center gap-1.5">
+      {hasUnreadNotification && (
+        <span className="size-2 rounded-full bg-blue-500 flex-shrink-0" />
+      )}
+      {taskLeadingIcon}
+    </div>
   );
 
   return (

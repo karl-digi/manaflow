@@ -11,10 +11,11 @@ import { api } from "@cmux/convex/api";
 import { useQuery } from "convex/react";
 import type { LinkProps } from "@tanstack/react-router";
 import { Link } from "@tanstack/react-router";
-import { Home, Plus, Server, Settings } from "lucide-react";
+import { Bell, Home, Plus, Server, Settings } from "lucide-react";
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ComponentType,
@@ -38,12 +39,23 @@ interface SidebarNavItem {
   search?: LinkProps["search"];
   exact?: boolean;
 }
-const navItems: SidebarNavItem[] = [
+interface SidebarNavItemWithBadge extends SidebarNavItem {
+  showBadge?: boolean;
+}
+
+const navItems: SidebarNavItemWithBadge[] = [
   {
     label: "Home",
     to: "/$teamSlugOrId/dashboard",
     exact: true,
     icon: Home,
+  },
+  {
+    label: "Notifications",
+    to: "/$teamSlugOrId/notifications",
+    exact: true,
+    icon: Bell,
+    showBadge: true,
   },
   {
     label: "Environments",
@@ -90,6 +102,22 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
 
   // Fetch pinned items
   const pinnedData = useQuery(api.tasks.getPinned, { teamSlugOrId });
+
+  // Fetch unread notification count
+  const unreadCount = useQuery(api.taskNotifications.getUnreadCount, {
+    teamSlugOrId,
+  });
+
+  // Fetch tasks with unread notifications for showing dots
+  const tasksWithUnread = useQuery(api.taskNotifications.getTasksWithUnread, {
+    teamSlugOrId,
+  });
+
+  // Create a Set for quick lookup of task IDs with unread notifications
+  const tasksWithUnreadSet = useMemo(() => {
+    if (!tasksWithUnread) return new Set<string>();
+    return new Set(tasksWithUnread.map((t: { taskId: string }) => t.taskId));
+  }, [tasksWithUnread]);
 
   useEffect(() => {
     localStorage.setItem("sidebarWidth", String(width));
@@ -255,6 +283,7 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
                   icon={item.icon}
                   exact={item.exact}
                   label={item.label}
+                  badgeCount={item.showBadge ? unreadCount : undefined}
                 />
               </li>
             ))}
@@ -300,6 +329,7 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
                             expandTaskIds?.includes(task._id) ?? false
                           }
                           teamSlugOrId={teamSlugOrId}
+                          hasUnreadNotification={tasksWithUnreadSet.has(task._id)}
                         />
                       ))}
                       {/* Horizontal divider after pinned items */}
@@ -320,6 +350,7 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
                           expandTaskIds?.includes(task._id) ?? false
                         }
                         teamSlugOrId={teamSlugOrId}
+                        hasUnreadNotification={tasksWithUnreadSet.has(task._id)}
                       />
                     ))}
                 </>

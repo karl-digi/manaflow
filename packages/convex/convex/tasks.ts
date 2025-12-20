@@ -41,6 +41,88 @@ export const get = authQuery({
   },
 });
 
+// Get tasks with notification-aware ordering:
+// - Tasks with unread notifications come first, ordered by latest notification time
+// - Then remaining tasks ordered by createdAt
+export const getWithNotificationOrder = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    projectFullName: v.optional(v.string()),
+    archived: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+
+    // Get all tasks
+    let q = ctx.db
+      .query("tasks")
+      .withIndex("by_team_user", (idx) =>
+        idx.eq("teamId", teamId).eq("userId", userId),
+      );
+
+    if (args.archived === true) {
+      q = q.filter((qq) => qq.eq(qq.field("isArchived"), true));
+    } else {
+      q = q.filter((qq) => qq.neq(qq.field("isArchived"), true));
+    }
+
+    q = q.filter((qq) => qq.neq(qq.field("isPreview"), true));
+
+    if (args.projectFullName) {
+      q = q.filter((qq) =>
+        qq.eq(qq.field("projectFullName"), args.projectFullName),
+      );
+    }
+
+    const tasks = await q.collect();
+
+    // Get unread notifications for this user
+    const unreadNotifications = await ctx.db
+      .query("taskNotifications")
+      .withIndex("by_team_user_unread", (q) =>
+        q.eq("teamId", teamId).eq("userId", userId).eq("readAt", undefined),
+      )
+      .collect();
+
+    // Build a map of taskId -> latest notification createdAt
+    const taskNotificationMap = new Map<Id<"tasks">, number>();
+    for (const n of unreadNotifications) {
+      const existing = taskNotificationMap.get(n.taskId);
+      if (!existing || n.createdAt > existing) {
+        taskNotificationMap.set(n.taskId, n.createdAt);
+      }
+    }
+
+    // Sort: tasks with unread notifications first (by latest notification time desc),
+    // then remaining tasks by createdAt desc
+    const sorted = [...tasks].sort((a, b) => {
+      const aNotifTime = taskNotificationMap.get(a._id);
+      const bNotifTime = taskNotificationMap.get(b._id);
+
+      // Both have unread notifications: sort by notification time desc
+      if (aNotifTime !== undefined && bNotifTime !== undefined) {
+        return bNotifTime - aNotifTime;
+      }
+
+      // Only a has unread: a comes first
+      if (aNotifTime !== undefined) {
+        return -1;
+      }
+
+      // Only b has unread: b comes first
+      if (bNotifTime !== undefined) {
+        return 1;
+      }
+
+      // Neither has unread: sort by createdAt desc
+      return (b.createdAt ?? 0) - (a.createdAt ?? 0);
+    });
+
+    return sorted;
+  },
+});
+
 export const getPreviewTasks = authQuery({
   args: {
     teamSlugOrId: v.string(),

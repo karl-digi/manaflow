@@ -15,6 +15,7 @@ interface SidebarNavLinkProps {
   icon?: ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
   exact?: boolean;
   className?: string;
+  badgeCount?: number;
 }
 
 export function SidebarNavLink({
@@ -25,6 +26,7 @@ export function SidebarNavLink({
   icon: Icon,
   exact = true,
   className,
+  badgeCount,
 }: SidebarNavLinkProps) {
   return (
     <Link
@@ -42,14 +44,21 @@ export function SidebarNavLink({
         "data-active": "true",
       }}
     >
-      {Icon ? (
-        <Icon
-          className={
-            "size-[15px] text-neutral-500 group-hover:text-neutral-800 dark:group-hover:text-neutral-100 group-data-[active=true]:text-neutral-900 dark:group-data-[active=true]:text-neutral-100"
-          }
-          aria-hidden
-        />
-      ) : null}
+      <div className="relative">
+        {Icon ? (
+          <Icon
+            className={
+              "size-[15px] text-neutral-500 group-hover:text-neutral-800 dark:group-hover:text-neutral-100 group-data-[active=true]:text-neutral-900 dark:group-data-[active=true]:text-neutral-100"
+            }
+            aria-hidden
+          />
+        ) : null}
+        {badgeCount !== undefined && badgeCount > 0 && (
+          <span className="absolute -top-1 -right-1 flex items-center justify-center min-w-[14px] h-[14px] px-1 text-[9px] font-medium text-white bg-blue-500 rounded-full">
+            {badgeCount > 99 ? "99+" : badgeCount}
+          </span>
+        )}
+      </div>
       <span>{label}</span>
     </Link>
   );

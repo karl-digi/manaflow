@@ -1086,6 +1086,25 @@ const convexSchema = defineSchema({
     .index("by_version", ["version"])
     .index("by_staging_latest", ["isStaging", "isLatest", "createdAt"])
     .index("by_staging_created", ["isStaging", "createdAt"]),
+
+  // Task notifications for alerting users of task run completions/failures
+  taskNotifications: defineTable({
+    taskId: v.id("tasks"),
+    taskRunId: v.optional(v.id("taskRuns")), // The run that triggered this notification
+    teamId: v.string(),
+    userId: v.string(),
+    type: v.union(
+      v.literal("run_completed"),
+      v.literal("run_failed"),
+    ),
+    message: v.optional(v.string()), // Optional summary message
+    readAt: v.optional(v.number()), // Null/undefined means unread
+    createdAt: v.number(),
+  })
+    .index("by_team_user_created", ["teamId", "userId", "createdAt"]) // List notifications for user
+    .index("by_team_user_unread", ["teamId", "userId", "readAt", "createdAt"]) // Filter unread
+    .index("by_task", ["taskId", "createdAt"]) // Get notifications for a task
+    .index("by_task_user_unread", ["taskId", "userId", "readAt"]), // Check unread per task
 });
 
 export default convexSchema;

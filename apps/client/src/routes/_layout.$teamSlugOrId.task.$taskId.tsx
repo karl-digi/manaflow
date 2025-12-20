@@ -9,9 +9,9 @@ import {
   useNavigate,
 } from "@tanstack/react-router";
 import clsx from "clsx";
-import { Suspense, useEffect } from "react";
+import { Suspense, useEffect, useRef } from "react";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId")({
   component: TaskDetailPage,
@@ -52,6 +52,19 @@ function TaskDetailPage() {
     taskId,
   });
   const clipboard = useClipboard({ timeout: 2000 });
+  const markTaskAsRead = useMutation(api.taskNotifications.markTaskAsRead);
+  const hasMarkedAsRead = useRef(false);
+
+  // Mark notifications for this task as read when viewing
+  useEffect(() => {
+    if (!hasMarkedAsRead.current && taskId) {
+      hasMarkedAsRead.current = true;
+      markTaskAsRead({ teamSlugOrId, taskId }).catch((err: Error) => {
+        // Ignore errors - the API might not be available yet
+        console.error("Failed to mark task notifications as read:", err);
+      });
+    }
+  }, [taskId, teamSlugOrId, markTaskAsRead]);
 
   // Get the deepest matched child to extract runId if present
   const childMatches = useChildMatches();

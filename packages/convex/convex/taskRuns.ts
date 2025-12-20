@@ -552,6 +552,16 @@ export const updateStatus = internalMutation({
     // After updating to a terminal status, check if we should update the task status
     if (args.status === "completed" || args.status === "failed") {
       await updateTaskStatusFromRuns(ctx, run.taskId, run.teamId, run.userId);
+
+      // Create a notification for the user
+      await ctx.db.insert("taskNotifications", {
+        taskId: run.taskId,
+        taskRunId: args.id,
+        teamId: run.teamId,
+        userId: run.userId,
+        type: args.status === "completed" ? "run_completed" : "run_failed",
+        createdAt: now,
+      });
     }
   },
 });
@@ -975,6 +985,16 @@ export const updateStatusPublic = authMutation({
     // After updating to a terminal status, check if we should update the task status
     if (args.status === "completed" || args.status === "failed") {
       await updateTaskStatusFromRuns(ctx, doc.taskId, teamId, userId);
+
+      // Create a notification for the user
+      await ctx.db.insert("taskNotifications", {
+        taskId: doc.taskId,
+        taskRunId: args.id,
+        teamId,
+        userId,
+        type: args.status === "completed" ? "run_completed" : "run_failed",
+        createdAt: now,
+      });
     }
   },
 });
