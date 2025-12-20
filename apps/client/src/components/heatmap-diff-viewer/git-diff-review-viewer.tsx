@@ -37,6 +37,7 @@ import {
   type ReviewHeatmapLine,
 } from "@/lib/heatmap";
 import { HeatmapDiffViewer } from "./heatmap-diff-viewer";
+import { kitties } from "../kitties";
 import type { HeatmapColorSettings } from "./heatmap-gradient";
 import type { ReplaceDiffEntry } from "@cmux/shared/diff-types";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
@@ -1304,6 +1305,9 @@ export function GitDiffHeatmapReviewViewer({
 }: GitDiffHeatmapReviewViewerProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [scrollContainer, setScrollContainer] = useState<HTMLElement | null>(null);
+  const kitty = useMemo(() => {
+    return kitties[Math.floor(Math.random() * kitties.length)];
+  }, []);
   // Use useDeferredValue to defer color changes and prevent blocking renders
   // when color pickers are being used. This matches the 0github implementation.
   const normalizedHeatmapColors = useMemo(
@@ -2366,6 +2370,11 @@ export function GitDiffHeatmapReviewViewer({
               <span className="select-none text-xs text-neutral-500 dark:text-neutral-400">
                 You&apos;ve reached the end of the diff!
               </span>
+              <div className="grid place-content-center">
+                <pre className="mt-2 pb-20 select-none text-left text-[8px] font-mono text-neutral-500 dark:text-neutral-400">
+                  {kitty}
+                </pre>
+              </div>
             </div>
           </div>
         </div>
