@@ -112,16 +112,41 @@ async function sendPtyInput(sessionId: string, data: string): Promise<void> {
   }
 }
 
-async function checkPtySessionAlive(sessionId: string): Promise<boolean> {
-  try {
-    const response = await fetch(`${PTY_SERVER_URL}/sessions`);
-    if (!response.ok) return false;
-    const sessions = await response.json() as PtySessionInfo[];
-    const session = sessions.find((s) => s.id === sessionId);
-    return session?.alive ?? false;
-  } catch {
-    return false;
+async function checkPtySessionAlive(
+  sessionId: string,
+  retries = 3,
+  retryDelayMs = 500,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      const response = await fetch(`${PTY_SERVER_URL}/sessions`);
+      if (!response.ok) {
+        if (attempt < retries - 1) {
+          await delay(retryDelayMs);
+          continue;
+        }
+        return false;
+      }
+      const sessions = (await response.json()) as PtySessionInfo[];
+      const session = sessions.find((s) => s.id === sessionId);
+      if (session) {
+        return session.alive;
+      }
+      // Session not found - retry in case of timing issue
+      if (attempt < retries - 1) {
+        await delay(retryDelayMs);
+        continue;
+      }
+      return false;
+    } catch {
+      if (attempt < retries - 1) {
+        await delay(retryDelayMs);
+        continue;
+      }
+      return false;
+    }
   }
+  return false;
 }
 
 async function fileExists(path: string): Promise<boolean> {
@@ -462,12 +487,12 @@ async function startDevScript(): Promise<DevResult> {
 
       await delay(2000);
 
-      // Verify PTY session is still alive
+      // Check PTY session status (non-fatal - the exit code check below is authoritative)
       const isAlive = await checkPtySessionAlive(devPtyId);
       if (!isAlive) {
-        const error = "Dev PTY session died after starting script";
-        console.error(`[DEV] ERROR: ${error}`);
-        return { error };
+        // This can be a false positive if the shell exited after running the command
+        // but the dev server is still running. The exit code check below is the real test.
+        console.warn(`[DEV] WARN: PTY session check failed, but dev server may still be running`);
       }
     } else {
       // tmux backend: send command via tmux send-keys
