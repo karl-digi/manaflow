@@ -4,6 +4,7 @@ import { FloatingPane } from "@/components/floating-pane";
 import { ProviderStatusSettings } from "@/components/provider-status-settings";
 import { useTheme } from "@/components/theme/use-theme";
 import { TitleBar } from "@/components/TitleBar";
+import { ChevronDown } from "lucide-react";
 import { api } from "@cmux/convex/api";
 import type { Doc } from "@cmux/convex/dataModel";
 import { AGENT_CONFIGS, type AgentConfig } from "@cmux/shared/agentConfig";
@@ -142,10 +143,10 @@ function SettingsComponent() {
 
   // Heatmap model options from model-config.ts
   const HEATMAP_MODEL_OPTIONS = [
-    { value: "anthropic-opus-4-5", label: "Claude Opus 4.5 (Most Accurate)", description: "Best quality reviews, slower" },
-    { value: "anthropic", label: "Claude Opus 4.1", description: "High quality, balanced speed" },
-    { value: "cmux-heatmap-2", label: "cmux-heatmap-2 (GPT-4.1 Fine-tuned)", description: "Fast, cost-effective" },
-    { value: "cmux-heatmap-1", label: "cmux-heatmap-1 (GPT-4.1 Mini)", description: "Fastest, most cost-effective" },
+    { value: "anthropic-opus-4-5", label: "Claude Opus 4.5" },
+    { value: "anthropic", label: "Claude Opus 4.1" },
+    { value: "cmux-heatmap-2", label: "cmux-heatmap-2" },
+    { value: "cmux-heatmap-1", label: "cmux-heatmap-1" },
   ];
 
   // Tooltip language options
@@ -915,53 +916,10 @@ function SettingsComponent() {
 
             {/* Heatmap Review Settings */}
             <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
-              <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800 flex items-center justify-between">
+              <div className="px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
                 <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
                   Diff Heatmap Review
                 </h2>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const config = {
-                        heatmapModel,
-                        heatmapThreshold,
-                        heatmapTooltipLanguage,
-                        heatmapColors,
-                      };
-                      navigator.clipboard.writeText(JSON.stringify(config, null, 2));
-                      toast.success("Config copied to clipboard");
-                    }}
-                    className="px-2 py-1 text-xs rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors"
-                  >
-                    Copy Config
-                  </button>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      try {
-                        const text = await navigator.clipboard.readText();
-                        const config = JSON.parse(text) as {
-                          heatmapModel?: string;
-                          heatmapThreshold?: number;
-                          heatmapTooltipLanguage?: string;
-                          heatmapColors?: typeof heatmapColors;
-                        };
-                        if (config.heatmapModel) setHeatmapModel(config.heatmapModel);
-                        if (config.heatmapThreshold !== undefined) setHeatmapThreshold(config.heatmapThreshold);
-                        if (config.heatmapTooltipLanguage) setHeatmapTooltipLanguage(config.heatmapTooltipLanguage);
-                        if (config.heatmapColors) setHeatmapColors(config.heatmapColors);
-                        toast.success("Config loaded from clipboard");
-                      } catch (error) {
-                        console.error("Failed to load config:", error);
-                        toast.error("Failed to load config - make sure you copied a valid config");
-                      }
-                    }}
-                    className="px-2 py-1 text-xs rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors"
-                  >
-                    Load Config
-                  </button>
-                </div>
               </div>
               <div className="p-4 space-y-6">
                 {/* Model Selector */}
@@ -975,23 +933,24 @@ function SettingsComponent() {
                   <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
                     Select the AI model used to analyze diffs and highlight areas that need attention.
                   </p>
-                  <select
-                    id="heatmapModel"
-                    value={heatmapModel}
-                    onChange={(e) => setHeatmapModel(e.target.value)}
-                    className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 text-sm"
-                  >
-                    {HEATMAP_MODEL_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  {HEATMAP_MODEL_OPTIONS.find((opt) => opt.value === heatmapModel)?.description && (
-                    <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
-                      {HEATMAP_MODEL_OPTIONS.find((opt) => opt.value === heatmapModel)?.description}
-                    </p>
-                  )}
+                  <div className="relative">
+                    <select
+                      id="heatmapModel"
+                      value={heatmapModel}
+                      onChange={(e) => setHeatmapModel(e.target.value)}
+                      className="w-full appearance-none px-3 py-2 pr-10 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 text-sm"
+                    >
+                      {HEATMAP_MODEL_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown
+                      className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500 dark:text-neutral-400"
+                      aria-hidden
+                    />
+                  </div>
                 </div>
 
                 {/* Tooltip Language Selector */}
@@ -1005,18 +964,24 @@ function SettingsComponent() {
                   <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
                     Language for the review comments shown in heatmap tooltips.
                   </p>
-                  <select
-                    id="heatmapTooltipLanguage"
-                    value={heatmapTooltipLanguage}
-                    onChange={(e) => setHeatmapTooltipLanguage(e.target.value)}
-                    className="w-full px-3 py-2 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 text-sm"
-                  >
-                    {TOOLTIP_LANGUAGE_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="relative">
+                    <select
+                      id="heatmapTooltipLanguage"
+                      value={heatmapTooltipLanguage}
+                      onChange={(e) => setHeatmapTooltipLanguage(e.target.value)}
+                      className="w-full appearance-none px-3 py-2 pr-10 border border-neutral-300 dark:border-neutral-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 text-sm"
+                    >
+                      {TOOLTIP_LANGUAGE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown
+                      className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500 dark:text-neutral-400"
+                      aria-hidden
+                    />
+                  </div>
                 </div>
 
                 {/* Threshold Slider */}
