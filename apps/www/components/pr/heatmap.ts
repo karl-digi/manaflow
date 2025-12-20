@@ -558,6 +558,12 @@ function doesLineContentMatch(
     return true;
   }
 
+  // Handle special token names - "walrus" means := operator
+  // Check if line has := when mostImportantWord is "walrus"
+  if (normalizedWord === "walrus" && normalizedContent.includes(":=")) {
+    return true;
+  }
+
   return !normalizedTarget && !normalizedWord;
 }
 
@@ -715,6 +721,12 @@ function buildHighlightCandidates(word: string): string[] {
   const base = stripSurroundingQuotes(word.trim());
   addCandidate(word);
   addCandidate(base);
+
+  // Map special token names to their actual representations
+  // "walrus" refers to Python's walrus operator :=
+  if (base.toLowerCase() === "walrus") {
+    addCandidate(":=");
+  }
   addCandidate(sanitizeHighlightToken(base));
 
   const tokens = base.split(/\s+/).filter(Boolean);

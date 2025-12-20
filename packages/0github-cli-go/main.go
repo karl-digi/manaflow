@@ -122,8 +122,10 @@ func highlightCodeWithToken(code string, lang string, token *string, score int) 
 
 	// Handle special tokens that describe operators rather than literal text
 	actualToken := *token
-	if actualToken == "walrus" {
-		// The walrus operator := should be highlighted, not the word "walrus"
+
+	// Map "walrus" to ":=" only if the line actually contains the walrus operator
+	// (defensive: someone might have a variable named "walrus")
+	if actualToken == "walrus" && strings.Contains(code, ":=") {
 		actualToken = ":="
 	}
 
@@ -734,6 +736,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							lineCode := line.CodeLine
 							if lineCode == "" {
 								lineCode = line.DiffLine
+							}
+							// Map "walrus" to ":=" only if line has the walrus operator
+							// (defensive: someone might have a variable named "walrus")
+							if token == "walrus" && strings.Contains(lineCode, ":=") {
+								token = ":="
 							}
 							// Check if token exists (case-insensitive)
 							if !strings.Contains(strings.ToLower(lineCode), strings.ToLower(token)) {

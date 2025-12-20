@@ -916,6 +916,41 @@ func TestWalrusOperatorTokenMapping(t *testing.T) {
 	t.Logf("Result: %q", result)
 }
 
+// TestWalrusVariableNotRemapped verifies that actual "walrus" variables are highlighted correctly
+func TestWalrusVariableNotRemapped(t *testing.T) {
+	// If someone has a variable named "walrus" and no := in the line,
+	// we should highlight "walrus", not look for ":="
+	code := "walrus = cute_animal()"
+	token := "walrus"
+	score := 50
+
+	result := highlightCodeWithToken(code, "python", &token, score)
+	stripped := stripAnsi(result)
+
+	// Code should be preserved
+	if stripped != code {
+		t.Errorf("code corrupted: got %q, want %q", stripped, code)
+	}
+
+	// "walrus" should be highlighted (not ":=" which doesn't exist)
+	if !strings.Contains(result, "walrus") {
+		t.Error("'walrus' should be in the result")
+	}
+
+	// Should have ANSI codes (highlighting applied)
+	if !strings.Contains(result, "\x1b[") {
+		t.Error("expected ANSI codes for highlighting")
+	}
+
+	// Should have background color for score 50
+	if !strings.Contains(result, "48;5;") {
+		t.Error("expected background color for highlighted token")
+	}
+
+	t.Logf("Variable 'walrus' correctly highlighted (not remapped to :=)")
+	t.Logf("Result: %q", result)
+}
+
 // TestAPILineNumberOffset tests the known issue where 0github API line numbers
 // are offset from GitHub's actual line numbers for new files
 func TestAPILineNumberOffset(t *testing.T) {

@@ -246,4 +246,101 @@ describe("buildDiffHeatmap", () => {
 
     expect(heatmap).toBeNull();
   });
+
+  it("handles walrus operator - maps 'walrus' token to ':=' for highlighting", () => {
+    // Test case from tinygrad/tinygrad#8435
+    const walrusDiff = `
+diff --git a/example.py b/example.py
+index 1111111..2222222 100644
+--- a/example.py
++++ b/example.py
+@@ -1,2 +1,3 @@
+ def test():
++    if (result := compute_value()) is not None:
++        return result
+`;
+
+    const files = parseDiff(walrusDiff, { nearbySequences: "zip" });
+    const file = files[0] ?? null;
+    expect(file).not.toBeNull();
+
+    const review = parseReviewHeatmap({
+      response: JSON.stringify({
+        lines: [
+          {
+            line: "2",
+            shouldBeReviewedScore: 0.7,
+            shouldReviewWhy: "walrus operator usage",
+            mostImportantWord: "walrus", // API returns "walrus", not ":="
+          },
+        ],
+      }),
+    });
+
+    const heatmap = buildDiffHeatmap(file, review);
+    expect(heatmap).not.toBeNull();
+    if (!heatmap) {
+      return;
+    }
+
+    // Should match line 2 and highlight the := operator
+    expect(heatmap.entries.has(2)).toBe(true);
+    const entry = heatmap.entries.get(2);
+    expect(entry?.mostImportantWord).toBe("walrus");
+
+    // The highlight range should point to ":=" in the line
+    const range = heatmap.newRanges.find((r) => r.lineNumber === 2);
+    expect(range).toBeDefined();
+    if (range) {
+      // The := should be highlighted (start should be at := position)
+      expect(range.length).toBe(2); // ":=" is 2 characters
+    }
+  });
+
+  it("does not remap 'walrus' when line has actual walrus variable", () => {
+    // Edge case: someone has a variable named "walrus"
+    const walrusVarDiff = `
+diff --git a/example.py b/example.py
+index 1111111..2222222 100644
+--- a/example.py
++++ b/example.py
+@@ -1,2 +1,3 @@
+ def test():
++    walrus = cute_animal()
++    return walrus
+`;
+
+    const files = parseDiff(walrusVarDiff, { nearbySequences: "zip" });
+    const file = files[0] ?? null;
+    expect(file).not.toBeNull();
+
+    const review = parseReviewHeatmap({
+      response: JSON.stringify({
+        lines: [
+          {
+            line: "2",
+            shouldBeReviewedScore: 0.5,
+            shouldReviewWhy: "walrus variable",
+            mostImportantWord: "walrus", // Refers to actual variable
+          },
+        ],
+      }),
+    });
+
+    const heatmap = buildDiffHeatmap(file, review);
+    expect(heatmap).not.toBeNull();
+    if (!heatmap) {
+      return;
+    }
+
+    // Should match line 2 and highlight "walrus" variable
+    expect(heatmap.entries.has(2)).toBe(true);
+
+    const range = heatmap.newRanges.find((r) => r.lineNumber === 2);
+    expect(range).toBeDefined();
+    if (range) {
+      // "walrus" should be highlighted (6 characters)
+      expect(range.length).toBe(6);
+    }
+  });
 });
