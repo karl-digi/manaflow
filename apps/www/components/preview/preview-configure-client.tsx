@@ -24,6 +24,8 @@ import Link from "next/link";
 import { formatEnvVarsContent } from "@cmux/shared/utils/format-env-vars-content";
 import { DEFAULT_PREVIEW_CONFIGURE_SNAPSHOT_ID } from "@cmux/shared";
 import clsx from "clsx";
+import { EnvVarsSection } from "@cmux/shared/components/environment/env-vars-section";
+import { ScriptsSection } from "@cmux/shared/components/environment/scripts-section";
 import {
   FrameworkPresetSelect,
   getFrameworkPresetConfig,
@@ -34,6 +36,7 @@ import {
   VncViewer,
   type VncConnectionStatus,
 } from "@cmux/shared/components/vnc-viewer";
+import { parseEnvBlock } from "@cmux/shared/utils/parse-env-block";
 
 const MASKED_ENV_VALUE = "••••••••••••••••";
 
@@ -185,43 +188,6 @@ const ensureInitialEnvVars = (initial?: EnvVar[]): EnvVar[] => {
   }
   return base;
 };
-
-function parseEnvBlock(text: string): Array<{ name: string; value: string }> {
-  const normalized = text.replace(/\r\n?/g, "\n");
-  const lines = normalized.split("\n");
-  const results: Array<{ name: string; value: string }> = [];
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (
-      trimmed.length === 0 ||
-      trimmed.startsWith("#") ||
-      trimmed.startsWith("//")
-    )
-      continue;
-
-    const cleanLine = trimmed.replace(/^export\s+/, "").replace(/^set\s+/, "");
-    const eqIdx = cleanLine.indexOf("=");
-
-    if (eqIdx === -1) continue;
-
-    const key = cleanLine.slice(0, eqIdx).trim();
-    let value = cleanLine.slice(eqIdx + 1).trim();
-
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-
-    if (key && !/\s/.test(key)) {
-      results.push({ name: key, value });
-    }
-  }
-
-  return results;
-}
 
 // Persistent iframe manager for Next.js
 type PersistentIframeOptions = {
@@ -413,11 +379,6 @@ export function PreviewConfigureClient({
   initialDevScript,
   startAtConfigureEnvironment = false,
 }: PreviewConfigureClientProps) {
-  const initialEnvPrefilled = useMemo(
-    () =>
-      Boolean(initialEnvVarsContent && initialEnvVarsContent.trim().length > 0),
-    [initialEnvVarsContent]
-  );
   const initialEnvVars = useMemo(() => {
     const parsed = initialEnvVarsContent
       ? parseEnvBlock(initialEnvVarsContent).map((entry) => ({
@@ -428,20 +389,9 @@ export function PreviewConfigureClient({
       : undefined;
     return ensureInitialEnvVars(parsed);
   }, [initialEnvVarsContent]);
-  const initialHasEnvValues = useMemo(
-    () =>
-      initialEnvPrefilled ||
-      initialEnvVars.some(
-        (r) => r.name.trim().length > 0 || r.value.trim().length > 0
-      ),
-    [initialEnvPrefilled, initialEnvVars]
-  );
-
   // Framework detection state - starts with defaults, updated via background fetch
   const [detectedPackageManager, setDetectedPackageManager] = useState<PackageManager>("npm");
   const [isDetectingFramework, setIsDetectingFramework] = useState(true);
-
-  const initialEnvComplete = initialHasEnvValues;
 
   const [instance, setInstance] = useState<SandboxInstance | null>(null);
   const [isProvisioning, setIsProvisioning] = useState(false);
@@ -472,31 +422,15 @@ export function PreviewConfigureClient({
   );
 
   const [envVars, setEnvVars] = useState<EnvVar[]>(initialEnvVars);
-  const [hasTouchedEnvVars, setHasTouchedEnvVars] = useState(false);
   const [frameworkPreset, setFrameworkPreset] = useState<FrameworkPreset>("other");
   const [maintenanceScript, setMaintenanceScript] = useState("");
   const [devScript, setDevScript] = useState("");
   const [hasUserEditedScripts, setHasUserEditedScripts] = useState(false);
   const [hasCompletedSetup, setHasCompletedSetup] = useState(false);
   const [isWaitingForWorkspace, setIsWaitingForWorkspace] = useState(false);
-  const [envNone, setEnvNone] = useState(false);
   const [commandsCopied, setCommandsCopied] = useState(false);
-  const [, setIsEnvSectionOpen] = useState(() => !initialEnvComplete);
-  const [areEnvValuesHidden, setAreEnvValuesHidden] = useState(true);
-  const [activeEnvValueIndex, setActiveEnvValueIndex] = useState<number | null>(
-    null
-  );
-  const [pendingFocusIndex, setPendingFocusIndex] = useState<number | null>(
-    null
-  );
 
   const [isSaving, setIsSaving] = useState(false);
-
-  useEffect(() => {
-    if (initialHasEnvValues) {
-      setIsEnvSectionOpen(false);
-    }
-  }, [initialHasEnvValues]);
 
   // Fetch framework detection in background on mount
   // Using refs to avoid re-running when user edits scripts
@@ -555,11 +489,8 @@ export function PreviewConfigureClient({
 
   const persistentIframeManager = iframeManager;
 
-  const keyInputRefs = useRef<Array<HTMLInputElement | null>>([]);
   const lastSubmittedEnvContent = useRef<string | null>(null);
   const copyResetTimeoutRef = useRef<number | null>(null);
-  const envSectionCollapsedOnEnterRef = useRef(false);
-
   useEffect(() => {
     return () => {
       if (copyResetTimeoutRef.current !== null) {
@@ -634,29 +565,6 @@ export function PreviewConfigureClient({
   );
 
   const isWorkspaceReady = Boolean(instance?.vscodeUrl);
-
-  const hasEnvValues = useMemo(
-    () =>
-      (!hasTouchedEnvVars && initialEnvPrefilled) ||
-      envVars.some(
-        (r) => r.name.trim().length > 0 || r.value.trim().length > 0
-      ),
-    [envVars, hasTouchedEnvVars, initialEnvPrefilled]
-  );
-  const envDone = envNone || hasEnvValues;
-
-  // Collapse env section when entering configure step if it's already satisfied
-  useEffect(() => {
-    if (
-      !hasCompletedSetup ||
-      !envDone ||
-      envSectionCollapsedOnEnterRef.current
-    ) {
-      return;
-    }
-    setIsEnvSectionOpen(false);
-    envSectionCollapsedOnEnterRef.current = true;
-  }, [envDone, hasCompletedSetup]);
 
   useEffect(() => {
     if (
@@ -760,23 +668,6 @@ export function PreviewConfigureClient({
     resolvedTeamSlugOrId,
   ]);
 
-  useEffect(() => {
-    if (pendingFocusIndex !== null) {
-      const el = keyInputRefs.current[pendingFocusIndex];
-      if (el) {
-        setTimeout(() => {
-          el.focus();
-          try {
-            el.scrollIntoView({ block: "nearest" });
-          } catch (_e) {
-            void 0;
-          }
-        }, 0);
-        setPendingFocusIndex(null);
-      }
-    }
-  }, [pendingFocusIndex, envVars]);
-
   // Auto-apply env vars to sandbox
   useEffect(() => {
     if (!instance?.instanceId || !resolvedTeamSlugOrId) {
@@ -822,7 +713,6 @@ export function PreviewConfigureClient({
   }, [envVars, instance?.instanceId, resolvedTeamSlugOrId]);
 
   const updateEnvVars = useCallback((updater: (prev: EnvVar[]) => EnvVar[]) => {
-    setHasTouchedEnvVars(true);
     setEnvVars((prev) => updater(prev));
   }, []);
 
@@ -1203,7 +1093,6 @@ export function PreviewConfigureClient({
     );
   };
 
-  // Shared render function for scripts section
   const renderScriptsSection = (options?: {
     compact?: boolean;
     defaultOpen?: boolean;
@@ -1218,64 +1107,23 @@ export function PreviewConfigureClient({
       stepNumber = 1,
       isDone = false,
     } = options ?? {};
-    const iconSize = compact ? "h-3.5 w-3.5" : "h-4 w-4";
-    const titleSize = compact ? "text-[13px]" : "text-base";
-    const contentPadding = compact ? "mt-3 pl-5" : "mt-4 pl-6";
 
     return (
-      <details className="group" open={defaultOpen}>
-        <summary
-          className={clsx(
-            "flex items-center gap-2 cursor-pointer font-semibold text-neutral-900 dark:text-neutral-100 list-none",
-            titleSize
-          )}
-        >
-          <ChevronDown
-            className={clsx(
-              iconSize,
-              "text-neutral-400 transition-transform -rotate-90 group-open:rotate-0"
-            )}
-          />
-          {showStepBadge && <StepBadge step={stepNumber} done={isDone} />}
-          Maintenance and Dev Scripts
-        </summary>
-        <div className={clsx(contentPadding, "space-y-4")}>
-          <div>
-            <label className="block text-xs text-neutral-500 dark:text-neutral-400 mb-1.5">
-              Maintenance Script
-            </label>
-            <textarea
-              value={maintenanceScript ?? ""}
-              onChange={(e) => handleMaintenanceScriptChange(e.target.value)}
-              placeholder="npm install, bun install, pip install -r requirements.txt"
-              rows={2}
-              className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-xs font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 resize-none"
-            />
-            <p className="text-xs text-neutral-400 mt-1">
-              Runs after git pull to install dependencies
-            </p>
-          </div>
-          <div>
-            <label className="block text-xs text-neutral-500 dark:text-neutral-400 mb-1.5">
-              Dev Script
-            </label>
-            <textarea
-              value={devScript ?? ""}
-              onChange={(e) => handleDevScriptChange(e.target.value)}
-              placeholder="npm run dev, bun dev, python manage.py runserver"
-              rows={2}
-              className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-xs font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 resize-none"
-            />
-            <p className="text-xs text-neutral-400 mt-1">
-              Starts the development server
-            </p>
-          </div>
-        </div>
-      </details>
+      <ScriptsSection
+        maintenanceScript={maintenanceScript}
+        devScript={devScript}
+        onMaintenanceScriptChange={handleMaintenanceScriptChange}
+        onDevScriptChange={handleDevScriptChange}
+        chevronIcon={ChevronDown}
+        headerPrefix={
+          showStepBadge ? <StepBadge step={stepNumber} done={isDone} /> : null
+        }
+        compact={compact}
+        defaultOpen={defaultOpen}
+      />
     );
   };
 
-  // Shared render function for environment variables section
   const renderEnvVarsSection = (options?: {
     compact?: boolean;
     defaultOpen?: boolean;
@@ -1290,210 +1138,23 @@ export function PreviewConfigureClient({
       stepNumber = 2,
       isDone = false,
     } = options ?? {};
-    const iconSize = compact ? "h-3.5 w-3.5" : "h-4 w-4";
-    const titleSize = compact ? "text-[13px]" : "text-base";
-    const contentPadding = compact ? "mt-3 pl-5" : "mt-4 pl-6";
 
     return (
-      <details
-        className="group"
-        open={defaultOpen}
-        onToggle={(e) => setIsEnvSectionOpen(e.currentTarget.open)}
-      >
-        <summary
-          className={clsx(
-            "flex items-center gap-2 cursor-pointer font-semibold text-neutral-900 dark:text-neutral-100 list-none",
-            titleSize
-          )}
-        >
-          <ChevronDown
-            className={clsx(
-              iconSize,
-              "text-neutral-400 transition-transform -rotate-90 group-open:rotate-0"
-            )}
-          />
-          {showStepBadge && <StepBadge step={stepNumber} done={isDone} />}
-          <span>Environment Variables</span>
-          <div className="ml-auto flex items-center gap-2">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.preventDefault();
-                setActiveEnvValueIndex(null);
-                setAreEnvValuesHidden((prev) => !prev);
-              }}
-              className="text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 transition p-0.5"
-              aria-label={areEnvValuesHidden ? "Reveal values" : "Hide values"}
-            >
-              {areEnvValuesHidden ? (
-                <EyeOff className={iconSize} />
-              ) : (
-                <Eye className={iconSize} />
-              )}
-            </button>
-          </div>
-        </summary>
-        <div
-          className={clsx(contentPadding, "space-y-2")}
-          onPasteCapture={(e) => {
-            const text = e.clipboardData?.getData("text") ?? "";
-            if (text && (/\n/.test(text) || /(=|:)\s*\S/.test(text))) {
-              e.preventDefault();
-              const items = parseEnvBlock(text);
-              if (items.length > 0) {
-                setEnvNone(false);
-                updateEnvVars((prev) => {
-                  const map = new Map(
-                    prev
-                      .filter(
-                        (r) =>
-                          r.name.trim().length > 0 || r.value.trim().length > 0
-                      )
-                      .map((r) => [r.name, r] as const)
-                  );
-                  for (const it of items) {
-                    if (!it.name) continue;
-                    const existing = map.get(it.name);
-                    if (existing)
-                      map.set(it.name, { ...existing, value: it.value });
-                    else
-                      map.set(it.name, {
-                        name: it.name,
-                        value: it.value,
-                        isSecret: true,
-                      });
-                  }
-                  const next = Array.from(map.values());
-                  next.push({ name: "", value: "", isSecret: true });
-                  setPendingFocusIndex(next.length - 1);
-                  return next;
-                });
-              }
-            }
-          }}
-        >
-          <div
-            className="grid gap-2 text-xs text-neutral-500 items-center mb-1"
-            style={{
-              gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.5fr) 40px",
-            }}
-          >
-            <span>Name</span>
-            <span>Value</span>
-            <span />
-          </div>
-          {envVars.map((row, idx) => {
-            const isEditingValue = activeEnvValueIndex === idx;
-            const shouldMaskValue =
-              areEnvValuesHidden &&
-              row.value.trim().length > 0 &&
-              !isEditingValue;
-            return (
-              <div
-                key={idx}
-                className="grid gap-2 items-center min-h-9"
-                style={{
-                  gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.5fr) 40px",
-                }}
-              >
-                <input
-                  type="text"
-                  value={row.name}
-                  disabled={envNone}
-                  ref={(el) => {
-                    keyInputRefs.current[idx] = el;
-                  }}
-                  onChange={(e) => {
-                    setEnvNone(false);
-                    updateEnvVars((prev) => {
-                      const next = [...prev];
-                      if (next[idx])
-                        next[idx] = { ...next[idx], name: e.target.value };
-                      return next;
-                    });
-                  }}
-                  placeholder="EXAMPLE_NAME"
-                  className="w-full min-w-0 h-9 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 disabled:opacity-60 disabled:cursor-not-allowed"
-                />
-                <input
-                  type={shouldMaskValue ? "password" : "text"}
-                  value={shouldMaskValue ? MASKED_ENV_VALUE : row.value}
-                  disabled={envNone}
-                  onChange={
-                    shouldMaskValue
-                      ? undefined
-                      : (e) => {
-                          setEnvNone(false);
-                          updateEnvVars((prev) => {
-                            const next = [...prev];
-                            if (next[idx])
-                              next[idx] = {
-                                ...next[idx],
-                                value: e.target.value,
-                              };
-                            return next;
-                          });
-                        }
-                  }
-                  onFocus={() => setActiveEnvValueIndex(idx)}
-                  onBlur={() =>
-                    setActiveEnvValueIndex((current) =>
-                      current === idx ? null : current
-                    )
-                  }
-                  readOnly={shouldMaskValue}
-                  placeholder="I9JU23NF394R6HH"
-                  className="w-full min-w-0 h-9 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 disabled:opacity-60 disabled:cursor-not-allowed"
-                />
-                <button
-                  type="button"
-                  disabled={envNone || envVars.length <= 1}
-                  onClick={() =>
-                    updateEnvVars((prev) => {
-                      const next = prev.filter((_, i) => i !== idx);
-                      return next.length > 0
-                        ? next
-                        : [{ name: "", value: "", isSecret: true }];
-                    })
-                  }
-                  className={clsx(
-                    "h-9 w-9 rounded-md border border-neutral-200 dark:border-neutral-800 text-neutral-500 dark:text-neutral-400 grid place-items-center",
-                    envNone || envVars.length <= 1
-                      ? "opacity-60 cursor-not-allowed"
-                      : "hover:bg-neutral-50 dark:hover:bg-neutral-900"
-                  )}
-                  aria-label="Remove variable"
-                >
-                  <Minus className="w-4 h-4" />
-                </button>
-              </div>
-            );
-          })}
-          <div className="mt-1">
-            <button
-              type="button"
-              onClick={() =>
-                updateEnvVars((prev) => [
-                  ...prev,
-                  { name: "", value: "", isSecret: true },
-                ])
-              }
-              disabled={envNone}
-              className="inline-flex items-center gap-2 h-9 rounded-md border border-neutral-200 dark:border-neutral-800 px-3 text-sm text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-900 transition disabled:opacity-60 disabled:cursor-not-allowed"
-            >
-              <Plus className="w-4 h-4" /> Add variable
-            </button>
-          </div>
-        </div>
-        <p
-          className={clsx(
-            "text-xs text-neutral-400 mt-4",
-            compact ? "pl-5" : "pl-6"
-          )}
-        >
-          Tip: Paste a .env file to auto-fill
-        </p>
-      </details>
+      <EnvVarsSection
+        envVars={envVars}
+        onUpdate={updateEnvVars}
+        chevronIcon={ChevronDown}
+        eyeIcon={Eye}
+        eyeOffIcon={EyeOff}
+        minusIcon={Minus}
+        plusIcon={Plus}
+        headerPrefix={
+          showStepBadge ? <StepBadge step={stepNumber} done={isDone} /> : null
+        }
+        compact={compact}
+        defaultOpen={defaultOpen}
+        maskedValue={MASKED_ENV_VALUE}
+      />
     );
   };
 

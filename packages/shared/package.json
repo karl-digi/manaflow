@@ -86,6 +86,10 @@
       "import": "./src/utils/format-env-vars-content.ts",
       "types": "./src/utils/format-env-vars-content.ts"
     },
+    "./utils/parse-env-block": {
+      "import": "./src/utils/parse-env-block.ts",
+      "types": "./src/utils/parse-env-block.ts"
+    },
     "./pull-request-state": {
       "import": "./src/pull-request-state.ts",
       "types": "./src/pull-request-state.ts"
@@ -105,6 +109,14 @@
     "./components/vnc-viewer": {
       "import": "./src/components/vnc-viewer.tsx",
       "types": "./src/components/vnc-viewer.tsx"
+    },
+    "./components/environment/env-vars-section": {
+      "import": "./src/components/environment/env-vars-section.tsx",
+      "types": "./src/components/environment/env-vars-section.tsx"
+    },
+    "./components/environment/scripts-section": {
+      "import": "./src/components/environment/scripts-section.tsx",
+      "types": "./src/components/environment/scripts-section.tsx"
     }
   },
   "peerDependencies": {

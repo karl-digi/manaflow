@@ -1,13 +1,6 @@
 import { GitHubIcon } from "@/components/icons/github";
 import { PersistentWebView } from "@/components/persistent-webview";
 import { WorkspaceLoadingIndicator } from "@/components/workspace-loading-indicator";
-import { ScriptTextareaField } from "@/components/ScriptTextareaField";
-import { SCRIPT_COPY } from "@/components/scriptCopy";
-import { ResizableColumns } from "@/components/ResizableColumns";
-import { RenderPanel } from "@/components/TaskPanelFactory";
-import { disableDragPointerEvents, restoreDragPointerEvents } from "@/lib/drag-pointer-events";
-import { parseEnvBlock } from "@/lib/parseEnvBlock";
-import type { PanelPosition, PanelType } from "@/lib/panel-config";
 import {
   TASK_RUN_IFRAME_ALLOW,
   TASK_RUN_IFRAME_SANDBOX,
@@ -17,29 +10,31 @@ import {
   type EnvVar,
   type EnvironmentConfigDraft,
 } from "@/types/environment";
+import { EnvVarsSection } from "@cmux/shared/components/environment/env-vars-section";
+import { ScriptsSection } from "@cmux/shared/components/environment/scripts-section";
 import { formatEnvVarsContent } from "@cmux/shared/utils/format-env-vars-content";
-import type { MorphSnapshotId } from "@cmux/shared";
 import { validateExposedPorts } from "@cmux/shared/utils/validate-exposed-ports";
+import type { MorphSnapshotId } from "@cmux/shared";
+import type { Id } from "@cmux/convex/dataModel";
 import {
+  postApiEnvironmentsByIdSnapshotsMutation,
   postApiEnvironmentsMutation,
   postApiSandboxesByIdEnvMutation,
-  postApiEnvironmentsByIdSnapshotsMutation,
 } from "@cmux/www-openapi-client/react-query";
-import { Accordion, AccordionItem } from "@heroui/react";
 import { useMutation as useRQMutation } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import type { Id } from "@cmux/convex/dataModel";
 import clsx from "clsx";
 import {
   ArrowLeft,
-  Code2,
+  ArrowRight,
+  Check,
+  ChevronDown,
+  Copy,
   Eye,
   EyeOff,
   Loader2,
   Minus,
-  Monitor,
   Plus,
-  Settings,
 } from "lucide-react";
 import {
   useCallback,
@@ -49,19 +44,35 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import TextareaAutosize from "react-textarea-autosize";
 import { toast } from "sonner";
 
 const MASKED_ENV_VALUE = "••••••••••••••••";
 
-type PreviewMode = "split" | "vscode" | "browser";
-type EnvPanelPosition = Extract<PanelPosition, "topLeft" | "bottomLeft">;
-type EnvPanelType = Extract<PanelType, "workspace" | "browser">;
-const ENV_PANEL_POSITIONS: EnvPanelPosition[] = ["topLeft", "bottomLeft"];
-const isEnvPanelPosition = (
-  position: PanelPosition | null
-): position is EnvPanelPosition =>
-  position === "topLeft" || position === "bottomLeft";
+const ALL_CONFIG_STEPS = [
+  "scripts",
+  "env-vars",
+  "run-scripts",
+  "browser-setup",
+] as const;
+
+type ConfigStep = (typeof ALL_CONFIG_STEPS)[number];
+
+type LayoutPhase = "setup" | "workspace";
+
+function StepBadge({ step, done }: { step: number; done?: boolean }) {
+  return (
+    <span
+      className={clsx(
+        "inline-flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-semibold",
+        done
+          ? "bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900"
+          : "bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300"
+      )}
+    >
+      {done ? <Check className="h-3 w-3" /> : step}
+    </span>
+  );
+}
 
 export function EnvironmentConfiguration({
   selectedRepos,
@@ -117,6 +128,15 @@ export function EnvironmentConfiguration({
     instanceId?: string;
     snapshotId?: MorphSnapshotId;
   };
+
+  const [layoutPhase, setLayoutPhase] = useState<LayoutPhase>("setup");
+  const [currentConfigStep, setCurrentConfigStep] = useState<ConfigStep>(
+    "run-scripts"
+  );
+  const [completedSteps, setCompletedSteps] = useState<Set<ConfigStep>>(
+    () => new Set(["scripts", "env-vars"] as ConfigStep[])
+  );
+
   const [envName, setEnvName] = useState(
     () => persistedState?.envName ?? initialEnvName
   );
@@ -132,12 +152,16 @@ export function EnvironmentConfiguration({
   const [exposedPorts, setExposedPorts] = useState(
     () => persistedState?.exposedPorts ?? initialExposedPorts
   );
+  const [portsError, setPortsError] = useState<string | null>(null);
+  const [commandsCopied, setCommandsCopied] = useState(false);
+
   const persistConfig = useCallback(
     (partial: Partial<EnvironmentConfigDraft>) => {
       onPersistStateChange?.(partial);
     },
     [onPersistStateChange]
   );
+
   const updateEnvName = useCallback(
     (value: string) => {
       setEnvName(value);
@@ -145,6 +169,7 @@ export function EnvironmentConfiguration({
     },
     [persistConfig]
   );
+
   const updateEnvVars = useCallback(
     (updater: (prev: EnvVar[]) => EnvVar[]) => {
       setEnvVars((prev) => {
@@ -155,6 +180,7 @@ export function EnvironmentConfiguration({
     },
     [persistConfig]
   );
+
   const updateMaintenanceScript = useCallback(
     (value: string) => {
       setMaintenanceScript(value);
@@ -162,6 +188,7 @@ export function EnvironmentConfiguration({
     },
     [persistConfig]
   );
+
   const updateDevScript = useCallback(
     (value: string) => {
       setDevScript(value);
@@ -169,258 +196,87 @@ export function EnvironmentConfiguration({
     },
     [persistConfig]
   );
+
   const updateExposedPorts = useCallback(
     (value: string) => {
       setExposedPorts(value);
+      setPortsError(null);
       persistConfig({ exposedPorts: value });
     },
     [persistConfig]
   );
-  const [portsError, setPortsError] = useState<string | null>(null);
-  const keyInputRefs = useRef<Array<HTMLInputElement | null>>([]);
-  const [pendingFocusIndex, setPendingFocusIndex] = useState<number | null>(
-    null
-  );
-  const [areEnvValuesHidden, setAreEnvValuesHidden] = useState(true);
-  const [activeEnvValueIndex, setActiveEnvValueIndex] = useState<number | null>(null);
-  const lastSubmittedEnvContent = useRef<string | null>(null);
-  const [previewMode, setPreviewMode] = useState<PreviewMode>(() => {
-    if (typeof window === "undefined") {
-      return "split";
-    }
-    const stored = window.localStorage.getItem("env-preview-mode");
-    if (stored === "split" || stored === "vscode" || stored === "browser") {
-      return stored;
-    }
-    return "split";
-  });
-  const [splitRatio, setSplitRatio] = useState(() => {
-    if (typeof window === "undefined") {
-      return 0.5;
-    }
-    const stored = window.localStorage.getItem("env-preview-split");
-    const parsed = stored ? Number.parseFloat(stored) : 0.5;
-    if (Number.isNaN(parsed)) {
-      return 0.5;
-    }
-    return Math.min(Math.max(parsed, 0.2), 0.8);
-  });
-  const splitContainerRef = useRef<HTMLDivElement | null>(null);
-  const splitDragRafRef = useRef<number | null>(null);
-  const [expandedPanelInSplit, setExpandedPanelInSplit] = useState<EnvPanelPosition | null>(null);
-  const [panelLayout, setPanelLayout] = useState<
-    Record<EnvPanelPosition, EnvPanelType>
-  >({
-    topLeft: "workspace",
-    bottomLeft: "browser",
-  });
-  const workspacePosition = useMemo<EnvPanelPosition | null>(() => {
-    return (
-      ENV_PANEL_POSITIONS.find(
-        (position) => panelLayout[position] === "workspace"
-      ) ?? null
-    );
-  }, [panelLayout]);
-  const browserPosition = useMemo<EnvPanelPosition | null>(() => {
-    return (
-      ENV_PANEL_POSITIONS.find(
-        (position) => panelLayout[position] === "browser"
-      ) ?? null
-    );
-  }, [panelLayout]);
-  const expandedPanelPosition = useMemo<PanelPosition | null>(() => {
-    if (previewMode === "split") {
-      return null;
-    }
-    if (previewMode === "vscode") {
-      return workspacePosition;
-    }
-    if (previewMode === "browser") {
-      return browserPosition;
-    }
-    return null;
-  }, [browserPosition, previewMode, workspacePosition]);
-  const basePersistKey = useMemo(() => {
-    if (instanceId) return `env-config:${instanceId}`;
-    if (vscodeUrl) return `env-config:${vscodeUrl}`;
-    if (browserUrl) return `env-config:${browserUrl}`;
-    return "env-config";
-  }, [browserUrl, instanceId, vscodeUrl]);
-  const vscodePersistKey = `${basePersistKey}:vscode`;
-  const browserPersistKey = `${basePersistKey}:browser`;
 
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    window.localStorage.setItem("env-preview-mode", previewMode);
-  }, [previewMode]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    window.localStorage.setItem("env-preview-split", String(splitRatio));
-  }, [splitRatio]);
-
-  useEffect(() => {
-    if (previewMode === "browser" && !browserUrl) {
-      setPreviewMode("vscode");
-    }
-  }, [browserUrl, previewMode]);
-
-  const handlePanelSwap = useCallback(
-    (fromPosition: PanelPosition, toPosition: PanelPosition) => {
-      if (
-        !isEnvPanelPosition(fromPosition) ||
-        !isEnvPanelPosition(toPosition) ||
-        fromPosition === toPosition
-      ) {
-        return;
-      }
-      const fromKey = fromPosition;
-      const toKey = toPosition;
-      setPanelLayout((prev) => {
-        if (prev[fromKey] === prev[toKey]) {
-          return prev;
-        }
-        return {
-          ...prev,
-          [fromKey]: prev[toKey],
-          [toKey]: prev[fromKey],
-        };
-      });
-    },
-    []
-  );
-
-  const handlePanelToggleExpand = useCallback(
-    (position: PanelPosition) => {
-      if (!isEnvPanelPosition(position)) {
-        return;
-      }
-      setExpandedPanelInSplit((prev) => {
-        if (prev === position) {
-          return null;
-        }
-        return position;
-      });
-    },
-    []
-  );
-
-  const clampSplitRatio = useCallback(
-    (value: number) => Math.min(Math.max(value, 0.2), 0.8),
-    []
-  );
-
-
-  const updateSplitFromEvent = useCallback(
-    (event: MouseEvent) => {
-      const container = splitContainerRef.current;
-      if (!container) return;
-      const rect = container.getBoundingClientRect();
-      if (rect.height <= 0) return;
-      const offset = (event.clientY - rect.top) / rect.height;
-      setSplitRatio(clampSplitRatio(offset));
-    },
-    [clampSplitRatio]
-  );
-
-  const handleSplitDragMove = useCallback(
-    (event: MouseEvent) => {
-      if (typeof window === "undefined") {
-        return;
-      }
-      if (splitDragRafRef.current != null) {
-        return;
-      }
-      splitDragRafRef.current = window.requestAnimationFrame(() => {
-        splitDragRafRef.current = null;
-        updateSplitFromEvent(event);
-      });
-    },
-    [updateSplitFromEvent]
-  );
-
-  const stopSplitDragging = useCallback(() => {
-    if (typeof window === "undefined" || typeof document === "undefined") {
-      return;
-    }
-    if (splitDragRafRef.current != null) {
-      cancelAnimationFrame(splitDragRafRef.current);
-      splitDragRafRef.current = null;
-    }
-    document.body.style.cursor = "";
-    document.body.classList.remove("select-none");
-    restoreDragPointerEvents();
-    window.removeEventListener("mousemove", handleSplitDragMove);
-    window.removeEventListener("mouseup", stopSplitDragging);
-  }, [handleSplitDragMove]);
-
-  const startSplitDragging = useCallback(
-    (event: React.MouseEvent<HTMLDivElement>) => {
-      if (previewMode !== "split") {
-        return;
-      }
-      if (typeof window === "undefined" || typeof document === "undefined") {
-        return;
-      }
-      event.preventDefault();
-      document.body.style.cursor = "row-resize";
-      document.body.classList.add("select-none");
-      disableDragPointerEvents();
-      window.addEventListener("mousemove", handleSplitDragMove);
-      window.addEventListener("mouseup", stopSplitDragging);
-    },
-    [handleSplitDragMove, previewMode, stopSplitDragging]
-  );
-
-  useEffect(() => {
-    return () => {
-      if (typeof window !== "undefined" && splitDragRafRef.current != null) {
-        cancelAnimationFrame(splitDragRafRef.current);
-        splitDragRafRef.current = null;
-        window.removeEventListener("mousemove", handleSplitDragMove);
-        window.removeEventListener("mouseup", stopSplitDragging);
-      }
-      if (typeof document !== "undefined") {
-        document.body.style.cursor = "";
-        document.body.classList.remove("select-none");
-      }
-      restoreDragPointerEvents();
-    };
-  }, [handleSplitDragMove, stopSplitDragging]);
-
-  const createEnvironmentMutation = useRQMutation(
-    postApiEnvironmentsMutation()
-  );
+  const createEnvironmentMutation = useRQMutation(postApiEnvironmentsMutation());
   const createSnapshotMutation = useRQMutation(
     postApiEnvironmentsByIdSnapshotsMutation()
   );
-  const applySandboxEnvMutation = useRQMutation(
+  const { mutate: applySandboxEnv } = useRQMutation(
     postApiSandboxesByIdEnvMutation()
   );
-  const applySandboxEnv = applySandboxEnvMutation.mutate;
+
+  const lastSubmittedEnvContent = useRef<string | null>(null);
+  const copyResetTimeoutRef = useRef<number | null>(null);
+
+  const resolvedVscodeUrl = useMemo(() => {
+    if (!vscodeUrl) return undefined;
+    try {
+      const url = new URL(vscodeUrl);
+      url.searchParams.set("folder", "/root/workspace");
+      return url.toString();
+    } catch {
+      return vscodeUrl;
+    }
+  }, [vscodeUrl]);
+
+  const workspacePlaceholder = useMemo(() => {
+    if (resolvedVscodeUrl) return null;
+    if (instanceId || isProvisioning) {
+      return {
+        title: "Waiting for VS Code",
+        description:
+          "The editor opens automatically once the environment finishes booting.",
+      };
+    }
+    return {
+      title: "VS Code workspace not ready",
+      description:
+        "Select repositories and launch an environment to open VS Code.",
+    };
+  }, [instanceId, isProvisioning, resolvedVscodeUrl]);
+
+  const browserPlaceholder = useMemo(() => {
+    if (browserUrl) return null;
+    if (instanceId || isProvisioning) {
+      return {
+        title: "Waiting for browser",
+        description:
+          "We'll embed the browser session as soon as the environment exposes it.",
+      };
+    }
+    return {
+      title: "Browser preview unavailable",
+      description:
+        "Launch the environment so the browser agent can handle authentication flows.",
+    };
+  }, [browserUrl, instanceId, isProvisioning]);
 
   useEffect(() => {
-    if (pendingFocusIndex !== null) {
-      const el = keyInputRefs.current[pendingFocusIndex];
-      if (el) {
-        setTimeout(() => {
-          el.focus();
-          try {
-            el.scrollIntoView({ block: "nearest" });
-          } catch (_e) {
-            void 0;
-          }
-        }, 0);
-        setPendingFocusIndex(null);
+    return () => {
+      if (copyResetTimeoutRef.current !== null) {
+        window.clearTimeout(copyResetTimeoutRef.current);
       }
-    }
-  }, [pendingFocusIndex, envVars]);
+    };
+  }, []);
 
-  // no-op placeholder removed; using onSnapshot instead
+  useEffect(() => {
+    if (!onHeaderControlsChange) {
+      return;
+    }
+    onHeaderControlsChange(null);
+    return () => {
+      onHeaderControlsChange(null);
+    };
+  }, [onHeaderControlsChange]);
 
   useEffect(() => {
     lastSubmittedEnvContent.current = null;
@@ -433,8 +289,8 @@ export function EnvironmentConfiguration({
 
     const envVarsContent = formatEnvVarsContent(
       envVars
-        .filter((r) => r.name.trim().length > 0)
-        .map((r) => ({ name: r.name, value: r.value }))
+        .filter((row) => row.name.trim().length > 0)
+        .map((row) => ({ name: row.name, value: row.value }))
     );
 
     if (
@@ -470,20 +326,96 @@ export function EnvironmentConfiguration({
     };
   }, [applySandboxEnv, envVars, instanceId, teamSlugOrId]);
 
-  const onSnapshot = async (): Promise<void> => {
-    if (!instanceId) {
-      console.error("Missing instanceId for snapshot");
+  const handleStartWorkspaceConfig = useCallback(() => {
+    setLayoutPhase("workspace");
+  }, []);
+
+  const handleBackToSetup = useCallback(() => {
+    setLayoutPhase("setup");
+  }, []);
+
+  const handleNextConfigStep = useCallback(() => {
+    const idx = ALL_CONFIG_STEPS.indexOf(currentConfigStep);
+    if (idx === -1) return;
+    const nextStep = ALL_CONFIG_STEPS[idx + 1];
+    setCompletedSteps((prev) => {
+      const next = new Set(prev);
+      next.add(currentConfigStep);
+      return next;
+    });
+    if (nextStep) {
+      setCurrentConfigStep(nextStep);
+    }
+  }, [currentConfigStep]);
+
+  const handleGoToStep = useCallback((step: ConfigStep) => {
+    setCompletedSteps((prev) => {
+      const next = new Set(prev);
+      next.delete(step);
+      return next;
+    });
+    setCurrentConfigStep(step);
+  }, []);
+
+  const isStepVisible = useCallback(
+    (step: ConfigStep) => completedSteps.has(step) || step === currentConfigStep,
+    [completedSteps, currentConfigStep]
+  );
+
+  const isStepCompleted = useCallback(
+    (step: ConfigStep) => completedSteps.has(step),
+    [completedSteps]
+  );
+
+  const isCurrentStep = useCallback(
+    (step: ConfigStep) => step === currentConfigStep,
+    [currentConfigStep]
+  );
+
+  const combinedCommands = useMemo(() => {
+    const parts = [maintenanceScript.trim(), devScript.trim()].filter(Boolean);
+    return parts.join(" && ");
+  }, [devScript, maintenanceScript]);
+
+  const handleCopyCommands = useCallback(async () => {
+    if (!combinedCommands) {
       return;
     }
-    if (!envName.trim()) {
-      console.error("Environment name is required");
+
+    try {
+      await navigator.clipboard.writeText(combinedCommands);
+      setCommandsCopied(true);
+      if (copyResetTimeoutRef.current !== null) {
+        window.clearTimeout(copyResetTimeoutRef.current);
+      }
+      copyResetTimeoutRef.current = window.setTimeout(() => {
+        setCommandsCopied(false);
+      }, 2000);
+    } catch (error) {
+      console.error("Failed to copy commands:", error);
+    }
+  }, [combinedCommands]);
+
+  const handleSaveConfiguration = useCallback(async () => {
+    if (!instanceId) {
+      console.error("Missing instanceId for environment save");
+      return;
+    }
+
+    const trimmedName = envName.trim();
+    if (!trimmedName) {
+      const message =
+        mode === "snapshot"
+          ? "Snapshot label is required"
+          : "Environment name is required";
+      toast.error(message);
       return;
     }
 
     const envVarsContent = formatEnvVarsContent(
       envVars
-        .filter((r) => r.name.trim().length > 0)
-        .map((r) => ({ name: r.name, value: r.value }))
+        .filter((row) => row.name.trim().length > 0)
+        .map((row) => ({ name: row.name, value: row.value }))
     );
 
     const normalizedMaintenanceScript = maintenanceScript.trim();
@@ -516,14 +448,13 @@ export function EnvironmentConfiguration({
     const ports = validation.sanitized;
 
     if (mode === "snapshot" && sourceEnvironmentId) {
-      // Create a new snapshot version
       createSnapshotMutation.mutate(
         {
           path: { id: sourceEnvironmentId },
           body: {
             teamSlugOrId,
             morphInstanceId: instanceId,
-            label: envName.trim(),
+            label: trimmedName,
             activate: true,
             maintenanceScript: requestMaintenanceScript,
             devScript: requestDevScript,
@@ -548,797 +479,605 @@ export function EnvironmentConfiguration({
               }),
             });
           },
-          onError: (err) => {
-            console.error("Failed to create snapshot version:", err);
+          onError: (error) => {
+            console.error("Failed to create snapshot version:", error);
           },
         }
       );
-    } else {
-      // Create a new environment
-      createEnvironmentMutation.mutate(
-        {
-          body: {
-            teamSlugOrId,
-            name: envName.trim(),
-            morphInstanceId: instanceId,
-            envVarsContent,
-            selectedRepos,
-            maintenanceScript: requestMaintenanceScript,
-            devScript: requestDevScript,
-            exposedPorts: ports.length > 0 ? ports : undefined,
-            description: undefined,
-          },
+      return;
+    }
+
+    createEnvironmentMutation.mutate(
+      {
+        body: {
+          teamSlugOrId,
+          name: trimmedName,
+          morphInstanceId: instanceId,
+          envVarsContent,
+          selectedRepos,
+          maintenanceScript: requestMaintenanceScript,
+          devScript: requestDevScript,
+          exposedPorts: ports.length > 0 ? ports : undefined,
+          description: undefined,
         },
-        {
-          onSuccess: async () => {
-            toast.success("Environment saved");
-            onEnvironmentSaved?.();
-            await navigate({
-              to: "/$teamSlugOrId/environments",
-              params: { teamSlugOrId },
-              search: {
-                step: undefined,
-                selectedRepos: undefined,
-                connectionLogin: undefined,
-                repoSearch: undefined,
-                instanceId: undefined,
-                snapshotId: undefined,
-              },
-            });
-          },
-          onError: (err) => {
-            console.error("Failed to create environment:", err);
-          },
-        }
-      );
+      },
+      {
+        onSuccess: async () => {
+          toast.success("Environment saved");
+          onEnvironmentSaved?.();
+          await navigate({
+            to: "/$teamSlugOrId/environments",
+            params: { teamSlugOrId },
+            search: {
+              step: undefined,
+              selectedRepos: undefined,
+              connectionLogin: undefined,
+              repoSearch: undefined,
+              instanceId: undefined,
+              snapshotId: undefined,
+            },
+          });
+        },
+        onError: (error) => {
+          console.error("Failed to create environment:", error);
+        },
+      }
+    );
+  }, [
+    createEnvironmentMutation,
+    createSnapshotMutation,
+    devScript,
+    envName,
+    envVars,
+    exposedPorts,
+    instanceId,
+    maintenanceScript,
+    mode,
+    navigate,
+    onEnvironmentSaved,
+    selectedRepos,
+    sourceEnvironmentId,
+    teamSlugOrId,
+  ]);
+
+  const handleBackNavigation = useCallback(async () => {
+    if (mode === "new") {
+      onBackToRepositorySelection?.();
+      await navigate({
+        to: "/$teamSlugOrId/environments/new",
+        params: { teamSlugOrId },
+        search: {
+          step: "select",
+          selectedRepos: selectedRepos.length > 0 ? selectedRepos : undefined,
+          instanceId: search.instanceId,
+          connectionLogin: search.connectionLogin,
+          repoSearch: search.repoSearch,
+          snapshotId: search.snapshotId,
+        },
+      });
+      return;
     }
-  };
 
-  const isBrowserAvailable = Boolean(browserUrl);
-  const workspacePlaceholder = useMemo(
-    () =>
-      vscodeUrl
-        ? null
-        : {
-            title: instanceId
-              ? "Waiting for VS Code"
-              : "VS Code workspace not ready",
-            description: instanceId
-              ? "The editor opens automatically once the environment finishes booting."
-              : "Select a repository and launch an environment to open VS Code.",
-          },
-    [instanceId, vscodeUrl]
-  );
-  const browserPlaceholder = useMemo(
-    () =>
-      browserUrl
-        ? null
-        : {
-            title: instanceId
-              ? "Waiting for browser"
-              : "Browser preview unavailable",
-            description: instanceId
-              ? "We'll embed the browser session as soon as the environment exposes it."
-              : "Launch an environment so the browser agent can handle screenshots and authentication flows.",
-          },
-    [browserUrl, instanceId]
-  );
-
-  const renderEnvPanel = (position: EnvPanelPosition) => {
-    const type = panelLayout[position];
-    const isPanelExpanded = previewMode === "split" ? expandedPanelInSplit === position : expandedPanelPosition === position;
-    const isAnyExpanded = previewMode === "split" ? expandedPanelInSplit !== null : expandedPanelPosition !== null;
-    const commonPanelProps = {
-      position,
-      onSwap: handlePanelSwap,
-      onToggleExpand: handlePanelToggleExpand,
-      isExpanded: isPanelExpanded,
-      isAnyPanelExpanded: isAnyExpanded,
-    };
-
-    if (type === "workspace") {
-      return (
-        <RenderPanel
-          key={`env-panel-${position}-workspace`}
-          type="workspace"
-          {...commonPanelProps}
-          workspaceUrl={vscodeUrl ?? null}
-          workspacePersistKey={vscodePersistKey}
-          PersistentWebView={PersistentWebView}
-          WorkspaceLoadingIndicator={WorkspaceLoadingIndicator}
-          TASK_RUN_IFRAME_ALLOW={TASK_RUN_IFRAME_ALLOW}
-          TASK_RUN_IFRAME_SANDBOX={TASK_RUN_IFRAME_SANDBOX}
-          workspacePlaceholder={workspacePlaceholder}
-          editorLoadingFallback={
-            <WorkspaceLoadingIndicator variant="vscode" status="loading" />
-          }
-          editorErrorFallback={
-            <WorkspaceLoadingIndicator variant="vscode" status="error" />
-          }
-          selectedRun={null}
-          rawWorkspaceUrl={null}
-        />
-      );
+    if (sourceEnvironmentId) {
+      await navigate({
+        to: "/$teamSlugOrId/environments/$environmentId",
+        params: {
+          teamSlugOrId,
+          environmentId: sourceEnvironmentId,
+        },
+        search: {
+          step: search.step,
+          selectedRepos: search.selectedRepos,
+          connectionLogin: search.connectionLogin,
+          repoSearch: search.repoSearch,
+          instanceId: search.instanceId,
+          snapshotId: search.snapshotId,
+        },
+      });
     }
+  }, [
+    mode,
+    navigate,
+    onBackToRepositorySelection,
+    search.connectionLogin,
+    search.instanceId,
+    search.repoSearch,
+    search.selectedRepos,
+    search.snapshotId,
+    search.step,
+    selectedRepos,
+    sourceEnvironmentId,
+    teamSlugOrId,
+  ]);
+
+  const isSaving =
+    createEnvironmentMutation.isPending || createSnapshotMutation.isPending;
+
+  const renderScriptsSection = (options?: {
+    compact?: boolean;
+    defaultOpen?: boolean;
+    showStepBadge?: boolean;
+    stepNumber?: number;
+    isDone?: boolean;
+  }) => {
+    const {
+      compact = false,
+      defaultOpen = true,
+      showStepBadge = false,
+      stepNumber = 1,
+      isDone = false,
+    } = options ?? {};
 
     return (
-      <RenderPanel
-        key={`env-panel-${position}-browser`}
-        type="browser"
-        {...commonPanelProps}
-        browserUrl={browserUrl ?? null}
-        browserPersistKey={browserPersistKey}
-        PersistentWebView={PersistentWebView}
-        WorkspaceLoadingIndicator={WorkspaceLoadingIndicator}
-        TASK_RUN_IFRAME_ALLOW={TASK_RUN_IFRAME_ALLOW}
-        TASK_RUN_IFRAME_SANDBOX={TASK_RUN_IFRAME_SANDBOX}
-        browserPlaceholder={browserPlaceholder}
-        selectedRun={null}
-        isMorphProvider={Boolean(instanceId)}
+      <ScriptsSection
+        maintenanceScript={maintenanceScript}
+        devScript={devScript}
+        onMaintenanceScriptChange={updateMaintenanceScript}
+        onDevScriptChange={updateDevScript}
+        chevronIcon={ChevronDown}
+        headerPrefix={
+          showStepBadge ? <StepBadge step={stepNumber} done={isDone} /> : null
+        }
+        compact={compact}
+        defaultOpen={defaultOpen}
       />
     );
   };
 
-  const renderSingleContent = () => {
-    if (previewMode === "vscode") {
-      return vscodeUrl ? (
-        <PersistentWebView
-          key={vscodePersistKey}
-          persistKey={vscodePersistKey}
-          src={vscodeUrl}
-          className="flex h-full"
-          iframeClassName="select-none"
-          allow={TASK_RUN_IFRAME_ALLOW}
-          sandbox={TASK_RUN_IFRAME_SANDBOX}
-          preflight
-          retainOnUnmount
-          fallback={<WorkspaceLoadingIndicator variant="vscode" status="loading" />}
-          fallbackClassName="bg-neutral-50 dark:bg-black"
-          errorFallback={<WorkspaceLoadingIndicator variant="vscode" status="error" />}
-          errorFallbackClassName="bg-neutral-50/95 dark:bg-black/95"
-          loadTimeoutMs={60_000}
-        />
-      ) : workspacePlaceholder ? (
-        <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-neutral-500 dark:text-neutral-400">
-          <div className="text-sm font-medium text-neutral-600 dark:text-neutral-200">
-            {workspacePlaceholder.title}
-          </div>
-          {workspacePlaceholder.description ? (
-            <p className="text-xs text-neutral-500 dark:text-neutral-400">
-              {workspacePlaceholder.description}
-            </p>
-          ) : null}
-        </div>
-      ) : null;
-    }
-
-    if (previewMode === "browser") {
-      return browserUrl && browserPersistKey ? (
-        <PersistentWebView
-          key={browserPersistKey}
-          persistKey={browserPersistKey}
-          src={browserUrl}
-          className="flex h-full"
-          iframeClassName="select-none"
-          allow={TASK_RUN_IFRAME_ALLOW}
-          sandbox={TASK_RUN_IFRAME_SANDBOX}
-          retainOnUnmount
-          fallback={<WorkspaceLoadingIndicator variant="browser" status="loading" />}
-          fallbackClassName="bg-neutral-50 dark:bg-black"
-          errorFallback={<WorkspaceLoadingIndicator variant="browser" status="error" />}
-          errorFallbackClassName="bg-neutral-50/95 dark:bg-black/95"
-          loadTimeoutMs={45_000}
-        />
-      ) : browserPlaceholder ? (
-        <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-neutral-500 dark:text-neutral-400">
-          <div className="text-sm font-medium text-neutral-600 dark:text-neutral-200">
-            {browserPlaceholder.title}
-          </div>
-          {browserPlaceholder.description ? (
-            <p className="text-xs text-neutral-500 dark:text-neutral-400">
-              {browserPlaceholder.description}
-            </p>
-          ) : null}
-        </div>
-      ) : null;
-    }
-
-    return null;
-  };
-
-  const previewContent =
-    previewMode === "split" ? (
-      <div
-        ref={splitContainerRef}
-        className="grid h-full min-h-0"
-        style={{
-          gridTemplateRows: expandedPanelInSplit === "topLeft"
-            ? "1fr 8px 0fr"
-            : expandedPanelInSplit === "bottomLeft"
-              ? "0fr 8px 1fr"
-              : `minmax(160px, ${splitRatio}fr) 8px minmax(160px, ${1 - splitRatio}fr)`,
-          gap: "0",
-        }}
-      >
-        <div className="min-h-0 h-full">{renderEnvPanel("topLeft")}</div>
-        {!expandedPanelInSplit && (
-          <div
-            role="separator"
-            aria-label="Resize preview panels"
-            aria-orientation="horizontal"
-            onMouseDown={startSplitDragging}
-            className="group relative cursor-row-resize select-none bg-transparent transition-colors z-10"
-            style={{
-              height: "8px",
-            }}
-            title="Resize panels"
-          >
-            <div className="absolute left-0 right-0 h-px bg-transparent group-hover:bg-neutral-400 dark:group-hover:bg-neutral-600 group-active:bg-neutral-500 dark:group-active:bg-neutral-500 transition-colors" style={{ top: "50%", transform: "translateY(-50%)" }} />
-          </div>
-        )}
-        {expandedPanelInSplit && <div className="h-0" />}
-        <div className="min-h-0 h-full">{renderEnvPanel("bottomLeft")}</div>
-      </div>
-    ) : (
-      <div className="h-full min-h-0">{renderSingleContent()}</div>
-    );
-
-  const previewButtonClass = useCallback(
-    (view: PreviewMode, disabled: boolean) =>
-      clsx(
-        "inline-flex h-7 w-7 items-center justify-center rounded focus:outline-none transition-colors",
-        disabled
-          ? "opacity-40 cursor-not-allowed text-neutral-500 dark:text-neutral-400"
-          : previewMode === view
-            ? "text-neutral-900 dark:text-white bg-neutral-100 dark:bg-neutral-800"
-            : "text-neutral-500 dark:text-neutral-400 cursor-pointer hover:text-neutral-900 dark:hover:text-neutral-100 hover:bg-neutral-50 dark:hover:bg-neutral-900"
-      ),
-    [previewMode]
-  );
-
-  const handlePreviewModeChange = useCallback(
-    (mode: PreviewMode) => {
-      if (mode === "browser" && !isBrowserAvailable) {
-        return;
-      }
-      setPreviewMode(mode);
-    },
-    [isBrowserAvailable]
-  );
-
-  const headerControls = useMemo(() => {
-    if (isProvisioning) {
-      return null;
-    }
+  const renderEnvVarsSection = (options?: {
+    compact?: boolean;
+    defaultOpen?: boolean;
+    showStepBadge?: boolean;
+    stepNumber?: number;
+    isDone?: boolean;
+  }) => {
+    const {
+      compact = false,
+      defaultOpen = true,
+      showStepBadge = false,
+      stepNumber = 2,
+      isDone = false,
+    } = options ?? {};
 
     return (
-      <div className="flex items-center gap-1.5">
-        <button
-          type="button"
-          onClick={() => handlePreviewModeChange("split")}
-          className={previewButtonClass("split", false)}
-          aria-pressed={previewMode === "split"}
-          aria-label="Split VS Code and browser"
-          title="Split VS Code and browser"
-        >
-          <svg
-            className="h-3.5 w-3.5"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <rect x="3" y="3" width="18" height="7" rx="1" />
-            <rect x="3" y="14" width="18" height="7" rx="1" />
-          </svg>
-        </button>
-        <button
-          type="button"
-          onClick={() => handlePreviewModeChange("vscode")}
-          className={previewButtonClass("vscode", false)}
-          aria-pressed={previewMode === "vscode"}
-          aria-label="Focus VS Code workspace"
-          title="Show VS Code workspace"
-        >
-          <Code2 className="h-3.5 w-3.5" />
-        </button>
-        <button
-          type="button"
-          onClick={() => handlePreviewModeChange("browser")}
-          className={previewButtonClass("browser", !isBrowserAvailable)}
-          aria-pressed={previewMode === "browser"}
-          aria-label="Show browser preview"
-          title="Show browser preview"
-          disabled={!isBrowserAvailable}
-        >
-          <Monitor className="h-3.5 w-3.5" />
-        </button>
-      </div>
+      <EnvVarsSection
+        envVars={envVars}
+        onUpdate={updateEnvVars}
+        chevronIcon={ChevronDown}
+        eyeIcon={Eye}
+        eyeOffIcon={EyeOff}
+        minusIcon={Minus}
+        plusIcon={Plus}
+        headerPrefix={
+          showStepBadge ? <StepBadge step={stepNumber} done={isDone} /> : null
+        }
+        compact={compact}
+        defaultOpen={defaultOpen}
+        maskedValue={MASKED_ENV_VALUE}
+      />
     );
-  }, [
-    handlePreviewModeChange,
-    isBrowserAvailable,
-    isProvisioning,
-    previewButtonClass,
-    previewMode,
-  ]);
+  };
 
-  useEffect(() => {
-    if (!onHeaderControlsChange) {
-      return;
-    }
-    onHeaderControlsChange(headerControls ?? null);
-  }, [headerControls, onHeaderControlsChange]);
-
-  useEffect(() => {
-    return () => {
-      onHeaderControlsChange?.(null);
-    };
-  }, [onHeaderControlsChange]);
-
-  const leftPane = (
-    <div className="h-full p-6 overflow-y-auto">
-      <div className="flex flex-wrap items-center gap-4 mb-4">
-        {mode === "new" ? (
-          <button
-            onClick={async () => {
-              onBackToRepositorySelection?.();
-              await navigate({
-                to: "/$teamSlugOrId/environments/new",
-                params: { teamSlugOrId },
-                search: {
-                  step: "select",
-                  selectedRepos:
-                    selectedRepos.length > 0 ? selectedRepos : undefined,
-                  instanceId: search.instanceId,
-                  connectionLogin: search.connectionLogin,
-                  repoSearch: search.repoSearch,
-                  snapshotId: search.snapshotId,
-                },
-              });
-            }}
-            className="inline-flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back to repository selection
-          </button>
-        ) : sourceEnvironmentId ? (
-          <button
-            onClick={async () => {
-              await navigate({
-                to: "/$teamSlugOrId/environments/$environmentId",
-                params: {
-                  teamSlugOrId,
-                  environmentId: sourceEnvironmentId,
-                },
-                search: {
-                  step: search.step,
-                  selectedRepos: search.selectedRepos,
-                  connectionLogin: search.connectionLogin,
-                  repoSearch: search.repoSearch,
-                  instanceId: search.instanceId,
-                  snapshotId: search.snapshotId,
-                },
-              });
-            }}
-            className="inline-flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back to environment
-          </button>
-        ) : null}
-      </div>
-
-      <h1 className="text-xl font-semibold text-neutral-900 dark:text-neutral-100">
-        {mode === "snapshot"
-          ? "Configure Snapshot Version"
-          : "Configure Environment"}
-      </h1>
-      <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-        {mode === "snapshot"
-          ? "Update configuration for the new snapshot version."
-          : "Set up your environment name and variables."}
-      </p>
-
-      <div className="mt-6 space-y-4">
-        <div className="space-y-2">
-          <label className="block text-sm font-medium text-neutral-800 dark:text-neutral-200">
-            {mode === "snapshot" ? "Snapshot label" : "Environment name"}
-          </label>
-          <input
-            type="text"
-            value={envName}
-            onChange={(e) => updateEnvName(e.target.value)}
-            readOnly={mode === "snapshot"}
-            aria-readonly={mode === "snapshot"}
-            placeholder={
-              mode === "snapshot"
-                ? "Auto-generated from environment"
-                : "e.g. project-name"
-            }
-            className={clsx(
-              "w-full rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2 text-sm placeholder:text-neutral-400 focus:outline-none focus:ring-2",
-              mode === "snapshot"
-                ? "bg-neutral-100 text-neutral-600 cursor-not-allowed focus:ring-neutral-300/0 dark:bg-neutral-900 dark:text-neutral-400 dark:focus:ring-neutral-700/0"
-                : "bg-white text-neutral-900 focus:ring-neutral-300 dark:bg-neutral-950 dark:text-neutral-100 dark:focus:ring-neutral-700"
-            )}
-          />
-        </div>
-
-        {selectedRepos.length > 0 ? (
-          <div>
-            <div className="text-xs text-neutral-500 dark:text-neutral-500 mb-1">
-              Selected repositories
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {selectedRepos.map((fullName) => (
-                <span
-                  key={fullName}
-                  className="inline-flex items-center gap-1 rounded-full border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-neutral-800 dark:text-neutral-200 px-2 py-1 text-xs"
-                >
-                  <GitHubIcon className="h-3 w-3 shrink-0 text-neutral-700 dark:text-neutral-300" />
-                  {fullName}
-                </span>
-              ))}
-            </div>
-          </div>
-        ) : null}
-
-        <Accordion
-          selectionMode="multiple"
-          className="px-0"
-          defaultExpandedKeys={[
-            "env-vars",
-            "install-dependencies",
-            "maintenance-script",
-            "dev-script",
-          ]}
-          itemClasses={{
-            trigger: "text-sm cursor-pointer py-3",
-            content: "pt-0",
-            title: "text-sm font-medium",
-          }}
-        >
-          <AccordionItem
-            key="env-vars"
-            aria-label="Environment variables"
-            title="Environment variables"
-          >
-            <div
-              className="pb-2"
-              onPasteCapture={(e) => {
-                const text = e.clipboardData?.getData("text") ?? "";
-                if (text && (/\n/.test(text) || /(=|:)\s*\S/.test(text))) {
-                  e.preventDefault();
-                  const items = parseEnvBlock(text);
-                  if (items.length > 0) {
-                    updateEnvVars((prev) => {
-                      const map = new Map(
-                        prev
-                          .filter(
-                            (r) =>
-                              r.name.trim().length > 0 ||
-                              r.value.trim().length > 0
-                          )
-                          .map((r) => [r.name, r] as const)
-                      );
-                      for (const it of items) {
-                        if (!it.name) continue;
-                        const existing = map.get(it.name);
-                        if (existing) {
-                          map.set(it.name, {
-                            ...existing,
-                            value: it.value,
-                          });
-                        } else {
-                          map.set(it.name, {
-                            name: it.name,
-                            value: it.value,
-                            isSecret: true,
-                          });
-                        }
-                      }
-                      const next = Array.from(map.values());
-                      next.push({ name: "", value: "", isSecret: true });
-                      setPendingFocusIndex(next.length - 1);
-                      return next;
-                    });
-                  }
-                }
-              }}
+  const renderSetupPanel = () => (
+    <div className="flex h-full flex-col">
+      <div className="flex-1 overflow-y-auto px-6 py-6">
+        <div className="flex flex-wrap items-center gap-4 mb-4">
+          {mode === "new" || sourceEnvironmentId ? (
+            <button
+              type="button"
+              onClick={handleBackNavigation}
+              className="inline-flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
             >
-              <div className="flex items-center justify-between pb-1">
-                <div
-                  className="grid gap-3 text-xs text-neutral-500 dark:text-neutral-500 items-center"
-                  style={{
-                    gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.4fr) 44px",
-                  }}
-                >
-                  <span>Key</span>
-                  <span>Value</span>
-                  <span className="w-[44px]" />
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveEnvValueIndex(null);
-                    setAreEnvValuesHidden((previous) => !previous);
-                  }}
-                  className="inline-flex items-center gap-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 px-2 py-1 text-xs text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-900"
-                >
-                  {areEnvValuesHidden ? (
-                    <>
-                      <EyeOff className="h-3 w-3" />
-                      Reveal
-                    </>
-                  ) : (
-                    <>
-                      <Eye className="h-3 w-3" />
-                      Hide
-                    </>
-                  )}
-                </button>
-              </div>
-
-              <div className="space-y-2">
-                {envVars.map((row, idx) => {
-                  const rowKey = idx;
-                  const isEditingValue = activeEnvValueIndex === idx;
-                  const shouldMaskValue = areEnvValuesHidden && row.value.trim().length > 0 && !isEditingValue;
-                  return (
-                    <div
-                      key={rowKey}
-                      className="grid gap-3 items-center"
-                      style={{
-                        gridTemplateColumns:
-                          "minmax(0, 1fr) minmax(0, 1.4fr) 44px",
-                      }}
-                    >
-                      <input
-                        type="text"
-                        value={row.name}
-                        ref={(el) => {
-                          keyInputRefs.current[idx] = el;
-                        }}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          updateEnvVars((prev) => {
-                            const next = [...prev];
-                            const current = next[idx];
-                            if (current) {
-                              next[idx] = { ...current, name: v };
-                            }
-                            return next;
-                          });
-                        }}
-                        placeholder="EXAMPLE_NAME"
-                        className="w-full min-w-0 self-start rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700"
-                      />
-                      <TextareaAutosize
-                        value={shouldMaskValue ? MASKED_ENV_VALUE : row.value}
-                        onChange={shouldMaskValue ? undefined : (e) => {
-                          const v = e.target.value;
-                          updateEnvVars((prev) => {
-                            const next = [...prev];
-                            const current = next[idx];
-                            if (current) {
-                              next[idx] = { ...current, value: v };
-                            }
-                            return next;
-                          });
-                        }}
-                        onFocus={() => setActiveEnvValueIndex(idx)}
-                        onBlur={() => setActiveEnvValueIndex((current) => current === idx ? null : current)}
-                        readOnly={shouldMaskValue}
-                        placeholder="I9JU23NF394R6HH"
-                        minRows={1}
-                        maxRows={10}
-                        className="w-full min-w-0 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 resize-none"
-                      />
-                      <div className="self-start flex items-center justify-end w-[44px]">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            updateEnvVars((prev) => {
-                              const next = prev.filter((_, i) => i !== idx);
-                              return next.length > 0
-                                ? next
-                                : [{ name: "", value: "", isSecret: true }];
-                            });
-                          }}
-                          className="h-10 w-[44px] rounded-md border border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300 grid place-items-center hover:bg-neutral-50 dark:hover:bg-neutral-900"
-                          aria-label="Remove variable"
-                        >
-                          <Minus className="w-4 h-4" />
-                        </button>
-                      </div>
-                  </div>
-                  );
-                })}
-              </div>
-
-              <div className="pt-2">
-                <button
-                  type="button"
-                  onClick={() =>
-                    updateEnvVars((prev) => [
-                      ...prev,
-                      { name: "", value: "", isSecret: true },
-                    ])
-                  }
-                  className="inline-flex items-center gap-2 rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2 text-sm text-neutral-800 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-900"
-                >
-                  <Plus className="w-4 h-4" /> Add More
-                </button>
-              </div>
-
-              <p className="text-xs text-neutral-500 dark:text-neutral-500 pt-2">
-                Tip: Paste an .env above to populate the form. Values are
-                encrypted at rest.
-              </p>
-            </div>
-          </AccordionItem>
-
-          <AccordionItem
-            key="install-dependencies"
-            aria-label="Install dependencies"
-            title="Install dependencies"
-          >
-            <div className="space-y-2 pb-4">
-              <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-3">
-                Use the VS Code terminal to install any dependencies your
-                codebase needs.
-              </p>
-              <p className="text-xs text-neutral-500 dark:text-neutral-500">
-                Examples: docker pull postgres, docker run redis, install system
-                packages, etc.
-              </p>
-            </div>
-          </AccordionItem>
-
-          <AccordionItem
-            key="maintenance-script"
-            aria-label="Maintenance script"
-            title="Maintenance script"
-          >
-            <div className="pb-4">
-              <ScriptTextareaField
-                description={SCRIPT_COPY.maintenance.description}
-                subtitle={SCRIPT_COPY.maintenance.subtitle}
-                value={maintenanceScript}
-                onChange={updateMaintenanceScript}
-                placeholder={SCRIPT_COPY.maintenance.placeholder}
-                descriptionClassName="mb-3"
-                minHeightClassName="min-h-[114px]"
-              />
-            </div>
-          </AccordionItem>
-
-          <AccordionItem
-            key="dev-script"
-            aria-label="Dev script"
-            title="Dev script"
-          >
-            <div className="space-y-4 pb-4">
-              <ScriptTextareaField
-                description={SCRIPT_COPY.dev.description}
-                subtitle={SCRIPT_COPY.dev.subtitle}
-                value={devScript}
-                onChange={updateDevScript}
-                placeholder={SCRIPT_COPY.dev.placeholder}
-                minHeightClassName="min-h-[130px]"
-              />
-
-              <div className="space-y-2">
-                <label className="block text-sm font-medium text-neutral-800 dark:text-neutral-200">
-                  Exposed ports
-                </label>
-                <input
-                  type="text"
-                  value={exposedPorts}
-                  onChange={(e) => updateExposedPorts(e.target.value)}
-                  placeholder="3000, 8080, 5432"
-                  className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700"
-                />
-                <p className="text-xs text-neutral-500 dark:text-neutral-500">
-                  Comma-separated list of ports that should be exposed from the
-                  container for preview URLs.
-                </p>
-                {portsError && (
-                  <p className="text-xs text-red-500">{portsError}</p>
-                )}
-              </div>
-            </div>
-          </AccordionItem>
-
-          <AccordionItem
-            key="browser-vnc"
-            aria-label="Browser setup"
-            title="Browser setup"
-          >
-            <div className="space-y-2 pb-4 text-xs text-neutral-600 dark:text-neutral-400">
-              <p>
-                Prepare the embedded browser so the browser agent can capture screenshots, finish authentication flows, and verify previews before you save this environment.
-              </p>
-              <ul className="list-disc space-y-1 pl-5">
-                <li>Sign in to SaaS tools or dashboards that require persistent sessions.</li>
-                <li>Clear cookie banners, popups, or MFA prompts that could block automation.</li>
-                <li>Load staging URLs and confirm pages render without certificate or CSP warnings.</li>
-              </ul>
-              <p className="text-[11px] text-neutral-500 dark:text-neutral-500">
-                Tip: the split-view toggle (first icon above the preview) keeps VS Code and the browser visible side-by-side while you configure things.
-              </p>
-            </div>
-          </AccordionItem>
-        </Accordion>
-
-        <div className="pt-2">
-          <button
-            type="button"
-            onClick={onSnapshot}
-            disabled={
-              isProvisioning ||
-              createEnvironmentMutation.isPending ||
-              createSnapshotMutation.isPending
-            }
-            className="inline-flex items-center rounded-md bg-neutral-900 text-white disabled:bg-neutral-300 dark:disabled:bg-neutral-700 disabled:cursor-not-allowed px-4 py-2 text-sm hover:bg-neutral-800 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200"
-          >
-            {isProvisioning ||
-            createEnvironmentMutation.isPending ||
-            createSnapshotMutation.isPending ? (
-              <>
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                {mode === "snapshot"
-                  ? "Creating snapshot..."
-                  : "Creating environment..."}
-              </>
-            ) : mode === "snapshot" ? (
-              "Create snapshot version"
-            ) : (
-              "Snapshot environment"
-            )}
-          </button>
+              <ArrowLeft className="w-4 h-4" />
+              {mode === "snapshot"
+                ? "Back to environment"
+                : "Back to repository selection"}
+            </button>
+          ) : null}
         </div>
+
+        <div className="space-y-2">
+          <h1 className="text-xl font-semibold text-neutral-900 dark:text-neutral-100">
+            {mode === "snapshot"
+              ? "Configure Snapshot Version"
+              : "Configure Environment"}
+          </h1>
+          <p className="text-sm text-neutral-500 dark:text-neutral-400">
+            {mode === "snapshot"
+              ? "Update configuration for the new snapshot version."
+              : "Set up your environment name, scripts, and variables before launching the workspace."}
+          </p>
+        </div>
+
+        <div className="mt-6 space-y-6">
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-neutral-800 dark:text-neutral-200">
+              {mode === "snapshot" ? "Snapshot label" : "Environment name"}
+            </label>
+            <input
+              type="text"
+              value={envName}
+              onChange={(e) => updateEnvName(e.target.value)}
+              readOnly={mode === "snapshot"}
+              aria-readonly={mode === "snapshot"}
+              placeholder={
+                mode === "snapshot"
+                  ? "Auto-generated from environment"
+                  : "e.g. project-name"
+              }
+              className={clsx(
+                "w-full rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2 text-sm placeholder:text-neutral-400 focus:outline-none focus:ring-2",
+                mode === "snapshot"
+                  ? "bg-neutral-100 text-neutral-600 cursor-not-allowed focus:ring-neutral-300/0 dark:bg-neutral-900 dark:text-neutral-400 dark:focus:ring-neutral-700/0"
+                  : "bg-white text-neutral-900 focus:ring-neutral-300 dark:bg-neutral-950 dark:text-neutral-100 dark:focus:ring-neutral-700"
+              )}
+            />
+          </div>
+
+          {selectedRepos.length > 0 ? (
+            <div>
+              <div className="text-xs text-neutral-500 dark:text-neutral-500 mb-1">
+                Selected repositories
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {selectedRepos.map((fullName) => (
+                  <span
+                    key={fullName}
+                    className="inline-flex items-center gap-1 rounded-full border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-neutral-800 dark:text-neutral-200 px-2 py-1 text-xs"
+                  >
+                    <GitHubIcon className="h-3 w-3 shrink-0 text-neutral-700 dark:text-neutral-300" />
+                    {fullName}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="text-xs text-neutral-500 dark:text-neutral-500">
+              No repositories selected. You can configure a bare workspace.
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-neutral-800 dark:text-neutral-200">
+              Exposed ports
+            </label>
+            <input
+              type="text"
+              value={exposedPorts}
+              onChange={(e) => updateExposedPorts(e.target.value)}
+              placeholder="3000, 5173"
+              className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-sm text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700"
+            />
+            <p className="text-xs text-neutral-500 dark:text-neutral-400">
+              Comma-separated ports to expose in preview URLs.
+            </p>
+            {portsError ? (
+              <p className="text-xs text-red-500 dark:text-red-400">
+                {portsError}
+              </p>
+            ) : null}
+          </div>
+
+          <div className="space-y-4">
+            {renderScriptsSection({ defaultOpen: true })}
+            {renderEnvVarsSection({ defaultOpen: true })}
+          </div>
+        </div>
+      </div>
+      <div className="border-t border-neutral-200 dark:border-neutral-800 px-6 py-4">
+        <button
+          type="button"
+          onClick={handleStartWorkspaceConfig}
+          className="inline-flex items-center justify-center gap-2 rounded-md bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 px-4 py-2 text-sm font-semibold hover:bg-neutral-800 dark:hover:bg-neutral-200 transition"
+        >
+          Continue to workspace
+          <ArrowRight className="w-4 h-4" />
+        </button>
+        {isProvisioning || !instanceId ? (
+          <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+            {isProvisioning
+              ? "Launching environment..."
+              : "Workspace will connect once the instance is ready."}
+          </p>
+        ) : null}
       </div>
     </div>
   );
 
-  const rightPane = (
-    <div className="h-full bg-neutral-50 dark:bg-neutral-950">
-      {isProvisioning ? (
-        <div className="flex h-full items-center justify-center">
-          <div className="text-center max-w-md px-6">
-            <div className="w-16 h-16 mx-auto mb-4 rounded-lg bg-neutral-200 dark:bg-neutral-800 flex items-center justify-center">
-              <Settings className="w-8 h-8 text-neutral-500 dark:text-neutral-400" />
-            </div>
-            <h3 className="text-lg font-medium text-neutral-900 dark:text-neutral-100 mb-2">
-              Launching Environment
-            </h3>
-            <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-4">
-              {mode === "snapshot"
-                ? "Creating instance from snapshot. Once ready, VS Code and the browser will appear here so you can test your changes."
-                : "Your development environment is launching. Once ready, VS Code and the browser will appear here so you can configure and test your setup."}
-            </p>
-          </div>
+  const renderWorkspaceSteps = () => (
+    <div className="space-y-4">
+      {isStepVisible("scripts") && (
+        <div>
+          {renderScriptsSection({
+            compact: true,
+            defaultOpen: !isStepCompleted("scripts"),
+            showStepBadge: true,
+            stepNumber: 1,
+            isDone: isStepCompleted("scripts"),
+          })}
         </div>
-      ) : (
-        <div className="flex h-full flex-col">
-          <div className="flex-1 min-h-0">{previewContent}</div>
+      )}
+
+      {isStepVisible("env-vars") && (
+        <div>
+          {renderEnvVarsSection({
+            compact: true,
+            defaultOpen: !isStepCompleted("env-vars"),
+            showStepBadge: true,
+            stepNumber: 2,
+            isDone: isStepCompleted("env-vars"),
+          })}
+        </div>
+      )}
+
+      {isStepVisible("run-scripts") && (
+        <div>
+          <details className="group" open={isCurrentStep("run-scripts")}>
+            <summary
+              className={clsx(
+                "flex items-center gap-2 list-none",
+                isSaving ? "cursor-not-allowed opacity-60" : "cursor-pointer"
+              )}
+              onClick={(event) => {
+                if (isSaving) return;
+                if (
+                  isStepCompleted("run-scripts") &&
+                  !isCurrentStep("run-scripts")
+                ) {
+                  event.preventDefault();
+                  handleGoToStep("run-scripts");
+                }
+              }}
+            >
+              <ChevronDown className="h-3.5 w-3.5 text-neutral-400 transition-transform -rotate-90 group-open:rotate-0" />
+              <StepBadge
+                step={3}
+                done={
+                  isStepCompleted("run-scripts") &&
+                  !isCurrentStep("run-scripts")
+                }
+              />
+              <span className="text-[13px] font-medium text-neutral-900 dark:text-neutral-100">
+                Run scripts in VS Code terminal
+              </span>
+            </summary>
+            <div className="mt-3 ml-6 space-y-3">
+              <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                Open terminal (
+                <kbd className="px-1 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 text-[10px] font-sans">
+                  Ctrl+Shift+`
+                </kbd>{" "}
+                or{" "}
+                <kbd className="px-1 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 text-[10px] font-sans">
+                  Cmd+J
+                </kbd>
+                ) and paste:
+              </p>
+              <div className="rounded-md border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 overflow-hidden">
+                <div className="flex items-center justify-between px-3 py-1.5 border-b border-neutral-200 dark:border-neutral-800 bg-neutral-100 dark:bg-neutral-800/50">
+                  <span className="text-[10px] uppercase tracking-wide text-neutral-500">
+                    Commands
+                  </span>
+                  {combinedCommands ? (
+                    <button
+                      type="button"
+                      onClick={handleCopyCommands}
+                      className={clsx(
+                        "p-0.5",
+                        commandsCopied
+                          ? "text-emerald-500"
+                          : "text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300"
+                      )}
+                    >
+                      {commandsCopied ? (
+                        <Check className="h-3 w-3" />
+                      ) : (
+                        <Copy className="h-3 w-3" />
+                      )}
+                    </button>
+                  ) : null}
+                </div>
+                <pre className="px-3 py-2 text-[11px] font-mono text-neutral-900 dark:text-neutral-100 overflow-x-auto whitespace-pre-wrap break-all select-all">
+                  {combinedCommands ? (
+                    combinedCommands
+                  ) : (
+                    <span className="text-neutral-400 italic">
+                      No scripts configured
+                    </span>
+                  )}
+                </pre>
+              </div>
+              <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                Proceed once the dev server is running.
+              </p>
+            </div>
+          </details>
+          {isCurrentStep("run-scripts") && (
+            <button
+              type="button"
+              onClick={handleNextConfigStep}
+              className="w-full mt-4 inline-flex items-center justify-center gap-2 rounded-md bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 px-4 py-2 text-sm font-semibold hover:bg-neutral-800 dark:hover:bg-neutral-200 transition"
+            >
+              Continue
+              <ArrowRight className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      )}
+
+      {isStepVisible("browser-setup") && (
+        <div>
+          <details className="group" open={isCurrentStep("browser-setup")}>
+            <summary
+              className={clsx(
+                "flex items-center gap-2 list-none",
+                isSaving ? "cursor-not-allowed opacity-60" : "cursor-pointer"
+              )}
+              onClick={(event) => {
+                if (isSaving) return;
+                if (
+                  isStepCompleted("browser-setup") &&
+                  !isCurrentStep("browser-setup")
+                ) {
+                  event.preventDefault();
+                  handleGoToStep("browser-setup");
+                }
+              }}
+            >
+              <ChevronDown className="h-3.5 w-3.5 text-neutral-400 transition-transform -rotate-90 group-open:rotate-0" />
+              <StepBadge
+                step={4}
+                done={
+                  isStepCompleted("browser-setup") &&
+                  !isCurrentStep("browser-setup")
+                }
+              />
+              <span className="text-[13px] font-medium text-neutral-900 dark:text-neutral-100">
+                Configure browser
+              </span>
+            </summary>
+            <div className="mt-3 ml-6 space-y-3">
+              <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                Use the browser on the right to set up authentication:
+              </p>
+              <ul className="space-y-2 text-[11px] text-neutral-600 dark:text-neutral-400">
+                <li className="flex items-start gap-2">
+                  <span className="flex h-4 w-4 items-center justify-center rounded-full bg-neutral-100 dark:bg-neutral-800 text-[10px] text-neutral-500 dark:text-neutral-400 flex-shrink-0 mt-0.5">
+                    1
+                  </span>
+                  <span>Sign in to any dashboards or SaaS tools</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="flex h-4 w-4 items-center justify-center rounded-full bg-neutral-100 dark:bg-neutral-800 text-[10px] text-neutral-500 dark:text-neutral-400 flex-shrink-0 mt-0.5">
+                    2
+                  </span>
+                  <span>Dismiss cookie banners, popups, or MFA prompts</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="flex h-4 w-4 items-center justify-center rounded-full bg-neutral-100 dark:bg-neutral-800 text-[10px] text-neutral-500 dark:text-neutral-400 flex-shrink-0 mt-0.5">
+                    3
+                  </span>
+                  <span>Navigate to your dev server URL (e.g., localhost:3000)</span>
+                </li>
+              </ul>
+              <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                Proceed once the browser is ready.
+              </p>
+            </div>
+          </details>
+          {isCurrentStep("browser-setup") && (
+            <button
+              type="button"
+              onClick={handleSaveConfiguration}
+              disabled={isSaving}
+              className="w-full mt-4 inline-flex items-center justify-center rounded-md bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 px-4 py-2 text-sm font-semibold hover:bg-neutral-800 dark:hover:bg-neutral-200 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isSaving ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  {mode === "snapshot" ? "Creating snapshot..." : "Saving..."}
+                </>
+              ) : mode === "snapshot" ? (
+                "Create snapshot version"
+              ) : (
+                "Save environment"
+              )}
+            </button>
+          )}
         </div>
       )}
     </div>
   );
 
+  const renderWorkspacePanel = () => {
+    const showBrowser = currentConfigStep === "browser-setup";
+    const activeUrl = showBrowser ? browserUrl : resolvedVscodeUrl;
+    const placeholder = showBrowser ? browserPlaceholder : workspacePlaceholder;
+    const fallback = (
+      <div className="flex h-full items-center justify-center">
+        <WorkspaceLoadingIndicator
+          variant={showBrowser ? "browser" : "vscode"}
+          status="loading"
+          loadingTitle={placeholder?.title}
+          loadingDescription={placeholder?.description}
+        />
+      </div>
+    );
+    const errorFallback = (
+      <div className="flex h-full items-center justify-center">
+        <WorkspaceLoadingIndicator
+          variant={showBrowser ? "browser" : "vscode"}
+          status="error"
+        />
+      </div>
+    );
+
+    if (!activeUrl) {
+      return fallback;
+    }
+
+    return (
+      <PersistentWebView
+        key={showBrowser ? "browser" : "vscode"}
+        persistKey={
+          instanceId
+            ? `env-config:${instanceId}:${showBrowser ? "browser" : "vscode"}`
+            : `env-config:${showBrowser ? "browser" : "vscode"}`
+        }
+        src={activeUrl}
+        className="flex h-full"
+        iframeClassName="select-none"
+        allow={TASK_RUN_IFRAME_ALLOW}
+        sandbox={TASK_RUN_IFRAME_SANDBOX}
+        preflight={!showBrowser}
+        retainOnUnmount
+        fallback={fallback}
+        fallbackClassName="bg-neutral-50 dark:bg-black"
+        errorFallback={errorFallback}
+        errorFallbackClassName="bg-neutral-50/95 dark:bg-black/95"
+        loadTimeoutMs={60_000}
+      />
+    );
+  };
+
+  if (layoutPhase === "setup") {
+    return renderSetupPanel();
+  }
+
   return (
-    <ResizableColumns
-      storageKey={null}
-      defaultLeftWidth={360}
-      minLeft={220}
-      maxLeft={700}
-      left={leftPane}
-      right={rightPane}
-    />
+    <div className="flex h-full">
+      <div className="w-[360px] border-r border-neutral-200 dark:border-neutral-800 p-6 overflow-y-auto">
+        <div className="space-y-2">
+          <button
+            type="button"
+            onClick={handleBackToSetup}
+            className="inline-flex items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
+          >
+            <ArrowLeft className="h-3 w-3" />
+            Back to setup
+          </button>
+          {mode === "new" ? (
+            <button
+              type="button"
+              onClick={handleBackNavigation}
+              className="inline-flex items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
+            >
+              <ArrowLeft className="h-3 w-3" />
+              Change repositories
+            </button>
+          ) : null}
+        </div>
+
+        <div className="mt-4 text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+          Workspace steps
+        </div>
+        <div className="mt-4">{renderWorkspaceSteps()}</div>
+      </div>
+      <div className="flex-1 min-h-0 p-4">
+        <div className="h-full rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 overflow-hidden">
+          {renderWorkspacePanel()}
+        </div>
+      </div>
+    </div>
   );
 }
