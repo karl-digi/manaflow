@@ -1452,12 +1452,7 @@ export function CommandBar({
       } else if (value === "dev:webcontents") {
         navigate({ to: "/debug-webcontents" });
       } else if (value === "dev:toggle-web-mode") {
-        const newValue = !webModeOverride;
-        setWebModeOverride(newValue);
-        // Notify server of the web mode override change
-        if (socket) {
-          socket.emit("set-web-mode-override", { enabled: newValue });
-        }
+        setWebModeOverride(!webModeOverride);
         toast.success(
           webModeOverride
             ? "Web mode override disabled"
@@ -1558,7 +1553,6 @@ export function CommandBar({
       closeCommand,
       webModeOverride,
       setWebModeOverride,
-      socket,
     ]
   );
 

@@ -201,9 +201,6 @@ export function setupSocketHandlers(
   let hasRefreshedGithub = false;
   let dockerEventsStarted = false;
 
-  // Check if running in dev mode for web mode override support
-  const isDevServer = process.env.NODE_ENV === "development";
-
   rt.onConnection((socket) => {
     // Ensure every packet runs within the auth context associated with this socket
     const q = socket.handshake.query?.auth;
@@ -220,9 +217,6 @@ export function setupSocketHandlers(
         : undefined;
     let currentAuthToken = token;
     let currentAuthHeaderJson = tokenJson;
-
-    // Web mode override for this socket (dev only)
-    let webModeOverride = false;
 
     // authenticate the token
     if (!token) {
@@ -249,25 +243,6 @@ export function setupSocketHandlers(
         callback?.({ ok: true });
       });
     });
-
-    // Dev-only: Set web mode override for this session
-    socket.on("set-web-mode-override", (data: { enabled: boolean }) => {
-      if (!isDevServer) {
-        serverLogger.warn("set-web-mode-override called in non-dev environment, ignoring");
-        return;
-      }
-      webModeOverride = data.enabled;
-      serverLogger.info(`Web mode override set to ${webModeOverride} for socket ${socket.id}`);
-    });
-
-    // Helper to check if web mode is effectively enabled for this socket
-    const isWebModeEnabled = () => {
-      // In dev mode, override takes precedence
-      if (isDevServer && webModeOverride) {
-        return true;
-      }
-      return env.NEXT_PUBLIC_WEB_MODE;
-    };
 
     // Rust N-API test endpoint
     socket.on("rust-get-time", async (callback) => {
@@ -412,7 +387,7 @@ export function setupSocketHandlers(
       });
       // Start Docker container state sync after first authenticated connection
       // Skip in web mode since Docker is not used
-      if (!dockerEventsStarted && !isWebModeEnabled()) {
+      if (!dockerEventsStarted && !env.NEXT_PUBLIC_WEB_MODE) {
         dockerEventsStarted = true;
         runWithAuth(initialToken, initialAuthJson, () => {
           serverLogger.info(
@@ -483,7 +458,7 @@ export function setupSocketHandlers(
 
     void (async () => {
       // In web mode, skip detecting local editors entirely
-      if (isWebModeEnabled()) {
+      if (env.NEXT_PUBLIC_WEB_MODE) {
         const emptyAvailability: AvailableEditors = {
           vscode: false,
           cursor: false,
@@ -573,7 +548,7 @@ export function setupSocketHandlers(
       const taskId = taskData.taskId;
       try {
         // In web mode, local (Docker) tasks are not supported
-        if (isWebModeEnabled() && !taskData.isCloudMode) {
+        if (env.NEXT_PUBLIC_WEB_MODE && !taskData.isCloudMode) {
           callback({
             taskId,
             error: "Local mode is not available in the web version. Please use Cloud mode.",
@@ -774,7 +749,7 @@ export function setupSocketHandlers(
           return;
         }
         // In web mode, local VSCode serve-web is not used
-        if (isWebModeEnabled()) {
+        if (env.NEXT_PUBLIC_WEB_MODE) {
           callback({ baseUrl: null, port: null });
           return;
         }
@@ -803,7 +778,7 @@ export function setupSocketHandlers(
         callback: (response: CreateLocalWorkspaceResponse) => void
       ) => {
         // In web mode, local workspaces are not supported
-        if (isWebModeEnabled()) {
+        if (env.NEXT_PUBLIC_WEB_MODE) {
           callback({
             success: false,
             error: "Local workspaces are not available in the web version. Please use Cloud mode.",
@@ -1737,7 +1712,7 @@ export function setupSocketHandlers(
 
     socket.on("open-in-editor", async (data, callback) => {
       // In web mode, opening local editors is not supported
-      if (isWebModeEnabled()) {
+      if (env.NEXT_PUBLIC_WEB_MODE) {
         callback?.({ success: false, error: "Opening local editors is not available in the web version." });
         return;
       }
@@ -2055,7 +2030,7 @@ export function setupSocketHandlers(
 
     socket.on("github-test-auth", async (callback) => {
       // In web mode, this debug feature is not available
-      if (isWebModeEnabled()) {
+      if (env.NEXT_PUBLIC_WEB_MODE) {
         callback({
           authStatus: "Not available in web mode",
           whoami: "N/A",
@@ -2442,7 +2417,7 @@ ${title}`;
     socket.on("check-provider-status", async (callback) => {
       try {
         // In web mode, only check API keys from Convex (no local files/keychains)
-        const status = isWebModeEnabled()
+        const status = env.NEXT_PUBLIC_WEB_MODE
           ? await checkAllProvidersStatusWebMode({ teamSlugOrId: safeTeam })
           : await checkAllProvidersStatus({ teamSlugOrId: safeTeam });
         callback({ success: true, ...status });
@@ -2460,7 +2435,7 @@ ${title}`;
         const { taskId } = ArchiveTaskSchema.parse(data);
 
         // In web mode, skip Docker container operations (managed by cloud provider)
-        if (isWebModeEnabled()) {
+        if (env.NEXT_PUBLIC_WEB_MODE) {
           serverLogger.info(`Skipping container cleanup for task ${taskId} in web mode`);
           callback({ success: true });
           return;

@@ -582,8 +582,6 @@ export interface ClientToServerEvents {
       error?: string;
     }) => void
   ) => void;
-  // Dev-only: Set web mode override for this session
-  "set-web-mode-override": (data: { enabled: boolean }) => void;
 }
 
 export interface ServerToClientEvents {
