@@ -44,6 +44,7 @@ import {
 import type { HeatmapColorSettings } from "@/components/heatmap-diff-viewer/heatmap-gradient";
 import { useCombinedWorkflowData, WorkflowRunsSection } from "@/components/WorkflowRunsSection";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
+import { getDiffTextForEntry } from "@/lib/build-unified-diff";
 
 const DIFF_HEADER_PREFIXES = [
   "diff --git ",
@@ -80,10 +81,12 @@ function convertDiffsToFileDiffs(
       ? options.prefix.trim()
       : null;
   return diffs
-    .filter((entry) => entry.patch && !entry.isBinary)
+    .filter((entry) => !entry.isBinary)
     .map((entry) => {
       const filePath = prefix ? `${prefix}:${entry.filePath}` : entry.filePath;
-      const diffText = stripDiffHeaders(entry.patch ?? "");
+      // Try to get diff text from patch, or fall back to building from content
+      const rawDiff = getDiffTextForEntry(entry);
+      const diffText = rawDiff ? stripDiffHeaders(rawDiff) : "";
       return { filePath, diffText };
     })
     .filter((entry) => entry.diffText.length > 0);
