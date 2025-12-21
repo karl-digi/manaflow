@@ -109,6 +109,14 @@
     "./components/vnc-viewer": {
       "import": "./src/components/vnc-viewer.tsx",
       "types": "./src/components/vnc-viewer.tsx"
+    },
+    "./environment-config": {
+      "import": "./src/environment-config/index.ts",
+      "types": "./src/environment-config/index.ts"
+    },
+    "./components/framework-logos": {
+      "import": "./src/components/framework-logos.tsx",
+      "types": "./src/components/framework-logos.tsx"
     }
   },
   "peerDependencies": {

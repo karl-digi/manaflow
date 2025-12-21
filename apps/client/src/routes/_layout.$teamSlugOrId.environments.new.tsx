@@ -1,8 +1,8 @@
-import { EnvironmentConfiguration } from "@/components/EnvironmentConfiguration";
+import { MultiRepoEnvironmentConfig } from "@/components/MultiRepoEnvironmentConfig";
 import { FloatingPane } from "@/components/floating-pane";
 import { RepositoryPicker } from "@/components/RepositoryPicker";
 import { TitleBar } from "@/components/TitleBar";
-import { toMorphVncUrl } from "@/lib/toProxyWorkspaceUrl";
+import { toMorphVncWebsocketUrl } from "@/lib/toProxyWorkspaceUrl";
 import {
   clearEnvironmentDraft,
   persistEnvironmentDraftMetadata,
@@ -96,11 +96,11 @@ function EnvironmentsPage() {
     return `https://port-39378-${hostId}.http.cloud.morph.so/?folder=/root/workspace`;
   }, [activeInstanceId]);
 
-  const derivedBrowserUrl = useMemo(() => {
+  const derivedVncWebsocketUrl = useMemo(() => {
     if (!activeInstanceId) return undefined;
     const hostId = activeInstanceId.replace(/_/g, "-");
     const workspaceUrl = `https://port-39378-${hostId}.http.cloud.morph.so/?folder=/root/workspace`;
-    return toMorphVncUrl(workspaceUrl) ?? undefined;
+    return toMorphVncWebsocketUrl(workspaceUrl) ?? undefined;
   }, [activeInstanceId]);
 
   useEffect(() => {
@@ -230,12 +230,12 @@ function EnvironmentsPage() {
             />
           </div>
         ) : (
-          <EnvironmentConfiguration
+          <MultiRepoEnvironmentConfig
             selectedRepos={activeSelectedRepos}
             teamSlugOrId={teamSlugOrId}
             instanceId={activeInstanceId}
             vscodeUrl={derivedVscodeUrl}
-            browserUrl={derivedBrowserUrl}
+            vncWebsocketUrl={derivedVncWebsocketUrl}
             isProvisioning={false}
             onHeaderControlsChange={setHeaderActions}
             persistedState={draft?.config}
