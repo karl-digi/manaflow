@@ -927,6 +927,87 @@ function HeatmapThresholdControl({
   );
 }
 
+type FileNavigatorProps = {
+  totalCount: number;
+  currentIndex: number;
+  onPrevious: () => void;
+  onNext: () => void;
+};
+
+function FileNavigator({
+  totalCount,
+  currentIndex,
+  onPrevious,
+  onNext,
+}: FileNavigatorProps) {
+  if (totalCount === 0) {
+    return null;
+  }
+
+  const displayIndex = currentIndex + 1;
+
+  return (
+    <TooltipProvider delayDuration={120} skipDelayDuration={120}>
+      <div className="flex items-center gap-3 border border-neutral-200 bg-white/95 px-3 py-1 text-xs font-medium text-neutral-700 backdrop-blur dark:border-neutral-700 dark:bg-neutral-900/95 dark:text-neutral-200">
+        <span aria-live="polite" className="flex items-center gap-1">
+          <span>File</span>
+          <span className="font-mono tabular-nums">{displayIndex}</span>
+          <span>of</span>
+          <span className="font-mono tabular-nums">{totalCount}</span>
+        </span>
+        <div className="flex items-center gap-1">
+          <Tooltip delayDuration={120}>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={onPrevious}
+                className="inline-flex h-6 w-6 items-center justify-center border border-neutral-200 bg-white text-neutral-600 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                aria-label="Go to previous file (Shift+K)"
+                disabled={totalCount === 0}
+              >
+                <ChevronLeft className="h-3.5 w-3.5" aria-hidden />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent
+              side="bottom"
+              align="center"
+              className="flex items-center gap-2 rounded-md border border-neutral-200 bg-white px-2 py-1 text-[11px] font-medium text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
+            >
+              <span>Previous file</span>
+              <span className="rounded border border-neutral-200 bg-neutral-50 px-1 py-0.5 font-mono text-[10px] uppercase text-neutral-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+                Shift+K
+              </span>
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip delayDuration={120}>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={onNext}
+                className="inline-flex h-6 w-6 items-center justify-center border border-neutral-200 bg-white text-neutral-600 transition hover:bg-neutral-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-500 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                aria-label="Go to next file (Shift+J)"
+                disabled={totalCount === 0}
+              >
+                <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent
+              side="bottom"
+              align="center"
+              className="flex items-center gap-2 rounded-md border border-neutral-200 bg-white px-2 py-1 text-[11px] font-medium text-neutral-700 shadow-md dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
+            >
+              <span>Next file</span>
+              <span className="rounded border border-neutral-200 bg-neutral-50 px-1 py-0.5 font-mono text-[10px] uppercase text-neutral-500 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+                Shift+J
+              </span>
+            </TooltipContent>
+          </Tooltip>
+        </div>
+      </div>
+    </TooltipProvider>
+  );
+}
+
 type ErrorNavigatorProps = {
   totalCount: number;
   currentIndex: number | null;
@@ -2088,11 +2169,44 @@ export function GitDiffHeatmapReviewViewer({
     []
   );
 
-  useEffect(() => {
-    if (typeof window === "undefined") {
+  // Navigate to the next file in sortedFiles
+  const handleFileNavigateNext = useCallback(() => {
+    if (sortedFiles.length === 0) {
       return;
     }
-    if (targetCount === 0) {
+
+    const currentFileIndex = sortedFiles.findIndex(
+      (file) => file.filePath === activeAnchor
+    );
+    const nextIndex =
+      currentFileIndex === -1 ? 0 : (currentFileIndex + 1) % sortedFiles.length;
+    const nextFile = sortedFiles[nextIndex];
+    if (nextFile) {
+      handleNavigate(nextFile.filePath, { updateAnchor: true, updateHash: true });
+    }
+  }, [sortedFiles, activeAnchor, handleNavigate]);
+
+  // Navigate to the previous file in sortedFiles
+  const handleFileNavigatePrevious = useCallback(() => {
+    if (sortedFiles.length === 0) {
+      return;
+    }
+
+    const currentFileIndex = sortedFiles.findIndex(
+      (file) => file.filePath === activeAnchor
+    );
+    const nextIndex =
+      currentFileIndex === -1
+        ? sortedFiles.length - 1
+        : (currentFileIndex - 1 + sortedFiles.length) % sortedFiles.length;
+    const nextFile = sortedFiles[nextIndex];
+    if (nextFile) {
+      handleNavigate(nextFile.filePath, { updateAnchor: true, updateHash: true });
+    }
+  }, [sortedFiles, activeAnchor, handleNavigate]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
       return;
     }
 
@@ -2117,10 +2231,20 @@ export function GitDiffHeatmapReviewViewer({
       const key = event.key.toLowerCase();
       if (key === "j") {
         event.preventDefault();
-        handleFocusNext({ source: "keyboard" });
+        // Navigate through heatmap targets if available, otherwise navigate through files
+        if (targetCount > 0) {
+          handleFocusNext({ source: "keyboard" });
+        } else {
+          handleFileNavigateNext();
+        }
       } else if (key === "k") {
         event.preventDefault();
-        handleFocusPrevious({ source: "keyboard" });
+        // Navigate through heatmap targets if available, otherwise navigate through files
+        if (targetCount > 0) {
+          handleFocusPrevious({ source: "keyboard" });
+        } else {
+          handleFileNavigatePrevious();
+        }
       }
     };
 
@@ -2129,7 +2253,13 @@ export function GitDiffHeatmapReviewViewer({
     return () => {
       window.removeEventListener("keydown", handleKeydown);
     };
-  }, [handleFocusNext, handleFocusPrevious, targetCount]);
+  }, [
+    handleFocusNext,
+    handleFocusPrevious,
+    handleFileNavigateNext,
+    handleFileNavigatePrevious,
+    targetCount,
+  ]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -2256,6 +2386,18 @@ export function GitDiffHeatmapReviewViewer({
                   currentIndex={focusedErrorIndex}
                   onPrevious={handleFocusPrevious}
                   onNext={handleFocusNext}
+                />
+              </div>
+            ) : sortedFiles.length > 1 ? (
+              <div className="flex justify-center">
+                <FileNavigator
+                  totalCount={sortedFiles.length}
+                  currentIndex={Math.max(
+                    0,
+                    sortedFiles.findIndex((f) => f.filePath === activeAnchor)
+                  )}
+                  onPrevious={handleFileNavigatePrevious}
+                  onNext={handleFileNavigateNext}
                 />
               </div>
             ) : null}
