@@ -16,7 +16,7 @@ import { env } from "../../_shared/convex-env";
 import { action } from "../_generated/server";
 
 const DEFAULT_OPENAI_CROWN_MODEL = "gpt-5-mini";
-const DEFAULT_ANTHROPIC_CROWN_MODEL = "claude-sonnet-4-20250514";
+const DEFAULT_ANTHROPIC_CROWN_MODEL = "claude-sonnet-4-5-20250514";
 
 const DEFAULT_SYSTEM_PROMPT =
   "You select the best implementation from structured diff inputs and explain briefly why.";
@@ -31,7 +31,8 @@ const CrownEvaluationCandidateValidator = v.object({
 });
 
 // Map user-friendly model names to provider-specific model IDs
-const MODEL_MAPPING: Record<string, { provider: "openai" | "anthropic"; modelId: string }> = {
+// extendedThinking enables Anthropic's extended thinking feature for supported models
+const MODEL_MAPPING: Record<string, { provider: "openai" | "anthropic"; modelId: string; extendedThinking?: boolean }> = {
   // OpenAI models
   "gpt-5-mini": { provider: "openai", modelId: "gpt-5-mini" },
   "gpt-5": { provider: "openai", modelId: "gpt-5" },
@@ -40,6 +41,7 @@ const MODEL_MAPPING: Record<string, { provider: "openai" | "anthropic"; modelId:
   "o4-mini": { provider: "openai", modelId: "o4-mini" },
   // Anthropic models
   "claude-opus-4": { provider: "anthropic", modelId: "claude-opus-4-20250514" },
+  "claude-sonnet-4-5": { provider: "anthropic", modelId: "claude-sonnet-4-5-20250514", extendedThinking: true },
   "claude-sonnet-4": { provider: "anthropic", modelId: "claude-sonnet-4-20250514" },
   // Legacy model name mapping to new model (claude-3-5-sonnet was deprecated)
   "claude-3-5-sonnet-20241022": { provider: "anthropic", modelId: "claude-sonnet-4-20250514" },
@@ -50,6 +52,7 @@ function resolveCrownModel(customModel?: string): {
   provider: "openai" | "anthropic";
   model: LanguageModel;
   modelId: string;
+  extendedThinking?: boolean;
 } {
   const requestedModel = customModel?.trim();
 
@@ -81,7 +84,7 @@ function resolveCrownModel(customModel?: string): {
       const anthropicKey = env.ANTHROPIC_API_KEY;
       if (anthropicKey) {
         const anthropic = createAnthropic({ apiKey: anthropicKey });
-        return { provider: "anthropic", model: anthropic(mapping.modelId), modelId: mapping.modelId };
+        return { provider: "anthropic", model: anthropic(mapping.modelId), modelId: mapping.modelId, extendedThinking: mapping.extendedThinking };
       }
     }
     // If the required API key is not available, fall through to default behavior
@@ -106,6 +109,7 @@ function resolveCrownModel(customModel?: string): {
       provider: "anthropic",
       model: anthropic(DEFAULT_ANTHROPIC_CROWN_MODEL),
       modelId: DEFAULT_ANTHROPIC_CROWN_MODEL,
+      extendedThinking: true, // Default model (claude-sonnet-4-5) supports extended thinking
     };
   }
 
@@ -163,12 +167,13 @@ export async function performCrownEvaluation(
     });
   });
 
-  let modelInfo: { provider: "openai" | "anthropic"; model: LanguageModel; modelId: string };
+  let modelInfo: { provider: "openai" | "anthropic"; model: LanguageModel; modelId: string; extendedThinking?: boolean };
   try {
     modelInfo = resolveCrownModel(settings?.crownModel);
     console.log("[convex.crown] Model resolved successfully:", {
       provider: modelInfo.provider,
       modelId: modelInfo.modelId,
+      extendedThinking: modelInfo.extendedThinking,
     });
   } catch (modelError) {
     console.error("[convex.crown] Failed to resolve model:", {
@@ -179,7 +184,7 @@ export async function performCrownEvaluation(
     throw modelError;
   }
 
-  const { model, provider, modelId } = modelInfo;
+  const { model, provider, modelId, extendedThinking } = modelInfo;
   const systemPrompt = settings?.crownSystemPrompt?.trim()
     ? settings.crownSystemPrompt
     : DEFAULT_SYSTEM_PROMPT;
@@ -244,6 +249,7 @@ IMPORTANT: Respond ONLY with the JSON object, no other text.`;
       hasSchema: true,
       temperature: provider === "openai" ? undefined : 0,
       maxRetries: 2,
+      extendedThinking,
     });
 
     const startTime = Date.now();
@@ -254,6 +260,14 @@ IMPORTANT: Respond ONLY with the JSON object, no other text.`;
       prompt: evaluationPrompt,
       ...(provider === "openai" ? {} : { temperature: 0 }),
       maxRetries: 2,
+      // Enable extended thinking for supported Anthropic models (e.g., claude-sonnet-4-5)
+      ...(extendedThinking ? {
+        providerOptions: {
+          anthropic: {
+            thinking: { type: "enabled", budgetTokens: 10000 },
+          },
+        },
+      } : {}),
     });
     const elapsedMs = Date.now() - startTime;
 
@@ -293,7 +307,7 @@ export async function performCrownSummarization(
   gitDiff: string,
   settings?: CrownSettings
 ): Promise<CrownSummarizationResponse> {
-  const { model, provider } = resolveCrownModel(settings?.crownModel);
+  const { model, provider, extendedThinking } = resolveCrownModel(settings?.crownModel);
 
   const summarizationPrompt = `You are an expert reviewer summarizing a pull request.
 
@@ -331,6 +345,14 @@ OUTPUT FORMAT (Markdown)
       prompt: summarizationPrompt,
       ...(provider === "openai" ? {} : { temperature: 0 }),
       maxRetries: 2,
+      // Enable extended thinking for supported Anthropic models (e.g., claude-sonnet-4-5)
+      ...(extendedThinking ? {
+        providerOptions: {
+          anthropic: {
+            thinking: { type: "enabled", budgetTokens: 10000 },
+          },
+        },
+      } : {}),
     });
 
     return CrownSummarizationResponseSchema.parse(object);

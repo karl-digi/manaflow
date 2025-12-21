@@ -183,10 +183,10 @@ function SettingsComponent() {
   const hasOpenAiKey =
     (apiKeyValues["OPENAI_API_KEY"] ?? "").trim().length > 0;
   const defaultCrownModelLabel = hasAnthropicKey
-    ? "Default (Claude 3.5 Sonnet)"
+    ? "Default (Claude Sonnet 4.5)"
     : hasOpenAiKey
       ? "Default (GPT-5 Mini)"
-      : "Default (Claude 3.5 Sonnet)";
+      : "Default (Claude Sonnet 4.5)";
 
   // Query existing API keys
   const { data: existingKeys } = useQuery(
@@ -883,6 +883,7 @@ function SettingsComponent() {
                     </optgroup>
                     <optgroup label="Anthropic">
                       <option value="claude-opus-4">Claude Opus 4</option>
+                      <option value="claude-sonnet-4-5">Claude Sonnet 4.5 (Extended Thinking)</option>
                       <option value="claude-sonnet-4">Claude Sonnet 4</option>
                       <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet</option>
                       <option value="claude-3-5-haiku-20241022">Claude 3.5 Haiku</option>
