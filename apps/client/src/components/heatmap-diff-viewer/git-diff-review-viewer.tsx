@@ -2092,9 +2092,6 @@ export function GitDiffHeatmapReviewViewer({
     if (typeof window === "undefined") {
       return;
     }
-    if (targetCount === 0) {
-      return;
-    }
 
     const handleKeydown = (event: KeyboardEvent) => {
       if (!event.shiftKey || event.metaKey || event.altKey || event.ctrlKey) {
@@ -2129,7 +2126,7 @@ export function GitDiffHeatmapReviewViewer({
     return () => {
       window.removeEventListener("keydown", handleKeydown);
     };
-  }, [handleFocusNext, handleFocusPrevious, targetCount]);
+  }, [handleFocusNext, handleFocusPrevious]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
