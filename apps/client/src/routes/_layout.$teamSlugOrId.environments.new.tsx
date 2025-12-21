@@ -1,4 +1,5 @@
 import { EnvironmentConfiguration } from "@/components/EnvironmentConfiguration";
+import { EnvironmentConfigurationNew } from "@/components/EnvironmentConfigurationNew";
 import { FloatingPane } from "@/components/floating-pane";
 import { RepositoryPicker } from "@/components/RepositoryPicker";
 import { TitleBar } from "@/components/TitleBar";
@@ -38,6 +39,8 @@ const searchSchema = z.object({
   connectionLogin: z.string().optional(),
   repoSearch: z.string().optional(),
   snapshotId: z.enum(morphSnapshotIds).default(DEFAULT_MORPH_SNAPSHOT_ID),
+  /** Use new environment configuration flow with framework detection */
+  useNewFlow: z.boolean().default(true),
 });
 
 const haveSameRepos = (
@@ -79,6 +82,7 @@ function EnvironmentsPage() {
   const urlInstanceId = searchParams.instanceId;
   const searchSnapshotId =
     searchParams.snapshotId ?? DEFAULT_MORPH_SNAPSHOT_ID;
+  const useNewFlow = searchParams.useNewFlow ?? true;
   const { teamSlugOrId } = Route.useParams();
   const navigate = useNavigate({ from: Route.fullPath });
   const draft = useEnvironmentDraft(teamSlugOrId);
@@ -229,6 +233,20 @@ function EnvironmentsPage() {
               }
             />
           </div>
+        ) : useNewFlow ? (
+          <EnvironmentConfigurationNew
+            selectedRepos={activeSelectedRepos}
+            teamSlugOrId={teamSlugOrId}
+            instanceId={activeInstanceId}
+            vscodeUrl={derivedVscodeUrl}
+            browserUrl={derivedBrowserUrl}
+            isProvisioning={false}
+            onHeaderControlsChange={setHeaderActions}
+            persistedState={draft?.config}
+            onPersistStateChange={handlePersistConfig}
+            onBackToRepositorySelection={handleBackToRepositorySelection}
+            onEnvironmentSaved={handleResetDraft}
+          />
         ) : (
           <EnvironmentConfiguration
             selectedRepos={activeSelectedRepos}
