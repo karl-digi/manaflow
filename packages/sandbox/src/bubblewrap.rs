@@ -1286,7 +1286,7 @@ impl SandboxService for BubblewrapService {
         .ok_or(SandboxError::NotFound(id))?;
 
         let target_command =
-            command.unwrap_or_else(|| vec!["/bin/zsh".to_string(), "-i".to_string()]);
+            command.unwrap_or_else(|| vec!["/bin/zsh".to_string(), "-l".to_string()]);
         info!(
             "attaching to sandbox {} with command: {:?} (tty={})",
             id_str, target_command, tty
@@ -1829,7 +1829,7 @@ impl SandboxService for BubblewrapService {
                             };
 
                             let target_command = command
-                                .unwrap_or_else(|| vec!["/bin/zsh".to_string(), "-i".to_string()]);
+                                .unwrap_or_else(|| vec!["/bin/zsh".to_string(), "-l".to_string()]);
 
                             if !tty {
                                 // Non-PTY mode: not supported in mux for simplicity
