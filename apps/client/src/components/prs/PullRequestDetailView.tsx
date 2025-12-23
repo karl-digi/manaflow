@@ -1,10 +1,21 @@
-import { RunDiffSection } from "@/components/RunDiffSection";
+import { RunDiffHeatmapReviewSection } from "@/components/RunDiffHeatmapReviewSection";
+import type { DiffViewerControls } from "@/components/heatmap-diff-viewer";
+import type { HeatmapColorSettings } from "@/components/heatmap-diff-viewer/heatmap-gradient";
 import { Dropdown } from "@/components/ui/dropdown";
+import {
+  DEFAULT_HEATMAP_MODEL,
+  DEFAULT_TOOLTIP_LANGUAGE,
+  normalizeHeatmapColors,
+  normalizeHeatmapModel,
+  normalizeTooltipLanguage,
+  type HeatmapModelOptionValue,
+  type TooltipLanguageValue,
+} from "@/lib/heatmap-settings";
 import { normalizeGitRef } from "@/lib/refWithOrigin";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
 import { api } from "@cmux/convex/api";
 import { useQuery as useRQ, useMutation } from "@tanstack/react-query";
-import { useQuery as useConvexQuery } from "convex/react";
+import { useQuery as useConvexQuery, useMutation as useConvexMutation } from "convex/react";
 import { ExternalLink, X, Check, Copy, GitBranch, Loader2 } from "lucide-react";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -14,11 +25,26 @@ import { MergeButton, type MergeMethod } from "@/components/ui/merge-button";
 import { postApiIntegrationsGithubPrsCloseMutation, postApiIntegrationsGithubPrsMergeSimpleMutation } from "@cmux/www-openapi-client/react-query";
 import type { PostApiIntegrationsGithubPrsCloseData, PostApiIntegrationsGithubPrsCloseResponse, PostApiIntegrationsGithubPrsMergeSimpleData, PostApiIntegrationsGithubPrsMergeSimpleResponse, Options } from "@cmux/www-openapi-client";
 import { useCombinedWorkflowData, WorkflowRunsBadge, WorkflowRunsSection } from "@/components/WorkflowRunsSection";
+import z from "zod";
 
 const RUN_PENDING_STATUSES = new Set(["in_progress", "queued", "waiting", "pending"]);
 const RUN_PASSING_CONCLUSIONS = new Set(["success", "neutral", "skipped"]);
 const PR_SYNC_GRACE_MS = 1500;
 const PR_FINAL_NOT_FOUND_DELAY_MS = 10000;
+
+const workspaceSettingsSchema = z
+  .object({
+    heatmapThreshold: z.number().optional(),
+    heatmapModel: z.string().optional(),
+    heatmapTooltipLanguage: z.string().optional(),
+    heatmapColors: z
+      .object({
+        line: z.object({ start: z.string(), end: z.string() }),
+        token: z.object({ start: z.string(), end: z.string() }),
+      })
+      .optional(),
+  })
+  .nullish();
 
 type PullRequestDetailViewProps = {
   teamSlugOrId: string;
@@ -27,11 +53,7 @@ type PullRequestDetailViewProps = {
   number: string;
 };
 
-type DiffControls = {
-  expandAll: () => void;
-  collapseAll: () => void;
-  totalAdditions: number;
-  totalDeletions: number;
+type DiffControls = DiffViewerControls & {
   expandChecks?: () => void;
   collapseChecks?: () => void;
 };
@@ -185,13 +207,104 @@ export function PullRequestDetailView({
 
   const [diffControls, setDiffControls] = useState<DiffControls | null>(null);
 
-  const handleDiffControlsChange = useCallback((controls: DiffControls | null) => {
+  const handleDiffControlsChange = useCallback((controls: DiffViewerControls | null) => {
     setDiffControls(controls ? {
       ...controls,
       expandChecks: expandAllChecks,
       collapseChecks: collapseAllChecks,
     } : null);
   }, [expandAllChecks, collapseAllChecks]);
+
+  // Heatmap settings state
+  const workspaceSettingsData = useConvexQuery(api.workspaceSettings.get, { teamSlugOrId });
+  const workspaceSettings = useMemo(() => {
+    const parsed = workspaceSettingsSchema.safeParse(workspaceSettingsData);
+    return parsed.success ? parsed.data ?? null : null;
+  }, [workspaceSettingsData]);
+  const updateWorkspaceSettings = useConvexMutation(api.workspaceSettings.update);
+
+  const [heatmapThreshold, setHeatmapThreshold] = useState<number>(0);
+  const [heatmapColors, setHeatmapColors] = useState<HeatmapColorSettings>(
+    normalizeHeatmapColors(undefined)
+  );
+  const [heatmapModel, setHeatmapModel] = useState<HeatmapModelOptionValue>(
+    DEFAULT_HEATMAP_MODEL
+  );
+  const [heatmapTooltipLanguage, setHeatmapTooltipLanguage] =
+    useState<TooltipLanguageValue>(DEFAULT_TOOLTIP_LANGUAGE);
+
+  useEffect(() => {
+    if (!workspaceSettings) {
+      return;
+    }
+    setHeatmapThreshold(workspaceSettings.heatmapThreshold ?? 0);
+    setHeatmapColors(normalizeHeatmapColors(workspaceSettings.heatmapColors));
+    setHeatmapModel(normalizeHeatmapModel(workspaceSettings.heatmapModel ?? null));
+    setHeatmapTooltipLanguage(
+      normalizeTooltipLanguage(workspaceSettings.heatmapTooltipLanguage ?? null)
+    );
+  }, [workspaceSettings]);
+
+  const handleHeatmapThresholdChange = useCallback(
+    (next: number) => {
+      if (next === heatmapThreshold) {
+        return;
+      }
+      setHeatmapThreshold(next);
+      void updateWorkspaceSettings({
+        teamSlugOrId,
+        heatmapThreshold: next,
+      }).catch((error) => {
+        console.error("Failed to update heatmap threshold:", error);
+      });
+    },
+    [heatmapThreshold, teamSlugOrId, updateWorkspaceSettings]
+  );
+
+  const handleHeatmapColorsChange = useCallback(
+    (next: HeatmapColorSettings) => {
+      setHeatmapColors(next);
+      void updateWorkspaceSettings({
+        teamSlugOrId,
+        heatmapColors: next,
+      }).catch((error) => {
+        console.error("Failed to update heatmap colors:", error);
+      });
+    },
+    [teamSlugOrId, updateWorkspaceSettings]
+  );
+
+  const handleHeatmapModelChange = useCallback(
+    (next: HeatmapModelOptionValue) => {
+      if (next === heatmapModel) {
+        return;
+      }
+      setHeatmapModel(next);
+      void updateWorkspaceSettings({
+        teamSlugOrId,
+        heatmapModel: next,
+      }).catch((error) => {
+        console.error("Failed to update heatmap model:", error);
+      });
+    },
+    [heatmapModel, teamSlugOrId, updateWorkspaceSettings]
+  );
+
+  const handleHeatmapTooltipLanguageChange = useCallback(
+    (next: TooltipLanguageValue) => {
+      if (next === heatmapTooltipLanguage) {
+        return;
+      }
+      setHeatmapTooltipLanguage(next);
+      void updateWorkspaceSettings({
+        teamSlugOrId,
+        heatmapTooltipLanguage: next,
+      }).catch((error) => {
+        console.error("Failed to update heatmap tooltip language:", error);
+      });
+    },
+    [heatmapTooltipLanguage, teamSlugOrId, updateWorkspaceSettings]
+  );
 
   const [shouldShowPrMissingState, setShouldShowPrMissingState] = useState(false);
   const [shouldShowDefinitiveMissingState, setShouldShowDefinitiveMissingState] = useState(false);
@@ -338,10 +451,6 @@ export function PullRequestDetailView({
       />
     );
   }
-
-  const gitDiffViewerClassNames = {
-    fileDiffRow: { button: "top-[56px]" },
-  };
 
   return (
     <div className="flex flex-1 min-h-0 flex-col">
@@ -512,12 +621,20 @@ export function PullRequestDetailView({
               {currentPR?.repoFullName &&
                 currentPR.baseRef &&
                 currentPR.headRef ? (
-                <RunDiffSection
+                <RunDiffHeatmapReviewSection
                   repoFullName={currentPR.repoFullName}
                   ref1={normalizeGitRef(currentPR.baseRef)}
                   ref2={normalizeGitRef(currentPR.headRef)}
                   onControlsChange={handleDiffControlsChange}
-                  classNames={gitDiffViewerClassNames}
+                  fileOutputs={fileOutputs ?? undefined}
+                  heatmapThreshold={heatmapThreshold}
+                  heatmapColors={heatmapColors}
+                  heatmapModel={heatmapModel}
+                  heatmapTooltipLanguage={heatmapTooltipLanguage}
+                  onHeatmapThresholdChange={handleHeatmapThresholdChange}
+                  onHeatmapColorsChange={handleHeatmapColorsChange}
+                  onHeatmapModelChange={handleHeatmapModelChange}
+                  onHeatmapTooltipLanguageChange={handleHeatmapTooltipLanguageChange}
                 />
               ) : (
                 <div className="px-6 text-sm text-neutral-600 dark:text-neutral-300">
