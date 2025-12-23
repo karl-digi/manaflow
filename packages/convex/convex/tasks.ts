@@ -35,15 +35,36 @@ export const get = authQuery({
       );
     }
 
-    // Note: order by createdAt desc, fallback to insertion order if not present
-    const results = await q.collect();
-    return results.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+    const tasks = await q.collect();
+
+    // Get unread task runs for this user in this team
+    // Uses taskId directly (denormalized) for O(1) lookup instead of O(N) fetches
+    const unreadRuns = await ctx.db
+      .query("unreadTaskRuns")
+      .withIndex("by_team_user", (q) => q.eq("teamId", teamId).eq("userId", userId))
+      .collect();
+
+    // Build set of taskIds that have unread runs (direct access, no joins needed)
+    // Filter out undefined taskIds (pre-migration data)
+    const tasksWithUnread = new Set(
+      unreadRuns.map((ur) => ur.taskId).filter((id): id is Id<"tasks"> => id !== undefined)
+    );
+
+    // Sort by createdAt desc
+    const sorted = [...tasks].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+
+    // Return tasks with hasUnread indicator
+    return sorted.map((task) => ({
+      ...task,
+      hasUnread: tasksWithUnread.has(task._id),
+    }));
   },
 });
 
-// Get tasks with notification-aware ordering:
-// - Tasks with unread notifications come first, ordered by latest notification time
-// - Then remaining tasks ordered by createdAt
+// Get tasks sorted by most recent activity (iMessage-style):
+// - Sorted by lastActivityAt desc (most recently active first)
+// - lastActivityAt is updated when a run is started OR notification is received
+// - Includes hasUnread for visual indicator (blue dot)
 export const getWithNotificationOrder = authQuery({
   args: {
     teamSlugOrId: v.string(),
@@ -77,49 +98,32 @@ export const getWithNotificationOrder = authQuery({
 
     const tasks = await q.collect();
 
-    // Get unread notifications for this user
-    const unreadNotifications = await ctx.db
-      .query("taskNotifications")
-      .withIndex("by_team_user_unread", (q) =>
-        q.eq("teamId", teamId).eq("userId", userId).eq("readAt", undefined),
-      )
+    // Get unread task runs for this user in this team
+    // Uses taskId directly (denormalized) for O(1) lookup instead of O(N) fetches
+    const unreadRuns = await ctx.db
+      .query("unreadTaskRuns")
+      .withIndex("by_team_user", (q) => q.eq("teamId", teamId).eq("userId", userId))
       .collect();
 
-    // Build a map of taskId -> latest notification createdAt
-    const taskNotificationMap = new Map<Id<"tasks">, number>();
-    for (const n of unreadNotifications) {
-      const existing = taskNotificationMap.get(n.taskId);
-      if (!existing || n.createdAt > existing) {
-        taskNotificationMap.set(n.taskId, n.createdAt);
-      }
-    }
+    // Build set of taskIds that have unread runs (direct access, no joins needed)
+    // Filter out undefined taskIds (pre-migration data)
+    const tasksWithUnread = new Set(
+      unreadRuns.map((ur) => ur.taskId).filter((id): id is Id<"tasks"> => id !== undefined)
+    );
 
-    // Sort: tasks with unread notifications first (by latest notification time desc),
-    // then remaining tasks by createdAt desc
+    // Sort by lastActivityAt desc (most recently active first)
+    // Fall back to createdAt for tasks without lastActivityAt (pre-migration)
     const sorted = [...tasks].sort((a, b) => {
-      const aNotifTime = taskNotificationMap.get(a._id);
-      const bNotifTime = taskNotificationMap.get(b._id);
-
-      // Both have unread notifications: sort by notification time desc
-      if (aNotifTime !== undefined && bNotifTime !== undefined) {
-        return bNotifTime - aNotifTime;
-      }
-
-      // Only a has unread: a comes first
-      if (aNotifTime !== undefined) {
-        return -1;
-      }
-
-      // Only b has unread: b comes first
-      if (bNotifTime !== undefined) {
-        return 1;
-      }
-
-      // Neither has unread: sort by createdAt desc
-      return (b.createdAt ?? 0) - (a.createdAt ?? 0);
+      const aTime = a.lastActivityAt ?? a.createdAt ?? 0;
+      const bTime = b.lastActivityAt ?? b.createdAt ?? 0;
+      return bTime - aTime;
     });
 
-    return sorted;
+    // Return tasks with hasUnread indicator
+    return sorted.map((task) => ({
+      ...task,
+      hasUnread: tasksWithUnread.has(task._id),
+    }));
   },
 });
 
@@ -174,7 +178,25 @@ export const getPinned = authQuery({
       .filter((q) => q.neq(q.field("isPreview"), true))
       .collect();
 
-    return pinnedTasks.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+    // Get unread task runs for this user in this team
+    // Uses taskId directly (denormalized) for O(1) lookup instead of O(N) fetches
+    const unreadRuns = await ctx.db
+      .query("unreadTaskRuns")
+      .withIndex("by_team_user", (q) => q.eq("teamId", teamId).eq("userId", userId))
+      .collect();
+
+    // Build set of taskIds that have unread runs (direct access, no joins needed)
+    // Filter out undefined taskIds (pre-migration data)
+    const tasksWithUnread = new Set(
+      unreadRuns.map((ur) => ur.taskId).filter((id): id is Id<"tasks"> => id !== undefined)
+    );
+
+    const sorted = pinnedTasks.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+
+    return sorted.map((task) => ({
+      ...task,
+      hasUnread: tasksWithUnread.has(task._id),
+    }));
   },
 });
 
@@ -286,6 +308,7 @@ export const create = authMutation({
       isCompleted: false,
       createdAt: now,
       updatedAt: now,
+      lastActivityAt: now,
       images: args.images,
       userId,
       teamId,
@@ -995,6 +1018,7 @@ export const createForPreview = internalMutation({
       isPreview: true,
       createdAt: now,
       updatedAt: now,
+      lastActivityAt: now,
       images: undefined,
       userId: args.userId,
       teamId: args.teamId,

@@ -247,10 +247,17 @@ export async function spawnAgent(
       );
     }
 
+    // Determine callback URL for stop hooks to call crown/complete
+    // In development, use host.docker.internal to reach the host machine
+    // In production, use the Convex site URL
+    const convexSiteUrl = process.env.CONVEX_SITE_URL || process.env.NEXT_PUBLIC_CONVEX_URL?.replace('.convex.cloud', '.convex.site');
+    const callbackUrl = process.env.CMUX_CALLBACK_URL || convexSiteUrl || 'http://host.docker.internal:9779';
+
     let envVars: Record<string, string> = {
       CMUX_PROMPT: processedTaskDescription,
       CMUX_TASK_RUN_ID: taskRunId,
       CMUX_TASK_RUN_JWT: taskRunJwt,
+      CMUX_CALLBACK_URL: callbackUrl,
       PROMPT: processedTaskDescription,
     };
 
@@ -453,6 +460,7 @@ export async function spawnAgent(
         taskId,
         theme: options.theme,
         teamSlugOrId,
+        envVars,
       });
     }
 

@@ -35,7 +35,7 @@ export function SidebarNavLink({
       search={search}
       activeOptions={{ exact }}
       className={clsx(
-        "pointer-default cursor-default group mx-1 flex items-center gap-2 rounded-sm pl-2 ml-2 pr-3 py-1 text-[13px] text-neutral-900 select-none hover:bg-neutral-200/45 dark:text-neutral-100 dark:hover:bg-neutral-800/45 data-[active=true]:hover:bg-neutral-200/75 dark:data-[active=true]:hover:bg-neutral-800/65",
+        "pointer-default cursor-default group flex items-center gap-2 rounded-sm pl-2 ml-2 py-1 text-[13px] text-neutral-900 select-none hover:bg-neutral-200/45 dark:text-neutral-100 dark:hover:bg-neutral-800/45 data-[active=true]:hover:bg-neutral-200/75 dark:data-[active=true]:hover:bg-neutral-800/65 pr-2",
         className
       )}
       activeProps={{
@@ -44,22 +44,20 @@ export function SidebarNavLink({
         "data-active": "true",
       }}
     >
-      <div className="relative">
-        {Icon ? (
-          <Icon
-            className={
-              "size-[15px] text-neutral-500 group-hover:text-neutral-800 dark:group-hover:text-neutral-100 group-data-[active=true]:text-neutral-900 dark:group-data-[active=true]:text-neutral-100"
-            }
-            aria-hidden
-          />
-        ) : null}
-        {badgeCount !== undefined && badgeCount > 0 && (
-          <span className="absolute -top-1 -right-1 flex items-center justify-center min-w-[14px] h-[14px] px-1 text-[9px] font-medium text-white bg-blue-500 rounded-full">
-            {badgeCount > 99 ? "99+" : badgeCount}
-          </span>
-        )}
-      </div>
+      {Icon ? (
+        <Icon
+          className={
+            "size-[15px] text-neutral-500 group-hover:text-neutral-800 dark:group-hover:text-neutral-100 group-data-[active=true]:text-neutral-900 dark:group-data-[active=true]:text-neutral-100"
+          }
+          aria-hidden
+        />
+      ) : null}
       <span>{label}</span>
+      {badgeCount !== undefined && badgeCount > 0 && (
+        <span className="flex items-center justify-center min-w-[14px] h-[14px] px-1 text-[9px] font-medium text-white bg-blue-500 rounded-full ml-auto">
+          {badgeCount > 99 ? "99+" : badgeCount}
+        </span>
+      )}
     </Link>
   );
 }

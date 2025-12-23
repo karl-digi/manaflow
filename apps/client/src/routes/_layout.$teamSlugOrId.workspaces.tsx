@@ -31,7 +31,10 @@ function WorkspacesRoute() {
   const { expandTaskIds } = useExpandTasks();
 
   // Tasks are already sorted by the query (unread notifications first)
-  const orderedTasks = tasks ?? ([] as NonNullable<typeof tasks>);
+  const orderedTasks = useMemo(
+    () => tasks ?? ([] as NonNullable<typeof tasks>),
+    [tasks]
+  );
 
   // Create a Set for quick lookup of task IDs with unread notifications
   const tasksWithUnreadSet = useMemo(() => {

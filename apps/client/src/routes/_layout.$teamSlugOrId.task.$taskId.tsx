@@ -9,7 +9,7 @@ import {
   useNavigate,
 } from "@tanstack/react-router";
 import clsx from "clsx";
-import { Suspense, useEffect, useRef } from "react";
+import { Suspense, useEffect } from "react";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { convexQuery } from "@convex-dev/react-query";
 import { useQuery as useRQ } from "@tanstack/react-query";
@@ -59,12 +59,11 @@ function TaskDetailPage() {
   const taskRuns = taskRunsQuery.data;
   const clipboard = useClipboard({ timeout: 2000 });
   const markTaskAsRead = useMutation(api.taskNotifications.markTaskAsRead);
-  const hasMarkedAsRead = useRef(false);
 
   // Mark notifications for this task as read when viewing
+  // Called on every visit since new notifications may have arrived
   useEffect(() => {
-    if (!hasMarkedAsRead.current && taskId) {
-      hasMarkedAsRead.current = true;
+    if (taskId) {
       markTaskAsRead({ teamSlugOrId, taskId }).catch((err: Error) => {
         // Ignore errors - the API might not be available yet
         console.error("Failed to mark task notifications as read:", err);

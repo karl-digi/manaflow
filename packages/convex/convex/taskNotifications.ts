@@ -39,66 +39,83 @@ export const list = authQuery({
       runs.filter(Boolean).map((r) => [r!._id, r!]),
     );
 
+    // Check which task runs are unread (explicit unread tracking)
+    const unreadRunIds = new Set<string>();
+    for (const runId of runIds) {
+      const unread = await ctx.db
+        .query("unreadTaskRuns")
+        .withIndex("by_run_user", (q) =>
+          q.eq("taskRunId", runId).eq("userId", userId),
+        )
+        .first();
+      if (unread) {
+        unreadRunIds.add(runId);
+      }
+    }
+
     return notifications.map((n) => ({
       ...n,
       task: taskMap.get(n.taskId) ?? null,
       taskRun: n.taskRunId ? (runMap.get(n.taskRunId) ?? null) : null,
+      isUnread: n.taskRunId ? unreadRunIds.has(n.taskRunId) : false,
     }));
   },
 });
 
 // Get unread notification count
+// Counts unique unread task runs (not individual notifications)
 export const getUnreadCount = authQuery({
   args: { teamSlugOrId: v.string() },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
 
-    // Query for unread notifications (readAt is undefined)
-    const unreadNotifications = await ctx.db
-      .query("taskNotifications")
-      .withIndex("by_team_user_unread", (q) =>
-        q.eq("teamId", teamId).eq("userId", userId).eq("readAt", undefined),
-      )
+    // Count unread runs for this user in this team
+    const unreadRuns = await ctx.db
+      .query("unreadTaskRuns")
+      .withIndex("by_team_user", (q) => q.eq("teamId", teamId).eq("userId", userId))
       .collect();
 
-    return unreadNotifications.length;
+    return unreadRuns.length;
   },
 });
 
 // Get tasks with unread notifications (for sidebar dots)
+// Uses explicit unread tracking - row exists = unread
 export const getTasksWithUnread = authQuery({
   args: { teamSlugOrId: v.string() },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
 
-    // Query for unread notifications
-    const unreadNotifications = await ctx.db
-      .query("taskNotifications")
-      .withIndex("by_team_user_unread", (q) =>
-        q.eq("teamId", teamId).eq("userId", userId).eq("readAt", undefined),
-      )
+    // Get all unread runs for this user in this team
+    const unreadRuns = await ctx.db
+      .query("unreadTaskRuns")
+      .withIndex("by_team_user", (q) => q.eq("teamId", teamId).eq("userId", userId))
       .collect();
 
-    // Group by taskId and get the most recent notification per task
-    const taskNotificationMap = new Map<
+    if (unreadRuns.length === 0) {
+      return [];
+    }
+
+    // Get task runs to find their taskIds
+    const taskRuns = await Promise.all(
+      unreadRuns.map((ur) => ctx.db.get(ur.taskRunId))
+    );
+
+    // Group by taskId
+    const taskUnreadMap = new Map<
       Id<"tasks">,
-      { count: number; latestCreatedAt: number }
+      { count: number }
     >();
 
-    for (const n of unreadNotifications) {
-      const existing = taskNotificationMap.get(n.taskId);
+    for (const run of taskRuns) {
+      if (!run) continue;
+      const existing = taskUnreadMap.get(run.taskId);
       if (!existing) {
-        taskNotificationMap.set(n.taskId, {
-          count: 1,
-          latestCreatedAt: n.createdAt,
-        });
+        taskUnreadMap.set(run.taskId, { count: 1 });
       } else {
         existing.count++;
-        if (n.createdAt > existing.latestCreatedAt) {
-          existing.latestCreatedAt = n.createdAt;
-        }
       }
     }
 
@@ -109,11 +126,11 @@ export const getTasksWithUnread = authQuery({
       latestNotificationAt: number;
     }> = [];
 
-    for (const [taskId, data] of taskNotificationMap) {
+    for (const [taskId, data] of taskUnreadMap) {
       result.push({
         taskId,
         unreadCount: data.count,
-        latestNotificationAt: data.latestCreatedAt,
+        latestNotificationAt: Date.now(), // Not tracking this anymore
       });
     }
 
@@ -121,31 +138,93 @@ export const getTasksWithUnread = authQuery({
   },
 });
 
-// Mark a single notification as read
-export const markAsRead = authMutation({
+// Mark a task run as read (delete unread row)
+export const markTaskRunAsRead = authMutation({
   args: {
     teamSlugOrId: v.string(),
-    notificationId: v.id("taskNotifications"),
+    taskRunId: v.id("taskRuns"),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    // Verify user has access to this team
+    await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+
+    // Delete the unread row if it exists
+    const existing = await ctx.db
+      .query("unreadTaskRuns")
+      .withIndex("by_run_user", (q) =>
+        q.eq("taskRunId", args.taskRunId).eq("userId", userId),
+      )
+      .first();
+
+    if (existing) {
+      await ctx.db.delete(existing._id);
+    }
+  },
+});
+
+// Mark a task run as unread (insert unread row)
+export const markTaskRunAsUnread = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    taskRunId: v.id("taskRuns"),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
 
-    const notification = await ctx.db.get(args.notificationId);
-    if (!notification || notification.teamId !== teamId || notification.userId !== userId) {
-      throw new Error("Notification not found or unauthorized");
+    // Get the task run to find taskId
+    const taskRun = await ctx.db.get(args.taskRunId);
+    if (!taskRun) {
+      throw new Error("Task run not found");
     }
 
-    if (!notification.readAt) {
-      await ctx.db.patch(args.notificationId, {
-        readAt: Date.now(),
+    // Check if unread row already exists
+    const existing = await ctx.db
+      .query("unreadTaskRuns")
+      .withIndex("by_run_user", (q) =>
+        q.eq("taskRunId", args.taskRunId).eq("userId", userId),
+      )
+      .first();
+
+    // Only insert if not already unread
+    if (!existing) {
+      await ctx.db.insert("unreadTaskRuns", {
+        taskRunId: args.taskRunId,
+        taskId: taskRun.taskId,
+        userId,
+        teamId,
       });
     }
   },
 });
 
-// Mark all notifications for a task as read
+// Mark all runs for a task as read (delete unread rows)
 export const markTaskAsRead = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    taskId: v.id("tasks"),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    // teamSlugOrId is validated by authMutation but we don't need teamId here
+    // since we query by taskId directly
+
+    // Get all unread rows for this task using by_task_user index (O(1) lookup)
+    const unreadRows = await ctx.db
+      .query("unreadTaskRuns")
+      .withIndex("by_task_user", (q) =>
+        q.eq("taskId", args.taskId).eq("userId", userId),
+      )
+      .collect();
+
+    // Delete all unread rows for this task
+    await Promise.all(unreadRows.map((row) => ctx.db.delete(row._id)));
+  },
+});
+
+// Mark all runs for a task as unread (insert unread rows)
+export const markTaskAsUnread = authMutation({
   args: {
     teamSlugOrId: v.string(),
     taskId: v.id("tasks"),
@@ -154,40 +233,50 @@ export const markTaskAsRead = authMutation({
     const userId = ctx.identity.subject;
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
 
-    // Get all unread notifications for this task
-    const unreadNotifications = await ctx.db
-      .query("taskNotifications")
-      .withIndex("by_task_user_unread", (q) =>
-        q.eq("taskId", args.taskId).eq("userId", userId).eq("readAt", undefined),
-      )
+    // Get all runs for this task
+    const runs = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
       .collect();
 
-    const now = Date.now();
-    for (const n of unreadNotifications) {
-      if (n.teamId === teamId) {
-        await ctx.db.patch(n._id, { readAt: now });
+    // Insert unread rows for each run (if not already unread)
+    for (const run of runs) {
+      if (run.teamId !== teamId) continue;
+
+      const existing = await ctx.db
+        .query("unreadTaskRuns")
+        .withIndex("by_run_user", (q) =>
+          q.eq("taskRunId", run._id).eq("userId", userId),
+        )
+        .first();
+
+      if (!existing) {
+        await ctx.db.insert("unreadTaskRuns", {
+          taskRunId: run._id,
+          taskId: args.taskId,
+          userId,
+          teamId,
+        });
       }
     }
   },
 });
 
-// Mark all notifications as read
+// Mark all task runs as read (delete all unread rows for user in this team)
 export const markAllAsRead = authMutation({
   args: { teamSlugOrId: v.string() },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
 
-    const unreadNotifications = await ctx.db
-      .query("taskNotifications")
-      .withIndex("by_team_user_unread", (q) =>
-        q.eq("teamId", teamId).eq("userId", userId).eq("readAt", undefined),
-      )
+    // Get all unread rows for this user in this team and delete them
+    const unreadRuns = await ctx.db
+      .query("unreadTaskRuns")
+      .withIndex("by_team_user", (q) => q.eq("teamId", teamId).eq("userId", userId))
       .collect();
 
-    const now = Date.now();
-    for (const n of unreadNotifications) {
-      await ctx.db.patch(n._id, { readAt: now });
+    for (const unread of unreadRuns) {
+      await ctx.db.delete(unread._id);
     }
   },
 });
@@ -203,6 +292,8 @@ export const createInternal = internalMutation({
     message: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const now = Date.now();
+
     await ctx.db.insert("taskNotifications", {
       taskId: args.taskId,
       taskRunId: args.taskRunId,
@@ -210,8 +301,31 @@ export const createInternal = internalMutation({
       userId: args.userId,
       type: args.type,
       message: args.message,
-      createdAt: Date.now(),
+      createdAt: now,
     });
+
+    // Update task's lastActivityAt for sorting (notification received = activity)
+    await ctx.db.patch(args.taskId, { lastActivityAt: now });
+
+    // Insert unread row for this task run (if taskRunId provided)
+    if (args.taskRunId) {
+      // Check if already unread (avoid duplicates)
+      const existing = await ctx.db
+        .query("unreadTaskRuns")
+        .withIndex("by_run_user", (q) =>
+          q.eq("taskRunId", args.taskRunId!).eq("userId", args.userId),
+        )
+        .first();
+
+      if (!existing) {
+        await ctx.db.insert("unreadTaskRuns", {
+          taskRunId: args.taskRunId,
+          taskId: args.taskId,
+          userId: args.userId,
+          teamId: args.teamId,
+        });
+      }
+    }
   },
 });
 
@@ -222,13 +336,14 @@ export const hasUnreadForTaskInternal = internalQuery({
     userId: v.string(),
   },
   handler: async (ctx, args) => {
-    const notification = await ctx.db
-      .query("taskNotifications")
-      .withIndex("by_task_user_unread", (q) =>
-        q.eq("taskId", args.taskId).eq("userId", args.userId).eq("readAt", undefined),
+    // O(1) lookup using by_task_user index (taskId is denormalized on unreadTaskRuns)
+    const unread = await ctx.db
+      .query("unreadTaskRuns")
+      .withIndex("by_task_user", (q) =>
+        q.eq("taskId", args.taskId).eq("userId", args.userId),
       )
       .first();
 
-    return notification !== null;
+    return unread !== null;
   },
 });

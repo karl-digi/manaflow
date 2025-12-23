@@ -1,17 +1,14 @@
 import { FloatingPane } from "@/components/floating-pane";
+import { TitleBar } from "@/components/TitleBar";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { api } from "@cmux/convex/api";
 import type { Id } from "@cmux/convex/dataModel";
 import { convexQuery } from "@convex-dev/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
+import clsx from "clsx";
 import { useMutation, useQuery } from "convex/react";
-import {
-  Bell,
-  CheckCircle,
-  CheckCheck,
-  XCircle,
-} from "lucide-react";
-import { useCallback } from "react";
+import { CheckCircle, Circle, XCircle } from "lucide-react";
+import { useCallback, type MouseEvent } from "react";
 
 // Type for notifications from the API
 interface NotificationData {
@@ -22,8 +19,8 @@ interface NotificationData {
   userId: string;
   type: "run_completed" | "run_failed";
   message?: string;
-  readAt?: number;
   createdAt: number;
+  isUnread: boolean;
   task: {
     _id: Id<"tasks">;
     text: string;
@@ -40,48 +37,47 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/notifications")({
   loader: async ({ params }) => {
     const { teamSlugOrId } = params;
     void convexQueryClient.queryClient.ensureQueryData(
-      convexQuery(api.taskNotifications.list, { teamSlugOrId })
+      convexQuery(api.taskNotifications.list, { teamSlugOrId }),
     );
   },
 });
 
 function NotificationsRoute() {
   const { teamSlugOrId } = Route.useParams();
-  const notifications = useQuery(api.taskNotifications.list, { teamSlugOrId }) as NotificationData[] | undefined;
-  const markAsRead = useMutation(api.taskNotifications.markAsRead);
+  const notifications = useQuery(api.taskNotifications.list, {
+    teamSlugOrId,
+  }) as NotificationData[] | undefined;
+  const markTaskRunAsRead = useMutation(api.taskNotifications.markTaskRunAsRead);
+  const markTaskRunAsUnread = useMutation(api.taskNotifications.markTaskRunAsUnread);
   const markAllAsRead = useMutation(api.taskNotifications.markAllAsRead);
 
   const handleMarkAsRead = useCallback(
-    async (notificationId: Id<"taskNotifications">) => {
-      await markAsRead({ teamSlugOrId, notificationId });
+    async (taskRunId: Id<"taskRuns"> | undefined) => {
+      if (taskRunId) {
+        await markTaskRunAsRead({ teamSlugOrId, taskRunId });
+      }
     },
-    [markAsRead, teamSlugOrId]
+    [markTaskRunAsRead, teamSlugOrId],
+  );
+
+  const handleMarkAsUnread = useCallback(
+    async (taskRunId: Id<"taskRuns"> | undefined) => {
+      if (taskRunId) {
+        await markTaskRunAsUnread({ teamSlugOrId, taskRunId });
+      }
+    },
+    [markTaskRunAsUnread, teamSlugOrId],
   );
 
   const handleMarkAllAsRead = useCallback(async () => {
     await markAllAsRead({ teamSlugOrId });
   }, [markAllAsRead, teamSlugOrId]);
 
-  const unreadCount =
-    notifications?.filter((n: { readAt?: number }) => !n.readAt).length ?? 0;
+  const hasUnread = notifications?.some((n) => n.isUnread) ?? false;
 
   return (
-    <FloatingPane>
+    <FloatingPane header={<TitleBar title="Notifications" />}>
       <div className="grow h-full flex flex-col">
-        <div className="border-b border-neutral-200 px-6 py-4 dark:border-neutral-800 flex items-center justify-between">
-          <h1 className="text-base font-semibold text-neutral-900 dark:text-neutral-100 select-none">
-            Notifications
-          </h1>
-          {unreadCount > 0 && (
-            <button
-              onClick={handleMarkAllAsRead}
-              className="flex items-center gap-1.5 text-xs text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100 transition-colors"
-            >
-              <CheckCheck className="size-4" />
-              Mark all as read
-            </button>
-          )}
-        </div>
         <div className="overflow-y-auto px-4 pb-6">
           {notifications === undefined ? (
             <div className="mt-6 space-y-3">
@@ -94,20 +90,33 @@ function NotificationsRoute() {
             </div>
           ) : notifications.length === 0 ? (
             <div className="mt-12 flex flex-col items-center justify-center text-neutral-500 dark:text-neutral-400">
-              <Bell className="size-12 mb-3 opacity-50" />
               <p className="text-sm select-none">No notifications yet.</p>
             </div>
           ) : (
-            <div className="mt-2 space-y-2">
-              {notifications.map((notification) => (
-                <NotificationItem
-                  key={notification._id}
-                  notification={notification}
-                  teamSlugOrId={teamSlugOrId}
-                  onMarkAsRead={handleMarkAsRead}
-                />
-              ))}
-            </div>
+            <>
+              {hasUnread && (
+                <div className="mt-2 mb-3 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={handleMarkAllAsRead}
+                    className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                  >
+                    Mark all as read
+                  </button>
+                </div>
+              )}
+              <div className="mt-2 space-y-2">
+                {notifications.map((notification) => (
+                  <NotificationItem
+                    key={notification._id}
+                    notification={notification}
+                    teamSlugOrId={teamSlugOrId}
+                    onMarkAsRead={handleMarkAsRead}
+                    onMarkAsUnread={handleMarkAsUnread}
+                  />
+                ))}
+              </div>
+            </>
           )}
         </div>
       </div>
@@ -119,70 +128,112 @@ function NotificationItem({
   notification,
   teamSlugOrId,
   onMarkAsRead,
+  onMarkAsUnread,
 }: {
   notification: NotificationData;
   teamSlugOrId: string;
-  onMarkAsRead: (id: Id<"taskNotifications">) => void;
+  onMarkAsRead: (taskRunId: Id<"taskRuns"> | undefined) => void;
+  onMarkAsUnread: (taskRunId: Id<"taskRuns"> | undefined) => void;
 }) {
-  const isUnread = !notification.readAt;
   const isCompleted = notification.type === "run_completed";
   const Icon = isCompleted ? CheckCircle : XCircle;
+  const isUnread = notification.isUnread;
 
   const taskName =
     notification.task?.text?.slice(0, 60) ||
     notification.task?.description?.slice(0, 60) ||
     "Task";
 
-  const truncatedTaskName =
-    taskName.length >= 60 ? `${taskName}...` : taskName;
+  const truncatedTaskName = taskName.length >= 60 ? `${taskName}...` : taskName;
 
   const timeAgo = getTimeAgo(notification.createdAt);
 
   const handleClick = () => {
+    // Only mark as read if currently unread
     if (isUnread) {
-      onMarkAsRead(notification._id);
+      onMarkAsRead(notification.taskRunId);
     }
   };
 
-  return (
-    <Link
-      to="/$teamSlugOrId/task/$taskId"
-      params={{
+  const handleToggleRead = (e: MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (isUnread) {
+      onMarkAsRead(notification.taskRunId);
+    } else {
+      onMarkAsUnread(notification.taskRunId);
+    }
+  };
+
+  // Navigate to the specific run if available, otherwise to the task
+  const linkTo = notification.taskRunId
+    ? ("/$teamSlugOrId/task/$taskId/run/$runId" as const)
+    : ("/$teamSlugOrId/task/$taskId" as const);
+
+  const linkParams = notification.taskRunId
+    ? {
         teamSlugOrId,
         taskId: notification.taskId,
-      }}
-      search={{ runId: undefined }}
+        runId: notification.taskRunId,
+      }
+    : {
+        teamSlugOrId,
+        taskId: notification.taskId,
+      };
+
+  return (
+    <Link
+      to={linkTo}
+      params={linkParams}
       onClick={handleClick}
-      className={`
-        block px-4 py-3 rounded-lg border transition-colors
-        ${
-          isUnread
-            ? "bg-blue-50/50 border-blue-200 dark:bg-blue-950/20 dark:border-blue-800"
-            : "bg-neutral-50 border-neutral-200 dark:bg-neutral-900 dark:border-neutral-800"
-        }
-        hover:bg-neutral-100 dark:hover:bg-neutral-800
-      `}
+      className={clsx(
+        "group block px-4 py-3 rounded-lg border transition-colors",
+        isUnread
+          ? "bg-blue-50 border-blue-200 dark:bg-blue-950/30 dark:border-blue-900 hover:bg-blue-100 dark:hover:bg-blue-950/50"
+          : "bg-neutral-50 border-neutral-200 dark:bg-neutral-900 dark:border-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+      )}
     >
       <div className="flex items-start gap-3">
+        {/* Unread indicator */}
+        <div className="mt-1.5 flex-shrink-0 w-2">
+          {isUnread && (
+            <span className="block size-2 rounded-full bg-blue-500" />
+          )}
+        </div>
         <div
-          className={`mt-0.5 flex-shrink-0 ${
+          className={clsx(
+            "mt-0.5 flex-shrink-0",
             isCompleted
               ? "text-green-600 dark:text-green-500"
               : "text-red-600 dark:text-red-500"
-          }`}
+          )}
         >
           <Icon className="size-5" />
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-2">
-            <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100 truncate">
+            <p
+              className={clsx(
+                "text-sm truncate",
+                isUnread
+                  ? "font-semibold text-neutral-900 dark:text-neutral-100"
+                  : "font-medium text-neutral-700 dark:text-neutral-300"
+              )}
+            >
               {isCompleted ? "Run completed" : "Run failed"}
             </p>
             <span className="text-xs text-neutral-500 dark:text-neutral-400 flex-shrink-0">
               {timeAgo}
             </span>
           </div>
-          <p className="text-sm text-neutral-600 dark:text-neutral-400 mt-0.5 truncate">
+          <p
+            className={clsx(
+              "text-sm mt-0.5 truncate",
+              isUnread
+                ? "text-neutral-700 dark:text-neutral-300"
+                : "text-neutral-600 dark:text-neutral-400"
+            )}
+          >
             {truncatedTaskName}
           </p>
           {notification.taskRun?.agentName && (
@@ -191,11 +242,22 @@ function NotificationItem({
             </p>
           )}
         </div>
-        {isUnread && (
-          <div className="flex-shrink-0 mt-1.5">
-            <div className="size-2 rounded-full bg-blue-500" />
-          </div>
-        )}
+        {/* Mark as read/unread button */}
+        <button
+          type="button"
+          onClick={handleToggleRead}
+          className="mt-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700"
+          title={isUnread ? "Mark as read" : "Mark as unread"}
+        >
+          <Circle
+            className={clsx(
+              "size-4",
+              isUnread
+                ? "text-blue-500 fill-blue-500"
+                : "text-neutral-400 dark:text-neutral-500"
+            )}
+          />
+        </button>
       </div>
     </Link>
   );

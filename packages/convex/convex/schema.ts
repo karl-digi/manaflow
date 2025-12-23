@@ -108,6 +108,7 @@ const convexSchema = defineSchema({
     generatedBranchName: v.optional(v.string()),
     createdAt: v.optional(v.number()),
     updatedAt: v.optional(v.number()),
+    lastActivityAt: v.optional(v.number()), // Updated on run start or notification received, for sorting
     userId: v.string(), // Link to user who created the task
     teamId: v.string(),
     environmentId: v.optional(v.id("environments")),
@@ -163,6 +164,7 @@ const convexSchema = defineSchema({
     .index("by_created", ["createdAt"])
     .index("by_user", ["userId", "createdAt"])
     .index("by_team_user", ["teamId", "userId"])
+    .index("by_team_user_activity", ["teamId", "userId", "lastActivityAt"])
     .index("by_pinned", ["pinned", "teamId", "userId"])
     .index("by_team_user_preview", ["teamId", "userId", "isPreview"])
     .index("by_team_preview", ["teamId", "isPreview"]),
@@ -1105,6 +1107,19 @@ const convexSchema = defineSchema({
     .index("by_team_user_unread", ["teamId", "userId", "readAt", "createdAt"]) // Filter unread
     .index("by_task", ["taskId", "createdAt"]) // Get notifications for a task
     .index("by_task_user_unread", ["taskId", "userId", "readAt"]), // Check unread per task
+
+  // Explicit unread tracking for task runs
+  // Row exists = unread, no row = read (safe default)
+  unreadTaskRuns: defineTable({
+    taskRunId: v.id("taskRuns"),
+    taskId: v.optional(v.id("tasks")), // Denormalized for efficient querying (optional for migration)
+    userId: v.string(),
+    teamId: v.string(),
+  })
+    .index("by_run_user", ["taskRunId", "userId"]) // Check if run is unread
+    .index("by_user", ["userId"]) // Get all unread runs for a user
+    .index("by_team_user", ["teamId", "userId"]) // Get unread runs for a user in a team
+    .index("by_task_user", ["taskId", "userId"]), // Get unread runs for a task
 });
 
 export default convexSchema;

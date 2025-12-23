@@ -15,7 +15,6 @@ import { Bell, Home, Plus, Server, Settings } from "lucide-react";
 import {
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
   type ComponentType,
@@ -28,8 +27,11 @@ import { SidebarPullRequestList } from "./sidebar/SidebarPullRequestList";
 import { SidebarSectionLink } from "./sidebar/SidebarSectionLink";
 import { SidebarWorkspacesSection } from "./sidebar/SidebarWorkspacesSection";
 
+// Tasks with hasUnread indicator from the query
+type TaskWithUnread = Doc<"tasks"> & { hasUnread: boolean };
+
 interface SidebarProps {
-  tasks: Doc<"tasks">[] | undefined;
+  tasks: TaskWithUnread[] | undefined;
   teamSlugOrId: string;
 }
 
@@ -109,17 +111,6 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
     teamSlugOrId,
   });
 
-  // Fetch tasks with unread notifications for showing dots
-  const tasksWithUnread = useQuery(api.taskNotifications.getTasksWithUnread, {
-    teamSlugOrId,
-  });
-
-  // Create a Set for quick lookup of task IDs with unread notifications
-  const tasksWithUnreadSet = useMemo(() => {
-    if (!tasksWithUnread) return new Set<string>();
-    return new Set(tasksWithUnread.map((t: { taskId: string }) => t.taskId));
-  }, [tasksWithUnread]);
-
   useEffect(() => {
     localStorage.setItem("sidebarWidth", String(width));
   }, [width]);
@@ -179,7 +170,7 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
       const clientX = e.clientX;
       const newWidth = Math.min(
         Math.max(clientX - containerLeft, MIN_WIDTH),
-        MAX_WIDTH,
+        MAX_WIDTH
       );
       setWidth(newWidth);
     });
@@ -215,7 +206,7 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
       window.addEventListener("mousemove", onMouseMove);
       window.addEventListener("mouseup", stopResizing);
     },
-    [onMouseMove, stopResizing],
+    [onMouseMove, stopResizing]
   );
 
   useEffect(() => {
@@ -243,7 +234,7 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
       }
     >
       <div
-        className={`h-[38px] flex items-center pr-1.5 shrink-0 ${isElectron ? "" : "pl-3"}`}
+        className={`h-[38px] flex items-center pr-0.5 shrink-0 ${isElectron ? "" : "pl-3"}`}
         style={{ WebkitAppRegion: "drag" } as CSSProperties}
       >
         {isElectron && <div className="w-[80px]"></div>}
@@ -324,7 +315,7 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
                             expandTaskIds?.includes(task._id) ?? false
                           }
                           teamSlugOrId={teamSlugOrId}
-                          hasUnreadNotification={tasksWithUnreadSet.has(task._id)}
+                          hasUnreadNotification={task.hasUnread}
                         />
                       ))}
                       {/* Horizontal divider after pinned items */}
@@ -345,7 +336,7 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
                           expandTaskIds?.includes(task._id) ?? false
                         }
                         teamSlugOrId={teamSlugOrId}
-                        hasUnreadNotification={tasksWithUnreadSet.has(task._id)}
+                        hasUnreadNotification={task.hasUnread}
                       />
                     ))}
                 </>

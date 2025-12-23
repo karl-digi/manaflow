@@ -600,7 +600,7 @@ function TaskTreeInner({
       });
       if (tasks) {
         const updatedTasks = tasks.map((t) =>
-          t._id === args.id ? { ...t, pinned: true, updatedAt: now } : t
+          t._id === args.id ? { ...t, pinned: true, updatedAt: now, hasUnread: t.hasUnread ?? false } : t
         );
         localStore.setQuery(
           api.tasks.get,
@@ -620,7 +620,7 @@ function TaskTreeInner({
         localStore.setQuery(
           api.tasks.getPinned,
           { teamSlugOrId: args.teamSlugOrId },
-          [{ ...taskToPin, pinned: true, updatedAt: now }, ...pinned]
+          [{ ...taskToPin, pinned: true, updatedAt: now, hasUnread: taskToPin.hasUnread ?? false }, ...pinned]
         );
       }
     }
@@ -671,6 +671,24 @@ function TaskTreeInner({
       id: task._id,
     });
   }, [unpinTask, teamSlugOrId, task._id]);
+
+  // Mutations for marking task as read/unread
+  const markTaskAsRead = useMutation(api.taskNotifications.markTaskAsRead);
+  const markTaskAsUnread = useMutation(api.taskNotifications.markTaskAsUnread);
+
+  const handleMarkAsRead = useCallback(() => {
+    markTaskAsRead({
+      teamSlugOrId,
+      taskId: task._id,
+    });
+  }, [markTaskAsRead, teamSlugOrId, task._id]);
+
+  const handleMarkAsUnread = useCallback(() => {
+    markTaskAsUnread({
+      teamSlugOrId,
+      taskId: task._id,
+    });
+  }, [markTaskAsUnread, teamSlugOrId, task._id]);
 
   const inferredBranch = getTaskBranch(task);
   const trimmedTaskText = (task.text ?? "").trim();
@@ -827,24 +845,14 @@ function TaskTreeInner({
     (Boolean(taskLeadingIcon) || isLocalWorkspace || isCloudWorkspace);
 
   const taskMetaIcon = shouldShowTaskArchiveOverlay ? (
-    <div className="flex items-center gap-1.5">
-      {hasUnreadNotification && (
-        <span className="size-2 rounded-full bg-blue-500 flex-shrink-0" />
-      )}
-      <SidebarArchiveOverlay
-        icon={taskLeadingIcon}
-        label="Archive"
-        onArchive={handleArchive}
-        groupName="task"
-      />
-    </div>
+    <SidebarArchiveOverlay
+      icon={taskLeadingIcon}
+      label="Archive"
+      onArchive={handleArchive}
+      groupName="task"
+    />
   ) : (
-    <div className="flex items-center gap-1.5">
-      {hasUnreadNotification && (
-        <span className="size-2 rounded-full bg-blue-500 flex-shrink-0" />
-      )}
-      {taskLeadingIcon}
-    </div>
+    taskLeadingIcon
   );
 
   return (
@@ -852,17 +860,17 @@ function TaskTreeInner({
       <div className="select-none flex flex-col">
         <ContextMenu.Root>
           <ContextMenu.Trigger>
-            <Link
-              ref={taskLinkRef}
-              to="/$teamSlugOrId/task/$taskId"
-              params={{ teamSlugOrId, taskId: task._id }}
-              search={{ runId: undefined }}
-              activeOptions={{ exact: true }}
-              className={clsx(
-                "group/task block",
-                // For local workspaces, manually add active class since we navigate to VSCode sub-route
-                localWorkspaceRunWithVscode && isTaskSelected && "active"
-              )}
+              <Link
+                ref={taskLinkRef}
+                to="/$teamSlugOrId/task/$taskId"
+                params={{ teamSlugOrId, taskId: task._id }}
+                search={{ runId: undefined }}
+                activeOptions={{ exact: true }}
+                className={clsx(
+                  "group/task block",
+                  // For local workspaces, manually add active class since we navigate to VSCode sub-route
+                  localWorkspaceRunWithVscode && isTaskSelected && "active"
+                )}
               data-focus-visible={isTaskLinkFocusVisible ? "true" : undefined}
               onMouseEnter={handlePrefetch}
               onFocus={handleTaskLinkFocus}
@@ -904,6 +912,7 @@ function TaskTreeInner({
                   expanded: isExpanded,
                   onToggle: handleToggle,
                   visible: canExpand,
+                  hasNotification: hasUnreadNotification,
                 }}
                 title={taskTitleContent}
                 titleClassName={taskTitleClassName}
@@ -955,6 +964,23 @@ function TaskTreeInner({
                   >
                     <Pin className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
                     <span>Pin</span>
+                  </ContextMenu.Item>
+                )}
+                {hasUnreadNotification ? (
+                  <ContextMenu.Item
+                    className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                    onClick={handleMarkAsRead}
+                  >
+                    <Eye className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
+                    <span>Mark as read</span>
+                  </ContextMenu.Item>
+                ) : (
+                  <ContextMenu.Item
+                    className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                    onClick={handleMarkAsUnread}
+                  >
+                    <EyeOff className="w-3.5 h-3.5 text-neutral-600 dark:text-neutral-300" />
+                    <span>Mark as unread</span>
                   </ContextMenu.Item>
                 )}
                 <ContextMenu.SubmenuRoot>
