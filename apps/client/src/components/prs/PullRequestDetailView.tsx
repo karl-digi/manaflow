@@ -6,7 +6,7 @@ import { api } from "@cmux/convex/api";
 import { useQuery as useRQ, useMutation } from "@tanstack/react-query";
 import { useQuery as useConvexQuery } from "convex/react";
 import { ExternalLink, X, Check, Copy, GitBranch, Loader2 } from "lucide-react";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useClipboard } from "@mantine/hooks";
 import clsx from "clsx";
@@ -180,18 +180,18 @@ export function PullRequestDetailView({
     setChecksExpandedOverride(!checksExpanded);
   };
 
-  const expandAllChecks = () => setChecksExpandedOverride(true);
-  const collapseAllChecks = () => setChecksExpandedOverride(false);
+  const expandAllChecks = useCallback(() => setChecksExpandedOverride(true), []);
+  const collapseAllChecks = useCallback(() => setChecksExpandedOverride(false), []);
 
   const [diffControls, setDiffControls] = useState<DiffControls | null>(null);
 
-  const handleDiffControlsChange = (controls: DiffControls | null) => {
+  const handleDiffControlsChange = useCallback((controls: DiffControls | null) => {
     setDiffControls(controls ? {
       ...controls,
       expandChecks: expandAllChecks,
       collapseChecks: collapseAllChecks,
     } : null);
-  };
+  }, [expandAllChecks, collapseAllChecks]);
 
   const [shouldShowPrMissingState, setShouldShowPrMissingState] = useState(false);
   const [shouldShowDefinitiveMissingState, setShouldShowDefinitiveMissingState] = useState(false);
