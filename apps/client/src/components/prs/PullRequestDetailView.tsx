@@ -1,7 +1,9 @@
 import { RunDiffHeatmapReviewSection } from "@/components/RunDiffHeatmapReviewSection";
-import type { DiffViewerControls } from "@/components/heatmap-diff-viewer";
+import type { DiffViewerControls, StreamFileState, StreamFileStatus } from "@/components/heatmap-diff-viewer";
 import type { HeatmapColorSettings } from "@/components/heatmap-diff-viewer/heatmap-gradient";
 import { Dropdown } from "@/components/ui/dropdown";
+import { cachedGetUser } from "@/lib/cachedGetUser";
+import type { ReviewHeatmapLine } from "@/lib/heatmap";
 import {
   DEFAULT_HEATMAP_MODEL,
   DEFAULT_TOOLTIP_LANGUAGE,
@@ -12,12 +14,15 @@ import {
   type TooltipLanguageValue,
 } from "@/lib/heatmap-settings";
 import { normalizeGitRef } from "@/lib/refWithOrigin";
+import { stackClientApp } from "@/lib/stack";
+import { WWW_ORIGIN } from "@/lib/wwwOrigin";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
 import { api } from "@cmux/convex/api";
+import type { ReplaceDiffEntry } from "@cmux/shared/diff-types";
 import { useQuery as useRQ, useMutation } from "@tanstack/react-query";
 import { useQuery as useConvexQuery, useMutation as useConvexMutation } from "convex/react";
 import { ExternalLink, X, Check, Copy, GitBranch, Loader2 } from "lucide-react";
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, useDeferredValue } from "react";
 import { toast } from "sonner";
 import { useClipboard } from "@mantine/hooks";
 import clsx from "clsx";
@@ -45,6 +50,91 @@ const workspaceSettingsSchema = z
       .optional(),
   })
   .nullish();
+
+const DIFF_HEADER_PREFIXES = [
+  "diff --git ",
+  "index ",
+  "--- ",
+  "+++ ",
+  "new file mode ",
+  "deleted file mode ",
+  "similarity index ",
+  "rename from ",
+  "rename to ",
+  "old mode ",
+  "new mode ",
+  "copy from ",
+  "copy to ",
+];
+
+function stripDiffHeaders(diffText: string): string {
+  const lines = diffText.split("\n");
+  const filtered = lines.filter(
+    (line) =>
+      !DIFF_HEADER_PREFIXES.some((prefix) => line.startsWith(prefix))
+  );
+  return filtered.join("\n").trimEnd();
+}
+
+function buildPatchFromContent(entry: ReplaceDiffEntry): string {
+  const oldContent = entry.oldContent ?? "";
+  const newContent = entry.newContent ?? "";
+
+  if (!oldContent && !newContent) {
+    return "";
+  }
+
+  const oldLines = oldContent ? oldContent.split(/\r?\n/) : [];
+  const newLines = newContent ? newContent.split(/\r?\n/) : [];
+
+  if (oldLines.length === 1 && oldLines[0] === "") {
+    oldLines.length = 0;
+  }
+  if (newLines.length === 1 && newLines[0] === "") {
+    newLines.length = 0;
+  }
+
+  const hunks: string[] = [];
+
+  if (entry.status === "added" || oldLines.length === 0) {
+    if (newLines.length > 0) {
+      hunks.push(`@@ -0,0 +1,${newLines.length} @@`);
+      for (const line of newLines) {
+        hunks.push(`+${line}`);
+      }
+    }
+  } else if (entry.status === "deleted" || newLines.length === 0) {
+    if (oldLines.length > 0) {
+      hunks.push(`@@ -1,${oldLines.length} +0,0 @@`);
+      for (const line of oldLines) {
+        hunks.push(`-${line}`);
+      }
+    }
+  } else {
+    hunks.push(`@@ -1,${oldLines.length} +1,${newLines.length} @@`);
+    for (const line of oldLines) {
+      hunks.push(`-${line}`);
+    }
+    for (const line of newLines) {
+      hunks.push(`+${line}`);
+    }
+  }
+
+  return hunks.join("\n");
+}
+
+function convertDiffsToFileDiffs(
+  diffs: ReplaceDiffEntry[]
+): Array<{ filePath: string; diffText: string }> {
+  return diffs
+    .filter((entry) => !entry.isBinary)
+    .map((entry) => {
+      const rawPatch = entry.patch ?? buildPatchFromContent(entry);
+      const diffText = stripDiffHeaders(rawPatch);
+      return { filePath: entry.filePath, diffText };
+    })
+    .filter((entry) => entry.diffText.length > 0);
+}
 
 type PullRequestDetailViewProps = {
   teamSlugOrId: string;
@@ -305,6 +395,253 @@ export function PullRequestDetailView({
     },
     [heatmapTooltipLanguage, teamSlugOrId, updateWorkspaceSettings]
   );
+
+  // Streaming heatmap review state
+  const [streamStateByFile, setStreamStateByFile] = useState<Map<string, StreamFileState>>(
+    () => new Map()
+  );
+  const activeReviewControllerRef = useRef<AbortController | null>(null);
+  const activeReviewKeyRef = useRef<string | null>(null);
+
+  const diffLabel = useMemo(() => {
+    if (currentPR) {
+      return `${currentPR.repoFullName}#${currentPR.number}`;
+    }
+    return `pr:${owner}/${repo}#${number}`;
+  }, [currentPR, owner, repo, number]);
+
+  const startSimpleReview = useCallback(
+    async ({
+      fileDiffs,
+      model,
+      language,
+      requestKey,
+      prDiffLabel,
+    }: {
+      fileDiffs: Array<{ filePath: string; diffText: string }>;
+      model: HeatmapModelOptionValue;
+      language: TooltipLanguageValue;
+      requestKey: string;
+      prDiffLabel: string;
+    }) => {
+      if (fileDiffs.length === 0) {
+        return;
+      }
+
+      const existingController = activeReviewControllerRef.current;
+      const hasActiveMatchingRequest =
+        existingController &&
+        activeReviewKeyRef.current === requestKey &&
+        !existingController.signal.aborted;
+      if (hasActiveMatchingRequest) {
+        return;
+      }
+
+      existingController?.abort();
+      const controller = new AbortController();
+      activeReviewControllerRef.current = controller;
+      activeReviewKeyRef.current = requestKey;
+
+      setStreamStateByFile(new Map());
+
+      const user = await cachedGetUser(stackClientApp);
+      const authHeaders = user ? await user.getAuthHeaders() : undefined;
+      const headers = new Headers(authHeaders);
+      headers.set("Content-Type", "application/json");
+
+      const url = new URL("/api/code-review/simple", WWW_ORIGIN);
+      url.searchParams.set("model", model);
+      url.searchParams.set("lang", language);
+
+      try {
+        const response = await fetch(url.toString(), {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ fileDiffs, diffLabel: prDiffLabel }),
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          console.error(
+            "[simple-review][pr][frontend] Failed to start stream",
+            response.status
+          );
+          return;
+        }
+
+        const body = response.body;
+        if (!body) {
+          console.error(
+            "[simple-review][pr][frontend] Response body missing for stream"
+          );
+          return;
+        }
+
+        const reader = body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) {
+            break;
+          }
+          buffer += decoder.decode(value, { stream: true });
+
+          let separatorIndex = buffer.indexOf("\n\n");
+          while (separatorIndex !== -1) {
+            const rawEvent = buffer.slice(0, separatorIndex);
+            buffer = buffer.slice(separatorIndex + 2);
+            separatorIndex = buffer.indexOf("\n\n");
+
+            const lines = rawEvent.split("\n");
+            for (const line of lines) {
+              if (!line.startsWith("data:")) {
+                continue;
+              }
+              const data = line.slice(5).trim();
+              if (data.length === 0) {
+                continue;
+              }
+              try {
+                const payload = JSON.parse(data) as Record<string, unknown>;
+                const type =
+                  typeof payload.type === "string" ? payload.type : "";
+                const filePath =
+                  typeof payload.filePath === "string"
+                    ? payload.filePath
+                    : null;
+
+                switch (type) {
+                  case "file":
+                    if (filePath) {
+                      setStreamStateByFile((previous) => {
+                        const next = new Map(previous);
+                        const current = next.get(filePath);
+                        next.set(filePath, {
+                          lines: current?.lines ?? [],
+                          status: "pending",
+                          skipReason: null,
+                          summary: null,
+                        });
+                        return next;
+                      });
+                    }
+                    break;
+                  case "skip":
+                    if (filePath) {
+                      setStreamStateByFile((previous) => {
+                        const next = new Map(previous);
+                        const current = next.get(filePath);
+                        next.set(filePath, {
+                          lines: current?.lines ?? [],
+                          status: "skipped",
+                          skipReason:
+                            typeof payload.reason === "string"
+                              ? payload.reason
+                              : null,
+                          summary: null,
+                        });
+                        return next;
+                      });
+                    }
+                    break;
+                  case "line":
+                    if (filePath) {
+                      setStreamStateByFile((previous) => {
+                        const next = new Map(previous);
+                        const current = next.get(filePath);
+                        const newLine: ReviewHeatmapLine = {
+                          lineNumber:
+                            typeof payload.newLineNumber === "number"
+                              ? payload.newLineNumber
+                              : null,
+                          lineText:
+                            typeof payload.codeLine === "string"
+                              ? payload.codeLine
+                              : null,
+                          score:
+                            typeof payload.scoreNormalized === "number"
+                              ? payload.scoreNormalized
+                              : null,
+                          reason:
+                            typeof payload.shouldReviewWhy === "string"
+                              ? payload.shouldReviewWhy
+                              : null,
+                          mostImportantWord:
+                            typeof payload.mostImportantWord === "string"
+                              ? payload.mostImportantWord
+                              : null,
+                        };
+                        next.set(filePath, {
+                          lines: [...(current?.lines ?? []), newLine],
+                          status: current?.status ?? "pending",
+                          skipReason: current?.skipReason ?? null,
+                          summary: current?.summary ?? null,
+                        });
+                        return next;
+                      });
+                    }
+                    break;
+                  case "file-complete":
+                    if (filePath) {
+                      setStreamStateByFile((previous) => {
+                        const next = new Map(previous);
+                        const current = next.get(filePath);
+                        const rawStatus = payload.status;
+                        let status: StreamFileStatus = "success";
+                        if (rawStatus === "skipped") {
+                          status = "skipped";
+                        } else if (rawStatus === "error") {
+                          status = "error";
+                        }
+                        next.set(filePath, {
+                          lines: current?.lines ?? [],
+                          status,
+                          skipReason: current?.skipReason ?? null,
+                          summary:
+                            typeof payload.summary === "string"
+                              ? payload.summary
+                              : null,
+                        });
+                        return next;
+                      });
+                    }
+                    break;
+                  default:
+                    break;
+                }
+              } catch (parseError) {
+                console.error(
+                  "[simple-review][pr][frontend] Failed to parse SSE payload",
+                  parseError
+                );
+              }
+            }
+          }
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown error";
+        const isAbortError =
+          message.includes("Stream aborted") || message.includes("aborted");
+        if (!isAbortError) {
+          console.error("[simple-review][pr][frontend] Stream failed", {
+            prDiffLabel,
+            message,
+            error,
+          });
+        }
+      }
+    },
+    []
+  );
+
+  // Clean up streaming request on unmount
+  useEffect(() => {
+    return () => {
+      activeReviewControllerRef.current?.abort();
+    };
+  }, []);
 
   const [shouldShowPrMissingState, setShouldShowPrMissingState] = useState(false);
   const [shouldShowDefinitiveMissingState, setShouldShowDefinitiveMissingState] = useState(false);
@@ -600,7 +937,10 @@ export function PullRequestDetailView({
               </div>
             </div>
           </div>
-          <div className="bg-white dark:bg-neutral-950">
+          <div
+            className="bg-white dark:bg-neutral-950"
+            style={{ "--cmux-diff-header-offset": "56px" } as React.CSSProperties}
+          >
             <Suspense fallback={null}>
               <WorkflowRunsSection
                 allRuns={workflowData.allRuns}
