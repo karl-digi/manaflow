@@ -152,6 +152,12 @@ const PTY_READ_BUFFER_SIZE: usize = 4096;
 const PTY_WRITE_CHUNK_SIZE: usize = 512; // Small chunks for smooth writes
 const PTY_INPUT_CHANNEL_SIZE: usize = 1024; // Bounded channel for backpressure
 
+// Terminal escape sequences for cursor position query/response
+// CSI 6n = DSR (Device Status Report) - requests cursor position
+// CSI <row>;<col>R = CPR (Cursor Position Report) - response
+const CSI_CURSOR_POSITION_REQUEST: &[u8] = b"\x1b[6n";
+const CSI_CURSOR_POSITION_RESPONSE: &str = "\x1b[1;1R"; // Safe default: row 1, col 1
+
 // =============================================================================
 // Error Types
 // =============================================================================
@@ -627,6 +633,13 @@ fn find_utf8_boundary(bytes: &[u8]) -> usize {
     end
 }
 
+/// Check if the buffer contains a cursor position request (CSI 6n / DSR).
+/// Returns true if the pattern is found.
+fn contains_cursor_position_request(data: &[u8]) -> bool {
+    data.windows(CSI_CURSOR_POSITION_REQUEST.len())
+        .any(|window| window == CSI_CURSOR_POSITION_REQUEST)
+}
+
 // =============================================================================
 // PTY Output Reader Task
 // =============================================================================
@@ -683,6 +696,26 @@ async fn spawn_pty_reader(
             Ok(n) => {
                 read_count += 1;
                 total_bytes_read += n;
+
+                // Check for cursor position request (CSI 6n / DSR) and auto-respond
+                // immediately. This prevents timeout errors when:
+                // 1. No terminal emulator client is connected
+                // 2. Client is connected but WebSocket round-trip is too slow
+                // This matches behavior of terminal multiplexers like tmux/screen.
+                // A double response (ours + real terminal) is harmless - first satisfies query.
+                if contains_cursor_position_request(&buf[..n]) {
+                    info!(
+                        "[reader:{}] Detected cursor position request, auto-responding with row=1 col=1",
+                        session_id
+                    );
+                    // Send cursor position response (row 1, col 1) back to PTY
+                    if let Err(e) = session.write_input(CSI_CURSOR_POSITION_RESPONSE) {
+                        warn!(
+                            "[reader:{}] Failed to send cursor position response: {}",
+                            session_id, e
+                        );
+                    }
+                }
 
                 // Combine any leftover bytes from previous read with new data
                 utf8_buffer.extend_from_slice(&buf[..n]);
