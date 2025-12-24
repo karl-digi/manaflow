@@ -1473,6 +1473,8 @@ async fn handle_prune(client: &Client, base_url: &str, args: PruneArgs) -> anyho
 
     if args.dry_run {
         eprintln!("(dry run - no sandboxes deleted)");
+        // Still check for orphaned filesystem directories (in dry-run mode)
+        prune_orphaned_fs(client, base_url, &args).await?;
         if args.docker {
             prune_docker(&args).await?;
         }
@@ -1568,6 +1570,8 @@ async fn prune_orphaned_fs(
         #[allow(dead_code)]
         path: String,
         age_secs: u64,
+        #[serde(default)]
+        size_bytes: u64,
     }
 
     #[derive(Deserialize)]
@@ -1576,6 +1580,24 @@ async fn prune_orphaned_fs(
         failed_count: usize,
         items: Vec<PrunedItem>,
         dry_run: bool,
+        #[serde(default)]
+        bytes_freed: u64,
+    }
+
+    fn format_bytes(bytes: u64) -> String {
+        const KB: u64 = 1024;
+        const MB: u64 = KB * 1024;
+        const GB: u64 = MB * 1024;
+
+        if bytes >= GB {
+            format!("{:.2} GB", bytes as f64 / GB as f64)
+        } else if bytes >= MB {
+            format!("{:.2} MB", bytes as f64 / MB as f64)
+        } else if bytes >= KB {
+            format!("{:.2} KB", bytes as f64 / KB as f64)
+        } else {
+            format!("{} B", bytes)
+        }
     }
 
     eprintln!("\nPruning orphaned filesystem directories...");
@@ -1622,33 +1644,43 @@ async fn prune_orphaned_fs(
     } else {
         for item in &result.items {
             let age_str = format_duration(Duration::from_secs(item.age_secs));
+            let size_str = format_bytes(item.size_bytes);
             if result.dry_run {
-                eprintln!("  (dry run) would delete: {} ({})", item.id, age_str);
+                eprintln!(
+                    "  (dry run) would delete: {} ({}, {})",
+                    item.id, age_str, size_str
+                );
             } else {
-                eprintln!("  \x1b[32m✓\x1b[0m Deleted {} ({})", item.id, age_str);
+                eprintln!(
+                    "  \x1b[32m✓\x1b[0m Deleted {} ({}, {})",
+                    item.id, age_str, size_str
+                );
             }
         }
         eprintln!();
+        let space_str = format_bytes(result.bytes_freed);
         if result.dry_run {
             eprintln!(
-                "Would prune {} orphaned director{}, {} failed.",
+                "Would prune {} orphaned director{} ({}), {} failed.",
                 result.deleted_count,
                 if result.deleted_count == 1 {
                     "y"
                 } else {
                     "ies"
                 },
+                space_str,
                 result.failed_count
             );
         } else {
             eprintln!(
-                "Pruned {} orphaned director{}, {} failed.",
+                "Pruned {} orphaned director{} ({}), {} failed.",
                 result.deleted_count,
                 if result.deleted_count == 1 {
                     "y"
                 } else {
                     "ies"
                 },
+                space_str,
                 result.failed_count
             );
         }

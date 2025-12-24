@@ -497,6 +497,7 @@ mod tests {
                 failed_count: 0,
                 items: vec![],
                 dry_run: request.dry_run,
+                bytes_freed: 0,
             })
         }
     }
