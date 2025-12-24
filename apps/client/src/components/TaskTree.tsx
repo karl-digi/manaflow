@@ -37,6 +37,7 @@ import {
 import clsx from "clsx";
 import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
+import { useSetTaskReadState } from "@/hooks/useMarkTaskAsRead";
 import {
   AlertTriangle,
   Archive as ArchiveIcon,
@@ -672,23 +673,16 @@ function TaskTreeInner({
     });
   }, [unpinTask, teamSlugOrId, task._id]);
 
-  // Mutations for marking task as read/unread
-  const markTaskAsRead = useMutation(api.taskNotifications.markTaskAsRead);
-  const markTaskAsUnread = useMutation(api.taskNotifications.markTaskAsUnread);
+  // Mutation for marking task as read/unread (with optimistic updates)
+  const setTaskReadState = useSetTaskReadState(teamSlugOrId);
 
   const handleMarkAsRead = useCallback(() => {
-    markTaskAsRead({
-      teamSlugOrId,
-      taskId: task._id,
-    });
-  }, [markTaskAsRead, teamSlugOrId, task._id]);
+    setTaskReadState(task._id, true);
+  }, [setTaskReadState, task._id]);
 
   const handleMarkAsUnread = useCallback(() => {
-    markTaskAsUnread({
-      teamSlugOrId,
-      taskId: task._id,
-    });
-  }, [markTaskAsUnread, teamSlugOrId, task._id]);
+    setTaskReadState(task._id, false);
+  }, [setTaskReadState, task._id]);
 
   const inferredBranch = getTaskBranch(task);
   const trimmedTaskText = (task.text ?? "").trim();

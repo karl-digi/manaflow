@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { resolveTeamIdLoose } from "../_shared/team";
 import type { Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery } from "./_generated/server";
@@ -26,18 +26,14 @@ export const list = authQuery({
     // Fetch associated tasks for display
     const taskIds = [...new Set(notifications.map((n) => n.taskId))];
     const tasks = await Promise.all(taskIds.map((id) => ctx.db.get(id)));
-    const taskMap = new Map(
-      tasks.filter(Boolean).map((t) => [t!._id, t!]),
-    );
+    const taskMap = new Map(tasks.filter(Boolean).map((t) => [t!._id, t!]));
 
     // Fetch associated task runs for display
     const runIds = notifications
       .filter((n) => n.taskRunId)
       .map((n) => n.taskRunId as Id<"taskRuns">);
     const runs = await Promise.all(runIds.map((id) => ctx.db.get(id)));
-    const runMap = new Map(
-      runs.filter(Boolean).map((r) => [r!._id, r!]),
-    );
+    const runMap = new Map(runs.filter(Boolean).map((r) => [r!._id, r!]));
 
     // Check which task runs are unread (explicit unread tracking)
     const unreadRunIds = new Set<string>();
@@ -62,6 +58,34 @@ export const list = authQuery({
   },
 });
 
+// Check if a task has any unread runs (for auto-mark-as-read triggering)
+export const hasUnreadForTask = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    taskId: v.id("tasks"),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+
+    // Verify task belongs to this team
+    const task = await ctx.db.get(args.taskId);
+    if (!task || task.teamId !== teamId) {
+      throw new ConvexError("Task not found");
+    }
+
+    // Check if any unread runs exist for this task
+    const unread = await ctx.db
+      .query("unreadTaskRuns")
+      .withIndex("by_task_user", (q) =>
+        q.eq("taskId", args.taskId).eq("userId", userId),
+      )
+      .first();
+
+    return unread !== null;
+  },
+});
+
 // Get unread notification count
 // Counts unique unread task runs (not individual notifications)
 export const getUnreadCount = authQuery({
@@ -73,7 +97,9 @@ export const getUnreadCount = authQuery({
     // Count unread runs for this user in this team
     const unreadRuns = await ctx.db
       .query("unreadTaskRuns")
-      .withIndex("by_team_user", (q) => q.eq("teamId", teamId).eq("userId", userId))
+      .withIndex("by_team_user", (q) =>
+        q.eq("teamId", teamId).eq("userId", userId),
+      )
       .collect();
 
     return unreadRuns.length;
@@ -91,7 +117,9 @@ export const getTasksWithUnread = authQuery({
     // Get all unread runs for this user in this team
     const unreadRuns = await ctx.db
       .query("unreadTaskRuns")
-      .withIndex("by_team_user", (q) => q.eq("teamId", teamId).eq("userId", userId))
+      .withIndex("by_team_user", (q) =>
+        q.eq("teamId", teamId).eq("userId", userId),
+      )
       .collect();
 
     if (unreadRuns.length === 0) {
@@ -100,14 +128,11 @@ export const getTasksWithUnread = authQuery({
 
     // Get task runs to find their taskIds
     const taskRuns = await Promise.all(
-      unreadRuns.map((ur) => ctx.db.get(ur.taskRunId))
+      unreadRuns.map((ur) => ctx.db.get(ur.taskRunId)),
     );
 
     // Group by taskId
-    const taskUnreadMap = new Map<
-      Id<"tasks">,
-      { count: number }
-    >();
+    const taskUnreadMap = new Map<Id<"tasks">, { count: number }>();
 
     for (const run of taskRuns) {
       if (!run) continue;
@@ -272,7 +297,9 @@ export const markAllAsRead = authMutation({
     // Get all unread rows for this user in this team and delete them
     const unreadRuns = await ctx.db
       .query("unreadTaskRuns")
-      .withIndex("by_team_user", (q) => q.eq("teamId", teamId).eq("userId", userId))
+      .withIndex("by_team_user", (q) =>
+        q.eq("teamId", teamId).eq("userId", userId),
+      )
       .collect();
 
     for (const unread of unreadRuns) {

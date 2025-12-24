@@ -73,13 +73,15 @@ export const agentStopped = httpAction(async (ctx, req) => {
   }
 
   if (
+    auth.payload.taskRunId !== taskRunId ||
     taskRun.teamId !== auth.payload.teamId ||
     taskRun.userId !== auth.payload.userId
   ) {
     console.warn(
       "[convex.notifications] Worker attempted to notify for unauthorized task run",
       {
-        taskRunId,
+        requestedTaskRunId: taskRunId,
+        tokenTaskRunId: auth.payload.taskRunId,
         workerTeamId: auth.payload.teamId,
         taskRunTeamId: taskRun.teamId,
       }
