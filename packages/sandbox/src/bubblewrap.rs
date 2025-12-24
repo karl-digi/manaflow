@@ -929,6 +929,13 @@ fi
         let root_overlay = path_to_string(&root_overlay, "root overlay")?;
         command.args(["--bind", &root_overlay, "/root"]);
 
+        // Mount VS Code extensions from Docker image (read-only for efficiency)
+        // This overlays the extensions dir on top of the writable /root
+        let vscode_extensions_path = "/root/.vscode-server-oss/extensions";
+        if Path::new(vscode_extensions_path).exists() {
+            command.args(["--ro-bind", vscode_extensions_path, vscode_extensions_path]);
+        }
+
         // Make common paths available inside the sandbox
         // /opt, /home/linuxbrew, /snap for credential helpers
         // /app for cmux-code (VS Code server)
