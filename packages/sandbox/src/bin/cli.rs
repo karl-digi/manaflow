@@ -1533,8 +1533,121 @@ async fn handle_prune(client: &Client, base_url: &str, args: PruneArgs) -> anyho
         failed
     );
 
+    // Prune orphaned filesystem directories
+    prune_orphaned_fs(client, base_url, &args).await?;
+
     if args.docker {
         prune_docker(&args).await?;
+    }
+
+    Ok(())
+}
+
+/// Prune orphaned sandbox filesystem directories via server endpoint
+async fn prune_orphaned_fs(
+    client: &Client,
+    base_url: &str,
+    args: &PruneArgs,
+) -> anyhow::Result<()> {
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Serialize)]
+    struct PruneRequest {
+        max_age_secs: Option<u64>,
+        all: bool,
+        dry_run: bool,
+    }
+
+    #[derive(Deserialize)]
+    struct PrunedItem {
+        id: String,
+        #[allow(dead_code)]
+        path: String,
+        age_secs: u64,
+    }
+
+    #[derive(Deserialize)]
+    struct PruneResponse {
+        deleted_count: usize,
+        failed_count: usize,
+        items: Vec<PrunedItem>,
+        dry_run: bool,
+    }
+
+    eprintln!("\nPruning orphaned filesystem directories...");
+
+    let max_age_secs = if args.all {
+        None
+    } else {
+        Some(
+            args.until
+                .unwrap_or(Duration::from_secs(24 * 3600))
+                .as_secs(),
+        )
+    };
+
+    let request = PruneRequest {
+        max_age_secs,
+        all: args.all,
+        dry_run: args.dry_run,
+    };
+
+    let url = format!("{}/prune", base_url.trim_end_matches('/'));
+    let response = match client.post(&url).json(&request).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("  \x1b[33m!\x1b[0m Failed to prune orphaned directories: {e}");
+            return Ok(());
+        }
+    };
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        eprintln!(
+            "  \x1b[33m!\x1b[0m Failed to prune orphaned directories: {} {}",
+            status, body
+        );
+        return Ok(());
+    }
+
+    let result: PruneResponse = response.json().await?;
+
+    if result.items.is_empty() {
+        eprintln!("  No orphaned directories found.");
+    } else {
+        for item in &result.items {
+            let age_str = format_duration(Duration::from_secs(item.age_secs));
+            if result.dry_run {
+                eprintln!("  (dry run) would delete: {} ({})", item.id, age_str);
+            } else {
+                eprintln!("  \x1b[32m✓\x1b[0m Deleted {} ({})", item.id, age_str);
+            }
+        }
+        eprintln!();
+        if result.dry_run {
+            eprintln!(
+                "Would prune {} orphaned director{}, {} failed.",
+                result.deleted_count,
+                if result.deleted_count == 1 {
+                    "y"
+                } else {
+                    "ies"
+                },
+                result.failed_count
+            );
+        } else {
+            eprintln!(
+                "Pruned {} orphaned director{}, {} failed.",
+                result.deleted_count,
+                if result.deleted_count == 1 {
+                    "y"
+                } else {
+                    "ies"
+                },
+                result.failed_count
+            );
+        }
     }
 
     Ok(())

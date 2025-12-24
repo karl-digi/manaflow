@@ -2,7 +2,8 @@ use crate::errors::{SandboxError, SandboxResult};
 use crate::ip_pool::{IpLease, IpPool};
 use crate::models::{
     CreateSandboxRequest, EnvVar, ExecRequest, ExecResponse, HostEvent, MuxClientMessage,
-    MuxServerMessage, PtySessionId, SandboxNetwork, SandboxStatus, SandboxSummary,
+    MuxServerMessage, PruneRequest, PruneResponse, PrunedItem, PtySessionId, SandboxNetwork,
+    SandboxStatus, SandboxSummary,
 };
 use crate::mux::terminal::{DaFilter, VirtualTerminal};
 use crate::service::SandboxService;
@@ -2130,6 +2131,122 @@ impl SandboxService for BubblewrapService {
         }
 
         Ok(None)
+    }
+
+    async fn prune_orphaned(&self, request: PruneRequest) -> SandboxResult<PruneResponse> {
+        use std::time::SystemTime;
+
+        let max_age_secs = if request.all {
+            0
+        } else {
+            request.max_age_secs.unwrap_or(86400) // Default: 24 hours
+        };
+
+        // Get set of known sandbox UUIDs
+        let known_ids: std::collections::HashSet<Uuid> = {
+            let sandboxes = self.sandboxes.lock().await;
+            sandboxes.keys().copied().collect()
+        };
+
+        let mut items = Vec::new();
+        let mut deleted_count = 0;
+        let mut failed_count = 0;
+
+        // Scan workspace_root for UUID-named directories
+        let mut entries = match fs::read_dir(&self.workspace_root).await {
+            Ok(entries) => entries,
+            Err(e) => {
+                warn!(
+                    "failed to read workspace root {}: {e}",
+                    self.workspace_root.display()
+                );
+                return Ok(PruneResponse {
+                    deleted_count: 0,
+                    failed_count: 0,
+                    items: vec![],
+                    dry_run: request.dry_run,
+                });
+            }
+        };
+
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let path = entry.path();
+            let file_name = match entry.file_name().into_string() {
+                Ok(name) => name,
+                Err(_) => continue, // Skip non-UTF8 names
+            };
+
+            // Try to parse as UUID
+            let id = match Uuid::parse_str(&file_name) {
+                Ok(id) => id,
+                Err(_) => continue, // Not a UUID-named directory, skip
+            };
+
+            // Skip if this is a known running sandbox
+            if known_ids.contains(&id) {
+                continue;
+            }
+
+            // Check if it's a directory
+            let metadata = match fs::metadata(&path).await {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            if !metadata.is_dir() {
+                continue;
+            }
+
+            // Get modification time and calculate age
+            let age_secs = match metadata.modified() {
+                Ok(mtime) => match SystemTime::now().duration_since(mtime) {
+                    Ok(duration) => duration.as_secs(),
+                    Err(_) => 0,
+                },
+                Err(_) => 0,
+            };
+
+            // Skip if not old enough (unless --all)
+            if !request.all && age_secs < max_age_secs {
+                continue;
+            }
+
+            let item = PrunedItem {
+                id: id.to_string(),
+                path: path.to_string_lossy().to_string(),
+                age_secs,
+            };
+
+            if request.dry_run {
+                items.push(item);
+                deleted_count += 1;
+            } else {
+                // Clean up any stale overlay mounts first
+                let system_dir = path.join("system");
+                if system_dir.exists() {
+                    cleanup_overlays(&system_dir).await;
+                }
+
+                // Remove the directory
+                match fs::remove_dir_all(&path).await {
+                    Ok(()) => {
+                        info!("pruned orphaned sandbox directory: {}", path.display());
+                        items.push(item);
+                        deleted_count += 1;
+                    }
+                    Err(e) => {
+                        warn!("failed to prune {}: {e}", path.display());
+                        failed_count += 1;
+                    }
+                }
+            }
+        }
+
+        Ok(PruneResponse {
+            deleted_count,
+            failed_count,
+            items,
+            dry_run: request.dry_run,
+        })
     }
 }
 
