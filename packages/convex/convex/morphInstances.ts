@@ -1,35 +1,110 @@
-import { query } from "./_generated/server";
+import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 
 /**
- * Check if an instance has been stopped by the cleanup cron.
- * Returns the stop record if found, null otherwise.
+ * Get the activity record for a Morph instance (public query).
  */
-export const getStopRecord = query({
+export const getActivity = query({
   args: {
     instanceId: v.string(),
   },
   handler: async (ctx, args) => {
-    const record = await ctx.db
-      .query("morphInstanceStops")
+    return await ctx.db
+      .query("morphInstanceActivity")
       .withIndex("by_instanceId", (q) => q.eq("instanceId", args.instanceId))
       .first();
-    return record;
   },
 });
 
 /**
- * Check if an instance is stopped (simple boolean check).
+ * Get the activity record for a Morph instance (internal, for cron jobs).
  */
-export const isStopped = query({
+export const getActivityInternal = internalQuery({
   args: {
     instanceId: v.string(),
   },
   handler: async (ctx, args) => {
-    const record = await ctx.db
-      .query("morphInstanceStops")
+    return await ctx.db
+      .query("morphInstanceActivity")
       .withIndex("by_instanceId", (q) => q.eq("instanceId", args.instanceId))
       .first();
-    return record !== null;
+  },
+});
+
+/**
+ * Record that an instance was resumed via the UI (public mutation).
+ */
+export const recordResume = mutation({
+  args: {
+    instanceId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("morphInstanceActivity")
+      .withIndex("by_instanceId", (q) => q.eq("instanceId", args.instanceId))
+      .first();
+
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        lastResumedAt: Date.now(),
+      });
+    } else {
+      await ctx.db.insert("morphInstanceActivity", {
+        instanceId: args.instanceId,
+        lastResumedAt: Date.now(),
+      });
+    }
+  },
+});
+
+/**
+ * Record that a Morph instance was paused (internal, for cron jobs).
+ */
+export const recordPauseInternal = internalMutation({
+  args: {
+    instanceId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("morphInstanceActivity")
+      .withIndex("by_instanceId", (q) => q.eq("instanceId", args.instanceId))
+      .first();
+
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        lastPausedAt: Date.now(),
+      });
+    } else {
+      await ctx.db.insert("morphInstanceActivity", {
+        instanceId: args.instanceId,
+        lastPausedAt: Date.now(),
+      });
+    }
+  },
+});
+
+/**
+ * Record that a Morph instance was stopped (internal, for cron jobs).
+ */
+export const recordStopInternal = internalMutation({
+  args: {
+    instanceId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("morphInstanceActivity")
+      .withIndex("by_instanceId", (q) => q.eq("instanceId", args.instanceId))
+      .first();
+
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        stoppedAt: Date.now(),
+      });
+    } else {
+      await ctx.db.insert("morphInstanceActivity", {
+        instanceId: args.instanceId,
+        stoppedAt: Date.now(),
+      });
+    }
   },
 });

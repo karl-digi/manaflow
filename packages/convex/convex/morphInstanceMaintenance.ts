@@ -1,6 +1,6 @@
 "use node";
 
-import { internalAction, internalMutation } from "./_generated/server";
+import { internalAction } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { env } from "../_shared/convex-env";
 import {
@@ -10,7 +10,6 @@ import {
   stopInstanceInstanceInstanceIdDelete,
   type InstanceModel,
 } from "@cmux/morphcloud-openapi-client";
-import { v } from "convex/values";
 
 const PAUSE_HOURS_THRESHOLD = 20;
 const MILLISECONDS_PER_HOUR = 60 * 60 * 1000;
@@ -22,7 +21,7 @@ const BATCH_SIZE = 5;
  */
 export const pauseOldMorphInstances = internalAction({
   args: {},
-  handler: async () => {
+  handler: async (ctx) => {
     // Only run in production to avoid dev crons affecting prod instances
     if (!env.CONVEX_IS_PRODUCTION) {
       console.log("[morphInstanceMaintenance] Skipping: not in production");
@@ -109,6 +108,11 @@ export const pauseOldMorphInstances = internalAction({
             throw new Error(JSON.stringify(pauseResponse.error));
           }
 
+          // Record the pause in our activity table
+          await ctx.runMutation(internal.morphInstances.recordPauseInternal, {
+            instanceId: instance.id,
+          });
+
           console.log(`[morphInstanceMaintenance] Paused ${instance.id}`);
           return instance.id;
         })
@@ -139,40 +143,8 @@ const STOP_DAYS_THRESHOLD = 14; // 2 weeks
 const STOP_BATCH_SIZE = 5;
 
 /**
- * Records that a Morph instance was stopped.
- */
-export const recordInstanceStop = internalMutation({
-  args: {
-    instanceId: v.string(),
-    ageHoursWhenStopped: v.number(),
-  },
-  handler: async (ctx, args) => {
-    await ctx.db.insert("morphInstanceStops", {
-      instanceId: args.instanceId,
-      stoppedAt: Date.now(),
-      ageHoursWhenStopped: args.ageHoursWhenStopped,
-    });
-  },
-});
-
-/**
- * Checks if an instance has already been stopped by looking up in the DB.
- */
-export const isInstanceStopped = internalMutation({
-  args: {
-    instanceId: v.string(),
-  },
-  handler: async (ctx, args) => {
-    const existing = await ctx.db
-      .query("morphInstanceStops")
-      .withIndex("by_instanceId", (q) => q.eq("instanceId", args.instanceId))
-      .first();
-    return existing !== null;
-  },
-});
-
-/**
- * Stops (deletes) all Morph instances that have been paused for more than 2 weeks.
+ * Stops (deletes) Morph instances that have been inactive for more than 2 weeks.
+ * Only stops instances where lastResumedAt is older than 2 weeks (or never resumed).
  * Called by the daily cron job at 5 AM Pacific Time.
  */
 export const stopOldMorphInstances = internalAction({
@@ -216,24 +188,18 @@ export const stopOldMorphInstances = internalAction({
     const now = Date.now();
     const thresholdMs = STOP_DAYS_THRESHOLD * 24 * MILLISECONDS_PER_HOUR;
 
-    // Filter for paused instances older than 2 weeks
-    const stalePausedInstances = instances
-      .filter((instance: InstanceModel) => instance.status === "paused")
-      .filter((instance: InstanceModel) => {
-        const createdMs = instance.created * 1000;
-        return now - createdMs > thresholdMs;
-      })
-      .sort((a: InstanceModel, b: InstanceModel) => a.created - b.created);
+    // Filter for paused instances only (we don't stop running instances)
+    const pausedInstances = instances.filter(
+      (instance: InstanceModel) => instance.status === "paused"
+    );
 
-    if (stalePausedInstances.length === 0) {
-      console.log(
-        `[morphInstanceMaintenance:stop] No paused instances older than ${STOP_DAYS_THRESHOLD} days`
-      );
+    if (pausedInstances.length === 0) {
+      console.log("[morphInstanceMaintenance:stop] No paused instances found");
       return;
     }
 
     console.log(
-      `[morphInstanceMaintenance:stop] Found ${stalePausedInstances.length} paused instance(s) older than ${STOP_DAYS_THRESHOLD} days`
+      `[morphInstanceMaintenance:stop] Checking ${pausedInstances.length} paused instance(s) for inactivity`
     );
 
     let successCount = 0;
@@ -241,32 +207,48 @@ export const stopOldMorphInstances = internalAction({
     let skippedCount = 0;
 
     // Process instances in batches
-    for (let i = 0; i < stalePausedInstances.length; i += STOP_BATCH_SIZE) {
-      const batch = stalePausedInstances.slice(i, i + STOP_BATCH_SIZE);
+    for (let i = 0; i < pausedInstances.length; i += STOP_BATCH_SIZE) {
+      const batch = pausedInstances.slice(i, i + STOP_BATCH_SIZE);
       console.log(
         `[morphInstanceMaintenance:stop] Processing batch ${Math.floor(i / STOP_BATCH_SIZE) + 1} (${batch.length} instances)`
       );
 
       const results = await Promise.allSettled(
         batch.map(async (instance: InstanceModel) => {
-          // Check if already stopped (recorded in DB)
-          const alreadyStopped = await ctx.runMutation(
-            internal.morphInstanceMaintenance.isInstanceStopped,
+          // Get activity record to check last resume time
+          const activity = await ctx.runQuery(
+            internal.morphInstances.getActivityInternal,
             { instanceId: instance.id }
           );
 
-          if (alreadyStopped) {
+          // Already stopped?
+          if (activity?.stoppedAt) {
             console.log(
               `[morphInstanceMaintenance:stop] Skipping ${instance.id} - already recorded as stopped`
             );
-            return { skipped: true, instanceId: instance.id };
+            return { skipped: true, reason: "already_stopped", instanceId: instance.id };
           }
 
-          const ageHours = Math.floor(
-            (now - instance.created * 1000) / MILLISECONDS_PER_HOUR
-          );
+          // Determine last activity time:
+          // - If resumed, use lastResumedAt
+          // - If never resumed but was paused, use lastPausedAt (means it was auto-paused and never used)
+          // - If no activity record, use instance creation time (legacy instance)
+          const lastActivityAt = activity?.lastResumedAt
+            ?? activity?.lastPausedAt
+            ?? (instance.created * 1000);
+
+          const inactiveDuration = now - lastActivityAt;
+          const inactiveDays = Math.floor(inactiveDuration / (24 * MILLISECONDS_PER_HOUR));
+
+          if (inactiveDuration < thresholdMs) {
+            console.log(
+              `[morphInstanceMaintenance:stop] Skipping ${instance.id} - last activity ${inactiveDays} days ago (< ${STOP_DAYS_THRESHOLD} days)`
+            );
+            return { skipped: true, reason: "recently_active", instanceId: instance.id };
+          }
+
           console.log(
-            `[morphInstanceMaintenance:stop] Stopping ${instance.id} (${ageHours}h old)...`
+            `[morphInstanceMaintenance:stop] Stopping ${instance.id} (inactive for ${inactiveDays} days)...`
           );
 
           const stopResponse = await stopInstanceInstanceInstanceIdDelete({
@@ -279,13 +261,9 @@ export const stopOldMorphInstances = internalAction({
           }
 
           // Record the stop in the database
-          await ctx.runMutation(
-            internal.morphInstanceMaintenance.recordInstanceStop,
-            {
-              instanceId: instance.id,
-              ageHoursWhenStopped: ageHours,
-            }
-          );
+          await ctx.runMutation(internal.morphInstances.recordStopInternal, {
+            instanceId: instance.id,
+          });
 
           console.log(`[morphInstanceMaintenance:stop] Stopped ${instance.id}`);
           return { skipped: false, instanceId: instance.id };
