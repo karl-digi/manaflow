@@ -86,17 +86,28 @@ function VSCodeComponent() {
     id: taskRunId,
   });
 
+  const isLocalWorkspace = taskRun?.vscode?.provider === "other";
+
   const workspaceUrl = getWorkspaceUrl(
     taskRun?.vscode?.workspaceUrl,
     taskRun?.vscode?.provider,
     localServeWeb.data?.baseUrl
   );
+
+  // Stabilize the workspace URL - once we have a valid URL, keep using it
+  // even if the query temporarily returns null (prevents flashing on refetch)
+  const stableWorkspaceUrlRef = useRef<string | null>(null);
+  if (workspaceUrl !== null) {
+    stableWorkspaceUrlRef.current = workspaceUrl;
+  }
+  const stableWorkspaceUrl =
+    workspaceUrl ?? (isLocalWorkspace ? stableWorkspaceUrlRef.current : null);
+
   const disablePreflight = taskRun?.vscode?.workspaceUrl
     ? shouldUseServerIframePreflight(taskRun.vscode.workspaceUrl)
     : false;
   const persistKey = getTaskRunPersistKey(taskRunId);
-  const hasWorkspace = workspaceUrl !== null;
-  const isLocalWorkspace = taskRun?.vscode?.provider === "other";
+  const hasWorkspace = stableWorkspaceUrl !== null;
   const webviewActions = useWebviewActions({ persistKey });
 
   const [iframeStatus, setIframeStatus] =
@@ -106,15 +117,18 @@ function VSCodeComponent() {
   // Only reset to loading when the URL actually changes to a different value
   // This prevents flickering when the URL reference changes but the value is the same
   useEffect(() => {
-    if (workspaceUrl !== prevWorkspaceUrlRef.current) {
+    if (stableWorkspaceUrl !== prevWorkspaceUrlRef.current) {
       // Only reset to loading if we're transitioning to a new URL
       // Don't reset if we're already loaded with the same URL
-      if (workspaceUrl !== null && prevWorkspaceUrlRef.current !== null) {
+      if (
+        stableWorkspaceUrl !== null &&
+        prevWorkspaceUrlRef.current !== null
+      ) {
         setIframeStatus("loading");
       }
-      prevWorkspaceUrlRef.current = workspaceUrl;
+      prevWorkspaceUrlRef.current = stableWorkspaceUrl;
     }
-  }, [workspaceUrl]);
+  }, [stableWorkspaceUrl]);
 
   const onLoad = useCallback(() => {
     console.log(`Workspace view loaded for task run ${taskRunId}`);
@@ -146,10 +160,10 @@ function VSCodeComponent() {
   const isEditorBusy = !hasWorkspace || iframeStatus !== "loaded";
 
   const focusWebviewIfReady = useCallback(() => {
-    if (!workspaceUrl) return;
+    if (!stableWorkspaceUrl) return;
     if (iframeStatus !== "loaded") return;
     void webviewActions.focus();
-  }, [iframeStatus, webviewActions, workspaceUrl]);
+  }, [iframeStatus, webviewActions, stableWorkspaceUrl]);
 
   useEffect(() => {
     focusWebviewIfReady();
@@ -174,10 +188,10 @@ function VSCodeComponent() {
           className="flex flex-row grow min-h-0 relative"
           aria-busy={isEditorBusy}
         >
-          {workspaceUrl ? (
+          {stableWorkspaceUrl ? (
             <PersistentWebView
               persistKey={persistKey}
-              src={workspaceUrl}
+              src={stableWorkspaceUrl}
               className="grow flex"
               iframeClassName="select-none"
               sandbox={TASK_RUN_IFRAME_SANDBOX}

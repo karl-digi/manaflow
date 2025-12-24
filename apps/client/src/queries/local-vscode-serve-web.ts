@@ -16,13 +16,15 @@ export function localVSCodeServeWebQueryOptions() {
       const socket = await waitForConnectedSocket();
       return await new Promise<LocalVSCodeServeWebInfo>((resolve, reject) => {
         let settled = false;
+        // Increased timeout to 15s to allow more time for serve-web to respond
+        // and reduce the chance of returning null prematurely
         const timer = setTimeout(() => {
           if (settled) {
             return;
           }
           settled = true;
           resolve({ baseUrl: null, port: null });
-        }, 5_000);
+        }, 15_000);
 
         try {
           socket.emit(
@@ -58,8 +60,13 @@ export function localVSCodeServeWebQueryOptions() {
         }
       });
     },
-    staleTime: 30_000,
-    gcTime: 5 * 60 * 1000,
+    // Increased staleTime to prevent frequent re-fetches that could cause flashing
+    // The serve-web URL rarely changes during a session
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    gcTime: 30 * 60 * 1000, // 30 minutes
+    // Retry on failure to ensure we eventually get the URL
+    retry: 3,
+    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10000),
   });
 }
 
