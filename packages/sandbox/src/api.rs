@@ -1,7 +1,8 @@
 use crate::errors::{ErrorBody, SandboxError, SandboxResult};
 use crate::models::{
     CreateSandboxRequest, ExecRequest, ExecResponse, HealthResponse, HostEvent, NotificationLevel,
-    NotificationLogEntry, NotificationRequest, OpenUrlRequest, SandboxSummary,
+    NotificationLogEntry, NotificationRequest, OpenUrlRequest, PruneRequest, PruneResponse,
+    PrunedItem, SandboxSummary,
 };
 use crate::notifications::NotificationStore;
 use crate::service::{AppState, GhResponseRegistry, HostEventSender, SandboxService};
@@ -51,6 +52,7 @@ fn default_tty() -> bool {
         open_url_post,
         list_notifications,
         send_notification,
+        prune_orphaned,
     ),
     components(schemas(
         CreateSandboxRequest,
@@ -64,7 +66,10 @@ fn default_tty() -> bool {
         NotificationRequest,
         NotificationLogEntry,
         NotificationLevel,
-        OpenUrlRequest
+        OpenUrlRequest,
+        PruneRequest,
+        PruneResponse,
+        PrunedItem
     )),
     tags((name = "sandboxes", description = "Manage bubblewrap-based sandboxes"))
 )]
@@ -108,6 +113,8 @@ pub fn build_router(
             "/notifications",
             get(list_notifications).post(send_notification),
         )
+        // Prune orphaned sandbox filesystem directories
+        .route("/prune", post(prune_orphaned))
         .merge(swagger_routes)
         // Fallback for subdomain routing: {index}-{port}.host -> sandbox's internal port
         .fallback(subdomain_proxy)
@@ -656,6 +663,23 @@ async fn delete_sandbox(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/prune",
+    request_body = PruneRequest,
+    responses(
+        (status = 200, description = "Prune completed", body = PruneResponse),
+        (status = 500, description = "Prune failed", body = ErrorBody)
+    )
+)]
+async fn prune_orphaned(
+    state: axum::extract::State<AppState>,
+    Json(request): Json<PruneRequest>,
+) -> SandboxResult<Json<PruneResponse>> {
+    let response = state.service.prune_orphaned(request).await?;
+    Ok(Json(response))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -730,6 +754,16 @@ mod tests {
 
         async fn delete(&self, _id: String) -> SandboxResult<Option<SandboxSummary>> {
             Ok(Some(fake_summary("mock-delete".into())))
+        }
+
+        async fn prune_orphaned(&self, request: PruneRequest) -> SandboxResult<PruneResponse> {
+            Ok(PruneResponse {
+                deleted_count: 0,
+                failed_count: 0,
+                items: vec![],
+                dry_run: request.dry_run,
+                bytes_freed: 0,
+            })
         }
     }
 
