@@ -75,7 +75,20 @@ export const deleteOldMorphSnapshots = internalAction({
       environments.map((e: { morphSnapshotId: string }) => e.morphSnapshotId)
     );
     console.log(
-      `[morphSnapshotMaintenance] ${environmentSnapshotIds.size} environment snapshots will not be deleted`
+      `[morphSnapshotMaintenance] ${environmentSnapshotIds.size} active environment snapshots will not be deleted`
+    );
+
+    // 2b. Get ALL snapshot IDs from environmentSnapshotVersions (never delete these)
+    // These are historical versions users may want to restore
+    const environmentVersions = await ctx.runQuery(
+      internal.environmentSnapshots.listAllSnapshotIds,
+      {}
+    );
+    const environmentVersionSnapshotIds = new Set<string>(
+      environmentVersions.map((v: { morphSnapshotId: string }) => v.morphSnapshotId)
+    );
+    console.log(
+      `[morphSnapshotMaintenance] ${environmentVersionSnapshotIds.size} environment version snapshots will not be deleted`
     );
 
     // 3. Get all instances from Morph and collect their snapshot IDs
@@ -138,6 +151,12 @@ export const deleteOldMorphSnapshots = internalAction({
 
       // Don't delete environment snapshots
       if (environmentSnapshotIds.has(snapshot.id)) {
+        skippedEnvironment.push(snapshot.id);
+        continue;
+      }
+
+      // Don't delete environment version snapshots (historical versions)
+      if (environmentVersionSnapshotIds.has(snapshot.id)) {
         skippedEnvironment.push(snapshot.id);
         continue;
       }
