@@ -2142,15 +2142,12 @@ impl SandboxService for BubblewrapService {
             request.max_age_secs.unwrap_or(86400) // Default: 24 hours
         };
 
-        // Get set of known sandbox UUIDs
-        let known_ids: std::collections::HashSet<Uuid> = {
-            let sandboxes = self.sandboxes.lock().await;
-            sandboxes.keys().copied().collect()
-        };
-
         let mut items = Vec::new();
         let mut deleted_count = 0;
         let mut failed_count = 0;
+
+        // Collect candidate directories first (without holding the lock)
+        let mut candidates: Vec<(Uuid, PathBuf, u64)> = Vec::new();
 
         // Scan workspace_root for UUID-named directories
         let mut entries = match fs::read_dir(&self.workspace_root).await {
@@ -2182,16 +2179,23 @@ impl SandboxService for BubblewrapService {
                 Err(_) => continue, // Not a UUID-named directory, skip
             };
 
-            // Skip if this is a known running sandbox
-            if known_ids.contains(&id) {
+            // Use symlink_metadata to avoid following symlinks (security: prevents
+            // malicious symlinks from causing deletion of arbitrary host paths)
+            let metadata = match fs::symlink_metadata(&path).await {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+
+            // Skip symlinks to prevent arbitrary path deletion attacks
+            if metadata.file_type().is_symlink() {
+                warn!(
+                    "skipping symlink in workspace_root during prune: {}",
+                    path.display()
+                );
                 continue;
             }
 
             // Check if it's a directory
-            let metadata = match fs::metadata(&path).await {
-                Ok(m) => m,
-                Err(_) => continue,
-            };
             if !metadata.is_dir() {
                 continue;
             }
@@ -2208,6 +2212,21 @@ impl SandboxService for BubblewrapService {
             // Skip if not old enough (unless --all)
             if !request.all && age_secs < max_age_secs {
                 continue;
+            }
+
+            candidates.push((id, path, age_secs));
+        }
+
+        // Now process candidates, re-checking the sandbox map before each deletion
+        // to avoid race conditions with concurrent sandbox creation
+        for (id, path, age_secs) in candidates {
+            // Re-check if this sandbox was created while we were scanning
+            // This prevents TOCTOU race conditions with sandbox creation
+            {
+                let sandboxes = self.sandboxes.lock().await;
+                if sandboxes.contains_key(&id) {
+                    continue; // Sandbox was created, skip deletion
+                }
             }
 
             let item = PrunedItem {

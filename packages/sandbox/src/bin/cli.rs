@@ -1661,7 +1661,16 @@ async fn prune_docker(args: &PruneArgs) -> anyhow::Result<()> {
         None
     } else {
         let duration = args.until.unwrap_or(Duration::from_secs(24 * 3600));
-        Some(format!("{}h", duration.as_secs() / 3600))
+        let secs = duration.as_secs();
+        // Use minutes for sub-hour durations to avoid truncation to 0h
+        // Docker supports both "Xh" and "Xm" formats
+        if secs < 3600 {
+            // Use minutes, with minimum of 1 minute
+            let mins = (secs / 60).max(1);
+            Some(format!("{mins}m"))
+        } else {
+            Some(format!("{}h", secs / 3600))
+        }
     };
 
     // Prune containers
