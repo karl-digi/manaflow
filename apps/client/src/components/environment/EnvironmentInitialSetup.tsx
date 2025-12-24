@@ -22,6 +22,15 @@ import {
   getFrameworkDisplayName,
   FRAMEWORK_PRESET_OPTIONS,
   MASKED_ENV_VALUE,
+  AngularLogo,
+  NextLogo,
+  NuxtLogo,
+  ReactLogo,
+  RemixLogo,
+  SvelteLogo,
+  ViteLogo,
+  VueLogo,
+  SparklesIcon,
 } from "@cmux/shared/components/environment";
 import clsx from "clsx";
 import {
@@ -30,7 +39,6 @@ import {
   ChevronDown,
   Eye,
   EyeOff,
-  Loader2,
   Minus,
   Plus,
   Check,
@@ -50,8 +58,6 @@ interface EnvironmentInitialSetupProps {
   frameworkPreset: FrameworkPreset;
   detectedPackageManager: PackageManager;
   isDetectingFramework: boolean;
-  isProvisioning: boolean;
-  isWorkspaceReady: boolean;
   onMaintenanceScriptChange: (value: string) => void;
   onDevScriptChange: (value: string) => void;
   onEnvVarsChange: (updater: (prev: EnvVar[]) => EnvVar[]) => void;
@@ -69,8 +75,6 @@ export function EnvironmentInitialSetup({
   frameworkPreset,
   detectedPackageManager,
   isDetectingFramework,
-  isProvisioning,
-  isWorkspaceReady,
   onMaintenanceScriptChange,
   onDevScriptChange,
   onEnvVarsChange,
@@ -244,35 +248,43 @@ export function EnvironmentInitialSetup({
           <button
             type="button"
             onClick={onContinue}
-            disabled={isProvisioning}
             className={clsx(
               "w-full inline-flex items-center justify-center gap-2 rounded-md px-5 py-2.5 text-sm font-semibold transition",
-              "bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 hover:bg-neutral-800 dark:hover:bg-neutral-200 cursor-pointer",
-              isProvisioning && "opacity-50 cursor-not-allowed",
-              !isWorkspaceReady && "opacity-80"
+              "bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 hover:bg-neutral-800 dark:hover:bg-neutral-200 cursor-pointer"
             )}
           >
-            {isProvisioning ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Provisioning workspace...
-              </>
-            ) : (
-              <>
-                Continue
-                <ArrowRight className="w-4 h-4" />
-              </>
-            )}
+            Continue
+            <ArrowRight className="w-4 h-4" />
           </button>
-          {!isWorkspaceReady && !isProvisioning && (
-            <p className="text-xs text-neutral-500 dark:text-neutral-400 text-center mt-2">
-              Workspace is still being prepared...
-            </p>
-          )}
         </div>
       </div>
     </div>
   );
+}
+
+// Map framework presets to their icons
+function getFrameworkIcon(preset: FrameworkPreset, className: string = "h-5 w-5") {
+  switch (preset) {
+    case "next":
+      return <NextLogo className={className} aria-hidden="true" />;
+    case "vite":
+      return <ViteLogo className={className} aria-hidden="true" />;
+    case "remix":
+      return <RemixLogo className={className} aria-hidden="true" />;
+    case "nuxt":
+      return <NuxtLogo className={className} aria-hidden="true" />;
+    case "sveltekit":
+      return <SvelteLogo className={className} aria-hidden="true" />;
+    case "angular":
+      return <AngularLogo className={className} aria-hidden="true" />;
+    case "cra":
+      return <ReactLogo className={className} aria-hidden="true" />;
+    case "vue":
+      return <VueLogo className={className} aria-hidden="true" />;
+    case "other":
+    default:
+      return <SparklesIcon className={className} aria-hidden="true" />;
+  }
 }
 
 // Framework Preset Select Component
@@ -309,9 +321,7 @@ function FrameworkPresetSelect({
         >
           <span className="flex items-center gap-3">
             <span className="flex h-8 w-8 items-center justify-center rounded-md border border-neutral-200 dark:border-neutral-800 bg-neutral-100 dark:bg-neutral-800">
-              <span className="text-xs font-medium">
-                {value === "other" ? "?" : value.charAt(0).toUpperCase()}
-              </span>
+              {getFrameworkIcon(value)}
             </span>
             <span className="text-left">
               <span className="block font-medium">{getFrameworkDisplayName(value)}</span>
@@ -350,9 +360,7 @@ function FrameworkPresetSelect({
                   )}
                 >
                   <span className="flex h-8 w-8 items-center justify-center rounded-md border border-neutral-200 dark:border-neutral-800 bg-neutral-100 dark:bg-neutral-800">
-                    <span className="text-xs font-medium">
-                      {preset === "other" ? "?" : preset.charAt(0).toUpperCase()}
-                    </span>
+                    {getFrameworkIcon(preset)}
                   </span>
                   <span className="flex-1 font-medium text-neutral-900 dark:text-neutral-100">
                     {getFrameworkDisplayName(preset)}
@@ -410,7 +418,7 @@ function ScriptsSection({
           <textarea
             value={maintenanceScript ?? ""}
             onChange={(e) => onMaintenanceScriptChange(e.target.value)}
-            placeholder="npm install, bun install, pip install -r requirements.txt"
+            placeholder="(cd [repo] && bun i)"
             rows={2}
             className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-xs font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 resize-none"
           />
@@ -425,7 +433,7 @@ function ScriptsSection({
           <textarea
             value={devScript ?? ""}
             onChange={(e) => onDevScriptChange(e.target.value)}
-            placeholder="npm run dev, bun dev, python manage.py runserver"
+            placeholder="(cd [repo] && ./scripts/dev.sh)"
             rows={2}
             className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-xs font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 resize-none"
           />

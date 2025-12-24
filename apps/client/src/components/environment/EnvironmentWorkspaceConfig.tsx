@@ -292,7 +292,7 @@ export function EnvironmentWorkspaceConfig({
             <textarea
               value={maintenanceScript ?? ""}
               onChange={(e) => onMaintenanceScriptChange(e.target.value)}
-              placeholder="npm install, bun install, pip install -r requirements.txt"
+              placeholder="(cd [repo] && bun i)"
               rows={2}
               className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-xs font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 resize-none"
             />
@@ -307,7 +307,7 @@ export function EnvironmentWorkspaceConfig({
             <textarea
               value={devScript ?? ""}
               onChange={(e) => onDevScriptChange(e.target.value)}
-              placeholder="npm run dev, bun dev, python manage.py runserver"
+              placeholder="(cd [repo] && bun run dev)"
               rows={2}
               className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-2 text-xs font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700 resize-none"
             />
@@ -688,7 +688,8 @@ export function EnvironmentWorkspaceConfig({
       <div className="h-full flex flex-col overflow-hidden relative">
         {/* Placeholder for VS Code or browser when not available */}
         {placeholder ? (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center text-neutral-500 dark:text-neutral-400">
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-4 text-center text-neutral-500 dark:text-neutral-400">
+            <Loader2 className="h-8 w-8 animate-spin text-neutral-400" />
             <div className="text-sm font-medium text-neutral-600 dark:text-neutral-200">
               {placeholder.title}
             </div>

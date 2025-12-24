@@ -30,7 +30,6 @@ import {
 } from "@cmux/www-openapi-client/react-query";
 import { useMutation as useRQMutation } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { Loader2 } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -98,8 +97,6 @@ export function EnvironmentSetupFlow({
   const vncWebsocketUrl = useMemo((): string | undefined => {
     return deriveVncWebsocketUrl(instanceId, vscodeUrl) ?? undefined;
   }, [instanceId, vscodeUrl]);
-
-  const isWorkspaceReady = Boolean(vscodeUrl);
 
   // Framework detection (only fetch if we have repos)
   const hasUserEditedScriptsRef = useRef(false);
@@ -223,11 +220,7 @@ export function EnvironmentSetupFlow({
   );
 
   const handleContinueToWorkspaceConfig = useCallback(() => {
-    setLayoutPhase("transitioning");
-    // After animation completes, set to workspace-config
-    setTimeout(() => {
-      setLayoutPhase("workspace-config");
-    }, 650);
+    setLayoutPhase("workspace-config");
   }, []);
 
   const handleBackToInitialSetup = useCallback(() => {
@@ -333,33 +326,6 @@ export function EnvironmentSetupFlow({
     teamSlugOrId,
   ]);
 
-  // Show loading state if transitioning
-  if (layoutPhase === "transitioning") {
-    if (!isWorkspaceReady) {
-      return (
-        <div className="flex min-h-full items-center justify-center bg-white dark:bg-black font-sans">
-          <div className="text-center px-6">
-            <Loader2 className="mx-auto h-8 w-8 animate-spin text-neutral-400" />
-            <h1 className="mt-4 text-lg font-medium text-neutral-900 dark:text-neutral-100">
-              Starting your VS Code workspace...
-            </h1>
-            <p className="mt-2 text-sm text-neutral-500 dark:text-neutral-400">
-              We'll show the configuration once your environment is ready.
-            </p>
-          </div>
-        </div>
-      );
-    }
-    // Brief transition animation placeholder
-    return (
-      <div className="flex min-h-full items-center justify-center bg-white dark:bg-black font-sans">
-        <div className="text-center px-6">
-          <Loader2 className="mx-auto h-8 w-8 animate-spin text-neutral-400" />
-        </div>
-      </div>
-    );
-  }
-
   // Initial Setup Phase
   if (layoutPhase === "initial-setup") {
     return (
@@ -371,8 +337,6 @@ export function EnvironmentSetupFlow({
         frameworkPreset={frameworkPreset}
         detectedPackageManager={detectedPackageManager}
         isDetectingFramework={isDetectingFramework}
-        isProvisioning={!instanceId}
-        isWorkspaceReady={isWorkspaceReady}
         onMaintenanceScriptChange={handleMaintenanceScriptChange}
         onDevScriptChange={handleDevScriptChange}
         onEnvVarsChange={handleEnvVarsChange}
