@@ -68,6 +68,7 @@ type _PTYEvent = StateSyncEvent | PTYCreatedEvent | PTYUpdatedEvent | PTYDeleted
 function getConfig() {
   const config = vscode.workspace.getConfiguration('cmux');
   return {
+    // Default to port 39383 which is where cmux-pty runs inside sandboxes
     serverUrl: config.get<string>('ptyServerUrl', 'http://localhost:39383'),
     defaultShell: config.get<string>('defaultShell', '/bin/zsh'),
   };

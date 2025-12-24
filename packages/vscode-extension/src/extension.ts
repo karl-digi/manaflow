@@ -1,4 +1,5 @@
 import type { ClientToServerEvents, ServerToClientEvents } from "@cmux/shared";
+import { defaultHostConfig, getHostUrl } from "@cmux/shared";
 import { execSync } from "node:child_process";
 import { io, Socket } from "socket.io-client";
 import * as vscode from "vscode";
@@ -40,7 +41,7 @@ function log(message: string, ...args: unknown[]) {
   const formattedMessage = `[${timestamp}] ${message}`;
   if (args.length > 0) {
     outputChannel.appendLine(
-      formattedMessage + " " + args.map((arg) => safeStringify(arg)).join(" ")
+      formattedMessage + " " + args.map((arg) => safeStringify(arg)).join(" "),
     );
   } else {
     outputChannel.appendLine(formattedMessage);
@@ -51,7 +52,7 @@ async function resolveDefaultBaseRef(repositoryPath: string): Promise<string> {
   try {
     const out = execSync(
       "git symbolic-ref --quiet refs/remotes/origin/HEAD || git remote show origin | sed -n 's/\tHEAD branch: //p'",
-      { cwd: repositoryPath, encoding: "utf8" }
+      { cwd: repositoryPath, encoding: "utf8" },
     );
     const ref = out.trim();
     if (ref.startsWith("refs/remotes/origin/")) {
@@ -66,7 +67,6 @@ async function resolveDefaultBaseRef(repositoryPath: string): Promise<string> {
   return "origin/main";
 }
 
-
 function tryExecGit(repoPath: string, cmd: string): string | null {
   try {
     const out = execSync(cmd, { cwd: repoPath, encoding: "utf8" });
@@ -78,11 +78,11 @@ function tryExecGit(repoPath: string, cmd: string): string | null {
 
 async function resolveMergeBase(
   repositoryPath: string,
-  defaultBaseRef: string
+  defaultBaseRef: string,
 ): Promise<string | null> {
   const hasBase = tryExecGit(
     repositoryPath,
-    `git rev-parse --verify --quiet "${defaultBaseRef}^{}"`
+    `git rev-parse --verify --quiet "${defaultBaseRef}^{}"`,
   );
   if (!hasBase) {
     // Best-effort fetch to get remote refs; ignore failures
@@ -90,7 +90,7 @@ async function resolveMergeBase(
   }
   const mergeBase = tryExecGit(
     repositoryPath,
-    `git merge-base HEAD "${defaultBaseRef}"`
+    `git merge-base HEAD "${defaultBaseRef}"`,
   );
   return mergeBase && /^[0-9a-f]{7,40}$/i.test(mergeBase) ? mergeBase : null;
 }
@@ -100,7 +100,7 @@ let _currentMultiDiffUri: string | null = null;
 
 async function openMultiDiffEditor(
   baseRef?: string,
-  useMergeBase: boolean = true
+  useMergeBase: boolean = true,
 ) {
   log("=== openMultiDiffEditor called ===");
   log("baseRef:", baseRef);
@@ -179,7 +179,7 @@ async function openMultiDiffEditor(
       resources.map((r) => ({
         originalUri: r.originalUri.toString(),
         modifiedUri: r.modifiedUri.toString(),
-      }))
+      })),
     );
 
     // Extract base branch name for title (e.g., "main" from "origin/main" or "refs/remotes/origin/main")
@@ -200,19 +200,19 @@ async function openMultiDiffEditor(
     const multiDiffUriString = multiDiffSourceUri.toString();
     const tabs = vscode.window.tabGroups.all.flatMap((g) => g.tabs);
     const existingTab = tabs.find(
-      (tab) => tab.label && tab.label.includes("All Changes vs")
+      (tab) => tab.label && tab.label.includes("All Changes vs"),
     );
 
     if (existingTab) {
       // Try to activate the existing tab first to preserve position
       // This helps maintain scroll position and user context
       const tabGroup = vscode.window.tabGroups.all.find((g) =>
-        g.tabs.includes(existingTab)
+        g.tabs.includes(existingTab),
       );
       if (tabGroup) {
         // Make sure the tab is active before updating
         await vscode.commands.executeCommand(
-          "workbench.action.focusActiveEditorGroup"
+          "workbench.action.focusActiveEditorGroup",
         );
       }
     }
@@ -231,7 +231,7 @@ async function openMultiDiffEditor(
     log("Multi-diff editor opened successfully");
     if (files.length > 0) {
       vscode.window.showInformationMessage(
-        `Showing ${files.length} file(s) changed vs ${baseBranchName}`
+        `Showing ${files.length} file(s) changed vs ${baseBranchName}`,
       );
     }
   } catch (error: unknown) {
@@ -239,7 +239,7 @@ async function openMultiDiffEditor(
     if (error instanceof Error) {
       log("Error stack:", error.stack);
       vscode.window.showErrorMessage(
-        `Failed to open changes: ${error.message}`
+        `Failed to open changes: ${error.message}`,
       );
     } else {
       vscode.window.showErrorMessage("Failed to open changes");
@@ -250,7 +250,7 @@ async function openMultiDiffEditor(
 async function waitForTmuxSession(
   sessionName: string,
   maxAttempts: number = 20,
-  delayMs: number = 1000
+  delayMs: number = 1000,
 ): Promise<boolean> {
   for (let i = 1; i <= maxAttempts; i++) {
     try {
@@ -260,7 +260,9 @@ async function waitForTmuxSession(
       log(`Tmux session '${sessionName}' found on attempt ${i}`);
       return true;
     } catch {
-      log(`Waiting for tmux session '${sessionName}'... (attempt ${i}/${maxAttempts})`);
+      log(
+        `Waiting for tmux session '${sessionName}'... (attempt ${i}/${maxAttempts})`,
+      );
       if (i < maxAttempts) {
         await new Promise((resolve) => setTimeout(resolve, delayMs));
       }
@@ -285,7 +287,8 @@ async function setupDefaultTerminal() {
     // Exact matches for known system tabs
     if (label === "Welcome" || label === "Get Started") return true;
     // Prefix matches for tabs that may have suffixes
-    if (label.startsWith("Walkthrough:") || label.startsWith("Release Notes")) return true;
+    if (label.startsWith("Walkthrough:") || label.startsWith("Release Notes"))
+      return true;
     return false;
   };
   const tabs = vscode.window.tabGroups.all.flatMap((g) => g.tabs);
@@ -354,7 +357,7 @@ function connectToWorker() {
     workerSocket.disconnect();
   }
 
-  workerSocket = io("http://localhost:39377/vscode", {
+  workerSocket = io(`${getHostUrl(defaultHostConfig.vscode)}/vscode`, {
     reconnection: true,
     reconnectionAttempts: 5,
     reconnectionDelay: 1000,
@@ -397,7 +400,7 @@ export function activate(context: vscode.ExtensionContext) {
     "cmux.showOutput",
     () => {
       outputChannel.show();
-    }
+    },
   );
   context.subscriptions.push(showOutputCommand);
 
@@ -416,7 +419,7 @@ export function activate(context: vscode.ExtensionContext) {
     async () => {
       log("Hello World from cmux!");
       vscode.window.showInformationMessage("Hello World from cmux!");
-    }
+    },
   );
 
   const run = vscode.commands.registerCommand("cmux.run", async () => {
@@ -476,7 +479,7 @@ export function activate(context: vscode.ExtensionContext) {
           }
         }
       }
-    }
+    },
   );
 
   context.subscriptions.push(disposable);

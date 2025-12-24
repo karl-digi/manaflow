@@ -187,6 +187,7 @@ impl SandboxService for MockService {
             services: cmux_sandbox::models::ServiceReadiness {
                 vnc: true,
                 vscode: false,
+                pty: false,
             },
             timed_out: vec![],
         })

@@ -42,6 +42,41 @@ RUN git clone https://github.com/agentclientprotocol/agent-client-protocol .tmp_
     cd .tmp_acp_repos/codex-acp && \
     cargo build --release
 
+# Build cmux-pty (PTY terminal server)
+FROM rust-base AS pty-builder
+WORKDIR /workspace
+ENV CARGO_TERM_COLOR=never \
+  CARGO_PROFILE_RELEASE_STRIP=symbols \
+  CARGO_TARGET_DIR=/workspace/target
+
+COPY crates/cmux-terminal ./crates/cmux-terminal
+COPY crates/cmux-pty ./crates/cmux-pty
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+  --mount=type=cache,target=/usr/local/cargo/git \
+  cargo build --locked --release --manifest-path crates/cmux-pty/Cargo.toml
+
+# Build VS Code extension
+FROM node:22-bookworm AS ext-builder
+RUN npm install -g bun @vscode/vsce
+WORKDIR /workspace/packages/shared
+# Copy and install shared dependencies first
+COPY packages/shared/package.json ./
+# Remove workspace refs (convex is not needed for extension build) and install
+RUN sed -i '/"@cmux\/convex"/d' package.json && \
+    npm install --legacy-peer-deps --ignore-scripts
+COPY packages/shared/src ./src
+# Now build the extension
+WORKDIR /workspace/packages/vscode-extension
+COPY packages/vscode-extension/package.json ./
+# Replace workspace:* with file:../shared for npm compatibility, then install
+RUN sed -i 's/"workspace:\*"/"file:..\/shared"/g' package.json && \
+    npm install --legacy-peer-deps
+# Copy extension source and build
+COPY packages/vscode-extension/src ./src
+COPY packages/vscode-extension/tsconfig.json ./
+RUN bun run compile && vsce package --allow-missing-repository --no-dependencies --allow-star-activation
+
 FROM chef AS builder
 ENV CARGO_TERM_COLOR=never \
   CARGO_PROFILE_RELEASE_STRIP=symbols \
@@ -356,6 +391,16 @@ COPY --from=builder --link /workspace/target/release/cmux-sandboxd /usr/local/bi
 COPY --from=builder --link /workspace/target/release/cmux /usr/local/bin/cmux
 COPY --from=builder --link /workspace/target/release/cmux-bridge /usr/local/bin/cmux-bridge
 COPY --from=acp-builder --link /workspace/target/release/codex-acp /usr/local/bin/codex-acp
+COPY --from=pty-builder --link /workspace/target/release/cmux-pty /app/cmux-pty/cmux-pty
+
+# Install cmux VS Code extension
+COPY --from=ext-builder /workspace/packages/vscode-extension/*.vsix /tmp/
+RUN mkdir -p /root/.vscode-server-oss/extensions && \
+    /app/cmux-code/bin/code-server-oss \
+      --install-extension /tmp/cmux-vscode-extension-*.vsix \
+      --extensions-dir /root/.vscode-server-oss/extensions \
+      --user-data-dir /root/.vscode-server-oss/data && \
+    rm -f /tmp/*.vsix
 
 COPY --link packages/sandbox/scripts/bootstrap-dind.sh /usr/local/bin/bootstrap-dind.sh
 COPY --link packages/sandbox/scripts/docker-mode.sh /usr/local/bin/docker-mode.sh

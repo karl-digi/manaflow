@@ -365,6 +365,76 @@ async fn start_vscode_background(
     Ok(())
 }
 
+/// Start cmux-pty server inside the sandbox (background process).
+/// This is the unified PTY server that handles terminal sessions.
+async fn start_cmux_pty_background(
+    nsenter_path: &str,
+    inner_pid: u32,
+    pty_port: u16,
+) -> Result<(), String> {
+    use tokio::time::timeout;
+    let cmd_timeout = Duration::from_secs(10);
+
+    // Start cmux-pty server
+    // --host 0.0.0.0: Listen on all interfaces (needed for proxy access)
+    // --port: The port to listen on
+    // Use nohup to prevent SIGHUP when nsenter shell exits
+    let pty_cmd = vec![
+        "/bin/sh".to_string(),
+        "-c".to_string(),
+        format!(
+            "nohup /app/cmux-pty/cmux-pty --host 0.0.0.0 --port {} > /tmp/cmux-pty.log 2>&1 &",
+            pty_port
+        ),
+    ];
+
+    let result = timeout(
+        cmd_timeout,
+        Command::new(nsenter_path)
+            .args(nsenter_args(inner_pid, None, &pty_cmd))
+            .output(),
+    )
+    .await;
+
+    match result {
+        Ok(Ok(output)) => {
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                debug!("cmux-pty start warning: {}", stderr);
+            }
+        }
+        Ok(Err(e)) => return Err(format!("cmux-pty command error: {}", e)),
+        Err(_) => {
+            debug!("cmux-pty command timed out (expected for backgrounded process)");
+        }
+    }
+
+    // Wait for cmux-pty to start listening
+    sleep(Duration::from_millis(300)).await;
+
+    // Verify cmux-pty is running by checking if it's listening on the port
+    let verify_cmd = vec![
+        "/bin/sh".to_string(),
+        "-c".to_string(),
+        format!("pgrep -f 'cmux-pty.*--port {}'", pty_port),
+    ];
+    let verify_result = timeout(
+        Duration::from_secs(5),
+        Command::new(nsenter_path)
+            .args(nsenter_args(inner_pid, None, &verify_cmd))
+            .output(),
+    )
+    .await;
+
+    let pty_running = matches!(verify_result, Ok(Ok(ref output)) if output.status.success());
+    if !pty_running {
+        return Err(format!("cmux-pty failed to start on port {}", pty_port));
+    }
+
+    info!(pty_port = pty_port, "cmux-pty started");
+    Ok(())
+}
+
 impl BubblewrapService {
     pub async fn new(workspace_root: PathBuf, port: u16) -> SandboxResult<Self> {
         if !workspace_root.exists() {
@@ -1388,21 +1458,23 @@ impl SandboxService for BubblewrapService {
         // Calculate display configuration for isolated X11/VNC desktop and VS Code
         // Display numbers start at 10 to avoid conflicts with system displays (:0, :1, etc.)
         // All sandboxes use fixed ports internally, accessed via subdomain routing:
-        //   {index}-39380.host -> noVNC, {index}-39378.host -> VS Code
+        //   {index}-39380.host -> noVNC, {index}-39378.host -> VS Code, {index}-39383.host -> cmux-pty
         let display_number = (10 + index) as u16;
         let vnc_port = 5900 + display_number;
         let novnc_port = 39380_u16; // Fixed port, accessed via subdomain routing
         let cdp_port = 39381_u16; // Fixed port, accessed via subdomain routing
         let vscode_port = 39378_u16; // Fixed port for cmux-code
+        let pty_port = 39383_u16; // Fixed port for cmux-pty
 
         // Display config is set immediately (ports are known upfront)
-        // Services start in background - use await_services_ready to wait for VNC/VS Code
+        // Services start in background - use await_services_ready to wait for VNC/VS Code/PTY
         let display = Some(SandboxDisplay {
             display_number,
             vnc_port,
             novnc_port,
             cdp_port,
             vscode_port,
+            pty_port,
         });
 
         // Create readiness watch channel for this sandbox
@@ -1456,6 +1528,7 @@ impl SandboxService for BubblewrapService {
                     let _ = tx.send(ServiceReadiness {
                         vnc: vnc_ready,
                         vscode: false,
+                        pty: false,
                     });
                 }
 
@@ -1483,11 +1556,44 @@ impl SandboxService for BubblewrapService {
                     }
                 };
 
-                // Update readiness with both VNC and VS Code status
+                // Update readiness with VNC and VS Code status
+                if let Some(ref tx) = readiness {
+                    let _ = tx.send(ServiceReadiness {
+                        vnc: vnc_ready,
+                        vscode: vscode_ready,
+                        pty: false,
+                    });
+                }
+
+                // Start cmux-pty (PTY server)
+                let pty_result =
+                    start_cmux_pty_background(&nsenter_path, inner_pid, pty_port).await;
+
+                let pty_ready = match pty_result {
+                    Ok(()) => {
+                        info!(
+                            sandbox_id = %sandbox_id,
+                            pty_port = pty_port,
+                            "cmux-pty ready (background)"
+                        );
+                        true
+                    }
+                    Err(e) => {
+                        warn!(
+                            sandbox_id = %sandbox_id,
+                            error = %e,
+                            "cmux-pty failed in background - PTY will be unavailable"
+                        );
+                        false
+                    }
+                };
+
+                // Update readiness with all service statuses
                 if let Some(tx) = readiness {
                     let _ = tx.send(ServiceReadiness {
                         vnc: vnc_ready,
                         vscode: vscode_ready,
+                        pty: pty_ready,
                     });
                 }
             });
@@ -2657,9 +2763,13 @@ impl SandboxService for BubblewrapService {
         };
 
         // Determine which services to wait for
+        // Empty services list = wait for all configured services (vnc, vscode, pty)
         let wait_for_vnc =
             request.services.is_empty() || request.services.iter().any(|s| s == "vnc");
-        let wait_for_vscode = request.services.iter().any(|s| s == "vscode");
+        let wait_for_vscode =
+            request.services.is_empty() || request.services.iter().any(|s| s == "vscode");
+        let wait_for_pty =
+            request.services.is_empty() || request.services.iter().any(|s| s == "pty");
 
         let timeout_duration = Duration::from_millis(request.timeout_ms);
         let deadline = tokio::time::Instant::now() + timeout_duration;
@@ -2671,8 +2781,9 @@ impl SandboxService for BubblewrapService {
             // Check if all requested services are ready
             let vnc_ok = !wait_for_vnc || current.vnc;
             let vscode_ok = !wait_for_vscode || current.vscode;
+            let pty_ok = !wait_for_pty || current.pty;
 
-            if vnc_ok && vscode_ok {
+            if vnc_ok && vscode_ok && pty_ok {
                 return Ok(AwaitReadyResponse {
                     ready: true,
                     services: current,
@@ -2690,6 +2801,9 @@ impl SandboxService for BubblewrapService {
                 }
                 if wait_for_vscode && !current.vscode {
                     timed_out.push("vscode".to_string());
+                }
+                if wait_for_pty && !current.pty {
+                    timed_out.push("pty".to_string());
                 }
                 return Ok(AwaitReadyResponse {
                     ready: false,
@@ -2716,6 +2830,9 @@ impl SandboxService for BubblewrapService {
                     }
                     if wait_for_vscode && !current.vscode {
                         timed_out.push("vscode".to_string());
+                    }
+                    if wait_for_pty && !current.pty {
+                        timed_out.push("pty".to_string());
                     }
                     return Ok(AwaitReadyResponse {
                         ready: false,

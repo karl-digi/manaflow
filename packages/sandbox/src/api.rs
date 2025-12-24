@@ -111,6 +111,28 @@ pub fn build_router(
         .route("/sandboxes/{id}/attach", any(attach_sandbox))
         .route("/sandboxes/{id}/proxy", any(proxy_sandbox))
         .route("/sandboxes/{id}/await-ready", post(await_ready))
+        // PTY proxy endpoints - direct access to sandbox's cmux-pty
+        .route(
+            "/sandboxes/{id}/pty/sessions",
+            get(pty_list_sessions).post(pty_create_session),
+        )
+        .route(
+            "/sandboxes/{id}/pty/sessions/{session_id}",
+            get(pty_get_session).delete(pty_delete_session),
+        )
+        .route(
+            "/sandboxes/{id}/pty/sessions/{session_id}/resize",
+            post(pty_resize_session),
+        )
+        .route(
+            "/sandboxes/{id}/pty/sessions/{session_id}/capture",
+            get(pty_capture_session),
+        )
+        .route(
+            "/sandboxes/{id}/pty/sessions/{session_id}/attach",
+            any(pty_attach_session),
+        )
+        .route("/sandboxes/{id}/pty/signal", post(pty_signal))
         // Multiplexed WebSocket endpoint - single connection for all PTY sessions
         .route("/mux/attach", any(mux_attach))
         // Open URL on host - used by sandboxed processes to open links
@@ -852,6 +874,234 @@ async fn await_ready(
     Ok(Json(response))
 }
 
+// =============================================================================
+// PTY Proxy Endpoints - Direct access to sandbox's cmux-pty service
+// =============================================================================
+
+const PTY_PORT: u16 = 39383;
+
+/// Get the sandbox IP address from the service.
+async fn get_sandbox_ip(state: &AppState, id: &str) -> SandboxResult<String> {
+    let sandbox = state
+        .service
+        .get(id.to_string())
+        .await?
+        .ok_or_else(|| SandboxError::NotFound(Uuid::nil()))?;
+    Ok(sandbox.network.sandbox_ip)
+}
+
+/// Helper to proxy HTTP requests to a sandbox's cmux-pty service.
+async fn proxy_pty_request(
+    sandbox_ip: &str,
+    method: reqwest::Method,
+    path: &str,
+    body: Option<Vec<u8>>,
+    content_type: Option<&str>,
+) -> Response {
+    let target_url = format!("http://{}:{}{}", sandbox_ip, PTY_PORT, path);
+
+    tracing::debug!(
+        sandbox_ip = %sandbox_ip,
+        target_url = %target_url,
+        method = %method,
+        "PTY proxy request"
+    );
+
+    let client = reqwest::Client::builder()
+        .http1_only()
+        .timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+
+    let mut req = client.request(method, &target_url);
+
+    if let Some(ct) = content_type {
+        req = req.header("Content-Type", ct);
+    }
+
+    if let Some(body_bytes) = body {
+        req = req.body(body_bytes);
+    }
+
+    match req.send().await {
+        Ok(resp) => {
+            let status = StatusCode::from_u16(resp.status().as_u16())
+                .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+
+            let mut response = Response::builder().status(status);
+
+            // Copy content-type header
+            if let Some(ct) = resp.headers().get("content-type") {
+                if let Ok(val) = axum::http::header::HeaderValue::from_bytes(ct.as_bytes()) {
+                    response = response.header("Content-Type", val);
+                }
+            }
+
+            match resp.bytes().await {
+                Ok(body) => response
+                    .body(Body::from(body))
+                    .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()),
+                Err(e) => {
+                    tracing::error!("Failed to read PTY proxy response: {e}");
+                    StatusCode::BAD_GATEWAY.into_response()
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!("PTY proxy request failed: {e}");
+            (StatusCode::BAD_GATEWAY, format!("PTY proxy error: {e}")).into_response()
+        }
+    }
+}
+
+/// List all PTY sessions in a sandbox.
+async fn pty_list_sessions(
+    state: axum::extract::State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    let sandbox_ip = match get_sandbox_ip(&state, &id).await {
+        Ok(ip) => ip,
+        Err(e) => return e.into_response(),
+    };
+
+    proxy_pty_request(&sandbox_ip, reqwest::Method::GET, "/sessions", None, None).await
+}
+
+/// Create a new PTY session in a sandbox.
+async fn pty_create_session(
+    state: axum::extract::State<AppState>,
+    Path(id): Path<String>,
+    body: axum::body::Bytes,
+) -> Response {
+    let sandbox_ip = match get_sandbox_ip(&state, &id).await {
+        Ok(ip) => ip,
+        Err(e) => return e.into_response(),
+    };
+
+    proxy_pty_request(
+        &sandbox_ip,
+        reqwest::Method::POST,
+        "/sessions",
+        Some(body.to_vec()),
+        Some("application/json"),
+    )
+    .await
+}
+
+/// Get a specific PTY session.
+async fn pty_get_session(
+    state: axum::extract::State<AppState>,
+    Path((id, session_id)): Path<(String, String)>,
+) -> Response {
+    let sandbox_ip = match get_sandbox_ip(&state, &id).await {
+        Ok(ip) => ip,
+        Err(e) => return e.into_response(),
+    };
+
+    let path = format!("/sessions/{}", session_id);
+    proxy_pty_request(&sandbox_ip, reqwest::Method::GET, &path, None, None).await
+}
+
+/// Delete a PTY session.
+async fn pty_delete_session(
+    state: axum::extract::State<AppState>,
+    Path((id, session_id)): Path<(String, String)>,
+) -> Response {
+    let sandbox_ip = match get_sandbox_ip(&state, &id).await {
+        Ok(ip) => ip,
+        Err(e) => return e.into_response(),
+    };
+
+    let path = format!("/sessions/{}", session_id);
+    proxy_pty_request(&sandbox_ip, reqwest::Method::DELETE, &path, None, None).await
+}
+
+/// Resize a PTY session.
+async fn pty_resize_session(
+    state: axum::extract::State<AppState>,
+    Path((id, session_id)): Path<(String, String)>,
+    body: axum::body::Bytes,
+) -> Response {
+    let sandbox_ip = match get_sandbox_ip(&state, &id).await {
+        Ok(ip) => ip,
+        Err(e) => return e.into_response(),
+    };
+
+    let path = format!("/sessions/{}/resize", session_id);
+    proxy_pty_request(
+        &sandbox_ip,
+        reqwest::Method::POST,
+        &path,
+        Some(body.to_vec()),
+        Some("application/json"),
+    )
+    .await
+}
+
+/// Capture PTY session content.
+async fn pty_capture_session(
+    state: axum::extract::State<AppState>,
+    Path((id, session_id)): Path<(String, String)>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let sandbox_ip = match get_sandbox_ip(&state, &id).await {
+        Ok(ip) => ip,
+        Err(e) => return e.into_response(),
+    };
+
+    let query_string = if params.is_empty() {
+        String::new()
+    } else {
+        let qs: Vec<String> = params.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
+        format!("?{}", qs.join("&"))
+    };
+
+    let path = format!("/sessions/{}/capture{}", session_id, query_string);
+    proxy_pty_request(&sandbox_ip, reqwest::Method::GET, &path, None, None).await
+}
+
+/// WebSocket attach to a PTY session.
+async fn pty_attach_session(
+    state: axum::extract::State<AppState>,
+    Path((id, session_id)): Path<(String, String)>,
+    ws: WebSocketUpgrade,
+) -> Response {
+    let sandbox_ip = match get_sandbox_ip(&state, &id).await {
+        Ok(ip) => ip,
+        Err(e) => return e.into_response(),
+    };
+
+    let path = format!("/sessions/{}/attach", session_id);
+
+    ws.on_upgrade(move |socket| async move {
+        if let Err(e) = proxy_websocket(socket, &sandbox_ip, PTY_PORT, &path).await {
+            tracing::error!("PTY WebSocket proxy error: {e}");
+        }
+    })
+}
+
+/// Send a signal to PTY processes in a sandbox.
+async fn pty_signal(
+    state: axum::extract::State<AppState>,
+    Path(id): Path<String>,
+    body: axum::body::Bytes,
+) -> Response {
+    let sandbox_ip = match get_sandbox_ip(&state, &id).await {
+        Ok(ip) => ip,
+        Err(e) => return e.into_response(),
+    };
+
+    proxy_pty_request(
+        &sandbox_ip,
+        reqwest::Method::POST,
+        "/signal",
+        Some(body.to_vec()),
+        Some("application/json"),
+    )
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -948,6 +1198,7 @@ mod tests {
                 services: ServiceReadiness {
                     vnc: true,
                     vscode: false,
+                    pty: false,
                 },
                 timed_out: vec![],
             })
