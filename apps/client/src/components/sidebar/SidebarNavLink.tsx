@@ -54,7 +54,8 @@ export function SidebarNavLink({
       ) : null}
       <span>{label}</span>
       {badgeCount !== undefined && badgeCount > 0 && (
-        <span className="flex items-center justify-center min-w-[14px] h-[14px] px-1 text-[9px] font-medium text-white bg-blue-500 rounded-full ml-auto">
+        <span className="flex items-center justify-center min-w-[14px] h-[14px] px-1 text-[9px] font-medium text-white bg-blue-500 rounded-full ml-auto tabular-nums tracking-tighter">
+          {/* 12 */}
           {badgeCount > 99 ? "99+" : badgeCount}
         </span>
       )}
