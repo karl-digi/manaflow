@@ -60,8 +60,9 @@ export const pauseOldMorphInstances = internalAction({
     const thresholdMs = PAUSE_HOURS_THRESHOLD * MILLISECONDS_PER_HOUR;
 
     // Filter for cmux ready instances older than the threshold
+    // Note: app can be "cmux", "cmux-dev", "cmux-preview", "cmux-automated-code-review", etc.
     const staleActiveInstances = instances
-      .filter((instance) => instance.metadata?.app === "cmux-dev")
+      .filter((instance) => instance.metadata?.app?.startsWith("cmux"))
       .filter((instance) => instance.status === "ready")
       .filter((instance) => {
         const createdMs = instance.created * 1000;
@@ -189,8 +190,9 @@ export const stopOldMorphInstances = internalAction({
     const thresholdMs = STOP_DAYS_THRESHOLD * 24 * MILLISECONDS_PER_HOUR;
 
     // Filter for cmux paused instances only (we don't stop running instances or non-cmux instances)
+    // Note: app can be "cmux", "cmux-dev", "cmux-preview", "cmux-automated-code-review", etc.
     const pausedInstances = instances
-      .filter((instance) => instance.metadata?.app === "cmux-dev")
+      .filter((instance) => instance.metadata?.app?.startsWith("cmux"))
       .filter((instance) => instance.status === "paused");
 
     if (pausedInstances.length === 0) {
