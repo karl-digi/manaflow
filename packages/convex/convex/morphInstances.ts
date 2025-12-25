@@ -49,12 +49,10 @@ export const recordResume = authMutation({
     // Find the taskRun that uses this instance to verify ownership
     const taskRun = await ctx.db
       .query("taskRuns")
-      .filter((q) =>
-        q.and(
-          q.eq(q.field("teamId"), teamId),
-          q.eq(q.field("vscode.containerName"), args.instanceId)
-        )
+      .withIndex("by_vscode_container_name", (q) =>
+        q.eq("vscode.containerName", args.instanceId)
       )
+      .filter((q) => q.eq(q.field("teamId"), teamId))
       .first();
 
     if (!taskRun) {
