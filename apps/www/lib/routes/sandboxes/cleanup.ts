@@ -11,11 +11,14 @@ export const VM_CLEANUP_COMMANDS = [
   // Kill all node/bun processes (dev servers) - these are the main culprits for port conflicts
   "pkill -9 -u root node 2>/dev/null || true",
   "pkill -9 -u root bun 2>/dev/null || true",
-  // Kill any remaining processes that might be holding ports (vite, esbuild, etc.)
+  // Kill any remaining processes that might be holding ports (vite, esbuild, pnpm, etc.)
   "pkill -9 -u root vite 2>/dev/null || true",
   "pkill -9 -u root esbuild 2>/dev/null || true",
   "pkill -9 -u root tsx 2>/dev/null || true",
   "pkill -9 -u root npx 2>/dev/null || true",
+  "pkill -9 -u root pnpm 2>/dev/null || true",
+  "pkill -9 -u root npm 2>/dev/null || true",
+  "pkill -9 -u root yarn 2>/dev/null || true",
 ].join(" && ");
 
 /**
