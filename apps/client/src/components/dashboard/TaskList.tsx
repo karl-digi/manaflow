@@ -1,12 +1,12 @@
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
-import { useLocalStorage } from "@mantine/hooks";
+import { useLocalStorage, useIntersection } from "@mantine/hooks";
 import { useQuery } from "convex/react";
 import clsx from "clsx";
-import { memo, useCallback, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TaskItem } from "./TaskItem";
 import { PreviewItem } from "./PreviewItem";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Loader2 } from "lucide-react";
 
 type TaskCategoryKey =
   | "pinned"
@@ -178,16 +178,116 @@ const createCollapsedPreviewCategoryState = (
   completed: defaultValue,
 });
 
+// Task type with hasUnread indicator from paginated query
+type ArchivedTask = Doc<"tasks"> & { hasUnread?: boolean };
+
+// Infinite scroll component for archived tasks
+const ArchivedTaskList = memo(function ArchivedTaskList({
+  teamSlugOrId,
+}: {
+  teamSlugOrId: string;
+}) {
+  const [cursor, setCursor] = useState<number | undefined>(undefined);
+  const [allTasks, setAllTasks] = useState<ArchivedTask[]>([]);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const loadedCursors = useRef(new Set<number | undefined>());
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Query current page
+  const result = useQuery(api.tasks.getArchivedPaginated, {
+    teamSlugOrId,
+    cursor,
+    limit: 20,
+  });
+
+  // Intersection observer for infinite scroll trigger
+  const { ref: loadMoreRef, entry } = useIntersection({
+    root: containerRef.current,
+    threshold: 0.1,
+  });
+
+  // Accumulate tasks as new pages load
+  useEffect(() => {
+    if (result && !loadedCursors.current.has(cursor)) {
+      loadedCursors.current.add(cursor);
+      setAllTasks((prev) => {
+        // For first page (no cursor), replace all tasks to handle real-time updates
+        if (cursor === undefined) {
+          // Merge: keep new first page, then append existing tasks not in first page
+          const firstPageIds = new Set(result.tasks.map((t) => t._id));
+          const existingTasks = prev.filter((t) => !firstPageIds.has(t._id));
+          return [...result.tasks, ...existingTasks];
+        }
+        // For subsequent pages, append new tasks
+        const existingIds = new Set(prev.map((t) => t._id));
+        const newTasks = result.tasks.filter((t) => !existingIds.has(t._id));
+        return [...prev, ...newTasks];
+      });
+      setIsLoadingMore(false);
+    }
+  }, [result, cursor]);
+
+  // Reset when teamSlugOrId changes
+  useEffect(() => {
+    setAllTasks([]);
+    setCursor(undefined);
+    loadedCursors.current.clear();
+  }, [teamSlugOrId]);
+
+  // Load more when intersection observer triggers
+  useEffect(() => {
+    if (
+      entry?.isIntersecting &&
+      result?.hasMore &&
+      result?.nextCursor !== null &&
+      !isLoadingMore
+    ) {
+      setIsLoadingMore(true);
+      setCursor(result.nextCursor);
+    }
+  }, [entry?.isIntersecting, result?.hasMore, result?.nextCursor, isLoadingMore]);
+
+  // Initial loading state
+  if (result === undefined && allTasks.length === 0) {
+    return (
+      <div className="text-sm text-neutral-500 dark:text-neutral-400 py-2 pl-4 select-none">
+        Loading...
+      </div>
+    );
+  }
+
+  // Empty state
+  if (allTasks.length === 0 && result && !result.hasMore) {
+    return (
+      <div className="text-sm text-neutral-500 dark:text-neutral-400 py-2 pl-4 select-none">
+        No archived tasks
+      </div>
+    );
+  }
+
+  return (
+    <div ref={containerRef} className="flex flex-col w-full">
+      {allTasks.map((task) => (
+        <TaskItem key={task._id} task={task} teamSlugOrId={teamSlugOrId} />
+      ))}
+      {/* Sentinel element for intersection observer */}
+      <div ref={loadMoreRef} className="w-full py-2">
+        {isLoadingMore && (
+          <div className="flex items-center justify-center py-2">
+            <Loader2 className="h-4 w-4 animate-spin text-neutral-400" />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+});
+
 export const TaskList = memo(function TaskList({
   teamSlugOrId,
 }: {
   teamSlugOrId: string;
 }) {
   const allTasks = useQuery(api.tasks.get, { teamSlugOrId });
-  const archivedTasks = useQuery(api.tasks.get, {
-    teamSlugOrId,
-    archived: true,
-  });
   const pinnedData = useQuery(api.tasks.getPinned, { teamSlugOrId });
   const previewRuns = useQuery(api.previewRuns.listByTeam, { teamSlugOrId });
   const [tab, setTab] = useState<"all" | "archived" | "previews">("all");
@@ -307,23 +407,7 @@ export const TaskList = memo(function TaskList({
       </div>
       <div className="flex flex-col gap-1 w-full">
         {tab === "archived" ? (
-          archivedTasks === undefined ? (
-            <div className="text-sm text-neutral-500 dark:text-neutral-400 py-2 pl-4 select-none">
-              Loading...
-            </div>
-          ) : archivedTasks.length === 0 ? (
-            <div className="text-sm text-neutral-500 dark:text-neutral-400 py-2 pl-4 select-none">
-              No archived tasks
-            </div>
-          ) : (
-            archivedTasks.map((task) => (
-              <TaskItem
-                key={task._id}
-                task={task}
-                teamSlugOrId={teamSlugOrId}
-              />
-            ))
-          )
+          <ArchivedTaskList teamSlugOrId={teamSlugOrId} />
         ) : tab === "previews" ? (
           previewRuns === undefined ? (
             <div className="text-sm text-neutral-500 dark:text-neutral-400 py-2 pl-4 select-none">

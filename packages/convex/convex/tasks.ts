@@ -61,6 +61,81 @@ export const get = authQuery({
   },
 });
 
+// Paginated query for archived tasks (infinite scroll)
+export const getArchivedPaginated = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    cursor: v.optional(v.number()), // createdAt timestamp cursor
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const pageSize = Math.max(1, Math.min(args.limit ?? 20, 50));
+
+    // Query archived tasks using the new index
+    let q = ctx.db
+      .query("tasks")
+      .withIndex("by_team_user_archived", (idx) =>
+        idx.eq("teamId", teamId).eq("userId", userId).eq("isArchived", true),
+      );
+
+    // Exclude preview tasks
+    q = q.filter((qq) => qq.neq(qq.field("isPreview"), true));
+
+    // Get all matching tasks
+    const allTasks = await q.collect();
+
+    // Sort by createdAt desc
+    const sorted = [...allTasks].sort(
+      (a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0),
+    );
+
+    // Apply cursor-based pagination
+    let startIdx = 0;
+    if (args.cursor !== undefined) {
+      startIdx = sorted.findIndex((t) => (t.createdAt ?? 0) < args.cursor!);
+      if (startIdx === -1) {
+        // Cursor is older than all tasks
+        return { tasks: [], nextCursor: null, hasMore: false };
+      }
+    }
+
+    // Get page + 1 to check if there's more
+    const pageWithExtra = sorted.slice(startIdx, startIdx + pageSize + 1);
+    const hasMore = pageWithExtra.length > pageSize;
+    const tasks = pageWithExtra.slice(0, pageSize);
+
+    // Get unread task runs for this user in this team
+    const unreadRuns = await ctx.db
+      .query("unreadTaskRuns")
+      .withIndex("by_team_user", (q) =>
+        q.eq("teamId", teamId).eq("userId", userId),
+      )
+      .collect();
+
+    const tasksWithUnread = new Set(
+      unreadRuns
+        .map((ur) => ur.taskId)
+        .filter((id): id is Id<"tasks"> => id !== undefined),
+    );
+
+    const nextCursor =
+      hasMore && tasks.length > 0
+        ? (tasks[tasks.length - 1].createdAt ?? null)
+        : null;
+
+    return {
+      tasks: tasks.map((task) => ({
+        ...task,
+        hasUnread: tasksWithUnread.has(task._id),
+      })),
+      nextCursor,
+      hasMore,
+    };
+  },
+});
+
 // Get tasks sorted by most recent activity (iMessage-style):
 // - Sorted by lastActivityAt desc (most recently active first)
 // - lastActivityAt is updated when a run is started OR notification is received
