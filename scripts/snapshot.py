@@ -2613,6 +2613,7 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
     set_ide_provider(args.ide_provider)
 
     console = Console()
+    console.quiet = bool(os.environ.get("CLAUDECODE"))
     client = MorphCloudClient()
     started_instances: list[Instance] = []
     manifest = _load_manifest(console)
