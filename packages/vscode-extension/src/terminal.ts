@@ -1285,3 +1285,72 @@ export function createQueuedTerminals(): void {
     cmuxTerminal.terminal.show(false); // false = take focus
   }
 }
+
+/**
+ * Wait for cmux-pty to be available (connected and synced).
+ * Returns true if cmux-pty is available, false if connection failed or timed out.
+ */
+export async function waitForCmuxPtyAvailable(timeoutMs: number = 5000): Promise<boolean> {
+  if (!terminalManager) return false;
+
+  try {
+    await Promise.race([
+      terminalManager.waitForInitialSync(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Initial sync timeout')), timeoutMs)
+      )
+    ]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Create a new terminal via cmux-pty.
+ * Returns the created terminal or null if creation failed.
+ */
+export async function createCmuxPtyTerminal(name: string, location: vscode.TerminalLocation = vscode.TerminalLocation.Editor): Promise<vscode.Terminal | null> {
+  if (!terminalManager) return null;
+
+  const config = getConfig();
+  const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '/root/workspace';
+
+  try {
+    // Create PTY via HTTP with the specified name
+    const response = await fetch(`${config.serverUrl}/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shell: config.defaultShell,
+        cwd: cwd,
+        name: name,
+        metadata: { location: location === vscode.TerminalLocation.Editor ? 'editor' : 'panel', managed: true },
+      }),
+    });
+
+    if (!response.ok) {
+      console.error('[cmux] Failed to create PTY:', response.statusText);
+      return null;
+    }
+
+    const data = await response.json() as TerminalInfo;
+    console.log('[cmux] Created PTY:', data.id, data.name);
+
+    // Create pseudoterminal for this PTY
+    const pty = new CmuxPseudoterminal(config.serverUrl, data.id);
+
+    // Create VS Code terminal with the PTY
+    const terminal = vscode.window.createTerminal({
+      name: data.name,
+      pty: pty,
+      location: location,
+    });
+
+    terminal.show();
+    return terminal;
+  } catch (err) {
+    console.error('[cmux] Error creating PTY terminal:', err);
+    return null;
+  }
+}
