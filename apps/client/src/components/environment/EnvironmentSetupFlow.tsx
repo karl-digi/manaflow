@@ -100,6 +100,16 @@ export function EnvironmentSetupFlow({
 
   // Track when scripts have been triggered to prevent re-triggering
   const scriptsTriggeredRef = useRef(false);
+  // Track the instanceId we triggered scripts for, so we reset when it changes
+  const scriptsTriggeredForInstanceRef = useRef<string | undefined>(undefined);
+
+  // Reset script trigger state when instanceId changes (new VM provisioned)
+  useEffect(() => {
+    if (instanceId !== scriptsTriggeredForInstanceRef.current) {
+      scriptsTriggeredRef.current = false;
+      scriptsTriggeredForInstanceRef.current = instanceId;
+    }
+  }, [instanceId]);
 
   useEffect(() => {
     if (selectedRepos.length === 0) return;
