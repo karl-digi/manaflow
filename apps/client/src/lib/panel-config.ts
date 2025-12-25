@@ -191,6 +191,44 @@ export function removePanelFromAllPositions(config: PanelConfig, panelType: Pane
 export type PanelPosition = "topLeft" | "topRight" | "bottomLeft" | "bottomRight";
 
 /**
+ * Ensures the terminal panel is visible in the current layout.
+ * If terminal is already visible, returns unchanged config.
+ * If there's an empty slot, adds terminal there.
+ * If all slots are full, switches to 4-panel layout to make room for terminal.
+ */
+export function ensureTerminalPanelVisible(config: PanelConfig): PanelConfig {
+  const currentLayout = getCurrentLayoutPanels(config);
+  const activePositions = getActivePanelPositions(config.layoutMode);
+
+  // Check if terminal is already in an active position
+  for (const pos of activePositions) {
+    if (currentLayout[pos] === "terminal") {
+      return config; // Already visible, no change
+    }
+  }
+
+  // Find first empty active position to add terminal
+  for (const pos of activePositions) {
+    if (currentLayout[pos] === null) {
+      return {
+        ...config,
+        layouts: {
+          ...config.layouts,
+          [config.layoutMode]: {
+            ...currentLayout,
+            [pos]: "terminal",
+          },
+        },
+      };
+    }
+  }
+
+  // All active positions filled - don't change layout, return unchanged
+  // User can manually add terminal panel if needed
+  return config;
+}
+
+/**
  * Returns which panel positions are visible for the given layout mode
  */
 export function getActivePanelPositions(layoutMode: LayoutMode): PanelPosition[] {

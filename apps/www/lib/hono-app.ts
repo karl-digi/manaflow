@@ -47,6 +47,11 @@ const clientPreviewOrigin = clientPreviewOriginRaw
   ? normalizeOrigin(clientPreviewOriginRaw)
   : undefined;
 
+// Additional client origins from env (for custom domains like karldigi.dev)
+// Supports comma-separated values: NEXT_PUBLIC_CLIENT_ORIGIN=https://a.com,https://b.com
+const additionalClientOrigins =
+  process.env.NEXT_PUBLIC_CLIENT_ORIGIN?.split(",").map((s) => s.trim()).filter(Boolean) ?? [];
+
 const app = new OpenAPIHono({
   defaultHook: (result, c) => {
     if (!result.success) {
@@ -86,6 +91,7 @@ app.use(
       "https://cmux.sh",
       "https://www.cmux.sh",
       ...(clientPreviewOrigin ? [clientPreviewOrigin] : []),
+      ...additionalClientOrigins,
     ],
     credentials: true,
     allowHeaders: ["x-stack-auth", "content-type", "authorization"],

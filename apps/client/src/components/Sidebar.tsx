@@ -311,9 +311,9 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
               ) : tasks && tasks.length > 0 ? (
                 <>
                   {/* Pinned items at the top */}
-                  {pinnedData && pinnedData.length > 0 && (
+                  {pinnedData && pinnedData.filter(t => !t.isArchived).length > 0 && (
                     <>
-                      {pinnedData.map((task) => (
+                      {pinnedData.filter(t => !t.isArchived).map((task) => (
                         <TaskTree
                           key={task._id}
                           task={task}
@@ -331,8 +331,9 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
                   {/* Regular (non-pinned) tasks */}
                   {tasks
                     .filter((task) => {
-                      // Only filter out directly pinned tasks
-                      return !task.pinned;
+                      // Filter out pinned tasks (shown separately above) and archived tasks
+                      // (defensive filter in case query returns stale data)
+                      return !task.pinned && !task.isArchived;
                     })
                     .map((task) => (
                       <TaskTree

@@ -16,10 +16,12 @@ import {
   getActivePanelPositions,
   removePanelFromAllPositions,
   getCurrentLayoutPanels,
+  ensureTerminalPanelVisible,
   PANEL_LABELS,
 } from "@/lib/panel-config";
 import type { PanelConfig, PanelType, PanelPosition } from "@/lib/panel-config";
 import {
+  cleanupTaskRunIframes,
   getTaskRunBrowserPersistKey,
   getTaskRunPersistKey,
 } from "@/lib/persistent-webview-keys";
@@ -44,6 +46,7 @@ import { api } from "@cmux/convex/api";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { convexQuery } from "@convex-dev/react-query";
 import { useQuery } from "convex/react";
+import { useQuery as useTanstackQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -107,12 +110,32 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
     });
 
     void (async () => {
-      const taskRuns = await queryClient.ensureQueryData(
-        convexQuery(api.taskRuns.getByTask, {
-          teamSlugOrId: opts.params.teamSlugOrId,
-          taskId: opts.params.taskId,
-        })
-      );
+      // Invalidate stale cache data before preloading iframes.
+      // This ensures we fetch fresh data from Convex instead of using
+      // potentially stale cached data from previous navigations.
+      const taskQueryOptions = convexQuery(api.tasks.getById, {
+        teamSlugOrId: opts.params.teamSlugOrId,
+        id: opts.params.taskId,
+      });
+      const taskRunsQueryOptions = convexQuery(api.taskRuns.getByTask, {
+        teamSlugOrId: opts.params.teamSlugOrId,
+        taskId: opts.params.taskId,
+      });
+
+      // Fetch task and task runs in parallel
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: taskQueryOptions.queryKey }),
+        queryClient.invalidateQueries({ queryKey: taskRunsQueryOptions.queryKey }),
+      ]);
+      const [task, taskRuns] = await Promise.all([
+        queryClient.fetchQuery(taskQueryOptions),
+        queryClient.fetchQuery(taskRunsQueryOptions),
+      ]);
+
+      // Don't preload iframes for archived tasks - prevents Wake on HTTP from resuming paused VMs
+      if (task?.isArchived) {
+        return;
+      }
 
       if (!taskRuns?.length) {
         return;
@@ -484,6 +507,9 @@ function TaskDetailPage() {
   }, [selectedRunId]);
   const headerTaskRunId = selectedRunId ?? taskRuns?.[0]?._id ?? null;
 
+  // Check if task is archived - if so, disable all HTTP requests to VM to prevent Wake on HTTP
+  const isTaskArchived = task?.isArchived === true;
+
   const rawWorkspaceUrl = selectedRun?.vscode?.workspaceUrl ?? null;
   const workspaceUrl = getWorkspaceUrl(
     rawWorkspaceUrl,
@@ -495,6 +521,8 @@ function TaskDetailPage() {
     : null;
 
   useEffect(() => {
+    // Don't preload iframes for archived tasks - prevents Wake on HTTP
+    if (isTaskArchived) return;
     if (selectedRunId && workspaceUrl) {
       void preloadTaskRunIframes([
         {
@@ -503,7 +531,83 @@ function TaskDetailPage() {
         },
       ]);
     }
-  }, [selectedRunId, workspaceUrl]);
+  }, [selectedRunId, workspaceUrl, isTaskArchived]);
+
+  // Clean up cached iframes when task becomes archived - prevents Wake on HTTP
+  // This handles the reactive case when task.isArchived changes via Convex real-time updates
+  useEffect(() => {
+    if (!isTaskArchived || !taskRuns?.length) return;
+
+    // Clean up iframes for all runs in this task
+    const cleanupAllRuns = (
+      runs: TaskRunListItem[]
+    ): void => {
+      for (const run of runs) {
+        cleanupTaskRunIframes(run._id);
+        if (run.children?.length) {
+          cleanupAllRuns(run.children);
+        }
+      }
+    };
+
+    cleanupAllRuns(taskRuns);
+  }, [isTaskArchived, taskRuns]);
+
+  // Track if we've already attempted terminal auto-add (prevent re-adding after user closes)
+  const hasAttemptedTerminalAutoAdd = useRef(false);
+
+  // Query terminal sessions to detect if Claude Code is running
+  // Disable for archived tasks to prevent Wake on HTTP (the query has refetchInterval: 10_000)
+  const xtermBaseUrl = useMemo(
+    () => (rawWorkspaceUrl && !isTaskArchived ? toMorphXtermBaseUrl(rawWorkspaceUrl) : null),
+    [rawWorkspaceUrl, isTaskArchived]
+  );
+  const terminalTabsQuery = useTanstackQuery(
+    terminalTabsQueryOptions({
+      baseUrl: xtermBaseUrl,
+      contextKey: selectedRunId,
+      // Disable query entirely for archived tasks - prevents Wake on HTTP from polling
+      enabled: Boolean(xtermBaseUrl) && !isTaskArchived,
+    })
+  );
+
+  // Auto-show terminal panel when sessions exist (only once per mount)
+  useEffect(() => {
+    // Only attempt once per run (don't re-add if user closes panel)
+    if (hasAttemptedTerminalAutoAdd.current) return;
+
+    // Wait for query to complete
+    if (terminalTabsQuery.isLoading || terminalTabsQuery.isError) return;
+
+    // Check if sessions exist
+    const hasTerminalSessions =
+      terminalTabsQuery.data && terminalTabsQuery.data.length > 0;
+    if (!hasTerminalSessions) return;
+
+    // Mark as attempted
+    hasAttemptedTerminalAutoAdd.current = true;
+
+    setPanelConfig((prev) => {
+      const updated = ensureTerminalPanelVisible(prev);
+      if (updated !== prev) {
+        // Config changed - save and trigger resize
+        savePanelConfig(updated);
+        requestAnimationFrame(() => {
+          window.dispatchEvent(new Event("resize"));
+        });
+      }
+      return updated;
+    });
+  }, [
+    terminalTabsQuery.data,
+    terminalTabsQuery.isLoading,
+    terminalTabsQuery.isError,
+  ]);
+
+  // Reset auto-add flag when run changes (new run = new attempt allowed)
+  useEffect(() => {
+    hasAttemptedTerminalAutoAdd.current = false;
+  }, [selectedRunId]);
 
   const updateIframeStatus = useCallback(
     (
@@ -611,6 +715,13 @@ function TaskDetailPage() {
     Boolean(selectedRun) && (!hasBrowserView || browserStatus !== "loaded");
 
   const workspacePlaceholder = useMemo(() => {
+    // Show archived message for archived tasks
+    if (isTaskArchived) {
+      return {
+        title: "Task is archived",
+        description: "Unarchive this task to access the workspace.",
+      };
+    }
     if (!taskRuns?.length) {
       return {
         title: "Workspace becomes available once a run starts.",
@@ -619,9 +730,16 @@ function TaskDetailPage() {
     }
 
     return null;
-  }, [taskRuns?.length]);
+  }, [taskRuns?.length, isTaskArchived]);
 
   const browserPlaceholder = useMemo(() => {
+    // Show archived message for archived tasks
+    if (isTaskArchived) {
+      return {
+        title: "Task is archived",
+        description: "Unarchive this task to access the browser preview.",
+      };
+    }
     if (!selectedRun) {
       if (taskRuns?.length) {
         return {
@@ -637,7 +755,7 @@ function TaskDetailPage() {
       description:
         "Start a cloud workspace run to expose a live browser session.",
     };
-  }, [selectedRun, taskRuns?.length]);
+  }, [selectedRun, taskRuns?.length, isTaskArchived]);
 
   // Determine if this is a workspace-only task (local or cloud workspace)
   const isWorkspaceOnlyTask = task?.isLocalWorkspace || task?.isCloudWorkspace;
@@ -684,8 +802,9 @@ function TaskDetailPage() {
       task: task ?? null,
       taskRuns: taskRuns ?? null,
       crownEvaluation,
-      workspaceUrl,
-      workspacePersistKey,
+      // For archived tasks, pass null URLs to prevent iframe loading (Wake on HTTP)
+      workspaceUrl: isTaskArchived ? null : workspaceUrl,
+      workspacePersistKey: isTaskArchived ? null : workspacePersistKey,
       selectedRun: selectedRun ?? null,
       editorStatus,
       setEditorStatus: handleWorkspaceStatusChange,
@@ -695,9 +814,10 @@ function TaskDetailPage() {
       editorErrorFallback,
       isEditorBusy,
       workspacePlaceholder,
-      rawWorkspaceUrl,
-      browserUrl,
-      browserPersistKey,
+      // For archived tasks, pass null URLs to prevent iframe loading (Wake on HTTP)
+      rawWorkspaceUrl: isTaskArchived ? null : rawWorkspaceUrl,
+      browserUrl: isTaskArchived ? null : browserUrl,
+      browserPersistKey: isTaskArchived ? null : browserPersistKey,
       browserStatus,
       setBrowserStatus: handleBrowserStatusChange,
       browserPlaceholder,
@@ -740,6 +860,7 @@ function TaskDetailPage() {
       handlePanelClose,
       teamSlugOrId,
       taskId,
+      isTaskArchived,
     ]
   );
 

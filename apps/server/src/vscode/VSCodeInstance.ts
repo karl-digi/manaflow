@@ -248,6 +248,28 @@ export abstract class VSCodeInstance extends EventEmitter {
     }
   }
 
+  /**
+   * Reconnect to worker at a new URL. Used when container restarts with new ports.
+   */
+  async reconnectToWorker(workerUrl: string): Promise<void> {
+    dockerLogger.info(
+      `[VSCodeInstance ${this.instanceId}] Reconnecting to worker at ${workerUrl}`
+    );
+    await this.disconnectFromWorker();
+    try {
+      await this.connectToWorker(workerUrl);
+      dockerLogger.info(
+        `[VSCodeInstance ${this.instanceId}] Successfully reconnected to worker`
+      );
+    } catch (error) {
+      dockerLogger.error(
+        `[VSCodeInstance ${this.instanceId}] Failed to reconnect to worker:`,
+        error
+      );
+      // Don't throw - let the instance continue even if worker reconnect fails
+    }
+  }
+
   // Override stop to also remove from registry
   protected async baseStop(): Promise<void> {
     // Stop file watching before disconnecting

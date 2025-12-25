@@ -279,7 +279,24 @@ async function setupDefaultTerminal() {
     return;
   }
 
-  // If any meaningful editors exist (not just system/onboarding tabs), don't do anything
+  isSetupComplete = true; // Set this BEFORE creating UI elements to prevent race conditions
+
+  // Check if we already have a cmux terminal open
+  const existingCmuxTerminal = vscode.window.terminals.find(
+    (t) => t.name === "cmux"
+  );
+  if (existingCmuxTerminal) {
+    log("cmux terminal already exists, showing it");
+    existingCmuxTerminal.show();
+    // Still set up the multi-diff editor
+    await Promise.all([
+      vscode.commands.executeCommand("workbench.view.scm"),
+      openMultiDiffEditor(),
+    ]);
+    return;
+  }
+
+  // If any meaningful editors exist (not just system/onboarding tabs), still create terminal but skip full setup
   const isSystemTab = (label: string | undefined): boolean => {
     if (!label) return false;
     // Exact matches for known system tabs
@@ -290,12 +307,10 @@ async function setupDefaultTerminal() {
   };
   const tabs = vscode.window.tabGroups.all.flatMap((g) => g.tabs);
   const meaningfulTabs = tabs.filter((tab) => !isSystemTab(tab.label));
-  if (meaningfulTabs.length > 0) {
-    log(`Found ${meaningfulTabs.length} existing tab(s), skipping setup`);
-    return;
+  const hasExistingTabs = meaningfulTabs.length > 0;
+  if (hasExistingTabs) {
+    log(`Found ${meaningfulTabs.length} existing tab(s), will still ensure cmux terminal exists`);
   }
-
-  isSetupComplete = true; // Set this BEFORE creating UI elements to prevent race conditions
 
   // Check if cmux-pty is managing the "cmux" terminal
   // This happens when the worker creates PTY sessions instead of tmux

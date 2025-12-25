@@ -682,7 +682,8 @@ fn refs_diff_numstat_matches_known_pairs() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_root = find_git_root(manifest_dir);
     // Proactively fetch to make sure remote-only commits are present locally
-    run(&repo_root, "git fetch --all --tags --prune");
+    // Use --force to handle tag conflicts between remotes (e.g., fork vs upstream)
+    run(&repo_root, "git fetch --all --tags --prune --force");
 
     let cases = vec![
         (

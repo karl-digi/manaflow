@@ -2,7 +2,7 @@ import { CmuxIpcSocketClient } from "@/lib/cmux-ipc-socket-client";
 import { type MainServerSocket } from "@cmux/shared/socket";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "@tanstack/react-router";
-import React, { useEffect, useMemo } from "react";
+import React, { useEffect, useMemo, useRef } from "react";
 import { cachedGetUser } from "../../lib/cachedGetUser";
 import { stackClientApp } from "../../lib/stack";
 import { authJsonQueryOptions } from "../convex/authJsonQueryOptions";
@@ -22,6 +22,8 @@ export const ElectronSocketProvider: React.FC<React.PropsWithChildren> = ({
   const [isConnected, setIsConnected] = React.useState(false);
   const [availableEditors, setAvailableEditors] =
     React.useState<SocketContextType["availableEditors"]>(null);
+  const socketRef = useRef<CmuxIpcSocketClient | null>(null);
+  const lastAuthTokenRef = useRef<string | null>(null);
   const teamSlugOrId = React.useMemo(() => {
     const pathname = location.pathname || "";
     const seg = pathname.split("/").filter(Boolean)[0];
@@ -29,14 +31,58 @@ export const ElectronSocketProvider: React.FC<React.PropsWithChildren> = ({
     return seg;
   }, [location.pathname]);
 
+  // Effect to update auth token on existing socket without reconnecting
+  useEffect(() => {
+    if (!authToken || !socketRef.current) return;
+    if (lastAuthTokenRef.current === authToken) return;
+
+    const prevToken = lastAuthTokenRef.current;
+    lastAuthTokenRef.current = authToken;
+
+    // If we had a previous token, this is a refresh - update via authenticate event
+    if (prevToken && socketRef.current.connected) {
+      console.log("[ElectronSocket] Auth token refreshed, updating server...");
+      (async () => {
+        const user = await cachedGetUser(stackClientApp);
+        const authJson = user ? await user.getAuthJson() : undefined;
+        socketRef.current?.emit(
+          "authenticate",
+          {
+            authToken,
+            authJson: authJson ? JSON.stringify(authJson) : undefined,
+          },
+          (response: { ok: boolean; error?: string }) => {
+            if (response?.ok) {
+              console.log("[ElectronSocket] Auth token updated successfully");
+            } else {
+              console.error(
+                "[ElectronSocket] Failed to update auth token:",
+                response?.error
+              );
+            }
+          }
+        );
+      })();
+    }
+  }, [authToken]);
+
+  // Track whether we have ever connected, to know if we need to establish initial connection
+  const hasConnectedRef = useRef(false);
+
+  // Effect to establish initial socket connection (only on teamSlugOrId change or initial mount)
   useEffect(() => {
     if (!authToken) {
       console.warn("[ElectronSocket] No auth token yet; delaying connect");
       return;
     }
 
+    // If socket already exists and team hasn't changed, skip reconnection
+    // (token refresh is handled by the separate effect above)
+    if (socketRef.current && hasConnectedRef.current) {
+      return;
+    }
+
     let disposed = false;
-    let createdSocket: CmuxIpcSocketClient | null = null;
 
     (async () => {
       const user = await cachedGetUser(stackClientApp);
@@ -53,7 +99,10 @@ export const ElectronSocketProvider: React.FC<React.PropsWithChildren> = ({
       if (disposed) return;
 
       console.log("[ElectronSocket] Connecting via IPC (cmux)...");
-      createdSocket = new CmuxIpcSocketClient(query);
+      const createdSocket = new CmuxIpcSocketClient(query);
+      socketRef.current = createdSocket;
+      lastAuthTokenRef.current = authToken;
+      hasConnectedRef.current = true;
 
       createdSocket.on("connect", () => {
         if (disposed) return;
@@ -89,9 +138,12 @@ export const ElectronSocketProvider: React.FC<React.PropsWithChildren> = ({
 
     return () => {
       disposed = true;
-      if (createdSocket) {
+      if (socketRef.current) {
         console.log("[ElectronSocket] Cleaning up IPC socket");
-        createdSocket.disconnect();
+        socketRef.current.disconnect();
+        socketRef.current = null;
+        lastAuthTokenRef.current = null;
+        hasConnectedRef.current = false;
         setSocket(null);
         setIsConnected(false);
       }

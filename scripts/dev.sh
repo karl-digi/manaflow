@@ -11,6 +11,7 @@
 #   --skip-convex[=BOOL]    Skip Convex backend (default: true)
 #   --show-compose-logs     Show Docker Compose logs in console
 #   --electron              Start Electron app
+#   --electron-debug[=PORT] Enable Chrome DevTools remote debugging (default port: 9222)
 #   --convex-agent          Run convex dev in agent mode
 #
 # Environment variables:
@@ -61,6 +62,8 @@ SHOW_COMPOSE_LOGS=false
 # Default to skipping Convex unless explicitly disabled via env/flag
 SKIP_CONVEX="${SKIP_CONVEX:-true}"
 RUN_ELECTRON=false
+ELECTRON_DEBUG=false
+ELECTRON_DEBUG_PORT=9222
 SKIP_DOCKER_BUILD="${SKIP_DOCKER_BUILD:-true}"
 CONVEX_AGENT_MODE=false
 
@@ -80,6 +83,27 @@ while [[ $# -gt 0 ]]; do
             ;;
         --electron)
             RUN_ELECTRON=true
+            shift
+            ;;
+        --electron-debug)
+            ELECTRON_DEBUG=true
+            # Check if next arg is a port number
+            if [[ -n "${2:-}" && "${2}" =~ ^[0-9]+$ ]]; then
+                ELECTRON_DEBUG_PORT="$2"
+                shift 2
+            else
+                shift
+            fi
+            ;;
+        --electron-debug=*)
+            ELECTRON_DEBUG=true
+            val="${1#*=}"
+            if [[ "$val" =~ ^[0-9]+$ ]]; then
+                ELECTRON_DEBUG_PORT="$val"
+            else
+                echo "Invalid port for --electron-debug: $val. Use a number." >&2
+                exit 1
+            fi
             shift
             ;;
         --skip-convex)
@@ -342,7 +366,19 @@ wait_for_log_message() {
 
 # Start Convex backend (different for devcontainer vs host)
 if [ "$SKIP_CONVEX" = "true" ]; then
-    echo -e "${YELLOW}Skipping Convex (SKIP_CONVEX=true)${NC}"
+    echo -e "${YELLOW}Skipping local Convex backend (SKIP_CONVEX=true)${NC}"
+
+    # Check if using Convex Cloud (CONVEX_DEPLOY_KEY is set)
+    # If so, we still need to initialize env vars on the cloud backend
+    if grep -q "^CONVEX_DEPLOY_KEY=" "$APP_DIR/.env" 2>/dev/null; then
+        echo -e "${BLUE}Detected CONVEX_DEPLOY_KEY, initializing Convex Cloud env vars...${NC}"
+        if ! "$APP_DIR/scripts/setup-convex-env.sh"; then
+            echo -e "${RED}Failed to initialize Convex Cloud environment variables${NC}"
+            echo -e "${YELLOW}Hint: Make sure .env file has valid CONVEX_DEPLOY_KEY${NC}"
+            exit 1
+        fi
+        echo -e "${GREEN}Convex Cloud environment variables initialized${NC}"
+    fi
 else
     if [ "$IS_DEVCONTAINER" = "true" ]; then
         # In devcontainer, Convex is already running as part of docker-compose
@@ -359,6 +395,19 @@ else
           }') &
         DOCKER_COMPOSE_PID=$!
         check_process $DOCKER_COMPOSE_PID "Docker Compose"
+
+        # Initialize Convex environment variables (required for fresh start)
+        # setup-convex-env.sh waits for the backend to be ready before setting env vars
+        echo -e "${BLUE}Initializing Convex environment variables...${NC}"
+        if ! "$APP_DIR/scripts/setup-convex-env.sh"; then
+            echo -e "${RED}Failed to initialize Convex environment variables${NC}"
+            echo -e "${YELLOW}Hint: Make sure .env file exists with required variables:${NC}"
+            echo -e "${YELLOW}  - STACK_WEBHOOK_SECRET${NC}"
+            echo -e "${YELLOW}  - BASE_APP_URL${NC}"
+            echo -e "${YELLOW}  - CMUX_TASK_RUN_JWT_SECRET${NC}"
+            exit 1
+        fi
+        echo -e "${GREEN}Convex environment variables initialized${NC}"
     fi
 fi
 
@@ -425,8 +474,14 @@ wait_for_log_message "$OPENAPI_LOG_FILE" "$OPENAPI_READY_MARKER" "$OPENAPI_CLIEN
 
 # Start Electron if requested
 if [ "$RUN_ELECTRON" = "true" ]; then
-    echo -e "${GREEN}Starting Electron app...${NC}"
-    (cd "$APP_DIR/apps/client" && exec bash -c 'trap "kill -9 0" EXIT; bunx dotenv-cli -e ../../.env -- pnpm dev:electron 2>&1 | tee "$LOG_DIR/electron.log" | prefix_output "ELECTRON" "$RED"') &
+    if [ "$ELECTRON_DEBUG" = "true" ]; then
+        echo -e "${GREEN}Starting Electron app with remote debugging on port $ELECTRON_DEBUG_PORT...${NC}"
+        export ELECTRON_DEBUG_PORT
+        (cd "$APP_DIR/apps/client" && exec bash -c 'trap "kill -9 0" EXIT; bunx dotenv-cli -e ../../.env -- pnpm dev:electron -- --remote-debugging-port='"$ELECTRON_DEBUG_PORT"' 2>&1 | tee "$LOG_DIR/electron.log" | prefix_output "ELECTRON" "$RED"') &
+    else
+        echo -e "${GREEN}Starting Electron app...${NC}"
+        (cd "$APP_DIR/apps/client" && exec bash -c 'trap "kill -9 0" EXIT; bunx dotenv-cli -e ../../.env -- pnpm dev:electron 2>&1 | tee "$LOG_DIR/electron.log" | prefix_output "ELECTRON" "$RED"') &
+    fi
     ELECTRON_PID=$!
     check_process $ELECTRON_PID "Electron App"
 fi
@@ -440,6 +495,9 @@ if [ "$SKIP_CONVEX" != "true" ]; then
 fi
 if [ "$RUN_ELECTRON" = "true" ]; then
     echo -e "${BLUE}Electron app is starting...${NC}"
+    if [ "$ELECTRON_DEBUG" = "true" ]; then
+        echo -e "${BLUE}Chrome DevTools: chrome://inspect or http://localhost:$ELECTRON_DEBUG_PORT${NC}"
+    fi
 fi
 echo -e "\nPress Ctrl+C to stop all services"
 

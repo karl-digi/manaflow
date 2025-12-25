@@ -3,6 +3,7 @@ import {
   getUserFromRequest,
 } from "@/lib/utils/auth";
 import { getConvex } from "@/lib/utils/get-convex";
+import { generateGitHubInstallationToken } from "@/lib/utils/github-app-token";
 import { selectGitIdentity } from "@/lib/utils/gitIdentity";
 import { stackServerAppJs } from "@/lib/utils/stack";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
@@ -31,7 +32,6 @@ import {
   encodeEnvContentForEnvctl,
   envctlLoadCommand,
 } from "./utils/ensure-env-vars";
-import { VM_CLEANUP_COMMANDS } from "./sandboxes/cleanup";
 
 /**
  * Wait for the VSCode server to be ready by polling the service URL.
@@ -543,8 +543,50 @@ sandboxesRouter.openapi(
         return c.text("Failed to resolve GitHub credentials", 401);
       }
 
-      // Sandboxes run as the requesting user, so prefer their OAuth scope over GitHub App installation tokens.
-      await configureGithubAccess(instance, githubAccessToken);
+      // Try to use GitHub App installation token for better permission scope.
+      // The user's OAuth token from Stack Auth may not have 'repo' scope needed for private repos.
+      let gitAuthToken = githubAccessToken;
+      if (parsedRepoUrl) {
+        try {
+          // Look up GitHub App installation for the repo's owner
+          const connections = await convex.query(api.github.listProviderConnections, {
+            teamSlugOrId: body.teamSlugOrId,
+          });
+          const targetConnection = connections.find(
+            (co) =>
+              co.isActive &&
+              co.accountLogin?.toLowerCase() === parsedRepoUrl.owner.toLowerCase()
+          );
+          if (targetConnection) {
+            console.log(
+              `[sandboxes.start] Found GitHub App installation ${targetConnection.installationId} for ${parsedRepoUrl.owner}`
+            );
+            const appToken = await generateGitHubInstallationToken({
+              installationId: targetConnection.installationId,
+              repositories: [parsedRepoUrl.fullName],
+              permissions: {
+                contents: "write",
+                metadata: "read",
+              },
+            });
+            gitAuthToken = appToken;
+            console.log(
+              `[sandboxes.start] Using GitHub App token for git authentication`
+            );
+          } else {
+            console.log(
+              `[sandboxes.start] No GitHub App installation found for ${parsedRepoUrl.owner}, using user OAuth token`
+            );
+          }
+        } catch (error) {
+          console.error(
+            `[sandboxes.start] Failed to get GitHub App token, falling back to user OAuth:`,
+            error
+          );
+        }
+      }
+
+      await configureGithubAccess(instance, gitAuthToken);
 
       let repoConfig: HydrateRepoConfig | undefined;
       if (body.repoUrl) {
@@ -750,8 +792,8 @@ sandboxesRouter.openapi(
     try {
       const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
       const instance = await client.instances.get({ instanceId: id });
-      // Kill all dev servers and user processes before pausing to avoid port conflicts on resume
-      await instance.exec(VM_CLEANUP_COMMANDS);
+      // Pause the VM directly - Morph preserves RAM state so processes resume exactly where they left off.
+      // No need to kill processes; doing so would terminate agent sessions that should persist across pause/resume.
       await instance.pause();
       return c.body(null, 204);
     } catch (error) {
@@ -1355,6 +1397,9 @@ sandboxesRouter.openapi(
       }
 
       await instance.resume();
+
+      // Morph preserves RAM state on pause/resume, so all processes (including agent sessions)
+      // should resume exactly where they left off. No need to restart services.
 
       // Record the resume for activity tracking (used by cleanup cron)
       // Get teamSlugOrId from request or fall back to instance metadata

@@ -35,3 +35,16 @@ export const CREDENTIAL_CLEANUP_COMMANDS = [
  * Full cleanup commands for snapshotting (processes + credentials).
  */
 export const SNAPSHOT_CLEANUP_COMMANDS = `${VM_CLEANUP_COMMANDS} && ${CREDENTIAL_CLEANUP_COMMANDS}`;
+
+/**
+ * Commands to restart cmux services after a VM resume.
+ *
+ * When a VM is paused after running VM_CLEANUP_COMMANDS, the services
+ * (cmux-xterm, cmux-ide, etc.) are killed. On resume, systemd doesn't
+ * automatically restart them since the state was frozen. This command
+ * restarts the cmux target to bring all services back up.
+ */
+export const VM_RESTART_SERVICES_COMMANDS = [
+  // Restart the cmux target which includes all cmux services
+  "systemctl restart cmux.target",
+].join(" && ");

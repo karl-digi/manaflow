@@ -37,7 +37,7 @@ import * as path from "node:path";
 import { promisify } from "node:util";
 import z from "zod";
 import { spawnAllAgents } from "./agentSpawner";
-import { stopContainersForRuns } from "./archiveTask";
+import { resumeContainersForRuns, stopContainersForRuns } from "./archiveTask";
 import { execWithEnv } from "./execWithEnv";
 import { getGitDiff } from "./diffs/gitDiff";
 import { GitDiffManager } from "./gitDiff";
@@ -2434,14 +2434,7 @@ ${title}`;
       try {
         const { taskId } = ArchiveTaskSchema.parse(data);
 
-        // In web mode, skip Docker container operations (managed by cloud provider)
-        if (env.NEXT_PUBLIC_WEB_MODE) {
-          serverLogger.info(`Skipping container cleanup for task ${taskId} in web mode`);
-          callback({ success: true });
-          return;
-        }
-
-        // Stop/pause all containers via helper (handles querying + logging)
+        // Stop/pause all containers via helper (handles Docker and Morph instances)
         const results = await stopContainersForRuns(taskId, safeTeam);
 
         // Log summary
@@ -2461,6 +2454,37 @@ ${title}`;
         callback({ success: true });
       } catch (error) {
         serverLogger.error("Error archiving task:", error);
+        callback({
+          success: false,
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
+      }
+    });
+
+    socket.on("unarchive-task", async (data, callback) => {
+      try {
+        const { taskId } = ArchiveTaskSchema.parse(data);
+
+        // Resume all containers via helper (handles Docker and Morph instances)
+        const results = await resumeContainersForRuns(taskId, safeTeam);
+
+        // Log summary
+        const successful = results.filter((r) => r.success).length;
+        const failed = results.filter((r) => !r.success).length;
+
+        if (failed > 0) {
+          serverLogger.warn(
+            `Unarchived task ${taskId}: ${successful} containers resumed, ${failed} failed`
+          );
+        } else {
+          serverLogger.info(
+            `Successfully unarchived task ${taskId}: all ${successful} containers resumed`
+          );
+        }
+
+        callback({ success: true });
+      } catch (error) {
+        serverLogger.error("Error unarchiving task:", error);
         callback({
           success: false,
           error: error instanceof Error ? error.message : "Unknown error",

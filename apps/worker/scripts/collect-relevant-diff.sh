@@ -108,15 +108,19 @@ if [[ -n "$base_ref" ]]; then
     changed_tracked=$(git --no-pager diff --name-only "$merge_base" || true)
     untracked=$(git ls-files --others --exclude-standard || true)
     filtered_files=()
-    OIFS="$IFS"; IFS=$'\n'
+
+    OIFS="$IFS"; IFS=$'
+'
     for f in $changed_tracked; do
       [[ -n "$f" ]] || continue
       if is_ignored_path "$f"; then continue; fi
       size=0
       if [[ -f "$f" ]]; then
         size=$(wc -c <"$f" 2>/dev/null || echo 0)
+        size=$(echo "$size" | xargs) # Trim whitespace
       elif [[ -n "$merge_base" ]]; then
         size=$(git cat-file -s "$merge_base:$f" 2>/dev/null || echo 0)
+        size=$(echo "$size" | xargs) # Trim whitespace
       fi
       case "$size" in
         ''|*[!0-9]*) size=0 ;;
@@ -129,6 +133,7 @@ if [[ -n "$base_ref" ]]; then
       if is_ignored_path "$f"; then continue; fi
       if [[ -f "$f" ]]; then
         size=$(wc -c <"$f" 2>/dev/null || echo 0)
+        size=$(echo "$size" | xargs) # Trim whitespace
         case "$size" in
           ''|*[!0-9]*) size=0 ;;
         esac
@@ -159,15 +164,18 @@ if [[ -n "$base_ref" ]]; then
     # Everything is committed - compare HEAD against merge-base
     changed_files=$(git --no-pager diff --name-only "$merge_base" HEAD || true)
     filtered_files=()
-    OIFS="$IFS"; IFS=$'\n'
+    OIFS="$IFS"; IFS=$'
+'
     for f in $changed_files; do
       [[ -n "$f" ]] || continue
       if is_ignored_path "$f"; then continue; fi
       size=0
       if git cat-file -e "HEAD:$f" 2>/dev/null; then
         size=$(git cat-file -s "HEAD:$f" 2>/dev/null || echo 0)
+        size=$(echo "$size" | xargs) # Trim whitespace
       elif git cat-file -e "$merge_base:$f" 2>/dev/null; then
         size=$(git cat-file -s "$merge_base:$f" 2>/dev/null || echo 0)
+        size=$(echo "$size" | xargs) # Trim whitespace
       fi
       case "$size" in
         ''|*[!0-9]*) size=0 ;;
@@ -207,6 +215,7 @@ export GIT_INDEX_FILE="$tmp_index"
   if is_ignored_path "$f"; then continue; fi
   if [[ -f "$f" ]]; then
     size=$(wc -c <"$f" 2>/dev/null || echo 0)
+    size=$(echo "$size" | xargs) # Trim whitespace
     case "$size" in
       ''|*[!0-9]*) size=0 ;;
     esac

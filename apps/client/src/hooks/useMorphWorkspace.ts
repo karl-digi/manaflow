@@ -45,7 +45,7 @@ export function useMorphInstancePauseQuery({
   });
   const canResume = taskRun?.vscode?.provider === "morph";
   return useQuery({
-    enabled: canResume && enabled,
+    enabled: canResume && enabled !== false,
     queryKey: morphPauseQueryKey(taskRunId, teamSlugOrId),
     queryFn: async ({ signal }) => {
       const { data } = await postApiMorphTaskRunsByTaskRunIdIsPaused({

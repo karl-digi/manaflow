@@ -2,7 +2,7 @@ name: Daily Morph Snapshot
 
 on:
   schedule:
-    - cron: "0 18 * * *" # 10am PST / 11am PDT
+    - cron: "0 18 * * 0" # Every Sunday 10am PST / 11am PDT
   workflow_dispatch:
 
 concurrency:
@@ -41,6 +41,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
+          cache: false
 
       - name: Setup uv
         uses: astral-sh/setup-uv@v4
@@ -60,12 +61,26 @@ jobs:
       - name: Run morph snapshot (with retry)
         env:
           MORPH_API_KEY: ${{ secrets.MORPH_API_KEY }}
+          SNAPSHOT_ID: ${{ vars.MORPH_SNAPSHOT_ID || 'snapshot_yw1qulce' }}
+          STANDARD_VCPUS: ${{ vars.MORPH_STANDARD_VCPUS || '4' }}
+          STANDARD_MEMORY: ${{ vars.MORPH_STANDARD_MEMORY || '6144' }}
+          STANDARD_DISK_SIZE: ${{ vars.MORPH_STANDARD_DISK_SIZE || '20480' }}
+          BOOSTED_VCPUS: ${{ vars.MORPH_BOOSTED_VCPUS || '6' }}
+          BOOSTED_MEMORY: ${{ vars.MORPH_BOOSTED_MEMORY || '8192' }}
+          BOOSTED_DISK_SIZE: ${{ vars.MORPH_BOOSTED_DISK_SIZE || '40960' }}
         run: |
           max_attempts=3
           attempt=1
           while [ $attempt -le $max_attempts ]; do
             echo "Attempt $attempt of $max_attempts"
-            if uv run ./scripts/snapshot.py; then
+            if uv run ./scripts/snapshot.py \
+              --snapshot-id "$SNAPSHOT_ID" \
+              --standard-vcpus "$STANDARD_VCPUS" \
+              --standard-memory "$STANDARD_MEMORY" \
+              --standard-disk-size "$STANDARD_DISK_SIZE" \
+              --boosted-vcpus "$BOOSTED_VCPUS" \
+              --boosted-memory "$BOOSTED_MEMORY" \
+              --boosted-disk-size "$BOOSTED_DISK_SIZE"; then
               echo "Snapshot completed successfully"
               exit 0
             fi
@@ -79,36 +94,52 @@ jobs:
           echo "All $max_attempts attempts failed"
           exit 1
 
-      - name: Check for changes
-        id: changes
+      - name: Check for snapshot changes
+        id: snapshot_changes
         run: |
-          if git diff --quiet; then
-            echo "No changes detected"
+          if git diff --quiet configs/ide-deps.json packages/shared/src/morph-snapshots.json; then
+            echo "No snapshot changes detected"
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
           else
-            echo "Changes detected"
+            echo "Snapshot changes detected"
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Regenerate OpenAPI client and run checks
+        if: steps.snapshot_changes.outputs.has_changes == 'true'
+        env:
+          STACK_SECRET_SERVER_KEY: ${{ secrets.STACK_SECRET_SERVER_KEY }}
+          STACK_SUPER_SECRET_ADMIN_KEY: ${{ secrets.STACK_SUPER_SECRET_ADMIN_KEY }}
+          STACK_DATA_VAULT_SECRET: ${{ secrets.STACK_DATA_VAULT_SECRET }}
+          CMUX_GITHUB_APP_ID: ${{ secrets.CMUX_GITHUB_APP_ID }}
+          CMUX_GITHUB_APP_PRIVATE_KEY: ${{ secrets.CMUX_GITHUB_APP_PRIVATE_KEY }}
+          CMUX_TASK_RUN_JWT_SECRET: ${{ secrets.CMUX_TASK_RUN_JWT_SECRET }}
+          MORPH_API_KEY: ${{ secrets.MORPH_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NEXT_PUBLIC_STACK_PROJECT_ID: ${{ secrets.NEXT_PUBLIC_STACK_PROJECT_ID }}
+          NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY: ${{ secrets.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY }}
+          NEXT_PUBLIC_CONVEX_URL: ${{ secrets.NEXT_PUBLIC_CONVEX_URL }}
+        run: bun run check
+
       - name: Configure git user
-        if: steps.changes.outputs.has_changes == 'true'
+        if: steps.snapshot_changes.outputs.has_changes == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Create branch and commit
-        if: steps.changes.outputs.has_changes == 'true'
+        if: steps.snapshot_changes.outputs.has_changes == 'true'
         id: commit
         run: |
           BRANCH_NAME="morph-snapshot-$(date +%Y%m%d-%H%M%S)"
           git checkout -b "$BRANCH_NAME"
-          git add configs/ide-deps.json packages/shared/src/morph-snapshots.json
+          git add configs/ide-deps.json packages/shared/src/morph-snapshots.json packages/www-openapi-client/src/client/
           git commit -m "chore: daily morph snapshot update"
           git push -u origin "$BRANCH_NAME"
           echo "branch=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Create Pull Request
-        if: steps.changes.outputs.has_changes == 'true'
+        if: steps.snapshot_changes.outputs.has_changes == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -119,6 +150,7 @@ jobs:
           ## Changes
           - Updated morph snapshots to latest version
           - Updated IDE extension and CLI package versions
+          - Regenerated OpenAPI client types
 
           ## Test plan
           - [ ] Verify new snapshots work by starting a sandbox session" \

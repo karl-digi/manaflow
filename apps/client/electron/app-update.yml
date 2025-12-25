@@ -1,5 +1,5 @@
 provider: github
-owner: manaflow-ai
+owner: karlorz
 repo: cmux
 releaseType: release
 updaterCacheDirName: cmux-updater

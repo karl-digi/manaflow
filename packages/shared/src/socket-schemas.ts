@@ -570,6 +570,10 @@ export interface ClientToServerEvents {
     data: ArchiveTask,
     callback: (response: { success: boolean; error?: string }) => void
   ) => void;
+  "unarchive-task": (
+    data: ArchiveTask,
+    callback: (response: { success: boolean; error?: string }) => void
+  ) => void;
   "spawn-from-comment": (
     data: SpawnFromComment,
     callback: (response: {

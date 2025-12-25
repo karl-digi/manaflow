@@ -35,6 +35,89 @@ function pemToDer(pem: string): Uint8Array {
   return base64urlToBytes(base64Url);
 }
 
+/**
+ * Checks if the PEM is in PKCS#1 format (RSA PRIVATE KEY).
+ * GitHub generates private keys in PKCS#1 format by default.
+ */
+function isPkcs1Format(pem: string): boolean {
+  return pem.includes("-----BEGIN RSA PRIVATE KEY-----");
+}
+
+/**
+ * Encodes an ASN.1 length value.
+ * - If length < 128: single byte
+ * - If length < 256: 0x81 + 1 byte
+ * - Otherwise: 0x82 + 2 bytes (big-endian)
+ */
+function encodeAsn1Length(len: number): Uint8Array {
+  if (len < 128) {
+    return new Uint8Array([len]);
+  } else if (len < 256) {
+    return new Uint8Array([0x81, len]);
+  } else {
+    return new Uint8Array([0x82, (len >> 8) & 0xff, len & 0xff]);
+  }
+}
+
+/**
+ * Wraps PKCS#1 RSA private key DER bytes in PKCS#8 structure.
+ * Web Crypto API's importKey("pkcs8", ...) only accepts PKCS#8 format.
+ *
+ * PKCS#8 structure:
+ * SEQUENCE {
+ *   INTEGER 0 (version)
+ *   SEQUENCE { OID rsaEncryption, NULL } (AlgorithmIdentifier)
+ *   OCTET STRING { <PKCS#1 DER> } (privateKey)
+ * }
+ */
+function wrapPkcs1InPkcs8(pkcs1Der: Uint8Array): Uint8Array {
+  // rsaEncryption OID: 1.2.840.113549.1.1.1
+  const rsaOid = new Uint8Array([
+    0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01,
+  ]);
+  const nullBytes = new Uint8Array([0x05, 0x00]);
+
+  // Build AlgorithmIdentifier: SEQUENCE { OID, NULL }
+  const algoContent = new Uint8Array(rsaOid.length + nullBytes.length);
+  algoContent.set(rsaOid);
+  algoContent.set(nullBytes, rsaOid.length);
+  const algoLen = encodeAsn1Length(algoContent.length);
+  const algorithmIdentifier = new Uint8Array(
+    1 + algoLen.length + algoContent.length,
+  );
+  algorithmIdentifier[0] = 0x30; // SEQUENCE tag
+  algorithmIdentifier.set(algoLen, 1);
+  algorithmIdentifier.set(algoContent, 1 + algoLen.length);
+
+  // Build version: INTEGER 0
+  const version = new Uint8Array([0x02, 0x01, 0x00]);
+
+  // Build privateKey: OCTET STRING { PKCS#1 DER }
+  const pkcs1Len = encodeAsn1Length(pkcs1Der.length);
+  const privateKeyOctet = new Uint8Array(
+    1 + pkcs1Len.length + pkcs1Der.length,
+  );
+  privateKeyOctet[0] = 0x04; // OCTET STRING tag
+  privateKeyOctet.set(pkcs1Len, 1);
+  privateKeyOctet.set(pkcs1Der, 1 + pkcs1Len.length);
+
+  // Build outer SEQUENCE
+  const contentLength =
+    version.length + algorithmIdentifier.length + privateKeyOctet.length;
+  const outerLen = encodeAsn1Length(contentLength);
+  const pkcs8 = new Uint8Array(1 + outerLen.length + contentLength);
+  pkcs8[0] = 0x30; // SEQUENCE tag
+  pkcs8.set(outerLen, 1);
+  let offset = 1 + outerLen.length;
+  pkcs8.set(version, offset);
+  offset += version.length;
+  pkcs8.set(algorithmIdentifier, offset);
+  offset += algorithmIdentifier.length;
+  pkcs8.set(privateKeyOctet, offset);
+
+  return pkcs8;
+}
+
 function base64urlEncodeJson(value: unknown): string {
   return base64urlFromBytes(textEncoder.encode(JSON.stringify(value)));
 }
@@ -46,7 +129,16 @@ async function importPrivateKey(pem: string): Promise<CryptoKey> {
   if (!subtle) {
     throw new Error("SubtleCrypto is not available in this environment");
   }
-  const der = pemToDer(pem);
+
+  let der = pemToDer(pem);
+
+  // Convert PKCS#1 to PKCS#8 if needed.
+  // Web Crypto API only supports PKCS#8 format for importKey.
+  // GitHub generates private keys in PKCS#1 format by default.
+  if (isPkcs1Format(pem)) {
+    der = wrapPkcs1InPkcs8(der);
+  }
+
   const keyData =
     der.byteOffset === 0 && der.byteLength === der.buffer.byteLength
       ? der

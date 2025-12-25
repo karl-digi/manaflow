@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import atexit
+import io
 import json
 import os
 import shutil
@@ -532,6 +533,64 @@ def create_repo_archive(repo_root: Path) -> Path:
                 continue
             tar.add(full_path, arcname=str(rel_path))
     return tmp_path
+
+
+def _ensure_bootstrap_presets(
+    console: Console,
+    base_snapshot_id: str,
+    preset_plans: tuple[SnapshotPresetPlan, ...],
+) -> None:
+    """Ensure morph-snapshots.json has bootstrap presets if empty.
+
+    When the manifest has no presets, inject bootstrap entries using the base
+    snapshot ID. This allows the worker to load successfully during initial
+    snapshot builds. The manifest will be updated with real snapshot IDs after
+    the build completes.
+    """
+    if not MORPH_SNAPSHOT_MANIFEST_PATH.exists():
+        console.info("morph-snapshots.json not found; creating with bootstrap presets")
+        manifest_data: dict[str, t.Any] = {
+            "schemaVersion": CURRENT_MANIFEST_SCHEMA_VERSION,
+            "updatedAt": _iso_timestamp(),
+            "presets": [],
+        }
+    else:
+        try:
+            manifest_data = json.loads(MORPH_SNAPSHOT_MANIFEST_PATH.read_text())
+        except Exception as exc:
+            console.always(f"Warning: failed to read morph-snapshots.json: {exc}")
+            return
+
+    presets = manifest_data.get("presets", [])
+    if presets:
+        console.info("morph-snapshots.json already has presets; skipping bootstrap injection")
+        return
+
+    console.always(f"Injecting bootstrap presets with base snapshot {base_snapshot_id}")
+    now_iso = _iso_timestamp()
+    bootstrap_presets = []
+    for plan in preset_plans:
+        bootstrap_presets.append({
+            "presetId": plan.preset_id,
+            "label": plan.label,
+            "cpu": plan.cpu_display,
+            "memory": plan.memory_display,
+            "disk": plan.disk_display,
+            "versions": [
+                {
+                    "version": 1,
+                    "snapshotId": base_snapshot_id,
+                    "capturedAt": now_iso,
+                }
+            ],
+        })
+    manifest_data["presets"] = bootstrap_presets
+    manifest_data["updatedAt"] = now_iso
+
+    MORPH_SNAPSHOT_MANIFEST_PATH.write_text(
+        json.dumps(manifest_data, indent=2, sort_keys=False)
+    )
+    console.always(f"Updated {MORPH_SNAPSHOT_MANIFEST_PATH} with bootstrap presets")
 
 
 # ---------------------------------------------------------------------------
@@ -1140,20 +1199,24 @@ async def task_install_go_toolchain(ctx: TaskContext) -> None:
 
 @registry.task(
     name="install-uv-python",
-    deps=("apt-bootstrap",),
+    deps=("ensure-docker",),
     description="Install uv CLI and provision default Python runtime",
 )
 async def task_install_uv_python(ctx: TaskContext) -> None:
     cmd = textwrap.dedent(
         """
         set -eux
-        ARCH="$(uname -m)"
-        curl -LsSf https://astral.sh/uv/install.sh | sh
+        # Install python3-pip via apt (also installs python3)
+        DEBIAN_FRONTEND=noninteractive apt-get update
+        DEBIAN_FRONTEND=noninteractive apt-get install -y python3-pip
+        # Install uv from PyPI (more reliable than GitHub CDN)
+        python3 -m pip install --break-system-packages uv
         export PATH="${HOME}/.local/bin:/usr/local/cargo/bin:${PATH}"
         uv python install --default
         PIP_VERSION="$(curl -fsSL https://pypi.org/pypi/pip/json | jq -r '.info.version')"
         python3 -m pip install --break-system-packages --upgrade "pip==${PIP_VERSION}"
         ln -sf /usr/bin/python3 /usr/bin/python
+        rm -rf /var/lib/apt/lists/*
         """
     )
     await ctx.run("install-uv-python", cmd)
@@ -1465,6 +1528,8 @@ async def task_install_ide_extensions(ctx: TaskContext) -> None:
             mv "${{tmpfile}}" "${{destination}}"
           fi
         }}
+        # Disable errexit for the while loop to avoid envctl debug trap interference
+        set +e
         while IFS='|' read -r publisher name version; do
           [ -z "${{publisher}}" ] && continue
           download_extension "${{publisher}}" "${{name}}" "${{version}}" "${{download_dir}}/${{publisher}}.${{name}}.vsix" &
@@ -1472,6 +1537,7 @@ async def task_install_ide_extensions(ctx: TaskContext) -> None:
 {extensions_blob}
 EXTENSIONS
         wait
+        set -e
         set -- "${{download_dir}}"/*.vsix
         for vsix in "$@"; do
           if [ -f "${{vsix}}" ]; then
@@ -2647,6 +2713,7 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
                 f"bun run bump-ide-deps failed with exit code {bump_result.returncode}"
             )
     preset_plans = _build_preset_plans(args)
+    _ensure_bootstrap_presets(console, args.snapshot_id, preset_plans)
 
     console.always(
         "Starting snapshot runs for presets "

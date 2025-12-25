@@ -93,14 +93,35 @@ class HttpExecClient:
         command: Command,
         *,
         timeout: float | None,
+        max_retries: int = 3,
     ) -> InstanceExecResponse:
-        """Execute a command via the HTTP exec service."""
-        return await asyncio.to_thread(
-            self._run_sync,
-            label,
-            command,
-            timeout,
-        )
+        """Execute a command via the HTTP exec service with retry on transient errors."""
+        last_exc: Exception | None = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                return await asyncio.to_thread(
+                    self._run_sync,
+                    label,
+                    command,
+                    timeout,
+                )
+            except RuntimeError as exc:
+                # Check if this is a transient gateway error (502, 503, 504)
+                exc_str = str(exc)
+                if any(f"HTTP Error {code}" in exc_str for code in (502, 503, 504)):
+                    last_exc = exc
+                    if attempt < max_retries:
+                        delay = min(2**attempt, 8)
+                        self._console.info(
+                            f"[{label}] transient HTTP error, retrying in {delay}s (attempt {attempt}/{max_retries}): {exc}"
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                raise
+        # Should not reach here, but satisfy type checker
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError("unexpected retry exhaustion")
 
     def _run_sync(
         self,

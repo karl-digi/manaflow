@@ -17,7 +17,7 @@ import {
 } from "@cmux/shared/pull-request-state";
 
 function rewriteMorphUrl(url: string): string {
-  // do not rewrite ports 39375 39377 39378 39379 39380 39381
+  // do not rewrite ports 39375 39377 39378 39379 39380 39381 39383
   if (
     url.includes("http.cloud.morph.so") &&
     (url.startsWith("https://port-39375-") ||
@@ -25,7 +25,8 @@ function rewriteMorphUrl(url: string): string {
       url.startsWith("https://port-39378-") ||
       url.startsWith("https://port-39379-") ||
       url.startsWith("https://port-39380-") ||
-      url.startsWith("https://port-39381-"))
+      url.startsWith("https://port-39381-") ||
+      url.startsWith("https://port-39383-"))
   ) {
     return url;
   }
@@ -1127,10 +1128,23 @@ export const updateVSCodePorts = authMutation({
       status: "starting" as const,
     };
 
+    // Update ports and regenerate URLs with new port
+    // Only regenerate if this is a Docker provider (localhost URLs)
+    const newUrl =
+      vscode.provider === "docker"
+        ? `http://localhost:${args.ports.vscode}`
+        : vscode.url;
+    const newWorkspaceUrl =
+      vscode.provider === "docker"
+        ? `http://localhost:${args.ports.vscode}/?folder=/root/workspace`
+        : vscode.workspaceUrl;
+
     await ctx.db.patch(args.id, {
       vscode: {
         ...vscode,
         ports: args.ports,
+        url: newUrl,
+        workspaceUrl: newWorkspaceUrl,
       },
       updatedAt: Date.now(),
     });
@@ -1166,6 +1180,38 @@ export const getByContainerName = authQuery({
     }
 
     return run;
+  },
+});
+
+/**
+ * Check if the task associated with a container name is archived.
+ * Used by iframe-preflight to prevent waking VMs for archived tasks.
+ */
+export const isTaskArchivedByContainerName = authQuery({
+  args: { teamSlugOrId: v.string(), containerName: v.string() },
+  handler: async (ctx, args) => {
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
+    const run = await ctx.db
+      .query("taskRuns")
+      .withIndex("by_vscode_container_name", (q) =>
+        q.eq("vscode.containerName", args.containerName),
+      )
+      .filter((q) => q.eq(q.field("teamId"), teamId))
+      .first();
+
+    if (!run) {
+      // If we can't find the run, return false (not archived) to allow the request
+      // This handles edge cases where container name doesn't match
+      return { isArchived: false, found: false };
+    }
+
+    // Look up the parent task to check its archived status
+    const task = await ctx.db.get(run.taskId);
+    if (!task) {
+      return { isArchived: false, found: false };
+    }
+
+    return { isArchived: task.isArchived === true, found: true };
   },
 });
 
