@@ -12,6 +12,10 @@
 import { GitHubIcon } from "@/components/icons/github";
 import { PersistentWebView } from "@/components/persistent-webview";
 import { WorkspaceLoadingIndicator } from "@/components/workspace-loading-indicator";
+import {
+  disableDragPointerEvents,
+  restoreDragPointerEvents,
+} from "@/lib/drag-pointer-events";
 import { parseEnvBlock } from "@/lib/parseEnvBlock";
 import {
   TASK_RUN_IFRAME_ALLOW,
@@ -129,41 +133,71 @@ export function EnvironmentWorkspaceConfig({
     return DEFAULT_SIDEBAR_WIDTH;
   });
   const [isResizing, setIsResizing] = useState(false);
-  const sidebarRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const containerLeftRef = useRef<number>(0);
+  const rafIdRef = useRef<number | null>(null);
 
-  // Handle resize
-  const handleResizeStart = useCallback((e: ReactMouseEvent) => {
-    e.preventDefault();
-    setIsResizing(true);
+  // Persist width to localStorage when it changes
+  useEffect(() => {
+    localStorage.setItem("cmux:env-workspace-sidebar-width", String(sidebarWidth));
+  }, [sidebarWidth]);
+
+  // Smooth resize using requestAnimationFrame (matches Sidebar.tsx pattern)
+  const onMouseMove = useCallback((e: MouseEvent) => {
+    // Batch width updates to once per animation frame to reduce layout thrashing
+    if (rafIdRef.current != null) return;
+    rafIdRef.current = window.requestAnimationFrame(() => {
+      rafIdRef.current = null;
+      const containerLeft = containerLeftRef.current;
+      const clientX = e.clientX;
+      const newWidth = Math.min(
+        Math.max(clientX - containerLeft, MIN_SIDEBAR_WIDTH),
+        MAX_SIDEBAR_WIDTH
+      );
+      setSidebarWidth(newWidth);
+    });
   }, []);
 
+  const stopResizing = useCallback(() => {
+    setIsResizing(false);
+    document.body.style.cursor = "";
+    document.body.classList.remove("select-none");
+    if (rafIdRef.current != null) {
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = null;
+    }
+    restoreDragPointerEvents();
+    window.removeEventListener("mousemove", onMouseMove);
+    window.removeEventListener("mouseup", stopResizing);
+  }, [onMouseMove]);
+
+  const startResizing = useCallback(
+    (e: ReactMouseEvent) => {
+      e.preventDefault();
+      setIsResizing(true);
+      document.body.style.cursor = "col-resize";
+      document.body.classList.add("select-none");
+      // Snapshot the container's left position so we don't force layout on every move
+      if (containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect();
+        containerLeftRef.current = rect.left;
+      }
+      disableDragPointerEvents();
+      window.addEventListener("mousemove", onMouseMove);
+      window.addEventListener("mouseup", stopResizing);
+    },
+    [onMouseMove, stopResizing]
+  );
+
+  // Cleanup event listeners on unmount
   useEffect(() => {
-    if (!isResizing) return;
-
-    const handleMouseMove = (e: globalThis.MouseEvent) => {
-      if (!sidebarRef.current) return;
-      const containerRect = sidebarRef.current.parentElement?.getBoundingClientRect();
-      if (!containerRect) return;
-
-      const newWidth = e.clientX - containerRect.left;
-      const clampedWidth = Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, newWidth));
-      setSidebarWidth(clampedWidth);
-    };
-
-    const handleMouseUp = () => {
-      setIsResizing(false);
-      // Persist to localStorage
-      localStorage.setItem("cmux:env-workspace-sidebar-width", String(sidebarWidth));
-    };
-
-    document.addEventListener("mousemove", handleMouseMove);
-    document.addEventListener("mouseup", handleMouseUp);
-
     return () => {
-      document.removeEventListener("mousemove", handleMouseMove);
-      document.removeEventListener("mouseup", handleMouseUp);
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", stopResizing);
     };
-  }, [isResizing, sidebarWidth]);
+  }, [onMouseMove, stopResizing]);
+
+  const resetWidth = useCallback(() => setSidebarWidth(DEFAULT_SIDEBAR_WIDTH), []);
 
   // Clean up copy timeout
   useEffect(() => {
@@ -801,16 +835,14 @@ export function EnvironmentWorkspaceConfig({
 
   return (
     <div
-      className={clsx(
-        "flex h-full overflow-hidden font-sans text-[15px] leading-6",
-        isResizing && "cursor-col-resize select-none"
-      )}
+      ref={containerRef}
+      className="flex h-full overflow-hidden font-sans text-[15px] leading-6"
+      style={{ userSelect: isResizing ? "none" : undefined }}
     >
       {/* Left: Configuration Sidebar */}
       <div
-        ref={sidebarRef}
-        className="h-full flex flex-col overflow-hidden bg-white dark:bg-black relative"
-        style={{ width: sidebarWidth, minWidth: sidebarWidth, maxWidth: sidebarWidth }}
+        className="h-full flex flex-col overflow-hidden bg-white dark:bg-black relative shrink-0"
+        style={{ width: sidebarWidth }}
       >
         <div className="flex-shrink-0 px-5 pt-4 pb-2">
           <button
@@ -859,21 +891,25 @@ export function EnvironmentWorkspaceConfig({
           )}
         </div>
 
-        {/* Resize Handle */}
+        {/* Resize Handle - invisible but with comfortable hit area */}
         <div
-          className={clsx(
-            "absolute top-0 right-0 w-1 h-full cursor-col-resize z-10 group",
-            "hover:bg-neutral-300 dark:hover:bg-neutral-600",
-            isResizing && "bg-neutral-400 dark:bg-neutral-500"
-          )}
-          onMouseDown={handleResizeStart}
-        >
-          <div className="absolute top-0 right-0 w-4 h-full -translate-x-1/2" />
-        </div>
+          role="separator"
+          aria-orientation="vertical"
+          title="Drag to resize"
+          onMouseDown={startResizing}
+          onDoubleClick={resetWidth}
+          className="absolute top-0 right-0 h-full cursor-col-resize"
+          style={{
+            width: "14px",
+            transform: "translateX(7px)",
+            background: "transparent",
+            zIndex: 10,
+          }}
+        />
       </div>
 
       {/* Right: Preview Panel */}
-      <div className="flex-1 flex flex-col bg-neutral-950 overflow-hidden">
+      <div className="flex-1 flex flex-col bg-neutral-950 overflow-hidden" data-drag-disable-pointer>
         {renderPreviewPanel()}
       </div>
     </div>
