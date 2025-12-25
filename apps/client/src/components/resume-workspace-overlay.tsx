@@ -29,8 +29,7 @@ export function ResumeWorkspaceOverlay({
   });
 
   const isPaused = pauseStatusQuery.data?.paused === true;
-  // Type assertion needed until openapi client is regenerated
-  const isStopped = (pauseStatusQuery.data as { stopped?: boolean } | undefined)?.stopped === true;
+  const isStopped = pauseStatusQuery.data?.stopped === true;
 
   const resumeWorkspace = useResumeMorphWorkspace({
     taskRunId,
