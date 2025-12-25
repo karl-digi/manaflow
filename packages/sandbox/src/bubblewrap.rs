@@ -2162,6 +2162,7 @@ impl SandboxService for BubblewrapService {
                     failed_count: 0,
                     items: vec![],
                     dry_run: request.dry_run,
+                    bytes_freed: 0,
                 });
             }
         };
@@ -2217,6 +2218,8 @@ impl SandboxService for BubblewrapService {
             candidates.push((id, path, age_secs));
         }
 
+        let mut bytes_freed: u64 = 0;
+
         // Now process candidates, re-checking the sandbox map before each deletion
         // to avoid race conditions with concurrent sandbox creation
         for (id, path, age_secs) in candidates {
@@ -2229,13 +2232,18 @@ impl SandboxService for BubblewrapService {
                 }
             }
 
+            // Calculate directory size
+            let size_bytes = calculate_dir_size(&path).await;
+
             let item = PrunedItem {
                 id: id.to_string(),
                 path: path.to_string_lossy().to_string(),
                 age_secs,
+                size_bytes,
             };
 
             if request.dry_run {
+                bytes_freed += size_bytes;
                 items.push(item);
                 deleted_count += 1;
             } else {
@@ -2249,6 +2257,7 @@ impl SandboxService for BubblewrapService {
                 match fs::remove_dir_all(&path).await {
                     Ok(()) => {
                         info!("pruned orphaned sandbox directory: {}", path.display());
+                        bytes_freed += size_bytes;
                         items.push(item);
                         deleted_count += 1;
                     }
@@ -2265,6 +2274,7 @@ impl SandboxService for BubblewrapService {
             failed_count,
             items,
             dry_run: request.dry_run,
+            bytes_freed,
         })
     }
 }
@@ -2347,6 +2357,39 @@ async fn cleanup_overlays(system_dir: &Path) {
         &[system_dir.join("usr-merged").to_string_lossy().as_ref()],
     )
     .await;
+}
+
+/// Calculate the total size of a directory recursively.
+async fn calculate_dir_size(path: &Path) -> u64 {
+    let mut total: u64 = 0;
+
+    let mut stack = vec![path.to_path_buf()];
+
+    while let Some(current) = stack.pop() {
+        let mut entries = match fs::read_dir(&current).await {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let entry_path = entry.path();
+
+            // Use symlink_metadata to not follow symlinks
+            let metadata = match fs::symlink_metadata(&entry_path).await {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+
+            if metadata.is_file() {
+                total += metadata.len();
+            } else if metadata.is_dir() && !metadata.file_type().is_symlink() {
+                stack.push(entry_path);
+            }
+            // Skip symlinks for size calculation
+        }
+    }
+
+    total
 }
 
 #[cfg(test)]

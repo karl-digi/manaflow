@@ -192,6 +192,9 @@ pub struct PrunedItem {
     pub path: String,
     /// Age of the directory in seconds.
     pub age_secs: u64,
+    /// Size of the directory in bytes.
+    #[serde(default)]
+    pub size_bytes: u64,
 }
 
 /// Response from pruning orphaned sandbox directories.
@@ -205,6 +208,9 @@ pub struct PruneResponse {
     pub items: Vec<PrunedItem>,
     /// Whether this was a dry run.
     pub dry_run: bool,
+    /// Total bytes freed (or would be freed in dry_run mode).
+    #[serde(default)]
+    pub bytes_freed: u64,
 }
 
 // ============================================================================
