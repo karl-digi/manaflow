@@ -360,10 +360,10 @@ export function EnvironmentWorkspaceConfig({
             isSaving && "cursor-not-allowed opacity-60"
           )}
           onClick={(e) => {
-            if (isSaving) return;
-            if (isStepCompleted("scripts") && !isCurrentStep("scripts")) {
+            // Just prevent interaction when saving - let details toggle naturally
+            // Don't call handleGoToStep for scripts section to keep it always completed
+            if (isSaving) {
               e.preventDefault();
-              handleGoToStep("scripts");
             }
           }}
         >
@@ -427,10 +427,10 @@ export function EnvironmentWorkspaceConfig({
             isSaving && "cursor-not-allowed opacity-60"
           )}
           onClick={(e) => {
-            if (isSaving) return;
-            if (isStepCompleted("env-vars") && !isCurrentStep("env-vars")) {
+            // Just prevent interaction when saving - let details toggle naturally
+            // Don't call handleGoToStep for env-vars section to keep it always completed
+            if (isSaving) {
               e.preventDefault();
-              handleGoToStep("env-vars");
             }
           }}
         >
