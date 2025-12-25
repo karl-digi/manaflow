@@ -422,6 +422,11 @@ setopt PROMPT_SUBST
 # Green user@host, blue path, magenta git branch
 PROMPT='%F{green}%n@%m%f:%F{blue}%~%f${vcs_info_msg_0_}%F{yellow}#%f '
 
+# Add user completion directories to fpath (synced from host)
+[[ -d ~/.zfunc ]] && fpath=(~/.zfunc $fpath)
+[[ -d ~/.local/share/zsh/completions ]] && fpath=(~/.local/share/zsh/completions $fpath)
+[[ -d ~/.zsh/completions ]] && fpath=(~/.zsh/completions $fpath)
+
 # Enable completion
 autoload -Uz compinit && compinit
 zstyle ':completion:*' menu select

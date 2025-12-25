@@ -184,6 +184,33 @@ pub const SYNC_FILES: &[SyncFileDef] = &[
         sandbox_path: "/root/.zsh",
         is_dir: true,
     },
+    // Zsh completions - user's custom completion functions
+    SyncFileDef {
+        name: "Zsh Completions (zfunc)",
+        host_path: ".zfunc",
+        sandbox_path: "/root/.zfunc",
+        is_dir: true,
+    },
+    SyncFileDef {
+        name: "Zsh Completions (XDG)",
+        host_path: ".local/share/zsh/completions",
+        sandbox_path: "/root/.local/share/zsh/completions",
+        is_dir: true,
+    },
+    // Zsh cache - keeps completion cache for faster startup
+    SyncFileDef {
+        name: "Zsh Cache",
+        host_path: ".cache/zsh",
+        sandbox_path: "/root/.cache/zsh",
+        is_dir: true,
+    },
+    // Zsh compdump - compiled completion definitions
+    SyncFileDef {
+        name: "Zsh Compdump",
+        host_path: ".zcompdump",
+        sandbox_path: "/root/.zcompdump",
+        is_dir: false,
+    },
 ];
 
 pub fn detect_sync_files() -> Vec<SyncFileToUpload> {
