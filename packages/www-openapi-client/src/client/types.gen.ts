@@ -394,6 +394,8 @@ export type ResumeTaskRunBody = {
 
 export type CheckTaskRunPausedResponse = {
     paused: boolean;
+    stopped?: boolean;
+    stoppedAt?: number;
 };
 
 export type CheckTaskRunPausedBody = {
