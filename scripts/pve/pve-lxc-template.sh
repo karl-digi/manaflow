@@ -383,11 +383,14 @@ echo ""
 echo "=== Setup Complete ==="
 echo ""
 echo "Installed versions:"
-command -v node &>/dev/null && echo "  Node.js: $(node --version)"
-command -v bun &>/dev/null && echo "  Bun: $(bun --version)"
-command -v uv &>/dev/null && echo "  uv: $(uv --version 2>&1 | head -1)"
-command -v docker &>/dev/null && echo "  Docker: $(docker --version 2>/dev/null | cut -d' ' -f3 | tr -d ',')"
-command -v criu &>/dev/null && echo "  CRIU: $(criu --version 2>&1 | head -1)"
+node --version 2>/dev/null && echo "  Node.js: $(node --version)" || true
+/usr/local/bin/bun --version 2>/dev/null && echo "  Bun: $(/usr/local/bin/bun --version)" || true
+/usr/local/bin/uv --version 2>/dev/null && echo "  uv: $(/usr/local/bin/uv --version 2>&1 | head -1)" || true
+docker --version 2>/dev/null && echo "  Docker: $(docker --version | cut -d' ' -f3 | tr -d ',')" || true
+criu --version 2>/dev/null && echo "  CRIU: $(criu --version 2>&1 | head -1)" || true
+
+echo ""
+echo "Setup completed successfully!"
 SETUP_EOF
 
     chmod +x "$setup_script"
