@@ -269,7 +269,8 @@ else
     apt-get update -qq
     apt-get install -y -qq \
         curl wget git unzip ca-certificates gnupg lsb-release \
-        sudo vim htop net-tools iproute2 openssh-server locales systemd
+        sudo vim htop net-tools iproute2 openssh-server locales systemd \
+        zsh software-properties-common
     locale-gen en_US.UTF-8 || true
     update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 || true
     mark_done "01-base"
@@ -373,9 +374,37 @@ if step_done "08-finalize"; then
     echo "[8/8] Finalize... SKIP (already done)"
 else
     echo "[8/8] Finalizing setup..."
+
+    # Create cmux directories
     mkdir -p /opt/cmux/{bin,config,checkpoints}
     mkdir -p /var/log/cmux
     mkdir -p /root/workspace
+
+    # Enable SSH service
+    systemctl enable ssh 2>/dev/null || true
+    systemctl start ssh 2>/dev/null || true
+
+    # Enable Docker service
+    systemctl enable docker 2>/dev/null || true
+
+    # Set zsh as default shell if available
+    if command -v zsh &>/dev/null; then
+        chsh -s "$(which zsh)" root 2>/dev/null || true
+    fi
+
+    # Setup XDG_RUNTIME_DIR (needed for some tools)
+    mkdir -p /run/user/0
+    chmod 700 /run/user/0
+    grep -q 'XDG_RUNTIME_DIR' /root/.bashrc 2>/dev/null || \
+        echo 'export XDG_RUNTIME_DIR=/run/user/0' >> /root/.bashrc
+    grep -q 'XDG_RUNTIME_DIR' /root/.zshrc 2>/dev/null || \
+        echo 'export XDG_RUNTIME_DIR=/run/user/0' >> /root/.zshrc 2>/dev/null || true
+
+    # Setup PATH in shell rc files
+    PATH_EXPORT='export PATH="/usr/local/bin:/usr/local/cargo/bin:$HOME/.local/bin:$HOME/.bun/bin:/usr/local/go/bin:$PATH"'
+    grep -q '/usr/local/bin' /root/.bashrc 2>/dev/null || echo "$PATH_EXPORT" >> /root/.bashrc
+    grep -q '/usr/local/bin' /root/.zshrc 2>/dev/null || echo "$PATH_EXPORT" >> /root/.zshrc 2>/dev/null || true
+
     mark_done "08-finalize"
 fi
 

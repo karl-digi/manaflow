@@ -101,10 +101,61 @@ main() {
         fi
     }
 
+    # Core tools
     check_tool "Node.js" "node --version"
     check_tool "Bun" "/usr/local/bin/bun --version"
     check_tool "uv" "/usr/local/bin/uv --version"
     check_tool "Docker" "docker --version"
+
+    echo ""
+    echo "  Services:"
+
+    # Check SSH service
+    check_service() {
+        local name="$1"
+        local service="$2"
+        local result
+        if result=$(ssh -o ConnectTimeout=5 "$pve_ssh_host" "pct exec ${TEST_VMID} -- systemctl is-active $service" 2>/dev/null); then
+            if [[ "$result" == "active" ]]; then
+                echo "  [OK] $name: running"
+            else
+                echo "  [WARN] $name: $result"
+            fi
+        else
+            echo "  [FAIL] $name: not found"
+            failed=1
+        fi
+    }
+
+    check_service "SSH" "ssh"
+    check_service "Docker" "docker"
+
+    echo ""
+    echo "  System:"
+
+    # Check root access and sudo
+    check_cmd() {
+        local name="$1"
+        local cmd="$2"
+        local expected="$3"
+        local result
+        if result=$(ssh -o ConnectTimeout=5 "$pve_ssh_host" "pct exec ${TEST_VMID} -- bash -c '$cmd'" 2>/dev/null); then
+            if [[ -z "$expected" || "$result" == *"$expected"* ]]; then
+                echo "  [OK] $name: $result"
+            else
+                echo "  [WARN] $name: $result (expected: $expected)"
+            fi
+        else
+            echo "  [FAIL] $name"
+            failed=1
+        fi
+    }
+
+    check_cmd "Root user" "whoami" "root"
+    check_cmd "Sudo" "which sudo" "sudo"
+    check_cmd "Shell" "echo \$SHELL" ""
+    check_cmd "Workspace dir" "test -d /root/workspace && echo exists" "exists"
+    check_cmd "Locale" "locale | grep LANG" "en_US.UTF-8"
 
     echo ""
 
