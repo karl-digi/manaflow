@@ -153,6 +153,20 @@ struct SignInView: View {
 
     private func sendCode() async {
         error = nil
+
+        #if DEBUG
+        // Dev shortcut: enter "42" to auto-login with test credentials
+        if email == "42" {
+            do {
+                try await authManager.signInWithPassword(email: "l@l.com", password: "abc123")
+                return
+            } catch let err {
+                error = err.localizedDescription
+                return
+            }
+        }
+        #endif
+
         do {
             try await authManager.sendCode(to: email)
             withAnimation {

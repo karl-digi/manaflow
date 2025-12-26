@@ -67,12 +67,44 @@ class StackAuthClient {
         return decoded.nonce
     }
 
+    // MARK: - Password Sign In (for debugging)
+
+    struct PasswordSignInResponse: Codable {
+        let refresh_token: String
+        let access_token: String
+        let user_id: String
+    }
+
+    func signInWithPassword(email: String, password: String) async throws -> PasswordSignInResponse {
+        let url = URL(string: "\(baseURL)/auth/password/sign-in")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        commonHeaders.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
+
+        let body = ["email": email, "password": password]
+        request.httpBody = try JSONEncoder().encode(body)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw AuthError.networkError
+        }
+
+        if httpResponse.statusCode != 200 {
+            let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
+            print("Stack Auth password error: \(httpResponse.statusCode) - \(errorBody)")
+            throw AuthError.serverError(httpResponse.statusCode, errorBody)
+        }
+
+        return try JSONDecoder().decode(PasswordSignInResponse.self, from: data)
+    }
+
     // MARK: - Verify OTP Code
 
     struct SignInResponse: Codable {
         let refresh_token: String
         let access_token: String
-        let is_new_user: Bool
+        let is_new_user: Bool?
         let user_id: String
     }
 

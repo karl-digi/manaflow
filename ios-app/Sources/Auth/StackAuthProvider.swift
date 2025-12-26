@@ -35,13 +35,31 @@ class StackAuthProvider: AuthProvider {
         print("🔐 Stack Auth: Logged out")
     }
 
-    /// Re-authenticate using stored refresh token
+    /// Re-authenticate using stored tokens
     func loginFromCache() async throws -> StackAuthResult {
+        print("🔐 Stack Auth: loginFromCache called")
+        print("🔐 Stack Auth: access_token exists: \(keychain.get("access_token") != nil)")
+        print("🔐 Stack Auth: refresh_token exists: \(keychain.get("refresh_token") != nil)")
+
+        // First try to use existing access token
+        if let accessToken = keychain.get("access_token") {
+            print("🔐 Stack Auth: Using existing access token (len: \(accessToken.count))")
+            do {
+                let user = try await client.getCurrentUser(accessToken: accessToken)
+                print("🔐 Stack Auth: Access token valid for \(user.primary_email ?? "unknown")")
+                return StackAuthResult(accessToken: accessToken, user: user)
+            } catch {
+                print("🔐 Stack Auth: Access token invalid, will try refresh: \(error)")
+            }
+        }
+
+        // Fall back to refresh token
         guard let refreshToken = keychain.get("refresh_token") else {
-            print("🔐 Stack Auth: No refresh token for cache login")
+            print("🔐 Stack Auth: No refresh token available")
             throw AuthError.unauthorized
         }
 
+        print("🔐 Stack Auth: Refreshing token...")
         let accessToken = try await client.refreshAccessToken(refreshToken: refreshToken)
         keychain.set(accessToken, forKey: "access_token")
 
@@ -53,6 +71,32 @@ class StackAuthProvider: AuthProvider {
 
     /// Extract JWT token for Convex authentication
     func extractIdToken(from authResult: StackAuthResult) -> String {
-        return authResult.accessToken
+        let token = authResult.accessToken
+        print("🔐 Stack Auth: Extracting token for Convex (length: \(token.count))")
+
+        // Debug: Decode and show JWT claims
+        let parts = token.split(separator: ".")
+        if parts.count == 3, let payloadData = decodeBase64URL(String(parts[1])) {
+            if let json = try? JSONSerialization.jsonObject(with: payloadData) as? [String: Any] {
+                let iss = json["iss"] as? String ?? "?"
+                let sub = json["sub"] as? String ?? "?"
+                let exp = json["exp"] as? Int ?? 0
+                print("🔐 JWT issuer: \(iss)")
+                print("🔐 JWT subject: \(sub)")
+                print("🔐 JWT expires: \(Date(timeIntervalSince1970: TimeInterval(exp)))")
+            }
+        }
+
+        return token
+    }
+
+    private func decodeBase64URL(_ string: String) -> Data? {
+        var base64 = string
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        while base64.count % 4 != 0 {
+            base64.append("=")
+        }
+        return Data(base64Encoded: base64)
     }
 }

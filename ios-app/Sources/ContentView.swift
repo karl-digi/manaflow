@@ -48,6 +48,14 @@ struct SettingsView: View {
                     }
                 }
 
+                #if DEBUG
+                Section("Debug") {
+                    NavigationLink("Convex Test") {
+                        ConvexTestView()
+                    }
+                }
+                #endif
+
                 Section {
                     Button(role: .destructive) {
                         Task {

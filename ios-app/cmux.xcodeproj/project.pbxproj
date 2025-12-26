@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		0BEB4F58E65C35CE4E4EE942 /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BE5CB8A89417C399DB8D166 /* ChatView.swift */; };
+		24D8752AB97DB126660D8F81 /* ConvexTestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6A61F42F94D17993038F637 /* ConvexTestView.swift */; };
 		2CE5BEC0FE0F92E3F298C570 /* StackAuthClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DEEADB25149C285A0422125 /* StackAuthClient.swift */; };
 		361B05C412BFA1E44BDCAD39 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9BA577D046F9E3C331F4986 /* Models.swift */; };
 		3A6FD7E27F3723EF627744A9 /* StackAuthProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF2848CBEF6B2A130DF4C9D2 /* StackAuthProvider.swift */; };
@@ -34,6 +35,7 @@
 		BF2848CBEF6B2A130DF4C9D2 /* StackAuthProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StackAuthProvider.swift; sourceTree = "<group>"; };
 		D8732D7AB61D4190BACAAB03 /* Environment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Environment.swift; sourceTree = "<group>"; };
 		D9BA577D046F9E3C331F4986 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		E6A61F42F94D17993038F637 /* ConvexTestView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConvexTestView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -83,6 +85,14 @@
 			path = Config;
 			sourceTree = "<group>";
 		};
+		BBE2BE334F53D4E47636EF15 /* Debug */ = {
+			isa = PBXGroup;
+			children = (
+				E6A61F42F94D17993038F637 /* ConvexTestView.swift */,
+			);
+			path = Debug;
+			sourceTree = "<group>";
+		};
 		F58C4F0A497799570589D124 /* Convex */ = {
 			isa = PBXGroup;
 			children = (
@@ -102,6 +112,7 @@
 				4C3A73493721EACC742CE8ED /* Auth */,
 				A13C99D002491553C349AD58 /* Config */,
 				F58C4F0A497799570589D124 /* Convex */,
+				BBE2BE334F53D4E47636EF15 /* Debug */,
 			);
 			path = Sources;
 			sourceTree = "<group>";
@@ -170,6 +181,7 @@
 				6ED3832765AAB169F7254054 /* ContentView.swift in Sources */,
 				E9D2BFC8E39842DB720CAD9D /* ConversationListView.swift in Sources */,
 				F024C0FD39B57208895F9153 /* ConvexClient.swift in Sources */,
+				24D8752AB97DB126660D8F81 /* ConvexTestView.swift in Sources */,
 				EC388CAF55CB58BE5B5D2654 /* Environment.swift in Sources */,
 				361B05C412BFA1E44BDCAD39 /* Models.swift in Sources */,
 				C9E3B69A93DD87E682311505 /* SignInView.swift in Sources */,

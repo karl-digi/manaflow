@@ -22,31 +22,43 @@ class ConvexClientManager: ObservableObject {
         print("📦 Convex initialized (\(env.name)): \(env.convexURL)")
 
         // Observe auth state changes
+        print("📦 Convex: Setting up authState subscription...")
         client.authState
             .receive(on: DispatchQueue.main)
             .sink { [weak self] state in
+                print("📦 Convex: authState changed to: \(state)")
                 switch state {
-                case .authenticated:
+                case .authenticated(let authResult):
                     self?.isAuthenticated = true
-                    print("📦 Convex: Authenticated")
+                    print("📦 Convex: ✅ Authenticated (user: \(authResult.user.primary_email ?? "?"))")
                 case .unauthenticated:
                     self?.isAuthenticated = false
-                    print("📦 Convex: Unauthenticated")
+                    print("📦 Convex: ❌ Unauthenticated")
                 case .loading:
-                    print("📦 Convex: Auth loading...")
+                    print("📦 Convex: ⏳ Auth loading...")
                 }
             }
             .store(in: &cancellables)
+        print("📦 Convex: authState subscription active, cancellables count: \(cancellables.count)")
     }
 
     /// Sync auth state with Stack Auth after user logs in via AuthManager
-    func syncAuth() async {
+    /// Returns a description of what happened for debugging
+    @discardableResult
+    func syncAuth() async -> String {
+        print("📦 Convex: Starting auth sync...")
         let result = await client.loginFromCache()
         switch result {
         case .success(let authResult):
-            print("📦 Convex: Auth synced for \(authResult.user.primary_email ?? "unknown")")
+            print("📦 Convex: Auth sync SUCCESS for \(authResult.user.primary_email ?? "unknown")")
+            print("📦 Convex: Token was passed to ffiClient.setAuth()")
+            // Give Convex a moment to process the token
+            try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+            print("📦 Convex: isAuthenticated = \(isAuthenticated)")
+            return "SUCCESS: \(authResult.user.primary_email ?? "unknown"), isAuth=\(isAuthenticated)"
         case .failure(let error):
-            print("📦 Convex: Auth sync failed - \(error)")
+            print("📦 Convex: Auth sync FAILED - \(error)")
+            return "FAILED: \(error)"
         }
     }
 

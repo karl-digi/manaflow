@@ -94,6 +94,33 @@ class AuthManager: ObservableObject {
         pendingEmail = nil
     }
 
+    // MARK: - Password Sign In (Debug)
+
+    func signInWithPassword(email: String, password: String) async throws {
+        isLoading = true
+        defer { isLoading = false }
+
+        let response = try await client.signInWithPassword(email: email, password: password)
+
+        // Store tokens
+        keychain.set(response.access_token, forKey: "access_token")
+        keychain.set(response.refresh_token, forKey: "refresh_token")
+        print("🔐 Password login: Tokens saved")
+
+        // Get user info
+        let user = try await client.getCurrentUser(accessToken: response.access_token)
+        print("🔐 Password login: Got user \(user.primary_email ?? "unknown")")
+
+        // Update state
+        self.currentUser = user
+        self.isAuthenticated = true
+
+        // Sync with Convex
+        print("🔐 Password login: Syncing with Convex...")
+        await ConvexClientManager.shared.syncAuth()
+        print("🔐 Password login: Convex sync complete")
+    }
+
     func signOut() async {
         if let refreshToken = keychain.get("refresh_token") {
             try? await client.signOut(refreshToken: refreshToken)
