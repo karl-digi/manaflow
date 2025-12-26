@@ -183,7 +183,10 @@ mod tests {
     fn test_filter_da1_query_with_param() {
         let mut filter = DaFilter::new();
         let result = filter.filter(b"\x1b[0c");
-        assert!(result.is_empty(), "DA1 query with 0 param should be filtered");
+        assert!(
+            result.is_empty(),
+            "DA1 query with 0 param should be filtered"
+        );
     }
 
     #[test]
@@ -211,7 +214,10 @@ mod tests {
     fn test_preserve_cursor_visibility() {
         let mut filter = DaFilter::new();
         let result = filter.filter(b"\x1b[?25h");
-        assert_eq!(result, b"\x1b[?25h", "Cursor visibility should be preserved");
+        assert_eq!(
+            result, b"\x1b[?25h",
+            "Cursor visibility should be preserved"
+        );
     }
 
     #[test]
@@ -225,7 +231,10 @@ mod tests {
     fn test_mixed_content() {
         let mut filter = DaFilter::new();
         let result = filter.filter(b"Before\x1b[cAfter");
-        assert_eq!(result, b"BeforeAfter", "Content around DA query should be preserved");
+        assert_eq!(
+            result, b"BeforeAfter",
+            "Content around DA query should be preserved"
+        );
     }
 
     #[test]

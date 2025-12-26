@@ -917,7 +917,10 @@ fn create_pty_session_inner(
         pid,
         metadata: RwLock::new(request.metadata.clone()),
         da_filter: Mutex::new(DaFilter::new()),
-        terminal: Mutex::new(VirtualTerminal::new(request.rows as usize, request.cols as usize)),
+        terminal: Mutex::new(VirtualTerminal::new(
+            request.rows as usize,
+            request.cols as usize,
+        )),
     });
 
     Ok((session, reader))
@@ -1100,7 +1103,10 @@ async fn capture_session(
         .ok_or_else(|| ServerError::SessionNotFound(session_id.clone()))?;
 
     // Check if client wants processed terminal content
-    let processed = params.get("processed").map(|v| v == "true").unwrap_or(false);
+    let processed = params
+        .get("processed")
+        .map(|v| v == "true")
+        .unwrap_or(false);
     let viewport_only = params.get("viewport").map(|v| v == "true").unwrap_or(false);
 
     if processed {
