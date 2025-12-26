@@ -263,6 +263,7 @@ apt-get install -y \
     curl \
     wget \
     git \
+    unzip \
     ca-certificates \
     gnupg \
     lsb-release \
@@ -272,7 +273,12 @@ apt-get install -y \
     net-tools \
     iproute2 \
     openssh-server \
+    locales \
     systemd
+
+# Fix locale warnings
+locale-gen en_US.UTF-8
+update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
 
 # Install Docker
 echo "[3/8] Installing Docker..."
