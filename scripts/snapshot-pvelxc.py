@@ -113,6 +113,7 @@ class PveLxcClient:
         api_token: str,
         node: str | None = None,
         verify_ssl: bool = False,
+        ssh_host: str | None = None,
     ) -> None:
         self.api_url = api_url.rstrip("/")
         self.api_token = api_token
@@ -127,6 +128,15 @@ class PveLxcClient:
             )
         self.token_id = token_parts[0]
         self.token_secret = token_parts[1]
+
+        # SSH host for pct commands (derived from API URL if not provided)
+        if ssh_host:
+            self.ssh_host = ssh_host
+        else:
+            # Extract hostname from API URL: https://host.example.com:8006 -> host.example.com
+            parsed = urllib.parse.urlparse(api_url)
+            hostname = parsed.hostname or "localhost"
+            self.ssh_host = f"root@{hostname}"
 
         # Create SSL context
         self._ssl_context: ssl.SSLContext | None = None
@@ -450,6 +460,139 @@ class PveLxcClient:
         """Async find next VMID."""
         return await asyncio.to_thread(self.find_next_vmid, node)
 
+    # -----------------------------------------------------------------------
+    # SSH-based operations for pct commands
+    # -----------------------------------------------------------------------
+
+    def ssh_exec(
+        self,
+        command: str,
+        *,
+        timeout: float | None = None,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess[str]:
+        """Execute command on PVE host via SSH."""
+        ssh_cmd = [
+            "ssh",
+            "-o", "BatchMode=yes",
+            "-o", "StrictHostKeyChecking=accept-new",
+            self.ssh_host,
+            command,
+        ]
+        result = subprocess.run(
+            ssh_cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout or 600,
+        )
+        if check and result.returncode != 0:
+            raise RuntimeError(
+                f"SSH command failed (exit {result.returncode}):\n"
+                f"Command: {command}\n"
+                f"stdout: {result.stdout}\n"
+                f"stderr: {result.stderr}"
+            )
+        return result
+
+    async def assh_exec(
+        self,
+        command: str,
+        *,
+        timeout: float | None = None,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess[str]:
+        """Async SSH exec."""
+        return await asyncio.to_thread(
+            self.ssh_exec, command, timeout=timeout, check=check
+        )
+
+    def pct_exec(
+        self,
+        vmid: int,
+        command: str,
+        *,
+        timeout: float | None = None,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess[str]:
+        """Execute command inside container via SSH + pct exec."""
+        # Escape single quotes in command for remote shell
+        escaped_cmd = command.replace("'", "'\"'\"'")
+        remote_cmd = f"pct exec {vmid} -- bash -lc '{escaped_cmd}'"
+        return self.ssh_exec(remote_cmd, timeout=timeout, check=check)
+
+    async def apct_exec(
+        self,
+        vmid: int,
+        command: str,
+        *,
+        timeout: float | None = None,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess[str]:
+        """Async pct exec."""
+        return await asyncio.to_thread(
+            self.pct_exec, vmid, command, timeout=timeout, check=check
+        )
+
+    def pct_push(
+        self,
+        vmid: int,
+        local_path: str,
+        remote_path: str,
+        *,
+        timeout: float | None = None,
+    ) -> None:
+        """Push a file to container via SSH + pct push.
+
+        First SCPs file to PVE host, then uses pct push to push into container.
+        """
+        import uuid
+        tmp_name = f"/tmp/pct_push_{vmid}_{uuid.uuid4().hex[:8]}"
+
+        # SCP local file to PVE host
+        scp_cmd = [
+            "scp",
+            "-o", "BatchMode=yes",
+            "-o", "StrictHostKeyChecking=accept-new",
+            local_path,
+            f"{self.ssh_host}:{tmp_name}",
+        ]
+        result = subprocess.run(
+            scp_cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout or 300,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"SCP failed (exit {result.returncode}): {result.stderr}"
+            )
+
+        # Push from PVE host to container
+        try:
+            self.ssh_exec(
+                f"pct push {vmid} {tmp_name} {remote_path}",
+                timeout=timeout,
+            )
+        finally:
+            # Clean up temp file on PVE host
+            try:
+                self.ssh_exec(f"rm -f {tmp_name}", timeout=30, check=False)
+            except Exception:
+                pass
+
+    async def apct_push(
+        self,
+        vmid: int,
+        local_path: str,
+        remote_path: str,
+        *,
+        timeout: float | None = None,
+    ) -> None:
+        """Async pct push."""
+        await asyncio.to_thread(
+            self.pct_push, vmid, local_path, remote_path, timeout=timeout
+        )
+
 
 # ---------------------------------------------------------------------------
 # Manifest types and helpers
@@ -652,9 +795,10 @@ class PveExecResponse:
 
 @dataclass(slots=True)
 class PveTaskContext:
-    """Execution context for PVE LXC tasks using pct exec."""
+    """Execution context for PVE LXC tasks using SSH + pct exec."""
 
     vmid: int
+    client: PveLxcClient
     repo_root: Path
     remote_repo_root: str
     remote_repo_tar: str
@@ -683,7 +827,7 @@ class PveTaskContext:
         *,
         timeout: float | None = None,
     ) -> PveExecResponse:
-        """Run a command inside the LXC container via pct exec."""
+        """Run a command inside the LXC container via SSH + pct exec."""
         command_with_env = self._apply_environment(command)
         return await self._run_pct_exec(label, command_with_env, timeout=timeout)
 
@@ -704,24 +848,22 @@ class PveTaskContext:
         *,
         timeout: float | None = None,
     ) -> PveExecResponse:
-        """Execute command via pct exec."""
+        """Execute command via SSH + pct exec."""
         self.console.info(f"[{label}] running...")
 
         # Wrap command in bash with pipefail
         script = f"set -euo pipefail\n{command}"
-        full_command = ["pct", "exec", str(self.vmid), "--", "bash", "-lc", script]
 
         attempts = 0
         max_attempts = 3
         while True:
             attempts += 1
             try:
-                result = await asyncio.to_thread(
-                    subprocess.run,
-                    full_command,
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout or 600,
+                result = await self.client.apct_exec(
+                    self.vmid,
+                    script,
+                    timeout=timeout,
+                    check=False,  # We handle errors ourselves
                 )
                 break
             except subprocess.TimeoutExpired as e:
@@ -754,6 +896,18 @@ class PveTaskContext:
             exit_code=result.returncode,
             stdout=result.stdout,
             stderr=result.stderr,
+        )
+
+    async def push_file(
+        self,
+        local_path: str,
+        remote_path: str,
+        *,
+        timeout: float | None = None,
+    ) -> None:
+        """Push a file to the container via SSH + pct push."""
+        await self.client.apct_push(
+            self.vmid, local_path, remote_path, timeout=timeout
         )
 
 
@@ -824,23 +978,17 @@ def create_repo_archive(repo_root: Path) -> Path:
 
 async def upload_repo_to_container(
     vmid: int,
+    client: PveLxcClient,
     repo_root: Path,
     remote_tar_path: str,
     console: Console,
 ) -> None:
-    """Upload repository archive to container via pct push."""
-    console.info(f"Creating repository archive...")
+    """Upload repository archive to container via SSH + pct push."""
+    console.info("Creating repository archive...")
     archive = await asyncio.to_thread(create_repo_archive, repo_root)
     try:
-        console.info(f"Uploading repository to container {vmid}...")
-        result = await asyncio.to_thread(
-            subprocess.run,
-            ["pct", "push", str(vmid), str(archive), remote_tar_path],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"pct push failed: {result.stderr}")
+        console.info(f"Uploading repository to container {vmid} via SSH...")
+        await client.apct_push(vmid, str(archive), remote_tar_path)
         console.info(f"Repository uploaded to {remote_tar_path}")
     finally:
         archive.unlink(missing_ok=True)
@@ -1316,7 +1464,7 @@ EOF
 )
 async def task_upload_repo(ctx: PveTaskContext) -> None:
     await upload_repo_to_container(
-        ctx.vmid, ctx.repo_root, ctx.remote_repo_tar, ctx.console
+        ctx.vmid, ctx.client, ctx.repo_root, ctx.remote_repo_tar, ctx.console
     )
     extract_cmd = textwrap.dedent(
         f"""
@@ -2205,21 +2353,20 @@ async def wait_for_container_ready(
     console: Console,
     timeout: int = 120,
 ) -> None:
-    """Wait for container to be running and ready for commands."""
+    """Wait for container to be running and ready for commands via SSH."""
     console.info(f"Waiting for container {vmid} to be ready...")
 
     elapsed = 0
     while elapsed < timeout:
         status = await client.aget_lxc_status(vmid)
         if status.get("status") == "running":
-            # Try to run a simple command
+            # Try to run a simple command via SSH + pct exec
             try:
-                result = await asyncio.to_thread(
-                    subprocess.run,
-                    ["pct", "exec", str(vmid), "--", "echo", "ready"],
-                    capture_output=True,
-                    text=True,
+                result = await client.apct_exec(
+                    vmid,
+                    "echo ready",
                     timeout=10,
+                    check=False,
                 )
                 if result.returncode == 0 and "ready" in result.stdout:
                     console.info(f"Container {vmid} is ready")
@@ -2283,6 +2430,7 @@ async def provision_and_snapshot_for_preset(
     # Create task context
     ctx = PveTaskContext(
         vmid=new_vmid,
+        client=client,
         repo_root=repo_root,
         remote_repo_root="/cmux",
         remote_repo_tar="/tmp/cmux-repo.tar",
@@ -2358,7 +2506,10 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
         api_url=api_url,
         api_token=api_token,
         node=os.environ.get("PVE_NODE"),
+        ssh_host=os.environ.get("PVE_SSH_HOST"),
     )
+
+    console.info(f"Using SSH host: {client.ssh_host}")
 
     # Test connection
     try:
@@ -2577,7 +2728,7 @@ def main() -> None:
         return
     try:
         asyncio.run(provision_and_snapshot(args))
-    except Exception as exc:
+    except Exception:
         traceback.print_exc()
         sys.exit(1)
 
