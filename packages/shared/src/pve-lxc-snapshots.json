@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2025-12-26T19:13:00Z",
+  "templateVmid": 9000,
+  "node": "karl-ws",
+  "presets": [
+    {
+      "presetId": "4vcpu_6gb_32gb",
+      "label": "Standard workspace",
+      "cpu": "4 vCPU",
+      "memory": "6 GB RAM",
+      "disk": "32 GB SSD",
+      "versions": [
+        {
+          "version": 1,
+          "vmid": 102,
+          "snapshotName": "cmux-4vcpu_6gb_32gb-20251227-030007",
+          "capturedAt": "2025-12-26T19:00:09Z"
+        }
+      ]
+    },
+    {
+      "presetId": "6vcpu_8gb_32gb",
+      "label": "Performance workspace",
+      "cpu": "6 vCPU",
+      "memory": "8 GB RAM",
+      "disk": "32 GB SSD",
+      "versions": [
+        {
+          "version": 1,
+          "vmid": 103,
+          "snapshotName": "cmux-6vcpu_8gb_32gb-20251227-031258",
+          "capturedAt": "2025-12-26T19:13:00Z"
+        }
+      ]
+    }
+  ]
+}
