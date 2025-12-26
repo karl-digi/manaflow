@@ -8,6 +8,7 @@ pub mod models;
 pub mod mux;
 pub mod notifications;
 pub mod palette;
+pub mod pve_lxc;
 pub mod sandbox_handle;
 pub mod service;
 pub mod settings;
@@ -28,6 +29,7 @@ pub use keyring::{
     store_claude_token, store_stack_refresh_token,
 };
 pub use mux::run_mux_tui;
+pub use pve_lxc::{PveConfig, PveLxcService};
 pub use sandbox_handle::{ExecOutput, SandboxBuilder, SandboxHandle, SandboxPool};
 
 pub const DEFAULT_HTTP_PORT: u16 = 46831;
