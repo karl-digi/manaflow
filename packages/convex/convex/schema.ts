@@ -1076,6 +1076,117 @@ const convexSchema = defineSchema({
     .index("by_version", ["version"])
     .index("by_staging_latest", ["isStaging", "isLatest", "createdAt"])
     .index("by_staging_created", ["isStaging", "createdAt"]),
+
+  // =============================================================================
+  // Issues - Team-scoped issue tracking with tree structure
+  // =============================================================================
+
+  issues: defineTable({
+    // Identity
+    shortId: v.string(), // Hierarchical ID: "1", "1.1", "1.1.1", "2", etc.
+    teamId: v.string(),
+
+    // Core fields
+    title: v.string(),
+    description: v.optional(v.string()),
+    status: v.union(
+      v.literal("open"),
+      v.literal("in_progress"),
+      v.literal("blocked"),
+      v.literal("closed"),
+      v.literal("tombstone") // soft-delete
+    ),
+    issueType: v.union(
+      v.literal("bug"),
+      v.literal("feature"),
+      v.literal("task"),
+      v.literal("epic"),
+      v.literal("chore")
+    ),
+
+    // Assignment
+    assignee: v.optional(v.string()), // userId
+    createdBy: v.string(), // userId or "agent:<agentName>"
+
+    // Tree structure
+    parentIssueId: v.optional(v.id("issues")), // null = root level
+    orderIndex: v.number(), // Order within siblings (1, 2, 3, ...)
+
+    // Timestamps
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    closedAt: v.optional(v.number()),
+    deletedAt: v.optional(v.number()),
+
+    // Close metadata
+    closeReason: v.optional(v.string()),
+  })
+    .index("by_team_shortId", ["teamId", "shortId"])
+    .index("by_team_status", ["teamId", "status", "updatedAt"])
+    .index("by_team_parent", ["teamId", "parentIssueId", "orderIndex"]) // For tree queries + ID generation
+    .index("by_assignee", ["teamId", "assignee", "status"])
+    .index("by_team_created", ["teamId", "createdAt"]),
+
+  // Issue dependencies - relationships between issues
+  issueDependencies: defineTable({
+    teamId: v.string(),
+    issueId: v.id("issues"), // The dependent issue
+    dependsOnId: v.id("issues"), // The blocking/parent issue
+    type: v.union(
+      v.literal("blocks"), // dependsOn must close before issue can start
+      v.literal("related"), // Soft link for reference
+      v.literal("discovered-from"), // Found during work on another issue
+      v.literal("duplicates"), // Issue is duplicate of dependsOn
+      v.literal("supersedes") // Issue supersedes dependsOn
+    ),
+    createdAt: v.number(),
+    createdBy: v.string(), // userId or "agent:<agentName>"
+    metadata: v.optional(v.string()), // JSON blob for type-specific data
+  })
+    .index("by_issue", ["issueId"])
+    .index("by_dependsOn", ["dependsOnId"])
+    .index("by_team_type", ["teamId", "type"]),
+
+  // Issue events - audit trail for undo/redo
+  issueEvents: defineTable({
+    teamId: v.string(),
+    issueId: v.id("issues"),
+
+    // Event metadata
+    eventType: v.union(
+      v.literal("created"),
+      v.literal("updated"),
+      v.literal("status_changed"),
+      v.literal("closed"),
+      v.literal("reopened"),
+      v.literal("deleted"),
+      v.literal("restored"), // Un-delete
+      v.literal("dependency_added"),
+      v.literal("dependency_removed"),
+      v.literal("assigned"),
+      v.literal("unassigned")
+    ),
+
+    // Who made the change
+    actor: v.string(), // userId or "agent:<agentName>" or "system"
+
+    // Change details for undo/redo
+    fieldChanged: v.optional(v.string()), // e.g., "title", "status"
+    oldValue: v.optional(v.string()), // JSON-encoded previous value
+    newValue: v.optional(v.string()), // JSON-encoded new value
+
+    // Full snapshot for complex undos
+    snapshot: v.optional(v.string()), // JSON-encoded full issue state before change
+
+    // Undo metadata
+    undoneAt: v.optional(v.number()), // If this event was undone
+    undoneBy: v.optional(v.string()),
+
+    createdAt: v.number(),
+  })
+    .index("by_issue", ["issueId", "createdAt"])
+    .index("by_team_created", ["teamId", "createdAt"])
+    .index("by_actor", ["actor", "createdAt"]),
 });
 
 export default convexSchema;

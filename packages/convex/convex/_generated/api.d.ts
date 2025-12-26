@@ -37,6 +37,7 @@ import type * as hostScreenshotCollector from "../hostScreenshotCollector.js";
 import type * as hostScreenshotCollectorActions from "../hostScreenshotCollectorActions.js";
 import type * as hostScreenshotCollector_http from "../hostScreenshotCollector_http.js";
 import type * as http from "../http.js";
+import type * as issues from "../issues.js";
 import type * as localWorkspaces from "../localWorkspaces.js";
 import type * as migrations from "../migrations.js";
 import type * as previewConfigs from "../previewConfigs.js";
@@ -101,6 +102,7 @@ declare const fullApi: ApiFromModules<{
   hostScreenshotCollectorActions: typeof hostScreenshotCollectorActions;
   hostScreenshotCollector_http: typeof hostScreenshotCollector_http;
   http: typeof http;
+  issues: typeof issues;
   localWorkspaces: typeof localWorkspaces;
   migrations: typeof migrations;
   previewConfigs: typeof previewConfigs;

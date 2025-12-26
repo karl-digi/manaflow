@@ -17,12 +17,14 @@ import { Route as DebugWebcontentsRouteImport } from './routes/debug-webcontents
 import { Route as DebugMonacoRouteImport } from './routes/debug-monaco'
 import { Route as DebugIconRouteImport } from './routes/debug-icon'
 import { Route as LayoutRouteImport } from './routes/_layout'
+import { Route as IssuesRouteImport } from './routes/_issues'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as HandlerSplatRouteImport } from './routes/handler.$'
 import { Route as LayoutTeamPickerRouteImport } from './routes/_layout.team-picker'
 import { Route as LayoutProfileRouteImport } from './routes/_layout.profile'
 import { Route as LayoutDebugRouteImport } from './routes/_layout.debug'
 import { Route as LayoutTeamSlugOrIdRouteImport } from './routes/_layout.$teamSlugOrId'
+import { Route as IssuesTeamSlugOrIdRouteImport } from './routes/_issues.$teamSlugOrId'
 import { Route as TeamSlugOrIdFeedRouteImport } from './routes/$teamSlugOrId.feed'
 import { Route as LayoutTeamSlugOrIdWorkspacesRouteImport } from './routes/_layout.$teamSlugOrId.workspaces'
 import { Route as LayoutTeamSlugOrIdSettingsRouteImport } from './routes/_layout.$teamSlugOrId.settings'
@@ -88,6 +90,10 @@ const LayoutRoute = LayoutRouteImport.update({
   id: '/_layout',
   getParentRoute: () => rootRouteImport,
 } as any)
+const IssuesRoute = IssuesRouteImport.update({
+  id: '/_issues',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -117,6 +123,11 @@ const LayoutTeamSlugOrIdRoute = LayoutTeamSlugOrIdRouteImport.update({
   id: '/$teamSlugOrId',
   path: '/$teamSlugOrId',
   getParentRoute: () => LayoutRoute,
+} as any)
+const IssuesTeamSlugOrIdRoute = IssuesTeamSlugOrIdRouteImport.update({
+  id: '/$teamSlugOrId',
+  path: '/$teamSlugOrId',
+  getParentRoute: () => IssuesRoute,
 } as any)
 const TeamSlugOrIdFeedRoute = TeamSlugOrIdFeedRouteImport.update({
   id: '/$teamSlugOrId/feed',
@@ -346,6 +357,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/_issues': typeof IssuesRouteWithChildren
   '/_layout': typeof LayoutRouteWithChildren
   '/debug-icon': typeof DebugIconRoute
   '/debug-monaco': typeof DebugMonacoRoute
@@ -355,6 +367,7 @@ export interface FileRoutesById {
   '/monaco-single-buffer': typeof MonacoSingleBufferRoute
   '/sign-in': typeof SignInRoute
   '/$teamSlugOrId/feed': typeof TeamSlugOrIdFeedRoute
+  '/_issues/$teamSlugOrId': typeof IssuesTeamSlugOrIdRoute
   '/_layout/$teamSlugOrId': typeof LayoutTeamSlugOrIdRouteWithChildren
   '/_layout/debug': typeof LayoutDebugRoute
   '/_layout/profile': typeof LayoutProfileRoute
@@ -467,6 +480,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/_issues'
     | '/_layout'
     | '/debug-icon'
     | '/debug-monaco'
@@ -476,6 +490,7 @@ export interface FileRouteTypes {
     | '/monaco-single-buffer'
     | '/sign-in'
     | '/$teamSlugOrId/feed'
+    | '/_issues/$teamSlugOrId'
     | '/_layout/$teamSlugOrId'
     | '/_layout/debug'
     | '/_layout/profile'
@@ -509,6 +524,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  IssuesRoute: typeof IssuesRouteWithChildren
   LayoutRoute: typeof LayoutRouteWithChildren
   DebugIconRoute: typeof DebugIconRoute
   DebugMonacoRoute: typeof DebugMonacoRoute
@@ -579,6 +595,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LayoutRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_issues': {
+      id: '/_issues'
+      path: ''
+      fullPath: ''
+      preLoaderRoute: typeof IssuesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -620,6 +643,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/$teamSlugOrId'
       preLoaderRoute: typeof LayoutTeamSlugOrIdRouteImport
       parentRoute: typeof LayoutRoute
+    }
+    '/_issues/$teamSlugOrId': {
+      id: '/_issues/$teamSlugOrId'
+      path: '/$teamSlugOrId'
+      fullPath: '/$teamSlugOrId'
+      preLoaderRoute: typeof IssuesTeamSlugOrIdRouteImport
+      parentRoute: typeof IssuesRoute
     }
     '/$teamSlugOrId/feed': {
       id: '/$teamSlugOrId/feed'
@@ -799,6 +829,17 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface IssuesRouteChildren {
+  IssuesTeamSlugOrIdRoute: typeof IssuesTeamSlugOrIdRoute
+}
+
+const IssuesRouteChildren: IssuesRouteChildren = {
+  IssuesTeamSlugOrIdRoute: IssuesTeamSlugOrIdRoute,
+}
+
+const IssuesRouteWithChildren =
+  IssuesRoute._addFileChildren(IssuesRouteChildren)
+
 interface LayoutTeamSlugOrIdEnvironmentsRouteChildren {
   LayoutTeamSlugOrIdEnvironmentsEnvironmentIdRoute: typeof LayoutTeamSlugOrIdEnvironmentsEnvironmentIdRoute
   LayoutTeamSlugOrIdEnvironmentsNewRoute: typeof LayoutTeamSlugOrIdEnvironmentsNewRoute
@@ -927,6 +968,7 @@ const LayoutRouteWithChildren =
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  IssuesRoute: IssuesRouteWithChildren,
   LayoutRoute: LayoutRouteWithChildren,
   DebugIconRoute: DebugIconRoute,
   DebugMonacoRoute: DebugMonacoRoute,
