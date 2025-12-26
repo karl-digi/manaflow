@@ -39,6 +39,9 @@ class AuthManager: ObservableObject {
             self.currentUser = user
             self.isAuthenticated = true
             print("🔐 Session restored for \(user.primary_email ?? "unknown")")
+
+            // Sync with Convex
+            await ConvexClientManager.shared.syncAuth()
         } catch {
             print("🔐 Session restore failed: \(error)")
             // Session invalid, clear tokens
@@ -83,6 +86,9 @@ class AuthManager: ObservableObject {
         self.currentUser = user
         self.isAuthenticated = true
 
+        // Sync with Convex
+        await ConvexClientManager.shared.syncAuth()
+
         // Clear pending state
         pendingNonce = nil
         pendingEmail = nil
@@ -95,6 +101,9 @@ class AuthManager: ObservableObject {
 
         keychain.delete("access_token")
         keychain.delete("refresh_token")
+
+        // Clear Convex auth
+        await ConvexClientManager.shared.clearAuth()
 
         self.currentUser = nil
         self.isAuthenticated = false
