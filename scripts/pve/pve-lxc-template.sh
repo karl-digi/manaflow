@@ -244,95 +244,143 @@ cmd_configure() {
 
     cat > "$setup_script" << 'SETUP_EOF'
 #!/bin/bash
-# cmux LXC container setup script
+# cmux LXC container setup script - idempotent and resumable
 # Run this inside the container: pct exec <vmid> -- bash /tmp/setup.sh
 
 set -euo pipefail
 
-echo "=== cmux LXC Setup Script ==="
+export DEBIAN_FRONTEND=noninteractive
+
+# Marker file to track completed steps
+MARKER_DIR="/opt/cmux/.setup-markers"
+mkdir -p "$MARKER_DIR"
+
+step_done() { [[ -f "$MARKER_DIR/$1" ]]; }
+mark_done() { touch "$MARKER_DIR/$1"; }
+
+echo "=== cmux LXC Setup Script (Resumable) ==="
 echo ""
 
-# Update system
-echo "[1/8] Updating system packages..."
-apt-get update
-apt-get upgrade -y
+# Step 1: Base packages and locale
+if step_done "01-base"; then
+    echo "[1/8] Base dependencies... SKIP (already done)"
+else
+    echo "[1/8] Installing base dependencies..."
+    apt-get update -qq
+    apt-get install -y -qq \
+        curl wget git unzip ca-certificates gnupg lsb-release \
+        sudo vim htop net-tools iproute2 openssh-server locales systemd
+    locale-gen en_US.UTF-8 || true
+    update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 || true
+    mark_done "01-base"
+fi
 
-# Install base dependencies
-echo "[2/8] Installing base dependencies..."
-apt-get install -y \
-    curl \
-    wget \
-    git \
-    unzip \
-    ca-certificates \
-    gnupg \
-    lsb-release \
-    sudo \
-    vim \
-    htop \
-    net-tools \
-    iproute2 \
-    openssh-server \
-    locales \
-    systemd
+# Step 2: Docker
+if step_done "02-docker"; then
+    echo "[2/8] Docker... SKIP (already done)"
+elif command -v docker &>/dev/null; then
+    echo "[2/8] Docker... SKIP (already installed)"
+    mark_done "02-docker"
+else
+    echo "[2/8] Installing Docker..."
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg 2>/dev/null || true
+    chmod a+r /etc/apt/keyrings/docker.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
+    apt-get update -qq
+    apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    systemctl enable docker || true
+    mark_done "02-docker"
+fi
 
-# Fix locale warnings
-locale-gen en_US.UTF-8
-update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+# Step 3: Node.js
+if step_done "03-nodejs"; then
+    echo "[3/8] Node.js... SKIP (already done)"
+elif command -v node &>/dev/null && [[ "$(node --version 2>/dev/null)" == v2* ]]; then
+    echo "[3/8] Node.js... SKIP (already installed: $(node --version))"
+    mark_done "03-nodejs"
+else
+    echo "[3/8] Installing Node.js..."
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null 2>&1
+    apt-get install -y -qq nodejs
+    echo "    Installed: $(node --version)"
+    mark_done "03-nodejs"
+fi
 
-# Install Docker
-echo "[3/8] Installing Docker..."
-install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-chmod a+r /etc/apt/keyrings/docker.gpg
-echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
-  tee /etc/apt/sources.list.d/docker.list > /dev/null
-apt-get update
-apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+# Step 4: Bun
+if step_done "04-bun"; then
+    echo "[4/8] Bun... SKIP (already done)"
+elif command -v bun &>/dev/null; then
+    echo "[4/8] Bun... SKIP (already installed: $(bun --version))"
+    mark_done "04-bun"
+else
+    echo "[4/8] Installing Bun..."
+    curl -fsSL https://bun.sh/install | bash >/dev/null 2>&1
+    ln -sf /root/.bun/bin/bun /usr/local/bin/bun
+    ln -sf /root/.bun/bin/bunx /usr/local/bin/bunx
+    echo "    Installed: $(/usr/local/bin/bun --version)"
+    mark_done "04-bun"
+fi
 
-# Install Node.js (via NodeSource)
-echo "[4/8] Installing Node.js 22..."
-curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-apt-get install -y nodejs
+# Step 5: uv (Python)
+if step_done "05-uv"; then
+    echo "[5/8] uv (Python)... SKIP (already done)"
+elif command -v uv &>/dev/null; then
+    echo "[5/8] uv... SKIP (already installed: $(uv --version))"
+    mark_done "05-uv"
+else
+    echo "[5/8] Installing uv..."
+    curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1
+    ln -sf /root/.local/bin/uv /usr/local/bin/uv
+    ln -sf /root/.local/bin/uvx /usr/local/bin/uvx
+    echo "    Installed: $(/usr/local/bin/uv --version)"
+    mark_done "05-uv"
+fi
 
-# Install Bun
-echo "[5/8] Installing Bun..."
-curl -fsSL https://bun.sh/install | bash
-ln -sf /root/.bun/bin/bun /usr/local/bin/bun
+# Step 6: VNC and X11
+if step_done "06-vnc"; then
+    echo "[6/8] VNC/X11... SKIP (already done)"
+elif command -v Xvfb &>/dev/null; then
+    echo "[6/8] VNC/X11... SKIP (already installed)"
+    mark_done "06-vnc"
+else
+    echo "[6/8] Installing VNC and X11..."
+    apt-get install -y -qq xvfb tigervnc-standalone-server tigervnc-common x11-utils xterm dbus-x11
+    mark_done "06-vnc"
+fi
 
-# Install uv (Python package manager)
-echo "[6/8] Installing uv..."
-curl -LsSf https://astral.sh/uv/install.sh | sh
-ln -sf /root/.local/bin/uv /usr/local/bin/uv
+# Step 7: CRIU
+if step_done "07-criu"; then
+    echo "[7/8] CRIU... SKIP (already done)"
+elif command -v criu &>/dev/null; then
+    echo "[7/8] CRIU... SKIP (already installed)"
+    mark_done "07-criu"
+else
+    echo "[7/8] Installing CRIU..."
+    apt-get install -y -qq criu
+    mark_done "07-criu"
+fi
 
-# Install VNC and X11 dependencies
-echo "[7/8] Installing VNC and X11..."
-apt-get install -y \
-    xvfb \
-    tigervnc-standalone-server \
-    tigervnc-common \
-    x11-utils \
-    xterm \
-    dbus-x11
-
-# Install CRIU for checkpointing
-echo "[8/8] Installing CRIU..."
-apt-get install -y criu
-
-# Create cmux directories
-mkdir -p /opt/cmux/{bin,config,checkpoints}
-mkdir -p /var/log/cmux
-
-# Configure Docker to start on boot
-systemctl enable docker
+# Step 8: cmux directories and final config
+if step_done "08-finalize"; then
+    echo "[8/8] Finalize... SKIP (already done)"
+else
+    echo "[8/8] Finalizing setup..."
+    mkdir -p /opt/cmux/{bin,config,checkpoints}
+    mkdir -p /var/log/cmux
+    mkdir -p /root/workspace
+    mark_done "08-finalize"
+fi
 
 echo ""
 echo "=== Setup Complete ==="
 echo ""
-echo "Container is ready for cmux services installation."
-echo "Next: Install cmux worker, proxy, and openvscode binaries."
+echo "Installed versions:"
+command -v node &>/dev/null && echo "  Node.js: $(node --version)"
+command -v bun &>/dev/null && echo "  Bun: $(bun --version)"
+command -v uv &>/dev/null && echo "  uv: $(uv --version 2>&1 | head -1)"
+command -v docker &>/dev/null && echo "  Docker: $(docker --version 2>/dev/null | cut -d' ' -f3 | tr -d ',')"
+command -v criu &>/dev/null && echo "  CRIU: $(criu --version 2>&1 | head -1)"
 SETUP_EOF
 
     chmod +x "$setup_script"
