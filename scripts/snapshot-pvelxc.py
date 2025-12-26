@@ -138,6 +138,10 @@ class PveLxcClient:
             hostname = parsed.hostname or "localhost"
             self.ssh_host = f"root@{hostname}"
 
+        # SSH ControlMaster socket path for connection multiplexing
+        # This allows multiple SSH sessions to share a single TCP connection
+        self._ssh_control_path: str | None = None
+
         # Create SSL context
         self._ssl_context: ssl.SSLContext | None = None
         if not verify_ssl:
@@ -464,6 +468,61 @@ class PveLxcClient:
     # SSH-based operations for pct commands
     # -----------------------------------------------------------------------
 
+    def start_ssh_control_master(self) -> None:
+        """Start SSH ControlMaster for connection multiplexing.
+
+        This creates a persistent SSH connection that subsequent SSH commands
+        can reuse, avoiding the overhead and connection limits of opening
+        many separate TCP connections.
+        """
+        if self._ssh_control_path:
+            return  # Already started
+
+        # Create control socket in temp directory
+        control_dir = tempfile.mkdtemp(prefix="pve_ssh_")
+        self._ssh_control_path = os.path.join(control_dir, "control.sock")
+
+        # Start ControlMaster in background
+        cmd = [
+            "ssh",
+            "-o", "BatchMode=yes",
+            "-o", "StrictHostKeyChecking=accept-new",
+            "-o", "ControlMaster=yes",
+            "-o", f"ControlPath={self._ssh_control_path}",
+            "-o", "ControlPersist=600",  # Keep alive for 10 minutes
+            "-N",  # No command, just open connection
+            "-f",  # Go to background
+            self.ssh_host,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            self._ssh_control_path = None
+            raise RuntimeError(
+                f"Failed to start SSH ControlMaster: {result.stderr}"
+            )
+
+    def stop_ssh_control_master(self) -> None:
+        """Stop SSH ControlMaster and clean up."""
+        if not self._ssh_control_path:
+            return
+
+        # Send exit command to control master
+        cmd = [
+            "ssh",
+            "-o", f"ControlPath={self._ssh_control_path}",
+            "-O", "exit",
+            self.ssh_host,
+        ]
+        subprocess.run(cmd, capture_output=True, timeout=10)
+
+        # Clean up control directory
+        control_dir = os.path.dirname(self._ssh_control_path)
+        try:
+            shutil.rmtree(control_dir, ignore_errors=True)
+        except Exception:
+            pass
+        self._ssh_control_path = None
+
     def ssh_exec(
         self,
         command: str,
@@ -476,9 +535,14 @@ class PveLxcClient:
             "ssh",
             "-o", "BatchMode=yes",
             "-o", "StrictHostKeyChecking=accept-new",
-            self.ssh_host,
-            command,
         ]
+        # Use ControlMaster if available
+        if self._ssh_control_path:
+            ssh_cmd.extend([
+                "-o", f"ControlPath={self._ssh_control_path}",
+            ])
+        ssh_cmd.extend([self.ssh_host, command])
+
         result = subprocess.run(
             ssh_cmd,
             capture_output=True,
@@ -548,14 +612,16 @@ class PveLxcClient:
         import uuid
         tmp_name = f"/tmp/pct_push_{vmid}_{uuid.uuid4().hex[:8]}"
 
-        # SCP local file to PVE host
+        # SCP local file to PVE host (uses ControlMaster if available)
         scp_cmd = [
             "scp",
             "-o", "BatchMode=yes",
             "-o", "StrictHostKeyChecking=accept-new",
-            local_path,
-            f"{self.ssh_host}:{tmp_name}",
         ]
+        if self._ssh_control_path:
+            scp_cmd.extend(["-o", f"ControlPath={self._ssh_control_path}"])
+        scp_cmd.extend([local_path, f"{self.ssh_host}:{tmp_name}"])
+
         result = subprocess.run(
             scp_cmd,
             capture_output=True,
@@ -2567,6 +2633,11 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
         f"(IDE provider: {args.ide_provider})"
     )
 
+    # Start SSH ControlMaster for connection multiplexing
+    # This prevents "Connection closed" errors when running many parallel tasks
+    console.info("Starting SSH ControlMaster for connection multiplexing...")
+    client.start_ssh_control_master()
+
     try:
         for index, preset_plan in enumerate(preset_plans):
             result = await provision_and_snapshot_for_preset(
@@ -2594,6 +2665,9 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
                 except Exception:
                     pass
         raise
+    finally:
+        # Always clean up SSH ControlMaster
+        client.stop_ssh_control_master()
 
     # Update manifest
     for result in results:
