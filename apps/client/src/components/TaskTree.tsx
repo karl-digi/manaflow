@@ -156,6 +156,7 @@ interface SidebarArchiveOverlayProps {
   label: string;
   onArchive: () => void;
   groupName: "task" | "run";
+  isLoading?: boolean;
 }
 
 function SidebarArchiveOverlay({
@@ -163,6 +164,7 @@ function SidebarArchiveOverlay({
   label,
   onArchive,
   groupName,
+  isLoading,
 }: SidebarArchiveOverlayProps) {
   const hoverShow =
     groupName === "task"
@@ -175,21 +177,32 @@ function SidebarArchiveOverlay({
         <TooltipTrigger asChild>
           <button
             type="button"
-            aria-label={label}
+            aria-label={isLoading ? "Archiving..." : label}
+            disabled={isLoading}
             className={clsx(
-              "flex h-4 w-4 -mr-0.5 items-center justify-center rounded-sm text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-50 opacity-0 pointer-events-none focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-400 dark:focus-visible:outline-neutral-500",
-              hoverShow
+              "flex h-4 w-4 -mr-0.5 items-center justify-center rounded-sm text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-50 pointer-events-none focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-400 dark:focus-visible:outline-neutral-500",
+              isLoading
+                ? "opacity-100 pointer-events-auto cursor-not-allowed"
+                : clsx("opacity-0", hoverShow)
             )}
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
-              onArchive();
+              if (!isLoading) {
+                onArchive();
+              }
             }}
           >
-            <ArchiveIcon className="w-3 h-3" />
+            {isLoading ? (
+              <Loader2 className="w-3 h-3 animate-spin" />
+            ) : (
+              <ArchiveIcon className="w-3 h-3" />
+            )}
           </button>
         </TooltipTrigger>
-        <TooltipContent side="right">{label}</TooltipContent>
+        <TooltipContent side="right">
+          {isLoading ? "Archiving..." : label}
+        </TooltipContent>
       </Tooltip>
       {icon ? (
         <div className="flex items-center justify-center">{icon}</div>
@@ -556,7 +569,9 @@ function TaskTreeInner({
     setIsTaskLinkFocusVisible(false);
   }, []);
 
-  const { archiveWithUndo, unarchive } = useArchiveTask(teamSlugOrId);
+  const { archiveWithUndo, unarchive, isArchiving } =
+    useArchiveTask(teamSlugOrId);
+  const taskIsArchiving = isArchiving(task._id);
 
   const {
     isRenaming,
@@ -844,6 +859,7 @@ function TaskTreeInner({
       label="Archive"
       onArchive={handleArchive}
       groupName="task"
+      isLoading={taskIsArchiving}
     />
   ) : (
     taskLeadingIcon
