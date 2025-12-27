@@ -74,6 +74,12 @@ export class BubblewrapSandbox extends Sandbox {
     // Convert host workspace path to container path for local mode
     const containerWorkspace = this.toContainerPath(this.config.workspacePath);
 
+    console.log(`[BubblewrapSandbox] Starting sandbox:`);
+    console.log(`  Host workspace: ${this.config.workspacePath}`);
+    console.log(`  Container workspace: ${containerWorkspace}`);
+    console.log(`  Host data dir: ${this.hostDataDir}`);
+    console.log(`  Container data dir: ${this.containerDataDir}`);
+
     // Create sandbox via cmux-sandboxd API
     const sandbox = await this.client.createSandbox({
       name: `cmux-${this.taskRunId}`,
@@ -89,6 +95,11 @@ export class BubblewrapSandbox extends Sandbox {
 
     this.sandboxId = sandbox.id;
     this.sandboxIndex = sandbox.index;
+
+    console.log(`[BubblewrapSandbox] Sandbox created:`);
+    console.log(`  ID: ${this.sandboxId}`);
+    console.log(`  Index: ${this.sandboxIndex}`);
+    console.log(`  Status: ${sandbox.status}`);
 
     // Wait for services to be ready if the endpoint exists
     // Note: await-ready endpoint may not be available in all sandboxd versions
