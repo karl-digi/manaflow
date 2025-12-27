@@ -266,7 +266,7 @@ const StartSandboxResponse = z
     instanceId: z.string(),
     vscodeUrl: z.string(),
     workerUrl: z.string(),
-    provider: z.enum(["morph", "proxmox"]).default("morph"),
+    provider: z.enum(["morph", "pve-lxc"]).default("morph"),
     vscodePersisted: z.boolean().optional(),
   })
   .openapi("StartSandboxResponse");
@@ -703,7 +703,7 @@ sandboxesRouter.openapi(
         instanceId: instance.id,
         vscodeUrl: vscodeService.url,
         workerUrl: workerService.url,
-        provider: provider === "proxmox" ? "proxmox" : "morph",
+        provider: provider === "proxmox" ? "pve-lxc" : "morph",
         vscodePersisted,
       });
     } catch (error) {
@@ -864,7 +864,7 @@ sandboxesRouter.openapi(
               running: z.boolean(),
               vscodeUrl: z.string().optional(),
               workerUrl: z.string().optional(),
-              provider: z.enum(["morph", "proxmox"]).optional(),
+              provider: z.enum(["morph", "pve-lxc"]).optional(),
             }),
           },
         },

@@ -28,7 +28,7 @@ export interface VSCodeInstanceInfo {
   workspaceUrl: string;
   instanceId: string;
   taskRunId: Id<"taskRuns">;
-  provider: "docker" | "morph" | "daytona";
+  provider: "docker" | "morph" | "daytona" | "pve-lxc";
   /** If true, VSCode URLs were already persisted to Convex by www */
   vscodePersisted?: boolean;
 }

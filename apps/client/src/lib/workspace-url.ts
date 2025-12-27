@@ -1,6 +1,6 @@
 import { toProxyWorkspaceUrl } from "./toProxyWorkspaceUrl";
 
-type VSCodeProvider = "docker" | "morph" | "other" | "daytona" | undefined;
+type VSCodeProvider = "docker" | "morph" | "other" | "daytona" | "pve-lxc" | undefined;
 
 /**
  * Get the workspace URL with appropriate serve-web handling based on provider.
