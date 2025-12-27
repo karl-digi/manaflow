@@ -244,6 +244,12 @@ class PveLxcClient:
         result = self._request("GET", f"/api2/json/nodes/{node}/lxc/{vmid}/config")
         return result.get("data", {})
 
+    async def aget_lxc_config(
+        self, vmid: int, node: str | None = None
+    ) -> dict[str, t.Any]:
+        """Async get LXC config."""
+        return await asyncio.to_thread(self.get_lxc_config, vmid, node)
+
     def clone_lxc(
         self,
         source_vmid: int,
@@ -2614,38 +2620,74 @@ async def update_existing_template(
     console: Console,
     client: PveLxcClient,
     repo_root: Path,
-) -> None:
-    """Update an existing template container in-place with the update_registry tasks.
+) -> int:
+    """Update an existing template container by cloning, updating, and converting to new template.
 
     This skips heavy dependency installation (apt, rust, go, node, etc.) and only
     runs tasks that rebuild binaries and update configs from the repo.
+
+    Flow:
+    1. Check if source VMID is a template (via config template=1)
+    2. If template, full clone to new auto-allocated VMID
+    3. Start the clone and run update tasks
+    4. Stop and convert to new template
+    5. Return new template VMID
+
+    Returns the new template VMID (or original VMID if it was a regular container).
     """
-    vmid = args.update_vmid
-    console.always(f"\n=== Update mode: updating container {vmid} ===")
+    source_vmid = args.update_vmid
+    console.always(f"\n=== Update mode: source container {source_vmid} ===")
     timings = TimingsCollector()
 
     node = await client.aget_node()
 
-    # Check if container exists and get its status
+    # Check if container exists
     try:
-        status = await client.aget_lxc_status(vmid, node)
-        console.info(f"Container {vmid} status: {status.get('status', 'unknown')}")
+        config = await client.aget_lxc_config(source_vmid, node)
+        console.info(f"Container {source_vmid} config loaded")
     except Exception as e:
-        console.always(f"ERROR: Container {vmid} not found: {e}")
+        console.always(f"ERROR: Container {source_vmid} not found: {e}")
         sys.exit(1)
 
-    # If container is stopped, start it
-    if status.get("status") != "running":
-        console.info(f"Starting container {vmid}...")
-        upid = await client.astart_lxc(vmid, node)
-        await client.await_task(upid, timeout=120, node=node)
-        await wait_for_container_ready(vmid, client, console=console)
+    # Check if source is a template (template=1 in config)
+    is_template = config.get("template", 0) == 1
+    console.info(f"Container {source_vmid} is_template: {is_template}")
+
+    if is_template:
+        # Clone from template to new VMID
+        new_vmid = await client.afind_next_vmid(node)
+        hostname = f"cmux-update-{new_vmid}"
+        console.always(f"Source {source_vmid} is a template, cloning to new container {new_vmid}...")
+
+        upid = await client.aclone_lxc(
+            source_vmid,
+            new_vmid,
+            hostname=hostname,
+            full=True,
+            node=node,
+        )
+        await client.await_task(upid, timeout=600, node=node)
+        console.info(f"Clone complete: {source_vmid} -> {new_vmid}")
+
+        work_vmid = new_vmid
     else:
-        console.info(f"Container {vmid} is already running")
+        # Source is a regular container, work on it directly
+        work_vmid = source_vmid
+        console.info(f"Container {source_vmid} is not a template, updating directly")
+
+    # Start the container
+    status = await client.aget_lxc_status(work_vmid, node)
+    if status.get("status") != "running":
+        console.info(f"Starting container {work_vmid}...")
+        upid = await client.astart_lxc(work_vmid, node)
+        await client.await_task(upid, timeout=120, node=node)
+        await wait_for_container_ready(work_vmid, client, console=console)
+    else:
+        console.info(f"Container {work_vmid} is already running")
 
     # Create task context
     ctx = PveTaskContext(
-        vmid=vmid,
+        vmid=work_vmid,
         client=client,
         repo_root=repo_root,
         remote_repo_root="/cmux",
@@ -2670,11 +2712,26 @@ async def update_existing_template(
         for line in summary:
             console.always(line)
 
-    console.always(f"\n=== Update complete for container {vmid} ===")
-    console.always("\nNote: Container left running for testing.")
-    console.always("To convert to template after verification:")
-    console.always(f"  pct stop {vmid}")
-    console.always(f"  pct template {vmid}")
+    # Stop container before converting to template
+    console.info(f"Stopping container {work_vmid} for template conversion...")
+    upid = await client.astop_lxc(work_vmid, node)
+    await client.await_task(upid, timeout=120, node=node)
+
+    # Convert to template
+    console.info(f"Converting container {work_vmid} to template...")
+    await client.aconvert_to_template(work_vmid, node)
+
+    console.always(f"\n=== Update complete: new template VMID {work_vmid} ===")
+
+    if is_template:
+        console.always(f"\nOld template: {source_vmid}")
+        console.always(f"New template: {work_vmid}")
+        console.always("\nTo use the new template, update manifest or clone from it:")
+        console.always(f"  pct clone {work_vmid} <new-vmid>")
+    else:
+        console.always(f"\nContainer {work_vmid} converted to template")
+
+    return work_vmid
 
 
 async def provision_and_create_template(
