@@ -149,7 +149,6 @@ describe("BubblewrapSandbox e2e", () => {
         sandboxdUrl: SANDBOXD_URL,
         taskRunId,
         taskId,
-        instanceId: 1,
         workspacePath: "/tmp",
         teamSlugOrId: "test",
       });
@@ -200,7 +199,6 @@ describe("BubblewrapSandbox e2e", () => {
         sandboxdUrl: SANDBOXD_URL,
         taskRunId,
         taskId,
-        instanceId: 2,
         workspacePath: "/tmp",
         teamSlugOrId: "test",
       });
