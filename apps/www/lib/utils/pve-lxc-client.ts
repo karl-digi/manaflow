@@ -42,6 +42,10 @@ export interface HttpService {
 export interface ContainerNetworking {
   httpServices: HttpService[];
   ipAddress?: string;
+  /** Container hostname (e.g., "cmux-200") */
+  hostname?: string;
+  /** Fully qualified domain name (e.g., "cmux-200.lan") */
+  fqdn?: string;
 }
 
 /**
@@ -137,16 +141,16 @@ export class PveLxcInstance {
   }
 
   /**
-   * Expose an HTTP service (stores in metadata, actual exposure via IP)
+   * Expose an HTTP service (stores in metadata, actual exposure via hostname/IP)
    */
   async exposeHttpService(name: string, port: number): Promise<void> {
-    // For PVE LXC, we expose services via direct container IP
-    const ipAddress = this.networking.ipAddress;
-    if (!ipAddress) {
-      throw new Error("Container IP address not available");
+    // Prefer FQDN when available, fall back to IP
+    const host = this.networking.fqdn || this.networking.ipAddress;
+    if (!host) {
+      throw new Error("Container hostname or IP address not available");
     }
 
-    const url = `http://${ipAddress}:${port}`;
+    const url = `http://${host}:${port}`;
     const existingService = this.networking.httpServices.find(
       (s) => s.name === name
     );
@@ -217,6 +221,16 @@ interface PveContainerConfig {
 }
 
 /**
+ * PVE DNS configuration response
+ */
+interface PveDnsConfig {
+  search?: string;
+  dns1?: string;
+  dns2?: string;
+  dns3?: string;
+}
+
+/**
  * Proxmox VE LXC Client
  */
 export class PveLxcClient {
@@ -224,6 +238,10 @@ export class PveLxcClient {
   private apiToken: string;
   private node: string | null;
   private sshHost: string;
+  /** Domain suffix for FQDNs, auto-detected from PVE DNS config (e.g., ".lan") */
+  private domainSuffix: string | null = null;
+  /** Whether we've attempted to fetch the domain suffix */
+  private domainSuffixFetched: boolean = false;
 
   // In-memory store for instance metadata (PVE doesn't have native metadata support)
   private instanceMetadata: Map<number, ContainerMetadata> = new Map();
@@ -241,6 +259,71 @@ export class PveLxcClient {
     // Extract SSH host from API URL
     const url = new URL(this.apiUrl);
     this.sshHost = `root@${url.hostname}`;
+  }
+
+  /**
+   * Get the domain suffix, auto-detecting from PVE DNS config if not already fetched.
+   * Returns null if no search domain is configured.
+   */
+  private async getDomainSuffix(): Promise<string | null> {
+    if (this.domainSuffixFetched) {
+      return this.domainSuffix;
+    }
+
+    try {
+      const node = await this.getNode();
+      const dnsConfig = await this.apiRequest<PveDnsConfig>(
+        "GET",
+        `/api2/json/nodes/${node}/dns`
+      );
+
+      if (dnsConfig?.search) {
+        // PVE returns "lan" or "example.com", we need ".lan" or ".example.com"
+        this.domainSuffix = `.${dnsConfig.search}`;
+        console.log(`[PveLxcClient] Auto-detected domain suffix: ${this.domainSuffix}`);
+      } else {
+        console.log("[PveLxcClient] No DNS search domain configured, using IP addresses");
+        this.domainSuffix = null;
+      }
+    } catch (error) {
+      console.error("[PveLxcClient] Failed to fetch DNS config:", error);
+      this.domainSuffix = null;
+    }
+
+    this.domainSuffixFetched = true;
+    return this.domainSuffix;
+  }
+
+  /**
+   * Build a URL for the given hostname and port.
+   * Prefers FQDN (hostname + domain suffix) when configured, falls back to IP.
+   */
+  private buildServiceUrl(
+    hostname: string | undefined,
+    ipAddress: string | undefined,
+    port: number,
+    domainSuffix: string | null
+  ): string {
+    // Prefer hostname+domainSuffix when available
+    if (hostname && domainSuffix) {
+      const fqdn = `${hostname}${domainSuffix}`;
+      return `http://${fqdn}:${port}`;
+    }
+    // Fall back to IP address
+    if (ipAddress) {
+      return `http://${ipAddress}:${port}`;
+    }
+    throw new Error("No hostname or IP address available for service URL");
+  }
+
+  /**
+   * Get the FQDN for a hostname.
+   */
+  private getFqdnSync(hostname: string, domainSuffix: string | null): string | undefined {
+    if (domainSuffix) {
+      return `${hostname}${domainSuffix}`;
+    }
+    return undefined;
   }
 
   /**
@@ -741,6 +824,10 @@ export class PveLxcClient {
       const newVmid = await this.findNextVmid();
       const hostname = `cmux-${newVmid}`;
 
+      // Auto-detect domain suffix from PVE DNS config
+      const domainSuffix = await this.getDomainSuffix();
+      const fqdn = this.getFqdnSync(hostname, domainSuffix);
+
       console.log(
         `[PveLxcClient] Linked-cloning from template ${templateVmid} to ${newVmid}`
       );
@@ -762,11 +849,12 @@ export class PveLxcClient {
       this.instanceMetadata.set(newVmid, metadata);
 
       // Initialize services with standard cmux ports
+      // Prefer hostname+domainSuffix when available, fall back to IP
       const services: HttpService[] = [];
-      if (ipAddress) {
+      if (hostname || ipAddress) {
         services.push(
-          { name: "vscode", port: 39378, url: `http://${ipAddress}:39378` },
-          { name: "worker", port: 39377, url: `http://${ipAddress}:39377` }
+          { name: "vscode", port: 39378, url: this.buildServiceUrl(hostname, ipAddress, 39378, domainSuffix) },
+          { name: "worker", port: 39377, url: this.buildServiceUrl(hostname, ipAddress, 39377, domainSuffix) }
         );
       }
       this.instanceServices.set(newVmid, services);
@@ -777,13 +865,13 @@ export class PveLxcClient {
         newVmid,
         "running",
         metadata,
-        { httpServices: services, ipAddress },
+        { httpServices: services, ipAddress, hostname, fqdn },
         node,
         this.sshHost
       );
 
       console.log(
-        `[PveLxcClient] Container ${newVmid} started with IP ${ipAddress || "pending"}`
+        `[PveLxcClient] Container ${newVmid} started (hostname=${hostname}, fqdn=${fqdn || "none"}, ip=${ipAddress || "pending"})`
       );
 
       return instance;
@@ -799,6 +887,11 @@ export class PveLxcClient {
         throw new Error(`Invalid PVE LXC instance ID: ${options.instanceId}`);
       }
       const vmid = parseInt(match[1], 10);
+      const hostname = `cmux-${vmid}`;
+
+      // Auto-detect domain suffix from PVE DNS config
+      const domainSuffix = await this.getDomainSuffix();
+      const fqdn = this.getFqdnSync(hostname, domainSuffix);
 
       const node = await this.getNode();
       const status = await this.getContainerStatus(vmid);
@@ -811,7 +904,7 @@ export class PveLxcClient {
         vmid,
         status,
         metadata,
-        { httpServices: services, ipAddress },
+        { httpServices: services, ipAddress, hostname, fqdn },
         node,
         this.sshHost
       );
@@ -827,11 +920,16 @@ export class PveLxcClient {
         `/api2/json/nodes/${node}/lxc`
       );
 
+      // Auto-detect domain suffix from PVE DNS config
+      const domainSuffix = await this.getDomainSuffix();
+
       const instances: PveLxcInstance[] = [];
       for (const container of containers) {
         const metadata = this.instanceMetadata.get(container.vmid);
         // Only include containers we know about (have metadata)
         if (metadata?.app?.startsWith("cmux")) {
+          const hostname = `cmux-${container.vmid}`;
+          const fqdn = this.getFqdnSync(hostname, domainSuffix);
           const status = await this.getContainerStatus(container.vmid);
           const ipAddress = await this.getContainerIp(container.vmid);
           const services = this.instanceServices.get(container.vmid) || [];
@@ -842,7 +940,7 @@ export class PveLxcClient {
               container.vmid,
               status,
               metadata,
-              { httpServices: services, ipAddress },
+              { httpServices: services, ipAddress, hostname, fqdn },
               node,
               this.sshHost
             )
