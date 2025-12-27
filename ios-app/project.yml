@@ -14,6 +14,9 @@ packages:
   ConvexMobile:
     url: https://github.com/get-convex/convex-swift
     from: "0.1.0"
+  Sentry:
+    url: https://github.com/getsentry/sentry-cocoa
+    from: "8.0.0"
 
 targets:
   cmux:
@@ -24,6 +27,7 @@ targets:
       - Assets.xcassets
     dependencies:
       - package: ConvexMobile
+      - package: Sentry
     settings:
       base:
         MARKETING_VERSION: "1.0"
