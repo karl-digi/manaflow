@@ -17,6 +17,15 @@ Required environment variables:
     PVE_API_URL - Proxmox API endpoint (e.g., https://pve.example.com:8006)
     PVE_API_TOKEN - API token in format: user@realm!tokenid=secret
 
+Optional environment variables:
+    PVE_CF_DOMAIN - Cloudflare Tunnel domain for HTTP exec (e.g., alphasolves.com)
+                    When set, uses https://exec-{vmid}.{domain}/exec for command execution
+                    via cmux-execd instead of SSH+pct exec. Falls back to PVE_PUBLIC_DOMAIN
+                    if not set, then to SSH if neither is set.
+    PVE_PUBLIC_DOMAIN - Alias for PVE_CF_DOMAIN (used as fallback)
+    PVE_NODE - Target PVE node name (auto-detected if not set)
+    PVE_SSH_HOST - SSH host for fallback (derived from PVE_API_URL if not set)
+
 Examples:
     uv run --env-file .env ./scripts/snapshot-pvelxc.py
     uv run --env-file .env ./scripts/snapshot-pvelxc.py --template-vmid 9000
@@ -116,11 +125,15 @@ class PveLxcClient:
         node: str | None = None,
         verify_ssl: bool = False,
         ssh_host: str | None = None,
+        cf_domain: str | None = None,
     ) -> None:
         self.api_url = api_url.rstrip("/")
         self.api_token = api_token
         self.node = node
         self.verify_ssl = verify_ssl
+        # Cloudflare Tunnel domain for public exec URLs (e.g., "example.com")
+        # When set, uses https://exec-{vmid}.{cf_domain}/exec for HTTP exec
+        self.cf_domain = cf_domain
 
         # Parse token: user@realm!tokenid=secret
         token_parts = api_token.split("=", 1)
@@ -132,6 +145,7 @@ class PveLxcClient:
         self.token_secret = token_parts[1]
 
         # SSH host for pct commands (derived from API URL if not provided)
+        # SSH is now optional - only used as fallback if cf_domain is not set
         if ssh_host:
             self.ssh_host = ssh_host
         else:
@@ -695,6 +709,251 @@ class PveLxcClient:
             self.pct_push, vmid, local_path, remote_path, timeout=timeout
         )
 
+    # -----------------------------------------------------------------------
+    # HTTP exec operations via cmux-execd (no SSH required)
+    # -----------------------------------------------------------------------
+
+    def build_exec_url(self, vmid: int) -> str | None:
+        """Build the HTTP exec URL for a container.
+
+        Returns None if cf_domain is not configured.
+        """
+        if not self.cf_domain:
+            return None
+        return f"https://exec-{vmid}.{self.cf_domain}/exec"
+
+    def http_exec(
+        self,
+        vmid: int,
+        command: str,
+        *,
+        timeout: float | None = None,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess[str] | None:
+        """Execute command inside container via HTTP exec (cmux-execd).
+
+        Returns None if HTTP exec is not available (cf_domain not set).
+        Falls back to SSH+pct exec if HTTP exec fails.
+
+        The cmux-execd daemon runs on port 39375 inside containers and is
+        exposed via Cloudflare Tunnel at https://exec-{vmid}.{cf_domain}/exec
+        """
+        exec_url = self.build_exec_url(vmid)
+        if not exec_url:
+            return None
+
+        timeout_ms = int((timeout or 600) * 1000)
+        body = json.dumps({
+            "command": f"HOME=/root {command}",
+            "timeout_ms": timeout_ms,
+        }).encode("utf-8")
+
+        req = urllib.request.Request(
+            exec_url,
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        stdout_lines: list[str] = []
+        stderr_lines: list[str] = []
+        exit_code: int | None = None
+
+        try:
+            with urllib.request.urlopen(
+                req,
+                timeout=timeout or 600,
+            ) as response:
+                # Parse streaming JSON lines response
+                for line in response:
+                    line_str = line.decode("utf-8").strip()
+                    if not line_str:
+                        continue
+                    try:
+                        event = json.loads(line_str)
+                        event_type = event.get("type")
+                        if event_type == "stdout":
+                            stdout_lines.append(event.get("data", ""))
+                        elif event_type == "stderr":
+                            stderr_lines.append(event.get("data", ""))
+                        elif event_type == "exit":
+                            exit_code = event.get("code", 0)
+                        elif event_type == "error":
+                            stderr_lines.append(event.get("message", "Unknown error"))
+                            exit_code = 1
+                    except json.JSONDecodeError:
+                        stderr_lines.append(line_str)
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode("utf-8", errors="replace")
+            stderr_lines.append(f"HTTP exec error {e.code}: {e.reason}\n{error_body}")
+            exit_code = 1
+        except urllib.error.URLError as e:
+            # Connection failed - HTTP exec not available
+            return None
+        except TimeoutError:
+            stderr_lines.append(f"HTTP exec timed out after {timeout}s")
+            exit_code = 124
+
+        if exit_code is None:
+            exit_code = 0
+
+        result = subprocess.CompletedProcess(
+            args=command,
+            returncode=exit_code,
+            stdout="".join(stdout_lines),
+            stderr="".join(stderr_lines),
+        )
+
+        if check and result.returncode != 0:
+            raise RuntimeError(
+                f"HTTP exec failed (exit {result.returncode}):\n"
+                f"Command: {command}\n"
+                f"stdout: {result.stdout}\n"
+                f"stderr: {result.stderr}"
+            )
+
+        return result
+
+    async def ahttp_exec(
+        self,
+        vmid: int,
+        command: str,
+        *,
+        timeout: float | None = None,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess[str] | None:
+        """Async HTTP exec."""
+        return await asyncio.to_thread(
+            self.http_exec, vmid, command, timeout=timeout, check=check
+        )
+
+    def exec_in_container(
+        self,
+        vmid: int,
+        command: str,
+        *,
+        timeout: float | None = None,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess[str]:
+        """Execute command inside container, preferring HTTP exec over SSH.
+
+        Tries HTTP exec first (via cmux-execd), falls back to SSH+pct exec.
+        """
+        # Try HTTP exec first if available
+        result = self.http_exec(vmid, command, timeout=timeout, check=False)
+        if result is not None:
+            if check and result.returncode != 0:
+                raise RuntimeError(
+                    f"Command failed (exit {result.returncode}):\n"
+                    f"Command: {command}\n"
+                    f"stdout: {result.stdout}\n"
+                    f"stderr: {result.stderr}"
+                )
+            return result
+
+        # Fall back to SSH+pct exec
+        return self.pct_exec(vmid, command, timeout=timeout, check=check)
+
+    async def aexec_in_container(
+        self,
+        vmid: int,
+        command: str,
+        *,
+        timeout: float | None = None,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess[str]:
+        """Async exec in container with HTTP/SSH fallback."""
+        return await asyncio.to_thread(
+            self.exec_in_container, vmid, command, timeout=timeout, check=check
+        )
+
+    def http_push_file(
+        self,
+        vmid: int,
+        local_path: str,
+        remote_path: str,
+        *,
+        timeout: float | None = None,
+    ) -> bool:
+        """Push a file to container via HTTP exec using base64 encoding.
+
+        Returns True if successful, False if HTTP exec is not available.
+        """
+        import base64
+
+        exec_url = self.build_exec_url(vmid)
+        if not exec_url:
+            return False
+
+        # Read local file and encode as base64
+        with open(local_path, "rb") as f:
+            file_data = f.read()
+        b64_data = base64.b64encode(file_data).decode("ascii")
+
+        # Escape the remote path for shell
+        escaped_path = shlex.quote(remote_path)
+        parent_dir = shlex.quote(str(Path(remote_path).parent))
+
+        # Build command to decode base64 and write to file
+        command = f"mkdir -p {parent_dir} && echo '{b64_data}' | base64 -d > {escaped_path}"
+
+        result = self.http_exec(vmid, command, timeout=timeout, check=False)
+        if result is None:
+            return False
+
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"HTTP file push failed (exit {result.returncode}):\n"
+                f"stdout: {result.stdout}\n"
+                f"stderr: {result.stderr}"
+            )
+        return True
+
+    async def ahttp_push_file(
+        self,
+        vmid: int,
+        local_path: str,
+        remote_path: str,
+        *,
+        timeout: float | None = None,
+    ) -> bool:
+        """Async HTTP file push."""
+        return await asyncio.to_thread(
+            self.http_push_file, vmid, local_path, remote_path, timeout=timeout
+        )
+
+    def push_file_to_container(
+        self,
+        vmid: int,
+        local_path: str,
+        remote_path: str,
+        *,
+        timeout: float | None = None,
+    ) -> None:
+        """Push file to container, preferring HTTP over SSH.
+
+        Tries HTTP push first (via cmux-execd), falls back to SSH+pct push.
+        """
+        # Try HTTP push first if available
+        if self.http_push_file(vmid, local_path, remote_path, timeout=timeout):
+            return
+
+        # Fall back to SSH+pct push
+        self.pct_push(vmid, local_path, remote_path, timeout=timeout)
+
+    async def apush_file_to_container(
+        self,
+        vmid: int,
+        local_path: str,
+        remote_path: str,
+        *,
+        timeout: float | None = None,
+    ) -> None:
+        """Async push file to container with HTTP/SSH fallback."""
+        await asyncio.to_thread(
+            self.push_file_to_container, vmid, local_path, remote_path, timeout=timeout
+        )
+
 
 # ---------------------------------------------------------------------------
 # Manifest types and helpers
@@ -957,7 +1216,7 @@ class PveTaskContext:
         *,
         timeout: float | None = None,
     ) -> PveExecResponse:
-        """Execute command via SSH + pct exec."""
+        """Execute command via HTTP exec (cmux-execd) or SSH + pct exec fallback."""
         self.console.info(f"[{label}] running...")
 
         # Wrap command in bash with pipefail
@@ -968,7 +1227,8 @@ class PveTaskContext:
         while True:
             attempts += 1
             try:
-                result = await self.client.apct_exec(
+                # Use aexec_in_container which prefers HTTP exec over SSH
+                result = await self.client.aexec_in_container(
                     self.vmid,
                     script,
                     timeout=timeout,
@@ -1014,8 +1274,8 @@ class PveTaskContext:
         *,
         timeout: float | None = None,
     ) -> None:
-        """Push a file to the container via SSH + pct push."""
-        await self.client.apct_push(
+        """Push a file to the container via HTTP exec or SSH + pct push."""
+        await self.client.apush_file_to_container(
             self.vmid, local_path, remote_path, timeout=timeout
         )
 
@@ -1092,12 +1352,15 @@ async def upload_repo_to_container(
     remote_tar_path: str,
     console: Console,
 ) -> None:
-    """Upload repository archive to container via SSH + pct push."""
+    """Upload repository archive to container via HTTP exec or SSH + pct push."""
     console.info("Creating repository archive...")
     archive = await asyncio.to_thread(create_repo_archive, repo_root)
     try:
-        console.info(f"Uploading repository to container {vmid} via SSH...")
-        await client.apct_push(vmid, str(archive), remote_tar_path)
+        if client.cf_domain:
+            console.info(f"Uploading repository to container {vmid} via HTTP exec...")
+        else:
+            console.info(f"Uploading repository to container {vmid} via SSH...")
+        await client.apush_file_to_container(vmid, str(archive), remote_tar_path)
         console.info(f"Repository uploaded to {remote_tar_path}")
     finally:
         archive.unlink(missing_ok=True)
@@ -2977,14 +3240,20 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
         console.always("  export PVE_API_TOKEN=root@pam!cmux=your-secret")
         sys.exit(1)
 
+    cf_domain = os.environ.get("PVE_CF_DOMAIN") or os.environ.get("PVE_PUBLIC_DOMAIN")
+
     client = PveLxcClient(
         api_url=api_url,
         api_token=api_token,
         node=os.environ.get("PVE_NODE"),
         ssh_host=os.environ.get("PVE_SSH_HOST"),
+        cf_domain=cf_domain,
     )
 
-    console.info(f"Using SSH host: {client.ssh_host}")
+    if cf_domain:
+        console.info(f"Using HTTP exec via Cloudflare Tunnel: exec-{{vmid}}.{cf_domain}")
+    else:
+        console.info(f"Using SSH host: {client.ssh_host} (set PVE_CF_DOMAIN to use HTTP exec)")
 
     # Test connection
     try:
@@ -3042,10 +3311,11 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
         f"(IDE provider: {args.ide_provider})"
     )
 
-    # Start SSH ControlMaster for connection multiplexing
-    # This prevents "Connection closed" errors when running many parallel tasks
-    console.info("Starting SSH ControlMaster for connection multiplexing...")
-    client.start_ssh_control_master()
+    # Start SSH ControlMaster if not using HTTP exec
+    # SSH is still needed as fallback for file transfers
+    if not cf_domain:
+        console.info("Starting SSH ControlMaster for connection multiplexing...")
+        client.start_ssh_control_master()
 
     try:
         for index, preset_plan in enumerate(preset_plans):
@@ -3075,8 +3345,9 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
                     pass
         raise
     finally:
-        # Always clean up SSH ControlMaster
-        client.stop_ssh_control_master()
+        # Clean up SSH ControlMaster if we started one
+        if not cf_domain:
+            client.stop_ssh_control_master()
 
     # Update manifest
     for result in results:
@@ -3253,14 +3524,20 @@ async def run_update_mode(args: argparse.Namespace) -> None:
         console.always("ERROR: PVE_API_URL and PVE_API_TOKEN must be set")
         sys.exit(1)
 
+    cf_domain = os.environ.get("PVE_CF_DOMAIN") or os.environ.get("PVE_PUBLIC_DOMAIN")
+
     client = PveLxcClient(
         api_url=api_url,
         api_token=api_token,
         node=os.environ.get("PVE_NODE"),
         ssh_host=os.environ.get("PVE_SSH_HOST"),
+        cf_domain=cf_domain,
     )
 
-    console.info(f"Using SSH host: {client.ssh_host}")
+    if cf_domain:
+        console.info(f"Using HTTP exec via Cloudflare Tunnel: exec-{{vmid}}.{cf_domain}")
+    else:
+        console.info(f"Using SSH host: {client.ssh_host} (set PVE_CF_DOMAIN to use HTTP exec)")
 
     # Test connection
     try:
@@ -3272,9 +3549,11 @@ async def run_update_mode(args: argparse.Namespace) -> None:
 
     repo_root = Path(args.repo_root).resolve()
 
-    # Start SSH ControlMaster
-    console.info("Starting SSH ControlMaster for connection multiplexing...")
-    client.start_ssh_control_master()
+    # Start SSH ControlMaster if not using HTTP exec
+    # SSH is still needed for pct push (file transfers)
+    if not cf_domain:
+        console.info("Starting SSH ControlMaster for connection multiplexing...")
+        client.start_ssh_control_master()
 
     try:
         await update_existing_template(
@@ -3284,7 +3563,8 @@ async def run_update_mode(args: argparse.Namespace) -> None:
             repo_root=repo_root,
         )
     finally:
-        client.stop_ssh_control_master()
+        if not cf_domain:
+            client.stop_ssh_control_master()
 
 
 if __name__ == "__main__":
