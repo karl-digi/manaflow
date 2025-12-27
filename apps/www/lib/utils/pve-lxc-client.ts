@@ -6,7 +6,6 @@
  */
 
 import { env } from "./www-env";
-import { spawn } from "node:child_process";
 import { Agent, fetch as undiciFetch } from "undici";
 
 // PVE often uses self-signed certificates, so we need a custom agent
@@ -76,7 +75,6 @@ export class PveLxcInstance {
 
   private client: PveLxcClient;
   private node: string;
-  private sshHost: string;
 
   constructor(
     client: PveLxcClient,
@@ -84,8 +82,7 @@ export class PveLxcInstance {
     status: ContainerStatus,
     metadata: ContainerMetadata,
     networking: ContainerNetworking,
-    node: string,
-    sshHost: string
+    node: string
   ) {
     this.client = client;
     this.vmid = vmid;
@@ -94,12 +91,10 @@ export class PveLxcInstance {
     this.metadata = metadata;
     this.networking = networking;
     this.node = node;
-    this.sshHost = sshHost;
   }
 
   /**
-   * Execute a command inside the container.
-   * Tries HTTP exec first (via cmux-execd), falls back to SSH + pct exec.
+   * Execute a command inside the container via HTTP exec (cmux-execd).
    */
   async exec(command: string, options?: { timeoutMs?: number }): Promise<ExecResult> {
     return this.client.execInContainer(this.vmid, command, {
@@ -237,7 +232,6 @@ export class PveLxcClient {
   private apiUrl: string;
   private apiToken: string;
   private node: string | null;
-  private sshHost: string;
   /** Domain suffix for FQDNs, auto-detected from PVE DNS config (e.g., ".lan") */
   private domainSuffix: string | null = null;
   /** Whether we've attempted to fetch the domain suffix */
@@ -259,10 +253,6 @@ export class PveLxcClient {
     this.apiToken = options.apiToken;
     this.node = options.node || null; // Will be auto-detected if not provided
     this.publicDomain = options.publicDomain || null;
-
-    // Extract SSH host from API URL
-    const url = new URL(this.apiUrl);
-    this.sshHost = `root@${url.hostname}`;
   }
 
   /**
@@ -432,52 +422,6 @@ export class PveLxcClient {
   }
 
   /**
-   * Execute a command on the PVE host via SSH
-   */
-  private async sshExec(command: string): Promise<ExecResult> {
-    return new Promise((resolve) => {
-      const sshArgs = [
-        "-o",
-        "StrictHostKeyChecking=no",
-        "-o",
-        "UserKnownHostsFile=/dev/null",
-        "-o",
-        "ConnectTimeout=10",
-        this.sshHost,
-        command,
-      ];
-
-      const proc = spawn("ssh", sshArgs);
-      let stdout = "";
-      let stderr = "";
-
-      proc.stdout.on("data", (data: Buffer) => {
-        stdout += data.toString();
-      });
-
-      proc.stderr.on("data", (data: Buffer) => {
-        stderr += data.toString();
-      });
-
-      proc.on("close", (code) => {
-        resolve({
-          exit_code: code ?? 1,
-          stdout,
-          stderr,
-        });
-      });
-
-      proc.on("error", (err) => {
-        resolve({
-          exit_code: 1,
-          stdout: "",
-          stderr: err.message,
-        });
-      });
-    });
-  }
-
-  /**
    * Execute a command inside an LXC container via HTTP exec daemon.
    * This uses the cmux-execd service running in the container on port 39375.
    * Returns null if HTTP exec is not available.
@@ -552,9 +496,8 @@ export class PveLxcClient {
         stderr: stderr.trimEnd(),
       };
     } catch (error) {
-      // HTTP exec not available, will fall back to SSH
-      console.log(
-        `[PveLxcClient] HTTP exec failed for ${ipAddress}, falling back to SSH:`,
+      console.error(
+        `[PveLxcClient] HTTP exec failed for ${ipAddress}:`,
         error instanceof Error ? error.message : error
       );
       return null;
@@ -562,31 +505,33 @@ export class PveLxcClient {
   }
 
   /**
-   * Execute a command inside an LXC container.
-   * Tries HTTP exec first (via cmux-execd), falls back to SSH + pct exec.
+   * Execute a command inside an LXC container via HTTP exec (cmux-execd).
+   * Requires cmux-execd to be running in the container on port 39375.
    */
   async execInContainer(
     vmid: number,
     command: string,
     options?: { ipAddress?: string; timeoutMs?: number }
   ): Promise<ExecResult> {
-    // Try HTTP exec first if we have the IP address
     const ipAddress = options?.ipAddress;
-    if (ipAddress) {
-      const httpResult = await this.httpExec(
-        ipAddress,
-        command,
-        options?.timeoutMs
-      );
-      if (httpResult) {
-        return httpResult;
-      }
+    if (!ipAddress) {
+      throw new Error(`Cannot execute command in container ${vmid}: IP address not available`);
     }
 
-    // Fall back to SSH + pct exec
-    const escapedCommand = command.replace(/'/g, "'\\''");
-    const pctCommand = `pct exec ${vmid} -- bash -lc '${escapedCommand}'`;
-    return this.sshExec(pctCommand);
+    const httpResult = await this.httpExec(
+      ipAddress,
+      command,
+      options?.timeoutMs
+    );
+
+    if (!httpResult) {
+      throw new Error(
+        `HTTP exec failed for container ${vmid} (${ipAddress}:39375). ` +
+        `Ensure cmux-execd is running in the container.`
+      );
+    }
+
+    return httpResult;
   }
 
   /**
@@ -890,8 +835,7 @@ export class PveLxcClient {
         "running",
         metadata,
         { httpServices: services, ipAddress, hostname, fqdn },
-        node,
-        this.sshHost
+        node
       );
 
       console.log(
@@ -929,8 +873,7 @@ export class PveLxcClient {
         status,
         metadata,
         { httpServices: services, ipAddress, hostname, fqdn },
-        node,
-        this.sshHost
+        node
       );
     },
 
@@ -965,8 +908,7 @@ export class PveLxcClient {
               status,
               metadata,
               { httpServices: services, ipAddress, hostname, fqdn },
-              node,
-              this.sshHost
+              node
             )
           );
         }
