@@ -21,6 +21,110 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/pve-api.sh"
 
+# Retry configuration for transient errors
+MAX_RETRIES="${PVE_MAX_RETRIES:-3}"
+RETRY_DELAY="${PVE_RETRY_DELAY:-5}"
+
+# HTTP exec configuration (optional, for faster execution when cmux-execd is running)
+# Set PVE_CF_DOMAIN to enable HTTP exec (e.g., alphasolves.com)
+# This uses https://exec-{vmid}.{cf_domain}/exec instead of SSH
+PVE_CF_DOMAIN="${PVE_CF_DOMAIN:-}"
+
+# Check if a string contains transient error patterns
+is_transient_error() {
+    local output="$1"
+    # SSH/network transient errors
+    echo "$output" | grep -qiE "(connection refused|connection reset|connection timed out|temporary failure|network is unreachable|no route to host|502|503|504|bad gateway|service unavailable|gateway timeout)" && return 0
+    return 1
+}
+
+# Execute command with retry logic for transient errors
+# Usage: retry_command <description> <command...>
+retry_command() {
+    local description="$1"
+    shift
+    local cmd=("$@")
+
+    local attempt=1
+    local delay="$RETRY_DELAY"
+    local result output exit_code
+
+    while [[ $attempt -le $MAX_RETRIES ]]; do
+        output=$("${cmd[@]}" 2>&1) && exit_code=0 || exit_code=$?
+
+        if [[ $exit_code -eq 0 ]]; then
+            echo "$output"
+            return 0
+        fi
+
+        # Check if this is a transient error worth retrying
+        if is_transient_error "$output" && [[ $attempt -lt $MAX_RETRIES ]]; then
+            log_warn "${description} failed (attempt ${attempt}/${MAX_RETRIES}): transient error, retrying in ${delay}s..."
+            sleep "$delay"
+            delay=$((delay * 2))  # Exponential backoff
+            attempt=$((attempt + 1))
+        else
+            # Non-transient error or max retries reached
+            echo "$output" >&2
+            return $exit_code
+        fi
+    done
+
+    return 1
+}
+
+# HTTP exec via cmux-execd (when PVE_CF_DOMAIN is set)
+# Usage: http_exec <vmid> <command> [timeout]
+http_exec() {
+    local vmid="$1"
+    local command="$2"
+    local timeout="${3:-120}"
+
+    if [[ -z "$PVE_CF_DOMAIN" ]]; then
+        return 1  # HTTP exec not available
+    fi
+
+    local url="https://exec-${vmid}.${PVE_CF_DOMAIN}/exec"
+    local json_payload
+    json_payload=$(jq -n --arg cmd "$command" --argjson timeout "$timeout" '{command: $cmd, timeout: $timeout}')
+
+    local result
+    result=$(curl -s -X POST "$url" \
+        -H "Content-Type: application/json" \
+        -d "$json_payload" \
+        --max-time "$timeout" 2>&1) || return 1
+
+    # Parse response
+    local exit_code stdout stderr
+    exit_code=$(echo "$result" | jq -r '.exit_code // 1')
+    stdout=$(echo "$result" | jq -r '.stdout // ""')
+    stderr=$(echo "$result" | jq -r '.stderr // ""')
+
+    echo "$stdout"
+    [[ -n "$stderr" ]] && echo "$stderr" >&2
+
+    return "$exit_code"
+}
+
+# HTTP file push via cmux-execd (when PVE_CF_DOMAIN is set)
+# Usage: http_push <vmid> <local_path> <remote_path>
+http_push() {
+    local vmid="$1"
+    local local_path="$2"
+    local remote_path="$3"
+
+    if [[ -z "$PVE_CF_DOMAIN" ]]; then
+        return 1  # HTTP exec not available
+    fi
+
+    # Base64 encode the file and push via HTTP exec
+    local base64_content
+    base64_content=$(base64 < "$local_path")
+
+    local decode_cmd="echo '${base64_content}' | base64 -d > ${remote_path}"
+    http_exec "$vmid" "$decode_cmd" 60
+}
+
 # Default configuration
 # Note: PVE_STORAGE should be a storage that supports 'rootdir' content type
 DEFAULT_STORAGE="${PVE_STORAGE:-local}"
@@ -64,10 +168,15 @@ Options for 'configure':
                             local         - Run pct commands directly (on PVE host)
                             pve-ssh       - SSH to PVE host, then use pct
                             container-ssh - SSH directly into container (needs openssh-server)
+                            http          - Use cmux-execd HTTP exec (needs PVE_CF_DOMAIN)
 
 Environment Variables:
   PVE_EXEC_MODE           Default execution mode for configure (default: auto)
   PVE_SSH_HOST            SSH target for pve-ssh mode (default: derived from PVE_API_URL)
+  PVE_CF_DOMAIN           Cloudflare Tunnel domain for HTTP exec (optional)
+                            When set, adds 'http' mode using cmux-execd
+  PVE_MAX_RETRIES         Max retries for transient errors (default: 3)
+  PVE_RETRY_DELAY         Initial retry delay in seconds (default: 5)
 
 Examples:
   $(basename "$0") list
@@ -75,6 +184,7 @@ Examples:
   $(basename "$0") configure 9000                      # Auto-detect mode
   $(basename "$0") configure 9000 --mode pve-ssh      # SSH to PVE host
   $(basename "$0") configure 9000 --mode container-ssh # SSH to container
+  $(basename "$0") configure 9000 --mode http         # HTTP exec (needs cmux-execd)
   $(basename "$0") convert 9000
 
 Note: The Proxmox VE API does not support executing commands inside containers.
@@ -82,6 +192,7 @@ Note: The Proxmox VE API does not support executing commands inside containers.
       - Running this script on the PVE host (local mode)
       - SSH access to the PVE host (pve-ssh mode)
       - SSH server running inside the container (container-ssh mode)
+      - cmux-execd HTTP daemon running inside the container (http mode)
 EOF
 }
 
@@ -468,13 +579,13 @@ SETUP_EOF
             log_info "Using PVE SSH host: ${pve_ssh_host}"
 
             log_info "Copying setup script to PVE host..."
-            if ! scp -q "$setup_script" "${pve_ssh_host}:/tmp/cmux-lxc-setup-${vmid}.sh"; then
+            if ! retry_command "SCP to PVE host" scp -q "$setup_script" "${pve_ssh_host}:/tmp/cmux-lxc-setup-${vmid}.sh"; then
                 log_error "Failed to copy setup script to PVE host"
                 return 1
             fi
 
             log_info "Pushing setup script to container ${vmid}..."
-            if ! ssh "$pve_ssh_host" "pct push ${vmid} /tmp/cmux-lxc-setup-${vmid}.sh /tmp/setup.sh"; then
+            if ! retry_command "pct push" ssh "$pve_ssh_host" "pct push ${vmid} /tmp/cmux-lxc-setup-${vmid}.sh /tmp/setup.sh"; then
                 log_error "Failed to push setup script to container"
                 return 1
             fi
@@ -530,7 +641,7 @@ SETUP_EOF
             fi
 
             log_info "Copying setup script to container..."
-            if ! scp -o StrictHostKeyChecking=no "$setup_script" "${container_ssh}:/tmp/setup.sh"; then
+            if ! retry_command "SCP to container" scp -o StrictHostKeyChecking=no "$setup_script" "${container_ssh}:/tmp/setup.sh"; then
                 log_error "Failed to copy setup script to container"
                 return 1
             fi
@@ -548,9 +659,50 @@ SETUP_EOF
             fi
             ;;
 
+        http)
+            # Use HTTP exec via cmux-execd (requires PVE_CF_DOMAIN and cmux-execd running)
+            if [[ -z "$PVE_CF_DOMAIN" ]]; then
+                log_error "HTTP exec mode requires PVE_CF_DOMAIN environment variable"
+                echo "Set PVE_CF_DOMAIN to your Cloudflare Tunnel domain (e.g., alphasolves.com)"
+                return 1
+            fi
+
+            local http_url="https://exec-${vmid}.${PVE_CF_DOMAIN}/exec"
+            log_info "Using HTTP exec via cmux-execd: ${http_url}"
+
+            # Check if cmux-execd is reachable
+            log_info "Testing HTTP exec connectivity..."
+            if ! http_exec "$vmid" "echo 'HTTP exec test'" 10 &>/dev/null; then
+                log_error "HTTP exec not available on container ${vmid}"
+                echo "Ensure cmux-execd is running inside the container."
+                echo "Falling back to SSH mode may be necessary for initial setup."
+                return 1
+            fi
+            log_info "HTTP exec is available"
+
+            log_info "Pushing setup script to container ${vmid} via HTTP exec..."
+            if ! http_push "$vmid" "$setup_script" "/tmp/setup.sh"; then
+                log_error "Failed to push setup script via HTTP exec"
+                return 1
+            fi
+
+            log_info "Executing setup script inside container ${vmid} via HTTP exec..."
+            log_info "This may take several minutes..."
+            echo ""
+
+            # Execute with a long timeout (15 minutes for full setup)
+            if http_exec "$vmid" "bash /tmp/setup.sh" 900; then
+                log_success "Container ${vmid} configured successfully via HTTP exec"
+            else
+                log_error "Setup script failed"
+                echo "Check container logs or try --mode pve-ssh for debugging"
+                return 1
+            fi
+            ;;
+
         *)
             log_error "Unknown execution mode: ${mode}"
-            echo "Valid modes: auto, local, pve-ssh, container-ssh"
+            echo "Valid modes: auto, local, pve-ssh, container-ssh, http"
             return 1
             ;;
     esac

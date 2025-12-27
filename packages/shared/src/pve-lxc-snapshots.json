@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "updatedAt": "2025-12-27T07:59:50Z",
+  "updatedAt": "2025-12-27T18:08:06Z",
   "baseTemplateVmid": 9000,
   "node": "karl-ws",
   "presets": [
@@ -20,6 +20,11 @@
           "version": 2,
           "templateVmid": 105,
           "capturedAt": "2025-12-27T07:59:50Z"
+        },
+        {
+          "version": 3,
+          "templateVmid": 108,
+          "capturedAt": "2025-12-27T18:08:06Z"
         }
       ]
     },
