@@ -219,42 +219,41 @@ struct MessageInputBar: View {
     let onSend: () -> Void
 
     var body: some View {
-        HStack(spacing: 12) {
-            Button {} label: {
-                Image(systemName: "plus.circle.fill")
-                    .font(.title2)
-                    .foregroundStyle(.gray)
-            }
+        GlassEffectContainer {
+            HStack(spacing: 12) {
+                // Plus button with glass circle
+                Button {} label: {
+                    Image(systemName: "plus")
+                        .font(.title3)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(width: 36, height: 36)
+                .glassEffect(.regular.interactive(), in: .circle)
 
-            HStack {
-                TextField("Message", text: $text, axis: .vertical)
-                    .lineLimit(1...5)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
+                // Text field with glass capsule
+                HStack(spacing: 8) {
+                    TextField("iMessage", text: $text, axis: .vertical)
+                        .lineLimit(1...5)
 
-                if text.isEmpty {
-                    Button {} label: {
+                    if text.isEmpty {
                         Image(systemName: "mic.fill")
-                            .foregroundStyle(.gray)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Button(action: onSend) {
+                            Image(systemName: "arrow.up.circle.fill")
+                                .font(.title2)
+                                .foregroundStyle(.blue)
+                        }
                     }
-                    .padding(.trailing, 8)
                 }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .glassEffect(.regular.interactive(), in: .capsule)
             }
-            .background(Color(.systemGray6))
-            .clipShape(Capsule())
-
-            if !text.isEmpty {
-                Button(action: onSend) {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.title)
-                        .foregroundStyle(.blue)
-                }
-                .transition(.scale.combined(with: .opacity))
-            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
         }
-        .padding(.horizontal)
-        .padding(.vertical, 8)
-        .background(.bar)
         .animation(.easeInOut(duration: 0.15), value: text.isEmpty)
     }
 }

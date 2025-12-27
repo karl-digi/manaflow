@@ -54,24 +54,21 @@ struct ConversationListView: View {
                     // Bottom bar: Search + Compose (iOS 26 Liquid Glass)
                     GlassEffectContainer {
                         HStack(spacing: 12) {
-                            // Search field with glass effect
+                            // Search field with glass capsule
                             HStack(spacing: 8) {
                                 Image(systemName: "magnifyingglass")
                                     .foregroundStyle(.secondary)
 
                                 TextField("Search", text: $searchText)
-                                    .foregroundStyle(.primary)
-
-                                Spacer()
 
                                 Image(systemName: "mic.fill")
                                     .foregroundStyle(.secondary)
                             }
                             .padding(.horizontal, 16)
-                            .padding(.vertical, 12)
-                            .glassEffect(in: .capsule)
+                            .padding(.vertical, 10)
+                            .glassEffect(.regular.interactive(), in: .capsule)
 
-                            // Compose button with glass effect
+                            // Compose button with glass circle
                             Button {
                                 showNewTask = true
                             } label: {
@@ -80,8 +77,7 @@ struct ConversationListView: View {
                                     .fontWeight(.medium)
                                     .foregroundStyle(.secondary)
                             }
-                            .buttonStyle(.plain)
-                            .frame(width: 48, height: 48)
+                            .frame(width: 44, height: 44)
                             .glassEffect(.regular.interactive(), in: .circle)
                         }
                         .padding(.horizontal, 16)
@@ -167,7 +163,8 @@ struct NewTaskSheet: View {
                     .disabled(taskDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
-            .onAppear {
+            .task {
+                try? await Task.sleep(for: .milliseconds(100))
                 isFocused = true
             }
         }
