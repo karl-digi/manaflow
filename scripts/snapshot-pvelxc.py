@@ -1225,8 +1225,11 @@ class PveTaskContext:
         """Execute command via HTTP exec (cmux-execd) or SSH + pct exec fallback."""
         self.console.info(f"[{label}] running...")
 
-        # Wrap command in bash with pipefail
-        script = f"set -euo pipefail\n{command}"
+        # Wrap command in bash explicitly to ensure pipefail support
+        # This handles the case where execd may use /bin/sh (dash) which doesn't support pipefail
+        # We invoke bash explicitly so the script works regardless of execd's shell
+        escaped_command = command.replace("'", "'\"'\"'")
+        script = f"/bin/bash -c '{escaped_command}'"
 
         attempts = 0
         max_attempts = 3
