@@ -47,6 +47,7 @@ CADDY_CONFIG_DIR="${CADDY_CONFIG_DIR:-/etc/caddy}"
 VSCODE_PORT=39378
 WORKER_PORT=39377
 XTERM_PORT=39376
+EXEC_PORT=39375
 
 show_help() {
     cat << 'EOF'
@@ -88,6 +89,7 @@ URL PATTERN (uses free Cloudflare Universal SSL):
       https://vscode-200.example.com
       https://worker-200.example.com
       https://xterm-200.example.com
+      https://exec-200.example.com
       https://preview-200.example.com
 
 EXAMPLE:
@@ -410,6 +412,7 @@ configure_caddy() {
 #   vscode-{vmid}.${CF_DOMAIN} -> cmux-{vmid}.${domain_suffix}:${VSCODE_PORT}
 #   worker-{vmid}.${CF_DOMAIN} -> cmux-{vmid}.${domain_suffix}:${WORKER_PORT}
 #   xterm-{vmid}.${CF_DOMAIN}  -> cmux-{vmid}.${domain_suffix}:${XTERM_PORT}
+#   exec-{vmid}.${CF_DOMAIN}   -> cmux-{vmid}.${domain_suffix}:${EXEC_PORT}
 #   preview-{vmid}.${CF_DOMAIN} -> cmux-{vmid}.${domain_suffix}:5173
 
 :${CADDY_PORT} {
@@ -439,6 +442,17 @@ configure_caddy() {
     @xterm header_regexp vmid Host ^xterm-(\d+)\.
     handle @xterm {
         reverse_proxy cmux-{re.vmid.1}.${domain_suffix}:${XTERM_PORT} {
+            header_up Host {upstream_hostport}
+            transport http {
+                dial_timeout 10s
+            }
+        }
+    }
+
+    # Exec service (cmux-execd for remote command execution)
+    @exec header_regexp vmid Host ^exec-(\d+)\.
+    handle @exec {
+        reverse_proxy cmux-{re.vmid.1}.${domain_suffix}:${EXEC_PORT} {
             header_up Host {upstream_hostport}
             transport http {
                 dial_timeout 10s
