@@ -4,8 +4,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BubblewrapSandbox } from "./BubblewrapSandbox.js";
 import { SandboxdClient } from "./sandboxd-client.js";
 
-const SANDBOXD_PORT = 46832; // Use different port to avoid conflicts with dev server
-const SANDBOXD_URL = `http://localhost:${SANDBOXD_PORT}`;
+const SANDBOXD_HOST_PORT = 46832; // Use different port to avoid conflicts with dev server
+const SANDBOXD_CONTAINER_PORT = 46831; // Default port inside container
+const SANDBOXD_URL = `http://localhost:${SANDBOXD_HOST_PORT}`;
 const CONTAINER_NAME = "cmux-sandboxd-test";
 const SANDBOXD_IMAGE = "ghcr.io/manaflow-ai/cmux-sandbox:latest";
 
@@ -35,28 +36,25 @@ async function startSandboxdContainer(): Promise<void> {
     cleanup.on("error", () => resolve());
   });
 
-  // Start the sandboxd container with dockerd
-  // On macOS, systemd doesn't work so we use a custom entrypoint script
+  // Start the sandboxd container with systemd
+  // Requires same flags as `cmux sandbox start` for cgroup/systemd support
   await new Promise<void>((resolve, reject) => {
     const proc = spawn("docker", [
       "run",
       "-d",
       "--privileged",
+      "--cgroupns=host",
+      "--tmpfs",
+      "/run",
+      "--tmpfs",
+      "/run/lock",
+      "-v",
+      "/sys/fs/cgroup:/sys/fs/cgroup:rw",
       "-p",
-      `${SANDBOXD_PORT}:${SANDBOXD_PORT}`,
+      `${SANDBOXD_HOST_PORT}:${SANDBOXD_CONTAINER_PORT}`,
       "--name",
       CONTAINER_NAME,
-      "--entrypoint",
-      "/bin/bash",
       SANDBOXD_IMAGE,
-      "-c",
-      // Start dockerd in background, wait for socket, then start sandboxd
-      `dockerd --iptables=false &
-       for i in $(seq 1 30); do
-         if [ -S /var/run/docker.sock ]; then break; fi
-         sleep 1
-       done
-       exec cmux-sandboxd --port ${SANDBOXD_PORT}`,
     ]);
 
     let stderr = "";
