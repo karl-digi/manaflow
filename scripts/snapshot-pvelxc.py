@@ -1402,6 +1402,94 @@ def get_git_remote_url(repo_root: Path) -> str | None:
     return None
 
 
+def get_current_branch(repo_root: Path) -> str | None:
+    """Get the current branch name."""
+    try:
+        output = _exec_git(repo_root, ["rev-parse", "--abbrev-ref", "HEAD"])
+        if output:
+            branch = output.strip()
+            if branch != "HEAD":  # Not detached HEAD
+                return branch
+    except RuntimeError:
+        pass
+    return None
+
+
+def get_upstream_branch(repo_root: Path) -> str | None:
+    """Get the upstream tracking branch (e.g., 'origin/main')."""
+    try:
+        output = _exec_git(repo_root, ["rev-parse", "--abbrev-ref", "@{upstream}"])
+        if output:
+            return output.strip()
+    except RuntimeError:
+        pass
+    return None
+
+
+def get_remote_branch_commit(repo_root: Path, remote_branch: str) -> str | None:
+    """Get the commit hash of a remote branch (e.g., 'origin/main')."""
+    try:
+        output = _exec_git(repo_root, ["rev-parse", remote_branch])
+        if output:
+            return output.strip()
+    except RuntimeError:
+        pass
+    return None
+
+
+def create_full_diff_patch(repo_root: Path, base_ref: str) -> Path | None:
+    """Create a git diff patch that includes ALL local changes relative to base_ref.
+
+    This includes:
+    - Unpushed commits (commits between base_ref and HEAD)
+    - Staged changes
+    - Unstaged changes
+
+    Returns the path to the patch file, or None if no changes.
+    """
+    tmp = tempfile.NamedTemporaryFile(
+        suffix=".patch", delete=False, mode="wb"
+    )
+    tmp_path = Path(tmp.name)
+    tmp.close()
+
+    env = dict(os.environ)
+    env.setdefault("LC_ALL", "C")
+
+    try:
+        # Create diff from base_ref to current working tree (includes everything)
+        # --binary: include binary files
+        # base_ref: the reference point (e.g., origin/branch)
+        # No second ref means "working tree" (includes uncommitted changes)
+        completed = subprocess.run(
+            ["git", "diff", "--binary", base_ref],
+            cwd=str(repo_root),
+            env=env,
+            capture_output=True,
+            check=False,
+        )
+
+        diff_output = completed.stdout
+
+        # Also get staged changes that might not be captured by the above
+        # (in case there are staged changes not yet committed)
+        # This is redundant with the above, but just to be safe
+        if not diff_output.strip():
+            print(f"[git-diff] No differences from {base_ref}")
+            tmp_path.unlink(missing_ok=True)
+            return None
+
+        tmp_path.write_bytes(diff_output)
+        patch_size = tmp_path.stat().st_size
+        print(f"[git-diff] Created full patch from {base_ref}: {patch_size} bytes")
+        return tmp_path
+
+    except Exception as e:
+        print(f"[git-diff] Failed to create full diff patch: {e}")
+        tmp_path.unlink(missing_ok=True)
+        return None
+
+
 def create_local_changes_patch(repo_root: Path) -> Path | None:
     """Create a git diff patch for local uncommitted changes only.
 
@@ -1508,14 +1596,15 @@ async def upload_repo_via_diff(
     """Upload repository via git clone from GitHub + local changes patch.
 
     New approach:
-    1. Get git remote URL and current HEAD commit from local repo
-    2. In container: git clone (or fetch) from GitHub to get committed changes
-    3. In container: checkout to current HEAD commit
-    4. Upload and apply local uncommitted changes as small patch
+    1. Get git remote URL and current branch name
+    2. Get upstream tracking branch (e.g., origin/feature/branch)
+    3. In container: git clone + checkout the tracking branch
+    4. Create diff from tracking branch to local working tree (includes unpushed commits + uncommitted changes)
+    5. Upload and apply the diff patch
 
     This is much faster than uploading full archive because:
-    - Committed changes come from GitHub (fast, no upload needed)
-    - Only local uncommitted changes need to be uploaded
+    - The base repo comes from GitHub (fast, no upload needed)
+    - Only local changes (unpushed + uncommitted) need to be uploaded as a patch
 
     Returns True if successful, False if fallback to full upload is needed.
     """
@@ -1525,98 +1614,139 @@ async def upload_repo_via_diff(
         console.info("[git-diff] No git remote URL found, falling back to full upload")
         return False
 
-    # Get current HEAD commit
-    current_commit = await asyncio.to_thread(get_current_commit, repo_root)
-    if not current_commit:
-        console.info("[git-diff] No current commit found, falling back to full upload")
+    # Get current branch
+    current_branch = await asyncio.to_thread(get_current_branch, repo_root)
+    if not current_branch:
+        console.info("[git-diff] Not on a branch (detached HEAD), falling back to full upload")
+        return False
+
+    # Get upstream tracking branch (e.g., origin/feature/branch)
+    upstream_branch = await asyncio.to_thread(get_upstream_branch, repo_root)
+    if not upstream_branch:
+        # If no tracking branch, assume origin/<current_branch>
+        upstream_branch = f"origin/{current_branch}"
+        console.info(f"[git-diff] No upstream tracking branch, assuming {upstream_branch}")
+
+    # Get the commit hash of the upstream branch
+    upstream_commit = await asyncio.to_thread(get_remote_branch_commit, repo_root, upstream_branch)
+    if not upstream_commit:
+        console.info(f"[git-diff] Cannot find upstream branch {upstream_branch}, falling back to full upload")
         return False
 
     console.info(f"[git-diff] Remote: {remote_url}")
-    console.info(f"[git-diff] HEAD: {current_commit[:12]}")
+    console.info(f"[git-diff] Branch: {current_branch}")
+    console.info(f"[git-diff] Upstream: {upstream_branch} ({upstream_commit[:12]})")
 
-    # Step 1: Clone or fetch repo in container
+    # Step 1: Clone or fetch repo in container at the upstream branch
+    # Use bash explicitly for pipefail support (dash/sh doesn't support it)
+    # Extract branch name from upstream_branch (e.g., "origin/feature/foo" -> "feature/foo")
+    remote_branch_name = "/".join(upstream_branch.split("/")[1:])  # "feature/foo"
+
     clone_cmd = textwrap.dedent(
         f"""
-        set -euo pipefail
+        bash -c 'set -euo pipefail
         REPO_DIR={shlex.quote(remote_repo_root)}
         REMOTE_URL={shlex.quote(remote_url)}
-        TARGET_COMMIT={shlex.quote(current_commit)}
+        BRANCH={shlex.quote(remote_branch_name)}
+        TARGET_COMMIT={shlex.quote(upstream_commit)}
 
         if [ -d "$REPO_DIR/.git" ]; then
             echo "[git-diff] Existing repo found, fetching updates..."
             cd "$REPO_DIR"
-            git fetch origin --depth=1 "$TARGET_COMMIT" 2>/dev/null || git fetch origin
+            git fetch origin "$BRANCH"
             git checkout -f "$TARGET_COMMIT"
             git clean -fd
         else
             echo "[git-diff] Cloning repository from GitHub..."
             rm -rf "$REPO_DIR"
-            git clone --depth=1 "$REMOTE_URL" "$REPO_DIR"
-            cd "$REPO_DIR"
-            # Fetch specific commit if not on default branch
-            git fetch origin "$TARGET_COMMIT" --depth=1 2>/dev/null || git fetch origin --unshallow 2>/dev/null || true
-            git checkout -f "$TARGET_COMMIT" 2>/dev/null || {{
-                echo "[git-diff] Commit not found, fetching full history..."
-                git fetch origin --unshallow 2>/dev/null || git fetch origin
-                git checkout -f "$TARGET_COMMIT"
+            # Clone the specific branch
+            git clone --branch "$BRANCH" --single-branch "$REMOTE_URL" "$REPO_DIR" || {{
+                # If branch clone fails, try full clone
+                echo "[git-diff] Branch clone failed, trying full clone..."
+                git clone "$REMOTE_URL" "$REPO_DIR"
             }}
+            cd "$REPO_DIR"
+            git checkout -f "$TARGET_COMMIT"
+            git clean -fd
         fi
         echo "[git-diff] Repository at commit $(git rev-parse --short HEAD)"
+        '
         """
     ).strip()
 
-    console.info("[git-diff] Cloning/fetching repository from GitHub in container...")
-    result = await client.aexec_in_container(vmid, clone_cmd, timeout=300, check=False)
-    if result.returncode != 0:
-        console.info(f"[git-diff] Clone/fetch failed: {result.stderr}")
-        console.info(f"[git-diff] stdout: {result.stdout}")
+    console.info(f"[git-diff] Cloning/fetching branch {remote_branch_name} from GitHub in container...")
+
+    # Retry clone operation a few times to handle transient HTTP errors (502, etc.)
+    max_clone_attempts = 3
+    clone_delay = 5.0
+    result = None
+    for attempt in range(1, max_clone_attempts + 1):
+        result = await client.aexec_in_container(vmid, clone_cmd, timeout=300, check=False)
+        if result.returncode == 0:
+            break
+        # Check for transient errors that are worth retrying
+        is_transient = any(
+            err in result.stderr
+            for err in ["502", "503", "504", "Bad Gateway", "Service Unavailable", "Gateway Timeout"]
+        )
+        if not is_transient or attempt >= max_clone_attempts:
+            console.info(f"[git-diff] Clone/fetch failed: {result.stderr}")
+            console.info(f"[git-diff] stdout: {result.stdout}")
+            return False
+        console.info(f"[git-diff] Clone attempt {attempt}/{max_clone_attempts} failed with transient error, retrying in {clone_delay}s...")
+        await asyncio.sleep(clone_delay)
+        clone_delay *= 2  # Exponential backoff
+
+    if result is None or result.returncode != 0:
         return False
 
     for line in result.stdout.splitlines():
         if line.strip():
             console.info(f"  {line}")
 
-    # Step 2: Create and upload local changes patch (if any)
-    patch_path = await asyncio.to_thread(create_local_changes_patch, repo_root)
+    # Step 2: Create full diff patch (unpushed commits + uncommitted changes)
+    # This diffs from the upstream branch to the current working tree
+    patch_path = await asyncio.to_thread(create_full_diff_patch, repo_root, upstream_branch)
 
     if patch_path is not None:
         try:
             patch_size = patch_path.stat().st_size
-            console.info(f"[git-diff] Local changes patch size: {patch_size} bytes")
+            console.info(f"[git-diff] Full patch size (unpushed + uncommitted): {patch_size} bytes")
 
             # Upload patch file
-            remote_patch_path = "/tmp/cmux-local.patch"
+            remote_patch_path = "/tmp/cmux-full.patch"
             if client.cf_domain:
-                console.info(f"[git-diff] Uploading local changes to container {vmid} via HTTP exec...")
+                console.info(f"[git-diff] Uploading patch to container {vmid} via HTTP exec...")
             else:
-                console.info(f"[git-diff] Uploading local changes to container {vmid} via SSH...")
+                console.info(f"[git-diff] Uploading patch to container {vmid} via SSH...")
             await client.apush_file_to_container(vmid, str(patch_path), remote_patch_path)
 
             # Apply patch in container
-            console.info("[git-diff] Applying local changes patch...")
+            # Use bash explicitly for pipefail support (dash/sh doesn't support it)
+            console.info("[git-diff] Applying full patch...")
             apply_cmd = textwrap.dedent(
                 f"""
-                set -euo pipefail
+                bash -c 'set -euo pipefail
                 cd {shlex.quote(remote_repo_root)}
                 git apply --whitespace=nowarn {remote_patch_path}
                 rm -f {remote_patch_path}
-                echo "[git-diff] Local changes applied successfully"
+                echo "[git-diff] Patch applied successfully"
+                '
                 """
             ).strip()
 
             result = await client.aexec_in_container(vmid, apply_cmd, timeout=120, check=False)
             if result.returncode != 0:
                 console.info(f"[git-diff] Patch apply failed: {result.stderr}")
-                # Continue anyway - the repo has committed changes, just not local changes
-                console.info("[git-diff] Continuing without local changes")
+                console.info("[git-diff] Continuing with upstream branch only (no local changes)")
             else:
-                console.info("[git-diff] Local changes applied")
+                console.info("[git-diff] Full patch applied (unpushed commits + uncommitted changes)")
         finally:
             patch_path.unlink(missing_ok=True)
     else:
-        console.info("[git-diff] No local uncommitted changes to apply")
+        console.info("[git-diff] No local changes to apply (working tree matches upstream)")
 
-    console.info("[git-diff] Repository updated via git clone + local patch")
+    console.info("[git-diff] Repository updated via git clone + patch")
     return True
 
 
