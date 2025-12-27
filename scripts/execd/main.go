@@ -133,7 +133,7 @@ func execHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	cmd := exec.CommandContext(baseCtx, "/bin/sh", "-c", command)
+	cmd := exec.CommandContext(baseCtx, "/bin/bash", "-c", command)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		_ = writeJSONLine(w, flusher, execEvent{
