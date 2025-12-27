@@ -66,8 +66,10 @@ PROXY_HTTP_PORT = 39379
 VNC_HTTP_PORT = 39380
 CDP_HTTP_PORT = 39381
 XTERM_HTTP_PORT = 39383
+EXEC_HTTP_PORT = 39375
 CDP_PROXY_BINARY_NAME = "cmux-cdp-proxy"
 VNC_PROXY_BINARY_NAME = "cmux-vnc-proxy"
+EXECD_BINARY_NAME = "cmux-execd"
 
 PVE_SNAPSHOT_MANIFEST_PATH = (
     Path(__file__).resolve().parent.parent / "packages/shared/src/pve-lxc-snapshots.json"
@@ -1102,6 +1104,7 @@ async def upload_repo_to_container(
 dotenv.load_dotenv()
 
 registry = TaskRegistry()
+update_registry = TaskRegistry()  # Subset of tasks for --update mode
 
 
 @registry.task(
@@ -1563,6 +1566,11 @@ EOF
     deps=("apt-bootstrap",),
     description="Upload repository to the container",
 )
+@update_registry.task(
+    name="upload-repo",
+    deps=(),  # No deps in update mode - tools already installed
+    description="Upload repository to the container",
+)
 async def task_upload_repo(ctx: PveTaskContext) -> None:
     await upload_repo_to_container(
         ctx.vmid, ctx.client, ctx.repo_root, ctx.remote_repo_tar, ctx.console
@@ -1583,6 +1591,11 @@ async def task_upload_repo(ctx: PveTaskContext) -> None:
     deps=("upload-repo", "install-bun", "install-node-runtime"),
     description="Install workspace dependencies via bun",
 )
+@update_registry.task(
+    name="install-repo-dependencies",
+    deps=("upload-repo",),  # bun/node already installed
+    description="Install workspace dependencies via bun",
+)
 async def task_install_repo_dependencies(ctx: PveTaskContext) -> None:
     cmd = textwrap.dedent(
         f"""
@@ -1595,6 +1608,11 @@ async def task_install_repo_dependencies(ctx: PveTaskContext) -> None:
 
 
 @registry.task(
+    name="package-vscode-extension",
+    deps=("install-repo-dependencies",),
+    description="Package the cmux VS Code extension for installation",
+)
+@update_registry.task(
     name="package-vscode-extension",
     deps=("install-repo-dependencies",),
     description="Package the cmux VS Code extension for installation",
@@ -1621,6 +1639,11 @@ async def task_package_vscode_extension(ctx: PveTaskContext) -> None:
 @registry.task(
     name="install-ide-extensions",
     deps=("install-openvscode", "install-coder", "install-cmux-code", "package-vscode-extension"),
+    description="Preinstall language extensions for the IDE",
+)
+@update_registry.task(
+    name="install-ide-extensions",
+    deps=("package-vscode-extension",),  # IDEs already installed
     description="Preinstall language extensions for the IDE",
 )
 async def task_install_ide_extensions(ctx: PveTaskContext) -> None:
@@ -1818,6 +1841,11 @@ async def task_install_global_cli(ctx: PveTaskContext) -> None:
     deps=("install-global-cli",),
     description="Create wrapper scripts for claude/npx/bunx to support OAuth token injection",
 )
+@update_registry.task(
+    name="setup-claude-oauth-wrappers",
+    deps=(),  # No deps - global-cli already installed
+    description="Create wrapper scripts for claude/npx/bunx to support OAuth token injection",
+)
 async def task_setup_claude_oauth_wrappers(ctx: PveTaskContext) -> None:
     script_path = Path(__file__).parent.parent / "configs" / "setup-claude-oauth-wrappers.sh"
     script_content = script_path.read_text()
@@ -1928,6 +1956,11 @@ async def task_configure_openbox(ctx: PveTaskContext) -> None:
     deps=("upload-repo", "install-base-packages"),
     description="Install VNC startup script (includes Chrome DevTools)",
 )
+@update_registry.task(
+    name="install-service-scripts",
+    deps=("upload-repo",),  # base packages already installed
+    description="Install VNC startup script (includes Chrome DevTools)",
+)
 async def task_install_service_scripts(ctx: PveTaskContext) -> None:
     repo = shlex.quote(ctx.remote_repo_root)
     cmd = textwrap.dedent(
@@ -1945,6 +1978,11 @@ async def task_install_service_scripts(ctx: PveTaskContext) -> None:
 @registry.task(
     name="build-cdp-proxy",
     deps=("install-service-scripts", "install-go-toolchain"),
+    description="Build and install Chrome DevTools and VNC proxy binaries",
+)
+@update_registry.task(
+    name="build-cdp-proxy",
+    deps=("install-service-scripts",),  # Go toolchain already installed
     description="Build and install Chrome DevTools and VNC proxy binaries",
 )
 async def task_build_cdp_proxy(ctx: PveTaskContext) -> None:
@@ -1972,6 +2010,39 @@ async def task_build_cdp_proxy(ctx: PveTaskContext) -> None:
 
 
 @registry.task(
+    name="build-execd",
+    deps=("install-service-scripts", "install-go-toolchain"),
+    description="Build cmux-execd HTTP exec daemon",
+)
+@update_registry.task(
+    name="build-execd",
+    deps=("install-service-scripts",),  # Go toolchain already installed
+    description="Build cmux-execd HTTP exec daemon",
+)
+async def task_build_execd(ctx: PveTaskContext) -> None:
+    repo = shlex.quote(ctx.remote_repo_root)
+    cmd = textwrap.dedent(
+        f"""
+        set -euo pipefail
+        export PATH="/usr/local/go/bin:${{PATH}}"
+        install -d /usr/local/bin
+        cd {repo}/scripts/execd
+        go build -trimpath -o /usr/local/bin/{EXECD_BINARY_NAME} .
+        if [ ! -x /usr/local/bin/{EXECD_BINARY_NAME} ]; then
+          echo "Failed to build {EXECD_BINARY_NAME}" >&2
+          exit 1
+        fi
+        """
+    )
+    await ctx.run("build-execd", cmd)
+
+
+@registry.task(
+    name="build-worker",
+    deps=("install-repo-dependencies",),
+    description="Build worker bundle and install helper scripts",
+)
+@update_registry.task(
     name="build-worker",
     deps=("install-repo-dependencies",),
     description="Build worker bundle and install helper scripts",
@@ -2009,6 +2080,11 @@ JSON
     deps=("upload-repo", "install-rust-toolchain"),
     description="Build Rust binaries with a shared target dir",
 )
+@update_registry.task(
+    name="build-rust-binaries",
+    deps=("upload-repo",),  # Rust toolchain already installed
+    description="Build Rust binaries with a shared target dir",
+)
 async def task_build_rust_binaries(ctx: PveTaskContext) -> None:
     repo = shlex.quote(ctx.remote_repo_root)
     cmd = textwrap.dedent(
@@ -2028,6 +2104,11 @@ async def task_build_rust_binaries(ctx: PveTaskContext) -> None:
 
 
 @registry.task(
+    name="link-rust-binaries",
+    deps=("build-rust-binaries",),
+    description="Symlink built Rust binaries into /usr/local/bin",
+)
+@update_registry.task(
     name="link-rust-binaries",
     deps=("build-rust-binaries",),
     description="Symlink built Rust binaries into /usr/local/bin",
@@ -2053,8 +2134,21 @@ async def task_link_rust_binaries(ctx: PveTaskContext) -> None:
         "install-service-scripts",
         "build-worker",
         "build-cdp-proxy",
+        "build-execd",
         "link-rust-binaries",
         "configure-zsh",
+    ),
+    description="Install cmux systemd units and helpers",
+)
+@update_registry.task(
+    name="install-systemd-units",
+    deps=(
+        "install-ide-extensions",
+        "install-service-scripts",
+        "build-worker",
+        "build-cdp-proxy",
+        "build-execd",
+        "link-rust-binaries",
     ),
     description="Install cmux systemd units and helpers",
 )
@@ -2093,6 +2187,7 @@ async def task_install_systemd_units(ctx: PveTaskContext) -> None:
         install -Dm0644 {repo}/configs/systemd/cmux-vnc-proxy.service /usr/lib/systemd/system/cmux-vnc-proxy.service
         install -Dm0644 {repo}/configs/systemd/cmux-cdp-proxy.service /usr/lib/systemd/system/cmux-cdp-proxy.service
         install -Dm0644 {repo}/configs/systemd/cmux-pty.service /usr/lib/systemd/system/cmux-pty.service
+        install -Dm0644 {repo}/configs/systemd/cmux-execd.service /usr/lib/systemd/system/cmux-execd.service
         install -Dm0644 {repo}/configs/systemd/cmux-memory-setup.service /usr/lib/systemd/system/cmux-memory-setup.service
         install -Dm0755 {repo}/configs/systemd/bin/{ide_configure_script} /usr/local/lib/cmux/{ide_configure_script}
         install -Dm0644 {repo}/configs/systemd/{ide_env_file} /etc/cmux/ide.env
@@ -2114,6 +2209,7 @@ async def task_install_systemd_units(ctx: PveTaskContext) -> None:
         ln -sf /usr/lib/systemd/system/cmux-vnc-proxy.service /etc/systemd/system/cmux.target.wants/cmux-vnc-proxy.service
         ln -sf /usr/lib/systemd/system/cmux-cdp-proxy.service /etc/systemd/system/cmux.target.wants/cmux-cdp-proxy.service
         ln -sf /usr/lib/systemd/system/cmux-pty.service /etc/systemd/system/cmux.target.wants/cmux-pty.service
+        ln -sf /usr/lib/systemd/system/cmux-execd.service /etc/systemd/system/cmux.target.wants/cmux-execd.service
         ln -sf /usr/lib/systemd/system/cmux-memory-setup.service /etc/systemd/system/multi-user.target.wants/cmux-memory-setup.service
         ln -sf /usr/lib/systemd/system/cmux-memory-setup.service /etc/systemd/system/swap.target.wants/cmux-memory-setup.service
         {{ systemctl daemon-reload || true; }}
@@ -2135,6 +2231,11 @@ async def task_install_systemd_units(ctx: PveTaskContext) -> None:
     deps=("upload-repo",),
     description="Install prompt-wrapper helper",
 )
+@update_registry.task(
+    name="install-prompt-wrapper",
+    deps=("upload-repo",),
+    description="Install prompt-wrapper helper",
+)
 async def task_install_prompt_wrapper(ctx: PveTaskContext) -> None:
     repo = shlex.quote(ctx.remote_repo_root)
     cmd = textwrap.dedent(
@@ -2146,6 +2247,11 @@ async def task_install_prompt_wrapper(ctx: PveTaskContext) -> None:
 
 
 @registry.task(
+    name="install-tmux-conf",
+    deps=("upload-repo",),
+    description="Install tmux configuration",
+)
+@update_registry.task(
     name="install-tmux-conf",
     deps=("upload-repo",),
     description="Install tmux configuration",
@@ -2165,6 +2271,11 @@ async def task_install_tmux_conf(ctx: PveTaskContext) -> None:
     deps=("upload-repo",),
     description="Install worker helper scripts",
 )
+@update_registry.task(
+    name="install-collect-scripts",
+    deps=("upload-repo",),
+    description="Install worker helper scripts",
+)
 async def task_install_collect_scripts(ctx: PveTaskContext) -> None:
     repo = shlex.quote(ctx.remote_repo_root)
     cmd = textwrap.dedent(
@@ -2179,6 +2290,11 @@ async def task_install_collect_scripts(ctx: PveTaskContext) -> None:
 @registry.task(
     name="configure-envctl",
     deps=("link-rust-binaries", "configure-zsh"),
+    description="Configure envctl defaults",
+)
+@update_registry.task(
+    name="configure-envctl",
+    deps=("link-rust-binaries",),
     description="Configure envctl defaults",
 )
 async def task_configure_envctl(ctx: PveTaskContext) -> None:
@@ -2238,6 +2354,18 @@ PROFILE
     deps=(
         "configure-envctl",
         "configure-openbox",
+        "install-prompt-wrapper",
+        "install-tmux-conf",
+        "install-collect-scripts",
+        "setup-claude-oauth-wrappers",
+        "install-systemd-units",
+    ),
+    description="Remove repository upload and toolchain caches prior to final validation",
+)
+@update_registry.task(
+    name="cleanup-build-artifacts",
+    deps=(
+        "configure-envctl",
         "install-prompt-wrapper",
         "install-tmux-conf",
         "install-collect-scripts",
@@ -2378,7 +2506,7 @@ async def task_check_systemd_services(ctx: PveTaskContext) -> None:
         echo "Checking cmux.target..."
         systemctl list-unit-files cmux.target
         echo "Checking installed services..."
-        for svc in cmux-ide cmux-worker cmux-proxy cmux-pty; do
+        for svc in cmux-ide cmux-worker cmux-proxy cmux-pty cmux-execd; do
           if [ -f "/usr/lib/systemd/system/${svc}.service" ]; then
             echo "  ${svc}.service: installed"
           else
@@ -2478,6 +2606,75 @@ async def wait_for_container_ready(
         elapsed += 2
 
     raise TimeoutError(f"Container {vmid} did not become ready within {timeout}s")
+
+
+async def update_existing_template(
+    args: argparse.Namespace,
+    *,
+    console: Console,
+    client: PveLxcClient,
+    repo_root: Path,
+) -> None:
+    """Update an existing template container in-place with the update_registry tasks.
+
+    This skips heavy dependency installation (apt, rust, go, node, etc.) and only
+    runs tasks that rebuild binaries and update configs from the repo.
+    """
+    vmid = args.update_vmid
+    console.always(f"\n=== Update mode: updating container {vmid} ===")
+    timings = TimingsCollector()
+
+    node = await client.aget_node()
+
+    # Check if container exists and get its status
+    try:
+        status = await client.aget_lxc_status(vmid, node)
+        console.info(f"Container {vmid} status: {status.get('status', 'unknown')}")
+    except Exception as e:
+        console.always(f"ERROR: Container {vmid} not found: {e}")
+        sys.exit(1)
+
+    # If container is stopped, start it
+    if status.get("status") != "running":
+        console.info(f"Starting container {vmid}...")
+        upid = await client.astart_lxc(vmid, node)
+        await client.await_task(upid, timeout=120, node=node)
+        await wait_for_container_ready(vmid, client, console=console)
+    else:
+        console.info(f"Container {vmid} is already running")
+
+    # Create task context
+    ctx = PveTaskContext(
+        vmid=vmid,
+        client=client,
+        repo_root=repo_root,
+        remote_repo_root="/cmux",
+        remote_repo_tar="/tmp/cmux-repo.tar",
+        console=console,
+        timings=timings,
+    )
+
+    # Run update task graph (uses update_registry instead of full registry)
+    console.always("\nRunning update tasks (skipping dependency installation)...")
+    await run_pve_task_graph(update_registry, ctx)
+
+    graph = format_dependency_graph(update_registry)
+    if graph:
+        console.always("\nUpdate Mode Dependency Graph")
+        for line in graph.splitlines():
+            console.always(line)
+
+    summary = timings.summary()
+    if summary:
+        console.always("\nTiming Summary")
+        for line in summary:
+            console.always(line)
+
+    console.always(f"\n=== Update complete for container {vmid} ===")
+    console.always("\nNote: Container left running for testing.")
+    console.always("To convert to template after verification:")
+    console.always(f"  pct stop {vmid}")
+    console.always(f"  pct template {vmid}")
 
 
 async def provision_and_create_template(
@@ -2814,6 +3011,16 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Print dependency graph and exit",
     )
+    parser.add_argument(
+        "--update",
+        action="store_true",
+        help="Update mode: update an existing template container in-place (skips dependency installation)",
+    )
+    parser.add_argument(
+        "--update-vmid",
+        type=int,
+        help="VMID of existing container to update (required with --update)",
+    )
     return parser.parse_args()
 
 
@@ -2821,15 +3028,78 @@ def main() -> None:
     dotenv.load_dotenv()
     args = parse_args()
     if getattr(args, "print_deps", False):
-        graph = format_dependency_graph(registry)
+        # Print appropriate registry based on mode
+        target_registry = update_registry if getattr(args, "update", False) else registry
+        graph = format_dependency_graph(target_registry)
         if graph:
             print(graph)
         return
-    try:
-        asyncio.run(provision_and_snapshot(args))
-    except Exception:
-        traceback.print_exc()
+
+    # Validate update mode arguments
+    if getattr(args, "update", False):
+        if not getattr(args, "update_vmid", None):
+            print("ERROR: --update-vmid is required when using --update mode")
+            sys.exit(1)
+        try:
+            asyncio.run(run_update_mode(args))
+        except Exception:
+            traceback.print_exc()
+            sys.exit(1)
+    else:
+        try:
+            asyncio.run(provision_and_snapshot(args))
+        except Exception:
+            traceback.print_exc()
+            sys.exit(1)
+
+
+async def run_update_mode(args: argparse.Namespace) -> None:
+    """Run update mode to update an existing container."""
+    # Set IDE provider before running tasks
+    set_ide_provider(args.ide_provider)
+
+    console = Console()
+
+    # Validate environment
+    api_url = os.environ.get("PVE_API_URL")
+    api_token = os.environ.get("PVE_API_TOKEN")
+
+    if not api_url or not api_token:
+        console.always("ERROR: PVE_API_URL and PVE_API_TOKEN must be set")
         sys.exit(1)
+
+    client = PveLxcClient(
+        api_url=api_url,
+        api_token=api_token,
+        node=os.environ.get("PVE_NODE"),
+        ssh_host=os.environ.get("PVE_SSH_HOST"),
+    )
+
+    console.info(f"Using SSH host: {client.ssh_host}")
+
+    # Test connection
+    try:
+        version = client.get_version()
+        console.always(f"Connected to Proxmox VE v{version['data']['version']}")
+    except Exception as e:
+        console.always(f"ERROR: Failed to connect to PVE API: {e}")
+        sys.exit(1)
+
+    repo_root = Path(args.repo_root).resolve()
+
+    # Start SSH ControlMaster
+    console.info("Starting SSH ControlMaster for connection multiplexing...")
+    client.start_ssh_control_master()
+
+    try:
+        await update_existing_template(
+            args,
+            console=console,
+            client=client,
+            repo_root=repo_root,
+        )
+    finally:
+        client.stop_ssh_control_master()
 
 
 if __name__ == "__main__":

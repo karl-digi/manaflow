@@ -47,6 +47,7 @@ async fn test_filesystem_isolation() {
         command: vec!["touch".into(), "/workspace/marker".into()],
         workdir: None,
         env: vec![],
+        timeout_ms: None,
     };
     let resp_touch = service
         .exec(summary_a.id.to_string(), exec_touch)
@@ -77,6 +78,7 @@ async fn test_filesystem_isolation() {
         command: vec!["ls".into(), "/workspace/marker".into()],
         workdir: None,
         env: vec![],
+        timeout_ms: None,
     };
     let resp_check = service
         .exec(summary_b.id.to_string(), exec_check)

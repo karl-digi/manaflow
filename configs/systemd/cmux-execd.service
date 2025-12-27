@@ -1,0 +1,19 @@
+[Unit]
+Description=Cmux Exec Daemon - HTTP command execution service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/opt/app/app.env
+Environment=EXECD_PORT=39375
+LogsDirectory=cmux
+ExecStartPre=/bin/mkdir -p /var/log/cmux
+ExecStart=/usr/local/bin/cmux-execd -port 39375
+Restart=on-failure
+RestartSec=2
+StandardOutput=append:/var/log/cmux/cmux-execd.log
+StandardError=append:/var/log/cmux/cmux-execd.log
+
+[Install]
+WantedBy=cmux.target multi-user.target

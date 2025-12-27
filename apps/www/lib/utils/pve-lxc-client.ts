@@ -94,10 +94,14 @@ export class PveLxcInstance {
   }
 
   /**
-   * Execute a command inside the container via SSH + pct exec
+   * Execute a command inside the container.
+   * Tries HTTP exec first (via cmux-execd), falls back to SSH + pct exec.
    */
-  async exec(command: string): Promise<ExecResult> {
-    return this.client.execInContainer(this.vmid, command);
+  async exec(command: string, options?: { timeoutMs?: number }): Promise<ExecResult> {
+    return this.client.execInContainer(this.vmid, command, {
+      ipAddress: this.networking.ipAddress,
+      timeoutMs: options?.timeoutMs,
+    });
   }
 
   /**
@@ -375,10 +379,109 @@ export class PveLxcClient {
   }
 
   /**
-   * Execute a command inside an LXC container via pct exec
+   * Execute a command inside an LXC container via HTTP exec daemon.
+   * This uses the cmux-execd service running in the container on port 39375.
+   * Returns null if HTTP exec is not available.
    */
-  async execInContainer(vmid: number, command: string): Promise<ExecResult> {
-    // Escape the command for shell
+  private async httpExec(
+    ipAddress: string,
+    command: string,
+    timeoutMs?: number
+  ): Promise<ExecResult | null> {
+    const execUrl = `http://${ipAddress}:39375/exec`;
+    const body = JSON.stringify({
+      command: `bash -lc ${JSON.stringify(command)}`,
+      timeout_ms: timeoutMs ?? 30000,
+    });
+
+    try {
+      const response = await undiciFetch(execUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body,
+        signal: AbortSignal.timeout(timeoutMs ?? 60000),
+      });
+
+      if (!response.ok) {
+        return null;
+      }
+
+      // Parse streaming JSON lines response
+      const text = await response.text();
+      const lines = text.trim().split("\n").filter(Boolean);
+
+      let stdout = "";
+      let stderr = "";
+      let exitCode = 0;
+
+      for (const line of lines) {
+        try {
+          const event = JSON.parse(line) as {
+            type: string;
+            data?: string;
+            code?: number;
+            message?: string;
+          };
+
+          switch (event.type) {
+            case "stdout":
+              if (event.data) stdout += event.data + "\n";
+              break;
+            case "stderr":
+              if (event.data) stderr += event.data + "\n";
+              break;
+            case "exit":
+              exitCode = event.code ?? 0;
+              break;
+            case "error":
+              stderr += (event.message ?? "Unknown error") + "\n";
+              break;
+          }
+        } catch {
+          // Skip malformed lines
+        }
+      }
+
+      return {
+        exit_code: exitCode,
+        stdout: stdout.trimEnd(),
+        stderr: stderr.trimEnd(),
+      };
+    } catch (error) {
+      // HTTP exec not available, will fall back to SSH
+      console.log(
+        `[PveLxcClient] HTTP exec failed for ${ipAddress}, falling back to SSH:`,
+        error instanceof Error ? error.message : error
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Execute a command inside an LXC container.
+   * Tries HTTP exec first (via cmux-execd), falls back to SSH + pct exec.
+   */
+  async execInContainer(
+    vmid: number,
+    command: string,
+    options?: { ipAddress?: string; timeoutMs?: number }
+  ): Promise<ExecResult> {
+    // Try HTTP exec first if we have the IP address
+    const ipAddress = options?.ipAddress;
+    if (ipAddress) {
+      const httpResult = await this.httpExec(
+        ipAddress,
+        command,
+        options?.timeoutMs
+      );
+      if (httpResult) {
+        return httpResult;
+      }
+    }
+
+    // Fall back to SSH + pct exec
     const escapedCommand = command.replace(/'/g, "'\\''");
     const pctCommand = `pct exec ${vmid} -- bash -lc '${escapedCommand}'`;
     return this.sshExec(pctCommand);

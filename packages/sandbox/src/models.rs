@@ -61,15 +61,20 @@ pub struct SandboxSummary {
     pub correlation_id: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, ToSchema)]
 pub struct ExecRequest {
     /// Command arguments executed via nsenter inside the sandbox
     #[schema(example = "[\"/bin/sh\",\"-c\",\"pnpm dev\"]")]
     pub command: Vec<String>,
     #[schema(example = "/workspace")]
+    #[serde(default)]
     pub workdir: Option<String>,
     #[serde(default)]
     pub env: Vec<EnvVar>,
+    /// Timeout in milliseconds for command execution (default: 30000)
+    #[schema(example = 30000)]
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]

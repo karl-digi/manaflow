@@ -618,14 +618,99 @@ impl PveClient {
         Ok(())
     }
 
-    /// Execute a command in an LXC container via the PVE API
-    /// Note: This requires the container to have the qemu-guest-agent or uses pct exec
-    async fn exec_lxc(&self, _vmid: u32, _command: &[String]) -> SandboxResult<ExecResponse> {
-        // PVE doesn't have a direct API for exec, so we need to use SSH or pct exec via SSH to the node
-        // For now, return a placeholder - actual implementation depends on setup
-        Err(SandboxError::Internal(
-            "PVE LXC exec not yet implemented - requires SSH access to node".to_string(),
-        ))
+    /// Execute a command in an LXC container via HTTP exec daemon (cmux-execd).
+    /// The cmux-execd service runs on port 39375 inside the container.
+    async fn exec_lxc(
+        &self,
+        ip: std::net::Ipv4Addr,
+        command: &[String],
+        timeout_ms: Option<u64>,
+    ) -> SandboxResult<ExecResponse> {
+        let cmd_str = command.join(" ");
+        let exec_url = format!("http://{}:39375/exec", ip);
+        let timeout = timeout_ms.unwrap_or(30000);
+
+        let body = serde_json::json!({
+            "command": format!("bash -lc {}", serde_json::to_string(&cmd_str).unwrap_or_else(|_| format!("'{}'", cmd_str))),
+            "timeout_ms": timeout,
+        });
+
+        let response = self
+            .client
+            .post(&exec_url)
+            .header("Content-Type", "application/json")
+            .body(body.to_string())
+            .timeout(std::time::Duration::from_millis(timeout + 5000))
+            .send()
+            .await
+            .map_err(|e| {
+                SandboxError::Internal(format!(
+                    "HTTP exec request failed for container at {}: {}",
+                    ip, e
+                ))
+            })?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(SandboxError::Internal(format!(
+                "HTTP exec failed with status {}: {}",
+                status, text
+            )));
+        }
+
+        // Parse streaming JSON lines response
+        let text = response
+            .text()
+            .await
+            .map_err(|e| SandboxError::Internal(format!("Failed to read exec response: {}", e)))?;
+
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut exit_code: i32 = 0;
+
+        for line in text.lines().filter(|l| !l.is_empty()) {
+            if let Ok(event) = serde_json::from_str::<serde_json::Value>(line) {
+                match event.get("type").and_then(|t| t.as_str()) {
+                    Some("stdout") => {
+                        if let Some(data) = event.get("data").and_then(|d| d.as_str()) {
+                            if !stdout.is_empty() {
+                                stdout.push('\n');
+                            }
+                            stdout.push_str(data);
+                        }
+                    }
+                    Some("stderr") => {
+                        if let Some(data) = event.get("data").and_then(|d| d.as_str()) {
+                            if !stderr.is_empty() {
+                                stderr.push('\n');
+                            }
+                            stderr.push_str(data);
+                        }
+                    }
+                    Some("exit") => {
+                        if let Some(code) = event.get("code").and_then(|c| c.as_i64()) {
+                            exit_code = code as i32;
+                        }
+                    }
+                    Some("error") => {
+                        if let Some(msg) = event.get("message").and_then(|m| m.as_str()) {
+                            if !stderr.is_empty() {
+                                stderr.push('\n');
+                            }
+                            stderr.push_str(msg);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        Ok(ExecResponse {
+            exit_code,
+            stdout,
+            stderr,
+        })
     }
 }
 
@@ -922,10 +1007,10 @@ impl SandboxService for PveLxcService {
         let sandboxes = self.sandboxes.lock().await;
         let entry = sandboxes.get(&uuid).ok_or(SandboxError::NotFound(uuid))?;
 
-        // Execute command via PVE API or SSH
-        // This is a placeholder - actual implementation requires SSH access to the node
-        // or using the PVE VNC console API
-        self.client.exec_lxc(entry.vmid, &exec.command).await
+        // Execute command via HTTP exec daemon (cmux-execd) running in the container
+        self.client
+            .exec_lxc(entry.ip, &exec.command, exec.timeout_ms)
+            .await
     }
 
     async fn attach(
