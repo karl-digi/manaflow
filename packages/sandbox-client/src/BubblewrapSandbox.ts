@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { Sandbox } from "./Sandbox.js";
 import { SandboxdClient } from "./sandboxd-client.js";
 import type {
@@ -15,6 +16,19 @@ interface BubblewrapSandboxConfig extends SandboxConfig {
    * - Cloud: URL from www API (Morph instance)
    */
   sandboxdUrl: string;
+
+  /**
+   * For local mode, the host's cmux data directory.
+   * This is used to convert host paths to sandboxd container paths.
+   * Default: ~/cmux
+   */
+  hostDataDir?: string;
+
+  /**
+   * The cmux data directory inside the sandboxd container.
+   * Default: /var/lib/cmux
+   */
+  containerDataDir?: string;
 }
 
 /**
@@ -27,17 +41,43 @@ export class BubblewrapSandbox extends Sandbox {
   private sandboxId: string | null = null;
   private sandboxIndex: number | null = null;
   private connected: boolean = false;
+  private hostDataDir: string;
+  private containerDataDir: string;
 
   constructor(config: BubblewrapSandboxConfig) {
     super(config);
     this.client = new SandboxdClient(config.sandboxdUrl);
+
+    // Set up path mapping for local mode
+    // Host: ~/cmux -> Container: /var/lib/cmux
+    this.hostDataDir = config.hostDataDir || `${homedir()}/cmux`;
+    this.containerDataDir = config.containerDataDir || "/var/lib/cmux";
+  }
+
+  /**
+   * Convert a host path to a container path.
+   * For local mode, this converts ~/cmux/... to /var/lib/cmux/...
+   */
+  private toContainerPath(hostPath: string | undefined): string | undefined {
+    if (!hostPath) return undefined;
+
+    // If the path starts with the host data dir, convert to container path
+    if (hostPath.startsWith(this.hostDataDir)) {
+      return hostPath.replace(this.hostDataDir, this.containerDataDir);
+    }
+
+    // Return as-is (might already be a container path or cloud mode)
+    return hostPath;
   }
 
   async start(): Promise<SandboxInfo> {
+    // Convert host workspace path to container path for local mode
+    const containerWorkspace = this.toContainerPath(this.config.workspacePath);
+
     // Create sandbox via cmux-sandboxd API
     const sandbox = await this.client.createSandbox({
       name: `cmux-${this.taskRunId}`,
-      workspace: this.config.workspacePath,
+      workspace: containerWorkspace,
       tab_id: String(this.taskRunId),
       env: this.config.envVars
         ? Object.entries(this.config.envVars).map(([key, value]) => ({
