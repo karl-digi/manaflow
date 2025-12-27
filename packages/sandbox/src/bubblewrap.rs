@@ -1322,10 +1322,10 @@ fi
             let mut buf = [0u8; 4096];
             loop {
                 // Check for resize events (non-blocking)
+                // Use blocking_lock to ensure resize is applied (resize is rare)
                 while let Ok((new_rows, new_cols)) = resize_rx.try_recv() {
-                    if let Ok(mut term) = terminal_clone.try_lock() {
-                        term.resize(new_rows as usize, new_cols as usize);
-                    }
+                    let mut term = terminal_clone.blocking_lock();
+                    term.resize(new_rows as usize, new_cols as usize);
                 }
 
                 match reader.read(&mut buf) {
@@ -1334,14 +1334,14 @@ fi
                         let data = &buf[..n];
 
                         // Process through VirtualTerminal (this buffers the content)
-                        if let Ok(mut term) = terminal_clone.try_lock() {
-                            term.process(data);
+                        // Use blocking_lock to ensure no output is dropped
+                        let mut term = terminal_clone.blocking_lock();
+                        term.process(data);
 
-                            // Send any pending responses back to PTY
-                            let responses = term.drain_responses();
-                            for response in responses {
-                                let _ = input_tx_clone.send(response);
-                            }
+                        // Send any pending responses back to PTY
+                        let responses = term.drain_responses();
+                        for response in responses {
+                            let _ = input_tx_clone.send(response);
                         }
                     }
                     Err(_) => break,
