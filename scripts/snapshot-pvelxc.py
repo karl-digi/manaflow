@@ -117,6 +117,25 @@ def get_ide_provider() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Git Diff Mode Configuration
+# ---------------------------------------------------------------------------
+
+# Module-level settings for git diff upload mode
+_use_git_diff: bool = False
+_base_commit: str | None = None
+
+
+def set_git_diff_mode(use_diff: bool, base_commit: str | None = None) -> None:
+    global _use_git_diff, _base_commit
+    _use_git_diff = use_diff
+    _base_commit = base_commit
+
+
+def get_git_diff_mode() -> tuple[bool, str | None]:
+    return _use_git_diff, _base_commit
+
+
+# ---------------------------------------------------------------------------
 # PVE API Client
 # ---------------------------------------------------------------------------
 
@@ -974,6 +993,7 @@ class PveTemplateVersionEntry(t.TypedDict):
     version: int
     templateVmid: int  # The VMID of the template container
     capturedAt: str
+    baseCommit: t.NotRequired[str]  # Git commit hash this version was built from
 
 
 class PveTemplatePresetEntry(t.TypedDict):
@@ -1021,6 +1041,7 @@ class TemplateRunResult:
     template_vmid: int  # The VMID of the created template
     captured_at: str
     node: str
+    base_commit: str | None = None  # Git commit hash this version was built from
 
 
 def _iso_timestamp() -> str:
@@ -1114,6 +1135,7 @@ def _update_manifest_with_template(
     template_vmid: int,
     captured_at: str,
     node: str,
+    base_commit: str | None = None,
 ) -> PveTemplateManifestEntry:
     """Update manifest with a new template version for a preset."""
     manifest["node"] = node
@@ -1145,13 +1167,14 @@ def _update_manifest_with_template(
     if preset_entry["versions"]:
         next_version = max(entry["version"] for entry in preset_entry["versions"]) + 1
 
-    preset_entry["versions"].append(
-        {
-            "version": next_version,
-            "templateVmid": template_vmid,
-            "capturedAt": captured_at,
-        }
-    )
+    version_entry: PveTemplateVersionEntry = {
+        "version": next_version,
+        "templateVmid": template_vmid,
+        "capturedAt": captured_at,
+    }
+    if base_commit:
+        version_entry["baseCommit"] = base_commit
+    preset_entry["versions"].append(version_entry)
     preset_entry["versions"].sort(key=lambda entry: entry["version"])
 
     return manifest
@@ -1355,6 +1378,246 @@ def create_repo_archive(repo_root: Path) -> Path:
                 continue
             tar.add(full_path, arcname=str(rel_path))
     return tmp_path
+
+
+def get_current_commit(repo_root: Path) -> str | None:
+    """Get the current HEAD commit hash."""
+    try:
+        output = _exec_git(repo_root, ["rev-parse", "HEAD"])
+        if output:
+            return output.strip()
+    except RuntimeError:
+        pass
+    return None
+
+
+def get_git_remote_url(repo_root: Path) -> str | None:
+    """Get the git remote origin URL."""
+    try:
+        output = _exec_git(repo_root, ["remote", "get-url", "origin"])
+        if output:
+            return output.strip()
+    except RuntimeError:
+        pass
+    return None
+
+
+def create_local_changes_patch(repo_root: Path) -> Path | None:
+    """Create a git diff patch for local uncommitted changes only.
+
+    Returns the path to the patch file, or None if no local changes.
+    This captures staged + unstaged changes in the working directory.
+    """
+    tmp = tempfile.NamedTemporaryFile(
+        prefix="cmux-local-", suffix=".patch", delete=False
+    )
+    tmp_path = Path(tmp.name)
+    tmp.close()
+
+    env = dict(os.environ)
+    env.setdefault("LC_ALL", "C")
+
+    try:
+        # Get staged changes
+        completed_staged = subprocess.run(
+            ["git", "diff", "--binary", "--cached"],
+            cwd=str(repo_root),
+            env=env,
+            capture_output=True,
+            check=False,
+        )
+        staged_diff = completed_staged.stdout if completed_staged.returncode == 0 else b""
+
+        # Get unstaged changes (working directory)
+        completed_unstaged = subprocess.run(
+            ["git", "diff", "--binary"],
+            cwd=str(repo_root),
+            env=env,
+            capture_output=True,
+            check=False,
+        )
+        unstaged_diff = completed_unstaged.stdout if completed_unstaged.returncode == 0 else b""
+
+        # Combine diffs
+        combined_diff = b""
+        if staged_diff:
+            combined_diff = staged_diff
+        if unstaged_diff:
+            if combined_diff:
+                combined_diff += b"\n"
+            combined_diff += unstaged_diff
+
+        if not combined_diff.strip():
+            print("[git-diff] No local uncommitted changes")
+            tmp_path.unlink(missing_ok=True)
+            return None
+
+        tmp_path.write_bytes(combined_diff)
+        patch_size = tmp_path.stat().st_size
+        print(f"[git-diff] Created local changes patch: {patch_size} bytes")
+        return tmp_path
+
+    except Exception as e:
+        print(f"[git-diff] Failed to create local changes patch: {e}")
+        tmp_path.unlink(missing_ok=True)
+        return None
+
+
+def get_base_commit_from_manifest(snapshot_id: str | None = None) -> str | None:
+    """Get the base commit from the manifest for incremental updates.
+
+    If snapshot_id is provided, finds the commit for that specific snapshot.
+    Otherwise, returns the most recent commit from any preset.
+    """
+    if not PVE_SNAPSHOT_MANIFEST_PATH.exists():
+        return None
+
+    try:
+        manifest = json.loads(PVE_SNAPSHOT_MANIFEST_PATH.read_text())
+        presets = manifest.get("presets", [])
+
+        # Find the most recent version with a baseCommit
+        latest_commit: str | None = None
+        latest_captured: str | None = None
+
+        for preset in presets:
+            versions = preset.get("versions", [])
+            for version in versions:
+                base_commit = version.get("baseCommit")
+                if not base_commit:
+                    continue
+
+                captured_at = version.get("capturedAt", "")
+                if latest_captured is None or captured_at > latest_captured:
+                    latest_commit = base_commit
+                    latest_captured = captured_at
+
+        return latest_commit
+    except Exception as e:
+        print(f"[git-diff] Failed to read base commit from manifest: {e}")
+        return None
+
+
+async def upload_repo_via_diff(
+    vmid: int,
+    client: PveLxcClient,
+    repo_root: Path,
+    remote_repo_root: str,
+    console: Console,
+) -> bool:
+    """Upload repository via git clone from GitHub + local changes patch.
+
+    New approach:
+    1. Get git remote URL and current HEAD commit from local repo
+    2. In container: git clone (or fetch) from GitHub to get committed changes
+    3. In container: checkout to current HEAD commit
+    4. Upload and apply local uncommitted changes as small patch
+
+    This is much faster than uploading full archive because:
+    - Committed changes come from GitHub (fast, no upload needed)
+    - Only local uncommitted changes need to be uploaded
+
+    Returns True if successful, False if fallback to full upload is needed.
+    """
+    # Get git remote URL
+    remote_url = await asyncio.to_thread(get_git_remote_url, repo_root)
+    if not remote_url:
+        console.info("[git-diff] No git remote URL found, falling back to full upload")
+        return False
+
+    # Get current HEAD commit
+    current_commit = await asyncio.to_thread(get_current_commit, repo_root)
+    if not current_commit:
+        console.info("[git-diff] No current commit found, falling back to full upload")
+        return False
+
+    console.info(f"[git-diff] Remote: {remote_url}")
+    console.info(f"[git-diff] HEAD: {current_commit[:12]}")
+
+    # Step 1: Clone or fetch repo in container
+    clone_cmd = textwrap.dedent(
+        f"""
+        set -euo pipefail
+        REPO_DIR={shlex.quote(remote_repo_root)}
+        REMOTE_URL={shlex.quote(remote_url)}
+        TARGET_COMMIT={shlex.quote(current_commit)}
+
+        if [ -d "$REPO_DIR/.git" ]; then
+            echo "[git-diff] Existing repo found, fetching updates..."
+            cd "$REPO_DIR"
+            git fetch origin --depth=1 "$TARGET_COMMIT" 2>/dev/null || git fetch origin
+            git checkout -f "$TARGET_COMMIT"
+            git clean -fd
+        else
+            echo "[git-diff] Cloning repository from GitHub..."
+            rm -rf "$REPO_DIR"
+            git clone --depth=1 "$REMOTE_URL" "$REPO_DIR"
+            cd "$REPO_DIR"
+            # Fetch specific commit if not on default branch
+            git fetch origin "$TARGET_COMMIT" --depth=1 2>/dev/null || git fetch origin --unshallow 2>/dev/null || true
+            git checkout -f "$TARGET_COMMIT" 2>/dev/null || {{
+                echo "[git-diff] Commit not found, fetching full history..."
+                git fetch origin --unshallow 2>/dev/null || git fetch origin
+                git checkout -f "$TARGET_COMMIT"
+            }}
+        fi
+        echo "[git-diff] Repository at commit $(git rev-parse --short HEAD)"
+        """
+    ).strip()
+
+    console.info("[git-diff] Cloning/fetching repository from GitHub in container...")
+    result = await client.aexec_in_container(vmid, clone_cmd, timeout=300, check=False)
+    if result.returncode != 0:
+        console.info(f"[git-diff] Clone/fetch failed: {result.stderr}")
+        console.info(f"[git-diff] stdout: {result.stdout}")
+        return False
+
+    for line in result.stdout.splitlines():
+        if line.strip():
+            console.info(f"  {line}")
+
+    # Step 2: Create and upload local changes patch (if any)
+    patch_path = await asyncio.to_thread(create_local_changes_patch, repo_root)
+
+    if patch_path is not None:
+        try:
+            patch_size = patch_path.stat().st_size
+            console.info(f"[git-diff] Local changes patch size: {patch_size} bytes")
+
+            # Upload patch file
+            remote_patch_path = "/tmp/cmux-local.patch"
+            if client.cf_domain:
+                console.info(f"[git-diff] Uploading local changes to container {vmid} via HTTP exec...")
+            else:
+                console.info(f"[git-diff] Uploading local changes to container {vmid} via SSH...")
+            await client.apush_file_to_container(vmid, str(patch_path), remote_patch_path)
+
+            # Apply patch in container
+            console.info("[git-diff] Applying local changes patch...")
+            apply_cmd = textwrap.dedent(
+                f"""
+                set -euo pipefail
+                cd {shlex.quote(remote_repo_root)}
+                git apply --whitespace=nowarn {remote_patch_path}
+                rm -f {remote_patch_path}
+                echo "[git-diff] Local changes applied successfully"
+                """
+            ).strip()
+
+            result = await client.aexec_in_container(vmid, apply_cmd, timeout=120, check=False)
+            if result.returncode != 0:
+                console.info(f"[git-diff] Patch apply failed: {result.stderr}")
+                # Continue anyway - the repo has committed changes, just not local changes
+                console.info("[git-diff] Continuing without local changes")
+            else:
+                console.info("[git-diff] Local changes applied")
+        finally:
+            patch_path.unlink(missing_ok=True)
+    else:
+        console.info("[git-diff] No local uncommitted changes to apply")
+
+    console.info("[git-diff] Repository updated via git clone + local patch")
+    return True
 
 
 async def upload_repo_to_container(
@@ -1853,6 +2116,24 @@ EOF
     description="Upload repository to the container",
 )
 async def task_upload_repo(ctx: PveTaskContext) -> None:
+    use_diff, _ = get_git_diff_mode()
+
+    # Try git diff mode if enabled (clones from GitHub + applies local changes)
+    if use_diff:
+        ctx.console.info("[upload-repo] Git diff mode enabled (clone from GitHub + local changes)")
+        diff_success = await upload_repo_via_diff(
+            ctx.vmid,
+            ctx.client,
+            ctx.repo_root,
+            ctx.remote_repo_root,
+            ctx.console,
+        )
+        if diff_success:
+            ctx.console.info("[upload-repo] Repository updated via git clone + local patch")
+            return
+        ctx.console.info("[upload-repo] Git diff failed, falling back to full upload")
+
+    # Full upload mode (default or fallback)
     await upload_repo_to_container(
         ctx.vmid, ctx.client, ctx.repo_root, ctx.remote_repo_tar, ctx.console
     )
@@ -3244,14 +3525,18 @@ async def provision_and_create_template(
     await client.aconvert_to_template(new_vmid, node)
 
     captured_at = _iso_timestamp()
+    current_commit = get_current_commit(repo_root)
 
     console.always(f"[{preset.preset_id}] Container {new_vmid} converted to template")
+    if current_commit:
+        console.info(f"[{preset.preset_id}] Base commit: {current_commit[:12]}")
 
     return TemplateRunResult(
         preset=preset,
         template_vmid=new_vmid,
         captured_at=captured_at,
         node=node,
+        base_commit=current_commit,
     )
 
 
@@ -3391,6 +3676,7 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
             result.template_vmid,
             result.captured_at,
             result.node,
+            result.base_commit,
         )
     _write_manifest(manifest)
 
@@ -3406,6 +3692,8 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
         console.always(f"  Template VMID: {result.template_vmid}")
         console.always(f"  Node: {result.node}")
         console.always(f"  Captured: {result.captured_at}")
+        if result.base_commit:
+            console.always(f"  Base Commit: {result.base_commit[:12]}")
         console.always("")
 
     console.always("To use these templates:")
@@ -3511,6 +3799,13 @@ def parse_args() -> argparse.Namespace:
         type=int,
         help="VMID of existing container to update (required with --update)",
     )
+    parser.add_argument(
+        "--use-git-diff",
+        dest="use_git_diff",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Clone from GitHub + apply local changes (default: enabled, use --no-use-git-diff for full archive upload)",
+    )
     return parser.parse_args()
 
 
@@ -3524,6 +3819,16 @@ def main() -> None:
         if graph:
             print(graph)
         return
+
+    # Set up git diff mode if enabled
+    # New approach: clone from GitHub + apply local uncommitted changes
+    # No longer needs base_commit from manifest
+    if getattr(args, "use_git_diff", False):
+        print("[git-diff] Enabled (clone from GitHub + apply local changes)")
+        set_git_diff_mode(True, None)
+    else:
+        print("[git-diff] Disabled (full archive upload)")
+        set_git_diff_mode(False, None)
 
     # Validate update mode arguments
     if getattr(args, "update", False):

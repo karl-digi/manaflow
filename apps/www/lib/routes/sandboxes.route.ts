@@ -266,6 +266,7 @@ const StartSandboxResponse = z
     instanceId: z.string(),
     vscodeUrl: z.string(),
     workerUrl: z.string(),
+    vncUrl: z.string().optional(),
     provider: z.enum(["morph", "pve-lxc"]).default("morph"),
     vscodePersisted: z.boolean().optional(),
   })
@@ -474,6 +475,7 @@ sandboxesRouter.openapi(
       const exposed = instance.networking.httpServices;
       const vscodeService = exposed.find((s) => s.port === 39378);
       const workerService = exposed.find((s) => s.port === 39377);
+      const vncService = exposed.find((s) => s.port === 39380);
       if (!vscodeService || !workerService) {
         await instance.stop().catch(() => { });
         return c.text("VSCode or worker service not found", 500);
@@ -507,6 +509,7 @@ sandboxesRouter.openapi(
               status: "starting",
               url: vscodeService.url,
               workspaceUrl: `${vscodeService.url}/?folder=/root/workspace`,
+              vncUrl: vncService?.url,
               startedAt: Date.now(),
             },
           });
@@ -703,6 +706,7 @@ sandboxesRouter.openapi(
         instanceId: instance.id,
         vscodeUrl: vscodeService.url,
         workerUrl: workerService.url,
+        vncUrl: vncService?.url,
         provider: provider === "proxmox" ? "pve-lxc" : "morph",
         vscodePersisted,
       });

@@ -34,6 +34,24 @@ export const Route = createFileRoute(
   },
 });
 
+/**
+ * Convert a VNC base URL to a websocket URL for noVNC connection.
+ * Supports both HTTP and HTTPS base URLs.
+ */
+function toVncWebsocketUrl(vncBaseUrl: string): string {
+  try {
+    const url = new URL(vncBaseUrl);
+    // Convert protocol: https -> wss, http -> ws
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    url.pathname = "/websockify";
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return vncBaseUrl;
+  }
+}
+
 function BrowserComponent() {
   const { runId: taskRunId, teamSlugOrId } = Route.useParams();
   const taskRun = useQuery(api.taskRuns.get, {
@@ -43,28 +61,36 @@ function BrowserComponent() {
 
   const vscodeInfo = taskRun?.vscode ?? null;
   const rawMorphUrl = vscodeInfo?.url ?? vscodeInfo?.workspaceUrl ?? null;
+
+  // Prefer vncUrl from task run data (works for all providers including PVE LXC)
+  // Fall back to deriving from Morph URL for backward compatibility
   const vncWebsocketUrl = useMemo(() => {
-    if (!rawMorphUrl) {
-      return null;
+    // If we have a direct vncUrl from the task run, use it
+    if (vscodeInfo?.vncUrl) {
+      return toVncWebsocketUrl(vscodeInfo.vncUrl);
     }
-    return toMorphVncWebsocketUrl(rawMorphUrl);
-  }, [rawMorphUrl]);
+    // Fall back to Morph URL derivation for backward compatibility
+    if (rawMorphUrl) {
+      return toMorphVncWebsocketUrl(rawMorphUrl);
+    }
+    return null;
+  }, [vscodeInfo?.vncUrl, rawMorphUrl]);
 
   const hasBrowserView = Boolean(vncWebsocketUrl);
-  const isMorphProvider = vscodeInfo?.provider === "morph";
-  const showLoader = isMorphProvider && !hasBrowserView;
+  const isSupportedProvider = vscodeInfo?.provider === "morph" || vscodeInfo?.provider === "pve-lxc";
+  const showLoader = isSupportedProvider && !hasBrowserView;
 
   const [vncStatus, setVncStatus] = useState<VncConnectionStatus>("disconnected");
 
   const overlayMessage = useMemo(() => {
-    if (!isMorphProvider) {
-      return "Browser preview is loading. Note that browser preview is only supported in cloud mode.";
+    if (!isSupportedProvider) {
+      return "Browser preview is not available for this sandbox provider.";
     }
     if (!hasBrowserView) {
       return "Waiting for the workspace to expose a browser preview...";
     }
     return "Launching browser preview...";
-  }, [hasBrowserView, isMorphProvider]);
+  }, [hasBrowserView, isSupportedProvider]);
 
   const onConnect = useCallback(() => {
     console.log(`Browser VNC connected for task run ${taskRunId}`);

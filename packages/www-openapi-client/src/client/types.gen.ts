@@ -541,6 +541,7 @@ export type StartSandboxResponse = {
     instanceId: string;
     vscodeUrl: string;
     workerUrl: string;
+    vncUrl?: string;
     provider?: 'morph' | 'pve-lxc';
     vscodePersisted?: boolean;
 };

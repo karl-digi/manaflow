@@ -1043,6 +1043,7 @@ export const updateVSCodeInstance = authMutation({
       ),
       url: v.optional(v.string()),
       workspaceUrl: v.optional(v.string()),
+      vncUrl: v.optional(v.string()),
       startedAt: v.optional(v.number()),
       stoppedAt: v.optional(v.number()),
     }),

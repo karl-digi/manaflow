@@ -48,6 +48,7 @@ VSCODE_PORT=39378
 WORKER_PORT=39377
 XTERM_PORT=39376
 EXEC_PORT=39375
+VNC_PORT=39380
 
 show_help() {
     cat << 'EOF'
@@ -90,6 +91,7 @@ URL PATTERN (uses free Cloudflare Universal SSL):
       https://worker-200.example.com
       https://xterm-200.example.com
       https://exec-200.example.com
+      https://vnc-200.example.com
       https://preview-200.example.com
 
 EXAMPLE:
@@ -413,6 +415,7 @@ configure_caddy() {
 #   worker-{vmid}.${CF_DOMAIN} -> cmux-{vmid}.${domain_suffix}:${WORKER_PORT}
 #   xterm-{vmid}.${CF_DOMAIN}  -> cmux-{vmid}.${domain_suffix}:${XTERM_PORT}
 #   exec-{vmid}.${CF_DOMAIN}   -> cmux-{vmid}.${domain_suffix}:${EXEC_PORT}
+#   vnc-{vmid}.${CF_DOMAIN}    -> cmux-{vmid}.${domain_suffix}:${VNC_PORT}
 #   preview-{vmid}.${CF_DOMAIN} -> cmux-{vmid}.${domain_suffix}:5173
 
 :${CADDY_PORT} {
@@ -460,7 +463,18 @@ configure_caddy() {
         }
     }
 
-    # Preview/VNC service (port 5173)
+    # VNC service (noVNC websockify proxy)
+    @vnc header_regexp vmid Host ^vnc-(\d+)\.
+    handle @vnc {
+        reverse_proxy cmux-{re.vmid.1}.${domain_suffix}:${VNC_PORT} {
+            header_up Host {upstream_hostport}
+            transport http {
+                dial_timeout 10s
+            }
+        }
+    }
+
+    # Preview service (port 5173)
     @preview header_regexp vmid Host ^preview-(\d+)\.
     handle @preview {
         reverse_proxy cmux-{re.vmid.1}.${domain_suffix}:5173 {
