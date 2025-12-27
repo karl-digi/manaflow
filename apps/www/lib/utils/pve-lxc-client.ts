@@ -40,7 +40,6 @@ export interface HttpService {
  */
 export interface ContainerNetworking {
   httpServices: HttpService[];
-  ipAddress?: string;
   /** Container hostname (e.g., "cmux-200") */
   hostname?: string;
   /** Fully qualified domain name (e.g., "cmux-200.lan") */
@@ -98,7 +97,6 @@ export class PveLxcInstance {
    */
   async exec(command: string, options?: { timeoutMs?: number }): Promise<ExecResult> {
     return this.client.execInContainer(this.vmid, command, {
-      ipAddress: this.networking.ipAddress,
       timeoutMs: options?.timeoutMs,
     });
   }
@@ -136,13 +134,13 @@ export class PveLxcInstance {
   }
 
   /**
-   * Expose an HTTP service (stores in metadata, actual exposure via hostname/IP)
+   * Expose an HTTP service (stores in metadata, actual exposure via FQDN)
    */
   async exposeHttpService(name: string, port: number): Promise<void> {
-    // Prefer FQDN when available, fall back to IP
-    const host = this.networking.fqdn || this.networking.ipAddress;
+    // Use FQDN for service URLs
+    const host = this.networking.fqdn;
     if (!host) {
-      throw new Error("Container hostname or IP address not available");
+      throw new Error("Container FQDN not available");
     }
 
     const url = `http://${host}:${port}`;
@@ -204,15 +202,6 @@ interface PveContainerStatus {
   cpus?: number;
   maxmem?: number;
   maxdisk?: number;
-}
-
-interface PveContainerConfig {
-  hostname?: string;
-  cores?: number;
-  memory?: number;
-  net0?: string;
-  rootfs?: string;
-  description?: string;
 }
 
 /**
@@ -286,28 +275,6 @@ export class PveLxcClient {
 
     this.domainSuffixFetched = true;
     return this.domainSuffix;
-  }
-
-  /**
-   * Build a URL for the given hostname and port.
-   * Prefers FQDN (hostname + domain suffix) when configured, falls back to IP.
-   */
-  private buildServiceUrl(
-    hostname: string | undefined,
-    ipAddress: string | undefined,
-    port: number,
-    domainSuffix: string | null
-  ): string {
-    // Prefer hostname+domainSuffix when available
-    if (hostname && domainSuffix) {
-      const fqdn = `${hostname}${domainSuffix}`;
-      return `http://${fqdn}:${port}`;
-    }
-    // Fall back to IP address
-    if (ipAddress) {
-      return `http://${ipAddress}:${port}`;
-    }
-    throw new Error("No hostname or IP address available for service URL");
   }
 
   /**
@@ -424,14 +391,18 @@ export class PveLxcClient {
   /**
    * Execute a command inside an LXC container via HTTP exec daemon.
    * This uses the cmux-execd service running in the container on port 39375.
+   * Supports both internal (hostname/IP) and public (Cloudflare Tunnel) URLs.
    * Returns null if HTTP exec is not available.
    */
   private async httpExec(
-    ipAddress: string,
+    host: string,
     command: string,
     timeoutMs?: number
   ): Promise<ExecResult | null> {
-    const execUrl = `http://${ipAddress}:39375/exec`;
+    // Support both public URLs (https://exec-xxx.domain.com) and internal (hostname:port)
+    const execUrl = host.startsWith("https://")
+      ? `${host}/exec`
+      : `http://${host}:39375/exec`;
     // Set HOME explicitly since cmux-execd may not have it set,
     // and many tools (gh, git) require HOME to be defined.
     // The command is passed directly to the execd service which runs it via sh -c.
@@ -497,7 +468,7 @@ export class PveLxcClient {
       };
     } catch (error) {
       console.error(
-        `[PveLxcClient] HTTP exec failed for ${ipAddress}:`,
+        `[PveLxcClient] HTTP exec failed for ${host}:`,
         error instanceof Error ? error.message : error
       );
       return null;
@@ -507,26 +478,41 @@ export class PveLxcClient {
   /**
    * Execute a command inside an LXC container via HTTP exec (cmux-execd).
    * Requires cmux-execd to be running in the container on port 39375.
+   * Uses public exec URL (Cloudflare Tunnel), FQDN, or hostname to reach the container.
    */
   async execInContainer(
     vmid: number,
     command: string,
-    options?: { ipAddress?: string; timeoutMs?: number }
+    options?: { execHost?: string; timeoutMs?: number }
   ): Promise<ExecResult> {
-    const ipAddress = options?.ipAddress;
-    if (!ipAddress) {
-      throw new Error(`Cannot execute command in container ${vmid}: IP address not available`);
+    // Determine the host to use for HTTP exec
+    // Priority: provided execHost > public exec URL > hostname-based FQDN
+    let host = options?.execHost;
+
+    if (!host) {
+      // Try public exec URL via Cloudflare Tunnel
+      const publicExecUrl = this.buildPublicServiceUrl("exec", vmid);
+      if (publicExecUrl) {
+        host = publicExecUrl;
+      } else {
+        // Fall back to hostname + domain suffix
+        const hostname = `cmux-${vmid}`;
+        const domainSuffix = await this.getDomainSuffix();
+        if (domainSuffix) {
+          host = `${hostname}${domainSuffix}`;
+        } else {
+          throw new Error(
+            `Cannot execute command in container ${vmid}: no public domain or DNS search domain configured`
+          );
+        }
+      }
     }
 
-    const httpResult = await this.httpExec(
-      ipAddress,
-      command,
-      options?.timeoutMs
-    );
+    const httpResult = await this.httpExec(host, command, options?.timeoutMs);
 
     if (!httpResult) {
       throw new Error(
-        `HTTP exec failed for container ${vmid} (${ipAddress}:39375). ` +
+        `HTTP exec failed for container ${vmid} via ${host}. ` +
         `Ensure cmux-execd is running in the container.`
       );
     }
@@ -563,72 +549,6 @@ export class PveLxcClient {
       vmid++;
     }
     return vmid;
-  }
-
-  /**
-   * Get container IP address from network config
-   * For DHCP containers, waits for the lease to be acquired with retries
-   */
-  private async getContainerIp(
-    vmid: number,
-    options: { maxRetries?: number; retryDelayMs?: number } = {}
-  ): Promise<string | undefined> {
-    const { maxRetries = 10, retryDelayMs = 2000 } = options;
-
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-      try {
-        const node = await this.getNode();
-        const config = await this.apiRequest<PveContainerConfig>(
-          "GET",
-          `/api2/json/nodes/${node}/lxc/${vmid}/config`
-        );
-
-        // Parse IP from net0 config (format: name=eth0,bridge=vmbr0,ip=10.0.0.x/24,...)
-        // Skip if ip=dhcp - need to get actual IP from container
-        if (config.net0) {
-          const ipMatch = config.net0.match(/ip=([^/,]+)/);
-          if (ipMatch && ipMatch[1] !== "dhcp") {
-            // Static IP configured, return it
-            return ipMatch[1];
-          }
-        }
-
-        // For DHCP or when static IP not found, try to get IP from container via exec
-        const result = await this.execInContainer(
-          vmid,
-          "hostname -I | awk '{print $1}'"
-        );
-        if (result.exit_code === 0 && result.stdout.trim()) {
-          const ip = result.stdout.trim();
-          // Validate it looks like an IP address (not empty or "dhcp")
-          if (/^\d+\.\d+\.\d+\.\d+$/.test(ip)) {
-            return ip;
-          }
-        }
-
-        // IP not ready yet, wait and retry
-        if (attempt < maxRetries - 1) {
-          console.log(
-            `[PveLxcClient] Waiting for container ${vmid} IP (attempt ${attempt + 1}/${maxRetries})...`
-          );
-          await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
-        }
-      } catch (error) {
-        console.error(
-          `[PveLxcClient] Error getting IP for container ${vmid}:`,
-          error
-        );
-        // On error, wait and retry
-        if (attempt < maxRetries - 1) {
-          await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
-        }
-      }
-    }
-
-    console.warn(
-      `[PveLxcClient] Failed to get IP for container ${vmid} after ${maxRetries} attempts`
-    );
-    return undefined;
   }
 
   /**
@@ -802,16 +722,13 @@ export class PveLxcClient {
       // Wait for container to be fully running
       await new Promise((resolve) => setTimeout(resolve, 3000));
 
-      // Get container IP
-      const ipAddress = await this.getContainerIp(newVmid);
-
       // Store metadata
       const metadata = options.metadata || {};
       this.instanceMetadata.set(newVmid, metadata);
 
       // Initialize services with standard cmux ports
       // Prefer public URL (via Cloudflare Tunnel) when PVE_PUBLIC_DOMAIN is set,
-      // otherwise fall back to internal hostname+domainSuffix or IP
+      // otherwise fall back to internal hostname+domainSuffix (FQDN)
       const services: HttpService[] = [];
       const vscodePubUrl = this.buildPublicServiceUrl("vscode", newVmid);
       const workerPubUrl = this.buildPublicServiceUrl("worker", newVmid);
@@ -820,10 +737,14 @@ export class PveLxcClient {
           { name: "vscode", port: 39378, url: vscodePubUrl },
           { name: "worker", port: 39377, url: workerPubUrl }
         );
-      } else if (hostname || ipAddress) {
+      } else if (fqdn) {
         services.push(
-          { name: "vscode", port: 39378, url: this.buildServiceUrl(hostname, ipAddress, 39378, domainSuffix) },
-          { name: "worker", port: 39377, url: this.buildServiceUrl(hostname, ipAddress, 39377, domainSuffix) }
+          { name: "vscode", port: 39378, url: `http://${fqdn}:39378` },
+          { name: "worker", port: 39377, url: `http://${fqdn}:39377` }
+        );
+      } else {
+        throw new Error(
+          `Cannot build service URLs for container ${newVmid}: no public domain or DNS search domain configured`
         );
       }
       this.instanceServices.set(newVmid, services);
@@ -834,12 +755,12 @@ export class PveLxcClient {
         newVmid,
         "running",
         metadata,
-        { httpServices: services, ipAddress, hostname, fqdn },
+        { httpServices: services, hostname, fqdn },
         node
       );
 
       console.log(
-        `[PveLxcClient] Container ${newVmid} started (hostname=${hostname}, fqdn=${fqdn || "none"}, ip=${ipAddress || "pending"})`
+        `[PveLxcClient] Container ${newVmid} started (hostname=${hostname}, fqdn=${fqdn || "none"})`
       );
 
       return instance;
@@ -863,7 +784,6 @@ export class PveLxcClient {
 
       const node = await this.getNode();
       const status = await this.getContainerStatus(vmid);
-      const ipAddress = await this.getContainerIp(vmid);
       const metadata = this.instanceMetadata.get(vmid) || {};
       const services = this.instanceServices.get(vmid) || [];
 
@@ -872,7 +792,7 @@ export class PveLxcClient {
         vmid,
         status,
         metadata,
-        { httpServices: services, ipAddress, hostname, fqdn },
+        { httpServices: services, hostname, fqdn },
         node
       );
     },
@@ -898,7 +818,6 @@ export class PveLxcClient {
           const hostname = `cmux-${container.vmid}`;
           const fqdn = this.getFqdnSync(hostname, domainSuffix);
           const status = await this.getContainerStatus(container.vmid);
-          const ipAddress = await this.getContainerIp(container.vmid);
           const services = this.instanceServices.get(container.vmid) || [];
 
           instances.push(
@@ -907,7 +826,7 @@ export class PveLxcClient {
               container.vmid,
               status,
               metadata,
-              { httpServices: services, ipAddress, hostname, fqdn },
+              { httpServices: services, hostname, fqdn },
               node
             )
           );
