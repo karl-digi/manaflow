@@ -908,6 +908,9 @@ class PveLxcClient:
             return False
 
         if result.returncode != 0:
+            # Fall back to SSH for payload too large errors (Cloudflare limit)
+            if "413" in result.stderr or "Payload Too Large" in result.stderr:
+                return False
             raise RuntimeError(
                 f"HTTP file push failed (exit {result.returncode}):\n"
                 f"stdout: {result.stdout}\n"
