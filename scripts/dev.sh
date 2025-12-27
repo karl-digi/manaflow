@@ -316,17 +316,18 @@ start_sandboxd() {
         image_to_use="ghcr.io/manaflow-ai/cmux-sandbox:latest"
     fi
 
-    # Start the sandboxd container
+    # Start the sandboxd container with systemd
+    # Uses same flags as `cmux sandbox start` for proper cgroup/systemd support
     echo -e "${BLUE}Starting cmux-sandboxd container on port $SANDBOXD_PORT using $image_to_use...${NC}"
     if ! docker run -d --privileged \
+        --cgroupns=host \
         -p "$SANDBOXD_PORT:$SANDBOXD_PORT" \
         -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
         -v "$CMUX_DATA_DIR:/var/lib/cmux:rw" \
         --tmpfs /run:mode=755 \
         --tmpfs /run/lock:mode=755 \
         --name "$SANDBOXD_CONTAINER_NAME" \
-        "$image_to_use" \
-        cmux-sandboxd --port "$SANDBOXD_PORT"; then
+        "$image_to_use"; then
         echo -e "${YELLOW}Failed to start cmux-sandboxd container, local sandbox mode may not work${NC}"
         return 0
     fi
