@@ -239,7 +239,7 @@ pve_lxc_rollback() {
     pve_api POST "/api2/json/nodes/${node}/lxc/${vmid}/snapshot/${snapname}/rollback"
 }
 
-# Clone LXC container
+# Clone LXC container (full clone - copies all data)
 # Usage: pve_lxc_clone <vmid> <newid> [node]
 pve_lxc_clone() {
     local vmid="$1"
@@ -247,6 +247,30 @@ pve_lxc_clone() {
     local node="${3:-$(pve_get_default_node)}"
     pve_api POST "/api2/json/nodes/${node}/lxc/${vmid}/clone" \
         -d "newid=${newid}&full=1"
+}
+
+# Linked-clone LXC container from template (fast, uses copy-on-write)
+# Requires source to be a template (template=1)
+# Usage: pve_lxc_linked_clone <vmid> <newid> [hostname] [node]
+pve_lxc_linked_clone() {
+    local vmid="$1"
+    local newid="$2"
+    local hostname="${3:-}"
+    local node="${4:-$(pve_get_default_node)}"
+    local data="newid=${newid}&full=0"
+    if [[ -n "$hostname" ]]; then
+        data="${data}&hostname=${hostname}"
+    fi
+    pve_api POST "/api2/json/nodes/${node}/lxc/${vmid}/clone" \
+        -d "$data"
+}
+
+# Convert LXC container to template
+# Usage: pve_lxc_to_template <vmid> [node]
+pve_lxc_to_template() {
+    local vmid="$1"
+    local node="${2:-$(pve_get_default_node)}"
+    pve_api POST "/api2/json/nodes/${node}/lxc/${vmid}/template"
 }
 
 # Delete LXC container

@@ -599,10 +599,26 @@ cmd_convert() {
     local result
     result=$(pve_api POST "/api2/json/nodes/${node}/lxc/${vmid}/template")
 
-    # Check for errors - API returns {"data": null} on success
+    # Debug: show raw API response
+    log_info "API response:"
+    echo "$result" | jq . 2>/dev/null || echo "$result"
+
+    # Check for errors in response
     if echo "$result" | jq -e '.errors' > /dev/null 2>&1; then
-        log_error "Failed to convert to template"
-        echo "$result" | jq .
+        log_error "Failed to convert to template (API error)"
+        return 1
+    fi
+
+    # Verify the template was actually created
+    sleep 1
+    local verify_config
+    verify_config=$(pve_lxc_config "$vmid" "$node")
+    local is_now_template
+    is_now_template=$(echo "$verify_config" | jq -r '.data.template // 0')
+
+    if [[ "$is_now_template" != "1" ]]; then
+        log_error "Template conversion failed - container is not marked as template"
+        log_info "This may be a permissions issue. Verify your API token has VM.Config.Options permission."
         return 1
     fi
 

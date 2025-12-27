@@ -72,7 +72,7 @@ VNC_PROXY_BINARY_NAME = "cmux-vnc-proxy"
 PVE_SNAPSHOT_MANIFEST_PATH = (
     Path(__file__).resolve().parent.parent / "packages/shared/src/pve-lxc-snapshots.json"
 )
-CURRENT_MANIFEST_SCHEMA_VERSION = 1
+CURRENT_MANIFEST_SCHEMA_VERSION = 2
 
 # Default template VMID (should be created via pve-lxc-template.sh)
 DEFAULT_TEMPLATE_VMID = 9000
@@ -405,6 +405,34 @@ class PveLxcClient:
         result = self._request("GET", f"/api2/json/nodes/{node}/lxc/{vmid}/snapshot")
         return result.get("data", [])
 
+    def convert_to_template(
+        self,
+        vmid: int,
+        node: str | None = None,
+    ) -> None:
+        """Convert an LXC container to a template.
+
+        The container must be stopped and have no snapshots.
+        Once converted, the container becomes read-only and can only
+        be used as a source for cloning.
+        """
+        node = node or self.get_node()
+        result = self._request(
+            "POST",
+            f"/api2/json/nodes/{node}/lxc/{vmid}/template",
+        )
+        # Check for error message in response
+        if result.get("message"):
+            raise RuntimeError(f"Failed to convert to template: {result['message']}")
+
+    async def aconvert_to_template(
+        self,
+        vmid: int,
+        node: str | None = None,
+    ) -> None:
+        """Async convert to template."""
+        await asyncio.to_thread(self.convert_to_template, vmid, node)
+
     def get_task_status(self, upid: str, node: str | None = None) -> dict[str, t.Any]:
         """Get task status."""
         node = node or self.get_node()
@@ -665,33 +693,41 @@ class PveLxcClient:
 # ---------------------------------------------------------------------------
 
 
-class PveSnapshotVersionEntry(t.TypedDict):
+class PveTemplateVersionEntry(t.TypedDict):
+    """A version entry for a preset template (schema v2)."""
     version: int
-    vmid: int
-    snapshotName: str
+    templateVmid: int  # The VMID of the template container
     capturedAt: str
 
 
-class PveSnapshotPresetEntry(t.TypedDict):
+class PveTemplatePresetEntry(t.TypedDict):
+    """A preset entry in the manifest (schema v2)."""
     presetId: str
     label: str
     cpu: str
     memory: str
     disk: str
-    versions: list[PveSnapshotVersionEntry]
+    versions: list[PveTemplateVersionEntry]
     description: t.NotRequired[str]
 
 
-class PveSnapshotManifestEntry(t.TypedDict):
+class PveTemplateManifestEntry(t.TypedDict):
+    """The manifest file structure (schema v2).
+
+    Schema v2 uses templates instead of snapshots for linked-clone support.
+    Each preset's 'versions' contains templateVmid (the template container)
+    instead of vmid+snapshotName.
+    """
     schemaVersion: int
     updatedAt: str
-    templateVmid: int
+    baseTemplateVmid: int  # The base template used to create preset templates
     node: str
-    presets: list[PveSnapshotPresetEntry]
+    presets: list[PveTemplatePresetEntry]
 
 
 @dataclass(slots=True, frozen=True)
-class SnapshotPresetPlan:
+class TemplatePresetPlan:
+    """Configuration for a preset to be created."""
     preset_id: str
     label: str
     cpu_display: str
@@ -703,10 +739,10 @@ class SnapshotPresetPlan:
 
 
 @dataclass(slots=True)
-class SnapshotRunResult:
-    preset: SnapshotPresetPlan
-    vmid: int
-    snapshot_name: str
+class TemplateRunResult:
+    """Result of creating a preset template."""
+    preset: TemplatePresetPlan
+    template_vmid: int  # The VMID of the created template
     captured_at: str
     node: str
 
@@ -744,8 +780,8 @@ def _preset_id_from_resources(
     return f"{vcpus}vcpu_{memory_gb}gb_{disk_gb}gb"
 
 
-def _build_preset_plans(args: argparse.Namespace) -> tuple[SnapshotPresetPlan, ...]:
-    standard_plan = SnapshotPresetPlan(
+def _build_preset_plans(args: argparse.Namespace) -> tuple[TemplatePresetPlan, ...]:
+    standard_plan = TemplatePresetPlan(
         preset_id=_preset_id_from_resources(
             args.standard_vcpus, args.standard_memory, args.standard_disk_size
         ),
@@ -757,7 +793,7 @@ def _build_preset_plans(args: argparse.Namespace) -> tuple[SnapshotPresetPlan, .
         memory_mib=args.standard_memory,
         disk_size_mib=args.standard_disk_size,
     )
-    boosted_plan = SnapshotPresetPlan(
+    boosted_plan = TemplatePresetPlan(
         preset_id=_preset_id_from_resources(
             args.boosted_vcpus, args.boosted_memory, args.boosted_disk_size
         ),
@@ -772,12 +808,12 @@ def _build_preset_plans(args: argparse.Namespace) -> tuple[SnapshotPresetPlan, .
     return (standard_plan, boosted_plan)
 
 
-def _load_manifest() -> PveSnapshotManifestEntry:
+def _load_manifest() -> PveTemplateManifestEntry:
     if not PVE_SNAPSHOT_MANIFEST_PATH.exists():
         return {
             "schemaVersion": CURRENT_MANIFEST_SCHEMA_VERSION,
             "updatedAt": _iso_timestamp(),
-            "templateVmid": DEFAULT_TEMPLATE_VMID,
+            "baseTemplateVmid": DEFAULT_TEMPLATE_VMID,
             "node": "",
             "presets": [],
         }
@@ -785,29 +821,29 @@ def _load_manifest() -> PveSnapshotManifestEntry:
         raw_manifest = json.loads(PVE_SNAPSHOT_MANIFEST_PATH.read_text())
     except Exception as exc:
         raise RuntimeError(
-            f"Failed to read PVE snapshot manifest at {PVE_SNAPSHOT_MANIFEST_PATH}: {exc}"
+            f"Failed to read PVE template manifest at {PVE_SNAPSHOT_MANIFEST_PATH}: {exc}"
         ) from exc
     return raw_manifest
 
 
-def _write_manifest(manifest: PveSnapshotManifestEntry) -> None:
+def _write_manifest(manifest: PveTemplateManifestEntry) -> None:
     PVE_SNAPSHOT_MANIFEST_PATH.write_text(
         json.dumps(manifest, indent=2, sort_keys=False) + "\n"
     )
 
 
-def _update_manifest_with_snapshot(
-    manifest: PveSnapshotManifestEntry,
-    preset: SnapshotPresetPlan,
-    vmid: int,
-    snapshot_name: str,
+def _update_manifest_with_template(
+    manifest: PveTemplateManifestEntry,
+    preset: TemplatePresetPlan,
+    template_vmid: int,
     captured_at: str,
     node: str,
-) -> PveSnapshotManifestEntry:
+) -> PveTemplateManifestEntry:
+    """Update manifest with a new template version for a preset."""
     manifest["node"] = node
     manifest["updatedAt"] = captured_at
 
-    preset_entry: PveSnapshotPresetEntry | None = None
+    preset_entry: PveTemplatePresetEntry | None = None
     for candidate in manifest["presets"]:
         if candidate.get("presetId") == preset.preset_id:
             preset_entry = candidate
@@ -836,8 +872,7 @@ def _update_manifest_with_snapshot(
     preset_entry["versions"].append(
         {
             "version": next_version,
-            "vmid": vmid,
-            "snapshotName": snapshot_name,
+            "templateVmid": template_vmid,
             "capturedAt": captured_at,
         }
     )
@@ -2445,17 +2480,17 @@ async def wait_for_container_ready(
     raise TimeoutError(f"Container {vmid} did not become ready within {timeout}s")
 
 
-async def provision_and_snapshot_for_preset(
+async def provision_and_create_template(
     args: argparse.Namespace,
     *,
-    preset: SnapshotPresetPlan,
+    preset: TemplatePresetPlan,
     console: Console,
     client: PveLxcClient,
     repo_root: Path,
     created_containers: list[int],
     show_dependency_graph: bool,
-) -> SnapshotRunResult:
-    """Provision and snapshot a container for a preset."""
+) -> TemplateRunResult:
+    """Provision a container for a preset and convert to template."""
     console.always(f"\n=== Provisioning preset {preset.preset_id} ({preset.label}) ===")
     timings = TimingsCollector()
 
@@ -2520,30 +2555,22 @@ async def provision_and_snapshot_for_preset(
         for line in summary:
             console.always(line)
 
-    # Stop container before snapshotting
-    console.info(f"Stopping container {new_vmid} for snapshot...")
+    # Stop container before converting to template
+    console.info(f"Stopping container {new_vmid} for template conversion...")
     upid = await client.astop_lxc(new_vmid, node)
     await client.await_task(upid, timeout=120, node=node)
 
-    # Create snapshot
-    snapshot_name = f"cmux-{preset.preset_id}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-    console.info(f"Creating snapshot {snapshot_name}...")
-    upid = await client.acreate_snapshot(
-        new_vmid,
-        snapshot_name,
-        description=f"cmux {preset.label} preset",
-        node=node,
-    )
-    await client.await_task(upid, timeout=300, node=node)
+    # Convert to template (this enables fast linked-clone)
+    console.info(f"Converting container {new_vmid} to template...")
+    await client.aconvert_to_template(new_vmid, node)
 
     captured_at = _iso_timestamp()
 
-    console.always(f"[{preset.preset_id}] Container {new_vmid} snapshot '{snapshot_name}' created")
+    console.always(f"[{preset.preset_id}] Container {new_vmid} converted to template")
 
-    return SnapshotRunResult(
+    return TemplateRunResult(
         preset=preset,
-        vmid=new_vmid,
-        snapshot_name=snapshot_name,
+        template_vmid=new_vmid,
         captured_at=captured_at,
         node=node,
     )
@@ -2620,16 +2647,16 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
             )
 
     manifest = _load_manifest()
-    manifest["templateVmid"] = args.template_vmid
+    manifest["baseTemplateVmid"] = args.template_vmid
     repo_root = Path(args.repo_root).resolve()
     preset_plans = _build_preset_plans(args)
     created_containers: list[int] = []
-    results: list[SnapshotRunResult] = []
+    results: list[TemplateRunResult] = []
 
     console.always(
-        f"Starting snapshot runs for presets "
+        f"Starting template creation for presets "
         f"{', '.join(plan.preset_id for plan in preset_plans)} "
-        f"from template {args.template_vmid} "
+        f"from base template {args.template_vmid} "
         f"(IDE provider: {args.ide_provider})"
     )
 
@@ -2640,7 +2667,7 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
 
     try:
         for index, preset_plan in enumerate(preset_plans):
-            result = await provision_and_snapshot_for_preset(
+            result = await provision_and_create_template(
                 args,
                 preset=preset_plan,
                 console=console,
@@ -2671,11 +2698,10 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
 
     # Update manifest
     for result in results:
-        manifest = _update_manifest_with_snapshot(
+        manifest = _update_manifest_with_template(
             manifest,
             result.preset,
-            result.vmid,
-            result.snapshot_name,
+            result.template_vmid,
             result.captured_at,
             result.node,
         )
@@ -2683,23 +2709,22 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
 
     # Summary
     console.always("\n" + "=" * 60)
-    console.always("PVE LXC Snapshot Summary")
+    console.always("PVE LXC Template Summary")
     console.always("=" * 60)
     console.always(f"Manifest updated: {PVE_SNAPSHOT_MANIFEST_PATH}")
     console.always("")
 
     for result in results:
         console.always(f"Preset: {result.preset.preset_id}")
-        console.always(f"  VMID: {result.vmid}")
-        console.always(f"  Snapshot: {result.snapshot_name}")
+        console.always(f"  Template VMID: {result.template_vmid}")
         console.always(f"  Node: {result.node}")
         console.always(f"  Captured: {result.captured_at}")
         console.always("")
 
-    console.always("To use these containers:")
-    console.always("  1. Start: pct start <vmid>")
-    console.always("  2. Enter: pct enter <vmid>")
-    console.always("  3. Rollback to snapshot: pct rollback <vmid> <snapname>")
+    console.always("To use these templates:")
+    console.always("  1. Linked-clone: pct clone <template-vmid> <new-vmid>")
+    console.always("  2. Start clone: pct start <new-vmid>")
+    console.always("  3. Enter clone: pct enter <new-vmid>")
 
 
 def parse_args() -> argparse.Namespace:

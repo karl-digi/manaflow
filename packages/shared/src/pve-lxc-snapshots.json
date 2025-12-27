@@ -1,7 +1,7 @@
 {
-  "schemaVersion": 1,
-  "updatedAt": "2025-12-26T19:13:00Z",
-  "templateVmid": 9000,
+  "schemaVersion": 2,
+  "updatedAt": "2025-12-27T00:00:00Z",
+  "baseTemplateVmid": 9000,
   "node": "karl-ws",
   "presets": [
     {
@@ -13,8 +13,7 @@
       "versions": [
         {
           "version": 1,
-          "vmid": 102,
-          "snapshotName": "cmux-4vcpu_6gb_32gb-20251227-030007",
+          "templateVmid": 102,
           "capturedAt": "2025-12-26T19:00:09Z"
         }
       ]
@@ -28,8 +27,7 @@
       "versions": [
         {
           "version": 1,
-          "vmid": 103,
-          "snapshotName": "cmux-6vcpu_8gb_32gb-20251227-031258",
+          "templateVmid": 103,
           "capturedAt": "2025-12-26T19:13:00Z"
         }
       ]

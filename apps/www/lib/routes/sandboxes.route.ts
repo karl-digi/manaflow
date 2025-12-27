@@ -948,8 +948,21 @@ sandboxesRouter.openapi(
     const { id } = c.req.valid("param");
     const { teamSlugOrId, taskRunId } = c.req.valid("json");
     try {
-      const client = getMorphClient();
-      const instance = await client.instances.get({ instanceId: id });
+      // Determine provider based on instance ID prefix
+      const isPveLxc = id.startsWith("pve_lxc_");
+      let instance: SandboxInstance;
+
+      if (isPveLxc) {
+        // PVE LXC instance
+        const pveClient = getPveLxcClient();
+        const pveLxcInstance = await pveClient.instances.get({ instanceId: id });
+        instance = wrapPveLxcInstance(pveLxcInstance);
+      } else {
+        // Morph instance (default)
+        const morphClient = getMorphClient();
+        const morphInstance = await morphClient.instances.get({ instanceId: id });
+        instance = wrapMorphInstance(morphInstance);
+      }
 
       const reservedPorts = RESERVED_CMUX_PORT_SET;
 
@@ -1013,9 +1026,15 @@ sandboxesRouter.openapi(
 
       let workingInstance = instance;
       const reloadInstance = async () => {
-        workingInstance = await client.instances.get({
-          instanceId: instance.id,
-        });
+        if (isPveLxc) {
+          const pveClient = getPveLxcClient();
+          const pveLxcInstance = await pveClient.instances.get({ instanceId: instance.id });
+          workingInstance = wrapPveLxcInstance(pveLxcInstance);
+        } else {
+          const morphClient = getMorphClient();
+          const morphInstance = await morphClient.instances.get({ instanceId: instance.id });
+          workingInstance = wrapMorphInstance(morphInstance);
+        }
       };
 
       await reloadInstance();

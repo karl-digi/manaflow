@@ -52,11 +52,11 @@ function isKnownDefaultSnapshot(snapshotId: string): boolean {
     return true;
   }
 
-  // Check PVE LXC snapshots
-  const isPveSnapshot = PVE_LXC_SNAPSHOT_PRESETS.some((preset) =>
-    preset.versions.some((v) => `pve_${v.vmid}_${v.snapshotName}` === snapshotId)
+  // Check PVE LXC templates (schema v2: pve_template_{templateVmid})
+  const isPveTemplate = PVE_LXC_SNAPSHOT_PRESETS.some((preset) =>
+    preset.versions.some((v) => `pve_template_${v.templateVmid}` === snapshotId)
   );
-  return isPveSnapshot;
+  return isPveTemplate;
 }
 
 export const resolveTeamAndSnapshot = async ({

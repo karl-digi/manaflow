@@ -15,14 +15,17 @@ const presetIdSchema = z
     message: "presetId must follow <cpu>_<memory>_<disk> format",
   });
 
-export const pveLxcSnapshotVersionSchema = z.object({
+/**
+ * Schema v2: Template-based versions for linked-clone support.
+ * Each version has a templateVmid (the VMID of the template container).
+ */
+export const pveLxcTemplateVersionSchema = z.object({
   version: z.number().int().positive(),
-  vmid: z.number().int().positive(),
-  snapshotName: z.string(),
+  templateVmid: z.number().int().positive(),
   capturedAt: isoDateStringSchema,
 });
 
-export const pveLxcSnapshotPresetSchema = z
+export const pveLxcTemplatePresetSchema = z
   .object({
     presetId: presetIdSchema,
     label: z.string(),
@@ -30,7 +33,7 @@ export const pveLxcSnapshotPresetSchema = z
     memory: z.string(),
     disk: z.string(),
     description: z.string().optional(),
-    versions: z.array(pveLxcSnapshotVersionSchema).min(1).readonly(),
+    versions: z.array(pveLxcTemplateVersionSchema).min(1).readonly(),
   })
   .superRefine((preset, ctx) => {
     const sortedByVersion = [...preset.versions].sort(
@@ -53,41 +56,55 @@ export const pveLxcSnapshotPresetSchema = z
     }
   });
 
-export const pveLxcSnapshotManifestSchema = z.object({
-  schemaVersion: z.number().int().positive(),
+/**
+ * Schema v2 manifest: Uses templates instead of snapshots for fast linked-clone.
+ * - baseTemplateVmid: The base template used to create preset templates
+ * - Each preset version has templateVmid (the template container VMID)
+ */
+export const pveLxcTemplateManifestSchema = z.object({
+  schemaVersion: z.literal(2),
   updatedAt: isoDateStringSchema,
-  templateVmid: z.number().int().positive(),
+  baseTemplateVmid: z.number().int().positive(),
   node: z.string(),
-  presets: z.array(pveLxcSnapshotPresetSchema).min(1),
+  presets: z.array(pveLxcTemplatePresetSchema).min(1),
 });
 
-export type PveLxcSnapshotVersion = z.infer<typeof pveLxcSnapshotVersionSchema>;
+// Legacy schema v1 aliases for backwards compatibility
+export const pveLxcSnapshotVersionSchema = pveLxcTemplateVersionSchema;
+export const pveLxcSnapshotPresetSchema = pveLxcTemplatePresetSchema;
+export const pveLxcSnapshotManifestSchema = pveLxcTemplateManifestSchema;
 
-export type PveLxcSnapshotPreset = z.infer<typeof pveLxcSnapshotPresetSchema>;
+// New schema v2 types
+export type PveLxcTemplateVersion = z.infer<typeof pveLxcTemplateVersionSchema>;
+export type PveLxcTemplatePreset = z.infer<typeof pveLxcTemplatePresetSchema>;
+export type PveLxcTemplateManifest = z.infer<typeof pveLxcTemplateManifestSchema>;
 
-export interface PveLxcSnapshotPresetWithLatest extends PveLxcSnapshotPreset {
-  /** Unique identifier combining vmid and snapshot name */
+// Legacy type aliases for backwards compatibility
+export type PveLxcSnapshotVersion = PveLxcTemplateVersion;
+export type PveLxcSnapshotPreset = PveLxcTemplatePreset;
+export type PveLxcSnapshotManifest = PveLxcTemplateManifest;
+
+export interface PveLxcSnapshotPresetWithLatest extends PveLxcTemplatePreset {
+  /** Unique identifier for template-based cloning: pve_template_{templateVmid} */
   id: string;
-  latestVersion: PveLxcSnapshotVersion;
-  versions: readonly PveLxcSnapshotVersion[];
+  latestVersion: PveLxcTemplateVersion;
+  versions: readonly PveLxcTemplateVersion[];
 }
 
-export type PveLxcSnapshotManifest = z.infer<typeof pveLxcSnapshotManifestSchema>;
-
 const sortVersions = (
-  versions: readonly PveLxcSnapshotVersion[],
-): PveLxcSnapshotVersion[] => [...versions].sort((a, b) => a.version - b.version);
+  versions: readonly PveLxcTemplateVersion[],
+): PveLxcTemplateVersion[] => [...versions].sort((a, b) => a.version - b.version);
 
 const toPresetWithLatest = (
-  preset: PveLxcSnapshotPreset,
+  preset: PveLxcTemplatePreset,
 ): PveLxcSnapshotPresetWithLatest => {
   const sortedVersions = sortVersions(preset.versions);
   const latestVersion = sortedVersions.length > 0 ? sortedVersions[sortedVersions.length - 1] : undefined;
   if (!latestVersion) {
     throw new Error(`Preset "${preset.presetId}" does not contain versions`);
   }
-  // Create a unique ID from vmid and snapshot name
-  const id = `pve_${latestVersion.vmid}_${latestVersion.snapshotName}`;
+  // Create a unique ID from template VMID (schema v2 format)
+  const id = `pve_template_${latestVersion.templateVmid}`;
   return {
     ...preset,
     versions: sortedVersions,

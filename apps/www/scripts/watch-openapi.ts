@@ -55,4 +55,5 @@ try {
   // ignore if already removed by concurrent runs
 }
 
-log(`[${(performance.now() - startTime).toFixed(2)}ms] watch-openapi complete`);
+// Always print the completion marker (dev.sh waits for this)
+console.log(`[${(performance.now() - startTime).toFixed(2)}ms] watch-openapi complete`);

@@ -24,12 +24,40 @@ export interface SandboxProviderConfig {
  * Determines which sandbox provider to use based on available environment variables.
  *
  * Selection priority:
- * 1. If MORPH_API_KEY is set, use Morph (original provider)
- * 2. If PVE_API_URL and PVE_API_TOKEN are set, use Proxmox
- * 3. Throw error if no provider is configured
+ * 1. If SANDBOX_PROVIDER is explicitly set, use that provider
+ * 2. If MORPH_API_KEY is set, use Morph (original provider)
+ * 3. If PVE_API_URL and PVE_API_TOKEN are set, use Proxmox
+ * 4. Throw error if no provider is configured
  */
 export function getActiveSandboxProvider(): SandboxProviderConfig {
-  // Check for Morph (original provider - takes priority if both are set)
+  const explicitProvider = env.SANDBOX_PROVIDER;
+
+  // Explicit provider selection
+  if (explicitProvider === "proxmox") {
+    if (!env.PVE_API_URL || !env.PVE_API_TOKEN) {
+      throw new Error(
+        "SANDBOX_PROVIDER=proxmox but PVE_API_URL or PVE_API_TOKEN is not set."
+      );
+    }
+    return {
+      provider: "proxmox",
+      apiUrl: env.PVE_API_URL,
+      apiToken: env.PVE_API_TOKEN,
+      node: env.PVE_NODE,
+    };
+  }
+
+  if (explicitProvider === "morph") {
+    if (!env.MORPH_API_KEY) {
+      throw new Error("SANDBOX_PROVIDER=morph but MORPH_API_KEY is not set.");
+    }
+    return {
+      provider: "morph",
+      apiKey: env.MORPH_API_KEY,
+    };
+  }
+
+  // Auto-detect: Morph takes priority if both are set
   if (env.MORPH_API_KEY) {
     return {
       provider: "morph",

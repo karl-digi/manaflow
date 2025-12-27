@@ -7,9 +7,11 @@
 
 import { env } from "./www-env";
 import { spawn } from "node:child_process";
-import { Agent } from "undici";
+import { Agent, fetch as undiciFetch } from "undici";
 
 // PVE often uses self-signed certificates, so we need a custom agent
+// We use undici's fetch directly to ensure the dispatcher option works
+// (Next.js patches global fetch which may not support dispatcher)
 const pveHttpsAgent = new Agent({
   connect: {
     rejectUnauthorized: false,
@@ -216,7 +218,7 @@ interface PveContainerConfig {
 export class PveLxcClient {
   private apiUrl: string;
   private apiToken: string;
-  private node: string;
+  private node: string | null;
   private sshHost: string;
 
   // In-memory store for instance metadata (PVE doesn't have native metadata support)
@@ -230,11 +232,31 @@ export class PveLxcClient {
   }) {
     this.apiUrl = options.apiUrl.replace(/\/$/, "");
     this.apiToken = options.apiToken;
-    this.node = options.node || "pve";
+    this.node = options.node || null; // Will be auto-detected if not provided
 
     // Extract SSH host from API URL
     const url = new URL(this.apiUrl);
     this.sshHost = `root@${url.hostname}`;
+  }
+
+  /**
+   * Get the target node (auto-detect if not set)
+   */
+  private async getNode(): Promise<string> {
+    if (this.node) {
+      return this.node;
+    }
+    // Auto-detect by querying /nodes endpoint
+    const result = await this.apiRequest<Array<{ node: string }>>(
+      "GET",
+      "/api2/json/nodes"
+    );
+    if (!result || result.length === 0) {
+      throw new Error("No nodes found in PVE cluster");
+    }
+    this.node = result[0].node;
+    console.log(`[PveLxcClient] Auto-detected node: ${this.node}`);
+    return this.node;
   }
 
   /**
@@ -250,21 +272,20 @@ export class PveLxcClient {
       Authorization: `PVEAPIToken=${this.apiToken}`,
     };
 
-    const options: RequestInit = {
-      method,
-      headers,
-    };
-
+    let requestBody: string | undefined;
     if (body) {
       headers["Content-Type"] = "application/x-www-form-urlencoded";
-      options.body = new URLSearchParams(
+      requestBody = new URLSearchParams(
         Object.entries(body).map(([k, v]) => [k, String(v)])
       ).toString();
     }
 
-    const response = await fetch(url, {
-      ...options,
-      // @ts-expect-error - dispatcher is a Node.js fetch extension for undici
+    // Use undici's fetch directly to ensure dispatcher option works
+    // (Next.js patches global fetch which ignores dispatcher)
+    const response = await undiciFetch(url, {
+      method,
+      headers,
+      body: requestBody,
       dispatcher: pveHttpsAgent,
     });
 
@@ -286,11 +307,12 @@ export class PveLxcClient {
   ): Promise<void> {
     const startTime = Date.now();
     const pollInterval = 2000;
+    const node = await this.getNode();
 
     while (Date.now() - startTime < timeoutMs) {
       const status = await this.apiRequest<PveTaskStatus>(
         "GET",
-        `/api2/json/nodes/${this.node}/tasks/${encodeURIComponent(upid)}/status`
+        `/api2/json/nodes/${node}/tasks/${encodeURIComponent(upid)}/status`
       );
 
       if (status.status === "stopped") {
@@ -363,16 +385,30 @@ export class PveLxcClient {
   }
 
   /**
-   * Get the next available VMID
+   * Get the next available VMID (checks both QEMU VMs and LXC containers)
    */
   private async findNextVmid(): Promise<number> {
+    const node = await this.getNode();
+
+    // Get LXC containers
     const containers = await this.apiRequest<PveContainerStatus[]>(
       "GET",
-      `/api2/json/nodes/${this.node}/lxc`
+      `/api2/json/nodes/${node}/lxc`
     );
 
-    const usedVmids = new Set(containers.map((c) => c.vmid));
-    let vmid = 100;
+    // Get QEMU VMs as well to avoid VMID collisions
+    const vms = await this.apiRequest<Array<{ vmid: number }>>(
+      "GET",
+      `/api2/json/nodes/${node}/qemu`
+    );
+
+    const usedVmids = new Set([
+      ...containers.map((c) => c.vmid),
+      ...vms.map((v) => v.vmid),
+    ]);
+
+    // Start from 200 to avoid collision with typical template VMIDs (100-199)
+    let vmid = 200;
     while (usedVmids.has(vmid)) {
       vmid++;
     }
@@ -381,71 +417,107 @@ export class PveLxcClient {
 
   /**
    * Get container IP address from network config
+   * For DHCP containers, waits for the lease to be acquired with retries
    */
-  private async getContainerIp(vmid: number): Promise<string | undefined> {
-    try {
-      const config = await this.apiRequest<PveContainerConfig>(
-        "GET",
-        `/api2/json/nodes/${this.node}/lxc/${vmid}/config`
-      );
+  private async getContainerIp(
+    vmid: number,
+    options: { maxRetries?: number; retryDelayMs?: number } = {}
+  ): Promise<string | undefined> {
+    const { maxRetries = 10, retryDelayMs = 2000 } = options;
 
-      // Parse IP from net0 config (format: name=eth0,bridge=vmbr0,ip=10.0.0.x/24,...)
-      if (config.net0) {
-        const ipMatch = config.net0.match(/ip=([^/,]+)/);
-        if (ipMatch) {
-          return ipMatch[1];
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        const node = await this.getNode();
+        const config = await this.apiRequest<PveContainerConfig>(
+          "GET",
+          `/api2/json/nodes/${node}/lxc/${vmid}/config`
+        );
+
+        // Parse IP from net0 config (format: name=eth0,bridge=vmbr0,ip=10.0.0.x/24,...)
+        // Skip if ip=dhcp - need to get actual IP from container
+        if (config.net0) {
+          const ipMatch = config.net0.match(/ip=([^/,]+)/);
+          if (ipMatch && ipMatch[1] !== "dhcp") {
+            // Static IP configured, return it
+            return ipMatch[1];
+          }
+        }
+
+        // For DHCP or when static IP not found, try to get IP from container via exec
+        const result = await this.execInContainer(
+          vmid,
+          "hostname -I | awk '{print $1}'"
+        );
+        if (result.exit_code === 0 && result.stdout.trim()) {
+          const ip = result.stdout.trim();
+          // Validate it looks like an IP address (not empty or "dhcp")
+          if (/^\d+\.\d+\.\d+\.\d+$/.test(ip)) {
+            return ip;
+          }
+        }
+
+        // IP not ready yet, wait and retry
+        if (attempt < maxRetries - 1) {
+          console.log(
+            `[PveLxcClient] Waiting for container ${vmid} IP (attempt ${attempt + 1}/${maxRetries})...`
+          );
+          await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+        }
+      } catch (error) {
+        console.error(
+          `[PveLxcClient] Error getting IP for container ${vmid}:`,
+          error
+        );
+        // On error, wait and retry
+        if (attempt < maxRetries - 1) {
+          await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
         }
       }
-
-      // Try to get IP from container status via exec
-      const result = await this.execInContainer(
-        vmid,
-        "hostname -I | awk '{print $1}'"
-      );
-      if (result.exit_code === 0 && result.stdout.trim()) {
-        return result.stdout.trim();
-      }
-    } catch {
-      // IP not available yet
     }
+
+    console.warn(
+      `[PveLxcClient] Failed to get IP for container ${vmid} after ${maxRetries} attempts`
+    );
     return undefined;
   }
 
   /**
-   * Parse snapshot ID to extract vmid and snapshot name
+   * Parse snapshot/template ID to extract template VMID.
+   * Schema v2 format: pve_template_{templateVmid}
    */
   private parseSnapshotId(snapshotId: string): {
-    vmid: number;
-    snapshotName: string;
+    templateVmid: number;
   } {
-    // Format: pve_{vmid}_{snapshotName}
-    const match = snapshotId.match(/^pve_(\d+)_(.+)$/);
+    // Schema v2 format: pve_template_{templateVmid}
+    const match = snapshotId.match(/^pve_template_(\d+)$/);
     if (!match) {
-      throw new Error(`Invalid PVE snapshot ID format: ${snapshotId}`);
+      throw new Error(
+        `Invalid PVE template ID format: ${snapshotId}. ` +
+        `Expected format: pve_template_{templateVmid}`
+      );
     }
     return {
-      vmid: parseInt(match[1], 10),
-      snapshotName: match[2],
+      templateVmid: parseInt(match[1], 10),
     };
   }
 
   /**
-   * Clone a container from a snapshot
+   * Clone a container from a template using linked-clone (fast, copy-on-write).
+   * Requires the source to be a template (template=1 in PVE config).
    */
-  private async cloneContainer(
-    sourceVmid: number,
-    snapshotName: string,
+  private async linkedCloneFromTemplate(
+    templateVmid: number,
     newVmid: number,
     hostname: string
   ): Promise<void> {
+    const node = await this.getNode();
     const upid = await this.apiRequest<string>(
       "POST",
-      `/api2/json/nodes/${this.node}/lxc/${sourceVmid}/clone`,
+      `/api2/json/nodes/${node}/lxc/${templateVmid}/clone`,
       {
         newid: newVmid,
         hostname,
-        snapname: snapshotName,
-        full: 1, // Full clone, not linked
+        full: 0, // Linked clone (fast, copy-on-write)
       }
     );
 
@@ -456,9 +528,10 @@ export class PveLxcClient {
    * Start a container
    */
   async startContainer(vmid: number): Promise<void> {
+    const node = await this.getNode();
     const upid = await this.apiRequest<string>(
       "POST",
-      `/api2/json/nodes/${this.node}/lxc/${vmid}/status/start`
+      `/api2/json/nodes/${node}/lxc/${vmid}/status/start`
     );
     await this.waitForTask(upid);
   }
@@ -467,9 +540,10 @@ export class PveLxcClient {
    * Stop a container
    */
   async stopContainer(vmid: number): Promise<void> {
+    const node = await this.getNode();
     const upid = await this.apiRequest<string>(
       "POST",
-      `/api2/json/nodes/${this.node}/lxc/${vmid}/status/stop`
+      `/api2/json/nodes/${node}/lxc/${vmid}/status/stop`
     );
     await this.waitForTask(upid);
   }
@@ -478,9 +552,10 @@ export class PveLxcClient {
    * Suspend (freeze) a container
    */
   async suspendContainer(vmid: number): Promise<void> {
+    const node = await this.getNode();
     const upid = await this.apiRequest<string>(
       "POST",
-      `/api2/json/nodes/${this.node}/lxc/${vmid}/status/suspend`
+      `/api2/json/nodes/${node}/lxc/${vmid}/status/suspend`
     );
     await this.waitForTask(upid);
   }
@@ -489,9 +564,10 @@ export class PveLxcClient {
    * Resume a suspended container
    */
   async resumeContainer(vmid: number): Promise<void> {
+    const node = await this.getNode();
     const upid = await this.apiRequest<string>(
       "POST",
-      `/api2/json/nodes/${this.node}/lxc/${vmid}/status/resume`
+      `/api2/json/nodes/${node}/lxc/${vmid}/status/resume`
     );
     await this.waitForTask(upid);
   }
@@ -507,9 +583,10 @@ export class PveLxcClient {
       // May already be stopped
     }
 
+    const node = await this.getNode();
     const upid = await this.apiRequest<string>(
       "DELETE",
-      `/api2/json/nodes/${this.node}/lxc/${vmid}`
+      `/api2/json/nodes/${node}/lxc/${vmid}`
     );
     await this.waitForTask(upid);
 
@@ -525,9 +602,10 @@ export class PveLxcClient {
     vmid: number
   ): Promise<ContainerStatus> {
     try {
+      const node = await this.getNode();
       const status = await this.apiRequest<PveContainerStatus>(
         "GET",
-        `/api2/json/nodes/${this.node}/lxc/${vmid}/status/current`
+        `/api2/json/nodes/${node}/lxc/${vmid}/status/current`
       );
 
       switch (status.status) {
@@ -550,21 +628,19 @@ export class PveLxcClient {
    */
   instances = {
     /**
-     * Start a new container from a snapshot
+     * Start a new container from a template using linked-clone (fast, copy-on-write).
      */
     start: async (options: StartContainerOptions): Promise<PveLxcInstance> => {
-      const { vmid: sourceVmid, snapshotName } = this.parseSnapshotId(
-        options.snapshotId
-      );
+      const { templateVmid } = this.parseSnapshotId(options.snapshotId);
       const newVmid = await this.findNextVmid();
       const hostname = `cmux-${newVmid}`;
 
       console.log(
-        `[PveLxcClient] Cloning container from ${sourceVmid}:${snapshotName} to ${newVmid}`
+        `[PveLxcClient] Linked-cloning from template ${templateVmid} to ${newVmid}`
       );
 
-      // Clone the container
-      await this.cloneContainer(sourceVmid, snapshotName, newVmid, hostname);
+      // Linked-clone from template (fast, copy-on-write)
+      await this.linkedCloneFromTemplate(templateVmid, newVmid, hostname);
 
       // Start the container
       await this.startContainer(newVmid);
@@ -589,13 +665,14 @@ export class PveLxcClient {
       }
       this.instanceServices.set(newVmid, services);
 
+      const node = await this.getNode();
       const instance = new PveLxcInstance(
         this,
         newVmid,
         "running",
         metadata,
         { httpServices: services, ipAddress },
-        this.node,
+        node,
         this.sshHost
       );
 
@@ -617,6 +694,7 @@ export class PveLxcClient {
       }
       const vmid = parseInt(match[1], 10);
 
+      const node = await this.getNode();
       const status = await this.getContainerStatus(vmid);
       const ipAddress = await this.getContainerIp(vmid);
       const metadata = this.instanceMetadata.get(vmid) || {};
@@ -628,7 +706,7 @@ export class PveLxcClient {
         status,
         metadata,
         { httpServices: services, ipAddress },
-        this.node,
+        node,
         this.sshHost
       );
     },
@@ -637,9 +715,10 @@ export class PveLxcClient {
      * List all cmux containers
      */
     list: async (): Promise<PveLxcInstance[]> => {
+      const node = await this.getNode();
       const containers = await this.apiRequest<PveContainerStatus[]>(
         "GET",
-        `/api2/json/nodes/${this.node}/lxc`
+        `/api2/json/nodes/${node}/lxc`
       );
 
       const instances: PveLxcInstance[] = [];
@@ -658,7 +737,7 @@ export class PveLxcClient {
               status,
               metadata,
               { httpServices: services, ipAddress },
-              this.node,
+              node,
               this.sshHost
             )
           );
