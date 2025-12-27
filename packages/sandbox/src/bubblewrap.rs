@@ -136,14 +136,25 @@ fn nsenter_args(pid: u32, workdir: Option<&str>, command: &[String]) -> Vec<Stri
         "--pid".to_string(),
     ];
 
-    if let Some(dir) = workdir {
-        args.push(format!("--wd={}", dir));
-    } else {
-        args.push("--wd".to_string());
-    }
-
+    // Note: We cannot use --wd with --mount because nsenter opens the directory
+    // BEFORE entering the mount namespace. Since /workspace only exists inside
+    // the bubblewrap namespace, we must use shell cd instead.
     args.push("--".to_string());
-    args.extend_from_slice(command);
+
+    if let Some(dir) = workdir {
+        // Wrap command in shell that changes to workdir first
+        // Use exec to replace shell process with the actual command
+        let escaped_command = command
+            .iter()
+            .map(|s| shell_escape::escape(std::borrow::Cow::Borrowed(s)).to_string())
+            .collect::<Vec<_>>()
+            .join(" ");
+        args.push("sh".to_string());
+        args.push("-c".to_string());
+        args.push(format!("cd {} && exec {}", dir, escaped_command));
+    } else {
+        args.extend_from_slice(command);
+    }
 
     args
 }
@@ -2983,26 +2994,34 @@ mod tests {
         let args = nsenter_args(123, None, &["ls".to_string()]);
         assert!(args.contains(&"--target".to_string()));
         assert!(args.contains(&"123".to_string()));
-        assert!(args.contains(&"--wd".to_string()));
 
-        // Verify structure: --target 123 ... --wd -- ls
-        let wd_idx = args.iter().position(|s| s == "--wd").unwrap();
+        // Verify structure: --target 123 ... -- ls
         let double_dash_idx = args.iter().position(|s| s == "--").unwrap();
         let ls_idx = args.iter().position(|s| s == "ls").unwrap();
 
-        assert!(wd_idx < double_dash_idx);
         assert!(double_dash_idx < ls_idx);
     }
 
     #[test]
     fn nsenter_args_custom_workdir() {
+        // When workdir is specified, command is wrapped in sh -c "cd /workdir && exec command"
         let args = nsenter_args(123, Some("/custom"), &["ls".to_string()]);
-        assert!(args.contains(&"--wd=/custom".to_string()));
 
-        let wd_idx = args.iter().position(|s| s == "--wd=/custom").unwrap();
+        // Should not contain --wd (we use shell cd instead)
+        assert!(!args.iter().any(|s| s.starts_with("--wd")));
+
+        // Verify structure: ... -- sh -c "cd /custom && exec ls"
         let double_dash_idx = args.iter().position(|s| s == "--").unwrap();
+        let sh_idx = args.iter().position(|s| s == "sh").unwrap();
+        let c_idx = args.iter().position(|s| s == "-c").unwrap();
 
-        assert!(wd_idx < double_dash_idx);
+        assert!(double_dash_idx < sh_idx);
+        assert!(sh_idx < c_idx);
+
+        // Verify the shell command contains cd and exec
+        let shell_cmd = &args[c_idx + 1];
+        assert!(shell_cmd.starts_with("cd /custom && exec"));
+        assert!(shell_cmd.contains("ls"));
     }
 
     #[test]
