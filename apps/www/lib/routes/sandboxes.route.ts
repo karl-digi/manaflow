@@ -913,7 +913,7 @@ sandboxesRouter.openapi(
       // Run scripts in background (don't await)
       (async () => {
         await runMaintenanceAndDevScripts({
-          instance,
+          instance: wrapMorphInstance(instance),
           maintenanceScript: maintenanceScript || undefined,
           devScript: devScript || undefined,
           identifiers: scriptIdentifiers,
