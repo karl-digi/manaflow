@@ -59,7 +59,7 @@ const formatStarCount = (stars?: number | null): string => {
 export function SiteHeader({
   linkPrefix = "",
   showDownload = true,
-  fallbackUrl = "https://github.com/manaflow-ai/cmux/releases",
+  fallbackUrl = "https://github.com/karlorz/cmux/releases",
   latestVersion,
   macDownloadUrls,
   extraEndContent,

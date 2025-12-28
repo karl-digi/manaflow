@@ -247,7 +247,7 @@ export default async function LandingPage() {
                 <p className="text-xs text-neutral-400">
                   Latest release: cmux {latestVersion}. Need another build? Visit the{" "}
                   <a
-                    href="https://github.com/manaflow-ai/cmux/releases"
+                    href="https://github.com/karlorz/cmux/releases"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="underline hover:text-neutral-300"
