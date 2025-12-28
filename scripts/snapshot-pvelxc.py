@@ -2037,7 +2037,7 @@ async def task_install_go_toolchain(ctx: PveTaskContext) -> None:
     cmd = textwrap.dedent(
         """
         set -eux
-        GO_VERSION="1.24.3"
+        GO_VERSION="1.25.5"
         ARCH="$(uname -m)"
         case "${ARCH}" in
           x86_64)
@@ -3137,8 +3137,9 @@ async def task_cleanup_build_artifacts(ctx: PveTaskContext) -> None:
         # Stop Chrome before cleaning profile locks to prevent it from recreating them
         # Chrome exits with code 21 if it sees stale lock files from snapshot
         systemctl stop cmux-devtools.service 2>/dev/null || true
-        pkill -9 -f google-chrome 2>/dev/null || true
-        pkill -9 -f chrome 2>/dev/null || true
+        # Use killall instead of pkill -f to avoid matching the bash script itself
+        # (pkill -f chrome would match this script since it contains "chrome" in cmd line)
+        killall -9 google-chrome chrome chromium chromium-browser 2>/dev/null || true
         sleep 1
         # Clean Chrome profile locks to prevent crash-loop on fresh clones
         rm -f /root/.config/chrome/SingletonLock
