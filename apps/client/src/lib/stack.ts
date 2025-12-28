@@ -11,14 +11,6 @@ export const stackClientApp = new StackClientApp({
   projectId: env.NEXT_PUBLIC_STACK_PROJECT_ID,
   publishableClientKey: env.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY,
   tokenStore: "cookie",
-  // Configure URLs to use the app's routes instead of Stack Auth's default /handler/* routes.
-  // This is critical for Electron where /handler/sign-in doesn't exist locally.
-  // urls: {
-  //   signIn: "/sign-in",
-  //   afterSignIn: "/",
-  //   signOut: "/sign-in",
-  //   afterSignOut: "/sign-in",
-  // },
   redirectMethod: {
     useNavigate() {
       const navigate = useTanstackNavigate();
