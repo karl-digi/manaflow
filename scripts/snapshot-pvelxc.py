@@ -3134,14 +3134,21 @@ async def task_cleanup_build_artifacts(ctx: PveTaskContext) -> None:
             rm -rf /var/lib/apt/lists/partial
             install -d -m 0755 /var/lib/apt/lists/partial
         fi
-        # Clean Chrome profile locks to prevent crash-loop on fresh clones
+        # Stop Chrome before cleaning profile locks to prevent it from recreating them
         # Chrome exits with code 21 if it sees stale lock files from snapshot
+        systemctl stop cmux-devtools.service 2>/dev/null || true
+        pkill -9 -f google-chrome 2>/dev/null || true
+        pkill -9 -f chrome 2>/dev/null || true
+        sleep 1
+        # Clean Chrome profile locks to prevent crash-loop on fresh clones
         rm -f /root/.config/chrome/SingletonLock
         rm -f /root/.config/chrome/SingletonCookie
         rm -f /root/.config/chrome/SingletonSocket
         rm -f /root/.config/google-chrome/SingletonLock
         rm -f /root/.config/google-chrome/SingletonCookie
         rm -f /root/.config/google-chrome/SingletonSocket
+        # Also clean any temp socket directories Chrome may have created
+        rm -rf /tmp/.com.google.Chrome.*
         """
     ).strip()
     await ctx.run("cleanup-disk-artifacts", cleanup_script)
