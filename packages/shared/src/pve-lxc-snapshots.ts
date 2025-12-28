@@ -58,14 +58,11 @@ export const pveLxcTemplatePresetSchema = z
 
 /**
  * Schema v2 manifest: Uses templates instead of snapshots for fast linked-clone.
- * - baseTemplateVmid: The base template used to create preset templates
- * - Each preset version has templateVmid (the template container VMID)
+ * Each preset version has templateVmid (the template container VMID).
  */
 export const pveLxcTemplateManifestSchema = z.object({
   schemaVersion: z.literal(2),
   updatedAt: isoDateStringSchema,
-  baseTemplateVmid: z.number().int().positive(),
-  node: z.string(),
   presets: z.array(pveLxcTemplatePresetSchema).min(1),
 });
 
