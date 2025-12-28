@@ -55,5 +55,5 @@ try {
   // ignore if already removed by concurrent runs
 }
 
-// Always print the completion marker (dev.sh waits for this)
-console.log(`[${(performance.now() - startTime).toFixed(2)}ms] watch-openapi complete`);
+log(`[${(performance.now() - startTime).toFixed(2)}ms] watch-openapi complete`);
+console.log("[watch-openapi] initial client generation complete");

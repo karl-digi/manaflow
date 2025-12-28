@@ -422,7 +422,7 @@ export type SetupInstanceBody = {
     instanceId?: string;
     selectedRepos?: Array<string>;
     ttlSeconds?: number;
-    snapshotId?: string | ('snapshot_5a255f9t' | 'snapshot_d5hz9r0j');
+    snapshotId?: string | ('snapshot_gnjo1w2g' | 'snapshot_whbzjn0r' | 'snapshot_pcmfvjra');
 };
 
 export type InstanceInfo = {
@@ -570,6 +570,16 @@ export type UpdateSandboxEnvResponse = {
 export type UpdateSandboxEnvBody = {
     teamSlugOrId: string;
     envVarsContent: string;
+};
+
+export type RunScriptsResponse = {
+    started: true;
+};
+
+export type RunScriptsBody = {
+    teamSlugOrId: string;
+    maintenanceScript?: string;
+    devScript?: string;
 };
 
 export type SandboxSshResponse = {
@@ -2469,6 +2479,43 @@ export type PostApiSandboxesByIdEnvResponses = {
 };
 
 export type PostApiSandboxesByIdEnvResponse = PostApiSandboxesByIdEnvResponses[keyof PostApiSandboxesByIdEnvResponses];
+
+export type PostApiSandboxesByIdRunScriptsData = {
+    body: RunScriptsBody;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/sandboxes/{id}/run-scripts';
+};
+
+export type PostApiSandboxesByIdRunScriptsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Forbidden
+     */
+    403: unknown;
+    /**
+     * Sandbox not found
+     */
+    404: unknown;
+    /**
+     * Failed to run scripts
+     */
+    500: unknown;
+};
+
+export type PostApiSandboxesByIdRunScriptsResponses = {
+    /**
+     * Scripts started successfully
+     */
+    200: RunScriptsResponse;
+};
+
+export type PostApiSandboxesByIdRunScriptsResponse = PostApiSandboxesByIdRunScriptsResponses[keyof PostApiSandboxesByIdRunScriptsResponses];
 
 export type PostApiSandboxesByIdStopData = {
     body?: never;
