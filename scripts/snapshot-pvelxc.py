@@ -94,6 +94,10 @@ CURRENT_MANIFEST_SCHEMA_VERSION = 2
 # Default template VMID (should be created via pve-lxc-template.sh)
 DEFAULT_TEMPLATE_VMID = 9000
 
+# Base VMID for cloned containers during template building
+# Clones will use 9000, 9001, 9002, etc. (auto-increments if slot is taken)
+CLONE_BASE_VMID = 9000
+
 # ---------------------------------------------------------------------------
 # IDE Provider Configuration
 # ---------------------------------------------------------------------------
@@ -169,15 +173,10 @@ class PveLxcClient:
         self.token_id = token_parts[0]
         self.token_secret = token_parts[1]
 
-        # SSH host for pct commands (derived from API URL if not provided)
-        # SSH is now optional - only used as fallback if cf_domain is not set
-        if ssh_host:
-            self.ssh_host = ssh_host
-        else:
-            # Extract hostname from API URL: https://host.example.com:8006 -> host.example.com
-            parsed = urllib.parse.urlparse(api_url)
-            hostname = parsed.hostname or "localhost"
-            self.ssh_host = f"root@{hostname}"
+        # SSH host for pct commands - only set if explicitly provided
+        # When None, SSH fallback is disabled and HTTP exec is required
+        self.ssh_host = ssh_host
+        self._ssh_host_explicit = ssh_host is not None
 
         # SSH ControlMaster socket path for connection multiplexing
         # This allows multiple SSH sessions to share a single TCP connection
@@ -516,8 +515,16 @@ class PveLxcClient:
             elapsed += poll_interval
         raise TimeoutError(f"Task {upid} timed out after {timeout}s")
 
-    def find_next_vmid(self, node: str | None = None) -> int:
-        """Find the next available VMID."""
+    def find_next_vmid(self, node: str | None = None, start: int = 100) -> int:
+        """Find the next available VMID starting from `start`.
+
+        Args:
+            node: PVE node name (auto-detected if not set)
+            start: Starting VMID to search from (default: 100)
+
+        Returns:
+            The first available VMID >= start
+        """
         node = node or self.get_node()
         containers = self.list_lxc(node)
         used_vmids = {c["vmid"] for c in containers}
@@ -530,14 +537,14 @@ class PveLxcClient:
         except Exception:
             pass
 
-        vmid = 100
+        vmid = start
         while vmid in used_vmids:
             vmid += 1
         return vmid
 
-    async def afind_next_vmid(self, node: str | None = None) -> int:
-        """Async find next VMID."""
-        return await asyncio.to_thread(self.find_next_vmid, node)
+    async def afind_next_vmid(self, node: str | None = None, start: int = 100) -> int:
+        """Async find next VMID starting from `start`."""
+        return await asyncio.to_thread(self.find_next_vmid, node, start)
 
     # -----------------------------------------------------------------------
     # SSH-based operations for pct commands
@@ -809,6 +816,10 @@ class PveLxcClient:
                     except json.JSONDecodeError:
                         stderr_lines.append(line_str)
         except urllib.error.HTTPError as e:
+            # Gateway errors (502, 503, 504) indicate cmux-execd is not available
+            # Return None to trigger fallback to SSH+pct exec
+            if e.code in (502, 503, 504):
+                return None
             error_body = e.read().decode("utf-8", errors="replace")
             stderr_lines.append(f"HTTP exec error {e.code}: {e.reason}\n{error_body}")
             exit_code = 1
@@ -862,7 +873,10 @@ class PveLxcClient:
     ) -> subprocess.CompletedProcess[str]:
         """Execute command inside container, preferring HTTP exec over SSH.
 
-        Tries HTTP exec first (via cmux-execd), falls back to SSH+pct exec.
+        Tries HTTP exec first (via cmux-execd), falls back to SSH+pct exec
+        only if PVE_SSH_HOST was explicitly provided.
+
+        Raises RuntimeError if HTTP exec is not available and SSH is not configured.
         """
         # Try HTTP exec first if available
         result = self.http_exec(vmid, command, timeout=timeout, check=False)
@@ -875,6 +889,16 @@ class PveLxcClient:
                     f"stderr: {result.stderr}"
                 )
             return result
+
+        # HTTP exec not available - check if SSH fallback is configured
+        if not self._ssh_host_explicit:
+            raise RuntimeError(
+                f"HTTP exec (cmux-execd) not available for container {vmid} and "
+                f"SSH fallback not configured.\n"
+                f"Options:\n"
+                f"  1. Set PVE_SSH_HOST=root@<pve-host-ip> to enable SSH fallback\n"
+                f"  2. Ensure cmux-execd is running in the container for HTTP exec"
+            )
 
         # Fall back to SSH+pct exec
         return self.pct_exec(vmid, command, timeout=timeout, check=check)
@@ -960,11 +984,24 @@ class PveLxcClient:
     ) -> None:
         """Push file to container, preferring HTTP over SSH.
 
-        Tries HTTP push first (via cmux-execd), falls back to SSH+pct push.
+        Tries HTTP push first (via cmux-execd), falls back to SSH+pct push
+        only if PVE_SSH_HOST was explicitly provided.
+
+        Raises RuntimeError if HTTP push is not available and SSH is not configured.
         """
         # Try HTTP push first if available
         if self.http_push_file(vmid, local_path, remote_path, timeout=timeout):
             return
+
+        # HTTP push not available - check if SSH fallback is configured
+        if not self._ssh_host_explicit:
+            raise RuntimeError(
+                f"HTTP exec (cmux-execd) not available for container {vmid} and "
+                f"SSH fallback not configured.\n"
+                f"Options:\n"
+                f"  1. Set PVE_SSH_HOST=root@<pve-host-ip> to enable SSH fallback\n"
+                f"  2. Ensure cmux-execd is running in the container for HTTP exec"
+            )
 
         # Fall back to SSH+pct push
         self.pct_push(vmid, local_path, remote_path, timeout=timeout)
@@ -3301,12 +3338,21 @@ async def wait_for_container_ready(
     *,
     console: Console,
     timeout: int = 180,
+    require_http_exec: bool = True,
 ) -> None:
     """Wait for container to be running and ready for commands.
 
-    Uses HTTP exec (cmux-execd) when cf_domain is configured, otherwise falls back
-    to checking container status via PVE API only. When cf_domain is configured,
-    waits for the cmux-execd service to become responsive (may take time after boot).
+    Uses HTTP exec (cmux-execd) when cf_domain is configured and require_http_exec=True,
+    otherwise falls back to checking container status via PVE API only.
+
+    Args:
+        vmid: Container VMID to wait for
+        client: PVE client instance
+        console: Console for logging
+        timeout: Max seconds to wait
+        require_http_exec: If True and cf_domain is set, wait for cmux-execd to be ready.
+            Set to False when provisioning from a base template that doesn't have
+            cmux-execd installed yet.
     """
     console.info(f"Waiting for container {vmid} to be ready...")
 
@@ -3319,8 +3365,8 @@ async def wait_for_container_ready(
                 container_running = True
                 console.info(f"Container {vmid} is running, waiting for services...")
 
-            # Try HTTP exec first if cf_domain is configured
-            if client.cf_domain:
+            # Try HTTP exec first if cf_domain is configured AND require_http_exec is True
+            if client.cf_domain and require_http_exec:
                 try:
                     result = await client.ahttp_exec(
                         vmid,
@@ -3337,8 +3383,8 @@ async def wait_for_container_ready(
                 if elapsed > 0 and elapsed % 30 == 0:
                     console.info(f"Still waiting for cmux-execd on container {vmid}... ({elapsed}s)")
             else:
-                # No cf_domain configured - just verify container is running via API
-                # The PVE API confirmed running status, so we're good
+                # No cf_domain configured or require_http_exec=False
+                # Just verify container is running via API
                 console.info(f"Container {vmid} is running (API verified)")
                 return
         await asyncio.sleep(2)
@@ -3478,8 +3524,8 @@ async def update_existing_template(
     console.info(f"Container {source_vmid} is_template: {is_template}")
 
     if is_template:
-        # Clone from template to new VMID
-        new_vmid = await client.afind_next_vmid(node)
+        # Clone from template to new VMID (starting from CLONE_BASE_VMID)
+        new_vmid = await client.afind_next_vmid(node, start=CLONE_BASE_VMID)
         hostname = f"cmux-{new_vmid}"
 
         # Try linked clone first (faster), fall back to full clone if it fails
@@ -3518,7 +3564,9 @@ async def update_existing_template(
         console.info(f"Starting container {work_vmid}...")
         upid = await client.astart_lxc(work_vmid, node)
         await client.await_task(upid, timeout=120, node=node)
-        await wait_for_container_ready(work_vmid, client, console=console)
+        # Don't require HTTP exec - the source may be a base template without cmux-execd
+        # (cmux-execd gets installed during provisioning tasks)
+        await wait_for_container_ready(work_vmid, client, console=console, require_http_exec=False)
     else:
         console.info(f"Container {work_vmid} is already running")
 
@@ -3618,7 +3666,8 @@ async def provision_and_create_template(
     timings = TimingsCollector()
 
     node = await client.aget_node()
-    new_vmid = await client.afind_next_vmid(node)
+    # Find next available VMID starting from CLONE_BASE_VMID (9000, 9001, etc.)
+    new_vmid = await client.afind_next_vmid(node, start=CLONE_BASE_VMID)
     hostname = f"cmux-{new_vmid}"
 
     # Try linked clone first (faster), fall back to full clone if it fails
@@ -3662,7 +3711,9 @@ async def provision_and_create_template(
     await client.await_task(upid, timeout=120, node=node)
 
     # Wait for container to be ready
-    await wait_for_container_ready(new_vmid, client, console=console)
+    # Don't require HTTP exec since the base template doesn't have cmux-execd installed yet
+    # (cmux-execd will be installed by the task graph below)
+    await wait_for_container_ready(new_vmid, client, console=console, require_http_exec=False)
 
     # Create task context
     ctx = PveTaskContext(
@@ -3747,8 +3798,16 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
 
     if cf_domain:
         console.info(f"Using HTTP exec via Cloudflare Tunnel: exec-{{vmid}}.{cf_domain}")
+        if client._ssh_host_explicit:
+            console.info(f"SSH fallback enabled: {client.ssh_host}")
+        else:
+            console.info("SSH fallback disabled (set PVE_SSH_HOST to enable)")
     else:
-        console.info(f"Using SSH host: {client.ssh_host} (set PVE_CF_DOMAIN to use HTTP exec)")
+        if client._ssh_host_explicit:
+            console.info(f"Using SSH host: {client.ssh_host}")
+        else:
+            console.always("ERROR: No exec method configured. Set PVE_CF_DOMAIN or PVE_SSH_HOST")
+            sys.exit(1)
 
     # Test connection
     try:
@@ -3806,9 +3865,8 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
         f"(IDE provider: {args.ide_provider})"
     )
 
-    # Start SSH ControlMaster if not using HTTP exec
-    # SSH is still needed as fallback for file transfers
-    if not cf_domain:
+    # Start SSH ControlMaster if SSH is configured
+    if client._ssh_host_explicit:
         console.info("Starting SSH ControlMaster for connection multiplexing...")
         client.start_ssh_control_master()
 
@@ -3841,7 +3899,7 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
         raise
     finally:
         # Clean up SSH ControlMaster if we started one
-        if not cf_domain:
+        if client._ssh_host_explicit:
             client.stop_ssh_control_master()
 
     # Update manifest
@@ -4051,8 +4109,16 @@ async def run_update_mode(args: argparse.Namespace) -> None:
 
     if cf_domain:
         console.info(f"Using HTTP exec via Cloudflare Tunnel: exec-{{vmid}}.{cf_domain}")
+        if client._ssh_host_explicit:
+            console.info(f"SSH fallback enabled: {client.ssh_host}")
+        else:
+            console.info("SSH fallback disabled (set PVE_SSH_HOST to enable)")
     else:
-        console.info(f"Using SSH host: {client.ssh_host} (set PVE_CF_DOMAIN to use HTTP exec)")
+        if client._ssh_host_explicit:
+            console.info(f"Using SSH host: {client.ssh_host}")
+        else:
+            console.always("ERROR: No exec method configured. Set PVE_CF_DOMAIN or PVE_SSH_HOST")
+            sys.exit(1)
 
     # Test connection
     try:
@@ -4064,9 +4130,8 @@ async def run_update_mode(args: argparse.Namespace) -> None:
 
     repo_root = Path(args.repo_root).resolve()
 
-    # Start SSH ControlMaster if not using HTTP exec
-    # SSH is still needed for pct push (file transfers)
-    if not cf_domain:
+    # Start SSH ControlMaster if SSH is configured
+    if client._ssh_host_explicit:
         console.info("Starting SSH ControlMaster for connection multiplexing...")
         client.start_ssh_control_master()
 
@@ -4078,7 +4143,7 @@ async def run_update_mode(args: argparse.Namespace) -> None:
             repo_root=repo_root,
         )
     finally:
-        if not cf_domain:
+        if client._ssh_host_explicit:
             client.stop_ssh_control_master()
 
 

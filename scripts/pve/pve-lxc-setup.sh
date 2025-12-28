@@ -212,9 +212,9 @@ echo ""
 
 # Step 1: Base packages and locale
 if step_done "01-base"; then
-    echo "[1/8] Base dependencies... SKIP (already done)"
+    echo "[1/10] Base dependencies... SKIP (already done)"
 else
-    echo "[1/8] Installing base dependencies..."
+    echo "[1/10] Installing base dependencies..."
     apt-get update -qq
     apt-get install -y -qq \
         curl wget git unzip ca-certificates gnupg lsb-release \
@@ -227,12 +227,12 @@ fi
 
 # Step 2: Docker
 if step_done "02-docker"; then
-    echo "[2/8] Docker... SKIP (already done)"
+    echo "[2/10] Docker... SKIP (already done)"
 elif command -v docker &>/dev/null; then
-    echo "[2/8] Docker... SKIP (already installed)"
+    echo "[2/10] Docker... SKIP (already installed)"
     mark_done "02-docker"
 else
-    echo "[2/8] Installing Docker..."
+    echo "[2/10] Installing Docker..."
     install -m 0755 -d /etc/apt/keyrings
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg 2>/dev/null || true
     chmod a+r /etc/apt/keyrings/docker.gpg
@@ -245,12 +245,12 @@ fi
 
 # Step 3: Node.js
 if step_done "03-nodejs"; then
-    echo "[3/8] Node.js... SKIP (already done)"
+    echo "[3/10] Node.js... SKIP (already done)"
 elif command -v node &>/dev/null && [[ "$(node --version 2>/dev/null)" == v2* ]]; then
-    echo "[3/8] Node.js... SKIP (already installed: $(node --version))"
+    echo "[3/10] Node.js... SKIP (already installed: $(node --version))"
     mark_done "03-nodejs"
 else
-    echo "[3/8] Installing Node.js..."
+    echo "[3/10] Installing Node.js..."
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null 2>&1
     apt-get install -y -qq nodejs
     echo "    Installed: $(node --version)"
@@ -259,12 +259,12 @@ fi
 
 # Step 4: Bun
 if step_done "04-bun"; then
-    echo "[4/8] Bun... SKIP (already done)"
+    echo "[4/10] Bun... SKIP (already done)"
 elif command -v bun &>/dev/null; then
-    echo "[4/8] Bun... SKIP (already installed: $(bun --version))"
+    echo "[4/10] Bun... SKIP (already installed: $(bun --version))"
     mark_done "04-bun"
 else
-    echo "[4/8] Installing Bun..."
+    echo "[4/10] Installing Bun..."
     curl -fsSL https://bun.sh/install | bash >/dev/null 2>&1
     ln -sf /root/.bun/bin/bun /usr/local/bin/bun
     ln -sf /root/.bun/bin/bunx /usr/local/bin/bunx
@@ -274,12 +274,12 @@ fi
 
 # Step 5: uv (Python)
 if step_done "05-uv"; then
-    echo "[5/8] uv (Python)... SKIP (already done)"
+    echo "[5/10] uv (Python)... SKIP (already done)"
 elif command -v uv &>/dev/null; then
-    echo "[5/8] uv... SKIP (already installed: $(uv --version))"
+    echo "[5/10] uv... SKIP (already installed: $(uv --version))"
     mark_done "05-uv"
 else
-    echo "[5/8] Installing uv..."
+    echo "[5/10] Installing uv..."
     curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1
     ln -sf /root/.local/bin/uv /usr/local/bin/uv
     ln -sf /root/.local/bin/uvx /usr/local/bin/uvx
@@ -289,24 +289,24 @@ fi
 
 # Step 6: VNC and X11
 if step_done "06-vnc"; then
-    echo "[6/8] VNC/X11... SKIP (already done)"
+    echo "[6/10] VNC/X11... SKIP (already done)"
 elif command -v Xvfb &>/dev/null; then
-    echo "[6/8] VNC/X11... SKIP (already installed)"
+    echo "[6/10] VNC/X11... SKIP (already installed)"
     mark_done "06-vnc"
 else
-    echo "[6/8] Installing VNC and X11..."
+    echo "[6/10] Installing VNC and X11..."
     apt-get install -y -qq xvfb tigervnc-standalone-server tigervnc-common x11-utils xterm dbus-x11
     mark_done "06-vnc"
 fi
 
 # Step 7: CRIU (optional)
 if step_done "07-criu"; then
-    echo "[7/8] CRIU... SKIP (already done)"
+    echo "[7/10] CRIU... SKIP (already done)"
 elif command -v criu &>/dev/null; then
-    echo "[7/8] CRIU... SKIP (already installed)"
+    echo "[7/10] CRIU... SKIP (already installed)"
     mark_done "07-criu"
 else
-    echo "[7/8] Installing CRIU..."
+    echo "[7/10] Installing CRIU..."
     add-apt-repository -y universe 2>/dev/null || true
     apt-get update -qq 2>/dev/null || true
     if apt-get install -y -qq criu 2>/dev/null; then
@@ -317,11 +317,253 @@ else
     mark_done "07-criu"
 fi
 
-# Step 8: Finalize
-if step_done "08-finalize"; then
-    echo "[8/8] Finalize... SKIP (already done)"
+# Step 8: Go (for cmux-execd)
+if step_done "08-go"; then
+    echo "[8/10] Go... SKIP (already done)"
+elif command -v go &>/dev/null; then
+    echo "[8/10] Go... SKIP (already installed: $(go version))"
+    mark_done "08-go"
 else
-    echo "[8/8] Finalizing setup..."
+    echo "[8/10] Installing Go..."
+    GO_VERSION="1.23.4"
+    curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" | tar -C /usr/local -xzf -
+    ln -sf /usr/local/go/bin/go /usr/local/bin/go
+    ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt
+    echo "    Installed: $(/usr/local/bin/go version)"
+    mark_done "08-go"
+fi
+
+# Step 9: cmux-execd (HTTP exec daemon for remote command execution)
+if step_done "09-execd"; then
+    echo "[9/10] cmux-execd... SKIP (already done)"
+elif [[ -f /usr/local/bin/cmux-execd ]]; then
+    echo "[9/10] cmux-execd... SKIP (already installed)"
+    mark_done "09-execd"
+else
+    echo "[9/10] Installing cmux-execd..."
+
+    # Create temp build directory
+    EXECD_BUILD_DIR=$(mktemp -d)
+    cd "$EXECD_BUILD_DIR"
+
+    # Write the execd source code
+    cat > main.go << 'EXECD_SOURCE'
+package main
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"os/exec"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+)
+
+type execRequest struct {
+	Command   string `json:"command"`
+	TimeoutMs *int   `json:"timeout_ms"`
+}
+
+type execEvent struct {
+	Type    string `json:"type"`
+	Data    string `json:"data,omitempty"`
+	Code    *int   `json:"code,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
+func writeJSONLine(w io.Writer, flusher http.Flusher, event execEvent) error {
+	payload, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	if _, err = w.Write(append(payload, '\n')); err != nil {
+		return err
+	}
+	flusher.Flush()
+	return nil
+}
+
+func readPipe(ctx context.Context, reader io.Reader, eventType string, wg *sync.WaitGroup, w io.Writer, flusher http.Flusher) {
+	defer wg.Done()
+	scanner := bufio.NewScanner(reader)
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 1024*1024)
+	for scanner.Scan() {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		line := strings.TrimRight(scanner.Text(), "\r")
+		if line == "" {
+			continue
+		}
+		_ = writeJSONLine(w, flusher, execEvent{Type: eventType, Data: line})
+	}
+}
+
+func execHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !strings.Contains(strings.ToLower(r.Header.Get("Content-Type")), "application/json") {
+		http.Error(w, "Unsupported Content-Type", http.StatusUnsupportedMediaType)
+		return
+	}
+
+	var payload execRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&payload); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	command := strings.TrimSpace(payload.Command)
+	if command == "" {
+		http.Error(w, "Command required", http.StatusBadRequest)
+		return
+	}
+
+	var timeout time.Duration
+	timeoutMs := 0
+	if payload.TimeoutMs != nil && *payload.TimeoutMs > 0 {
+		timeoutMs = *payload.TimeoutMs
+		timeout = time.Duration(timeoutMs) * time.Millisecond
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/jsonlines")
+	w.WriteHeader(http.StatusOK)
+
+	ctx := context.Background()
+	var cancel context.CancelFunc
+	if timeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+	} else {
+		ctx, cancel = context.WithCancel(ctx)
+	}
+	defer cancel()
+
+	go func() {
+		<-r.Context().Done()
+		cancel()
+	}()
+
+	cmd := exec.CommandContext(ctx, "/bin/bash", "-c", command)
+	stdout, _ := cmd.StdoutPipe()
+	stderr, _ := cmd.StderrPipe()
+
+	if err := cmd.Start(); err != nil {
+		exitCode := 127
+		_ = writeJSONLine(w, flusher, execEvent{Type: "error", Message: err.Error()})
+		_ = writeJSONLine(w, flusher, execEvent{Type: "exit", Code: &exitCode})
+		return
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go readPipe(r.Context(), stdout, "stdout", &wg, w, flusher)
+	go readPipe(r.Context(), stderr, "stderr", &wg, w, flusher)
+
+	waitErr := cmd.Wait()
+	wg.Wait()
+
+	exitCode := 0
+	if waitErr != nil {
+		var exitErr *exec.ExitError
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			_ = writeJSONLine(w, flusher, execEvent{Type: "error", Message: fmt.Sprintf("timeout after %dms", timeoutMs)})
+			exitCode = 124
+		} else if errors.As(waitErr, &exitErr) {
+			exitCode = exitErr.ExitCode()
+		} else {
+			exitCode = 1
+		}
+	}
+	_ = writeJSONLine(w, flusher, execEvent{Type: "exit", Code: &exitCode})
+}
+
+func main() {
+	portFlag := flag.Int("port", 39375, "port")
+	flag.Parse()
+	port := *portFlag
+	if env := os.Getenv("EXECD_PORT"); env != "" {
+		if v, err := strconv.Atoi(env); err == nil {
+			port = v
+		}
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
+	mux.HandleFunc("/exec", execHandler)
+	log.Printf("cmux-execd listening on :%d", port)
+	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", port), mux))
+}
+EXECD_SOURCE
+
+    cat > go.mod << 'GOMOD'
+module cmux-execd
+go 1.21
+GOMOD
+
+    # Build the binary
+    export PATH="/usr/local/go/bin:$PATH"
+    CGO_ENABLED=0 go build -ldflags="-s -w" -o cmux-execd .
+    mv cmux-execd /usr/local/bin/cmux-execd
+    chmod +x /usr/local/bin/cmux-execd
+
+    # Create systemd service
+    cat > /etc/systemd/system/cmux-execd.service << 'SERVICE'
+[Unit]
+Description=cmux exec daemon - HTTP command execution
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=EXECD_PORT=39375
+ExecStart=/usr/local/bin/cmux-execd -port 39375
+Restart=on-failure
+RestartSec=2
+StandardOutput=append:/var/log/cmux/cmux-execd.log
+StandardError=append:/var/log/cmux/cmux-execd.log
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+
+    # Enable and start the service
+    mkdir -p /var/log/cmux
+    systemctl daemon-reload
+    systemctl enable cmux-execd
+    systemctl start cmux-execd
+
+    # Cleanup
+    cd /
+    rm -rf "$EXECD_BUILD_DIR"
+
+    echo "    cmux-execd installed and running on port 39375"
+    mark_done "09-execd"
+fi
+
+# Step 10: Finalize
+if step_done "10-finalize"; then
+    echo "[10/10] Finalize... SKIP (already done)"
+else
+    echo "[10/10] Finalizing setup..."
 
     # Create cmux directories
     mkdir -p /opt/cmux/{bin,config,checkpoints}
@@ -353,7 +595,7 @@ else
     grep -q '/usr/local/bin' /root/.bashrc 2>/dev/null || echo "$PATH_EXPORT" >> /root/.bashrc
     grep -q '/usr/local/bin' /root/.zshrc 2>/dev/null || echo "$PATH_EXPORT" >> /root/.zshrc 2>/dev/null || true
 
-    mark_done "08-finalize"
+    mark_done "10-finalize"
 fi
 
 echo ""
@@ -364,7 +606,11 @@ node --version 2>/dev/null && echo "  Node.js: $(node --version)" || true
 /usr/local/bin/bun --version 2>/dev/null && echo "  Bun: $(/usr/local/bin/bun --version)" || true
 /usr/local/bin/uv --version 2>/dev/null && echo "  uv: $(/usr/local/bin/uv --version 2>&1 | head -1)" || true
 docker --version 2>/dev/null && echo "  Docker: $(docker --version | cut -d' ' -f3 | tr -d ',')" || true
+/usr/local/bin/go version 2>/dev/null && echo "  Go: $(/usr/local/bin/go version | awk '{print $3}')" || true
 criu --version 2>/dev/null && echo "  CRIU: $(criu --version 2>&1 | head -1)" || true
+echo ""
+echo "Services:"
+systemctl is-active cmux-execd 2>/dev/null && echo "  cmux-execd: running (port 39375)" || echo "  cmux-execd: not running"
 echo ""
 SETUP_EOF
 }
