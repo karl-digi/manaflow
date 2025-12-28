@@ -3351,8 +3351,7 @@ async def wait_for_container_ready(
         console: Console for logging
         timeout: Max seconds to wait
         require_http_exec: If True and cf_domain is set, wait for cmux-execd to be ready.
-            Set to False when provisioning from a base template that doesn't have
-            cmux-execd installed yet.
+            Should typically be True since base templates have cmux-execd installed.
     """
     console.info(f"Waiting for container {vmid} to be ready...")
 
@@ -3564,9 +3563,9 @@ async def update_existing_template(
         console.info(f"Starting container {work_vmid}...")
         upid = await client.astart_lxc(work_vmid, node)
         await client.await_task(upid, timeout=120, node=node)
-        # Don't require HTTP exec - the source may be a base template without cmux-execd
-        # (cmux-execd gets installed during provisioning tasks)
-        await wait_for_container_ready(work_vmid, client, console=console, require_http_exec=False)
+        # Base templates created with pve-lxc-setup.sh have cmux-execd installed,
+        # so we wait for HTTP exec to be ready before running provisioning tasks
+        await wait_for_container_ready(work_vmid, client, console=console, require_http_exec=True)
     else:
         console.info(f"Container {work_vmid} is already running")
 
@@ -3711,9 +3710,9 @@ async def provision_and_create_template(
     await client.await_task(upid, timeout=120, node=node)
 
     # Wait for container to be ready
-    # Don't require HTTP exec since the base template doesn't have cmux-execd installed yet
-    # (cmux-execd will be installed by the task graph below)
-    await wait_for_container_ready(new_vmid, client, console=console, require_http_exec=False)
+    # Base templates created with pve-lxc-setup.sh have cmux-execd installed,
+    # so we wait for HTTP exec to be ready before running provisioning tasks
+    await wait_for_container_ready(new_vmid, client, console=console, require_http_exec=True)
 
     # Create task context
     ctx = PveTaskContext(
