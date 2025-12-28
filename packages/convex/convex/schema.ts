@@ -272,6 +272,7 @@ const convexSchema = defineSchema({
         url: v.optional(v.string()), // The VSCode URL
         workspaceUrl: v.optional(v.string()), // The workspace URL
         vncUrl: v.optional(v.string()), // The VNC websocket URL for browser preview
+        xtermUrl: v.optional(v.string()), // The xterm terminal backend URL
         startedAt: v.optional(v.number()),
         stoppedAt: v.optional(v.number()),
         lastAccessedAt: v.optional(v.number()), // Track when user last accessed the container

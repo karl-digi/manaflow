@@ -754,17 +754,20 @@ export class PveLxcClient {
       const vscodePubUrl = this.buildPublicServiceUrl("vscode", newVmid);
       const workerPubUrl = this.buildPublicServiceUrl("worker", newVmid);
       const vncPubUrl = this.buildPublicServiceUrl("vnc", newVmid);
-      if (vscodePubUrl && workerPubUrl && vncPubUrl) {
+      const xtermPubUrl = this.buildPublicServiceUrl("xterm", newVmid);
+      if (vscodePubUrl && workerPubUrl && vncPubUrl && xtermPubUrl) {
         services.push(
           { name: "vscode", port: 39378, url: vscodePubUrl },
           { name: "worker", port: 39377, url: workerPubUrl },
-          { name: "vnc", port: 39380, url: vncPubUrl }
+          { name: "vnc", port: 39380, url: vncPubUrl },
+          { name: "xterm", port: 39383, url: xtermPubUrl }
         );
       } else if (fqdn) {
         services.push(
           { name: "vscode", port: 39378, url: `http://${fqdn}:39378` },
           { name: "worker", port: 39377, url: `http://${fqdn}:39377` },
-          { name: "vnc", port: 39380, url: `http://${fqdn}:39380` }
+          { name: "vnc", port: 39380, url: `http://${fqdn}:39380` },
+          { name: "xterm", port: 39383, url: `http://${fqdn}:39383` }
         );
       } else {
         throw new Error(

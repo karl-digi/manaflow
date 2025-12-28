@@ -477,6 +477,7 @@ sandboxesRouter.openapi(
       const vscodeService = exposed.find((s) => s.port === 39378);
       const workerService = exposed.find((s) => s.port === 39377);
       const vncService = exposed.find((s) => s.port === 39380);
+      const xtermService = exposed.find((s) => s.port === 39383);
       if (!vscodeService || !workerService) {
         await instance.stop().catch(() => { });
         return c.text("VSCode or worker service not found", 500);
@@ -511,6 +512,7 @@ sandboxesRouter.openapi(
               url: vscodeService.url,
               workspaceUrl: `${vscodeService.url}/?folder=/root/workspace`,
               vncUrl: vncService?.url,
+              xtermUrl: xtermService?.url,
               startedAt: Date.now(),
             },
           });
