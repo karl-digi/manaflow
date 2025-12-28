@@ -82,17 +82,39 @@ type ParsedStackAccessCookie = {
   accessToken?: string;
 };
 
-function parseStackAccessCookie(value: string | undefined): ParsedStackAccessCookie {
+type ParsedStackRefreshCookie = {
+  refreshToken?: string;
+};
+
+function normalizeCookieValue(value: string | undefined): string | undefined {
   if (!value) {
-    return {};
+    return undefined;
   }
 
-  if (!value.startsWith("[")) {
-    return { accessToken: value };
+  if (!value.includes("%")) {
+    return value;
   }
 
   try {
-    const parsed: unknown = JSON.parse(value);
+    return decodeURIComponent(value);
+  } catch (error) {
+    console.error("[After Sign In] Failed to decode cookie value", error);
+    return value;
+  }
+}
+
+function parseStackAccessCookie(value: string | undefined): ParsedStackAccessCookie {
+  const normalized = normalizeCookieValue(value);
+  if (!normalized) {
+    return {};
+  }
+
+  if (!normalized.startsWith("[")) {
+    return { accessToken: normalized };
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(normalized);
     if (Array.isArray(parsed)) {
       const [refreshToken, accessToken] = parsed;
       if (typeof refreshToken === "string" && typeof accessToken === "string") {
@@ -101,6 +123,35 @@ function parseStackAccessCookie(value: string | undefined): ParsedStackAccessCoo
     }
   } catch (error) {
     console.error("[After Sign In] Failed to parse stack-access cookie", error);
+  }
+
+  return {};
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function parseStackRefreshCookie(value: string | undefined): ParsedStackRefreshCookie {
+  const normalized = normalizeCookieValue(value);
+  if (!normalized) {
+    return {};
+  }
+
+  if (!normalized.startsWith("{")) {
+    return { refreshToken: normalized };
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(normalized);
+    if (isRecord(parsed)) {
+      const refreshTokenValue = parsed.refresh_token;
+      if (typeof refreshTokenValue === "string") {
+        return { refreshToken: refreshTokenValue };
+      }
+    }
+  } catch (error) {
+    console.error("[After Sign In] Failed to parse stack-refresh cookie", error);
   }
 
   return {};
@@ -179,9 +230,10 @@ export default async function AfterSignInPage({ searchParams: searchParamsPromis
   const stackRefreshCookieValue = findStackCookie(stackCookies, refreshCookieBaseName);
   const stackAccessCookieValue = findStackCookie(stackCookies, "stack-access");
   const parsedAccessCookie = parseStackAccessCookie(stackAccessCookieValue);
+  const parsedRefreshCookie = parseStackRefreshCookie(stackRefreshCookieValue);
 
-  let stackRefreshToken = stackRefreshCookieValue ?? parsedAccessCookie.refreshToken;
-  let stackAccessCookie = stackAccessCookieValue;
+  let stackRefreshToken = parsedAccessCookie.refreshToken ?? parsedRefreshCookie.refreshToken;
+  let stackAccessCookie = normalizeCookieValue(stackAccessCookieValue);
   let accessToken = parsedAccessCookie.accessToken;
 
   if (!stackRefreshToken || !stackAccessCookie) {
@@ -201,7 +253,10 @@ export default async function AfterSignInPage({ searchParams: searchParamsPromis
     }
   }
 
-  if (!stackAccessCookie && stackRefreshToken && accessToken) {
+  // ALWAYS reconstruct the access cookie JSON to ensure the refresh token matches
+  // Stack Auth SDK validates: refreshTokenCookie === accessCookieJSON[0]
+  // If we pass mismatched tokens (e.g., from different cookie sources), auth fails with 401
+  if (stackRefreshToken && accessToken) {
     stackAccessCookie = JSON.stringify([stackRefreshToken, accessToken]);
   }
 
