@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2025-12-24T16:41:50Z",
+  "updatedAt": "2025-12-28T18:47:36Z",
   "presets": [
     {
       "presetId": "4vcpu_6gb_32gb",
@@ -27,6 +27,34 @@
           "version": 1,
           "snapshotId": "snapshot_d5hz9r0j",
           "capturedAt": "2025-12-24T16:41:50Z"
+        }
+      ]
+    },
+    {
+      "presetId": "4vcpu_6gb_20gb",
+      "label": "Standard workspace",
+      "cpu": "4 vCPU",
+      "memory": "6 GB RAM",
+      "disk": "20 GB SSD",
+      "versions": [
+        {
+          "version": 1,
+          "snapshotId": "snapshot_y6uf4l7f",
+          "capturedAt": "2025-12-28T18:47:24Z"
+        }
+      ]
+    },
+    {
+      "presetId": "6vcpu_8gb_40gb",
+      "label": "Performance workspace",
+      "cpu": "6 vCPU",
+      "memory": "8 GB RAM",
+      "disk": "40 GB SSD",
+      "versions": [
+        {
+          "version": 1,
+          "snapshotId": "snapshot_oq3yu26v",
+          "capturedAt": "2025-12-28T18:47:36Z"
         }
       ]
     }
