@@ -126,17 +126,15 @@ def get_ide_provider() -> str:
 
 # Module-level settings for git diff upload mode
 _use_git_diff: bool = False
-_base_commit: str | None = None
 
 
-def set_git_diff_mode(use_diff: bool, base_commit: str | None = None) -> None:
-    global _use_git_diff, _base_commit
+def set_git_diff_mode(use_diff: bool) -> None:
+    global _use_git_diff
     _use_git_diff = use_diff
-    _base_commit = base_commit
 
 
-def get_git_diff_mode() -> tuple[bool, str | None]:
-    return _use_git_diff, _base_commit
+def get_git_diff_mode() -> bool:
+    return _use_git_diff
 
 
 # ---------------------------------------------------------------------------
@@ -1030,7 +1028,6 @@ class PveTemplateVersionEntry(t.TypedDict):
     version: int
     templateVmid: int  # The VMID of the template container
     capturedAt: str
-    baseCommit: t.NotRequired[str]  # Git commit hash this version was built from
 
 
 class PveTemplatePresetEntry(t.TypedDict):
@@ -1078,7 +1075,6 @@ class TemplateRunResult:
     template_vmid: int  # The VMID of the created template
     captured_at: str
     node: str
-    base_commit: str | None = None  # Git commit hash this version was built from
 
 
 def _iso_timestamp() -> str:
@@ -1200,7 +1196,6 @@ def _update_manifest_with_template(
     template_vmid: int,
     captured_at: str,
     node: str,
-    base_commit: str | None = None,
 ) -> PveTemplateManifestEntry:
     """Update manifest with a new template version for a preset."""
     manifest["node"] = node
@@ -1237,8 +1232,6 @@ def _update_manifest_with_template(
         "templateVmid": template_vmid,
         "capturedAt": captured_at,
     }
-    if base_commit:
-        version_entry["baseCommit"] = base_commit
     preset_entry["versions"].append(version_entry)
     preset_entry["versions"].sort(key=lambda entry: entry["version"])
 
@@ -1445,17 +1438,6 @@ def create_repo_archive(repo_root: Path) -> Path:
     return tmp_path
 
 
-def get_current_commit(repo_root: Path) -> str | None:
-    """Get the current HEAD commit hash."""
-    try:
-        output = _exec_git(repo_root, ["rev-parse", "HEAD"])
-        if output:
-            return output.strip()
-    except RuntimeError:
-        pass
-    return None
-
-
 def get_git_remote_url(repo_root: Path) -> str | None:
     """Get the git remote origin URL."""
     try:
@@ -1613,41 +1595,6 @@ def create_local_changes_patch(repo_root: Path) -> Path | None:
     except Exception as e:
         print(f"[git-diff] Failed to create local changes patch: {e}")
         tmp_path.unlink(missing_ok=True)
-        return None
-
-
-def get_base_commit_from_manifest(snapshot_id: str | None = None) -> str | None:
-    """Get the base commit from the manifest for incremental updates.
-
-    If snapshot_id is provided, finds the commit for that specific snapshot.
-    Otherwise, returns the most recent commit from any preset.
-    """
-    if not PVE_SNAPSHOT_MANIFEST_PATH.exists():
-        return None
-
-    try:
-        manifest = json.loads(PVE_SNAPSHOT_MANIFEST_PATH.read_text())
-        presets = manifest.get("presets", [])
-
-        # Find the most recent version with a baseCommit
-        latest_commit: str | None = None
-        latest_captured: str | None = None
-
-        for preset in presets:
-            versions = preset.get("versions", [])
-            for version in versions:
-                base_commit = version.get("baseCommit")
-                if not base_commit:
-                    continue
-
-                captured_at = version.get("capturedAt", "")
-                if latest_captured is None or captured_at > latest_captured:
-                    latest_commit = base_commit
-                    latest_captured = captured_at
-
-        return latest_commit
-    except Exception as e:
-        print(f"[git-diff] Failed to read base commit from manifest: {e}")
         return None
 
 
@@ -2311,7 +2258,7 @@ EOF
     description="Upload repository to the container",
 )
 async def task_upload_repo(ctx: PveTaskContext) -> None:
-    use_diff, _ = get_git_diff_mode()
+    use_diff = get_git_diff_mode()
 
     # Try git diff mode if enabled (clones from GitHub + applies local changes)
     if use_diff:
@@ -3751,18 +3698,14 @@ async def provision_and_create_template(
     await client.aconvert_to_template(new_vmid, node)
 
     captured_at = _iso_timestamp()
-    current_commit = get_current_commit(repo_root)
 
     console.always(f"[{preset.preset_id}] Container {new_vmid} converted to template")
-    if current_commit:
-        console.info(f"[{preset.preset_id}] Base commit: {current_commit[:12]}")
 
     return TemplateRunResult(
         preset=preset,
         template_vmid=new_vmid,
         captured_at=captured_at,
         node=node,
-        base_commit=current_commit,
     )
 
 
@@ -3909,7 +3852,6 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
             result.template_vmid,
             result.captured_at,
             result.node,
-            result.base_commit,
         )
     _write_manifest(manifest)
 
@@ -3925,8 +3867,6 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
         console.always(f"  Template VMID: {result.template_vmid}")
         console.always(f"  Node: {result.node}")
         console.always(f"  Captured: {result.captured_at}")
-        if result.base_commit:
-            console.always(f"  Base Commit: {result.base_commit[:12]}")
         console.always("")
 
     console.always("To use these templates:")
@@ -4054,14 +3994,13 @@ def main() -> None:
         return
 
     # Set up git diff mode if enabled
-    # New approach: clone from GitHub + apply local uncommitted changes
-    # No longer needs base_commit from manifest
+    # Git diff mode: clone from GitHub + apply local uncommitted changes
     if getattr(args, "use_git_diff", False):
         print("[git-diff] Enabled (clone from GitHub + apply local changes)")
-        set_git_diff_mode(True, None)
+        set_git_diff_mode(True)
     else:
         print("[git-diff] Disabled (full archive upload)")
-        set_git_diff_mode(False, None)
+        set_git_diff_mode(False)
 
     # Validate update mode arguments
     if getattr(args, "update", False):
