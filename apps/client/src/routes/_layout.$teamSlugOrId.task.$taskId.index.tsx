@@ -566,9 +566,18 @@ function TaskDetailPage() {
 
   // Query terminal sessions to detect if Claude Code is running
   // Disable for archived tasks to prevent Wake on HTTP (the query has refetchInterval: 10_000)
+  // Prefer direct xtermUrl from vscode info (works for PVE LXC), fall back to deriving from Morph URL
   const xtermBaseUrl = useMemo(
-    () => (rawWorkspaceUrl && !isTaskArchived ? toMorphXtermBaseUrl(rawWorkspaceUrl) : null),
-    [rawWorkspaceUrl, isTaskArchived]
+    () => {
+      if (isTaskArchived) return null;
+      // Prefer direct xtermUrl if available (PVE LXC and future providers)
+      if (selectedRun?.vscode?.xtermUrl) {
+        return selectedRun.vscode.xtermUrl;
+      }
+      // Fall back to deriving from Morph workspace URL
+      return rawWorkspaceUrl ? toMorphXtermBaseUrl(rawWorkspaceUrl) : null;
+    },
+    [rawWorkspaceUrl, isTaskArchived, selectedRun?.vscode?.xtermUrl]
   );
   const terminalTabsQuery = useTanstackQuery(
     terminalTabsQueryOptions({
@@ -832,6 +841,7 @@ function TaskDetailPage() {
       workspacePlaceholder,
       // For archived tasks, pass null URLs to prevent iframe loading (Wake on HTTP)
       rawWorkspaceUrl: isTaskArchived ? null : rawWorkspaceUrl,
+      xtermUrl: isTaskArchived ? null : xtermBaseUrl,
       browserUrl: isTaskArchived ? null : browserUrl,
       browserPersistKey: isTaskArchived ? null : browserPersistKey,
       browserStatus,
@@ -866,6 +876,7 @@ function TaskDetailPage() {
       isEditorBusy,
       workspacePlaceholder,
       rawWorkspaceUrl,
+      xtermBaseUrl,
       browserUrl,
       browserPersistKey,
       browserStatus,

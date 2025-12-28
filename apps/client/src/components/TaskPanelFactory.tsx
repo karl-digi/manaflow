@@ -166,6 +166,7 @@ interface PanelFactoryProps {
   } | null;
   // Terminal panel props
   rawWorkspaceUrl?: string | null;
+  xtermUrl?: string | null;
   // Browser panel props
   browserUrl?: string | null;
   browserPersistKey?: string | null;
@@ -540,7 +541,7 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
     }
 
     case "terminal": {
-      const { rawWorkspaceUrl, TaskRunTerminalPane } = props;
+      const { rawWorkspaceUrl, xtermUrl, TaskRunTerminalPane } = props;
       if (!TaskRunTerminalPane) return null;
 
       return panelWrapper(
@@ -548,8 +549,9 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
         PANEL_LABELS.terminal,
         <div className="flex-1 bg-black">
           <TaskRunTerminalPane
-            key={rawWorkspaceUrl ?? "no-workspace"}
+            key={xtermUrl ?? rawWorkspaceUrl ?? "no-workspace"}
             workspaceUrl={rawWorkspaceUrl ?? null}
+            xtermUrl={xtermUrl}
           />
         </div>
       );
@@ -672,9 +674,10 @@ export const RenderPanel = React.memo(RenderPanelComponent, (prevProps, nextProp
     }
   }
 
-  // For terminal panel, check workspace URL
+  // For terminal panel, check workspace URL and xtermUrl
   if (prevProps.type === "terminal") {
-    if (prevProps.rawWorkspaceUrl !== nextProps.rawWorkspaceUrl) {
+    if (prevProps.rawWorkspaceUrl !== nextProps.rawWorkspaceUrl ||
+      prevProps.xtermUrl !== nextProps.xtermUrl) {
       return false;
     }
   }
