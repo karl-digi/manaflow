@@ -1,6 +1,10 @@
 import SwiftUI
 import UIKit
 
+private func debugLog(_ message: String) {
+    NSLog("[ChatApproachI] %@", message)
+}
+
 /// Approach I: Container Resize (no scroll tricks)
 /// - Container height shrinks when keyboard appears
 /// - Scroll view fills container
@@ -56,7 +60,7 @@ final class ContainerResizeViewController: UIViewController {
         populateMessages()
         setupKeyboardObservers()
 
-        print("🚀 ChatApproachI viewDidLoad complete")
+        debugLog("🚀 ChatApproachI viewDidLoad complete")
 
         DispatchQueue.main.async {
             self.scrollToBottom(animated: false)
@@ -92,7 +96,7 @@ final class ContainerResizeViewController: UIViewController {
         // Calculate delta from last known keyboard height
         let delta = effectiveKeyboardHeight - lastKeyboardHeight
 
-        print("""
+        debugLog("""
         ⌨️ Keyboard change:
           endFrame: \(endFrame.debugDescription)
           endFrameInView: \(endFrameInView.debugDescription)
@@ -109,7 +113,7 @@ final class ContainerResizeViewController: UIViewController {
 
         // Skip if no change
         guard abs(delta) > 1 else {
-            print("⌨️ Skipping - delta too small: \(delta)")
+            debugLog("⌨️ Skipping - delta too small: \(delta)")
             return
         }
 
@@ -117,10 +121,18 @@ final class ContainerResizeViewController: UIViewController {
         keyboardAnimator?.stopAnimation(true)
 
         let inputBarHeight = inputBarVC.view.bounds.height
-        let newBottomInset = inputBarHeight + keyboardOverlap
+        // Use max of keyboardOverlap or safeBottom to always include safe area
+        let newBottomInset = inputBarHeight + max(keyboardOverlap, safeBottom)
         let currentOffset = scrollView.contentOffset
 
-        print("""
+        // Calculate target offset BEFORE changing any scroll view properties
+        // (UIKit auto-adjusts offset when content inset changes)
+        var targetOffsetY = currentOffset.y + delta
+        let minY: CGFloat = 0
+        let maxY = max(0, scrollView.contentSize.height - scrollView.bounds.height + newBottomInset)
+        targetOffsetY = min(max(targetOffsetY, minY), maxY)
+
+        debugLog("""
         📜 Scroll state before:
           contentOffset: \(currentOffset.debugDescription)
           contentSize: \(self.scrollView.contentSize.debugDescription)
@@ -128,39 +140,29 @@ final class ContainerResizeViewController: UIViewController {
           contentInset.bottom: \(self.scrollView.contentInset.bottom)
           inputBarHeight: \(inputBarHeight)
           newBottomInset: \(newBottomInset)
+          targetOffsetY: \(targetOffsetY)
+          maxY: \(maxY)
         """)
 
         // Animate content offset and insets to follow keyboard
         keyboardAnimator = UIViewPropertyAnimator(duration: animationDuration, curve: curve) { [self] in
             // Move input bar: use max of keyboard overlap or safe area
-            // When keyboard hidden: keyboardOverlap=0, so use safeBottom
-            // When keyboard shown: keyboardOverlap > safeBottom, so use keyboardOverlap
             inputBarBottomConstraint.constant = -max(keyboardOverlap, safeBottom)
 
             // Update content inset to account for keyboard
             scrollView.contentInset.bottom = newBottomInset
             scrollView.verticalScrollIndicatorInsets.bottom = newBottomInset
 
-            // Adjust content offset to keep content visible
-            var offset = scrollView.contentOffset
-            offset.y += delta
+            // Set pre-calculated offset
+            scrollView.contentOffset.y = targetOffsetY
 
-            // Clamp to valid range
-            let minY: CGFloat = 0
-            let maxY = max(0, scrollView.contentSize.height - scrollView.bounds.height + newBottomInset)
-            offset.y = min(max(offset.y, minY), maxY)
-
-            print("""
+            debugLog("""
             📜 Scroll state after (in animation block):
-              new offset.y: \(offset.y)
-              minY: \(minY)
-              maxY: \(maxY)
-              contentSize.height: \(self.scrollView.contentSize.height)
-              bounds.height: \(self.scrollView.bounds.height)
+              targetOffsetY: \(targetOffsetY)
+              actual offset.y: \(self.scrollView.contentOffset.y)
               inputBarBottomConstraint.constant: \(self.inputBarBottomConstraint.constant)
             """)
 
-            scrollView.contentOffset = offset
             view.layoutIfNeeded()
         }
         keyboardAnimator?.startAnimation()
@@ -244,7 +246,7 @@ final class ContainerResizeViewController: UIViewController {
         let safeBottom = view.window?.safeAreaInsets.bottom ?? view.safeAreaInsets.bottom
         let newBottomInset = inputBarHeight + safeBottom
 
-        print("""
+        debugLog("""
         📐 updateScrollViewInsets:
           inputBarHeight: \(inputBarHeight)
           safeAreaInsets.bottom: \(safeBottom)
