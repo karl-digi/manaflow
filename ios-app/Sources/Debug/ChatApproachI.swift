@@ -22,7 +22,7 @@ enum OverscrollFix: String, CaseIterable {
 /// - Top of visible content stays put, bottom gets "pushed" by keyboard
 struct ChatApproachI: View {
     let conversation: Conversation
-    @State private var selectedFix: OverscrollFix = .none
+    @State private var selectedFix: OverscrollFix = .fix1_contentInsetAdjustment
 
     var body: some View {
         VStack(spacing: 0) {
