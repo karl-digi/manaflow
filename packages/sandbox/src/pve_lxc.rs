@@ -1166,6 +1166,15 @@ mod tests {
 
     #[test]
     fn test_pve_config_from_env() {
+        // Clear any pre-existing env vars to ensure clean test environment
+        std::env::remove_var("PVE_NODE");
+        std::env::remove_var("PVE_TEMPLATE_VMID");
+        std::env::remove_var("PVE_STORAGE");
+        std::env::remove_var("PVE_BRIDGE");
+        std::env::remove_var("PVE_IP_POOL_CIDR");
+        std::env::remove_var("PVE_GATEWAY");
+        std::env::remove_var("PVE_VERIFY_TLS");
+
         // Test that config works with only 2 required env vars
         std::env::set_var("PVE_API_URL", "https://pve.test:8006");
         std::env::set_var(
