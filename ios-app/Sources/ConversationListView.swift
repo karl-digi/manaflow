@@ -53,7 +53,7 @@ struct ConversationListView: View {
             }
             .listStyle(.plain)
             .scrollDismissesKeyboard(.interactively)
-            .safeAreaInset(edge: .bottom) {
+            .safeAreaInset(edge: .bottom, spacing: 0) {
                 // Bottom bar: Search + Compose (iOS 26 Liquid Glass)
                 GlassEffectContainer {
                     HStack(spacing: 12) {
@@ -71,6 +71,7 @@ struct ConversationListView: View {
                         .padding(.horizontal, 16)
                         .padding(.vertical, 10)
                         .glassEffect(.regular.interactive(), in: .capsule)
+                        .frame(maxWidth: .infinity)
 
                         // Compose or Cancel button with glass circle
                         if isSearching {

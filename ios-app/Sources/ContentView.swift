@@ -51,6 +51,9 @@ struct SettingsView: View {
 
                 #if DEBUG
                 Section("Debug") {
+                    NavigationLink("Chat Keyboard Approaches") {
+                        ChatDebugMenu()
+                    }
                     NavigationLink("Convex Test") {
                         ConvexTestView()
                     }

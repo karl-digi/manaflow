@@ -1,10 +1,11 @@
 import SwiftUI
+import UIKit
 
 struct ChatView: View {
     let conversation: Conversation
     @State private var messages: [Message]
     @State private var newMessage = ""
-    @State private var scrollProxy: ScrollViewProxy?
+    @State private var scrollToBottomTrigger = 0
     @FocusState private var isInputFocused: Bool
 
     init(conversation: Conversation) {
@@ -13,38 +14,23 @@ struct ChatView: View {
     }
 
     var body: some View {
-        // Messages
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 2) {
-                    ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
-                        MessageBubble(
-                            message: message,
-                            showTail: shouldShowTail(at: index),
-                            showTimestamp: shouldShowTimestamp(at: index)
-                        )
-                        .id(message.id)
-                    }
+        ChatKeyboardContainer(scrollToBottomTrigger: $scrollToBottomTrigger) {
+            // Messages content
+            LazyVStack(spacing: 2) {
+                ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
+                    MessageBubble(
+                        message: message,
+                        showTail: shouldShowTail(at: index),
+                        showTimestamp: shouldShowTimestamp(at: index)
+                    )
                 }
-                .padding(.horizontal)
-                .padding(.top, 8)
-                .padding(.bottom, 8)
             }
-            .scrollDismissesKeyboard(.interactively)
-            .onAppear {
-                scrollProxy = proxy
-                scrollToBottom(animated: false)
-            }
-            .onChange(of: messages.count) {
-                scrollToBottom(animated: true)
-            }
-            .onTapGesture {
-                isInputFocused = false
-            }
-            .safeAreaInset(edge: .bottom) {
-                MessageInputBar(text: $newMessage, onSend: sendMessage)
-                    .focused($isInputFocused)
-            }
+            .padding(.horizontal)
+            .padding(.top, 8)
+            .padding(.bottom, 8)
+        } inputBar: {
+            // Input bar
+            MessageInputBar(text: $newMessage, isFocused: $isInputFocused, onSend: sendMessage)
         }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -107,6 +93,9 @@ struct ChatView: View {
         }
         newMessage = ""
 
+        // Trigger scroll to bottom
+        scrollToBottomTrigger += 1
+
         // Simulate reply after delay
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
             let reply = Message(
@@ -118,33 +107,25 @@ struct ChatView: View {
             withAnimation(.easeInOut(duration: 0.2)) {
                 messages.append(reply)
             }
-        }
-    }
-
-    func scrollToBottom(animated: Bool) {
-        guard let lastMessage = messages.last else { return }
-        if animated {
-            withAnimation(.easeOut(duration: 0.2)) {
-                scrollProxy?.scrollTo(lastMessage.id, anchor: .bottom)
-            }
-        } else {
-            scrollProxy?.scrollTo(lastMessage.id, anchor: .bottom)
+            scrollToBottomTrigger += 1
         }
     }
 
     func generateReply() -> String {
         let replies = [
-            "Got it! 👍",
+            "Got it!",
             "Makes sense, I'll look into that.",
             "Sure thing!",
             "Let me check and get back to you.",
             "Sounds good!",
-            "On it! 🚀",
+            "On it!",
             "Perfect, thanks for letting me know.",
         ]
         return replies.randomElement()!
     }
 }
+
+// MARK: - Message Bubble
 
 struct MessageBubble: View {
     let message: Message
@@ -213,8 +194,11 @@ struct MessageBubble: View {
     }
 }
 
+// MARK: - Message Input Bar
+
 struct MessageInputBar: View {
     @Binding var text: String
+    var isFocused: FocusState<Bool>.Binding
     let onSend: () -> Void
 
     var body: some View {
@@ -235,6 +219,7 @@ struct MessageInputBar: View {
                 HStack(spacing: 8) {
                     TextField("iMessage", text: $text, axis: .vertical)
                         .lineLimit(1...5)
+                        .focused(isFocused)
 
                     // Fixed size container to prevent layout shift
                     ZStack {
