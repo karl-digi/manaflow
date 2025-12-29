@@ -26,6 +26,12 @@
 		F024C0FD39B57208895F9153 /* ConvexClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6679E0C9833E77D4A4295D4C /* ConvexClient.swift */; };
 		F6098AD7DB98B95086FD932A /* ChatKeyboardContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AEA367B39118F09C4A8989FF /* ChatKeyboardContainer.swift */; };
 		B35DB98CCC0FCABD471C00B7 /* ChatApproachI.swift in Sources */ = {isa = PBXBuildFile; fileRef = B75670515EE743E0C02EFE2D /* ChatApproachI.swift */; };
+		BF1A00001111111111111111 /* ChatFix1_ContentInsetNever.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF1A00001111111111111111 /* ChatFix1_ContentInsetNever.swift */; };
+		BF2A00002222222222222222 /* ChatFix2_InputBarHeightOnly.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF2A00002222222222222222 /* ChatFix2_InputBarHeightOnly.swift */; };
+		BF3A00003333333333333333 /* ChatFix3_AdjustedContentInset.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF3A00003333333333333333 /* ChatFix3_AdjustedContentInset.swift */; };
+		BF4A00004444444444444444 /* ChatFix4_ScrollViewDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF4A00004444444444444444 /* ChatFix4_ScrollViewDelegate.swift */; };
+		BF5A00005555555555555555 /* ChatFix5_ReducePadding.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF5A00005555555555555555 /* ChatFix5_ReducePadding.swift */; };
+		BF6A00006666666666666666 /* ChatApproachI_Fix1Default.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF6A00006666666666666666 /* ChatApproachI_Fix1Default.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -47,6 +53,12 @@
 		D8732D7AB61D4190BACAAB03 /* Environment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Environment.swift; sourceTree = "<group>"; };
 		D9BA577D046F9E3C331F4986 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		E6A61F42F94D17993038F637 /* ConvexTestView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConvexTestView.swift; sourceTree = "<group>"; };
+		CF1A00001111111111111111 /* ChatFix1_ContentInsetNever.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFix1_ContentInsetNever.swift; sourceTree = "<group>"; };
+		CF2A00002222222222222222 /* ChatFix2_InputBarHeightOnly.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFix2_InputBarHeightOnly.swift; sourceTree = "<group>"; };
+		CF3A00003333333333333333 /* ChatFix3_AdjustedContentInset.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFix3_AdjustedContentInset.swift; sourceTree = "<group>"; };
+		CF4A00004444444444444444 /* ChatFix4_ScrollViewDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFix4_ScrollViewDelegate.swift; sourceTree = "<group>"; };
+		CF5A00005555555555555555 /* ChatFix5_ReducePadding.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFix5_ReducePadding.swift; sourceTree = "<group>"; };
+		CF6A00006666666666666666 /* ChatApproachI_Fix1Default.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatApproachI_Fix1Default.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -105,6 +117,12 @@
 				B75670515EE743E0C02EFE2D /* ChatApproachI.swift */,
 				E6A61F42F94D17993038F637 /* ConvexTestView.swift */,
 				B87CA70AD58D024077E85845 /* DebugInputBar.swift */,
+				CF1A00001111111111111111 /* ChatFix1_ContentInsetNever.swift */,
+				CF2A00002222222222222222 /* ChatFix2_InputBarHeightOnly.swift */,
+				CF3A00003333333333333333 /* ChatFix3_AdjustedContentInset.swift */,
+				CF4A00004444444444444444 /* ChatFix4_ScrollViewDelegate.swift */,
+				CF5A00005555555555555555 /* ChatFix5_ReducePadding.swift */,
+				CF6A00006666666666666666 /* ChatApproachI_Fix1Default.swift */,
 			);
 			path = Debug;
 			sourceTree = "<group>";
@@ -227,6 +245,12 @@
 				C9E3B69A93DD87E682311505 /* SignInView.swift in Sources */,
 				2CE5BEC0FE0F92E3F298C570 /* StackAuthClient.swift in Sources */,
 				3A6FD7E27F3723EF627744A9 /* StackAuthProvider.swift in Sources */,
+				BF1A00001111111111111111 /* ChatFix1_ContentInsetNever.swift in Sources */,
+				BF2A00002222222222222222 /* ChatFix2_InputBarHeightOnly.swift in Sources */,
+				BF3A00003333333333333333 /* ChatFix3_AdjustedContentInset.swift in Sources */,
+				BF4A00004444444444444444 /* ChatFix4_ScrollViewDelegate.swift in Sources */,
+				BF5A00005555555555555555 /* ChatFix5_ReducePadding.swift in Sources */,
+				BF6A00006666666666666666 /* ChatApproachI_Fix1Default.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

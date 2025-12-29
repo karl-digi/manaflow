@@ -1,31 +1,25 @@
 import SwiftUI
 import UIKit
 
-private func debugLog(_ message: String) {
-    NSLog("[ChatApproachI] %@", message)
+private func log(_ message: String) {
+    NSLog("[Fix1-Picker] %@", message)
 }
 
-/// Overscroll fix variations to test
-enum OverscrollFix: String, CaseIterable {
-    case none = "None (current)"
-    case fix1_contentInsetAdjustment = "1: contentInsetAdjustmentBehavior=.never"
-    case fix2_inputBarHeightOnly = "2: inset=inputBarHeight only"
-    case fix3_adjustedContentInset = "3: use adjustedContentInset"
-    case fix4_scrollViewDelegate = "4: limit scroll in delegate"
-    case fix5_reducePadding = "5: reduce bottom padding"
-}
-
-/// Approach I: Container Resize (no scroll tricks)
-/// - Container height shrinks when keyboard appears
-/// - Scroll view fills container
-/// - Content offset stays EXACTLY the same
-/// - Top of visible content stays put, bottom gets "pushed" by keyboard
-struct ChatApproachI: View {
+/// Dropdown version defaulting to Fix 1: contentInsetAdjustmentBehavior=.never
+struct ChatApproachI_Fix1Default: View {
     let conversation: Conversation
-    @State private var selectedFix: OverscrollFix = .none
+    @State private var selectedFix: OverscrollFix = .fix1_contentInsetAdjustment
 
     var body: some View {
         VStack(spacing: 0) {
+            // Debug banner to confirm we're in picker version
+            Text("PICKER (DEFAULT FIX 1)")
+                .font(.caption.bold())
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+                .background(Color.green)
+
             // Fix selector at top
             Picker("Overscroll Fix", selection: $selectedFix) {
                 ForEach(OverscrollFix.allCases, id: \.self) { fix in
@@ -37,7 +31,7 @@ struct ChatApproachI: View {
             .padding(.vertical, 8)
             .background(Color(.systemGroupedBackground))
 
-            ContainerResizeViewController_Wrapper(conversation: conversation, fix: selectedFix)
+            ContainerResizeVC_Fix1Default_Wrapper(conversation: conversation, fix: selectedFix)
                 .ignoresSafeArea()
         }
         .navigationTitle("Container Resize")
@@ -45,20 +39,20 @@ struct ChatApproachI: View {
     }
 }
 
-struct ContainerResizeViewController_Wrapper: UIViewControllerRepresentable {
+private struct ContainerResizeVC_Fix1Default_Wrapper: UIViewControllerRepresentable {
     let conversation: Conversation
     let fix: OverscrollFix
 
-    func makeUIViewController(context: Context) -> ContainerResizeViewController {
-        ContainerResizeViewController(messages: conversation.messages, fix: fix)
+    func makeUIViewController(context: Context) -> ContainerResizeVC_Fix1Default {
+        ContainerResizeVC_Fix1Default(messages: conversation.messages, fix: fix)
     }
 
-    func updateUIViewController(_ uiViewController: ContainerResizeViewController, context: Context) {
+    func updateUIViewController(_ uiViewController: ContainerResizeVC_Fix1Default, context: Context) {
         uiViewController.updateFix(fix)
     }
 }
 
-final class ContainerResizeViewController: UIViewController, UIScrollViewDelegate {
+private final class ContainerResizeVC_Fix1Default: UIViewController, UIScrollViewDelegate {
     private var scrollView: UIScrollView!
     private var contentStack: UIStackView!
     private var inputBarVC: DebugInputBarViewController!
@@ -83,7 +77,7 @@ final class ContainerResizeViewController: UIViewController, UIScrollViewDelegat
     func updateFix(_ fix: OverscrollFix) {
         guard fix != currentFix else { return }
         currentFix = fix
-        debugLog("🔧 Fix changed to: \(fix.rawValue)")
+        log("🔧 Fix changed to: \(fix.rawValue)")
         applyFix()
     }
 
@@ -129,7 +123,7 @@ final class ContainerResizeViewController: UIViewController, UIScrollViewDelegat
         // Apply initial fix setting
         applyFix()
 
-        debugLog("🚀 ChatApproachI viewDidLoad complete with fix: \(currentFix.rawValue)")
+        log("🚀 ChatApproachI viewDidLoad complete with fix: \(currentFix.rawValue)")
 
         DispatchQueue.main.async {
             self.scrollToBottom(animated: false)
@@ -165,7 +159,7 @@ final class ContainerResizeViewController: UIViewController, UIScrollViewDelegat
         // Calculate delta from last known keyboard height
         let delta = effectiveKeyboardHeight - lastKeyboardHeight
 
-        debugLog("""
+        log("""
         ⌨️ Keyboard change:
           endFrame: \(endFrame.debugDescription)
           endFrameInView: \(endFrameInView.debugDescription)
@@ -182,7 +176,7 @@ final class ContainerResizeViewController: UIViewController, UIScrollViewDelegat
 
         // Skip if no change
         guard abs(delta) > 1 else {
-            debugLog("⌨️ Skipping - delta too small: \(delta)")
+            log("⌨️ Skipping - delta too small: \(delta)")
             return
         }
 
@@ -211,7 +205,7 @@ final class ContainerResizeViewController: UIViewController, UIScrollViewDelegat
         let maxY = max(0, scrollView.contentSize.height - scrollView.bounds.height + newBottomInset)
         targetOffsetY = min(max(targetOffsetY, minY), maxY)
 
-        debugLog("""
+        log("""
         📜 Scroll state before:
           contentOffset: \(currentOffset.debugDescription)
           contentSize: \(self.scrollView.contentSize.debugDescription)
@@ -235,7 +229,7 @@ final class ContainerResizeViewController: UIViewController, UIScrollViewDelegat
             // Set pre-calculated offset
             scrollView.contentOffset.y = targetOffsetY
 
-            debugLog("""
+            log("""
             📜 Scroll state after (in animation block):
               targetOffsetY: \(targetOffsetY)
               actual offset.y: \(self.scrollView.contentOffset.y)
@@ -366,7 +360,7 @@ final class ContainerResizeViewController: UIViewController, UIScrollViewDelegat
             }
         }
 
-        debugLog("""
+        log("""
         📐 updateScrollViewInsets (\(currentFix.rawValue)):
           inputBarHeight: \(inputBarHeight)
           safeAreaInsets.bottom: \(safeBottom)
@@ -415,7 +409,7 @@ final class ContainerResizeViewController: UIViewController, UIScrollViewDelegat
             x: 0,
             y: max(0, scrollView.contentSize.height - visibleHeight)
         )
-        debugLog("""
+        log("""
         📍 scrollToBottom (\(currentFix.rawValue)):
           contentSize.height: \(scrollView.contentSize.height)
           bounds.height: \(scrollView.bounds.height)
