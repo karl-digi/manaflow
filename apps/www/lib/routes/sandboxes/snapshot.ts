@@ -33,7 +33,11 @@ export interface SnapshotResolution {
 function getDefaultSnapshotId(provider: SandboxProvider): string {
   switch (provider) {
     case "proxmox":
+    case "pve-lxc":
       return DEFAULT_PVE_LXC_SNAPSHOT_ID;
+    case "pve-vm":
+      // TODO: Add default PVE VM snapshot when implemented
+      return DEFAULT_MORPH_SNAPSHOT_ID;
     case "morph":
     default:
       return DEFAULT_MORPH_SNAPSHOT_ID;

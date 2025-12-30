@@ -434,7 +434,7 @@ sandboxesRouter.openapi(
       let instance: SandboxInstance;
       let rawPveLxcInstance: PveLxcInstance | null = null;
 
-      if (provider === "proxmox") {
+      if (provider === "proxmox" || provider === "pve-lxc") {
         // Proxmox VE LXC provider
         console.log(`[sandboxes.start] Starting PVE LXC sandbox with snapshot ${resolvedSnapshotId}`);
         const pveClient = getPveLxcClient();
@@ -505,7 +505,7 @@ sandboxesRouter.openapi(
             teamSlugOrId: body.teamSlugOrId,
             id: body.taskRunId as Id<"taskRuns">,
             vscode: {
-              provider: provider === "proxmox" ? "pve-lxc" : "morph",
+              provider: provider === "proxmox" || provider === "pve-lxc" ? "pve-lxc" : "morph",
               containerName: instance.id,
               status: "starting",
               url: vscodeService.url,
@@ -709,7 +709,7 @@ sandboxesRouter.openapi(
         vscodeUrl: vscodeService.url,
         workerUrl: workerService.url,
         vncUrl: vncService?.url,
-        provider: provider === "proxmox" ? "pve-lxc" : "morph",
+        provider: provider === "proxmox" || provider === "pve-lxc" ? "pve-lxc" : "morph",
         vscodePersisted,
       });
     } catch (error) {
