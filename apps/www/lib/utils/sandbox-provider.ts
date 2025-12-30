@@ -1,9 +1,10 @@
 import { env } from "./www-env";
 
 /**
- * Supported sandbox providers
+ * Supported sandbox providers (unified naming)
+ * Note: "proxmox" is kept for backwards compatibility and maps to "pve-lxc"
  */
-export type SandboxProvider = "morph" | "proxmox";
+export type SandboxProvider = "morph" | "pve-lxc" | "pve-vm" | "proxmox";
 
 /**
  * Configuration for the active sandbox provider
@@ -32,15 +33,29 @@ export interface SandboxProviderConfig {
 export function getActiveSandboxProvider(): SandboxProviderConfig {
   const explicitProvider = env.SANDBOX_PROVIDER;
 
-  // Explicit provider selection
-  if (explicitProvider === "proxmox") {
+  // Explicit provider selection (support both "proxmox" and "pve-lxc")
+  if (explicitProvider === "proxmox" || explicitProvider === "pve-lxc") {
     if (!env.PVE_API_URL || !env.PVE_API_TOKEN) {
       throw new Error(
-        "SANDBOX_PROVIDER=proxmox but PVE_API_URL or PVE_API_TOKEN is not set."
+        "PVE provider selected but PVE_API_URL or PVE_API_TOKEN is not set."
       );
     }
     return {
-      provider: "proxmox",
+      provider: "pve-lxc",
+      apiUrl: env.PVE_API_URL,
+      apiToken: env.PVE_API_TOKEN,
+      node: env.PVE_NODE,
+    };
+  }
+
+  if (explicitProvider === "pve-vm") {
+    if (!env.PVE_API_URL || !env.PVE_API_TOKEN) {
+      throw new Error(
+        "SANDBOX_PROVIDER=pve-vm but PVE_API_URL or PVE_API_TOKEN is not set."
+      );
+    }
+    return {
+      provider: "pve-vm",
       apiUrl: env.PVE_API_URL,
       apiToken: env.PVE_API_TOKEN,
       node: env.PVE_NODE,
@@ -65,10 +80,10 @@ export function getActiveSandboxProvider(): SandboxProviderConfig {
     };
   }
 
-  // Check for Proxmox VE LXC
+  // Check for Proxmox VE LXC (auto-detect defaults to LXC)
   if (env.PVE_API_URL && env.PVE_API_TOKEN) {
     return {
-      provider: "proxmox",
+      provider: "pve-lxc",
       apiUrl: env.PVE_API_URL,
       apiToken: env.PVE_API_TOKEN,
       node: env.PVE_NODE,
@@ -97,13 +112,13 @@ export function isProxmoxAvailable(): boolean {
 /**
  * Get a list of all available sandbox providers
  */
-export function getAvailableSandboxProviders(): SandboxProvider[] {
-  const providers: SandboxProvider[] = [];
+export function getAvailableSandboxProviders(): ("morph" | "pve-lxc")[] {
+  const providers: ("morph" | "pve-lxc")[] = [];
   if (isMorphAvailable()) {
     providers.push("morph");
   }
   if (isProxmoxAvailable()) {
-    providers.push("proxmox");
+    providers.push("pve-lxc");
   }
   return providers;
 }

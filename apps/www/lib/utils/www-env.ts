@@ -12,8 +12,9 @@ export const env = createEnv({
     CMUX_GITHUB_APP_ID: z.string().min(1),
     CMUX_GITHUB_APP_PRIVATE_KEY: z.string().min(1),
     // Sandbox providers (at least one required)
-    // Explicit provider selection: "morph" or "proxmox" (auto-detect if not set)
-    SANDBOX_PROVIDER: z.enum(["morph", "proxmox"]).optional(),
+    // Explicit provider selection: "morph", "proxmox" (legacy), "pve-lxc", or "pve-vm"
+    // If not set, auto-detects based on available env vars
+    SANDBOX_PROVIDER: z.enum(["morph", "proxmox", "pve-lxc", "pve-vm"]).optional(),
     // Morph Cloud - original provider
     MORPH_API_KEY: z.string().min(1).optional(),
     // Proxmox VE LXC - self-hosted alternative

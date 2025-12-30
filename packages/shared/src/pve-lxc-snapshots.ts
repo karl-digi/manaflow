@@ -82,8 +82,10 @@ export type PveLxcSnapshotPreset = PveLxcTemplatePreset;
 export type PveLxcSnapshotManifest = PveLxcTemplateManifest;
 
 export interface PveLxcSnapshotPresetWithLatest extends PveLxcTemplatePreset {
-  /** Unique identifier for template-based cloning: pve_template_{templateVmid} */
+  /** Unified snapshot ID for UI/URLs/database (format: pvelxc_{presetId}_v{version}) */
   id: string;
+  /** Template VMID for PVE API operations */
+  templateVmid: number;
   latestVersion: PveLxcTemplateVersion;
   versions: readonly PveLxcTemplateVersion[];
 }
@@ -100,13 +102,13 @@ const toPresetWithLatest = (
   if (!latestVersion) {
     throw new Error(`Preset "${preset.presetId}" does not contain versions`);
   }
-  // Create a unique ID from presetId and template VMID
-  // Include presetId since multiple presets can share the same template
-  const id = `pve_${preset.presetId}_${latestVersion.templateVmid}`;
   return {
     ...preset,
     versions: sortedVersions,
-    id,
+    // Unified ID format: pvelxc_{presetId}_v{version}
+    id: `pvelxc_${preset.presetId}_v${latestVersion.version}`,
+    // Keep template VMID for PVE API calls
+    templateVmid: latestVersion.templateVmid,
     latestVersion,
   };
 };
@@ -149,10 +151,22 @@ export const getPveLxcSnapshotByPresetId = (
 
 /**
  * Get the latest snapshot ID for a given preset ID.
+ * Returns the unified ID format (pvelxc_{presetId}_v{version})
  */
 export const getPveLxcSnapshotIdByPresetId = (
   presetId: string,
 ): PveLxcSnapshotId | undefined => {
   const preset = getPveLxcSnapshotByPresetId(presetId);
   return preset?.id;
+};
+
+/**
+ * Get the template VMID for a given preset ID.
+ * Returns the numeric VMID for PVE API operations.
+ */
+export const getPveLxcTemplateVmidByPresetId = (
+  presetId: string,
+): number | undefined => {
+  const preset = getPveLxcSnapshotByPresetId(presetId);
+  return preset?.templateVmid;
 };

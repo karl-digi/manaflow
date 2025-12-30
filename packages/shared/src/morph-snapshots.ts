@@ -63,7 +63,10 @@ export type MorphSnapshotVersion = z.infer<typeof morphSnapshotVersionSchema>;
 export type MorphSnapshotPreset = z.infer<typeof morphSnapshotPresetSchema>;
 
 export interface MorphSnapshotPresetWithLatest extends MorphSnapshotPreset {
+  /** Unified snapshot ID for UI/URLs/database (format: morph_{presetId}_v{version}) */
   id: MorphSnapshotVersion["snapshotId"];
+  /** Original Morph Cloud snapshot ID (required for Morph Cloud API calls) */
+  snapshotId: MorphSnapshotVersion["snapshotId"];
   latestVersion: MorphSnapshotVersion;
   versions: readonly MorphSnapshotVersion[];
 }
@@ -85,7 +88,10 @@ const toPresetWithLatest = (
   return {
     ...preset,
     versions: sortedVersions,
-    id: latestVersion.snapshotId,
+    // Unified ID format: morph_{presetId}_v{version}
+    id: `morph_${preset.presetId}_v${latestVersion.version}`,
+    // Keep original Morph snapshot ID for API calls
+    snapshotId: latestVersion.snapshotId,
     latestVersion,
   };
 };
@@ -119,12 +125,24 @@ export const DEFAULT_MORPH_SNAPSHOT_ID: MorphSnapshotId = firstPreset.id;
 
 /**
  * Get the latest snapshot ID for a given preset ID.
+ * Returns the unified ID format (morph_{presetId}_v{version})
  */
 export const getSnapshotIdByPresetId = (
   presetId: string,
 ): MorphSnapshotId | undefined => {
   const preset = MORPH_SNAPSHOT_PRESETS.find((p) => p.presetId === presetId);
   return preset?.id;
+};
+
+/**
+ * Get the Morph Cloud API snapshot ID for a given preset ID.
+ * Returns the original Morph snapshot format (snapshot_...)
+ */
+export const getMorphApiSnapshotIdByPresetId = (
+  presetId: string,
+): string | undefined => {
+  const preset = MORPH_SNAPSHOT_PRESETS.find((p) => p.presetId === presetId);
+  return preset?.snapshotId;
 };
 
 /**

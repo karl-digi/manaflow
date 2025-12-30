@@ -13,6 +13,11 @@
 /**
  * Supported sandbox provider types.
  * Add new providers here as they are implemented.
+ *
+ * Naming convention: Use hyphenated format for multi-word providers
+ * - morph: Morph Cloud
+ * - pve-lxc: Proxmox VE LXC containers
+ * - pve-vm: Proxmox VE QEMU virtual machines
  */
 export type SandboxProviderType = "morph" | "pve-lxc" | "pve-vm";
 
@@ -137,4 +142,153 @@ export function filterVisiblePresets(presets: SandboxPreset[]): SandboxPreset[] 
   return presets.filter((p) =>
     (UI_VISIBLE_PRESET_IDS as readonly string[]).includes(p.presetId)
   );
+}
+
+/**
+ * Parse a unified snapshot ID to extract provider and metadata.
+ *
+ * Supported formats:
+ * - morph_{presetId}_v{version}  (e.g., "morph_4vcpu_16gb_48gb_v1")
+ * - pvelxc_{presetId}_v{version} (e.g., "pvelxc_4vcpu_6gb_32gb_v1")
+ * - pvevm_{presetId}_v{version}  (e.g., "pvevm_4vcpu_6gb_32gb_v1")
+ * - pve_{presetId}_{vmid}        (backwards compat, old format)
+ *
+ * @param id - The unified snapshot ID to parse
+ * @returns Parsed components or null if format is invalid
+ */
+export function parseSnapshotId(id: string): {
+  provider: SandboxProviderType;
+  presetId: string;
+  version: number;
+} | null {
+  // Match unified format: prefix_cpu_mem_disk_v123
+  const match = id.match(/^(morph|pvelxc|pvevm)_([^_]+_[^_]+_[^_]+)_v(\d+)$/);
+  if (match) {
+    const [, prefix, presetId, versionStr] = match;
+    const providerMap: Record<string, SandboxProviderType> = {
+      morph: "morph",
+      pvelxc: "pve-lxc",
+      pvevm: "pve-vm",
+    };
+
+    return {
+      provider: providerMap[prefix] || "morph",
+      presetId,
+      version: parseInt(versionStr, 10),
+    };
+  }
+
+  // Backwards compat: old pve_{presetId}_{vmid} format
+  const oldPveMatch = id.match(/^pve_([^_]+_[^_]+_[^_]+)_(\d+)$/);
+  if (oldPveMatch) {
+    return {
+      provider: "pve-lxc",
+      presetId: oldPveMatch[1],
+      version: 1,  // Assume v1 for old format
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Resolved snapshot identifier with provider-specific details.
+ * Different providers use different identifiers for API operations.
+ */
+export interface ResolvedSnapshotId {
+  /** The sandbox provider type */
+  provider: SandboxProviderType;
+  /** Version number */
+  version: number;
+  /** Morph Cloud API snapshot ID (format: snapshot_...) */
+  snapshotId?: string;
+  /** PVE template VMID (for LXC/VM cloning) */
+  templateVmid?: number;
+}
+
+/**
+ * Resolve a unified snapshot ID to provider-specific API identifiers.
+ *
+ * This function converts our user-facing unified IDs into the actual
+ * provider-specific identifiers needed for API operations:
+ * - Morph: Returns the cloud snapshot ID (snapshot_...)
+ * - PVE LXC/VM: Returns the template VMID number
+ *
+ * Note: This function requires runtime imports to avoid circular dependencies.
+ * It should only be used in backend/server contexts, not in shared schema definitions.
+ *
+ * @param unifiedId - The unified snapshot ID (e.g., "morph_4vcpu_16gb_48gb_v1")
+ * @returns Resolved provider-specific identifiers
+ * @throws Error if the ID format is invalid or the snapshot is not found
+ *
+ * @example
+ * ```typescript
+ * // Morph Cloud
+ * const resolved = resolveSnapshotId("morph_4vcpu_16gb_48gb_v1");
+ * // Returns: { provider: "morph", version: 1, snapshotId: "snapshot_5a255f9t" }
+ *
+ * // PVE LXC
+ * const resolved = resolveSnapshotId("pvelxc_4vcpu_6gb_32gb_v1");
+ * // Returns: { provider: "pve-lxc", version: 1, templateVmid: 9011 }
+ * ```
+ */
+export async function resolveSnapshotId(unifiedId: string): Promise<ResolvedSnapshotId> {
+  const parsed = parseSnapshotId(unifiedId);
+  if (!parsed) {
+    throw new Error(`Invalid snapshot ID format: ${unifiedId}`);
+  }
+
+  switch (parsed.provider) {
+    case "morph": {
+      // Dynamic import to avoid circular dependency
+      const { MORPH_SNAPSHOT_PRESETS } = await import("./morph-snapshots");
+      const preset = MORPH_SNAPSHOT_PRESETS.find(p => p.presetId === parsed.presetId);
+      if (!preset) {
+        throw new Error(`Morph preset not found: ${parsed.presetId}`);
+      }
+
+      // Find the specific version
+      const versionData = preset.versions.find(v => v.version === parsed.version);
+      if (!versionData) {
+        throw new Error(`Morph version not found: ${parsed.version} for preset ${parsed.presetId}`);
+      }
+
+      return {
+        provider: "morph",
+        version: parsed.version,
+        snapshotId: versionData.snapshotId,  // Returns "snapshot_5a255f9t"
+      };
+    }
+
+    case "pve-lxc": {
+      // Dynamic import to avoid circular dependency
+      const { PVE_LXC_SNAPSHOT_PRESETS } = await import("./pve-lxc-snapshots");
+      const preset = PVE_LXC_SNAPSHOT_PRESETS.find(p => p.presetId === parsed.presetId);
+      if (!preset) {
+        throw new Error(`PVE LXC preset not found: ${parsed.presetId}`);
+      }
+
+      // Find the specific version
+      const versionData = preset.versions.find(v => v.version === parsed.version);
+      if (!versionData) {
+        throw new Error(`PVE LXC version not found: ${parsed.version} for preset ${parsed.presetId}`);
+      }
+
+      return {
+        provider: "pve-lxc",
+        version: parsed.version,
+        templateVmid: versionData.templateVmid,  // Returns VMID like 9011
+      };
+    }
+
+    case "pve-vm": {
+      // TODO: Implement when PVE VM is added
+      throw new Error("PVE VM provider not yet implemented");
+    }
+
+    default: {
+      const _exhaustive: never = parsed.provider;
+      throw new Error(`Unknown provider: ${_exhaustive}`);
+    }
+  }
 }
