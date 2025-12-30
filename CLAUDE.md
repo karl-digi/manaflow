@@ -111,3 +111,64 @@ Log files are overwritten on each run. Use `tail -f logs/<file>` to follow live 
 
 The cmux cli is written in Rust.
 If working on the cmux cli (dmux in development mode), first read packages/sandbox/AGENTS.md
+
+## Task Planning with Beads
+
+**Use beads as the primary task tracker, NOT TodoWrite.**
+
+### Default Workflow (ALWAYS follow this)
+
+Before starting any non-trivial task:
+
+1. **Ask clarifying questions FIRST** - but ONLY if they are:
+   - Genuinely ambiguous (multiple valid interpretations)
+   - Missing critical context that affects implementation
+   - About scope boundaries that could lead to wasted work
+
+   **DO NOT ask questions that are:**
+   - Obvious from context or the codebase
+   - Answerable by reading existing code
+   - About preferences when there's a clear best practice
+   - Filler questions to seem thorough
+
+2. **Create beads issues** - Break work into trackable issues
+3. **Execute systematically** - Work through issues one by one
+
+### Quick reference
+- `bd ready` - See available work
+- `bd create --title="..." --type=task --priority=2` - Create issue
+- `bd update <id> --status=in_progress` - Start work
+- `bd close <id>` - Complete work
+- `bd sync` - Sync with remote
+
+### When to skip questions entirely
+- Task is unambiguous and well-defined
+- You can determine scope by reading the code
+- It's a bug fix with clear reproduction steps
+- User explicitly says "just do it"
+
+## Landing the Plane (Session Completion)
+
+**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
+
+**MANDATORY WORKFLOW:**
+
+1. **File issues for remaining work** - Create issues for anything that needs follow-up
+2. **Run quality gates** (if code changed) - Tests, linters, builds
+3. **Update issue status** - Close finished work, update in-progress items
+4. **PUSH TO REMOTE** - This is MANDATORY:
+   ```bash
+   git pull --rebase
+   bd sync
+   git push
+   git status  # MUST show "up to date with origin"
+   ```
+5. **Clean up** - Clear stashes, prune remote branches
+6. **Verify** - All changes committed AND pushed
+7. **Hand off** - Provide context for next session
+
+**CRITICAL RULES:**
+- Work is NOT complete until `git push` succeeds
+- NEVER stop before pushing - that leaves work stranded locally
+- NEVER say "ready to push when you are" - YOU must push
+- If push fails, resolve and retry until it succeeds
