@@ -9,8 +9,6 @@ import {
 import { formatDistanceToNow } from "date-fns";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
-  ChevronLeft,
-  ChevronRight,
   Maximize2,
   Minimize2,
   Pause,
@@ -128,7 +126,7 @@ export function VideoPlayer({
   const [isPlaying, setIsPlaying] = useState(autoPlay);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(recording.durationMs ?? 0);
-  const [volume, setVolume] = useState(1);
+  const [_volume, _setVolume] = useState(1);
   const [isMuted, setIsMuted] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState<PlaybackSpeed>(1);
   const [isFullscreen, setIsFullscreen] = useState(false);
