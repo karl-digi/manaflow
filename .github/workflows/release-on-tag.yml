@@ -62,15 +62,21 @@ jobs:
           candidates+=("v$version" "$version")
 
           resolved_tag=""
-          for tag in "${candidates[@]}"; do
-            if [[ -z "$tag" ]]; then
-              continue
-            fi
-            if gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
-              resolved_tag="$tag"
-              break
-            fi
-          done
+          # If triggered by tag push, use that tag directly (don't search for other versions)
+          if [[ -n "$release_tag" ]] || [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            resolved_tag="${candidates[0]}"
+          else
+            # workflow_dispatch without tag: search for existing release
+            for tag in "${candidates[@]}"; do
+              if [[ -z "$tag" ]]; then
+                continue
+              fi
+              if gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
+                resolved_tag="$tag"
+                break
+              fi
+            done
+          fi
 
           if [[ -z "$resolved_tag" ]]; then
             resolved_tag="${candidates[0]}"
