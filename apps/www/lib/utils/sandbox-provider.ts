@@ -2,9 +2,8 @@ import { env } from "./www-env";
 
 /**
  * Supported sandbox providers (unified naming)
- * Note: "proxmox" is kept for backwards compatibility and maps to "pve-lxc"
  */
-export type SandboxProvider = "morph" | "pve-lxc" | "pve-vm" | "proxmox";
+export type SandboxProvider = "morph" | "pve-lxc" | "pve-vm";
 
 /**
  * Configuration for the active sandbox provider
@@ -27,14 +26,17 @@ export interface SandboxProviderConfig {
  * Selection priority:
  * 1. If SANDBOX_PROVIDER is explicitly set, use that provider
  * 2. If MORPH_API_KEY is set, use Morph (original provider)
- * 3. If PVE_API_URL and PVE_API_TOKEN are set, use Proxmox
+ * 3. If PVE_API_URL and PVE_API_TOKEN are set, use PVE LXC
  * 4. Throw error if no provider is configured
  */
 export function getActiveSandboxProvider(): SandboxProviderConfig {
   const explicitProvider = env.SANDBOX_PROVIDER;
 
-  // Explicit provider selection (support both "proxmox" and "pve-lxc")
-  if (explicitProvider === "proxmox" || explicitProvider === "pve-lxc") {
+  // Normalize "proxmox" to "pve-lxc" for backwards compatibility with env vars
+  const normalizedProvider = explicitProvider === "proxmox" ? "pve-lxc" : explicitProvider;
+
+  // Explicit provider selection
+  if (normalizedProvider === "pve-lxc") {
     if (!env.PVE_API_URL || !env.PVE_API_TOKEN) {
       throw new Error(
         "PVE provider selected but PVE_API_URL or PVE_API_TOKEN is not set."
@@ -48,7 +50,7 @@ export function getActiveSandboxProvider(): SandboxProviderConfig {
     };
   }
 
-  if (explicitProvider === "pve-vm") {
+  if (normalizedProvider === "pve-vm") {
     if (!env.PVE_API_URL || !env.PVE_API_TOKEN) {
       throw new Error(
         "SANDBOX_PROVIDER=pve-vm but PVE_API_URL or PVE_API_TOKEN is not set."
@@ -62,7 +64,7 @@ export function getActiveSandboxProvider(): SandboxProviderConfig {
     };
   }
 
-  if (explicitProvider === "morph") {
+  if (normalizedProvider === "morph") {
     if (!env.MORPH_API_KEY) {
       throw new Error("SANDBOX_PROVIDER=morph but MORPH_API_KEY is not set.");
     }

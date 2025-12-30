@@ -27,7 +27,6 @@ export const configRouter = new OpenAPIHono();
  */
 function toProviderType(provider: SandboxProvider): SandboxProviderType {
   switch (provider) {
-    case "proxmox":
     case "pve-lxc":
       return "pve-lxc";
     case "pve-vm":

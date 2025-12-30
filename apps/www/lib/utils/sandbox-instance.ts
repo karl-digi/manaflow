@@ -132,7 +132,7 @@ export function wrapPveLxcInstance(instance: PveLxcInstance): SandboxInstance {
 /**
  * Provider type
  */
-export type SandboxProvider = "morph" | "proxmox";
+export type SandboxProvider = "morph" | "pve-lxc" | "pve-vm";
 
 /**
  * Result of starting a sandbox
