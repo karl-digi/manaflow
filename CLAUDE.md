@@ -112,90 +112,96 @@ Log files are overwritten on each run. Use `tail -f logs/<file>` to follow live 
 The cmux cli is written in Rust.
 If working on the cmux cli (dmux in development mode), first read packages/sandbox/AGENTS.md
 
-## NEVER ASK - JUST DO IT (Action Bias Protocol)
+## Action Bias with Clarifying Questions
 
-**This is the most important rule. When you encounter incomplete work, issues, or decisions:**
+**Do the work. Only ask when you genuinely cannot decide.**
 
-### ❌ INVALID QUESTIONS (answer is always YES):
+### ❌ DON'T ASK (answer is always YES):
 ```
-"Would you like me to..."         → Answer is YES. Just do it.
-"Should I fix this bug?"          → Answer is YES. Just fix it.
-"Do you want me to continue?"     → Answer is YES. Keep going.
-"Should I complete the integration?" → Answer is YES. Complete it.
-```
-
-### ✅ VALID QUESTIONS (polls that clarify the problem):
-```
-"The API could return 404 or 400 for this case. Which is correct?"  → Needs decision
-"Should this data be persisted or kept in memory?"                   → Architecture poll
-"Is this feature for all users or just admins?"                      → Scope clarification
-"The existing code uses pattern X, but Y seems better. Preference?"  → Pattern decision
+"Would you like me to..."         → Just do it.
+"Should I fix this bug?"          → Just fix it.
+"Do you want me to continue?"     → Keep going.
+"Should I complete the integration?" → Complete it.
 ```
 
-### ✅ ALWAYS DO THIS (action, not asking):
+### ✅ DO ASK (when you can't decide the right approach):
 ```
-"I found X issue. Fixing it now..."
-"The components aren't wired together. Completing the integration..."
-"Tests are failing. Investigating and fixing..."
-"Review found issues. Addressing them..."
-"Discovered missing integration. Creating issue and implementing..."
+"The API could return 404 or 400 for this case. Which is correct?"
+"Should this data be persisted or kept in memory?"
+"Is this feature for all users or just admins?"
+"Pattern A or B? Here are the trade-offs: [list them]"
+"I'm unsure how to handle X. Options are: [A] ... [B] ..."
 ```
 
-### The Rule
+### ✅ When to Surface Decisions to User
 
-**If you can do it, DO IT. Don't ask.**
+**Ask when there's genuine ambiguity you cannot resolve:**
+- Multiple valid implementation approaches with real trade-offs
+- Business logic that affects user experience
+- Architectural decisions that affect future work
+- You're uncertain and the wrong choice would be costly
+- Breaking changes or backward compatibility concerns
+
+**Present options clearly:**
+```
+## Implementation Decision: [Topic]
+
+**Option A:** [approach]
+- Pros: ...
+- Cons: ...
+
+**Option B:** [approach]
+- Pros: ...
+- Cons: ...
+
+**My lean:** Option A because [reasoning], but this affects [X] so wanted to check.
+```
+
+### The Core Rule
+
+**If you CAN decide confidently → just do it.**
+**If you genuinely CANNOT decide → surface the options.**
 
 - Found a bug? Fix it.
 - Tests failing? Fix them.
 - Components not wired? Wire them.
-- Missing integration? Complete it.
-- Review found issues? Address them.
-- More work discovered? Create issues and keep working.
-
-### Valid Reasons to Ask (Polling)
-
-**Only poll when there's genuine ambiguity that affects implementation:**
-- Technical decisions with trade-offs (approach A vs B)
-- Business logic unclear (what SHOULD happen?)
-- Scope boundaries (is X in scope or out of scope?)
-- Breaking changes (acceptable or not?)
-- Need credentials/secrets you don't have
-- Destructive operations that could lose data
-
-### Invalid Reasons to Ask
-
-**Never ask if the answer is obviously YES:**
-- "Should I fix this bug?" → YES
-- "Should I complete the integration?" → YES
-- "Should I write tests?" → YES
-- "Should I continue working?" → YES
-- "Would you like me to..." → YES
-
-### During Ralph Wiggum Mode
-
-This rule is **especially critical** during Ralph mode:
-- NEVER stop to ask if you should continue
-- NEVER present options and wait for user to choose
-- NEVER say "would you like me to..."
-- ALWAYS keep working until `bd ready` returns empty
-- ALWAYS create issues for discovered work and continue
+- Uncertain between two valid patterns? Ask with trade-offs.
+- Don't know the business requirement? Ask.
 
 ### Discovered Work Protocol
 
-When you find incomplete work during implementation:
+**Before creating ANY issue, ask yourself:**
+1. Is this necessary to complete the current task?
+2. Is this in scope for what the user asked?
 
-1. **Create a beads issue immediately:**
+**If NO to either → DO NOT create the issue.**
+
+❌ **OUT OF SCOPE (don't create issues for):**
+- "Nice to have" improvements
+- Future features not requested
+- Refactoring unrelated code
+- Supporting additional platforms/providers
+- Product roadmap items
+
+✅ **IN SCOPE (do create issues for):**
+- Blocking bugs found during implementation
+- Missing pieces required to complete current task
+- Tests needed for code you're writing
+- Direct dependencies of the requested work
+
+**When you find in-scope work:**
+
+1. **Verify it's necessary** - Can you complete the user's request without this?
+2. **Create issue only if blocking:**
    ```bash
    bd create --title="Wire RunVideoGallery to diff view" --type=task --priority=1 --labels $(git rev-parse --abbrev-ref HEAD)
    ```
+3. **Keep working** - don't stop to ask permission
 
-2. **Keep working on it OR the next issue** - don't stop and ask
-
-3. **Only stop when:**
-   - All issues are closed
-   - All tests pass
-   - All checks pass
-   - Context is exhausted (then provide handoff)
+**Only stop when:**
+- Current task is complete
+- All tests pass
+- You need a decision you cannot make yourself
 
 ## Task Planning with Beads
 
@@ -442,163 +448,35 @@ Playback verified: chapters clickable, seek works
 - Ralph workflow includes verification as mandatory step
 - Session end hooks check for test coverage
 
-## Multi-Agent Review (Automatic)
+## Multi-Agent Review
 
-**For significant changes, spawn review subagents to catch issues before completion.**
+**Reviews happen automatically via hooks, or on-demand via `/review` command.**
 
-### When to Trigger Reviews
+### Automatic Review (Stop Hook)
 
-Automatically spawn review subagents when:
-- Change affects >3 files or >100 lines of code
-- Implementing a new feature (not just a bug fix)
-- Modifying critical paths (auth, payments, data)
-- Uncertain about approach or implementation
-- Before closing a substantial issue
+When you stop working, the `multi-agent-review.sh` hook automatically:
+1. Runs Codex for code quality review
+2. Runs Gemini for protocol compliance check
+3. Reports any issues found
 
-### Review Agent Types
+This happens automatically - no action needed.
 
-Use the Task tool with `subagent_type=general-purpose` to spawn reviewers:
+### On-Demand Review (`/review`)
 
-| Review Type | Focus | Prompt Pattern |
-|-------------|-------|----------------|
-| Code Quality | Architecture, patterns, maintainability | "Review this diff for code quality..." |
-| Bug Detection | Edge cases, error handling, security | "Review this diff for potential bugs..." |
-| Alternative Approach | Better solutions, missed optimizations | "Suggest alternative approaches for..." |
+Run `/review` proactively during implementation when:
+- You've made significant changes (>50 lines, >2 files)
+- You're unsure if an approach is correct
+- Before moving to the next beads issue
+- After implementing a new feature
 
-### How to Trigger Reviews
+**Don't wait until you're "done" - checkpoint early and often.**
 
-```markdown
-## Triggering a Multi-Agent Review
+### After Review - ACTION (not asking)
 
-When you've completed significant implementation work, spawn parallel review subagents:
-
-1. Get the diff:
-   git diff HEAD~1 --stat  # See what changed
-   git diff HEAD~1         # Full diff
-
-2. Spawn review subagents in parallel using Task tool:
-   - Code Quality Reviewer
-   - Bug Detection Reviewer
-   - (Optional) Alternative Approach Reviewer
-
-3. Synthesize feedback:
-   - Collect all reviewer responses
-   - Prioritize issues (critical > major > minor)
-   - Fix critical/major issues before proceeding
-   - Document any intentionally ignored feedback
-
-4. Only proceed to close after addressing feedback
-```
-
-### Review Subagent Prompts
-
-**Code Quality Review:**
-```
-Review this code change for quality issues:
-
-[PASTE DIFF HERE]
-
-Focus on:
-- Code organization and structure
-- Naming conventions and clarity
-- Unnecessary complexity
-- Missing error handling
-- Adherence to project patterns (see CLAUDE.md)
-
-Return:
-- CRITICAL issues (must fix)
-- MAJOR issues (should fix)
-- MINOR issues (nice to fix)
-- GOOD things (what's done well)
-```
-
-**Bug Detection Review:**
-```
-Review this code change for potential bugs:
-
-[PASTE DIFF HERE]
-
-Focus on:
-- Edge cases not handled
-- Null/undefined scenarios
-- Race conditions
-- Security vulnerabilities
-- Error propagation issues
-- Resource leaks
-
-Return:
-- BUGS found (with severity)
-- RISKS identified
-- TEST CASES that should be added
-```
-
-**Alternative Approach Review:**
-```
-Review this implementation and suggest alternatives:
-
-[PASTE DIFF HERE]
-
-Context: [DESCRIBE WHAT YOU'RE TRYING TO DO]
-
-Focus on:
-- Simpler approaches
-- More idiomatic patterns
-- Performance optimizations
-- Existing code/libraries that could be reused
-
-Return:
-- ALTERNATIVE approaches (with trade-offs)
-- OPTIMIZATIONS possible
-- REUSE opportunities (existing code)
-```
-
-### Example: Triggering Reviews
-
-```markdown
-## I just implemented video recording. Let me trigger reviews.
-
-### Changes Summary
-- 5 new files, ~500 lines of code
-- New Convex table and mutations
-- HTTP API endpoints
-- React hook and component
-
-### Spawning Review Subagents...
-
-[Use Task tool to spawn 2-3 reviewers in parallel]
-
-### Review Results
-
-**Code Quality Review:**
-- CRITICAL: None
-- MAJOR: HTTP handler has inconsistent error codes
-- MINOR: Could extract common JSON response helper
-
-**Bug Detection Review:**
-- BUGS: Recording state not cleaned up on error
-- RISKS: No rate limiting on upload endpoint
-- TEST CASES: Add test for upload with invalid recordingId
-
-### Actions Taken
-1. Fixed inconsistent error codes
-2. Added cleanup on error
-3. Created issue for rate limiting (beads-xxx)
-4. Added requested test case
-
-### Ready to close issue
-```
-
-### Integration with cmux
-
-Since cmux is a multi-agent orchestration system, you can also use cmux itself for reviews:
-
-```bash
-# Use cmux to spawn multiple AI agents for review
-# Each agent reviews the same diff from different perspectives
-# Results are aggregated and presented
-```
-
-This is a natural fit for the cmux workflow where multiple agents work in parallel.
+1. **CRITICAL issues** - Fix immediately
+2. **MAJOR issues** - Fix now or create beads issue
+3. **MINOR issues** - Create beads issue for later
+4. **Continue working** - Review is a checkpoint, not a stopping point
 
 ## Landing the Plane (Session Completion)
 

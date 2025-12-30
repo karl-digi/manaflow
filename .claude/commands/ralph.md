@@ -14,7 +14,7 @@ Your mission: Work through ALL beads issues until there are none left. Keep goin
 
 **CRITICAL: Every issue MUST go through the closed-loop verification cycle. Never close without verification passing.**
 
-**NEVER ASK - JUST DO IT: Do NOT stop to ask "would you like me to..." - keep working until everything is done.**
+**Action Bias: Do the work. Only ask when you genuinely cannot decide between options.**
 
 ## Current Session Setup
 

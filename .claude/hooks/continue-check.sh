@@ -1,6 +1,11 @@
 #!/bin/bash
-# Checks for incomplete work and DIRECTS Claude to continue (not ask)
-# Runs on Stop event to prevent premature session endings
+# ============================================================================
+# HOOK: continue-check.sh
+# EVENT: Stop (1st in chain)
+# PURPOSE: Detects incomplete beads issues, directs Claude to continue working
+# PART OF: Closed-Loop Verification Harness
+# DISABLE: CONTINUE_CHECK_DISABLED=1
+# ============================================================================
 
 set -euo pipefail
 
