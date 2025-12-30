@@ -549,7 +549,7 @@ export type StartSandboxResponse = {
 export type StartSandboxBody = {
     teamSlugOrId: string;
     environmentId?: string;
-    snapshotId?: string | ('snapshot_5a255f9t' | 'snapshot_d5hz9r0j') | 'pve_template_9011';
+    snapshotId?: string;
     ttlSeconds?: number;
     metadata?: {
         [key: string]: string;

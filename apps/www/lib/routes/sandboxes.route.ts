@@ -34,7 +34,6 @@ import {
   allocateScriptIdentifiers,
   runMaintenanceAndDevScripts,
 } from "./sandboxes/startDevAndMaintenanceScript";
-import { SandboxSnapshotIdSchema } from "./sandboxes/snapshot-schemas";
 import {
   encodeEnvContentForEnvctl,
   envctlLoadCommand,
@@ -245,7 +244,7 @@ const StartSandboxBody = z
   .object({
     teamSlugOrId: z.string(),
     environmentId: z.string().optional(),
-    snapshotId: SandboxSnapshotIdSchema.optional(),
+    snapshotId: z.string().optional(),
     ttlSeconds: z
       .number()
       .optional()
