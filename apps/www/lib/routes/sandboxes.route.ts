@@ -12,6 +12,7 @@ import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
 import { RESERVED_CMUX_PORT_SET } from "@cmux/shared/utils/reserved-cmux-ports";
 import { parseGithubRepoUrl } from "@cmux/shared/utils/parse-github-repo-url";
+import { parseSnapshotId, getMorphApiSnapshotIdByPresetId } from "@cmux/shared";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { MorphCloudClient } from "morphcloud";
@@ -455,8 +456,21 @@ sandboxesRouter.openapi(
       } else {
         // Morph provider (default)
         const client = getMorphClient();
+
+        // Convert unified snapshot ID (morph_4vcpu_6gb_32gb_v1) to actual Morph snapshot ID (snapshot_...)
+        let actualMorphSnapshotId = resolvedSnapshotId;
+        const parsed = parseSnapshotId(resolvedSnapshotId);
+        if (parsed?.provider === "morph") {
+          const morphSnapshotId = getMorphApiSnapshotIdByPresetId(parsed.presetId);
+          if (morphSnapshotId) {
+            actualMorphSnapshotId = morphSnapshotId;
+          } else {
+            throw new Error(`Morph snapshot not found for preset: ${parsed.presetId}`);
+          }
+        }
+
         const morphInstance = await client.instances.start({
-          snapshotId: resolvedSnapshotId,
+          snapshotId: actualMorphSnapshotId,
           ttlSeconds: body.ttlSeconds ?? 60 * 60,
           ttlAction: "pause",
           metadata: {
