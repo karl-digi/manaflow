@@ -35,47 +35,116 @@ This PR adds Proxmox VE (PVE) LXC containers as an alternative sandbox provider 
 ## Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         PVE LXC SANDBOX ARCHITECTURE                         │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  ┌─────────────────────┐      ┌─────────────────────┐                       │
-│  │   apps/www (Hono)   │      │   apps/client       │                       │
-│  │   Backend API       │◄────►│   Frontend SPA      │                       │
-│  └──────────┬──────────┘      └─────────────────────┘                       │
-│             │                                                                │
-│  ┌──────────▼──────────┐                                                    │
-│  │  sandbox-provider   │ ← Detects Morph or PVE based on env vars           │
-│  │  sandbox-instance   │ ← Unified interface for both providers             │
-│  └──────────┬──────────┘                                                    │
-│             │                                                                │
-│  ┌──────────┴──────────────────────────────────────────────┐                │
-│  │                    PROVIDER LAYER                        │                │
-│  │  ┌─────────────────┐         ┌─────────────────────────┐│                │
-│  │  │  MorphCloudClient│         │   PveLxcClient         ││                │
-│  │  │  (morphcloud npm)│         │   (pve-lxc-client.ts)  ││                │
-│  │  └─────────────────┘         └─────────────────────────┘│                │
-│  └──────────────────────────────────────────────────────────┘                │
-│                                     │                                        │
-│                    ┌────────────────▼────────────────┐                      │
-│                    │     Proxmox VE Host             │                      │
-│                    │  ┌───────────────────────────┐  │                      │
-│                    │  │  LXC Container (cmux-XXX) │  │                      │
-│                    │  │  ├─ cmux-execd (39375)    │  │                      │
-│                    │  │  ├─ worker (39377)        │  │                      │
-│                    │  │  ├─ vscode (39378)        │  │                      │
-│                    │  │  ├─ vnc (39380)           │  │                      │
-│                    │  │  └─ xterm (39383)         │  │                      │
-│                    │  └───────────────────────────┘  │                      │
-│                    │           │                     │                      │
-│                    │  ┌────────▼────────┐           │                      │
-│                    │  │ Cloudflare Tunnel│           │                      │
-│                    │  │ + Caddy (routing)│           │                      │
-│                    │  └─────────────────┘           │                      │
-│                    └─────────────────────────────────┘                      │
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│                          PVE LXC SANDBOX ARCHITECTURE                            │
+├──────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                   │
+│  ┌───────────────────────┐      ┌──────────────────────┐                        │
+│  │   apps/www (Hono)     │      │   apps/client        │                        │
+│  │   Backend API         │◄────►│   Frontend SPA       │                        │
+│  └──────────┬────────────┘      └──────────────────────┘                        │
+│             │                                                                    │
+│  ┌──────────▼────────────┐                                                      │
+│  │  sandbox-provider     │ ← Detects Morph or PVE based on env vars             │
+│  │  sandbox-instance     │ ← Unified interface for both providers               │
+│  └──────────┬────────────┘                                                      │
+│             │                                                                    │
+│  ┌──────────┴────────────────────────────────────────────────────┐              │
+│  │                    PROVIDER LAYER                              │              │
+│  │  ┌──────────────────┐         ┌────────────────────────────┐│              │
+│  │  │  MorphCloudClient│         │   PveLxcClient            ││              │
+│  │  │  (morphcloud npm)│         │   (pve-lxc-client.ts)     ││              │
+│  │  └──────────────────┘         └────────────────────────────┘│              │
+│  └────────────────────────────────────────────────────────────────┘              │
+│                                     │                                            │
+│                    ┌────────────────▼────────────────┐                          │
+│                    │     Proxmox VE Host             │                          │
+│                    │  ┌────────────────────────────┐ │                          │
+│                    │  │  LXC Container (cmux-XXX)  │ │                          │
+│                    │  │                            │ │                          │
+│                    │  │  ┌──────────────────────┐  │ │                          │
+│                    │  │  │  apps/server         │  │ │  ← Claude Code/Codex/  │
+│                    │  │  │  (CLI executor)      │  │ │    task runtime        │
+│                    │  │  │  ├─ Socket.IO        │  │ │                        │
+│                    │  │  │  ├─ Express server   │  │ │                        │
+│                    │  │  │  └─ AI SDK (Vercel) │  │ │                        │
+│                    │  │  └──────────────────────┘  │ │                        │
+│                    │  │                            │ │                        │
+│                    │  │  ├─ cmux-execd (39375)    │ │                          │
+│                    │  │  ├─ worker (39377)        │ │                          │
+│                    │  │  ├─ vscode (39378)        │ │                          │
+│                    │  │  ├─ vnc (39380)           │ │                          │
+│                    │  │  └─ xterm (39383)         │ │                          │
+│                    │  └────────────────────────────┘ │                          │
+│                    │           │                      │                          │
+│                    │  ┌────────▼──────────┐          │                          │
+│                    │  │ Cloudflare Tunnel │          │                          │
+│                    │  │ + Caddy (routing) │          │                          │
+│                    │  └───────────────────┘          │                          │
+│                    └─────────────────────────────────┘                          │
+│                                                                                   │
+└──────────────────────────────────────────────────────────────────────────────────┘
 ```
+
+### apps/server Deployment (Task Execution Orchestrator)
+
+**Critical Clarification**: `apps/server` is **NOT an external service**. It runs **embedded inside each sandbox** (both Morph and PVE LXC):
+
+#### Deployment Architecture
+
+| Aspect | Morph Cloud | PVE LXC (PR #27) |
+|--------|------------|-----------------|
+| **Location** | Inside Morph VM snapshot | Inside LXC container snapshot |
+| **Port** | 9776 | 9776 |
+| **Per-Instance** | One per Morph VM | One per LXC container |
+| **Communication** | Socket.IO + Express | Socket.IO + Express |
+| **Snapshot Baking** | Pre-baked in Morph image | Built by `scripts/snapshot-pvelxc.py` |
+
+#### What apps/server Does
+
+`apps/server` is the **central task execution orchestrator** inside each sandbox:
+
+1. **Agent Spawning & Task Management**
+   - Initiates Claude Code, Codex CLI, and other agent lifecycles via `spawnAgent`
+   - Creates task runs in Convex database
+   - Generates Git branches and sets up execution environments
+   - Manages VSCode container startup and configuration
+
+2. **Git Operations & Worktree Management**
+   - Creates/manages Git worktrees for task isolation
+   - Computes diffs between Git references
+   - Handles branch checkouts within containers
+   - Persists worktree metadata to Convex
+
+3. **Real-time Communication** (Socket.IO WebSocket)
+   - Communicates with frontend via Socket.IO on port 9776
+   - Receives control plane commands (exec, file-changes)
+   - Emits events: `vscode-spawned`, `file-changes`, `terminal-failed`
+   - URL pattern: `port-9776-vm-{vmid}.{domain}` (via Cloudflare Tunnel in PVE)
+
+4. **Worker Coordination**
+   - Receives `worker:file-changes` events from running agents
+   - Processes file changes and updates Convex in real-time
+   - Monitors terminal state and handles failures
+   - Orchestrates diff computation for UI updates
+
+#### Frontend Communication Flow
+
+```
+┌─────────────────┐
+│  apps/client    │ (Frontend SPA on port 5173)
+└────────┬────────┘
+         │
+         ├─► HTTP/REST to apps/www (/api/sandboxes/start)
+         │   Port: 9779
+         │   Purpose: Create/manage sandbox lifecycle
+         │
+         └─► Socket.IO to apps/server inside sandbox
+             URL: port-9776-vm-{vmid}.{domain}
+             Purpose: Real-time task execution
+```
+
+**Why apps/server is inside the sandbox**: Enables true isolation, allows each task to have its own agent runtime environment, and eliminates the need for a separate execution server farm.
 
 ---
 
