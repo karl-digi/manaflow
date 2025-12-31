@@ -171,8 +171,13 @@ export function parseSnapshotId(id: string): {
       pvevm: "pve-vm",
     };
 
+    const provider = providerMap[prefix];
+    if (!provider) {
+      return null;
+    }
+
     return {
-      provider: providerMap[prefix] || "morph",
+      provider,
       presetId,
       version: parseInt(versionStr, 10),
     };
