@@ -22,6 +22,7 @@ import {
   githubOAuthTokenRouter,
   healthRouter,
   morphRouter,
+  pveLxcRouter,
   sandboxesRouter,
   teamsRouter,
   usersRouter,
@@ -141,6 +142,7 @@ app.route("/", githubInstallStateRouter);
 app.route("/", githubOAuthTokenRouter);
 app.route("/", githubBranchesRouter);
 app.route("/", morphRouter);
+app.route("/", pveLxcRouter);
 app.route("/", iframePreflightRouter);
 app.route("/", environmentsRouter);
 app.route("/", sandboxesRouter);

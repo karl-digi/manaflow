@@ -10,6 +10,7 @@ import {
   useResumeMorphWorkspace,
   useRefreshMorphGitHubAuth,
 } from "@/hooks/useMorphWorkspace";
+import { useResumePveLxcWorkspace } from "@/hooks/usePveLxcWorkspace";
 import { useOpenWithActions } from "@/hooks/useOpenWithActions";
 import { useTaskRename } from "@/hooks/useTaskRename";
 import { isElectron } from "@/lib/electron";
@@ -1539,21 +1540,37 @@ function TaskRunTreeInner({
     networking: run.networking,
   });
 
-  const resumeWorkspace = useResumeMorphWorkspace({
+  const resumeMorphWorkspace = useResumeMorphWorkspace({
     taskRunId: run._id,
     teamSlugOrId,
   });
 
-  const handleResumeWorkspace = useCallback(() => {
-    if (resumeWorkspace.isPending) {
+  const resumePveLxcWorkspace = useResumePveLxcWorkspace({
+    taskRunId: run._id,
+    teamSlugOrId,
+  });
+
+  const handleResumeMorphWorkspace = useCallback(() => {
+    if (resumeMorphWorkspace.isPending) {
       return;
     }
 
-    void resumeWorkspace.mutateAsync({
+    void resumeMorphWorkspace.mutateAsync({
       path: { taskRunId: run._id },
       body: { teamSlugOrId },
     });
-  }, [resumeWorkspace, run._id, teamSlugOrId]);
+  }, [resumeMorphWorkspace, run._id, teamSlugOrId]);
+
+  const handleResumePveLxcWorkspace = useCallback(() => {
+    if (resumePveLxcWorkspace.isPending) {
+      return;
+    }
+
+    void resumePveLxcWorkspace.mutateAsync({
+      path: { taskRunId: run._id },
+      body: { teamSlugOrId },
+    });
+  }, [resumePveLxcWorkspace, run._id, teamSlugOrId]);
 
   const refreshGitHubAuth = useRefreshMorphGitHubAuth({
     taskRunId: run._id,
@@ -1654,11 +1671,21 @@ function TaskRunTreeInner({
               {run.vscode?.provider === "morph" ? (
                 <ContextMenu.Item
                   className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
-                  onClick={handleResumeWorkspace}
-                  disabled={resumeWorkspace.isPending}
+                  onClick={handleResumeMorphWorkspace}
+                  disabled={resumeMorphWorkspace.isPending}
                 >
                   <Play className="w-3.5 h-3.5" />
-                  {resumeWorkspace.isPending ? "Resuming…" : "Resume VM"}
+                  {resumeMorphWorkspace.isPending ? "Resuming…" : "Resume VM"}
+                </ContextMenu.Item>
+              ) : null}
+              {run.vscode?.provider === "pve-lxc" ? (
+                <ContextMenu.Item
+                  className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
+                  onClick={handleResumePveLxcWorkspace}
+                  disabled={resumePveLxcWorkspace.isPending}
+                >
+                  <Play className="w-3.5 h-3.5" />
+                  {resumePveLxcWorkspace.isPending ? "Resuming…" : "Resume Container"}
                 </ContextMenu.Item>
               ) : null}
               {run.vscode?.provider === "morph" ? (

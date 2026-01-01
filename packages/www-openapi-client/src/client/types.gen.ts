@@ -438,6 +438,23 @@ export type InstanceInfo = {
 
 export type ListInstancesResponse = Array<InstanceInfo>;
 
+export type PveLxcResumeTaskRunResponse = {
+    resumed: true;
+};
+
+export type PveLxcResumeTaskRunBody = {
+    teamSlugOrId: string;
+};
+
+export type PveLxcCheckTaskRunStoppedResponse = {
+    stopped: boolean;
+    deleted?: boolean;
+};
+
+export type PveLxcCheckTaskRunStoppedBody = {
+    teamSlugOrId: string;
+};
+
 export type CreateEnvironmentResponse = {
     id: string;
     snapshotId: string;
@@ -2064,6 +2081,96 @@ export type GetApiMorphInstancesResponses = {
 };
 
 export type GetApiMorphInstancesResponse = GetApiMorphInstancesResponses[keyof GetApiMorphInstancesResponses];
+
+export type PostApiPveLxcTaskRunsByTaskRunIdResumeData = {
+    body: PveLxcResumeTaskRunBody;
+    path: {
+        taskRunId: string;
+    };
+    query?: never;
+    url: '/api/pve-lxc/task-runs/{taskRunId}/resume';
+};
+
+export type PostApiPveLxcTaskRunsByTaskRunIdResumeErrors = {
+    /**
+     * Task run is not backed by a PVE LXC container
+     */
+    400: unknown;
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Forbidden
+     */
+    403: unknown;
+    /**
+     * Task run or container not found
+     */
+    404: unknown;
+    /**
+     * Failed to resume container
+     */
+    500: unknown;
+    /**
+     * PVE LXC provider not configured
+     */
+    503: unknown;
+};
+
+export type PostApiPveLxcTaskRunsByTaskRunIdResumeResponses = {
+    /**
+     * PVE LXC container resumed
+     */
+    200: PveLxcResumeTaskRunResponse;
+};
+
+export type PostApiPveLxcTaskRunsByTaskRunIdResumeResponse = PostApiPveLxcTaskRunsByTaskRunIdResumeResponses[keyof PostApiPveLxcTaskRunsByTaskRunIdResumeResponses];
+
+export type PostApiPveLxcTaskRunsByTaskRunIdIsStoppedData = {
+    body: PveLxcCheckTaskRunStoppedBody;
+    path: {
+        taskRunId: string;
+    };
+    query?: never;
+    url: '/api/pve-lxc/task-runs/{taskRunId}/is-stopped';
+};
+
+export type PostApiPveLxcTaskRunsByTaskRunIdIsStoppedErrors = {
+    /**
+     * Task run is not backed by a PVE LXC container
+     */
+    400: unknown;
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Forbidden
+     */
+    403: unknown;
+    /**
+     * Task run not found
+     */
+    404: unknown;
+    /**
+     * Failed to check container status
+     */
+    500: unknown;
+    /**
+     * PVE LXC provider not configured
+     */
+    503: unknown;
+};
+
+export type PostApiPveLxcTaskRunsByTaskRunIdIsStoppedResponses = {
+    /**
+     * PVE LXC container status returned
+     */
+    200: PveLxcCheckTaskRunStoppedResponse;
+};
+
+export type PostApiPveLxcTaskRunsByTaskRunIdIsStoppedResponse = PostApiPveLxcTaskRunsByTaskRunIdIsStoppedResponses[keyof PostApiPveLxcTaskRunsByTaskRunIdIsStoppedResponses];
 
 export type GetApiIframePreflightData = {
     body?: never;

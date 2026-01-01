@@ -18,6 +18,7 @@ export { githubInstallStateRouter } from "./github.install-state.route";
 export { healthRouter } from "./health.route";
 export { iframePreflightRouter } from "./iframe-preflight.route";
 export { morphRouter } from "./morph.route";
+export { pveLxcRouter } from "./pve-lxc.route";
 export { sandboxesRouter } from "./sandboxes.route";
 export { teamsRouter } from "./teams.route";
 export { usersRouter } from "./users.route";
