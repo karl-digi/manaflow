@@ -8,6 +8,8 @@ This PR adds Proxmox VE (PVE) LXC containers as an alternative sandbox provider 
 
 **Update (2025-12-31):** URL pattern refactored to Morph-consistent (`port-{port}-vm-{vmid}.{domain}`)
 
+**Update (2026-01-02):** All scripts verified and tested. URL pattern fixes applied to all provisioning and test scripts.
+
 ---
 
 ## URL Pattern (Morph-Consistent)
@@ -408,6 +410,18 @@ Updated `buildPublicServiceUrl()` method:
 return `https://port-${port}-vm-${vmid}.${this.publicDomain}`;
 ```
 
+#### 3. Provisioning & Test Scripts (2026-01-02)
+
+All scripts updated to use the correct URL pattern:
+
+| Script | Change |
+|--------|--------|
+| `scripts/snapshot-pvelxc.py` | `exec-{vmid}` → `port-39375-vm-{vmid}` |
+| `scripts/pve/pve-lxc-template.sh` | `exec-${vmid}` → `port-39375-vm-${vmid}` |
+| `scripts/test-pve-gitdiff.py` | `exec-{vmid}` → `port-39375-vm-{vmid}` |
+| `scripts/pve/test-pve-cf-tunnel.ts` | `exec-${vmid}` → `port-39375-vm-${vmid}`, `vscode-${vmid}` → `port-39378-vm-${vmid}`, `worker-${vmid}` → `port-39377-vm-${vmid}` |
+| `scripts/test-xterm-cors.sh` | `xterm-${VMID}` → `port-39383-vm-${VMID}`, `exec-${VMID}` → `port-39375-vm-${VMID}` |
+
 ### Benefits
 
 1. **Single Caddy rule** - No hardcoded service names, any port works automatically
@@ -422,4 +436,57 @@ return `https://port-${port}-vm-${vmid}.${this.publicDomain}`;
 3. Update TypeScript client code (already done)
 4. Redeploy backend
 5. Test new URLs
+
+---
+
+## Script Verification Results (2026-01-02)
+
+All PVE scripts have been verified and tested:
+
+### Runtime Tests (All Passed)
+
+| Script | Test Type | Result |
+|--------|-----------|--------|
+| `pve-api.sh` | Runtime | Pass (connection, list functions) |
+| `pve-test-connection.sh` | Runtime | Pass (API connection, node detection) |
+| `pve-instance.sh` | Runtime | Pass (list, status, start, stop) |
+| `test-pve-lxc-client.ts` | Runtime | Pass (11/11 tests) |
+| `test-pve-cf-tunnel.ts` | Runtime | Pass (11/11 tests) |
+| `test-pve-gitdiff.py` | Runtime | Pass (clone, patch, apply) |
+| `test-xterm-cors.sh` | Runtime | Pass (CORS headers, service status) |
+| `pve-test-template.sh` | Runtime | Pass (clone, verify, cleanup) |
+
+### Syntax Verification (All Passed)
+
+| Script | Result |
+|--------|--------|
+| `pve-lxc-template.sh` | Pass |
+| `pve-criu.sh` | Pass |
+| `pve-tunnel-setup.sh` | Pass |
+| `pve-lxc-setup.sh` | Pass |
+| `pve-test-template.sh` | Pass |
+
+### Test Commands
+
+```bash
+# Connection test
+./scripts/pve/pve-test-connection.sh
+
+# Instance management
+./scripts/pve/pve-instance.sh list
+./scripts/pve/pve-instance.sh status 200
+
+# TypeScript client tests
+bun run scripts/pve/test-pve-lxc-client.ts
+bun run scripts/pve/test-pve-cf-tunnel.ts --vmid 200
+
+# Git diff workflow test
+uv run --env-file .env ./scripts/test-pve-gitdiff.py --vmid 200
+
+# Xterm CORS test
+./scripts/test-xterm-cors.sh 200
+
+# Template verification
+./scripts/pve/pve-test-template.sh 9000
+```
 
