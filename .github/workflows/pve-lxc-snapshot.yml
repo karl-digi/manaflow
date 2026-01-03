@@ -1,4 +1,4 @@
-name: Daily Morph Snapshot
+name: Weekly PVE LXC Snapshot
 
 on:
   schedule:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: morph-snapshot
+  group: pve-lxc-snapshot
   cancel-in-progress: false
 
 permissions:
@@ -19,8 +19,8 @@ env:
   GO_VERSION: "1.23"
 
 jobs:
-  morph-snapshot:
-    name: Build Morph Snapshot
+  pve-lxc-snapshot:
+    name: Build PVE LXC Snapshot
     runs-on: ubuntu-latest
     environment: dev
     steps:
@@ -58,23 +58,26 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Run morph snapshot (with retry)
+      - name: Run PVE LXC snapshot (with retry)
         env:
-          MORPH_API_KEY: ${{ secrets.MORPH_API_KEY }}
-          SNAPSHOT_ID: ${{ vars.MORPH_SNAPSHOT_ID || 'snapshot_yw1qulce' }}
-          STANDARD_VCPUS: ${{ vars.MORPH_STANDARD_VCPUS || '4' }}
-          STANDARD_MEMORY: ${{ vars.MORPH_STANDARD_MEMORY || '6144' }}
-          STANDARD_DISK_SIZE: ${{ vars.MORPH_STANDARD_DISK_SIZE || '32768' }}
-          BOOSTED_VCPUS: ${{ vars.MORPH_BOOSTED_VCPUS || '6' }}
-          BOOSTED_MEMORY: ${{ vars.MORPH_BOOSTED_MEMORY || '8192' }}
-          BOOSTED_DISK_SIZE: ${{ vars.MORPH_BOOSTED_DISK_SIZE || '32768' }}
+          PVE_API_URL: ${{ secrets.PVE_API_URL }}
+          PVE_API_TOKEN: ${{ secrets.PVE_API_TOKEN }}
+          PVE_PUBLIC_DOMAIN: ${{ secrets.PVE_PUBLIC_DOMAIN }}
+          PVE_NODE: ${{ secrets.PVE_NODE }}
+          TEMPLATE_VMID: ${{ vars.PVE_TEMPLATE_VMID || '9000' }}
+          STANDARD_VCPUS: ${{ vars.PVE_STANDARD_VCPUS || '4' }}
+          STANDARD_MEMORY: ${{ vars.PVE_STANDARD_MEMORY || '6144' }}
+          STANDARD_DISK_SIZE: ${{ vars.PVE_STANDARD_DISK_SIZE || '32768' }}
+          BOOSTED_VCPUS: ${{ vars.PVE_BOOSTED_VCPUS || '6' }}
+          BOOSTED_MEMORY: ${{ vars.PVE_BOOSTED_MEMORY || '8192' }}
+          BOOSTED_DISK_SIZE: ${{ vars.PVE_BOOSTED_DISK_SIZE || '32768' }}
         run: |
           max_attempts=3
           attempt=1
           while [ $attempt -le $max_attempts ]; do
             echo "Attempt $attempt of $max_attempts"
-            if uv run ./scripts/snapshot.py \
-              --snapshot-id "$SNAPSHOT_ID" \
+            if uv run ./scripts/snapshot-pvelxc.py \
+              --template-vmid "$TEMPLATE_VMID" \
               --standard-vcpus "$STANDARD_VCPUS" \
               --standard-memory "$STANDARD_MEMORY" \
               --standard-disk-size "$STANDARD_DISK_SIZE" \
@@ -115,10 +118,10 @@ jobs:
         if: steps.changes.outputs.has_changes == 'true'
         id: commit
         run: |
-          BRANCH_NAME="morph-snapshot-$(date +%Y%m%d-%H%M%S)"
+          BRANCH_NAME="pve-lxc-snapshot-$(date +%Y%m%d-%H%M%S)"
           git checkout -b "$BRANCH_NAME"
-          git add configs/ide-deps.json packages/shared/src/morph-snapshots.json
-          git commit -m "chore: daily morph snapshot update"
+          git add configs/ide-deps.json packages/shared/src/pve-lxc-snapshots.json
+          git commit -m "chore: weekly PVE LXC snapshot update"
           git push -u origin "$BRANCH_NAME"
           echo "branch=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
 
@@ -128,14 +131,14 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh pr create \
-            --title "chore: daily morph snapshot update" \
-            --body "Automated daily morph snapshot update.
+            --title "chore: weekly PVE LXC snapshot update" \
+            --body "Automated weekly PVE LXC snapshot update.
 
           ## Changes
-          - Updated morph snapshots to latest version
+          - Updated PVE LXC templates to latest version
           - Updated IDE extension and CLI package versions
 
           ## Test plan
-          - [ ] Verify new snapshots work by starting a sandbox session" \
+          - [ ] Verify new templates work by cloning and starting a container" \
             --head "${{ steps.commit.outputs.branch }}" \
             --base main
