@@ -2343,6 +2343,11 @@ async def task_install_cmux_code(ctx: PveTaskContext) -> None:
         """
         set -eux
         CODE_RELEASE="$(curl -fsSL https://api.github.com/repos/manaflow-ai/vscode-1/releases/latest | jq -r '.tag_name' | sed 's|^v||')"
+        if [ -z "${CODE_RELEASE}" ] || [ "${CODE_RELEASE}" = "null" ]; then
+          echo "ERROR: Failed to get cmux-code release version from GitHub API" >&2
+          exit 1
+        fi
+        echo "Installing cmux-code version: ${CODE_RELEASE}"
         arch="$(dpkg --print-architecture)"
         case "${arch}" in
           amd64) ARCH="x64" ;;
@@ -2374,6 +2379,17 @@ async def task_install_cmux_code(ctx: PveTaskContext) -> None:
   "extensions.verifySignature": false
 }
 EOF
+
+        # Verify binary exists after extraction
+        bin_path="/app/cmux-code/bin/code-server-oss"
+        if [ ! -x "${bin_path}" ]; then
+          echo "ERROR: cmux-code binary not found at ${bin_path} after extraction" >&2
+          echo "Checking /app/cmux-code contents:" >&2
+          find /app/cmux-code -type f -name "code-server*" 2>/dev/null || echo "No code-server binaries found"
+          ls -la /app/cmux-code/bin/ 2>/dev/null || echo "bin directory missing or empty"
+          exit 1
+        fi
+        echo "cmux-code binary verified at ${bin_path}"
         """
     )
     await ctx.run("install-cmux-code", cmd)
