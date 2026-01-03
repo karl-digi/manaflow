@@ -9,42 +9,49 @@
 /* Begin PBXBuildFile section */
 		0BEB4F58E65C35CE4E4EE942 /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BE5CB8A89417C399DB8D166 /* ChatView.swift */; };
 		20A59B687D0399C43C985B31 /* DebugInputBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = B87CA70AD58D024077E85845 /* DebugInputBar.swift */; };
+		2283F03332355B2A6F811710 /* ChatApproachI_Fix1Default.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E3A23AD3BA4B17B7605CCBC /* ChatApproachI_Fix1Default.swift */; };
 		24D8752AB97DB126660D8F81 /* ConvexTestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6A61F42F94D17993038F637 /* ConvexTestView.swift */; };
 		2CE5BEC0FE0F92E3F298C570 /* StackAuthClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DEEADB25149C285A0422125 /* StackAuthClient.swift */; };
 		361B05C412BFA1E44BDCAD39 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9BA577D046F9E3C331F4986 /* Models.swift */; };
 		3A6FD7E27F3723EF627744A9 /* StackAuthProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF2848CBEF6B2A130DF4C9D2 /* StackAuthProvider.swift */; };
+		5479917679421FDD8C3C2995 /* ChatFix4_ScrollViewDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2371E50D0E3E362104DE9177 /* ChatFix4_ScrollViewDelegate.swift */; };
+		6A5960808C1C40C3C1DEEA2E /* ChatFix5_ReducePadding.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C74190A1F266AB5E2C38455 /* ChatFix5_ReducePadding.swift */; };
 		6ED3832765AAB169F7254054 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B8CDE2F6CDCAB37E3107C76 /* ContentView.swift */; };
 		7E0146088B71697EB516611F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B005E08ACAAF83F6A13F9D8C /* Assets.xcassets */; };
+		8030869706BE8FD94533D58A /* ChatApproachI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9788FAF68766BFAA9A451A8D /* ChatApproachI.swift */; };
 		83357B66D3EF312F35A86BB1 /* CMuxApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72E20F7A729081D044495605 /* CMuxApp.swift */; };
 		8B6A74AEAD4EC07300279462 /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = 2AB0CD82D816F53E55B1E103 /* Sentry */; };
+		8C11E78F09BA811A5EBC33CC /* ChatFix1MainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4296ACD1C15CC2E35AE162CC /* ChatFix1MainView.swift */; };
+		8FB1CB1D89D93D703FFE61BA /* ChatFix3_AdjustedContentInset.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B4E7CFD0EE433DFB9F348A0 /* ChatFix3_AdjustedContentInset.swift */; };
 		C9E3B69A93DD87E682311505 /* SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88ED9D7168B6FC097B490637 /* SignInView.swift */; };
+		D593A476423097F95F227570 /* ChatFix2_InputBarHeightOnly.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1AB960D917D344F2BB227AC /* ChatFix2_InputBarHeightOnly.swift */; };
 		D71540B39A0E33807FB77410 /* AuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79D367AC3D322118AE559DBF /* AuthManager.swift */; };
 		DCEF7D27D2624C7E3F7B4E14 /* ChatDebugMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80C3A9D5662A04DE39FD3844 /* ChatDebugMenu.swift */; };
 		E3FA94BC78BB51AAFD61D055 /* ConvexMobile in Frameworks */ = {isa = PBXBuildFile; productRef = 4C0C333BDE07456C757877E2 /* ConvexMobile */; };
 		E9D2BFC8E39842DB720CAD9D /* ConversationListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCD6DF60D6756BE09A1CFEE9 /* ConversationListView.swift */; };
 		EC388CAF55CB58BE5B5D2654 /* Environment.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8732D7AB61D4190BACAAB03 /* Environment.swift */; };
 		F024C0FD39B57208895F9153 /* ConvexClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6679E0C9833E77D4A4295D4C /* ConvexClient.swift */; };
+		F51147F292563E8B2503D43E /* ChatFix1_ContentInsetNever.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38A50394379F40101C8A95FC /* ChatFix1_ContentInsetNever.swift */; };
 		F6098AD7DB98B95086FD932A /* ChatKeyboardContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AEA367B39118F09C4A8989FF /* ChatKeyboardContainer.swift */; };
-		B35DB98CCC0FCABD471C00B7 /* ChatApproachI.swift in Sources */ = {isa = PBXBuildFile; fileRef = B75670515EE743E0C02EFE2D /* ChatApproachI.swift */; };
-		BF1A00001111111111111111 /* ChatFix1_ContentInsetNever.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF1A00001111111111111111 /* ChatFix1_ContentInsetNever.swift */; };
-		BF2A00002222222222222222 /* ChatFix2_InputBarHeightOnly.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF2A00002222222222222222 /* ChatFix2_InputBarHeightOnly.swift */; };
-		BF3A00003333333333333333 /* ChatFix3_AdjustedContentInset.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF3A00003333333333333333 /* ChatFix3_AdjustedContentInset.swift */; };
-		BF4A00004444444444444444 /* ChatFix4_ScrollViewDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF4A00004444444444444444 /* ChatFix4_ScrollViewDelegate.swift */; };
-		BF5A00005555555555555555 /* ChatFix5_ReducePadding.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF5A00005555555555555555 /* ChatFix5_ReducePadding.swift */; };
-		BF6A00006666666666666666 /* ChatApproachI_Fix1Default.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF6A00006666666666666666 /* ChatApproachI_Fix1Default.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		0BE5CB8A89417C399DB8D166 /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
 		1B8CDE2F6CDCAB37E3107C76 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		1C74190A1F266AB5E2C38455 /* ChatFix5_ReducePadding.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFix5_ReducePadding.swift; sourceTree = "<group>"; };
+		2371E50D0E3E362104DE9177 /* ChatFix4_ScrollViewDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFix4_ScrollViewDelegate.swift; sourceTree = "<group>"; };
 		2DEEADB25149C285A0422125 /* StackAuthClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StackAuthClient.swift; sourceTree = "<group>"; };
+		38A50394379F40101C8A95FC /* ChatFix1_ContentInsetNever.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFix1_ContentInsetNever.swift; sourceTree = "<group>"; };
+		4296ACD1C15CC2E35AE162CC /* ChatFix1MainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFix1MainView.swift; sourceTree = "<group>"; };
 		46410B90D2F45E6882E585AD /* cmux.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = cmux.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		6679E0C9833E77D4A4295D4C /* ConvexClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConvexClient.swift; sourceTree = "<group>"; };
 		72E20F7A729081D044495605 /* CMuxApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CMuxApp.swift; sourceTree = "<group>"; };
 		79D367AC3D322118AE559DBF /* AuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthManager.swift; sourceTree = "<group>"; };
 		80C3A9D5662A04DE39FD3844 /* ChatDebugMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatDebugMenu.swift; sourceTree = "<group>"; };
 		88ED9D7168B6FC097B490637 /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
-		B75670515EE743E0C02EFE2D /* ChatApproachI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatApproachI.swift; sourceTree = "<group>"; };
+		8B4E7CFD0EE433DFB9F348A0 /* ChatFix3_AdjustedContentInset.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFix3_AdjustedContentInset.swift; sourceTree = "<group>"; };
+		8E3A23AD3BA4B17B7605CCBC /* ChatApproachI_Fix1Default.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatApproachI_Fix1Default.swift; sourceTree = "<group>"; };
+		9788FAF68766BFAA9A451A8D /* ChatApproachI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatApproachI.swift; sourceTree = "<group>"; };
 		AEA367B39118F09C4A8989FF /* ChatKeyboardContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatKeyboardContainer.swift; sourceTree = "<group>"; };
 		B005E08ACAAF83F6A13F9D8C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B87CA70AD58D024077E85845 /* DebugInputBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugInputBar.swift; sourceTree = "<group>"; };
@@ -53,12 +60,7 @@
 		D8732D7AB61D4190BACAAB03 /* Environment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Environment.swift; sourceTree = "<group>"; };
 		D9BA577D046F9E3C331F4986 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		E6A61F42F94D17993038F637 /* ConvexTestView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConvexTestView.swift; sourceTree = "<group>"; };
-		CF1A00001111111111111111 /* ChatFix1_ContentInsetNever.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFix1_ContentInsetNever.swift; sourceTree = "<group>"; };
-		CF2A00002222222222222222 /* ChatFix2_InputBarHeightOnly.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFix2_InputBarHeightOnly.swift; sourceTree = "<group>"; };
-		CF3A00003333333333333333 /* ChatFix3_AdjustedContentInset.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFix3_AdjustedContentInset.swift; sourceTree = "<group>"; };
-		CF4A00004444444444444444 /* ChatFix4_ScrollViewDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFix4_ScrollViewDelegate.swift; sourceTree = "<group>"; };
-		CF5A00005555555555555555 /* ChatFix5_ReducePadding.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFix5_ReducePadding.swift; sourceTree = "<group>"; };
-		CF6A00006666666666666666 /* ChatApproachI_Fix1Default.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatApproachI_Fix1Default.swift; sourceTree = "<group>"; };
+		F1AB960D917D344F2BB227AC /* ChatFix2_InputBarHeightOnly.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFix2_InputBarHeightOnly.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -113,16 +115,16 @@
 		BBE2BE334F53D4E47636EF15 /* Debug */ = {
 			isa = PBXGroup;
 			children = (
+				8E3A23AD3BA4B17B7605CCBC /* ChatApproachI_Fix1Default.swift */,
+				9788FAF68766BFAA9A451A8D /* ChatApproachI.swift */,
 				80C3A9D5662A04DE39FD3844 /* ChatDebugMenu.swift */,
-				B75670515EE743E0C02EFE2D /* ChatApproachI.swift */,
+				38A50394379F40101C8A95FC /* ChatFix1_ContentInsetNever.swift */,
+				F1AB960D917D344F2BB227AC /* ChatFix2_InputBarHeightOnly.swift */,
+				8B4E7CFD0EE433DFB9F348A0 /* ChatFix3_AdjustedContentInset.swift */,
+				2371E50D0E3E362104DE9177 /* ChatFix4_ScrollViewDelegate.swift */,
+				1C74190A1F266AB5E2C38455 /* ChatFix5_ReducePadding.swift */,
 				E6A61F42F94D17993038F637 /* ConvexTestView.swift */,
 				B87CA70AD58D024077E85845 /* DebugInputBar.swift */,
-				CF1A00001111111111111111 /* ChatFix1_ContentInsetNever.swift */,
-				CF2A00002222222222222222 /* ChatFix2_InputBarHeightOnly.swift */,
-				CF3A00003333333333333333 /* ChatFix3_AdjustedContentInset.swift */,
-				CF4A00004444444444444444 /* ChatFix4_ScrollViewDelegate.swift */,
-				CF5A00005555555555555555 /* ChatFix5_ReducePadding.swift */,
-				CF6A00006666666666666666 /* ChatApproachI_Fix1Default.swift */,
 			);
 			path = Debug;
 			sourceTree = "<group>";
@@ -138,6 +140,7 @@
 		F80B6A470B95146C17D0BE5A /* Sources */ = {
 			isa = PBXGroup;
 			children = (
+				4296ACD1C15CC2E35AE162CC /* ChatFix1MainView.swift */,
 				AEA367B39118F09C4A8989FF /* ChatKeyboardContainer.swift */,
 				0BE5CB8A89417C399DB8D166 /* ChatView.swift */,
 				72E20F7A729081D044495605 /* CMuxApp.swift */,
@@ -231,8 +234,15 @@
 			files = (
 				D71540B39A0E33807FB77410 /* AuthManager.swift in Sources */,
 				83357B66D3EF312F35A86BB1 /* CMuxApp.swift in Sources */,
-				B35DB98CCC0FCABD471C00B7 /* ChatApproachI.swift in Sources */,
+				8030869706BE8FD94533D58A /* ChatApproachI.swift in Sources */,
+				2283F03332355B2A6F811710 /* ChatApproachI_Fix1Default.swift in Sources */,
 				DCEF7D27D2624C7E3F7B4E14 /* ChatDebugMenu.swift in Sources */,
+				8C11E78F09BA811A5EBC33CC /* ChatFix1MainView.swift in Sources */,
+				F51147F292563E8B2503D43E /* ChatFix1_ContentInsetNever.swift in Sources */,
+				D593A476423097F95F227570 /* ChatFix2_InputBarHeightOnly.swift in Sources */,
+				8FB1CB1D89D93D703FFE61BA /* ChatFix3_AdjustedContentInset.swift in Sources */,
+				5479917679421FDD8C3C2995 /* ChatFix4_ScrollViewDelegate.swift in Sources */,
+				6A5960808C1C40C3C1DEEA2E /* ChatFix5_ReducePadding.swift in Sources */,
 				F6098AD7DB98B95086FD932A /* ChatKeyboardContainer.swift in Sources */,
 				0BEB4F58E65C35CE4E4EE942 /* ChatView.swift in Sources */,
 				6ED3832765AAB169F7254054 /* ContentView.swift in Sources */,
@@ -245,12 +255,6 @@
 				C9E3B69A93DD87E682311505 /* SignInView.swift in Sources */,
 				2CE5BEC0FE0F92E3F298C570 /* StackAuthClient.swift in Sources */,
 				3A6FD7E27F3723EF627744A9 /* StackAuthProvider.swift in Sources */,
-				BF1A00001111111111111111 /* ChatFix1_ContentInsetNever.swift in Sources */,
-				BF2A00002222222222222222 /* ChatFix2_InputBarHeightOnly.swift in Sources */,
-				BF3A00003333333333333333 /* ChatFix3_AdjustedContentInset.swift in Sources */,
-				BF4A00004444444444444444 /* ChatFix4_ScrollViewDelegate.swift in Sources */,
-				BF5A00005555555555555555 /* ChatFix5_ReducePadding.swift in Sources */,
-				BF6A00006666666666666666 /* ChatApproachI_Fix1Default.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 private func log(_ message: String) {
-    NSLog("[Fix1-Standalone] %@", message)
+    NSLog("[CMUX_CHAT_FIX1] STANDALONE %@", message)
 }
 
 /// Fix 1: contentInsetAdjustmentBehavior = .never

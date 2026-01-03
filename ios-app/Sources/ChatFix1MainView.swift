@@ -5,18 +5,37 @@ private func log(_ message: String) {
     NSLog("[CMUX_CHAT_FIX1] MAIN %@", message)
 }
 
-/// Main chat container that mirrors Fix 1: .never behavior verbatim.
-struct ChatKeyboardContainer: UIViewControllerRepresentable {
-    let messages: [Message]
+struct ChatFix1MainView: View {
+    let conversation: Conversation
+    private let topShimHeight: CGFloat
 
-    func makeUIViewController(context: Context) -> ChatFix1ViewController {
-        ChatFix1ViewController(messages: messages)
+    init(conversation: Conversation) {
+        self.conversation = conversation
+        self.topShimHeight = 1 / UIScreen.main.scale
     }
 
-    func updateUIViewController(_ uiViewController: ChatFix1ViewController, context: Context) {}
+    var body: some View {
+        VStack(spacing: 0) {
+            Color.clear
+                .frame(height: topShimHeight)
+                .accessibilityHidden(true)
+            Fix1MainViewController_Wrapper(conversation: conversation)
+                .ignoresSafeArea()
+        }
+    }
 }
 
-final class ChatFix1ViewController: UIViewController, UIScrollViewDelegate {
+private struct Fix1MainViewController_Wrapper: UIViewControllerRepresentable {
+    let conversation: Conversation
+
+    func makeUIViewController(context: Context) -> Fix1MainViewController {
+        Fix1MainViewController(messages: conversation.messages, titleText: conversation.name)
+    }
+
+    func updateUIViewController(_ uiViewController: Fix1MainViewController, context: Context) {}
+}
+
+private final class Fix1MainViewController: UIViewController, UIScrollViewDelegate {
     private var scrollView: UIScrollView!
     private var contentStack: UIStackView!
     private var inputBarVC: DebugInputBarViewController!
@@ -26,12 +45,16 @@ final class ChatFix1ViewController: UIViewController, UIScrollViewDelegate {
     private var lastKeyboardHeight: CGFloat = 0
     private var inputBarBottomConstraint: NSLayoutConstraint!
     private var contentStackBottomConstraint: NSLayoutConstraint!
-    private var lastAppliedSafeBottom: CGFloat = -1
-    private var lastAppliedInputBarHeight: CGFloat = -1
-    private var lastAppliedBottomInset: CGFloat = -1
+    private var lastTopLogSignature: String?
+    private var headerContainer: UIView!
+    private var backButton: UIButton!
+    private var titleLabel: UILabel!
 
-    init(messages: [Message]) {
+    private let titleText: String
+
+    init(messages: [Message], titleText: String) {
         self.messages = messages
+        self.titleText = titleText
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -43,14 +66,10 @@ final class ChatFix1ViewController: UIViewController, UIScrollViewDelegate {
 
         setupScrollView()
         setupInputBar()
+        setupHeaderOverlay()
         setupConstraints()
         populateMessages()
         setupKeyboardObservers()
-
-        log("✅ MAIN VERBATIM FIX1 ACTIVE")
-        log("  inputBarVC: \(String(describing: inputBarVC))")
-        log("  parent: \(String(describing: parent))")
-        log("  navigationController: \(String(describing: navigationController))")
 
         applyFix1()
 
@@ -60,6 +79,16 @@ final class ChatFix1ViewController: UIViewController, UIScrollViewDelegate {
             log("viewDidLoad - second async scrollToBottom")
             self.scrollToBottom(animated: false)
         }
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        navigationController?.setNavigationBarHidden(true, animated: false)
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        navigationController?.setNavigationBarHidden(false, animated: false)
     }
 
     private func applyFix1() {
@@ -80,6 +109,7 @@ final class ChatFix1ViewController: UIViewController, UIScrollViewDelegate {
         log("  scrollView.contentInset: \(scrollView.contentInset)")
         log("  scrollView.contentSize: \(scrollView.contentSize)")
         log("  scrollView.bounds: \(scrollView.bounds)")
+        logTopInsets(reason: "applyFix1-after-layout")
 
         DispatchQueue.main.async {
             log("applyFix1 - first async scrollToBottom")
@@ -171,12 +201,37 @@ final class ChatFix1ViewController: UIViewController, UIScrollViewDelegate {
         inputBarVC.didMove(toParent: self)
     }
 
+    private func setupHeaderOverlay() {
+        headerContainer = UIView()
+        headerContainer.translatesAutoresizingMaskIntoConstraints = false
+        headerContainer.backgroundColor = .clear
+        view.addSubview(headerContainer)
+
+        backButton = UIButton(type: .system)
+        backButton.translatesAutoresizingMaskIntoConstraints = false
+        let chevron = UIImage(systemName: "chevron.left")
+        backButton.setImage(chevron, for: .normal)
+        backButton.tintColor = .label
+        backButton.addTarget(self, action: #selector(handleBackButton), for: .touchUpInside)
+        backButton.backgroundColor = UIColor.systemBackground.withAlphaComponent(0.7)
+        backButton.layer.cornerRadius = 18
+        backButton.clipsToBounds = true
+        headerContainer.addSubview(backButton)
+
+        titleLabel = UILabel()
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.text = titleText
+        titleLabel.font = UIFont.preferredFont(forTextStyle: .headline)
+        titleLabel.textColor = .label
+        headerContainer.addSubview(titleLabel)
+    }
+
     private func setupConstraints() {
         inputBarBottomConstraint = inputBarVC.view.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: 0)
         contentStackBottomConstraint = contentStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -8)
 
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            scrollView.topAnchor.constraint(equalTo: view.topAnchor),
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
@@ -189,37 +244,42 @@ final class ChatFix1ViewController: UIViewController, UIScrollViewDelegate {
 
             inputBarVC.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             inputBarVC.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            inputBarBottomConstraint
+            inputBarBottomConstraint,
+
+            headerContainer.topAnchor.constraint(equalTo: view.topAnchor),
+            headerContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            headerContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+
+            backButton.leadingAnchor.constraint(equalTo: headerContainer.leadingAnchor, constant: 16),
+            backButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+            backButton.widthAnchor.constraint(equalToConstant: 36),
+            backButton.heightAnchor.constraint(equalToConstant: 36),
+
+            titleLabel.centerXAnchor.constraint(equalTo: headerContainer.centerXAnchor),
+            titleLabel.centerYAnchor.constraint(equalTo: backButton.centerYAnchor),
+
+            headerContainer.bottomAnchor.constraint(equalTo: backButton.bottomAnchor, constant: 8)
         ])
     }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        log("viewDidLayoutSubviews - lastKeyboardHeight: \(lastKeyboardHeight)")
+        log("  view.window: \(String(describing: view.window))")
+        log("  inputBarVC.view.bounds: \(inputBarVC.view.bounds)")
         if lastKeyboardHeight == 0 {
             let safeBottom = view.window?.safeAreaInsets.bottom ?? 0
-            let newConstant = -safeBottom
-            if inputBarBottomConstraint.constant != newConstant {
-                log("viewDidLayoutSubviews - updating inputBarBottomConstraint to: \(newConstant)")
-                inputBarBottomConstraint.constant = newConstant
-            }
+            log("  setting inputBarBottomConstraint to: \(-safeBottom)")
+            inputBarBottomConstraint.constant = -safeBottom
             updateScrollViewInsets()
         }
+        logTopInsets(reason: "viewDidLayoutSubviews")
     }
 
     private func updateScrollViewInsets() {
         let inputBarHeight = inputBarVC.view.bounds.height
         let safeBottom = view.window?.safeAreaInsets.bottom ?? view.safeAreaInsets.bottom
         let newBottomInset = inputBarHeight + safeBottom
-
-        if inputBarHeight == lastAppliedInputBarHeight,
-           safeBottom == lastAppliedSafeBottom,
-           newBottomInset == lastAppliedBottomInset {
-            return
-        }
-
-        lastAppliedInputBarHeight = inputBarHeight
-        lastAppliedSafeBottom = safeBottom
-        lastAppliedBottomInset = newBottomInset
 
         log("updateScrollViewInsets:")
         log("  inputBarHeight: \(inputBarHeight)")
@@ -228,6 +288,28 @@ final class ChatFix1ViewController: UIViewController, UIScrollViewDelegate {
 
         scrollView.contentInset.bottom = newBottomInset
         scrollView.verticalScrollIndicatorInsets.bottom = newBottomInset
+    }
+
+    private func logTopInsets(reason: String) {
+        let safeTop = view.window?.safeAreaInsets.top ?? view.safeAreaInsets.top
+        let scrollInsetTop = scrollView.contentInset.top
+        let adjustedTop = scrollView.adjustedContentInset.top
+        let scrollFrameMinY = scrollView.frame.minY
+        let scrollBoundsHeight = scrollView.bounds.height
+        let offsetY = scrollView.contentOffset.y
+        let signature = String(
+            format: "safeTop=%.1f insetTop=%.1f adjustedTop=%.1f scrollFrameMinY=%.1f boundsH=%.1f offsetY=%.1f",
+            safeTop,
+            scrollInsetTop,
+            adjustedTop,
+            scrollFrameMinY,
+            scrollBoundsHeight,
+            offsetY
+        )
+        if signature != lastTopLogSignature {
+            log("CMUX_CHAT_TOP \(reason) \(signature)")
+            lastTopLogSignature = signature
+        }
     }
 
     private func populateMessages() {
@@ -264,6 +346,14 @@ final class ChatFix1ViewController: UIViewController, UIScrollViewDelegate {
 
     @objc private func dismissKeyboard() {
         view.endEditing(true)
+    }
+
+    @objc private func handleBackButton() {
+        if let navigationController {
+            navigationController.popViewController(animated: true)
+        } else {
+            dismiss(animated: true)
+        }
     }
 
     private func sendMessage() {

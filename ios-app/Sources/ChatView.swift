@@ -3,129 +3,32 @@ import UIKit
 
 struct ChatView: View {
     let conversation: Conversation
-    @State private var messages: [Message]
-    @State private var newMessage = ""
-    @State private var scrollToBottomTrigger = 0
-    @FocusState private var isInputFocused: Bool
 
     init(conversation: Conversation) {
         self.conversation = conversation
-        self._messages = State(initialValue: conversation.messages)
     }
 
     var body: some View {
-        ChatKeyboardContainer(scrollToBottomTrigger: $scrollToBottomTrigger) {
-            // Messages content
-            LazyVStack(spacing: 2) {
-                ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
-                    MessageBubble(
-                        message: message,
-                        showTail: shouldShowTail(at: index),
-                        showTimestamp: shouldShowTimestamp(at: index)
-                    )
-                }
-            }
-            .padding(.horizontal)
-            .padding(.top, 8)
-            .padding(.bottom, 8)
-        } inputBar: {
-            // Input bar
-            MessageInputBar(text: $newMessage, isFocused: $isInputFocused, onSend: sendMessage)
-        }
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                VStack(spacing: 0) {
-                    Text(conversation.name)
-                        .font(.headline)
-                    if conversation.isOnline {
-                        Text("online")
-                            .font(.caption)
-                            .foregroundStyle(.green)
-                    }
-                }
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                HStack(spacing: 16) {
-                    Button {} label: {
-                        Image(systemName: "video")
-                    }
-                    Button {} label: {
-                        Image(systemName: "phone")
-                    }
-                }
-            }
-        }
+        ChatFix1MainView(conversation: conversation)
     }
 
-    // Show tail only on last message in a sequence from same sender
-    func shouldShowTail(at index: Int) -> Bool {
-        if index == messages.count - 1 { return true }
-        return messages[index].isFromMe != messages[index + 1].isFromMe
-    }
-
-    // Show timestamp when there's a gap or sender changes
-    func shouldShowTimestamp(at index: Int) -> Bool {
-        if index == 0 { return true }
-        let current = messages[index]
-        let previous = messages[index - 1]
-
-        // Show if sender changed
-        if current.isFromMe != previous.isFromMe { return true }
-
-        // Show if more than 5 minutes gap
-        let gap = current.timestamp.timeIntervalSince(previous.timestamp)
-        return gap > 300
-    }
-
-    func sendMessage() {
-        guard !newMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-
-        let message = Message(
-            content: newMessage,
-            timestamp: .now,
-            isFromMe: true,
-            status: .sent
-        )
-
-        withAnimation(.easeInOut(duration: 0.2)) {
-            messages.append(message)
-        }
-        newMessage = ""
-
-        // Trigger scroll to bottom
-        scrollToBottomTrigger += 1
-
-        // Simulate reply after delay
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            let reply = Message(
-                content: generateReply(),
-                timestamp: .now,
-                isFromMe: false,
-                status: .delivered
-            )
-            withAnimation(.easeInOut(duration: 0.2)) {
-                messages.append(reply)
-            }
-            scrollToBottomTrigger += 1
-        }
-    }
-
-    func generateReply() -> String {
-        let replies = [
-            "Got it!",
-            "Makes sense, I'll look into that.",
-            "Sure thing!",
-            "Let me check and get back to you.",
-            "Sounds good!",
-            "On it!",
-            "Perfect, thanks for letting me know.",
-        ]
-        return replies.randomElement()!
-    }
 }
 
 // MARK: - Message Bubble
+
+struct ChatMessageRow: Identifiable {
+    let id: Message.ID
+    let message: Message
+    let showTail: Bool
+    let showTimestamp: Bool
+
+    init(message: Message, showTail: Bool, showTimestamp: Bool) {
+        self.id = message.id
+        self.message = message
+        self.showTail = showTail
+        self.showTimestamp = showTimestamp
+    }
+}
 
 struct MessageBubble: View {
     let message: Message

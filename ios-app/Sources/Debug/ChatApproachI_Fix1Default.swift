@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 private func log(_ message: String) {
-    NSLog("[Fix1-Picker] %@", message)
+    NSLog("[CMUX_CHAT_FIX1] PICKER %@", message)
 }
 
 /// Dropdown version defaulting to Fix 1: contentInsetAdjustmentBehavior=.never
