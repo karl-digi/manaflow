@@ -10,6 +10,28 @@ export type Health = {
     uptime: number;
 };
 
+export type SandboxHealth = {
+    status: 'healthy' | 'unhealthy' | 'degraded';
+    /**
+     * Active sandbox provider
+     */
+    provider: string;
+    providerStatus: 'connected' | 'disconnected' | 'error';
+    /**
+     * API latency in milliseconds
+     */
+    latencyMs?: number;
+    /**
+     * Number of templates available
+     */
+    templatesAvailable?: number;
+    /**
+     * Error message if status is unhealthy
+     */
+    error?: string;
+    timestamp: string;
+};
+
 export type AnonymousSignUpResponse = {
     success: boolean;
     userId?: string;
@@ -856,6 +878,22 @@ export type GetApiHealthResponses = {
 };
 
 export type GetApiHealthResponse = GetApiHealthResponses[keyof GetApiHealthResponses];
+
+export type GetApiHealthSandboxData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/health/sandbox';
+};
+
+export type GetApiHealthSandboxResponses = {
+    /**
+     * Sandbox provider health status
+     */
+    200: SandboxHealth;
+};
+
+export type GetApiHealthSandboxResponse = GetApiHealthSandboxResponses[keyof GetApiHealthSandboxResponses];
 
 export type PostApiAuthAnonymousSignUpData = {
     body?: never;

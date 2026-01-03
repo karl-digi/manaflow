@@ -204,6 +204,15 @@ interface PveContainerStatus {
   cpus?: number;
   maxmem?: number;
   maxdisk?: number;
+  template?: number;
+}
+
+/**
+ * PVE container network interface configuration
+ */
+interface PveContainerConfig {
+  net0?: string; // Format: name=eth0,bridge=vmbr0,ip=10.100.0.X/24,gw=10.100.0.1
+  [key: string]: string | number | undefined;
 }
 
 /**
@@ -230,8 +239,9 @@ export class PveLxcClient {
   /** Public domain for external access via Cloudflare Tunnel (e.g., "example.com") */
   private publicDomain: string | null;
 
-  // In-memory store for instance metadata (PVE doesn't have native metadata support)
-  private instanceMetadata: Map<number, ContainerMetadata> = new Map();
+  // In-memory store for HTTP service URLs (computed from VMID, not persisted)
+  // Note: Instance metadata (teamId, userId, etc.) is now tracked in Convex
+  // via sandboxInstanceActivity table, not stored here.
   private instanceServices: Map<number, HttpService[]> = new Map();
 
   constructor(options: {
@@ -299,6 +309,71 @@ export class PveLxcClient {
       return null;
     }
     return `https://port-${port}-vm-${vmid}.${this.publicDomain}`;
+  }
+
+  /**
+   * Get the IP address of a container from its network configuration.
+   * Parses the net0 config field (format: name=eth0,ip=10.100.0.X/24,gw=...)
+   * Returns null if IP cannot be determined.
+   */
+  private async getContainerIp(vmid: number): Promise<string | null> {
+    try {
+      const node = await this.getNode();
+      const config = await this.apiRequest<PveContainerConfig>(
+        "GET",
+        `/api2/json/nodes/${node}/lxc/${vmid}/config`
+      );
+
+      // Parse net0 configuration to extract IP
+      // Format: name=eth0,bridge=vmbr0,ip=10.100.0.123/24,gw=10.100.0.1
+      const net0 = config.net0;
+      if (!net0) return null;
+
+      const ipMatch = net0.match(/ip=([0-9.]+)/);
+      if (ipMatch?.[1]) {
+        return ipMatch[1];
+      }
+
+      return null;
+    } catch (error) {
+      console.error(`[PveLxcClient] Failed to get IP for container ${vmid}:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Build a service URL using the best available method:
+   * 1. Public URL via Cloudflare Tunnel (if configured)
+   * 2. FQDN (if DNS search domain is configured)
+   * 3. Container IP address (fallback for local dev)
+   *
+   * Returns null if no URL can be built.
+   */
+  private async buildServiceUrl(
+    port: number,
+    vmid: number,
+    hostname: string,
+    domainSuffix: string | null
+  ): Promise<string | null> {
+    // 1. Try public URL (Cloudflare Tunnel)
+    const publicUrl = this.buildPublicServiceUrl(port, vmid);
+    if (publicUrl) {
+      return publicUrl;
+    }
+
+    // 2. Try FQDN
+    if (domainSuffix) {
+      return `http://${hostname}${domainSuffix}:${port}`;
+    }
+
+    // 3. Fallback to container IP
+    const ip = await this.getContainerIp(vmid);
+    if (ip) {
+      console.log(`[PveLxcClient] Using IP fallback for container ${vmid}: ${ip}`);
+      return `http://${ip}:${port}`;
+    }
+
+    return null;
   }
 
   /**
@@ -725,8 +800,8 @@ export class PveLxcClient {
     );
     await this.waitForTask(upid);
 
-    // Clean up metadata
-    this.instanceMetadata.delete(vmid);
+    // Clean up in-memory service URLs
+    // Note: Convex sandboxInstanceActivity is updated separately via recordStopInternal
     this.instanceServices.delete(vmid);
   }
 
@@ -806,35 +881,28 @@ export class PveLxcClient {
       // Wait for container to be fully running
       await new Promise((resolve) => setTimeout(resolve, 3000));
 
-      // Store metadata
+      // Note: Metadata (teamId, userId, etc.) is tracked in Convex sandboxInstanceActivity
+      // table via sandboxes.route.ts calling recordCreate mutation
       const metadata = options.metadata || {};
-      this.instanceMetadata.set(newVmid, metadata);
 
       // Initialize services with standard cmux ports
-      // Prefer public URL (via Cloudflare Tunnel) when PVE_PUBLIC_DOMAIN is set,
-      // otherwise fall back to internal hostname+domainSuffix (FQDN)
+      // URL resolution order: public URL (Cloudflare Tunnel) > FQDN > container IP
       const services: HttpService[] = [];
-      const vscodePubUrl = this.buildPublicServiceUrl(39378, newVmid);
-      const workerPubUrl = this.buildPublicServiceUrl(39377, newVmid);
-      const vncPubUrl = this.buildPublicServiceUrl(39380, newVmid);
-      const xtermPubUrl = this.buildPublicServiceUrl(39383, newVmid);
-      if (vscodePubUrl && workerPubUrl && vncPubUrl && xtermPubUrl) {
+      const vscodeUrl = await this.buildServiceUrl(39378, newVmid, hostname, domainSuffix);
+      const workerUrl = await this.buildServiceUrl(39377, newVmid, hostname, domainSuffix);
+      const vncUrl = await this.buildServiceUrl(39380, newVmid, hostname, domainSuffix);
+      const xtermUrl = await this.buildServiceUrl(39383, newVmid, hostname, domainSuffix);
+
+      if (vscodeUrl && workerUrl && vncUrl && xtermUrl) {
         services.push(
-          { name: "vscode", port: 39378, url: vscodePubUrl },
-          { name: "worker", port: 39377, url: workerPubUrl },
-          { name: "vnc", port: 39380, url: vncPubUrl },
-          { name: "xterm", port: 39383, url: xtermPubUrl }
-        );
-      } else if (fqdn) {
-        services.push(
-          { name: "vscode", port: 39378, url: `http://${fqdn}:39378` },
-          { name: "worker", port: 39377, url: `http://${fqdn}:39377` },
-          { name: "vnc", port: 39380, url: `http://${fqdn}:39380` },
-          { name: "xterm", port: 39383, url: `http://${fqdn}:39383` }
+          { name: "vscode", port: 39378, url: vscodeUrl },
+          { name: "worker", port: 39377, url: workerUrl },
+          { name: "vnc", port: 39380, url: vncUrl },
+          { name: "xterm", port: 39383, url: xtermUrl }
         );
       } else {
         throw new Error(
-          `Cannot build service URLs for container ${newVmid}: no public domain or DNS search domain configured`
+          `Cannot build service URLs for container ${newVmid}: no public domain, DNS search domain, or container IP available`
         );
       }
       this.instanceServices.set(newVmid, services);
@@ -874,7 +942,9 @@ export class PveLxcClient {
 
       const node = await this.getNode();
       const status = await this.getContainerStatus(vmid);
-      const metadata = this.instanceMetadata.get(vmid) || {};
+      // Note: Metadata is stored in Convex sandboxInstanceActivity, not in-memory
+      // Return empty metadata here; callers can query Convex for full details
+      const metadata: ContainerMetadata = {};
       const services = this.instanceServices.get(vmid) || [];
 
       return new PveLxcInstance(
@@ -888,7 +958,9 @@ export class PveLxcClient {
     },
 
     /**
-     * List all cmux containers
+     * List all cmux containers.
+     * Filters by hostname prefix "cmux-" to identify cmux-managed containers.
+     * Note: Detailed metadata is stored in Convex sandboxInstanceActivity table.
      */
     list: async (): Promise<PveLxcInstance[]> => {
       const node = await this.getNode();
@@ -902,13 +974,16 @@ export class PveLxcClient {
 
       const instances: PveLxcInstance[] = [];
       for (const container of containers) {
-        const metadata = this.instanceMetadata.get(container.vmid);
-        // Only include containers we know about (have metadata)
-        if (metadata?.app?.startsWith("cmux")) {
-          const hostname = `cmux-${container.vmid}`;
+        // Filter by hostname prefix to identify cmux-managed containers
+        // This is more reliable than checking in-memory metadata
+        const containerHostname = container.name || "";
+        if (containerHostname.startsWith("cmux-")) {
+          const hostname = containerHostname;
           const fqdn = this.getFqdnSync(hostname, domainSuffix);
           const status = await this.getContainerStatus(container.vmid);
           const services = this.instanceServices.get(container.vmid) || [];
+          // Metadata is in Convex, return empty here
+          const metadata: ContainerMetadata = {};
 
           instances.push(
             new PveLxcInstance(

@@ -19,4 +19,12 @@ crons.daily(
   internal.sandboxInstanceMaintenance.stopOldSandboxInstances
 );
 
+// Clean up orphaned containers (exist in provider but not in Convex)
+// Runs daily at 14:00 UTC (6 AM PST / 7 AM PDT)
+crons.daily(
+  "cleanup orphaned containers",
+  { hourUTC: 14, minuteUTC: 0 },
+  internal.sandboxInstanceMaintenance.cleanupOrphanedContainers
+);
+
 export default crons;

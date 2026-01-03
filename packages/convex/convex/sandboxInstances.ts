@@ -266,6 +266,52 @@ export const recordCreateInternal = internalMutation({
 });
 
 /**
+ * Record that an instance was created.
+ * Called from sandboxes.route.ts after starting a new sandbox.
+ * Requires auth and verifies the user belongs to the specified team.
+ */
+export const recordCreate = authMutation({
+  args: {
+    instanceId: v.string(),
+    provider: v.union(
+      v.literal("morph"),
+      v.literal("pve-lxc"),
+      v.literal("docker"),
+      v.literal("daytona"),
+      v.literal("other")
+    ),
+    teamSlugOrId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    // Verify user belongs to this team and get team ID
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
+    // Get user ID from identity subject (Stack Auth user ID)
+    const userId = ctx.identity.subject;
+
+    const existing = await ctx.db
+      .query("sandboxInstanceActivity")
+      .withIndex("by_instanceId", (q) => q.eq("instanceId", args.instanceId))
+      .first();
+
+    if (existing) {
+      // Update existing record (shouldn't normally happen)
+      await ctx.db.patch(existing._id, {
+        teamId,
+        userId,
+      });
+    } else {
+      await ctx.db.insert("sandboxInstanceActivity", {
+        instanceId: args.instanceId,
+        provider: args.provider,
+        teamId,
+        userId,
+        createdAt: Date.now(),
+      });
+    }
+  },
+});
+
+/**
  * Bulk query activity records by instance IDs (internal, for maintenance).
  */
 export const getActivitiesByInstanceIdsInternal = internalQuery({

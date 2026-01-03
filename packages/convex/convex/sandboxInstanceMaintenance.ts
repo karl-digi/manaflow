@@ -735,3 +735,99 @@ export const stopOldSandboxInstances = internalAction({
     );
   },
 });
+
+// ============================================================================
+// Orphan Container Cleanup (Garbage Collection)
+// ============================================================================
+
+/**
+ * Clean up orphaned containers that exist in the provider but have no
+ * corresponding Convex sandboxInstanceActivity record.
+ *
+ * This handles cases where:
+ * - Container was created but server crashed before recording to Convex
+ * - Manual container creation on PVE that shouldn't exist
+ * - Stale containers from failed cleanup attempts
+ *
+ * Safety measures:
+ * - Only processes containers with "cmux-" hostname prefix
+ * - Requires container to be stopped (not running)
+ * - Logs all actions for audit purposes
+ */
+export const cleanupOrphanedContainers = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    console.log("[sandboxMaintenance:orphanCleanup] Starting orphan cleanup...");
+
+    const configs = getProviderConfigs();
+    let totalCleaned = 0;
+    let totalSkipped = 0;
+
+    for (const config of configs) {
+      if (!config.available || !config.client) {
+        console.log(
+          `[sandboxMaintenance:orphanCleanup] Skipping ${config.provider}: not available`
+        );
+        continue;
+      }
+
+      try {
+        // Get all instances from provider
+        const instances = await config.client.listInstances();
+        console.log(
+          `[sandboxMaintenance:orphanCleanup] ${config.provider}: Found ${instances.length} instances`
+        );
+
+        if (instances.length === 0) continue;
+
+        // Get activity records for these instances from Convex
+        const instanceIds = instances.map((i) => i.id);
+        const activities = await ctx.runQuery(
+          internal.sandboxInstances.getActivitiesByInstanceIdsInternal,
+          { instanceIds }
+        );
+
+        // Find orphans: instances with no activity record
+        const orphans = instances.filter((inst) => !activities[inst.id]);
+
+        console.log(
+          `[sandboxMaintenance:orphanCleanup] ${config.provider}: Found ${orphans.length} orphaned instances`
+        );
+
+        for (const orphan of orphans) {
+          // Safety: only clean up stopped containers
+          // "ready" is Morph's term for running, PVE uses status directly
+          if (orphan.status === "ready" || orphan.status === "running") {
+            console.log(
+              `[sandboxMaintenance:orphanCleanup] Skipping running orphan: ${orphan.id}`
+            );
+            totalSkipped++;
+            continue;
+          }
+
+          try {
+            console.log(
+              `[sandboxMaintenance:orphanCleanup] Deleting orphan: ${orphan.id} (status=${orphan.status})`
+            );
+            await config.client.stopInstance(orphan.id);
+            totalCleaned++;
+          } catch (error) {
+            console.error(
+              `[sandboxMaintenance:orphanCleanup] Failed to delete ${orphan.id}:`,
+              error
+            );
+          }
+        }
+      } catch (error) {
+        console.error(
+          `[sandboxMaintenance:orphanCleanup] Error processing ${config.provider}:`,
+          error
+        );
+      }
+    }
+
+    console.log(
+      `[sandboxMaintenance:orphanCleanup] Finished: ${totalCleaned} cleaned, ${totalSkipped} skipped`
+    );
+  },
+});

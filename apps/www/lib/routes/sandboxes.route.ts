@@ -22,6 +22,7 @@ import {
   wrapMorphInstance,
   wrapPveLxcInstance,
 } from "@/lib/utils/sandbox-instance";
+import { sandboxCreationRateLimit } from "@/lib/middleware/rate-limit";
 import { loadEnvironmentEnvVars } from "./sandboxes/environment";
 import {
   configureGithubAccess,
@@ -240,6 +241,13 @@ async function verifyInstanceOwnership(
 }
 
 export const sandboxesRouter = new OpenAPIHono();
+
+// Apply rate limiting to sandbox creation endpoint
+// Limits to 10 sandboxes per hour per authenticated user
+sandboxesRouter.use("/sandboxes/start", sandboxCreationRateLimit({
+  limit: 10,
+  windowMs: 60 * 60 * 1000, // 1 hour
+}));
 
 const StartSandboxBody = z
   .object({
@@ -484,6 +492,23 @@ sandboxesRouter.openapi(
         void (async () => {
           await instance.setWakeOn(true, true);
         })();
+      }
+
+      // Record sandbox creation in Convex for activity tracking
+      // This enables the maintenance cron to properly track and garbage collect instances
+      try {
+        await convex.mutation(api.sandboxInstances.recordCreate, {
+          instanceId: instance.id,
+          provider: provider === "pve-lxc" ? "pve-lxc" : "morph",
+          teamSlugOrId: body.teamSlugOrId,
+        });
+        console.log(`[sandboxes.start] Recorded instance creation for ${instance.id}`);
+      } catch (error) {
+        // Non-fatal: instance is created, but activity tracking may not work
+        console.error(
+          "[sandboxes.start] Failed to record instance creation (non-fatal):",
+          error,
+        );
       }
 
       const exposed = instance.networking.httpServices;
