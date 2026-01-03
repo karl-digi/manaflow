@@ -842,6 +842,9 @@ class PveLxcClient:
                         continue
                     try:
                         event = json.loads(line_str)
+                        if not isinstance(event, dict):
+                            stderr_lines.append(f"Invalid JSON event (not a dict): {line_str}")
+                            continue
                         event_type = event.get("type")
                         if event_type == "stdout":
                             stdout_lines.append(event.get("data", ""))
@@ -1964,7 +1967,17 @@ async def task_ensure_docker(ctx: PveTaskContext) -> None:
           > /etc/apt/sources.list.d/docker.list
 
         echo "[docker] installing engine and CLI plugins"
-        DEBIAN_FRONTEND=noninteractive apt-get update
+        # Retry apt-get update up to 3 times
+        for i in 1 2 3; do
+          DEBIAN_FRONTEND=noninteractive apt-get update && break || {
+            if [ $i -eq 3 ]; then
+              echo "apt-get update failed after 3 attempts" >&2
+              exit 1
+            fi
+            echo "apt-get update failed, retrying in 5s..." >&2
+            sleep 5
+          }
+        done
         DEBIAN_FRONTEND=noninteractive apt-get install -y \
           docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
@@ -2087,7 +2100,7 @@ async def task_install_bun(ctx: PveTaskContext) -> None:
 
     # Step 2: Poll for download completion
     ctx.console.info("[install-bun] Waiting for background download to complete...")
-    max_wait = 300  # 5 minutes max
+    max_wait = 600  # 10 minutes max
     poll_interval = 10
     elapsed = 0
 
@@ -2552,6 +2565,10 @@ async def task_install_ide_extensions(ctx: PveTaskContext) -> None:
         set -eux
         export HOME=/root
         server_root="{server_root}"
+        
+        echo "DEBUG: Checking content of {server_root}..."
+        ls -R "{server_root}" || echo "Failed to list {server_root}"
+        
         bin_path="{bin_path}"
         if [ ! -x "${{bin_path}}" ]; then
           echo "IDE binary not found at ${{bin_path}}" >&2
