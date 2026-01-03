@@ -10,6 +10,30 @@ This PR adds Proxmox VE (PVE) LXC containers as an alternative sandbox provider 
 
 **Update (2026-01-02):** All scripts verified and tested. URL pattern fixes applied to all provisioning and test scripts.
 
+**Update (2026-01-03):** Comprehensive architecture review completed. Implementation plans added for future improvements.
+
+---
+
+## Review Verdict
+
+| Category | Rating | Notes |
+|----------|--------|-------|
+| **Architecture** | 5/5 | Clean provider abstraction, extensible design |
+| **Code Style** | 5/5 | Follows all CLAUDE.md conventions |
+| **Resilience** | 4/5 | Good extension points, needs metadata persistence |
+| **Testing** | 4/5 | Good integration tests, could add unit tests |
+| **Documentation** | 5/5 | Comprehensive review doc and READMEs |
+
+**Merge Recommendation:** Approve with minor changes - The PR demonstrates good architectural alignment with upstream cmux while enabling self-hosted deployment via PVE LXC. The provider abstraction is well-designed for future extensibility.
+
+### Core Design Principle Preserved
+
+The implementation maintains the core cmux principle:
+
+> **cmux spawns an isolated openvscode instance via Docker or a configurable sandbox provider**
+
+Each PVE LXC container runs an isolated openvscode instance with embedded `apps/server`, exactly mirroring the Morph Cloud architecture.
+
 ---
 
 ## URL Pattern (Morph-Consistent)
@@ -247,58 +271,43 @@ This PR adds Proxmox VE (PVE) LXC containers as an alternative sandbox provider 
 
 #### High Priority
 
-1. **No Instance Metadata Persistence**
-   - `PveLxcClient` uses in-memory `Map<vmid, metadata>` (line 234)
-   - Lost on server restart
-   - **Fix:** Store metadata in Convex or PVE description field
-
-2. **Missing Container Cleanup/GC**
+1. **Missing Container Cleanup/GC**
    - No TTL enforcement for containers
    - No automatic cleanup of orphaned containers
    - **Fix:** Add `pruneContainers()` with TTL check + Convex reconciliation
 
-3. **CRIU Hibernation Not Integrated**
-   - `pve-criu.sh` exists but not used in `PveLxcClient`
-   - `pause()` just calls `stop()` (no RAM state preservation)
-   - **Impact:** Feature parity with Morph hibernation incomplete
-
-4. **Error Recovery for Failed Clones**
-   - If `linkedCloneFromTemplate` succeeds but `startContainer` fails, container left in stopped state
+2. **Error Recovery for Failed Clones**
+   - If clone succeeds but `startContainer` fails, container left in stopped state
    - **Fix:** Add rollback logic to delete failed containers
 
 #### Medium Priority
 
-5. **No Health Check Endpoint**
-   - Can't verify PVE connectivity from frontend
+3. **No Health Check Endpoint**
+   - Can't verify sandbox provider connectivity from frontend
    - **Fix:** Add `GET /api/health/sandbox` endpoint
 
-6. **Missing Rate Limiting**
+4. **Missing Rate Limiting**
    - No protection against rapid container creation
    - **Fix:** Add rate limiting per team/user
 
-7. **Service URL Fallback Chain Incomplete**
+5. **Service URL Fallback Chain Incomplete**
    - Falls back from public domain to FQDN, but no IP fallback
    - If DNS not configured, errors out
    - **Fix:** Add container IP fallback for local dev
 
-8. **Frontend Terminal Not PVE-Aware**
-   - `toMorphXtermBaseUrl()` only handles Morph URLs
-   - **Fix:** Add `toPveLxcXtermBaseUrl()` or generalize URL building
-
 #### Low Priority
 
-9. **PVE VM Provider Stub**
+6. **PVE VM Provider Stub**
    - `pve-vm` type declared but not implemented
-   - `SANDBOX_PROVIDER_CAPABILITIES["pve-vm"]` defined
    - **Plan:** Defer to future PR
 
-10. **No Snapshot Versioning UI**
-    - API returns versions but UI only uses latest
-    - **Future:** Allow selecting specific snapshot versions
+7. **No Snapshot Versioning UI**
+   - API returns versions but UI only uses latest
+   - **Future:** Allow selecting specific snapshot versions
 
-11. **Tunnel Setup Not Automated**
-    - `pve-tunnel-setup.sh` requires manual execution on PVE host
-    - **Future:** Consider Ansible/Terraform automation
+8. **Tunnel Setup Not Automated**
+   - `pve-tunnel-setup.sh` requires manual execution on PVE host
+   - **Future:** Consider Ansible/Terraform automation
 
 ---
 
@@ -377,11 +386,11 @@ uv run --env-file .env ./scripts/snapshot-pvelxc.py --template-vmid 9000
 
 ## Recommendations for Next Steps
 
-1. **Add metadata persistence** - Highest priority, prevents data loss
+1. **Clone failure rollback** - Quick fix, prevents orphaned containers
 2. **Implement container GC** - Prevents resource leaks
 3. **Add health check endpoint** - Improves observability
-4. **Generalize terminal URL builder** - Fixes frontend for PVE
-5. **Write missing unit tests** - Improves reliability
+4. **Add rate limiting** - Prevents abuse
+5. **Write unit tests for snapshot parsing** - Improves reliability
 
 ---
 
@@ -488,5 +497,212 @@ uv run --env-file .env ./scripts/test-pve-gitdiff.py --vmid 200
 
 # Template verification
 ./scripts/pve/pve-test-template.sh 9000
+```
+
+---
+
+## Provider Abstraction Architecture
+
+### Interface Design (`sandbox-instance.ts`)
+
+The `SandboxInstance` interface provides a unified API across all providers:
+
+```typescript
+export interface SandboxInstance {
+  id: string;
+  status: string;
+  metadata: Record<string, string | undefined>;
+  networking: SandboxNetworking;
+
+  exec(command: string): Promise<ExecResult>;
+  stop(): Promise<void>;
+  pause(): Promise<void>;
+  resume(): Promise<void>;
+  exposeHttpService(name: string, port: number): Promise<void>;
+  hideHttpService(name: string): Promise<void>;
+  setWakeOn(http: boolean, ssh: boolean): Promise<void>;
+}
+```
+
+### Wrapper Pattern
+
+Provider-specific instances are wrapped to conform to the unified interface:
+
+```typescript
+// Morph Cloud
+const instance = wrapMorphInstance(morphInstance);
+
+// PVE LXC
+const instance = wrapPveLxcInstance(pveLxcInstance);
+
+// Future: AWS EC2, GCP VMs, etc.
+const instance = wrapAwsEc2Instance(ec2Instance);
+```
+
+### Unified Snapshot ID Format
+
+```
+Format: {provider}_{presetId}_v{version}
+
+Examples:
+  morph_4vcpu_16gb_48gb_v1      -> Morph Cloud snapshot
+  pvelxc_4vcpu_6gb_32gb_v1      -> PVE LXC template
+  pvevm_4vcpu_6gb_32gb_v1       -> PVE VM template (future)
+```
+
+### Adding a New Provider
+
+To add a new sandbox provider (e.g., AWS EC2):
+
+1. **Add provider type** (`packages/shared/src/sandbox-presets.ts`):
+   ```typescript
+   export type SandboxProviderType = "morph" | "pve-lxc" | "pve-vm" | "aws-ec2";
+   ```
+
+2. **Define capabilities**:
+   ```typescript
+   SANDBOX_PROVIDER_CAPABILITIES["aws-ec2"] = {
+     supportsHibernate: true,
+     supportsSnapshots: true,
+     supportsResize: true,
+     supportsNestedVirt: false,
+     supportsGpu: true,
+   };
+   ```
+
+3. **Create client** (`apps/www/lib/utils/aws-ec2-client.ts`)
+
+4. **Add wrapper function** (`sandbox-instance.ts`):
+   ```typescript
+   export function wrapAwsEc2Instance(instance: Ec2Instance): SandboxInstance
+   ```
+
+5. **Update snapshot resolution** (`sandbox-presets.ts`):
+   ```typescript
+   case "aws-ec2": {
+     // Return AMI ID
+   }
+   ```
+
+6. **Update provider detection** (`sandbox-provider.ts`):
+   ```typescript
+   if (env.AWS_ACCESS_KEY_ID && env.AWS_SECRET_ACCESS_KEY) {
+     return { provider: "aws-ec2", ... };
+   }
+   ```
+
+---
+
+## Implementation Plans (Future Work)
+
+These plans focus on **cmux-specific improvements** that apply regardless of underlying virtualization technology.
+
+### Plan 1: Container Garbage Collection (HIGH PRIORITY)
+
+**Problem:** No TTL enforcement or cleanup of orphaned sandboxes.
+
+**Solution:** Extend existing `sandboxInstanceMaintenance.ts` cron to handle PVE containers.
+
+**Files to modify:**
+- `packages/convex/convex/sandboxInstanceMaintenance.ts` - Add PVE cleanup logic
+- `packages/convex/convex/crons.ts` - Ensure cron covers both providers
+- `apps/www/lib/utils/pve-lxc-client.ts` - Add `pruneContainers()` method
+
+**Estimated effort:** 2-3 hours
+
+---
+
+### Plan 2: Clone Failure Rollback (HIGH PRIORITY)
+
+**Problem:** If container clone succeeds but start fails, orphaned container remains.
+
+**Location:** `apps/www/lib/utils/pve-lxc-client.ts` - `instances.start()`
+
+**Solution:** Wrap `startContainer()` in try/catch and delete container on failure.
+
+**Estimated effort:** 30 minutes
+
+---
+
+### Plan 3: Health Check Endpoint (MEDIUM PRIORITY)
+
+**Problem:** No way to verify sandbox provider connectivity from frontend.
+
+**Solution:** Add `GET /api/health/sandbox` endpoint returning provider status and latency.
+
+**File:** `apps/www/lib/routes/health.route.ts`
+
+**Estimated effort:** 1-2 hours
+
+---
+
+### Plan 4: Rate Limiting (MEDIUM PRIORITY)
+
+**Problem:** No protection against rapid sandbox creation.
+
+**Solution:** Add per-team rate limits using `hono-rate-limiter` middleware.
+
+**File:** `apps/www/lib/middleware/rate-limit.ts`
+
+**Estimated effort:** 1-2 hours
+
+---
+
+### Plan 5: Service URL IP Fallback (LOW PRIORITY)
+
+**Problem:** Falls back from public domain to FQDN, but no IP fallback for local dev.
+
+**Location:** `apps/www/lib/utils/pve-lxc-client.ts` - `buildServiceUrl()`
+
+**Solution:** Add container IP as third fallback option for local development without DNS.
+
+**Estimated effort:** 1 hour
+
+---
+
+### Plan 6: Unit Tests for Snapshot Parsing (LOW PRIORITY)
+
+**Problem:** Edge cases in `parseSnapshotId()` not covered by tests.
+
+**File:** `packages/shared/src/sandbox-presets.test.ts`
+
+**Test cases needed:**
+- Parse morph/pvelxc/pvevm snapshot IDs
+- Handle backwards-compatible formats
+- Return null for invalid formats
+
+**Estimated effort:** 1 hour
+
+---
+
+## Implementation Priority Matrix
+
+| Priority | Plan | Effort | Impact |
+|----------|------|--------|--------|
+| **P0** | Plan 2: Clone Failure Rollback | 30min | Prevents orphaned containers |
+| **P1** | Plan 1: Container GC | 2-3h | Prevents resource leaks |
+| **P2** | Plan 3: Health Check Endpoint | 1-2h | Improves observability |
+| **P2** | Plan 4: Rate Limiting | 1-2h | Prevents abuse |
+| **P3** | Plan 5: IP Fallback | 1h | Better local dev experience |
+| **P3** | Plan 6: Unit Tests | 1h | Improved reliability |
+
+---
+
+## Quick Reference: Beads Issues for Follow-up
+
+```bash
+# P0 - Must fix
+bd create --title="PVE: Add clone failure rollback" --type=bug --priority=0
+
+# P1 - Should fix soon
+bd create --title="PVE: Add container garbage collection" --type=task --priority=1
+
+# P2 - Nice to have
+bd create --title="Sandbox: Add health check endpoint" --type=task --priority=2
+bd create --title="Sandbox: Add rate limiting" --type=task --priority=2
+
+# P3 - Future work
+bd create --title="PVE: Add IP fallback for service URLs" --type=task --priority=3
+bd create --title="Shared: Add unit tests for snapshot parsing" --type=task --priority=3
 ```
 
