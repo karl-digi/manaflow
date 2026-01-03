@@ -399,7 +399,9 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
 
     private func updateTopFadeHeightIfNeeded() {
         let safeTop = view.window?.safeAreaInsets.top ?? view.safeAreaInsets.top
-        let targetHeight = safeTop + 16
+        // Extend gradient past the header (safeTop + 8 + 36 + 8 = header bottom)
+        // Add extra 24pt for smooth fade into content area
+        let targetHeight = safeTop + 52 + 24
         if abs(topFadeHeightConstraint.constant - targetHeight) > 0.5 {
             topFadeHeightConstraint.constant = targetHeight
             topFadeView.updateColors()
@@ -595,10 +597,15 @@ private final class TopFadeView: UIView {
 
     func updateColors() {
         let base = UIColor.systemBackground
-        let maxAlpha: CGFloat = 0.6
+        // Gradient from solid at top to transparent at bottom
+        // Use multiple stops with easing for a smooth falloff (no hard line)
         gradientLayer.colors = [
-            base.withAlphaComponent(0.0).cgColor,
-            base.withAlphaComponent(maxAlpha).cgColor
+            base.withAlphaComponent(1.0).cgColor,
+            base.withAlphaComponent(0.8).cgColor,
+            base.withAlphaComponent(0.4).cgColor,
+            base.withAlphaComponent(0.0).cgColor
         ]
+        // Ease-out curve: fast initial fade, then gradual
+        gradientLayer.locations = [0.0, 0.3, 0.6, 1.0]
     }
 }
