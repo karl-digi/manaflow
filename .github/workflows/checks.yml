@@ -34,7 +34,6 @@ jobs:
 
       - name: Checks and tests (parallel on one runner)
         shell: bash
-        timeout-minutes: 5
         env:
           GITHUB_TOKEN: ${{ github.token }}
           STACK_SECRET_SERVER_KEY: ${{ secrets.STACK_SECRET_SERVER_KEY }}
@@ -53,9 +52,11 @@ jobs:
           STACK_TEST_USER_ID: ${{ secrets.STACK_TEST_USER_ID }}
         run: |
           set -euo pipefail
-          echo "::group::Running checks (bun run check)"
-          bun run check
-          echo "::endgroup::"
-          echo "::group::Running cmux package tests"
-          (cd packages/cmux && bun run test)
-          echo "::endgroup::"
+          bun run check & pid1=$!
+          (cd packages/cmux && bun run test) & pid2=$!
+          wait $pid1; s1=$?
+          wait $pid2; s2=$?
+          if [ $s1 -ne 0 ] || [ $s2 -ne 0 ]; then
+            echo "At least one task failed"
+            exit 1
+          fi

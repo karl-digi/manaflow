@@ -57,3 +57,6 @@ try {
 
 log(`[${(performance.now() - startTime).toFixed(2)}ms] watch-openapi complete`);
 console.log("[watch-openapi] initial client generation complete");
+
+// Exit explicitly - the Hono app import keeps the event loop alive
+process.exit(0);

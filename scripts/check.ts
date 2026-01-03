@@ -6,14 +6,46 @@ const quiet = !!process.env.CLAUDECODE;
 
 // Run precheck (generate-openapi-client) - failures are non-fatal
 async function runPrecheck(repoRoot: string): Promise<void> {
+  const TIMEOUT_MS = 60_000; // 60 second timeout
+
   return new Promise((resolve) => {
     const child = spawn("bun", ["run", "--silent", "generate-openapi-client"], {
       cwd: repoRoot,
       shell: true,
       stdio: quiet ? "ignore" : "inherit",
     });
-    child.on("close", () => resolve());
-    child.on("error", () => resolve());
+
+    let resolved = false;
+    const finish = () => {
+      if (!resolved) {
+        resolved = true;
+        resolve();
+      }
+    };
+
+    // Timeout fallback in case close/exit events don't fire
+    const timeout = setTimeout(() => {
+      console.warn("[precheck] Timed out after 60s, continuing anyway");
+      try {
+        child.kill();
+      } catch {
+        // Ignore kill errors
+      }
+      finish();
+    }, TIMEOUT_MS);
+
+    child.on("close", () => {
+      clearTimeout(timeout);
+      finish();
+    });
+    child.on("exit", () => {
+      clearTimeout(timeout);
+      finish();
+    });
+    child.on("error", () => {
+      clearTimeout(timeout);
+      finish();
+    });
   });
 }
 
