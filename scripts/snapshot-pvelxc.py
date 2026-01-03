@@ -361,6 +361,10 @@ class PveLxcClient:
         )
         return result.get("data", "")
 
+    async def ashutdown_lxc(self, vmid: int, node: str | None = None) -> str:
+        """Async shutdown LXC."""
+        return await asyncio.to_thread(self.shutdown_lxc, vmid, node)
+
     def delete_lxc(self, vmid: int, node: str | None = None) -> str:
         """Delete LXC container. Returns task UPID."""
         node = node or self.get_node()
@@ -408,6 +412,40 @@ class PveLxcClient:
         await asyncio.to_thread(
             self.set_lxc_config, vmid, cores=cores, memory=memory, node=node
         )
+
+    def resize_lxc_disk(
+        self,
+        vmid: int,
+        disk: str,
+        size: str,
+        node: str | None = None,
+    ) -> str:
+        """Resize LXC container disk. Returns task UPID."""
+        node = node or self.get_node()
+        data = {
+            "disk": disk,
+            "size": size,
+        }
+        result = self._request(
+            "PUT",
+            f"/api2/json/nodes/{node}/lxc/{vmid}/resize",
+            data,
+        )
+        return result.get("data", "")
+
+    async def aresize_lxc_disk(
+        self,
+        vmid: int,
+        disk: str,
+        size: str,
+        node: str | None = None,
+    ) -> None:
+        """Async resize LXC disk and wait for completion."""
+        upid = await asyncio.to_thread(
+            self.resize_lxc_disk, vmid, disk, size, node=node
+        )
+        if upid:
+            await self.await_task(upid, node=node)
 
     def create_snapshot(
         self,
@@ -2229,10 +2267,17 @@ async def task_install_cmux_code(ctx: PveTaskContext) -> None:
         esac
         mkdir -p /app/cmux-code
         url="https://github.com/manaflow-ai/vscode-1/releases/download/v${CODE_RELEASE}/vscode-server-linux-${ARCH}-web.tar.gz"
+        echo "Downloading ${url}..."
         curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/cmux-code.tar.gz "${url}" || \
           curl -fSL4 --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/cmux-code.tar.gz "${url}"
+        
+        ls -lh /tmp/cmux-code.tar.gz
+        
         tar xf /tmp/cmux-code.tar.gz -C /app/cmux-code --strip-components=1
         rm -f /tmp/cmux-code.tar.gz
+
+        echo "Contents of /app/cmux-code:"
+        ls -R /app/cmux-code
 
         mkdir -p /root/.vscode-server-oss/data/User
         cat > /root/.vscode-server-oss/data/User/settings.json << 'EOF'
@@ -3576,9 +3621,9 @@ async def update_existing_template(
         for line in summary:
             console.always(line)
 
-    # Stop container before converting to template
-    console.info(f"Stopping container {work_vmid} for template conversion...")
-    upid = await client.astop_lxc(work_vmid, node)
+    # Gracefully shutdown container before converting to template
+    console.info(f"Shutting down container {work_vmid} for template conversion...")
+    upid = await client.ashutdown_lxc(work_vmid, node)
     await client.await_task(upid, timeout=120, node=node)
 
     # Convert to template
@@ -3625,10 +3670,15 @@ async def provision_and_create_template(
     repo_root: Path,
     created_containers: list[int],
     show_dependency_graph: bool,
+    source_vmid: int | None = None,
+    run_tasks: bool = True,
 ) -> TemplateRunResult:
     """Provision a container for a preset and convert to template."""
     console.always(f"\n=== Provisioning preset {preset.preset_id} ({preset.label}) ===")
     timings = TimingsCollector()
+
+    # Determine source VMID: use override if provided, else fall back to args
+    src_vmid = source_vmid if source_vmid is not None else args.template_vmid
 
     node = await client.aget_node()
     # Find next available VMID starting from CLONE_BASE_VMID (9000, 9001, etc.)
@@ -3637,27 +3687,27 @@ async def provision_and_create_template(
 
     # Try linked clone first (faster), fall back to full clone if it fails
     try:
-        console.info(f"Linked-cloning template {args.template_vmid} to new container {new_vmid}...")
+        console.info(f"Linked-cloning template {src_vmid} to new container {new_vmid}...")
         upid = await client.aclone_lxc(
-            args.template_vmid,
+            src_vmid,
             new_vmid,
             hostname=hostname,
             full=False,  # Linked clone (fast)
             node=node,
         )
         await client.await_task(upid, timeout=300, node=node)
-        console.info(f"Linked clone complete: {args.template_vmid} -> {new_vmid}")
+        console.info(f"Linked clone complete: {src_vmid} -> {new_vmid}")
     except Exception as e:
         console.always(f"Linked clone failed ({e}), falling back to full clone...")
         upid = await client.aclone_lxc(
-            args.template_vmid,
+            src_vmid,
             new_vmid,
             hostname=hostname,
             full=True,  # Full clone (fallback)
             node=node,
         )
         await client.await_task(upid, timeout=600, node=node)
-        console.info(f"Full clone complete: {args.template_vmid} -> {new_vmid}")
+        console.info(f"Full clone complete: {src_vmid} -> {new_vmid}")
 
     created_containers.append(new_vmid)
 
@@ -3670,47 +3720,81 @@ async def provision_and_create_template(
         node=node,
     )
 
-    # Start container
-    console.info(f"Starting container {new_vmid}...")
-    upid = await client.astart_lxc(new_vmid, node)
-    await client.await_task(upid, timeout=120, node=node)
+    # Resize disk if needed
+    # Get current disk size first to compare (optimization)
+    config = await client.aget_lxc_config(new_vmid, node)
+    rootfs = config.get("rootfs", "")
+    current_size_gb = 0
+    if "size=" in rootfs:
+        try:
+            # format: volume=local-lvm:vm-9000-disk-0,size=8G
+            size_part = [p for p in rootfs.split(",") if p.startswith("size=")][0]
+            size_str = size_part.split("=")[1]
+            if size_str.endswith("G"):
+                current_size_gb = float(size_str[:-1])
+            elif size_str.endswith("M"):
+                current_size_gb = float(size_str[:-1]) / 1024
+        except Exception:
+            pass
 
-    # Wait for container to be ready
-    # Base templates created with pve-lxc-setup.sh have cmux-execd installed,
-    # so we wait for HTTP exec to be ready before running provisioning tasks
-    await wait_for_container_ready(new_vmid, client, console=console, require_http_exec=True)
+    target_size_gb = preset.disk_size_mib / 1024
+    if target_size_gb > current_size_gb:
+        console.info(f"Resizing disk for container {new_vmid} to {target_size_gb}GB (current: {current_size_gb}GB)...")
+        # Ensure container is stopped/unmounted if needed (PVE handles this for live resize usually,
+        # but for initial setup safety we do it before start)
+        # Note: resize requires volume to be available. PVE handles online resize too.
+        # Since we just cloned it and haven't started it yet, it's safe.
+        await client.aresize_lxc_disk(
+            new_vmid,
+            "rootfs",
+            f"{int(target_size_gb)}G",
+            node=node,
+        )
+    else:
+        console.info(f"Disk size {current_size_gb}GB is sufficient for target {target_size_gb}GB")
 
-    # Create task context
-    ctx = PveTaskContext(
-        vmid=new_vmid,
-        client=client,
-        repo_root=repo_root,
-        remote_repo_root="/cmux",
-        remote_repo_tar="/tmp/cmux-repo.tar",
-        console=console,
-        timings=timings,
-    )
+    if run_tasks:
+        # Start container
+        console.info(f"Starting container {new_vmid}...")
+        upid = await client.astart_lxc(new_vmid, node)
+        await client.await_task(upid, timeout=120, node=node)
 
-    # Run task graph
-    await run_pve_task_graph(registry, ctx)
+        # Wait for container to be ready
+        # Base templates created with pve-lxc-setup.sh have cmux-execd installed,
+        # so we wait for HTTP exec to be ready before running provisioning tasks
+        await wait_for_container_ready(new_vmid, client, console=console, require_http_exec=True)
 
-    if show_dependency_graph:
-        graph = format_dependency_graph(registry)
-        if graph:
-            console.always("\nDependency Graph")
-            for line in graph.splitlines():
+        # Create task context
+        ctx = PveTaskContext(
+            vmid=new_vmid,
+            client=client,
+            repo_root=repo_root,
+            remote_repo_root="/cmux",
+            remote_repo_tar="/tmp/cmux-repo.tar",
+            console=console,
+            timings=timings,
+        )
+
+        # Run task graph
+        await run_pve_task_graph(registry, ctx)
+
+        if show_dependency_graph:
+            graph = format_dependency_graph(registry)
+            if graph:
+                console.always("\nDependency Graph")
+                for line in graph.splitlines():
+                    console.always(line)
+
+        summary = timings.summary()
+        if summary:
+            console.always("\nTiming Summary")
+            for line in summary:
                 console.always(line)
 
-    summary = timings.summary()
-    if summary:
-        console.always("\nTiming Summary")
-        for line in summary:
-            console.always(line)
-
-    # Stop container before converting to template
-    console.info(f"Stopping container {new_vmid} for template conversion...")
-    upid = await client.astop_lxc(new_vmid, node)
-    await client.await_task(upid, timeout=120, node=node)
+        # Gracefully shutdown container before converting to template
+        console.info(f"Shutting down container {new_vmid} for template conversion...")
+        upid = await client.ashutdown_lxc(new_vmid, node)
+        await client.await_task(upid, timeout=120, node=node)
 
     # Convert to template (this enables fast linked-clone)
     console.info(f"Converting container {new_vmid} to template...")
@@ -3831,18 +3915,44 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
         console.info("Starting SSH ControlMaster for connection multiplexing...")
         client.start_ssh_control_master()
 
+    last_template_vmid: int | None = None
+    last_template_disk_mib: int = 0
+
     try:
         for index, preset_plan in enumerate(preset_plans):
+            # Default to using base template and running tasks
+            source_vmid = args.template_vmid
+            run_tasks = True
+
+            # Optimization: Use previous template if available and disk requirement is met.
+            # This allows creating "boosted" templates by cloning "standard" and just resizing resources,
+            # avoiding a full rebuild of dependencies.
+            # We only chain if the new disk size is >= previous disk size (can't shrink easily).
+            if last_template_vmid and preset_plan.disk_size_mib >= last_template_disk_mib:
+                source_vmid = last_template_vmid
+                run_tasks = False
+                console.info(
+                    f"Optimization: Building {preset_plan.label} from previous template {last_template_vmid} "
+                    f"(skips task execution)"
+                )
+
             result = await provision_and_create_template(
                 args,
                 preset=preset_plan,
+                source_vmid=source_vmid,
+                run_tasks=run_tasks,
                 console=console,
                 client=client,
                 repo_root=repo_root,
                 created_containers=created_containers,
-                show_dependency_graph=(index == 0),
+                show_dependency_graph=(index == 0 and run_tasks),
             )
             results.append(result)
+
+            # Update last template for chaining
+            last_template_vmid = result.template_vmid
+            last_template_disk_mib = preset_plan.disk_size_mib
+
     except Exception as e:
         console.always(f"\nERROR: Provisioning failed: {e}")
         traceback.print_exc()
@@ -3852,7 +3962,11 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
             console.always("\nCleaning up created containers...")
             for vmid in created_containers:
                 try:
-                    client.stop_lxc(vmid)
+                    # Gracefully shutdown before deletion
+                    client.shutdown_lxc(vmid)
+                    # Give it a moment to shutdown
+                    import time
+                    time.sleep(2)
                     client.delete_lxc(vmid)
                     console.always(f"  Deleted container {vmid}")
                 except Exception:
