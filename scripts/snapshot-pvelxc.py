@@ -2150,7 +2150,7 @@ async def task_install_bun(ctx: PveTaskContext) -> None:
         bunx --version
         """
     )
-    await ctx.run("install-bun-binary", cmd, timeout=60)
+    await ctx.run("install-bun-binary", cmd, timeout=600)
 
 
 @registry.task(
