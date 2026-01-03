@@ -144,8 +144,9 @@ private final class Fix1ViewController: UIViewController, UIScrollViewDelegate {
         let currentOffset = scrollView.contentOffset
 
         var targetOffsetY = currentOffset.y + delta
-        let minY: CGFloat = 0
-        let maxY = max(0, scrollView.contentSize.height - scrollView.bounds.height + newBottomInset)
+        let adjustedTop = scrollView.adjustedContentInset.top
+        let minY = -adjustedTop
+        let maxY = max(minY, scrollView.contentSize.height - scrollView.bounds.height + newBottomInset)
         targetOffsetY = min(max(targetOffsetY, minY), maxY)
 
         keyboardAnimator = UIViewPropertyAnimator(duration: animationDuration, curve: curve) { [self] in
@@ -248,6 +249,9 @@ private final class Fix1ViewController: UIViewController, UIScrollViewDelegate {
                 showTimestamp: index == 0
             )
             let host = UIHostingController(rootView: bubble)
+            if #available(iOS 16.0, *) {
+                host.safeAreaRegions = []
+            }
             host.view.backgroundColor = .clear
             host.view.translatesAutoresizingMaskIntoConstraints = false
 
@@ -258,13 +262,13 @@ private final class Fix1ViewController: UIViewController, UIScrollViewDelegate {
     }
 
     private func scrollToBottom(animated: Bool) {
-        let visibleHeight = scrollView.bounds.height - scrollView.contentInset.bottom
-        let bottomOffset = CGPoint(
-            x: 0,
-            y: max(0, scrollView.contentSize.height - visibleHeight)
-        )
+        let insets = scrollView.adjustedContentInset
+        let visibleHeight = scrollView.bounds.height - insets.top - insets.bottom
+        let bottomOffsetY = max(-insets.top, scrollView.contentSize.height - visibleHeight)
+        let bottomOffset = CGPoint(x: 0, y: bottomOffsetY)
         log("scrollToBottom:")
         log("  scrollView.bounds: \(scrollView.bounds)")
+        log("  scrollView.contentInset.top: \(scrollView.contentInset.top)")
         log("  scrollView.contentInset.bottom: \(scrollView.contentInset.bottom)")
         log("  visibleHeight: \(visibleHeight)")
         log("  scrollView.contentSize: \(scrollView.contentSize)")
@@ -285,6 +289,9 @@ private final class Fix1ViewController: UIViewController, UIScrollViewDelegate {
 
         let bubble = MessageBubble(message: message, showTail: true, showTimestamp: false)
         let host = UIHostingController(rootView: bubble)
+        if #available(iOS 16.0, *) {
+            host.safeAreaRegions = []
+        }
         host.view.backgroundColor = .clear
         host.view.translatesAutoresizingMaskIntoConstraints = false
 

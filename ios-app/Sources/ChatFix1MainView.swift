@@ -15,13 +15,15 @@ struct ChatFix1MainView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        ZStack(alignment: .top) {
+            Fix1MainViewController_Wrapper(conversation: conversation)
+                .ignoresSafeArea()
             Color.clear
                 .frame(height: topShimHeight)
                 .accessibilityHidden(true)
-            Fix1MainViewController_Wrapper(conversation: conversation)
-                .ignoresSafeArea()
         }
+        .background(Color.clear)
+        .ignoresSafeArea()
     }
 }
 
@@ -39,16 +41,27 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     private var scrollView: UIScrollView!
     private var contentStack: UIStackView!
     private var inputBarVC: DebugInputBarViewController!
+    private var backgroundView: UIView!
 
     private var messages: [Message]
     private var keyboardAnimator: UIViewPropertyAnimator?
     private var lastKeyboardHeight: CGFloat = 0
+    private var lastAppliedBottomInset: CGFloat = 0
+    private var lastContentHeight: CGFloat = 0
+    private var hasUserScrolled = false
+    private var didInitialScrollToBottom = false
     private var inputBarBottomConstraint: NSLayoutConstraint!
     private var contentStackBottomConstraint: NSLayoutConstraint!
-    private var lastTopLogSignature: String?
+    private var contentStackTopConstraint: NSLayoutConstraint!
+    private var lastGeometryLogSignature: String?
+    private var lastVisibleSignature: String?
     private var headerContainer: UIView!
     private var backButton: UIButton!
+    private var backButtonBackground: UIVisualEffectView!
     private var titleLabel: UILabel!
+    private var topFadeView: TopFadeView!
+    private var topFadeHeightConstraint: NSLayoutConstraint!
+    private var didLogGeometryOnce = false
 
     private let titleText: String
 
@@ -62,8 +75,9 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .systemBackground
+        view.backgroundColor = .clear
 
+        setupBackground()
         setupScrollView()
         setupInputBar()
         setupHeaderOverlay()
@@ -84,6 +98,12 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         navigationController?.setNavigationBarHidden(true, animated: false)
+        enableInteractivePopGesture()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        enableInteractivePopGesture()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -95,6 +115,8 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         log("🔧 applyFix1 called")
 
         scrollView.contentInsetAdjustmentBehavior = .never
+        scrollView.contentInset.top = 0
+        scrollView.verticalScrollIndicatorInsets.top = 0
         contentStackBottomConstraint.constant = -8
 
         log("applyFix1 - before updateScrollViewInsets")
@@ -109,7 +131,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         log("  scrollView.contentInset: \(scrollView.contentInset)")
         log("  scrollView.contentSize: \(scrollView.contentSize)")
         log("  scrollView.bounds: \(scrollView.bounds)")
-        logTopInsets(reason: "applyFix1-after-layout")
+        logContentGeometry(reason: "applyFix1-after-layout")
 
         DispatchQueue.main.async {
             log("applyFix1 - first async scrollToBottom")
@@ -154,8 +176,9 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         let currentOffset = scrollView.contentOffset
 
         var targetOffsetY = currentOffset.y + delta
-        let minY: CGFloat = 0
-        let maxY = max(0, scrollView.contentSize.height - scrollView.bounds.height + newBottomInset)
+        let adjustedTop = scrollView.adjustedContentInset.top
+        let minY = -adjustedTop
+        let maxY = max(minY, scrollView.contentSize.height - scrollView.bounds.height + newBottomInset)
         targetOffsetY = min(max(targetOffsetY, minY), maxY)
 
         keyboardAnimator = UIViewPropertyAnimator(duration: animationDuration, curve: curve) { [self] in
@@ -173,6 +196,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         scrollView.alwaysBounceVertical = true
         scrollView.keyboardDismissMode = .interactive
         scrollView.showsVerticalScrollIndicator = false
+        scrollView.backgroundColor = .clear
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.delegate = self
 
@@ -189,6 +213,13 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         scrollView.addSubview(contentStack)
     }
 
+    private func setupBackground() {
+        backgroundView = UIView()
+        backgroundView.translatesAutoresizingMaskIntoConstraints = false
+        backgroundView.backgroundColor = .systemBackground
+        view.addSubview(backgroundView)
+    }
+
     private func setupInputBar() {
         inputBarVC = DebugInputBarViewController()
         inputBarVC.view.translatesAutoresizingMaskIntoConstraints = false
@@ -202,10 +233,22 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     }
 
     private func setupHeaderOverlay() {
+        topFadeView = TopFadeView()
+        topFadeView.translatesAutoresizingMaskIntoConstraints = false
+        topFadeView.isUserInteractionEnabled = false
+        view.addSubview(topFadeView)
+
         headerContainer = UIView()
         headerContainer.translatesAutoresizingMaskIntoConstraints = false
         headerContainer.backgroundColor = .clear
         view.addSubview(headerContainer)
+
+        backButtonBackground = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterial))
+        backButtonBackground.translatesAutoresizingMaskIntoConstraints = false
+        backButtonBackground.isUserInteractionEnabled = false
+        backButtonBackground.layer.cornerRadius = 18
+        backButtonBackground.clipsToBounds = true
+        headerContainer.addSubview(backButtonBackground)
 
         backButton = UIButton(type: .system)
         backButton.translatesAutoresizingMaskIntoConstraints = false
@@ -213,9 +256,6 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         backButton.setImage(chevron, for: .normal)
         backButton.tintColor = .label
         backButton.addTarget(self, action: #selector(handleBackButton), for: .touchUpInside)
-        backButton.backgroundColor = UIColor.systemBackground.withAlphaComponent(0.7)
-        backButton.layer.cornerRadius = 18
-        backButton.clipsToBounds = true
         headerContainer.addSubview(backButton)
 
         titleLabel = UILabel()
@@ -229,14 +269,21 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     private func setupConstraints() {
         inputBarBottomConstraint = inputBarVC.view.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: 0)
         contentStackBottomConstraint = contentStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -8)
+        contentStackTopConstraint = contentStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 8)
+        topFadeHeightConstraint = topFadeView.heightAnchor.constraint(equalToConstant: 0)
 
         NSLayoutConstraint.activate([
+            backgroundView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            backgroundView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            backgroundView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            backgroundView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+
             scrollView.topAnchor.constraint(equalTo: view.topAnchor),
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
 
-            contentStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 8),
+            contentStackTopConstraint,
             contentStack.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 16),
             contentStack.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -16),
             contentStackBottomConstraint,
@@ -246,9 +293,19 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
             inputBarVC.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             inputBarBottomConstraint,
 
+            topFadeView.topAnchor.constraint(equalTo: view.topAnchor),
+            topFadeView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            topFadeView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            topFadeHeightConstraint,
+
             headerContainer.topAnchor.constraint(equalTo: view.topAnchor),
             headerContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             headerContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+
+            backButtonBackground.leadingAnchor.constraint(equalTo: headerContainer.leadingAnchor, constant: 16),
+            backButtonBackground.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+            backButtonBackground.widthAnchor.constraint(equalToConstant: 36),
+            backButtonBackground.heightAnchor.constraint(equalToConstant: 36),
 
             backButton.leadingAnchor.constraint(equalTo: headerContainer.leadingAnchor, constant: 16),
             backButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
@@ -267,13 +324,21 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         log("viewDidLayoutSubviews - lastKeyboardHeight: \(lastKeyboardHeight)")
         log("  view.window: \(String(describing: view.window))")
         log("  inputBarVC.view.bounds: \(inputBarVC.view.bounds)")
+        updateTopFadeHeightIfNeeded()
         if lastKeyboardHeight == 0 {
             let safeBottom = view.window?.safeAreaInsets.bottom ?? 0
             log("  setting inputBarBottomConstraint to: \(-safeBottom)")
             inputBarBottomConstraint.constant = -safeBottom
             updateScrollViewInsets()
         }
-        logTopInsets(reason: "viewDidLayoutSubviews")
+        maybeScrollToBottomIfNeeded()
+        logContentGeometry(reason: "viewDidLayoutSubviews")
+        logVisibleMessages(reason: "viewDidLayoutSubviews")
+        if !didLogGeometryOnce, view.window != nil {
+            didLogGeometryOnce = true
+            logContentGeometry(reason: "layoutOnce")
+            logVisibleMessages(reason: "layoutOnce")
+        }
     }
 
     private func updateScrollViewInsets() {
@@ -286,30 +351,71 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         log("  safeBottom: \(safeBottom)")
         log("  newBottomInset: \(newBottomInset)")
 
-        scrollView.contentInset.bottom = newBottomInset
-        scrollView.verticalScrollIndicatorInsets.bottom = newBottomInset
+        if abs(lastAppliedBottomInset - newBottomInset) > 0.5 {
+            scrollView.contentInset.bottom = newBottomInset
+            scrollView.verticalScrollIndicatorInsets.bottom = newBottomInset
+            lastAppliedBottomInset = newBottomInset
+        }
     }
 
-    private func logTopInsets(reason: String) {
-        let safeTop = view.window?.safeAreaInsets.top ?? view.safeAreaInsets.top
-        let scrollInsetTop = scrollView.contentInset.top
-        let adjustedTop = scrollView.adjustedContentInset.top
-        let scrollFrameMinY = scrollView.frame.minY
-        let scrollBoundsHeight = scrollView.bounds.height
-        let offsetY = scrollView.contentOffset.y
-        let signature = String(
-            format: "safeTop=%.1f insetTop=%.1f adjustedTop=%.1f scrollFrameMinY=%.1f boundsH=%.1f offsetY=%.1f",
-            safeTop,
-            scrollInsetTop,
-            adjustedTop,
-            scrollFrameMinY,
-            scrollBoundsHeight,
-            offsetY
-        )
-        if signature != lastTopLogSignature {
-            log("CMUX_CHAT_TOP \(reason) \(signature)")
-            lastTopLogSignature = signature
+    private func maybeScrollToBottomIfNeeded() {
+        let contentHeight = scrollView.contentSize.height
+        if abs(contentHeight - lastContentHeight) > 1 {
+            lastContentHeight = contentHeight
+            if !hasUserScrolled && (didInitialScrollToBottom == false || contentHeight > 0) {
+                didInitialScrollToBottom = true
+                scrollToBottom(animated: false)
+            }
         }
+    }
+
+    private func logContentGeometry(reason: String) {
+        let safeTop = view.window?.safeAreaInsets.top ?? view.safeAreaInsets.top
+        let insetTop = scrollView.contentInset.top
+        let insetBottom = scrollView.contentInset.bottom
+        let adjustedTop = scrollView.adjustedContentInset.top
+        let adjustedBottom = scrollView.adjustedContentInset.bottom
+        let offset = scrollView.contentOffset
+        let contentSize = scrollView.contentSize
+        let stackFrame = contentStack.frame
+        let firstFrame = contentStack.arrangedSubviews.first?.frame ?? .zero
+        let lastFrame = contentStack.arrangedSubviews.last?.frame ?? .zero
+        let signature = String(
+            format: "safeTop=%.1f insetTop=%.1f insetBottom=%.1f adjustedTop=%.1f adjustedBottom=%.1f offset=(%.1f,%.1f) content=(%.1f,%.1f) stackY=%.1f stackH=%.1f firstY=%.1f lastMaxY=%.1f topConst=%.1f",
+            safeTop,
+            insetTop,
+            insetBottom,
+            adjustedTop,
+            adjustedBottom,
+            offset.x,
+            offset.y,
+            contentSize.width,
+            contentSize.height,
+            stackFrame.minY,
+            stackFrame.height,
+            firstFrame.minY,
+            lastFrame.maxY,
+            contentStackTopConstraint.constant
+        )
+        if signature != lastGeometryLogSignature {
+            log("CMUX_CHAT_GEOM \(reason) \(signature)")
+            lastGeometryLogSignature = signature
+        }
+    }
+
+    private func updateTopFadeHeightIfNeeded() {
+        let safeTop = view.window?.safeAreaInsets.top ?? view.safeAreaInsets.top
+        let targetHeight = safeTop + 16
+        if abs(topFadeHeightConstraint.constant - targetHeight) > 0.5 {
+            topFadeHeightConstraint.constant = targetHeight
+            topFadeView.updateColors()
+        }
+    }
+
+    private func enableInteractivePopGesture() {
+        guard let nav = navigationController else { return }
+        nav.interactivePopGestureRecognizer?.isEnabled = true
+        nav.interactivePopGestureRecognizer?.delegate = nil
     }
 
     private func populateMessages() {
@@ -320,6 +426,9 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
                 showTimestamp: index == 0
             )
             let host = UIHostingController(rootView: bubble)
+            if #available(iOS 16.0, *) {
+                host.safeAreaRegions = []
+            }
             host.view.backgroundColor = .clear
             host.view.translatesAutoresizingMaskIntoConstraints = false
 
@@ -330,13 +439,13 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     }
 
     private func scrollToBottom(animated: Bool) {
-        let visibleHeight = scrollView.bounds.height - scrollView.contentInset.bottom
-        let bottomOffset = CGPoint(
-            x: 0,
-            y: max(0, scrollView.contentSize.height - visibleHeight)
-        )
+        let insets = scrollView.adjustedContentInset
+        let visibleHeight = scrollView.bounds.height - insets.top - insets.bottom
+        let bottomOffsetY = max(-insets.top, scrollView.contentSize.height - visibleHeight)
+        let bottomOffset = CGPoint(x: 0, y: bottomOffsetY)
         log("scrollToBottom:")
         log("  scrollView.bounds: \(scrollView.bounds)")
+        log("  scrollView.contentInset.top: \(scrollView.contentInset.top)")
         log("  scrollView.contentInset.bottom: \(scrollView.contentInset.bottom)")
         log("  visibleHeight: \(visibleHeight)")
         log("  scrollView.contentSize: \(scrollView.contentSize)")
@@ -356,6 +465,26 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         }
     }
 
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        if !decelerate {
+            logContentGeometry(reason: "scrollEndDrag")
+            logVisibleMessages(reason: "scrollEndDrag")
+        }
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        logContentGeometry(reason: "scrollEndDecel")
+        logVisibleMessages(reason: "scrollEndDecel")
+    }
+
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        hasUserScrolled = true
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        logVisibleMessages(reason: "scroll")
+    }
+
     private func sendMessage() {
         guard !inputBarVC.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
 
@@ -365,6 +494,9 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
 
         let bubble = MessageBubble(message: message, showTail: true, showTimestamp: false)
         let host = UIHostingController(rootView: bubble)
+        if #available(iOS 16.0, *) {
+            host.safeAreaRegions = []
+        }
         host.view.backgroundColor = .clear
         host.view.translatesAutoresizingMaskIntoConstraints = false
 
@@ -375,5 +507,83 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         DispatchQueue.main.async {
             self.scrollToBottom(animated: true)
         }
+    }
+
+    private func logVisibleMessages(reason: String) {
+        guard !contentStack.arrangedSubviews.isEmpty else { return }
+
+        let visibleRect = CGRect(origin: scrollView.contentOffset, size: scrollView.bounds.size)
+        var visibleItems: [(Int, CGRect)] = []
+        visibleItems.reserveCapacity(contentStack.arrangedSubviews.count)
+
+        for (index, subview) in contentStack.arrangedSubviews.enumerated() {
+            let frameInScroll = contentStack.convert(subview.frame, to: scrollView)
+            if frameInScroll.intersects(visibleRect) {
+                visibleItems.append((index, frameInScroll))
+            }
+        }
+
+        let signature = visibleItems
+            .map { item in
+                String(
+                    format: "%d:%.1f:%.1f:%.1f:%.1f",
+                    item.0,
+                    item.1.origin.x,
+                    item.1.origin.y,
+                    item.1.size.width,
+                    item.1.size.height
+                )
+            }
+            .joined(separator: "|")
+
+        guard signature != lastVisibleSignature else { return }
+        lastVisibleSignature = signature
+
+        log("CMUX_CHAT_MSG \(reason) count=\(visibleItems.count)")
+        for (index, frame) in visibleItems {
+            log("CMUX_CHAT_MSG \(reason)   [\(index)] frame: \(frame)")
+        }
+    }
+}
+
+private final class TopFadeView: UIView {
+    override class var layerClass: AnyClass {
+        CAGradientLayer.self
+    }
+
+    private var gradientLayer: CAGradientLayer {
+        layer as? CAGradientLayer ?? CAGradientLayer()
+    }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        gradientLayer.startPoint = CGPoint(x: 0.5, y: 0)
+        gradientLayer.endPoint = CGPoint(x: 0.5, y: 1)
+        updateColors()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        isUserInteractionEnabled = false
+        gradientLayer.startPoint = CGPoint(x: 0.5, y: 0)
+        gradientLayer.endPoint = CGPoint(x: 0.5, y: 1)
+        updateColors()
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
+            updateColors()
+        }
+    }
+
+    func updateColors() {
+        let base = UIColor.systemBackground
+        let maxAlpha: CGFloat = 0.6
+        gradientLayer.colors = [
+            base.withAlphaComponent(0.0).cgColor,
+            base.withAlphaComponent(maxAlpha).cgColor
+        ]
     }
 }
