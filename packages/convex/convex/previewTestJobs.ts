@@ -9,12 +9,8 @@ import { v } from "convex/values";
 import { getTeamId } from "../_shared/team";
 import { internal } from "./_generated/api";
 import type { Id, Doc } from "./_generated/dataModel";
-import { authMutation, authQuery, authAction } from "./users/utils";
-import { internalMutation, internalQuery } from "./_generated/server";
-
-function normalizeRepoFullName(value: string): string {
-  return value.trim().replace(/\.git$/i, "").toLowerCase();
-}
+import { authMutation, authQuery } from "./users/utils";
+import { action } from "./_generated/server";
 
 /**
  * Parse a GitHub PR URL to extract owner, repo, and PR number
@@ -55,7 +51,13 @@ export const createTestRun = authMutation({
     teamSlugOrId: v.string(),
     prUrl: v.string(),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<{
+    previewRunId: Id<"previewRuns">;
+    taskId: Id<"tasks">;
+    taskRunId: Id<"taskRuns">;
+    prNumber: number;
+    repoFullName: string;
+  }> => {
     const teamId = await getTeamId(ctx, args.teamSlugOrId);
 
     // Parse PR URL
@@ -66,7 +68,7 @@ export const createTestRun = authMutation({
       );
     }
 
-    const { owner, repo, prNumber, repoFullName } = parsed;
+    const { prNumber, repoFullName } = parsed;
 
     // Find the preview config for this repo
     const config = await ctx.db
@@ -130,19 +132,22 @@ export const createTestRun = authMutation({
     const userId = config.createdByUserId ?? "system";
 
     // Create task for this preview run
-    const taskId = await ctx.runMutation(internal.tasks.createForPreview, {
-      teamId,
-      userId,
-      previewRunId: runId,
-      repoFullName,
-      prNumber,
-      prUrl: args.prUrl,
-      headSha,
-      baseBranch: config.repoDefaultBranch,
-    });
+    const taskId: Id<"tasks"> = await ctx.runMutation(
+      internal.tasks.createForPreview,
+      {
+        teamId,
+        userId,
+        previewRunId: runId,
+        repoFullName,
+        prNumber,
+        prUrl: args.prUrl,
+        headSha,
+        baseBranch: config.repoDefaultBranch,
+      }
+    );
 
     // Create taskRun
-    const { taskRunId } = await ctx.runMutation(
+    const { taskRunId }: { taskRunId: Id<"taskRuns"> } = await ctx.runMutation(
       internal.taskRuns.createForPreview,
       {
         taskId,
@@ -173,15 +178,19 @@ export const createTestRun = authMutation({
 /**
  * Dispatch a test preview job (start the actual screenshot capture)
  */
-export const dispatchTestJob = authAction({
+export const dispatchTestJob = action({
   args: {
     teamSlugOrId: v.string(),
     previewRunId: v.id("previewRuns"),
   },
   handler: async (ctx, args) => {
-    const teamId = await getTeamId(ctx, args.teamSlugOrId);
+    // Manual auth check for actions (no authAction wrapper available)
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error("Authentication required");
+    }
 
-    // Get the preview run
+    // Get the preview run first
     const previewRun = await ctx.runQuery(internal.previewRuns.getById, {
       id: args.previewRunId,
     });
@@ -190,8 +199,13 @@ export const dispatchTestJob = authAction({
       throw new Error("Preview run not found");
     }
 
-    if (previewRun.teamId !== teamId) {
-      throw new Error("Preview run does not belong to this team");
+    // Verify the user is a member of the team that owns this run
+    const { isMember } = await ctx.runQuery(internal.teams.checkTeamMembership, {
+      teamId: previewRun.teamId,
+      userId: identity.subject,
+    });
+    if (!isMember) {
+      throw new Error("Forbidden: Not a member of this team");
     }
 
     // Mark as dispatched
