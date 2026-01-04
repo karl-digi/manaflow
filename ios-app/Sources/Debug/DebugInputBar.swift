@@ -6,12 +6,20 @@ struct DebugInputBar: View {
     @Binding var text: String
     let onSend: () -> Void
     @Binding var isFocused: Bool
+    @ObservedObject var layout: InputBarLayoutModel
+    private let inputHeight: CGFloat = 42
 
     @FocusState private var textFieldFocused: Bool
 
-    init(text: Binding<String>, isFocused: Binding<Bool> = .constant(false), onSend: @escaping () -> Void) {
+    init(
+        text: Binding<String>,
+        isFocused: Binding<Bool> = .constant(false),
+        layout: InputBarLayoutModel,
+        onSend: @escaping () -> Void
+    ) {
         self._text = text
         self._isFocused = isFocused
+        self.layout = layout
         self.onSend = onSend
     }
 
@@ -26,7 +34,7 @@ struct DebugInputBar: View {
                         .foregroundStyle(.primary)
                 }
                 .buttonStyle(.plain)
-                .frame(width: 36, height: 36)
+                .frame(width: inputHeight, height: inputHeight)
                 .glassEffect(.regular.interactive(), in: .circle)
 
                 // Text field with glass capsule
@@ -51,13 +59,16 @@ struct DebugInputBar: View {
                     .frame(width: 32, height: 32)
                 }
                 .padding(.horizontal, 16)
-                .padding(.vertical, 10)
+                .frame(height: inputHeight)
                 .glassEffect(.regular.interactive(), in: .capsule)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+            .padding(.horizontal, layout.horizontalPadding)
+            .padding(.top, 8)
+            .padding(.bottom, layout.bottomPadding)
         }
         .animation(.easeInOut(duration: 0.15), value: text.isEmpty)
+        .animation(.easeInOut(duration: 0.2), value: layout.horizontalPadding)
+        .animation(.easeInOut(duration: 0.2), value: layout.bottomPadding)
         .onChange(of: textFieldFocused) { _, newValue in
             isFocused = newValue
         }
@@ -74,6 +85,7 @@ final class DebugInputBarViewController: UIViewController {
     var onTextChange: ((String) -> Void)?
 
     private var hostingController: UIHostingController<DebugInputBarWrapper>!
+    private let layoutModel = InputBarLayoutModel(horizontalPadding: 20, bottomPadding: 28)
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -81,6 +93,7 @@ final class DebugInputBarViewController: UIViewController {
 
         let wrapper = DebugInputBarWrapper(
             text: Binding(get: { self.text }, set: { self.text = $0; self.onTextChange?($0) }),
+            layout: layoutModel,
             onSend: { self.onSend?() }
         )
         hostingController = UIHostingController(rootView: wrapper)
@@ -104,6 +117,7 @@ final class DebugInputBarViewController: UIViewController {
         text = newText
         hostingController.rootView = DebugInputBarWrapper(
             text: Binding(get: { self.text }, set: { self.text = $0; self.onTextChange?($0) }),
+            layout: layoutModel,
             onSend: { self.onSend?() }
         )
     }
@@ -111,13 +125,33 @@ final class DebugInputBarViewController: UIViewController {
     func clearText() {
         updateText("")
     }
+
+    func updateLayout(horizontalPadding: CGFloat, bottomPadding: CGFloat) {
+        if layoutModel.horizontalPadding != horizontalPadding {
+            layoutModel.horizontalPadding = horizontalPadding
+        }
+        if layoutModel.bottomPadding != bottomPadding {
+            layoutModel.bottomPadding = bottomPadding
+        }
+    }
 }
 
 private struct DebugInputBarWrapper: View {
     @Binding var text: String
+    @ObservedObject var layout: InputBarLayoutModel
     let onSend: () -> Void
 
     var body: some View {
-        DebugInputBar(text: $text, onSend: onSend)
+        DebugInputBar(text: $text, layout: layout, onSend: onSend)
+    }
+}
+
+final class InputBarLayoutModel: ObservableObject {
+    @Published var horizontalPadding: CGFloat
+    @Published var bottomPadding: CGFloat
+
+    init(horizontalPadding: CGFloat, bottomPadding: CGFloat) {
+        self.horizontalPadding = horizontalPadding
+        self.bottomPadding = bottomPadding
     }
 }

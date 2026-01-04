@@ -105,6 +105,7 @@ struct MessageInputBar: View {
     @Binding var text: String
     var isFocused: FocusState<Bool>.Binding
     let onSend: () -> Void
+    private let inputHeight: CGFloat = 42
 
     var body: some View {
         GlassEffectContainer {
@@ -117,7 +118,7 @@ struct MessageInputBar: View {
                         .foregroundStyle(.primary)
                 }
                 .buttonStyle(.plain)
-                .frame(width: 36, height: 36)
+                .frame(width: inputHeight, height: inputHeight)
                 .glassEffect(.regular.interactive(), in: .circle)
 
                 // Text field with glass capsule
@@ -143,11 +144,12 @@ struct MessageInputBar: View {
                     .frame(width: 32, height: 32)
                 }
                 .padding(.horizontal, 16)
-                .padding(.vertical, 10)
+                .frame(height: inputHeight)
                 .glassEffect(.regular.interactive(), in: .capsule)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 20)
+            .padding(.top, 8)
+            .padding(.bottom, 28)
         }
         .animation(.easeInOut(duration: 0.15), value: text.isEmpty)
     }

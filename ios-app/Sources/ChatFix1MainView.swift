@@ -57,6 +57,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     private var topFadeView: TopFadeView!
     private var topFadeHeightConstraint: NSLayoutConstraint!
     private var didLogGeometryOnce = false
+    private var isKeyboardVisible = false
 
     init(messages: [Message]) {
         self.messages = messages
@@ -106,7 +107,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         scrollView.contentInsetAdjustmentBehavior = .never
         scrollView.contentInset.top = 0
         scrollView.verticalScrollIndicatorInsets.top = 0
-        contentStackBottomConstraint.constant = -8
+        contentStackBottomConstraint.constant = -12
 
         log("applyFix1 - before updateScrollViewInsets")
         log("  view.window: \(String(describing: view.window))")
@@ -181,7 +182,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
 
     private func setupConstraints() {
         inputBarBottomConstraint = inputBarVC.view.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor, constant: 0)
-        contentStackBottomConstraint = contentStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -8)
+        contentStackBottomConstraint = contentStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -12)
         contentStackTopConstraint = contentStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 0)
         topFadeHeightConstraint = topFadeView.heightAnchor.constraint(equalToConstant: 0)
 
@@ -251,8 +252,14 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         let keyboardFrame = view.keyboardLayoutGuide.layoutFrame
         let keyboardOverlap = max(0, view.bounds.maxY - keyboardFrame.minY)
         let safeBottom = view.window?.safeAreaInsets.bottom ?? view.safeAreaInsets.bottom
-        let extraSafeGap = max(0, safeBottom - keyboardOverlap)
-        let newInputBarConstant = -extraSafeGap
+        let keyboardVisible = keyboardOverlap > safeBottom + 1
+        let newInputBarConstant = keyboardVisible ? 0 : safeBottom
+
+        if keyboardVisible != isKeyboardVisible {
+            isKeyboardVisible = keyboardVisible
+            let horizontalPadding: CGFloat = keyboardVisible ? 12 : 20
+            inputBarVC.updateLayout(horizontalPadding: horizontalPadding, bottomPadding: 28)
+        }
 
         if abs(inputBarBottomConstraint.constant - newInputBarConstant) > 0.5 {
             inputBarBottomConstraint.constant = newInputBarConstant
@@ -260,7 +267,8 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
 
         let inputBarHeight = inputBarVC.view.bounds.height
         let contentBottomPadding = max(0, -contentStackBottomConstraint.constant)
-        let newBottomInset = max(0, inputBarHeight + max(keyboardOverlap, safeBottom) - contentBottomPadding)
+        let effectiveKeyboardOverlap = keyboardVisible ? keyboardOverlap : 0
+        let newBottomInset = max(0, inputBarHeight + effectiveKeyboardOverlap - contentBottomPadding)
 
         if abs(lastAppliedBottomInset - newBottomInset) <= 0.5 {
             return
