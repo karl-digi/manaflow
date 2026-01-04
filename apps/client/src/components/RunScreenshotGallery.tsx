@@ -28,6 +28,7 @@ interface ScreenshotImage {
   fileName?: string | null;
   commitSha?: string | null;
   url?: string | null;
+  description?: string | null;
 }
 
 interface RunScreenshotSet {
@@ -35,6 +36,7 @@ interface RunScreenshotSet {
   taskId: Id<"tasks">;
   runId: Id<"taskRuns">;
   status: ScreenshotStatus;
+  hasUiChanges?: boolean | null;
   commitSha?: string | null;
   capturedAt: number;
   error?: string | null;
@@ -445,7 +447,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
               <Dialog.Overlay className="fixed inset-0 bg-neutral-950/60 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in data-[state=closed]:fade-out z-[var(--z-floating-high-overlay)]" />
               <Dialog.Content className="fixed left-1/2 top-1/2 z-[var(--z-floating-high)] flex max-h-[calc(100vh-4rem)] w-[min(2600px,calc(100vw-4rem))] -translate-x-1/2 -translate-y-1/2 flex-col gap-4 rounded-3xl border border-neutral-200 bg-white/95 p-4 shadow-2xl focus:outline-none dark:border-neutral-800 dark:bg-neutral-950/95 sm:max-h-[calc(100vh-6rem)] sm:w-[min(2600px,calc(100vw-6rem))] sm:p-6">
                 <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="space-y-1">
+                  <div className="space-y-1 flex-1 min-w-0">
                     <Dialog.Title className="text-base font-semibold text-neutral-900 dark:text-neutral-100">
                       {activeOverallIndex !== null ? `${activeOverallIndex}. ` : ""}
                       {currentEntry.image.fileName ?? "Screenshot"}
@@ -457,6 +459,11 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                         addSuffix: true,
                       })}
                     </Dialog.Description>
+                    {currentEntry.image.description && (
+                      <p className="text-sm text-neutral-700 dark:text-neutral-300 mt-2 max-w-2xl">
+                        {currentEntry.image.description}
+                      </p>
+                    )}
                   </div>
                   <div className="flex items-center gap-2">
                     <div className="flex items-center gap-1 rounded-full border border-neutral-200 bg-white/90 px-2 py-1 text-xs font-medium text-neutral-600 shadow-sm dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-200">
@@ -634,6 +641,11 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                     Latest
                   </span>
                 )}
+                {set.hasUiChanges === false && (
+                  <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-sky-100/80 text-sky-700 dark:bg-sky-900/60 dark:text-sky-300">
+                    No UI changes
+                  </span>
+                )}
                 <span
                   className="text-xs text-neutral-600 dark:text-neutral-400"
                   title={capturedAtDate.toLocaleString()}
@@ -682,7 +694,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                         type="button"
                         onClick={() => setActiveImageKey(stableKey)}
                         className={cn(
-                          "group relative flex w-[220px] flex-col overflow-hidden rounded-lg border border-neutral-200 bg-neutral-50 text-left transition-colors hover:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-900/70 dark:hover:border-neutral-500",
+                          "group relative flex w-[280px] flex-col overflow-hidden rounded-lg border border-neutral-200 bg-neutral-50 text-left transition-colors hover:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-900/70 dark:hover:border-neutral-500",
                           isActive &&
                           "border-emerald-400/70 shadow-[0_0_0_1px_rgba(16,185,129,0.25)] dark:border-emerald-400/60",
                         )}
@@ -690,16 +702,23 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                       >
                         <img
                           src={image.url}
-                          alt={displayName}
-                          className="h-48 w-[220px] object-contain bg-neutral-100 dark:bg-neutral-950"
+                          alt={image.description || displayName}
+                          className="h-48 w-[280px] object-contain bg-neutral-100 dark:bg-neutral-950"
                           loading="lazy"
                         />
                         <div className="absolute top-2 right-2 text-neutral-600 opacity-0 transition group-hover:opacity-100 dark:text-neutral-300">
                           <Maximize2 className="h-3.5 w-3.5" />
                         </div>
-                        <div className="border-t border-neutral-200 px-2 py-1 text-xs text-neutral-600 dark:border-neutral-700 dark:text-neutral-300 truncate">
-                          {humanIndex !== null ? `${humanIndex}. ` : ""}
-                          {displayName}
+                        <div className="border-t border-neutral-200 px-2 py-1.5 dark:border-neutral-700">
+                          <div className="text-xs font-medium text-neutral-700 dark:text-neutral-200 truncate">
+                            {humanIndex !== null ? `${humanIndex}. ` : ""}
+                            {displayName}
+                          </div>
+                          {image.description && (
+                            <p className="mt-0.5 text-[11px] text-neutral-500 dark:text-neutral-400 line-clamp-2">
+                              {image.description}
+                            </p>
+                          )}
                         </div>
                       </button>
                     );
@@ -709,7 +728,9 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                 <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
                   {set.status === "failed"
                     ? "Screenshot capture failed before any images were saved."
-                    : "No screenshots were captured for this attempt."}
+                    : set.hasUiChanges === false
+                      ? "No UI changes detected — screenshots show the baseline state."
+                      : "No screenshots were captured for this attempt."}
                 </p>
               )}
             </article>
