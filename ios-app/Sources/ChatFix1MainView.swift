@@ -44,8 +44,6 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     private var backgroundView: UIView!
 
     private var messages: [Message]
-    private var keyboardAnimator: UIViewPropertyAnimator?
-    private var lastKeyboardHeight: CGFloat = 0
     private var lastAppliedBottomInset: CGFloat = 0
     private var lastAppliedTopInset: CGFloat = 0
     private var lastContentHeight: CGFloat = 0
@@ -77,7 +75,6 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         setupTopFade()
         setupConstraints()
         populateMessages()
-        setupKeyboardObservers()
 
         applyFix1()
 
@@ -116,7 +113,8 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         log("  view.safeAreaInsets: \(view.safeAreaInsets)")
         log("  inputBarVC.view.bounds: \(inputBarVC.view.bounds)")
 
-        updateScrollViewInsets()
+        updateTopInsetIfNeeded()
+        updateBottomInsetsForKeyboard()
         view.layoutIfNeeded()
 
         log("applyFix1 - after layoutIfNeeded")
@@ -131,56 +129,6 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
             log("  scrollView.contentSize: \(self.scrollView.contentSize)")
             self.scrollToBottom(animated: false)
         }
-    }
-
-    private func setupKeyboardObservers() {
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(keyboardWillChange(_:)),
-            name: UIResponder.keyboardWillChangeFrameNotification,
-            object: nil
-        )
-    }
-
-    @objc private func keyboardWillChange(_ notification: Notification) {
-        guard let userInfo = notification.userInfo,
-              let endFrame = userInfo[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
-              let duration = userInfo[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double,
-              let curveRaw = userInfo[UIResponder.keyboardAnimationCurveUserInfoKey] as? Int else { return }
-
-        let curve = UIView.AnimationCurve(rawValue: curveRaw) ?? .easeInOut
-        let animationDuration = duration > 0 ? duration : 0.25
-        let endFrameInView = view.convert(endFrame, from: nil)
-        let keyboardOverlap = max(0, view.bounds.maxY - endFrameInView.minY)
-
-        let safeBottom = view.window?.safeAreaInsets.bottom ?? view.safeAreaInsets.bottom
-        let effectiveKeyboardHeight = keyboardOverlap > safeBottom ? keyboardOverlap - safeBottom : 0
-        let delta = effectiveKeyboardHeight - lastKeyboardHeight
-
-        lastKeyboardHeight = effectiveKeyboardHeight
-
-        guard abs(delta) > 1 else { return }
-
-        keyboardAnimator?.stopAnimation(true)
-
-        let inputBarHeight = inputBarVC.view.bounds.height
-        let newBottomInset = inputBarHeight + max(keyboardOverlap, safeBottom)
-        let currentOffset = scrollView.contentOffset
-
-        var targetOffsetY = currentOffset.y + delta
-        let adjustedTop = scrollView.adjustedContentInset.top
-        let minY = -adjustedTop
-        let maxY = max(minY, scrollView.contentSize.height - scrollView.bounds.height + newBottomInset)
-        targetOffsetY = min(max(targetOffsetY, minY), maxY)
-
-        keyboardAnimator = UIViewPropertyAnimator(duration: animationDuration, curve: curve) { [self] in
-            inputBarBottomConstraint.constant = -max(keyboardOverlap, safeBottom)
-            scrollView.contentInset.bottom = newBottomInset
-            scrollView.verticalScrollIndicatorInsets.bottom = newBottomInset
-            scrollView.contentOffset.y = targetOffsetY
-            view.layoutIfNeeded()
-        }
-        keyboardAnimator?.startAnimation()
     }
 
     private func setupScrollView() {
@@ -232,7 +180,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     }
 
     private func setupConstraints() {
-        inputBarBottomConstraint = inputBarVC.view.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: 0)
+        inputBarBottomConstraint = inputBarVC.view.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor, constant: 0)
         contentStackBottomConstraint = contentStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -8)
         contentStackTopConstraint = contentStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 0)
         topFadeHeightConstraint = topFadeView.heightAnchor.constraint(equalToConstant: 0)
@@ -267,16 +215,11 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        log("viewDidLayoutSubviews - lastKeyboardHeight: \(lastKeyboardHeight)")
         log("  view.window: \(String(describing: view.window))")
         log("  inputBarVC.view.bounds: \(inputBarVC.view.bounds)")
         updateTopFadeHeightIfNeeded()
-        if lastKeyboardHeight == 0 {
-            let safeBottom = view.window?.safeAreaInsets.bottom ?? 0
-            log("  setting inputBarBottomConstraint to: \(-safeBottom)")
-            inputBarBottomConstraint.constant = -safeBottom
-            updateScrollViewInsets()
-        }
+        updateTopInsetIfNeeded()
+        updateBottomInsetsForKeyboard()
         maybeScrollToBottomIfNeeded()
         logContentGeometry(reason: "viewDidLayoutSubviews")
         logVisibleMessages(reason: "viewDidLayoutSubviews")
@@ -287,33 +230,56 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         }
     }
 
-    private func updateScrollViewInsets() {
+    private func updateTopInsetIfNeeded() {
         let safeTop = view.window?.safeAreaInsets.top ?? view.safeAreaInsets.top
-        let safeBottom = view.window?.safeAreaInsets.bottom ?? view.safeAreaInsets.bottom
-        let inputBarHeight = inputBarVC.view.bounds.height
 
         // Safe area already accounts for the navigation bar; add a small padding below it.
         let newTopInset = safeTop + 8
-        let newBottomInset = inputBarHeight + safeBottom
 
         log("updateScrollViewInsets:")
         log("  safeTop: \(safeTop)")
-        log("  inputBarHeight: \(inputBarHeight)")
-        log("  safeBottom: \(safeBottom)")
         log("  newTopInset: \(newTopInset)")
-        log("  newBottomInset: \(newBottomInset)")
 
         if abs(lastAppliedTopInset - newTopInset) > 0.5 {
             scrollView.contentInset.top = newTopInset
             scrollView.verticalScrollIndicatorInsets.top = newTopInset
             lastAppliedTopInset = newTopInset
         }
+    }
 
-        if abs(lastAppliedBottomInset - newBottomInset) > 0.5 {
-            scrollView.contentInset.bottom = newBottomInset
-            scrollView.verticalScrollIndicatorInsets.bottom = newBottomInset
-            lastAppliedBottomInset = newBottomInset
+    private func updateBottomInsetsForKeyboard() {
+        let keyboardFrame = view.keyboardLayoutGuide.layoutFrame
+        let keyboardOverlap = max(0, view.bounds.maxY - keyboardFrame.minY)
+        let safeBottom = view.window?.safeAreaInsets.bottom ?? view.safeAreaInsets.bottom
+        let extraSafeGap = max(0, safeBottom - keyboardOverlap)
+        let newInputBarConstant = -extraSafeGap
+
+        if abs(inputBarBottomConstraint.constant - newInputBarConstant) > 0.5 {
+            inputBarBottomConstraint.constant = newInputBarConstant
         }
+
+        let inputBarHeight = inputBarVC.view.bounds.height
+        let contentBottomPadding = max(0, -contentStackBottomConstraint.constant)
+        let newBottomInset = max(0, inputBarHeight + max(keyboardOverlap, safeBottom) - contentBottomPadding)
+
+        if abs(lastAppliedBottomInset - newBottomInset) <= 0.5 {
+            return
+        }
+
+        let oldBottomInset = scrollView.contentInset.bottom
+        let oldMaxOffsetY = scrollView.contentSize.height - scrollView.bounds.height + oldBottomInset
+        let distanceFromBottom = max(0, oldMaxOffsetY - scrollView.contentOffset.y)
+        scrollView.contentInset.bottom = newBottomInset
+        scrollView.verticalScrollIndicatorInsets.bottom = newBottomInset
+        lastAppliedBottomInset = newBottomInset
+
+        let newMaxOffsetY = scrollView.contentSize.height - scrollView.bounds.height + newBottomInset
+        var targetOffsetY = newMaxOffsetY - distanceFromBottom
+        let adjustedTop = scrollView.adjustedContentInset.top
+        let minY = -adjustedTop
+        let maxY = max(minY, newMaxOffsetY)
+        targetOffsetY = min(max(targetOffsetY, minY), maxY)
+        scrollView.contentOffset.y = targetOffsetY
     }
 
     private func maybeScrollToBottomIfNeeded() {

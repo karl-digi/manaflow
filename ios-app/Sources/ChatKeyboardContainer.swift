@@ -22,12 +22,8 @@ final class ChatFix1ViewController: UIViewController, UIScrollViewDelegate {
     private var inputBarVC: DebugInputBarViewController!
 
     private var messages: [Message]
-    private var keyboardAnimator: UIViewPropertyAnimator?
-    private var lastKeyboardHeight: CGFloat = 0
     private var inputBarBottomConstraint: NSLayoutConstraint!
     private var contentStackBottomConstraint: NSLayoutConstraint!
-    private var lastAppliedSafeBottom: CGFloat = -1
-    private var lastAppliedInputBarHeight: CGFloat = -1
     private var lastAppliedBottomInset: CGFloat = -1
 
     init(messages: [Message]) {
@@ -45,7 +41,6 @@ final class ChatFix1ViewController: UIViewController, UIScrollViewDelegate {
         setupInputBar()
         setupConstraints()
         populateMessages()
-        setupKeyboardObservers()
 
         log("✅ MAIN VERBATIM FIX1 ACTIVE")
         log("  inputBarVC: \(String(describing: inputBarVC))")
@@ -73,7 +68,7 @@ final class ChatFix1ViewController: UIViewController, UIScrollViewDelegate {
         log("  view.safeAreaInsets: \(view.safeAreaInsets)")
         log("  inputBarVC.view.bounds: \(inputBarVC.view.bounds)")
 
-        updateScrollViewInsets()
+        updateBottomInsetsForKeyboard()
         view.layoutIfNeeded()
 
         log("applyFix1 - after layoutIfNeeded")
@@ -87,55 +82,6 @@ final class ChatFix1ViewController: UIViewController, UIScrollViewDelegate {
             log("  scrollView.contentSize: \(self.scrollView.contentSize)")
             self.scrollToBottom(animated: false)
         }
-    }
-
-    private func setupKeyboardObservers() {
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(keyboardWillChange(_:)),
-            name: UIResponder.keyboardWillChangeFrameNotification,
-            object: nil
-        )
-    }
-
-    @objc private func keyboardWillChange(_ notification: Notification) {
-        guard let userInfo = notification.userInfo,
-              let endFrame = userInfo[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
-              let duration = userInfo[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double,
-              let curveRaw = userInfo[UIResponder.keyboardAnimationCurveUserInfoKey] as? Int else { return }
-
-        let curve = UIView.AnimationCurve(rawValue: curveRaw) ?? .easeInOut
-        let animationDuration = duration > 0 ? duration : 0.25
-        let endFrameInView = view.convert(endFrame, from: nil)
-        let keyboardOverlap = max(0, view.bounds.maxY - endFrameInView.minY)
-
-        let safeBottom = view.window?.safeAreaInsets.bottom ?? view.safeAreaInsets.bottom
-        let effectiveKeyboardHeight = keyboardOverlap > safeBottom ? keyboardOverlap - safeBottom : 0
-        let delta = effectiveKeyboardHeight - lastKeyboardHeight
-
-        lastKeyboardHeight = effectiveKeyboardHeight
-
-        guard abs(delta) > 1 else { return }
-
-        keyboardAnimator?.stopAnimation(true)
-
-        let inputBarHeight = inputBarVC.view.bounds.height
-        let newBottomInset = inputBarHeight + max(keyboardOverlap, safeBottom)
-        let currentOffset = scrollView.contentOffset
-
-        var targetOffsetY = currentOffset.y + delta
-        let minY: CGFloat = 0
-        let maxY = max(0, scrollView.contentSize.height - scrollView.bounds.height + newBottomInset)
-        targetOffsetY = min(max(targetOffsetY, minY), maxY)
-
-        keyboardAnimator = UIViewPropertyAnimator(duration: animationDuration, curve: curve) { [self] in
-            inputBarBottomConstraint.constant = -max(keyboardOverlap, safeBottom)
-            scrollView.contentInset.bottom = newBottomInset
-            scrollView.verticalScrollIndicatorInsets.bottom = newBottomInset
-            scrollView.contentOffset.y = targetOffsetY
-            view.layoutIfNeeded()
-        }
-        keyboardAnimator?.startAnimation()
     }
 
     private func setupScrollView() {
@@ -172,7 +118,7 @@ final class ChatFix1ViewController: UIViewController, UIScrollViewDelegate {
     }
 
     private func setupConstraints() {
-        inputBarBottomConstraint = inputBarVC.view.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: 0)
+        inputBarBottomConstraint = inputBarVC.view.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor, constant: 0)
         contentStackBottomConstraint = contentStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -8)
 
         NSLayoutConstraint.activate([
@@ -195,30 +141,29 @@ final class ChatFix1ViewController: UIViewController, UIScrollViewDelegate {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        if lastKeyboardHeight == 0 {
-            let safeBottom = view.window?.safeAreaInsets.bottom ?? 0
-            let newConstant = -safeBottom
-            if inputBarBottomConstraint.constant != newConstant {
-                log("viewDidLayoutSubviews - updating inputBarBottomConstraint to: \(newConstant)")
-                inputBarBottomConstraint.constant = newConstant
-            }
-            updateScrollViewInsets()
-        }
+        updateBottomInsetsForKeyboard()
     }
 
-    private func updateScrollViewInsets() {
+    private func updateBottomInsetsForKeyboard() {
         let inputBarHeight = inputBarVC.view.bounds.height
+        let keyboardFrame = view.keyboardLayoutGuide.layoutFrame
+        let keyboardOverlap = max(0, view.bounds.maxY - keyboardFrame.minY)
         let safeBottom = view.window?.safeAreaInsets.bottom ?? view.safeAreaInsets.bottom
-        let newBottomInset = inputBarHeight + safeBottom
+        let extraSafeGap = max(0, safeBottom - keyboardOverlap)
+        let newInputBarConstant = -extraSafeGap
+        if inputBarBottomConstraint.constant != newInputBarConstant {
+            inputBarBottomConstraint.constant = newInputBarConstant
+        }
+        let contentBottomPadding = max(0, -contentStackBottomConstraint.constant)
+        let newBottomInset = max(0, inputBarHeight + max(keyboardOverlap, safeBottom) - contentBottomPadding)
 
-        if inputBarHeight == lastAppliedInputBarHeight,
-           safeBottom == lastAppliedSafeBottom,
-           newBottomInset == lastAppliedBottomInset {
+        if newBottomInset == lastAppliedBottomInset {
             return
         }
 
-        lastAppliedInputBarHeight = inputBarHeight
-        lastAppliedSafeBottom = safeBottom
+        let oldBottomInset = scrollView.contentInset.bottom
+        let oldMaxOffsetY = scrollView.contentSize.height - scrollView.bounds.height + oldBottomInset
+        let distanceFromBottom = max(0, oldMaxOffsetY - scrollView.contentOffset.y)
         lastAppliedBottomInset = newBottomInset
 
         log("updateScrollViewInsets:")
@@ -228,6 +173,13 @@ final class ChatFix1ViewController: UIViewController, UIScrollViewDelegate {
 
         scrollView.contentInset.bottom = newBottomInset
         scrollView.verticalScrollIndicatorInsets.bottom = newBottomInset
+
+        let newMaxOffsetY = scrollView.contentSize.height - scrollView.bounds.height + newBottomInset
+        var targetOffsetY = newMaxOffsetY - distanceFromBottom
+        let minY: CGFloat = 0
+        let maxY = max(0, newMaxOffsetY)
+        targetOffsetY = min(max(targetOffsetY, minY), maxY)
+        scrollView.contentOffset.y = targetOffsetY
     }
 
     private func populateMessages() {
