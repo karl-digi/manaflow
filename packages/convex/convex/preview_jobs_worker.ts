@@ -1870,7 +1870,7 @@ export async function runPreviewJob(
           baseBranch: defaultBranch,
           headBranch: run.headRef || run.headSha,
           outputDir: `/root/screenshots/${Date.now()}-pr-${run.prNumber}`,
-          pathToClaudeCodeExecutable: "/usr/local/bin/claude",
+          pathToClaudeCodeExecutable: "/root/.bun/bin/claude",
           installCommand: environment.maintenanceScript ?? undefined,
           devCommand: environment.devScript ?? undefined,
           auth: { taskRunJwt: previewJwt },
