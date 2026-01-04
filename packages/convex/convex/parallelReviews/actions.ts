@@ -52,9 +52,9 @@ function getReviewerModel(agent: ReviewerAgent): LanguageModel {
       return openai(REVIEWER_MODELS.codex);
     }
     case "gemini": {
-      const apiKey = env.GOOGLE_GENERATIVE_AI_API_KEY;
+      const apiKey = env.GEMINI_API_KEY;
       if (!apiKey) {
-        throw new ConvexError("GOOGLE_GENERATIVE_AI_API_KEY not configured");
+        throw new ConvexError("GEMINI_API_KEY not configured");
       }
       const google = createGoogleGenerativeAI({ apiKey });
       return google(REVIEWER_MODELS.gemini) as LanguageModel;
