@@ -101,6 +101,7 @@ type FocusNavigateOptions = {
 type NavigateOptions = {
   updateAnchor?: boolean;
   updateHash?: boolean;
+  shouldScroll?: boolean;
 };
 
 type HeatmapFileStatus =
@@ -1994,7 +1995,8 @@ export function GitDiffHeatmapReviewViewer({
         window.location.hash = encodeURIComponent(path);
       }
 
-      if (scrollContainer) {
+      const shouldScroll = options?.shouldScroll ?? true;
+      if (shouldScroll && scrollContainer) {
         const target = document.getElementById(path);
         if (target) {
           target.scrollIntoView({ behavior: "auto", block: "start" });
@@ -2118,20 +2120,17 @@ export function GitDiffHeatmapReviewViewer({
       const key = event.key.toLowerCase();
       if (key === "j") {
         event.preventDefault();
-        event.stopPropagation();
         handleFocusNext({ source: "keyboard" });
       } else if (key === "k") {
         event.preventDefault();
-        event.stopPropagation();
         handleFocusPrevious({ source: "keyboard" });
       }
     };
 
-    // Use capture phase to intercept before other handlers
-    window.addEventListener("keydown", handleKeydown, true);
+    window.addEventListener("keydown", handleKeydown);
 
     return () => {
-      window.removeEventListener("keydown", handleKeydown, true);
+      window.removeEventListener("keydown", handleKeydown);
     };
   }, [handleFocusNext, handleFocusPrevious, targetCount]);
 
@@ -2168,6 +2167,7 @@ export function GitDiffHeatmapReviewViewer({
     handleNavigate(focusedError.filePath, {
       updateAnchor: isUserInitiated,
       updateHash: isUserInitiated,
+      shouldScroll: false,
     });
 
     if (!isUserInitiated) {
