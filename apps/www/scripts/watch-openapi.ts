@@ -58,5 +58,18 @@ try {
 log(`[${(performance.now() - startTime).toFixed(2)}ms] watch-openapi complete`);
 console.log("[watch-openapi] initial client generation complete");
 
-// Exit explicitly - the Hono app import keeps the event loop alive
-process.exit(0);
+const isWatchMode =
+  process.execArgv.includes("--watch") ||
+  process.env.OPENAPI_WATCH === "1" ||
+  process.env.OPENAPI_WATCH === "true";
+const forceExit =
+  process.env.OPENAPI_FORCE_EXIT === "1" ||
+  process.env.OPENAPI_FORCE_EXIT === "true";
+const disableExit =
+  process.env.OPENAPI_FORCE_EXIT === "0" ||
+  process.env.OPENAPI_FORCE_EXIT === "false";
+
+// In CI / non-watch runs we still need an explicit exit because the Hono app import keeps the event loop alive.
+if (forceExit || (!isWatchMode && !disableExit)) {
+  process.exit(0);
+}
