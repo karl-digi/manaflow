@@ -26,6 +26,7 @@ import {
   type FileData,
 } from "react-diff-view";
 
+import { isElectron } from "@/lib/electron";
 import { cn } from "@/lib/utils";
 import {
   parseReviewHeatmap,
@@ -1646,7 +1647,7 @@ export function GitDiffHeatmapReviewViewer({
   );
 
   const hydratedInitialPath =
-    typeof window !== "undefined"
+    typeof window !== "undefined" && !isElectron
       ? decodeURIComponent(window.location.hash.slice(1))
       : "";
 
@@ -1800,7 +1801,7 @@ export function GitDiffHeatmapReviewViewer({
   }, [directoryPaths, activePath]);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
+    if (typeof window === "undefined" || isElectron) {
       return;
     }
     const hash = decodeURIComponent(window.location.hash.slice(1));
@@ -1989,7 +1990,7 @@ export function GitDiffHeatmapReviewViewer({
       }
 
       const shouldUpdateHash = options?.updateHash ?? true;
-      if (shouldUpdateHash) {
+      if (shouldUpdateHash && !isElectron) {
         window.location.hash = encodeURIComponent(path);
       }
 
