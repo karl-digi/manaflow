@@ -89,8 +89,11 @@ export function usePersistentIframe({
     if (!containerRef.current) return;
 
     try {
-      // Get or create the iframe
-      const iframe = persistentIframeManager.getOrCreateIframe(key, url, { allow, sandbox });
+      // Get or create the iframe (use allow/sandbox from mountOptions for consistency)
+      const iframe = persistentIframeManager.getOrCreateIframe(key, url, {
+        allow: mountOptions.allow,
+        sandbox: mountOptions.sandbox,
+      });
 
       // Set up load handlers if not already loaded
       if (!iframe.contentWindow || iframe.src !== url) {
@@ -131,7 +134,7 @@ export function usePersistentIframe({
         cleanupRef.current = null;
       }
     };
-  }, [key, url, mountOptions, preload, allow, sandbox]);
+  }, [key, url, mountOptions, preload]);
 
   const handlePreload = useCallback(() => {
     return persistentIframeManager.preloadIframe(key, url, { allow, sandbox });

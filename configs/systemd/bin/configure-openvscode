@@ -69,6 +69,7 @@ mkdir -p "${user_dir}" "${default_profile_dir}" "${machine_dir}"
 merge_settings() {
   local target_file="$1"
   local base_settings="$2"
+  local temp_file="${target_file}.tmp"
 
   if [[ -f "$target_file" ]] && [[ -s "$target_file" ]]; then
     # File exists and is not empty - merge base settings with existing (base settings take precedence for managed settings)
@@ -79,7 +80,9 @@ merge_settings() {
       existing='{}'
     fi
     # Merge: existing settings first, then base settings on top (so base settings win for managed keys)
-    printf '%s' "$existing" | jq --argjson base "$base_settings" '. * $base' > "$target_file"
+    # Write to temp file first, then atomically move to target
+    printf '%s' "$existing" | jq --argjson base "$base_settings" '. * $base' > "$temp_file"
+    mv "$temp_file" "$target_file"
   else
     # File doesn't exist or is empty - write base settings directly
     printf '%s' "$base_settings" > "$target_file"
