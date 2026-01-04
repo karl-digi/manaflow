@@ -3095,7 +3095,7 @@ export type PostApiPreviewTestJobsErrors = {
      */
     401: unknown;
     /**
-     * Preview config not found
+     * Preview config not found or PR not found on GitHub
      */
     404: unknown;
 };
@@ -3246,6 +3246,40 @@ export type GetApiPreviewTestJobsByPreviewRunIdResponses = {
 };
 
 export type GetApiPreviewTestJobsByPreviewRunIdResponse = GetApiPreviewTestJobsByPreviewRunIdResponses[keyof GetApiPreviewTestJobsByPreviewRunIdResponses];
+
+export type PostApiPreviewTestJobsByPreviewRunIdRetryData = {
+    body?: never;
+    path: {
+        previewRunId: string;
+    };
+    query: {
+        teamSlugOrId: string;
+    };
+    url: '/api/preview/test/jobs/{previewRunId}/retry';
+};
+
+export type PostApiPreviewTestJobsByPreviewRunIdRetryErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Preview run not found
+     */
+    404: unknown;
+};
+
+export type PostApiPreviewTestJobsByPreviewRunIdRetryResponses = {
+    /**
+     * New job created and dispatched
+     */
+    200: {
+        newPreviewRunId: string;
+        dispatched: boolean;
+    };
+};
+
+export type PostApiPreviewTestJobsByPreviewRunIdRetryResponse = PostApiPreviewTestJobsByPreviewRunIdRetryResponses[keyof PostApiPreviewTestJobsByPreviewRunIdRetryResponses];
 
 export type ClientOptions = {
     baseUrl: `${string}://${string}` | (string & {});

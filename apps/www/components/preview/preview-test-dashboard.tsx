@@ -17,6 +17,7 @@ import {
   FileText,
 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import clsx from "clsx";
 import {
   QueryClient,
@@ -30,6 +31,7 @@ import {
   getApiPreviewTestJobs,
   postApiPreviewTestJobs,
   postApiPreviewTestJobsByPreviewRunIdDispatch,
+  postApiPreviewTestJobsByPreviewRunIdRetry,
   deleteApiPreviewTestJobsByPreviewRunId,
   getApiPreviewTestCheckAccess,
   getApiPreviewConfigs,
@@ -117,6 +119,7 @@ function PreviewTestDashboardInner({
   selectedTeamSlugOrId,
   teamOptions,
 }: PreviewTestDashboardProps) {
+  const router = useRouter();
   const [prUrls, setPrUrls] = useState("");
   const [selectedTeam, setSelectedTeam] = useState(selectedTeamSlugOrId);
   const [expandedJobs, setExpandedJobs] = useState<Set<string>>(new Set());
@@ -223,6 +226,26 @@ function PreviewTestDashboardInner({
     },
   });
 
+  // Retry test job mutation
+  const retryJobMutation = useMutation({
+    mutationFn: async (previewRunId: string) => {
+      const response = await postApiPreviewTestJobsByPreviewRunIdRetry({
+        path: { previewRunId },
+        query: { teamSlugOrId: selectedTeam },
+      });
+      if (response.error) {
+        throw new Error("Failed to retry test job");
+      }
+      return response.data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["preview-test-jobs", selectedTeam] });
+    },
+    onError: (error) => {
+      setError(error.message);
+    },
+  });
+
   const handleCreateJobs = useCallback(async () => {
     setError(null);
     setAccessWarning(null);
@@ -287,6 +310,14 @@ function PreviewTestDashboardInner({
     [deleteJobMutation]
   );
 
+  const handleRetryJob = useCallback(
+    async (previewRunId: string) => {
+      setError(null);
+      await retryJobMutation.mutateAsync(previewRunId);
+    },
+    [retryJobMutation]
+  );
+
   const handleDispatchAll = useCallback(async () => {
     setError(null);
     const pendingJobs = jobs.filter((job) => job.status === "pending");
@@ -306,6 +337,19 @@ function PreviewTestDashboardInner({
       return next;
     });
   }, []);
+
+  const handleJobClick = useCallback(
+    (job: TestJob) => {
+      // If the job has a trajectory, navigate to it
+      if (job.taskId && job.taskRunId) {
+        router.push(`/${selectedTeam}/task/${job.taskId}/run/${job.taskRunId}`);
+      } else {
+        // Otherwise just toggle expanded state
+        toggleJobExpanded(job._id);
+      }
+    },
+    [router, selectedTeam, toggleJobExpanded]
+  );
 
   const getStatusIcon = (status: TestJob["status"]) => {
     switch (status) {
@@ -342,10 +386,10 @@ function PreviewTestDashboardInner({
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Preview.new Testing</h1>
+          <h1 className="text-2xl font-bold text-white">Preview.new Eval Board</h1>
           <p className="mt-1 text-sm text-neutral-400">
-            Test preview jobs without GitHub integration. Screenshots and captions
-            will be generated but no comments will be posted.
+            Evaluate preview jobs without GitHub integration. Screenshots and
+            captions will be generated but no comments will be posted.
           </p>
         </div>
         <Link href="/preview">
@@ -375,71 +419,67 @@ function PreviewTestDashboardInner({
 
       {/* PR URL input */}
       <div className="rounded-lg border border-neutral-800 bg-neutral-900/50 p-4">
-        <div className="mb-3 flex items-center justify-between">
-          <label className="text-sm font-medium text-neutral-300">
-            PR URLs (one per line)
-          </label>
+        <div className="flex items-center gap-3">
+          <input
+            type="text"
+            value={prUrls}
+            onChange={(e) => setPrUrls(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && prUrls.trim()) {
+                e.preventDefault();
+                handleCreateJobs();
+              }
+            }}
+            placeholder="https://github.com/owner/repo/pull/123"
+            className="flex-1 rounded-md border border-neutral-700 bg-neutral-800 px-3 py-2 text-sm text-white placeholder:text-neutral-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+          <Button
+            onClick={handleCreateJobs}
+            disabled={createJobMutation.isPending || !prUrls.trim()}
+            className="gap-2 shrink-0"
+          >
+            {createJobMutation.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Plus className="h-4 w-4" />
+            )}
+            Add
+          </Button>
           <button
             onClick={() => setShowConfiguredRepos(!showConfiguredRepos)}
-            className="text-xs text-neutral-400 hover:text-neutral-200"
+            className={clsx(
+              "flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs transition-colors shrink-0",
+              activeConfigs.length > 0
+                ? "bg-green-900/30 text-green-400 hover:bg-green-900/50"
+                : "bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-300"
+            )}
           >
             {activeConfigs.length > 0 ? (
-              <span className="flex items-center gap-1">
-                <CheckCircle2 className="h-3 w-3 text-green-400" />
-                {activeConfigs.length} repo{activeConfigs.length !== 1 ? "s" : ""} configured
-              </span>
+              <>
+                <CheckCircle2 className="h-3 w-3" />
+                {activeConfigs.length} repo{activeConfigs.length !== 1 ? "s" : ""}
+              </>
             ) : (
-              <span className="flex items-center gap-1">
-                <AlertCircle className="h-3 w-3 text-amber-400" />
-                No repos configured
-              </span>
+              <>
+                <span className="h-1.5 w-1.5 rounded-full bg-neutral-500" />
+                0 repos
+              </>
             )}
           </button>
-        </div>
-        <div className="flex items-start gap-3">
-          <div className="relative flex-1">
-            <textarea
-              value={prUrls}
-              onChange={(e) => setPrUrls(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey && prUrls.trim()) {
-                  e.preventDefault();
-                  handleCreateJobs();
-                }
-              }}
-              placeholder="https://github.com/owner/repo/pull/123 https://github.com/owner/repo/pull/456"
-              rows={3}
-              className="w-full rounded-md border border-neutral-700 bg-neutral-800 px-3 py-2 text-sm text-white placeholder:text-neutral-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none"
+          <Button
+            onClick={() =>
+              qc.invalidateQueries({
+                queryKey: ["preview-test-jobs", selectedTeam],
+              })
+            }
+            variant="ghost"
+            size="icon"
+            className="shrink-0"
+          >
+            <RefreshCw
+              className={clsx("h-4 w-4", isLoadingJobs && "animate-spin")}
             />
-          </div>
-          <div className="flex flex-col gap-2">
-            <Button
-              onClick={handleCreateJobs}
-              disabled={createJobMutation.isPending || !prUrls.trim()}
-              className="gap-2"
-            >
-              {createJobMutation.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Plus className="h-4 w-4" />
-              )}
-              Add Jobs
-            </Button>
-            <Button
-              onClick={() =>
-                qc.invalidateQueries({
-                  queryKey: ["preview-test-jobs", selectedTeam],
-                })
-              }
-              variant="ghost"
-              size="icon"
-              className="self-center"
-            >
-              <RefreshCw
-                className={clsx("h-4 w-4", isLoadingJobs && "animate-spin")}
-              />
-            </Button>
-          </div>
+          </Button>
         </div>
       </div>
 
@@ -603,14 +643,22 @@ function PreviewTestDashboardInner({
                 {/* Job header */}
                 <div
                   className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-neutral-800/50"
-                  onClick={() => toggleJobExpanded(job._id)}
+                  onClick={() => handleJobClick(job)}
                 >
-                  <ChevronDown
-                    className={clsx(
-                      "h-4 w-4 text-neutral-500 transition-transform",
-                      !expandedJobs.has(job._id) && "-rotate-90"
-                    )}
-                  />
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleJobExpanded(job._id);
+                    }}
+                    className="rounded p-0.5 hover:bg-neutral-700"
+                  >
+                    <ChevronDown
+                      className={clsx(
+                        "h-4 w-4 text-neutral-500 transition-transform",
+                        !expandedJobs.has(job._id) && "-rotate-90"
+                      )}
+                    />
+                  </button>
                   {getStatusIcon(job.status)}
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
@@ -640,6 +688,11 @@ function PreviewTestDashboardInner({
                   >
                     {getStatusText(job.status)}
                   </span>
+                  {job.taskId && job.taskRunId && (
+                    <span className="text-xs text-neutral-500">
+                      Click to view trajectory
+                    </span>
+                  )}
                   <div
                     className="flex items-center gap-1"
                     onClick={(e) => e.stopPropagation()}
@@ -653,6 +706,22 @@ function PreviewTestDashboardInner({
                       >
                         <Play className="h-3 w-3" />
                         Start
+                      </Button>
+                    )}
+                    {job.status === "failed" && (
+                      <Button
+                        onClick={() => handleRetryJob(job._id)}
+                        disabled={retryJobMutation.isPending}
+                        size="sm"
+                        variant="outline"
+                        className="gap-1"
+                      >
+                        {retryJobMutation.isPending ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-3 w-3" />
+                        )}
+                        Retry
                       </Button>
                     )}
                     <a

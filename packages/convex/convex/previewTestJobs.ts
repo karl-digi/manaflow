@@ -10,7 +10,7 @@ import { getTeamId } from "../_shared/team";
 import { internal } from "./_generated/api";
 import type { Id, Doc } from "./_generated/dataModel";
 import { authMutation, authQuery } from "./users/utils";
-import { action } from "./_generated/server";
+import { action, internalMutation } from "./_generated/server";
 
 /**
  * Parse a GitHub PR URL to extract owner, repo, and PR number
@@ -50,6 +50,18 @@ export const createTestRun = authMutation({
   args: {
     teamSlugOrId: v.string(),
     prUrl: v.string(),
+    // Optional PR metadata fetched from GitHub - if provided, uses real data
+    prMetadata: v.optional(
+      v.object({
+        headSha: v.string(),
+        baseSha: v.optional(v.string()),
+        prTitle: v.string(),
+        prDescription: v.optional(v.string()),
+        headRef: v.optional(v.string()),
+        headRepoFullName: v.optional(v.string()),
+        headRepoCloneUrl: v.optional(v.string()),
+      })
+    ),
   },
   handler: async (ctx, args): Promise<{
     previewRunId: Id<"previewRuns">;
@@ -106,29 +118,29 @@ export const createTestRun = authMutation({
       );
     }
 
-    // Fetch PR metadata from GitHub (without posting anything)
-    // For test runs, we'll use placeholder values if we can't fetch
-    const headSha = `test-${Date.now()}`;
-    const prTitle = `Test PR #${prNumber}`;
+    // Use real PR metadata if provided, otherwise fall back to placeholder values
+    const headSha = args.prMetadata?.headSha ?? `test-${Date.now()}`;
+    const prTitle = args.prMetadata?.prTitle ?? `Test PR #${prNumber}`;
 
     const now = Date.now();
 
-    // Create preview run WITHOUT repoInstallationId - this skips GitHub comments
+    // Create preview run with repoInstallationId for git authentication
+    // Note: GitHub comment posting is controlled by the isTestRun field, not by missing installationId
     const runId = await ctx.db.insert("previewRuns", {
       previewConfigId: config._id,
       teamId,
       repoFullName,
-      // Explicitly NOT setting repoInstallationId - this skips GitHub comment posting
-      repoInstallationId: undefined,
+      // Include repoInstallationId so git fetch can authenticate
+      repoInstallationId: config.repoInstallationId,
       prNumber,
       prUrl: args.prUrl,
       prTitle,
-      prDescription: undefined,
+      prDescription: args.prMetadata?.prDescription,
       headSha,
-      baseSha: undefined,
-      headRef: undefined,
-      headRepoFullName: undefined,
-      headRepoCloneUrl: undefined,
+      baseSha: args.prMetadata?.baseSha,
+      headRef: args.prMetadata?.headRef,
+      headRepoFullName: args.prMetadata?.headRepoFullName,
+      headRepoCloneUrl: args.prMetadata?.headRepoCloneUrl,
       status: "pending",
       stateReason: "Test preview run",
       dispatchedAt: undefined,
@@ -150,6 +162,142 @@ export const createTestRun = authMutation({
     if (!identity) {
       throw new Error("Authentication required");
     }
+    const userId = config.createdByUserId ?? "system";
+
+    // Create task for this preview run
+    const taskId: Id<"tasks"> = await ctx.runMutation(
+      internal.tasks.createForPreview,
+      {
+        teamId,
+        userId,
+        previewRunId: runId,
+        repoFullName,
+        prNumber,
+        prUrl: args.prUrl,
+        headSha,
+        baseBranch: config.repoDefaultBranch,
+      }
+    );
+
+    // Create taskRun
+    const { taskRunId }: { taskRunId: Id<"taskRuns"> } = await ctx.runMutation(
+      internal.taskRuns.createForPreview,
+      {
+        taskId,
+        teamId,
+        userId,
+        prUrl: args.prUrl,
+        environmentId: config.environmentId,
+        newBranch: undefined,
+      }
+    );
+
+    // Link the taskRun to the preview run
+    await ctx.runMutation(internal.previewRuns.linkTaskRun, {
+      previewRunId: runId,
+      taskRunId,
+    });
+
+    return {
+      previewRunId: runId,
+      taskId,
+      taskRunId,
+      prNumber,
+      repoFullName,
+    };
+  },
+});
+
+/**
+ * Internal mutation to create a test run (used by retry action)
+ */
+export const createTestRunInternal = internalMutation({
+  args: {
+    teamId: v.string(),
+    prUrl: v.string(),
+    // Optional PR metadata fetched from GitHub - if provided, uses real data
+    prMetadata: v.optional(
+      v.object({
+        headSha: v.string(),
+        baseSha: v.optional(v.string()),
+        prTitle: v.string(),
+        prDescription: v.optional(v.string()),
+        headRef: v.optional(v.string()),
+        headRepoFullName: v.optional(v.string()),
+        headRepoCloneUrl: v.optional(v.string()),
+      })
+    ),
+  },
+  handler: async (ctx, args): Promise<{
+    previewRunId: Id<"previewRuns">;
+    taskId: Id<"tasks">;
+    taskRunId: Id<"taskRuns">;
+    prNumber: number;
+    repoFullName: string;
+  }> => {
+    const { teamId } = args;
+
+    // Parse PR URL
+    const parsed = parsePrUrl(args.prUrl);
+    if (!parsed) {
+      throw new Error(
+        `Invalid PR URL format. Expected: https://github.com/owner/repo/pull/123`
+      );
+    }
+
+    const { prNumber, repoFullName } = parsed;
+
+    // Find the preview config for this repo
+    const config = await ctx.db
+      .query("previewConfigs")
+      .withIndex("by_team_repo", (q) =>
+        q.eq("teamId", teamId).eq("repoFullName", repoFullName)
+      )
+      .first();
+
+    if (!config) {
+      throw new Error(
+        `No preview configuration found for ${repoFullName}. ` +
+          `Please create one first via the cmux UI at /preview.`
+      );
+    }
+
+    // Use real PR metadata if provided, otherwise fall back to placeholder values
+    const headSha = args.prMetadata?.headSha ?? `test-${Date.now()}`;
+    const prTitle = args.prMetadata?.prTitle ?? `Test PR #${prNumber}`;
+    const now = Date.now();
+
+    // Create preview run with repoInstallationId for git authentication
+    const runId = await ctx.db.insert("previewRuns", {
+      previewConfigId: config._id,
+      teamId,
+      repoFullName,
+      repoInstallationId: config.repoInstallationId,
+      prNumber,
+      prUrl: args.prUrl,
+      prTitle,
+      prDescription: args.prMetadata?.prDescription,
+      headSha,
+      baseSha: args.prMetadata?.baseSha,
+      headRef: args.prMetadata?.headRef,
+      headRepoFullName: args.prMetadata?.headRepoFullName,
+      headRepoCloneUrl: args.prMetadata?.headRepoCloneUrl,
+      status: "pending",
+      stateReason: "Test preview run",
+      dispatchedAt: undefined,
+      startedAt: undefined,
+      completedAt: undefined,
+      screenshotSetId: undefined,
+      githubCommentUrl: undefined,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await ctx.db.patch(config._id, {
+      lastRunAt: now,
+      updatedAt: now,
+    });
+
     const userId = config.createdByUserId ?? "system";
 
     // Create task for this preview run
@@ -262,9 +410,9 @@ export const listTestRuns = authQuery({
       .order("desc")
       .take(take * 2);
 
-    // Filter to only test runs (those without repoInstallationId)
+    // Filter to only test runs (identified by stateReason or missing repoInstallationId for legacy runs)
     const testRuns = runs
-      .filter((run) => !run.repoInstallationId)
+      .filter((run) => run.stateReason === "Test preview run" || !run.repoInstallationId)
       .slice(0, take);
 
     // Enrich with config info and screenshot data
@@ -541,6 +689,70 @@ export const checkRepoAccess = authQuery({
 });
 
 /**
+ * Retry a failed test preview job by creating a new run and dispatching it
+ */
+export const retryTestJob = action({
+  args: {
+    teamSlugOrId: v.string(),
+    previewRunId: v.id("previewRuns"),
+  },
+  handler: async (ctx, args): Promise<{
+    newPreviewRunId: Id<"previewRuns">;
+    dispatched: boolean;
+  }> => {
+    // Manual auth check for actions
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error("Authentication required");
+    }
+
+    // Get the preview run to retry
+    const previewRun: Doc<"previewRuns"> | null = await ctx.runQuery(internal.previewRuns.getById, {
+      id: args.previewRunId,
+    });
+
+    if (!previewRun) {
+      throw new Error("Preview run not found");
+    }
+
+    // Verify the user is a member of the team that owns this run
+    const { isMember } = await ctx.runQuery(internal.teams.checkTeamMembership, {
+      teamId: previewRun.teamId,
+      userId: identity.subject,
+    });
+    if (!isMember) {
+      throw new Error("Forbidden: Not a member of this team");
+    }
+
+    // Create a new test run with the same PR URL
+    const newRun: {
+      previewRunId: Id<"previewRuns">;
+      taskId: Id<"tasks">;
+      taskRunId: Id<"taskRuns">;
+      prNumber: number;
+      repoFullName: string;
+    } = await ctx.runMutation(internal.previewTestJobs.createTestRunInternal, {
+      teamId: previewRun.teamId,
+      prUrl: previewRun.prUrl,
+    });
+
+    // Immediately dispatch the new run
+    await ctx.runMutation(internal.previewRuns.markDispatched, {
+      previewRunId: newRun.previewRunId,
+    });
+
+    await ctx.scheduler.runAfter(0, internal.preview_jobs.executePreviewJob, {
+      previewRunId: newRun.previewRunId,
+    });
+
+    return {
+      newPreviewRunId: newRun.previewRunId,
+      dispatched: true,
+    };
+  },
+});
+
+/**
  * Delete a test preview run
  */
 export const deleteTestRun = authMutation({
@@ -560,8 +772,9 @@ export const deleteTestRun = authMutation({
       throw new Error("Preview run does not belong to this team");
     }
 
-    // Only allow deleting test runs (those without repoInstallationId)
-    if (run.repoInstallationId) {
+    // Only allow deleting test runs (identified by stateReason or missing repoInstallationId for legacy runs)
+    const isTestRun = run.stateReason === "Test preview run" || !run.repoInstallationId;
+    if (!isTestRun) {
       throw new Error("Cannot delete production preview runs");
     }
 
