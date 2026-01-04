@@ -422,9 +422,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
     };
   }, [goNext, goPrev, isSlideshowOpen]);
 
-  if (sortedScreenshotSets.length === 0) {
-    return null;
-  }
+  const isEmpty = sortedScreenshotSets.length === 0;
 
   return (
     <section className="border-b border-neutral-200 bg-neutral-50/60 dark:border-neutral-800 dark:bg-neutral-950/40">
@@ -433,8 +431,9 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
           Screenshots
         </h2>
         <span className="text-xs text-neutral-600 dark:text-neutral-400">
-          {sortedScreenshotSets.length}{" "}
-          {sortedScreenshotSets.length === 1 ? "capture" : "captures"}
+          {isEmpty
+            ? "No captures yet"
+            : `${sortedScreenshotSets.length} ${sortedScreenshotSets.length === 1 ? "capture" : "captures"}`}
         </span>
       </div>
       <div className="px-3.5 pb-4 space-y-4">
@@ -736,6 +735,11 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
             </article>
           );
         })}
+        {isEmpty && (
+          <div className="text-xs text-neutral-500 dark:text-neutral-400 py-2">
+            No screenshot captures have been recorded for this run yet.
+          </div>
+        )}
       </div>
     </section>
   );
