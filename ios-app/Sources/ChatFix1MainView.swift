@@ -47,6 +47,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     private var keyboardAnimator: UIViewPropertyAnimator?
     private var lastKeyboardHeight: CGFloat = 0
     private var lastAppliedBottomInset: CGFloat = 0
+    private var lastAppliedTopInset: CGFloat = 0
     private var lastContentHeight: CGFloat = 0
     private var hasUserScrolled = false
     private var didInitialScrollToBottom = false
@@ -268,7 +269,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     private func setupConstraints() {
         inputBarBottomConstraint = inputBarVC.view.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: 0)
         contentStackBottomConstraint = contentStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -8)
-        contentStackTopConstraint = contentStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 8)
+        contentStackTopConstraint = contentStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 0)
         topFadeHeightConstraint = topFadeView.heightAnchor.constraint(equalToConstant: 0)
 
         NSLayoutConstraint.activate([
@@ -336,14 +337,27 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     }
 
     private func updateScrollViewInsets() {
-        let inputBarHeight = inputBarVC.view.bounds.height
+        let safeTop = view.window?.safeAreaInsets.top ?? view.safeAreaInsets.top
         let safeBottom = view.window?.safeAreaInsets.bottom ?? view.safeAreaInsets.bottom
+        let inputBarHeight = inputBarVC.view.bounds.height
+
+        // Header height: 8pt padding + 36pt button + 8pt padding = 52pt below safe area
+        // Add 8pt extra so content doesn't sit right at header edge
+        let newTopInset = safeTop + 52 + 8
         let newBottomInset = inputBarHeight + safeBottom
 
         log("updateScrollViewInsets:")
+        log("  safeTop: \(safeTop)")
         log("  inputBarHeight: \(inputBarHeight)")
         log("  safeBottom: \(safeBottom)")
+        log("  newTopInset: \(newTopInset)")
         log("  newBottomInset: \(newBottomInset)")
+
+        if abs(lastAppliedTopInset - newTopInset) > 0.5 {
+            scrollView.contentInset.top = newTopInset
+            scrollView.verticalScrollIndicatorInsets.top = newTopInset
+            lastAppliedTopInset = newTopInset
+        }
 
         if abs(lastAppliedBottomInset - newBottomInset) > 0.5 {
             scrollView.contentInset.bottom = newBottomInset
@@ -435,18 +449,24 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     }
 
     private func scrollToBottom(animated: Bool) {
-        let insets = scrollView.adjustedContentInset
-        let visibleHeight = scrollView.bounds.height - insets.top - insets.bottom
-        let bottomOffsetY = max(-insets.top, scrollView.contentSize.height - visibleHeight)
-        let bottomOffset = CGPoint(x: 0, y: bottomOffsetY)
+        let contentHeight = scrollView.contentSize.height
+        let boundsHeight = scrollView.bounds.height
+        let topInset = scrollView.contentInset.top
+        let bottomInset = scrollView.contentInset.bottom
+
+        // Max offset: bottom of content aligns with visible area above input bar
+        let maxOffsetY = contentHeight - boundsHeight + bottomInset
+        // Min offset: content starts below header
+        let minOffsetY = -topInset
+        // Scroll to bottom, clamped to minimum (handles small content)
+        let targetOffsetY = max(minOffsetY, maxOffsetY)
+
         log("scrollToBottom:")
-        log("  scrollView.bounds: \(scrollView.bounds)")
-        log("  scrollView.contentInset.top: \(scrollView.contentInset.top)")
-        log("  scrollView.contentInset.bottom: \(scrollView.contentInset.bottom)")
-        log("  visibleHeight: \(visibleHeight)")
-        log("  scrollView.contentSize: \(scrollView.contentSize)")
-        log("  bottomOffset: \(bottomOffset)")
-        scrollView.setContentOffset(bottomOffset, animated: animated)
+        log("  contentHeight: \(contentHeight), boundsHeight: \(boundsHeight)")
+        log("  topInset: \(topInset), bottomInset: \(bottomInset)")
+        log("  maxOffsetY: \(maxOffsetY), minOffsetY: \(minOffsetY)")
+        log("  targetOffsetY: \(targetOffsetY)")
+        scrollView.setContentOffset(CGPoint(x: 0, y: targetOffsetY), animated: animated)
     }
 
     @objc private func dismissKeyboard() {
