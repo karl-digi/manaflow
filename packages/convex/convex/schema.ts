@@ -758,14 +758,16 @@ const convexSchema = defineSchema({
     name: v.string(), // Human-friendly environment name
     teamId: v.string(), // Team that owns this environment
     userId: v.string(), // User who created the environment
-    snapshotId: v.string(), // Canonical snapshot identifier (snapshot_*)
-    snapshotProvider: v.union(
-      v.literal("morph"),
-      v.literal("pve-lxc"),
-      v.literal("pve-vm"),
-      v.literal("docker"),
-      v.literal("daytona"),
-      v.literal("other")
+    snapshotId: v.optional(v.string()), // Canonical snapshot identifier (snapshot_*), optional for legacy rows
+    snapshotProvider: v.optional(
+      v.union(
+        v.literal("morph"),
+        v.literal("pve-lxc"),
+        v.literal("pve-vm"),
+        v.literal("docker"),
+        v.literal("daytona"),
+        v.literal("other")
+      )
     ),
     morphSnapshotId: v.optional(v.string()), // Legacy Morph snapshot identifier
     templateVmid: v.optional(v.number()), // PVE template VMID (for pve-lxc/pve-vm)
@@ -785,14 +787,16 @@ const convexSchema = defineSchema({
   environmentSnapshotVersions: defineTable({
     environmentId: v.id("environments"),
     teamId: v.string(),
-    snapshotId: v.string(),
-    snapshotProvider: v.union(
-      v.literal("morph"),
-      v.literal("pve-lxc"),
-      v.literal("pve-vm"),
-      v.literal("docker"),
-      v.literal("daytona"),
-      v.literal("other")
+    snapshotId: v.optional(v.string()),
+    snapshotProvider: v.optional(
+      v.union(
+        v.literal("morph"),
+        v.literal("pve-lxc"),
+        v.literal("pve-vm"),
+        v.literal("docker"),
+        v.literal("daytona"),
+        v.literal("other")
+      )
     ),
     morphSnapshotId: v.optional(v.string()), // Legacy Morph snapshot identifier
     templateVmid: v.optional(v.number()), // PVE template VMID (for pve-lxc/pve-vm)

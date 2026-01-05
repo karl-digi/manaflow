@@ -12,6 +12,103 @@ import type { DataModel } from "./_generated/dataModel";
 
 export const migrations = new Migrations<DataModel>(components.migrations);
 
+const inferSnapshotProvider = (
+  snapshotId: string | undefined,
+  morphSnapshotId: string | undefined,
+  templateVmid: number | undefined
+): "morph" | "pve-lxc" | "pve-vm" | undefined => {
+  if (!snapshotId) {
+    if (templateVmid !== undefined) {
+      return "pve-lxc";
+    }
+    return morphSnapshotId ? "morph" : undefined;
+  }
+
+  if (snapshotId.startsWith("pvevm_") || snapshotId.startsWith("snapshot_pvevm")) {
+    return "pve-vm";
+  }
+  if (
+    snapshotId.startsWith("pvelxc_") ||
+    snapshotId.startsWith("pve_lxc_") ||
+    snapshotId.startsWith("snapshot_pvelxc") ||
+    snapshotId.startsWith("pve_")
+  ) {
+    return "pve-lxc";
+  }
+  if (snapshotId.startsWith("morph_")) {
+    return "morph";
+  }
+  if (snapshotId.startsWith("snapshot_")) {
+    return templateVmid !== undefined ? "pve-lxc" : "morph";
+  }
+  if (templateVmid !== undefined) {
+    return "pve-lxc";
+  }
+  return morphSnapshotId ? "morph" : undefined;
+};
+
+// Backfill snapshotId/snapshotProvider from legacy morphSnapshotId where possible.
+// Run with: bunx convex run migrations:run '{fn: "migrations:backfillEnvironmentsSnapshotFields"}'
+export const backfillEnvironmentsSnapshotFields = migrations.define({
+  table: "environments",
+  migrateOne: (_ctx, doc) => {
+    const updates: Partial<typeof doc> = {};
+    const normalizedSnapshotId = doc.snapshotId ?? doc.morphSnapshotId;
+
+    if (doc.snapshotId === undefined && doc.morphSnapshotId) {
+      updates.snapshotId = doc.morphSnapshotId;
+    }
+
+    if (doc.snapshotProvider === undefined) {
+      const provider = inferSnapshotProvider(
+        normalizedSnapshotId,
+        doc.morphSnapshotId,
+        doc.templateVmid
+      );
+      if (provider) {
+        updates.snapshotProvider = provider;
+      }
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return;
+    }
+
+    return updates;
+  },
+});
+
+// Run with: bunx convex run migrations:run '{fn: "migrations:backfillEnvironmentSnapshotVersionsSnapshotFields"}'
+export const backfillEnvironmentSnapshotVersionsSnapshotFields =
+  migrations.define({
+    table: "environmentSnapshotVersions",
+    migrateOne: (_ctx, doc) => {
+      const updates: Partial<typeof doc> = {};
+      const normalizedSnapshotId = doc.snapshotId ?? doc.morphSnapshotId;
+
+      if (doc.snapshotId === undefined && doc.morphSnapshotId) {
+        updates.snapshotId = doc.morphSnapshotId;
+      }
+
+      if (doc.snapshotProvider === undefined) {
+        const provider = inferSnapshotProvider(
+          normalizedSnapshotId,
+          doc.morphSnapshotId,
+          doc.templateVmid
+        );
+        if (provider) {
+          updates.snapshotProvider = provider;
+        }
+      }
+
+      if (Object.keys(updates).length === 0) {
+        return;
+      }
+
+      return updates;
+    },
+  });
+
 // Backfill teams.teamId from legacy teams.uuid when missing
 export const backfillTeamsTeamId = migrations.define({
   table: "teams",
