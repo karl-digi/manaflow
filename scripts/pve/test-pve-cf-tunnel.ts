@@ -159,6 +159,7 @@ async function main() {
       create: { type: "boolean", default: false },
       template: { type: "string", short: "t", default: "105" },
       cleanup: { type: "boolean", default: false },
+      "instance-id": { type: "string" },
       help: { type: "boolean", short: "h" },
     },
     allowPositionals: true,
@@ -170,6 +171,7 @@ Usage: bun run scripts/pve/test-pve-cf-tunnel.ts [options]
 
 Options:
   --vmid, -v <id>     Test with existing container VMID
+  --instance-id <id>  Instance ID/hostname for instanceId-based URLs
   --use-fqdn          Use FQDN instead of CF tunnel URL
   --create            Create a new container from template
   --template, -t <id> Template VMID for --create (default: 105)
@@ -197,6 +199,7 @@ Environment:
   console.log(`  PVE_PUBLIC_DOMAIN: ${publicDomain || "<not set>"}`);
   console.log(`  PVE_NODE: ${node || "<auto-detect>"}`);
   console.log(`  --use-fqdn: ${values["use-fqdn"]}`);
+  console.log(`  --instance-id: ${values["instance-id"] || "<not set>"}`);
   console.log("");
 
   if (!apiUrl || !apiToken) {
@@ -214,6 +217,7 @@ Environment:
   });
 
   let vmid: number | undefined;
+  let instanceId: string | undefined = values["instance-id"];
   let createdInstance = false;
 
   // Create new container if requested
@@ -224,10 +228,12 @@ Environment:
 
     try {
       const instance = await client.instances.start({
-        snapshotId: `pve_template_${templateVmid}`,
+        snapshotId: String(templateVmid),
+        templateVmid,
         metadata: { app: "cmux-test" },
       });
       vmid = instance.vmid;
+      instanceId = instance.id;
       createdInstance = true;
 
       logResult({
@@ -259,7 +265,23 @@ Environment:
     process.exit(1);
   }
 
-  const hostname = `cmux-${vmid}`;
+  if (!instanceId && vmid !== undefined) {
+    try {
+      const instance = await client.instances.get({
+        instanceId: `pve_lxc_${vmid}`,
+        vmid,
+      });
+      instanceId = instance.networking.hostname;
+    } catch (error) {
+      console.warn(
+        "WARN: Failed to resolve hostname from PVE, using legacy default",
+        error
+      );
+      instanceId = `cmux-${vmid}`;
+    }
+  }
+
+  const hostname = instanceId ?? `cmux-${vmid}`;
 
   // Wait for container to be ready
   if (createdInstance) {
@@ -268,9 +290,9 @@ Environment:
   }
 
   // Test 1: Direct HTTP exec via CF Tunnel
-  if (publicDomain && !values["use-fqdn"]) {
+  if (publicDomain && !values["use-fqdn"] && instanceId) {
     console.log("\n--- Test 1: HTTP exec via CF Tunnel ---");
-    const cfExecUrl = `https://port-39375-vm-${vmid}.${publicDomain}`;
+    const cfExecUrl = `https://port-39375-${instanceId}.${publicDomain}`;
     logResult(await testHttpExec("CF Tunnel exec", cfExecUrl, "echo hello"));
     logResult(await testHttpExec("CF Tunnel hostname", cfExecUrl, "hostname"));
     logResult(await testHttpExec("CF Tunnel uname", cfExecUrl, "uname -a"));
@@ -297,11 +319,11 @@ Environment:
   logResult(await testClientExec(client, vmid, "which bun node git || echo 'some tools missing'"));
   logResult(await testClientExec(client, vmid, "ps aux | head -5"));
 
-  // Test 5: Service connectivity (Morph-consistent URL pattern)
-  if (publicDomain && !values["use-fqdn"]) {
-    console.log("\n--- Test 5: Service URLs (Morph-consistent pattern) ---");
-    const vscodeUrl = `https://port-39378-vm-${vmid}.${publicDomain}`;
-    const workerUrl = `https://port-39377-vm-${vmid}.${publicDomain}`;
+  // Test 5: Service connectivity (instanceId-based URL pattern)
+  if (publicDomain && !values["use-fqdn"] && instanceId) {
+    console.log("\n--- Test 5: Service URLs (instanceId-based pattern) ---");
+    const vscodeUrl = `https://port-39378-${instanceId}.${publicDomain}`;
+    const workerUrl = `https://port-39377-${instanceId}.${publicDomain}`;
 
     try {
       const vscodeRes = await fetch(vscodeUrl, {

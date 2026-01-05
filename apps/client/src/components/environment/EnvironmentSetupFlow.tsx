@@ -375,7 +375,7 @@ export function EnvironmentSetupFlow({
         body: {
           teamSlugOrId,
           name: finalEnvName,
-          morphInstanceId: instanceId,
+          instanceId,
           envVarsContent,
           selectedRepos,
           maintenanceScript: requestMaintenanceScript,

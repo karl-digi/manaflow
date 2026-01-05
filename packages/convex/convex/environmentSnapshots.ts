@@ -22,9 +22,16 @@ export const list = authQuery({
       .order("desc")
       .collect();
 
+    const activeSnapshotId = environment.snapshotId ?? environment.morphSnapshotId;
+    const activeSnapshotProvider =
+      environment.snapshotProvider ?? (environment.morphSnapshotId ? "morph" : "other");
+
     return versions.map((version) => ({
       ...version,
-      isActive: version.morphSnapshotId === environment.morphSnapshotId,
+      isActive:
+        (version.snapshotId ?? version.morphSnapshotId) === activeSnapshotId &&
+        (version.snapshotProvider ??
+          (version.morphSnapshotId ? "morph" : "other")) === activeSnapshotProvider,
     }));
   },
 });
@@ -33,7 +40,16 @@ export const create = authMutation({
   args: {
     teamSlugOrId: v.string(),
     environmentId: v.id("environments"),
-    morphSnapshotId: v.string(),
+    snapshotId: v.string(),
+    snapshotProvider: v.union(
+      v.literal("morph"),
+      v.literal("pve-lxc"),
+      v.literal("pve-vm"),
+      v.literal("docker"),
+      v.literal("daytona"),
+      v.literal("other")
+    ),
+    templateVmid: v.optional(v.number()),
     label: v.optional(v.string()),
     activate: v.optional(v.boolean()),
     maintenanceScript: v.optional(v.string()),
@@ -63,13 +79,22 @@ export const create = authMutation({
     const maintenanceScript =
       args.maintenanceScript ?? environment.maintenanceScript ?? undefined;
     const devScript = args.devScript ?? environment.devScript ?? undefined;
+    const legacyMorphSnapshotId =
+      args.snapshotProvider === "morph" ? args.snapshotId : undefined;
+    const templateVmid =
+      args.snapshotProvider === "pve-lxc" || args.snapshotProvider === "pve-vm"
+        ? args.templateVmid
+        : undefined;
 
     const snapshotVersionId = await ctx.db.insert(
       "environmentSnapshotVersions",
       {
         environmentId: args.environmentId,
         teamId,
-        morphSnapshotId: args.morphSnapshotId,
+        snapshotId: args.snapshotId,
+        snapshotProvider: args.snapshotProvider,
+        morphSnapshotId: legacyMorphSnapshotId,
+        templateVmid,
         version: nextVersion,
         createdAt,
         createdByUserId: userId,
@@ -81,7 +106,10 @@ export const create = authMutation({
 
     if (args.activate ?? true) {
       await ctx.db.patch(args.environmentId, {
-        morphSnapshotId: args.morphSnapshotId,
+        snapshotId: args.snapshotId,
+        snapshotProvider: args.snapshotProvider,
+        morphSnapshotId: legacyMorphSnapshotId,
+        templateVmid,
         maintenanceScript,
         devScript,
         updatedAt: Date.now(),
@@ -123,14 +151,23 @@ export const activate = authMutation({
       versionDoc.devScript ?? environment.devScript ?? undefined;
 
     await ctx.db.patch(args.environmentId, {
+      snapshotId: versionDoc.snapshotId ?? versionDoc.morphSnapshotId,
+      snapshotProvider:
+        versionDoc.snapshotProvider ??
+        (versionDoc.morphSnapshotId ? "morph" : "other"),
       morphSnapshotId: versionDoc.morphSnapshotId,
+      templateVmid: versionDoc.templateVmid,
       maintenanceScript,
       devScript,
       updatedAt: Date.now(),
     });
 
     return {
-      morphSnapshotId: versionDoc.morphSnapshotId,
+      snapshotId: versionDoc.snapshotId ?? versionDoc.morphSnapshotId ?? "",
+      snapshotProvider:
+        versionDoc.snapshotProvider ??
+        (versionDoc.morphSnapshotId ? "morph" : "other"),
+      templateVmid: versionDoc.templateVmid,
       version: versionDoc.version,
     };
   },
@@ -160,7 +197,9 @@ export const remove = authMutation({
       throw new Error("Snapshot version not found");
     }
 
-    if (versionDoc.morphSnapshotId === environment.morphSnapshotId) {
+    const activeSnapshotId = environment.snapshotId ?? environment.morphSnapshotId;
+    const versionSnapshotId = versionDoc.snapshotId ?? versionDoc.morphSnapshotId;
+    if (versionSnapshotId && versionSnapshotId === activeSnapshotId) {
       throw new Error("Cannot delete the active snapshot version.");
     }
 
@@ -172,13 +211,43 @@ export const findBySnapshotId = authQuery({
   args: {
     teamSlugOrId: v.string(),
     snapshotId: v.string(),
+    snapshotProvider: v.optional(
+      v.union(
+        v.literal("morph"),
+        v.literal("pve-lxc"),
+        v.literal("pve-vm"),
+        v.literal("docker"),
+        v.literal("daytona"),
+        v.literal("other")
+      )
+    ),
   },
   handler: async (ctx, args) => {
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+    const provider = args.snapshotProvider;
+    if (provider) {
+      return await ctx.db
+        .query("environmentSnapshotVersions")
+        .withIndex("by_team_snapshot", (q) =>
+          q.eq("teamId", teamId).eq("snapshotId", args.snapshotId)
+        )
+        .filter((q) => q.eq(q.field("snapshotProvider"), provider))
+        .first();
+    }
+
+    const canonical = await ctx.db
+      .query("environmentSnapshotVersions")
+      .withIndex("by_team_snapshot", (q) =>
+        q.eq("teamId", teamId).eq("snapshotId", args.snapshotId)
+      )
+      .first();
+    if (canonical) {
+      return canonical;
+    }
 
     return await ctx.db
       .query("environmentSnapshotVersions")
-      .withIndex("by_team_snapshot", (q) =>
+      .withIndex("by_team_snapshot_legacy", (q) =>
         q.eq("teamId", teamId).eq("morphSnapshotId", args.snapshotId)
       )
       .first();

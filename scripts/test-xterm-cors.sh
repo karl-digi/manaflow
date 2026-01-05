@@ -1,18 +1,26 @@
 #!/bin/bash
 # Test xterm CORS headers and connectivity
-# Usage: ./scripts/test-xterm-cors.sh <vmid>
+# Usage: ./scripts/test-xterm-cors.sh <instanceId|vmid>
+# Example: ./scripts/test-xterm-cors.sh pvelxc-abc123
 # Example: ./scripts/test-xterm-cors.sh 202
 
 set -euo pipefail
 
-VMID="${1:-202}"
+ARG="${1:-202}"
+if [[ "$ARG" =~ ^[0-9]+$ ]]; then
+    VMID="$ARG"
+    INSTANCE_ID="cmux-${VMID}"
+else
+    VMID=""
+    INSTANCE_ID="$ARG"
+fi
 DOMAIN="${PVE_PUBLIC_DOMAIN:-alphasolves.com}"
-# URL pattern (Morph-consistent): https://port-{port}-vm-{vmid}.{domain}
-XTERM_URL="https://port-39383-vm-${VMID}.${DOMAIN}"
-EXEC_URL="https://port-39375-vm-${VMID}.${DOMAIN}"
+# URL pattern (instanceId-based): https://port-{port}-{instanceId}.{domain}
+XTERM_URL="https://port-39383-${INSTANCE_ID}.${DOMAIN}"
+EXEC_URL="https://port-39375-${INSTANCE_ID}.${DOMAIN}"
 
 echo "=============================================="
-echo "Testing xterm service for VMID: ${VMID}"
+echo "Testing xterm service for instance: ${INSTANCE_ID}"
 echo "URL: ${XTERM_URL}"
 echo "=============================================="
 echo

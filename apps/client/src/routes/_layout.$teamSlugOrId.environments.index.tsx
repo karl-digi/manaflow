@@ -143,7 +143,7 @@ function EnvironmentsListPage() {
 
                 <div className="mt-3 pt-3 border-t border-neutral-100 dark:border-neutral-900">
                   <div className="text-xs text-neutral-500 dark:text-neutral-500 mb-3">
-                    Snapshot ID: {env.morphSnapshotId}
+                    Snapshot ID: {env.snapshotId ?? env.morphSnapshotId}
                   </div>
                   <div className="flex gap-2">
                     <Link
@@ -155,7 +155,7 @@ function EnvironmentsListPage() {
                         connectionLogin: undefined,
                         repoSearch: undefined,
                         instanceId: undefined,
-                        snapshotId: env.morphSnapshotId ?? undefined,
+                        snapshotId: env.snapshotId ?? env.morphSnapshotId ?? undefined,
                       }}
                       className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 py-1.5 text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-900 transition-colors"
                     >

@@ -22,6 +22,7 @@ export interface SnapshotResolution {
   resolvedSnapshotId: string;
   /** The sandbox provider to use */
   provider: SandboxProvider;
+  resolvedTemplateVmid?: number;
   environmentDataVaultKey?: string;
   environmentMaintenanceScript?: string;
   environmentDevScript?: string;
@@ -55,12 +56,9 @@ function isKnownDefaultSnapshot(snapshotId: string): boolean {
     return true;
   }
 
-  // Check PVE LXC templates (unified format: pvelxc_{presetId}_v{version})
+  // Check PVE LXC templates (canonical snapshot_*)
   const isPveTemplate = PVE_LXC_SNAPSHOT_PRESETS.some((preset) =>
-    preset.versions.some((v) => {
-      const unifiedId = `pvelxc_${preset.presetId}_v${v.version}`;
-      return unifiedId === snapshotId;
-    })
+    preset.versions.some((v) => v.snapshotId === snapshotId)
   );
   return isPveTemplate;
 }
@@ -97,11 +95,13 @@ export const resolveTeamAndSnapshot = async ({
       });
     }
 
+    const snapshotId =
+      environmentDoc.snapshotId ?? environmentDoc.morphSnapshotId ?? defaultSnapshotId;
     return {
       team,
       provider,
-      resolvedSnapshotId:
-        environmentDoc.morphSnapshotId || defaultSnapshotId,
+      resolvedSnapshotId: snapshotId,
+      resolvedTemplateVmid: environmentDoc.templateVmid ?? undefined,
       environmentDataVaultKey: environmentDoc.dataVaultKey ?? undefined,
       environmentMaintenanceScript: environmentDoc.maintenanceScript ?? undefined,
       environmentDevScript: environmentDoc.devScript ?? undefined,
@@ -120,8 +120,8 @@ export const resolveTeamAndSnapshot = async ({
     const environments = await convex.query(api.environments.list, {
       teamSlugOrId,
     });
-    const matchedEnvironment = environments.find(
-      (environment) => environment.morphSnapshotId === snapshotId
+    const matchedEnvironment = environments.find((environment) =>
+      (environment.snapshotId ?? environment.morphSnapshotId) === snapshotId
     );
 
     if (matchedEnvironment) {
@@ -129,13 +129,20 @@ export const resolveTeamAndSnapshot = async ({
         team,
         provider,
         resolvedSnapshotId:
-          matchedEnvironment.morphSnapshotId || defaultSnapshotId,
+          matchedEnvironment.snapshotId ??
+          matchedEnvironment.morphSnapshotId ??
+          defaultSnapshotId,
+        resolvedTemplateVmid: matchedEnvironment.templateVmid ?? undefined,
       };
     }
 
     const snapshotVersion = await convex.query(
       api.environmentSnapshots.findBySnapshotId,
-      { teamSlugOrId, snapshotId }
+      {
+        teamSlugOrId,
+        snapshotId,
+        snapshotProvider: provider,
+      }
     );
 
     if (!snapshotVersion) {
@@ -148,7 +155,10 @@ export const resolveTeamAndSnapshot = async ({
       team,
       provider,
       resolvedSnapshotId:
-        snapshotVersion.morphSnapshotId || defaultSnapshotId,
+        snapshotVersion.snapshotId ??
+        snapshotVersion.morphSnapshotId ??
+        defaultSnapshotId,
+      resolvedTemplateVmid: snapshotVersion.templateVmid ?? undefined,
     };
   }
 

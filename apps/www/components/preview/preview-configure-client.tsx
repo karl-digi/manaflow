@@ -102,7 +102,11 @@ function resolveMorphHostId(
   workspaceUrl?: string
 ): string | null {
   if (instanceId && instanceId.trim().length > 0) {
-    return instanceId.trim().toLowerCase().replace(/_/g, "-");
+    const normalized = instanceId.trim().toLowerCase();
+    if (!isMorphInstanceId(normalized)) {
+      return null;
+    }
+    return normalized.replace(/_/g, "-");
   }
 
   if (!workspaceUrl) {
@@ -129,6 +133,10 @@ function resolveMorphHostId(
   }
 
   return null;
+}
+
+function isMorphInstanceId(value: string): boolean {
+  return value.startsWith("morphvm_") || value.startsWith("morphvm-");
 }
 
 function deriveVncUrl(
@@ -922,7 +930,7 @@ export function PreviewConfigureClient({
         body: JSON.stringify({
           teamSlugOrId: resolvedTeamSlugOrId,
           name: envName,
-          morphInstanceId: instance.instanceId,
+          instanceId: instance.instanceId,
           envVarsContent,
           selectedRepos: [repo],
           maintenanceScript: requestMaintenanceScript,

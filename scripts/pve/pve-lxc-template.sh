@@ -27,8 +27,20 @@ RETRY_DELAY="${PVE_RETRY_DELAY:-5}"
 
 # HTTP exec configuration (optional, for faster execution when cmux-execd is running)
 # Set PVE_CF_DOMAIN to enable HTTP exec (e.g., alphasolves.com)
-# URL pattern (Morph-consistent): https://port-{port}-vm-{vmid}.{cf_domain}
+# URL pattern (instanceId-based): https://port-{port}-{instanceId}.{cf_domain}
 PVE_CF_DOMAIN="${PVE_CF_DOMAIN:-}"
+
+get_container_hostname() {
+    local vmid="$1"
+    local node
+    node=$(pve_get_default_node)
+    local hostname
+    hostname=$(pve_lxc_config "$vmid" "$node" | jq -r '.data.hostname // empty')
+    if [[ -z "$hostname" ]]; then
+        hostname="cmux-${vmid}"
+    fi
+    echo "$hostname"
+}
 
 # Check if a string contains transient error patterns
 is_transient_error() {
@@ -84,7 +96,9 @@ http_exec() {
         return 1  # HTTP exec not available
     fi
 
-    local url="https://port-39375-vm-${vmid}.${PVE_CF_DOMAIN}/exec"
+    local hostname
+    hostname=$(get_container_hostname "$vmid")
+    local url="https://port-39375-${hostname}.${PVE_CF_DOMAIN}/exec"
     local json_payload
     json_payload=$(jq -n --arg cmd "$command" --argjson timeout "$timeout" '{command: $cmd, timeout: $timeout}')
 
@@ -667,7 +681,9 @@ SETUP_EOF
                 return 1
             fi
 
-            local http_url="https://port-39375-vm-${vmid}.${PVE_CF_DOMAIN}/exec"
+            local hostname
+            hostname=$(get_container_hostname "$vmid")
+            local http_url="https://port-39375-${hostname}.${PVE_CF_DOMAIN}/exec"
             log_info "Using HTTP exec via cmux-execd: ${http_url}"
 
             # Check if cmux-execd is reachable

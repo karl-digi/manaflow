@@ -189,8 +189,8 @@ export function deriveVncWebsocketUrl(
  * Derive VS Code URL from instance ID
  */
 export function deriveVscodeUrl(instanceId?: string, folderPath?: string): string | null {
-  if (!instanceId) return null;
-  const hostId = instanceId.replace(/_/g, "-");
+  const hostId = resolveMorphHostId(instanceId);
+  if (!hostId) return null;
   const folder = folderPath ?? "/root/workspace";
   return `https://port-39378-${hostId}.http.cloud.morph.so/?folder=${encodeURIComponent(folder)}`;
 }
@@ -199,8 +199,8 @@ export function deriveVscodeUrl(instanceId?: string, folderPath?: string): strin
  * Derive browser VNC URL from instance ID
  */
 export function deriveBrowserVncUrl(instanceId?: string): string | null {
-  if (!instanceId) return null;
-  const hostId = instanceId.replace(/_/g, "-");
+  const hostId = resolveMorphHostId(instanceId);
+  if (!hostId) return null;
   const baseUrl = `https://port-39380-${hostId}.http.cloud.morph.so/vnc.html`;
   return normalizeVncUrl(baseUrl);
 }
@@ -210,7 +210,11 @@ function resolveMorphHostId(
   workspaceUrl?: string
 ): string | null {
   if (instanceId && instanceId.trim().length > 0) {
-    return instanceId.trim().toLowerCase().replace(/_/g, "-");
+    const normalized = instanceId.trim().toLowerCase();
+    if (!isMorphInstanceId(normalized)) {
+      return null;
+    }
+    return normalized.replace(/_/g, "-");
   }
 
   if (!workspaceUrl) {
@@ -237,6 +241,10 @@ function resolveMorphHostId(
   }
 
   return null;
+}
+
+function isMorphInstanceId(value: string): boolean {
+  return value.startsWith("morphvm_") || value.startsWith("morphvm-");
 }
 
 function normalizeVncUrl(url: string): string | null {

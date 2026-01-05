@@ -758,7 +758,17 @@ const convexSchema = defineSchema({
     name: v.string(), // Human-friendly environment name
     teamId: v.string(), // Team that owns this environment
     userId: v.string(), // User who created the environment
-    morphSnapshotId: v.string(), // Morph snapshot identifier
+    snapshotId: v.string(), // Canonical snapshot identifier (snapshot_*)
+    snapshotProvider: v.union(
+      v.literal("morph"),
+      v.literal("pve-lxc"),
+      v.literal("pve-vm"),
+      v.literal("docker"),
+      v.literal("daytona"),
+      v.literal("other")
+    ),
+    morphSnapshotId: v.optional(v.string()), // Legacy Morph snapshot identifier
+    templateVmid: v.optional(v.number()), // PVE template VMID (for pve-lxc/pve-vm)
     dataVaultKey: v.string(), // Key for StackAuth DataBook (stores encrypted env vars)
     selectedRepos: v.optional(v.array(v.string())), // List of repository full names
     description: v.optional(v.string()), // Optional description
@@ -775,7 +785,17 @@ const convexSchema = defineSchema({
   environmentSnapshotVersions: defineTable({
     environmentId: v.id("environments"),
     teamId: v.string(),
-    morphSnapshotId: v.string(),
+    snapshotId: v.string(),
+    snapshotProvider: v.union(
+      v.literal("morph"),
+      v.literal("pve-lxc"),
+      v.literal("pve-vm"),
+      v.literal("docker"),
+      v.literal("daytona"),
+      v.literal("other")
+    ),
+    morphSnapshotId: v.optional(v.string()), // Legacy Morph snapshot identifier
+    templateVmid: v.optional(v.number()), // PVE template VMID (for pve-lxc/pve-vm)
     version: v.number(),
     createdAt: v.number(),
     createdByUserId: v.string(),
@@ -786,7 +806,8 @@ const convexSchema = defineSchema({
     .index("by_environment_version", ["environmentId", "version"])
     .index("by_environment_createdAt", ["environmentId", "createdAt"])
     .index("by_team_createdAt", ["teamId", "createdAt"])
-    .index("by_team_snapshot", ["teamId", "morphSnapshotId"]),
+    .index("by_team_snapshot", ["teamId", "snapshotId"])
+    .index("by_team_snapshot_legacy", ["teamId", "morphSnapshotId"]),
 
   // Webhook deliveries for idempotency and auditing
   webhookDeliveries: defineTable({
@@ -1144,6 +1165,20 @@ const convexSchema = defineSchema({
       v.literal("daytona"),
       v.literal("other")
     ),
+    vmid: v.optional(v.number()), // PVE VMID
+    hostname: v.optional(v.string()), // PVE hostname (instanceId for new instances)
+    snapshotId: v.optional(v.string()),
+    snapshotProvider: v.optional(
+      v.union(
+        v.literal("morph"),
+        v.literal("pve-lxc"),
+        v.literal("pve-vm"),
+        v.literal("docker"),
+        v.literal("daytona"),
+        v.literal("other")
+      )
+    ),
+    templateVmid: v.optional(v.number()),
     // Activity timestamps
     lastPausedAt: v.optional(v.number()), // When instance was last paused by cron
     lastResumedAt: v.optional(v.number()), // When instance was last resumed via UI
@@ -1154,6 +1189,7 @@ const convexSchema = defineSchema({
     createdAt: v.optional(v.number()), // When the activity record was created
   })
     .index("by_instanceId", ["instanceId"])
+    .index("by_vmid", ["vmid"])
     .index("by_provider", ["provider"])
     .index("by_provider_stopped", ["provider", "stoppedAt"]) // For cleanup queries
     .index("by_team", ["teamId"]),

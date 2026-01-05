@@ -1,5 +1,3 @@
-import type { MorphSnapshotId } from "@cmux/shared";
-
 export type EnvVar = { name: string; value: string; isSecret: boolean };
 
 export const ensureInitialEnvVars = (initial?: EnvVar[]): EnvVar[] => {
@@ -29,7 +27,8 @@ export interface EnvironmentConfigDraft {
 export interface EnvironmentDraftMetadata {
   selectedRepos: string[];
   instanceId?: string;
-  snapshotId?: MorphSnapshotId;
+  snapshotId?: string;
+  snapshotProvider?: string;
 }
 
 export const createEmptyEnvironmentConfig = (): EnvironmentConfigDraft => ({

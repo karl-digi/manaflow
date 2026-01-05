@@ -12,7 +12,6 @@ import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
 import { RESERVED_CMUX_PORT_SET } from "@cmux/shared/utils/reserved-cmux-ports";
 import { parseGithubRepoUrl } from "@cmux/shared/utils/parse-github-repo-url";
-import { parseSnapshotId, getMorphApiSnapshotIdByPresetId } from "@cmux/shared";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { MorphCloudClient } from "morphcloud";
@@ -50,6 +49,14 @@ function getMorphClient(): MorphCloudClient {
     throw new Error("Morph API key not configured");
   }
   return new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
+}
+
+function isPveLxcInstanceId(instanceId: string): boolean {
+  return (
+    instanceId.startsWith("pvelxc-") ||
+    instanceId.startsWith("pve_lxc_") ||
+    instanceId.startsWith("cmux-")
+  );
 }
 
 /**
@@ -373,6 +380,7 @@ sandboxesRouter.openapi(
         team,
         provider,
         resolvedSnapshotId,
+        resolvedTemplateVmid,
         environmentDataVaultKey,
         environmentMaintenanceScript,
         environmentDevScript,
@@ -449,6 +457,7 @@ sandboxesRouter.openapi(
         const pveClient = getPveLxcClient();
         rawPveLxcInstance = await pveClient.instances.start({
           snapshotId: resolvedSnapshotId,
+          templateVmid: resolvedTemplateVmid,
           ttlSeconds: body.ttlSeconds ?? 60 * 60,
           ttlAction: "pause",
           metadata: {
@@ -465,20 +474,8 @@ sandboxesRouter.openapi(
         // Morph provider (default)
         const client = getMorphClient();
 
-        // Convert unified snapshot ID (morph_4vcpu_6gb_32gb_v1) to actual Morph snapshot ID (snapshot_...)
-        let actualMorphSnapshotId = resolvedSnapshotId;
-        const parsed = parseSnapshotId(resolvedSnapshotId);
-        if (parsed?.provider === "morph") {
-          const morphSnapshotId = getMorphApiSnapshotIdByPresetId(parsed.presetId);
-          if (morphSnapshotId) {
-            actualMorphSnapshotId = morphSnapshotId;
-          } else {
-            throw new Error(`Morph snapshot not found for preset: ${parsed.presetId}`);
-          }
-        }
-
         const morphInstance = await client.instances.start({
-          snapshotId: actualMorphSnapshotId,
+          snapshotId: resolvedSnapshotId,
           ttlSeconds: body.ttlSeconds ?? 60 * 60,
           ttlAction: "pause",
           metadata: {
@@ -500,6 +497,11 @@ sandboxesRouter.openapi(
         await convex.mutation(api.sandboxInstances.recordCreate, {
           instanceId: instance.id,
           provider: provider === "pve-lxc" ? "pve-lxc" : "morph",
+          vmid: rawPveLxcInstance?.vmid,
+          hostname: rawPveLxcInstance?.networking.hostname,
+          snapshotId: resolvedSnapshotId,
+          snapshotProvider: provider === "pve-lxc" ? "pve-lxc" : "morph",
+          templateVmid: resolvedTemplateVmid,
           teamSlugOrId: body.teamSlugOrId,
         });
         console.log(`[sandboxes.start] Recorded instance creation for ${instance.id}`);
@@ -813,7 +815,7 @@ sandboxesRouter.openapi(
       });
 
       // Detect provider based on instance ID prefix
-      const isPveLxc = id.startsWith("pve_lxc_");
+      const isPveLxc = isPveLxcInstanceId(id);
 
       let instance: SandboxInstance;
 
@@ -951,7 +953,7 @@ sandboxesRouter.openapi(
       });
 
       // Detect provider based on instance ID prefix
-      const isPveLxc = id.startsWith("pve_lxc_");
+      const isPveLxc = isPveLxcInstanceId(id);
 
       let instance: SandboxInstance;
 
@@ -1052,7 +1054,7 @@ sandboxesRouter.openapi(
 
     try {
       // Determine provider based on instance ID prefix
-      const isPveLxc = id.startsWith("pve_lxc_");
+      const isPveLxc = isPveLxcInstanceId(id);
 
       if (isPveLxc) {
         // PVE LXC instance
@@ -1111,7 +1113,7 @@ sandboxesRouter.openapi(
     if (!token) return c.text("Unauthorized", 401);
     try {
       // Determine provider based on instance ID prefix
-      const isPveLxc = id.startsWith("pve_lxc_");
+      const isPveLxc = isPveLxcInstanceId(id);
 
       if (isPveLxc) {
         // PVE LXC instance
@@ -1203,7 +1205,7 @@ sandboxesRouter.openapi(
     const { teamSlugOrId, taskRunId } = c.req.valid("json");
     try {
       // Determine provider based on instance ID prefix
-      const isPveLxc = id.startsWith("pve_lxc_");
+      const isPveLxc = isPveLxcInstanceId(id);
       let instance: SandboxInstance;
 
       if (isPveLxc) {
@@ -1626,7 +1628,7 @@ sandboxesRouter.openapi(
       const convex = getConvex({ accessToken });
 
       // Determine provider based on instance ID prefix
-      const isPveLxc = id.startsWith("pve_lxc_");
+      const isPveLxc = isPveLxcInstanceId(id);
       const isMorphVm = id.startsWith("morphvm_");
 
       if (isPveLxc) {

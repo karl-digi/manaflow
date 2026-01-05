@@ -1142,8 +1142,12 @@ export async function runPreviewJob(
     return;
   }
 
-  if (!environment.morphSnapshotId) {
-    console.warn("[preview-jobs] Environment missing morph snapshot; skipping", {
+  const snapshotId = environment.snapshotId ?? environment.morphSnapshotId;
+  const snapshotProvider =
+    environment.snapshotProvider ?? (environment.morphSnapshotId ? "morph" : "other");
+
+  if (!snapshotId) {
+    console.warn("[preview-jobs] Environment missing snapshot; skipping", {
       previewRunId,
       environmentId: environment._id,
     });
@@ -1154,7 +1158,7 @@ export async function runPreviewJob(
           taskRunId,
           exitCode: 0,
         });
-        console.log("[preview-jobs] Task run marked as completed (skipped - no morph snapshot)", {
+        console.log("[preview-jobs] Task run marked as completed (skipped - no snapshot)", {
           previewRunId,
           taskRunId,
         });
@@ -1166,7 +1170,7 @@ export async function runPreviewJob(
             isCompleted: true,
             crownEvaluationStatus: "succeeded",
           });
-          console.log("[preview-jobs] Task marked as completed (skipped - no morph snapshot)", {
+          console.log("[preview-jobs] Task marked as completed (skipped - no snapshot)", {
             previewRunId,
             taskId: taskRun.taskId,
           });
@@ -1186,7 +1190,19 @@ export async function runPreviewJob(
     return;
   }
 
-  const snapshotId = environment.morphSnapshotId;
+  if (snapshotProvider !== "morph") {
+    console.warn("[preview-jobs] Non-morph snapshot provider is not supported", {
+      previewRunId,
+      environmentId: environment._id,
+      snapshotProvider,
+    });
+    await ctx.runMutation(internal.previewRuns.updateStatus, {
+      previewRunId,
+      status: "completed",
+    });
+    return;
+  }
+
   let instance: InstanceModel | null = null;
   let taskId: Id<"tasks"> | null = null;
 

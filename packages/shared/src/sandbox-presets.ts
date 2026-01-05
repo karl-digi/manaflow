@@ -145,7 +145,10 @@ export function filterVisiblePresets(presets: SandboxPreset[]): SandboxPreset[] 
 }
 
 /**
- * Parse a unified snapshot ID to extract provider and metadata.
+ * Parse a legacy snapshot ID to extract provider and metadata.
+ *
+ * Note: Canonical snapshot IDs are provider-agnostic (snapshot_*) and
+ * cannot be parsed without external provider context.
  *
  * Supported formats:
  * - morph_{presetId}_v{version}  (e.g., "morph_4vcpu_16gb_48gb_v1")
@@ -160,6 +163,7 @@ export function parseSnapshotId(id: string): {
   provider: SandboxProviderType;
   presetId: string;
   version: number;
+  templateVmid?: number;
 } | null {
   // Match unified format: prefix_cpu_mem_disk_v123
   const match = id.match(/^(morph|pvelxc|pvevm)_([^_]+_[^_]+_[^_]+)_v(\d+)$/);
@@ -194,6 +198,7 @@ export function parseSnapshotId(id: string): {
   const oldPveMatch = id.match(/^pve_([^_]+_[^_]+_[^_]+)_(\d+)$/);
   if (oldPveMatch) {
     const presetId = oldPveMatch[1];
+    const templateVmid = oldPveMatch[2] ? parseInt(oldPveMatch[2], 10) : undefined;
     if (!presetId) {
       return null;
     }
@@ -202,6 +207,7 @@ export function parseSnapshotId(id: string): {
       provider: "pve-lxc",
       presetId,
       version: 1,  // Assume v1 for old format
+      templateVmid,
     };
   }
 
@@ -215,87 +221,143 @@ export function parseSnapshotId(id: string): {
 export interface ResolvedSnapshotId {
   /** The sandbox provider type */
   provider: SandboxProviderType;
+  /** Canonical snapshot ID (snapshot_*) */
+  snapshotId: string;
   /** Version number */
   version: number;
-  /** Morph Cloud API snapshot ID (format: snapshot_...) */
-  snapshotId?: string;
   /** PVE template VMID (for LXC/VM cloning) */
   templateVmid?: number;
 }
 
 /**
- * Resolve a unified snapshot ID to provider-specific API identifiers.
+ * Resolve a snapshot ID to provider-specific API identifiers.
  *
- * This function converts our user-facing unified IDs into the actual
- * provider-specific identifiers needed for API operations:
- * - Morph: Returns the cloud snapshot ID (snapshot_...)
- * - PVE LXC/VM: Returns the template VMID number
+ * This function converts our canonical snapshot IDs into the actual
+ * provider-specific identifiers needed for API operations.
+ *
+ * Note: snapshot IDs are provider-agnostic (snapshot_*). The caller must
+ * pass the provider to resolve correctly.
  *
  * Note: This function requires runtime imports to avoid circular dependencies.
  * It should only be used in backend/server contexts, not in shared schema definitions.
  *
- * @param unifiedId - The unified snapshot ID (e.g., "morph_4vcpu_16gb_48gb_v1")
+ * @param snapshotId - The canonical snapshot ID (snapshot_*)
+ * @param provider - The snapshot provider ("morph", "pve-lxc", "pve-vm")
  * @returns Resolved provider-specific identifiers
  * @throws Error if the ID format is invalid or the snapshot is not found
  *
  * @example
  * ```typescript
  * // Morph Cloud
- * const resolved = resolveSnapshotId("morph_4vcpu_16gb_48gb_v1");
+ * const resolved = resolveSnapshotId("snapshot_5a255f9t", "morph");
  * // Returns: { provider: "morph", version: 1, snapshotId: "snapshot_5a255f9t" }
  *
  * // PVE LXC
- * const resolved = resolveSnapshotId("pvelxc_4vcpu_6gb_32gb_v1");
- * // Returns: { provider: "pve-lxc", version: 1, templateVmid: 9011 }
+ * const resolved = resolveSnapshotId("snapshot_pvelxc9k1x", "pve-lxc");
+ * // Returns: { provider: "pve-lxc", version: 1, snapshotId: "snapshot_pvelxc9k1x", templateVmid: 9011 }
  * ```
  */
-export async function resolveSnapshotId(unifiedId: string): Promise<ResolvedSnapshotId> {
-  const parsed = parseSnapshotId(unifiedId);
-  if (!parsed) {
-    throw new Error(`Invalid snapshot ID format: ${unifiedId}`);
+export async function resolveSnapshotId(
+  snapshotId: string,
+  provider: SandboxProviderType,
+): Promise<ResolvedSnapshotId> {
+  const legacy = parseSnapshotId(snapshotId);
+
+  const resolveFromLegacy = async () => {
+    if (!legacy) {
+      return null;
+    }
+    switch (legacy.provider) {
+      case "morph": {
+        const { MORPH_SNAPSHOT_PRESETS } = await import("./morph-snapshots");
+        const preset = MORPH_SNAPSHOT_PRESETS.find(p => p.presetId === legacy.presetId);
+        if (!preset) {
+          throw new Error(`Morph preset not found: ${legacy.presetId}`);
+        }
+        const versionData = preset.versions.find(v => v.version === legacy.version);
+        if (!versionData) {
+          throw new Error(`Morph version not found: ${legacy.version} for preset ${legacy.presetId}`);
+        }
+        return {
+          provider: "morph" as const,
+          version: versionData.version,
+          snapshotId: versionData.snapshotId,
+        };
+      }
+      case "pve-lxc": {
+        const { PVE_LXC_SNAPSHOT_PRESETS } = await import("./pve-lxc-snapshots");
+        const preset = PVE_LXC_SNAPSHOT_PRESETS.find(p => p.presetId === legacy.presetId);
+        if (!preset) {
+          throw new Error(`PVE LXC preset not found: ${legacy.presetId}`);
+        }
+        let versionData = preset.versions.find(v => v.version === legacy.version);
+        if (!versionData && legacy.templateVmid) {
+          versionData = preset.versions.find(v => v.templateVmid === legacy.templateVmid);
+        }
+        if (!versionData) {
+          throw new Error(`PVE LXC version not found for preset ${legacy.presetId}`);
+        }
+        return {
+          provider: "pve-lxc" as const,
+          version: versionData.version,
+          snapshotId: versionData.snapshotId,
+          templateVmid: versionData.templateVmid,
+        };
+      }
+      case "pve-vm": {
+        throw new Error("PVE VM provider not yet implemented");
+      }
+      default: {
+        const _exhaustive: never = legacy.provider;
+        throw new Error(`Unknown provider: ${_exhaustive}`);
+      }
+    }
+  };
+
+  if (legacy && legacy.provider !== provider) {
+    throw new Error(
+      `Snapshot provider mismatch: id indicates ${legacy.provider}, expected ${provider}`,
+    );
   }
 
-  switch (parsed.provider) {
+  switch (provider) {
     case "morph": {
       // Dynamic import to avoid circular dependency
       const { MORPH_SNAPSHOT_PRESETS } = await import("./morph-snapshots");
-      const preset = MORPH_SNAPSHOT_PRESETS.find(p => p.presetId === parsed.presetId);
-      if (!preset) {
-        throw new Error(`Morph preset not found: ${parsed.presetId}`);
+      const versionData = MORPH_SNAPSHOT_PRESETS.flatMap(preset => preset.versions)
+        .find(version => version.snapshotId === snapshotId);
+      if (versionData) {
+        return {
+          provider: "morph",
+          version: versionData.version,
+          snapshotId: versionData.snapshotId,
+        };
       }
-
-      // Find the specific version
-      const versionData = preset.versions.find(v => v.version === parsed.version);
-      if (!versionData) {
-        throw new Error(`Morph version not found: ${parsed.version} for preset ${parsed.presetId}`);
+      const legacyResolved = await resolveFromLegacy();
+      if (legacyResolved) {
+        return legacyResolved;
       }
-
-      return {
-        provider: "morph",
-        version: parsed.version,
-        snapshotId: versionData.snapshotId,  // Returns "snapshot_5a255f9t"
-      };
+      throw new Error(`Morph snapshot not found: ${snapshotId}`);
     }
 
     case "pve-lxc": {
       // Dynamic import to avoid circular dependency
       const { PVE_LXC_SNAPSHOT_PRESETS } = await import("./pve-lxc-snapshots");
-      const preset = PVE_LXC_SNAPSHOT_PRESETS.find(p => p.presetId === parsed.presetId);
-      if (!preset) {
-        throw new Error(`PVE LXC preset not found: ${parsed.presetId}`);
+      const versionData = PVE_LXC_SNAPSHOT_PRESETS.flatMap(preset => preset.versions)
+        .find(version => version.snapshotId === snapshotId);
+      if (versionData) {
+        return {
+          provider: "pve-lxc",
+          version: versionData.version,
+          snapshotId: versionData.snapshotId,
+          templateVmid: versionData.templateVmid,
+        };
       }
-
-      // Find the specific version
-      const versionData = preset.versions.find(v => v.version === parsed.version);
-      if (!versionData) {
-        throw new Error(`PVE LXC version not found: ${parsed.version} for preset ${parsed.presetId}`);
+      const legacyResolved = await resolveFromLegacy();
+      if (legacyResolved) {
+        return legacyResolved;
       }
-
-      return {
-        provider: "pve-lxc",
-        version: parsed.version,
-        templateVmid: versionData.templateVmid,  // Returns VMID like 9011
-      };
+      throw new Error(`PVE LXC snapshot not found: ${snapshotId}`);
     }
 
     case "pve-vm": {
@@ -304,7 +366,7 @@ export async function resolveSnapshotId(unifiedId: string): Promise<ResolvedSnap
     }
 
     default: {
-      const _exhaustive: never = parsed.provider;
+      const _exhaustive: never = provider;
       throw new Error(`Unknown provider: ${_exhaustive}`);
     }
   }

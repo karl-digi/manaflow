@@ -31,6 +31,7 @@ export type SandboxProvider = (typeof SANDBOX_PROVIDERS)[number];
  */
 export function detectProviderFromInstanceId(instanceId: string): SandboxProvider {
   if (instanceId.startsWith("morphvm_")) return "morph";
+  if (instanceId.startsWith("pvelxc-")) return "pve-lxc";
   if (instanceId.startsWith("pve_lxc_")) return "pve-lxc";
   if (instanceId.startsWith("docker_")) return "docker";
   if (instanceId.startsWith("daytona_")) return "daytona";
@@ -238,6 +239,20 @@ export const recordCreateInternal = internalMutation({
       v.literal("daytona"),
       v.literal("other")
     ),
+    vmid: v.optional(v.number()),
+    hostname: v.optional(v.string()),
+    snapshotId: v.optional(v.string()),
+    snapshotProvider: v.optional(
+      v.union(
+        v.literal("morph"),
+        v.literal("pve-lxc"),
+        v.literal("pve-vm"),
+        v.literal("docker"),
+        v.literal("daytona"),
+        v.literal("other")
+      )
+    ),
+    templateVmid: v.optional(v.number()),
     teamId: v.optional(v.string()),
     userId: v.optional(v.string()),
   },
@@ -252,11 +267,21 @@ export const recordCreateInternal = internalMutation({
       await ctx.db.patch(existing._id, {
         teamId: args.teamId,
         userId: args.userId,
+        vmid: args.vmid,
+        hostname: args.hostname,
+        snapshotId: args.snapshotId,
+        snapshotProvider: args.snapshotProvider,
+        templateVmid: args.templateVmid,
       });
     } else {
       await ctx.db.insert("sandboxInstanceActivity", {
         instanceId: args.instanceId,
         provider: args.provider,
+        vmid: args.vmid,
+        hostname: args.hostname,
+        snapshotId: args.snapshotId,
+        snapshotProvider: args.snapshotProvider,
+        templateVmid: args.templateVmid,
         teamId: args.teamId,
         userId: args.userId,
         createdAt: Date.now(),
@@ -280,6 +305,20 @@ export const recordCreate = authMutation({
       v.literal("daytona"),
       v.literal("other")
     ),
+    vmid: v.optional(v.number()),
+    hostname: v.optional(v.string()),
+    snapshotId: v.optional(v.string()),
+    snapshotProvider: v.optional(
+      v.union(
+        v.literal("morph"),
+        v.literal("pve-lxc"),
+        v.literal("pve-vm"),
+        v.literal("docker"),
+        v.literal("daytona"),
+        v.literal("other")
+      )
+    ),
+    templateVmid: v.optional(v.number()),
     teamSlugOrId: v.string(),
   },
   handler: async (ctx, args) => {
@@ -298,11 +337,21 @@ export const recordCreate = authMutation({
       await ctx.db.patch(existing._id, {
         teamId,
         userId,
+        vmid: args.vmid,
+        hostname: args.hostname,
+        snapshotId: args.snapshotId,
+        snapshotProvider: args.snapshotProvider,
+        templateVmid: args.templateVmid,
       });
     } else {
       await ctx.db.insert("sandboxInstanceActivity", {
         instanceId: args.instanceId,
         provider: args.provider,
+        vmid: args.vmid,
+        hostname: args.hostname,
+        snapshotId: args.snapshotId,
+        snapshotProvider: args.snapshotProvider,
+        templateVmid: args.templateVmid,
         teamId,
         userId,
         createdAt: Date.now(),
@@ -324,6 +373,11 @@ export const getActivitiesByInstanceIdsInternal = internalQuery({
       {
         instanceId: string;
         provider: SandboxProvider;
+        vmid?: number;
+        hostname?: string;
+        snapshotId?: string;
+        snapshotProvider?: SandboxProvider | "pve-vm";
+        templateVmid?: number;
         lastPausedAt?: number;
         lastResumedAt?: number;
         stoppedAt?: number;
@@ -343,6 +397,11 @@ export const getActivitiesByInstanceIdsInternal = internalQuery({
         results.set(instanceId, {
           instanceId: activity.instanceId,
           provider: activity.provider,
+          vmid: activity.vmid,
+          hostname: activity.hostname,
+          snapshotId: activity.snapshotId,
+          snapshotProvider: activity.snapshotProvider,
+          templateVmid: activity.templateVmid,
           lastPausedAt: activity.lastPausedAt,
           lastResumedAt: activity.lastResumedAt,
           stoppedAt: activity.stoppedAt,

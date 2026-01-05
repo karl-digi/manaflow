@@ -48,15 +48,19 @@ If `PVE_API_URL` is already set in your environment, the `.env` file will not ov
 
 ## URL Pattern
 
-PVE LXC uses a Morph-consistent URL pattern for service access via Cloudflare Tunnel:
+PVE LXC uses an instanceId-based URL pattern for service access via Cloudflare Tunnel:
 
 | Service | Port | URL Pattern |
 |---------|------|-------------|
-| VSCode | 39378 | `https://port-39378-vm-{vmid}.{domain}` |
-| Worker | 39377 | `https://port-39377-vm-{vmid}.{domain}` |
-| Xterm | 39383 | `https://port-39383-vm-{vmid}.{domain}` |
-| Exec | 39375 | `https://port-39375-vm-{vmid}.{domain}` |
-| VNC | 39380 | `https://port-39380-vm-{vmid}.{domain}` |
+| VSCode | 39378 | `https://port-39378-{instanceId}.{domain}` |
+| Worker | 39377 | `https://port-39377-{instanceId}.{domain}` |
+| Xterm | 39383 | `https://port-39383-{instanceId}.{domain}` |
+| Exec | 39375 | `https://port-39375-{instanceId}.{domain}` |
+| VNC | 39380 | `https://port-39380-{instanceId}.{domain}` |
+
+Legacy VMID-based URLs are still supported:
+
+`https://port-{port}-vm-{vmid}.{domain}`
 
 ## Scripts
 
@@ -228,7 +232,7 @@ systemctl status cloudflared
 systemctl status caddy-cmux
 
 # Test URL routing
-curl -v https://port-39378-vm-200.example.com
+curl -v https://port-39378-pvelxc-abc123.example.com
 ```
 
 ### Common Errors

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { parseSnapshotId } from "./sandbox-presets";
 
 describe("parseSnapshotId", () => {
-  describe("unified format parsing", () => {
+  describe("legacy format parsing", () => {
     it("parses morph snapshot ID correctly", () => {
       const result = parseSnapshotId("morph_4vcpu_6gb_32gb_v1");
       expect(result).toEqual({
@@ -56,6 +56,7 @@ describe("parseSnapshotId", () => {
         provider: "pve-lxc",
         presetId: "4vcpu_6gb_32gb",
         version: 1, // Old format assumes v1
+        templateVmid: 9011,
       });
     });
 
@@ -65,6 +66,7 @@ describe("parseSnapshotId", () => {
         provider: "pve-lxc",
         presetId: "6vcpu_8gb_32gb",
         version: 1,
+        templateVmid: 9012,
       });
     });
   });
@@ -82,6 +84,10 @@ describe("parseSnapshotId", () => {
 
     it("returns null for random string", () => {
       expect(parseSnapshotId("random_string")).toBeNull();
+    });
+
+    it("returns null for canonical snapshot ids", () => {
+      expect(parseSnapshotId("snapshot_lormn2pz")).toBeNull();
     });
 
     it("returns null for missing version suffix", () => {
@@ -154,6 +160,7 @@ describe("parseSnapshotId", () => {
         provider: "pve-lxc",
         presetId: "4vcpu_6gb_32gb",
         version: 1,
+        templateVmid: 99999,
       });
     });
   });

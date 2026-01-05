@@ -35,10 +35,9 @@ describe("pve lxc snapshots manifest", () => {
       expect(latest).toBeDefined();
       expect(preset.latestVersion).toEqual(latest);
 
-      // Check unified ID format
-      expect(preset.id).toBe(
-        `pvelxc_${preset.presetId}_v${latest.version}`,
-      );
+      // Check canonical snapshot ID format
+      expect(preset.id).toBe(latest.snapshotId);
+      expect(preset.id).toMatch(/^snapshot_[a-z0-9]+$/i);
 
       // Check template VMID is preserved
       expect(preset.templateVmid).toBe(latest.templateVmid);
@@ -96,11 +95,11 @@ describe("pve lxc snapshots manifest", () => {
   });
 
   describe("getPveLxcSnapshotIdByPresetId", () => {
-    it("returns unified snapshot id for valid preset id", () => {
+    it("returns canonical snapshot id for valid preset id", () => {
       const firstPreset = PVE_LXC_SNAPSHOT_PRESETS[0];
       const result = getPveLxcSnapshotIdByPresetId(firstPreset.presetId);
       expect(result).toBe(firstPreset.id);
-      expect(result).toMatch(/^pvelxc_[a-z0-9]+_[a-z0-9]+_[a-z0-9]+_v\d+$/i);
+      expect(result).toMatch(/^snapshot_[a-z0-9]+$/i);
     });
 
     it("returns undefined for invalid preset id", () => {

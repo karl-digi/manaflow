@@ -8,6 +8,7 @@
 
 import { env } from "./www-env";
 import { Agent, fetch as undiciFetch } from "undici";
+import crypto from "node:crypto";
 
 // PVE often uses self-signed certificates, so we need a custom agent
 // We use undici's fetch directly to ensure the dispatcher option works
@@ -41,7 +42,7 @@ export interface HttpService {
  */
 export interface ContainerNetworking {
   httpServices: HttpService[];
-  /** Container hostname (e.g., "cmux-200") */
+  /** Container hostname / instance ID (e.g., "pvelxc-abc123") */
   hostname?: string;
   /** Fully qualified domain name (e.g., "cmux-200.lan") */
   fqdn?: string;
@@ -78,6 +79,7 @@ export class PveLxcInstance {
 
   constructor(
     client: PveLxcClient,
+    instanceId: string,
     vmid: number,
     status: ContainerStatus,
     metadata: ContainerMetadata,
@@ -86,7 +88,7 @@ export class PveLxcInstance {
   ) {
     this.client = client;
     this.vmid = vmid;
-    this.id = `pve_lxc_${vmid}`;
+    this.id = instanceId;
     this.status = status;
     this.metadata = metadata;
     this.networking = networking;
@@ -99,6 +101,8 @@ export class PveLxcInstance {
   async exec(command: string, options?: { timeoutMs?: number }): Promise<ExecResult> {
     return this.client.execInContainer(this.vmid, command, {
       timeoutMs: options?.timeoutMs,
+      instanceId: this.id,
+      hostname: this.networking.hostname,
     });
   }
 
@@ -144,16 +148,16 @@ export class PveLxcInstance {
   }
 
   /**
-   * Expose an HTTP service (stores in metadata, actual exposure via FQDN)
+   * Expose an HTTP service (uses public domain when available, falls back to FQDN)
    */
   async exposeHttpService(name: string, port: number): Promise<void> {
-    // Use FQDN for service URLs
-    const host = this.networking.fqdn;
-    if (!host) {
-      throw new Error("Container FQDN not available");
+    const hostname = this.networking.hostname;
+    if (!hostname) {
+      throw new Error("Container hostname not available");
     }
-
-    const url = `http://${host}:${port}`;
+    const publicUrl = this.client.getPublicServiceUrl(port, hostname);
+    const fqdn = this.networking.fqdn;
+    const url = publicUrl ?? (fqdn ? `http://${fqdn}:${port}` : `http://${hostname}:${port}`);
     const existingService = this.networking.httpServices.find(
       (s) => s.name === name
     );
@@ -188,6 +192,8 @@ export class PveLxcInstance {
  */
 export interface StartContainerOptions {
   snapshotId: string;
+  templateVmid?: number;
+  instanceId?: string;
   ttlSeconds?: number;
   ttlAction?: "pause" | "stop";
   metadata?: ContainerMetadata;
@@ -220,6 +226,7 @@ interface PveContainerStatus {
  */
 interface PveContainerConfig {
   net0?: string; // Format: name=eth0,bridge=vmbr0,ip=10.100.0.X/24,gw=10.100.0.1
+  hostname?: string;
   [key: string]: string | number | undefined;
 }
 
@@ -251,6 +258,7 @@ export class PveLxcClient {
   // Note: Instance metadata (teamId, userId, etc.) is now tracked in Convex
   // via sandboxInstanceActivity table, not stored here.
   private instanceServices: Map<number, HttpService[]> = new Map();
+  private instanceHostnames: Map<number, string> = new Map();
 
   constructor(options: {
     apiUrl: string;
@@ -262,6 +270,20 @@ export class PveLxcClient {
     this.apiToken = options.apiToken;
     this.node = options.node || null; // Will be auto-detected if not provided
     this.publicDomain = options.publicDomain || null;
+  }
+
+  private generateInstanceId(): string {
+    const suffix = crypto.randomUUID().split("-")[0];
+    return `pvelxc-${suffix}`.toLowerCase();
+  }
+
+  private generateSnapshotId(): string {
+    const suffix = crypto.randomUUID().split("-")[0];
+    return `snapshot_${suffix}`.toLowerCase();
+  }
+
+  private normalizeHostId(value: string): string {
+    return value.trim().toLowerCase().replace(/_/g, "-");
   }
 
   /**
@@ -309,14 +331,19 @@ export class PveLxcClient {
 
   /**
    * Build a public URL for a service via Cloudflare Tunnel.
-   * Pattern (Morph-consistent): https://port-{port}-vm-{vmid}.{publicDomain}
+   * Pattern (instanceId-based): https://port-{port}-{instanceId}.{publicDomain}
    * Returns null if publicDomain is not configured.
    */
-  private buildPublicServiceUrl(port: number, vmid: number): string | null {
+  private buildPublicServiceUrl(port: number, hostId: string): string | null {
     if (!this.publicDomain) {
       return null;
     }
-    return `https://port-${port}-vm-${vmid}.${this.publicDomain}`;
+    const normalizedHostId = this.normalizeHostId(hostId);
+    return `https://port-${port}-${normalizedHostId}.${this.publicDomain}`;
+  }
+
+  getPublicServiceUrl(port: number, hostId: string): string | null {
+    return this.buildPublicServiceUrl(port, hostId);
   }
 
   /**
@@ -349,6 +376,27 @@ export class PveLxcClient {
     }
   }
 
+  private async getContainerHostname(vmid: number): Promise<string | null> {
+    const cached = this.instanceHostnames.get(vmid);
+    if (cached) {
+      return cached;
+    }
+    try {
+      const node = await this.getNode();
+      const config = await this.apiRequest<PveContainerConfig>(
+        "GET",
+        `/api2/json/nodes/${node}/lxc/${vmid}/config`
+      );
+      const hostname = typeof config.hostname === "string" ? config.hostname : null;
+      if (hostname) {
+        this.instanceHostnames.set(vmid, hostname);
+      }
+      return hostname;
+    } catch {
+      return null;
+    }
+  }
+
   /**
    * Build a service URL using the best available method:
    * 1. Public URL via Cloudflare Tunnel (if configured)
@@ -361,10 +409,11 @@ export class PveLxcClient {
     port: number,
     vmid: number,
     hostname: string,
-    domainSuffix: string | null
+    domainSuffix: string | null,
+    publicHostId: string
   ): Promise<string | null> {
     // 1. Try public URL (Cloudflare Tunnel)
-    const publicUrl = this.buildPublicServiceUrl(port, vmid);
+    const publicUrl = this.buildPublicServiceUrl(port, publicHostId);
     if (publicUrl) {
       return publicUrl;
     }
@@ -656,9 +705,24 @@ export class PveLxcClient {
   async execInContainer(
     vmid: number,
     command: string,
-    options?: { execHost?: string; timeoutMs?: number; retries?: number }
+    options?: {
+      execHost?: string;
+      timeoutMs?: number;
+      retries?: number;
+      hostname?: string;
+      instanceId?: string;
+    }
   ): Promise<ExecResult> {
-    const hostname = `cmux-${vmid}`;
+    const fallbackHostname = `cmux-${vmid}`;
+    const resolvedHostname =
+      options?.hostname ??
+      (await this.getContainerHostname(vmid)) ??
+      fallbackHostname;
+    const hostId =
+      options?.instanceId && !options.instanceId.startsWith("pve_lxc_")
+        ? options.instanceId
+        : resolvedHostname;
+    const hostname = resolvedHostname;
     const domainSuffix = await this.getDomainSuffix();
     const maxRetries = options?.retries ?? 5;
     const baseDelayMs = 2000;
@@ -678,7 +742,7 @@ export class PveLxcClient {
       hosts.add(`http://${fqdn}:39375`);
     }
 
-    const publicExecUrl = this.buildPublicServiceUrl(39375, vmid);
+    const publicExecUrl = this.buildPublicServiceUrl(39375, hostId);
     if (publicExecUrl) {
       hosts.add(publicExecUrl);
     }
@@ -754,9 +818,35 @@ export class PveLxcClient {
     return vmid;
   }
 
+  private async findVmidByHostname(hostname: string): Promise<number | null> {
+    const node = await this.getNode();
+    const containers = await this.apiRequest<PveContainerStatus[]>(
+      "GET",
+      `/api2/json/nodes/${node}/lxc`
+    );
+    const normalized = this.normalizeHostId(hostname);
+    const match = containers.find(
+      (container) => this.normalizeHostId(container.name ?? "") === normalized
+    );
+    return match?.vmid ?? null;
+  }
+
+  private async resolveVmidForInstanceId(instanceId: string): Promise<number> {
+    const legacyMatch = instanceId.match(/^pve_lxc_(\d+)$/);
+    if (legacyMatch?.[1]) {
+      return parseInt(legacyMatch[1], 10);
+    }
+    const hostname = this.normalizeHostId(instanceId);
+    const vmid = await this.findVmidByHostname(hostname);
+    if (!vmid) {
+      throw new Error(`Unable to resolve VMID for instance ${instanceId}`);
+    }
+    return vmid;
+  }
+
   /**
-   * Parse snapshot/template ID to extract template VMID.
-   * Unified format: pvelxc_{presetId}_v{version} (e.g., "pvelxc_4vcpu_6gb_32gb_v1")
+   * Resolve a snapshot ID to a template VMID.
+   * Supports canonical snapshot_*, legacy pvelxc_{presetId}_v{version}, and pve_lxc_{vmid}.
    */
   private async parseSnapshotId(snapshotId: string): Promise<{
     templateVmid: number;
@@ -772,19 +862,32 @@ export class PveLxcClient {
       return { templateVmid: parseInt(snapshotId, 10) };
     }
 
+    // Dynamic import to avoid circular dependency
+    const { PVE_LXC_SNAPSHOT_PRESETS } = await import("./pve-lxc-defaults");
+
+    // Canonical snapshot ID
+    if (/^snapshot_[a-z0-9]+$/i.test(snapshotId)) {
+      const preset = PVE_LXC_SNAPSHOT_PRESETS.find((p) =>
+        p.versions.some((v) => v.snapshotId === snapshotId),
+      );
+      const versionData = preset?.versions.find((v) => v.snapshotId === snapshotId);
+      if (!versionData) {
+        throw new Error(`PVE LXC snapshot not found: ${snapshotId}`);
+      }
+      return { templateVmid: versionData.templateVmid };
+    }
+
     const match = snapshotId.match(/^pvelxc_([^_]+_[^_]+_[^_]+)_v(\d+)$/);
     if (!match) {
       throw new Error(
         `Invalid PVE template ID format: ${snapshotId}. ` +
-        `Expected format: pvelxc_{presetId}_v{version} or pve_lxc_{vmid}`
+        `Expected format: snapshot_* or pvelxc_{presetId}_v{version} or pve_lxc_{vmid}`
       );
     }
 
     const [, presetId, versionStr] = match;
     const version = parseInt(versionStr, 10);
 
-    // Dynamic import to avoid circular dependency
-    const { PVE_LXC_SNAPSHOT_PRESETS } = await import("./pve-lxc-defaults");
     const preset = PVE_LXC_SNAPSHOT_PRESETS.find(p => p.presetId === presetId);
     if (!preset) {
       throw new Error(`PVE LXC preset not found: ${presetId}`);
@@ -802,19 +905,13 @@ export class PveLxcClient {
 
   /**
    * Convert an existing container into a reusable template.
-   * Returns the template VMID and snapshot identifier (pve_lxc_{vmid}).
+   * Returns the template VMID and canonical snapshot ID.
    */
   async createTemplateFromContainer(sourceInstanceId: string): Promise<{
     templateVmid: number;
     snapshotId: string;
   }> {
-    const sourceMatch = sourceInstanceId.match(/^pve_lxc_(\d+)$/);
-    if (!sourceMatch) {
-      throw new Error(
-        `Invalid PVE LXC instance ID: ${sourceInstanceId}. Expected format: pve_lxc_{vmid}`
-      );
-    }
-    const sourceVmid = parseInt(sourceMatch[1], 10);
+    const sourceVmid = await this.resolveVmidForInstanceId(sourceInstanceId);
 
     const targetNode = await this.getNode();
 
@@ -838,7 +935,7 @@ export class PveLxcClient {
       }
     );
 
-    const snapshotId = `pve_lxc_${sourceVmid}`;
+    const snapshotId = this.generateSnapshotId();
     return { templateVmid: sourceVmid, snapshotId };
   }
 
@@ -1007,6 +1104,7 @@ export class PveLxcClient {
     // Clean up in-memory service URLs
     // Note: Convex sandboxInstanceActivity is updated separately via recordStopInternal
     this.instanceServices.delete(vmid);
+    this.instanceHostnames.delete(vmid);
   }
 
   /**
@@ -1046,20 +1144,25 @@ export class PveLxcClient {
      * Includes rollback logic: if clone succeeds but start fails, the container is deleted.
      */
     start: async (options: StartContainerOptions): Promise<PveLxcInstance> => {
-      const { templateVmid } = await this.parseSnapshotId(options.snapshotId);
+      const resolvedTemplateVmid =
+        options.templateVmid ??
+        (await this.parseSnapshotId(options.snapshotId)).templateVmid;
       const newVmid = await this.findNextVmid();
-      const hostname = `cmux-${newVmid}`;
+      const instanceId = this.normalizeHostId(
+        options.instanceId ?? this.generateInstanceId()
+      );
+      const hostname = instanceId;
 
       // Auto-detect domain suffix from PVE DNS config
       const domainSuffix = await this.getDomainSuffix();
       const fqdn = this.getFqdnSync(hostname, domainSuffix);
 
       console.log(
-        `[PveLxcClient] Linked-cloning from template ${templateVmid} to ${newVmid}`
+        `[PveLxcClient] Linked-cloning from template ${resolvedTemplateVmid} to ${newVmid}`
       );
 
       // Linked-clone from template (fast, copy-on-write)
-      await this.linkedCloneFromTemplate(templateVmid, newVmid, hostname);
+      await this.linkedCloneFromTemplate(resolvedTemplateVmid, newVmid, hostname);
 
       // Start the container with rollback on failure
       try {
@@ -1092,10 +1195,34 @@ export class PveLxcClient {
       // Initialize services with standard cmux ports
       // URL resolution order: public URL (Cloudflare Tunnel) > FQDN > container IP
       const services: HttpService[] = [];
-      const vscodeUrl = await this.buildServiceUrl(39378, newVmid, hostname, domainSuffix);
-      const workerUrl = await this.buildServiceUrl(39377, newVmid, hostname, domainSuffix);
-      const vncUrl = await this.buildServiceUrl(39380, newVmid, hostname, domainSuffix);
-      const xtermUrl = await this.buildServiceUrl(39383, newVmid, hostname, domainSuffix);
+      const vscodeUrl = await this.buildServiceUrl(
+        39378,
+        newVmid,
+        hostname,
+        domainSuffix,
+        hostname
+      );
+      const workerUrl = await this.buildServiceUrl(
+        39377,
+        newVmid,
+        hostname,
+        domainSuffix,
+        hostname
+      );
+      const vncUrl = await this.buildServiceUrl(
+        39380,
+        newVmid,
+        hostname,
+        domainSuffix,
+        hostname
+      );
+      const xtermUrl = await this.buildServiceUrl(
+        39383,
+        newVmid,
+        hostname,
+        domainSuffix,
+        hostname
+      );
 
       if (vscodeUrl && workerUrl && vncUrl && xtermUrl) {
         services.push(
@@ -1110,10 +1237,12 @@ export class PveLxcClient {
         );
       }
       this.instanceServices.set(newVmid, services);
+      this.instanceHostnames.set(newVmid, hostname);
 
       const node = await this.getNode();
       const instance = new PveLxcInstance(
         this,
+        instanceId,
         newVmid,
         "running",
         metadata,
@@ -1131,14 +1260,21 @@ export class PveLxcClient {
     /**
      * Get an existing container instance
      */
-    get: async (options: { instanceId: string }): Promise<PveLxcInstance> => {
-      // Parse instance ID (format: pve_lxc_{vmid})
-      const match = options.instanceId.match(/^pve_lxc_(\d+)$/);
-      if (!match) {
-        throw new Error(`Invalid PVE LXC instance ID: ${options.instanceId}`);
-      }
-      const vmid = parseInt(match[1], 10);
-      const hostname = `cmux-${vmid}`;
+    get: async (options: {
+      instanceId: string;
+      vmid?: number;
+      hostname?: string;
+    }): Promise<PveLxcInstance> => {
+      const vmid =
+        options.vmid ?? (await this.resolveVmidForInstanceId(options.instanceId));
+      const fallbackHostname = `cmux-${vmid}`;
+      const resolvedHostname =
+        options.hostname ??
+        (await this.getContainerHostname(vmid)) ??
+        (options.instanceId.startsWith("pvelxc-")
+          ? this.normalizeHostId(options.instanceId)
+          : fallbackHostname);
+      const hostname = resolvedHostname;
 
       // Auto-detect domain suffix from PVE DNS config
       const domainSuffix = await this.getDomainSuffix();
@@ -1153,10 +1289,34 @@ export class PveLxcClient {
 
       // Rebuild service URLs if not cached (common on fresh client instances)
       if (!services || services.length === 0) {
-        const vscodeUrl = await this.buildServiceUrl(39378, vmid, hostname, domainSuffix);
-        const workerUrl = await this.buildServiceUrl(39377, vmid, hostname, domainSuffix);
-        const vncUrl = await this.buildServiceUrl(39380, vmid, hostname, domainSuffix);
-        const xtermUrl = await this.buildServiceUrl(39383, vmid, hostname, domainSuffix);
+        const vscodeUrl = await this.buildServiceUrl(
+          39378,
+          vmid,
+          hostname,
+          domainSuffix,
+          hostname
+        );
+        const workerUrl = await this.buildServiceUrl(
+          39377,
+          vmid,
+          hostname,
+          domainSuffix,
+          hostname
+        );
+        const vncUrl = await this.buildServiceUrl(
+          39380,
+          vmid,
+          hostname,
+          domainSuffix,
+          hostname
+        );
+        const xtermUrl = await this.buildServiceUrl(
+          39383,
+          vmid,
+          hostname,
+          domainSuffix,
+          hostname
+        );
 
         services = [];
         if (vscodeUrl && workerUrl && vncUrl && xtermUrl) {
@@ -1169,9 +1329,11 @@ export class PveLxcClient {
           this.instanceServices.set(vmid, services);
         }
       }
+      this.instanceHostnames.set(vmid, hostname);
 
       return new PveLxcInstance(
         this,
+        options.instanceId,
         vmid,
         status,
         metadata,
@@ -1200,17 +1362,25 @@ export class PveLxcClient {
         // Filter by hostname prefix to identify cmux-managed containers
         // This is more reliable than checking in-memory metadata
         const containerHostname = container.name || "";
-        if (containerHostname.startsWith("cmux-")) {
+        if (
+          containerHostname.startsWith("cmux-") ||
+          containerHostname.startsWith("pvelxc-")
+        ) {
           const hostname = containerHostname;
           const fqdn = this.getFqdnSync(hostname, domainSuffix);
           const status = await this.getContainerStatus(container.vmid);
           const services = this.instanceServices.get(container.vmid) || [];
           // Metadata is in Convex, return empty here
           const metadata: ContainerMetadata = {};
+          const instanceId = hostname.startsWith("pvelxc-")
+            ? hostname
+            : `pve_lxc_${container.vmid}`;
+          this.instanceHostnames.set(container.vmid, hostname);
 
           instances.push(
             new PveLxcInstance(
               this,
+              instanceId,
               container.vmid,
               status,
               metadata,

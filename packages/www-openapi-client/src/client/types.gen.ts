@@ -444,7 +444,7 @@ export type SetupInstanceBody = {
     instanceId?: string;
     selectedRepos?: Array<string>;
     ttlSeconds?: number;
-    snapshotId?: string | ('morph_4vcpu_6gb_32gb_v1' | 'morph_6vcpu_8gb_32gb_v1');
+    snapshotId?: string | ('snapshot_5a255f9t' | 'snapshot_d5hz9r0j');
 };
 
 export type InstanceInfo = {
@@ -480,12 +480,13 @@ export type PveLxcCheckTaskRunStoppedBody = {
 export type CreateEnvironmentResponse = {
     id: string;
     snapshotId: string;
+    snapshotProvider: 'morph' | 'pve-lxc' | 'pve-vm' | 'docker' | 'daytona' | 'other';
 };
 
 export type CreateEnvironmentBody = {
     teamSlugOrId: string;
     name: string;
-    morphInstanceId: string;
+    instanceId: string;
     envVarsContent: string;
     selectedRepos?: Array<string>;
     description?: string;
@@ -497,7 +498,9 @@ export type CreateEnvironmentBody = {
 export type GetEnvironmentResponse = {
     id: string;
     name: string;
-    morphSnapshotId: string;
+    snapshotId: string;
+    snapshotProvider: 'morph' | 'pve-lxc' | 'pve-vm' | 'docker' | 'daytona' | 'other';
+    templateVmid?: number;
     dataVaultKey: string;
     selectedRepos?: Array<string>;
     description?: string;
@@ -535,13 +538,15 @@ export type UpdateEnvironmentPortsResponse = {
 export type UpdateEnvironmentPortsBody = {
     teamSlugOrId: string;
     ports: Array<number>;
-    morphInstanceId?: string;
+    instanceId?: string;
 };
 
 export type SnapshotVersionResponse = {
     id: string;
     version: number;
-    morphSnapshotId: string;
+    snapshotId: string;
+    snapshotProvider: 'morph' | 'pve-lxc' | 'pve-vm' | 'docker' | 'daytona' | 'other';
+    templateVmid?: number;
     createdAt: number;
     createdByUserId: string;
     label?: string;
@@ -555,12 +560,13 @@ export type ListSnapshotVersionsResponse = Array<SnapshotVersionResponse>;
 export type CreateSnapshotVersionResponse = {
     snapshotVersionId: string;
     snapshotId: string;
+    snapshotProvider: 'morph' | 'pve-lxc' | 'pve-vm' | 'docker' | 'daytona' | 'other';
     version: number;
 };
 
 export type CreateSnapshotVersionBody = {
     teamSlugOrId: string;
-    morphInstanceId: string;
+    instanceId: string;
     label?: string;
     activate?: boolean;
     maintenanceScript?: string;
@@ -568,7 +574,9 @@ export type CreateSnapshotVersionBody = {
 };
 
 export type ActivateSnapshotVersionResponse = {
-    morphSnapshotId: string;
+    snapshotId: string;
+    snapshotProvider: 'morph' | 'pve-lxc' | 'pve-vm' | 'docker' | 'daytona' | 'other';
+    templateVmid?: number;
     version: number;
 };
 

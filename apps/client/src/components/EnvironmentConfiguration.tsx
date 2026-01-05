@@ -522,7 +522,7 @@ export function EnvironmentConfiguration({
           path: { id: sourceEnvironmentId },
           body: {
             teamSlugOrId,
-            morphInstanceId: instanceId,
+            instanceId,
             label: envName.trim(),
             activate: true,
             maintenanceScript: requestMaintenanceScript,
@@ -560,7 +560,7 @@ export function EnvironmentConfiguration({
           body: {
             teamSlugOrId,
             name: envName.trim(),
-            morphInstanceId: instanceId,
+            instanceId,
             envVarsContent,
             selectedRepos,
             maintenanceScript: requestMaintenanceScript,

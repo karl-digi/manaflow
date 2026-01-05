@@ -63,7 +63,7 @@ export type MorphSnapshotVersion = z.infer<typeof morphSnapshotVersionSchema>;
 export type MorphSnapshotPreset = z.infer<typeof morphSnapshotPresetSchema>;
 
 export interface MorphSnapshotPresetWithLatest extends MorphSnapshotPreset {
-  /** Unified snapshot ID for UI/URLs/database (format: morph_{presetId}_v{version}) */
+  /** Canonical snapshot ID (snapshot_*) */
   id: MorphSnapshotVersion["snapshotId"];
   /** Original Morph Cloud snapshot ID (required for Morph Cloud API calls) */
   snapshotId: MorphSnapshotVersion["snapshotId"];
@@ -88,8 +88,8 @@ const toPresetWithLatest = (
   return {
     ...preset,
     versions: sortedVersions,
-    // Unified ID format: morph_{presetId}_v{version}
-    id: `morph_${preset.presetId}_v${latestVersion.version}`,
+    // Canonical snapshot ID (snapshot_*)
+    id: latestVersion.snapshotId,
     // Keep original Morph snapshot ID for API calls
     snapshotId: latestVersion.snapshotId,
     latestVersion,
@@ -125,7 +125,7 @@ export const DEFAULT_MORPH_SNAPSHOT_ID: MorphSnapshotId = firstPreset.id;
 
 /**
  * Get the latest snapshot ID for a given preset ID.
- * Returns the unified ID format (morph_{presetId}_v{version})
+ * Returns the canonical snapshot ID (snapshot_*)
  */
 export const getSnapshotIdByPresetId = (
   presetId: string,

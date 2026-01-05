@@ -19,6 +19,7 @@ import urllib.request
 import urllib.error
 import urllib.parse
 import ssl
+import uuid
 from typing import Any
 
 
@@ -41,8 +42,13 @@ async def main():
     test_vmid = int(os.environ.get("PVE_TEST_VMID", "9999"))
     node = os.environ.get("PVE_NODE", "karl-ws")
 
+    instance_id = os.environ.get("PVE_TEST_INSTANCE_ID")
+    if not instance_id:
+        instance_id = f"pvelxc-{uuid.uuid4().hex[:8]}"
+
     print(f"Template VMID: {template_vmid}")
     print(f"Test VMID: {test_vmid}")
+    print(f"Instance ID: {instance_id}")
     print(f"Node: {node}")
 
     # PVE API headers (don't set Content-Type in base headers - set per request)
@@ -76,9 +82,12 @@ async def main():
             print(f"PVE API Error {e.code}: {error_body}")
             raise
 
-    def run_http_exec(vmid: int, command: str, timeout: int = 120) -> tuple[int, str, str]:
+    def normalize_host_id(value: str) -> str:
+        return value.strip().lower().replace("_", "-")
+
+    def run_http_exec(host_id: str, command: str, timeout: int = 120) -> tuple[int, str, str]:
         """Run command via HTTP exec using streaming JSON response."""
-        exec_url = f"https://port-39375-vm-{vmid}.{public_domain}/exec"
+        exec_url = f"https://port-39375-{normalize_host_id(host_id)}.{public_domain}/exec"
 
         timeout_ms = timeout * 1000
         body = json.dumps({
@@ -146,15 +155,15 @@ async def main():
         except Exception:
             pass
 
-        # Clone template with proper hostname format: cmux-{vmid}
-        print(f"\nCloning template {template_vmid} to {test_vmid} with hostname cmux-{test_vmid}...")
+        # Clone template with instance ID hostname
+        print(f"\nCloning template {template_vmid} to {test_vmid} with hostname {instance_id}...")
         result = pve_api(
             "POST",
             f"/nodes/{node}/lxc/{template_vmid}/clone",
             {
                 "newid": test_vmid,
                 "full": 0,  # Linked clone
-                "hostname": f"cmux-{test_vmid}",  # CRITICAL: Must be cmux-{vmid} for Caddy proxy
+                "hostname": instance_id,
             }
         )
 
@@ -201,7 +210,7 @@ async def main():
         # Wait for container to be ready
         print(f"Waiting for container {test_vmid} to be ready (HTTP exec available)...")
         for i in range(60):
-            exit_code, stdout, stderr = run_http_exec(test_vmid, "echo ready", timeout=5)
+            exit_code, stdout, stderr = run_http_exec(instance_id, "echo ready", timeout=5)
             if exit_code == 0:
                 print(f"Container {test_vmid} is ready")
                 break
@@ -240,7 +249,7 @@ url="https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-li
 nohup sh -c "curl -fsSL --retry 3 --retry-delay 5 -o /tmp/bun.zip '${url}' && touch /tmp/bun-download-done" > /tmp/bun-download.log 2>&1 &
 echo "Background download started (PID: $!)"
 """
-        exit_code, stdout, stderr = run_http_exec(test_vmid, cmd, timeout=60)
+        exit_code, stdout, stderr = run_http_exec(instance_id, cmd, timeout=60)
         elapsed = time.time() - start
         print(f"  Completed in {elapsed:.1f}s")
         print(f"  Exit code: {exit_code}")
@@ -262,7 +271,7 @@ echo "Background download started (PID: $!)"
 
         while elapsed < max_wait:
             exit_code, stdout, stderr = run_http_exec(
-                test_vmid,
+                instance_id,
                 "[ -f /tmp/bun-download-done ] && echo done || echo waiting",
                 timeout=15
             )
@@ -274,14 +283,14 @@ echo "Background download started (PID: $!)"
             # Check for download failure after initial delay
             if elapsed > 30:
                 _, stdout2, _ = run_http_exec(
-                    test_vmid,
+                    instance_id,
                     "pgrep -f 'curl.*bun.zip' > /dev/null && echo running || echo stopped",
                     timeout=15
                 )
                 if "stopped" in stdout2 and "done" not in stdout:
                     # Download process stopped but didn't complete
                     _, log_output, _ = run_http_exec(
-                        test_vmid,
+                        instance_id,
                         "cat /tmp/bun-download.log 2>/dev/null || echo 'no log'",
                         timeout=15
                     )
@@ -294,7 +303,7 @@ echo "Background download started (PID: $!)"
         else:
             # Timeout - get the log for debugging
             exit_code, log_output, _ = run_http_exec(
-                test_vmid,
+                instance_id,
                 "cat /tmp/bun-download.log 2>/dev/null || echo 'no log'",
                 timeout=15
             )
@@ -320,7 +329,7 @@ rm -rf /tmp/bun.zip /tmp/bun-linux-* /tmp/bun-arch /tmp/bun-download-done /tmp/b
 bun --version
 bunx --version
 """
-        exit_code, stdout, stderr = run_http_exec(test_vmid, cmd, timeout=60)
+        exit_code, stdout, stderr = run_http_exec(instance_id, cmd, timeout=60)
         elapsed = time.time() - start
         print(f"  Completed in {elapsed:.1f}s")
         print(f"  Exit code: {exit_code}")
@@ -335,7 +344,7 @@ bunx --version
         # Step 4: Final verification
         print("\nStep 4: Final verification...")
         exit_code, stdout, stderr = run_http_exec(
-            test_vmid,
+            instance_id,
             "which bun && bun --version && which bunx && bunx --version",
             timeout=10
         )

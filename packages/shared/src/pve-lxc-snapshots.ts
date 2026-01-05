@@ -17,10 +17,11 @@ const presetIdSchema = z
 
 /**
  * Schema v2: Template-based versions for linked-clone support.
- * Each version has a templateVmid (the VMID of the template container).
+ * Each version has a snapshotId and templateVmid (the VMID of the template container).
  */
 export const pveLxcTemplateVersionSchema = z.object({
   version: z.number().int().positive(),
+  snapshotId: z.string().regex(/^snapshot_[a-z0-9]+$/i),
   templateVmid: z.number().int().positive(),
   capturedAt: isoDateStringSchema,
 });
@@ -82,7 +83,7 @@ export type PveLxcSnapshotPreset = PveLxcTemplatePreset;
 export type PveLxcSnapshotManifest = PveLxcTemplateManifest;
 
 export interface PveLxcSnapshotPresetWithLatest extends PveLxcTemplatePreset {
-  /** Unified snapshot ID for UI/URLs/database (format: pvelxc_{presetId}_v{version}) */
+  /** Canonical snapshot ID (format: snapshot_<id>) */
   id: string;
   /** Template VMID for PVE API operations */
   templateVmid: number;
@@ -105,8 +106,8 @@ const toPresetWithLatest = (
   return {
     ...preset,
     versions: sortedVersions,
-    // Unified ID format: pvelxc_{presetId}_v{version}
-    id: `pvelxc_${preset.presetId}_v${latestVersion.version}`,
+    // Canonical snapshot ID (snapshot_*)
+    id: latestVersion.snapshotId,
     // Keep template VMID for PVE API calls
     templateVmid: latestVersion.templateVmid,
     latestVersion,
@@ -151,7 +152,7 @@ export const getPveLxcSnapshotByPresetId = (
 
 /**
  * Get the latest snapshot ID for a given preset ID.
- * Returns the unified ID format (pvelxc_{presetId}_v{version})
+ * Returns the canonical snapshot ID (snapshot_*)
  */
 export const getPveLxcSnapshotIdByPresetId = (
   presetId: string,

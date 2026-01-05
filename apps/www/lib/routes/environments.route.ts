@@ -3,6 +3,11 @@ import { getConvex } from "@/lib/utils/get-convex";
 import { getPveLxcClient } from "@/lib/utils/pve-lxc-client";
 import { PVE_LXC_SNAPSHOT_PRESETS } from "@/lib/utils/pve-lxc-defaults";
 import { getActiveSandboxProvider } from "@/lib/utils/sandbox-provider";
+import {
+  type SandboxInstance,
+  wrapMorphInstance,
+  wrapPveLxcInstance,
+} from "@/lib/utils/sandbox-instance";
 import { stackServerAppJs } from "@/lib/utils/stack";
 import { verifyTeamAccess } from "@/lib/utils/team-verification";
 import { env } from "@/lib/utils/www-env";
@@ -74,11 +79,24 @@ const sanitizePortsOrThrow = (ports: readonly number[]): number[] => {
 
 const serviceNameForPort = (port: number): string => `port-${port}`;
 
+const detectInstanceProvider = (
+  instanceId: string
+): "morph" | "pve-lxc" | "pve-vm" | "other" => {
+  if (instanceId.startsWith("morphvm_")) return "morph";
+  if (instanceId.startsWith("pvelxc-") || instanceId.startsWith("pve_lxc_")) {
+    return "pve-lxc";
+  }
+  if (instanceId.startsWith("pvevm-") || instanceId.startsWith("pve_vm_")) {
+    return "pve-vm";
+  }
+  return "other";
+};
+
 const CreateEnvironmentBody = z
   .object({
     teamSlugOrId: z.string(),
     name: z.string(),
-    morphInstanceId: z.string(),
+    instanceId: z.string(),
     envVarsContent: z.string(), // The entire .env file content
     selectedRepos: z.array(z.string()).optional(),
     description: z.string().optional(),
@@ -92,6 +110,7 @@ const CreateEnvironmentResponse = z
   .object({
     id: z.string(),
     snapshotId: z.string(),
+    snapshotProvider: z.enum(["morph", "pve-lxc", "pve-vm", "docker", "daytona", "other"]),
   })
   .openapi("CreateEnvironmentResponse");
 
@@ -99,7 +118,9 @@ const GetEnvironmentResponse = z
   .object({
     id: z.string(),
     name: z.string(),
-    morphSnapshotId: z.string(),
+    snapshotId: z.string(),
+    snapshotProvider: z.enum(["morph", "pve-lxc", "pve-vm", "docker", "daytona", "other"]),
+    templateVmid: z.number().optional(),
     dataVaultKey: z.string(),
     selectedRepos: z.array(z.string()).optional(),
     description: z.string().optional(),
@@ -150,7 +171,7 @@ const UpdateEnvironmentPortsBody = z
   .object({
     teamSlugOrId: z.string(),
     ports: z.array(z.number()),
-    morphInstanceId: z.string().optional(),
+    instanceId: z.string().optional(),
   })
   .openapi("UpdateEnvironmentPortsBody");
 
@@ -165,7 +186,9 @@ const SnapshotVersionResponse = z
   .object({
     id: z.string(),
     version: z.number(),
-    morphSnapshotId: z.string(),
+    snapshotId: z.string(),
+    snapshotProvider: z.enum(["morph", "pve-lxc", "pve-vm", "docker", "daytona", "other"]),
+    templateVmid: z.number().optional(),
     createdAt: z.number(),
     createdByUserId: z.string(),
     label: z.string().optional(),
@@ -182,7 +205,7 @@ const ListSnapshotVersionsResponse = z
 const CreateSnapshotVersionBody = z
   .object({
     teamSlugOrId: z.string(),
-    morphInstanceId: z.string(),
+    instanceId: z.string(),
     label: z.string().optional(),
     activate: z.boolean().optional(),
     maintenanceScript: z.string().optional(),
@@ -194,6 +217,7 @@ const CreateSnapshotVersionResponse = z
   .object({
     snapshotVersionId: z.string(),
     snapshotId: z.string(),
+    snapshotProvider: z.enum(["morph", "pve-lxc", "pve-vm", "docker", "daytona", "other"]),
     version: z.number(),
   })
   .openapi("CreateSnapshotVersionResponse");
@@ -206,7 +230,9 @@ const ActivateSnapshotVersionBody = z
 
 const ActivateSnapshotVersionResponse = z
   .object({
-    morphSnapshotId: z.string(),
+    snapshotId: z.string(),
+    snapshotProvider: z.enum(["morph", "pve-lxc", "pve-vm", "docker", "daytona", "other"]),
+    templateVmid: z.number().optional(),
     version: z.number(),
   })
   .openapi("ActivateSnapshotVersionResponse");
@@ -261,6 +287,13 @@ environmentsRouter.openapi(
           : [];
 
       const provider = getActiveSandboxProvider().provider;
+      const instanceProvider = detectInstanceProvider(body.instanceId);
+      if (instanceProvider !== "other" && instanceProvider !== provider) {
+        return c.text(
+          "Forbidden: Instance provider does not match active sandbox provider",
+          403
+        );
+      }
 
       const persistDataVaultPromise = (async () => {
         const dataVaultKey = `env_${randomBytes(16).toString("hex")}`;
@@ -273,11 +306,22 @@ environmentsRouter.openapi(
       })();
 
       let snapshotId: string;
+      let snapshotProvider:
+        | "morph"
+        | "pve-lxc"
+        | "pve-vm"
+        | "docker"
+        | "daytona"
+        | "other";
+      let templateVmid: number | undefined;
 
-      if (provider === "pve-lxc") {
+      const resolvedProvider =
+        instanceProvider !== "other" ? instanceProvider : provider;
+
+      if (resolvedProvider === "pve-lxc") {
         const pveClient = getPveLxcClient();
         const pveInstance = await pveClient.instances.get({
-          instanceId: body.morphInstanceId,
+          instanceId: body.instanceId,
         });
 
         // Ensure container is running before executing cleanup commands
@@ -288,14 +332,16 @@ environmentsRouter.openapi(
         await pveInstance.exec(SNAPSHOT_CLEANUP_COMMANDS);
 
         const template = await pveClient.createTemplateFromContainer(
-          body.morphInstanceId
+          body.instanceId
         );
         snapshotId = template.snapshotId;
+        templateVmid = template.templateVmid;
+        snapshotProvider = "pve-lxc";
       } else {
         // Create Morph snapshot from instance
         const client = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
         const instance = await withMorphRetry(
-          () => client.instances.get({ instanceId: body.morphInstanceId }),
+          () => client.instances.get({ instanceId: body.instanceId }),
           "instances.get (create environment)"
         );
 
@@ -309,6 +355,7 @@ environmentsRouter.openapi(
 
         const snapshot = await instance.snapshot();
         snapshotId = snapshot.id;
+        snapshotProvider = "morph";
       }
 
       const convexClient = getConvex({ accessToken });
@@ -318,7 +365,9 @@ environmentsRouter.openapi(
         {
           teamSlugOrId: body.teamSlugOrId,
           name: body.name,
-          morphSnapshotId: snapshotId,
+          snapshotId,
+          snapshotProvider,
+          templateVmid,
           dataVaultKey,
           selectedRepos: body.selectedRepos,
           description: body.description,
@@ -331,6 +380,7 @@ environmentsRouter.openapi(
       return c.json({
         id: environmentId,
         snapshotId,
+        snapshotProvider,
       });
     } catch (error) {
       if (error instanceof HTTPException) {
@@ -384,7 +434,10 @@ environmentsRouter.openapi(
       const result = environments.map((env) => ({
         id: env._id,
         name: env.name,
-        morphSnapshotId: env.morphSnapshotId,
+        snapshotId: env.snapshotId ?? env.morphSnapshotId,
+        snapshotProvider:
+          env.snapshotProvider ?? (env.morphSnapshotId ? "morph" : "other"),
+        templateVmid: env.templateVmid ?? undefined,
         dataVaultKey: env.dataVaultKey,
         selectedRepos: env.selectedRepos,
         description: env.description,
@@ -455,7 +508,11 @@ environmentsRouter.openapi(
       const mapped = {
         id: environment._id,
         name: environment.name,
-        morphSnapshotId: environment.morphSnapshotId,
+        snapshotId: environment.snapshotId ?? environment.morphSnapshotId,
+        snapshotProvider:
+          environment.snapshotProvider ??
+          (environment.morphSnapshotId ? "morph" : "other"),
+        templateVmid: environment.templateVmid ?? undefined,
         dataVaultKey: environment.dataVaultKey,
         selectedRepos: environment.selectedRepos,
         description: environment.description,
@@ -614,7 +671,11 @@ environmentsRouter.openapi(
       return c.json({
         id: updated._id,
         name: updated.name,
-        morphSnapshotId: updated.morphSnapshotId,
+        snapshotId: updated.snapshotId ?? updated.morphSnapshotId,
+        snapshotProvider:
+          updated.snapshotProvider ??
+          (updated.morphSnapshotId ? "morph" : "other"),
+        templateVmid: updated.templateVmid ?? undefined,
         dataVaultKey: updated.dataVaultKey,
         selectedRepos: updated.selectedRepos ?? undefined,
         description: updated.description ?? undefined,
@@ -693,30 +754,42 @@ environmentsRouter.openapi(
           }>
         | undefined;
 
-      if (body.morphInstanceId) {
-        const morphClient = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
-        const instance = await withMorphRetry(
-          () => morphClient.instances.get({ instanceId: body.morphInstanceId! }),
-          "instances.get (update ports)"
-        );
-
-        const metadata = instance.metadata;
-        const instanceTeamId = metadata?.teamId;
-        if (instanceTeamId && instanceTeamId !== team.uuid) {
-          return c.text(
-            "Forbidden: Instance does not belong to this team",
-            403
+      if (body.instanceId) {
+        const instanceProvider = detectInstanceProvider(body.instanceId);
+        let workingInstance: SandboxInstance;
+        if (instanceProvider === "pve-lxc") {
+          const pveClient = getPveLxcClient();
+          const pveInstance = await pveClient.instances.get({
+            instanceId: body.instanceId,
+          });
+          workingInstance = wrapPveLxcInstance(pveInstance);
+        } else if (instanceProvider === "morph") {
+          const morphClient = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
+          const instance = await withMorphRetry(
+            () => morphClient.instances.get({ instanceId: body.instanceId! }),
+            "instances.get (update ports)"
           );
-        }
-        const metadataEnvironmentId = metadata?.environmentId;
-        if (metadataEnvironmentId && metadataEnvironmentId !== id) {
-          return c.text(
-            "Forbidden: Instance does not belong to this environment",
-            403
-          );
+
+          const metadata = instance.metadata;
+          const instanceTeamId = metadata?.teamId;
+          if (instanceTeamId && instanceTeamId !== team.uuid) {
+            return c.text(
+              "Forbidden: Instance does not belong to this team",
+              403
+            );
+          }
+          const metadataEnvironmentId = metadata?.environmentId;
+          if (metadataEnvironmentId && metadataEnvironmentId !== id) {
+            return c.text(
+              "Forbidden: Instance does not belong to this environment",
+              403
+            );
+          }
+          workingInstance = wrapMorphInstance(instance);
+        } else {
+          return c.text("Sandbox instance provider not supported", 404);
         }
 
-        const workingInstance = instance;
         const { servicesToHide, portsToExpose, servicesToKeep } =
           determineHttpServiceUpdates(
             workingInstance.networking.httpServices,
@@ -731,7 +804,7 @@ environmentsRouter.openapi(
           const serviceName = serviceNameForPort(port);
           return (async () => {
             try {
-              return await workingInstance.exposeHttpService(serviceName, port);
+              await workingInstance.exposeHttpService(serviceName, port);
             } catch (error) {
               console.error(
                 `[environments.updatePorts] Failed to expose ${serviceName}`,
@@ -744,10 +817,31 @@ environmentsRouter.openapi(
           })();
         });
 
-        const [_, newlyExposedServices] = await Promise.all([
+        await Promise.all([
           Promise.all(hidePromises),
           Promise.all(exposePromises),
         ]);
+
+        const reloadInstance = async () => {
+          if (instanceProvider === "pve-lxc") {
+            const pveClient = getPveLxcClient();
+            const pveInstance = await pveClient.instances.get({
+              instanceId: body.instanceId!,
+            });
+            return wrapPveLxcInstance(pveInstance);
+          }
+          if (instanceProvider === "morph") {
+            const morphClient = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
+            const instance = await withMorphRetry(
+              () => morphClient.instances.get({ instanceId: body.instanceId! }),
+              "instances.get (update ports reload)"
+            );
+            return wrapMorphInstance(instance);
+          }
+          return workingInstance;
+        };
+
+        workingInstance = await reloadInstance();
 
         const serviceUrls = new Map<number, string>();
 
@@ -755,8 +849,14 @@ environmentsRouter.openapi(
           serviceUrls.set(service.port, service.url);
         }
 
-        for (const service of newlyExposedServices) {
-          serviceUrls.set(service.port, service.url);
+        for (const port of sanitizedPorts) {
+          const serviceName = serviceNameForPort(port);
+          const matched = workingInstance.networking.httpServices.find(
+            (service) => service.name === serviceName || service.port === port
+          );
+          if (matched?.url) {
+            serviceUrls.set(port, matched.url);
+          }
         }
 
         services = Array.from(serviceUrls.entries())
@@ -847,7 +947,10 @@ environmentsRouter.openapi(
       const mapped = versions.map((version) => ({
         id: String(version._id),
         version: version.version,
-        morphSnapshotId: version.morphSnapshotId,
+        snapshotId: version.snapshotId ?? version.morphSnapshotId,
+        snapshotProvider:
+          version.snapshotProvider ?? (version.morphSnapshotId ? "morph" : "other"),
+        templateVmid: version.templateVmid ?? undefined,
         createdAt: version.createdAt,
         createdByUserId: version.createdByUserId,
         label: version.label ?? undefined,
@@ -915,13 +1018,31 @@ environmentsRouter.openapi(
 
       const convexClient = getConvex({ accessToken });
       const provider = getActiveSandboxProvider().provider;
+      const instanceProvider = detectInstanceProvider(body.instanceId);
+      if (instanceProvider !== "other" && instanceProvider !== provider) {
+        return c.text(
+          "Forbidden: Instance provider does not match active sandbox provider",
+          403
+        );
+      }
 
       let snapshotId: string;
+      let snapshotProvider:
+        | "morph"
+        | "pve-lxc"
+        | "pve-vm"
+        | "docker"
+        | "daytona"
+        | "other";
+      let templateVmid: number | undefined;
 
-      if (provider === "pve-lxc") {
+      const resolvedProvider =
+        instanceProvider !== "other" ? instanceProvider : provider;
+
+      if (resolvedProvider === "pve-lxc") {
         const pveClient = getPveLxcClient();
         const pveInstance = await pveClient.instances.get({
-          instanceId: body.morphInstanceId,
+          instanceId: body.instanceId,
         });
 
         if (pveInstance.status !== "running") {
@@ -931,13 +1052,15 @@ environmentsRouter.openapi(
         await pveInstance.exec(SNAPSHOT_CLEANUP_COMMANDS);
 
         const template = await pveClient.createTemplateFromContainer(
-          body.morphInstanceId
+          body.instanceId
         );
         snapshotId = template.snapshotId;
+        templateVmid = template.templateVmid;
+        snapshotProvider = "pve-lxc";
       } else {
         const morphClient = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
         const instance = await withMorphRetry(
-          () => morphClient.instances.get({ instanceId: body.morphInstanceId }),
+          () => morphClient.instances.get({ instanceId: body.instanceId }),
           "instances.get (create snapshot)"
         );
 
@@ -958,6 +1081,7 @@ environmentsRouter.openapi(
 
         const snapshot = await instance.snapshot();
         snapshotId = snapshot.id;
+        snapshotProvider = "morph";
       }
 
       const creation = await convexClient.mutation(
@@ -965,7 +1089,9 @@ environmentsRouter.openapi(
         {
           teamSlugOrId: body.teamSlugOrId,
           environmentId,
-          morphSnapshotId: snapshotId,
+          snapshotId,
+          snapshotProvider,
+          templateVmid,
           label: body.label,
           activate: body.activate,
           maintenanceScript: body.maintenanceScript,
@@ -976,6 +1102,7 @@ environmentsRouter.openapi(
       return c.json({
         snapshotVersionId: String(creation.snapshotVersionId),
         snapshotId,
+        snapshotProvider,
         version: creation.version,
       });
     } catch (error) {
@@ -1123,14 +1250,9 @@ environmentsRouter.openapi(
           environmentId,
         })) ?? [];
 
-      // Collect all snapshot IDs tied to this environment (active + versions)
-      const snapshotIds = new Set<string>();
-      snapshotIds.add(environment.morphSnapshotId);
-      snapshotVersions.forEach((version) => {
-        snapshotIds.add(version.morphSnapshotId);
-      });
-
-      const provider = getActiveSandboxProvider().provider;
+      const provider =
+        environment.snapshotProvider ??
+        (environment.morphSnapshotId ? "morph" : getActiveSandboxProvider().provider);
 
       if (provider === "pve-lxc") {
         const pveClient = getPveLxcClient();
@@ -1140,11 +1262,17 @@ environmentsRouter.openapi(
           )
         );
 
-        for (const snapshotId of snapshotIds) {
-          const match = snapshotId.match(/^pve_lxc_(\d+)$/i);
-          if (!match) continue;
+        const templateVmids = new Set<number>();
+        if (environment.templateVmid) {
+          templateVmids.add(environment.templateVmid);
+        }
+        snapshotVersions.forEach((version) => {
+          if (version.templateVmid) {
+            templateVmids.add(version.templateVmid);
+          }
+        });
 
-          const vmid = Number.parseInt(match[1], 10);
+        for (const vmid of templateVmids) {
           if (!Number.isFinite(vmid)) continue;
 
           // Protect base templates and low VMIDs reserved for presets

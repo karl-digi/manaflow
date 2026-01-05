@@ -19,10 +19,12 @@ Required environment variables:
 
 Optional environment variables:
     PVE_CF_DOMAIN - Cloudflare Tunnel domain for HTTP exec (e.g., alphasolves.com)
-                    When set, uses Morph-consistent URL pattern:
-                    https://port-{port}-vm-{vmid}.{domain} for command execution via
-                    cmux-execd instead of SSH+pct exec. Falls back to PVE_PUBLIC_DOMAIN
-                    if not set, then to SSH if neither is set.
+                    When set, uses instanceId-based URL pattern:
+                    https://port-{port}-{instanceId}.{domain} for command execution via
+                    cmux-execd instead of SSH+pct exec. Falls back to legacy
+                    port-{port}-vm-{vmid}.{domain} if hostname cannot be resolved.
+                    Falls back to PVE_PUBLIC_DOMAIN if not set, then to SSH if
+                    neither is set.
     PVE_PUBLIC_DOMAIN - Alias for PVE_CF_DOMAIN (used as fallback)
     PVE_NODE - Target PVE node name (auto-detected if not set)
     PVE_SSH_HOST - SSH host for fallback (derived from PVE_API_URL if not set)
@@ -57,6 +59,7 @@ import traceback
 import typing as t
 import urllib.parse
 import urllib.request
+import uuid
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -160,8 +163,10 @@ class PveLxcClient:
         self.node = node
         self.verify_ssl = verify_ssl
         # Cloudflare Tunnel domain for public exec URLs (e.g., "example.com")
-        # When set, uses Morph-consistent URL pattern: port-{port}-vm-{vmid}.{cf_domain}
+        # When set, uses instanceId-based URL pattern: port-{port}-{instanceId}.{cf_domain}
+        # Falls back to legacy vmid-based URLs if hostname cannot be resolved.
         self.cf_domain = cf_domain
+        self._http_host_ids: dict[int, str] = {}
 
         # Parse token: user@realm!tokenid=secret
         token_parts = api_token.split("=", 1)
@@ -384,6 +389,8 @@ class PveLxcClient:
         *,
         cores: int | None = None,
         memory: int | None = None,
+        description: str | None = None,
+        tags: str | None = None,
         node: str | None = None,
     ) -> None:
         """Update LXC container configuration."""
@@ -393,6 +400,10 @@ class PveLxcClient:
             data["cores"] = cores
         if memory is not None:
             data["memory"] = memory
+        if description is not None:
+            data["description"] = description
+        if tags is not None:
+            data["tags"] = tags
         if data:
             self._request(
                 "PUT",
@@ -406,11 +417,19 @@ class PveLxcClient:
         *,
         cores: int | None = None,
         memory: int | None = None,
+        description: str | None = None,
+        tags: str | None = None,
         node: str | None = None,
     ) -> None:
         """Async set LXC config."""
         await asyncio.to_thread(
-            self.set_lxc_config, vmid, cores=cores, memory=memory, node=node
+            self.set_lxc_config,
+            vmid,
+            cores=cores,
+            memory=memory,
+            description=description,
+            tags=tags,
+            node=node,
         )
 
     def resize_lxc_disk(
@@ -782,14 +801,36 @@ class PveLxcClient:
     # HTTP exec operations via cmux-execd (no SSH required)
     # -----------------------------------------------------------------------
 
+    def _normalize_host_id(self, value: str) -> str:
+        return value.strip().lower().replace("_", "-")
+
+    def resolve_http_host_id(self, vmid: int) -> str | None:
+        cached = self._http_host_ids.get(vmid)
+        if cached:
+            return cached
+        try:
+            config = self.get_lxc_config(vmid)
+        except Exception:
+            return None
+        hostname = config.get("hostname")
+        if isinstance(hostname, str) and hostname.strip():
+            host_id = self._normalize_host_id(hostname)
+            self._http_host_ids[vmid] = host_id
+            return host_id
+        return None
+
     def build_exec_url(self, vmid: int) -> str | None:
         """Build the HTTP exec URL for a container.
 
         Returns None if cf_domain is not configured.
-        URL pattern (Morph-consistent): https://port-{port}-vm-{vmid}.{cf_domain}
+        URL pattern (instanceId-based): https://port-{port}-{instanceId}.{cf_domain}
+        Falls back to legacy: https://port-{port}-vm-{vmid}.{cf_domain}
         """
         if not self.cf_domain:
             return None
+        host_id = self.resolve_http_host_id(vmid)
+        if host_id:
+            return f"https://port-39375-{host_id}.{self.cf_domain}/exec"
         return f"https://port-39375-vm-{vmid}.{self.cf_domain}/exec"
 
     def http_exec(
@@ -806,8 +847,8 @@ class PveLxcClient:
         Falls back to SSH+pct exec if HTTP exec fails.
 
         The cmux-execd daemon runs on port 39375 inside containers and is
-        exposed via Cloudflare Tunnel using Morph-consistent URL pattern:
-        https://port-{port}-vm-{vmid}.{cf_domain}
+        exposed via Cloudflare Tunnel using instanceId-based URL pattern:
+        https://port-{port}-{instanceId}.{cf_domain}
         """
         exec_url = self.build_exec_url(vmid)
         if not exec_url:
@@ -986,10 +1027,9 @@ class PveLxcClient:
         escaped_path = shlex.quote(remote_path)
         parent_dir = shlex.quote(str(Path(remote_path).parent))
 
-        # Build command to decode base64 and write to file
-        command = f"mkdir -p {parent_dir} && echo '{b64_data}' | base64 -d > {escaped_path}"
-
-        result = self.http_exec(vmid, command, timeout=timeout, check=False)
+        # Initialize the remote file
+        init_cmd = f"mkdir -p {parent_dir} && : > {escaped_path}"
+        result = self.http_exec(vmid, init_cmd, timeout=timeout, check=False)
         if result is None:
             return False
 
@@ -1002,6 +1042,26 @@ class PveLxcClient:
                 f"stdout: {result.stdout}\n"
                 f"stderr: {result.stderr}"
             )
+
+        # Append base64 in chunks to avoid shell argument limits
+        chunk_size = 8192  # multiple of 4 for base64 alignment
+        for offset in range(0, len(b64_data), chunk_size):
+            chunk = b64_data[offset: offset + chunk_size]
+            append_cmd = (
+                f"printf '%s' '{chunk}' | base64 -d >> {escaped_path}"
+            )
+            result = self.http_exec(vmid, append_cmd, timeout=timeout, check=False)
+            if result is None:
+                return False
+            if result.returncode != 0:
+                if "413" in result.stderr or "Payload Too Large" in result.stderr:
+                    return False
+                raise RuntimeError(
+                    f"HTTP file push failed (exit {result.returncode}):\n"
+                    f"stdout: {result.stdout}\n"
+                    f"stderr: {result.stderr}"
+                )
+
         return True
 
     async def ahttp_push_file(
@@ -1071,6 +1131,7 @@ class PveLxcClient:
 class PveTemplateVersionEntry(t.TypedDict):
     """A version entry for a preset template (schema v2)."""
     version: int
+    snapshotId: str
     templateVmid: int  # The VMID of the template container
     capturedAt: str
 
@@ -1090,8 +1151,8 @@ class PveTemplateManifestEntry(t.TypedDict):
     """The manifest file structure (schema v2).
 
     Schema v2 uses templates instead of snapshots for linked-clone support.
-    Each preset's 'versions' contains templateVmid (the template container)
-    instead of vmid+snapshotName.
+    Each preset's 'versions' contains snapshotId and templateVmid for
+    instanceId-based snapshot selection.
     """
     schemaVersion: int
     updatedAt: str
@@ -1117,6 +1178,7 @@ class TemplatePresetPlan:
 class TemplateRunResult:
     """Result of creating a preset template."""
     preset: TemplatePresetPlan
+    snapshot_id: str
     template_vmid: int  # The VMID of the created template
     captured_at: str
     node: str
@@ -1129,6 +1191,45 @@ def _iso_timestamp() -> str:
         .isoformat()
         .replace("+00:00", "Z")
     )
+
+
+def _generate_instance_id(prefix: str = "pvelxc") -> str:
+    return f"{prefix}-{uuid.uuid4().hex[:8]}"
+
+
+def _generate_snapshot_id() -> str:
+    return f"snapshot_{uuid.uuid4().hex[:8]}"
+
+
+def _preset_id_to_tag(preset_id: str) -> str:
+    return f"preset-{preset_id.replace('_', '-')}"
+
+
+def _build_template_tags(preset_id: str | None) -> str:
+    tags = ["cmux"]
+    if preset_id:
+        tags.append(_preset_id_to_tag(preset_id))
+    return ";".join(tags)
+
+
+def _build_template_description(
+    *,
+    snapshot_id: str,
+    preset_id: str | None,
+    captured_at: str,
+    source_vmid: int,
+    hostname: str | None,
+) -> str:
+    lines = [
+        "cmux template snapshot",
+        f"snapshotId: {snapshot_id}",
+        f"presetId: {preset_id}" if preset_id else "presetId: unknown",
+        f"capturedAt: {captured_at}",
+        f"sourceVmid: {source_vmid}",
+    ]
+    if hostname:
+        lines.append(f"hostname: {hostname}")
+    return "\n".join(lines)
 
 
 def _format_cpu_display(vcpus: int) -> str:
@@ -1183,6 +1284,13 @@ def _build_preset_plans(args: argparse.Namespace) -> tuple[TemplatePresetPlan, .
     return (standard_plan, boosted_plan)
 
 
+def _ensure_manifest_snapshot_ids(manifest: PveTemplateManifestEntry) -> None:
+    for preset in manifest.get("presets", []):
+        for version in preset.get("versions", []):
+            if not version.get("snapshotId"):
+                version["snapshotId"] = _generate_snapshot_id()
+
+
 def _load_manifest() -> PveTemplateManifestEntry:
     if not PVE_SNAPSHOT_MANIFEST_PATH.exists():
         return {
@@ -1198,6 +1306,7 @@ def _load_manifest() -> PveTemplateManifestEntry:
         raise RuntimeError(
             f"Failed to read PVE template manifest at {PVE_SNAPSHOT_MANIFEST_PATH}: {exc}"
         ) from exc
+    _ensure_manifest_snapshot_ids(raw_manifest)
     return raw_manifest
 
 
@@ -1219,6 +1328,7 @@ def _find_preset_for_vmid(manifest: PveTemplateManifestEntry, vmid: int) -> PveT
 def _add_version_to_preset(
     preset_entry: PveTemplatePresetEntry,
     template_vmid: int,
+    snapshot_id: str,
     captured_at: str,
 ) -> None:
     """Add a new version entry to an existing preset."""
@@ -1228,6 +1338,7 @@ def _add_version_to_preset(
 
     version_entry: PveTemplateVersionEntry = {
         "version": next_version,
+        "snapshotId": snapshot_id,
         "templateVmid": template_vmid,
         "capturedAt": captured_at,
     }
@@ -1239,6 +1350,7 @@ def _update_manifest_with_template(
     manifest: PveTemplateManifestEntry,
     preset: TemplatePresetPlan,
     template_vmid: int,
+    snapshot_id: str,
     captured_at: str,
     node: str,
 ) -> PveTemplateManifestEntry:
@@ -1274,6 +1386,7 @@ def _update_manifest_with_template(
 
     version_entry: PveTemplateVersionEntry = {
         "version": next_version,
+        "snapshotId": snapshot_id,
         "templateVmid": template_vmid,
         "capturedAt": captured_at,
     }
@@ -3666,7 +3779,7 @@ async def update_existing_template(
     if is_template:
         # Clone from template to new VMID (starting from CLONE_BASE_VMID)
         new_vmid = await client.afind_next_vmid(node, start=CLONE_BASE_VMID)
-        hostname = f"cmux-{new_vmid}"
+        hostname = _generate_instance_id()
 
         # Try linked clone first (faster), fall back to full clone if it fails
         try:
@@ -3696,6 +3809,7 @@ async def update_existing_template(
     else:
         # Source is a regular container, work on it directly
         work_vmid = source_vmid
+        hostname = config.get("hostname")
         console.info(f"Container {source_vmid} is not a template, updating directly")
 
     # Start the container
@@ -3765,17 +3879,35 @@ async def update_existing_template(
     # Update manifest with new template version
     manifest = _load_manifest()
     captured_at = _iso_timestamp()
+    snapshot_id = _generate_snapshot_id()
 
     # Find the preset for the source VMID
     preset_entry = _find_preset_for_vmid(manifest, source_vmid)
+    preset_id = preset_entry.get("presetId") if preset_entry else None
+    description = _build_template_description(
+        snapshot_id=snapshot_id,
+        preset_id=preset_id,
+        captured_at=captured_at,
+        source_vmid=source_vmid,
+        hostname=hostname if isinstance(hostname, str) else None,
+    )
+    tags = _build_template_tags(preset_id)
+    await client.aset_lxc_config(
+        work_vmid,
+        node=node,
+        description=description,
+        tags=tags,
+    )
+
     if preset_entry:
-        _add_version_to_preset(preset_entry, work_vmid, captured_at)
+        _add_version_to_preset(preset_entry, work_vmid, snapshot_id, captured_at)
         manifest["updatedAt"] = captured_at
         manifest["node"] = node
         _write_manifest(manifest)
         console.always(f"\nManifest updated: {PVE_SNAPSHOT_MANIFEST_PATH}")
         console.always(f"  Preset: {preset_entry.get('presetId')} ({preset_entry.get('label')})")
         console.always(f"  New version added with template VMID {work_vmid}")
+        console.always(f"  Snapshot ID: {snapshot_id}")
     else:
         console.always(f"\nWARNING: Source VMID {source_vmid} not found in manifest")
         console.always(f"  Manifest not updated. Manually add template {work_vmid} to the manifest if needed.")
@@ -3813,7 +3945,7 @@ async def provision_and_create_template(
     node = await client.aget_node()
     # Find next available VMID starting from CLONE_BASE_VMID (9000, 9001, etc.)
     new_vmid = await client.afind_next_vmid(node, start=CLONE_BASE_VMID)
-    hostname = f"cmux-{new_vmid}"
+    hostname = _generate_instance_id()
 
     # Try linked clone first (faster), fall back to full clone if it fails
     try:
@@ -3931,11 +4063,27 @@ async def provision_and_create_template(
     await client.aconvert_to_template(new_vmid, node)
 
     captured_at = _iso_timestamp()
+    snapshot_id = _generate_snapshot_id()
+    tags = _build_template_tags(preset.preset_id)
+    description = _build_template_description(
+        snapshot_id=snapshot_id,
+        preset_id=preset.preset_id,
+        captured_at=captured_at,
+        source_vmid=src_vmid,
+        hostname=hostname,
+    )
+    await client.aset_lxc_config(
+        new_vmid,
+        node=node,
+        description=description,
+        tags=tags,
+    )
 
     console.always(f"[{preset.preset_id}] Container {new_vmid} converted to template")
 
     return TemplateRunResult(
         preset=preset,
+        snapshot_id=snapshot_id,
         template_vmid=new_vmid,
         captured_at=captured_at,
         node=node,
@@ -3972,7 +4120,9 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
     )
 
     if cf_domain:
-        console.info(f"Using HTTP exec via Cloudflare Tunnel: exec-{{vmid}}.{cf_domain}")
+        console.info(
+            "Using HTTP exec via Cloudflare Tunnel: port-{port}-{instanceId}.{cf_domain}"
+        )
         if client._ssh_host_explicit:
             console.info(f"SSH fallback enabled: {client.ssh_host}")
         else:
@@ -4113,6 +4263,7 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
             manifest,
             result.preset,
             result.template_vmid,
+            result.snapshot_id,
             result.captured_at,
             result.node,
         )
@@ -4127,6 +4278,7 @@ async def provision_and_snapshot(args: argparse.Namespace) -> None:
 
     for result in results:
         console.always(f"Preset: {result.preset.preset_id}")
+        console.always(f"  Snapshot ID: {result.snapshot_id}")
         console.always(f"  Template VMID: {result.template_vmid}")
         console.always(f"  Node: {result.node}")
         console.always(f"  Captured: {result.captured_at}")
@@ -4309,7 +4461,9 @@ async def run_update_mode(args: argparse.Namespace) -> None:
     )
 
     if cf_domain:
-        console.info(f"Using HTTP exec via Cloudflare Tunnel: exec-{{vmid}}.{cf_domain}")
+        console.info(
+            "Using HTTP exec via Cloudflare Tunnel: port-{port}-{instanceId}.{cf_domain}"
+        )
         if client._ssh_host_explicit:
             console.info(f"SSH fallback enabled: {client.ssh_host}")
         else:

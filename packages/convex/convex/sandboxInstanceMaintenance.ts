@@ -203,15 +203,15 @@ function createPveLxcProviderClient(
         `/api2/json/nodes/${nodeName}/lxc`
       );
 
-      // Filter to cmux containers (hostname starts with "cmux-")
+      // Filter to cmux containers (hostname starts with "cmux-" or "pvelxc-")
       // Exclude templates and high VMID ranges (>=9000) used for templates
       // Note: PVE doesn't have native metadata, so we rely on hostname convention
       return containers
-        .filter((c) => c.name?.startsWith("cmux-"))
+        .filter((c) => c.name?.startsWith("cmux-") || c.name?.startsWith("pvelxc-"))
         .filter((c) => c.template !== 1) // Exclude PVE templates
         .filter((c) => c.vmid < 9000) // Exclude template VMID range (9000-9999)
         .map((c) => ({
-          id: `pve_lxc_${c.vmid}`,
+          id: c.name?.startsWith("pvelxc-") ? c.name : `pve_lxc_${c.vmid}`,
           status: c.status === "running" ? "ready" : c.status,
           // PVE doesn't track creation time easily, use 0 as fallback
           // The activity table will have the actual creation time
@@ -223,12 +223,7 @@ function createPveLxcProviderClient(
     },
 
     async pauseInstance(instanceId: string): Promise<void> {
-      // Extract VMID from instance ID (pve_lxc_XXX)
-      const match = instanceId.match(/^pve_lxc_(\d+)$/);
-      if (!match) {
-        throw new Error(`Invalid PVE LXC instance ID: ${instanceId}`);
-      }
-      const vmid = match[1];
+      const vmid = await resolveVmid(instanceId);
       const nodeName = await getNode();
 
       // PVE LXC doesn't support hibernate, so we stop the container
@@ -243,12 +238,7 @@ function createPveLxcProviderClient(
     },
 
     async stopInstance(instanceId: string): Promise<void> {
-      // Extract VMID from instance ID (pve_lxc_XXX)
-      const match = instanceId.match(/^pve_lxc_(\d+)$/);
-      if (!match) {
-        throw new Error(`Invalid PVE LXC instance ID: ${instanceId}`);
-      }
-      const vmid = match[1];
+      const vmid = await resolveVmid(instanceId);
       const nodeName = await getNode();
 
       // First stop, then delete
@@ -274,6 +264,27 @@ function createPveLxcProviderClient(
       await pveWaitForTask(apiUrl, apiToken, nodeName, deleteUpid);
     },
   };
+
+  async function resolveVmid(instanceId: string): Promise<string> {
+    const legacyMatch = instanceId.match(/^pve_lxc_(\d+)$/);
+    if (legacyMatch?.[1]) {
+      return legacyMatch[1];
+    }
+    if (instanceId.startsWith("pvelxc-") || instanceId.startsWith("cmux-")) {
+      const nodeName = await getNode();
+      const containers = await pveApiRequest<PveContainerStatus[]>(
+        apiUrl,
+        apiToken,
+        "GET",
+        `/api2/json/nodes/${nodeName}/lxc`
+      );
+      const match = containers.find((c) => c.name === instanceId);
+      if (match) {
+        return String(match.vmid);
+      }
+    }
+    throw new Error(`Invalid PVE LXC instance ID: ${instanceId}`);
+  }
 }
 
 // ============================================================================

@@ -56,7 +56,16 @@ export const create = authMutation({
   args: {
     teamSlugOrId: v.string(),
     name: v.string(),
-    morphSnapshotId: v.string(),
+    snapshotId: v.string(),
+    snapshotProvider: v.union(
+      v.literal("morph"),
+      v.literal("pve-lxc"),
+      v.literal("pve-vm"),
+      v.literal("docker"),
+      v.literal("daytona"),
+      v.literal("other")
+    ),
+    templateVmid: v.optional(v.number()),
     dataVaultKey: v.string(),
     selectedRepos: v.optional(v.array(v.string())),
     description: v.optional(v.string()),
@@ -83,12 +92,21 @@ export const create = authMutation({
     };
     const maintenanceScript = normalizeScript(args.maintenanceScript);
     const devScript = normalizeScript(args.devScript);
+    const legacyMorphSnapshotId =
+      args.snapshotProvider === "morph" ? args.snapshotId : undefined;
+    const templateVmid =
+      args.snapshotProvider === "pve-lxc" || args.snapshotProvider === "pve-vm"
+        ? args.templateVmid
+        : undefined;
 
     const environmentId = await ctx.db.insert("environments", {
       name: args.name,
       teamId,
       userId,
-      morphSnapshotId: args.morphSnapshotId,
+      snapshotId: args.snapshotId,
+      snapshotProvider: args.snapshotProvider,
+      morphSnapshotId: legacyMorphSnapshotId,
+      templateVmid,
       dataVaultKey: args.dataVaultKey,
       selectedRepos: args.selectedRepos,
       description: args.description,
@@ -102,7 +120,10 @@ export const create = authMutation({
     await ctx.db.insert("environmentSnapshotVersions", {
       environmentId,
       teamId,
-      morphSnapshotId: args.morphSnapshotId,
+      snapshotId: args.snapshotId,
+      snapshotProvider: args.snapshotProvider,
+      morphSnapshotId: legacyMorphSnapshotId,
+      templateVmid,
       version: 1,
       createdAt,
       createdByUserId: userId,
