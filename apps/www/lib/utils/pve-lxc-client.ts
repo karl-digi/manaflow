@@ -119,6 +119,14 @@ export class PveLxcInstance {
   }
 
   /**
+   * Shutdown the container gracefully.
+   */
+  async shutdown(): Promise<void> {
+    await this.client.shutdownContainer(this.vmid, { timeoutSeconds: 60 });
+    this.status = "stopped";
+  }
+
+  /**
    * Pause the container (LXC doesn't support hibernate, use stop instead)
    * Note: Unlike Morph VMs, LXC containers don't preserve RAM state on stop.
    */
@@ -793,8 +801,8 @@ export class PveLxcClient {
   }
 
   /**
-   * Create a reusable template from an existing container.
-   * Returns the new template VMID and snapshot identifier (pve_lxc_{vmid}).
+   * Convert an existing container into a reusable template.
+   * Returns the template VMID and snapshot identifier (pve_lxc_{vmid}).
    */
   async createTemplateFromContainer(sourceInstanceId: string): Promise<{
     templateVmid: number;
@@ -808,81 +816,30 @@ export class PveLxcClient {
     }
     const sourceVmid = parseInt(sourceMatch[1], 10);
 
-    // Allocate a new VMID for the template to avoid collisions
-    const templateVmid = await this.findNextVmid();
-    const hostname = `cmux-template-${templateVmid}`;
     const targetNode = await this.getNode();
 
-    // If container is running, create a temporary snapshot to enable cloning
-    let snapshotName: string | null = null;
-    if ((await this.getContainerStatus(sourceVmid)) === "running") {
-      snapshotName = `cmux-temp-${Date.now()}`;
-      const snapshotUpid = await this.apiRequest<string>(
-        "POST",
-        `/api2/json/nodes/${targetNode}/lxc/${sourceVmid}/snapshot`,
-        { snapname: snapshotName }
-      );
-      await this.waitForTaskNormalized(
-        snapshotUpid,
-        `create temp snapshot ${snapshotName} on container ${sourceVmid}`
-      );
-    }
+    await this.ensureContainerStopped(sourceVmid);
 
-    // Perform a full clone of the source container to capture filesystem changes
-    const cloneUpid = await this.apiRequest<string>(
-      "POST",
-      `/api2/json/nodes/${targetNode}/lxc/${sourceVmid}/clone`,
-      {
-        newid: templateVmid,
-        hostname,
-        full: 1, // Full clone to capture current state
-        ...(snapshotName ? { snapname: snapshotName } : {}),
-      }
-    );
-    await this.waitForTaskNormalized(
-      cloneUpid,
-      `clone container ${sourceVmid} -> template ${templateVmid}`
-    );
-
-    // Convert the cloned container into a template for fast linked-clone starts
+    // Convert the container into a template for fast linked-clone starts
     const templateUpid = await this.apiRequest<string>(
       "POST",
-      `/api2/json/nodes/${targetNode}/lxc/${templateVmid}/template`
+      `/api2/json/nodes/${targetNode}/lxc/${sourceVmid}/template`
     );
     await this.waitForTaskNormalized(
       templateUpid,
-      `convert container ${templateVmid} to template`,
+      `convert container ${sourceVmid} to template`,
       async () => {
         // Fallback: poll config to confirm template flag is set
         const config = await this.apiRequest<PveContainerConfig>(
           "GET",
-          `/api2/json/nodes/${targetNode}/lxc/${templateVmid}/config`
+          `/api2/json/nodes/${targetNode}/lxc/${sourceVmid}/config`
         );
         return config.template === 1;
       }
     );
 
-    // Clean up temporary snapshot (if created)
-    if (snapshotName) {
-      try {
-        const deleteUpid = await this.apiRequest<string>(
-          "DELETE",
-          `/api2/json/nodes/${targetNode}/lxc/${sourceVmid}/snapshot/${snapshotName}`
-        );
-        await this.waitForTaskNormalized(
-          deleteUpid,
-          `delete temp snapshot ${snapshotName} on container ${sourceVmid}`
-        );
-      } catch (error) {
-        console.error(
-          `[PveLxcClient] Failed to delete temp snapshot ${snapshotName} on ${sourceVmid}:`,
-          error
-        );
-      }
-    }
-
-    const snapshotId = `pve_lxc_${templateVmid}`;
-    return { templateVmid, snapshotId };
+    const snapshotId = `pve_lxc_${sourceVmid}`;
+    return { templateVmid: sourceVmid, snapshotId };
   }
 
   /**
@@ -933,6 +890,49 @@ export class PveLxcClient {
       `/api2/json/nodes/${node}/lxc/${vmid}/status/stop`
     );
     await this.waitForTaskNormalized(upid, `stop container ${vmid}`);
+  }
+
+  /**
+   * Shutdown a container gracefully.
+   */
+  async shutdownContainer(
+    vmid: number,
+    options?: { timeoutSeconds?: number }
+  ): Promise<void> {
+    const node = await this.getNode();
+    const upid = await this.apiRequest<string>(
+      "POST",
+      `/api2/json/nodes/${node}/lxc/${vmid}/status/shutdown`,
+      options?.timeoutSeconds ? { timeout: options.timeoutSeconds } : undefined
+    );
+    await this.waitForTaskNormalized(
+      upid,
+      `shutdown container ${vmid}`,
+      async () => (await this.getContainerStatus(vmid)) !== "running"
+    );
+  }
+
+  private async ensureContainerStopped(vmid: number): Promise<void> {
+    const status = await this.getContainerStatus(vmid);
+    if (status === "stopped") {
+      return;
+    }
+
+    if (status === "running") {
+      try {
+        await this.shutdownContainer(vmid, { timeoutSeconds: 60 });
+      } catch (error) {
+        console.error(
+          `[PveLxcClient] Graceful shutdown failed for ${vmid}, falling back to stop:`,
+          error
+        );
+      }
+    }
+
+    const finalStatus = await this.getContainerStatus(vmid);
+    if (finalStatus !== "stopped") {
+      await this.stopContainer(vmid);
+    }
   }
 
   /**

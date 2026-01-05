@@ -914,35 +914,58 @@ environmentsRouter.openapi(
       });
 
       const convexClient = getConvex({ accessToken });
-      const morphClient = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
-      const instance = await withMorphRetry(
-        () => morphClient.instances.get({ instanceId: body.morphInstanceId }),
-        "instances.get (create snapshot)"
-      );
+      const provider = getActiveSandboxProvider().provider;
 
-      const metadata = instance.metadata;
-      const instanceTeamId = metadata?.teamId;
-      if (instanceTeamId && instanceTeamId !== team.uuid) {
-        return c.text("Forbidden: Instance does not belong to this team", 403);
-      }
-      const metadataEnvironmentId = metadata?.environmentId;
-      if (metadataEnvironmentId && metadataEnvironmentId !== id) {
-        return c.text(
-          "Forbidden: Instance does not belong to this environment",
-          403
+      let snapshotId: string;
+
+      if (provider === "pve-lxc") {
+        const pveClient = getPveLxcClient();
+        const pveInstance = await pveClient.instances.get({
+          instanceId: body.morphInstanceId,
+        });
+
+        if (pveInstance.status !== "running") {
+          await pveInstance.start();
+        }
+
+        await pveInstance.exec(SNAPSHOT_CLEANUP_COMMANDS);
+
+        const template = await pveClient.createTemplateFromContainer(
+          body.morphInstanceId
         );
+        snapshotId = template.snapshotId;
+      } else {
+        const morphClient = new MorphCloudClient({ apiKey: env.MORPH_API_KEY });
+        const instance = await withMorphRetry(
+          () => morphClient.instances.get({ instanceId: body.morphInstanceId }),
+          "instances.get (create snapshot)"
+        );
+
+        const metadata = instance.metadata;
+        const instanceTeamId = metadata?.teamId;
+        if (instanceTeamId && instanceTeamId !== team.uuid) {
+          return c.text("Forbidden: Instance does not belong to this team", 403);
+        }
+        const metadataEnvironmentId = metadata?.environmentId;
+        if (metadataEnvironmentId && metadataEnvironmentId !== id) {
+          return c.text(
+            "Forbidden: Instance does not belong to this environment",
+            403
+          );
+        }
+
+        await instance.exec(SNAPSHOT_CLEANUP_COMMANDS);
+
+        const snapshot = await instance.snapshot();
+        snapshotId = snapshot.id;
       }
-
-      await instance.exec(SNAPSHOT_CLEANUP_COMMANDS);
-
-      const snapshot = await instance.snapshot();
 
       const creation = await convexClient.mutation(
         api.environmentSnapshots.create,
         {
           teamSlugOrId: body.teamSlugOrId,
           environmentId,
-          morphSnapshotId: snapshot.id,
+          morphSnapshotId: snapshotId,
           label: body.label,
           activate: body.activate,
           maintenanceScript: body.maintenanceScript,
@@ -952,7 +975,7 @@ environmentsRouter.openapi(
 
       return c.json({
         snapshotVersionId: String(creation.snapshotVersionId),
-        snapshotId: snapshot.id,
+        snapshotId,
         version: creation.version,
       });
     } catch (error) {
