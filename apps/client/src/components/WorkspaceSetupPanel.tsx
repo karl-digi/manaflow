@@ -193,6 +193,11 @@ export function WorkspaceSetupPanel({
 
   const handleEnvPaste = useCallback(
     (event: ClipboardEvent<HTMLDivElement>) => {
+      // Allow normal paste behavior when pasting into a value input
+      const target = event.target as HTMLElement;
+      if (target.getAttribute?.("data-env-input") === "value") {
+        return;
+      }
       const text = event.clipboardData?.getData("text") ?? "";
       if (!text || !/\n|=/.test(text)) {
         return;
@@ -441,6 +446,7 @@ export function WorkspaceSetupPanel({
                                   current === idx ? null : current,
                                 );
                               }}
+                              data-env-input="value"
                               className="w-full rounded-md border border-neutral-200 bg-white px-2 py-1.5 text-[11px] font-mono text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100 dark:placeholder:text-neutral-600 dark:focus:border-neutral-600 transition"
                             />
                             <button

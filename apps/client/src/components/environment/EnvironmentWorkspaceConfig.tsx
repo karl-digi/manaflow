@@ -282,6 +282,11 @@ export function EnvironmentWorkspaceConfig({
 
   const handleEnvVarsPaste = useCallback(
     (e: React.ClipboardEvent<HTMLDivElement>) => {
+      // Allow normal paste behavior when pasting into a value input
+      const target = e.target as HTMLElement;
+      if (target.getAttribute?.("data-env-input") === "value") {
+        return;
+      }
       const text = e.clipboardData?.getData("text") ?? "";
       if (text && (/\n/.test(text) || /(=|:)\s*\S/.test(text))) {
         e.preventDefault();
@@ -515,6 +520,7 @@ export function EnvironmentWorkspaceConfig({
                   }
                   readOnly={shouldMaskValue}
                   placeholder="I9JU23NF394R6HH"
+                  data-env-input="value"
                   className="w-full min-w-0 h-9 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 px-3 text-sm font-mono text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-700"
                 />
                 <button
