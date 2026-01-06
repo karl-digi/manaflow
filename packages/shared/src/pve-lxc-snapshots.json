@@ -24,11 +24,11 @@
       ]
     },
     {
-      "presetId": "6vcpu_8gb_32gb",
+      "presetId": "6vcpu_8gb_40gb",
       "label": "Performance workspace",
       "cpu": "6 vCPU",
       "memory": "8 GB RAM",
-      "disk": "32 GB SSD",
+      "disk": "40 GB SSD",
       "versions": [
         {
           "version": 1,
