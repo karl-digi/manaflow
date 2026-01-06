@@ -17,8 +17,9 @@ export const githubSetup = httpAction(async (ctx, req) => {
   const installationIdStr = url.searchParams.get("installation_id");
   const state = url.searchParams.get("state");
   const base = env.BASE_APP_URL.replace(/\/$/, "");
+  const protocol = env.NEXT_PUBLIC_CMUX_PROTOCOL ?? "cmux-next";
   const toCmuxDeepLink = (team?: string | null) =>
-    `cmux://github-connect-complete${team ? `?team=${encodeURIComponent(team)}` : ""}`;
+    `${protocol}://github-connect-complete${team ? `?team=${encodeURIComponent(team)}` : ""}`;
 
   if (!installationIdStr) {
     return new Response("missing params", { status: 400 });

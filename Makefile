@@ -25,7 +25,7 @@ convex-init:
 
 convex-init-prod:
 	@echo "🔧 Initializing Convex environment variables (production)..."
-	./scripts/setup-convex-env.sh --prod
+	./scripts/setup-convex-env.sh --prod --env-file .env.production
 
 convex-clear-prod:
 	@echo "⚠️  WARNING: This will DELETE ALL DATA from production Convex!"

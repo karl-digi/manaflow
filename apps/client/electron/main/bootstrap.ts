@@ -15,11 +15,19 @@ import { clearLogDirectory } from "./log-management/clear-log-directory";
 import { resolveLogFilePath } from "./log-management/log-paths";
 import { SENTRY_ELECTRON_DSN } from "../../src/sentry-config";
 
+const APP_NAME = "com.karlorz.cmux";
+
 // Provide CommonJS require in ESM main bundle so dependencies relying on require work.
 const require = createRequire(import.meta.url);
 (globalThis as typeof globalThis & { require?: typeof require }).require = require;
 
 const PARTITION = "persist:cmux";
+
+try {
+  app.setName(APP_NAME);
+} catch (error) {
+  console.error("Failed to set app name early for userData path", error);
+}
 
 // Sentry must initialize before the Electron app "ready" event fires.
 Sentry.init({

@@ -13,6 +13,7 @@ export const env = createEnv({
     INSTALL_STATE_SECRET: z.string().min(1).optional(),
     CMUX_GITHUB_APP_ID: z.string().min(1).optional(),
     CMUX_GITHUB_APP_PRIVATE_KEY: z.string().min(1).optional(),
+    NEXT_PUBLIC_CMUX_PROTOCOL: z.string().min(1).optional(),
     BASE_APP_URL: z.string().min(1),
     CMUX_TASK_RUN_JWT_SECRET: z.string().min(1),
     OPENAI_API_KEY: z.string().min(1).optional(),

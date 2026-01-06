@@ -251,6 +251,7 @@ const convexSchema = defineSchema({
           v.literal("docker"),
           v.literal("morph"),
           v.literal("daytona"),
+          v.literal("pve-lxc"),
           v.literal("other")
         ), // Extensible for future providers
         containerName: v.optional(v.string()), // For Docker provider
@@ -270,6 +271,8 @@ const convexSchema = defineSchema({
         ),
         url: v.optional(v.string()), // The VSCode URL
         workspaceUrl: v.optional(v.string()), // The workspace URL
+        vncUrl: v.optional(v.string()),
+        xtermUrl: v.optional(v.string()),
         startedAt: v.optional(v.number()),
         stoppedAt: v.optional(v.number()),
         lastAccessedAt: v.optional(v.number()), // Track when user last accessed the container

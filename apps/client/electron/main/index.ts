@@ -909,11 +909,11 @@ app.whenReady().then(async () => {
     },
   });
 
-  // Ensure macOS menu and About panel use "cmux" instead of package.json name
+  // Ensure macOS menu and About panel use "cmux next" instead of package.json name
   if (process.platform === "darwin") {
     try {
-      app.setName("cmux");
-      app.setAboutPanelOptions({ applicationName: "cmux" });
+      app.setName("cmux next");
+      app.setAboutPanelOptions({ applicationName: "cmux next" });
     } catch (error) {
       console.error("Failed to set app name and about panel options", error);
     }
@@ -934,8 +934,8 @@ app.whenReady().then(async () => {
   // will add CFBundleURLTypes on macOS, but calling this is harmless and also
   // helps on Windows/Linux when packaged.
   try {
-    const ok = app.setAsDefaultProtocolClient("cmux");
-    mainLog("setAsDefaultProtocolClient(cmux)", {
+    const ok = app.setAsDefaultProtocolClient("cmux-next");
+    mainLog("setAsDefaultProtocolClient(cmux-next)", {
       ok,
       packaged: app.isPackaged,
     });
@@ -1270,7 +1270,7 @@ async function handleProtocolUrl(url: string): Promise<void> {
     const refreshExpiry = refreshPayload?.exp ?? defaultExpiry;
     const accessExpiry = accessPayload?.exp ?? defaultExpiry;
 
-    // Determine a cookieable URL. Prefer our custom cmux:// origin when not
+    // Determine a cookieable URL. Prefer our custom cmux-next:// origin when not
     // running against an http(s) dev server.
     const currentUrl = new URL(mainWindow.webContents.getURL());
     currentUrl.hash = "";
