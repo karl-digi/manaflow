@@ -219,6 +219,8 @@ jobs:
     needs: prepare-release
     environment: electron
     runs-on: self-hosted
+    env:
+      ELECTRON_BUILDER_CONFIG: ${{ github.event.repository.fork && 'electron-builder.fork.json' || 'electron-builder.json' }}
     defaults:
       run:
         working-directory: ./
@@ -328,6 +330,8 @@ jobs:
     needs: prepare-release
     environment: electron
     runs-on: self-hosted
+    env:
+      ELECTRON_BUILDER_CONFIG: ${{ github.event.repository.fork && 'electron-builder.fork.json' || 'electron-builder.json' }}
     defaults:
       run:
         working-directory: ./
@@ -485,7 +489,7 @@ jobs:
           fi
           bunx electron-vite build -c electron.vite.config.ts
           bunx electron-builder \
-            --config electron-builder.json \
+            --config "$ELECTRON_BUILDER_CONFIG" \
             --mac dmg zip \
             --universal \
             --publish never \
@@ -562,6 +566,8 @@ jobs:
     needs: prepare-release
     environment: electron
     runs-on: macos-14
+    env:
+      ELECTRON_BUILDER_CONFIG: ${{ github.event.repository.fork && 'electron-builder.fork.local.json' || 'electron-builder.local.json' }}
     defaults:
       run:
         working-directory: ./
@@ -622,7 +628,7 @@ jobs:
           set -euo pipefail
           bunx electron-vite build -c electron.vite.config.ts
           bunx electron-builder \
-            --config electron-builder.local.json \
+            --config "$ELECTRON_BUILDER_CONFIG" \
             --mac dmg zip \
             --arm64 \
             --publish never
@@ -651,6 +657,8 @@ jobs:
     needs: prepare-release
     environment: electron
     runs-on: macos-14
+    env:
+      ELECTRON_BUILDER_CONFIG: ${{ github.event.repository.fork && 'electron-builder.fork.local.json' || 'electron-builder.local.json' }}
     defaults:
       run:
         working-directory: ./
@@ -743,7 +751,7 @@ jobs:
           set -euo pipefail
           bunx electron-vite build -c electron.vite.config.ts
           bunx electron-builder \
-            --config electron-builder.local.json \
+            --config "$ELECTRON_BUILDER_CONFIG" \
             --mac dmg zip \
             --universal \
             --publish never
