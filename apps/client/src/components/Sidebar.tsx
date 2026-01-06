@@ -21,7 +21,7 @@ import {
   type ComponentType,
   type CSSProperties,
 } from "react";
-import CmuxLogo from "./logo/cmux-logo";
+import CmuxLogoMark from "./logo/cmux-logo-mark";
 import { SidebarNavLink } from "./sidebar/SidebarNavLink";
 import { SidebarPreviewList } from "./sidebar/SidebarPreviewList";
 import { SidebarPullRequestList } from "./sidebar/SidebarPullRequestList";
@@ -246,11 +246,14 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
           to="/$teamSlugOrId/dashboard"
           params={{ teamSlugOrId }}
           activeOptions={{ exact: true }}
-          className="flex items-center gap-2 select-none cursor-pointer"
+          className="flex items-center gap-1.5 select-none cursor-pointer whitespace-nowrap"
           style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
         >
           {/* <Terminals */}
-          <CmuxLogo height={32} />
+          <CmuxLogoMark height={20} label="cmux-next" />
+          <span className="text-xs font-semibold tracking-wide text-neutral-900 dark:text-neutral-100 whitespace-nowrap">
+            cmux-next
+          </span>
         </Link>
         <div className="grow"></div>
         <Link

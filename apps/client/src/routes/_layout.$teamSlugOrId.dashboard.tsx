@@ -999,7 +999,7 @@ function DashboardComponent() {
   ]);
 
   return (
-    <FloatingPane header={<TitleBar title="cmux" />}>
+    <FloatingPane header={<TitleBar title="cmux-next" />}>
       <div className="flex flex-col grow relative">
         {/* Main content area */}
         <div className="flex-1 flex flex-col pt-32 pb-0">

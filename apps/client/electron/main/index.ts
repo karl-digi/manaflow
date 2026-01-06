@@ -909,11 +909,11 @@ app.whenReady().then(async () => {
     },
   });
 
-  // Ensure macOS menu and About panel use "cmux" instead of package.json name
+  // Ensure macOS menu and About panel use "cmux-next" instead of package.json name
   if (process.platform === "darwin") {
     try {
-      app.setName("cmux");
-      app.setAboutPanelOptions({ applicationName: "cmux" });
+      app.setName("cmux-next");
+      app.setAboutPanelOptions({ applicationName: "cmux-next" });
     } catch (error) {
       console.error("Failed to set app name and about panel options", error);
     }
@@ -934,8 +934,8 @@ app.whenReady().then(async () => {
   // will add CFBundleURLTypes on macOS, but calling this is harmless and also
   // helps on Windows/Linux when packaged.
   try {
-    const ok = app.setAsDefaultProtocolClient("cmux");
-    mainLog("setAsDefaultProtocolClient(cmux)", {
+    const ok = app.setAsDefaultProtocolClient("cmux-next");
+    mainLog("setAsDefaultProtocolClient(cmux-next)", {
       ok,
       packaged: app.isPackaged,
     });
@@ -1261,7 +1261,16 @@ async function handleProtocolUrl(url: string): Promise<void> {
       });
     }
 
-    // Determine a cookieable URL. Prefer our custom cmux:// origin when not
+    // Calculate cookie expiration dates.
+    // If JWT verification failed, use 30 days as default (matching server session creation).
+    // This prevents session cookies that expire on app close.
+    const THIRTY_DAYS_IN_SECONDS = 30 * 24 * 60 * 60;
+    const nowInSeconds = Math.floor(Date.now() / 1000);
+    const defaultExpiry = nowInSeconds + THIRTY_DAYS_IN_SECONDS;
+    const refreshExpiry = refreshPayload?.exp ?? defaultExpiry;
+    const accessExpiry = accessPayload?.exp ?? defaultExpiry;
+
+    // Determine a cookieable URL. Prefer our custom cmux-next:// origin when not
     // running against an http(s) dev server.
     const currentUrl = new URL(mainWindow.webContents.getURL());
     currentUrl.hash = "";
@@ -1281,8 +1290,8 @@ async function handleProtocolUrl(url: string): Promise<void> {
       refreshCookieName,
       refreshValueLength: stackRefresh.length,
       accessValueLength: stackAccess.length,
-      refreshExp: refreshPayload?.exp,
-      accessExp: accessPayload?.exp,
+      refreshExp: refreshExpiry,
+      accessExp: accessExpiry,
     });
 
     try {
@@ -1291,7 +1300,7 @@ async function handleProtocolUrl(url: string): Promise<void> {
           url: realUrl,
           name: refreshCookieName,
           value: stackRefresh,
-          expirationDate: refreshPayload?.exp,
+          expirationDate: refreshExpiry,
           sameSite: "no_restriction",
           secure: true,
         }),
@@ -1299,7 +1308,7 @@ async function handleProtocolUrl(url: string): Promise<void> {
           url: realUrl,
           name: "stack-access",
           value: stackAccess,
-          expirationDate: accessPayload?.exp,
+          expirationDate: accessExpiry,
           sameSite: "no_restriction",
           secure: true,
         }),

@@ -51,7 +51,8 @@ function GitHubInstallCompleteContent() {
     const teamParam = searchParams.get("team");
     if (teamParam) {
       try {
-        const deepLink = `cmux://github-connect-complete?team=${encodeURIComponent(
+        const protocol = process.env.NEXT_PUBLIC_CMUX_PROTOCOL ?? "cmux-next";
+        const deepLink = `${protocol}://github-connect-complete?team=${encodeURIComponent(
           teamParam,
         )}`;
         window.location.href = deepLink;

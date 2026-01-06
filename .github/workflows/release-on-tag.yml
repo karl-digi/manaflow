@@ -263,7 +263,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-          profile: minimal
           targets: aarch64-apple-darwin
       - name: Install dependencies (bun)
         run: bun install --frozen-lockfile
@@ -384,7 +383,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-          profile: minimal
           targets: aarch64-apple-darwin, x86_64-apple-darwin
 
       - name: Install dependencies (bun)
@@ -559,6 +557,216 @@ jobs:
             fi
           done
 
+  macos-arm64-unsigned:
+    name: macOS arm64 (unsigned)
+    needs: prepare-release
+    environment: electron
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: ./
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.21
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin
+      - name: Install dependencies (bun)
+        run: bun install --frozen-lockfile
+      - name: Install app deps in apps/client (bun)
+        working-directory: apps/client
+        run: bun install --frozen-lockfile
+      - name: Write .env for build
+        shell: bash
+        run: |
+          cat > .env <<EOF
+          NEXT_PUBLIC_CONVEX_URL=${{ secrets.NEXT_PUBLIC_CONVEX_URL }}
+          NEXT_PUBLIC_STACK_PROJECT_ID=${{ secrets.NEXT_PUBLIC_STACK_PROJECT_ID }}
+          NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY=${{ secrets.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY }}
+          NEXT_PUBLIC_WWW_ORIGIN=${{ secrets.NEXT_PUBLIC_WWW_ORIGIN }}
+          NEXT_PUBLIC_GITHUB_APP_SLUG=${{ secrets.NEXT_PUBLIC_GITHUB_APP_SLUG }}
+          NEXT_PUBLIC_CMUX_PROTOCOL=${{ secrets.NEXT_PUBLIC_CMUX_PROTOCOL }}
+          EOF
+      - name: Build native Rust addon
+        working-directory: apps/server/native/core
+        shell: bash
+        run: bunx --bun @napi-rs/cli build --platform --release
+      - name: Sync package.json version with release tag
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          echo "Setting package.json version to $VERSION"
+          cd apps/client && npm pkg set version="$VERSION"
+      - name: Generate icons
+        working-directory: apps/client
+        run: bun run ./scripts/generate-icons.mjs
+      - name: Build unsigned macOS arm64 artifacts
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          NODE_OPTIONS: "--max-old-space-size=6144"
+        working-directory: apps/client
+        shell: bash
+        run: |
+          set -euo pipefail
+          bunx electron-vite build -c electron.vite.config.ts
+          bunx electron-builder \
+            --config electron-builder.local.json \
+            --mac dmg zip \
+            --arm64 \
+            --publish never
+      - name: Publish unsigned macOS arm64 artifacts to GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+          REPO: ${{ github.repository }}
+        working-directory: apps/client/dist-electron
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          artifacts=( *.dmg *.zip *.blockmap latest-*.yml )
+          if [[ ${#artifacts[@]} -eq 0 ]]; then
+            echo "No unsigned macOS arm64 artifacts found" >&2
+            exit 1
+          fi
+          for artifact in "${artifacts[@]}"; do
+            echo "Uploading $artifact"
+            gh release upload "$RELEASE_TAG" "$artifact" --repo "$REPO" --clobber
+          done
+
+  macos-universal-unsigned:
+    name: macOS universal (unsigned)
+    needs: prepare-release
+    environment: electron
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: ./
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.21
+      - name: Ensure Rosetta (for x64 toolchain)
+        shell: bash
+        run: |
+          set -euo pipefail
+          /usr/sbin/softwareupdate --install-rosetta --agree-to-license || true
+      - name: Install Rust toolchain and mac targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - name: Install dependencies (bun)
+        run: bun install --frozen-lockfile
+      - name: Install app deps in apps/client (bun)
+        working-directory: apps/client
+        run: bun install --frozen-lockfile
+      - name: Write .env for build
+        shell: bash
+        run: |
+          cat > .env <<EOF
+          NEXT_PUBLIC_CONVEX_URL=${{ secrets.NEXT_PUBLIC_CONVEX_URL }}
+          NEXT_PUBLIC_STACK_PROJECT_ID=${{ secrets.NEXT_PUBLIC_STACK_PROJECT_ID }}
+          NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY=${{ secrets.NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY }}
+          NEXT_PUBLIC_WWW_ORIGIN=${{ secrets.NEXT_PUBLIC_WWW_ORIGIN }}
+          NEXT_PUBLIC_GITHUB_APP_SLUG=${{ secrets.NEXT_PUBLIC_GITHUB_APP_SLUG }}
+          NEXT_PUBLIC_CMUX_PROTOCOL=${{ secrets.NEXT_PUBLIC_CMUX_PROTOCOL }}
+          EOF
+      - name: Remove stale macOS native binaries
+        working-directory: apps/server/native/core
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f cmux_native_core.darwin-*.node
+      - name: Build native Rust addon (arm64 + x64)
+        working-directory: apps/server/native/core
+        shell: bash
+        run: |
+          set -euo pipefail
+          bunx --bun @napi-rs/cli build --platform --release --target x86_64-apple-darwin
+          bunx --bun @napi-rs/cli build --platform --release --target aarch64-apple-darwin
+      - name: Verify macOS native addon slices
+        working-directory: apps/server/native/core
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -f cmux_native_core.darwin-arm64.node ]]; then
+            echo "arm64 native binary missing" >&2
+            exit 1
+          fi
+          if compgen -G 'cmux_native_core.darwin-x64.node' >/dev/null; then
+            ls -l cmux_native_core.darwin-x64.node
+          elif compgen -G 'cmux_native_core.darwin-x86_64.node' >/dev/null; then
+            mv cmux_native_core.darwin-x86_64.node cmux_native_core.darwin-x64.node
+            ls -l cmux_native_core.darwin-x64.node
+          else
+            echo "x64 native binary missing" >&2
+            exit 1
+          fi
+      - name: Sync package.json version with release tag
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          echo "Setting package.json version to $VERSION"
+          cd apps/client && npm pkg set version="$VERSION"
+      - name: Generate icons
+        working-directory: apps/client
+        run: bun run ./scripts/generate-icons.mjs
+      - name: Build unsigned macOS universal artifacts
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          NODE_OPTIONS: "--max-old-space-size=6144"
+        working-directory: apps/client
+        shell: bash
+        run: |
+          set -euo pipefail
+          bunx electron-vite build -c electron.vite.config.ts
+          bunx electron-builder \
+            --config electron-builder.local.json \
+            --mac dmg zip \
+            --universal \
+            --publish never
+      - name: Publish unsigned macOS universal artifacts to GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+          REPO: ${{ github.repository }}
+        working-directory: apps/client/dist-electron
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          artifacts=( *.dmg *.zip *.blockmap latest-*.yml )
+          if [[ ${#artifacts[@]} -eq 0 ]]; then
+            echo "No unsigned macOS universal artifacts found" >&2
+            exit 1
+          fi
+          for artifact in "${artifacts[@]}"; do
+            echo "Uploading $artifact"
+            gh release upload "$RELEASE_TAG" "$artifact" --repo "$REPO" --clobber
+          done
+
   windows-x64:
     name: Windows x64
     needs: prepare-release
@@ -582,7 +790,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-          profile: minimal
           targets: x86_64-pc-windows-msvc
       - name: Install dependencies (bun)
         run: bun install --frozen-lockfile
@@ -639,7 +846,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-          profile: minimal
           targets: x86_64-unknown-linux-gnu
       - name: Install dependencies (bun)
         run: bun install --frozen-lockfile

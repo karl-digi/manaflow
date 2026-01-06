@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { CheckCircle2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
+import { env } from "@/client-env";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/connect-complete")(
   {
@@ -18,6 +19,7 @@ function ConnectComplete() {
   const CLOSE_AFTER_SECONDS = 6;
   const [seconds, setSeconds] = useState(CLOSE_AFTER_SECONDS);
   const triedAutoClose = useRef(false);
+  const protocol = env.NEXT_PUBLIC_CMUX_PROTOCOL ?? "cmux-next";
 
   useEffect(() => {
     // Check if this is a web popup flow via query param or window.opener
@@ -35,22 +37,22 @@ function ConnectComplete() {
         setTimeout(() => {
           window.close();
         }, 100);
-      } catch (_e) {
-        // ignored - will fall back to countdown
+      } catch (error) {
+        console.error("Failed to complete web popup flow", error);
       }
       return;
     }
 
     // For non-popup (Electron flow), try deep link
-    const href = `cmux://github-connect-complete?team=${encodeURIComponent(
+    const href = `${protocol}://github-connect-complete?team=${encodeURIComponent(
       teamSlugOrId
     )}`;
     try {
       window.location.href = href;
-    } catch {
-      // non-fatal; user can return manually
+    } catch (error) {
+      console.error("Failed to open desktop deep link", error);
     }
-  }, [teamSlugOrId, popup]);
+  }, [teamSlugOrId, popup, protocol]);
 
   useEffect(() => {
     const iv = window.setInterval(() => {
@@ -69,8 +71,8 @@ function ConnectComplete() {
         );
         window.opener?.focus?.();
         window.close();
-      } catch (_e) {
-        // ignored
+      } catch (error) {
+        console.error("Failed to close popup window", error);
       }
     }
   }, [seconds]);
@@ -78,8 +80,8 @@ function ConnectComplete() {
   const handleClose = () => {
     try {
       window.close();
-    } catch (_e) {
-      // If browser blocks programmatic close, fall back to navigation option
+    } catch (error) {
+      console.error("Failed to close window", error);
     }
   };
 

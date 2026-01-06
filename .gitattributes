@@ -7,3 +7,5 @@
 
 # Always keep OUR version of morph-snapshots.json (fork-specific snapshots)
 packages/shared/src/morph-snapshots.json merge=ours
+configs/ide-deps.json merge=ours
+packages/www-openapi-client/src/client/types.gen.ts merge=ours

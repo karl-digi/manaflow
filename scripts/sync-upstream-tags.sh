@@ -7,6 +7,11 @@ set -euo pipefail
 
 REPO="${GITHUB_REPO:-karlorz/cmux}"
 
+if ! git diff --quiet || ! git diff --cached --quiet; then
+    echo "ERROR: Working tree is dirty. Commit or stash changes before running." >&2
+    exit 1
+fi
+
 echo "Fetching tags from upstream..."
 git fetch upstream --tags --force
 
@@ -19,6 +24,18 @@ fi
 
 echo "Latest upstream tag: $LATEST_TAG"
 echo "Target repo: $REPO"
+
+# Sync apps/client/package.json version with the upstream tag.
+VERSION="${LATEST_TAG#v}"
+echo "Setting apps/client/package.json version to $VERSION..."
+cd apps/client
+npm pkg set version="$VERSION"
+cd - >/dev/null
+
+if ! git diff --quiet -- apps/client/package.json; then
+    git add apps/client/package.json
+    git commit -m "chore: release $LATEST_TAG"
+fi
 
 # Check if a release exists for this tag and delete it
 echo "Checking for existing release $LATEST_TAG..."
