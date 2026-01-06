@@ -250,7 +250,10 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
           style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
         >
           {/* <Terminals */}
-          <CmuxLogo height={32} />
+          <CmuxLogo height={22} showWordmark={false} label="cmux-next" />
+          <span className="text-sm font-semibold tracking-wide text-neutral-900 dark:text-neutral-100">
+            cmux-next
+          </span>
         </Link>
         <div className="grow"></div>
         <Link
