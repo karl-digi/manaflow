@@ -77,6 +77,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     private var lastVisibleSignature: String?
     private var topFadeView: TopFadeView!
     private var topFadeHeightConstraint: NSLayoutConstraint!
+    private var bottomFadeView: BottomFadeView!
     private var didLogGeometryOnce = false
     private var isKeyboardVisible = false
     private var keyboardAnimationDuration: TimeInterval = 0.25
@@ -163,6 +164,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         setupDebugOverlay()
         observeDebugSettingsChanges()
         setupTopFade()
+        setupBottomFade()
         setupConstraints()
         populateMessages()
 
@@ -467,6 +469,13 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         view.addSubview(topFadeView)
     }
 
+    private func setupBottomFade() {
+        bottomFadeView = BottomFadeView()
+        bottomFadeView.translatesAutoresizingMaskIntoConstraints = false
+        bottomFadeView.isUserInteractionEnabled = false
+        view.addSubview(bottomFadeView)
+    }
+
     private func setupConstraints() {
         inputBarBottomConstraint = inputBarVC.view.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor, constant: 0)
         inputBarHeightConstraint = inputBarVC.view.heightAnchor.constraint(
@@ -504,7 +513,12 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
             topFadeView.topAnchor.constraint(equalTo: view.topAnchor),
             topFadeView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             topFadeView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            topFadeHeightConstraint
+            topFadeHeightConstraint,
+
+            bottomFadeView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            bottomFadeView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            bottomFadeView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            bottomFadeView.topAnchor.constraint(equalTo: inputBarVC.view.topAnchor)
         ])
 
     }
@@ -1445,5 +1459,51 @@ private final class TopFadeView: UIView {
         ]
         // Ease-out curve: fast initial fade, then gradual
         gradientLayer.locations = [0.0, 0.3, 0.6, 1.0]
+    }
+}
+
+private final class BottomFadeView: UIView {
+    override class var layerClass: AnyClass {
+        CAGradientLayer.self
+    }
+
+    private var gradientLayer: CAGradientLayer {
+        layer as? CAGradientLayer ?? CAGradientLayer()
+    }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        gradientLayer.startPoint = CGPoint(x: 0.5, y: 0)
+        gradientLayer.endPoint = CGPoint(x: 0.5, y: 1)
+        updateColors()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        isUserInteractionEnabled = false
+        gradientLayer.startPoint = CGPoint(x: 0.5, y: 0)
+        gradientLayer.endPoint = CGPoint(x: 0.5, y: 1)
+        updateColors()
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
+            updateColors()
+        }
+    }
+
+    func updateColors() {
+        let base = UIColor.systemBackground
+        // Gradient from transparent at top to solid at bottom
+        gradientLayer.colors = [
+            base.withAlphaComponent(0.0).cgColor,
+            base.withAlphaComponent(0.4).cgColor,
+            base.withAlphaComponent(0.8).cgColor,
+            base.withAlphaComponent(1.0).cgColor
+        ]
+        // Ease-in curve: gradual start, then fast fade to solid
+        gradientLayer.locations = [0.0, 0.4, 0.7, 1.0]
     }
 }
