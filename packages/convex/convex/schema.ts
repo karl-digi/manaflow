@@ -599,7 +599,7 @@ const convexSchema = defineSchema({
     createdByUserId: v.optional(v.string()),
     repoFullName: v.string(),
     repoProvider: v.optional(v.literal("github")),
-    repoInstallationId: v.number(),
+    repoInstallationId: v.optional(v.number()),
     repoDefaultBranch: v.optional(v.string()),
     environmentId: v.optional(v.id("environments")),
     status: v.optional(
@@ -988,6 +988,7 @@ const convexSchema = defineSchema({
   })
     .index("by_team", ["teamId", "updatedAt"])
     .index("by_team_repo", ["teamId", "repoFullName", "updatedAt"])
+    .index("by_team_repo_pr", ["teamId", "repoFullName", "triggeringPrNumber", "updatedAt"])
     .index("by_checkRunId", ["checkRunId"])
     .index("by_headSha", ["headSha", "updatedAt"]),
 

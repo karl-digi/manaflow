@@ -61,7 +61,6 @@ export function usePersistentIframe({
 }: UsePersistentIframeOptions) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
-
   // Store callbacks in refs to avoid triggering effects on callback changes
   const onLoadRef = useRef(onLoad);
   const onErrorRef = useRef(onError);
@@ -85,32 +84,41 @@ export function usePersistentIframe({
   );
 
   // Mount/unmount effect - only re-runs when key, url, or mount options change
+  // Uses refs for callbacks to avoid effect re-runs when callbacks change
   useEffect(() => {
     if (!containerRef.current) return;
 
+    let loadHandler: (() => void) | null = null;
+    let errorHandler: (() => void) | null = null;
+    let iframe: HTMLIFrameElement | null = null;
+
     try {
       // Get or create the iframe (use allow/sandbox from mountOptions for consistency)
-      const iframe = persistentIframeManager.getOrCreateIframe(key, url, {
+      iframe = persistentIframeManager.getOrCreateIframe(key, url, {
         allow: mountOptions.allow,
         sandbox: mountOptions.sandbox,
       });
 
       // Set up load handlers if not already loaded
       if (!iframe.contentWindow || iframe.src !== url) {
-        const handleLoad = () => {
-          iframe.removeEventListener("load", handleLoad);
-          iframe.removeEventListener("error", handleError);
+        loadHandler = () => {
+          if (iframe) {
+            iframe.removeEventListener("load", loadHandler!);
+            iframe.removeEventListener("error", errorHandler!);
+          }
           onLoadRef.current?.();
         };
 
-        const handleError = () => {
-          iframe.removeEventListener("load", handleLoad);
-          iframe.removeEventListener("error", handleError);
+        errorHandler = () => {
+          if (iframe) {
+            iframe.removeEventListener("load", loadHandler!);
+            iframe.removeEventListener("error", errorHandler!);
+          }
           onErrorRef.current?.(new Error(`Failed to load iframe: ${url}`));
         };
 
-        iframe.addEventListener("load", handleLoad);
-        iframe.addEventListener("error", handleError);
+        iframe.addEventListener("load", loadHandler);
+        iframe.addEventListener("error", errorHandler);
       } else if (!preload) {
         // Already loaded and not from preload
         onLoadRef.current?.();
@@ -127,8 +135,12 @@ export function usePersistentIframe({
       onErrorRef.current?.(error as Error);
     }
 
-    // Cleanup
+    // Cleanup - remove event listeners to prevent stale callbacks and memory leaks
     return () => {
+      if (iframe && loadHandler && errorHandler) {
+        iframe.removeEventListener("load", loadHandler);
+        iframe.removeEventListener("error", errorHandler);
+      }
       if (cleanupRef.current) {
         cleanupRef.current();
         cleanupRef.current = null;
