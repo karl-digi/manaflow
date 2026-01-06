@@ -8,7 +8,6 @@ import type {
 import { MonacoGitDiffViewer } from "@/components/monaco/monaco-git-diff-viewer";
 import { RunScreenshotGallery } from "@/components/RunScreenshotGallery";
 import { TaskDetailHeader } from "@/components/task-detail-header";
-import { DiffViewToggle, type DiffViewMode } from "@/components/diff-view-toggle";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { cachedGetUser } from "@/lib/cachedGetUser";
 import type { ReviewHeatmapLine } from "@/lib/heatmap";
@@ -332,7 +331,7 @@ export const Route = createFileRoute(
 function RunDiffPage() {
   const { taskId, teamSlugOrId, runId } = Route.useParams();
   const [diffControls, setDiffControls] = useState<DiffControls | null>(null);
-  const [viewMode, setViewMode] = useState<DiffViewMode>("diff");
+  const [isAiReviewActive, setIsAiReviewActive] = useState(false);
   const [hasVisitedAiReview, setHasVisitedAiReview] = useState(false);
   const { socket } = useSocket();
   // Use React Query-wrapped Convex queries to avoid real-time subscriptions
@@ -907,12 +906,15 @@ function RunDiffPage() {
     [setStreamStateByFile]
   );
 
-  // Handler for view mode changes - track when user visits AI review
-  const handleViewModeChange = useCallback((mode: DiffViewMode) => {
-    setViewMode(mode);
-    if (mode === "ai-review" && !hasVisitedAiReview) {
-      setHasVisitedAiReview(true);
-    }
+  // Handler for toggling AI review - track when user first visits AI review
+  const handleToggleAiReview = useCallback(() => {
+    setIsAiReviewActive((prev) => {
+      const next = !prev;
+      if (next && !hasVisitedAiReview) {
+        setHasVisitedAiReview(true);
+      }
+      return next;
+    });
   }, [hasVisitedAiReview]);
 
   // Auto-trigger the simple review when diff data and settings are ready,
@@ -1055,6 +1057,8 @@ function RunDiffPage() {
             onCollapseAllChecks={collapseAllChecks}
             onOpenLocalWorkspace={isWorkspace ? undefined : handleOpenLocalWorkspace}
             teamSlugOrId={teamSlugOrId}
+            isAiReviewActive={isAiReviewActive}
+            onToggleAiReview={handleToggleAiReview}
           />
           {task?.text && (
             <div className="mb-2 px-3.5">
@@ -1092,14 +1096,8 @@ function RunDiffPage() {
                 highlightedSetId={selectedRun?.latestScreenshotSetId ?? null}
               />
             )}
-            <div className="px-3.5 py-2 border-b border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 sticky top-[56px] z-[var(--z-sticky-low)]">
-              <DiffViewToggle
-                value={viewMode}
-                onChange={handleViewModeChange}
-              />
-            </div>
             <div
-              className="flex-1 min-h-0"
+              className="flex-1 min-h-0 mt-4"
               style={{ "--cmux-diff-header-offset": "56px" } as React.CSSProperties}
             >
               <Suspense
@@ -1112,12 +1110,7 @@ function RunDiffPage() {
                 }
               >
                 {hasDiffSources ? (
-                  viewMode === "diff" ? (
-                    <MonacoGitDiffViewer
-                      diffs={diffQuery.data ?? []}
-                      onControlsChange={setDiffControls}
-                    />
-                  ) : (
+                  isAiReviewActive ? (
                     <RunDiffHeatmapReviewSection
                       repoFullName={primaryRepo as string}
                       additionalRepoFullNames={additionalRepos}
@@ -1134,6 +1127,11 @@ function RunDiffPage() {
                       onHeatmapColorsChange={handleHeatmapColorsChange}
                       onHeatmapModelChange={handleHeatmapModelChange}
                       onHeatmapTooltipLanguageChange={handleHeatmapTooltipLanguageChange}
+                    />
+                  ) : (
+                    <MonacoGitDiffViewer
+                      diffs={diffQuery.data ?? []}
+                      onControlsChange={setDiffControls}
                     />
                   )
                 ) : (
