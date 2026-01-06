@@ -146,6 +146,10 @@ struct MessageInputBar: View {
                 .padding(.horizontal, 16)
                 .frame(height: inputHeight)
                 .glassEffect(.regular.interactive(), in: .capsule)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    isFocused.wrappedValue = true
+                }
             }
             .padding(.horizontal, 20)
             .padding(.top, 8)

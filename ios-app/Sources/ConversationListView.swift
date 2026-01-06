@@ -6,9 +6,10 @@ struct ConversationListView: View {
     @State private var showSettings = false
     @State private var showNewTask = false
     @FocusState private var isSearchFocused: Bool
+    @State private var isSearchActive = false
 
     var isSearching: Bool {
-        isSearchFocused || !searchText.isEmpty
+        isSearchFocused || !searchText.isEmpty || isSearchActive
     }
 
     var filteredConversations: [Conversation] {
@@ -64,6 +65,17 @@ struct ConversationListView: View {
 
                             TextField("Search", text: $searchText)
                                 .focused($isSearchFocused)
+                                .onChange(of: isSearchFocused) { _, newValue in
+                                    if newValue {
+                                        isSearchActive = true
+                                    } else {
+                                        DispatchQueue.main.async {
+                                            if !isSearchFocused && searchText.isEmpty {
+                                                isSearchActive = false
+                                            }
+                                        }
+                                    }
+                                }
 
                             Image(systemName: "mic.fill")
                                 .foregroundStyle(.secondary)
@@ -72,12 +84,18 @@ struct ConversationListView: View {
                         .padding(.vertical, 10)
                         .glassEffect(.regular.interactive(), in: .capsule)
                         .frame(maxWidth: .infinity)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            isSearchFocused = true
+                            isSearchActive = true
+                        }
 
                         // Compose or Cancel button with glass circle
                         if isSearching {
                             Button {
                                 searchText = ""
                                 isSearchFocused = false
+                                isSearchActive = false
                             } label: {
                                 Image(systemName: "xmark")
                                     .font(.title3)

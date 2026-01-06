@@ -71,6 +71,10 @@ struct DebugInputBar: View {
                 .frame(height: DebugInputBarMetrics.inputHeight)
                 .glassEffect(.regular.interactive(), in: .capsule)
                 .accessibilityIdentifier("chat.inputPill")
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    textFieldFocused = true
+                }
                 .overlay(
                     InputBarFrameReader { frame in
                         geometry.pillFrameInWindow = frame
