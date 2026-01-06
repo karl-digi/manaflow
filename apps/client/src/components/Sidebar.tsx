@@ -21,7 +21,7 @@ import {
   type ComponentType,
   type CSSProperties,
 } from "react";
-import CmuxLogo from "./logo/cmux-logo";
+import CmuxLogoMark from "./logo/cmux-logo-mark";
 import { SidebarNavLink } from "./sidebar/SidebarNavLink";
 import { SidebarPreviewList } from "./sidebar/SidebarPreviewList";
 import { SidebarPullRequestList } from "./sidebar/SidebarPullRequestList";
@@ -241,16 +241,16 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
         className={`h-[38px] flex items-center pr-0.5 shrink-0 ${isElectron ? "" : "pl-3"}`}
         style={{ WebkitAppRegion: "drag" } as CSSProperties}
       >
-        {isElectron && <div className="w-[80px]"></div>}
+        {isElectron && <div className="w-[64px]"></div>}
         <Link
           to="/$teamSlugOrId/dashboard"
           params={{ teamSlugOrId }}
           activeOptions={{ exact: true }}
-          className="flex items-center gap-2 select-none cursor-pointer whitespace-nowrap"
+          className="flex items-center gap-1.5 select-none cursor-pointer whitespace-nowrap"
           style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
         >
           {/* <Terminals */}
-          <CmuxLogo height={22} showWordmark={false} label="cmux-next" />
+          <CmuxLogoMark height={20} label="cmux-next" />
           <span className="text-xs font-semibold tracking-wide text-neutral-900 dark:text-neutral-100 whitespace-nowrap">
             cmux-next
           </span>
