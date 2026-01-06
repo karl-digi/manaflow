@@ -43,6 +43,7 @@ import {
   postApiPreviewTestJobsByPreviewRunIdRetry,
   deleteApiPreviewTestJobsByPreviewRunId,
   getApiPreviewTestCheckAccess,
+  getApiPreviewConfigs,
 } from "@cmux/www-openapi-client";
 
 type TeamOption = {
@@ -98,6 +99,15 @@ type AccessCheckResult = {
   suggestedAction: string | null;
 };
 
+type PreviewConfig = {
+  id: string;
+  repoFullName: string;
+  repoInstallationId?: number | null;
+  status: "active" | "paused" | "disabled";
+  environmentId?: string | null;
+  updatedAt: number;
+};
+
 type PreviewTestDashboardProps = {
   selectedTeamSlugOrId: string;
   teamOptions: TeamOption[];
@@ -136,6 +146,24 @@ function PreviewTestDashboardInner({
   const clientBaseUrl = typeof window !== "undefined" && window.location.hostname === "localhost"
     ? "http://localhost:5173"
     : "https://www.cmux.sh";
+
+  // Fetch preview configs for this team
+  const { data: configsData, isLoading: isLoadingConfigs } = useQuery({
+    queryKey: ["preview-configs", selectedTeam],
+    queryFn: async () => {
+      const response = await getApiPreviewConfigs({
+        query: { teamSlugOrId: selectedTeam },
+      });
+      if (response.error) {
+        throw new Error("Failed to fetch preview configs");
+      }
+      return response.data;
+    },
+    enabled: Boolean(selectedTeam),
+    refetchInterval: false, // Don't need frequent updates for configs
+  });
+
+  const configs = (configsData?.configs ?? []) as PreviewConfig[];
 
   // Fetch test jobs
   const { data: jobsData, isLoading: isLoadingJobs } = useQuery({
@@ -399,6 +427,69 @@ function PreviewTestDashboardInner({
           </select>
         </div>
       )}
+
+      {/* Configured Repos Section */}
+      <div className="rounded-lg border border-neutral-800 bg-neutral-900/30 p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-medium text-neutral-300">
+            Configured Repositories
+          </h2>
+          <Link
+            href="/preview"
+            className="text-xs text-blue-400 hover:text-blue-300"
+          >
+            Manage in Preview Settings
+          </Link>
+        </div>
+        {isLoadingConfigs ? (
+          <div className="flex items-center gap-2 text-sm text-neutral-500">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Loading configurations...
+          </div>
+        ) : configs.length === 0 ? (
+          <div className="text-sm text-neutral-500">
+            <p>No preview configurations found for this team.</p>
+            <p className="mt-1">
+              <Link href="/preview" className="text-blue-400 hover:text-blue-300">
+                Add a preview configuration
+              </Link>{" "}
+              to test PRs from a repository.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {configs.map((config) => (
+              <div
+                key={config.id}
+                className="flex items-center justify-between rounded-md bg-neutral-800/50 px-3 py-2 text-sm"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-neutral-200">
+                    {config.repoFullName}
+                  </span>
+                  {config.repoInstallationId ? (
+                    <span className="rounded bg-green-900/50 px-1.5 py-0.5 text-xs text-green-400">
+                      GitHub Connected
+                    </span>
+                  ) : (
+                    <span className="rounded bg-amber-900/50 px-1.5 py-0.5 text-xs text-amber-400">
+                      No GitHub App
+                    </span>
+                  )}
+                  {config.status && config.status !== "active" && (
+                    <span className="rounded bg-neutral-700 px-1.5 py-0.5 text-xs text-neutral-400">
+                      {config.status}
+                    </span>
+                  )}
+                </div>
+                <span className="text-xs text-neutral-500">
+                  Updated {new Date(config.updatedAt).toLocaleDateString()}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* PR URL input */}
       <div className="flex items-center gap-3">
