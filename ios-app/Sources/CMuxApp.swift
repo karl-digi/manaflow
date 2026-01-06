@@ -23,11 +23,7 @@ struct CMuxApp: App {
 
     var body: some Scene {
         WindowGroup {
-            #if DEBUG
-            ChatFix1MainView(conversation: fakeConversations[0])
-            #else
             ContentView()
-            #endif
         }
     }
 }

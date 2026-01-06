@@ -24,6 +24,9 @@ struct MainTabView: View {
 
 struct SettingsView: View {
     @StateObject private var authManager = AuthManager.shared
+    #if DEBUG
+    @AppStorage(DebugSettingsKeys.showChatOverlays) private var showChatOverlays = false
+    #endif
 
     var body: some View {
         NavigationStack {
@@ -51,6 +54,7 @@ struct SettingsView: View {
 
                 #if DEBUG
                 Section("Debug") {
+                    Toggle("Show chat debug overlays", isOn: $showChatOverlays)
                     NavigationLink("Chat Keyboard Approaches") {
                         ChatDebugMenu()
                     }

@@ -57,6 +57,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     private var debugMessageLine: UIView!
     private var debugPillLine: UIView!
     private var debugInfoLabel: UILabel!
+    private var debugSettingsObserver: NSObjectProtocol?
 
     private var messages: [Message]
     private var lastAppliedTopInset: CGFloat = 0
@@ -85,7 +86,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         if let value = ProcessInfo.processInfo.environment["CMUX_DEBUG_AUTOFOCUS"] {
             return value == "1" || value.lowercased() == "true"
         }
-        return true
+        return false
         #else
         return false
         #endif
@@ -160,6 +161,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         setupScrollView()
         setupInputBar()
         setupDebugOverlay()
+        observeDebugSettingsChanges()
         setupTopFade()
         setupConstraints()
         populateMessages()
@@ -228,6 +230,9 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
 
     deinit {
         NotificationCenter.default.removeObserver(self)
+        if let debugSettingsObserver {
+            NotificationCenter.default.removeObserver(debugSettingsObserver)
+        }
     }
 
     private func applyFix1() {
@@ -401,6 +406,57 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         view.addSubview(debugRedLabel)
         view.addSubview(debugGreenLabel)
         view.addSubview(debugInfoLabel)
+        updateDebugOverlayVisibility()
+#endif
+    }
+
+    private func observeDebugSettingsChanges() {
+#if DEBUG
+        debugSettingsObserver = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.updateDebugOverlayVisibility()
+        }
+#endif
+    }
+
+    private func updateDebugOverlayVisibility() {
+#if DEBUG
+        let isVisible = DebugSettings.showChatOverlays
+        if isVisible {
+            debugYellowOverlay.isHidden = false
+            debugRedOverlay.isHidden = false
+            debugGreenOverlay.isHidden = false
+            debugYellowLabel.isHidden = false
+            debugRedLabel.isHidden = false
+            debugGreenLabel.isHidden = false
+            debugPillLine.isHidden = false
+            debugInfoLabel.isHidden = false
+            extraSpacerView.isHidden = false
+            bottomSpacerView.isHidden = false
+            belowPillSpacerView.isHidden = false
+            extraSpacerLabel.isHidden = false
+            bottomSpacerLabel.isHidden = false
+            belowPillSpacerLabel.isHidden = false
+        } else {
+            debugYellowOverlay.isHidden = true
+            debugRedOverlay.isHidden = true
+            debugGreenOverlay.isHidden = true
+            debugYellowLabel.isHidden = true
+            debugRedLabel.isHidden = true
+            debugGreenLabel.isHidden = true
+            debugMessageLine.isHidden = true
+            debugPillLine.isHidden = true
+            debugInfoLabel.isHidden = true
+            extraSpacerView.isHidden = true
+            bottomSpacerView.isHidden = true
+            belowPillSpacerView.isHidden = true
+            extraSpacerLabel.isHidden = true
+            bottomSpacerLabel.isHidden = true
+            belowPillSpacerLabel.isHidden = true
+        }
 #endif
     }
 
@@ -760,6 +816,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
             self.view.bringSubviewToFront(self.debugRedLabel)
             self.view.bringSubviewToFront(self.debugGreenLabel)
             self.view.bringSubviewToFront(self.debugInfoLabel)
+            self.updateDebugOverlayVisibility()
             #endif
         }
 
