@@ -655,16 +655,21 @@ export const checkRepoAccess = authQuery({
     }
 
     // Config exists - check if the installation is active (if we have an installation ID)
+    // For test eval board, configs without repoInstallationId are allowed since we're testing
+    // without GitHub integration. The test run creation handles this by fetching PR data
+    // via alternative means or using placeholder data.
     const configInstallationId = config.repoInstallationId;
     if (!configInstallationId) {
+      // Allow access for test eval board - config exists but no installation ID
+      // This is valid for configs created via direct link without GitHub App
       return {
-        hasAccess: false,
+        hasAccess: true,
         hasConfig: true,
         hasActiveInstallation: false,
         repoFullName,
-        errorCode: "no_installation",
-        errorMessage: "Preview configuration missing GitHub installation ID",
-        suggestedAction: "Re-configure the preview for this repository with a GitHub App installation",
+        errorCode: null,
+        errorMessage: null,
+        suggestedAction: null,
       };
     }
 
