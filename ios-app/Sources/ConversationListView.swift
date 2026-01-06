@@ -56,79 +56,75 @@ struct ConversationListView: View {
             .scrollDismissesKeyboard(.interactively)
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 // Bottom bar: Search + Compose (iOS 26 Liquid Glass)
-                ZStack {
-                    Color.clear
-                        .contentShape(Rectangle())
-                        .onTapGesture {}
+                GlassEffectContainer {
+                    HStack(spacing: 12) {
+                        // Search field with glass capsule
+                        HStack(spacing: 8) {
+                            Image(systemName: "magnifyingglass")
+                                .foregroundStyle(.secondary)
 
-                    GlassEffectContainer {
-                        HStack(spacing: 12) {
-                            // Search field with glass capsule
-                            HStack(spacing: 8) {
-                                Image(systemName: "magnifyingglass")
-                                    .foregroundStyle(.secondary)
-
-                                TextField("Search", text: $searchText)
-                                    .focused($isSearchFocused)
-                                    .onChange(of: isSearchFocused) { _, newValue in
-                                        if newValue {
-                                            isSearchActive = true
-                                        } else {
-                                            DispatchQueue.main.async {
-                                                if !isSearchFocused && searchText.isEmpty {
-                                                    isSearchActive = false
-                                                }
+                            TextField("Search", text: $searchText)
+                                .focused($isSearchFocused)
+                                .onChange(of: isSearchFocused) { _, newValue in
+                                    if newValue {
+                                        isSearchActive = true
+                                    } else {
+                                        DispatchQueue.main.async {
+                                            if !isSearchFocused && searchText.isEmpty {
+                                                isSearchActive = false
                                             }
                                         }
                                     }
-
-                                Image(systemName: "mic.fill")
-                                    .foregroundStyle(.secondary)
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
-                            .glassEffect(.regular.interactive(), in: .capsule)
-                            .frame(maxWidth: .infinity)
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                isSearchFocused = true
-                                isSearchActive = true
-                            }
-
-                            // Compose or Cancel button with glass circle
-                            if isSearching {
-                                Button {
-                                    searchText = ""
-                                    isSearchFocused = false
-                                    isSearchActive = false
-                                } label: {
-                                    Image(systemName: "xmark")
-                                        .font(.title3)
-                                        .fontWeight(.medium)
-                                        .foregroundStyle(.primary)
                                 }
-                                .buttonStyle(.plain)
-                                .frame(width: 44, height: 44)
-                                .glassEffect(.regular.interactive(), in: .circle)
-                            } else {
-                                Button {
-                                    showNewTask = true
-                                } label: {
-                                    Image(systemName: "square.and.pencil")
-                                        .font(.title3)
-                                        .fontWeight(.medium)
-                                        .foregroundStyle(.primary)
-                                }
-                                .buttonStyle(.plain)
-                                .frame(width: 44, height: 44)
-                                .glassEffect(.regular.interactive(), in: .circle)
-                            }
+
+                            Image(systemName: "mic.fill")
+                                .foregroundStyle(.secondary)
                         }
                         .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
+                        .padding(.vertical, 10)
+                        .glassEffect(.regular.interactive(), in: .capsule)
+                        .frame(maxWidth: .infinity)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            isSearchFocused = true
+                            isSearchActive = true
+                        }
+
+                        // Compose or Cancel button with glass circle
+                        if isSearching {
+                            Button {
+                                searchText = ""
+                                isSearchFocused = false
+                                isSearchActive = false
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.title3)
+                                    .fontWeight(.medium)
+                                    .foregroundStyle(.primary)
+                            }
+                            .buttonStyle(.plain)
+                            .frame(width: 44, height: 44)
+                            .glassEffect(.regular.interactive(), in: .circle)
+                        } else {
+                            Button {
+                                showNewTask = true
+                            } label: {
+                                Image(systemName: "square.and.pencil")
+                                    .font(.title3)
+                                    .fontWeight(.medium)
+                                    .foregroundStyle(.primary)
+                            }
+                            .buttonStyle(.plain)
+                            .frame(width: 44, height: 44)
+                            .glassEffect(.regular.interactive(), in: .circle)
+                        }
                     }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
                 }
-                .frame(maxWidth: .infinity)
+                .contentShape(Rectangle())
+                .onTapGesture {}
+                .zIndex(1)
             }
             .navigationTitle("Tasks")
             .navigationBarTitleDisplayMode(.inline)
