@@ -786,6 +786,7 @@ const convexSchema = defineSchema({
   environmentSnapshotVersions: defineTable({
     environmentId: v.id("environments"),
     teamId: v.string(),
+    morphSnapshotId: v.optional(v.string()), // Legacy field for backfill
     snapshotId: v.optional(v.string()),
     snapshotProvider: v.optional(
       v.union(

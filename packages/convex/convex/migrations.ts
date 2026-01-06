@@ -27,6 +27,23 @@ const inferSnapshotProvider = (
   return undefined;
 };
 
+const inferSnapshotProviderFromLegacy = (
+  snapshotId: string | undefined,
+  morphSnapshotId: string | undefined,
+  templateVmid: number | undefined
+): "morph" | "pve-lxc" | "pve-vm" | undefined => {
+  if (morphSnapshotId) {
+    if (morphSnapshotId.startsWith("pve_lxc_")) {
+      return "pve-lxc";
+    }
+    if (morphSnapshotId.startsWith("snapshot_")) {
+      return "morph";
+    }
+  }
+
+  return inferSnapshotProvider(snapshotId, templateVmid);
+};
+
 // Backfill snapshotProvider from snapshotId/template metadata where possible.
 // Run with: bunx convex run migrations:run '{fn: "migrations:backfillEnvironmentsSnapshotFields"}'
 export const backfillEnvironmentsSnapshotFields = migrations.define({
@@ -73,6 +90,40 @@ export const backfillEnvironmentSnapshotVersionsSnapshotFields =
 
       if (Object.keys(updates).length === 0) {
         return;
+      }
+
+      return updates;
+    },
+  });
+
+// Copy legacy morphSnapshotId to snapshotId, infer snapshotProvider, then drop morphSnapshotId.
+// Run with: bunx convex run migrations:run '{fn: "migrations:backfillEnvironmentSnapshotVersionsMorphSnapshotId"}'
+export const backfillEnvironmentSnapshotVersionsMorphSnapshotId =
+  migrations.define({
+    table: "environmentSnapshotVersions",
+    migrateOne: (_ctx, doc) => {
+      const legacy = doc as typeof doc & { morphSnapshotId?: string };
+      if (legacy.morphSnapshotId === undefined) {
+        return;
+      }
+
+      const updates: Partial<typeof doc> & { morphSnapshotId?: undefined } = {
+        morphSnapshotId: undefined,
+      };
+
+      if (doc.snapshotId === undefined && legacy.morphSnapshotId) {
+        updates.snapshotId = legacy.morphSnapshotId;
+      }
+
+      if (doc.snapshotProvider === undefined) {
+        const provider = inferSnapshotProviderFromLegacy(
+          updates.snapshotId ?? doc.snapshotId,
+          legacy.morphSnapshotId,
+          doc.templateVmid
+        );
+        if (provider) {
+          updates.snapshotProvider = provider;
+        }
       }
 
       return updates;
