@@ -504,7 +504,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         bottomFadeView = BottomFadeView()
         bottomFadeView.translatesAutoresizingMaskIntoConstraints = false
         bottomFadeView.isUserInteractionEnabled = false
-        view.addSubview(bottomFadeView)
+        view.insertSubview(bottomFadeView, belowSubview: inputBarVC.view)
     }
 
     private func setupConstraints() {
