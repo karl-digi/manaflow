@@ -13,6 +13,7 @@
 		2283F03332355B2A6F811710 /* ChatApproachI_Fix1Default.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E3A23AD3BA4B17B7605CCBC /* ChatApproachI_Fix1Default.swift */; };
 		24D8752AB97DB126660D8F81 /* ConvexTestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6A61F42F94D17993038F637 /* ConvexTestView.swift */; };
 		2CE5BEC0FE0F92E3F298C570 /* StackAuthClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DEEADB25149C285A0422125 /* StackAuthClient.swift */; };
+		35DD00750B94902B2CF0CDF6 /* ShortThreadLayoutUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F680356269E010CC8DDF11B /* ShortThreadLayoutUITests.swift */; };
 		361B05C412BFA1E44BDCAD39 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9BA577D046F9E3C331F4986 /* Models.swift */; };
 		3A6FD7E27F3723EF627744A9 /* StackAuthProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF2848CBEF6B2A130DF4C9D2 /* StackAuthProvider.swift */; };
 		5479917679421FDD8C3C2995 /* ChatFix4_ScrollViewDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2371E50D0E3E362104DE9177 /* ChatFix4_ScrollViewDelegate.swift */; };
@@ -64,6 +65,7 @@
 		8B4E7CFD0EE433DFB9F348A0 /* ChatFix3_AdjustedContentInset.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFix3_AdjustedContentInset.swift; sourceTree = "<group>"; };
 		8E3A23AD3BA4B17B7605CCBC /* ChatApproachI_Fix1Default.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatApproachI_Fix1Default.swift; sourceTree = "<group>"; };
 		9788FAF68766BFAA9A451A8D /* ChatApproachI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatApproachI.swift; sourceTree = "<group>"; };
+		9F680356269E010CC8DDF11B /* ShortThreadLayoutUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortThreadLayoutUITests.swift; sourceTree = "<group>"; };
 		AEA367B39118F09C4A8989FF /* ChatKeyboardContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatKeyboardContainer.swift; sourceTree = "<group>"; };
 		B005E08ACAAF83F6A13F9D8C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B87CA70AD58D024077E85845 /* DebugInputBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugInputBar.swift; sourceTree = "<group>"; };
@@ -104,6 +106,7 @@
 			isa = PBXGroup;
 			children = (
 				C18818FD4536DFDC6D6FA1D5 /* KeyboardSyncUITests.swift */,
+				9F680356269E010CC8DDF11B /* ShortThreadLayoutUITests.swift */,
 			);
 			path = cmuxUITests;
 			sourceTree = "<group>";
@@ -312,6 +315,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				1AB68DA70F76F585B6332F68 /* KeyboardSyncUITests.swift in Sources */,
+				35DD00750B94902B2CF0CDF6 /* ShortThreadLayoutUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

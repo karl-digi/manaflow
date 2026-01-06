@@ -520,6 +520,8 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         updateTopFadeHeightIfNeeded()
         updateTopInsetIfNeeded()
         updateBottomInsetsForKeyboard()
+        updateContentMinHeightIfNeeded()
+        clampContentOffsetIfNeeded()
         maybeScrollToBottomIfNeeded()
         let scale = max(1, view.traitCollection.displayScale)
         let pillTopY = currentPillTopY(scale: scale)
@@ -549,10 +551,49 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
             scrollView.verticalScrollIndicatorInsets.top = newTopInset
             lastAppliedTopInset = newTopInset
         }
+    }
 
-        if abs(contentStackMinHeightConstraint.constant - lastAppliedTopInset) > 0.5 {
-            contentStackMinHeightConstraint.constant = lastAppliedTopInset
+    private func updateContentMinHeightIfNeeded() {
+        let topInset = scrollView.adjustedContentInset.top
+        let bottomInset = scrollView.contentInset.bottom
+        let contentHeight = naturalContentHeight()
+        let boundsHeight = scrollView.bounds.height
+        let fits = contentFitsAboveInput(
+            contentHeight: contentHeight,
+            boundsHeight: boundsHeight,
+            topInset: topInset,
+            bottomInset: bottomInset
+        )
+        if fits {
+            if contentStackMinHeightConstraint.isActive {
+                contentStackMinHeightConstraint.isActive = false
+            }
+        } else {
+            let targetConstant: CGFloat = lastAppliedTopInset
+            if !contentStackMinHeightConstraint.isActive {
+                contentStackMinHeightConstraint.isActive = true
+            }
+            if abs(contentStackMinHeightConstraint.constant - targetConstant) > 0.5 {
+                contentStackMinHeightConstraint.constant = targetConstant
+            }
         }
+    }
+
+    private func naturalContentHeight() -> CGFloat {
+        let targetWidth = max(1, scrollView.bounds.width - 32)
+        let wasActive = contentStackMinHeightConstraint.isActive
+        if wasActive {
+            contentStackMinHeightConstraint.isActive = false
+        }
+        let size = contentStack.systemLayoutSizeFitting(
+            CGSize(width: targetWidth, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+        if wasActive {
+            contentStackMinHeightConstraint.isActive = true
+        }
+        return size.height
     }
 
     private func updateBottomInsetsForKeyboard(animated: Bool = false) {
@@ -571,7 +612,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         let oldPillTopY = useTransitionSnapshot ? (transitionSnapshot?.oldPillTopY ?? liveOldPillTopY) : liveOldPillTopY
         let oldOffsetY = useTransitionSnapshot ? (transitionSnapshot?.oldOffsetY ?? liveOldOffsetY) : liveOldOffsetY
         let rawDistanceFromBottom = useTransitionSnapshot ? (transitionSnapshot?.distanceFromBottom ?? liveDistanceFromBottom) : liveDistanceFromBottom
-        let shouldAnchorToBottom = (useTransitionSnapshot ? (transitionSnapshot?.wasAtBottom ?? liveIsAtBottom) : liveIsAtBottom)
+        let wasAnchoredToBottom = (useTransitionSnapshot ? (transitionSnapshot?.wasAtBottom ?? liveIsAtBottom) : liveIsAtBottom)
             && !scrollView.isDragging
             && !scrollView.isDecelerating
         let visibleAnchorIndex = {
@@ -631,6 +672,15 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
                 self.view.layoutIfNeeded()
             }
 
+            let naturalHeight = self.naturalContentHeight()
+            let fitsAboveInput = self.contentFitsAboveInput(
+                contentHeight: naturalHeight,
+                boundsHeight: self.scrollView.bounds.height,
+                topInset: self.scrollView.adjustedContentInset.top,
+                bottomInset: self.scrollView.contentInset.bottom
+            )
+            let shouldAnchorToBottom = wasAnchoredToBottom && !fitsAboveInput
+
             let desiredGap: CGFloat = 16
             let pillFrame = self.computedPillFrameInView()
             let pillTopY = self.pixelAlign(self.inputBarVC.view.frame.minY + pillFrame.minY, scale: scale)
@@ -654,14 +704,14 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
             log("CMUX_CHAT_SPACER keyboard=\(keyboardVisible) pillTop=\(pillTopY) pillBottom=\(pillBottomY) belowGap=\(belowPillGap) extra=\(targetExtraSpacerHeight) red=\(targetBottomSpacerHeight) green=\(targetBelowPillHeight) inputBarFrame=\(self.inputBarVC.view.frame)")
             #endif
             if self.scrollView.contentInset.bottom != targetBottomInset {
-                self.scrollView.contentInset.bottom = targetBottomInset
-                self.scrollView.verticalScrollIndicatorInsets.bottom = targetBottomInset
-            }
+            self.scrollView.contentInset.bottom = targetBottomInset
+            self.scrollView.verticalScrollIndicatorInsets.bottom = targetBottomInset
+        }
 
-            self.view.layoutIfNeeded()
-            self.scrollView.layoutIfNeeded()
+        self.view.layoutIfNeeded()
+        self.scrollView.layoutIfNeeded()
 
-            let newMaxOffsetY = max(0, self.scrollView.contentSize.height - self.scrollView.bounds.height + targetBottomInset)
+        let newMaxOffsetY = max(0, self.scrollView.contentSize.height - self.scrollView.bounds.height + targetBottomInset)
             let deltaInset = targetBottomInset - oldBottomInset
             let deltaPill = pillTopY - oldPillTopY
             let shouldAdjustOffset = animated || abs(deltaPill) > 0.5 || oldAnchorSample != nil || useTransitionSnapshot
@@ -679,6 +729,8 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
                 }
                 if shouldAnchorToBottom {
                     targetOffsetY = newMaxOffsetY
+                } else if fitsAboveInput {
+                    targetOffsetY = minY
                 }
 
                 targetOffsetY = min(max(targetOffsetY, minY), maxY)
@@ -830,6 +882,46 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         } else {
             applyUpdates()
         }
+    }
+
+    private func clampContentOffsetIfNeeded() {
+        let bounds = contentOffsetBounds()
+        let minY = bounds.minY
+        let maxY = bounds.maxY
+        let currentY = scrollView.contentOffset.y
+        if currentY < minY || currentY > maxY {
+            let clampedY = min(max(currentY, minY), maxY)
+            if abs(clampedY - currentY) > 0.5 {
+                scrollView.contentOffset.y = clampedY
+            }
+        }
+    }
+
+    private func contentOffsetBounds() -> (minY: CGFloat, maxY: CGFloat) {
+        let topInset = scrollView.adjustedContentInset.top
+        let bottomInset = scrollView.contentInset.bottom
+        let contentHeight = naturalContentHeight()
+        let boundsHeight = scrollView.bounds.height
+        let minY = -topInset
+        let maxYRaw = contentHeight - boundsHeight + bottomInset
+        let fits = contentFitsAboveInput(
+            contentHeight: contentHeight,
+            boundsHeight: boundsHeight,
+            topInset: topInset,
+            bottomInset: bottomInset
+        )
+        let maxY = fits ? minY : maxYRaw
+        return (minY: minY, maxY: maxY)
+    }
+
+    private func contentFitsAboveInput(
+        contentHeight: CGFloat,
+        boundsHeight: CGFloat,
+        topInset: CGFloat,
+        bottomInset: CGFloat
+    ) -> Bool {
+        let availableHeight = boundsHeight - bottomInset
+        return contentHeight + topInset <= availableHeight + 1
     }
 
     @objc private func handleKeyboardFrameChange(_ notification: Notification) {
@@ -1064,7 +1156,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         host.view.translatesAutoresizingMaskIntoConstraints = false
 
         addChild(host)
-        if let previousLast = contentStack.arrangedSubviews.dropLast(3).last {
+        if let previousLast = messageArrangedViews().last {
             contentStack.setCustomSpacing(contentStack.spacing, after: previousLast)
         }
         let insertIndex = max(contentStack.arrangedSubviews.count - 3, 0)
@@ -1083,18 +1175,29 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         }
     }
 
+    private func messageArrangedViews() -> [UIView] {
+        let arranged = contentStack.arrangedSubviews
+        guard arranged.count >= 3 else { return [] }
+        return Array(arranged.dropLast(3))
+    }
+
     private func scrollToBottom(animated: Bool) {
-        let contentHeight = scrollView.contentSize.height
+        let contentHeight = naturalContentHeight()
         let boundsHeight = scrollView.bounds.height
-        let topInset = scrollView.contentInset.top
+        let topInset = scrollView.adjustedContentInset.top
         let bottomInset = scrollView.contentInset.bottom
 
         // Max offset: bottom of content aligns with visible area above input bar
         let maxOffsetY = contentHeight - boundsHeight + bottomInset
         // Min offset: content starts below header
         let minOffsetY = -topInset
-        // Scroll to bottom, clamped to minimum (handles small content)
-        let targetOffsetY = max(minOffsetY, maxOffsetY)
+        let fits = contentFitsAboveInput(
+            contentHeight: contentHeight,
+            boundsHeight: boundsHeight,
+            topInset: topInset,
+            bottomInset: bottomInset
+        )
+        let targetOffsetY = fits ? minOffsetY : maxOffsetY
 
         log("scrollToBottom:")
         log("  contentHeight: \(contentHeight), boundsHeight: \(boundsHeight)")
@@ -1111,22 +1214,24 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
         if !decelerate {
+            clampContentOffsetIfNeeded()
             logContentGeometry(reason: "scrollEndDrag")
             logVisibleMessages(reason: "scrollEndDrag")
         }
     }
 
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        logVisibleMessages(reason: "scroll")
+    }
+
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        clampContentOffsetIfNeeded()
         logContentGeometry(reason: "scrollEndDecel")
         logVisibleMessages(reason: "scrollEndDecel")
     }
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         hasUserScrolled = true
-    }
-
-    func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        logVisibleMessages(reason: "scroll")
     }
 
     private func sendMessage() {
@@ -1144,13 +1249,14 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     }
 
     private func logVisibleMessages(reason: String) {
-        guard !contentStack.arrangedSubviews.isEmpty else { return }
+        let messageViews = messageArrangedViews()
+        guard !messageViews.isEmpty else { return }
 
         let visibleRect = CGRect(origin: scrollView.contentOffset, size: scrollView.bounds.size)
         var visibleItems: [(Int, CGRect)] = []
-        visibleItems.reserveCapacity(contentStack.arrangedSubviews.count)
+        visibleItems.reserveCapacity(messageViews.count)
 
-        for (index, subview) in contentStack.arrangedSubviews.enumerated() {
+        for (index, subview) in messageViews.enumerated() {
             let frameInScroll = contentStack.convert(subview.frame, to: scrollView)
             if frameInScroll.intersects(visibleRect) {
                 visibleItems.append((index, frameInScroll))
@@ -1180,7 +1286,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     }
 
     private func lastMessageFrameInView() -> CGRect {
-        let messageViews = contentStack.arrangedSubviews.dropLast(3)
+        let messageViews = messageArrangedViews()
         guard let lastMessageView = messageViews.last else { return .zero }
         return contentStack.convert(lastMessageView.frame, to: view)
     }
@@ -1219,7 +1325,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     }
 
     private func visibleMessageAnchor() -> (index: Int, y: CGFloat) {
-        let messageViews = Array(contentStack.arrangedSubviews.dropLast(3))
+        let messageViews = messageArrangedViews()
         guard !messageViews.isEmpty else { return (index: -1, y: 0) }
         let visibleRect = view.bounds
         var bestIndex: Int = -1
@@ -1242,7 +1348,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     }
 
     private func anchorCandidateIndex(pillTopY: CGFloat) -> Int? {
-        let messageViews = Array(contentStack.arrangedSubviews.dropLast(3))
+        let messageViews = messageArrangedViews()
         guard !messageViews.isEmpty else { return nil }
         var bestIndex: Int?
         var bestMaxY: CGFloat = -.greatestFiniteMagnitude
@@ -1261,7 +1367,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     }
 
     private func anchorSample(index: Int, pillTopY: CGFloat) -> AnchorSample? {
-        let messageViews = Array(contentStack.arrangedSubviews.dropLast(3))
+        let messageViews = messageArrangedViews()
         guard index >= 0, index < messageViews.count else { return nil }
         let frame = contentStack.convert(messageViews[index].frame, to: view)
         let scale = max(1, view.traitCollection.displayScale)
@@ -1271,7 +1377,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     }
 
     private func anchorBottomContentY(index: Int) -> CGFloat? {
-        let messageViews = Array(contentStack.arrangedSubviews.dropLast(3))
+        let messageViews = messageArrangedViews()
         guard index >= 0, index < messageViews.count else { return nil }
         let frame = messageViews[index].frame
         let contentY = frame.maxY + contentStack.frame.minY
