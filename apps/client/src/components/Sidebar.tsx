@@ -246,12 +246,12 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
           to="/$teamSlugOrId/dashboard"
           params={{ teamSlugOrId }}
           activeOptions={{ exact: true }}
-          className="flex items-center gap-2 select-none cursor-pointer"
+          className="flex items-center gap-2 select-none cursor-pointer whitespace-nowrap"
           style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
         >
           {/* <Terminals */}
           <CmuxLogo height={22} showWordmark={false} label="cmux-next" />
-          <span className="text-sm font-semibold tracking-wide text-neutral-900 dark:text-neutral-100">
+          <span className="text-xs font-semibold tracking-wide text-neutral-900 dark:text-neutral-100 whitespace-nowrap">
             cmux-next
           </span>
         </Link>
