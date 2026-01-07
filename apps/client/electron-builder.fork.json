@@ -12,19 +12,8 @@
   ],
   "extraResources": [
     {
-      "from": "assets/cmux-logos/cmux.iconset",
-      "to": "cmux-logos/cmux.iconset"
-    },
-    {
       "from": "electron/app-update.next.yml",
       "to": "app-update.next.yml"
-    },
-    {
-      "from": "../../apps/server/native/core",
-      "to": "native/core",
-      "filter": [
-        "*.node"
-      ]
     }
   ]
 }
