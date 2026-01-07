@@ -17,7 +17,7 @@
     },
     {
       "from": "electron/app-update.next.yml",
-      "to": "app-update.yml"
+      "to": "app-update.next.yml"
     },
     {
       "from": "../../apps/server/native/core",
