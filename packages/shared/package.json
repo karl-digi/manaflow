@@ -26,6 +26,10 @@
       "import": "./src/providers/amp/start-amp-proxy.ts",
       "types": "./src/providers/amp/start-amp-proxy.ts"
     },
+    "./src/providers/opencode/completion-detector.ts": {
+      "import": "./src/providers/opencode/completion-detector.ts",
+      "types": "./src/providers/opencode/completion-detector.ts"
+    },
     "./model-usage": {
       "import": "./src/model-usage.ts",
       "types": "./src/model-usage.ts"

@@ -429,6 +429,15 @@ echo -e "${GREEN}Starting backend server on port 9776...${NC}"
 SERVER_PID=$!
 check_process $SERVER_PID "Backend Server"
 
+# Start the openapi client generator before frontend/www so generated files are ready
+echo -e "${GREEN}Starting openapi client generator...${NC}"
+(cd "$APP_DIR/apps/www" && exec bash -c 'trap "kill -9 0" EXIT; bun run generate-openapi-client:watch 2>&1 | tee "$LOG_DIR/openapi-client.log" | prefix_output "OPENAPI-CLIENT" "$MAGENTA"') &
+OPENAPI_CLIENT_PID=$!
+check_process $OPENAPI_CLIENT_PID "OpenAPI Client Generator"
+OPENAPI_LOG_FILE="$LOG_DIR/openapi-client.log"
+OPENAPI_READY_MARKER="initial client generation complete"
+wait_for_log_message "$OPENAPI_LOG_FILE" "$OPENAPI_READY_MARKER" "$OPENAPI_CLIENT_PID" "OpenAPI Client Generator"
+
 # Start the frontend
 echo -e "${GREEN}Starting frontend on port 5173...${NC}"
 (cd "$APP_DIR/apps/client" && exec bash -c 'trap "kill -9 0" EXIT; bun run dev --host 0.0.0.0 2>&1 | tee "$LOG_DIR/client.log" | prefix_output "CLIENT" "$CYAN"') &
@@ -462,15 +471,6 @@ check_process $WWW_PID "WWW App"
     sleep 0.5
   done
 ') &
-
-# Start the openapi client generator
-echo -e "${GREEN}Starting openapi client generator...${NC}"
-(cd "$APP_DIR/apps/www" && exec bash -c 'trap "kill -9 0" EXIT; bun run generate-openapi-client:watch 2>&1 | tee "$LOG_DIR/openapi-client.log" | prefix_output "OPENAPI-CLIENT" "$MAGENTA"') &
-OPENAPI_CLIENT_PID=$!
-check_process $OPENAPI_CLIENT_PID "OpenAPI Client Generator"
-OPENAPI_LOG_FILE="$LOG_DIR/openapi-client.log"
-OPENAPI_READY_MARKER="initial client generation complete"
-wait_for_log_message "$OPENAPI_LOG_FILE" "$OPENAPI_READY_MARKER" "$OPENAPI_CLIENT_PID" "OpenAPI Client Generator"
 
 # Start Electron if requested
 if [ "$RUN_ELECTRON" = "true" ]; then

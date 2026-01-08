@@ -1992,9 +1992,17 @@ async def task_build_worker(ctx: TaskContext) -> None:
           --target node \\
           --outdir ./apps/worker/build \\
           --external @cmux/convex \\
+          --external path-to-regexp \\
           --external 'node:*'
         if [ ! -f ./apps/worker/build/index.js ]; then
           echo "Worker build output missing at ./apps/worker/build/index.js" >&2
+          exit 1
+        fi
+        install -d ./apps/worker/build/node_modules
+        if [ -d ./node_modules/express/node_modules/path-to-regexp ]; then
+          cp -RL ./node_modules/express/node_modules/path-to-regexp ./apps/worker/build/node_modules/path-to-regexp
+        else
+          echo "Missing express path-to-regexp dependency" >&2
           exit 1
         fi
         install -d /builtins

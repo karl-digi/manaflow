@@ -5,8 +5,12 @@ import {
   OPENROUTER_API_KEY,
   XAI_API_KEY,
 } from "../../apiKeys";
-import { checkOpencodeRequirements } from "./check-requirements";
+import {
+  checkOpencodeRequirements,
+  createOpencodeRequirementsChecker,
+} from "./check-requirements";
 import { startOpenCodeCompletionDetector } from "./completion-detector";
+import { OPENCODE_FREE_MODEL_IDS } from "./free-models.generated";
 
 import {
   getOpencodeEnvironment,
@@ -25,15 +29,21 @@ const OPENCODE_BASE_ARGS = [
   String(OPENCODE_HTTP_PORT),
 ];
 
-export const OPENCODE_GROK_CODE_CONFIG: AgentConfig = {
-  name: "opencode/grok-code",
-  command: "bunx",
-  args: [...OPENCODE_BASE_ARGS, "--model", "opencode/grok-code"],
-  environment: getOpencodeEnvironmentSkipAuth,
-  checkRequirements: checkOpencodeRequirements,
-  apiKeys: [],
-  completionDetector: startOpenCodeCompletionDetector,
-};
+const OPENCODE_FREE_MODEL_CONFIGS: AgentConfig[] = OPENCODE_FREE_MODEL_IDS.map(
+  (modelId) => ({
+    name: `opencode/${modelId}`,
+    command: "bunx",
+    args: [...OPENCODE_BASE_ARGS, "--model", `opencode/${modelId}`],
+    environment: getOpencodeEnvironmentSkipAuth,
+    checkRequirements: createOpencodeRequirementsChecker({
+      requireAuth: false,
+    }),
+    apiKeys: [],
+    completionDetector: startOpenCodeCompletionDetector,
+  })
+);
+
+export { OPENCODE_FREE_MODEL_CONFIGS };
 
 export const OPENCODE_SONNET_CONFIG: AgentConfig = {
   name: "opencode/sonnet-4",

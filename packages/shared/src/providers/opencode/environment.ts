@@ -1,7 +1,6 @@
 import type {
   EnvironmentContext,
   EnvironmentResult,
-  PostStartCommand,
 } from "../common/environment-result";
 
 // Opencode HTTP API configuration
@@ -19,7 +18,6 @@ async function buildOpencodeEnvironment(
   const files: EnvironmentResult["files"] = [];
   const env: Record<string, string> = {};
   const startupCommands: string[] = [];
-  const postStartCommands: PostStartCommand[] = [];
 
   // Ensure .local/share/opencode directory exists
   startupCommands.push("mkdir -p ~/.local/share/opencode");
@@ -77,20 +75,130 @@ ls -la "\${MARKER_FILE}" >> "\${LOG_FILE}" 2>&1
   });
 
   // Install OpenCode Notification plugin to invoke completion hook
+  // Only fires completion when session is idle AND has assistant messages (not just errors)
   const pluginContent = `\
-export const NotificationPlugin = async ({ project: _project, client: _client, $, directory: _directory, worktree: _worktree }) => {
+export const NotificationPlugin = async ({ project: _project, client, $, directory: _directory, worktree: _worktree }) => {
+  let completionFired = false;
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const log = (msg) => {
+    const line = "[" + new Date().toISOString() + "] " + msg + "\\n";
+    fs.appendFileSync("/root/lifecycle/opencode-plugin.log", line);
+  };
+
+  // Read messages directly from storage (SDK API is broken)
+  const readMessagesFromStorage = () => {
+    const storageBase = path.join(process.env.HOME || "/root", ".local/share/opencode/storage");
+    const messageDir = path.join(storageBase, "message");
+    const messages = [];
+
+    try {
+      // Find all session directories
+      const sessionDirs = fs.readdirSync(messageDir).filter(d => d.startsWith("ses_"));
+      for (const sessionDir of sessionDirs) {
+        const sessionPath = path.join(messageDir, sessionDir);
+        const msgFiles = fs.readdirSync(sessionPath).filter(f => f.endsWith(".json"));
+        for (const msgFile of msgFiles) {
+          try {
+            const content = fs.readFileSync(path.join(sessionPath, msgFile), "utf-8");
+            messages.push(JSON.parse(content));
+          } catch (e) {
+            // Skip invalid files
+          }
+        }
+      }
+    } catch (e) {
+      log("Error reading message storage: " + e);
+    }
+
+    return messages;
+  };
+
   return {
     event: async ({ event }) => {
-      // Send notification on session completion
-      if (event.type === "session.idle") {
-        try {
-          await $\`/root/lifecycle/opencode/session-complete-hook.sh\`
-        } catch (primaryError) {
-          try {
-            await $\`bash -lc "/root/lifecycle/opencode/session-complete-hook.sh"\`
-          } catch (fallbackError) {
-            console.error("[CMUX] Failed to run OpenCode completion hook", primaryError, fallbackError);
+      // Prevent duplicate completion hooks
+      if (completionFired) return;
+
+      const props = event?.properties ?? {};
+      const statusType =
+        props.status?.type ??
+        props.status ??
+        event?.status?.type ??
+        event?.status;
+      const isIdle =
+        event.type === "session.idle" ||
+        (event.type === "session.status" && statusType === "idle");
+
+      if (!isIdle) return;
+
+      log("session.idle event received");
+
+      // Check if the session has actual assistant work (not just errors)
+      // This prevents marking errored sessions (e.g., "Forbidden") as completed
+      let shouldComplete = false; // Default to NOT completing - must prove success
+
+      try {
+        // Read messages directly from storage (SDK client.session.messages() is broken)
+        const messages = readMessagesFromStorage();
+        log("Got " + messages.length + " messages from storage");
+
+        // Find assistant messages
+        const assistantMsgs = messages.filter((m) => m.role === "assistant");
+        log("Found " + assistantMsgs.length + " assistant messages");
+
+        // If no assistant messages, don't complete (nothing was done)
+        if (assistantMsgs.length === 0) {
+          log("No assistant messages found, skipping completion");
+          return;
+        }
+
+        // Check if ANY assistant message completed successfully
+        const hasSuccessfulCompletion = assistantMsgs.some((m) => {
+          // Check for explicit error in the message
+          const hasExplicitError = m.error != null && typeof m.error === "object";
+
+          // Check for successful finish reason
+          const hasFinish = m.finish && m.finish !== "error";
+
+          // Check for completed timestamp
+          const hasCompleted = m.time?.completed != null;
+
+          log("Msg " + m.id + ": error=" + (hasExplicitError ? "YES(" + (m.error?.name || "unknown") + ")" : "no") + " finish=" + m.finish + " completed=" + hasCompleted);
+
+          // If there's an explicit error object, this message failed
+          if (hasExplicitError) {
+            log("Message has error, not counting as success");
+            return false;
           }
+
+          // Success if finished or completed without error
+          return hasFinish || hasCompleted;
+        });
+
+        if (hasSuccessfulCompletion) {
+          log("Found successful completion, will fire hook");
+          shouldComplete = true;
+        } else {
+          log("No successful completion found, skipping hook");
+        }
+      } catch (err) {
+        // If anything fails, log it but don't complete
+        log("Error in plugin: " + (err?.message ?? err));
+        return;
+      }
+
+      if (!shouldComplete) {
+        return;
+      }
+
+      completionFired = true;
+      try {
+        await $\`/root/lifecycle/opencode/session-complete-hook.sh\`
+      } catch (primaryError) {
+        try {
+          await $\`bash -lc "/root/lifecycle/opencode/session-complete-hook.sh"\`
+        } catch (fallbackError) {
+          console.error("[CMUX] Failed to run OpenCode completion hook", primaryError, fallbackError);
         }
       }
     },
@@ -110,65 +218,117 @@ export const NotificationPlugin = async ({ project: _project, client: _client, $
   }
 
   // Add post-start commands to poll the session endpoint and submit the prompt
-  // These run after the opencode TUI starts
   const baseUrl = `http://${OPENCODE_HTTP_HOST}:${OPENCODE_HTTP_PORT}`;
-  const logFile = "/root/lifecycle/opencode-post-start.log";
-
-  // Command 1: Poll /session until it's ready (with retries)
-  postStartCommands.push({
-    description: "Wait for opencode session to be ready",
-    command: `
-      LOG="${logFile}"
-      echo "[$(date -Iseconds)] Waiting for opencode session..." >> "$LOG"
-      for i in $(seq 1 60); do
-        if curl -sf "${baseUrl}/session" >> "$LOG" 2>&1; then
-          echo "" >> "$LOG"
-          echo "[$(date -Iseconds)] OpenCode session ready after $i attempts" >> "$LOG"
-          exit 0
-        fi
-        sleep 1
-      done
-      echo "[$(date -Iseconds)] OpenCode session not ready after 60 attempts" >> "$LOG"
-      exit 1
-    `.trim(),
-    timeoutMs: 90000, // 90 seconds total (60 retries * 1 second + overhead)
-    continueOnError: false,
-  });
-
-  // Command 2: Append the prompt to the TUI's prompt field
-  // Use base64 encoding to safely pass through shell without escaping issues
   const promptBase64 = Buffer.from(ctx.prompt).toString("base64");
 
-  postStartCommands.push({
-    description: "Append prompt to opencode TUI",
-    // Decode base64 prompt, build JSON with jq, then curl
-    command: `
-      LOG="${logFile}"
-      PROMPT=$(echo "${promptBase64}" | base64 -d)
-      JSON=$(printf '%s' "$PROMPT" | jq -Rs '{text: .}')
-      echo "[$(date -Iseconds)] Appending prompt to TUI..." >> "$LOG"
-      echo "JSON payload: $JSON" >> "$LOG"
-      RESULT=$(curl -sf -X POST "${baseUrl}/tui/append-prompt" -H "Content-Type: application/json" -d "$JSON" 2>&1)
-      echo "[$(date -Iseconds)] append-prompt result: $RESULT" >> "$LOG"
-    `.trim(),
-    timeoutMs: 30000, // 30 seconds
-    continueOnError: false,
+  const postStartScript = `#!/bin/bash
+set -euo pipefail
+
+LOG="/root/lifecycle/opencode-post-start.log"
+BASE_URL="${baseUrl}"
+PROMPT_BASE64="${promptBase64}"
+
+log() {
+  echo "[$(date -Iseconds)] $*" >> "$LOG"
+}
+
+wait_for_session() {
+  for i in $(seq 1 60); do
+    if curl -sf "\${BASE_URL}/session" >> "$LOG" 2>&1; then
+      log "OpenCode session ready after \${i} attempts"
+      return 0
+    fi
+    sleep 1
+  done
+  log "OpenCode session not ready after 60 attempts"
+  return 1
+}
+
+append_prompt() {
+  local prompt json
+  prompt=$(echo "\${PROMPT_BASE64}" | base64 -d)
+  json=$(printf '%s' "$prompt" | jq -Rs '{text: .}')
+  for j in $(seq 1 3); do
+    if curl -sf -X POST "\${BASE_URL}/tui/append-prompt" -H "Content-Type: application/json" -d "$json" >> "$LOG" 2>&1; then
+      log "append-prompt succeeded on attempt \${j}"
+      return 0
+    fi
+    sleep 1
+  done
+  log "append-prompt failed after 3 attempts"
+  return 1
+}
+
+submit_prompt() {
+  for j in $(seq 1 3); do
+    if curl -sf -X POST "\${BASE_URL}/tui/submit-prompt" >> "$LOG" 2>&1; then
+      log "submit-prompt succeeded on attempt \${j}"
+      return 0
+    fi
+    sleep 1
+  done
+  log "submit-prompt failed after 3 attempts"
+  return 1
+}
+
+log "Post-start script begin"
+if ! wait_for_session; then
+  log "Aborting post-start because session never became ready"
+  exit 1
+fi
+
+prompt=$(echo "\${PROMPT_BASE64}" | base64 -d)
+expected_fragment=$(printf '%s' "$prompt" | tr '\n\t' '  ' | sed -E 's/[[:space:]]+/ /g' | sed -E 's/^ +| +$//g' | cut -c1-64)
+if [ -z "$expected_fragment" ]; then
+  log "Prompt is empty after decode; skipping auto-submit"
+  log "Post-start script end"
+  exit 0
+fi
+
+log "Expected title fragment: \${expected_fragment}"
+sleep 2
+
+sent=0
+
+for attempt in $(seq 1 12); do
+  if [ "\${sent}" -eq 0 ]; then
+    log "Prompt send attempt \${attempt}"
+    if append_prompt && submit_prompt; then
+      sent=1
+      log "Prompt submitted"
+    else
+      log "Prompt send failed; will retry"
+    fi
+  else
+    log "Prompt already submitted; waiting for title update (attempt \${attempt})"
+  fi
+  sleep 2
+  title=$(curl -sf "\${BASE_URL}/session" | jq -r '.title // ""' 2>>"$LOG" || true)
+  log "Session title after attempt \${attempt}: \${title}"
+  if [ -n "$title" ] && printf '%s' "$title" | grep -Fq "$expected_fragment"; then
+    log "Session title matched expected fragment"
+    break
+  fi
+  sleep 5
+done
+log "Post-start script end"
+`;
+
+  files.push({
+    destinationPath: "/root/lifecycle/opencode/post-start.sh",
+    contentBase64: Buffer.from(postStartScript).toString("base64"),
+    mode: "755",
   });
 
-  // Command 3: Submit the prompt (triggers execution)
-  postStartCommands.push({
-    description: "Submit prompt to opencode",
-    command: `
-      LOG="${logFile}"
-      echo "[$(date -Iseconds)] Submitting prompt..." >> "$LOG"
-      RESULT=$(curl -sf -X POST "${baseUrl}/tui/submit-prompt" 2>&1)
-      echo "[$(date -Iseconds)] submit-prompt result: $RESULT" >> "$LOG"
-    `.trim(),
-    timeoutMs: 30000, // 30 seconds
-    continueOnError: false,
-  });
+  // Run post-start script in background via nohup in startupCommands.
+  // NOTE: Cannot use postStartCommands here because cmux-pty backend sends them
+  // as PTY input to the TUI rather than running them as separate processes.
+  // The script logs to /root/lifecycle/opencode-post-start.log for debugging.
+  startupCommands.push(
+    "nohup /root/lifecycle/opencode/post-start.sh >/root/lifecycle/opencode-post-start.log 2>&1 &"
+  );
 
-  return { files, env, startupCommands, postStartCommands };
+  return { files, env, startupCommands, postStartCommands: [] };
 }
 
 export async function getOpencodeEnvironment(

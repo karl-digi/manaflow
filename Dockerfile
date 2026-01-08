@@ -477,6 +477,7 @@ bun build ./apps/worker/src/index.ts \
   --outdir ./apps/worker/build \
   --external @cmux/convex \
   --external convex \
+  --external path-to-regexp \
   --external node:*
 bun build ./apps/worker/src/runBrowserAgentFromPrompt.ts \
   --target node \
@@ -489,6 +490,12 @@ mv ./apps/worker/build/browser-agent/runBrowserAgentFromPrompt.js ./apps/worker/
 rm -rf ./apps/worker/build/browser-agent
 echo "Built worker"
 mkdir -p ./apps/worker/build/node_modules
+if [ -d ./node_modules/express/node_modules/path-to-regexp ]; then
+  cp -RL ./node_modules/express/node_modules/path-to-regexp ./apps/worker/build/node_modules/path-to-regexp
+else
+  echo "Missing express path-to-regexp dependency" >&2
+  exit 1
+fi
 shopt -s nullglob
 declare -A COPIED_PACKAGES=()
 

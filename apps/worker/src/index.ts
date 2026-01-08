@@ -24,6 +24,7 @@ import type { Id } from "@cmux/convex/dataModel";
 import { getWorkerServerSocketOptions } from "@cmux/shared/node/socket";
 import { CmuxPtyClient } from "@cmux/shared/cmux-pty-client";
 import { startAmpProxy } from "@cmux/shared/src/providers/amp/start-amp-proxy.ts";
+import { startOpenCodeCompletionDetector } from "@cmux/shared/src/providers/opencode/completion-detector.ts";
 import { handleWorkerTaskCompletion } from "./crown/workflow";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import * as xtermHeadless from "@xterm/headless";
@@ -52,6 +53,19 @@ import type { WorkerTaskRunResponse } from "@cmux/shared/convex-safe";
 import { verifyTaskRunToken } from "@cmux/shared/convex-safe";
 
 const execAsync = promisify(exec);
+
+const resolveCompletionDetector = (
+  agentModel?: string,
+  agentConfig?: { completionDetector?: (taskRunId: string) => Promise<void> }
+) => {
+  if (agentConfig?.completionDetector) {
+    return agentConfig.completionDetector;
+  }
+  if (agentModel?.startsWith("opencode/")) {
+    return startOpenCodeCompletionDetector;
+  }
+  return undefined;
+};
 
 type PreviewJobContext = {
   taskId: Id<"tasks">;
@@ -1359,19 +1373,23 @@ async function createTerminal(
           });
         }
 
-        if (options.taskRunId && agentConfig?.completionDetector) {
+        const completionDetector = resolveCompletionDetector(
+          options.agentModel,
+          agentConfig
+        );
+
+        if (options.taskRunId && completionDetector) {
           log(
             "INFO",
             `[cmux-pty] Setting up completion detector for task ${options.taskRunId}`,
             {
               taskRunId: options.taskRunId,
               agentModel: options.agentModel,
-              hasDetector: !!agentConfig.completionDetector,
+              hasDetector: !!completionDetector,
             }
           );
 
-          agentConfig
-            .completionDetector(options.taskRunId)
+          completionDetector(options.taskRunId)
             .then(async () => {
               log(
                 "INFO",
@@ -1419,7 +1437,7 @@ async function createTerminal(
                 );
               }
             })
-            .catch((e) => {
+            .catch((e: unknown) => {
               log(
                 "ERROR",
                 `[cmux-pty] Completion detector error for ${options.agentModel}: ${String(e)}`
@@ -1731,7 +1749,12 @@ async function createTerminal(
     });
   }
 
-  if (options.taskRunId && agentConfig?.completionDetector) {
+  const completionDetector = resolveCompletionDetector(
+    options.agentModel,
+    agentConfig
+  );
+
+  if (options.taskRunId && completionDetector) {
     try {
       log(
         "INFO",
@@ -1739,12 +1762,11 @@ async function createTerminal(
         {
           taskRunId: options.taskRunId,
           agentModel: options.agentModel,
-          hasDetector: !!agentConfig.completionDetector,
+          hasDetector: !!completionDetector,
         }
       );
 
-      agentConfig
-        .completionDetector(options.taskRunId)
+      completionDetector(options.taskRunId)
         .then(async () => {
           log(
             "INFO",
@@ -1803,7 +1825,7 @@ async function createTerminal(
             );
           }
         })
-        .catch((e) => {
+        .catch((e: unknown) => {
           log(
             "ERROR",
             `Completion detector error for ${options.agentModel}: ${String(e)}`

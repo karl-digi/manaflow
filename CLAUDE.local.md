@@ -5,6 +5,8 @@
 
 # Git/PR
 - All PRs should target `karlorz/cmux:main` unless explicitly requested to submit to upstream `manaflow-ai/cmux`
+- gh repo set-default karlorz/cmux
+✓ Set karlorz/cmux as the default repository for the current directory
 
 # Config for Host Machine (not Devcontainer)
 - `make convex-fresh`: Fresh Convex setup and start concex service via docker compose, it will delete convex data volume
@@ -51,6 +53,9 @@ uv run --env-file .env ./scripts/snapshot-pvelxc.py \
 --boosted-memory 8192 \
 --boosted-disk-size 40960
 ```
+
+# Rebuild PVE LXC snapshot use gh
+- `gh workflow run "Weekly PVE LXC Snapshot" --repo karlorz/cmux --ref main`
 
 # Rebuild Morph snapshot use gh (production)
 - `gh workflow run "Daily Morph Snapshot" --repo karlorz/cmux --ref main`
