@@ -7,6 +7,7 @@ import * as path from "node:path";
 import { getDockerSocketCandidates } from "@cmux/shared/providers/common/check-docker";
 import { getConvex } from "../utils/convexClient";
 import { cleanupGitCredentials } from "../utils/dockerGitSetup";
+import { getEditorSettingsUpload } from "../utils/editorSettings";
 import { dockerLogger } from "../utils/fileLogger";
 import { getGitHubOAuthToken } from "../utils/getGitHubToken";
 import { getAuthToken, runWithAuthToken } from "../utils/requestContext";
@@ -62,6 +63,7 @@ export class DockerVSCodeInstance extends VSCodeInstance {
   private static dockerInstance: Docker | null = null;
   private static eventStreamRetryTimer: NodeJS.Timeout | null = null;
   private static eventStreamBackoffMs = 1000;
+  private editorSettingsTempDir: string | null = null;
 
   // Get or create the Docker singleton
   static getDocker(): Docker {
@@ -127,6 +129,94 @@ export class DockerVSCodeInstance extends VSCodeInstance {
           `Failed to pull Docker image ${this.imageName}: ${pullError}`
         );
       }
+    }
+  }
+
+  /**
+   * Prepare VS Code editor settings files on the host and return Docker bind mounts.
+   * These settings are written before container creation so VS Code Server has access to them on startup.
+   */
+  private async prepareEditorSettingsBinds(): Promise<string[]> {
+    const binds: string[] = [];
+
+    try {
+      const editorSettings = await getEditorSettingsUpload();
+      if (!editorSettings || editorSettings.authFiles.length === 0) {
+        dockerLogger.info(
+          "No editor settings to sync for Docker container"
+        );
+        return binds;
+      }
+
+      // Create a temp directory for this container's editor settings
+      const tempDir = path.join(
+        os.tmpdir(),
+        "cmux-editor-settings",
+        `container-${this.instanceId}`
+      );
+      await fs.promises.mkdir(tempDir, { recursive: true });
+      this.editorSettingsTempDir = tempDir;
+
+      dockerLogger.info(
+        `Preparing ${editorSettings.authFiles.length} editor settings files from ${editorSettings.sourceEditor}`
+      );
+
+      // Write each auth file to the temp directory and create a bind mount
+      // We group files by their parent directory to create efficient mounts
+      const filesByDir = new Map<string, Array<{ name: string; content: string; mode?: string }>>();
+
+      for (const file of editorSettings.authFiles) {
+        // Skip extension-related files - we don't mount those, they're handled via authFiles later
+        if (
+          file.destinationPath.includes("user-extensions.txt") ||
+          file.destinationPath.includes("install-extensions") ||
+          file.destinationPath.includes("/etc/profile.d/")
+        ) {
+          continue;
+        }
+
+        const destDir = path.dirname(file.destinationPath);
+        const fileName = path.basename(file.destinationPath);
+
+        if (!filesByDir.has(destDir)) {
+          filesByDir.set(destDir, []);
+        }
+        filesByDir.get(destDir)!.push({
+          name: fileName,
+          content: Buffer.from(file.contentBase64, "base64").toString("utf8"),
+          mode: file.mode,
+        });
+      }
+
+      // For each container directory, create a host directory with the files
+      for (const [containerDir, files] of filesByDir) {
+        // Create a sanitized subdirectory path on the host
+        const sanitizedPath = containerDir.replace(/^\/+/, "").replace(/\//g, "__");
+        const hostDir = path.join(tempDir, sanitizedPath);
+        await fs.promises.mkdir(hostDir, { recursive: true });
+
+        // Write each file
+        for (const file of files) {
+          const hostPath = path.join(hostDir, file.name);
+          await fs.promises.writeFile(hostPath, file.content, "utf8");
+          if (file.mode) {
+            await fs.promises.chmod(hostPath, parseInt(file.mode, 8));
+          }
+          dockerLogger.info(`  Wrote editor settings file: ${hostPath} -> ${containerDir}/${file.name}`);
+        }
+
+        // Create a bind mount for this directory
+        binds.push(`${hostDir}:${containerDir}:rw`);
+      }
+
+      dockerLogger.info(
+        `Created ${binds.length} bind mounts for editor settings`
+      );
+      return binds;
+    } catch (error) {
+      dockerLogger.error("Failed to prepare editor settings binds:", error);
+      // Don't fail container creation if settings sync fails
+      return [];
     }
   }
 
@@ -226,6 +316,10 @@ export class DockerVSCodeInstance extends VSCodeInstance {
     // Check if image exists and pull if missing
     await this.ensureImageExists(docker);
 
+    // Prepare editor settings binds before container creation
+    // This ensures VS Code Server has access to user settings on startup
+    const editorSettingsBinds = await this.prepareEditorSettingsBinds();
+
     // Capture current auth token for this instance and mapping
     this.authToken = getAuthToken();
 
@@ -284,7 +378,7 @@ export class DockerVSCodeInstance extends VSCodeInstance {
         "/run": "rw,mode=755",
         "/run/lock": "rw,mode=755",
       },
-      Binds: ["/sys/fs/cgroup:/sys/fs/cgroup:rw"],
+      Binds: ["/sys/fs/cgroup:/sys/fs/cgroup:rw", ...editorSettingsBinds],
     };
 
     const createOptions: Docker.ContainerCreateOptions = {
@@ -725,6 +819,16 @@ export class DockerVSCodeInstance extends VSCodeInstance {
 
     // Clean up git credentials file if we created one
     await cleanupGitCredentials(this.instanceId);
+
+    // Clean up editor settings temp directory
+    if (this.editorSettingsTempDir) {
+      try {
+        await fs.promises.rm(this.editorSettingsTempDir, { recursive: true, force: true });
+        dockerLogger.info(`Cleaned up editor settings temp directory: ${this.editorSettingsTempDir}`);
+      } catch {
+        // Directory might not exist, which is fine
+      }
+    }
 
     // Call base stop to disconnect from worker and remove from registry
     await this.baseStop();
