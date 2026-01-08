@@ -184,16 +184,15 @@ exit 0`;
     mode: "755",
   });
 
-  // Check if user has provided an OAuth token (preferred), Bedrock token, or API key
+  // Check if user has provided an OAuth token (preferred) or API key
+  // Note: AWS Bedrock is NOT used for tasks - it's only used for internal services
+  // like heatmap and preview.new code reviews (see apps/www/lib/services/code-review/)
   const hasOAuthToken =
     ctx.apiKeys?.CLAUDE_CODE_OAUTH_TOKEN &&
     ctx.apiKeys.CLAUDE_CODE_OAUTH_TOKEN.trim().length > 0;
   const hasAnthropicApiKey =
     ctx.apiKeys?.ANTHROPIC_API_KEY &&
     ctx.apiKeys.ANTHROPIC_API_KEY.trim().length > 0;
-  const hasBedrockToken =
-    ctx.apiKeys?.AWS_BEARER_TOKEN_BEDROCK &&
-    ctx.apiKeys.AWS_BEARER_TOKEN_BEDROCK.trim().length > 0;
 
   // If OAuth token is provided, write it to /etc/claude-code/env
   // The wrapper scripts (claude, npx, bunx) source this file before running claude-code
@@ -206,37 +205,21 @@ exit 0`;
       contentBase64: Buffer.from(oauthEnvContent).toString("base64"),
       mode: "600", // Restrictive permissions for the token
     });
-  } else if (hasBedrockToken) {
-    // If Bedrock token is provided (and no OAuth), write Bedrock env vars to /etc/claude-code/env
-    // Claude Code will use these to authenticate with AWS Bedrock
-    const bedrockEnvContent = [
-      `AWS_BEARER_TOKEN_BEDROCK=${ctx.apiKeys?.AWS_BEARER_TOKEN_BEDROCK}`,
-      `CLAUDE_CODE_USE_BEDROCK=1`,
-      `AWS_REGION=${ctx.apiKeys?.AWS_REGION ?? "us-west-1"}`,
-      `ANTHROPIC_MODEL=${ctx.apiKeys?.ANTHROPIC_MODEL ?? "global.anthropic.claude-opus-4-5-20251101-v1:0"}`,
-      `ANTHROPIC_SMALL_FAST_MODEL=${ctx.apiKeys?.ANTHROPIC_SMALL_FAST_MODEL ?? "us.anthropic.claude-haiku-4-5-20251001-v1:0"}`,
-    ].join("\n") + "\n";
-    files.push({
-      destinationPath: "/etc/claude-code/env",
-      contentBase64: Buffer.from(bedrockEnvContent).toString("base64"),
-      mode: "600", // Restrictive permissions for the token
-    });
   }
 
   // Create settings.json with hooks configuration
-  // Priority: OAuth token > Bedrock token > API key via cmux proxy
+  // Priority: OAuth token > API key via cmux proxy
   // When OAuth token is present, we don't use the cmux proxy (user pays directly via their subscription)
-  // When Bedrock token is present, we use AWS Bedrock directly
-  // When only API key is present, we route through cmux proxy for tracking/rate limiting
-  const useDirectAuth = hasOAuthToken || hasBedrockToken;
+  // When no OAuth token, we route through cmux proxy for tracking/rate limiting
+  const useDirectAuth = hasOAuthToken;
   const settingsConfig: Record<string, unknown> = {
     alwaysThinkingEnabled: true,
-    // Configure helper to avoid env-var based prompting (only when not using OAuth or Bedrock)
+    // Configure helper to avoid env-var based prompting (only when not using OAuth)
     ...(useDirectAuth ? {} : { apiKeyHelper: claudeApiKeyHelperPath }),
     // Use the Anthropic API key from cmux settings.json instead of env vars
     // This ensures Claude Code always uses the key from cmux, bypassing any
     // ANTHROPIC_API_KEY environment variables in the repo
-    // Only set this when NOT using OAuth token or Bedrock (they take precedence)
+    // Only set this when NOT using OAuth token (OAuth takes precedence)
     ...(!useDirectAuth && hasAnthropicApiKey
       ? { anthropicApiKey: ctx.apiKeys?.ANTHROPIC_API_KEY }
       : {}),
@@ -266,9 +249,8 @@ exit 0`;
     env: {
       CLAUDE_CODE_ENABLE_TELEMETRY: 0,
       CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: 1,
-      // Only route through cmux proxy when NOT using OAuth token or Bedrock
+      // Only route through cmux proxy when NOT using OAuth token
       // OAuth token users go directly to Anthropic API (they pay via their subscription)
-      // Bedrock users go through AWS Bedrock (configured via /etc/claude-code/env)
       ...(useDirectAuth
         ? {}
         : {
