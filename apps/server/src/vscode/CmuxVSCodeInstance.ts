@@ -115,8 +115,7 @@ export class CmuxVSCodeInstance extends VSCodeInstance {
   }
 
   async stop(): Promise<void> {
-    // Disconnect socket and ask www to stop
-    await this.disconnectFromWorker();
+    this.stopFileWatch();
     if (this.sandboxId) {
       try {
         await postApiSandboxesByIdStop({
