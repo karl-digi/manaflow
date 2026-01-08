@@ -440,6 +440,13 @@ function buildUpload(editor: EditorExport): EditorSettingsUpload | null {
     // Write settings to both IDE provider locations for compatibility
     // The correct one will be used based on which IDE is installed
     const targets = [
+      // cmux-code paths
+      posix.join(IDE_PATHS["cmux-code"].userDir, "settings.json"),
+      posix.join(
+        IDE_PATHS["cmux-code"].profileDir ?? IDE_PATHS["cmux-code"].userDir,
+        "settings.json"
+      ),
+      posix.join(IDE_PATHS["cmux-code"].machineDir, "settings.json"),
       // OpenVSCode paths
       posix.join(IDE_PATHS.openvscode.userDir, "settings.json"),
       posix.join(
@@ -450,13 +457,6 @@ function buildUpload(editor: EditorExport): EditorSettingsUpload | null {
       // Coder paths
       posix.join(IDE_PATHS.coder.userDir, "settings.json"),
       posix.join(IDE_PATHS.coder.machineDir, "settings.json"),
-      // cmux-code paths
-      posix.join(IDE_PATHS["cmux-code"].userDir, "settings.json"),
-      posix.join(
-        IDE_PATHS["cmux-code"].profileDir ?? IDE_PATHS["cmux-code"].userDir,
-        "settings.json"
-      ),
-      posix.join(IDE_PATHS["cmux-code"].machineDir, "settings.json"),
     ];
     for (const destinationPath of targets) {
       authFiles.push({
@@ -468,7 +468,12 @@ function buildUpload(editor: EditorExport): EditorSettingsUpload | null {
   }
 
   if (editor.keybindings) {
-    // Write keybindings to both IDE provider locations
+    // Write keybindings to all IDE provider locations
+    authFiles.push({
+      destinationPath: posix.join(IDE_PATHS["cmux-code"].userDir, "keybindings.json"),
+      contentBase64: encode(editor.keybindings.content),
+      mode: "644",
+    });
     authFiles.push({
       destinationPath: posix.join(IDE_PATHS.openvscode.userDir, "keybindings.json"),
       contentBase64: encode(editor.keybindings.content),
@@ -479,18 +484,18 @@ function buildUpload(editor: EditorExport): EditorSettingsUpload | null {
       contentBase64: encode(editor.keybindings.content),
       mode: "644",
     });
-    authFiles.push({
-      destinationPath: posix.join(IDE_PATHS["cmux-code"].userDir, "keybindings.json"),
-      contentBase64: encode(editor.keybindings.content),
-      mode: "644",
-    });
   }
 
   if (editor.snippets.length > 0) {
     for (const snippet of editor.snippets) {
       const name = path.basename(snippet.path);
       if (!name) continue;
-      // Write snippets to both IDE provider locations
+      // Write snippets to all IDE provider locations
+      authFiles.push({
+        destinationPath: posix.join(IDE_PATHS["cmux-code"].snippetsDir, name),
+        contentBase64: encode(snippet.content),
+        mode: "644",
+      });
       authFiles.push({
         destinationPath: posix.join(IDE_PATHS.openvscode.snippetsDir, name),
         contentBase64: encode(snippet.content),
@@ -498,11 +503,6 @@ function buildUpload(editor: EditorExport): EditorSettingsUpload | null {
       });
       authFiles.push({
         destinationPath: posix.join(IDE_PATHS.coder.snippetsDir, name),
-        contentBase64: encode(snippet.content),
-        mode: "644",
-      });
-      authFiles.push({
-        destinationPath: posix.join(IDE_PATHS["cmux-code"].snippetsDir, name),
         contentBase64: encode(snippet.content),
         mode: "644",
       });
