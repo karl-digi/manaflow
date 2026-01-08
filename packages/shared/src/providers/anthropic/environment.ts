@@ -195,7 +195,7 @@ exit 0`;
     ctx.apiKeys.ANTHROPIC_API_KEY.trim().length > 0;
 
   // If OAuth token is provided, write it to /etc/claude-code/env
-  // The wrapper scripts (claude, npx, bunx) source this file before running claude-code
+  // The wrapper scripts (claude and other launchers) source this file before running claude-code
   // This is necessary because CLAUDE_CODE_OAUTH_TOKEN must be set as an env var
   // BEFORE claude-code starts (it checks OAuth early, before loading settings.json)
   if (hasOAuthToken) {

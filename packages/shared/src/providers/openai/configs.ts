@@ -7,9 +7,8 @@ import { applyCodexApiKeys, getOpenAIEnvironment } from "./environment";
 
 export const CODEX_GPT_5_2_CODEX_XHIGH_REASONING_CONFIG: AgentConfig = {
   name: "codex/gpt-5.2-codex-xhigh",
-  command: "bunx",
+  command: "codex",
   args: [
-    "@openai/codex@latest",
     "--model",
     "gpt-5.2-codex",
     "--sandbox",
@@ -29,9 +28,8 @@ export const CODEX_GPT_5_2_CODEX_XHIGH_REASONING_CONFIG: AgentConfig = {
 
 export const CODEX_GPT_5_2_CODEX_HIGH_REASONING_CONFIG: AgentConfig = {
   name: "codex/gpt-5.2-codex-high",
-  command: "bunx",
+  command: "codex",
   args: [
-    "@openai/codex@latest",
     "--model",
     "gpt-5.2-codex",
     "--sandbox",
@@ -51,9 +49,8 @@ export const CODEX_GPT_5_2_CODEX_HIGH_REASONING_CONFIG: AgentConfig = {
 
 export const CODEX_GPT_5_2_CODEX_MEDIUM_REASONING_CONFIG: AgentConfig = {
   name: "codex/gpt-5.2-codex-medium",
-  command: "bunx",
+  command: "codex",
   args: [
-    "@openai/codex@latest",
     "--model",
     "gpt-5.2-codex",
     "--sandbox",
@@ -73,9 +70,8 @@ export const CODEX_GPT_5_2_CODEX_MEDIUM_REASONING_CONFIG: AgentConfig = {
 
 export const CODEX_GPT_5_2_CODEX_LOW_REASONING_CONFIG: AgentConfig = {
   name: "codex/gpt-5.2-codex-low",
-  command: "bunx",
+  command: "codex",
   args: [
-    "@openai/codex@latest",
     "--model",
     "gpt-5.2-codex",
     "--sandbox",
@@ -95,9 +91,8 @@ export const CODEX_GPT_5_2_CODEX_LOW_REASONING_CONFIG: AgentConfig = {
 
 export const CODEX_GPT_5_2_CODEX_CONFIG: AgentConfig = {
   name: "codex/gpt-5.2-codex",
-  command: "bunx",
+  command: "codex",
   args: [
-    "@openai/codex@latest",
     "--model",
     "gpt-5.2-codex",
     "--sandbox",
@@ -115,9 +110,8 @@ export const CODEX_GPT_5_2_CODEX_CONFIG: AgentConfig = {
 
 export const CODEX_GPT_5_1_CODEX_MAX_XHIGH_REASONING_CONFIG: AgentConfig = {
   name: "codex/gpt-5.1-codex-max-xhigh",
-  command: "bunx",
+  command: "codex",
   args: [
-    "@openai/codex@latest",
     "--model",
     "gpt-5.1-codex-max",
     "--sandbox",
@@ -137,9 +131,8 @@ export const CODEX_GPT_5_1_CODEX_MAX_XHIGH_REASONING_CONFIG: AgentConfig = {
 
 export const CODEX_GPT_5_1_CODEX_MAX_HIGH_REASONING_CONFIG: AgentConfig = {
   name: "codex/gpt-5.1-codex-max-high",
-  command: "bunx",
+  command: "codex",
   args: [
-    "@openai/codex@latest",
     "--model",
     "gpt-5.1-codex-max",
     "--sandbox",
@@ -159,9 +152,8 @@ export const CODEX_GPT_5_1_CODEX_MAX_HIGH_REASONING_CONFIG: AgentConfig = {
 
 export const CODEX_GPT_5_1_CODEX_MAX_MEDIUM_REASONING_CONFIG: AgentConfig = {
   name: "codex/gpt-5.1-codex-max-medium",
-  command: "bunx",
+  command: "codex",
   args: [
-    "@openai/codex@latest",
     "--model",
     "gpt-5.1-codex-max",
     "--sandbox",
@@ -181,9 +173,8 @@ export const CODEX_GPT_5_1_CODEX_MAX_MEDIUM_REASONING_CONFIG: AgentConfig = {
 
 export const CODEX_GPT_5_1_CODEX_MAX_LOW_REASONING_CONFIG: AgentConfig = {
   name: "codex/gpt-5.1-codex-max-low",
-  command: "bunx",
+  command: "codex",
   args: [
-    "@openai/codex@latest",
     "--model",
     "gpt-5.1-codex-max",
     "--sandbox",
@@ -203,9 +194,8 @@ export const CODEX_GPT_5_1_CODEX_MAX_LOW_REASONING_CONFIG: AgentConfig = {
 
 export const CODEX_GPT_5_1_CODEX_MAX_CONFIG: AgentConfig = {
   name: "codex/gpt-5.1-codex-max",
-  command: "bunx",
+  command: "codex",
   args: [
-    "@openai/codex@latest",
     "--model",
     "gpt-5.1-codex-max",
     "--sandbox",
@@ -223,9 +213,8 @@ export const CODEX_GPT_5_1_CODEX_MAX_CONFIG: AgentConfig = {
 
 export const CODEX_GPT_5_1_CONFIG: AgentConfig = {
   name: "codex/gpt-5.1",
-  command: "bunx",
+  command: "codex",
   args: [
-    "@openai/codex@latest",
     "--model",
     "gpt-5.1",
     "--sandbox",
@@ -243,9 +232,8 @@ export const CODEX_GPT_5_1_CONFIG: AgentConfig = {
 
 export const CODEX_GPT_5_1_CODEX_CONFIG: AgentConfig = {
   name: "codex/gpt-5.1-codex",
-  command: "bunx",
+  command: "codex",
   args: [
-    "@openai/codex@latest",
     "--model",
     "gpt-5.1-codex",
     "--sandbox",
@@ -263,9 +251,8 @@ export const CODEX_GPT_5_1_CODEX_CONFIG: AgentConfig = {
 
 export const CODEX_GPT_5_1_CODEX_MINI_CONFIG: AgentConfig = {
   name: "codex/gpt-5.1-codex-mini",
-  command: "bunx",
+  command: "codex",
   args: [
-    "@openai/codex@latest",
     "--model",
     "gpt-5.1-codex-mini",
     "--sandbox",
@@ -283,9 +270,8 @@ export const CODEX_GPT_5_1_CODEX_MINI_CONFIG: AgentConfig = {
 
 export const CODEX_GPT_5_1_CODEX_HIGH_REASONING_CONFIG: AgentConfig = {
   name: "codex/gpt-5.1-codex-high",
-  command: "bunx",
+  command: "codex",
   args: [
-    "@openai/codex@latest",
     "--model",
     "gpt-5.1-codex",
     "--sandbox",
@@ -305,9 +291,8 @@ export const CODEX_GPT_5_1_CODEX_HIGH_REASONING_CONFIG: AgentConfig = {
 
 export const CODEX_GPT_5_CONFIG: AgentConfig = {
   name: "codex/gpt-5",
-  command: "bunx",
+  command: "codex",
   args: [
-    "@openai/codex@latest",
     "--model",
     "gpt-5",
     "--sandbox",
@@ -325,9 +310,8 @@ export const CODEX_GPT_5_CONFIG: AgentConfig = {
 
 export const CODEX_GPT_5_HIGH_REASONING_CONFIG: AgentConfig = {
   name: "codex/gpt-5-high",
-  command: "bunx",
+  command: "codex",
   args: [
-    "@openai/codex@latest",
     "--model",
     "gpt-5",
     "--sandbox",
@@ -347,9 +331,8 @@ export const CODEX_GPT_5_HIGH_REASONING_CONFIG: AgentConfig = {
 
 export const CODEX_GPT_5_MEDIUM_REASONING_CONFIG: AgentConfig = {
   name: "codex/gpt-5-medium",
-  command: "bunx",
+  command: "codex",
   args: [
-    "@openai/codex@latest",
     "--model",
     "gpt-5",
     "--sandbox",
@@ -369,9 +352,8 @@ export const CODEX_GPT_5_MEDIUM_REASONING_CONFIG: AgentConfig = {
 
 export const CODEX_GPT_5_LOW_REASONING_CONFIG: AgentConfig = {
   name: "codex/gpt-5-low",
-  command: "bunx",
+  command: "codex",
   args: [
-    "@openai/codex@latest",
     "--model",
     "gpt-5",
     "--sandbox",
@@ -391,9 +373,8 @@ export const CODEX_GPT_5_LOW_REASONING_CONFIG: AgentConfig = {
 
 export const CODEX_GPT_5_MINIMAL_REASONING_CONFIG: AgentConfig = {
   name: "codex/gpt-5-minimal",
-  command: "bunx",
+  command: "codex",
   args: [
-    "@openai/codex@latest",
     "--model",
     "gpt-5",
     "--sandbox",
@@ -413,9 +394,8 @@ export const CODEX_GPT_5_MINIMAL_REASONING_CONFIG: AgentConfig = {
 
 export const CODEX_O3_CONFIG: AgentConfig = {
   name: "codex/o3",
-  command: "bunx",
+  command: "codex",
   args: [
-    "@openai/codex@latest",
     "--model",
     "o3",
     "--sandbox",
@@ -433,9 +413,8 @@ export const CODEX_O3_CONFIG: AgentConfig = {
 
 export const CODEX_O4_MINI_CONFIG: AgentConfig = {
   name: "codex/o4-mini",
-  command: "bunx",
+  command: "codex",
   args: [
-    "@openai/codex@latest",
     "--model",
     "o4-mini",
     "--sandbox",
@@ -453,9 +432,8 @@ export const CODEX_O4_MINI_CONFIG: AgentConfig = {
 
 export const CODEX_GPT_4_1_CONFIG: AgentConfig = {
   name: "codex/gpt-4.1",
-  command: "bunx",
+  command: "codex",
   args: [
-    "@openai/codex@latest",
     "--model",
     "gpt-4.1",
     "--sandbox",
@@ -473,9 +451,8 @@ export const CODEX_GPT_4_1_CONFIG: AgentConfig = {
 
 export const CODEX_GPT_5_CODEX_MINI_CONFIG: AgentConfig = {
   name: "codex/gpt-5-codex-mini",
-  command: "bunx",
+  command: "codex",
   args: [
-    "@openai/codex@latest",
     "--model",
     "gpt-5-codex-mini",
     "--sandbox",
@@ -493,9 +470,8 @@ export const CODEX_GPT_5_CODEX_MINI_CONFIG: AgentConfig = {
 
 export const CODEX_GPT_5_CODEX_LOW_REASONING_CONFIG: AgentConfig = {
   name: "codex/gpt-5-codex-low",
-  command: "bunx",
+  command: "codex",
   args: [
-    "@openai/codex@latest",
     "--model",
     "gpt-5-codex",
     "--sandbox",
@@ -515,9 +491,8 @@ export const CODEX_GPT_5_CODEX_LOW_REASONING_CONFIG: AgentConfig = {
 
 export const CODEX_GPT_5_CODEX_MEDIUM_REASONING_CONFIG: AgentConfig = {
   name: "codex/gpt-5-codex-medium",
-  command: "bunx",
+  command: "codex",
   args: [
-    "@openai/codex@latest",
     "--model",
     "gpt-5-codex",
     "--sandbox",
@@ -537,9 +512,8 @@ export const CODEX_GPT_5_CODEX_MEDIUM_REASONING_CONFIG: AgentConfig = {
 
 export const CODEX_GPT_5_CODEX_HIGH_REASONING_CONFIG: AgentConfig = {
   name: "codex/gpt-5-codex-high",
-  command: "bunx",
+  command: "codex",
   args: [
-    "@openai/codex@latest",
     "--model",
     "gpt-5-codex",
     "--sandbox",
@@ -559,9 +533,8 @@ export const CODEX_GPT_5_CODEX_HIGH_REASONING_CONFIG: AgentConfig = {
 
 export const CODEX_GPT_5_2_CONFIG: AgentConfig = {
   name: "codex/gpt-5.2",
-  command: "bunx",
+  command: "codex",
   args: [
-    "@openai/codex@latest",
     "--model",
     "gpt-5.2",
     "--sandbox",
@@ -579,9 +552,8 @@ export const CODEX_GPT_5_2_CONFIG: AgentConfig = {
 
 export const CODEX_GPT_5_2_LOW_REASONING_CONFIG: AgentConfig = {
   name: "codex/gpt-5.2-low",
-  command: "bunx",
+  command: "codex",
   args: [
-    "@openai/codex@latest",
     "--model",
     "gpt-5.2",
     "--sandbox",
@@ -601,9 +573,8 @@ export const CODEX_GPT_5_2_LOW_REASONING_CONFIG: AgentConfig = {
 
 export const CODEX_GPT_5_2_MEDIUM_REASONING_CONFIG: AgentConfig = {
   name: "codex/gpt-5.2-medium",
-  command: "bunx",
+  command: "codex",
   args: [
-    "@openai/codex@latest",
     "--model",
     "gpt-5.2",
     "--sandbox",
@@ -623,9 +594,8 @@ export const CODEX_GPT_5_2_MEDIUM_REASONING_CONFIG: AgentConfig = {
 
 export const CODEX_GPT_5_2_HIGH_REASONING_CONFIG: AgentConfig = {
   name: "codex/gpt-5.2-high",
-  command: "bunx",
+  command: "codex",
   args: [
-    "@openai/codex@latest",
     "--model",
     "gpt-5.2",
     "--sandbox",
