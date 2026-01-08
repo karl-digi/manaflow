@@ -59,6 +59,17 @@ export const env = createEnv({
     // Convex HTTP actions URL (for self-hosted setups where HTTP actions are on a different port)
     // Falls back to NEXT_PUBLIC_CONVEX_URL with .convex.cloud -> .convex.site transformation
     CONVEX_SITE_URL: z.string().min(1).optional(),
+    // AWS Bedrock for Claude (optional override for Anthropic)
+    AWS_BEARER_TOKEN_BEDROCK: z.string().min(1).optional(),
+    AWS_REGION: z.string().min(1).default("us-west-1"),
+    ANTHROPIC_MODEL: z
+      .string()
+      .min(1)
+      .default("global.anthropic.claude-opus-4-5-20251101-v1:0"),
+    ANTHROPIC_SMALL_FAST_MODEL: z
+      .string()
+      .min(1)
+      .default("us.anthropic.claude-haiku-4-5-20251001-v1:0"),
   },
   client: {
     NEXT_PUBLIC_STACK_PROJECT_ID: z.string().min(1),

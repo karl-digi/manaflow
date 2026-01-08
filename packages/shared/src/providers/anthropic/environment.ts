@@ -185,6 +185,8 @@ exit 0`;
   });
 
   // Check if user has provided an OAuth token (preferred) or API key
+  // Note: AWS Bedrock is NOT used for tasks - it's only used for internal services
+  // like heatmap and preview.new code reviews (see apps/www/lib/services/code-review/)
   const hasOAuthToken =
     ctx.apiKeys?.CLAUDE_CODE_OAUTH_TOKEN &&
     ctx.apiKeys.CLAUDE_CODE_OAUTH_TOKEN.trim().length > 0;
@@ -206,17 +208,19 @@ exit 0`;
   }
 
   // Create settings.json with hooks configuration
+  // Priority: OAuth token > API key via cmux proxy
   // When OAuth token is present, we don't use the cmux proxy (user pays directly via their subscription)
-  // When only API key is present, we route through cmux proxy for tracking/rate limiting
+  // When no OAuth token, we route through cmux proxy for tracking/rate limiting
+  const useDirectAuth = hasOAuthToken;
   const settingsConfig: Record<string, unknown> = {
     alwaysThinkingEnabled: true,
     // Configure helper to avoid env-var based prompting (only when not using OAuth)
-    ...(hasOAuthToken ? {} : { apiKeyHelper: claudeApiKeyHelperPath }),
+    ...(useDirectAuth ? {} : { apiKeyHelper: claudeApiKeyHelperPath }),
     // Use the Anthropic API key from cmux settings.json instead of env vars
     // This ensures Claude Code always uses the key from cmux, bypassing any
     // ANTHROPIC_API_KEY environment variables in the repo
-    // Only set this when NOT using OAuth token (OAuth token takes precedence)
-    ...(!hasOAuthToken && hasAnthropicApiKey
+    // Only set this when NOT using OAuth token (OAuth takes precedence)
+    ...(!useDirectAuth && hasAnthropicApiKey
       ? { anthropicApiKey: ctx.apiKeys?.ANTHROPIC_API_KEY }
       : {}),
     hooks: {
@@ -248,7 +252,7 @@ exit 0`;
       CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: 1,
       // Only route through cmux proxy when NOT using OAuth token
       // OAuth token users go directly to Anthropic API (they pay via their subscription)
-      ...(hasOAuthToken
+      ...(useDirectAuth
         ? {}
         : {
             ANTHROPIC_BASE_URL: "https://www.cmux.dev/api/anthropic",
