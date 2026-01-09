@@ -20,7 +20,7 @@ import {
 import { action } from "../_generated/server";
 
 const OPENAI_CROWN_MODEL = "gpt-5-mini";
-const ANTHROPIC_CROWN_MODEL = "claude-3-5-sonnet-20241022";
+const ANTHROPIC_CROWN_MODEL = "claude-sonnet-4-5-20250929";
 const GEMINI_CROWN_MODEL = "gemini-3-flash-preview";
 
 const CrownEvaluationCandidateValidator = v.object({

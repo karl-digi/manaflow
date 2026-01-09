@@ -32,7 +32,7 @@ const CONFIG = {
     apiKeyEnv: "ANTHROPIC_API_KEY",
     baseUrlEnv: "AIGATEWAY_ANTHROPIC_BASE_URL",
     defaultBaseUrl: CLOUDFLARE_ANTHROPIC_BASE_URL,
-    models: ["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"],
+    models: ["claude-sonnet-4-5-20250929", "claude-sonnet-4-5"],
   },
   gemini: {
     apiKeyEnv: "GEMINI_API_KEY",
