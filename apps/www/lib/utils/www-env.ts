@@ -54,7 +54,8 @@ export const env = createEnv({
       .transform((value) => value === "1" || value?.toLowerCase() === "true"),
     OPENAI_API_KEY: z.string().min(1).optional(),
     GEMINI_API_KEY: z.string().min(1).optional(),
-    ANTHROPIC_API_KEY: z.string().min(1),
+    // TODO: Make required again after GEMINI_API_KEY migration is complete
+    ANTHROPIC_API_KEY: z.string().min(1).optional(),
     CMUX_TASK_RUN_JWT_SECRET: z.string().min(1),
     // Convex HTTP actions URL (for self-hosted setups where HTTP actions are on a different port)
     // Falls back to NEXT_PUBLIC_CONVEX_URL with .convex.cloud -> .convex.site transformation

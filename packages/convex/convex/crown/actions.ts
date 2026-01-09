@@ -1,6 +1,7 @@
 "use node";
 
 import { createAnthropic } from "@ai-sdk/anthropic";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import { generateObject, type LanguageModel } from "ai";
 import { ConvexError, v } from "convex/values";
@@ -11,12 +12,19 @@ import {
   type CrownEvaluationResponse,
   type CrownSummarizationResponse,
 } from "@cmux/shared/convex-safe";
-import { CLOUDFLARE_OPENAI_BASE_URL } from "@cmux/shared";
-import { env } from "../../_shared/convex-env";
+import {
+  CLOUDFLARE_OPENAI_BASE_URL,
+  CLOUDFLARE_ANTHROPIC_BASE_URL,
+  CLOUDFLARE_GEMINI_BASE_URL,
+} from "@cmux/shared";
 import { action } from "../_generated/server";
 
 const OPENAI_CROWN_MODEL = "gpt-5-mini";
-const ANTHROPIC_CROWN_MODEL = "claude-3-5-sonnet-20241022";
+const ANTHROPIC_CROWN_MODEL = "claude-sonnet-4-5-20250929";
+const GEMINI_CROWN_MODEL = "gemini-3-flash-preview";
+
+const CROWN_PROVIDERS = ["openai", "anthropic", "gemini"] as const;
+type CrownProvider = (typeof CROWN_PROVIDERS)[number];
 
 const CrownEvaluationCandidateValidator = v.object({
   runId: v.optional(v.string()),
@@ -28,29 +36,43 @@ const CrownEvaluationCandidateValidator = v.object({
 });
 
 function resolveCrownModel(): {
-  provider: "openai" | "anthropic";
+  provider: CrownProvider;
   model: LanguageModel;
 } {
-  const openaiKey = env.OPENAI_API_KEY;
+  // Note: AIGATEWAY_* accessed via process.env to avoid Convex static analysis
+  const openaiKey = process.env.OPENAI_API_KEY;
   if (openaiKey) {
     const openai = createOpenAI({
       apiKey: openaiKey,
-      baseURL: CLOUDFLARE_OPENAI_BASE_URL,
+      baseURL: process.env.AIGATEWAY_OPENAI_BASE_URL || CLOUDFLARE_OPENAI_BASE_URL,
     });
     return { provider: "openai", model: openai(OPENAI_CROWN_MODEL) };
   }
 
-  const anthropicKey = env.ANTHROPIC_API_KEY;
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
   if (anthropicKey) {
-    const anthropic = createAnthropic({ apiKey: anthropicKey });
+    const anthropic = createAnthropic({
+      apiKey: anthropicKey,
+      baseURL:
+        process.env.AIGATEWAY_ANTHROPIC_BASE_URL || CLOUDFLARE_ANTHROPIC_BASE_URL,
+    });
     return {
       provider: "anthropic",
       model: anthropic(ANTHROPIC_CROWN_MODEL),
     };
   }
 
+  const geminiKey = process.env.GEMINI_API_KEY;
+  if (geminiKey) {
+    const google = createGoogleGenerativeAI({
+      apiKey: geminiKey,
+      baseURL: process.env.AIGATEWAY_GEMINI_BASE_URL || CLOUDFLARE_GEMINI_BASE_URL,
+    });
+    return { provider: "gemini", model: google(GEMINI_CROWN_MODEL) };
+  }
+
   throw new ConvexError(
-    "Crown evaluation is not configured (missing OpenAI or Anthropic API key)"
+    "Crown evaluation is not configured (missing OpenAI, Anthropic, or Gemini API key)"
   );
 }
 
@@ -114,9 +136,10 @@ IMPORTANT: Respond ONLY with the JSON object, no other text.`;
       maxRetries: 2,
     });
 
+    console.info(`[convex.crown] Evaluation completed via ${provider}`);
     return CrownEvaluationResponseSchema.parse(object);
   } catch (error) {
-    console.error("[convex.crown] Evaluation error", error);
+    console.error(`[convex.crown] ${provider} evaluation error`, error);
     throw new ConvexError("Evaluation failed");
   }
 }
@@ -165,9 +188,10 @@ OUTPUT FORMAT (Markdown)
       maxRetries: 2,
     });
 
+    console.info(`[convex.crown] Summarization completed via ${provider}`);
     return CrownSummarizationResponseSchema.parse(object);
   } catch (error) {
-    console.error("[convex.crown] Summarization error", error);
+    console.error(`[convex.crown] ${provider} summarization error`, error);
     throw new ConvexError("Summarization failed");
   }
 }

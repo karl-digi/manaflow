@@ -16,8 +16,10 @@ export const env = createEnv({
     NEXT_PUBLIC_CMUX_PROTOCOL: z.string().min(1).optional(),
     BASE_APP_URL: z.string().min(1),
     CMUX_TASK_RUN_JWT_SECRET: z.string().min(1),
-    OPENAI_API_KEY: z.string().min(1).optional(),
-    ANTHROPIC_API_KEY: z.string().min(1).optional(),
+    // Note: AI API keys (OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY) and
+    // AIGATEWAY_*_BASE_URL variables are accessed via process.env directly in
+    // crown/actions.ts to allow proper deletion via `npx convex env remove`
+    // without validation errors (same pattern as PVE_* variables)
     MORPH_API_KEY: z.string().min(1).optional(),
     // Note: PVE_* variables are accessed via process.env directly in
     // sandboxInstanceMaintenance.ts to avoid Convex static analysis

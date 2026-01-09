@@ -76,7 +76,7 @@ export async function POST(request: NextRequest) {
           })()
         : {
             "Content-Type": "application/json",
-            "x-api-key": env.ANTHROPIC_API_KEY,
+            "x-api-key": env.ANTHROPIC_API_KEY ?? "",
             "anthropic-version": "2023-06-01",
           };
 
