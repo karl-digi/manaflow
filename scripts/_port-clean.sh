@@ -20,7 +20,7 @@ clean_ports() {
     ports=("$@")
   else
     local default_convex=${CONVEX_PORT:-9777}
-    ports=(5173 "$default_convex" 9777 9778)
+    ports=(5173 9776 "$default_convex" 9777 9778 9779)
   fi
 
   echo -e "${BLUE}Checking ports and cleaning up processes...${NC}"
