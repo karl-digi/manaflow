@@ -32,72 +32,52 @@ const CrownEvaluationCandidateValidator = v.object({
   index: v.optional(v.number()),
 });
 
-type ApiKeys = Record<string, string | undefined>;
-
-function resolveCrownModel(
-  apiKeys: ApiKeys
-): { model: LanguageModel; providerName: string } | null {
+function resolveCrownModel(): {
+  providerName: string;
+  model: LanguageModel;
+} {
   // Note: AIGATEWAY_* accessed via process.env to avoid Convex static analysis
-  if (apiKeys.OPENAI_API_KEY) {
+  const openaiKey = process.env.OPENAI_API_KEY;
+  if (openaiKey) {
     const openai = createOpenAI({
-      apiKey: apiKeys.OPENAI_API_KEY,
+      apiKey: openaiKey,
       baseURL: process.env.AIGATEWAY_OPENAI_BASE_URL || CLOUDFLARE_OPENAI_BASE_URL,
     });
     return { model: openai(OPENAI_CROWN_MODEL), providerName: "OpenAI" };
   }
 
-  if (apiKeys.ANTHROPIC_API_KEY) {
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  if (anthropicKey) {
     const anthropic = createAnthropic({
-      apiKey: apiKeys.ANTHROPIC_API_KEY,
+      apiKey: anthropicKey,
       baseURL:
         process.env.AIGATEWAY_ANTHROPIC_BASE_URL || CLOUDFLARE_ANTHROPIC_BASE_URL,
     });
-    return { model: anthropic(ANTHROPIC_CROWN_MODEL), providerName: "Anthropic" };
+    return {
+      providerName: "Anthropic",
+      model: anthropic(ANTHROPIC_CROWN_MODEL),
+    };
   }
 
-  if (apiKeys.GEMINI_API_KEY) {
+  const geminiKey = process.env.GEMINI_API_KEY;
+  if (geminiKey) {
     const google = createGoogleGenerativeAI({
-      apiKey: apiKeys.GEMINI_API_KEY,
+      apiKey: geminiKey,
       baseURL: process.env.AIGATEWAY_GEMINI_BASE_URL || CLOUDFLARE_GEMINI_BASE_URL,
     });
     return { model: google(GEMINI_CROWN_MODEL), providerName: "Gemini" };
   }
 
-  return null;
-}
-
-function getApiKeysFromEnv(): ApiKeys {
-  // Filter out placeholder keys
-  // Note: Uses process.env directly (not createEnv schema) to allow proper
-  // deletion via `npx convex env remove` without validation errors
-  const isValidKey = (key: string | undefined): string | undefined => {
-    if (!key) return undefined;
-    if (key.includes("placeholder")) return undefined;
-    if (key.startsWith("sk_place")) return undefined;
-    return key;
-  };
-
-  return {
-    OPENAI_API_KEY: isValidKey(process.env.OPENAI_API_KEY),
-    ANTHROPIC_API_KEY: isValidKey(process.env.ANTHROPIC_API_KEY),
-    GEMINI_API_KEY: isValidKey(process.env.GEMINI_API_KEY),
-  };
+  throw new ConvexError(
+    "Crown evaluation is not configured (missing OpenAI, Anthropic, or Gemini API key)"
+  );
 }
 
 export async function performCrownEvaluation(
   prompt: string,
   candidates: CrownEvaluationCandidate[]
 ): Promise<CrownEvaluationResponse> {
-  const apiKeys = getApiKeysFromEnv();
-  const config = resolveCrownModel(apiKeys);
-
-  if (!config) {
-    throw new ConvexError(
-      "Crown evaluation is not configured (missing OpenAI, Anthropic, or Gemini API key)"
-    );
-  }
-
-  const { model, providerName } = config;
+  const { model, providerName } = resolveCrownModel();
 
   const normalizedCandidates = candidates.map((candidate, idx) => {
     const resolvedIndex = candidate.index ?? idx;
@@ -165,16 +145,7 @@ export async function performCrownSummarization(
   prompt: string,
   gitDiff: string
 ): Promise<CrownSummarizationResponse> {
-  const apiKeys = getApiKeysFromEnv();
-  const config = resolveCrownModel(apiKeys);
-
-  if (!config) {
-    throw new ConvexError(
-      "Crown summarization is not configured (missing OpenAI, Anthropic, or Gemini API key)"
-    );
-  }
-
-  const { model, providerName } = config;
+  const { model, providerName } = resolveCrownModel();
 
   const summarizationPrompt = `You are an expert reviewer summarizing a pull request.
 
