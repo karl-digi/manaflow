@@ -5,6 +5,7 @@ COMPOSE_FILE := docker-compose.convex.yml
 PROJECT_NAME := cmux-convex
 
 .PHONY: convex-up convex-down convex-restart convex-clean convex-init convex-init-prod convex-clear-prod convex-fresh dev dev-electron sync-upstream-tags
+.PHONY: clone-proxy-linux-amd64 clone-proxy-linux-arm64
 
 convex-up:
 	cd $(DEVCONTAINER_DIR) && COMPOSE_PROJECT_NAME=$(PROJECT_NAME) docker compose -f $(COMPOSE_FILE) up -d
@@ -53,3 +54,11 @@ dev-electron:
 
 sync-upstream-tags:
 	./scripts/sync-upstream-tags.sh
+
+clone-proxy-linux-amd64:
+	cd scripts/pve/clone-proxy && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/pve-clone-proxy .
+	@echo "Built linux/amd64 proxy to /tmp/pve-clone-proxy"
+
+clone-proxy-linux-arm64:
+	cd scripts/pve/clone-proxy && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o /tmp/pve-clone-proxy .
+	@echo "Built linux/arm64 proxy to /tmp/pve-clone-proxy"

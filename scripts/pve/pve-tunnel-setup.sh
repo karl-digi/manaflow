@@ -43,7 +43,9 @@ CADDY_PORT="${CADDY_PORT:-8080}"
 CLOUDFLARED_CONFIG_DIR="${CLOUDFLARED_CONFIG_DIR:-/etc/cloudflared}"
 CADDY_CONFIG_DIR="${CADDY_CONFIG_DIR:-/etc/caddy}"
 PVE_API_HOSTNAME="${PVE_API_HOSTNAME:-}"
-PVE_API_ORIGIN="${PVE_API_ORIGIN:-https://127.0.0.1:8006}"
+# Default PVE API origin goes through the local clone proxy (plain HTTP).
+# Override to https://127.0.0.1:8006 if you want to bypass the proxy.
+PVE_API_ORIGIN="${PVE_API_ORIGIN:-http://127.0.0.1:8081}"
 
 # Service ports for cmux sandboxes
 VSCODE_PORT=39378
@@ -365,8 +367,8 @@ credentials-file: ${CLOUDFLARED_CONFIG_DIR}/${tunnel_id}.json
 
 ingress:
 $(if [[ -n "$PVE_API_HOSTNAME" ]]; then cat << PVE_INGRESS
-  # Optional PVE API hostname
-  - hostname: "${PVE_API_HOSTNAME}"
+    # Optional PVE API hostname (defaults to clone proxy at ${PVE_API_ORIGIN})
+    - hostname: "${PVE_API_HOSTNAME}"
     service: ${PVE_API_ORIGIN}
     originRequest:
       noTLSVerify: true

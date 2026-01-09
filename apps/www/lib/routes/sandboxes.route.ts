@@ -21,7 +21,6 @@ import {
   wrapMorphInstance,
   wrapPveLxcInstance,
 } from "@/lib/utils/sandbox-instance";
-import { sandboxCreationRateLimit } from "@/lib/middleware/rate-limit";
 import { loadEnvironmentEnvVars } from "./sandboxes/environment";
 import {
   configureGithubAccess,
@@ -247,13 +246,6 @@ async function verifyInstanceOwnership(
 }
 
 export const sandboxesRouter = new OpenAPIHono();
-
-// Apply rate limiting to sandbox creation endpoint
-// Limits to 10 sandboxes per hour per authenticated user
-sandboxesRouter.use("/sandboxes/start", sandboxCreationRateLimit({
-  limit: 10,
-  windowMs: 60 * 60 * 1000, // 1 hour
-}));
 
 const StartSandboxBody = z
   .object({

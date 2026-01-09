@@ -1203,12 +1203,12 @@ export class PveLxcClient {
     /**
      * Start a new container from a template using linked-clone (fast, copy-on-write).
      * Includes rollback logic: if clone succeeds but start fails, the container is deleted.
+     * Retries with a new VMID on "already exists" collision (race condition handling).
      */
     start: async (options: StartContainerOptions): Promise<PveLxcInstance> => {
       const resolvedTemplateVmid =
         options.templateVmid ??
         (await this.parseSnapshotId(options.snapshotId)).templateVmid;
-      const newVmid = await this.findNextVmid();
       const instanceId = this.normalizeHostId(
         options.instanceId ?? this.generateInstanceId()
       );
@@ -1218,104 +1218,131 @@ export class PveLxcClient {
       const domainSuffix = await this.getDomainSuffix();
       const fqdn = this.getFqdnSync(hostname, domainSuffix);
 
-      console.log(
-        `[PveLxcClient] Linked-cloning from template ${resolvedTemplateVmid} to ${newVmid}`
-      );
-
-      // Linked-clone from template (fast, copy-on-write)
-      await this.linkedCloneFromTemplate(resolvedTemplateVmid, newVmid, hostname);
-
-      // Start the container with rollback on failure
-      try {
-        await this.startContainer(newVmid);
-      } catch (startError) {
-        // Clone succeeded but start failed - rollback by deleting the container
-        console.error(
-          `[PveLxcClient] Failed to start container ${newVmid}, rolling back clone:`,
-          startError instanceof Error ? startError.message : startError
-        );
-        try {
-          await this.deleteContainer(newVmid);
-          console.log(`[PveLxcClient] Rollback complete: container ${newVmid} deleted`);
-        } catch (deleteError) {
-          console.error(
-            `[PveLxcClient] Failed to rollback (delete) container ${newVmid}:`,
-            deleteError instanceof Error ? deleteError.message : deleteError
-          );
-        }
-        throw startError;
-      }
-
-      // Wait for container to be fully running
-      await new Promise((resolve) => setTimeout(resolve, 3000));
-
       // Note: Metadata (teamId, userId, etc.) is tracked in Convex sandboxInstanceActivity
       // table via sandboxes.route.ts calling recordCreate mutation
       const metadata = options.metadata || {};
 
-      // Initialize services with standard cmux ports
-      // URL resolution order: public URL (Cloudflare Tunnel) > FQDN > container IP
-      const services: HttpService[] = [];
-      const vscodeUrl = await this.buildServiceUrl(
-        39378,
-        newVmid,
-        hostname,
-        domainSuffix,
-        hostname
-      );
-      const workerUrl = await this.buildServiceUrl(
-        39377,
-        newVmid,
-        hostname,
-        domainSuffix,
-        hostname
-      );
-      const vncUrl = await this.buildServiceUrl(
-        39380,
-        newVmid,
-        hostname,
-        domainSuffix,
-        hostname
-      );
-      const xtermUrl = await this.buildServiceUrl(
-        39383,
-        newVmid,
-        hostname,
-        domainSuffix,
-        hostname
-      );
+      // Retry clone on VMID collision (race condition when multiple concurrent requests
+      // query findNextVmid at the same time before any clone completes)
+      const maxRetries = 5;
+      let lastError: Error | null = null;
 
-      if (vscodeUrl && workerUrl && vncUrl && xtermUrl) {
-        services.push(
-          { name: "vscode", port: 39378, url: vscodeUrl },
-          { name: "worker", port: 39377, url: workerUrl },
-          { name: "vnc", port: 39380, url: vncUrl },
-          { name: "xterm", port: 39383, url: xtermUrl }
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        const newVmid = await this.findNextVmid();
+
+        console.log(
+          `[PveLxcClient] Linked-cloning from template ${resolvedTemplateVmid} to ${newVmid} (attempt ${attempt}/${maxRetries})`
         );
-      } else {
-        throw new Error(
-          `Cannot build service URLs for container ${newVmid}: no public domain, DNS search domain, or container IP available`
+
+        try {
+          // Linked-clone from template (fast, copy-on-write)
+          await this.linkedCloneFromTemplate(resolvedTemplateVmid, newVmid, hostname);
+        } catch (cloneError) {
+          const errorMsg = cloneError instanceof Error ? cloneError.message : String(cloneError);
+          // Check for VMID collision error - retry with a new VMID
+          if (errorMsg.includes("already exists")) {
+            console.warn(
+              `[PveLxcClient] VMID ${newVmid} collision detected, retrying with new VMID (attempt ${attempt}/${maxRetries})`
+            );
+            lastError = cloneError instanceof Error ? cloneError : new Error(errorMsg);
+            // Small delay before retry to let other operations complete
+            await new Promise((resolve) => setTimeout(resolve, 100 * attempt));
+            continue;
+          }
+          throw cloneError;
+        }
+
+        // Clone succeeded - start the container with rollback on failure
+        try {
+          await this.startContainer(newVmid);
+        } catch (startError) {
+          // Clone succeeded but start failed - rollback by deleting the container
+          console.error(
+            `[PveLxcClient] Failed to start container ${newVmid}, rolling back clone:`,
+            startError instanceof Error ? startError.message : startError
+          );
+          try {
+            await this.deleteContainer(newVmid);
+            console.log(`[PveLxcClient] Rollback complete: container ${newVmid} deleted`);
+          } catch (deleteError) {
+            console.error(
+              `[PveLxcClient] Failed to rollback (delete) container ${newVmid}:`,
+              deleteError instanceof Error ? deleteError.message : deleteError
+            );
+          }
+          throw startError;
+        }
+
+        // Wait for container to be fully running
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+
+        // Initialize services with standard cmux ports
+        // URL resolution order: public URL (Cloudflare Tunnel) > FQDN > container IP
+        const services: HttpService[] = [];
+        const vscodeUrl = await this.buildServiceUrl(
+          39378,
+          newVmid,
+          hostname,
+          domainSuffix,
+          hostname
         );
+        const workerUrl = await this.buildServiceUrl(
+          39377,
+          newVmid,
+          hostname,
+          domainSuffix,
+          hostname
+        );
+        const vncUrl = await this.buildServiceUrl(
+          39380,
+          newVmid,
+          hostname,
+          domainSuffix,
+          hostname
+        );
+        const xtermUrl = await this.buildServiceUrl(
+          39383,
+          newVmid,
+          hostname,
+          domainSuffix,
+          hostname
+        );
+
+        if (vscodeUrl && workerUrl && vncUrl && xtermUrl) {
+          services.push(
+            { name: "vscode", port: 39378, url: vscodeUrl },
+            { name: "worker", port: 39377, url: workerUrl },
+            { name: "vnc", port: 39380, url: vncUrl },
+            { name: "xterm", port: 39383, url: xtermUrl }
+          );
+        } else {
+          throw new Error(
+            `Cannot build service URLs for container ${newVmid}: no public domain, DNS search domain, or container IP available`
+          );
+        }
+        this.instanceServices.set(newVmid, services);
+        this.instanceHostnames.set(newVmid, hostname);
+
+        const node = await this.getNode();
+        const instance = new PveLxcInstance(
+          this,
+          instanceId,
+          newVmid,
+          "running",
+          metadata,
+          { httpServices: services, hostname, fqdn },
+          node
+        );
+
+        console.log(
+          `[PveLxcClient] Container ${newVmid} started (hostname=${hostname}, fqdn=${fqdn || "none"})`
+        );
+
+        return instance;
       }
-      this.instanceServices.set(newVmid, services);
-      this.instanceHostnames.set(newVmid, hostname);
 
-      const node = await this.getNode();
-      const instance = new PveLxcInstance(
-        this,
-        instanceId,
-        newVmid,
-        "running",
-        metadata,
-        { httpServices: services, hostname, fqdn },
-        node
-      );
-
-      console.log(
-        `[PveLxcClient] Container ${newVmid} started (hostname=${hostname}, fqdn=${fqdn || "none"})`
-      );
-
-      return instance;
+      // All retries exhausted
+      throw lastError ?? new Error(`Failed to clone container after ${maxRetries} attempts due to VMID collisions`);
     },
 
     /**

@@ -1,0 +1,11 @@
+# Route PVE API clone requests through the serialization proxy while leaving all other
+# traffic on the existing PVE API endpoint. Adjust the site label to match your TLS host.
+pve.example.com {
+    # Proxy clone operations to the middleware
+    handle_path /api2/json/nodes/*/lxc/*/clone* {
+        reverse_proxy 127.0.0.1:8081
+    }
+
+    # Everything else goes directly to PVE API (Caddy will terminate TLS)
+    reverse_proxy 127.0.0.1:8006
+}
