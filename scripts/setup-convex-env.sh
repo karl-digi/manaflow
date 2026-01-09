@@ -177,9 +177,23 @@ echo "  - CMUX_GITHUB_APP_PRIVATE_KEY: $(echo "$GITHUB_PRIVATE_KEY" | head -1)"
 echo "  - NEXT_PUBLIC_GITHUB_APP_SLUG: $(get_env_value NEXT_PUBLIC_GITHUB_APP_SLUG)"
 echo "  - NEXT_PUBLIC_CMUX_PROTOCOL: $(get_env_value NEXT_PUBLIC_CMUX_PROTOCOL)"
 echo "  - INSTALL_STATE_SECRET: $(echo "$INSTALL_STATE_SECRET" | head -c 10)..."
-echo "  - OPENAI_API_KEY: $(get_env_value OPENAI_API_KEY | head -c 10)..."
-echo "  - ANTHROPIC_API_KEY: $(get_env_value ANTHROPIC_API_KEY | head -c 10)..."
-echo "  - GEMINI_API_KEY: $(get_env_value GEMINI_API_KEY | head -c 10)..."
+# Helper to show value or (will be deleted) for optional vars
+show_optional_value() {
+  local value=$1
+  local truncate=${2:-10}
+  if [ -n "$value" ]; then
+    echo "$value" | head -c "$truncate"
+    echo "..."
+  else
+    echo "(will be deleted)"
+  fi
+}
+echo "  - OPENAI_API_KEY: $(show_optional_value "$(get_env_value OPENAI_API_KEY)")"
+echo "  - ANTHROPIC_API_KEY: $(show_optional_value "$(get_env_value ANTHROPIC_API_KEY)")"
+echo "  - GEMINI_API_KEY: $(show_optional_value "$(get_env_value GEMINI_API_KEY)")"
+echo "  - AIGATEWAY_OPENAI_BASE_URL: $(show_optional_value "$(get_env_value AIGATEWAY_OPENAI_BASE_URL)" 50)"
+echo "  - AIGATEWAY_ANTHROPIC_BASE_URL: $(show_optional_value "$(get_env_value AIGATEWAY_ANTHROPIC_BASE_URL)" 50)"
+echo "  - AIGATEWAY_GEMINI_BASE_URL: $(show_optional_value "$(get_env_value AIGATEWAY_GEMINI_BASE_URL)" 50)"
 echo "  - MORPH_API_KEY: $(get_env_value MORPH_API_KEY | head -c 10)..."
 echo "  - PVE_API_URL: $(get_env_value PVE_API_URL)"
 echo "  - PVE_API_TOKEN: $(get_env_value PVE_API_TOKEN | head -c 20)..."
@@ -201,6 +215,7 @@ echo ""
 build_json_changes() {
   local changes=""
 
+  # Add change only if value is non-empty (skip if empty)
   add_change() {
     local name=$1
     local value=$2
@@ -211,6 +226,23 @@ build_json_changes() {
       # Escape the value for JSON (use printf to avoid adding newline from echo)
       local escaped_value=$(printf '%s' "$value" | jq -Rs . | sed 's/^"//;s/"$//')
       changes="$changes{\"name\": \"$name\", \"value\": \"$escaped_value\"}"
+    fi
+  }
+
+  # Add change with deletion support: if value is empty, delete the variable (value: null)
+  # Use this for optional variables that should be removed when not set in .env
+  add_optional_change() {
+    local name=$1
+    local value=$2
+    if [ -n "$changes" ]; then
+      changes="$changes,"
+    fi
+    if [ -n "$value" ]; then
+      local escaped_value=$(printf '%s' "$value" | jq -Rs . | sed 's/^"//;s/"$//')
+      changes="$changes{\"name\": \"$name\", \"value\": \"$escaped_value\"}"
+    else
+      # Empty value = delete the variable
+      changes="$changes{\"name\": \"$name\", \"value\": null}"
     fi
   }
 
@@ -227,9 +259,14 @@ build_json_changes() {
   add_change "NEXT_PUBLIC_GITHUB_APP_SLUG" "$(get_env_value NEXT_PUBLIC_GITHUB_APP_SLUG)"
   add_change "NEXT_PUBLIC_CMUX_PROTOCOL" "$(get_env_value NEXT_PUBLIC_CMUX_PROTOCOL)"
   add_change "INSTALL_STATE_SECRET" "$INSTALL_STATE_SECRET"
-  add_change "OPENAI_API_KEY" "$(get_env_value OPENAI_API_KEY)"
-  add_change "ANTHROPIC_API_KEY" "$(get_env_value ANTHROPIC_API_KEY)"
-  add_change "GEMINI_API_KEY" "$(get_env_value GEMINI_API_KEY)"
+  # AI API keys: use add_optional_change to delete when not set in .env
+  add_optional_change "OPENAI_API_KEY" "$(get_env_value OPENAI_API_KEY)"
+  add_optional_change "ANTHROPIC_API_KEY" "$(get_env_value ANTHROPIC_API_KEY)"
+  add_optional_change "GEMINI_API_KEY" "$(get_env_value GEMINI_API_KEY)"
+  # AI Gateway base URL overrides: use add_optional_change to delete when not set
+  add_optional_change "AIGATEWAY_OPENAI_BASE_URL" "$(get_env_value AIGATEWAY_OPENAI_BASE_URL)"
+  add_optional_change "AIGATEWAY_ANTHROPIC_BASE_URL" "$(get_env_value AIGATEWAY_ANTHROPIC_BASE_URL)"
+  add_optional_change "AIGATEWAY_GEMINI_BASE_URL" "$(get_env_value AIGATEWAY_GEMINI_BASE_URL)"
   add_change "MORPH_API_KEY" "$(get_env_value MORPH_API_KEY)"
   add_change "PVE_API_URL" "$(get_env_value PVE_API_URL)"
   add_change "PVE_API_TOKEN" "$(get_env_value PVE_API_TOKEN)"

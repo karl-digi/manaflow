@@ -1,6 +1,7 @@
 "use node";
 
 import { createAnthropic } from "@ai-sdk/anthropic";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import { generateObject, type LanguageModel } from "ai";
 import { ConvexError, v } from "convex/values";
@@ -11,12 +12,16 @@ import {
   type CrownEvaluationResponse,
   type CrownSummarizationResponse,
 } from "@cmux/shared/convex-safe";
-import { CLOUDFLARE_OPENAI_BASE_URL } from "@cmux/shared";
-import { env } from "../../_shared/convex-env";
+import {
+  CLOUDFLARE_OPENAI_BASE_URL,
+  CLOUDFLARE_ANTHROPIC_BASE_URL,
+  CLOUDFLARE_GEMINI_BASE_URL,
+} from "@cmux/shared";
 import { action } from "../_generated/server";
 
 const OPENAI_CROWN_MODEL = "gpt-5-mini";
 const ANTHROPIC_CROWN_MODEL = "claude-3-5-sonnet-20241022";
+const GEMINI_CROWN_MODEL = "gemini-3-flash-preview";
 
 const CrownEvaluationCandidateValidator = v.object({
   runId: v.optional(v.string()),
@@ -27,38 +32,72 @@ const CrownEvaluationCandidateValidator = v.object({
   index: v.optional(v.number()),
 });
 
-function resolveCrownModel(): {
-  provider: "openai" | "anthropic";
-  model: LanguageModel;
-} {
-  const openaiKey = env.OPENAI_API_KEY;
-  if (openaiKey) {
+type ApiKeys = Record<string, string | undefined>;
+
+function resolveCrownModel(
+  apiKeys: ApiKeys
+): { model: LanguageModel; providerName: string } | null {
+  // Note: AIGATEWAY_* accessed via process.env to avoid Convex static analysis
+  if (apiKeys.OPENAI_API_KEY) {
     const openai = createOpenAI({
-      apiKey: openaiKey,
-      baseURL: CLOUDFLARE_OPENAI_BASE_URL,
+      apiKey: apiKeys.OPENAI_API_KEY,
+      baseURL: process.env.AIGATEWAY_OPENAI_BASE_URL || CLOUDFLARE_OPENAI_BASE_URL,
     });
-    return { provider: "openai", model: openai(OPENAI_CROWN_MODEL) };
+    return { model: openai(OPENAI_CROWN_MODEL), providerName: "OpenAI" };
   }
 
-  const anthropicKey = env.ANTHROPIC_API_KEY;
-  if (anthropicKey) {
-    const anthropic = createAnthropic({ apiKey: anthropicKey });
-    return {
-      provider: "anthropic",
-      model: anthropic(ANTHROPIC_CROWN_MODEL),
-    };
+  if (apiKeys.ANTHROPIC_API_KEY) {
+    const anthropic = createAnthropic({
+      apiKey: apiKeys.ANTHROPIC_API_KEY,
+      baseURL:
+        process.env.AIGATEWAY_ANTHROPIC_BASE_URL || CLOUDFLARE_ANTHROPIC_BASE_URL,
+    });
+    return { model: anthropic(ANTHROPIC_CROWN_MODEL), providerName: "Anthropic" };
   }
 
-  throw new ConvexError(
-    "Crown evaluation is not configured (missing OpenAI or Anthropic API key)"
-  );
+  if (apiKeys.GEMINI_API_KEY) {
+    const google = createGoogleGenerativeAI({
+      apiKey: apiKeys.GEMINI_API_KEY,
+      baseURL: process.env.AIGATEWAY_GEMINI_BASE_URL || CLOUDFLARE_GEMINI_BASE_URL,
+    });
+    return { model: google(GEMINI_CROWN_MODEL), providerName: "Gemini" };
+  }
+
+  return null;
+}
+
+function getApiKeysFromEnv(): ApiKeys {
+  // Filter out placeholder keys
+  // Note: Uses process.env directly (not createEnv schema) to allow proper
+  // deletion via `npx convex env remove` without validation errors
+  const isValidKey = (key: string | undefined): string | undefined => {
+    if (!key) return undefined;
+    if (key.includes("placeholder")) return undefined;
+    if (key.startsWith("sk_place")) return undefined;
+    return key;
+  };
+
+  return {
+    OPENAI_API_KEY: isValidKey(process.env.OPENAI_API_KEY),
+    ANTHROPIC_API_KEY: isValidKey(process.env.ANTHROPIC_API_KEY),
+    GEMINI_API_KEY: isValidKey(process.env.GEMINI_API_KEY),
+  };
 }
 
 export async function performCrownEvaluation(
   prompt: string,
   candidates: CrownEvaluationCandidate[]
 ): Promise<CrownEvaluationResponse> {
-  const { model, provider } = resolveCrownModel();
+  const apiKeys = getApiKeysFromEnv();
+  const config = resolveCrownModel(apiKeys);
+
+  if (!config) {
+    throw new ConvexError(
+      "Crown evaluation is not configured (missing OpenAI, Anthropic, or Gemini API key)"
+    );
+  }
+
+  const { model, providerName } = config;
 
   const normalizedCandidates = candidates.map((candidate, idx) => {
     const resolvedIndex = candidate.index ?? idx;
@@ -110,13 +149,14 @@ IMPORTANT: Respond ONLY with the JSON object, no other text.`;
       system:
         "You select the best implementation from structured diff inputs and explain briefly why.",
       prompt: evaluationPrompt,
-      ...(provider === "openai" ? {} : { temperature: 0 }),
+      ...(providerName === "OpenAI" ? {} : { temperature: 0 }),
       maxRetries: 2,
     });
 
+    console.info(`[convex.crown] Evaluation completed via ${providerName}`);
     return CrownEvaluationResponseSchema.parse(object);
   } catch (error) {
-    console.error("[convex.crown] Evaluation error", error);
+    console.error(`[convex.crown] ${providerName} evaluation error`, error);
     throw new ConvexError("Evaluation failed");
   }
 }
@@ -125,7 +165,16 @@ export async function performCrownSummarization(
   prompt: string,
   gitDiff: string
 ): Promise<CrownSummarizationResponse> {
-  const { model, provider } = resolveCrownModel();
+  const apiKeys = getApiKeysFromEnv();
+  const config = resolveCrownModel(apiKeys);
+
+  if (!config) {
+    throw new ConvexError(
+      "Crown summarization is not configured (missing OpenAI, Anthropic, or Gemini API key)"
+    );
+  }
+
+  const { model, providerName } = config;
 
   const summarizationPrompt = `You are an expert reviewer summarizing a pull request.
 
@@ -161,13 +210,14 @@ OUTPUT FORMAT (Markdown)
       system:
         "You are an expert reviewer summarizing pull requests. Provide a clear, concise summary following the requested format.",
       prompt: summarizationPrompt,
-      ...(provider === "openai" ? {} : { temperature: 0 }),
+      ...(providerName === "OpenAI" ? {} : { temperature: 0 }),
       maxRetries: 2,
     });
 
+    console.info(`[convex.crown] Summarization completed via ${providerName}`);
     return CrownSummarizationResponseSchema.parse(object);
   } catch (error) {
-    console.error("[convex.crown] Summarization error", error);
+    console.error(`[convex.crown] ${providerName} summarization error`, error);
     throw new ConvexError("Summarization failed");
   }
 }
