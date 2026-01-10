@@ -19,14 +19,21 @@ import { type Task, type MCPQuestion, type MCPProgress } from "./types.js";
 export const DEFAULT_MODEL = "opus";
 
 /**
- * Orchestration Protocol - instructs Claude to write questions to inbox file
- * Keep this minimal to avoid noise in output
+ * Orchestration Protocol - instructs Claude to ask questions via file
  */
 const ORCHESTRATION_PROTOCOL = `
-When you need human input on important decisions, write a JSON line to $CMUX_INBOX_FILE:
-{"id":"q1","question":"Your question?","importance":"medium"}
+## IMPORTANT: Human-in-the-loop Communication
 
-Only ask about significant decisions. Keep working while waiting for response.
+You are being orchestrated by ocmux. When you need human input:
+
+1. Write a question to the inbox file using this bash command:
+   echo '{"id":"q1","question":"Your question here","importance":"high"}' >> $CMUX_INBOX_FILE
+
+2. Importance levels: "high" (blocking), "medium" (should answer), "low" (nice to have)
+
+3. Continue working on other aspects while waiting - check $CMUX_ANSWERS_FILE periodically
+
+Ask questions for: architecture decisions, unclear requirements, permission to make breaking changes, or when you're stuck.
 `;
 
 /**
