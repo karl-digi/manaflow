@@ -350,7 +350,7 @@ claude --model "${actualModel}" --dangerously-skip-permissions "$(cat "${promptF
   }
 
   /**
-   * Open/attach to a task's tmux session
+   * Open/attach to a task's tmux session in a split pane
    */
   async openTerminal(taskId: string): Promise<void> {
     const sessionName = this.getSessionName(taskId);
@@ -360,31 +360,42 @@ claude --model "${actualModel}" --dangerously-skip-permissions "$(cat "${promptF
       throw new Error(`Task has finished or exited. Use 'new' to start a fresh task.`);
     }
 
-    // Open in a new terminal window
-    const platform = process.platform;
-    let openCmd: string;
+    // Check if we're inside tmux
+    const inTmux = process.env.TMUX;
 
-    if (platform === "darwin") {
-      // macOS: Open new Terminal.app window and attach to tmux
-      openCmd = `osascript -e 'tell application "Terminal" to do script "tmux attach-session -t ${sessionName}"'`;
-    } else if (platform === "linux") {
-      // Linux: Try common terminal emulators
-      const terminals = [
-        `gnome-terminal -- tmux attach-session -t "${sessionName}"`,
-        `xterm -e tmux attach-session -t "${sessionName}"`,
-        `konsole -e tmux attach-session -t "${sessionName}"`,
-      ];
-      // Try each until one works
-      for (const cmd of terminals) {
-        const result = await exec(cmd);
-        if (result.code === 0) return;
+    if (inTmux) {
+      // Create a split pane and link to the task session
+      // -h for horizontal split (side by side), -l 70% for 70% width
+      const result = await exec(
+        `tmux split-window -h -l 70% "tmux attach-session -t '${sessionName}'"`
+      );
+      if (result.code !== 0) {
+        throw new Error(`Failed to create split pane: ${result.stderr}`);
       }
-      throw new Error("Could not find a terminal emulator. Run manually: tmux attach-session -t " + sessionName);
     } else {
-      throw new Error(`Unsupported platform: ${platform}. Run manually: tmux attach-session -t ${sessionName}`);
-    }
+      // Not in tmux - open in new terminal window (fallback)
+      const platform = process.platform;
+      let openCmd: string;
 
-    await exec(openCmd);
+      if (platform === "darwin") {
+        openCmd = `osascript -e 'tell application "Terminal" to do script "tmux attach-session -t ${sessionName}"'`;
+      } else if (platform === "linux") {
+        const terminals = [
+          `gnome-terminal -- tmux attach-session -t "${sessionName}"`,
+          `xterm -e tmux attach-session -t "${sessionName}"`,
+          `konsole -e tmux attach-session -t "${sessionName}"`,
+        ];
+        for (const cmd of terminals) {
+          const result = await exec(cmd);
+          if (result.code === 0) return;
+        }
+        throw new Error("Run: tmux attach-session -t " + sessionName);
+      } else {
+        throw new Error(`Run: tmux attach-session -t ${sessionName}`);
+      }
+
+      await exec(openCmd);
+    }
   }
 
   /**

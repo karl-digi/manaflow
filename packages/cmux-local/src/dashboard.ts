@@ -608,11 +608,8 @@ async function refreshTasks(): Promise<void> {
               message: `[${iq.importance.toUpperCase()}] ${iq.question.slice(0, 30)}...`,
             });
 
-            // Brief headline notification (non-blocking)
-            const urgencyColor = iq.importance === "high" ? chalk.red : chalk.yellow;
-            const urgencyLabel = iq.importance === "high" ? "URGENT " : "";
-            console.log(urgencyColor(`\n  ✉ ${urgencyLabel}New in inbox [${key}]: `) + chalk.white(iq.question.slice(0, 40) + (iq.question.length > 40 ? "..." : "")));
-            console.log(chalk.gray(`    → Type 'view ${key}' or '${key} <answer>'\n`));
+            // Silent update - no console output during polling
+            // Questions will be shown in inbox section on next dashboard refresh
           }
         } catch {
           // Inbox files might not exist yet
@@ -868,6 +865,13 @@ export async function runDashboard(): Promise<void> {
     }
     console.error();
     process.exit(1);
+  }
+
+  // Suggest running inside tmux for split pane support
+  if (!process.env.TMUX) {
+    console.log(chalk.yellow("\n  Tip: Run inside tmux for split-pane task viewing"));
+    console.log(chalk.gray("       tmux new-session -s cmux-dashboard"));
+    console.log();
   }
 
   // Initial load
