@@ -426,14 +426,16 @@ async function main(): Promise<void> {
 ${chalk.bold.cyan("CMUX Local")} - Docker-based Claude Code Orchestrator
 
 ${chalk.bold("USAGE:")}
-  cmux-local                          Start interactive mode
-  cmux-local start <path> "<prompt>"  Start a new task directly
-  cmux-local list                     List running tasks
-  cmux-local --help                   Show this help
+  cmux-local                       Start interactive mode
+  cmux-local "<prompt>"            Start task in current directory
+  cmux-local setup                 Build Docker image (run once)
+  cmux-local list                  List running tasks
+  cmux-local stop-all              Stop all tasks
+  cmux-local --help                Show this help
 
 ${chalk.bold("INTERACTIVE COMMANDS:")}
-  new                     Start new task (guided prompts)
-  start <path> <prompt>   Start task directly
+  new                     Start new task (prompts for repo + task)
+  start . <prompt>        Start task in current directory
   list                    Show all tasks and questions
   open <n>                Open terminal for task n in browser
   q<n> <answer>           Answer question n
@@ -444,20 +446,18 @@ ${chalk.bold("INTERACTIVE COMMANDS:")}
 
 ${chalk.bold("REQUIREMENTS:")}
   - Docker must be running
-  - ANTHROPIC_API_KEY environment variable (for Claude Code)
+  - ANTHROPIC_API_KEY environment variable
 
-${chalk.bold("EXAMPLES:")}
-  # Interactive mode
+${chalk.bold("QUICK START:")}
+  # One-time setup (builds Docker image)
+  cmux-local setup
+
+  # Start a task in your project
+  cd ~/myproject
+  cmux-local "Add dark mode toggle"
+
+  # Or interactive mode
   cmux-local
-  > new
-  Repo path: ~/projects/my-app
-  Task description: Add a dark mode toggle
-
-  # Direct start
-  cmux-local start ~/myproject "Fix the login bug"
-
-  # Answer a question
-  > q1 use JWT with refresh tokens
 `);
     process.exit(0);
   }
@@ -469,28 +469,69 @@ ${chalk.bold("EXAMPLES:")}
     process.exit(1);
   }
 
-  // Handle direct commands
-  if (args[0] === "start" && args[1]) {
-    const repoPath = args[1];
-    const prompt = args.slice(2).join(" ");
-    if (!prompt) {
-      console.error(chalk.red("Usage: cmux-local start <path> <prompt>"));
-      process.exit(1);
+  // Handle setup command
+  if (args[0] === "setup") {
+    console.log(chalk.cyan("\n  Setting up CMUX Local...\n"));
+
+    // Check for ANTHROPIC_API_KEY
+    if (!process.env.ANTHROPIC_API_KEY) {
+      console.log(chalk.yellow("  Warning: ANTHROPIC_API_KEY not set."));
+      console.log(chalk.gray("  Set it with: export ANTHROPIC_API_KEY=your_key\n"));
+    } else {
+      console.log(chalk.green("  ✓ ANTHROPIC_API_KEY is set\n"));
     }
+
+    // Build Docker image
+    console.log(chalk.gray("  Building Docker image..."));
     try {
-      const task = await docker.startTask(repoPath, prompt);
-      console.log(chalk.green(`Started task #${task.number} (${task.id})`));
-      console.log(chalk.gray(`Terminal: `) + chalk.cyan(`http://localhost:${task.terminalPort}`));
+      await docker.ensureImage();
+      console.log(chalk.green("\n  ✓ Setup complete!\n"));
+      console.log(chalk.gray("  Now you can run:"));
+      console.log(chalk.cyan('    cmux-local "Your task description"'));
+      console.log(chalk.gray("  Or for interactive mode:"));
+      console.log(chalk.cyan("    cmux-local\n"));
     } catch (err) {
-      console.error(chalk.red("Failed:"), err);
+      console.error(chalk.red("  Failed to build image:"), err);
       process.exit(1);
     }
     process.exit(0);
   }
 
+  // Handle direct task start: cmux-local "prompt"
+  if (args.length > 0 && !["list", "ls", "stop-all", "start"].includes(args[0])) {
+    const prompt = args.join(" ");
+    const repoPath = process.cwd();
+
+    console.log(chalk.gray(`\n  Starting task in ${repoPath}...`));
+
+    try {
+      const task = await docker.startTask(repoPath, prompt);
+      console.log(chalk.green(`\n  ✓ Started task #${task.number} (${task.id})`));
+      console.log(chalk.gray(`    Terminal: `) + chalk.cyan(`http://localhost:${task.terminalPort}`));
+      console.log(chalk.gray(`\n  Run 'cmux-local' to monitor and answer questions.\n`));
+    } catch (err) {
+      console.error(chalk.red("  Failed:"), err);
+      process.exit(1);
+    }
+    process.exit(0);
+  }
+
+  // Handle list
   if (args[0] === "list" || args[0] === "ls") {
     tasks = await docker.listTasks();
     printTasks();
+    process.exit(0);
+  }
+
+  // Handle stop-all
+  if (args[0] === "stop-all") {
+    try {
+      await docker.stopAllTasks();
+      console.log(chalk.green("  Stopped all tasks."));
+    } catch (err) {
+      console.error(chalk.red("  Failed:"), err);
+      process.exit(1);
+    }
     process.exit(0);
   }
 

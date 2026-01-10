@@ -6,8 +6,10 @@
  */
 
 import { spawn } from "node:child_process";
+import * as path from "node:path";
+import * as fs from "node:fs";
 import { nanoid } from "nanoid";
-import { type Task, type DockerContainer, BASE_PORT, getTaskPort } from "./types.js";
+import { type Task, BASE_PORT, getTaskPort } from "./types.js";
 
 /**
  * Execute a command and return stdout
@@ -62,6 +64,7 @@ function escapeShell(str: string): string {
 
 export class DockerConnector {
   private imageName = "cmux-local-worker";
+  private imageBuilding = false;
 
   /**
    * Check if Docker is available
@@ -69,6 +72,28 @@ export class DockerConnector {
   async checkDocker(): Promise<boolean> {
     const result = await exec("docker info 2>/dev/null");
     return result.code === 0;
+  }
+
+  /**
+   * Get the path to the Dockerfile
+   */
+  private getDockerfilePath(): string {
+    // Try to find Dockerfile relative to this file
+    // Use import.meta.url which is standard ESM
+    const currentDir = path.dirname(new URL(import.meta.url).pathname);
+    const possiblePaths = [
+      path.join(currentDir, "..", "Dockerfile"),
+      path.join(currentDir, "..", "..", "Dockerfile"),
+      path.join(process.cwd(), "packages", "cmux-local", "Dockerfile"),
+    ];
+
+    for (const p of possiblePaths) {
+      if (fs.existsSync(p)) {
+        return p;
+      }
+    }
+
+    return "";
   }
 
   /**
@@ -81,36 +106,55 @@ export class DockerConnector {
       return; // Image exists
     }
 
-    // Build a simple image with Claude Code
-    // For now, use a base image - user needs Claude Code installed
-    console.log("Building cmux-local-worker image...");
+    if (this.imageBuilding) {
+      // Wait for build to complete
+      while (this.imageBuilding) {
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+      return;
+    }
 
-    const dockerfile = `
+    this.imageBuilding = true;
+
+    try {
+      console.log("Building cmux-local-worker image (this may take a few minutes)...");
+
+      // Try to use Dockerfile from package
+      const dockerfilePath = this.getDockerfilePath();
+
+      let buildCmd: string;
+      if (dockerfilePath && fs.existsSync(dockerfilePath)) {
+        const dockerfileDir = path.dirname(dockerfilePath);
+        buildCmd = `docker build -t ${this.imageName} "${dockerfileDir}"`;
+      } else {
+        // Fallback: inline Dockerfile
+        const dockerfile = `
 FROM ubuntu:22.04
-
-RUN apt-get update && apt-get install -y \\
-    curl \\
-    git \\
-    tmux \\
-    ttyd \\
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Node.js
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \\
-    && apt-get install -y nodejs
-
-# Install Claude Code globally
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y curl git tmux ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs && rm -rf /var/lib/apt/lists/*
+RUN curl -L https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64 -o /usr/local/bin/ttyd && chmod +x /usr/local/bin/ttyd
 RUN npm install -g @anthropic-ai/claude-code
-
 WORKDIR /workspace
+EXPOSE 7681
+CMD ["ttyd", "-p", "7681", "bash"]
+`.trim();
 
-# Default command: start ttyd with tmux
-CMD ["ttyd", "-p", "7681", "tmux", "new-session", "-A", "-s", "main"]
-`;
+        // Write dockerfile to temp and build
+        const tmpDir = `/tmp/cmux-local-build-${Date.now()}`;
+        await exec(`mkdir -p "${tmpDir}"`);
+        fs.writeFileSync(`${tmpDir}/Dockerfile`, dockerfile);
+        buildCmd = `docker build -t ${this.imageName} "${tmpDir}"`;
+      }
 
-    const buildResult = await exec(`echo '${dockerfile}' | docker build -t ${this.imageName} -`);
-    if (buildResult.code !== 0) {
-      throw new Error(`Failed to build image: ${buildResult.stderr}`);
+      const buildResult = await exec(buildCmd);
+      if (buildResult.code !== 0) {
+        throw new Error(`Failed to build image: ${buildResult.stderr}`);
+      }
+
+      console.log("Image built successfully!");
+    } finally {
+      this.imageBuilding = false;
     }
   }
 
