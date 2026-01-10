@@ -176,7 +176,7 @@ impl CliSpawner {
     }
 
     /// Spawn CLI in bubblewrap sandbox.
-    async fn spawn_bubblewrap(&self, _namespace_id: Option<&str>) -> Result<SpawnedCli> {
+    async fn spawn_bubblewrap(&self, namespace_id: Option<&str>) -> Result<SpawnedCli> {
         let bwrap_path = self.bubblewrap_path.as_deref().unwrap_or("/usr/bin/bwrap");
 
         let args = self.provider.command_args();
@@ -184,11 +184,36 @@ impl CliSpawner {
             .split_first()
             .context("Provider command args cannot be empty")?;
 
-        info!(
-            provider = %self.provider.display_name(),
-            cwd = %self.cwd.display(),
-            "Spawning CLI in bubblewrap sandbox"
-        );
+        // Determine workspace directory based on namespace
+        let workspace_dir = if let Some(ns_id) = namespace_id {
+            // Shared namespace: use persistent directory that can be reused
+            let ns_dir = PathBuf::from("/var/lib/cmux/namespaces").join(ns_id);
+            // Create namespace directory if it doesn't exist
+            if !ns_dir.exists() {
+                std::fs::create_dir_all(&ns_dir).with_context(|| {
+                    format!("Failed to create namespace directory: {}", ns_dir.display())
+                })?;
+            }
+            info!(
+                provider = %self.provider.display_name(),
+                namespace_id = %ns_id,
+                workspace = %ns_dir.display(),
+                "Spawning CLI in shared bubblewrap namespace"
+            );
+            ns_dir
+        } else {
+            // Dedicated namespace: use the provided cwd (typically unique per conversation)
+            info!(
+                provider = %self.provider.display_name(),
+                cwd = %self.cwd.display(),
+                "Spawning CLI in dedicated bubblewrap sandbox"
+            );
+            self.cwd.clone()
+        };
+
+        let workspace_str = workspace_dir
+            .to_str()
+            .context("Workspace directory path is not valid UTF-8")?;
 
         let cwd_str = self
             .cwd
@@ -208,11 +233,19 @@ impl CliSpawner {
             "--ro-bind",
             "/",
             "/",
-            // Bind working directory read-write
+            // Bind workspace directory read-write (shared or dedicated)
             "--bind",
-            cwd_str,
-            cwd_str,
-            // Standard mounts
+            workspace_str,
+            workspace_str,
+        ];
+
+        // If cwd is different from workspace, also bind it
+        if workspace_str != cwd_str {
+            bwrap_args.extend_from_slice(&["--bind", cwd_str, cwd_str]);
+        }
+
+        // Standard mounts
+        bwrap_args.extend_from_slice(&[
             "--dev",
             "/dev",
             "--proc",
@@ -224,7 +257,7 @@ impl CliSpawner {
             cwd_str,
             // Separator before command
             "--",
-        ];
+        ]);
 
         // Add the CLI command and args
         bwrap_args.push(cmd);
@@ -235,6 +268,7 @@ impl CliSpawner {
         debug!(
             bwrap_path = %bwrap_path,
             args = ?bwrap_args,
+            namespace_id = ?namespace_id,
             "Bubblewrap command"
         );
 

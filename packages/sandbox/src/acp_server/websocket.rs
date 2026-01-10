@@ -209,14 +209,26 @@ async fn handle_acp_connection(
         return;
     }
 
+    // Get CLI stdin/stdout handles for forwarding
+    let (mut cli_stdin, cli_stdout) = match agent.take_cli_io().await {
+        Some(io) => io,
+        None => {
+            error!(
+                conversation_id = %token_payload.conversation_id,
+                "Failed to get CLI I/O handles"
+            );
+            return;
+        }
+    };
+
     // Split WebSocket
     let (mut ws_write, mut ws_read) = socket.split();
 
-    // Create channels for bidirectional communication
+    // Create channel for WebSocket write queue
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
 
-    // Spawn writer task
-    let write_task = tokio::spawn(async move {
+    // Spawn task to write messages to WebSocket
+    let ws_write_task = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
             if let Err(e) = ws_write.send(msg).await {
                 error!(error = %e, "Failed to send WebSocket message");
@@ -225,33 +237,105 @@ async fn handle_acp_connection(
         }
     });
 
-    // Read loop
+    // Spawn task to read from CLI stdout and forward to WebSocket
+    let tx_clone = tx.clone();
+    let conversation_id_clone = token_payload.conversation_id.clone();
+    let cli_read_task = tokio::spawn(async move {
+        use tokio::io::{AsyncBufReadExt, BufReader};
+
+        let mut reader = BufReader::new(cli_stdout);
+        let mut line = String::new();
+
+        loop {
+            line.clear();
+            match reader.read_line(&mut line).await {
+                Ok(0) => {
+                    // EOF - CLI closed stdout
+                    info!(
+                        conversation_id = %conversation_id_clone,
+                        "CLI stdout closed"
+                    );
+                    break;
+                }
+                Ok(_) => {
+                    let trimmed = line.trim_end();
+                    if !trimmed.is_empty() {
+                        debug!(
+                            conversation_id = %conversation_id_clone,
+                            message = %trimmed,
+                            "Forwarding CLI response to WebSocket"
+                        );
+                        // Forward as text message (JSON-RPC is text-based)
+                        if let Err(e) = tx_clone.send(Message::Text(trimmed.to_string().into())) {
+                            error!(error = %e, "Failed to queue CLI response");
+                            break;
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!(
+                        error = %e,
+                        conversation_id = %conversation_id_clone,
+                        "Error reading from CLI stdout"
+                    );
+                    break;
+                }
+            }
+        }
+    });
+
+    // Main loop: read from WebSocket and forward to CLI stdin
+    use tokio::io::AsyncWriteExt;
+
     while let Some(result) = ws_read.next().await {
         match result {
             Ok(Message::Binary(data)) => {
                 let msg = String::from_utf8_lossy(&data);
-                debug!(message = %msg, "Received ACP message");
+                debug!(
+                    conversation_id = %token_payload.conversation_id,
+                    message = %msg,
+                    "Forwarding binary message to CLI"
+                );
 
-                // TODO: Parse JSON-RPC message and route to agent
-                // For now, echo back
-                if let Err(e) = tx.send(Message::Binary(data)) {
-                    error!(error = %e, "Failed to queue response");
+                // Forward to CLI stdin with newline
+                if let Err(e) = cli_stdin.write_all(&data).await {
+                    error!(error = %e, "Failed to write to CLI stdin");
+                    break;
+                }
+                if let Err(e) = cli_stdin.write_all(b"\n").await {
+                    error!(error = %e, "Failed to write newline to CLI stdin");
+                    break;
+                }
+                if let Err(e) = cli_stdin.flush().await {
+                    error!(error = %e, "Failed to flush CLI stdin");
                     break;
                 }
             }
             Ok(Message::Text(text)) => {
-                debug!(message = %text, "Received ACP text message");
+                debug!(
+                    conversation_id = %token_payload.conversation_id,
+                    message = %text,
+                    "Forwarding text message to CLI"
+                );
 
-                // TODO: Parse JSON-RPC message and route to agent
-                if let Err(e) = tx.send(Message::Text(text)) {
-                    error!(error = %e, "Failed to queue response");
+                // Forward to CLI stdin with newline
+                if let Err(e) = cli_stdin.write_all(text.as_bytes()).await {
+                    error!(error = %e, "Failed to write to CLI stdin");
+                    break;
+                }
+                if let Err(e) = cli_stdin.write_all(b"\n").await {
+                    error!(error = %e, "Failed to write newline to CLI stdin");
+                    break;
+                }
+                if let Err(e) = cli_stdin.flush().await {
+                    error!(error = %e, "Failed to flush CLI stdin");
                     break;
                 }
             }
             Ok(Message::Close(_)) => {
                 info!(
                     conversation_id = %token_payload.conversation_id,
-                    "WebSocket closed"
+                    "WebSocket closed by client"
                 );
                 break;
             }
@@ -271,9 +355,18 @@ async fn handle_acp_connection(
         }
     }
 
-    // Clean up
+    // Clean up: close CLI stdin and wait for tasks
+    drop(cli_stdin);
     drop(tx);
-    let _ = write_task.await;
+
+    // Wait for tasks to complete with timeout
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        async {
+            let _ = cli_read_task.await;
+            let _ = ws_write_task.await;
+        }
+    ).await;
 
     info!(
         conversation_id = %token_payload.conversation_id,
