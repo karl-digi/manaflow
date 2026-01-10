@@ -22,16 +22,19 @@ pub struct AcpServerState {
     pub convex_url: String,
     /// JWT secret for verification
     pub jwt_secret: String,
+    /// Convex admin key for API authentication
+    pub convex_admin_key: String,
     /// Default working directory
     pub default_cwd: std::path::PathBuf,
 }
 
 impl AcpServerState {
     /// Create new ACP server state.
-    pub fn new(convex_url: String, jwt_secret: String, default_cwd: std::path::PathBuf) -> Self {
+    pub fn new(convex_url: String, jwt_secret: String, convex_admin_key: String, default_cwd: std::path::PathBuf) -> Self {
         Self {
             convex_url,
             jwt_secret,
+            convex_admin_key,
             default_cwd,
         }
     }
@@ -184,7 +187,7 @@ async fn handle_acp_connection(
     );
 
     // Create Convex client
-    let convex_client = ConvexClient::new(&state.convex_url);
+    let convex_client = ConvexClient::new(&state.convex_url, &state.convex_admin_key);
 
     // Create wrapped agent
     let agent = Arc::new(WrappedAgent::new(

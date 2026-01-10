@@ -31,6 +31,10 @@ struct Args {
     #[arg(long, env = "CMUX_CONVERSATION_JWT_SECRET")]
     jwt_secret: String,
 
+    /// Convex admin key for API authentication
+    #[arg(long, env = "CONVEX_ADMIN_KEY")]
+    convex_admin_key: String,
+
     /// Default working directory for spawned CLIs
     #[arg(long, env = "ACP_WORKING_DIR", default_value = "/workspace")]
     working_dir: PathBuf,
@@ -82,6 +86,7 @@ async fn main() -> anyhow::Result<()> {
     let state = AcpServerState::new(
         args.convex_url.clone(),
         args.jwt_secret.clone(),
+        args.convex_admin_key.clone(),
         args.working_dir.clone(),
     );
 
