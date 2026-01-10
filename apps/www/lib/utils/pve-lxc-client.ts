@@ -902,79 +902,234 @@ export class PveLxcClient {
    * Convert an existing container into a reusable template.
    * Returns the template VMID and canonical snapshot ID.
    *
-   * This clones the source into a new template VMID to avoid mutating
-   * the active workspace container.
+   * Workflow:
+   * 1. Shutdown source container (e.g., VMID 201)
+   * 2. Convert source container to template (in-place)
+   * 3. Linked clone from source template to new template VMID (9000+)
+   * 4. Convert linked clone to template
+   *
+   * Rollback strategy:
+   * - If step 2 fails: Source is still a container, just restart it
+   * - If step 3/4 fails AND linked clone exists:
+   *   - Delete source template (201)
+   *   - Clone from linked clone (9000) back to source VMID (201)
+   *   - Delete linked clone (9000)
+   *   - Start restored container (201)
+   *
+   * This uses linked clone for efficiency (fast, copy-on-write).
    */
   async createTemplateFromContainer(sourceInstanceId: string): Promise<{
     templateVmid: number;
     snapshotId: string;
   }> {
     const sourceVmid = await this.resolveVmidForInstanceId(sourceInstanceId);
-
     const targetNode = await this.getNode();
+    const sourceHostname =
+      (await this.getContainerHostname(sourceVmid)) ??
+      this.normalizeHostId(sourceInstanceId);
 
-    const sourceStatus = await this.getContainerStatus(sourceVmid);
-    const wasRunning = sourceStatus === "running";
+    // Track state for rollback
+    let sourceConvertedToTemplate = false;
+    let linkedCloneVmid: number | null = null;
+    let linkedCloneCreated = false;
 
+    // Step 1: Ensure source container is stopped
+    console.log(
+      `[PveLxcClient] Stopping source container ${sourceVmid} for template creation`
+    );
     await this.ensureContainerStopped(sourceVmid);
 
-    const templateVmid = await this.findNextTemplateVmid();
-    const templateHostname = this.normalizeHostId(
-      `cmux-template-${crypto.randomUUID().split("-")[0]}`
-    );
-    let templateCreated = false;
-
     try {
-      await this.cloneContainerFromSource(
+      // Step 2: Convert source container to template (in-place)
+      console.log(
+        `[PveLxcClient] Converting container ${sourceVmid} to template`
+      );
+      const convertUpid = await this.apiRequest<string>(
+        "POST",
+        `/api2/json/nodes/${targetNode}/lxc/${sourceVmid}/template`
+      );
+      await this.waitForTaskNormalized(
+        convertUpid,
+        `convert container ${sourceVmid} to template`,
+        async () => {
+          const config = await this.apiRequest<PveContainerConfig>(
+            "GET",
+            `/api2/json/nodes/${targetNode}/lxc/${sourceVmid}/config`
+          );
+          return config.template === 1;
+        }
+      );
+      sourceConvertedToTemplate = true;
+
+      // Step 3: Linked clone from source template to new template VMID (9000+)
+      linkedCloneVmid = await this.findNextTemplateVmid();
+      const templateHostname = this.normalizeHostId(
+        `cmux-template-${crypto.randomUUID().split("-")[0]}`
+      );
+
+      console.log(
+        `[PveLxcClient] Linked cloning from template ${sourceVmid} to ${linkedCloneVmid}`
+      );
+      await this.linkedCloneFromTemplate(
         sourceVmid,
-        templateVmid,
+        linkedCloneVmid,
         templateHostname
       );
-      templateCreated = true;
+      linkedCloneCreated = true;
 
-      await this.ensureContainerStopped(templateVmid);
-
-      // Convert the cloned container into a template for fast linked-clone starts
+      // Step 4: Convert the linked clone to a template
+      console.log(
+        `[PveLxcClient] Converting linked clone ${linkedCloneVmid} to template`
+      );
       const templateUpid = await this.apiRequest<string>(
         "POST",
-        `/api2/json/nodes/${targetNode}/lxc/${templateVmid}/template`
+        `/api2/json/nodes/${targetNode}/lxc/${linkedCloneVmid}/template`
       );
       await this.waitForTaskNormalized(
         templateUpid,
-        `convert container ${templateVmid} to template`,
+        `convert container ${linkedCloneVmid} to template`,
         async () => {
-          // Fallback: poll config to confirm template flag is set
           const config = await this.apiRequest<PveContainerConfig>(
             "GET",
-            `/api2/json/nodes/${targetNode}/lxc/${templateVmid}/config`
+            `/api2/json/nodes/${targetNode}/lxc/${linkedCloneVmid}/config`
           );
           return config.template === 1;
         }
       );
 
       const snapshotId = this.generateSnapshotId();
-      return { templateVmid, snapshotId };
+      console.log(
+        `[PveLxcClient] Template created: VMID=${linkedCloneVmid}, snapshotId=${snapshotId}`
+      );
+      return { templateVmid: linkedCloneVmid, snapshotId };
     } catch (error) {
-      if (templateCreated) {
-        try {
-          await this.deleteContainer(templateVmid);
-        } catch (cleanupError) {
-          console.error(
-            `[PveLxcClient] Failed to cleanup template ${templateVmid}:`,
-            cleanupError
-          );
-        }
-      }
+      console.error(
+        `[PveLxcClient] Template creation failed, attempting rollback:`,
+        error instanceof Error ? error.message : error
+      );
+
+      await this.rollbackTemplateCreation({
+        sourceVmid,
+        sourceHostname,
+        sourceConvertedToTemplate,
+        linkedCloneVmid,
+        linkedCloneCreated,
+        targetNode,
+      });
+
       throw error;
-    } finally {
-      if (wasRunning) {
+    }
+  }
+
+  /**
+   * Rollback helper for createTemplateFromContainer.
+   * Attempts to restore the source container to a usable state after a failure.
+   */
+  private async rollbackTemplateCreation(state: {
+    sourceVmid: number;
+    sourceHostname: string;
+    sourceConvertedToTemplate: boolean;
+    linkedCloneVmid: number | null;
+    linkedCloneCreated: boolean;
+    targetNode: string;
+  }): Promise<void> {
+    const {
+      sourceVmid,
+      sourceHostname,
+      sourceConvertedToTemplate,
+      linkedCloneVmid,
+      linkedCloneCreated,
+    } = state;
+
+    // Case 1: Source is still a container (step 2 failed) - just restart it
+    if (!sourceConvertedToTemplate) {
+      console.log(
+        `[PveLxcClient] Rollback: Source ${sourceVmid} is still a container, restarting...`
+      );
+      try {
+        await this.startContainer(sourceVmid);
+        console.log(
+          `[PveLxcClient] Rollback successful: restarted container ${sourceVmid}`
+        );
+      } catch (restartError) {
+        console.error(
+          `[PveLxcClient] Rollback failed to restart container ${sourceVmid}:`,
+          restartError instanceof Error ? restartError.message : restartError
+        );
+      }
+      return;
+    }
+
+    // Case 2: Source is template, linked clone exists - restore from linked clone
+    if (sourceConvertedToTemplate && linkedCloneCreated && linkedCloneVmid) {
+      console.log(
+        `[PveLxcClient] Rollback: Restoring container ${sourceVmid} from linked clone ${linkedCloneVmid}`
+      );
+
+      try {
+        // Step A: Delete the source template to free up the VMID
+        console.log(
+          `[PveLxcClient] Rollback: Deleting source template ${sourceVmid}`
+        );
+        await this.deleteContainer(sourceVmid);
+
+        // Step B: Clone from linkedCloneVmid back to sourceVmid
+        // The linked clone might be a container or template depending on where we failed
+        console.log(
+          `[PveLxcClient] Rollback: Cloning from ${linkedCloneVmid} to ${sourceVmid}`
+        );
+        await this.cloneContainerFromSource(
+          linkedCloneVmid,
+          sourceVmid,
+          sourceHostname
+        );
+
+        // Step C: Start the restored container
+        console.log(
+          `[PveLxcClient] Rollback: Starting restored container ${sourceVmid}`
+        );
+        await this.startContainer(sourceVmid);
+
+        // Step D: Clean up the linked clone
+        console.log(
+          `[PveLxcClient] Rollback: Cleaning up linked clone ${linkedCloneVmid}`
+        );
+        await this.deleteContainer(linkedCloneVmid);
+
+        console.log(
+          `[PveLxcClient] Rollback successful: container ${sourceVmid} restored and running`
+        );
+      } catch (rollbackError) {
+        console.error(
+          `[PveLxcClient] Rollback failed:`,
+          rollbackError instanceof Error
+            ? rollbackError.message
+            : rollbackError
+        );
+        console.error(
+          `[PveLxcClient] Manual intervention may be required. State: ` +
+            `sourceVmid=${sourceVmid} (template), linkedCloneVmid=${linkedCloneVmid}`
+        );
+      }
+      return;
+    }
+
+    // Case 3: Source is template, no linked clone - cannot restore automatically
+    if (sourceConvertedToTemplate && !linkedCloneCreated) {
+      console.error(
+        `[PveLxcClient] Rollback impossible: Source ${sourceVmid} is now a template ` +
+          `with no backup. Manual intervention required.`
+      );
+
+      // Clean up any partial linked clone if VMID was allocated but clone failed
+      if (linkedCloneVmid) {
         try {
-          await this.startContainer(sourceVmid);
-        } catch (restartError) {
-          console.error(
-            `[PveLxcClient] Failed to restart source container ${sourceVmid}:`,
-            restartError
+          await this.deleteContainer(linkedCloneVmid);
+          console.log(
+            `[PveLxcClient] Cleaned up partial linked clone ${linkedCloneVmid}`
           );
+        } catch {
+          // Ignore - container might not exist
         }
       }
     }
