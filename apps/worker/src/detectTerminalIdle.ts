@@ -135,8 +135,6 @@ export async function detectTerminalIdle(
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   let maxRuntimeTimer: ReturnType<typeof setTimeout> | null = null;
   let child: ChildProcessWithoutNullStreams;
-  let stdoutBuffer = "";
-  let stderrBuffer = "";
   let detachCommandSentTime: number | null = null;
 
   return new Promise(async (resolve, reject) => {

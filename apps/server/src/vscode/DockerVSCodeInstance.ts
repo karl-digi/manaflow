@@ -273,6 +273,10 @@ export class DockerVSCodeInstance extends VSCodeInstance {
       AutoRemove: true,
       Privileged: true,
       CgroupnsMode: "host",
+      // Memory limits to prevent parallel agents from consuming all host memory
+      Memory: 8 * 1024 * 1024 * 1024, // 8GB hard limit
+      MemoryReservation: 2 * 1024 * 1024 * 1024, // 2GB soft reservation
+      MemorySwap: 12 * 1024 * 1024 * 1024, // 12GB total (8GB RAM + 4GB swap)
       PortBindings: {
         "39375/tcp": [{ HostPort: "0" }], // Exec service port
         "39378/tcp": [{ HostPort: "0" }], // VS Code port
@@ -847,11 +851,13 @@ export class DockerVSCodeInstance extends VSCodeInstance {
             return;
           }
           if (stream) {
-            let output = "";
-            stream.on("data", (chunk) => {
-              output += chunk.toString();
+            // Use Buffer array instead of string concatenation to avoid O(n²) memory growth
+            const outputChunks: Buffer[] = [];
+            stream.on("data", (chunk: Buffer) => {
+              outputChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
             });
             stream.on("end", () => {
+              const output = Buffer.concat(outputChunks).toString();
               if (
                 output.includes("Logged in as") ||
                 output.includes("already logged in")
@@ -1200,9 +1206,31 @@ export class DockerVSCodeInstance extends VSCodeInstance {
         DockerVSCodeInstance.eventsStream = stream;
         DockerVSCodeInstance.eventStreamBackoffMs = 1000;
 
-        let buffer = "";
+        // Use Buffer array for line parsing with size limit to prevent unbounded memory growth
+        const MAX_BUFFER_SIZE = 10 * 1024 * 1024; // 10MB max buffer
+        const bufferChunks: Buffer[] = [];
+        let bufferSize = 0;
+
         stream.on("data", (chunk: Buffer | string) => {
-          buffer += chunk.toString();
+          const chunkBuffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          bufferChunks.push(chunkBuffer);
+          bufferSize += chunkBuffer.length;
+
+          // Safety: if buffer exceeds max size, reset to prevent memory exhaustion
+          if (bufferSize > MAX_BUFFER_SIZE) {
+            dockerLogger.warn(
+              `[docker events] Buffer exceeded ${MAX_BUFFER_SIZE} bytes, resetting to prevent memory exhaustion`
+            );
+            bufferChunks.length = 0;
+            bufferSize = 0;
+            return;
+          }
+
+          // Concatenate and process lines
+          let buffer = Buffer.concat(bufferChunks).toString();
+          bufferChunks.length = 0;
+          bufferSize = 0;
+
           for (;;) {
             const idx = buffer.indexOf("\n");
             if (idx === -1) break;
@@ -1218,6 +1246,13 @@ export class DockerVSCodeInstance extends VSCodeInstance {
                 e
               );
             }
+          }
+
+          // Keep remaining incomplete line in buffer
+          if (buffer.length > 0) {
+            const remaining = Buffer.from(buffer);
+            bufferChunks.push(remaining);
+            bufferSize = remaining.length;
           }
         });
 

@@ -216,10 +216,26 @@ app.get("/health", (_req, res) => {
   });
 });
 
-// Configure multer for file uploads
+// Configure multer for file uploads with disk storage to avoid RAM bloat
+// Using disk storage instead of memoryStorage() prevents 100MB files from being held in RAM
+const UPLOAD_TEMP_DIR = "/tmp/cmux-uploads";
 const upload = multer({
   limits: { fileSize: 100 * 1024 * 1024 }, // 100MB limit
-  storage: multer.memoryStorage(),
+  storage: multer.diskStorage({
+    destination: async (_req, _file, cb) => {
+      try {
+        await fs.mkdir(UPLOAD_TEMP_DIR, { recursive: true });
+        cb(null, UPLOAD_TEMP_DIR);
+      } catch (err) {
+        cb(err instanceof Error ? err : new Error(String(err)), UPLOAD_TEMP_DIR);
+      }
+    },
+    filename: (_req, file, cb) => {
+      // Use timestamp + random suffix to avoid collisions
+      const uniqueSuffix = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+      cb(null, `${uniqueSuffix}-${file.originalname}`);
+    },
+  }),
 });
 
 const ALLOWED_UPLOAD_ROOT = "/root/prompt";
@@ -265,8 +281,18 @@ app.post("/upload-image", upload.single("image"), async (req, res) => {
     const dir = path.dirname(resolvedPath);
     await fs.mkdir(dir, { recursive: true });
 
-    // Write the file
-    await fs.writeFile(resolvedPath, req.file.buffer);
+    // Move file from temp location to destination (disk storage puts file at req.file.path)
+    // Using rename for efficiency when on same filesystem, fallback to copy+delete
+    const tempPath = req.file.path;
+    try {
+      await fs.rename(tempPath, resolvedPath);
+    } catch (renameErr) {
+      // Cross-filesystem move: copy then delete
+      await fs.copyFile(tempPath, resolvedPath);
+      await fs.unlink(tempPath).catch(() => {
+        // Best effort cleanup of temp file
+      });
+    }
 
     log("INFO", `Successfully wrote image file: ${resolvedPath}`);
 
@@ -388,6 +414,8 @@ const hasTaskRunId = (
 ): value is { taskRunId?: Id<"taskRuns"> } =>
   typeof value === "object" && value !== null && "taskRunId" in value;
 
+// Maximum pending events to prevent unbounded memory growth when server is disconnected
+const MAX_PENDING_EVENTS = 10000;
 const pendingEvents: PendingEvent[] = [];
 
 /**
@@ -403,6 +431,16 @@ function emitToMainServer<K extends WorkerToServerEventNames>(
     log("DEBUG", `Emitting ${event} to main server`, { event, data: payload });
     mainServerSocket.emit(event, ...args);
   } else {
+    // Check queue size limit to prevent unbounded memory growth
+    if (pendingEvents.length >= MAX_PENDING_EVENTS) {
+      // Drop oldest events to make room (FIFO eviction)
+      const dropped = pendingEvents.shift();
+      log("WARNING", `Pending events queue full (${MAX_PENDING_EVENTS}), dropping oldest event`, {
+        droppedEvent: dropped?.event,
+        droppedAge: dropped ? Date.now() - dropped.timestamp : 0,
+      });
+    }
+
     log("WARNING", `Main server not connected, queuing ${event} event`, {
       event,
       data: payload,

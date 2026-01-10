@@ -6,6 +6,9 @@ export const queryClient = new QueryClient({
     queries: {
       queryKeyHashFn: convexQueryClient.hashFn(),
       queryFn: convexQueryClient.queryFn(),
+      // Cache management to prevent unbounded memory growth in long-running sessions
+      staleTime: 60 * 1000, // Data considered fresh for 1 minute
+      gcTime: 5 * 60 * 1000, // Garbage collect unused queries after 5 minutes
     },
   },
 });
