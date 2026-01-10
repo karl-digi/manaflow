@@ -250,14 +250,14 @@ RUN arch="$(uname -m)"; \
     aarch64) ARCH="arm64" ;; \
     *) echo "Unsupported architecture: ${arch}" >&2; exit 1 ;; \
   esac; \
-  CMUX_CODE_RELEASE=$(curl -sX GET "https://api.github.com/repos/manaflow-ai/vscode-1/releases/latest" \
+  CMUX_CODE_RELEASE=$(curl -sX GET "https://api.github.com/repos/karlorz/vscode-1/releases/latest" \
     | jq -r '.tag_name' \
     | sed 's|^v||'); \
   echo "Installing cmux-code v${CMUX_CODE_RELEASE}"; \
   mkdir -p /app/cmux-code; \
   curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 \
     -o /tmp/cmux-code.tar.gz \
-    "https://github.com/manaflow-ai/vscode-1/releases/download/v${CMUX_CODE_RELEASE}/vscode-server-linux-${ARCH}-web.tar.gz"; \
+    "https://github.com/karlorz/vscode-1/releases/download/v${CMUX_CODE_RELEASE}/vscode-server-linux-${ARCH}-web.tar.gz"; \
   tar xf /tmp/cmux-code.tar.gz -C /app/cmux-code/ --strip-components=1; \
   rm -rf /tmp/cmux-code.tar.gz; \
   # Create VS Code settings directory with default config

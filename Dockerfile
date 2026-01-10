@@ -275,7 +275,7 @@ arch="$(dpkg --print-architecture)"
 if [ "${IDE_PROVIDER}" = "cmux-code" ]; then
   # Install cmux-code (our VSCode fork with OpenVSIX marketplace)
   if [ -z "${CMUX_CODE_RELEASE:-}" ]; then
-    CMUX_CODE_RELEASE=$(github-curl -sX GET "https://api.github.com/repos/manaflow-ai/vscode-1/releases/latest" \
+    CMUX_CODE_RELEASE=$(github-curl -sX GET "https://api.github.com/repos/karlorz/vscode-1/releases/latest" \
       | jq -r '.tag_name' \
       | sed 's|^v||')
   fi
@@ -286,7 +286,7 @@ if [ "${IDE_PROVIDER}" = "cmux-code" ]; then
     ARCH="arm64"
   fi
   mkdir -p /app/cmux-code
-  url="https://github.com/manaflow-ai/vscode-1/releases/download/v${CMUX_CODE_RELEASE}/vscode-server-linux-${ARCH}-web.tar.gz"
+  url="https://github.com/karlorz/vscode-1/releases/download/v${CMUX_CODE_RELEASE}/vscode-server-linux-${ARCH}-web.tar.gz"
   echo "Downloading: $url"
   github-curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/cmux-code.tar.gz "$url" \
     || github-curl -4 -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/cmux-code.tar.gz "$url"
@@ -890,7 +890,7 @@ arch="$(dpkg --print-architecture)"
 if [ "${IDE_PROVIDER}" = "cmux-code" ]; then
   # Install cmux-code (our VSCode fork with OpenVSIX marketplace)
   if [ -z "${CMUX_CODE_RELEASE:-}" ]; then
-    CMUX_CODE_RELEASE=$(github-curl -sX GET "https://api.github.com/repos/manaflow-ai/vscode-1/releases/latest" \
+    CMUX_CODE_RELEASE=$(github-curl -sX GET "https://api.github.com/repos/karlorz/vscode-1/releases/latest" \
       | jq -r '.tag_name' \
       | sed 's|^v||')
   fi
@@ -901,7 +901,7 @@ if [ "${IDE_PROVIDER}" = "cmux-code" ]; then
     ARCH="arm64"
   fi
   mkdir -p /app/cmux-code
-  url="https://github.com/manaflow-ai/vscode-1/releases/download/v${CMUX_CODE_RELEASE}/vscode-server-linux-${ARCH}-web.tar.gz"
+  url="https://github.com/karlorz/vscode-1/releases/download/v${CMUX_CODE_RELEASE}/vscode-server-linux-${ARCH}-web.tar.gz"
   echo "Downloading: $url"
   github-curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/cmux-code.tar.gz "$url" \
     || github-curl -4 -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o /tmp/cmux-code.tar.gz "$url"
