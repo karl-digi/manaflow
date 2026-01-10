@@ -294,10 +294,10 @@ class PtyClient {
 
       const timeout = setTimeout(() => {
         if (!this._connected) {
-          console.error('[cmux] PtyClient connection timeout');
+          console.error('[cmux] PtyClient connection timeout after 10s');
           reject(new Error('Connection timeout'));
         }
-      }, 5000);
+      }, 10000); // Increased from 5s to 10s to allow for slower startup
 
       this._ws.onopen = () => {
         clearTimeout(timeout);
@@ -1265,6 +1265,60 @@ export async function waitForCmuxPtyTerminal(name: string, maxWaitMs: number = 1
     }
   }
 
+  return false;
+}
+
+/**
+ * Check if cmux-pty has ANY terminals (not just a specific name).
+ * This is useful for detecting if cmux-pty is being used at all.
+ */
+export function hasAnyCmuxPtyTerminals(): boolean {
+  if (!terminalManager) return false;
+  return terminalManager.hasTerminals() || terminalManager.hasQueuedTerminals();
+}
+
+/**
+ * Wait for cmux-pty to have ANY terminals.
+ * Returns true if cmux-pty has any terminals, false if not found after waiting.
+ * This is more reliable than waiting for a specific terminal name since
+ * maintenance/dev terminals may be created before the agent's "cmux" terminal.
+ */
+export async function waitForAnyCmuxPtyTerminals(maxWaitMs: number = 15000): Promise<boolean> {
+  if (!terminalManager) return false;
+
+  // Wait for initial sync to complete (with longer timeout)
+  const syncTimeout = 10000; // 10 seconds - increased from 5s
+  try {
+    await Promise.race([
+      terminalManager.waitForInitialSync(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Initial sync timeout')), syncTimeout)
+      )
+    ]);
+  } catch {
+    // Timeout or connection failure - fall back to tmux
+    console.log('[cmux] waitForAnyCmuxPtyTerminals: initial sync failed/timed out');
+    return false;
+  }
+
+  // Check if ANY terminals exist
+  if (hasAnyCmuxPtyTerminals()) {
+    console.log('[cmux] waitForAnyCmuxPtyTerminals: found terminals after initial sync');
+    return true;
+  }
+
+  // Wait longer for terminals to be created (orchestrator may still be running)
+  console.log('[cmux] waitForAnyCmuxPtyTerminals: waiting for terminals...');
+  const startTime = Date.now();
+  while (Date.now() - startTime < maxWaitMs) {
+    await new Promise(resolve => setTimeout(resolve, 500));
+    if (hasAnyCmuxPtyTerminals()) {
+      console.log(`[cmux] waitForAnyCmuxPtyTerminals: found terminals after ${Date.now() - startTime}ms`);
+      return true;
+    }
+  }
+
+  console.log('[cmux] waitForAnyCmuxPtyTerminals: no terminals found after waiting');
   return false;
 }
 
