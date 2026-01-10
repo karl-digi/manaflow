@@ -6,6 +6,7 @@ import * as readline from "node:readline";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import * as os from "node:os";
+import { spawnSync } from "node:child_process";
 import chalk from "chalk";
 import { search, input } from "@inquirer/prompts";
 import { LocalRunner, DEFAULT_MODEL } from "./local.js";
@@ -392,68 +393,14 @@ function printQuestionDetail(key: string, entry: { question: Question; taskId: s
 }
 
 // ─────────────────────────────────────────────────────────────
-// Watch Mode - View task output inline
+// Attach to tmux session directly
 // ─────────────────────────────────────────────────────────────
 
-async function watchTaskOutput(task: Task, _rl: readline.Interface): Promise<void> {
-  return new Promise((resolve) => {
-    let running = true;
-
-    // Set up raw mode to capture single keystrokes
-    if (process.stdin.isTTY) {
-      process.stdin.setRawMode(true);
-    }
-    process.stdin.resume();
-
-    const renderOutput = async (): Promise<void> => {
-      if (!running) return;
-
-      try {
-        const output = await runner.readOutput(task.id, 40); // Last 40 lines
-        clearScreen();
-
-        // Header
-        console.log(chalk.cyan.bold(`  ╭─ Task #${task.number}: ${task.repoName} ${"─".repeat(Math.max(0, 50 - task.repoName.length))}╮`));
-        console.log(chalk.gray(`  │ Press 'q' or Escape to return to dashboard ${" ".repeat(21)}│`));
-        console.log(chalk.cyan.bold(`  ╰${"─".repeat(66)}╯`));
-        console.log();
-
-        // Show tmux output
-        const lines = output.split("\n").slice(-35); // Fit in terminal
-        for (const line of lines) {
-          console.log(`  ${line}`);
-        }
-      } catch {
-        clearScreen();
-        console.log(chalk.yellow(`  Task #${task.number} has finished or is unavailable.`));
-        console.log(chalk.gray(`  Press any key to return...`));
-      }
-    };
-
-    // Initial render
-    renderOutput();
-
-    // Refresh every 500ms
-    const refreshInterval = setInterval(() => {
-      renderOutput();
-    }, 500);
-
-    // Handle keypress
-    const onKeypress = (key: Buffer): void => {
-      const char = key.toString();
-      // q, Q, or Escape (0x1b)
-      if (char === "q" || char === "Q" || key[0] === 0x1b) {
-        running = false;
-        clearInterval(refreshInterval);
-        process.stdin.removeListener("data", onKeypress);
-        if (process.stdin.isTTY) {
-          process.stdin.setRawMode(false);
-        }
-        resolve();
-      }
-    };
-
-    process.stdin.on("data", onKeypress);
+function attachToTask(task: Task): void {
+  const sessionName = `cmux-${task.id}`;
+  // Directly attach to tmux session - user can detach with Ctrl+B, D
+  spawnSync("tmux", ["attach-session", "-t", sessionName], {
+    stdio: "inherit",
   });
 }
 
@@ -721,11 +668,16 @@ async function handleCommand(inputStr: string, rl: readline.Interface): Promise<
         console.log(chalk.red(`  Task ${taskNum} not found.`));
         break;
       }
-      // Enter watch mode - show task output inline
+      if (task.status !== "running") {
+        console.log(chalk.yellow(`  Task #${taskNum} is not running.`));
+        break;
+      }
+      // Attach directly to tmux session (Ctrl+B, D to detach)
+      console.log(chalk.gray(`  Attaching to task #${taskNum}... (Ctrl+B, D to detach)`));
       rl.pause();
-      await watchTaskOutput(task, rl);
+      attachToTask(task);
       rl.resume();
-      // Refresh dashboard after exiting watch mode
+      // Refresh dashboard after detaching
       clearScreen();
       printDashboard();
       printQuickHelp();

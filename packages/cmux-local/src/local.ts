@@ -252,8 +252,16 @@ export CMUX_PROMPT_FILE="${promptFile}"
 # Inbox for human-in-the-loop communication
 export CMUX_INBOX_FILE="${inboxFile}"
 export CMUX_ANSWERS_FILE="${answersFile}"
-# Only use OAuth token - never prompt about API keys
+# Only use OAuth token - disable all other auth methods
 unset ANTHROPIC_API_KEY
+unset ANTHROPIC_BASE_URL
+unset AWS_ACCESS_KEY_ID
+unset AWS_SECRET_ACCESS_KEY
+unset AWS_SESSION_TOKEN
+unset AWS_REGION
+unset AWS_DEFAULT_REGION
+unset AWS_PROFILE
+unset CLAUDE_CODE_USE_BEDROCK
 export CLAUDE_CODE_OAUTH_TOKEN="${oauthToken}"
 claude --dangerously-skip-permissions --model "${actualModel}" "$(cat "${promptFile}")"
 `;
@@ -385,6 +393,50 @@ claude --dangerously-skip-permissions --model "${actualModel}" "$(cat "${promptF
     const sessionName = this.getSessionName(taskId);
     // This will replace the current process
     execSync(`tmux attach-session -t "${sessionName}"`, { stdio: "inherit" });
+  }
+
+  /**
+   * Send raw key buffer to a tmux session
+   */
+  async sendKeysToSession(taskId: string, key: Buffer): Promise<void> {
+    const sessionName = this.getSessionName(taskId);
+
+    // Handle special keys
+    const keyStr = key.toString();
+    let tmuxKey: string;
+
+    if (key[0] === 0x0d) {
+      tmuxKey = "Enter";
+    } else if (key[0] === 0x7f || key[0] === 0x08) {
+      tmuxKey = "BSpace";
+    } else if (key[0] === 0x1b && key.length === 1) {
+      tmuxKey = "Escape";
+    } else if (key[0] === 0x09) {
+      tmuxKey = "Tab";
+    } else if (key[0] === 0x1b && key[1] === 0x5b) {
+      // Arrow keys and other escape sequences
+      if (key[2] === 0x41) tmuxKey = "Up";
+      else if (key[2] === 0x42) tmuxKey = "Down";
+      else if (key[2] === 0x43) tmuxKey = "Right";
+      else if (key[2] === 0x44) tmuxKey = "Left";
+      else tmuxKey = keyStr;
+    } else if (key[0] < 32 && key[0] !== 0x11) {
+      // Ctrl+letter (except Ctrl+Q which is our exit)
+      tmuxKey = `C-${String.fromCharCode(key[0] + 96)}`;
+    } else {
+      // Regular characters - use literal mode
+      const result = await exec(`tmux send-keys -t "${sessionName}" -l "${keyStr.replace(/"/g, '\\"')}"`);
+      if (result.code !== 0) {
+        throw new Error(`Failed to send keys: ${result.stderr}`);
+      }
+      return;
+    }
+
+    // Send special key
+    const result = await exec(`tmux send-keys -t "${sessionName}" "${tmuxKey}"`);
+    if (result.code !== 0) {
+      throw new Error(`Failed to send keys: ${result.stderr}`);
+    }
   }
 
   /**
