@@ -10,7 +10,7 @@ import chalk from "chalk";
 import { search, input, confirm } from "@inquirer/prompts";
 import { LocalRunner, DEFAULT_MODEL } from "./local.js";
 import { type Task, type Question, type ActivityEntry } from "./types.js";
-import { extractQuestionsFromOutput, extractCurrentActivity, type Decision, type Assumption } from "./extractor.js";
+import { extractCurrentActivity } from "./extractor.js";
 
 // Track MCP questions we've already seen (by their MCP ID)
 const mcpQuestionsSeen: Set<string> = new Set();
@@ -58,11 +58,11 @@ const PROJECT_DIRS = [
 const runner = new LocalRunner();
 let tasks: Task[] = [];
 const questions: Map<string, { question: Question; taskId: string }> = new Map();
-const decisions: Map<string, { decision: Decision; taskId: string }> = new Map();
-const assumptions: Map<string, { assumption: Assumption; taskId: string }> = new Map();
+const _decisions: Map<string, { decision: unknown; taskId: string }> = new Map();
+const _assumptions: Map<string, { assumption: unknown; taskId: string }> = new Map();
 const activity: ActivityEntry[] = [];
 const taskCurrentActivity: Map<string, string> = new Map(); // Track what each task is doing
-const taskFocus: Map<string, string> = new Map(); // Track current focus per task
+const _taskFocus: Map<string, string> = new Map(); // Track current focus per task
 let questionCounter = 0;
 let isRunning = true;
 let recentRepos: string[] = [];
@@ -221,7 +221,7 @@ function printDashboard(): void {
 
   // Categorize tasks
   const inProgress = tasks.filter((t) => t.status === "running" || t.status === "starting");
-  const withQuestions = tasks.filter((t) => {
+  const _withQuestions = tasks.filter((t) => {
     return Array.from(questions.values()).some((q) => q.taskId === t.id);
   });
   const completed = tasks.filter((t) => t.status === "done");

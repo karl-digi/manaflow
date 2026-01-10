@@ -13,51 +13,20 @@ import { nanoid } from "nanoid";
 import { type Task, type MCPQuestion, type MCPProgress } from "./types.js";
 
 /**
- * Default model - Claude Opus 4.5
+ * Default model - Claude Opus 4
+ * Use just "opus" for CLI compatibility
  */
-export const DEFAULT_MODEL = "claude-opus-4-5-20251101";
+export const DEFAULT_MODEL = "opus";
 
 /**
  * Orchestration Protocol - instructs Claude to write questions to inbox file
+ * Keep this minimal to avoid noise in output
  */
 const ORCHESTRATION_PROTOCOL = `
-## Human-in-the-Loop Protocol
+When you need human input on important decisions, write a JSON line to $CMUX_INBOX_FILE:
+{"id":"q1","question":"Your question?","importance":"medium"}
 
-You are being orchestrated. A human operator is monitoring your work through a dashboard.
-When you need human input, write to the inbox file so they can respond.
-
-### Asking Questions
-
-When you genuinely need human input (unclear requirements, significant decisions, multiple valid approaches):
-
-1. Use the Write tool to APPEND to: $CMUX_INBOX_FILE
-2. Write valid JSON in this format:
-
-{"id":"unique-id","question":"Your question here?","options":["Option A","Option B"],"suggestion":"Your recommendation","importance":"high"}
-
-- id: Use a unique string (timestamp or random)
-- question: Clear, specific question
-- options: Array of choices (optional)
-- suggestion: Your recommendation (optional)
-- importance: "high" (blocking) | "medium" (helpful) | "low" (nice to know)
-
-**IMPORTANT**:
-- Only ask when genuinely uncertain - don't ask about things you can decide yourself
-- Keep working after asking - don't block waiting for answers
-- Check $CMUX_ANSWERS_FILE periodically for responses
-
-### When NOT to ask:
-- Implementation details you can figure out
-- Syntax questions
-- Decisions you're 80%+ confident about
-
-### Example:
-
-If unsure about authentication approach:
-Write to $CMUX_INBOX_FILE:
-{"id":"auth-q1","question":"Should user sessions use JWT tokens or HTTP-only cookies?","options":["JWT (stateless, good for APIs)","Cookies (simpler, better security defaults)"],"suggestion":"Cookies - simpler for MVP and avoids token refresh complexity","importance":"medium"}
-
-Then continue working with your best judgment while waiting for response.
+Only ask about significant decisions. Keep working while waiting for response.
 `;
 
 /**

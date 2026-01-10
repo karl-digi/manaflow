@@ -57,7 +57,7 @@ const PROTOCOL_EXAMPLES = [
 /**
  * Check if text is a protocol example that should be filtered out
  */
-function isProtocolExample(text: string): boolean {
+function _isProtocolExample(text: string): boolean {
   const lower = text.toLowerCase();
   return PROTOCOL_EXAMPLES.some((example) => lower.includes(example));
 }
