@@ -2,6 +2,12 @@ import type {
   EnvironmentContext,
   EnvironmentResult,
 } from "../common/environment-result";
+import {
+  BEDROCK_CLAUDE_SONNET_45_MODEL_ID,
+  BEDROCK_CLAUDE_OPUS_45_MODEL_ID,
+  BEDROCK_CLAUDE_HAIKU_45_MODEL_ID,
+  BEDROCK_AWS_REGION,
+} from "../../utils/anthropic";
 
 export const CLAUDE_KEY_ENV_VARS_TO_UNSET = [
   "ANTHROPIC_API_KEY",
@@ -10,8 +16,26 @@ export const CLAUDE_KEY_ENV_VARS_TO_UNSET = [
   "CLAUDE_API_KEY",
 ];
 
-export async function getClaudeEnvironment(
+// Bedrock model ID mapping for each supported Claude model
+export const BEDROCK_MODEL_IDS: Record<string, string> = {
+  "claude-sonnet-4-5-20250929": BEDROCK_CLAUDE_SONNET_45_MODEL_ID,
+  "claude-opus-4-5": BEDROCK_CLAUDE_OPUS_45_MODEL_ID,
+  "claude-haiku-4-5-20251001": BEDROCK_CLAUDE_HAIKU_45_MODEL_ID,
+};
+
+/**
+ * Factory function to create model-specific Claude environment functions.
+ * This allows each model to have its own Bedrock model ID for fallback.
+ */
+export function createClaudeEnvironment(modelId: string) {
+  return async (ctx: EnvironmentContext): Promise<EnvironmentResult> => {
+    return getClaudeEnvironmentInternal(ctx, modelId);
+  };
+}
+
+async function getClaudeEnvironmentInternal(
   ctx: EnvironmentContext,
+  modelId: string,
 ): Promise<EnvironmentResult> {
   // These must be lazy since configs are imported into the browser
   // const { exec } = await import("node:child_process");
@@ -25,9 +49,6 @@ export async function getClaudeEnvironment(
   const env: Record<string, string> = {};
   const startupCommands: string[] = [];
   const claudeLifecycleDir = "/root/lifecycle/claude";
-  const claudeSecretsDir = `${claudeLifecycleDir}/secrets`;
-  // const claudeApiKeyPath = `${claudeSecretsDir}/.anthropic_key`;
-  const claudeApiKeyHelperPath = `${claudeSecretsDir}/anthropic_key_helper.sh`;
 
   // Prepare .claude.json
   try {
@@ -119,7 +140,6 @@ export async function getClaudeEnvironment(
   // Ensure directories exist
   startupCommands.unshift("mkdir -p ~/.claude");
   startupCommands.push(`mkdir -p ${claudeLifecycleDir}`);
-  startupCommands.push(`mkdir -p ${claudeSecretsDir}`);
 
   // Clean up any previous Claude completion markers
   // This should run before the agent starts to ensure clean state
@@ -184,21 +204,29 @@ exit 0`;
     mode: "755",
   });
 
-  // Check if user has provided an OAuth token (preferred) or API key
-  // Note: AWS Bedrock is NOT used for tasks - it's only used for internal services
-  // like heatmap and preview.new code reviews (see apps/www/lib/services/code-review/)
+  // Check if user has provided an OAuth token (preferred) or their own API key
+  // Priority:
+  // 1. OAuth token - Direct to Anthropic (user pays via their subscription)
+  // 2. User's ANTHROPIC_API_KEY - Direct to Anthropic (user pays via their API key)
+  // 3. Neither - Fall back to AWS Bedrock (cmux pays)
+  // IMPORTANT: We NEVER use cmux's platform-provided ANTHROPIC_API_KEY for Claude Code tasks
   const hasOAuthToken =
     ctx.apiKeys?.CLAUDE_CODE_OAUTH_TOKEN &&
     ctx.apiKeys.CLAUDE_CODE_OAUTH_TOKEN.trim().length > 0;
-  const hasAnthropicApiKey =
+  const hasUserAnthropicApiKey =
     ctx.apiKeys?.ANTHROPIC_API_KEY &&
     ctx.apiKeys.ANTHROPIC_API_KEY.trim().length > 0;
+
+  // Determine auth mode
+  const useOAuth = hasOAuthToken;
+  const useUserApiKey = !hasOAuthToken && hasUserAnthropicApiKey;
+  const useBedrock = !hasOAuthToken && !hasUserAnthropicApiKey;
 
   // If OAuth token is provided, write it to /etc/claude-code/env
   // The wrapper scripts (claude, npx, bunx) source this file before running claude-code
   // This is necessary because CLAUDE_CODE_OAUTH_TOKEN must be set as an env var
   // BEFORE claude-code starts (it checks OAuth early, before loading settings.json)
-  if (hasOAuthToken) {
+  if (useOAuth) {
     const oauthEnvContent = `CLAUDE_CODE_OAUTH_TOKEN=${ctx.apiKeys?.CLAUDE_CODE_OAUTH_TOKEN}\n`;
     files.push({
       destinationPath: "/etc/claude-code/env",
@@ -207,22 +235,55 @@ exit 0`;
     });
   }
 
+  // When using Bedrock, we need to set up AWS credentials and the Bedrock model ID
+  // Get the Bedrock model ID for this model from the mapping
+  const bedrockModelId = BEDROCK_MODEL_IDS[modelId];
+  if (useBedrock && !bedrockModelId) {
+    console.warn(
+      `[Claude Environment] No Bedrock model ID mapping for model: ${modelId}. ` +
+        `Available mappings: ${Object.keys(BEDROCK_MODEL_IDS).join(", ")}`,
+    );
+  }
+
+  // For Bedrock, we need to pass AWS credentials to the sandbox
+  // These are read from the server's environment
+  const awsAccessKeyId = process.env.AWS_ACCESS_KEY_ID;
+  const awsSecretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
+  const awsSessionToken = process.env.AWS_SESSION_TOKEN;
+
+  // Build the env vars to pass to the sandbox
+  const sandboxEnv: Record<string, string> = {};
+
+  if (useBedrock) {
+    // Enable Bedrock mode
+    sandboxEnv.CLAUDE_CODE_USE_BEDROCK = "1";
+    sandboxEnv.AWS_REGION = BEDROCK_AWS_REGION;
+
+    // Pass AWS credentials if available
+    if (awsAccessKeyId) {
+      sandboxEnv.AWS_ACCESS_KEY_ID = awsAccessKeyId;
+    }
+    if (awsSecretAccessKey) {
+      sandboxEnv.AWS_SECRET_ACCESS_KEY = awsSecretAccessKey;
+    }
+    if (awsSessionToken) {
+      sandboxEnv.AWS_SESSION_TOKEN = awsSessionToken;
+    }
+
+    // Override the model to use the Bedrock model ID
+    if (bedrockModelId) {
+      sandboxEnv.ANTHROPIC_MODEL = bedrockModelId;
+    }
+  }
+
   // Create settings.json with hooks configuration
-  // Priority: OAuth token > API key via cmux proxy
-  // When OAuth token is present, we don't use the cmux proxy (user pays directly via their subscription)
-  // When no OAuth token, we route through cmux proxy for tracking/rate limiting
-  const useDirectAuth = hasOAuthToken;
+  // When using OAuth or user's API key, go direct to Anthropic (no proxy)
+  // When using Bedrock, no API key settings needed (credentials handled via env vars)
   const settingsConfig: Record<string, unknown> = {
     alwaysThinkingEnabled: true,
-    // Configure helper to avoid env-var based prompting (only when not using OAuth)
-    ...(useDirectAuth ? {} : { apiKeyHelper: claudeApiKeyHelperPath }),
-    // Use the Anthropic API key from cmux settings.json instead of env vars
-    // This ensures Claude Code always uses the key from cmux, bypassing any
-    // ANTHROPIC_API_KEY environment variables in the repo
-    // Only set this when NOT using OAuth token (OAuth takes precedence)
-    ...(!useDirectAuth && hasAnthropicApiKey
-      ? { anthropicApiKey: ctx.apiKeys?.ANTHROPIC_API_KEY }
-      : {}),
+    // Use the user's Anthropic API key directly (not through cmux proxy)
+    // Only set this when using the user's own API key
+    ...(useUserApiKey ? { anthropicApiKey: ctx.apiKeys?.ANTHROPIC_API_KEY } : {}),
     hooks: {
       Stop: [
         {
@@ -249,33 +310,28 @@ exit 0`;
     env: {
       CLAUDE_CODE_ENABLE_TELEMETRY: 0,
       CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: 1,
-      // Only route through cmux proxy when NOT using OAuth token
-      // OAuth token users go directly to Anthropic API (they pay via their subscription)
-      ...(useDirectAuth
-        ? {}
-        : {
-            ANTHROPIC_BASE_URL: "https://www.cmux.dev/api/anthropic",
-            ANTHROPIC_CUSTOM_HEADERS: `x-cmux-token:${ctx.taskRunJwt}`,
-          }),
+      // No longer using the cmux proxy - we go direct or use Bedrock
     },
   };
 
-  // Add settings.json to files array as well
+  // If no OAuth token, ensure we don't use any cached credentials
+  // This prevents using stale/leftover credentials from previous sessions
+  if (!useOAuth) {
+    // Clear any existing credentials file by writing an empty one
+    files.push({
+      destinationPath: "$HOME/.claude/.credentials.json",
+      contentBase64: Buffer.from("{}").toString("base64"),
+      mode: "600",
+    });
+  }
+
+  // Add settings.json to files array
   files.push({
     destinationPath: "$HOME/.claude/settings.json",
     contentBase64: Buffer.from(
       JSON.stringify(settingsConfig, null, 2),
     ).toString("base64"),
     mode: "644",
-  });
-
-  // Add apiKey helper script to read key from file
-  const helperScript = `#!/bin/sh
-echo ${ctx.taskRunJwt}`;
-  files.push({
-    destinationPath: claudeApiKeyHelperPath,
-    contentBase64: Buffer.from(helperScript).toString("base64"),
-    mode: "700",
   });
 
   // Log the files for debugging
@@ -288,8 +344,17 @@ echo ${ctx.taskRunJwt}`;
 
   return {
     files,
-    env,
+    env: { ...env, ...sandboxEnv },
     startupCommands,
     unsetEnv: [...CLAUDE_KEY_ENV_VARS_TO_UNSET],
   };
+}
+
+// Legacy export for backwards compatibility - uses a default model
+// New code should use createClaudeEnvironment with a specific model ID
+export async function getClaudeEnvironment(
+  ctx: EnvironmentContext,
+): Promise<EnvironmentResult> {
+  // Default to opus-4.5 for backwards compatibility
+  return getClaudeEnvironmentInternal(ctx, "claude-opus-4-5");
 }

@@ -4,7 +4,7 @@ import { checkClaudeRequirements } from "./check-requirements";
 import { startClaudeCompletionDetector } from "./completion-detector";
 import {
   CLAUDE_KEY_ENV_VARS_TO_UNSET,
-  getClaudeEnvironment,
+  createClaudeEnvironment,
 } from "./environment";
 
 /**
@@ -12,10 +12,11 @@ import {
  *
  * Priority:
  * 1. If CLAUDE_CODE_OAUTH_TOKEN is set, use it and unset ANTHROPIC_API_KEY
- * 2. Otherwise, fall back to ANTHROPIC_API_KEY
+ * 2. If user's ANTHROPIC_API_KEY is set, use it directly (not through cmux proxy)
+ * 3. Otherwise, fall back to AWS Bedrock (handled in environment.ts)
  *
- * The OAuth token is preferred because it uses the user's own Claude subscription
- * and bypasses the need for an API key entirely.
+ * The OAuth token is preferred because it uses the user's own Claude subscription.
+ * IMPORTANT: We NEVER use cmux's platform-provided ANTHROPIC_API_KEY for tasks.
  */
 const applyClaudeApiKeys: NonNullable<AgentConfig["applyApiKeys"]> = async (
   keys,
@@ -40,76 +41,22 @@ const applyClaudeApiKeys: NonNullable<AgentConfig["applyApiKeys"]> = async (
     };
   }
 
-  // Fall back to ANTHROPIC_API_KEY if no OAuth token
+  // Fall back to user's ANTHROPIC_API_KEY if no OAuth token
+  // Note: The API key is passed via settings.json (anthropicApiKey), not env var
   if (anthropicKey && anthropicKey.trim().length > 0) {
-    // Note: We still unset ANTHROPIC_API_KEY here because getClaudeEnvironment
-    // handles the key via settings.json (anthropicApiKey) instead of env var
     return {
       unsetEnv,
     };
   }
 
+  // No user-provided credentials - will use AWS Bedrock (configured in environment.ts)
   return {
     unsetEnv,
   };
 };
 
-export const CLAUDE_SONNET_4_CONFIG: AgentConfig = {
-  name: "claude/sonnet-4",
-  command: "bunx",
-  args: [
-    "@anthropic-ai/claude-code@latest",
-    "--model",
-    "claude-sonnet-4-20250514",
-    "--allow-dangerously-skip-permissions",
-    "--dangerously-skip-permissions",
-    "--ide",
-    "$PROMPT",
-  ],
-  environment: getClaudeEnvironment,
-  checkRequirements: checkClaudeRequirements,
-  apiKeys: [CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY],
-  applyApiKeys: applyClaudeApiKeys,
-  completionDetector: startClaudeCompletionDetector,
-};
-
-export const CLAUDE_OPUS_4_CONFIG: AgentConfig = {
-  name: "claude/opus-4",
-  command: "bunx",
-  args: [
-    "@anthropic-ai/claude-code@latest",
-    "--model",
-    "claude-opus-4-20250514",
-    "--allow-dangerously-skip-permissions",
-    "--dangerously-skip-permissions",
-    "--ide",
-    "$PROMPT",
-  ],
-  environment: getClaudeEnvironment,
-  checkRequirements: checkClaudeRequirements,
-  apiKeys: [CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY],
-  applyApiKeys: applyClaudeApiKeys,
-  completionDetector: startClaudeCompletionDetector,
-};
-
-export const CLAUDE_OPUS_4_1_CONFIG: AgentConfig = {
-  name: "claude/opus-4.1",
-  command: "bunx",
-  args: [
-    "@anthropic-ai/claude-code@latest",
-    "--model",
-    "claude-opus-4-1-20250805",
-    "--allow-dangerously-skip-permissions",
-    "--dangerously-skip-permissions",
-    "--ide",
-    "$PROMPT",
-  ],
-  environment: getClaudeEnvironment,
-  checkRequirements: checkClaudeRequirements,
-  apiKeys: [CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY],
-  applyApiKeys: applyClaudeApiKeys,
-  completionDetector: startClaudeCompletionDetector,
-};
+// Only export 4.5 models - older models are no longer supported
+// When no OAuth token or user API key is provided, these fall back to AWS Bedrock
 
 export const CLAUDE_OPUS_4_5_CONFIG: AgentConfig = {
   name: "claude/opus-4.5",
@@ -123,7 +70,7 @@ export const CLAUDE_OPUS_4_5_CONFIG: AgentConfig = {
     "--ide",
     "$PROMPT",
   ],
-  environment: getClaudeEnvironment,
+  environment: createClaudeEnvironment("claude-opus-4-5"),
   checkRequirements: checkClaudeRequirements,
   apiKeys: [CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY],
   applyApiKeys: applyClaudeApiKeys,
@@ -142,7 +89,7 @@ export const CLAUDE_SONNET_4_5_CONFIG: AgentConfig = {
     "--ide",
     "$PROMPT",
   ],
-  environment: getClaudeEnvironment,
+  environment: createClaudeEnvironment("claude-sonnet-4-5-20250929"),
   checkRequirements: checkClaudeRequirements,
   apiKeys: [CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY],
   applyApiKeys: applyClaudeApiKeys,
@@ -161,7 +108,7 @@ export const CLAUDE_HAIKU_4_5_CONFIG: AgentConfig = {
     "--ide",
     "$PROMPT",
   ],
-  environment: getClaudeEnvironment,
+  environment: createClaudeEnvironment("claude-haiku-4-5-20251001"),
   checkRequirements: checkClaudeRequirements,
   apiKeys: [CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY],
   applyApiKeys: applyClaudeApiKeys,
