@@ -78,7 +78,7 @@ export class DockerVSCodeInstance extends VSCodeInstance {
     super(config);
     this.containerName = `cmux-${this.taskRunId}`;
     this.imageName =
-      process.env.WORKER_IMAGE_NAME || "docker.io/manaflow/cmux:latest";
+      process.env.WORKER_IMAGE_NAME || "docker.io/karl8080/cmux:latest";
     dockerLogger.info(`WORKER_IMAGE_NAME: ${process.env.WORKER_IMAGE_NAME}`);
     dockerLogger.info(`this.imageName: ${this.imageName}`);
     // Register this instance

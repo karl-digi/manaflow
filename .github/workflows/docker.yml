@@ -10,7 +10,7 @@ on:
 
 env:
   REGISTRY: docker.io
-  IMAGE_NAME: manaflow/cmux
+  IMAGE_NAME: karl8080/cmux
 
 jobs:
   docker-build:
