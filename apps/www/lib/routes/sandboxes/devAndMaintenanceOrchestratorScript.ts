@@ -64,6 +64,20 @@ async function checkPtyServerHealth(): Promise<boolean> {
   }
 }
 
+async function waitForPtyServerReady(
+  timeoutMs = 15_000,
+  intervalMs = 500,
+): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (await checkPtyServerHealth()) {
+      return true;
+    }
+    await delay(intervalMs);
+  }
+  return false;
+}
+
 async function createPtySession(options: {
   shell?: string;
   cwd?: string;
@@ -237,6 +251,14 @@ function requireEnv(name: string): string {
   return sanitizeEnvValue(name, value);
 }
 
+function optionalEnv(name: string): string | null {
+  const value = process.env[name];
+  if (value === undefined) {
+    return null;
+  }
+  return sanitizeEnvValue(name, value);
+}
+
 function envBoolean(name: string): boolean {
   const value = process.env[name];
   if (!value) {
@@ -259,15 +281,15 @@ const config = {
   devErrorLogPath: requireEnv("CMUX_ORCH_DEV_ERROR_LOG_PATH"),
   hasMaintenanceScript: envBoolean("CMUX_ORCH_HAS_MAINTENANCE_SCRIPT"),
   hasDevScript: envBoolean("CMUX_ORCH_HAS_DEV_SCRIPT"),
-  convexUrl: requireEnv("CMUX_ORCH_CONVEX_URL"),
-  taskRunJwt: requireEnv("CMUX_ORCH_TASK_RUN_JWT"),
+  convexUrl: optionalEnv("CMUX_ORCH_CONVEX_URL"),
+  taskRunJwt: optionalEnv("CMUX_ORCH_TASK_RUN_JWT"),
   isCloudWorkspace: envBoolean("CMUX_ORCH_IS_CLOUD_WORKSPACE"),
 };
 
 async function detectBackend(): Promise<"cmux-pty" | "tmux"> {
   // Check if cmux-pty server is available
   console.log("[ORCHESTRATOR] Checking if cmux-pty server is available...");
-  const ptyAvailable = await checkPtyServerHealth();
+  const ptyAvailable = await waitForPtyServerReady();
 
   if (ptyAvailable) {
     console.log("[ORCHESTRATOR] cmux-pty server is available, using cmux-pty backend");

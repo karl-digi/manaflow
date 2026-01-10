@@ -1238,12 +1238,12 @@ export async function waitForCmuxPtyTerminal(name: string, maxWaitMs: number = 1
   if (!terminalManager) return false;
 
   // Wait for initial sync to complete (with timeout to avoid hanging if PTY server is down)
-  const syncTimeout = 5000; // 5 seconds
+  const startTime = Date.now();
   try {
     await Promise.race([
       terminalManager.waitForInitialSync(),
       new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Initial sync timeout')), syncTimeout)
+        setTimeout(() => reject(new Error('Initial sync timeout')), maxWaitMs)
       )
     ]);
   } catch {
@@ -1257,7 +1257,6 @@ export async function waitForCmuxPtyTerminal(name: string, maxWaitMs: number = 1
   }
 
   // Wait a bit more in case state_sync arrives later
-  const startTime = Date.now();
   while (Date.now() - startTime < maxWaitMs) {
     await new Promise(resolve => setTimeout(resolve, 500));
     if (hasCmuxPtyTerminal(name)) {
@@ -1269,8 +1268,44 @@ export async function waitForCmuxPtyTerminal(name: string, maxWaitMs: number = 1
 }
 
 /**
+ * Wait for cmux-pty to sync and check if it has any terminals.
+ * Returns true if any terminal exists or is queued, false if not found after waiting.
+ */
+export async function waitForAnyCmuxPtyTerminal(maxWaitMs: number = 10000): Promise<boolean> {
+  if (!terminalManager) return false;
+
+  const startTime = Date.now();
+  try {
+    await Promise.race([
+      terminalManager.waitForInitialSync(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Initial sync timeout')), maxWaitMs)
+      )
+    ]);
+  } catch {
+    return false;
+  }
+
+  const hasAny = () =>
+    terminalManager.hasTerminals() || terminalManager.hasQueuedTerminals();
+
+  if (hasAny()) {
+    return true;
+  }
+
+  while (Date.now() - startTime < maxWaitMs) {
+    await new Promise(resolve => setTimeout(resolve, 500));
+    if (hasAny()) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
  * Create all queued terminals from cmux-pty state_sync.
- * This should be called after waitForCmuxPtyTerminal() confirms terminals exist.
+ * This should be called after waitForAnyCmuxPtyTerminal() or waitForCmuxPtyTerminal() confirms terminals exist.
  * Directly creates the vscode terminals without going through provideTerminalProfile.
  * Focuses the "cmux" terminal if found.
  */

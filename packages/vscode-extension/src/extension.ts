@@ -2,7 +2,12 @@ import type { ClientToServerEvents, ServerToClientEvents } from "@cmux/shared";
 import { execSync } from "node:child_process";
 import { io, Socket } from "socket.io-client";
 import * as vscode from "vscode";
-import { activateTerminal, deactivateTerminal, waitForCmuxPtyTerminal, createQueuedTerminals } from "./terminal";
+import {
+  activateTerminal,
+  createQueuedTerminals,
+  deactivateTerminal,
+  waitForAnyCmuxPtyTerminal,
+} from "./terminal";
 
 // Create output channel for cmux logs
 const outputChannel = vscode.window.createOutputChannel("cmux");
@@ -301,7 +306,7 @@ async function setupDefaultTerminal() {
 
   // Check if cmux-pty is managing the "cmux" terminal
   // This happens when the worker creates PTY sessions instead of tmux
-  const hasCmuxPty = await waitForCmuxPtyTerminal("cmux", 5000);
+  const hasCmuxPty = await waitForAnyCmuxPtyTerminal(15000);
 
   if (hasCmuxPty) {
     // cmux-pty has the terminal - directly create it from the restore queue

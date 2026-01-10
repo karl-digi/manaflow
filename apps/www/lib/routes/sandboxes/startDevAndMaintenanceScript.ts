@@ -117,14 +117,18 @@ ${devScript}
   const orchestratorScript = getOrchestratorScript();
 
   if (!convexUrl) {
-    throw new Error("Convex URL not supplied but is required");
+    console.warn(
+      "[runMaintenanceAndDevScripts] Convex URL not supplied; error reporting disabled",
+    );
   }
 
   if (!taskRunJwt) {
-    throw new Error("taskRunJwt not supplied but is required")
+    console.warn(
+      "[runMaintenanceAndDevScripts] taskRunJwt not supplied; error reporting disabled",
+    );
   }
 
-  const orchestratorEnvVars: Record<string, string> = {
+  const orchestratorEnvVars: Record<string, string | undefined> = {
     CMUX_ORCH_WORKSPACE_ROOT: WORKSPACE_ROOT,
     CMUX_ORCH_RUNTIME_DIR: CMUX_RUNTIME_DIR,
     CMUX_ORCH_MAINTENANCE_SCRIPT_PATH: ids.maintenance.scriptPath,
@@ -143,6 +147,7 @@ ${devScript}
   };
 
   const orchestratorEnvString = Object.entries(orchestratorEnvVars)
+    .filter((entry): entry is [string, string] => entry[1] !== undefined)
     .map(([key, value]) => `export ${key}=${singleQuote(value)}`)
     .join("\n");
 
