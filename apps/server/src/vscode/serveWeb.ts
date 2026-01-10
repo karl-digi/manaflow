@@ -4,6 +4,8 @@ import { constants as fsConstants } from "node:fs";
 import { access } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { createServer } from "node:net";
+import os from "node:os";
+import path from "node:path";
 import { promisify } from "node:util";
 
 type Logger = {
@@ -22,6 +24,61 @@ const SERVER_READY_TIMEOUT_MS = 15_000;
 let resolvedVSCodeExecutable: string | null = null;
 let currentServeWebBaseUrl: string | null = null;
 let currentServeWebPort: number | null = null;
+
+/**
+ * Detects the host's VSCode user data directory based on the platform.
+ * This is needed because `code serve-web` may use a different default
+ * user data directory than the regular VSCode application.
+ *
+ * @returns The path to the user data directory if found, null otherwise.
+ */
+async function detectVSCodeUserDataDir(
+  logger: Logger
+): Promise<string | null> {
+  const homeDir = os.homedir();
+
+  // Platform-specific user data directory candidates
+  // Order matters - we check the most likely locations first
+  const candidates: string[] = [];
+
+  if (process.platform === "darwin") {
+    // macOS: Regular VSCode uses ~/Library/Application Support/Code/
+    candidates.push(
+      path.join(homeDir, "Library", "Application Support", "Code"),
+      path.join(homeDir, "Library", "Application Support", "Code - Insiders"),
+      path.join(homeDir, "Library", "Application Support", "VSCodium")
+    );
+  } else if (process.platform === "win32") {
+    // Windows: %APPDATA%/Code/
+    const appData =
+      process.env.APPDATA || path.join(homeDir, "AppData", "Roaming");
+    candidates.push(
+      path.join(appData, "Code"),
+      path.join(appData, "Code - Insiders"),
+      path.join(appData, "VSCodium")
+    );
+  } else {
+    // Linux: ~/.config/Code/
+    candidates.push(
+      path.join(homeDir, ".config", "Code"),
+      path.join(homeDir, ".config", "Code - Insiders"),
+      path.join(homeDir, ".config", "VSCodium")
+    );
+  }
+
+  for (const candidate of candidates) {
+    try {
+      await access(candidate, fsConstants.R_OK);
+      logger.info(`Found VSCode user data directory: ${candidate}`);
+      return candidate;
+    } catch {
+      // Directory doesn't exist or isn't accessible, try next
+    }
+  }
+
+  logger.debug?.("No existing VSCode user data directory found");
+  return null;
+}
 
 export type VSCodeServeWebHandle = {
   process: ChildProcess;
@@ -76,27 +133,35 @@ export async function ensureVSCodeServeWeb(
       `Starting VS Code serve-web using executable ${executable} on port ${port}...`
     );
 
-    child = spawn(
-      executable,
-      [
-        "serve-web",
-        "--accept-server-license-terms",
-        "--without-connection-token",
-        "--host",
-        "127.0.0.1",
-        "--port",
-        String(port),
-      ],
-      {
-        detached: false,
-        stdio: ["ignore", "pipe", "pipe"],
-        env: {
-          ...process.env,
-          // Make sure VS Code CLI does not inherit our existing IPC hook.
-          VSCODE_IPC_HOOK_CLI: undefined,
-        },
-      }
-    );
+    // Detect the host's VSCode user data directory to sync settings
+    const userDataDir = await detectVSCodeUserDataDir(logger);
+
+    // Build the command arguments
+    const args = [
+      "serve-web",
+      "--accept-server-license-terms",
+      "--without-connection-token",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      String(port),
+    ];
+
+    // If we found a user data directory, use it to sync settings
+    if (userDataDir) {
+      args.push("--user-data-dir", userDataDir);
+      logger.info(`Using VSCode user data directory: ${userDataDir}`);
+    }
+
+    child = spawn(executable, args, {
+      detached: false,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        // Make sure VS Code CLI does not inherit our existing IPC hook.
+        VSCODE_IPC_HOOK_CLI: undefined,
+      },
+    });
 
     attachServeWebProcessLogging(child, logger);
 
