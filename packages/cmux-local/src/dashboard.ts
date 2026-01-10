@@ -7,7 +7,7 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import chalk from "chalk";
-import { search, input, confirm } from "@inquirer/prompts";
+import { search, input } from "@inquirer/prompts";
 import { LocalRunner, DEFAULT_MODEL } from "./local.js";
 import { type Task, type Question, type ActivityEntry } from "./types.js";
 import { extractCurrentActivity } from "./extractor.js";
@@ -499,31 +499,8 @@ async function handleNewTask(): Promise<void> {
     return;
   }
 
-  // Confirm and Start
-  console.log(chalk.bold("\n  Review"));
-  console.log(chalk.gray("  " + "─".repeat(60)));
-  console.log(`     Project: ${chalk.cyan(repoName)}`);
-  console.log(`     Model:   ${chalk.cyan("Claude Opus 4")}`);
-  console.log(`     Task:    ${chalk.white(taskPrompt.slice(0, 50))}${taskPrompt.length > 50 ? "..." : ""}`);
-
-  let shouldStart: boolean;
-  try {
-    shouldStart = await confirm({
-      message: "Start task?",
-      default: true,
-    });
-  } catch {
-    console.log(chalk.yellow("\n  Cancelled."));
-    return;
-  }
-
-  if (!shouldStart) {
-    console.log(chalk.yellow("  Cancelled."));
-    return;
-  }
-
-  // Start the task
-  console.log(chalk.gray("\n  Starting task..."));
+  // Auto-start immediately (no confirmation needed)
+  console.log(chalk.gray("\n  Starting with Opus 4.5..."));
   try {
     const task = await runner.startTask(selectedRepo, taskPrompt, DEFAULT_MODEL);
     addRecentRepo(selectedRepo);
