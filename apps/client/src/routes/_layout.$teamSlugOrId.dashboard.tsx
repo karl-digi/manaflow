@@ -738,7 +738,8 @@ function DashboardComponent() {
     }));
 
     const options: SelectOption[] = [];
-    if (envOptions.length > 0) {
+    // Only show environments in cloud mode
+    if (isCloudMode && envOptions.length > 0) {
       options.push({
         label: "Environments",
         value: "__heading-env",
@@ -756,7 +757,7 @@ function DashboardComponent() {
     }
 
     return options;
-  }, [reposByOrg, environmentsQuery.data]);
+  }, [reposByOrg, environmentsQuery.data, isCloudMode]);
 
   const selectedRepoFullName = useMemo(() => {
     if (!selectedProject[0] || isEnvSelected) return null;
