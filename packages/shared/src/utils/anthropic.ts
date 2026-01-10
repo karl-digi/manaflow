@@ -1,7 +1,11 @@
 export const CLOUDFLARE_ANTHROPIC_BASE_URL =
   "https://gateway.ai.cloudflare.com/v1/0c1675e0def6de1ab3a50a4e17dc5656/cmux-heatmap/anthropic";
 
-// AWS Bedrock model IDs for Claude
-export const BEDROCK_CLAUDE_OPUS_45_MODEL_ID = "global.anthropic.claude-opus-4-5-20251101-v1:0";
-export const BEDROCK_CLAUDE_HAIKU_45_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0";
+// Environment variable names for AWS Bedrock Claude 4.5 model IDs
+export const ANTHROPIC_MODEL_SONNET_45_ENV = "ANTHROPIC_MODEL_SONNET_45";
+export const ANTHROPIC_MODEL_OPUS_45_ENV = "ANTHROPIC_MODEL_OPUS_45";
+export const ANTHROPIC_MODEL_HAIKU_45_ENV = "ANTHROPIC_MODEL_HAIKU_45";
+export const AWS_REGION_ENV = "AWS_REGION";
+
+// Legacy constant for backward compatibility
 export const BEDROCK_AWS_REGION = "us-west-1";

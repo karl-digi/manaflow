@@ -1,5 +1,10 @@
 import type { AgentConfig } from "../../agentConfig";
 import { ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN } from "../../apiKeys";
+import {
+  ANTHROPIC_MODEL_HAIKU_45_ENV,
+  ANTHROPIC_MODEL_OPUS_45_ENV,
+  ANTHROPIC_MODEL_SONNET_45_ENV,
+} from "../../utils/anthropic";
 import { checkClaudeRequirements } from "./check-requirements";
 import { startClaudeCompletionDetector } from "./completion-detector";
 import {
@@ -54,70 +59,13 @@ const applyClaudeApiKeys: NonNullable<AgentConfig["applyApiKeys"]> = async (
   };
 };
 
-export const CLAUDE_SONNET_4_CONFIG: AgentConfig = {
-  name: "claude/sonnet-4",
-  command: "bunx",
-  args: [
-    "@anthropic-ai/claude-code@latest",
-    "--model",
-    "claude-sonnet-4-20250514",
-    "--allow-dangerously-skip-permissions",
-    "--dangerously-skip-permissions",
-    "--ide",
-    "$PROMPT",
-  ],
-  environment: getClaudeEnvironment,
-  checkRequirements: checkClaudeRequirements,
-  apiKeys: [CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY],
-  applyApiKeys: applyClaudeApiKeys,
-  completionDetector: startClaudeCompletionDetector,
-};
-
-export const CLAUDE_OPUS_4_CONFIG: AgentConfig = {
-  name: "claude/opus-4",
-  command: "bunx",
-  args: [
-    "@anthropic-ai/claude-code@latest",
-    "--model",
-    "claude-opus-4-20250514",
-    "--allow-dangerously-skip-permissions",
-    "--dangerously-skip-permissions",
-    "--ide",
-    "$PROMPT",
-  ],
-  environment: getClaudeEnvironment,
-  checkRequirements: checkClaudeRequirements,
-  apiKeys: [CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY],
-  applyApiKeys: applyClaudeApiKeys,
-  completionDetector: startClaudeCompletionDetector,
-};
-
-export const CLAUDE_OPUS_4_1_CONFIG: AgentConfig = {
-  name: "claude/opus-4.1",
-  command: "bunx",
-  args: [
-    "@anthropic-ai/claude-code@latest",
-    "--model",
-    "claude-opus-4-1-20250805",
-    "--allow-dangerously-skip-permissions",
-    "--dangerously-skip-permissions",
-    "--ide",
-    "$PROMPT",
-  ],
-  environment: getClaudeEnvironment,
-  checkRequirements: checkClaudeRequirements,
-  apiKeys: [CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_API_KEY],
-  applyApiKeys: applyClaudeApiKeys,
-  completionDetector: startClaudeCompletionDetector,
-};
-
 export const CLAUDE_OPUS_4_5_CONFIG: AgentConfig = {
   name: "claude/opus-4.5",
   command: "bunx",
   args: [
     "@anthropic-ai/claude-code@latest",
     "--model",
-    "claude-opus-4-5",
+    `$${ANTHROPIC_MODEL_OPUS_45_ENV}`,
     "--allow-dangerously-skip-permissions",
     "--dangerously-skip-permissions",
     "--ide",
@@ -136,7 +84,7 @@ export const CLAUDE_SONNET_4_5_CONFIG: AgentConfig = {
   args: [
     "@anthropic-ai/claude-code@latest",
     "--model",
-    "claude-sonnet-4-5-20250929",
+    `$${ANTHROPIC_MODEL_SONNET_45_ENV}`,
     "--allow-dangerously-skip-permissions",
     "--dangerously-skip-permissions",
     "--ide",
@@ -155,7 +103,7 @@ export const CLAUDE_HAIKU_4_5_CONFIG: AgentConfig = {
   args: [
     "@anthropic-ai/claude-code@latest",
     "--model",
-    "claude-haiku-4-5-20251001",
+    `$${ANTHROPIC_MODEL_HAIKU_45_ENV}`,
     "--allow-dangerously-skip-permissions",
     "--dangerously-skip-permissions",
     "--ide",
