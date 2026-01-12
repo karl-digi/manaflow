@@ -6,8 +6,10 @@
 
 export * from "./types";
 export { MorphSandboxProvider } from "./morph";
+export { FreestyleSandboxProvider } from "./freestyle";
 
 import { env } from "../convex-env";
+import { FreestyleSandboxProvider } from "./freestyle";
 import { MorphSandboxProvider } from "./morph";
 import type { SandboxProvider, SandboxProviderName } from "./types";
 
@@ -27,9 +29,13 @@ export function getSandboxProvider(name: SandboxProviderName): SandboxProvider {
       }
       return new MorphSandboxProvider(apiKey);
     }
-    case "freestyle":
-      // TODO: Implement FreestyleSandboxProvider
-      throw new Error("Freestyle provider not yet implemented");
+    case "freestyle": {
+      const apiKey = env.FREESTYLE_API_KEY;
+      if (!apiKey) {
+        throw new Error("FREESTYLE_API_KEY not configured");
+      }
+      return new FreestyleSandboxProvider(apiKey);
+    }
     case "daytona":
       // TODO: Implement DaytonaSandboxProvider
       throw new Error("Daytona provider not yet implemented");
@@ -41,10 +47,13 @@ export function getSandboxProvider(name: SandboxProviderName): SandboxProvider {
 /**
  * Get the default sandbox provider.
  *
- * Currently defaults to Morph if configured.
+ * Tries Freestyle first (if configured), then Morph.
  */
 export function getDefaultSandboxProvider(): SandboxProvider {
   // Try providers in order of preference
+  if (env.FREESTYLE_API_KEY) {
+    return new FreestyleSandboxProvider(env.FREESTYLE_API_KEY);
+  }
   if (env.MORPH_API_KEY) {
     return new MorphSandboxProvider(env.MORPH_API_KEY);
   }
