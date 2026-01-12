@@ -14,7 +14,7 @@ use tracing_subscriber::EnvFilter;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
-use cmux_sandbox::acp_server::{acp_websocket_handler, AcpServerState};
+use cmux_sandbox::acp_server::{acp_websocket_handler, AcpServerState, ApiKeys};
 
 /// ACP Server for iOS app integration.
 #[derive(Parser, Debug)]
@@ -40,6 +40,18 @@ struct Args {
     /// Default working directory for spawned CLIs
     #[arg(long, env = "ACP_WORKING_DIR", default_value = "/workspace")]
     working_dir: PathBuf,
+
+    /// Anthropic API key for Claude Code
+    #[arg(long, env = "ANTHROPIC_API_KEY")]
+    anthropic_api_key: Option<String>,
+
+    /// OpenAI API key for Codex
+    #[arg(long, env = "OPENAI_API_KEY")]
+    openai_api_key: Option<String>,
+
+    /// Google API key for Gemini CLI
+    #[arg(long, env = "GOOGLE_API_KEY")]
+    google_api_key: Option<String>,
 
     /// Enable verbose logging
     #[arg(short, long)]
@@ -110,13 +122,21 @@ async fn main() -> anyhow::Result<()> {
         "Starting cmux-acp-server"
     );
 
+    // Create API keys from args
+    let api_keys = ApiKeys {
+        anthropic_api_key: args.anthropic_api_key.clone(),
+        openai_api_key: args.openai_api_key.clone(),
+        google_api_key: args.google_api_key.clone(),
+    };
+
     // Create ACP server state
     let state = AcpServerState::new(
         args.convex_url.clone(),
         args.jwt_secret.clone(),
         args.convex_admin_key.clone(),
         args.working_dir.clone(),
-    );
+    )
+    .with_api_keys(api_keys);
 
     // Build router
     let app = Router::new()

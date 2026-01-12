@@ -24,6 +24,19 @@ pub struct AcpServerState {
     pub convex_admin_key: String,
     /// Default working directory
     pub default_cwd: std::path::PathBuf,
+    /// API keys for coding CLIs
+    pub api_keys: ApiKeys,
+}
+
+/// API keys for different coding CLI providers.
+#[derive(Clone, Default)]
+pub struct ApiKeys {
+    /// Anthropic API key for Claude Code
+    pub anthropic_api_key: Option<String>,
+    /// OpenAI API key for Codex
+    pub openai_api_key: Option<String>,
+    /// Google API key for Gemini CLI
+    pub google_api_key: Option<String>,
 }
 
 impl AcpServerState {
@@ -39,7 +52,14 @@ impl AcpServerState {
             jwt_secret,
             convex_admin_key,
             default_cwd,
+            api_keys: ApiKeys::default(),
         }
+    }
+
+    /// Set API keys.
+    pub fn with_api_keys(mut self, api_keys: ApiKeys) -> Self {
+        self.api_keys = api_keys;
+        self
     }
 }
 
@@ -193,6 +213,35 @@ async fn handle_acp_connection(
     // Create Convex client
     let convex_client = ConvexClient::new(&state.convex_url, &state.convex_admin_key);
 
+    // Build environment variables for the CLI based on provider
+    let mut env_vars = Vec::new();
+    match provider {
+        AcpProvider::Claude => {
+            if let Some(ref key) = state.api_keys.anthropic_api_key {
+                env_vars.push(("ANTHROPIC_API_KEY".to_string(), key.clone()));
+            }
+        }
+        AcpProvider::Codex => {
+            if let Some(ref key) = state.api_keys.openai_api_key {
+                env_vars.push(("OPENAI_API_KEY".to_string(), key.clone()));
+            }
+        }
+        AcpProvider::Gemini => {
+            if let Some(ref key) = state.api_keys.google_api_key {
+                env_vars.push(("GOOGLE_API_KEY".to_string(), key.clone()));
+            }
+        }
+        AcpProvider::Opencode => {
+            // Opencode may use multiple providers, pass all available keys
+            if let Some(ref key) = state.api_keys.anthropic_api_key {
+                env_vars.push(("ANTHROPIC_API_KEY".to_string(), key.clone()));
+            }
+            if let Some(ref key) = state.api_keys.openai_api_key {
+                env_vars.push(("OPENAI_API_KEY".to_string(), key.clone()));
+            }
+        }
+    }
+
     // Create wrapped agent
     let agent = Arc::new(WrappedAgent::new(
         convex_client,
@@ -200,7 +249,7 @@ async fn handle_acp_connection(
         provider,
         isolation,
         state.default_cwd.clone(),
-        vec![], // TODO: Add env vars
+        env_vars,
     ));
 
     // Connect to CLI

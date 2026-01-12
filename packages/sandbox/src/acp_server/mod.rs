@@ -17,4 +17,4 @@ mod websocket;
 pub use agent::WrappedAgent;
 pub use persistence::ConvexClient;
 pub use spawner::{CliSpawner, IsolationMode};
-pub use websocket::{acp_websocket_handler, AcpServerState};
+pub use websocket::{acp_websocket_handler, AcpServerState, ApiKeys};
