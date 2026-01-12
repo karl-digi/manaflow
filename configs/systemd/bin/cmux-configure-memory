@@ -91,6 +91,23 @@ if [ "$in_container" -eq 1 ] && [ "$force_swap" = "1" ]; then
   memory_container=0
 fi
 
+zram_priority_default=50
+swapfile_priority_default=100
+zram_priority="${CMUX_ZRAM_PRIORITY:-$zram_priority_default}"
+swapfile_priority="${CMUX_SWAPFILE_PRIORITY:-$swapfile_priority_default}"
+case "$zram_priority" in
+  *[!0-9]*|"")
+    log "Invalid CMUX_ZRAM_PRIORITY='${zram_priority}' (expected non-negative integer); using default ${zram_priority_default}."
+    zram_priority="$zram_priority_default"
+    ;;
+esac
+case "$swapfile_priority" in
+  *[!0-9]*|"")
+    log "Invalid CMUX_SWAPFILE_PRIORITY='${swapfile_priority}' (expected non-negative integer); using default ${swapfile_priority_default}."
+    swapfile_priority="$swapfile_priority_default"
+    ;;
+esac
+
 before_free="$(capture_output free -h || true)"
 before_swapon="$(capture_output swapon --show=NAME,TYPE,SIZE,USED,PRIO || true)"
 before_zram="$(capture_output zramctl || true)"
@@ -122,7 +139,6 @@ if [ -r /etc/os-release ]; then
 fi
 
 lower_like=" ${distro_like,,} "
-zram_priority=120
 zram_unit=""
 zram_config_path=""
 
@@ -158,10 +174,10 @@ else
     config_path="${zram_config_path:-/etc/default/zramswap}"
     case "$(basename "$config_path")" in
       zram-config)
-        config_content=$'# Managed by cmux-configure-memory\nZRAM_NUM_DEVICES=1\nALGO=zstd\nPERCENT=50\nPRIORITY=120\n'
+        config_content=$'# Managed by cmux-configure-memory\nZRAM_NUM_DEVICES=1\nALGO=zstd\nPERCENT=50\nPRIORITY='"${zram_priority}"$'\n'
         ;;
       *)
-        config_content=$'# Managed by cmux-configure-memory\nALGO=zstd\nPERCENT=50\nPRIORITY=120\n'
+        config_content=$'# Managed by cmux-configure-memory\nALGO=zstd\nPERCENT=50\nPRIORITY='"${zram_priority}"$'\n'
         ;;
     esac
     if write_file_if_changed "$config_path" "0644" "$config_content"; then
@@ -182,7 +198,7 @@ else
     fi
     summary+=("Configured zram-tools (${zram_unit:-unknown}) to allocate 50% RAM with zstd (priority ${zram_priority}).")
   else
-    config_content=$'# Managed by cmux-configure-memory\n[zram0]\ncompression-algorithm = zstd\nzram-size = ram / 2\nswap-priority = 120\n'
+    config_content=$'# Managed by cmux-configure-memory\n[zram0]\ncompression-algorithm = zstd\nzram-size = ram / 2\nswap-priority = '"${zram_priority}"$'\n'
     if write_file_if_changed "/etc/systemd/zram-generator.conf" "0644" "$config_content"; then
       zram_changed=1
       log "Updated /etc/systemd/zram-generator.conf"
@@ -328,34 +344,34 @@ else
     fi
     if [ -f "$swapfile_path" ]; then
       if ! grep -q "^${swapfile_path}[[:space:]]" /etc/fstab 2>/dev/null; then
-        printf '%s\n' "${swapfile_path} none swap defaults,nofail,pri=10 0 0" >> /etc/fstab
-        log "Added ${swapfile_path} to /etc/fstab with priority 10."
+        printf '%s\n' "${swapfile_path} none swap defaults,nofail,pri=${swapfile_priority} 0 0" >> /etc/fstab
+        log "Added ${swapfile_path} to /etc/fstab with priority ${swapfile_priority}."
       fi
       tmp_err="$(mktemp)"
       if grep -q "^${swapfile_path}[[:space:]]" /proc/swaps 2>/dev/null; then
         current_prio="$(awk -v path="${swapfile_path}" '$1 == path {print $5}' /proc/swaps 2>/dev/null | head -n1)"
-        if [ "${current_prio:-10}" -ne 10 ]; then
-          log "Resetting priority for ${swapfile_path} from ${current_prio:-unknown} to 10."
+        if [ "${current_prio:-$swapfile_priority}" -ne "$swapfile_priority" ]; then
+          log "Resetting priority for ${swapfile_path} from ${current_prio:-unknown} to ${swapfile_priority}."
           if ! swapoff "$swapfile_path" 2>"$tmp_err"; then
             swap_activation_error="$(normalize_whitespace "$(cat "$tmp_err")")"
-          elif ! swapon -p 10 "$swapfile_path" 2>"$tmp_err"; then
+          elif ! swapon -p "$swapfile_priority" "$swapfile_path" 2>"$tmp_err"; then
             swap_activation_error="$(normalize_whitespace "$(cat "$tmp_err")")"
           fi
         else
           swap_active_after=1
         fi
       else
-        if ! swapon -p 10 "$swapfile_path" 2>"$tmp_err"; then
+        if ! swapon -p "$swapfile_priority" "$swapfile_path" 2>"$tmp_err"; then
           swap_activation_error="$(normalize_whitespace "$(cat "$tmp_err")")"
         fi
       fi
       rm -f "$tmp_err"
       if grep -q "^${swapfile_path}[[:space:]]" /proc/swaps 2>/dev/null; then
         current_prio="$(awk -v path="${swapfile_path}" '$1 == path {print $5}' /proc/swaps 2>/dev/null | head -n1)"
-        if [ "${current_prio:-10}" -eq 10 ]; then
+        if [ "${current_prio:-$swapfile_priority}" -eq "$swapfile_priority" ]; then
           swap_active_after=1
         else
-          swap_activation_error="swap priority ${current_prio:-unknown} (expected 10)"
+          swap_activation_error="swap priority ${current_prio:-unknown} (expected ${swapfile_priority})"
         fi
       fi
     fi
@@ -374,7 +390,7 @@ else
 
   if [ -f "$swapfile_path" ]; then
     if [ "$swap_active_after" -eq 1 ]; then
-      summary+=("Ensured ${swapfile_size_gib}GiB swapfile at ${swapfile_path} with priority 10.")
+      summary+=("Ensured ${swapfile_size_gib}GiB swapfile at ${swapfile_path} with priority ${swapfile_priority}.")
     else
       if [ -n "$swap_activation_error" ]; then
         summary+=("Prepared ${swapfile_size_gib}GiB swapfile at ${swapfile_path}; activation pending (${swap_activation_error}).")
