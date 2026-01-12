@@ -1310,8 +1310,8 @@ export async function runPreviewJob(
 
   // Post initial GitHub comment early with diff heatmap link
   // This gives users immediate feedback while screenshots are being captured
-  // Skip for test preview runs (stateReason === "Test preview run") - they shouldn't post to GitHub
-  const isTestRun = run.stateReason === "Test preview run";
+  // Skip for test preview runs (stateReason starts with "Test preview run") - they shouldn't post to GitHub
+  const isTestRun = run.stateReason?.startsWith("Test preview run") === true;
   if (run.repoInstallationId && !isTestRun) {
     try {
       const initialCommentResult = await ctx.runAction(

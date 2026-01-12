@@ -102,6 +102,11 @@ export const enqueueFromWebhook = internalMutation({
 
     // Mark older runs as superseded by this new run
     for (const oldRun of runsToSupersede) {
+      const supersedeReason = `Superseded by newer commit ${args.headSha.slice(0, 7)}`;
+      const stateReason =
+        oldRun.stateReason?.startsWith("Test preview run") === true
+          ? `Test preview run (${supersedeReason})`
+          : supersedeReason;
       console.log("[previewRuns] Superseding older preview run", {
         oldRunId: oldRun._id,
         oldHeadSha: oldRun.headSha,
@@ -113,7 +118,7 @@ export const enqueueFromWebhook = internalMutation({
       await ctx.db.patch(oldRun._id, {
         status: "superseded",
         supersededBy: runId,
-        stateReason: `Superseded by newer commit ${args.headSha.slice(0, 7)}`,
+        stateReason,
         completedAt: now,
         updatedAt: now,
       });
@@ -344,6 +349,11 @@ export const enqueueFromTaskRun = internalMutation({
 
     // Mark older runs as superseded by this new run
     for (const oldRun of runsToSupersede) {
+      const supersedeReason = `Superseded by newer commit ${headSha.slice(0, 7)}`;
+      const stateReason =
+        oldRun.stateReason?.startsWith("Test preview run") === true
+          ? `Test preview run (${supersedeReason})`
+          : supersedeReason;
       console.log("[previewRuns] Superseding older preview run (from taskRun)", {
         oldRunId: oldRun._id,
         oldHeadSha: oldRun.headSha,
@@ -355,7 +365,7 @@ export const enqueueFromTaskRun = internalMutation({
       await ctx.db.patch(oldRun._id, {
         status: "superseded",
         supersededBy: runId,
-        stateReason: `Superseded by newer commit ${headSha.slice(0, 7)}`,
+        stateReason,
         completedAt: now,
         updatedAt: now,
       });

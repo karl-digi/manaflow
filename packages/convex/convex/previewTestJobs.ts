@@ -329,17 +329,36 @@ export const listTestRuns = authQuery({
     const teamId = await getTeamId(ctx, args.teamSlugOrId);
     const take = Math.max(1, Math.min(args.limit ?? 50, 100));
 
-    // Get recent preview runs for the team
-    const runs = await ctx.db
-      .query("previewRuns")
-      .withIndex("by_team_created", (q) => q.eq("teamId", teamId))
-      .order("desc")
-      .take(take * 2);
+    const isTestRun = (run: Doc<"previewRuns">) =>
+      run.stateReason?.startsWith("Test preview run") === true || !run.repoInstallationId;
 
-    // Filter to only test runs (identified by stateReason or missing repoInstallationId for legacy runs)
-    const testRuns = runs
-      .filter((run) => run.stateReason === "Test preview run" || !run.repoInstallationId)
-      .slice(0, take);
+    // Scan recent runs until we have enough test runs, so production runs don't crowd them out.
+    const testRuns: Array<Doc<"previewRuns">> = [];
+    let cursor: string | null = null;
+    const pageSize = Math.min(Math.max(take * 4, 50), 200);
+
+    while (testRuns.length < take) {
+      const page = await ctx.db
+        .query("previewRuns")
+        .withIndex("by_team_created", (q) => q.eq("teamId", teamId))
+        .order("desc")
+        .paginate({ cursor, numItems: pageSize });
+
+      for (const run of page.page) {
+        if (!isTestRun(run)) {
+          continue;
+        }
+        testRuns.push(run);
+        if (testRuns.length >= take) {
+          break;
+        }
+      }
+
+      if (page.isDone) {
+        break;
+      }
+      cursor = page.continueCursor;
+    }
 
     // Enrich with config info and screenshot data
     const enrichedRuns = await Promise.all(
@@ -724,7 +743,8 @@ export const deleteTestRun = authMutation({
     }
 
     // Only allow deleting test runs (identified by stateReason or missing repoInstallationId for legacy runs)
-    const isTestRun = run.stateReason === "Test preview run" || !run.repoInstallationId;
+    const isTestRun =
+      run.stateReason?.startsWith("Test preview run") === true || !run.repoInstallationId;
     if (!isTestRun) {
       throw new Error("Cannot delete production preview runs");
     }
