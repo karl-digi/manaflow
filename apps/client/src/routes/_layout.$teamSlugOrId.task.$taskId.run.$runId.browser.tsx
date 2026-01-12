@@ -1,14 +1,19 @@
-import { VncViewer, type VncConnectionStatus } from "@cmux/shared/components/vnc-viewer";
+import {
+  VncViewer,
+  type VncConnectionStatus,
+  type VncViewerHandle,
+} from "@cmux/shared/components/vnc-viewer";
 import { WorkspaceLoadingIndicator } from "@/components/workspace-loading-indicator";
 import { toMorphVncWebsocketUrl } from "@/lib/toProxyWorkspaceUrl";
 import { api } from "@cmux/convex/api";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { createFileRoute } from "@tanstack/react-router";
 import clsx from "clsx";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import z from "zod";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { useQuery } from "convex/react";
+import { addBrowserReloadListener } from "@/lib/browser-reload-events";
 
 const paramsSchema = z.object({
   taskId: typedZid("tasks"),
@@ -54,6 +59,7 @@ function toVncWebsocketUrl(vncBaseUrl: string): string {
 
 function BrowserComponent() {
   const { runId: taskRunId, teamSlugOrId } = Route.useParams();
+  const vncRef = useRef<VncViewerHandle>(null);
   const taskRun = useQuery(api.taskRuns.get, {
     teamSlugOrId,
     id: taskRunId,
@@ -105,6 +111,16 @@ function BrowserComponent() {
     [taskRunId]
   );
 
+  useEffect(() => {
+    return addBrowserReloadListener((runId) => {
+      if (runId !== taskRunId) return;
+      const viewer = vncRef.current;
+      if (!viewer) return;
+      viewer.disconnect();
+      viewer.connect();
+    });
+  }, [taskRunId]);
+
   const loadingFallback = useMemo(
     () => <WorkspaceLoadingIndicator variant="browser" status="loading" />,
     []
@@ -125,6 +141,7 @@ function BrowserComponent() {
         >
           {vncWebsocketUrl ? (
             <VncViewer
+              ref={vncRef}
               url={vncWebsocketUrl}
               className="grow"
               background="#000000"

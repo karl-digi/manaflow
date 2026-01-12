@@ -50,9 +50,62 @@ export const CREDENTIAL_CLEANUP_COMMANDS = [
 ].join(" && ");
 
 /**
- * Full cleanup commands for snapshotting (processes + credentials).
+ * Commands to clean up browser lock files before snapshotting.
+ *
+ * Chrome/Chromium stores hostname-specific lock files (SingletonLock, SingletonSocket,
+ * SingletonCookie) that contain the container hostname. When a snapshot is taken and
+ * cloned to a new container with a different hostname, Chrome refuses to start because
+ * it thinks another process is using the profile.
+ *
+ * This cleanup removes these stale lock files to allow Chrome to start fresh on cloned
+ * containers.
  */
-export const SNAPSHOT_CLEANUP_COMMANDS = `${VM_CLEANUP_COMMANDS} && ${CREDENTIAL_CLEANUP_COMMANDS}`;
+export const BROWSER_LOCK_CLEANUP_COMMANDS = [
+  // Stop Chrome/Chromium processes first
+  "pkill -9 chrome 2>/dev/null || true",
+  "pkill -9 chromium 2>/dev/null || true",
+  // Clean up Chrome lock files (various profile locations)
+  "rm -f /root/.config/chrome/SingletonLock 2>/dev/null || true",
+  "rm -f /root/.config/chrome/SingletonSocket 2>/dev/null || true",
+  "rm -f /root/.config/chrome/SingletonCookie 2>/dev/null || true",
+  "rm -f /root/.config/google-chrome/SingletonLock 2>/dev/null || true",
+  "rm -f /root/.config/google-chrome/SingletonSocket 2>/dev/null || true",
+  "rm -f /root/.config/google-chrome/SingletonCookie 2>/dev/null || true",
+  "rm -f /root/.config/chromium/SingletonLock 2>/dev/null || true",
+  "rm -f /root/.config/chromium/SingletonSocket 2>/dev/null || true",
+  "rm -f /root/.config/chromium/SingletonCookie 2>/dev/null || true",
+  // Clean up any Chrome crash dumps that might reference old hostname
+  "rm -rf /root/.config/chrome/Crash\\ Reports/* 2>/dev/null || true",
+  "rm -rf /root/.config/google-chrome/Crash\\ Reports/* 2>/dev/null || true",
+  "rm -rf /root/.config/chromium/Crash\\ Reports/* 2>/dev/null || true",
+].join(" && ");
+
+/**
+ * Full cleanup commands for snapshotting (processes + credentials + browser locks).
+ */
+export const SNAPSHOT_CLEANUP_COMMANDS = `${VM_CLEANUP_COMMANDS} && ${CREDENTIAL_CLEANUP_COMMANDS} && ${BROWSER_LOCK_CLEANUP_COMMANDS}`;
+
+/**
+ * Commands to clean stale browser lock files on container boot.
+ * This is a subset of BROWSER_LOCK_CLEANUP_COMMANDS that only removes lock files
+ * without killing Chrome (since Chrome may not be running yet on boot).
+ *
+ * This handles the case where a snapshot was created with stale lock files
+ * from a previous container hostname.
+ */
+export const BROWSER_LOCK_CLEANUP_ON_BOOT = [
+  // Clean up Chrome lock files (various profile locations)
+  // These contain hostname-specific data that prevents Chrome from starting on cloned containers
+  "rm -f /root/.config/chrome/SingletonLock 2>/dev/null || true",
+  "rm -f /root/.config/chrome/SingletonSocket 2>/dev/null || true",
+  "rm -f /root/.config/chrome/SingletonCookie 2>/dev/null || true",
+  "rm -f /root/.config/google-chrome/SingletonLock 2>/dev/null || true",
+  "rm -f /root/.config/google-chrome/SingletonSocket 2>/dev/null || true",
+  "rm -f /root/.config/google-chrome/SingletonCookie 2>/dev/null || true",
+  "rm -f /root/.config/chromium/SingletonLock 2>/dev/null || true",
+  "rm -f /root/.config/chromium/SingletonSocket 2>/dev/null || true",
+  "rm -f /root/.config/chromium/SingletonCookie 2>/dev/null || true",
+].join(" && ");
 
 /**
  * Commands to restart cmux services after a VM resume.
@@ -61,8 +114,13 @@ export const SNAPSHOT_CLEANUP_COMMANDS = `${VM_CLEANUP_COMMANDS} && ${CREDENTIAL
  * (cmux-xterm, cmux-ide, etc.) are killed. On resume, systemd doesn't
  * automatically restart them since the state was frozen. This command
  * restarts the cmux target to bring all services back up.
+ *
+ * Also cleans stale browser lock files that may exist in snapshots from
+ * previous container hostnames.
  */
 export const VM_RESTART_SERVICES_COMMANDS = [
+  // Clean stale browser lock files before starting services
+  BROWSER_LOCK_CLEANUP_ON_BOOT,
   // Restart the cmux target which includes all cmux services
   "systemctl restart cmux.target",
 ].join(" && ");

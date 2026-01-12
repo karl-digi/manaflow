@@ -26,7 +26,7 @@ MAX_RETRIES="${PVE_MAX_RETRIES:-3}"
 RETRY_DELAY="${PVE_RETRY_DELAY:-5}"
 
 # HTTP exec configuration (optional, for faster execution when cmux-execd is running)
-# Set PVE_PUBLIC_DOMAIN to enable HTTP exec (e.g., alphasolves.com)
+# Set PVE_PUBLIC_DOMAIN to enable HTTP exec (e.g., example.com)
 # URL pattern (instanceId-based): https://port-{port}-{instanceId}.{public_domain}
 PVE_PUBLIC_DOMAIN="${PVE_PUBLIC_DOMAIN:-}"
 
@@ -677,7 +677,7 @@ SETUP_EOF
             # Use HTTP exec via cmux-execd (requires PVE_PUBLIC_DOMAIN and cmux-execd running)
             if [[ -z "$PVE_PUBLIC_DOMAIN" ]]; then
                 log_error "HTTP exec mode requires PVE_PUBLIC_DOMAIN environment variable"
-                echo "Set PVE_PUBLIC_DOMAIN to your Cloudflare Tunnel domain (e.g., alphasolves.com)"
+                echo "Set PVE_PUBLIC_DOMAIN to your Cloudflare Tunnel domain (e.g., example.com)"
                 return 1
             fi
 

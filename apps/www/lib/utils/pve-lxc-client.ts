@@ -758,6 +758,11 @@ export class PveLxcClient {
         const httpResult = await this.httpExec(host, command, options?.timeoutMs);
 
         if (httpResult) {
+          // Log command execution (truncate long commands for readability)
+          const truncatedCmd = command.length > 100 ? `${command.slice(0, 100)}...` : command;
+          console.log(
+            `[PveLxcClient] Exec completed (exit=${httpResult.exit_code}): ${truncatedCmd}`
+          );
           if (attempt > 1) {
             console.log(
               `[PveLxcClient] HTTP exec succeeded on attempt ${attempt} for ${host}`

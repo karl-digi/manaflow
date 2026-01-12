@@ -154,7 +154,7 @@ export function toMorphVncWebsocketUrl(sourceUrl: string): string | null {
  * Convert a generic VNC base URL to a noVNC HTML viewer URL.
  * Works with any VNC URL (PVE LXC, Morph, etc.) by appending /vnc.html and query params.
  *
- * @param vncBaseUrl - The base VNC URL (e.g., https://vnc-201.alphasolves.com)
+ * @param vncBaseUrl - The base VNC URL (e.g., https://vnc-201.{PVE_PUBLIC_DOMAIN})
  * @returns The noVNC HTML viewer URL with autoconnect params
  */
 export function toVncViewerUrl(vncBaseUrl: string): string | null {
@@ -172,6 +172,104 @@ export function toVncViewerUrl(vncBaseUrl: string): string | null {
     searchParams.set("reconnect", "1");
     searchParams.set("reconnect_delay", "1000");
     url.search = `?${searchParams.toString()}`;
+    url.hash = "";
+
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Generic port-based URL regex that matches patterns like:
+ * - port-39378-pvelxc-1cc7473f.{PVE_PUBLIC_DOMAIN} (PVE LXC)
+ * - port-39378-morphvm-abc123.http.cloud.morph.so (Morph)
+ */
+const GENERIC_PORT_HOST_REGEX = /^port-(\d+)-([^.]+)\.(.+)$/;
+
+/**
+ * Convert any workspace URL to a VNC viewer URL.
+ * Works with both Morph URLs and PVE LXC URLs (or any port-based URL pattern).
+ *
+ * Supports patterns like:
+ * - https://port-39378-morphvm-abc123.http.cloud.morph.so -> VNC on port 39380
+ * - https://port-39378-pvelxc-1cc7473f.{PVE_PUBLIC_DOMAIN} -> VNC on port 39380
+ *
+ * @param sourceUrl - The workspace/vscode URL
+ * @returns The noVNC HTML viewer URL with autoconnect params, or null if URL doesn't match
+ */
+export function toGenericVncUrl(sourceUrl: string): string | null {
+  if (!sourceUrl) {
+    return null;
+  }
+
+  // Try Morph-specific parser first (for backwards compatibility)
+  const morphResult = toMorphVncUrl(sourceUrl);
+  if (morphResult) {
+    return morphResult;
+  }
+
+  // Try generic port-based URL pattern
+  try {
+    const url = new URL(sourceUrl);
+    const match = url.hostname.match(GENERIC_PORT_HOST_REGEX);
+
+    if (!match) {
+      return null;
+    }
+
+    const [, , hostId, domain] = match;
+    // Replace the port in hostname with VNC port (39380)
+    url.hostname = `port-39380-${hostId}.${domain}`;
+    url.pathname = "/vnc.html";
+
+    const searchParams = new URLSearchParams();
+    searchParams.set("autoconnect", "1");
+    searchParams.set("resize", "scale");
+    searchParams.set("reconnect", "1");
+    searchParams.set("reconnect_delay", "1000");
+    url.search = `?${searchParams.toString()}`;
+    url.hash = "";
+
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Convert any workspace URL to a VNC websocket URL for direct noVNC/RFB connection.
+ * Works with both Morph URLs and PVE LXC URLs (or any port-based URL pattern).
+ *
+ * @param sourceUrl - The workspace/vscode URL
+ * @returns The wss:// URL pointing to /websockify endpoint, or null if URL doesn't match
+ */
+export function toGenericVncWebsocketUrl(sourceUrl: string): string | null {
+  if (!sourceUrl) {
+    return null;
+  }
+
+  // Try Morph-specific parser first (for backwards compatibility)
+  const morphResult = toMorphVncWebsocketUrl(sourceUrl);
+  if (morphResult) {
+    return morphResult;
+  }
+
+  // Try generic port-based URL pattern
+  try {
+    const url = new URL(sourceUrl);
+    const match = url.hostname.match(GENERIC_PORT_HOST_REGEX);
+
+    if (!match) {
+      return null;
+    }
+
+    const [, , hostId, domain] = match;
+    // Replace the port in hostname with VNC port (39380)
+    url.hostname = `port-39380-${hostId}.${domain}`;
+    url.protocol = "wss:";
+    url.pathname = "/websockify";
+    url.search = "";
     url.hash = "";
 
     return url.toString();

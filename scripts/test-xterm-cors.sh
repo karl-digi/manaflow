@@ -11,7 +11,7 @@ if [[ $# -lt 1 ]]; then
 fi
 
 INSTANCE_ID="$1"
-DOMAIN="${PVE_PUBLIC_DOMAIN:-alphasolves.com}"
+DOMAIN="${PVE_PUBLIC_DOMAIN:-example.com}"
 # URL pattern (instanceId-based): https://port-{port}-{instanceId}.{domain}
 XTERM_URL="https://port-39383-${INSTANCE_ID}.${DOMAIN}"
 EXEC_URL="https://port-39375-${INSTANCE_ID}.${DOMAIN}"

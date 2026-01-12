@@ -1462,27 +1462,33 @@ async def task_install_ide_extensions(ctx: TaskContext) -> None:
         set -eux
         export HOME=/root
         server_root="{server_root}"
+        echo "[install-ide-extensions] provider={ide_provider} server_root={server_root}"
         bin_path="{bin_path}"
+        echo "[install-ide-extensions] bin_path=${{bin_path}}"
         if [ ! -x "${{bin_path}}" ]; then
           echo "IDE binary not found at ${{bin_path}}" >&2
           exit 1
         fi
         extensions_dir="{extensions_dir}"
         user_data_dir="{user_data_dir}"
+        echo "[install-ide-extensions] extensions_dir=${{extensions_dir}} user_data_dir=${{user_data_dir}}"
         mkdir -p "${{extensions_dir}}" "${{user_data_dir}}"
         cmux_vsix="/tmp/cmux-vscode-extension.vsix"
         if [ ! -f "${{cmux_vsix}}" ]; then
           echo "cmux extension package missing at ${{cmux_vsix}}" >&2
           exit 1
         fi
+        ls -lh "${{cmux_vsix}}"
         install_from_file() {{
           local package_path="$1"
+          echo "[install-ide-extensions] installing ${{package_path}}"
           "${{bin_path}}" \\
             --install-extension "${{package_path}}" \\
             --force \\
             --extensions-dir "${{extensions_dir}}" \\
             --user-data-dir "${{user_data_dir}}"
         }}
+        echo "[install-ide-extensions] installing bundled cmux extension"
         install_from_file "${{cmux_vsix}}"
         rm -f "${{cmux_vsix}}"
         download_dir="$(mktemp -d)"
@@ -1490,6 +1496,7 @@ async def task_install_ide_extensions(ctx: TaskContext) -> None:
           rm -rf "${{download_dir}}"
         }}
         trap cleanup EXIT
+        echo "[install-ide-extensions] downloading marketplace extensions to ${{download_dir}}"
         download_extension() {{
           local publisher="$1"
           local name="$2"
@@ -1501,6 +1508,7 @@ async def task_install_ide_extensions(ctx: TaskContext) -> None:
           local attempt=1
           local max_attempts=3
           while [ "${{attempt}}" -le "${{max_attempts}}" ]; do
+            echo "[install-ide-extensions] fetch ${{publisher}}.${{name}}@${{version}} attempt ${{attempt}}"
             if curl -fSL --retry 6 --retry-all-errors --retry-delay 2 --connect-timeout 20 --max-time 600 -o "${{tmpfile}}" "${{url}}" 2>"${{curl_stderr}}"; then
               rm -f "${{curl_stderr}}"
               break
@@ -1530,20 +1538,25 @@ async def task_install_ide_extensions(ctx: TaskContext) -> None:
         }}
         # Disable errexit for the while loop to avoid envctl debug trap interference
         set +e
+        ext_count=0
         while IFS='|' read -r publisher name version; do
           [ -z "${{publisher}}" ] && continue
           download_extension "${{publisher}}" "${{name}}" "${{version}}" "${{download_dir}}/${{publisher}}.${{name}}.vsix" &
+          ext_count=$((ext_count + 1))
         done <<'EXTENSIONS'
 {extensions_blob}
 EXTENSIONS
         wait
+        echo "[install-ide-extensions] downloaded ${{ext_count}} extensions"
         set -e
+        shopt -s nullglob
         set -- "${{download_dir}}"/*.vsix
         for vsix in "$@"; do
           if [ -f "${{vsix}}" ]; then
             install_from_file "${{vsix}}"
           fi
         done
+        echo "[install-ide-extensions] completed installs"
         """
     )
     await ctx.run("install-ide-extensions", cmd)
@@ -1999,7 +2012,9 @@ async def task_build_worker(ctx: TaskContext) -> None:
           exit 1
         fi
         install -d ./apps/worker/build/node_modules
-        if [ -d ./node_modules/express/node_modules/path-to-regexp ]; then
+        if [ -d ./node_modules/path-to-regexp ]; then
+          cp -RL ./node_modules/path-to-regexp ./apps/worker/build/node_modules/path-to-regexp
+        elif [ -d ./node_modules/express/node_modules/path-to-regexp ]; then
           cp -RL ./node_modules/express/node_modules/path-to-regexp ./apps/worker/build/node_modules/path-to-regexp
         else
           echo "Missing express path-to-regexp dependency" >&2

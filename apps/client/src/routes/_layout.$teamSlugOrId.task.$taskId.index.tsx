@@ -26,7 +26,7 @@ import {
   getTaskRunPersistKey,
 } from "@/lib/persistent-webview-keys";
 import {
-  toMorphVncUrl,
+  toGenericVncUrl,
   toMorphXtermBaseUrl,
   toVncViewerUrl,
 } from "@/lib/toProxyWorkspaceUrl";
@@ -178,7 +178,7 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId/task/$taskId/")({
         if (rawVncUrl) {
           vncUrl = toVncViewerUrl(rawVncUrl);
         } else if (rawBrowserUrl) {
-          vncUrl = toMorphVncUrl(rawBrowserUrl);
+          vncUrl = toGenericVncUrl(rawBrowserUrl);
         }
         if (vncUrl) {
           void preloadTaskRunBrowserIframe(selectedRun._id, vncUrl).catch(
@@ -709,9 +709,9 @@ function TaskDetailPage() {
     if (rawVncUrl) {
       return toVncViewerUrl(rawVncUrl);
     }
-    // Fall back to deriving from workspace URL for Morph
+    // Fall back to deriving from workspace URL (works for Morph and PVE LXC)
     if (rawBrowserUrl) {
-      return toMorphVncUrl(rawBrowserUrl);
+      return toGenericVncUrl(rawBrowserUrl);
     }
     return null;
   }, [rawVncUrl, rawBrowserUrl]);

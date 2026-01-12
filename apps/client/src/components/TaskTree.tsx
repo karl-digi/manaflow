@@ -17,9 +17,9 @@ import { isElectron } from "@/lib/electron";
 import { isFakeConvexId } from "@/lib/fakeConvexId";
 import {
   getTaskRunPersistKey,
-  getTaskRunBrowserPersistKey,
 } from "@/lib/persistent-webview-keys";
 import { persistentIframeManager } from "@/lib/persistentIframeManager";
+import { emitBrowserReload } from "@/lib/browser-reload-events";
 import type { AnnotatedTaskRun, TaskRunWithChildren } from "@/types/task";
 import { ContextMenu } from "@base-ui-components/react/context-menu";
 import { api } from "@cmux/convex/api";
@@ -2081,7 +2081,7 @@ function TaskRunDetails({
   }, [run._id]);
 
   const handleReloadBrowser = useCallback(() => {
-    persistentIframeManager.reloadIframe(getTaskRunBrowserPersistKey(run._id));
+    emitBrowserReload(run._id);
   }, [run._id]);
 
   const handleReloadTerminals = useCallback(() => {
