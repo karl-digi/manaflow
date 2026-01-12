@@ -271,10 +271,18 @@ pub async fn acp_websocket_handler(
         .unwrap_or("")
         .to_string();
 
+    // Extract cwd override from header (for local development without admin key)
+    let cwd_override = headers
+        .get("x-acp-cwd")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
     let provider = extract_provider(&query);
     let isolation = extract_isolation(&query);
 
-    ws.on_upgrade(move |socket| handle_acp_connection(socket, state, jwt, provider, isolation))
+    ws.on_upgrade(move |socket| {
+        handle_acp_connection(socket, state, jwt, provider, isolation, cwd_override)
+    })
 }
 
 /// Handle an ACP WebSocket connection.
@@ -284,6 +292,7 @@ async fn handle_acp_connection(
     jwt: Option<String>,
     provider: AcpProvider,
     isolation: IsolationMode,
+    cwd_override: Option<String>,
 ) {
     // Verify JWT
     let token_payload = match jwt {
@@ -309,6 +318,43 @@ async fn handle_acp_connection(
 
     // Create Convex client for persistence
     let convex_client = ConvexClient::new(&state.convex_url, &state.convex_admin_key);
+
+    // Fetch conversation to get its cwd, or use override/default
+    let cwd = if let Some(override_cwd) = cwd_override {
+        debug!(
+            conversation_id = %token_payload.conversation_id,
+            cwd = %override_cwd,
+            "Using cwd from header override"
+        );
+        std::path::PathBuf::from(override_cwd)
+    } else {
+        match convex_client
+            .get_conversation(&token_payload.conversation_id)
+            .await
+        {
+            Ok(conv) => {
+                let path = if conv.cwd.is_empty() {
+                    state.default_cwd.clone()
+                } else {
+                    std::path::PathBuf::from(&conv.cwd)
+                };
+                debug!(
+                    conversation_id = %token_payload.conversation_id,
+                    cwd = %path.display(),
+                    "Using conversation cwd from Convex"
+                );
+                path
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    conversation_id = %token_payload.conversation_id,
+                    "Failed to fetch conversation, using default cwd"
+                );
+                state.default_cwd.clone()
+            }
+        }
+    };
 
     // Build environment variables for the CLI
     // Prefer proxy base URLs over direct API keys for security
@@ -358,7 +404,7 @@ async fn handle_acp_connection(
         token_payload.conversation_id.clone(),
         provider,
         isolation,
-        state.default_cwd.clone(),
+        cwd,
         env_vars,
     ));
 

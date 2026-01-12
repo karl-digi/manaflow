@@ -112,6 +112,30 @@ struct ConvexMutationResponse {
     error_message: Option<String>,
 }
 
+/// Convex query response.
+#[derive(Debug, Deserialize)]
+struct ConvexQueryResponse {
+    status: String,
+    value: Option<serde_json::Value>,
+    #[serde(rename = "errorMessage")]
+    error_message: Option<String>,
+}
+
+/// Conversation data from Convex.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ConversationData {
+    #[serde(rename = "_id")]
+    pub id: String,
+    #[serde(rename = "teamId")]
+    pub team_id: String,
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
+    #[serde(rename = "providerId")]
+    pub provider_id: String,
+    pub cwd: String,
+    pub status: String,
+}
+
 impl ConvexClient {
     /// Create a new Convex client.
     pub fn new(convex_url: impl Into<String>, admin_key: impl Into<String>) -> Self {
@@ -120,6 +144,65 @@ impl ConvexClient {
             convex_url: convex_url.into(),
             admin_key: admin_key.into(),
         }
+    }
+
+    /// Call a Convex query via HTTP.
+    async fn call_query(
+        &self,
+        function_path: &str,
+        args: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let url = format!("{}/api/query", self.convex_url);
+
+        debug!(
+            function = %function_path,
+            "Calling Convex query"
+        );
+
+        let response = self
+            .http_client
+            .post(&url)
+            .header("Authorization", format!("Convex {}", self.admin_key))
+            .json(&json!({
+                "path": function_path,
+                "args": args,
+            }))
+            .send()
+            .await
+            .context("Failed to send request to Convex")?;
+
+        let status = response.status();
+        let body: ConvexQueryResponse = response
+            .json()
+            .await
+            .context("Failed to parse Convex response")?;
+
+        if body.status != "success" {
+            let error_msg = body
+                .error_message
+                .unwrap_or_else(|| format!("Unknown error (status: {})", status));
+            error!(
+                function = %function_path,
+                error = %error_msg,
+                "Convex query failed"
+            );
+            anyhow::bail!("Convex query failed: {}", error_msg);
+        }
+
+        Ok(body.value.unwrap_or(serde_json::Value::Null))
+    }
+
+    /// Get a conversation by ID.
+    pub async fn get_conversation(&self, conversation_id: &str) -> Result<ConversationData> {
+        let args = json!({
+            "conversationId": conversation_id,
+        });
+
+        let result = self
+            .call_query("conversations:getByIdInternal", args)
+            .await?;
+
+        serde_json::from_value(result).context("Failed to parse conversation data")
     }
 
     /// Call a Convex mutation via HTTP.

@@ -13,11 +13,16 @@
 mod agent;
 mod api_proxy;
 mod persistence;
+pub mod rest;
 mod spawner;
 mod websocket;
 
 pub use agent::WrappedAgent;
 pub use api_proxy::{ApiProxies, ApiProxy, ProviderConfig};
-pub use persistence::ConvexClient;
+pub use persistence::{ConversationData, ConvexClient};
+pub use rest::{
+    create_conversation, get_conversation, get_conversation_messages, list_conversations,
+    refresh_conversation_jwt, RestApiDoc, RestApiState,
+};
 pub use spawner::{CliSpawner, IsolationMode};
 pub use websocket::{acp_websocket_handler, AcpServerState, ApiKeys};

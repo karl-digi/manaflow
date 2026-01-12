@@ -7,7 +7,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use axum::routing::{any, get};
+use axum::routing::{any, get, post};
 use axum::Router;
 use clap::Parser;
 use tracing::{info, Level};
@@ -15,7 +15,11 @@ use tracing_subscriber::EnvFilter;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
-use cmux_sandbox::acp_server::{acp_websocket_handler, AcpServerState, ApiKeys, ApiProxies};
+use cmux_sandbox::acp_server::{
+    acp_websocket_handler, create_conversation, get_conversation, get_conversation_messages,
+    list_conversations, refresh_conversation_jwt, AcpServerState, ApiKeys, ApiProxies, RestApiDoc,
+    RestApiState,
+};
 
 /// ACP Server for iOS app integration.
 #[derive(Parser, Debug)]
@@ -87,23 +91,33 @@ async fn health() -> axum::Json<HealthResponse> {
     })
 }
 
-/// OpenAPI documentation for the ACP server.
+/// OpenAPI documentation for the ACP server (health endpoints only).
 #[derive(OpenApi)]
 #[openapi(
     info(
         title = "cmux ACP Server",
         description = "ACP (Agent Client Protocol) server for iOS app integration. \
-            Provides WebSocket endpoints for communicating with coding agents (Claude Code, Codex, etc.).",
+            Provides REST endpoints for conversation management and WebSocket endpoints \
+            for communicating with coding agents (Claude Code, Codex, etc.).",
         version = "0.1.0"
     ),
     paths(health),
     components(schemas(HealthResponse)),
     tags(
         (name = "health", description = "Health check endpoints"),
+        (name = "conversations", description = "Conversation management endpoints"),
         (name = "acp", description = "WebSocket endpoints for ACP protocol")
     )
 )]
 struct ApiDoc;
+
+/// Merge OpenAPI documents.
+fn merged_openapi() -> utoipa::openapi::OpenApi {
+    let mut api = ApiDoc::openapi();
+    let rest_api = RestApiDoc::openapi();
+    api.merge(rest_api);
+    api
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -169,7 +183,30 @@ async fn main() -> anyhow::Result<()> {
         state = state.with_api_keys(api_keys);
     }
 
-    // Build router
+    // Create REST API state
+    let rest_state = RestApiState::new(args.convex_url.clone(), args.convex_admin_key.clone());
+
+    // Build REST API router (separate state)
+    let rest_router = Router::new()
+        .route(
+            "/api/conversations",
+            get(list_conversations).post(create_conversation),
+        )
+        .route(
+            "/api/conversations/{conversation_id}",
+            get(get_conversation),
+        )
+        .route(
+            "/api/conversations/{conversation_id}/messages",
+            get(get_conversation_messages),
+        )
+        .route(
+            "/api/conversations/{conversation_id}/jwt",
+            post(refresh_conversation_jwt),
+        )
+        .with_state(rest_state);
+
+    // Build main router with WebSocket routes
     let app = Router::new()
         .route("/health", get(health))
         .route("/healthz", get(health))
@@ -178,8 +215,9 @@ async fn main() -> anyhow::Result<()> {
             "/api/conversations/{conversation_id}/ws",
             any(acp_websocket_handler),
         )
-        .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()))
-        .with_state(state);
+        .with_state(state)
+        .merge(rest_router)
+        .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", merged_openapi()));
 
     // Bind and serve
     let addr = SocketAddr::from(([0, 0, 0, 0], args.port));
