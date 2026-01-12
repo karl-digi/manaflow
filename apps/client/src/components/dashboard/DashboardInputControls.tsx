@@ -21,7 +21,7 @@ import { Link, useRouter } from "@tanstack/react-router";
 import clsx from "clsx";
 import { useAction, useMutation } from "convex/react";
 import { Check, GitBranch, Image, Link2, Mic, Server, X } from "lucide-react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { AgentCommandItem, MAX_AGENT_COMMAND_COUNT } from "./AgentCommandItem";
 
@@ -35,6 +35,8 @@ interface DashboardInputControlsProps {
   onBranchChange: (branches: string[]) => void;
   onBranchSearchChange?: (search: string) => void;
   isBranchSearchLoading?: boolean;
+  onBranchEndReached?: () => void;
+  branchFooter?: ReactNode;
   selectedAgents: string[];
   onAgentChange: (agents: string[]) => void;
   isCloudMode: boolean;
@@ -64,6 +66,8 @@ export const DashboardInputControls = memo(function DashboardInputControls({
   onBranchChange,
   onBranchSearchChange,
   isBranchSearchLoading = false,
+  onBranchEndReached,
+  branchFooter,
   selectedAgents,
   onAgentChange,
   isCloudMode,
@@ -680,6 +684,7 @@ export const DashboardInputControls = memo(function DashboardInputControls({
                   value={selectedBranch}
                   onChange={onBranchChange}
                   onSearchChange={onBranchSearchChange}
+                  onEndReached={onBranchEndReached}
                   searchLoading={isBranchSearchLoading}
                   disableClientFilter
                   placeholder="Branch"
@@ -688,6 +693,7 @@ export const DashboardInputControls = memo(function DashboardInputControls({
                   loading={isLoadingBranches}
                   showSearch
                   disabled={branchDisabled}
+                  footer={branchFooter}
                   leftIcon={
                     <GitBranch className="w-4 h-4 text-neutral-500 dark:text-neutral-400" />
                   }

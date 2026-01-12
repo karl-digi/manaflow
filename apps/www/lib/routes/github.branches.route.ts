@@ -102,6 +102,11 @@ const BranchesQuery = z
       .default(30)
       .optional()
       .openapi({ description: "Max branches to return (default 30, max 100)" }),
+    cursor: z
+      .string()
+      .trim()
+      .optional()
+      .openapi({ description: "Pagination cursor for fetching the next batch" }),
   })
   .openapi("GithubBranchesQuery");
 
@@ -110,6 +115,8 @@ const BranchesResponse = z
     branches: z.array(GithubBranch),
     defaultBranch: z.string().nullable(),
     error: z.string().nullable(),
+    nextCursor: z.string().nullable(),
+    hasMore: z.boolean(),
   })
   .openapi("GithubBranchesResponse");
 
@@ -138,91 +145,184 @@ githubBranchesRouter.openapi(
       return c.text("Unauthorized", 401);
     }
 
-    const { repo, search, limit = 30 } = c.req.valid("query");
+    const { repo, search, limit = 30, cursor } = c.req.valid("query");
 
     try {
       const githubAccount = await user.getConnectedAccount("github");
       if (!githubAccount) {
-        return c.json({ branches: [], defaultBranch: null, error: "GitHub account not connected" }, 200);
+        return c.json({
+          branches: [],
+          defaultBranch: null,
+          error: "GitHub account not connected",
+          nextCursor: null,
+          hasMore: false,
+        }, 200);
       }
 
       const { accessToken } = await githubAccount.getAccessToken();
       if (!accessToken || accessToken.trim().length === 0) {
-        return c.json({ branches: [], defaultBranch: null, error: "GitHub access token not found" }, 200);
+        return c.json({
+          branches: [],
+          defaultBranch: null,
+          error: "GitHub access token not found",
+          nextCursor: null,
+          hasMore: false,
+        }, 200);
       }
 
       const octokit = new Octokit({ auth: accessToken.trim() });
       const [owner, repoName] = repo.split("/");
-
-      // Get repo info for default branch
-      let defaultBranchName: string | null = null;
-      try {
-        const { data: repoData } = await octokit.request("GET /repos/{owner}/{repo}", {
-          owner: owner!,
-          repo: repoName!,
-        });
-        defaultBranchName = repoData.default_branch;
-      } catch {
-        // Ignore - we'll continue without default branch info
+      if (!owner || !repoName) {
+        return c.json({
+          branches: [],
+          defaultBranch: null,
+          error: "Invalid repository name",
+          nextCursor: null,
+          hasMore: false,
+        }, 200);
       }
 
-      type BranchResp = { name: string; commit: { sha: string } };
+      type BranchEdge = {
+        cursor: string;
+        node: {
+          name: string;
+          target: { oid?: string | null } | null;
+        };
+      };
+
+      type BranchQueryResponse = {
+        repository: {
+          defaultBranchRef: { name: string } | null;
+          refs: {
+            edges: BranchEdge[];
+            pageInfo: { endCursor: string | null; hasNextPage: boolean };
+          };
+        } | null;
+      };
+
       const branches: Array<z.infer<typeof GithubBranch>> = [];
+      const searchTerm = search?.trim() ?? "";
+      const searchLower = searchTerm ? searchTerm.toLowerCase() : "";
+      const perPage = Math.min(100, Math.max(30, limit));
 
-      if (!search) {
-        // No search - just get first page of branches
-        const { data } = await octokit.request("GET /repos/{owner}/{repo}/branches", {
-          owner: owner!,
-          repo: repoName!,
-          per_page: limit,
-        }) as { data: BranchResp[] };
+      let nextCursor: string | null = null;
+      let hasMore = false;
+      let afterCursor: string | null = cursor ?? null;
+      let defaultBranchName: string | null = null;
 
-        for (const br of data) {
-          branches.push({
-            name: br.name,
-            lastCommitSha: br.commit.sha,
-            isDefault: br.name === defaultBranchName,
-          });
-        }
-      } else {
-        // With search - fetch pages until we find enough matches
-        const searchLower = search.toLowerCase();
-        let page = 1;
-        const perPage = 100;
-
-        while (branches.length < limit) {
-          const { data } = await octokit.request("GET /repos/{owner}/{repo}/branches", {
-            owner: owner!,
-            repo: repoName!,
-            per_page: perPage,
-            page,
-          }) as { data: BranchResp[] };
-
-          if (data.length === 0) break;
-
-          for (const br of data) {
-            if (br.name.toLowerCase().includes(searchLower)) {
-              branches.push({
-                name: br.name,
-                lastCommitSha: br.commit.sha,
-                isDefault: br.name === defaultBranchName,
-              });
-              if (branches.length >= limit) break;
+      const branchQuery = `
+        query($owner: String!, $repo: String!, $after: String, $first: Int!) {
+          repository(owner: $owner, name: $repo) {
+            defaultBranchRef {
+              name
+            }
+            refs(
+              refPrefix: "refs/heads/"
+              first: $first
+              after: $after
+              orderBy: { field: TAG_COMMIT_DATE, direction: DESC }
+            ) {
+              edges {
+                cursor
+                node {
+                  name
+                  target {
+                    ... on Commit {
+                      oid
+                    }
+                  }
+                }
+              }
+              pageInfo {
+                endCursor
+                hasNextPage
+              }
             }
           }
-
-          if (data.length < perPage) break;
-          page++;
         }
+      `;
+
+      while (branches.length < limit) {
+        const response = await octokit.graphql<BranchQueryResponse>(branchQuery, {
+          owner,
+          repo: repoName,
+          after: afterCursor ?? undefined,
+          first: perPage,
+        });
+
+        const repository = response.repository;
+        if (!repository) {
+          break;
+        }
+
+        if (defaultBranchName === null) {
+          defaultBranchName = repository.defaultBranchRef?.name ?? null;
+        }
+
+        const edges = repository.refs.edges ?? [];
+        if (edges.length === 0) {
+          hasMore = false;
+          nextCursor = null;
+          break;
+        }
+
+        for (let index = 0; index < edges.length; index += 1) {
+          const edge = edges[index];
+          const branchName = edge.node.name;
+          if (searchLower && !branchName.toLowerCase().includes(searchLower)) {
+            continue;
+          }
+
+          branches.push({
+            name: branchName,
+            lastCommitSha: edge.node.target?.oid ?? undefined,
+            isDefault: branchName === defaultBranchName,
+          });
+
+          if (branches.length >= limit) {
+            const isLastEdge = index === edges.length - 1;
+            hasMore = !isLastEdge || repository.refs.pageInfo.hasNextPage;
+            nextCursor = edge.cursor ?? null;
+            break;
+          }
+        }
+
+        if (branches.length >= limit) {
+          break;
+        }
+
+        if (!repository.refs.pageInfo.hasNextPage) {
+          hasMore = false;
+          nextCursor = null;
+          break;
+        }
+
+        afterCursor = repository.refs.pageInfo.endCursor;
+        if (!afterCursor) {
+          hasMore = false;
+          nextCursor = null;
+          break;
+        }
+
+        hasMore = true;
+        nextCursor = afterCursor;
       }
 
-      return c.json({ branches, defaultBranch: defaultBranchName, error: null }, 200);
+      return c.json({
+        branches,
+        defaultBranch: defaultBranchName,
+        error: null,
+        nextCursor,
+        hasMore,
+      }, 200);
     } catch (error) {
       console.error("[github.branches] Error fetching branches:", error);
       return c.json({
         branches: [],
         defaultBranch: null,
         error: error instanceof Error ? error.message : "Failed to fetch branches",
+        nextCursor: null,
+        hasMore: false,
       }, 200);
     }
   }

@@ -382,6 +382,8 @@ export type GithubBranchesResponse = {
     branches: Array<GithubBranch>;
     defaultBranch: string | null;
     error: string | null;
+    nextCursor: string | null;
+    hasMore: boolean;
 };
 
 export type ResumeTaskRunResponse = {
@@ -422,7 +424,7 @@ export type SetupInstanceBody = {
     instanceId?: string;
     selectedRepos?: Array<string>;
     ttlSeconds?: number;
-    snapshotId?: string | ('snapshot_m0lw91ep' | 'snapshot_hnwrt0re' | 'snapshot_pcmfvjra');
+    snapshotId?: string | ('snapshot_phq07yhf' | 'snapshot_qrql1trf' | 'snapshot_pcmfvjra');
 };
 
 export type InstanceInfo = {
@@ -1857,6 +1859,10 @@ export type GetApiIntegrationsGithubBranchesData = {
          * Max branches to return (default 30, max 100)
          */
         limit?: number;
+        /**
+         * Pagination cursor for fetching the next batch
+         */
+        cursor?: string;
     };
     url: '/api/integrations/github/branches';
 };

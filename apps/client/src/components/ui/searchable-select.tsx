@@ -105,6 +105,10 @@ export interface SearchableSelectProps {
   searchLoading?: boolean;
   // Disable client-side filtering (use when server handles filtering)
   disableClientFilter?: boolean;
+  // Callback when the scroll reaches the end of the list
+  onEndReached?: () => void;
+  // Distance from bottom before triggering onEndReached
+  endReachedOffset?: number;
 }
 
 interface WarningIndicatorProps {
@@ -263,6 +267,8 @@ const SearchableSelect = forwardRef<
     onSearchChange,
     searchLoading = false,
     disableClientFilter = false,
+    onEndReached,
+    endReachedOffset = 48,
   },
   ref
 ) {
@@ -448,6 +454,7 @@ const SearchableSelect = forwardRef<
   }, [normOptions, search, disableClientFilter]);
 
   const listRef = useRef<HTMLDivElement | null>(null);
+  const endReachedRef = useRef(false);
   const rowVirtualizer = useVirtualizer({
     count: filteredOptions.length,
     getScrollElement: () => listRef.current,
@@ -472,6 +479,33 @@ const SearchableSelect = forwardRef<
       });
     }
   }, [open, rowVirtualizer]);
+
+  useEffect(() => {
+    endReachedRef.current = false;
+  }, [filteredOptions.length, open]);
+
+  useEffect(() => {
+    if (!open || !onEndReached) return;
+    const listEl = listRef.current;
+    if (!listEl) return;
+
+    const handleScroll = () => {
+      const distanceToBottom =
+        listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight;
+      const atEnd = distanceToBottom <= endReachedOffset;
+      if (atEnd) {
+        if (endReachedRef.current) return;
+        endReachedRef.current = true;
+        onEndReached();
+      } else {
+        endReachedRef.current = false;
+      }
+    };
+
+    handleScroll();
+    listEl.addEventListener("scroll", handleScroll);
+    return () => listEl.removeEventListener("scroll", handleScroll);
+  }, [endReachedOffset, filteredOptions.length, onEndReached, open]);
 
   // Track the first non-heading option to select it when options change
   const firstSelectableOption = useMemo(() => {

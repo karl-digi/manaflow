@@ -23,7 +23,8 @@ import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { createFakeConvexId } from "@/lib/fakeConvexId";
 import { attachTaskLifecycleListeners } from "@/lib/socket/taskLifecycleListeners";
-import { getApiIntegrationsGithubBranchesOptions } from "@/queries/branches";
+import type { GithubBranchesResponse } from "@cmux/www-openapi-client";
+import { getApiIntegrationsGithubBranches } from "@cmux/www-openapi-client";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
@@ -35,12 +36,17 @@ import type {
 } from "@cmux/shared";
 import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
 import { convexQuery } from "@convex-dev/react-query";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useQuery,
+  type InfiniteData,
+} from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useAction, useMutation } from "convex/react";
 import { Server as ServerIcon } from "lucide-react";
 import { useDebouncedValue } from "@mantine/hooks";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 
@@ -211,36 +217,87 @@ function DashboardComponent() {
   // This prevents delay when user clears the search
   const effectiveBranchSearch = branchSearch === "" ? "" : debouncedBranchSearch;
 
-  // Branches query - uses GraphQL to get default branch AND branches in a single API call
-  // Server-side search via GitHub GraphQL API (prefix match)
+  const branchPageSize = 30;
+
+  // Branches query - server-side filtering with cursor pagination
   // Each search term is cached separately by React Query
-  const branchesQuery = useQuery({
-    ...getApiIntegrationsGithubBranchesOptions({
-      query: {
-        repo: selectedProject[0] || "",
-        limit: 5,
-        search: effectiveBranchSearch || undefined,
-      },
-    }),
+  const branchesQuery = useInfiniteQuery<
+    GithubBranchesResponse,
+    Error,
+    InfiniteData<GithubBranchesResponse>,
+    Array<string | number>,
+    string | null
+  >({
+    queryKey: [
+      "github-branches",
+      selectedProject[0] || "",
+      effectiveBranchSearch || "",
+      branchPageSize,
+    ],
+    queryFn: async ({ pageParam }) => {
+      const { data } = await getApiIntegrationsGithubBranches({
+        query: {
+          repo: selectedProject[0] || "",
+          limit: branchPageSize,
+          search: effectiveBranchSearch || undefined,
+          cursor: typeof pageParam === "string" ? pageParam : undefined,
+        },
+        throwOnError: true,
+      });
+      return data;
+    },
+    getNextPageParam: (lastPage) => {
+      if (!lastPage.hasMore) {
+        return undefined;
+      }
+      return lastPage.nextCursor ?? undefined;
+    },
     staleTime: 30_000,
     enabled: !!selectedProject[0] && !isEnvSelected,
+    initialPageParam: null,
     // Keep previous data visible while fetching new search results
     // This prevents "No options" flash and button skeleton during search
     placeholderData: keepPreviousData,
   });
 
+  const { fetchNextPage, hasNextPage, isFetching, isFetchingNextPage } =
+    branchesQuery;
+
   // Show loading in search input when search is pending or fetching
   const isBranchSearchLoading =
     branchSearch !== "" &&
-    (branchSearch !== effectiveBranchSearch || branchesQuery.isFetching);
+    (branchSearch !== effectiveBranchSearch ||
+      (isFetching && !isFetchingNextPage));
 
   // Extract branch names and default branch from the query
-  const branchNames = useMemo(
-    () => branchesQuery.data?.branches?.map((branch) => branch.name) ?? [],
-    [branchesQuery.data]
-  );
+  const branchNames = useMemo(() => {
+    const names: string[] = [];
+    const seen = new Set<string>();
+    const pages = branchesQuery.data?.pages ?? [];
+    for (const page of pages) {
+      for (const branch of page.branches ?? []) {
+        if (seen.has(branch.name)) continue;
+        seen.add(branch.name);
+        names.push(branch.name);
+      }
+    }
+    return names;
+  }, [branchesQuery.data]);
 
-  const defaultBranchName = branchesQuery.data?.defaultBranch ?? null;
+  const defaultBranchName = useMemo(() => {
+    const pages = branchesQuery.data?.pages ?? [];
+    for (const page of pages) {
+      if (page.defaultBranch) return page.defaultBranch;
+    }
+    return null;
+  }, [branchesQuery.data]);
+
+  const handleBranchListEndReached = useCallback(() => {
+    if (!hasNextPage || isFetchingNextPage) {
+      return;
+    }
+    void fetchNextPage();
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
 
   // Handle branch search changes from SearchableSelect
   const handleBranchSearchChange = useCallback((search: string) => {
@@ -818,6 +875,25 @@ function DashboardComponent() {
 
   const branchOptions = branchNames;
 
+  const branchFooter = useMemo(() => {
+    if (isFetchingNextPage) {
+      return (
+        <div className="flex items-center gap-2 px-3 py-2 text-[11px] text-neutral-500 dark:text-neutral-400">
+          <span className="h-3 w-3 animate-spin rounded-full border border-neutral-400 border-t-transparent" />
+          <span>Loading more branches...</span>
+        </div>
+      );
+    }
+    if (hasNextPage) {
+      return (
+        <div className="px-3 py-2 text-[11px] text-neutral-500 dark:text-neutral-400">
+          Scroll to load more branches
+        </div>
+      );
+    }
+    return null;
+  }, [hasNextPage, isFetchingNextPage]);
+
   // Cloud mode toggle handler
   const handleCloudModeToggle = useCallback(() => {
     // In web mode, always stay in cloud mode
@@ -1064,7 +1140,9 @@ function DashboardComponent() {
               isCloudMode={isCloudMode}
               onCloudModeToggle={handleCloudModeToggle}
               isLoadingProjects={reposByOrgQuery.isLoading}
-              isLoadingBranches={branchesQuery.isFetching && effectiveSelectedBranch.length === 0}
+              isLoadingBranches={branchesQuery.isLoading && branchNames.length === 0}
+              onBranchEndReached={handleBranchListEndReached}
+              branchFooter={branchFooter}
               teamSlugOrId={teamSlugOrId}
               cloudToggleDisabled={isEnvSelected}
               branchDisabled={isEnvSelected || !selectedProject[0]}
@@ -1139,6 +1217,8 @@ type DashboardMainCardProps = {
   onBranchChange: (newBranches: string[]) => void;
   onBranchSearchChange: (search: string) => void;
   isBranchSearchLoading: boolean;
+  onBranchEndReached?: () => void;
+  branchFooter?: ReactNode;
   selectedAgents: string[];
   onAgentChange: (newAgents: string[]) => void;
   isCloudMode: boolean;
@@ -1170,6 +1250,8 @@ function DashboardMainCard({
   onBranchChange,
   onBranchSearchChange,
   isBranchSearchLoading,
+  onBranchEndReached,
+  branchFooter,
   selectedAgents,
   onAgentChange,
   isCloudMode,
@@ -1208,6 +1290,8 @@ function DashboardMainCard({
           onBranchChange={onBranchChange}
           onBranchSearchChange={onBranchSearchChange}
           isBranchSearchLoading={isBranchSearchLoading}
+          onBranchEndReached={onBranchEndReached}
+          branchFooter={branchFooter}
           selectedAgents={selectedAgents}
           onAgentChange={onAgentChange}
           isCloudMode={isCloudMode}

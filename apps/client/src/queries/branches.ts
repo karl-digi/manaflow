@@ -1,5 +1,5 @@
-// Re-export the OpenAPI-generated query options for branches
-// These are used in the dashboard and diff pages for lazy-loading branches
+// Re-export the OpenAPI-generated query options for branches.
+// These are used in places that don't need infinite loading.
 export {
   getApiIntegrationsGithubDefaultBranchOptions,
   getApiIntegrationsGithubBranchesOptions,
