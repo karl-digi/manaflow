@@ -5,6 +5,7 @@
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use axum::routing::{any, get};
 use axum::Router;
@@ -14,7 +15,7 @@ use tracing_subscriber::EnvFilter;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
-use cmux_sandbox::acp_server::{acp_websocket_handler, AcpServerState, ApiKeys};
+use cmux_sandbox::acp_server::{acp_websocket_handler, AcpServerState, ApiKeys, ApiProxies};
 
 /// ACP Server for iOS app integration.
 #[derive(Parser, Debug)]
@@ -56,6 +57,11 @@ struct Args {
     /// Enable verbose logging
     #[arg(short, long)]
     verbose: bool,
+
+    /// Use internal API proxy instead of passing API keys directly to CLIs.
+    /// This is more secure as API keys are never exposed to CLI processes.
+    #[arg(long, env = "ACP_USE_PROXY", default_value = "true")]
+    use_proxy: bool,
 }
 
 /// Health check endpoint response.
@@ -119,24 +125,49 @@ async fn main() -> anyhow::Result<()> {
     info!(
         port = args.port,
         working_dir = %args.working_dir.display(),
+        use_proxy = args.use_proxy,
         "Starting cmux-acp-server"
     );
 
-    // Create API keys from args
-    let api_keys = ApiKeys {
-        anthropic_api_key: args.anthropic_api_key.clone(),
-        openai_api_key: args.openai_api_key.clone(),
-        google_api_key: args.google_api_key.clone(),
-    };
-
     // Create ACP server state
-    let state = AcpServerState::new(
+    let mut state = AcpServerState::new(
         args.convex_url.clone(),
         args.jwt_secret.clone(),
         args.convex_admin_key.clone(),
         args.working_dir.clone(),
-    )
-    .with_api_keys(api_keys);
+    );
+
+    if args.use_proxy {
+        // Start API proxies (preferred - API keys not exposed to CLIs)
+        info!("Starting API proxies...");
+        let proxies = ApiProxies::start(
+            args.anthropic_api_key.clone(),
+            args.openai_api_key.clone(),
+            args.google_api_key.clone(),
+        )
+        .await?;
+
+        if let Some(ref proxy) = proxies.anthropic {
+            info!(base_url = %proxy.base_url(), "Anthropic API proxy started");
+        }
+        if let Some(ref proxy) = proxies.openai {
+            info!(base_url = %proxy.base_url(), "OpenAI API proxy started");
+        }
+        if let Some(ref proxy) = proxies.google {
+            info!(base_url = %proxy.base_url(), "Google API proxy started");
+        }
+
+        state = state.with_proxies(Arc::new(proxies));
+    } else {
+        // Fall back to direct API keys (deprecated)
+        info!("Using direct API keys (proxy disabled)");
+        let api_keys = ApiKeys {
+            anthropic_api_key: args.anthropic_api_key.clone(),
+            openai_api_key: args.openai_api_key.clone(),
+            google_api_key: args.google_api_key.clone(),
+        };
+        state = state.with_api_keys(api_keys);
+    }
 
     // Build router
     let app = Router::new()

@@ -8,13 +8,16 @@
 //! - iOS App → WebSocket → ACP Server → CLI Spawner → Coding CLI
 //! - Conversations are persisted to Convex via HTTP API
 //! - Supports multiple isolation modes via bubblewrap namespaces
+//! - API keys are held by internal proxy servers, not passed to CLIs
 
 mod agent;
+mod api_proxy;
 mod persistence;
 mod spawner;
 mod websocket;
 
 pub use agent::WrappedAgent;
+pub use api_proxy::{ApiProxies, ApiProxy, ProviderConfig};
 pub use persistence::ConvexClient;
 pub use spawner::{CliSpawner, IsolationMode};
 pub use websocket::{acp_websocket_handler, AcpServerState, ApiKeys};

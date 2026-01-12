@@ -99,6 +99,8 @@ struct StreamingState {
     accumulated_text: String,
 }
 
+use super::api_proxy::ApiProxies;
+
 /// State for the ACP server.
 #[derive(Clone)]
 pub struct AcpServerState {
@@ -110,8 +112,10 @@ pub struct AcpServerState {
     pub convex_admin_key: String,
     /// Default working directory
     pub default_cwd: std::path::PathBuf,
-    /// API keys for coding CLIs
+    /// API keys for coding CLIs (deprecated, use proxies instead)
     pub api_keys: ApiKeys,
+    /// API proxies for coding CLIs (preferred over direct API keys)
+    pub api_proxies: Option<Arc<ApiProxies>>,
 }
 
 /// API keys for different coding CLI providers.
@@ -139,12 +143,19 @@ impl AcpServerState {
             convex_admin_key,
             default_cwd,
             api_keys: ApiKeys::default(),
+            api_proxies: None,
         }
     }
 
-    /// Set API keys.
+    /// Set API keys (deprecated, use with_proxies instead).
     pub fn with_api_keys(mut self, api_keys: ApiKeys) -> Self {
         self.api_keys = api_keys;
+        self
+    }
+
+    /// Set API proxies (preferred over direct API keys).
+    pub fn with_proxies(mut self, proxies: Arc<ApiProxies>) -> Self {
+        self.api_proxies = Some(proxies);
         self
     }
 }
@@ -299,34 +310,47 @@ async fn handle_acp_connection(
     // Create Convex client for persistence
     let convex_client = ConvexClient::new(&state.convex_url, &state.convex_admin_key);
 
-    // Build environment variables for the CLI based on provider
-    let mut env_vars = Vec::new();
-    match provider {
-        AcpProvider::Claude => {
-            if let Some(ref key) = state.api_keys.anthropic_api_key {
-                env_vars.push(("ANTHROPIC_API_KEY".to_string(), key.clone()));
+    // Build environment variables for the CLI
+    // Prefer proxy base URLs over direct API keys for security
+    let env_vars = if let Some(ref proxies) = state.api_proxies {
+        // Use proxy base URLs - API keys are held by the proxy
+        let vars = proxies.env_vars();
+        debug!(
+            proxy_vars = ?vars,
+            "Using API proxies for CLI"
+        );
+        vars
+    } else {
+        // Fall back to direct API keys (deprecated)
+        let mut vars = Vec::new();
+        match provider {
+            AcpProvider::Claude => {
+                if let Some(ref key) = state.api_keys.anthropic_api_key {
+                    vars.push(("ANTHROPIC_API_KEY".to_string(), key.clone()));
+                }
+            }
+            AcpProvider::Codex => {
+                if let Some(ref key) = state.api_keys.openai_api_key {
+                    vars.push(("OPENAI_API_KEY".to_string(), key.clone()));
+                }
+            }
+            AcpProvider::Gemini => {
+                if let Some(ref key) = state.api_keys.google_api_key {
+                    vars.push(("GOOGLE_API_KEY".to_string(), key.clone()));
+                }
+            }
+            AcpProvider::Opencode => {
+                // Opencode may use multiple providers, pass all available keys
+                if let Some(ref key) = state.api_keys.anthropic_api_key {
+                    vars.push(("ANTHROPIC_API_KEY".to_string(), key.clone()));
+                }
+                if let Some(ref key) = state.api_keys.openai_api_key {
+                    vars.push(("OPENAI_API_KEY".to_string(), key.clone()));
+                }
             }
         }
-        AcpProvider::Codex => {
-            if let Some(ref key) = state.api_keys.openai_api_key {
-                env_vars.push(("OPENAI_API_KEY".to_string(), key.clone()));
-            }
-        }
-        AcpProvider::Gemini => {
-            if let Some(ref key) = state.api_keys.google_api_key {
-                env_vars.push(("GOOGLE_API_KEY".to_string(), key.clone()));
-            }
-        }
-        AcpProvider::Opencode => {
-            // Opencode may use multiple providers, pass all available keys
-            if let Some(ref key) = state.api_keys.anthropic_api_key {
-                env_vars.push(("ANTHROPIC_API_KEY".to_string(), key.clone()));
-            }
-            if let Some(ref key) = state.api_keys.openai_api_key {
-                env_vars.push(("OPENAI_API_KEY".to_string(), key.clone()));
-            }
-        }
-    }
+        vars
+    };
 
     // Create wrapped agent
     let agent = Arc::new(WrappedAgent::new(
