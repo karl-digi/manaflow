@@ -1,13 +1,16 @@
 //! cmux-acp-server binary entry point.
 //!
-//! Standalone ACP server for iOS app integration. Handles WebSocket connections
-//! from iOS clients and manages conversations with coding CLIs.
+//! Standalone ACP server for sandbox integration. Handles REST API requests
+//! from Convex and manages conversations with coding CLIs.
+//!
+//! SECURITY: This server has NO direct Convex access. It can only communicate
+//! back to Convex via the callback URL using the JWT provided at spawn time.
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use axum::routing::{any, get, post};
+use axum::routing::{get, post};
 use axum::Router;
 use clap::Parser;
 use tracing::{info, warn, Level};
@@ -16,30 +19,21 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use cmux_sandbox::acp_server::{
-    acp_websocket_handler, init_conversation, receive_prompt, set_conversation_jwt, AcpServerState,
-    ApiKeys, ApiProxies, CallbackClient, RestApiDoc, RestApiState,
+    init_conversation, receive_prompt, ApiProxies, CallbackClient, RestApiDoc, RestApiState,
 };
 
-/// ACP Server for iOS app integration.
+/// ACP Server for sandbox integration.
 #[derive(Parser, Debug)]
 #[command(name = "cmux-acp-server")]
-#[command(about = "ACP server for cmux iOS app")]
+#[command(about = "ACP server for cmux sandbox")]
 struct Args {
     /// Port to listen on
     #[arg(short, long, env = "ACP_PORT", default_value = "39384")]
     port: u16,
 
-    /// Convex deployment URL
-    #[arg(long, env = "CONVEX_URL")]
-    convex_url: String,
-
     /// JWT secret for conversation token verification
     #[arg(long, env = "CMUX_CONVERSATION_JWT_SECRET")]
     jwt_secret: String,
-
-    /// Convex admin key for API authentication
-    #[arg(long, env = "CONVEX_ADMIN_KEY")]
-    convex_admin_key: String,
 
     /// Default working directory for spawned CLIs
     #[arg(long, env = "ACP_WORKING_DIR", default_value = "/workspace")]
@@ -74,7 +68,7 @@ struct Args {
 
     // === Callback mode environment variables (set by Convex when spawning sandbox) ===
     /// Convex callback URL for posting state updates.
-    /// When set, the sandbox uses callback mode instead of direct persistence.
+    /// This is the ONLY way the sandbox can communicate back to Convex.
     /// Example: https://polite-canary-804.convex.site/api/acp/callback
     #[arg(long, env = "CONVEX_CALLBACK_URL")]
     callback_url: Option<String>,
@@ -113,22 +107,20 @@ async fn health() -> axum::Json<HealthResponse> {
     })
 }
 
-/// OpenAPI documentation for the ACP server (health endpoints only).
+/// OpenAPI documentation for the ACP server.
 #[derive(OpenApi)]
 #[openapi(
     info(
         title = "cmux ACP Server",
-        description = "ACP (Agent Client Protocol) server for iOS app integration. \
-            Provides REST endpoints for conversation management and WebSocket endpoints \
-            for communicating with coding agents (Claude Code, Codex, etc.).",
+        description = "ACP (Agent Client Protocol) server for sandbox integration. \
+            Provides REST endpoints for Convex to control the sandbox and spawn coding agents.",
         version = "0.1.0"
     ),
     paths(health),
     components(schemas(HealthResponse)),
     tags(
         (name = "health", description = "Health check endpoints"),
-        (name = "conversations", description = "Conversation management endpoints"),
-        (name = "acp", description = "WebSocket endpoints for ACP protocol")
+        (name = "acp", description = "ACP sandbox control endpoints")
     )
 )]
 struct ApiDoc;
@@ -158,7 +150,7 @@ async fn main() -> anyhow::Result<()> {
         .with_target(true)
         .init();
 
-    // Check if we're in callback mode
+    // Check if we're in callback mode (required for persistence)
     let callback_mode = args.callback_url.is_some() && args.sandbox_jwt.is_some();
 
     info!(
@@ -172,39 +164,29 @@ async fn main() -> anyhow::Result<()> {
     );
 
     // Initialize callback client if in callback mode
+    // This is the ONLY way the sandbox can communicate back to Convex
     let callback_client =
         if let (Some(callback_url), Some(sandbox_jwt)) = (&args.callback_url, &args.sandbox_jwt) {
             info!(
                 callback_url = %callback_url,
-                "Callback mode enabled"
+                "Callback mode enabled - sandbox can persist to Convex"
             );
             Some(CallbackClient::new(
                 callback_url.clone(),
                 sandbox_jwt.clone(),
             ))
         } else {
+            warn!("Callback mode NOT enabled - sandbox cannot persist to Convex!");
+            warn!("Set CONVEX_CALLBACK_URL and SANDBOX_JWT for persistence.");
             None
         };
 
-    // Create ACP server state
-    let mut state = AcpServerState::new(
-        args.convex_url.clone(),
-        args.jwt_secret.clone(),
-        args.convex_admin_key.clone(),
-        args.working_dir.clone(),
-    );
-
-    // Configure API proxy mode (production) or local proxy mode (development)
-    if let Some(ref api_proxy_url) = args.api_proxy_url {
-        // Production mode: use external API proxy (Vercel) for API calls
-        // Per-conversation proxies will forward to this URL with JWT auth
-        info!(
-            api_proxy_url = %api_proxy_url,
-            "Using API proxy mode (per-conversation JWT auth)"
-        );
-        state = state.with_api_proxy_url(api_proxy_url.clone());
-    } else if args.use_proxy {
-        // Development mode: start local API proxies with direct API keys
+    // Start API proxies if configured (for passing API keys securely to CLIs)
+    let _api_proxies = if args.use_proxy
+        && (args.anthropic_api_key.is_some()
+            || args.openai_api_key.is_some()
+            || args.google_api_key.is_some())
+    {
         info!("Starting local API proxies...");
         let proxies = ApiProxies::start(
             args.anthropic_api_key.clone(),
@@ -223,17 +205,10 @@ async fn main() -> anyhow::Result<()> {
             info!(base_url = %proxy.base_url(), "Google API proxy started");
         }
 
-        state = state.with_proxies(Arc::new(proxies));
+        Some(Arc::new(proxies))
     } else {
-        // Deprecated: fall back to direct API keys
-        info!("Using direct API keys (proxy disabled)");
-        let api_keys = ApiKeys {
-            anthropic_api_key: args.anthropic_api_key.clone(),
-            openai_api_key: args.openai_api_key.clone(),
-            google_api_key: args.google_api_key.clone(),
-        };
-        state = state.with_api_keys(api_keys);
-    }
+        None
+    };
 
     // Create REST API state for ACP endpoints (Convex -> Sandbox communication)
     // SECURITY: RestApiState only has callback access, not direct Convex query/mutation access
@@ -242,34 +217,18 @@ async fn main() -> anyhow::Result<()> {
     if let Some(ref client) = callback_client {
         rest_state = rest_state.with_callback_client(client.clone());
         info!("REST API configured with callback client for Convex persistence");
-    } else {
-        warn!("REST API started WITHOUT callback client - no Convex persistence!");
     }
 
-    // Build REST API router for ACP endpoints only
+    // Build REST API router for ACP endpoints
     // These endpoints allow Convex to control the sandbox:
     // - /api/acp/init: Initialize a conversation (spawn CLI)
     // - /api/acp/prompt: Send prompts to an active conversation
-    let rest_router = Router::new()
-        .route("/api/acp/init", post(init_conversation))
-        .route("/api/acp/prompt", post(receive_prompt))
-        .with_state(rest_state);
-
-    // Build main router with WebSocket routes
     let app = Router::new()
         .route("/health", get(health))
         .route("/healthz", get(health))
-        .route("/api/acp", any(acp_websocket_handler))
-        .route(
-            "/api/conversations/{conversation_id}/ws",
-            any(acp_websocket_handler),
-        )
-        .route(
-            "/api/conversations/{conversation_id}/proxy-jwt",
-            post(set_conversation_jwt),
-        )
-        .with_state(state)
-        .merge(rest_router)
+        .route("/api/acp/init", post(init_conversation))
+        .route("/api/acp/prompt", post(receive_prompt))
+        .with_state(rest_state)
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", merged_openapi()));
 
     // Bind and serve

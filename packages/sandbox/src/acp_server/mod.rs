@@ -1,34 +1,26 @@
-//! ACP Server module for iOS app integration.
+//! ACP Server module for sandbox integration.
 //!
-//! This module implements the Agent side of the Agent Client Protocol (ACP),
-//! allowing iOS clients to connect and interact with coding CLIs (Claude Code,
-//! Codex, Gemini, OpenCode) via WebSocket.
+//! This module provides REST API endpoints for Convex to control the sandbox.
+//! The sandbox spawns coding CLIs (Claude Code, Codex, Gemini, OpenCode) and
+//! communicates back to Convex ONLY via callbacks using JWT authentication.
 //!
 //! Architecture:
-//! - iOS App → WebSocket → ACP Server → CLI Spawner → Coding CLI
-//! - Conversations are persisted to Convex via HTTP API
-//! - Supports multiple isolation modes via bubblewrap namespaces
-//! - API keys are held by internal proxy servers, not passed to CLIs
+//! - Convex → REST API → Sandbox → CLI Spawner → Coding CLI
+//! - Sandbox → Callback Client → Convex (persistence via JWT-authenticated callbacks)
+//!
+//! SECURITY: The sandbox has NO direct Convex query/mutation access.
+//! All persistence goes through the callback client using the JWT provided at spawn time.
 
-mod agent;
 mod api_proxy;
 pub mod callback;
-mod persistence;
 pub mod rest;
 mod spawner;
-mod websocket;
 
-pub use agent::WrappedAgent;
 pub use api_proxy::{
-    ApiProxies, ApiProxy, ConversationApiProxies, ConversationApiProxy, JwtHolder, ProviderConfig,
+    ApiProxies, ApiProxy, ConversationApiProxies, ConversationApiProxy, JwtHolder,
 };
 pub use callback::{
     CallbackClient, CallbackContentBlock, CallbackToolCall, CallbackToolCallStatus, StopReason,
 };
-pub use persistence::{ConversationData, ConvexClient};
 pub use rest::{init_conversation, receive_prompt, RestApiDoc, RestApiState};
 pub use spawner::{AcpProvider, CliSpawner, IsolationMode};
-pub use websocket::{
-    acp_websocket_handler, set_conversation_jwt, AcpServerState, ApiKeys, ConversationProxyManager,
-    SetJwtRequest, SetJwtResponse, SharedProxyManager,
-};
