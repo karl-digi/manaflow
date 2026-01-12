@@ -15,7 +15,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::ChildStdin;
+use tokio::process::{ChildStdin, ChildStdout};
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 use utoipa::{OpenApi, ToSchema};
@@ -27,6 +27,8 @@ use super::spawner::{AcpProvider, CliSpawner, IsolationMode as SpawnerIsolationM
 struct ConversationState {
     /// CLI stdin handle for sending prompts
     stdin: Arc<Mutex<Option<ChildStdin>>>,
+    /// ACP session ID (returned by new_session handshake)
+    acp_session_id: Arc<Mutex<Option<String>>>,
     /// Current message ID being streamed (set when assistant starts responding)
     current_message_id: Arc<Mutex<Option<String>>>,
 }
@@ -481,6 +483,121 @@ impl RestApiState {
     }
 }
 
+/// Perform ACP handshake (initialize + new_session) with the CLI.
+/// Returns the ACP session ID on success.
+async fn perform_acp_handshake(
+    stdin: &mut ChildStdin,
+    stdout: &mut BufReader<ChildStdout>,
+    cwd: &std::path::Path,
+) -> Result<String, String> {
+    // Generate unique request IDs
+    let init_id = uuid::Uuid::new_v4().to_string();
+    let session_id = uuid::Uuid::new_v4().to_string();
+
+    // Send initialize request
+    let init_request = json!({
+        "jsonrpc": "2.0",
+        "id": init_id,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": 1,
+            "clientCapabilities": {
+                "fs": {
+                    "readTextFile": true,
+                    "writeTextFile": true
+                },
+                "terminal": false
+            }
+        }
+    });
+
+    let init_msg = format!(
+        "{}\n",
+        serde_json::to_string(&init_request).unwrap_or_default()
+    );
+    stdin
+        .write_all(init_msg.as_bytes())
+        .await
+        .map_err(|e| format!("Failed to send initialize: {}", e))?;
+    stdin
+        .flush()
+        .await
+        .map_err(|e| format!("Failed to flush initialize: {}", e))?;
+
+    debug!("Sent ACP initialize request");
+
+    // Read initialize response
+    let mut line = String::new();
+    stdout
+        .read_line(&mut line)
+        .await
+        .map_err(|e| format!("Failed to read initialize response: {}", e))?;
+
+    debug!(response = %line.trim(), "Received initialize response");
+
+    // Parse initialize response to check for errors
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) {
+        if value.get("error").is_some() {
+            return Err(format!("Initialize failed: {}", line.trim()));
+        }
+    }
+
+    // Send session/new request
+    let new_session_request = json!({
+        "jsonrpc": "2.0",
+        "id": session_id,
+        "method": "session/new",
+        "params": {
+            "cwd": cwd.to_string_lossy(),
+            "mcpServers": []
+        }
+    });
+
+    let session_msg = format!(
+        "{}\n",
+        serde_json::to_string(&new_session_request).unwrap_or_default()
+    );
+    stdin
+        .write_all(session_msg.as_bytes())
+        .await
+        .map_err(|e| format!("Failed to send new_session: {}", e))?;
+    stdin
+        .flush()
+        .await
+        .map_err(|e| format!("Failed to flush new_session: {}", e))?;
+
+    debug!("Sent ACP new_session request");
+
+    // Read new_session response
+    line.clear();
+    stdout
+        .read_line(&mut line)
+        .await
+        .map_err(|e| format!("Failed to read new_session response: {}", e))?;
+
+    debug!(response = %line.trim(), "Received new_session response");
+
+    // Parse new_session response to extract session ID
+    let value: serde_json::Value = serde_json::from_str(&line)
+        .map_err(|e| format!("Failed to parse new_session response: {}", e))?;
+
+    if let Some(error) = value.get("error") {
+        return Err(format!("new_session failed: {}", error));
+    }
+
+    // Extract session ID from result.sessionId
+    let acp_session_id = value
+        .get("result")
+        .and_then(|r| r.get("sessionId"))
+        .and_then(|s| s.as_str())
+        .ok_or_else(|| "No sessionId in new_session response".to_string())?
+        .to_string();
+
+    debug!(acp_session_id = %acp_session_id, "ACP handshake complete");
+
+    Ok(acp_session_id)
+}
+
 /// Create a new conversation.
 #[utoipa::path(
     post,
@@ -831,7 +948,7 @@ pub async fn init_conversation(
     };
 
     // Spawn CLI process
-    let spawner = CliSpawner::new(provider, cwd, SpawnerIsolationMode::None);
+    let spawner = CliSpawner::new(provider, cwd.clone(), SpawnerIsolationMode::None);
     let mut cli = match spawner.spawn().await {
         Ok(cli) => cli,
         Err(e) => {
@@ -846,12 +963,54 @@ pub async fn init_conversation(
         }
     };
 
-    let stdin = cli.stdin.take();
-    let stdout = cli.stdout.take();
+    let mut stdin = cli.stdin.take().ok_or_else(|| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "CLI stdin not available".to_string(),
+                code: Some("STDIN_UNAVAILABLE".to_string()),
+            }),
+        )
+    })?;
 
-    // Create conversation state
+    let stdout = cli.stdout.take().ok_or_else(|| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "CLI stdout not available".to_string(),
+                code: Some("STDOUT_UNAVAILABLE".to_string()),
+            }),
+        )
+    })?;
+
+    // Wrap stdout in BufReader for handshake
+    let mut reader = BufReader::new(stdout);
+
+    // Perform ACP handshake (initialize + new_session)
+    let acp_session_id = match perform_acp_handshake(&mut stdin, &mut reader, &cwd).await {
+        Ok(id) => id,
+        Err(e) => {
+            error!(error = %e, "ACP handshake failed");
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("ACP handshake failed: {}", e),
+                    code: Some("HANDSHAKE_FAILED".to_string()),
+                }),
+            ));
+        }
+    };
+
+    info!(
+        conversation_id = %request.conversation_id,
+        acp_session_id = %acp_session_id,
+        "ACP handshake completed"
+    );
+
+    // Create conversation state with ACP session ID
     let conversation_state = Arc::new(ConversationState {
-        stdin: Arc::new(Mutex::new(stdin)),
+        stdin: Arc::new(Mutex::new(Some(stdin))),
+        acp_session_id: Arc::new(Mutex::new(Some(acp_session_id))),
         current_message_id: Arc::new(Mutex::new(None)),
     });
 
@@ -860,52 +1019,57 @@ pub async fn init_conversation(
         .conversations
         .insert(request.conversation_id.clone(), conversation_state.clone());
 
-    // Spawn stdout reader task if we have a callback client
-    if let (Some(stdout), Some(callback_client)) = (stdout, state.callback_client.clone()) {
-        let conversation_id = request.conversation_id.clone();
-        let current_message_id = conversation_state.current_message_id.clone();
+    // Always spawn stdout reader task to consume CLI output (prevents EPIPE)
+    // In callback mode, send updates to Convex; otherwise just log
+    let callback_client = state.callback_client.clone();
+    let conversation_id = request.conversation_id.clone();
+    let current_message_id = conversation_state.current_message_id.clone();
 
-        tokio::spawn(async move {
-            let mut reader = BufReader::new(stdout);
-            let mut line = String::new();
+    tokio::spawn(async move {
+        let mut line = String::new();
 
-            loop {
-                line.clear();
-                match reader.read_line(&mut line).await {
-                    Ok(0) => {
-                        // EOF - CLI process ended
-                        debug!(conversation_id = %conversation_id, "CLI stdout EOF");
-                        break;
-                    }
-                    Ok(_) => {
-                        // Parse JSON-RPC response and extract text
-                        if let Some(text) = extract_text_from_jsonrpc(&line) {
+        loop {
+            line.clear();
+            match reader.read_line(&mut line).await {
+                Ok(0) => {
+                    // EOF - CLI process ended
+                    debug!(conversation_id = %conversation_id, "CLI stdout EOF");
+                    break;
+                }
+                Ok(_) => {
+                    debug!(conversation_id = %conversation_id, line = %line.trim(), "CLI output");
+
+                    // Parse JSON-RPC response and extract text
+                    if let Some(text) = extract_text_from_jsonrpc(&line) {
+                        if let Some(ref client) = callback_client {
                             let msg_id = current_message_id.lock().await;
-                            callback_client
+                            client
                                 .send_text_chunk(&conversation_id, msg_id.as_deref(), &text)
                                 .await;
                         }
                     }
-                    Err(e) => {
-                        warn!(
-                            conversation_id = %conversation_id,
-                            error = %e,
-                            "Error reading CLI stdout"
-                        );
-                        break;
-                    }
+                }
+                Err(e) => {
+                    warn!(
+                        conversation_id = %conversation_id,
+                        error = %e,
+                        "Error reading CLI stdout"
+                    );
+                    break;
                 }
             }
+        }
 
-            // Send completion callback
+        // Send completion callback if in callback mode
+        if let Some(ref client) = callback_client {
             let msg_id = current_message_id.lock().await;
             if let Some(ref id) = *msg_id {
-                callback_client
+                client
                     .complete_message(&conversation_id, id, StopReason::EndTurn)
                     .await;
             }
-        });
-    }
+        }
+    });
 
     info!(
         conversation_id = %request.conversation_id,
@@ -990,6 +1154,20 @@ pub async fn receive_prompt(
         }
     };
 
+    // Get the ACP session ID from conversation state
+    let acp_session_id = {
+        let session_id_guard = conversation.acp_session_id.lock().await;
+        session_id_guard.clone().ok_or_else(|| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "ACP session not initialized".to_string(),
+                    code: Some("SESSION_NOT_INITIALIZED".to_string()),
+                }),
+            )
+        })?
+    };
+
     // Format content as JSON-RPC message for ACP
     let content: Vec<serde_json::Value> = request
         .content
@@ -1020,16 +1198,15 @@ pub async fn receive_prompt(
         })
         .collect();
 
-    // Create JSON-RPC request
+    // Create JSON-RPC request using ACP session/prompt method
+    // Use the ACP session ID from the handshake, not the Convex session ID
     let jsonrpc_request = json!({
         "jsonrpc": "2.0",
         "id": request.session_id,
-        "method": "sampling/createMessage",
+        "method": "session/prompt",
         "params": {
-            "messages": [{
-                "role": "user",
-                "content": content
-            }]
+            "sessionId": acp_session_id,
+            "prompt": content
         }
     });
 
