@@ -1,12 +1,9 @@
 import {
   internalMutation,
   internalQuery,
-  mutation,
   query,
 } from "./_generated/server";
 import { v } from "convex/values";
-import { internal } from "./_generated/api";
-import { Id } from "./_generated/dataModel";
 
 // Status type for type safety
 const sandboxStatusValidator = v.union(

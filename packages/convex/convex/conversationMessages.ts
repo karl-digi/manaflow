@@ -1,13 +1,10 @@
 import { v } from "convex/values";
 import { getTeamId } from "../_shared/team";
-import type { Doc, Id } from "./_generated/dataModel";
 import {
   internalMutation,
   internalQuery,
-  type MutationCtx,
-  type QueryCtx,
 } from "./_generated/server";
-import { authMutation, authQuery } from "./users/utils";
+import { authQuery } from "./users/utils";
 
 // Content block validator matching ACP ContentBlock types
 const contentBlockValidator = v.object({

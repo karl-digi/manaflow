@@ -2,13 +2,9 @@ import { v } from "convex/values";
 import { SignJWT } from "jose";
 import { env } from "../_shared/convex-env";
 import { getTeamId } from "../_shared/team";
-import { internal } from "./_generated/api";
-import type { Doc, Id } from "./_generated/dataModel";
 import {
   internalMutation,
   internalQuery,
-  type MutationCtx,
-  type QueryCtx,
 } from "./_generated/server";
 import { authMutation, authQuery } from "./users/utils";
 
