@@ -589,6 +589,40 @@ EOF
         echo "All integration tests passed!"
         `
       );
+
+      // Test that systemd service PATH includes /root/.bun/bin
+      // This is critical for CLI spawning to work
+      await ctx.run(
+        "test-systemd-path",
+        `
+        set -e
+
+        # Get the PATH from the running cmux-acp-server process
+        PID=$(pgrep -f cmux-acp-server | head -1)
+        if [ -z "$PID" ]; then
+          echo "✗ cmux-acp-server not running"
+          exit 1
+        fi
+
+        PATH_ENV=$(cat /proc/$PID/environ | tr '\\0' '\\n' | grep '^PATH=')
+        echo "Service PATH: $PATH_ENV"
+
+        # Verify /root/.bun/bin is in PATH
+        if echo "$PATH_ENV" | grep -q '/root/.bun/bin'; then
+          echo "✓ PATH includes /root/.bun/bin"
+        else
+          echo "✗ PATH missing /root/.bun/bin - CLI spawning will fail!"
+          exit 1
+        fi
+
+        # Verify CLIs are accessible from service PATH
+        export $PATH_ENV
+        which claude-code-acp && echo "✓ claude-code-acp found in PATH"
+        which codex-acp && echo "✓ codex-acp found in PATH"
+
+        echo "Systemd PATH test passed!"
+        `
+      );
     },
   });
 
