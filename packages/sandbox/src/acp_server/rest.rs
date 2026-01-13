@@ -463,9 +463,9 @@ pub async fn init_conversation(
     );
 
     // Parse provider ID
-    let provider = match AcpProvider::from_str(&request.provider_id) {
-        Some(p) => p,
-        None => {
+    let provider = match request.provider_id.parse::<AcpProvider>() {
+        Ok(p) => p,
+        Err(_) => {
             return Err((
                 StatusCode::BAD_REQUEST,
                 Json(ErrorResponse {

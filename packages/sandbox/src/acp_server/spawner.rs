@@ -3,6 +3,7 @@
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::str::FromStr;
 use tokio::process::{Child, Command};
 use tracing::{debug, info};
 
@@ -55,15 +56,30 @@ impl AcpProvider {
             AcpProvider::Gemini => "Gemini CLI",
         }
     }
+}
 
-    /// Parse from string identifier.
-    pub fn from_str(s: &str) -> Option<Self> {
+/// Parse error for AcpProvider.
+#[derive(Debug, Clone)]
+pub struct ParseAcpProviderError(String);
+
+impl std::fmt::Display for ParseAcpProviderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "unknown ACP provider: {}", self.0)
+    }
+}
+
+impl std::error::Error for ParseAcpProviderError {}
+
+impl FromStr for AcpProvider {
+    type Err = ParseAcpProviderError;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "codex" => Some(AcpProvider::Codex),
-            "opencode" => Some(AcpProvider::Opencode),
-            "claude" => Some(AcpProvider::Claude),
-            "gemini" => Some(AcpProvider::Gemini),
-            _ => None,
+            "codex" => Ok(AcpProvider::Codex),
+            "opencode" => Ok(AcpProvider::Opencode),
+            "claude" => Ok(AcpProvider::Claude),
+            "gemini" => Ok(AcpProvider::Gemini),
+            _ => Err(ParseAcpProviderError(s.to_string())),
         }
     }
 }
@@ -305,9 +321,15 @@ mod tests {
 
     #[test]
     fn test_provider_from_str() {
-        assert_eq!(AcpProvider::from_str("claude"), Some(AcpProvider::Claude));
-        assert_eq!(AcpProvider::from_str("CODEX"), Some(AcpProvider::Codex));
-        assert_eq!(AcpProvider::from_str("unknown"), None);
+        assert_eq!(
+            "claude".parse::<AcpProvider>().ok(),
+            Some(AcpProvider::Claude)
+        );
+        assert_eq!(
+            "CODEX".parse::<AcpProvider>().ok(),
+            Some(AcpProvider::Codex)
+        );
+        assert!("unknown".parse::<AcpProvider>().is_err());
     }
 
     #[test]
