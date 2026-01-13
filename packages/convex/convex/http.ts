@@ -27,6 +27,7 @@ import {
   getLatest as getLatestHostScreenshotCollector,
 } from "./hostScreenshotCollector_http";
 import { acpCallback } from "./acp_http";
+import { anthropicProxy } from "./anthropic_http";
 
 const http = httpRouter();
 
@@ -154,6 +155,12 @@ http.route({
   path: "/api/acp/callback",
   method: "POST",
   handler: acpCallback,
+});
+
+http.route({
+  path: "/api/anthropic/v1/messages",
+  method: "POST",
+  handler: anthropicProxy,
 });
 
 export default http;

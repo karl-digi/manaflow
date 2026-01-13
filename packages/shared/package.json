@@ -90,6 +90,10 @@
       "import": "./src/utils/format-env-vars-content.ts",
       "types": "./src/utils/format-env-vars-content.ts"
     },
+    "./utils/anthropic": {
+      "import": "./src/utils/anthropic.ts",
+      "types": "./src/utils/anthropic.ts"
+    },
     "./pull-request-state": {
       "import": "./src/pull-request-state.ts",
       "types": "./src/pull-request-state.ts"

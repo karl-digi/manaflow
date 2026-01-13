@@ -8,9 +8,6 @@ import {
   CLAUDE_OPUS_4_5_CONFIG,
   CLAUDE_SONNET_4_5_CONFIG,
   CLAUDE_HAIKU_4_5_CONFIG,
-  CLAUDE_OPUS_4_1_CONFIG,
-  CLAUDE_SONNET_4_CONFIG,
-  CLAUDE_OPUS_4_CONFIG,
 } from "./providers/anthropic/configs";
 import {
   CURSOR_GPT_5_CONFIG,
@@ -110,15 +107,14 @@ export interface AgentConfig {
     context?: ProviderRequirementsContext,
   ) => Promise<string[]>; // Returns list of missing requirements
   completionDetector?: (taskRunId: string) => Promise<void>;
+  disabled?: boolean; // When true, agent is shown in UI but not selectable
+  disabledReason?: string; // Reason shown in tooltip when disabled
 }
 
 export const AGENT_CONFIGS: AgentConfig[] = [
   CLAUDE_OPUS_4_5_CONFIG,
   CLAUDE_SONNET_4_5_CONFIG,
   CLAUDE_HAIKU_4_5_CONFIG,
-  CLAUDE_OPUS_4_1_CONFIG,
-  CLAUDE_SONNET_4_CONFIG,
-  CLAUDE_OPUS_4_CONFIG,
   CODEX_GPT_5_2_CODEX_XHIGH_REASONING_CONFIG,
   CODEX_GPT_5_2_CODEX_HIGH_REASONING_CONFIG,
   CODEX_GPT_5_2_CODEX_MEDIUM_REASONING_CONFIG,

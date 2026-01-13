@@ -1,3 +1,4 @@
+import { paginationOptsValidator } from "convex/server";
 import { v } from "convex/values";
 import { getTeamId, resolveTeamIdLoose } from "../_shared/team";
 import { api } from "./_generated/api";
@@ -10,6 +11,7 @@ export const get = authQuery({
     teamSlugOrId: v.string(),
     projectFullName: v.optional(v.string()),
     archived: v.optional(v.boolean()),
+    excludeLocalWorkspaces: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
@@ -28,6 +30,11 @@ export const get = authQuery({
 
     // Exclude preview tasks from the main tasks list
     q = q.filter((qq) => qq.neq(qq.field("isPreview"), true));
+
+    // Exclude local workspaces when in web mode
+    if (args.excludeLocalWorkspaces) {
+      q = q.filter((qq) => qq.neq(qq.field("isLocalWorkspace"), true));
+    }
 
     if (args.projectFullName) {
       q = q.filter((qq) =>
@@ -61,6 +68,59 @@ export const get = authQuery({
   },
 });
 
+// Paginated query for archived tasks (infinite scroll)
+export const getArchivedPaginated = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    paginationOpts: paginationOptsValidator,
+    excludeLocalWorkspaces: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const userId = ctx.identity.subject;
+    const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
+
+    // Query archived tasks with pagination
+    let q = ctx.db
+      .query("tasks")
+      .withIndex("by_team_user", (idx) =>
+        idx.eq("teamId", teamId).eq("userId", userId),
+      )
+      .filter((qq) => qq.eq(qq.field("isArchived"), true))
+      .filter((qq) => qq.neq(qq.field("isPreview"), true));
+
+    // Exclude local workspaces when in web mode
+    if (args.excludeLocalWorkspaces) {
+      q = q.filter((qq) => qq.neq(qq.field("isLocalWorkspace"), true));
+    }
+
+    const paginatedResult = await q.order("desc").paginate(args.paginationOpts);
+
+    // Get unread task runs for this user in this team
+    const unreadRuns = await ctx.db
+      .query("unreadTaskRuns")
+      .withIndex("by_team_user", (q) =>
+        q.eq("teamId", teamId).eq("userId", userId),
+      )
+      .collect();
+
+    // Build set of taskIds that have unread runs
+    const tasksWithUnread = new Set(
+      unreadRuns
+        .map((ur) => ur.taskId)
+        .filter((id): id is Id<"tasks"> => id !== undefined),
+    );
+
+    // Return paginated result with hasUnread indicator
+    return {
+      ...paginatedResult,
+      page: paginatedResult.page.map((task) => ({
+        ...task,
+        hasUnread: tasksWithUnread.has(task._id),
+      })),
+    };
+  },
+});
+
 // Get tasks sorted by most recent activity (iMessage-style):
 // - Sorted by lastActivityAt desc (most recently active first)
 // - lastActivityAt is updated when a run is started OR notification is received
@@ -70,6 +130,7 @@ export const getWithNotificationOrder = authQuery({
     teamSlugOrId: v.string(),
     projectFullName: v.optional(v.string()),
     archived: v.optional(v.boolean()),
+    excludeLocalWorkspaces: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
@@ -89,6 +150,11 @@ export const getWithNotificationOrder = authQuery({
     }
 
     q = q.filter((qq) => qq.neq(qq.field("isPreview"), true));
+
+    // Exclude local workspaces when in web mode
+    if (args.excludeLocalWorkspaces) {
+      q = q.filter((qq) => qq.neq(qq.field("isLocalWorkspace"), true));
+    }
 
     if (args.projectFullName) {
       q = q.filter((qq) =>
@@ -163,20 +229,27 @@ export const getPreviewTasks = authQuery({
 export const getPinned = authQuery({
   args: {
     teamSlugOrId: v.string(),
+    excludeLocalWorkspaces: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userId = ctx.identity.subject;
     const teamId = await resolveTeamIdLoose(ctx, args.teamSlugOrId);
 
     // Get pinned tasks (excluding archived and preview tasks)
-    const pinnedTasks = await ctx.db
+    let q = ctx.db
       .query("tasks")
       .withIndex("by_pinned", (idx) =>
         idx.eq("pinned", true).eq("teamId", teamId).eq("userId", userId),
       )
-      .filter((q) => q.neq(q.field("isArchived"), true))
-      .filter((q) => q.neq(q.field("isPreview"), true))
-      .collect();
+      .filter((qq) => qq.neq(qq.field("isArchived"), true))
+      .filter((qq) => qq.neq(qq.field("isPreview"), true));
+
+    // Exclude local workspaces when in web mode
+    if (args.excludeLocalWorkspaces) {
+      q = q.filter((qq) => qq.neq(qq.field("isLocalWorkspace"), true));
+    }
+
+    const pinnedTasks = await q.collect();
 
     // Get unread task runs for this user in this team
     // Uses taskId directly (denormalized) for O(1) lookup instead of O(N) fetches

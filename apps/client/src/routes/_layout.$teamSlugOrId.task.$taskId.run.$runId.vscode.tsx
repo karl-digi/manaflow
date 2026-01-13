@@ -86,19 +86,34 @@ function VSCodeComponent() {
     id: taskRunId,
   });
 
-  const workspaceUrl = getWorkspaceUrl(
-    taskRun?.vscode?.workspaceUrl,
-    taskRun?.vscode?.provider,
-    localServeWeb.data?.baseUrl
+  // Extract stable values from taskRun to avoid re-renders when unrelated fields change
+  const rawWorkspaceUrl = taskRun?.vscode?.workspaceUrl;
+  const vsCodeProvider = taskRun?.vscode?.provider;
+  const vsCodeStatusMessage = taskRun?.vscode?.statusMessage;
+  const taskRunStatus = taskRun?.status;
+  const taskRunErrorMessage = taskRun?.errorMessage;
+  const localServeWebBaseUrl = localServeWeb.data?.baseUrl;
+
+  // Check if the task run failed (e.g., Docker pull failed)
+  const hasTaskRunFailed = taskRunStatus === "failed";
+
+  // Memoize the workspace URL to prevent unnecessary recalculations
+  const workspaceUrl = useMemo(
+    () => getWorkspaceUrl(rawWorkspaceUrl, vsCodeProvider, localServeWebBaseUrl),
+    [rawWorkspaceUrl, vsCodeProvider, localServeWebBaseUrl]
   );
-  const disablePreflight = taskRun?.vscode?.workspaceUrl
-    ? shouldUseServerIframePreflight(taskRun.vscode.workspaceUrl)
-    : false;
+
+  const disablePreflight = useMemo(
+    () => (rawWorkspaceUrl ? shouldUseServerIframePreflight(rawWorkspaceUrl) : false),
+    [rawWorkspaceUrl]
+  );
+
   const persistKey = getTaskRunPersistKey(taskRunId);
   const hasWorkspace = workspaceUrl !== null;
-  const isLocalWorkspace = taskRun?.vscode?.provider === "other";
+  const isLocalWorkspace = vsCodeProvider === "other";
   const webviewActions = useWebviewActions({ persistKey });
 
+  // Track iframe status - use state for rendering but with stable callback
   const [iframeStatus, setIframeStatus] =
     useState<PersistentIframeStatus>("loading");
   const prevWorkspaceUrlRef = useRef<string | null>(null);
@@ -115,6 +130,14 @@ function VSCodeComponent() {
       prevWorkspaceUrlRef.current = workspaceUrl;
     }
   }, [workspaceUrl]);
+
+  // Stable callback for status changes - setIframeStatus is already stable
+  const handleStatusChange = useCallback(
+    (status: PersistentIframeStatus) => {
+      setIframeStatus(status);
+    },
+    []
+  );
 
   const onLoad = useCallback(() => {
     console.log(`Workspace view loaded for task run ${taskRunId}`);
@@ -134,9 +157,13 @@ function VSCodeComponent() {
   const loadingFallback = useMemo(
     () =>
       isLocalWorkspace ? null : (
-        <WorkspaceLoadingIndicator variant="vscode" status="loading" />
+        <WorkspaceLoadingIndicator
+          variant="vscode"
+          status="loading"
+          loadingDescription={vsCodeStatusMessage}
+        />
       ),
-    [isLocalWorkspace]
+    [isLocalWorkspace, vsCodeStatusMessage]
   );
   const errorFallback = useMemo(
     () => <WorkspaceLoadingIndicator variant="vscode" status="error" />,
@@ -191,7 +218,7 @@ function VSCodeComponent() {
               fallbackClassName="bg-neutral-50 dark:bg-black"
               errorFallback={errorFallback}
               errorFallbackClassName="bg-neutral-50/95 dark:bg-black/95"
-              onStatusChange={setIframeStatus}
+              onStatusChange={handleStatusChange}
               loadTimeoutMs={60_000}
             />
           ) : (
@@ -199,7 +226,12 @@ function VSCodeComponent() {
           )}
           {!hasWorkspace && !isLocalWorkspace ? (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <WorkspaceLoadingIndicator variant="vscode" status="loading" />
+              <WorkspaceLoadingIndicator
+                variant="vscode"
+                status={hasTaskRunFailed ? "error" : "loading"}
+                loadingDescription={vsCodeStatusMessage}
+                errorDescription={taskRunErrorMessage ?? undefined}
+              />
             </div>
           ) : null}
           {taskRun ? (

@@ -36,6 +36,7 @@ const NETWORK_BASE: Ipv4Addr = Ipv4Addr::new(10, 201, 0, 0);
 const HOST_IF_PREFIX: &str = "vethh";
 const NS_IF_PREFIX: &str = "vethn";
 const DOCKER_CONTAINER_SOCKET: &str = "/run/docker.sock";
+const SANDBOX_WORKSPACE_MOUNT: &str = "/workspace";
 
 /// Handle for a multiplexed PTY session.
 struct PtySessionHandle {
@@ -906,9 +907,9 @@ fi
             DOCKER_CONTAINER_SOCKET,
             "--bind",
             &workspace_str,
-            "/workspace",
+            SANDBOX_WORKSPACE_MOUNT,
             "--chdir",
-            "/workspace",
+            SANDBOX_WORKSPACE_MOUNT,
             "--hostname",
             &format!("sandbox-{}", index),
             "--json-status-fd",
@@ -1497,7 +1498,7 @@ impl SandboxService for BubblewrapService {
             let nsenter_path = self.nsenter_path.clone();
             let sandbox_id = id;
             let readiness = self.readiness.lock().await.get(&id).cloned();
-            let workspace_path = workspace.to_string_lossy().to_string();
+            let workspace_path = SANDBOX_WORKSPACE_MOUNT;
 
             tokio::spawn(async move {
                 // Start X11/VNC stack
@@ -1573,7 +1574,7 @@ impl SandboxService for BubblewrapService {
 
                 // Start cmux-code (VS Code server) AFTER cmux-pty is ready
                 let vscode_result =
-                    start_vscode_background(&nsenter_path, inner_pid, vscode_port, &workspace_path)
+                    start_vscode_background(&nsenter_path, inner_pid, vscode_port, workspace_path)
                         .await;
 
                 let vscode_ready = match vscode_result {
@@ -1796,9 +1797,15 @@ impl SandboxService for BubblewrapService {
             // Reader tasks (Stdout/Stderr -> WebSocket)
             let (tx_out, mut rx_out) = tokio::sync::mpsc::channel::<Vec<u8>>(32);
             let tx_err = tx_out.clone();
+            let tx_in_for_dsr = tx_in.clone();
+            let tx_in_for_dsr_err = tx_in.clone();
 
             tokio::spawn(async move {
                 let mut buf = [0u8; 1024];
+                // DSR cursor position query: ESC [ 6 n
+                const DSR_QUERY: &[u8] = b"\x1b[6n";
+                // DSR status query: ESC [ 5 n
+                const DSR_STATUS_QUERY: &[u8] = b"\x1b[5n";
                 loop {
                     match stdout.read(&mut buf).await {
                         Ok(0) => {
@@ -1806,8 +1813,25 @@ impl SandboxService for BubblewrapService {
                             break;
                         }
                         Ok(n) => {
-                            info!("Read from stdout: {:?}", String::from_utf8_lossy(&buf[..n]));
-                            if tx_out.send(buf[..n].to_vec()).await.is_err() {
+                            let data = &buf[..n];
+                            info!("Read from stdout: {:?}", String::from_utf8_lossy(data));
+
+                            // Respond to DSR queries even without a PTY to avoid CLI timeouts.
+                            if data.windows(DSR_QUERY.len()).any(|w| w == DSR_QUERY) {
+                                let response = b"\x1b[1;1R".to_vec();
+                                info!("Detected DSR query, injecting cursor position response");
+                                let _ = tx_in_for_dsr.send(response).await;
+                            }
+                            if data
+                                .windows(DSR_STATUS_QUERY.len())
+                                .any(|w| w == DSR_STATUS_QUERY)
+                            {
+                                let response = b"\x1b[0n".to_vec();
+                                info!("Detected DSR status query, injecting OK response");
+                                let _ = tx_in_for_dsr.send(response).await;
+                            }
+
+                            if tx_out.send(data.to_vec()).await.is_err() {
                                 break;
                             }
                         }
@@ -1821,6 +1845,10 @@ impl SandboxService for BubblewrapService {
 
             tokio::spawn(async move {
                 let mut buf = [0u8; 1024];
+                // DSR cursor position query: ESC [ 6 n
+                const DSR_QUERY: &[u8] = b"\x1b[6n";
+                // DSR status query: ESC [ 5 n
+                const DSR_STATUS_QUERY: &[u8] = b"\x1b[5n";
                 loop {
                     match stderr.read(&mut buf).await {
                         Ok(0) => {
@@ -1828,8 +1856,25 @@ impl SandboxService for BubblewrapService {
                             break;
                         }
                         Ok(n) => {
-                            info!("Read from stderr: {:?}", String::from_utf8_lossy(&buf[..n]));
-                            if tx_err.send(buf[..n].to_vec()).await.is_err() {
+                            let data = &buf[..n];
+                            info!("Read from stderr: {:?}", String::from_utf8_lossy(data));
+
+                            // Respond to DSR queries even without a PTY to avoid CLI timeouts.
+                            if data.windows(DSR_QUERY.len()).any(|w| w == DSR_QUERY) {
+                                let response = b"\x1b[1;1R".to_vec();
+                                info!("Detected DSR query on stderr, injecting cursor position response");
+                                let _ = tx_in_for_dsr_err.send(response).await;
+                            }
+                            if data
+                                .windows(DSR_STATUS_QUERY.len())
+                                .any(|w| w == DSR_STATUS_QUERY)
+                            {
+                                let response = b"\x1b[0n".to_vec();
+                                info!("Detected DSR status query on stderr, injecting OK response");
+                                let _ = tx_in_for_dsr_err.send(response).await;
+                            }
+
+                            if tx_err.send(data.to_vec()).await.is_err() {
                                 break;
                             }
                         }

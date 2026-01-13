@@ -1,4 +1,5 @@
 import { verifyTaskRunToken, type TaskRunTokenPayload } from "@cmux/shared";
+import { CMUX_ANTHROPIC_PROXY_PLACEHOLDER_API_KEY } from "@cmux/shared/utils/anthropic";
 import { env } from "@/lib/utils/www-env";
 import { NextRequest, NextResponse } from "next/server";
 import { trackAnthropicProxyRequest } from "@/lib/analytics/track-anthropic-proxy";
@@ -7,7 +8,7 @@ const ANTHROPIC_API_URL =
   "https://gateway.ai.cloudflare.com/v1/0c1675e0def6de1ab3a50a4e17dc5656/cmux-ai-proxy/anthropic/v1/messages";
 const TEMPORARY_DISABLE_AUTH = true;
 
-const hardCodedApiKey = "sk_placeholder_cmux_anthropic_api_key";
+const hardCodedApiKey = CMUX_ANTHROPIC_PROXY_PLACEHOLDER_API_KEY;
 
 async function requireTaskRunToken(
   request: NextRequest

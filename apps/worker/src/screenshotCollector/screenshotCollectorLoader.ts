@@ -30,6 +30,7 @@ export type CaptureScreenshotsOptions = {
   pathToClaudeCodeExecutable?: string;
   installCommand?: string;
   devCommand?: string;
+  convexSiteUrl?: string;
 } & ({ auth: { taskRunJwt: string } } | { auth: { anthropicApiKey: string } });
 
 export interface ScreenshotCollectorModule {

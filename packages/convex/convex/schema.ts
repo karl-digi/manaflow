@@ -259,6 +259,7 @@ const convexSchema = defineSchema({
           v.literal("running"),
           v.literal("stopped")
         ),
+        statusMessage: v.optional(v.string()), // Human-readable status (e.g., "Pulling Docker image...")
         ports: v.optional(
           v.object({
             vscode: v.string(),
@@ -599,7 +600,7 @@ const convexSchema = defineSchema({
     createdByUserId: v.optional(v.string()),
     repoFullName: v.string(),
     repoProvider: v.optional(v.literal("github")),
-    repoInstallationId: v.number(),
+    repoInstallationId: v.optional(v.number()),
     repoDefaultBranch: v.optional(v.string()),
     environmentId: v.optional(v.id("environments")),
     status: v.optional(
@@ -639,7 +640,9 @@ const convexSchema = defineSchema({
       v.literal("completed"),
       v.literal("failed"),
       v.literal("skipped"),
+      v.literal("superseded"), // Marked when a newer commit's preview run replaces this one
     ),
+    supersededBy: v.optional(v.id("previewRuns")), // Reference to the newer run that superseded this one
     stateReason: v.optional(v.string()),
     dispatchedAt: v.optional(v.number()),
     startedAt: v.optional(v.number()),
@@ -653,6 +656,7 @@ const convexSchema = defineSchema({
     .index("by_config_status", ["previewConfigId", "status", "createdAt"])
     .index("by_config_head", ["previewConfigId", "headSha"])
     .index("by_config_pr", ["previewConfigId", "prNumber", "createdAt"])
+    .index("by_config_pr_head", ["previewConfigId", "prNumber", "headSha"]) // For commit-aware duplicate detection
     .index("by_team_created", ["teamId", "createdAt"]),
   crownEvaluations: defineTable({
     taskId: v.id("tasks"),
@@ -678,6 +682,25 @@ const convexSchema = defineSchema({
     updatedAt: v.number(),
     userId: v.string(),
     teamId: v.string(),
+  }).index("by_team_user", ["teamId", "userId"]),
+
+  // User-uploaded editor settings (VS Code, Cursor, Windsurf)
+  // For cmux.sh web users who can't auto-detect local settings
+  userEditorSettings: defineTable({
+    teamId: v.string(),
+    userId: v.string(),
+    settingsJson: v.optional(v.string()), // settings.json content
+    keybindingsJson: v.optional(v.string()), // keybindings.json content
+    snippets: v.optional(
+      v.array(
+        v.object({
+          name: v.string(), // filename e.g. "javascript.json"
+          content: v.string(), // snippet file content
+        })
+      )
+    ),
+    extensions: v.optional(v.string()), // newline-separated extension IDs
+    updatedAt: v.number(),
   }).index("by_team_user", ["teamId", "userId"]),
 
   // System and user comments attached to a task
@@ -988,6 +1011,7 @@ const convexSchema = defineSchema({
   })
     .index("by_team", ["teamId", "updatedAt"])
     .index("by_team_repo", ["teamId", "repoFullName", "updatedAt"])
+    .index("by_team_repo_pr", ["teamId", "repoFullName", "triggeringPrNumber", "updatedAt"])
     .index("by_checkRunId", ["checkRunId"])
     .index("by_headSha", ["headSha", "updatedAt"]),
 

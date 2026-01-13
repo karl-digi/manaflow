@@ -1,6 +1,8 @@
+import { env } from "@/client-env";
 import { TaskTree } from "@/components/TaskTree";
 import { TaskTreeSkeleton } from "@/components/TaskTreeSkeleton";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
+import { useWarmLocalWorkspaces } from "@/hooks/useWarmLocalWorkspaces";
 import {
   disableDragPointerEvents,
   restoreDragPointerEvents,
@@ -105,8 +107,16 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
 
   const { expandTaskIds } = useExpandTasks();
 
-  // Fetch pinned items
-  const pinnedData = useQuery(api.tasks.getPinned, { teamSlugOrId });
+  // Fetch pinned items (exclude local workspaces in web mode)
+  const excludeLocalWorkspaces = env.NEXT_PUBLIC_WEB_MODE || undefined;
+  const pinnedData = useQuery(api.tasks.getPinned, { teamSlugOrId, excludeLocalWorkspaces });
+
+  useWarmLocalWorkspaces({
+    teamSlugOrId,
+    tasks,
+    pinnedTasks: pinnedData,
+    enabled: !env.NEXT_PUBLIC_WEB_MODE,
+  });
 
   // Fetch unread notification count
   const unreadCount = useQuery(api.taskNotifications.getUnreadCount, {

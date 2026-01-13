@@ -14,6 +14,7 @@ import {
   branchRouter,
   codeReviewRouter,
   devServerRouter,
+  editorSettingsRouter,
   environmentsRouter,
   githubBranchesRouter,
   githubFrameworkDetectionRouter,
@@ -144,6 +145,7 @@ app.route("/", codeReviewRouter);
 app.route("/", workspaceConfigsRouter);
 app.route("/", previewRouter);
 app.route("/", proxyAnthropicRouter);
+app.route("/", editorSettingsRouter);
 
 // OpenAPI documentation
 app.doc("/doc", {

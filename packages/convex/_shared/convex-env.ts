@@ -22,6 +22,7 @@ export const env = createEnv({
     CONVEX_SITE_URL: z.string().min(1).optional(),
     OPENAI_API_KEY: z.string().min(1).optional(),
     ANTHROPIC_API_KEY: z.string().min(1).optional(),
+    VERTEX_PRIVATE_KEY: z.string().min(1).optional(),
     MORPH_API_KEY: z.string().min(1).optional(),
     FREESTYLE_API_KEY: z.string().min(1).optional(),
     CMUX_IS_STAGING: z.string().optional(),

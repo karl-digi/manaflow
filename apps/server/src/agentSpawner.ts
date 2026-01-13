@@ -25,7 +25,10 @@ import {
   getAuthToken,
   runWithAuth,
 } from "./utils/requestContext";
-import { getEditorSettingsUpload } from "./utils/editorSettings";
+import {
+  getEditorSettingsUpload,
+  type UserUploadedEditorSettings,
+} from "./utils/editorSettings";
 import { env } from "./utils/server-env";
 import { getWwwClient } from "./utils/wwwClient";
 import { getWwwOpenApiModule } from "./utils/wwwOpenApiModule";
@@ -303,9 +306,13 @@ export async function spawnAgent(
 
     // Fetch API keys from Convex BEFORE calling agent.environment()
     // so agents can access them in their environment configuration
-    const apiKeys = await getConvex().query(api.apiKeys.getAllForAgents, {
+    const userApiKeys = await getConvex().query(api.apiKeys.getAllForAgents, {
       teamSlugOrId,
     });
+
+    const apiKeys: Record<string, string> = {
+      ...userApiKeys,
+    };
 
     // Use environment property if available
     if (agent.environment) {
@@ -314,6 +321,7 @@ export async function spawnAgent(
         prompt: processedTaskDescription,
         taskRunJwt,
         apiKeys,
+        callbackUrl,
       });
       envVars = {
         ...envVars,
@@ -351,7 +359,30 @@ export async function spawnAgent(
       }
     }
 
-    const editorSettings = await getEditorSettingsUpload();
+    // Fetch user-uploaded editor settings from Convex (for web mode users)
+    let userUploadedSettings: UserUploadedEditorSettings | null = null;
+    try {
+      const userEditorSettingsFromDb = await getConvex().query(
+        api.userEditorSettings.get,
+        { teamSlugOrId }
+      );
+      if (userEditorSettingsFromDb) {
+        userUploadedSettings = {
+          settingsJson: userEditorSettingsFromDb.settingsJson ?? undefined,
+          keybindingsJson: userEditorSettingsFromDb.keybindingsJson ?? undefined,
+          snippets: userEditorSettingsFromDb.snippets ?? undefined,
+          extensions: userEditorSettingsFromDb.extensions ?? undefined,
+        };
+      }
+    } catch (error) {
+      serverLogger.warn(
+        "[AgentSpawner] Failed to fetch user editor settings from Convex",
+        error
+      );
+    }
+
+    // Get editor settings (user-uploaded overrides auto-detected)
+    const editorSettings = await getEditorSettingsUpload(userUploadedSettings);
     if (editorSettings) {
       if (editorSettings.authFiles.length > 0) {
         authFiles = [...authFiles, ...editorSettings.authFiles];
@@ -381,6 +412,17 @@ export async function spawnAgent(
       }
       return arg;
     });
+
+    const usesDangerousPermissions = processedArgs.includes(
+      "--dangerously-skip-permissions"
+    );
+    if (usesDangerousPermissions && envVars.IS_SANDBOX !== "1") {
+      const previousValue = envVars.IS_SANDBOX;
+      envVars.IS_SANDBOX = "1";
+      serverLogger.info(
+        `[AgentSpawner] Setting IS_SANDBOX=1 for ${agent.name} (was ${previousValue ?? "unset"})`
+      );
+    }
 
     const agentCommand = `${agent.command} ${processedArgs.join(" ")}`;
 
@@ -840,8 +882,31 @@ chmod +x ${maintenanceScriptPath}`;
         ];
 
     // Build cmux-pty specific command (the actual agent command without tmux/bash wrapper)
-    // For cmux-pty, we want to run the command directly in a shell so env vars expand
-    const ptyCommandString = `${unsetCommand}${commandString}`;
+    // For Codex agents, replace $CMUX_PROMPT with actual prompt value (matching tmux behavior)
+    // This avoids relying on shell expansion which can fail due to timing or env setup issues
+    let ptyCommandString: string;
+    if (agent.name.toLowerCase().includes("codex")) {
+      // For Codex: build command with prompt value directly embedded (like tmuxArgs does)
+      const ptyArgs = actualArgs.map((arg) => {
+        if (arg === "$CMUX_PROMPT") {
+          return processedTaskDescription;
+        }
+        return arg;
+      });
+      // Shell-escape all args with single quotes (no env var expansion needed)
+      const ptyShellEscaped = (s: string) =>
+        `'${s.replace(/'/g, "'\\''")}'`;
+      const ptyCommandStr = [actualCommand, ...ptyArgs]
+        .map(ptyShellEscaped)
+        .join(" ");
+      ptyCommandString = `${unsetCommand}${ptyCommandStr}`;
+      serverLogger.info(
+        `[AgentSpawner] Codex ptyCommand (prompt embedded): ${ptyCommandString.slice(0, 200)}...`
+      );
+    } else {
+      // For other agents: use env var expansion as before
+      ptyCommandString = `${unsetCommand}${commandString}`;
+    }
 
     // Use cmux-pty backend - worker will fall back to tmux if cmux-pty server unavailable
     const terminalCreationCommand: WorkerCreateTerminal = {
@@ -1029,13 +1094,20 @@ exit $EXIT_CODE
           formData.append("image", blob, "image.png");
           formData.append("path", imageFile.path);
 
-          // Get worker port from VSCode instance
-          const workerPort =
-            vscodeInstance instanceof DockerVSCodeInstance
-              ? (vscodeInstance as DockerVSCodeInstance).getPorts()?.worker
-              : "39377";
-
-          const uploadUrl = `http://localhost:${workerPort}/upload-image`;
+          // Get upload URL from VSCode instance
+          let uploadUrl: string;
+          if (vscodeInstance instanceof DockerVSCodeInstance) {
+            const workerPort = vscodeInstance.getPorts()?.worker;
+            uploadUrl = `http://localhost:${workerPort}/upload-image`;
+          } else if (vscodeInstance instanceof CmuxVSCodeInstance) {
+            const workerUrl = vscodeInstance.getWorkerUrl();
+            if (!workerUrl) {
+              throw new Error("Worker URL not available for cloud instance");
+            }
+            uploadUrl = `${workerUrl}/upload-image`;
+          } else {
+            throw new Error("Unknown VSCode instance type");
+          }
 
           serverLogger.info(`[AgentSpawner] Uploading image to ${uploadUrl}`);
 
