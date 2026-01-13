@@ -6,7 +6,7 @@ import { env } from "../_shared/convex-env";
  * Cloudflare AI Gateway configuration.
  */
 const CLOUDFLARE_ACCOUNT_ID = "0c1675e0def6de1ab3a50a4e17dc5656";
-const CLOUDFLARE_GATEWAY_ID = "cmux-heatmap";
+const CLOUDFLARE_GATEWAY_ID = "cmux-ai-proxy";
 
 /**
  * Google Cloud project configuration.
@@ -26,6 +26,22 @@ const JSON_HEADERS = {
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: JSON_HEADERS });
+}
+
+/**
+ * Convert Anthropic API model ID to Vertex AI model ID format.
+ * Anthropic uses: claude-haiku-4-5-20251001
+ * Vertex AI uses: claude-haiku-4-5@20251001
+ * The pattern is to replace the last dash before the 8-digit date with @
+ */
+function toVertexModelId(anthropicModelId: string): string {
+  // Match model name ending with -YYYYMMDD (8 digit date)
+  const match = anthropicModelId.match(/^(.+)-(\d{8})$/);
+  if (match) {
+    return `${match[1]}@${match[2]}`;
+  }
+  // If no date suffix, return as-is (Vertex will likely fail, but let's pass it through)
+  return anthropicModelId;
 }
 
 /**
@@ -60,7 +76,6 @@ function buildServiceAccountJson(): string {
     auth_provider_x509_cert_url: "https://www.googleapis.com/oauth2/v1/certs",
     client_x509_cert_url: "https://www.googleapis.com/robot/v1/metadata/x509/vertex-express%40manaflow-420907.iam.gserviceaccount.com",
     universe_domain: "googleapis.com",
-    // Required by Cloudflare AI Gateway for Vertex AI
     region: GCP_REGION,
   };
 
@@ -70,55 +85,15 @@ function buildServiceAccountJson(): string {
 const TEMPORARY_DISABLE_AUTH = true;
 
 /**
- * Supported Claude models on Vertex AI.
- */
-const SUPPORTED_VERTEX_MODELS = [
-  "claude-opus-4-5",
-  "claude-sonnet-4-5",
-  "claude-haiku-4-5",
-] as const;
-
-/**
- * Map model names to Vertex AI format.
- * Strips date suffixes (e.g., "-20250929") since Vertex AI expects base model names.
- */
-function mapToVertexModel(model: string): string {
-  // Strip date suffix (e.g., "claude-sonnet-4-5-20250929" -> "claude-sonnet-4-5")
-  const baseModel = model.replace(/-\d{8}$/, "");
-
-  // Check if the base model is supported on Vertex AI
-  if (SUPPORTED_VERTEX_MODELS.includes(baseModel as typeof SUPPORTED_VERTEX_MODELS[number])) {
-    return baseModel;
-  }
-
-  // Default to sonnet if model is not recognized
-  console.warn(`[anthropic-proxy] Unknown model "${model}", defaulting to claude-sonnet-4-5`);
-  return "claude-sonnet-4-5";
-}
-
-/**
  * HTTP action to proxy Anthropic API requests to Vertex AI via Cloudflare AI Gateway.
  * This endpoint is called by Claude Code running in sandboxes.
  */
 export const anthropicProxy = httpAction(async (_ctx, req) => {
-  const startTime = Date.now();
-
-  // Log incoming request details
-  const url = new URL(req.url);
-  console.log("[anthropic-proxy] === Incoming Request ===");
-  console.log("[anthropic-proxy] Method:", req.method);
-  console.log("[anthropic-proxy] URL:", req.url);
-  console.log("[anthropic-proxy] Path:", url.pathname);
-  console.log("[anthropic-proxy] x-cmux-token present:", !!req.headers.get("x-cmux-token"));
-  console.log("[anthropic-proxy] x-api-key present:", !!req.headers.get("x-api-key"));
-  console.log("[anthropic-proxy] authorization present:", !!req.headers.get("authorization"));
-  console.log("[anthropic-proxy] content-type:", req.headers.get("content-type"));
 
   // Try to extract token payload for tracking
   const workerAuth = await getWorkerAuth(req, {
     loggerPrefix: "[anthropic-proxy]",
   });
-  console.log("[anthropic-proxy] workerAuth result:", workerAuth ? { taskRunId: workerAuth.payload.taskRunId, teamId: workerAuth.payload.teamId } : null);
 
   if (!TEMPORARY_DISABLE_AUTH && !workerAuth) {
     console.error("[anthropic-proxy] Auth error: Missing or invalid token");
@@ -128,18 +103,15 @@ export const anthropicProxy = httpAction(async (_ctx, req) => {
   try {
     const body = await req.json();
 
-    // Build Cloudflare AI Gateway URL with model and stream suffix
-    const requestedModel = body.model ?? "claude-sonnet-4-5";
-    const vertexModel = mapToVertexModel(requestedModel);
+    const requestedModel = body.model;
+    const vertexModelId = toVertexModelId(requestedModel);
     const streamSuffix = body.stream ? ":streamRawPredict" : ":rawPredict";
-    const cloudflareUrl = `${CLOUDFLARE_VERTEX_BASE_URL}/${vertexModel}${streamSuffix}`;
+    const cloudflareUrl = `${CLOUDFLARE_VERTEX_BASE_URL}/${vertexModelId}${streamSuffix}`;
 
-    console.log("[anthropic-proxy] Model mapping:", requestedModel, "->", vertexModel);
-    console.log("[anthropic-proxy] Proxying to Cloudflare AI Gateway:", cloudflareUrl);
+    console.log("[anthropic-proxy] Model mapping:", { requestedModel, vertexModelId });
 
     // Build service account JSON for Cloudflare authentication
     const serviceAccountJson = buildServiceAccountJson();
-    console.log("[anthropic-proxy] Service account JSON built (length:", serviceAccountJson.length, ")");
 
     // Build headers - Cloudflare AI Gateway expects service account JSON directly (no Bearer prefix)
     const headers: Record<string, string> = {
@@ -154,24 +126,14 @@ export const anthropicProxy = httpAction(async (_ctx, req) => {
       anthropic_version: "vertex-2023-10-16",
     };
 
-    console.log("[anthropic-proxy] Request body keys:", Object.keys(vertexBody));
-
     const response = await fetch(cloudflareUrl, {
       method: "POST",
       headers,
       body: JSON.stringify(vertexBody),
     });
 
-    console.log("[anthropic-proxy] Cloudflare response status:", response.status);
-
     // Handle streaming responses
     if (body.stream && response.ok) {
-      console.log(
-        "[anthropic-proxy] Streaming response, latency:",
-        Date.now() - startTime,
-        "ms"
-      );
-
       const stream = response.body;
       if (!stream) {
         return jsonResponse({ error: "No response body" }, 500);
@@ -193,12 +155,6 @@ export const anthropicProxy = httpAction(async (_ctx, req) => {
       console.error("[anthropic-proxy] Cloudflare/Vertex error:", data);
       return jsonResponse(data, response.status);
     }
-
-    console.log(
-      "[anthropic-proxy] Success, latency:",
-      Date.now() - startTime,
-      "ms"
-    );
 
     return jsonResponse(data);
   } catch (error) {

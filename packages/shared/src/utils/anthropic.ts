@@ -4,10 +4,6 @@ export const CLOUDFLARE_ANTHROPIC_BASE_URL =
 export const CMUX_ANTHROPIC_PROXY_PLACEHOLDER_API_KEY =
   "sk_placeholder_cmux_anthropic_api_key";
 
-export const VERTEX_MODEL_OPUS_45 = "claude-opus-4-5";
-export const VERTEX_MODEL_SONNET_45 = "claude-sonnet-4-5";
-export const VERTEX_MODEL_HAIKU_45 = "claude-haiku-4-5";
-
 /**
  * AWS Bedrock model IDs for Claude models.
  * Used by code review heatmap feature. Claude Code fallback now uses Vertex AI.

@@ -262,6 +262,7 @@ interface ScreenshotCollectorOptions {
   pathToClaudeCodeExecutable?: string;
   installCommand?: string;
   devCommand?: string;
+  callbackUrl?: string;
   auth: { taskRunJwt: string } | { anthropicApiKey: string };
 }
 
@@ -1980,6 +1981,7 @@ export async function runPreviewJob(
           pathToClaudeCodeExecutable: "/root/.bun/bin/claude",
           installCommand: environment.maintenanceScript ?? undefined,
           devCommand: environment.devScript ?? undefined,
+          callbackUrl: convexUrl,
           auth: { taskRunJwt: previewJwt },
         };
 

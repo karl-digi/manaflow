@@ -467,6 +467,7 @@ export async function startScreenshotCollection(
       pathToClaudeCodeExecutable: "/root/.bun/bin/claude",
       installCommand: options.installCommand ?? undefined,
       devCommand: options.devCommand ?? undefined,
+      callbackUrl: options.convexUrl ?? undefined,
       ...claudeAuth,
     });
 
