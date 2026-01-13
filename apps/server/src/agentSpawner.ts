@@ -313,6 +313,7 @@ export async function spawnAgent(
       ...userApiKeys,
       // Use Convex HTTP endpoint for Anthropic proxy (Vertex AI via Cloudflare)
       ANTHROPIC_BASE_URL: `${callbackUrl}/api/anthropic`,
+      ANTHROPIC_API_KEY: "sk_placeholder_cmux_anthropic_api_key",
     };
 
     // Use environment property if available
