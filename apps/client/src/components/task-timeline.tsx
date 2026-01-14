@@ -320,21 +320,6 @@ export function TaskTimeline({
               </div>
             )}
 
-            {/* Crown reasoning as PR Defense */}
-            {event.crownReason && event.isCrowned && (
-              <div className="mt-3 rounded-lg border border-amber-200 dark:border-amber-800/50 bg-amber-50/50 dark:bg-amber-900/10 p-3">
-                <div className="flex items-center gap-2 mb-2">
-                  <Trophy className="size-4 text-amber-600 dark:text-amber-400" />
-                  <span className="text-sm font-medium text-amber-700 dark:text-amber-300">
-                    PR Defense
-                  </span>
-                </div>
-                <div className="text-sm text-amber-800 dark:text-amber-200/90">
-                  {event.crownReason}
-                </div>
-              </div>
-            )}
-
             {/* Code review summary card - shown for crowned runs */}
             {event.isCrowned && codeReviewSummary && (
               <div className="mt-3 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-900/50 p-3">
