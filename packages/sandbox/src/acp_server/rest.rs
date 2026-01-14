@@ -120,6 +120,9 @@ impl RestApiState {
             if let Some(ref proxy) = proxies.anthropic {
                 info!(base_url = %proxy.base_url(), "Anthropic proxy started");
             }
+            if let Some(ref proxy) = proxies.openai {
+                info!(base_url = %proxy.base_url(), "OpenAI proxy started");
+            }
 
             let mut guard = self.api_proxies.write().await;
             *guard = Some(Arc::new(proxies));

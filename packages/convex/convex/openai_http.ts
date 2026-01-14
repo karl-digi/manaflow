@@ -16,6 +16,7 @@ const hardCodedApiKey = "sk-openai-proxy-placeholder";
 export const CLOUDFLARE_OPENAI_BASE_URL =
   `https://gateway.ai.cloudflare.com/v1/${CLOUDFLARE_ACCOUNT_ID}/${CLOUDFLARE_GATEWAY_ID}/openai`;
 
+
 const JSON_HEADERS = {
   "Content-Type": "application/json",
 };
@@ -84,24 +85,13 @@ export const openaiProxy = httpAction(async (_ctx, req) => {
 
     console.log(`[openai-proxy] ${req.method} ${path}`);
 
-    // Build headers for upstream request
+    // Build headers for upstream request - minimal set only
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey}`,
     };
 
-    // Forward relevant headers
-    req.headers.forEach((value, key) => {
-      const lowerKey = key.toLowerCase();
-      // Skip headers we handle ourselves
-      if (
-        !["host", "authorization", "content-length", "x-cmux-token"].includes(
-          lowerKey
-        )
-      ) {
-        headers[key] = value;
-      }
-    });
+    // NOTE: Not forwarding other headers to avoid any interference
 
     const body = await req.text();
 
