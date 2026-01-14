@@ -68,24 +68,8 @@ export class MorphSandboxProvider implements SandboxProvider {
 
     const data = (await response.json()) as MorphStartResponse;
 
-    // Expose HTTP service for the ACP server
-    const exposeResponse = await fetch(
-      `${this.baseUrl}/instance/${data.id}/http`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${this.apiKey}`,
-        },
-        body: JSON.stringify({ name: "acp", port: 39384 }),
-      }
-    );
-
-    if (!exposeResponse.ok) {
-      const text = await exposeResponse.text();
-      console.error("[morph] Failed to expose HTTP service:", text);
-      // Don't fail spawn, just log the error
-    }
+    // HTTP service is already exposed in the snapshot (see snapshot provisioning)
+    // No need to call expose again - it's inherited from the snapshot
 
     // Morph VMs are accessible at {service-name}-{instanceId}.http.cloud.morph.so
     // Instance ID uses underscore (morphvm_xxx) but URL uses hyphen (morphvm-xxx)
