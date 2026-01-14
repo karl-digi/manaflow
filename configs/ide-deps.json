@@ -8,7 +8,7 @@
     {
       "publisher": "openai",
       "name": "chatgpt",
-      "version": "0.5.58"
+      "version": "0.5.59"
     },
     {
       "publisher": "ms-vscode",
@@ -33,6 +33,6 @@
     "opencode-ai": "1.1.19",
     "codebuff": "1.0.581",
     "@devcontainers/cli": "0.81.1",
-    "@sourcegraph/amp": "0.0.1768348918-g4f9eb6"
+    "@sourcegraph/amp": "0.0.1768373636-g7a36e6"
   }
 }

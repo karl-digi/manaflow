@@ -93,7 +93,6 @@ type BranchBaseOptions = {
   installCommand?: string;
   /** Command to start the dev server (e.g., "bun run dev", "npm run dev") */
   devCommand?: string;
-  /** Callback URL for the Anthropic proxy (e.g., "https://www.cmux.dev" or Convex site URL) */
   convexSiteUrl?: string;
 };
 
@@ -135,6 +134,17 @@ function log(
 ): void {
   const logData = data ? ` ${JSON.stringify(data)}` : "";
   console.log(`[${level}] ${message}${logData}`);
+}
+
+function formatOptionalValue(value: string | null | undefined): string {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : "<unset>";
+}
+
+function formatSecretValue(value: string | null | undefined): string {
+  const trimmed = value?.trim();
+  if (!trimmed) return "<unset>";
+  return `present(length=${trimmed.length})`;
 }
 
 export async function captureScreenshotsForBranch(
@@ -308,37 +318,22 @@ INCOMPLETE CAPTURE: Missing important UI elements. Ensure full components are vi
   const screenshotPaths: string[] = [];
   let structuredOutput: ScreenshotStructuredOutput | null = null;
 
-  const anthropicBaseUrl = `${convexSiteUrl}/api/anthropic`;
-
-  // Log full environment for debugging
-  await logToScreenshotCollector(`[DEBUG] convexSiteUrl: ${convexSiteUrl}`);
-  await logToScreenshotCollector(`[DEBUG] anthropicBaseUrl: ${anthropicBaseUrl}`);
-  await logToScreenshotCollector(`[DEBUG] Full messages URL would be: ${anthropicBaseUrl}/v1/messages`);
-
-  // Pre-flight test: check if endpoint is reachable
-  try {
-    await logToScreenshotCollector(`[DEBUG] Testing endpoint connectivity...`);
-    const testResponse = await fetch(`${anthropicBaseUrl}/v1/messages`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": "sk_placeholder_cmux_anthropic_api_key",
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 10,
-        messages: [{ role: "user", content: "hi" }],
-      }),
-    });
-    await logToScreenshotCollector(`[DEBUG] Pre-flight test response: ${testResponse.status} ${testResponse.statusText}`);
-    if (!testResponse.ok) {
-      const errorText = await testResponse.text();
-      await logToScreenshotCollector(`[DEBUG] Pre-flight test error body: ${errorText}`);
-    }
-  } catch (preflightError) {
-    await logToScreenshotCollector(`[DEBUG] Pre-flight test failed: ${preflightError instanceof Error ? preflightError.message : String(preflightError)}`);
+  if (useTaskRunJwt && !convexSiteUrl) {
+    await logToScreenshotCollector(
+      "[WARN] convexSiteUrl is missing; Anthropic proxy requests may fail."
+    );
   }
+  const normalizedConvexSiteUrl = formatOptionalValue(convexSiteUrl);
+
+  await logToScreenshotCollector(
+    `[DEBUG] convexSiteUrl: ${normalizedConvexSiteUrl}`
+  );
+
+  const anthropicBaseUrl = `${normalizedConvexSiteUrl}/api/anthropic`;
+
+  await logToScreenshotCollector(
+    `[DEBUG] anthropicBaseUrl: ${anthropicBaseUrl}`
+  );
 
   try {
     const hadOriginalApiKey = Object.prototype.hasOwnProperty.call(
@@ -370,6 +365,36 @@ INCOMPLETE CAPTURE: Missing important UI elements. Ensure full components are vi
         prompt,
         cwd: workspaceDir,
         pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
+      })}`
+    );
+
+    const claudeEnv = {
+      ...process.env,
+      IS_SANDBOX: "1",
+      CLAUDE_CODE_ENABLE_TELEMETRY: "0",
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+      ...(useTaskRunJwt
+        ? {
+          ANTHROPIC_API_KEY: "sk_placeholder_cmux_anthropic_api_key",
+          ANTHROPIC_BASE_URL: anthropicBaseUrl,
+          ANTHROPIC_CUSTOM_HEADERS: `x-cmux-token:${auth.taskRunJwt}`,
+        }
+        : {}),
+    };
+
+    await logToScreenshotCollector(
+      `[DEBUG] Claude env: ${JSON.stringify({
+        ANTHROPIC_BASE_URL: formatOptionalValue(claudeEnv.ANTHROPIC_BASE_URL),
+        ANTHROPIC_CUSTOM_HEADERS: formatSecretValue(
+          claudeEnv.ANTHROPIC_CUSTOM_HEADERS
+        ),
+        ANTHROPIC_API_KEY: formatSecretValue(claudeEnv.ANTHROPIC_API_KEY),
+        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: formatOptionalValue(
+          claudeEnv.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
+        ),
+        CLAUDE_CODE_ENABLE_TELEMETRY: formatOptionalValue(
+          claudeEnv.CLAUDE_CODE_ENABLE_TELEMETRY
+        ),
       })}`
     );
 
@@ -407,19 +432,7 @@ INCOMPLETE CAPTURE: Missing important UI elements. Ensure full components are vi
             type: "json_schema",
             schema: screenshotOutputJsonSchema,
           },
-          env: {
-            ...process.env,
-            IS_SANDBOX: "1",
-            CLAUDE_CODE_ENABLE_TELEMETRY: "0",
-            CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
-            ...(useTaskRunJwt
-              ? {
-                ANTHROPIC_API_KEY: "sk_placeholder_cmux_anthropic_api_key",
-                ANTHROPIC_BASE_URL: anthropicBaseUrl,
-                ANTHROPIC_CUSTOM_HEADERS: `x-cmux-token:${auth.taskRunJwt}`,
-              }
-              : {}),
-          },
+          env: claudeEnv,
           stderr: (data) =>
             logToScreenshotCollector(`[claude-code-stderr] ${data}`),
         },
