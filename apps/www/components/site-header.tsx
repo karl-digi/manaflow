@@ -152,13 +152,15 @@ export function SiteHeader({
             </MacDownloadLink>
           ) : null}
           <a
-            className="hidden md:inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-semibold text-black shadow-sm transition hover:bg-neutral-100"
+            className="hidden md:inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-pink-500 via-purple-500 to-indigo-500 p-[1px] text-sm font-semibold shadow-sm transition hover:from-pink-400 hover:via-purple-400 hover:to-indigo-400"
             href="https://cmux.sh"
             rel="noopener noreferrer"
             target="_blank"
           >
-            <CmuxIcon className="h-4 w-4" aria-hidden />
-            <span>Web</span>
+            <span className="flex items-center gap-2 rounded-full bg-white px-4 py-2 text-black transition hover:bg-neutral-100">
+              <CmuxIcon className="h-4 w-4" aria-hidden />
+              <span>Web</span>
+            </span>
           </a>
         </div>
       </div>

@@ -158,9 +158,9 @@ export default async function LandingPage() {
         aria-hidden
         className="pointer-events-none absolute inset-0 -z-10 overflow-hidden"
       >
-        <div className="absolute inset-x-[-20%] top-[-30%] h-[40rem] rounded-full bg-gradient-to-br from-blue-600/30 via-sky-500/20 to-purple-600/10 blur-3xl" />
-        <div className="absolute inset-x-[30%] top-[20%] h-[30rem] rounded-full bg-gradient-to-br from-cyan-400/20 via-sky-500/20 to-transparent blur-[160px]" />
-        <div className="absolute inset-x-[10%] bottom-[-20%] h-[32rem] rounded-full bg-gradient-to-tr from-indigo-500/20 via-blue-700/10 to-transparent blur-[200px]" />
+        <div className="absolute inset-x-[-20%] top-[-30%] h-[40rem] rounded-full bg-gradient-to-br from-red-500/30 via-orange-500/20 to-yellow-500/10 blur-3xl" />
+        <div className="absolute inset-x-[30%] top-[20%] h-[30rem] rounded-full bg-gradient-to-br from-green-400/20 via-cyan-500/20 to-blue-500/20 blur-[160px]" />
+        <div className="absolute inset-x-[10%] bottom-[-20%] h-[32rem] rounded-full bg-gradient-to-tr from-indigo-500/20 via-purple-500/15 to-pink-500/10 blur-[200px]" />
       </div>
 
       <SiteHeader
@@ -191,7 +191,7 @@ export default async function LandingPage() {
                     Learn more about the
                     {" "}
                     <a
-                      className="text-sky-400 hover:text-sky-300 underline decoration-dotted underline-offset-4"
+                      className="bg-gradient-to-r from-pink-400 via-purple-400 to-indigo-400 bg-clip-text text-transparent hover:from-pink-300 hover:via-purple-300 hover:to-indigo-300 underline decoration-dotted underline-offset-4"
                       href="#nav-about"
                     >
                       vision
@@ -200,7 +200,7 @@ export default async function LandingPage() {
                     or
                     {" "}
                     <a
-                      className="text-sky-400 hover:text-sky-300 underline decoration-dotted underline-offset-4"
+                      className="bg-gradient-to-r from-pink-400 via-purple-400 to-indigo-400 bg-clip-text text-transparent hover:from-pink-300 hover:via-purple-300 hover:to-indigo-300 underline decoration-dotted underline-offset-4"
                       href="#nav-features"
                     >
                       how it works today
@@ -211,13 +211,15 @@ export default async function LandingPage() {
               </div>
               <div className="flex flex-col gap-3 sm:flex-row">
                 <a
-                  className="inline-flex items-center justify-center gap-2 rounded-lg border border-white/20 bg-white px-4 py-3 text-sm font-semibold text-black shadow-xl transition hover:bg-neutral-100"
+                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-pink-500 via-purple-500 to-indigo-500 p-[2px] text-sm font-semibold shadow-xl transition hover:from-pink-400 hover:via-purple-400 hover:to-indigo-400"
                   href="https://cmux.sh"
                   rel="noopener noreferrer"
                   target="_blank"
                 >
-                  <CmuxIcon className="h-4 w-4" aria-hidden />
-                  Try web version
+                  <span className="flex items-center justify-center gap-2 rounded-[6px] bg-white px-4 py-3 text-black transition hover:bg-neutral-100">
+                    <CmuxIcon className="h-4 w-4" aria-hidden />
+                    Try web version
+                  </span>
                 </a>
                 <MacDownloadLink
                   autoDetect
@@ -263,7 +265,7 @@ export default async function LandingPage() {
               )}
             </div>
             <div className="relative">
-              <div className="rounded-3xl border border-white/10 bg-white/5 p-6 shadow-[0_40px_120px_-40px_rgba(56,189,248,0.35)] backdrop-blur lg:ml-auto lg:max-w-lg">
+              <div className="rounded-3xl border border-white/10 bg-white/5 p-6 shadow-[0_40px_120px_-40px_rgba(236,72,153,0.35)] backdrop-blur lg:ml-auto lg:max-w-lg">
                 <div className="space-y-6">
                   <div className="relative aspect-video overflow-hidden rounded-xl">
                     <iframe
@@ -276,7 +278,7 @@ export default async function LandingPage() {
                   </div>
                   {heroHighlights.map((highlight) => (
                     <div key={highlight.title} className="flex gap-4">
-                      <div className="mt-0.5 h-8 w-8 flex-none rounded-full bg-gradient-to-br from-sky-500/80 to-indigo-500/80 text-center text-base font-semibold leading-8 text-white shadow-lg">
+                      <div className="mt-0.5 h-8 w-8 flex-none rounded-full bg-gradient-to-br from-pink-500/80 via-purple-500/80 to-indigo-500/80 text-center text-base font-semibold leading-8 text-white shadow-lg">
                         •
                       </div>
                       <div className="space-y-1">
@@ -382,7 +384,7 @@ export default async function LandingPage() {
                   className="group relative overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-6 transition hover:border-white/20 hover:bg-white/10"
                 >
                   <div className="flex items-start gap-4">
-                    <div className="rounded-xl bg-gradient-to-br from-sky-500/40 via-blue-500/40 to-purple-500/40 p-3 text-white shadow-lg">
+                    <div className="rounded-xl bg-gradient-to-br from-red-500/40 via-yellow-500/40 to-green-500/40 p-3 text-white shadow-lg">
                       <Icon className="h-5 w-5" aria-hidden />
                     </div>
                     <div className="space-y-2">
@@ -438,7 +440,7 @@ export default async function LandingPage() {
                           key={item}
                           className="flex items-center gap-2 rounded-lg border border-dashed border-white/10 bg-white/5 px-3 py-2"
                         >
-                          <Settings className="h-3.5 w-3.5 flex-none text-sky-300" aria-hidden />
+                          <Settings className="h-3.5 w-3.5 flex-none text-pink-400" aria-hidden />
                           <span>{item}</span>
                         </li>
                       ))}
