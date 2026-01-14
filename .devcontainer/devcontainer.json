@@ -24,7 +24,10 @@
           "source.fixAll.eslint": true
         },
         "typescript.updateImportsOnFileMove.enabled": "always",
-        "typescript.preferences.importModuleSpecifier": "relative"
+        "typescript.preferences.importModuleSpecifier": "relative",
+        "security.workspace.trust.enabled": false,
+        "github.copilot.nextEditSuggestions.enabled": false,
+        "github.copilot.chat.agent.enabled": false
       }
     }
   },
