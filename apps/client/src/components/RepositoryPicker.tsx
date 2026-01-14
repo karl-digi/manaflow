@@ -571,7 +571,12 @@ function RepositoryConnectionsSection({
   const openGitHubAppInstallPopup = useCallback(async () => {
     if (!installNewUrl) return;
     try {
-      const { state } = await mintState({ teamSlugOrId });
+      // In web mode, pass a returnUrl so github_setup redirects back to the web
+      // instead of using the cmux:// deep link (which opens Electron)
+      const returnUrl = !isElectron
+        ? new URL(`/${teamSlugOrId}/connect-complete?popup=true`, window.location.origin).toString()
+        : undefined;
+      const { state } = await mintState({ teamSlugOrId, returnUrl });
       const sep = installNewUrl.includes("?") ? "&" : "?";
       const url = `${installNewUrl}${sep}state=${encodeURIComponent(state)}`;
       openCenteredPopup(
