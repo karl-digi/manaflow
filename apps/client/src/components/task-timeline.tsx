@@ -8,15 +8,21 @@ import { formatDistanceToNow } from "date-fns";
 import {
   AlertCircle,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Clock,
+  ExternalLink,
+  GitPullRequest,
   Play,
   Sparkles,
   Trophy,
   XCircle,
+  Loader2,
 } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import CmuxLogoMark from "./logo/cmux-logo-mark";
 import { TaskMessage } from "./task-message";
+import { cn } from "@/lib/utils";
 
 type TaskRunStatus = "pending" | "running" | "completed" | "failed" | "skipped";
 
@@ -38,6 +44,17 @@ interface TimelineEvent {
   crownReason?: string;
   summary?: string;
   userId?: string;
+  // Enhanced fields for richer UI
+  pullRequests?: Array<{
+    repoFullName: string;
+    url?: string;
+    number?: number;
+    state: "none" | "draft" | "open" | "merged" | "closed" | "unknown";
+    isDraft?: boolean;
+  }>;
+  pullRequestUrl?: string;
+  screenshotUrl?: string;
+  latestScreenshotSetId?: Id<"taskRunScreenshotSets">;
 }
 
 type TaskRunWithChildren = Doc<"taskRuns"> & {
@@ -53,6 +70,226 @@ interface TaskTimelineProps {
     winnerRunId?: Id<"taskRuns">;
     reason?: string;
   } | null;
+}
+
+const PR_STATE_STYLES: Record<string, { bg: string; text: string; label: string }> = {
+  draft: {
+    bg: "bg-neutral-100 dark:bg-neutral-800",
+    text: "text-neutral-600 dark:text-neutral-400",
+    label: "Draft",
+  },
+  open: {
+    bg: "bg-green-100 dark:bg-green-900/30",
+    text: "text-green-700 dark:text-green-400",
+    label: "Open",
+  },
+  merged: {
+    bg: "bg-purple-100 dark:bg-purple-900/30",
+    text: "text-purple-700 dark:text-purple-400",
+    label: "Merged",
+  },
+  closed: {
+    bg: "bg-red-100 dark:bg-red-900/30",
+    text: "text-red-700 dark:text-red-400",
+    label: "Closed",
+  },
+  none: {
+    bg: "bg-neutral-100 dark:bg-neutral-800",
+    text: "text-neutral-500 dark:text-neutral-500",
+    label: "No PR",
+  },
+  unknown: {
+    bg: "bg-neutral-100 dark:bg-neutral-800",
+    text: "text-neutral-500 dark:text-neutral-500",
+    label: "Unknown",
+  },
+};
+
+function PullRequestBadge({ pr }: { pr: NonNullable<TimelineEvent["pullRequests"]>[number] }) {
+  const style = PR_STATE_STYLES[pr.state] || PR_STATE_STYLES.unknown;
+  const shortRepo = pr.repoFullName.split("/").pop() || pr.repoFullName;
+
+  if (pr.url) {
+    return (
+      <a
+        href={pr.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className={cn(
+          "inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium transition-opacity hover:opacity-80",
+          style.bg,
+          style.text
+        )}
+      >
+        <GitPullRequest className="size-3" />
+        <span className="max-w-[100px] truncate">{shortRepo}</span>
+        {pr.number && <span>#{pr.number}</span>}
+        <ExternalLink className="size-2.5 opacity-60" />
+      </a>
+    );
+  }
+
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium",
+        style.bg,
+        style.text
+      )}
+    >
+      <GitPullRequest className="size-3" />
+      <span className="max-w-[100px] truncate">{shortRepo}</span>
+      <span className="opacity-60">({style.label})</span>
+    </span>
+  );
+}
+
+function ExpandableReason({
+  reason,
+  variant = "crown"
+}: {
+  reason: string;
+  variant?: "crown" | "evaluation"
+}) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const isLong = reason.length > 150;
+  const displayText = isLong && !isExpanded ? reason.slice(0, 150) + "..." : reason;
+
+  const styles = variant === "crown"
+    ? "text-amber-700 dark:text-amber-400 bg-gradient-to-r from-amber-50 to-yellow-50 dark:from-amber-900/20 dark:to-yellow-900/20 border-amber-200 dark:border-amber-800"
+    : "text-purple-700 dark:text-purple-400 bg-gradient-to-r from-purple-50 to-violet-50 dark:from-purple-900/20 dark:to-violet-900/20 border-purple-200 dark:border-purple-800";
+
+  const Icon = variant === "crown" ? Trophy : Sparkles;
+
+  return (
+    <div className={cn("mt-2 text-[13px] rounded-lg p-3 border", styles)}>
+      <div className="flex items-start gap-2">
+        <Icon className="size-4 mt-0.5 shrink-0" />
+        <div className="flex-1 min-w-0">
+          <p className="leading-relaxed">{displayText}</p>
+          {isLong && (
+            <button
+              type="button"
+              onClick={() => setIsExpanded(!isExpanded)}
+              className="mt-1 text-xs font-medium opacity-70 hover:opacity-100 inline-flex items-center gap-0.5"
+            >
+              {isExpanded ? (
+                <>Show less <ChevronUp className="size-3" /></>
+              ) : (
+                <>Show more <ChevronDown className="size-3" /></>
+              )}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RunCompletionCard({
+  event,
+  teamSlugOrId,
+  taskId,
+}: {
+  event: TimelineEvent;
+  teamSlugOrId: string;
+  taskId: Id<"tasks">;
+}) {
+  const agentName = event.agentName || "Agent";
+  const hasPRs = event.pullRequests && event.pullRequests.length > 0;
+
+  return (
+    <div className={cn(
+      "rounded-lg border p-3 transition-all",
+      event.isCrowned
+        ? "border-amber-300 dark:border-amber-700 bg-gradient-to-br from-amber-50/80 to-yellow-50/50 dark:from-amber-950/30 dark:to-yellow-950/20 shadow-sm shadow-amber-100 dark:shadow-amber-900/20"
+        : "border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900/50"
+    )}>
+      {/* Header */}
+      <div className="flex items-start justify-between gap-2 mb-2">
+        <Link
+          to="/$teamSlugOrId/task/$taskId/run/$runId"
+          params={{
+            teamSlugOrId,
+            taskId,
+            runId: event.runId!,
+            taskRunId: event.runId!,
+          }}
+          className="group flex items-center gap-2 hover:underline"
+        >
+          {event.isCrowned ? (
+            <div className="size-5 rounded-full bg-gradient-to-br from-amber-400 to-yellow-500 flex items-center justify-center shadow-sm">
+              <Trophy className="size-3 text-white" />
+            </div>
+          ) : (
+            <div className="size-5 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
+              <CheckCircle2 className="size-3 text-green-600 dark:text-green-400" />
+            </div>
+          )}
+          <span className="font-medium text-sm text-neutral-900 dark:text-neutral-100">
+            {agentName}
+          </span>
+          {event.isCrowned && (
+            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-200 dark:bg-amber-800 text-amber-800 dark:text-amber-200">
+              WINNER
+            </span>
+          )}
+        </Link>
+        <span className="text-[11px] text-neutral-500 dark:text-neutral-500 whitespace-nowrap">
+          {formatDistanceToNow(event.timestamp, { addSuffix: true })}
+        </span>
+      </div>
+
+      {/* PR Badges */}
+      {hasPRs && (
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {event.pullRequests!.map((pr) => (
+            <PullRequestBadge key={pr.repoFullName} pr={pr} />
+          ))}
+        </div>
+      )}
+
+      {/* Summary */}
+      {event.summary && (
+        <div className="text-[13px] text-neutral-600 dark:text-neutral-400 bg-neutral-50 dark:bg-neutral-900 rounded-md p-2.5 leading-relaxed">
+          {event.summary}
+        </div>
+      )}
+
+      {/* Crown Reason */}
+      {event.crownReason && (
+        <ExpandableReason reason={event.crownReason} variant="crown" />
+      )}
+
+      {/* Screenshot Preview */}
+      {event.screenshotUrl && (
+        <div className="mt-2 rounded-md overflow-hidden border border-neutral-200 dark:border-neutral-800">
+          <img
+            src={event.screenshotUrl}
+            alt="Preview"
+            className="w-full h-24 object-cover bg-neutral-100 dark:bg-neutral-800"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RunningIndicator({ agentName }: { agentName: string }) {
+  return (
+    <div className="flex items-center gap-2 py-1">
+      <div className="relative">
+        <div className="size-4 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
+          <Loader2 className="size-2.5 text-blue-600 dark:text-blue-400 animate-spin" />
+        </div>
+        <span className="absolute -top-0.5 -right-0.5 size-2 bg-blue-500 rounded-full animate-pulse" />
+      </div>
+      <span className="text-xs">
+        <span className="font-medium text-neutral-900 dark:text-neutral-100">{agentName}</span>
+        <span className="text-neutral-500 dark:text-neutral-400"> is working...</span>
+      </span>
+    </div>
+  );
 }
 
 export function TaskTimeline({
@@ -83,8 +320,8 @@ export function TaskTimeline({
     if (!taskRuns) return timelineEvents;
 
     // Flatten the tree structure to get all runs
-    const flattenRuns = (runs: TaskRunWithChildren[]): Doc<"taskRuns">[] => {
-      const result: Doc<"taskRuns">[] = [];
+    const flattenRuns = (runs: TaskRunWithChildren[]): TaskRunWithChildren[] => {
+      const result: TaskRunWithChildren[] = [];
       runs.forEach((run) => {
         result.push(run);
         if (run.children?.length) {
@@ -128,6 +365,9 @@ export function TaskTimeline({
           summary: run.summary,
           isCrowned: run.isCrowned,
           crownReason: run.crownReason,
+          pullRequests: run.pullRequests,
+          pullRequestUrl: run.pullRequestUrl,
+          latestScreenshotSetId: run.latestScreenshotSetId,
         });
       }
     });
@@ -147,6 +387,22 @@ export function TaskTimeline({
     return timelineEvents.sort((a, b) => a.timestamp - b.timestamp);
   }, [task, taskRuns, crownEvaluation]);
 
+  // Track running agents
+  const runningAgents = useMemo(() => {
+    if (!taskRuns) return [];
+    const flattenRuns = (runs: TaskRunWithChildren[]): TaskRunWithChildren[] => {
+      const result: TaskRunWithChildren[] = [];
+      runs.forEach((run) => {
+        result.push(run);
+        if (run.children?.length) {
+          result.push(...flattenRuns(run.children));
+        }
+      });
+      return result;
+    };
+    return flattenRuns(taskRuns).filter(run => run.status === "running");
+  }, [taskRuns]);
+
   if (!events.length && !task) {
     return (
       <div className="flex items-center justify-center py-12 text-neutral-500">
@@ -158,6 +414,19 @@ export function TaskTimeline({
 
   const ActivityEvent = ({ event }: { event: TimelineEvent }) => {
     const agentName = event.agentName || "Agent";
+
+    // Use card layout for completed runs
+    if (event.type === "run_completed") {
+      return (
+        <div className="w-full">
+          <RunCompletionCard
+            event={event}
+            teamSlugOrId={params.teamSlugOrId}
+            taskId={params.taskId}
+          />
+        </div>
+      );
+    }
 
     let icon;
     let content;
@@ -226,70 +495,6 @@ export function TaskTimeline({
             <span className="text-neutral-500 dark:text-neutral-500 ml-1">
               {formatDistanceToNow(event.timestamp, { addSuffix: true })}
             </span>
-          </>
-        );
-        break;
-      case "run_completed":
-        icon = event.isCrowned ? (
-          <div className="size-4 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
-            <Trophy className="size-2.5 text-amber-600 dark:text-amber-400" />
-          </div>
-        ) : (
-          <div className="size-4 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
-            <CheckCircle2 className="size-2.5 text-green-600 dark:text-green-400" />
-          </div>
-        );
-        content = (
-          <>
-            {event.runId ? (
-              <Link
-                to="/$teamSlugOrId/task/$taskId/run/$runId"
-                params={{
-                  teamSlugOrId: params.teamSlugOrId,
-                  taskId: params.taskId,
-                  runId: event.runId,
-                  taskRunId: event.runId,
-                }}
-                className="hover:underline inline"
-              >
-                <span className="font-medium text-neutral-900 dark:text-neutral-100">
-                  {agentName}
-                </span>
-                <span className="text-neutral-600 dark:text-neutral-400">
-                  {event.isCrowned
-                    ? " completed and won the crown"
-                    : " completed"}
-                </span>
-                <span className="text-neutral-500 dark:text-neutral-500 ml-1">
-                  {formatDistanceToNow(event.timestamp, { addSuffix: true })}
-                </span>
-              </Link>
-            ) : (
-              <>
-                <span className="font-medium text-neutral-900 dark:text-neutral-100">
-                  {agentName}
-                </span>
-                <span className="text-neutral-600 dark:text-neutral-400">
-                  {event.isCrowned
-                    ? " completed and won the crown"
-                    : " completed"}
-                </span>
-                <span className="text-neutral-500 dark:text-neutral-500 ml-1">
-                  {formatDistanceToNow(event.timestamp, { addSuffix: true })}
-                </span>
-              </>
-            )}
-            {event.summary && (
-              <div className="mt-2 text-sm text-neutral-600 dark:text-neutral-400 bg-neutral-50 dark:bg-neutral-900 rounded-md p-3">
-                {event.summary}
-              </div>
-            )}
-            {event.crownReason && (
-              <div className="mt-2 text-[13px] text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 rounded-md p-3">
-                <Trophy className="inline size-3 mr-2" />
-                {event.crownReason}
-              </div>
-            )}
           </>
         );
         break;
@@ -394,54 +599,51 @@ export function TaskTimeline({
         break;
       case "crown_evaluation":
         icon = (
-          <div className="size-4 rounded-full bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center">
-            <Sparkles className="size-2.5 text-purple-600 dark:text-purple-400" />
+          <div className="size-4 rounded-full bg-gradient-to-br from-purple-400 to-violet-500 flex items-center justify-center">
+            <Sparkles className="size-2.5 text-white" />
           </div>
         );
         content = (
-          <>
-            {event.runId ? (
-              <Link
-                to="/$teamSlugOrId/task/$taskId/run/$runId"
-                params={{
-                  teamSlugOrId: params.teamSlugOrId,
-                  taskId: params.taskId,
-                  runId: event.runId,
-                  taskRunId: event.runId,
-                }}
-                className="hover:underline inline"
-              >
-                <span className="font-medium text-neutral-900 dark:text-neutral-100">
-                  Crown evaluation
-                </span>
-                <span className="text-neutral-600 dark:text-neutral-400">
-                  {" "}
-                  completed
-                </span>
-                <span className="text-neutral-500 dark:text-neutral-500 ml-1">
-                  {formatDistanceToNow(event.timestamp, { addSuffix: true })}
-                </span>
-              </Link>
-            ) : (
-              <>
-                <span className="font-medium text-neutral-900 dark:text-neutral-100">
-                  Crown evaluation
-                </span>
-                <span className="text-neutral-600 dark:text-neutral-400">
-                  {" "}
-                  completed
-                </span>
-                <span className="text-neutral-500 dark:text-neutral-500 ml-1">
-                  {formatDistanceToNow(event.timestamp, { addSuffix: true })}
-                </span>
-              </>
-            )}
+          <div className="w-full">
+            <div className="flex items-center gap-2 mb-1">
+              {event.runId ? (
+                <Link
+                  to="/$teamSlugOrId/task/$taskId/run/$runId"
+                  params={{
+                    teamSlugOrId: params.teamSlugOrId,
+                    taskId: params.taskId,
+                    runId: event.runId,
+                    taskRunId: event.runId,
+                  }}
+                  className="hover:underline inline"
+                >
+                  <span className="font-medium text-neutral-900 dark:text-neutral-100">
+                    Crown evaluation
+                  </span>
+                  <span className="text-neutral-600 dark:text-neutral-400">
+                    {" "}
+                    completed
+                  </span>
+                </Link>
+              ) : (
+                <>
+                  <span className="font-medium text-neutral-900 dark:text-neutral-100">
+                    Crown evaluation
+                  </span>
+                  <span className="text-neutral-600 dark:text-neutral-400">
+                    {" "}
+                    completed
+                  </span>
+                </>
+              )}
+              <span className="text-neutral-500 dark:text-neutral-500">
+                {formatDistanceToNow(event.timestamp, { addSuffix: true })}
+              </span>
+            </div>
             {event.crownReason && (
-              <div className="mt-2 text-[13px] text-purple-700 dark:text-purple-400 bg-purple-50 dark:bg-purple-900/20 rounded-md p-3">
-                {event.crownReason}
-              </div>
+              <ExpandableReason reason={event.crownReason} variant="evaluation" />
             )}
-          </>
+          </div>
         );
         break;
       default:
@@ -487,6 +689,20 @@ export function TaskTimeline({
           timestamp={task.createdAt}
           content={task.text}
         />
+      )}
+
+      {/* Running Agents Indicator */}
+      {runningAgents.length > 0 && (
+        <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg p-2.5 mb-3">
+          <div className="text-[11px] font-medium text-blue-600 dark:text-blue-400 uppercase tracking-wide mb-1.5">
+            Currently Running
+          </div>
+          <div className="space-y-1">
+            {runningAgents.map((run) => (
+              <RunningIndicator key={run._id} agentName={run.agentName || "Agent"} />
+            ))}
+          </div>
+        </div>
       )}
 
       <div>
