@@ -14,6 +14,23 @@ import { useQuery as useRQ } from "@tanstack/react-query";
 import { Suspense, useEffect } from "react";
 import { env } from "@/client-env";
 
+// Helper to find a team membership matching the given slug or ID
+function findTeamMembership(
+  memberships: Awaited<
+    ReturnType<typeof convexQueryClient.convexClient.query<typeof api.teams.listTeamMemberships>>
+  >,
+  teamSlugOrId: string
+) {
+  return memberships.find((membership) => {
+    const team = membership.team;
+    const membershipTeamId = team?.teamId ?? membership.teamId;
+    const membershipSlug = team?.slug;
+    return (
+      membershipSlug === teamSlugOrId || membershipTeamId === teamSlugOrId
+    );
+  });
+}
+
 export const Route = createFileRoute("/_layout/$teamSlugOrId")({
   component: LayoutComponentWrapper,
   beforeLoad: async ({ params, location }) => {
@@ -27,17 +44,23 @@ export const Route = createFileRoute("/_layout/$teamSlugOrId")({
       });
     }
     const { teamSlugOrId } = params;
-    const teamMemberships = await convexQueryClient.convexClient.query(
-      api.teams.listTeamMemberships
-    );
-    const teamMembership = teamMemberships.find((membership) => {
-      const team = membership.team;
-      const membershipTeamId = team?.teamId ?? membership.teamId;
-      const membershipSlug = team?.slug;
-      return (
-        membershipSlug === teamSlugOrId || membershipTeamId === teamSlugOrId
+
+    // Poll for membership to handle webhook sync lag for new users.
+    // The webhook from Stack Auth may not have been processed yet when a
+    // user first clicks on their team after account creation.
+    const timeoutAt = Date.now() + 10_000; // 10 second timeout
+    let teamMembership = null;
+
+    while (Date.now() < timeoutAt) {
+      const teamMemberships = await convexQueryClient.convexClient.query(
+        api.teams.listTeamMemberships
       );
-    });
+      teamMembership = findTeamMembership(teamMemberships, teamSlugOrId);
+      if (teamMembership) break;
+      // Wait 300ms before retrying
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+
     if (!teamMembership) {
       throw redirect({ to: "/team-picker" });
     }
