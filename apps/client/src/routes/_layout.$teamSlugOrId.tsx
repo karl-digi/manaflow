@@ -2,6 +2,7 @@ import { CmuxComments } from "@/components/cmux-comments";
 import { CommandBar } from "@/components/CommandBar";
 import { Sidebar } from "@/components/Sidebar";
 import { SIDEBAR_PRS_DEFAULT_LIMIT } from "@/components/sidebar/const";
+import { CommandBarProvider } from "@/contexts/command-bar/CommandBarProvider";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { ExpandTasksProvider } from "@/contexts/expand-tasks/ExpandTasksProvider";
 import { cachedGetUser } from "@/lib/cachedGetUser";
@@ -78,46 +79,48 @@ function LayoutComponent() {
 
   return (
     <ExpandTasksProvider>
-      <CommandBar teamSlugOrId={teamSlugOrId} />
+      <CommandBarProvider>
+        <CommandBar teamSlugOrId={teamSlugOrId} />
 
-      <div className="flex flex-row grow min-h-0 h-dvh bg-white dark:bg-black overflow-x-auto snap-x snap-mandatory md:overflow-x-visible md:snap-none">
-        <Sidebar tasks={displayTasks} teamSlugOrId={teamSlugOrId} />
+        <div className="flex flex-row grow min-h-0 h-dvh bg-white dark:bg-black overflow-x-auto snap-x snap-mandatory md:overflow-x-visible md:snap-none">
+          <Sidebar tasks={displayTasks} teamSlugOrId={teamSlugOrId} />
 
-        <div className="min-w-full md:min-w-0 grow snap-start snap-always flex flex-col">
-          <Suspense fallback={<div>Loading...</div>}>
-            <Outlet />
-          </Suspense>
+          <div className="min-w-full md:min-w-0 grow snap-start snap-always flex flex-col">
+            <Suspense fallback={<div>Loading...</div>}>
+              <Outlet />
+            </Suspense>
+          </div>
         </div>
-      </div>
 
-      <button
-        onClick={() => {
-          const msg = window.prompt("Enter debug note");
-          if (msg) {
-            // Prefix allows us to easily grep in the console.
+        <button
+          onClick={() => {
+            const msg = window.prompt("Enter debug note");
+            if (msg) {
+              // Prefix allows us to easily grep in the console.
 
-            console.log(`[USER NOTE] ${msg}`);
-          }
-        }}
-        className="hidden"
-        style={{
-          position: "fixed",
-          bottom: "16px",
-          right: "16px",
-          zIndex: "var(--z-overlay)",
-          background: "#ffbf00",
-          color: "#000",
-          border: "none",
-          borderRadius: "4px",
-          padding: "8px 12px",
-          cursor: "default",
-          fontSize: "12px",
-          fontWeight: 600,
-          boxShadow: "0 2px 4px rgba(0,0,0,0.15)",
-        }}
-      >
-        Add Debug Note
-      </button>
+              console.log(`[USER NOTE] ${msg}`);
+            }
+          }}
+          className="hidden"
+          style={{
+            position: "fixed",
+            bottom: "16px",
+            right: "16px",
+            zIndex: "var(--z-overlay)",
+            background: "#ffbf00",
+            color: "#000",
+            border: "none",
+            borderRadius: "4px",
+            padding: "8px 12px",
+            cursor: "default",
+            fontSize: "12px",
+            fontWeight: 600,
+            boxShadow: "0 2px 4px rgba(0,0,0,0.15)",
+          }}
+        >
+          Add Debug Note
+        </button>
+      </CommandBarProvider>
     </ExpandTasksProvider>
   );
 }

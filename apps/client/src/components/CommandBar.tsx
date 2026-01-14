@@ -1,6 +1,7 @@
 import { env } from "@/client-env";
 import { GitHubIcon } from "@/components/icons/github";
 import { useTheme } from "@/components/theme/use-theme";
+import { useCommandBar } from "@/contexts/command-bar/CommandBarContext";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { isElectron } from "@/lib/electron";
@@ -1080,6 +1081,20 @@ export function CommandBar({
     document.addEventListener("keydown", down);
     return () => document.removeEventListener("keydown", down);
   }, [captureFocusBeforeOpen, closeCommand]);
+
+  // Register open handler with context for external triggers (e.g., logo click)
+  const { registerOpenHandler } = useCommandBar();
+  useEffect(() => {
+    registerOpenHandler(() => {
+      if (openRef.current) {
+        closeCommand();
+        return;
+      }
+      setOpenedWithShift(false);
+      captureFocusBeforeOpen();
+      setOpen(true);
+    });
+  }, [registerOpenHandler, closeCommand, captureFocusBeforeOpen]);
 
   // Listen for custom event to open command bar with a specific page
   useEffect(() => {

@@ -1,6 +1,7 @@
 import { env } from "@/client-env";
 import { TaskTree } from "@/components/TaskTree";
 import { TaskTreeSkeleton } from "@/components/TaskTreeSkeleton";
+import { useCommandBar } from "@/contexts/command-bar/CommandBarContext";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { useWarmLocalWorkspaces } from "@/hooks/useWarmLocalWorkspaces";
 import {
@@ -106,6 +107,7 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
   });
 
   const { expandTaskIds } = useExpandTasks();
+  const { openCommandBar } = useCommandBar();
 
   // Fetch pinned items (exclude local workspaces in web mode)
   const excludeLocalWorkspaces = env.NEXT_PUBLIC_WEB_MODE || undefined;
@@ -250,16 +252,14 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
         style={{ WebkitAppRegion: "drag" } as CSSProperties}
       >
         {isElectron && <div className="w-[80px]"></div>}
-        <Link
-          to="/$teamSlugOrId/dashboard"
-          params={{ teamSlugOrId }}
-          activeOptions={{ exact: true }}
+        <button
+          type="button"
+          onClick={openCommandBar}
           className="flex items-center gap-2 select-none cursor-pointer"
           style={{ WebkitAppRegion: "no-drag" } as CSSProperties}
         >
-          {/* <Terminals */}
           <CmuxLogo height={32} />
-        </Link>
+        </button>
         <div className="grow"></div>
         <Link
           to="/$teamSlugOrId/dashboard"
