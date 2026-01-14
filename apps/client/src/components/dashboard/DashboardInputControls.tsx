@@ -600,6 +600,7 @@ export const DashboardInputControls = memo(function DashboardInputControls({
           loading={isLoadingProjects}
           maxTagCount={1}
           showSearch
+          data-tour="repo-picker"
           footer={
             <div className="p-1">
               <Link
@@ -743,7 +744,7 @@ export const DashboardInputControls = memo(function DashboardInputControls({
         {branchDisabled ? null : (
           <Tooltip>
             <TooltipTrigger asChild>
-              <div>
+              <div data-tour="branch-picker">
                 <SearchableSelect
                   options={branchOptions}
                   value={selectedBranch}
@@ -785,17 +786,20 @@ export const DashboardInputControls = memo(function DashboardInputControls({
           itemVariant="agent"
           optionItemComponent={AgentCommandItem}
           maxCountPerValue={MAX_AGENT_COMMAND_COUNT}
+          data-tour="agent-picker"
         />
       </div>
 
       <div className="flex items-center justify-end gap-2.5 ml-auto mr-0 pr-1">
         {/* Cloud/Local Mode Toggle - hidden in web mode (always cloud) */}
         {!env.NEXT_PUBLIC_WEB_MODE && (
-          <ModeToggleTooltip
-            isCloudMode={isCloudMode}
-            onToggle={onCloudModeToggle}
-            disabled={cloudToggleDisabled}
-          />
+          <div data-tour="cloud-toggle">
+            <ModeToggleTooltip
+              isCloudMode={isCloudMode}
+              onToggle={onCloudModeToggle}
+              disabled={cloudToggleDisabled}
+            />
+          </div>
         )}
 
         <button

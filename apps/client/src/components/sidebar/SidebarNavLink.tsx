@@ -16,6 +16,7 @@ interface SidebarNavLinkProps {
   exact?: boolean;
   className?: string;
   badgeCount?: number;
+  tourId?: string;
 }
 
 export function SidebarNavLink({
@@ -27,6 +28,7 @@ export function SidebarNavLink({
   exact = true,
   className,
   badgeCount,
+  tourId,
 }: SidebarNavLinkProps) {
   return (
     <Link
@@ -34,6 +36,7 @@ export function SidebarNavLink({
       params={params}
       search={search}
       activeOptions={{ exact }}
+      data-tour={tourId}
       className={clsx(
         "pointer-default cursor-default group flex items-center gap-2 rounded-sm pl-2 ml-2 py-1 text-[13px] text-neutral-900 select-none hover:bg-neutral-200/45 dark:text-neutral-100 dark:hover:bg-neutral-800/45 data-[active=true]:hover:bg-neutral-200/75 dark:data-[active=true]:hover:bg-neutral-800/65 pr-2",
         className

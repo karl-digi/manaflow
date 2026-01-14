@@ -4,6 +4,7 @@ import { Sidebar } from "@/components/Sidebar";
 import { SIDEBAR_PRS_DEFAULT_LIMIT } from "@/components/sidebar/const";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { ExpandTasksProvider } from "@/contexts/expand-tasks/ExpandTasksProvider";
+import { OnboardingTourProvider } from "@/contexts/onboarding/OnboardingTourContext";
 import { cachedGetUser } from "@/lib/cachedGetUser";
 import { setLastTeamSlugOrId } from "@/lib/lastTeam";
 import { stackClientApp } from "@/lib/stack";
@@ -78,19 +79,20 @@ function LayoutComponent() {
 
   return (
     <ExpandTasksProvider>
-      <CommandBar teamSlugOrId={teamSlugOrId} />
+      <OnboardingTourProvider>
+        <CommandBar teamSlugOrId={teamSlugOrId} />
 
-      <div className="flex flex-row grow min-h-0 h-dvh bg-white dark:bg-black overflow-x-auto snap-x snap-mandatory md:overflow-x-visible md:snap-none">
-        <Sidebar tasks={displayTasks} teamSlugOrId={teamSlugOrId} />
+        <div className="flex flex-row grow min-h-0 h-dvh bg-white dark:bg-black overflow-x-auto snap-x snap-mandatory md:overflow-x-visible md:snap-none">
+          <Sidebar tasks={displayTasks} teamSlugOrId={teamSlugOrId} />
 
-        <div className="min-w-full md:min-w-0 grow snap-start snap-always flex flex-col">
-          <Suspense fallback={<div>Loading...</div>}>
-            <Outlet />
-          </Suspense>
+          <div className="min-w-full md:min-w-0 grow snap-start snap-always flex flex-col">
+            <Suspense fallback={<div>Loading...</div>}>
+              <Outlet />
+            </Suspense>
+          </div>
         </div>
-      </div>
 
-      <button
+        <button
         onClick={() => {
           const msg = window.prompt("Enter debug note");
           if (msg) {
@@ -115,9 +117,10 @@ function LayoutComponent() {
           fontWeight: 600,
           boxShadow: "0 2px 4px rgba(0,0,0,0.15)",
         }}
-      >
-        Add Debug Note
-      </button>
+        >
+          Add Debug Note
+        </button>
+      </OnboardingTourProvider>
     </ExpandTasksProvider>
   );
 }

@@ -46,6 +46,7 @@ interface SidebarNavItem {
 interface SidebarNavItemWithBadge extends SidebarNavItem {
   showBadge?: boolean;
   hidden?: boolean;
+  tourId?: string;
 }
 
 const navItems: SidebarNavItemWithBadge[] = [
@@ -54,6 +55,7 @@ const navItems: SidebarNavItemWithBadge[] = [
     to: "/$teamSlugOrId/dashboard",
     exact: true,
     icon: Home,
+    tourId: "dashboard-nav",
   },
   {
     label: "Notifications",
@@ -75,12 +77,14 @@ const navItems: SidebarNavItemWithBadge[] = [
     },
     exact: true,
     icon: Server,
+    tourId: "environments-nav",
   },
   {
     label: "Settings",
     to: "/$teamSlugOrId/settings",
     exact: true,
     icon: Settings,
+    tourId: "settings-nav",
   },
 ];
 
@@ -232,6 +236,7 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
   return (
     <div
       ref={containerRef}
+      data-tour="sidebar"
       className="relative bg-neutral-50 dark:bg-black flex flex-col shrink-0 h-dvh grow pr-1 w-[75vw] snap-start snap-always md:w-auto md:snap-align-none"
       style={
         {
@@ -289,6 +294,7 @@ export function Sidebar({ tasks, teamSlugOrId }: SidebarProps) {
                   exact={item.exact}
                   label={item.label}
                   badgeCount={item.showBadge ? unreadCount : undefined}
+                  tourId={item.tourId}
                 />
               </li>
             ))}

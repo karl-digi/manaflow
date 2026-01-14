@@ -339,7 +339,7 @@ export const TaskList = memo(function TaskList({
   }, [setCollapsedPreviewCategories]);
 
   return (
-    <div className="mt-6 w-full">
+    <div className="mt-6 w-full" data-tour="task-list">
       <div className="mb-3 px-4">
         <div className="flex items-end gap-2.5 select-none">
           <button

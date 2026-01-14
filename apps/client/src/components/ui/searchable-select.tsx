@@ -105,6 +105,8 @@ export interface SearchableSelectProps {
   searchLoading?: boolean;
   // Disable client-side filtering (use when server handles filtering)
   disableClientFilter?: boolean;
+  // Data attribute for onboarding tour targeting
+  "data-tour"?: string;
 }
 
 interface WarningIndicatorProps {
@@ -263,6 +265,7 @@ const SearchableSelect = forwardRef<
     onSearchChange,
     searchLoading = false,
     disableClientFilter = false,
+    "data-tour": dataTour,
   },
   ref
 ) {
@@ -598,7 +601,7 @@ const SearchableSelect = forwardRef<
 
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
-      <div className={clsx("inline-flex items-center", classNames.root)}>
+      <div className={clsx("inline-flex items-center", classNames.root)} data-tour={dataTour}>
         <Popover.Trigger asChild>
           <button
             ref={triggerRef}
