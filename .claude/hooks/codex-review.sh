@@ -39,7 +39,7 @@ unbuffer codex \
   --dangerously-bypass-approvals-and-sandbox \
   --model gpt-5.2-codex \
   -c model_reasoning_effort="high" \
-  review --base "Review compared to main, including including staged, unstaged, and untracked changes.
+  review --base main "Review compared to main, including staged, unstaged, and untracked changes.
 
 $REVIEW_GUIDELINES" > "$TMPFILE" 2>&1 || true
 
