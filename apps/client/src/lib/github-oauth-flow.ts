@@ -7,13 +7,13 @@
  *
  * But OAuth requires a full page redirect, breaking the flow.
  *
- * Solution: Store the pending action in sessionStorage before OAuth redirect,
+ * Solution: Store the install intent in sessionStorage before OAuth redirect,
  * then check for it after returning and continue the flow.
  */
 
-const PENDING_ACTION_KEY = "cmux_pending_github_action";
+const GITHUB_APP_INSTALL_INTENT_KEY = "cmux_github_app_install_intent";
 
-export interface PendingGitHubAction {
+export interface GitHubAppInstallIntent {
   action: "install-github-app";
   teamSlugOrId: string;
   timestamp: number;
@@ -22,92 +22,74 @@ export interface PendingGitHubAction {
 /**
  * Store the intent to install GitHub App after OAuth completes.
  */
-export function setPendingGitHubAction(teamSlugOrId: string): void {
+export function setGitHubAppInstallIntent(teamSlugOrId: string): void {
   try {
-    const pending: PendingGitHubAction = {
+    const intent: GitHubAppInstallIntent = {
       action: "install-github-app",
       teamSlugOrId,
       timestamp: Date.now(),
     };
-    sessionStorage.setItem(PENDING_ACTION_KEY, JSON.stringify(pending));
-    console.log("[GitHubOAuthFlow] Stored pending action:", pending);
+    sessionStorage.setItem(GITHUB_APP_INSTALL_INTENT_KEY, JSON.stringify(intent));
   } catch (err) {
-    console.error("[GitHubOAuthFlow] Failed to store pending action:", err);
+    console.error("[GitHubOAuthFlow] Failed to store install intent:", err);
   }
 }
 
 /**
- * Get and clear any pending GitHub action.
- * Returns null if no action or if action is stale (> 5 minutes old).
+ * Get and clear any pending GitHub App install intent.
+ * Returns null if no intent or if intent is stale (> 5 minutes old).
  */
-export function consumePendingGitHubAction(): PendingGitHubAction | null {
-  try {
-    const raw = sessionStorage.getItem(PENDING_ACTION_KEY);
-    console.log("[GitHubOAuthFlow] Consuming pending action, raw:", raw);
-    if (!raw) return null;
-
-    sessionStorage.removeItem(PENDING_ACTION_KEY);
-
-    const pending = JSON.parse(raw) as PendingGitHubAction;
-
-    // Ignore stale actions (> 5 minutes old)
-    const MAX_AGE_MS = 5 * 60 * 1000;
-    if (Date.now() - pending.timestamp > MAX_AGE_MS) {
-      console.log("[GitHubOAuthFlow] Pending action too old, ignoring");
-      return null;
-    }
-
-    console.log("[GitHubOAuthFlow] Returning pending action:", pending);
-    return pending;
-  } catch (err) {
-    console.error("[GitHubOAuthFlow] Failed to consume pending action:", err);
-    return null;
+export function consumeGitHubAppInstallIntent(): GitHubAppInstallIntent | null {
+  const intent = getGitHubAppInstallIntent();
+  if (intent) {
+    clearGitHubAppInstallIntent();
   }
+  return intent;
 }
 
 /**
- * Check if there's a pending action without consuming it.
+ * Check if there's a pending install intent without consuming it.
  */
-export function hasPendingGitHubAction(): boolean {
+export function hasGitHubAppInstallIntent(): boolean {
   try {
-    return sessionStorage.getItem(PENDING_ACTION_KEY) !== null;
+    return sessionStorage.getItem(GITHUB_APP_INSTALL_INTENT_KEY) !== null;
   } catch {
     return false;
   }
 }
 
 /**
- * Peek at the pending action without consuming it.
- * Returns null if no action or if action is stale (> 5 minutes old).
- * Use this to check if the action matches before consuming.
+ * Peek at the install intent without consuming it.
+ * Returns null if no intent or if intent is stale (> 5 minutes old).
+ * Use this to check if the intent matches before consuming.
  */
-export function getPendingGitHubAction(): PendingGitHubAction | null {
+export function getGitHubAppInstallIntent(): GitHubAppInstallIntent | null {
   try {
-    const raw = sessionStorage.getItem(PENDING_ACTION_KEY);
+    const raw = sessionStorage.getItem(GITHUB_APP_INSTALL_INTENT_KEY);
     if (!raw) return null;
 
-    const pending = JSON.parse(raw) as PendingGitHubAction;
+    const intent = JSON.parse(raw) as GitHubAppInstallIntent;
 
-    // Ignore stale actions (> 5 minutes old)
+    // Ignore stale intents (> 5 minutes old)
     const MAX_AGE_MS = 5 * 60 * 1000;
-    if (Date.now() - pending.timestamp > MAX_AGE_MS) {
-      // Clean up stale action
-      sessionStorage.removeItem(PENDING_ACTION_KEY);
+    if (Date.now() - intent.timestamp > MAX_AGE_MS) {
+      // Clean up stale intent
+      sessionStorage.removeItem(GITHUB_APP_INSTALL_INTENT_KEY);
       return null;
     }
 
-    return pending;
+    return intent;
   } catch {
     return null;
   }
 }
 
 /**
- * Clear the pending action (use after successfully handling it).
+ * Clear the install intent (use after successfully handling it).
  */
-export function clearPendingGitHubAction(): void {
+export function clearGitHubAppInstallIntent(): void {
   try {
-    sessionStorage.removeItem(PENDING_ACTION_KEY);
+    sessionStorage.removeItem(GITHUB_APP_INSTALL_INTENT_KEY);
   } catch {
     // Ignore errors
   }

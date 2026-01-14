@@ -5,9 +5,8 @@ import { api } from "@cmux/convex/api";
 import { DEFAULT_MORPH_SNAPSHOT_ID, type MorphSnapshotId } from "@cmux/shared";
 import { isElectron } from "@/lib/electron";
 import {
-  clearPendingGitHubAction,
-  getPendingGitHubAction,
-  setPendingGitHubAction,
+  consumeGitHubAppInstallIntent,
+  setGitHubAppInstallIntent,
 } from "@/lib/github-oauth-flow";
 import { WWW_ORIGIN } from "@/lib/wwwOrigin";
 import { useUser } from "@stackframe/react";
@@ -143,7 +142,7 @@ export function RepositoryPicker({
   }, [initialSnapshotId]);
 
   const handleConnectionsInvalidated = useCallback((): void => {
-    const qc = router.options.context?.queryClient;
+    const qc = router.options.context.queryClient;
     if (qc) {
       qc.invalidateQueries();
     }
@@ -448,8 +447,6 @@ function RepositoryConnectionsSection({
     teamSlugOrId,
   });
   const mintState = useMutation(api.github_app.mintInstallState);
-  // Prevent double handling of pending GitHub action in React Strict Mode
-  const pendingActionHandledRef = useRef(false);
 
   const activeConnections = useMemo(
     () => (connections || []).filter((c) => c.isActive !== false),
@@ -590,33 +587,20 @@ function RepositoryConnectionsSection({
     }
   }, [handlePopupClosedRefetch, installNewUrl, mintState, openCenteredPopup, teamSlugOrId]);
 
-  // Check for pending GitHub action on mount (after OAuth redirect)
+  // Check for pending GitHub App install intent on mount (after OAuth redirect)
   useEffect(() => {
-    // Prevent double handling in React Strict Mode
-    if (pendingActionHandledRef.current) {
-      console.log("[GitHubOAuth] RepositoryPicker already handled pending action, skipping");
-      return;
-    }
-
-    // Don't act on pending action if we can't complete it (install URL not ready)
     if (!installNewUrl) {
       return;
     }
 
-    // Peek at pending action first - only consume if team matches
-    const pendingAction = getPendingGitHubAction();
-    console.log("[GitHubOAuth] RepositoryPicker checking pending action:", { pendingAction, teamSlugOrId });
+    // Atomically get and clear - second call in Strict Mode returns null
+    const installIntent = consumeGitHubAppInstallIntent();
 
-    // Only proceed if there's a pending action for THIS team
-    if (!pendingAction || pendingAction.teamSlugOrId !== teamSlugOrId) {
+    // Only proceed if there's an install intent for THIS team
+    if (!installIntent || installIntent.teamSlugOrId !== teamSlugOrId) {
       return;
     }
 
-    // Team matches - clear the pending action and handle it
-    clearPendingGitHubAction();
-    pendingActionHandledRef.current = true;
-    console.log("[GitHubOAuth] RepositoryPicker found matching pending action, opening GitHub App install popup");
-    // Continue with GitHub App installation after OAuth completed
     void openGitHubAppInstallPopup().catch((err) => {
       console.error("Failed to continue GitHub install after OAuth:", err);
     });
@@ -632,7 +616,7 @@ function RepositoryConnectionsSection({
         const githubAccount = await user.getConnectedAccount("github");
         if (!githubAccount) {
           // Store intent to continue with app installation after OAuth
-          setPendingGitHubAction(teamSlugOrId);
+          setGitHubAppInstallIntent(teamSlugOrId);
 
           if (isElectron) {
             // In Electron, open OAuth flow in system browser

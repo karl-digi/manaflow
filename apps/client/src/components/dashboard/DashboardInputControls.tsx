@@ -14,9 +14,8 @@ import {
 } from "@/components/ui/tooltip";
 import { isElectron } from "@/lib/electron";
 import {
-  clearPendingGitHubAction,
-  getPendingGitHubAction,
-  setPendingGitHubAction,
+  consumeGitHubAppInstallIntent,
+  setGitHubAppInstallIntent,
 } from "@/lib/github-oauth-flow";
 import { WWW_ORIGIN } from "@/lib/wwwOrigin";
 import { api } from "@cmux/convex/api";
@@ -147,7 +146,6 @@ export const DashboardInputControls = memo(function DashboardInputControls({
   const router = useRouter();
   const user = useUser({ or: "return-null" });
   const agentSelectRef = useRef<SearchableSelectHandle | null>(null);
-  const pendingActionHandledRef = useRef(false);
   const mintState = useMutation(api.github_app.mintInstallState);
   const addManualRepo = useAction(api.github_http.addManualRepo);
   const providerStatusMap = useMemo(() => {
@@ -377,12 +375,12 @@ export const DashboardInputControls = memo(function DashboardInputControls({
     const handleMessage = (event: MessageEvent) => {
       if (event.origin !== window.location.origin) return;
       if (event.data?.type === "cmux/github-install-complete") {
-        router.options.context?.queryClient?.invalidateQueries();
+        router.options.context.queryClient.invalidateQueries();
       }
     };
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [router.options.context?.queryClient]);
+  }, [router.options.context.queryClient]);
 
   const handleImageClick = useCallback(() => {
     // Trigger the file select from ImagePlugin
@@ -549,39 +547,26 @@ export const DashboardInputControls = memo(function DashboardInputControls({
       url,
       { name: "github-install" },
       () => {
-        router.options.context?.queryClient?.invalidateQueries();
+        router.options.context.queryClient.invalidateQueries();
       },
     );
     win?.focus?.();
-  }, [mintState, router.options.context?.queryClient, teamSlugOrId]);
+  }, [mintState, router.options.context.queryClient, teamSlugOrId]);
 
-  // Check for pending GitHub action on mount (after OAuth redirect)
+  // Check for pending GitHub App install intent on mount (after OAuth redirect)
   useEffect(() => {
-    // Prevent double handling in React Strict Mode
-    if (pendingActionHandledRef.current) {
-      console.log("[GitHubOAuth] Already handled pending action, skipping");
-      return;
-    }
-
-    // Don't act on pending action if we can't complete it (GitHub App not configured)
     if (!env.NEXT_PUBLIC_GITHUB_APP_SLUG) {
       return;
     }
 
-    // Peek at pending action first - only consume if team matches
-    const pendingAction = getPendingGitHubAction();
-    console.log("[GitHubOAuth] Checking pending action:", { pendingAction, teamSlugOrId });
+    // Atomically get and clear - second call in Strict Mode returns null
+    const installIntent = consumeGitHubAppInstallIntent();
 
-    // Only proceed if there's a pending action for THIS team
-    if (!pendingAction || pendingAction.teamSlugOrId !== teamSlugOrId) {
+    // Only proceed if there's an install intent for THIS team
+    if (!installIntent || installIntent.teamSlugOrId !== teamSlugOrId) {
       return;
     }
 
-    // Team matches - clear the pending action and handle it
-    clearPendingGitHubAction();
-    pendingActionHandledRef.current = true;
-    console.log("[GitHubOAuth] Found matching pending action, opening GitHub App install popup");
-    // Continue with GitHub App installation after OAuth completed
     void openGitHubAppInstallPopup().catch((err) => {
       console.error("Failed to continue GitHub install after OAuth:", err);
     });
@@ -629,23 +614,19 @@ export const DashboardInputControls = memo(function DashboardInputControls({
                     if (user) {
                       try {
                         const githubAccount = await user.getConnectedAccount("github");
-                        console.log("[GitHubOAuth] GitHub account check:", { githubAccount: !!githubAccount });
                         if (!githubAccount) {
                           // Store intent to continue with app installation after OAuth
-                          console.log("[GitHubOAuth] Setting pending action for team:", teamSlugOrId);
-                          setPendingGitHubAction(teamSlugOrId);
+                          setGitHubAppInstallIntent(teamSlugOrId);
 
                           if (isElectron) {
                             // In Electron, open OAuth flow in system browser
                             // The www endpoint will handle OAuth and return via deep link
                             const oauthUrl = `${WWW_ORIGIN}/handler/connect-github?team=${encodeURIComponent(teamSlugOrId)}`;
-                            console.log("[GitHubOAuth] Opening OAuth in system browser:", oauthUrl);
                             window.open(oauthUrl, "_blank", "noopener,noreferrer");
                             return;
                           }
 
                           // In web, use Stack Auth's redirect
-                          console.log("[GitHubOAuth] Redirecting to OAuth...");
                           await user.getConnectedAccount("github", { or: "redirect" });
                           return; // Will redirect, so don't continue
                         }
