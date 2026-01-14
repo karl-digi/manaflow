@@ -3,7 +3,7 @@ import { GitHubIcon } from "@/components/icons/github";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@cmux/convex/api";
 import { DEFAULT_MORPH_SNAPSHOT_ID, type MorphSnapshotId } from "@cmux/shared";
-import { isElectron } from "@/lib/electron";
+import { getElectronBridge, isElectron } from "@/lib/electron";
 import {
   consumeGitHubAppInstallIntent,
   setGitHubAppInstallIntent,
@@ -608,8 +608,7 @@ function RepositoryConnectionsSection({
     checkAndConsumeInstallIntent();
 
     // Also check when github-connect-complete event is received (Electron deep link)
-    const cmux = (window as Window & { cmux?: { on?: (event: string, cb: () => void) => () => void } }).cmux;
-    const off = cmux?.on?.("github-connect-complete", checkAndConsumeInstallIntent);
+    const off = getElectronBridge()?.on("github-connect-complete", checkAndConsumeInstallIntent);
 
     return () => {
       off?.();

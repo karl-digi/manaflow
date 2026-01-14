@@ -12,7 +12,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { isElectron } from "@/lib/electron";
+import { getElectronBridge, isElectron } from "@/lib/electron";
 import {
   consumeGitHubAppInstallIntent,
   setGitHubAppInstallIntent,
@@ -577,8 +577,7 @@ export const DashboardInputControls = memo(function DashboardInputControls({
     checkAndConsumeInstallIntent();
 
     // Also check when github-connect-complete event is received (Electron deep link)
-    const cmux = (window as Window & { cmux?: { on?: (event: string, cb: () => void) => () => void } }).cmux;
-    const off = cmux?.on?.("github-connect-complete", checkAndConsumeInstallIntent);
+    const off = getElectronBridge()?.on("github-connect-complete", checkAndConsumeInstallIntent);
 
     return () => {
       off?.();

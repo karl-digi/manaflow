@@ -129,4 +129,4 @@ declare global {
   }
 }
 
-export {};
+export type { CmuxAPI };
