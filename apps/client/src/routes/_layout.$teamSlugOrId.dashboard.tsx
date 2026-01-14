@@ -23,7 +23,7 @@ import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { createFakeConvexId } from "@/lib/fakeConvexId";
 import { attachTaskLifecycleListeners } from "@/lib/socket/taskLifecycleListeners";
-import { getApiIntegrationsGithubBranchesOptions } from "@/queries/branches";
+import { getApiIntegrationsGithubBranchesInfiniteOptions } from "@/queries/branches";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
@@ -35,7 +35,7 @@ import type {
 } from "@cmux/shared";
 import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
 import { convexQuery } from "@convex-dev/react-query";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useQuery, useInfiniteQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useAction, useMutation } from "convex/react";
 import { Server as ServerIcon } from "lucide-react";
@@ -211,22 +211,27 @@ function DashboardComponent() {
   // This prevents delay when user clears the search
   const effectiveBranchSearch = branchSearch === "" ? "" : debouncedBranchSearch;
 
-  // Branches query - uses GraphQL to get default branch AND branches in a single API call
-  // Server-side search via GitHub GraphQL API (prefix match)
+  // Branches query - uses GraphQL to get branches sorted by most recent commit
+  // Infinite query for pagination, server-side search via GitHub GraphQL API
   // Each search term is cached separately by React Query
-  const branchesQuery = useQuery({
-    ...getApiIntegrationsGithubBranchesOptions({
+  const branchesQuery = useInfiniteQuery({
+    ...getApiIntegrationsGithubBranchesInfiniteOptions({
       query: {
         repo: selectedProject[0] || "",
-        limit: 5,
+        limit: 30,
         search: effectiveBranchSearch || undefined,
       },
     }),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage, allPages) => {
+      // If we got fewer branches than the limit, there are no more pages
+      if (!lastPage.branches || lastPage.branches.length < 30) {
+        return undefined;
+      }
+      return allPages.length + 1;
+    },
     staleTime: 30_000,
     enabled: !!selectedProject[0] && !isEnvSelected,
-    // Keep previous data visible while fetching new search results
-    // This prevents "No options" flash and button skeleton during search
-    placeholderData: keepPreviousData,
   });
 
   // Show loading in search input when search is pending or fetching
@@ -234,18 +239,25 @@ function DashboardComponent() {
     branchSearch !== "" &&
     (branchSearch !== effectiveBranchSearch || branchesQuery.isFetching);
 
-  // Extract branch names and default branch from the query
+  // Extract branch names and default branch from the infinite query
   const branchNames = useMemo(
-    () => branchesQuery.data?.branches?.map((branch) => branch.name) ?? [],
+    () => branchesQuery.data?.pages?.flatMap((page) => page.branches?.map((branch) => branch.name) ?? []) ?? [],
     [branchesQuery.data]
   );
 
-  const defaultBranchName = branchesQuery.data?.defaultBranch ?? null;
+  const defaultBranchName = branchesQuery.data?.pages?.[0]?.defaultBranch ?? null;
 
   // Handle branch search changes from SearchableSelect
   const handleBranchSearchChange = useCallback((search: string) => {
     setBranchSearch(search);
   }, []);
+
+  // Handle loading more branches for infinite scroll
+  const handleLoadMoreBranches = useCallback(() => {
+    if (branchesQuery.hasNextPage && !branchesQuery.isFetchingNextPage) {
+      branchesQuery.fetchNextPage();
+    }
+  }, [branchesQuery]);
 
   // Show toast if branches query fails
   useEffect(() => {
@@ -1072,6 +1084,9 @@ function DashboardComponent() {
               canSubmit={canSubmit}
               onStartTask={handleStartTask}
               isStartingTask={isStartingTask}
+              hasMoreBranches={branchesQuery.hasNextPage}
+              isFetchingMoreBranches={branchesQuery.isFetchingNextPage}
+              onLoadMoreBranches={handleLoadMoreBranches}
             />
             {shouldShowWorkspaceSetup ? (
               <WorkspaceSetupPanel
@@ -1152,6 +1167,10 @@ type DashboardMainCardProps = {
   canSubmit: boolean;
   onStartTask: () => void;
   isStartingTask: boolean;
+  // Infinite query props for branches
+  hasMoreBranches?: boolean;
+  isFetchingMoreBranches?: boolean;
+  onLoadMoreBranches?: () => void;
 };
 
 function DashboardMainCard({
@@ -1183,6 +1202,9 @@ function DashboardMainCard({
   canSubmit,
   onStartTask,
   isStartingTask,
+  hasMoreBranches,
+  isFetchingMoreBranches,
+  onLoadMoreBranches,
 }: DashboardMainCardProps) {
   return (
     <div className="relative bg-white dark:bg-neutral-700/50 border border-neutral-500/15 dark:border-neutral-500/15 rounded-2xl transition-all">
@@ -1218,6 +1240,9 @@ function DashboardMainCard({
           cloudToggleDisabled={cloudToggleDisabled}
           branchDisabled={branchDisabled}
           providerStatus={providerStatus}
+          hasMoreBranches={hasMoreBranches}
+          isFetchingMoreBranches={isFetchingMoreBranches}
+          onLoadMoreBranches={onLoadMoreBranches}
         />
         <DashboardStartTaskButton
           canSubmit={canSubmit}

@@ -375,6 +375,10 @@ export type GithubDefaultBranchResponse = {
 export type GithubBranch = {
     name: string;
     lastCommitSha?: string;
+    /**
+     * ISO 8601 date of the last commit on this branch
+     */
+    lastCommitDate?: string;
     isDefault?: boolean;
 };
 
@@ -1854,9 +1858,13 @@ export type GetApiIntegrationsGithubBranchesData = {
          */
         search?: string;
         /**
-         * Max branches to return (default 30, max 100)
+         * Max branches to return per page (default 30, max 100)
          */
         limit?: number;
+        /**
+         * 1-based page index for pagination (default 1)
+         */
+        page?: number;
     };
     url: '/api/integrations/github/branches';
 };

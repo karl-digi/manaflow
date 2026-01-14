@@ -20,7 +20,7 @@ import { parseGithubRepoUrl } from "@cmux/shared";
 import { Link, useRouter } from "@tanstack/react-router";
 import clsx from "clsx";
 import { useAction, useMutation } from "convex/react";
-import { Check, GitBranch, Image, Link2, Mic, Server, X } from "lucide-react";
+import { Check, GitBranch, Image, Link2, Loader2, Mic, Server, X } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AgentCommandItem, MAX_AGENT_COMMAND_COUNT } from "./AgentCommandItem";
@@ -45,6 +45,10 @@ interface DashboardInputControlsProps {
   cloudToggleDisabled?: boolean;
   branchDisabled?: boolean;
   providerStatus?: ProviderStatusResponse | null;
+  // Infinite query props for branches
+  hasMoreBranches?: boolean;
+  isFetchingMoreBranches?: boolean;
+  onLoadMoreBranches?: () => void;
 }
 
 type AgentOption = SelectOptionObject & { displayLabel: string; isDisabled?: boolean };
@@ -74,6 +78,9 @@ export const DashboardInputControls = memo(function DashboardInputControls({
   cloudToggleDisabled = false,
   branchDisabled = false,
   providerStatus = null,
+  hasMoreBranches = false,
+  isFetchingMoreBranches = false,
+  onLoadMoreBranches,
 }: DashboardInputControlsProps) {
   const router = useRouter();
   const agentSelectRef = useRef<SearchableSelectHandle | null>(null);
@@ -690,6 +697,36 @@ export const DashboardInputControls = memo(function DashboardInputControls({
                   disabled={branchDisabled}
                   leftIcon={
                     <GitBranch className="w-4 h-4 text-neutral-500 dark:text-neutral-400" />
+                  }
+                  footer={
+                    hasMoreBranches ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          onLoadMoreBranches?.();
+                        }}
+                        disabled={isFetchingMoreBranches}
+                        className={clsx(
+                          "w-full px-3 py-2 text-[13px] text-left",
+                          "text-neutral-600 dark:text-neutral-400",
+                          "hover:bg-neutral-100 dark:hover:bg-neutral-800",
+                          "transition-colors",
+                          "disabled:opacity-50 disabled:cursor-not-allowed",
+                          "flex items-center gap-2"
+                        )}
+                      >
+                        {isFetchingMoreBranches ? (
+                          <>
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            <span>Loading...</span>
+                          </>
+                        ) : (
+                          <span>Load more branches</span>
+                        )}
+                      </button>
+                    ) : undefined
                   }
                 />
               </div>

@@ -368,7 +368,7 @@ export const getApiIntegrationsGithubDefaultBranch = <ThrowOnError extends boole
 };
 
 /**
- * List branches for a repository with optional search filter
+ * List branches for a repository with optional search filter, sorted by most recent commit
  */
 export const getApiIntegrationsGithubBranches = <ThrowOnError extends boolean = false>(options: Options<GetApiIntegrationsGithubBranchesData, ThrowOnError>) => {
     return (options.client ?? _heyApiClient).get<GetApiIntegrationsGithubBranchesResponses, GetApiIntegrationsGithubBranchesErrors, ThrowOnError>({

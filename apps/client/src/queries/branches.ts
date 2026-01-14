@@ -3,4 +3,5 @@
 export {
   getApiIntegrationsGithubDefaultBranchOptions,
   getApiIntegrationsGithubBranchesOptions,
+  getApiIntegrationsGithubBranchesInfiniteOptions,
 } from "@cmux/www-openapi-client/react-query";

@@ -9,6 +9,7 @@ const GithubBranch = z
   .object({
     name: z.string(),
     lastCommitSha: z.string().optional(),
+    lastCommitDate: z.string().optional().openapi({ description: "ISO 8601 date of the last commit on this branch" }),
     isDefault: z.boolean().optional(),
   })
   .openapi("GithubBranch");
@@ -101,7 +102,13 @@ const BranchesQuery = z
       .max(100)
       .default(30)
       .optional()
-      .openapi({ description: "Max branches to return (default 30, max 100)" }),
+      .openapi({ description: "Max branches to return per page (default 30, max 100)" }),
+    page: z.coerce
+      .number()
+      .min(1)
+      .default(1)
+      .optional()
+      .openapi({ description: "1-based page index for pagination (default 1)" }),
   })
   .openapi("GithubBranchesQuery");
 
@@ -113,12 +120,61 @@ const BranchesResponse = z
   })
   .openapi("GithubBranchesResponse");
 
+// GraphQL query to fetch branches with commit dates for sorting
+const BRANCHES_QUERY = `
+  query($owner: String!, $repo: String!, $first: Int!, $after: String) {
+    repository(owner: $owner, name: $repo) {
+      defaultBranchRef {
+        name
+      }
+      refs(refPrefix: "refs/heads/", first: $first, after: $after, orderBy: { field: TAG_COMMIT_DATE, direction: DESC }) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          name
+          target {
+            ... on Commit {
+              oid
+              committedDate
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+type GraphQLBranchNode = {
+  name: string;
+  target: {
+    oid: string;
+    committedDate: string;
+  } | null;
+};
+
+type GraphQLBranchesResponse = {
+  repository: {
+    defaultBranchRef: {
+      name: string;
+    } | null;
+    refs: {
+      pageInfo: {
+        hasNextPage: boolean;
+        endCursor: string | null;
+      };
+      nodes: GraphQLBranchNode[];
+    };
+  };
+};
+
 githubBranchesRouter.openapi(
   createRoute({
     method: "get" as const,
     path: "/integrations/github/branches",
     tags: ["Integrations"],
-    summary: "List branches for a repository with optional search filter",
+    summary: "List branches for a repository with optional search filter, sorted by most recent commit",
     request: { query: BranchesQuery },
     responses: {
       200: {
@@ -138,7 +194,7 @@ githubBranchesRouter.openapi(
       return c.text("Unauthorized", 401);
     }
 
-    const { repo, search, limit = 30 } = c.req.valid("query");
+    const { repo, search, limit = 30, page = 1 } = c.req.valid("query");
 
     try {
       const githubAccount = await user.getConnectedAccount("github");
@@ -154,66 +210,94 @@ githubBranchesRouter.openapi(
       const octokit = new Octokit({ auth: accessToken.trim() });
       const [owner, repoName] = repo.split("/");
 
-      // Get repo info for default branch
-      let defaultBranchName: string | null = null;
-      try {
-        const { data: repoData } = await octokit.request("GET /repos/{owner}/{repo}", {
-          owner: owner!,
-          repo: repoName!,
-        });
-        defaultBranchName = repoData.default_branch;
-      } catch {
-        // Ignore - we'll continue without default branch info
+      if (!owner || !repoName) {
+        return c.json({ branches: [], defaultBranch: null, error: "Invalid repository format" }, 200);
       }
 
-      type BranchResp = { name: string; commit: { sha: string } };
       const branches: Array<z.infer<typeof GithubBranch>> = [];
+      let defaultBranchName: string | null = null;
 
       if (!search) {
-        // No search - just get first page of branches
-        const { data } = await octokit.request("GET /repos/{owner}/{repo}/branches", {
-          owner: owner!,
-          repo: repoName!,
-          per_page: limit,
-        }) as { data: BranchResp[] };
+        // Use GraphQL to fetch branches sorted by commit date
+        // For pagination, we need to skip (page-1) * limit items
+        // GraphQL doesn't support offset, so we fetch all pages up to the requested one
+        const itemsToSkip = (page - 1) * limit;
+        const itemsToFetch = itemsToSkip + limit;
 
-        for (const br of data) {
-          branches.push({
-            name: br.name,
-            lastCommitSha: br.commit.sha,
-            isDefault: br.name === defaultBranchName,
+        let cursor: string | null = null;
+        let fetchedCount = 0;
+        const allBranches: Array<z.infer<typeof GithubBranch>> = [];
+
+        while (fetchedCount < itemsToFetch) {
+          const batchSize = Math.min(100, itemsToFetch - fetchedCount);
+          const result: GraphQLBranchesResponse = await octokit.graphql<GraphQLBranchesResponse>(BRANCHES_QUERY, {
+            owner,
+            repo: repoName,
+            first: batchSize,
+            after: cursor,
           });
+
+          if (!defaultBranchName && result.repository.defaultBranchRef) {
+            defaultBranchName = result.repository.defaultBranchRef.name;
+          }
+
+          const nodes = result.repository.refs.nodes;
+          for (const node of nodes) {
+            allBranches.push({
+              name: node.name,
+              lastCommitSha: node.target?.oid,
+              lastCommitDate: node.target?.committedDate,
+              isDefault: node.name === defaultBranchName,
+            });
+          }
+
+          fetchedCount += nodes.length;
+
+          if (!result.repository.refs.pageInfo.hasNextPage) {
+            break;
+          }
+          cursor = result.repository.refs.pageInfo.endCursor;
         }
+
+        // Return only the branches for the requested page
+        branches.push(...allBranches.slice(itemsToSkip, itemsToSkip + limit));
       } else {
-        // With search - fetch pages until we find enough matches
+        // With search - fetch pages until we find enough matches for the requested page
         const searchLower = search.toLowerCase();
-        let page = 1;
-        const perPage = 100;
+        const itemsToSkip = (page - 1) * limit;
+        const matchedBranches: Array<z.infer<typeof GithubBranch>> = [];
+        let cursor: string | null = null;
+        let hasMore = true;
 
-        while (branches.length < limit) {
-          const { data } = await octokit.request("GET /repos/{owner}/{repo}/branches", {
-            owner: owner!,
-            repo: repoName!,
-            per_page: perPage,
-            page,
-          }) as { data: BranchResp[] };
+        while (matchedBranches.length < itemsToSkip + limit && hasMore) {
+          const result: GraphQLBranchesResponse = await octokit.graphql<GraphQLBranchesResponse>(BRANCHES_QUERY, {
+            owner,
+            repo: repoName,
+            first: 100,
+            after: cursor,
+          });
 
-          if (data.length === 0) break;
+          if (!defaultBranchName && result.repository.defaultBranchRef) {
+            defaultBranchName = result.repository.defaultBranchRef.name;
+          }
 
-          for (const br of data) {
-            if (br.name.toLowerCase().includes(searchLower)) {
-              branches.push({
-                name: br.name,
-                lastCommitSha: br.commit.sha,
-                isDefault: br.name === defaultBranchName,
+          for (const node of result.repository.refs.nodes) {
+            if (node.name.toLowerCase().includes(searchLower)) {
+              matchedBranches.push({
+                name: node.name,
+                lastCommitSha: node.target?.oid,
+                lastCommitDate: node.target?.committedDate,
+                isDefault: node.name === defaultBranchName,
               });
-              if (branches.length >= limit) break;
             }
           }
 
-          if (data.length < perPage) break;
-          page++;
+          hasMore = result.repository.refs.pageInfo.hasNextPage;
+          cursor = result.repository.refs.pageInfo.endCursor;
         }
+
+        // Return only the branches for the requested page
+        branches.push(...matchedBranches.slice(itemsToSkip, itemsToSkip + limit));
       }
 
       return c.json({ branches, defaultBranch: defaultBranchName, error: null }, 200);
