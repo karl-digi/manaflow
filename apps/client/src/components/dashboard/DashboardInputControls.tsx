@@ -1,4 +1,5 @@
 import { env } from "@/client-env";
+import { GitHubConnectionDialog } from "@/components/github/GitHubConnectionDialog";
 import { AgentLogo } from "@/components/icons/agent-logos";
 import { GitHubIcon } from "@/components/icons/github";
 import { ModeToggleTooltip } from "@/components/ui/mode-toggle-tooltip";
@@ -12,6 +13,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useGitHubConnection } from "@/hooks/useGitHubConnection";
 import { isElectron } from "@/lib/electron";
 import { api } from "@cmux/convex/api";
 import type { ProviderStatus, ProviderStatusResponse } from "@cmux/shared";
@@ -54,6 +56,68 @@ type AgentSelectionInstance = {
   id: string;
 };
 
+function watchPopupClosed(win: Window | null, onClose: () => void): void {
+  if (!win) return;
+  const timer = window.setInterval(() => {
+    try {
+      if (win.closed) {
+        window.clearInterval(timer);
+        onClose();
+      }
+    } catch {
+      /* noop */
+    }
+  }, 600);
+}
+
+function openCenteredPopup(
+  url: string,
+  opts?: { name?: string; width?: number; height?: number },
+  onClose?: () => void,
+): Window | null {
+  if (isElectron) {
+    // In Electron, always open in the system browser and skip popup plumbing
+    window.open(url, "_blank", "noopener,noreferrer");
+    return null;
+  }
+  const name = opts?.name ?? "cmux-popup";
+  const width = Math.floor(opts?.width ?? 980);
+  const height = Math.floor(opts?.height ?? 780);
+  const dualScreenLeft = window.screenLeft ?? window.screenX ?? 0;
+  const dualScreenTop = window.screenTop ?? window.screenY ?? 0;
+  const outerWidth = window.outerWidth || window.innerWidth || width;
+  const outerHeight = window.outerHeight || window.innerHeight || height;
+  const left = Math.max(0, dualScreenLeft + (outerWidth - width) / 2);
+  const top = Math.max(0, dualScreenTop + (outerHeight - height) / 2);
+  const features = [
+    `width=${width}`,
+    `height=${height}`,
+    `left=${Math.floor(left)}`,
+    `top=${Math.floor(top)}`,
+    "resizable=yes",
+    "scrollbars=yes",
+    "toolbar=no",
+    "location=no",
+    "status=no",
+    "menubar=no",
+  ].join(",");
+
+  const win = window.open("about:blank", name, features);
+  if (win) {
+    try {
+      win.location.href = url;
+    } catch {
+      window.open(url, "_blank");
+    }
+    win.focus?.();
+    if (onClose) watchPopupClosed(win, onClose);
+    return win;
+  } else {
+    window.open(url, "_blank");
+    return null;
+  }
+}
+
 export const DashboardInputControls = memo(function DashboardInputControls({
   projectOptions,
   selectedProject,
@@ -79,6 +143,10 @@ export const DashboardInputControls = memo(function DashboardInputControls({
   const agentSelectRef = useRef<SearchableSelectHandle | null>(null);
   const mintState = useMutation(api.github_app.mintInstallState);
   const addManualRepo = useAction(api.github_http.addManualRepo);
+
+  // GitHub OAuth connection state (for users who signed up with email/password)
+  const { isConnected: isGitHubConnected, refresh: refreshGitHubConnection } = useGitHubConnection();
+  const [showGitHubConnectionDialog, setShowGitHubConnectionDialog] = useState(false);
   const providerStatusMap = useMemo(() => {
     const map = new Map<string, ProviderStatus>();
     providerStatus?.providers?.forEach((provider) => {
@@ -389,6 +457,56 @@ export const DashboardInputControls = memo(function DashboardInputControls({
     setCustomRepoError(null);
   }, []);
 
+  // Function to start the GitHub App installation flow
+  const startGitHubAppInstall = useCallback(async () => {
+    try {
+      const slug = env.NEXT_PUBLIC_GITHUB_APP_SLUG;
+      if (!slug) {
+        alert("GitHub App not configured. Please contact support.");
+        return;
+      }
+      const baseUrl = `https://github.com/apps/${slug}/installations/new`;
+      // For web users, pass returnUrl to connect-complete page which handles popup close
+      // Include popup=true query param to signal this is a web popup flow
+      const returnUrl = !isElectron
+        ? new URL(`/${teamSlugOrId}/connect-complete?popup=true`, window.location.origin).toString()
+        : undefined;
+      const { state } = await mintState({ teamSlugOrId, returnUrl });
+      const sep = baseUrl.includes("?") ? "&" : "?";
+      const url = `${baseUrl}${sep}state=${encodeURIComponent(state)}`;
+      const win = openCenteredPopup(
+        url,
+        { name: "github-install" },
+        () => {
+          router.options.context?.queryClient?.invalidateQueries();
+        },
+      );
+      win?.focus?.();
+    } catch (err) {
+      console.error("Failed to start GitHub install:", err);
+      alert("Failed to start installation. Please try again.");
+    }
+  }, [mintState, router.options.context?.queryClient, teamSlugOrId]);
+
+  // Handler for the "Add repos from GitHub" button
+  const handleAddReposFromGitHub = useCallback(async () => {
+    // If user doesn't have GitHub OAuth connected, show the connection dialog
+    if (!isGitHubConnected) {
+      setShowGitHubConnectionDialog(true);
+      return;
+    }
+    // Otherwise, proceed with GitHub App installation
+    await startGitHubAppInstall();
+  }, [isGitHubConnected, startGitHubAppInstall]);
+
+  // Called when GitHub OAuth connection is completed
+  const handleGitHubConnectionComplete = useCallback(async () => {
+    // Refresh the connection state
+    await refreshGitHubConnection();
+    // Proceed with GitHub App installation
+    await startGitHubAppInstall();
+  }, [refreshGitHubConnection, startGitHubAppInstall]);
+
   const agentSelectionFooter = selectedAgents.length ? (
     <div className="bg-neutral-50 dark:bg-neutral-900/70">
       <div className="relative">
@@ -460,83 +578,27 @@ export const DashboardInputControls = memo(function DashboardInputControls({
     </div>
   );
 
-  function openCenteredPopup(
-    url: string,
-    opts?: { name?: string; width?: number; height?: number },
-    onClose?: () => void,
-  ): Window | null {
-    if (isElectron) {
-      // In Electron, always open in the system browser and skip popup plumbing
-      window.open(url, "_blank", "noopener,noreferrer");
-      return null;
-    }
-    const name = opts?.name ?? "cmux-popup";
-    const width = Math.floor(opts?.width ?? 980);
-    const height = Math.floor(opts?.height ?? 780);
-    const dualScreenLeft = window.screenLeft ?? window.screenX ?? 0;
-    const dualScreenTop = window.screenTop ?? window.screenY ?? 0;
-    const outerWidth = window.outerWidth || window.innerWidth || width;
-    const outerHeight = window.outerHeight || window.innerHeight || height;
-    const left = Math.max(0, dualScreenLeft + (outerWidth - width) / 2);
-    const top = Math.max(0, dualScreenTop + (outerHeight - height) / 2);
-    const features = [
-      `width=${width}`,
-      `height=${height}`,
-      `left=${Math.floor(left)}`,
-      `top=${Math.floor(top)}`,
-      "resizable=yes",
-      "scrollbars=yes",
-      "toolbar=no",
-      "location=no",
-      "status=no",
-      "menubar=no",
-    ].join(",");
-
-    const win = window.open("about:blank", name, features);
-    if (win) {
-      try {
-        win.location.href = url;
-      } catch {
-        window.open(url, "_blank");
-      }
-      win.focus?.();
-      if (onClose) watchPopupClosed(win, onClose);
-      return win;
-    } else {
-      window.open(url, "_blank");
-      return null;
-    }
-  }
-
-  function watchPopupClosed(win: Window | null, onClose: () => void): void {
-    if (!win) return;
-    const timer = window.setInterval(() => {
-      try {
-        if (win.closed) {
-          window.clearInterval(timer);
-          onClose();
-        }
-      } catch {
-        /* noop */
-      }
-    }, 600);
-  }
-
   return (
-    <div className="flex items-end gap-1 grow">
-      <div className="flex items-end gap-1">
-        <SearchableSelect
-          options={projectOptions}
-          value={selectedProject}
-          onChange={onProjectChange}
-          onSearchPaste={onProjectSearchPaste}
-          placeholder="Select project"
-          singleSelect={true}
-          className="rounded-2xl"
-          loading={isLoadingProjects}
-          maxTagCount={1}
-          showSearch
-          footer={
+    <>
+      <GitHubConnectionDialog
+        open={showGitHubConnectionDialog}
+        onOpenChange={setShowGitHubConnectionDialog}
+        onConnected={handleGitHubConnectionComplete}
+      />
+      <div className="flex items-end gap-1 grow">
+        <div className="flex items-end gap-1">
+          <SearchableSelect
+            options={projectOptions}
+            value={selectedProject}
+            onChange={onProjectChange}
+            onSearchPaste={onProjectSearchPaste}
+            placeholder="Select project"
+            singleSelect={true}
+            className="rounded-2xl"
+            loading={isLoadingProjects}
+            maxTagCount={1}
+            showSearch
+            footer={
             <div className="p-1">
               <Link
                 to="/$teamSlugOrId/environments/new"
@@ -556,37 +618,9 @@ export const DashboardInputControls = memo(function DashboardInputControls({
               </Link>
               <button
                 type="button"
-                onClick={async (e) => {
+                onClick={(e) => {
                   e.preventDefault();
-                  try {
-                    const slug = env.NEXT_PUBLIC_GITHUB_APP_SLUG;
-                    if (!slug) {
-                      alert("GitHub App not configured. Please contact support.");
-                      return;
-                    }
-                    const baseUrl = `https://github.com/apps/${slug}/installations/new`;
-                    // For web users, pass returnUrl to connect-complete page which handles popup close
-                    // Include popup=true query param to signal this is a web popup flow
-                    const returnUrl = !isElectron
-                      ? new URL(`/${teamSlugOrId}/connect-complete?popup=true`, window.location.origin).toString()
-                      : undefined;
-                    const { state } = await mintState({ teamSlugOrId, returnUrl });
-                    const sep = baseUrl.includes("?") ? "&" : "?";
-                    const url = `${baseUrl}${sep}state=${encodeURIComponent(
-                      state,
-                    )}`;
-                    const win = openCenteredPopup(
-                      url,
-                      { name: "github-install" },
-                      () => {
-                        router.options.context?.queryClient?.invalidateQueries();
-                      },
-                    );
-                    win?.focus?.();
-                  } catch (err) {
-                    console.error("Failed to start GitHub install:", err);
-                    alert("Failed to start installation. Please try again.");
-                  }
+                  void handleAddReposFromGitHub();
                 }}
                 className="w-full px-2 h-8 flex items-center gap-2 text-[13.5px] text-neutral-800 dark:text-neutral-200 rounded-md hover:bg-neutral-50 dark:hover:bg-neutral-900"
               >
@@ -757,6 +791,7 @@ export const DashboardInputControls = memo(function DashboardInputControls({
           <Mic className="w-4 h-4" />
         </button>
       </div>
-    </div>
+      </div>
+    </>
   );
 });
