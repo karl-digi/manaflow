@@ -483,7 +483,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                         type="button"
                         onClick={handleZoomOut}
                         disabled={!canZoomOut}
-                        className="rounded-full p-1 transition disabled:opacity-40 hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70 dark:hover:bg-neutral-800/80"
+                        className="rounded-full p-1 transition disabled:opacity-40 hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400/70 dark:focus-visible:ring-neutral-500/70 dark:hover:bg-neutral-800/80"
                         aria-label="Zoom out"
                       >
                         <ZoomOut className="h-3.5 w-3.5" />
@@ -495,7 +495,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                         type="button"
                         onClick={handleZoomIn}
                         disabled={!canZoomIn}
-                        className="rounded-full p-1 transition disabled:opacity-40 hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70 dark:hover:bg-neutral-800/80"
+                        className="rounded-full p-1 transition disabled:opacity-40 hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400/70 dark:focus-visible:ring-neutral-500/70 dark:hover:bg-neutral-800/80"
                         aria-label="Zoom in"
                       >
                         <ZoomIn className="h-3.5 w-3.5" />
@@ -504,7 +504,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                         type="button"
                         onClick={() => resetZoomState()}
                         disabled={!canResetZoom}
-                        className="rounded-full p-1 transition disabled:opacity-40 hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70 dark:hover:bg-neutral-800/80"
+                        className="rounded-full p-1 transition disabled:opacity-40 hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400/70 dark:focus-visible:ring-neutral-500/70 dark:hover:bg-neutral-800/80"
                         aria-label="Reset zoom"
                       >
                         <RotateCcw className="h-3.5 w-3.5" />
@@ -514,7 +514,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                       <button
                         type="button"
                         onClick={closeSlideshow}
-                        className="rounded-full p-1.5 text-neutral-600 transition hover:bg-neutral-100 hover:text-neutral-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70 dark:text-neutral-300 dark:hover:bg-neutral-800/80 dark:hover:text-neutral-100"
+                        className="rounded-full p-1.5 text-neutral-600 transition hover:bg-neutral-100 hover:text-neutral-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400/70 dark:focus-visible:ring-neutral-500/70 dark:text-neutral-300 dark:hover:bg-neutral-800/80 dark:hover:text-neutral-100"
                         aria-label="Close slideshow"
                       >
                         <X className="h-4 w-4" />
@@ -527,7 +527,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                     <button
                       type="button"
                       onClick={goPrev}
-                      className="rounded-full border border-neutral-200 bg-white p-2 text-neutral-600 transition hover:text-neutral-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70 dark:border-neutral-700/80 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100"
+                      className="rounded-full border border-neutral-200 bg-white p-2 text-neutral-600 transition hover:text-neutral-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400/70 dark:focus-visible:ring-neutral-500/70 dark:border-neutral-700/80 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100"
                       aria-label="Previous screenshot"
                     >
                       <ChevronLeft className="h-5 w-5" />
@@ -568,7 +568,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                     <button
                       type="button"
                       onClick={goNext}
-                      className="rounded-full border border-neutral-200 bg-white p-2 text-neutral-600 transition hover:text-neutral-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70 dark:border-neutral-700/80 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100"
+                      className="rounded-full border border-neutral-200 bg-white p-2 text-neutral-600 transition hover:text-neutral-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400/70 dark:focus-visible:ring-neutral-500/70 dark:border-neutral-700/80 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100"
                       aria-label="Next screenshot"
                     >
                       <ChevronRight className="h-5 w-5" />
@@ -594,9 +594,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                             type="button"
                             onClick={() => setActiveImageKey(entry.key)}
                             className={cn(
-                              "group relative flex h-24 w-40 flex-shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-50 p-1 transition hover:border-neutral-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70 dark:border-neutral-700 dark:bg-neutral-900/70 dark:hover:border-neutral-500",
-                              isActiveThumb &&
-                                "border-emerald-400/70 shadow-[0_0_0_1px_rgba(16,185,129,0.25)] dark:border-emerald-400/60",
+                              "group relative flex h-24 w-40 flex-shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-50 p-1 transition hover:border-neutral-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400/70 dark:focus-visible:ring-neutral-500/70 dark:border-neutral-700 dark:bg-neutral-900/70 dark:hover:border-neutral-500",
                             )}
                             aria-label={`View ${displayName}`}
                             aria-current={isActiveThumb ? "true" : undefined}
@@ -649,9 +647,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
             <article
               key={set._id}
               className={cn(
-                "rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950/70 p-3 transition-shadow",
-                isHighlighted &&
-                "border-emerald-400/70 dark:border-emerald-400/60 shadow-[0_0_0_1px_rgba(16,185,129,0.25)]"
+                "rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950/70 p-3 transition-shadow"
               )}
             >
               <div className="flex flex-wrap items-center gap-2">
@@ -708,7 +704,6 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                     }
                     const flatIndex = globalIndexByKey.get(stableKey) ?? null;
                     const humanIndex = flatIndex !== null ? flatIndex + 1 : null;
-                    const isActive = activeImageKey === stableKey;
 
                     return (
                       <button
@@ -716,9 +711,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                         type="button"
                         onClick={() => setActiveImageKey(stableKey)}
                         className={cn(
-                          "group relative flex w-[220px] flex-col overflow-hidden rounded-lg border border-neutral-200 bg-neutral-50 text-left transition-colors hover:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-900/70 dark:hover:border-neutral-500",
-                          isActive &&
-                          "border-emerald-400/70 shadow-[0_0_0_1px_rgba(16,185,129,0.25)] dark:border-emerald-400/60",
+                          "group relative flex w-[220px] flex-col overflow-hidden rounded-lg border border-neutral-200 bg-neutral-50 text-left transition-colors hover:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-900/70 dark:hover:border-neutral-500"
                         )}
                         aria-label={`Open ${displayName} in slideshow`}
                       >
