@@ -22,7 +22,7 @@ export default async function ConnectGitHubPage({
 }: ConnectGitHubPageProps) {
   const user = await stackServerApp.getUser({ or: "redirect" });
   const searchParams = await searchParamsPromise;
-  const teamSlugOrId = getSingleValue(searchParams?.team ?? undefined);
+  const teamSlugOrId = getSingleValue(searchParams?.team);
 
   // Check if GitHub is already connected
   const githubAccount = await user.getConnectedAccount("github");

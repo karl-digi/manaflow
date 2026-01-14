@@ -11,13 +11,17 @@
  * then check for it after returning and continue the flow.
  */
 
+import { z } from "zod";
+
 const GITHUB_APP_INSTALL_INTENT_KEY = "cmux_github_app_install_intent";
 
-export interface GitHubAppInstallIntent {
-  action: "install-github-app";
-  teamSlugOrId: string;
-  timestamp: number;
-}
+const GitHubAppInstallIntentSchema = z.object({
+  action: z.literal("install-github-app"),
+  teamSlugOrId: z.string(),
+  timestamp: z.number(),
+});
+
+export type GitHubAppInstallIntent = z.infer<typeof GitHubAppInstallIntentSchema>;
 
 /**
  * Store the intent to install GitHub App after OAuth completes.
@@ -68,7 +72,13 @@ export function getGitHubAppInstallIntent(): GitHubAppInstallIntent | null {
     const raw = sessionStorage.getItem(GITHUB_APP_INSTALL_INTENT_KEY);
     if (!raw) return null;
 
-    const intent = JSON.parse(raw);
+    const parsed = GitHubAppInstallIntentSchema.safeParse(JSON.parse(raw));
+    if (!parsed.success) {
+      sessionStorage.removeItem(GITHUB_APP_INSTALL_INTENT_KEY);
+      return null;
+    }
+
+    const intent = parsed.data;
 
     // Ignore stale intents (> 5 minutes old)
     const MAX_AGE_MS = 5 * 60 * 1000;

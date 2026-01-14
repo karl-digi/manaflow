@@ -20,6 +20,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { isElectron } from "@/lib/electron";
 import { WWW_ORIGIN } from "@/lib/wwwOrigin";
 import { toast } from "sonner";
+import { z } from "zod";
+
+const GitHubUserSchema = z.object({
+  login: z.string(),
+});
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/settings")({
   component: SettingsComponent,
@@ -106,8 +111,9 @@ function ConnectedAccountsSection({ teamSlugOrId }: { teamSlugOrId: string }) {
           headers: { Authorization: `Bearer ${token.accessToken}` },
         });
         if (!response.ok) return { connected: true, username: null };
-        const data = (await response.json()) as { login: string };
-        return { connected: true, username: data.login };
+        const parsed = GitHubUserSchema.safeParse(await response.json());
+        if (!parsed.success) return { connected: true, username: null };
+        return { connected: true, username: parsed.data.login };
       } catch (err) {
         console.error("Failed to fetch GitHub username:", err);
         return { connected: true, username: null };
@@ -128,14 +134,14 @@ function ConnectedAccountsSection({ teamSlugOrId }: { teamSlugOrId: string }) {
         // The www endpoint will handle OAuth and return via deep link
         const oauthUrl = `${WWW_ORIGIN}/handler/connect-github?team=${encodeURIComponent(teamSlugOrId)}`;
         window.open(oauthUrl, "_blank", "noopener,noreferrer");
-        setIsConnecting(false);
         return;
       }
 
-      // In web, use Stack Auth's redirect
+      // In web, use Stack Auth's redirect (page navigates away)
       await user.getConnectedAccount("github", { or: "redirect" });
     } catch (error) {
       console.error("Failed to connect GitHub:", error);
+    } finally {
       setIsConnecting(false);
     }
   }, [user, teamSlugOrId]);

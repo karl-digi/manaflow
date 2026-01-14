@@ -1941,24 +1941,30 @@ export function setupSocketHandlers(
             );
           }
 
-          // Pass clean URL as remoteUrl to avoid persisting OAuth token in .git/config
-          await repoManager.ensureRepository(
-            authenticatedRepoUrl,
-            projectPaths.originPath,
-            undefined, // branch
-            targetRepoUrl // clean URL for remote storage
-          );
+          let baseBranch: string;
+          try {
+            // Pass clean URL as remoteUrl to avoid persisting OAuth token in .git/config
+            await repoManager.ensureRepository(
+              authenticatedRepoUrl,
+              projectPaths.originPath,
+              undefined, // branch
+              targetRepoUrl // clean URL for remote storage
+            );
 
-          const baseBranch =
-            branchOverride ||
-            (await repoManager.getDefaultBranch(projectPaths.originPath));
+            baseBranch =
+              branchOverride ||
+              (await repoManager.getDefaultBranch(projectPaths.originPath));
 
-          await repoManager.ensureRepository(
-            authenticatedRepoUrl,
-            projectPaths.originPath,
-            baseBranch,
-            targetRepoUrl // clean URL for remote storage
-          );
+            await repoManager.ensureRepository(
+              authenticatedRepoUrl,
+              projectPaths.originPath,
+              baseBranch,
+              targetRepoUrl // clean URL for remote storage
+            );
+          } finally {
+            // Clear authenticated URL from memory after use
+            authenticatedRepoUrl = "";
+          }
 
           const worktreeInfo = {
             ...projectPaths,
