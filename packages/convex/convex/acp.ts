@@ -484,9 +484,9 @@ export const spawnSandbox = internalAction({
         callbackUrl: `${env.CONVEX_SITE_URL}/api/acp/callback`,
         sandboxJwt: callbackJwt,
         sandboxId,
-        // API proxy URL routes CLI requests through our proxy which validates
-        // the JWT and injects the real API key
-        apiProxyUrl: env.BASE_APP_URL,
+        // API proxy URL routes CLI requests through Convex HTTP proxy which
+        // validates the JWT and injects the real API key (with Vertex fallback)
+        apiProxyUrl: env.CONVEX_SITE_URL,
       });
     }
 

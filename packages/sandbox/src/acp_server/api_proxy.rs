@@ -626,19 +626,20 @@ impl ConversationApiProxies {
         initial_jwt: Option<String>,
         jwt_timeout: std::time::Duration,
     ) -> anyhow::Result<Self> {
-        // Anthropic proxy URL - note the /api/ prefix for Hono basePath
-        let anthropic_outer_url = format!("{}/api/proxy/anthropic", api_proxy_url);
+        // Anthropic proxy URL - uses Convex HTTP endpoint (has Vertex AI fallback)
+        let anthropic_outer_url = format!("{}/api/anthropic", api_proxy_url);
         let anthropic =
             ConversationApiProxy::start(anthropic_outer_url, initial_jwt.clone(), jwt_timeout)
                 .await?;
 
-        // OpenAI would go here when we add it
-        // let openai_url = format!("{}/proxy/openai", api_proxy_url);
-        // let openai = ConversationApiProxy::start(openai_outer_url, initial_jwt, jwt_timeout).await?;
+        // OpenAI proxy URL - uses Convex HTTP endpoint (with Cloudflare AI Gateway)
+        let openai_outer_url = format!("{}/api/openai", api_proxy_url);
+        let openai =
+            ConversationApiProxy::start(openai_outer_url, initial_jwt, jwt_timeout).await?;
 
         Ok(Self {
             anthropic: Some(anthropic),
-            openai: None,
+            openai: Some(openai),
         })
     }
 

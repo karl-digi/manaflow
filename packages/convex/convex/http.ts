@@ -28,6 +28,7 @@ import {
 } from "./hostScreenshotCollector_http";
 import { acpCallback } from "./acp_http";
 import { anthropicProxy } from "./anthropic_http";
+import { openaiProxy } from "./openai_http";
 
 const http = httpRouter();
 
@@ -161,6 +162,19 @@ http.route({
   path: "/api/anthropic/v1/messages",
   method: "POST",
   handler: anthropicProxy,
+});
+
+// OpenAI proxy routes for Codex CLI and other OpenAI-based agents
+http.route({
+  path: "/api/openai/v1/chat/completions",
+  method: "POST",
+  handler: openaiProxy,
+});
+
+http.route({
+  path: "/api/openai/v1/responses",
+  method: "POST",
+  handler: openaiProxy,
 });
 
 export default http;
