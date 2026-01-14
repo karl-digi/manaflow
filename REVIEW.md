@@ -32,4 +32,19 @@
 - Avoid unnecessary .clone()
 - No unsafe blocks without clear justification and comment
 
+## Swift
+
+- No force unwrapping (!) - use guard let, if let, or ??
+- No try! or as! - handle errors and type mismatches gracefully
+- Use [weak self] in escaping closures - prevent retain cycles
+- Delegates must be weak - strong delegate references cause memory leaks
+- All UI updates on main thread - use DispatchQueue.main or @MainActor
+- Don't block main thread - heavy work goes on background queues
+- Prefer let over var - immutability by default
+- Prefer structs over classes unless reference semantics needed
+- Remove observers in deinit - NotificationCenter, KVO, timers
+- No empty catch {} - at minimum log the error
+- Avoid Massive View Controllers - break into smaller components
+- Don't mix frame manipulation with Auto Layout
+
 Catch other errors too, use your best judgment.
