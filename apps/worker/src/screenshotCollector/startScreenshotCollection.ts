@@ -54,6 +54,29 @@ function sanitizeSegment(segment: string | null | undefined): string {
   return normalized.length > 0 ? normalized : "current";
 }
 
+function formatOptionalValue(value: string | null | undefined): string {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : "<unset>";
+}
+
+function normalizeConvexUrl(value?: string | null): string | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+
+  try {
+    const url = new URL(trimmed);
+    if (url.hostname.endsWith(".convex.cloud")) {
+      url.hostname = url.hostname.replace(/\.convex\.cloud$/, ".convex.site");
+    }
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return trimmed
+      .replace(/\/$/, "")
+      .replace(/\.convex\.cloud$/, ".convex.site");
+  }
+}
+
 async function detectHeadBranch(workspaceDir: string): Promise<string | null> {
   try {
     const output = await runCommandCapture(
@@ -141,10 +164,26 @@ export async function startScreenshotCollection(
     path: SCREENSHOT_COLLECTOR_LOG_PATH,
     openVSCodeUrl: SCREENSHOT_COLLECTOR_DIRECTORY_URL,
   });
+  const normalizedConvexUrl = normalizeConvexUrl(options.convexUrl ?? undefined);
+  const convexUrlLabel = formatOptionalValue(normalizedConvexUrl);
+  const originalConvexUrlLabel = formatOptionalValue(options.convexUrl ?? undefined);
+  if (convexUrlLabel !== originalConvexUrlLabel) {
+    await logToScreenshotCollector(
+      `Normalized Convex URL from ${originalConvexUrlLabel} to ${convexUrlLabel}`
+    );
+  }
+  await logToScreenshotCollector(
+    `Convex URL for screenshot collector: ${convexUrlLabel}`
+  );
+  if (convexUrlLabel !== "<unset>") {
+    await logToScreenshotCollector(
+      `Expected ANTHROPIC_BASE_URL: ${convexUrlLabel}/api/anthropic`
+    );
+  }
 
   // Load the screenshot collector module from Convex storage
   await logToScreenshotCollector("Loading screenshot collector module...");
-  const collectorModule = await loadScreenshotCollector(options.convexUrl ?? undefined);
+  const collectorModule = await loadScreenshotCollector(normalizedConvexUrl);
   await logToScreenshotCollector("Screenshot collector module loaded");
 
   const workspaceRoot = WORKSPACE_ROOT;
@@ -467,7 +506,7 @@ export async function startScreenshotCollection(
       pathToClaudeCodeExecutable: "/root/.bun/bin/claude",
       installCommand: options.installCommand ?? undefined,
       devCommand: options.devCommand ?? undefined,
-      convexSiteUrl: options.convexUrl ?? undefined,
+      convexSiteUrl: normalizedConvexUrl,
       ...claudeAuth,
     });
 
