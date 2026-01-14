@@ -2,19 +2,23 @@ import { api } from "@cmux/convex/api";
 import { type Doc, type Id } from "@cmux/convex/dataModel";
 import type { RunEnvironmentSummary } from "@/types/task";
 import { useUser } from "@stackframe/react";
-import { Link, useParams } from "@tanstack/react-router";
+import { Link, useParams, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "convex/react";
 import { formatDistanceToNow } from "date-fns";
 import {
   AlertCircle,
   CheckCircle2,
   Clock,
+  FileText,
   Play,
+  Shield,
   Sparkles,
   Trophy,
   XCircle,
 } from "lucide-react";
 import { useMemo } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import CmuxLogoMark from "./logo/cmux-logo-mark";
 import { TaskMessage } from "./task-message";
 
@@ -38,6 +42,18 @@ interface TimelineEvent {
   crownReason?: string;
   summary?: string;
   userId?: string;
+  // New fields for enhanced activity bar
+  screenshotUrl?: string | null;
+  screenshotCapturedAt?: number;
+}
+
+interface CodeReviewSummary {
+  state: "pending" | "running" | "completed" | "failed" | "error";
+  filesReviewed: number;
+  criticalCount: number;
+  warningCount: number;
+  infoCount: number;
+  totalFindings: number;
 }
 
 type TaskRunWithChildren = Doc<"taskRuns"> & {
@@ -53,14 +69,20 @@ interface TaskTimelineProps {
     winnerRunId?: Id<"taskRuns">;
     reason?: string;
   } | null;
+  // New props for enhanced activity bar
+  screenshotUrls?: Record<string, { url: string | null; capturedAt: number } | null>;
+  codeReviewSummary?: CodeReviewSummary | null;
 }
 
 export function TaskTimeline({
   task,
   taskRuns,
   crownEvaluation,
+  screenshotUrls,
+  codeReviewSummary,
 }: TaskTimelineProps) {
   const user = useUser();
+  const navigate = useNavigate();
   const params = useParams({ from: "/_layout/$teamSlugOrId/task/$taskId" });
   const taskComments = useQuery(api.taskComments.listByTask, {
     teamSlugOrId: params.teamSlugOrId,
@@ -117,6 +139,9 @@ export function TaskTimeline({
               ? "run_skipped"
               : "run_completed";
 
+        // Get screenshot URL for this run
+        const screenshotData = screenshotUrls?.[run._id];
+
         timelineEvents.push({
           id: `${run._id}-end`,
           type: endEventType,
@@ -128,6 +153,8 @@ export function TaskTimeline({
           summary: run.summary,
           isCrowned: run.isCrowned,
           crownReason: run.crownReason,
+          screenshotUrl: screenshotData?.url ?? null,
+          screenshotCapturedAt: screenshotData?.capturedAt,
         });
       }
     });
@@ -145,7 +172,7 @@ export function TaskTimeline({
 
     // Sort by timestamp
     return timelineEvents.sort((a, b) => a.timestamp - b.timestamp);
-  }, [task, taskRuns, crownEvaluation]);
+  }, [task, taskRuns, crownEvaluation, screenshotUrls]);
 
   if (!events.length && !task) {
     return (
@@ -279,15 +306,111 @@ export function TaskTimeline({
                 </span>
               </>
             )}
+            {/* Summary with markdown support */}
             {event.summary && (
-              <div className="mt-2 text-sm text-neutral-600 dark:text-neutral-400 bg-neutral-50 dark:bg-neutral-900 rounded-md p-3">
-                {event.summary}
+              <div className="mt-3 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-900/50 p-3">
+                <div className="flex items-start gap-2">
+                  <FileText className="size-3.5 mt-0.5 text-neutral-500 dark:text-neutral-400 shrink-0" />
+                  <div className="text-sm text-neutral-700 dark:text-neutral-300 prose prose-sm prose-neutral dark:prose-invert max-w-none prose-p:my-1 prose-headings:my-1.5">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {event.summary}
+                    </ReactMarkdown>
+                  </div>
+                </div>
               </div>
             )}
-            {event.crownReason && (
-              <div className="mt-2 text-[13px] text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 rounded-md p-3">
-                <Trophy className="inline size-3 mr-2" />
-                {event.crownReason}
+
+            {/* Crown reasoning as PR Defense */}
+            {event.crownReason && event.isCrowned && (
+              <div className="mt-3 rounded-lg border border-amber-200 dark:border-amber-800/50 bg-amber-50/50 dark:bg-amber-900/10 p-3">
+                <div className="flex items-center gap-2 mb-2">
+                  <Trophy className="size-4 text-amber-600 dark:text-amber-400" />
+                  <span className="text-sm font-medium text-amber-700 dark:text-amber-300">
+                    PR Defense
+                  </span>
+                </div>
+                <div className="text-sm text-amber-800 dark:text-amber-200/90">
+                  {event.crownReason}
+                </div>
+              </div>
+            )}
+
+            {/* Code review summary card - shown for crowned runs */}
+            {event.isCrowned && codeReviewSummary && (
+              <div className="mt-3 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-900/50 p-3">
+                <div className="flex items-center gap-2">
+                  <Shield className="size-4 text-blue-600 dark:text-blue-400" />
+                  <span className="text-sm font-medium text-neutral-700 dark:text-neutral-200">
+                    Code Review
+                  </span>
+                  <span className={`ml-auto text-xs px-1.5 py-0.5 rounded ${
+                    codeReviewSummary.state === "completed"
+                      ? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
+                      : codeReviewSummary.state === "running" || codeReviewSummary.state === "pending"
+                        ? "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400"
+                        : "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
+                  }`}>
+                    {codeReviewSummary.state}
+                  </span>
+                </div>
+                {codeReviewSummary.state === "completed" && (
+                  <div className="mt-2 flex gap-4 text-xs">
+                    {codeReviewSummary.criticalCount > 0 && (
+                      <span className="flex items-center gap-1 text-red-600 dark:text-red-400">
+                        <AlertCircle className="size-3" />
+                        {codeReviewSummary.criticalCount} critical
+                      </span>
+                    )}
+                    {codeReviewSummary.warningCount > 0 && (
+                      <span className="flex items-center gap-1 text-amber-600 dark:text-amber-400">
+                        <AlertCircle className="size-3" />
+                        {codeReviewSummary.warningCount} warnings
+                      </span>
+                    )}
+                    {codeReviewSummary.totalFindings === 0 && (
+                      <span className="text-green-600 dark:text-green-400">
+                        No issues found
+                      </span>
+                    )}
+                    <span className="text-neutral-500 dark:text-neutral-400 ml-auto">
+                      {codeReviewSummary.filesReviewed} files
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Screenshot thumbnail */}
+            {event.screenshotUrl && (
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (event.runId) {
+                      void navigate({
+                        to: "/$teamSlugOrId/task/$taskId/run/$runId/diff",
+                        params: {
+                          teamSlugOrId: params.teamSlugOrId,
+                          taskId: params.taskId,
+                          runId: event.runId,
+                        },
+                      });
+                    }
+                  }}
+                  className="block rounded-lg border border-neutral-200 dark:border-neutral-800 overflow-hidden hover:border-neutral-400 dark:hover:border-neutral-600 transition-colors"
+                >
+                  <img
+                    src={event.screenshotUrl}
+                    alt="Screenshot preview"
+                    className="w-full max-w-[200px] h-auto"
+                    loading="lazy"
+                  />
+                </button>
+                {event.screenshotCapturedAt && (
+                  <div className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                    Captured {formatDistanceToNow(event.screenshotCapturedAt, { addSuffix: true })}
+                  </div>
+                )}
               </div>
             )}
           </>

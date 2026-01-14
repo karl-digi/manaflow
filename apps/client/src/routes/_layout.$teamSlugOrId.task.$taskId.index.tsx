@@ -318,6 +318,62 @@ function TaskDetailPage() {
     taskId,
   });
 
+  // Get all run IDs for fetching screenshot URLs
+  const allRunIds = useMemo(() => {
+    if (!taskRuns) return [];
+    const ids: (typeof taskRuns)[number]["_id"][] = [];
+    const stack = [...taskRuns];
+    while (stack.length > 0) {
+      const run = stack.pop();
+      if (run) {
+        ids.push(run._id);
+        if (run.children) {
+          stack.push(...run.children);
+        }
+      }
+    }
+    return ids;
+  }, [taskRuns]);
+
+  // Fetch screenshot URLs for activity bar
+  const screenshotUrls = useQuery(
+    api.taskRuns.getLatestScreenshotUrls,
+    allRunIds.length > 0
+      ? {
+          teamSlugOrId,
+          runIds: allRunIds,
+        }
+      : "skip",
+  );
+
+  // Get the crowned run's PR info for code review summary
+  const crownedRun = useMemo(() => {
+    if (!taskRuns || !crownEvaluation?.winnerRunId) return null;
+    const stack = [...taskRuns];
+    while (stack.length > 0) {
+      const run = stack.pop();
+      if (run?._id === crownEvaluation.winnerRunId) {
+        return run;
+      }
+      if (run?.children) {
+        stack.push(...run.children);
+      }
+    }
+    return null;
+  }, [taskRuns, crownEvaluation]);
+
+  // Fetch code review summary for the PR
+  const codeReviewSummary = useQuery(
+    api.codeReview.getReviewSummaryForPr,
+    task?.projectFullName && crownedRun?.pullRequestNumber
+      ? {
+          teamSlugOrId,
+          repoFullName: task.projectFullName,
+          prNumber: crownedRun.pullRequestNumber,
+        }
+      : "skip",
+  );
+
   const [panelConfig, setPanelConfig] = useState<PanelConfig>(() =>
     loadPanelConfig()
   );
@@ -715,6 +771,8 @@ function TaskDetailPage() {
       task: task ?? null,
       taskRuns: taskRuns ?? null,
       crownEvaluation,
+      screenshotUrls: screenshotUrls ?? undefined,
+      codeReviewSummary: codeReviewSummary ?? undefined,
       workspaceUrl,
       workspacePersistKey,
       selectedRun: selectedRun ?? null,
@@ -749,6 +807,8 @@ function TaskDetailPage() {
       task,
       taskRuns,
       crownEvaluation,
+      screenshotUrls,
+      codeReviewSummary,
       workspaceUrl,
       workspacePersistKey,
       selectedRun,

@@ -133,6 +133,15 @@ const dispatchPanelDragEvent = (event: string) => {
 };
 
 
+interface CodeReviewSummary {
+  state: "pending" | "running" | "completed" | "failed" | "error";
+  filesReviewed: number;
+  criticalCount: number;
+  warningCount: number;
+  infoCount: number;
+  totalFindings: number;
+}
+
 interface PanelFactoryProps {
   type: PanelType | null;
   position: PanelPosition;
@@ -149,6 +158,9 @@ interface PanelFactoryProps {
     winnerRunId?: Id<"taskRuns">;
     reason?: string;
   } | null;
+  // Activity bar enhancement props
+  screenshotUrls?: Record<string, { url: string | null; capturedAt: number } | null>;
+  codeReviewSummary?: CodeReviewSummary | null;
   // Workspace panel props
   workspaceUrl?: string | null;
   workspacePersistKey?: string | null;
@@ -434,7 +446,7 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
 
   switch (type) {
     case "chat": {
-      const { task, taskRuns, crownEvaluation, TaskRunChatPane } = props;
+      const { task, taskRuns, crownEvaluation, screenshotUrls, codeReviewSummary, TaskRunChatPane } = props;
       if (!TaskRunChatPane) return null;
       return (
         <div
@@ -453,6 +465,8 @@ const RenderPanelComponent = (props: PanelFactoryProps): ReactNode => {
             task={task}
             taskRuns={taskRuns}
             crownEvaluation={crownEvaluation}
+            screenshotUrls={screenshotUrls}
+            codeReviewSummary={codeReviewSummary}
             hideHeader={false}
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
@@ -683,7 +697,9 @@ export const RenderPanel = React.memo(RenderPanelComponent, (prevProps, nextProp
   if (prevProps.type === "chat") {
     if (prevProps.task?._id !== nextProps.task?._id ||
       prevProps.taskRuns !== nextProps.taskRuns ||
-      prevProps.crownEvaluation !== nextProps.crownEvaluation) {
+      prevProps.crownEvaluation !== nextProps.crownEvaluation ||
+      prevProps.screenshotUrls !== nextProps.screenshotUrls ||
+      prevProps.codeReviewSummary !== nextProps.codeReviewSummary) {
       return false;
     }
   }
