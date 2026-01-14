@@ -310,6 +310,36 @@ INCOMPLETE CAPTURE: Missing important UI elements. Ensure full components are vi
 
   const anthropicBaseUrl = `${convexSiteUrl}/api/anthropic`;
 
+  // Log full environment for debugging
+  await logToScreenshotCollector(`[DEBUG] convexSiteUrl: ${convexSiteUrl}`);
+  await logToScreenshotCollector(`[DEBUG] anthropicBaseUrl: ${anthropicBaseUrl}`);
+  await logToScreenshotCollector(`[DEBUG] Full messages URL would be: ${anthropicBaseUrl}/v1/messages`);
+
+  // Pre-flight test: check if endpoint is reachable
+  try {
+    await logToScreenshotCollector(`[DEBUG] Testing endpoint connectivity...`);
+    const testResponse = await fetch(`${anthropicBaseUrl}/v1/messages`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": "sk_placeholder_cmux_anthropic_api_key",
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 10,
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    });
+    await logToScreenshotCollector(`[DEBUG] Pre-flight test response: ${testResponse.status} ${testResponse.statusText}`);
+    if (!testResponse.ok) {
+      const errorText = await testResponse.text();
+      await logToScreenshotCollector(`[DEBUG] Pre-flight test error body: ${errorText}`);
+    }
+  } catch (preflightError) {
+    await logToScreenshotCollector(`[DEBUG] Pre-flight test failed: ${preflightError instanceof Error ? preflightError.message : String(preflightError)}`);
+  }
+
   try {
     const hadOriginalApiKey = Object.prototype.hasOwnProperty.call(
       process.env,
@@ -324,6 +354,9 @@ INCOMPLETE CAPTURE: Missing important UI elements. Ensure full components are vi
       );
       await logToScreenshotCollector(
         `ANTHROPIC_BASE_URL: ${anthropicBaseUrl}`
+      );
+      await logToScreenshotCollector(
+        `[DEBUG] ANTHROPIC_CUSTOM_HEADERS will be: x-cmux-token:<jwt>`
       );
     } else if (providedApiKey) {
       process.env.ANTHROPIC_API_KEY = providedApiKey;
@@ -720,15 +753,11 @@ async function main() {
 }
 
 // Check if running as CLI (not imported as module)
-// Support various filename patterns: index.js, index.mjs, screenshot-collector.mjs, etc.
-const scriptPath = process.argv[1] ?? "";
-const isRunningAsCli =
-  import.meta.url === `file://${scriptPath}` ||
-  scriptPath.endsWith("/index.js") ||
-  scriptPath.endsWith("/index.mjs") ||
-  scriptPath.includes("screenshot-collector");
+// Only run as CLI if SCREENSHOT_OPTIONS env var is set - this is the definitive signal
+// that we're being run as a CLI, not imported as a module
+const shouldRunAsCli = !!process.env.SCREENSHOT_OPTIONS;
 
-if (isRunningAsCli) {
+if (shouldRunAsCli) {
   main().catch((error) => {
     console.error("CLI execution failed:", error);
     process.exit(1);
