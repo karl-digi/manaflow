@@ -61,11 +61,11 @@ Use `tools/convex-swift-gen/generate-swift.ts` to emit Swift `Decodable` structs
   - Maps validators to Swift types and Convex property wrappers.
   - Emits enums for string-literal unions; falls back to `ConvexValue` for unknown/any shapes.
   - Writes `schema-ir.json` and `schema-report.json` alongside the Swift output for debugging.
+- Scope: this generates Swift types for Convex tables in `schema.ts` (not query/mutation return types yet).
 - Default output: `tools/convex-swift-gen/out/ConvexTables.swift` (plus `schema-ir.json` and `schema-report.json` in the same folder).
-- Custom output example:
+- Custom output example (recommended for app code):
   `bun run tools/convex-swift-gen/generate-swift.ts --out ios-app/Sources/Generated/ConvexTables.swift`
-- Format output with (requires `swift-format` on PATH):
-  `bun run tools/convex-swift-gen/generate-swift.ts --format`
+- Formatting: `swift-format` runs by default (requires it on PATH). Use `--no-format` to skip.
 
 ## Sandboxes
 

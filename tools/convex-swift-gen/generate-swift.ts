@@ -121,7 +121,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..", "..");
 const defaultSchemaPath = join(repoRoot, "packages", "convex", "convex", "schema.ts");
 const defaultOutFile = join(here, "out", "ConvexTables.swift");
-const defaultFormat = false;
+const defaultFormat = true;
 
 try {
   const options = parseArgs(process.argv.slice(2));
