@@ -158,6 +158,7 @@ export default async function LandingPage() {
         aria-hidden
         className="pointer-events-none absolute inset-0 -z-10 overflow-hidden"
       >
+        <div className="absolute inset-0 bg-[conic-gradient(from_0deg_at_50%_50%,#ff0000,#ff8000,#ffff00,#80ff00,#00ff00,#00ff80,#00ffff,#0080ff,#0000ff,#8000ff,#ff00ff,#ff0080,#ff0000)] opacity-[0.15] blur-[100px] animate-[spin_20s_linear_infinite]" />
         <div className="absolute inset-x-[-20%] top-[-30%] h-[40rem] rounded-full bg-gradient-to-br from-blue-600/30 via-sky-500/20 to-purple-600/10 blur-3xl" />
         <div className="absolute inset-x-[30%] top-[20%] h-[30rem] rounded-full bg-gradient-to-br from-cyan-400/20 via-sky-500/20 to-transparent blur-[160px]" />
         <div className="absolute inset-x-[10%] bottom-[-20%] h-[32rem] rounded-full bg-gradient-to-tr from-indigo-500/20 via-blue-700/10 to-transparent blur-[200px]" />
