@@ -34,25 +34,9 @@ impl AcpProvider {
     /// Get the full command with arguments for this provider.
     pub fn command_args(&self) -> Vec<&'static str> {
         match self {
-            AcpProvider::Codex => vec![
-                "codex-acp",
-                "-c",
-                "approval_policy=\"never\"",
-                "-c",
-                "sandbox_mode=\"danger-full-access\"",
-                // Disable OpenAI auth requirement (top-level config)
-                "-c",
-                "requires_openai_auth=false",
-                // Use custom provider that routes through our proxy
-                "-c",
-                "model_provider_name=\"cmux-proxy\"",
-                "-c",
-                "model_providers.cmux-proxy.name=\"cmux-proxy\"",
-                "-c",
-                "model_providers.cmux-proxy.env_key=\"OPENAI_API_KEY\"",
-                "-c",
-                "model_providers.cmux-proxy.wire_api=\"responses\"",
-            ],
+            // Codex reads config from ~/.codex/config.toml (created in snapshot)
+            // which sets up cmux-proxy provider with requires_openai_auth=false
+            AcpProvider::Codex => vec!["codex-acp"],
             AcpProvider::Opencode => vec!["opencode", "acp"],
             AcpProvider::Claude => vec!["claude-code-acp"],
             AcpProvider::Gemini => vec!["gemini", "--experimental-acp"],

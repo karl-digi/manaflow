@@ -366,6 +366,45 @@ export function createProvisioningRegistry(): TaskRegistry<ProvisioningContext> 
   });
 
   // =========================================================================
+  // CLI Configuration (depends on CLI installations)
+  // =========================================================================
+
+  registry.register({
+    name: "setup-cli-configs",
+    description: "Create config files for CLI tools (Codex, etc.)",
+    deps: ["install-acp"],
+    func: async (ctx) => {
+      await ctx.run(
+        "setup-cli-configs",
+        `
+        set -e
+
+        # Create Codex CLI config
+        # This sets up a custom provider that doesn't require OpenAI auth
+        # and routes requests through our proxy
+        mkdir -p /root/.codex
+        cat > /root/.codex/config.toml << 'EOF'
+# Codex CLI configuration for cmux sandbox
+# Uses a custom provider to bypass OpenAI authentication
+
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+model_provider_name = "cmux-proxy"
+
+[model_providers.cmux-proxy]
+name = "cmux-proxy"
+env_key = "OPENAI_API_KEY"
+wire_api = "responses"
+EOF
+
+        echo "Created /root/.codex/config.toml"
+        cat /root/.codex/config.toml
+        `
+      );
+    },
+  });
+
+  // =========================================================================
   // Directory Setup (depends on key installations)
   // =========================================================================
 
@@ -441,7 +480,7 @@ SERVICE
   registry.register({
     name: "verify",
     description: "Verify all installations",
-    deps: ["setup-dirs", "setup-user", "install-bun", "install-rust", "install-uv", "setup-docker", "setup-acp-service"],
+    deps: ["setup-dirs", "setup-user", "install-bun", "install-rust", "install-uv", "setup-docker", "setup-acp-service", "setup-cli-configs"],
     func: async (ctx) => {
       await ctx.run(
         "verify",
