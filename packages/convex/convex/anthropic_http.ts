@@ -196,8 +196,22 @@ async function handleResponse(
 
 /**
  * Proxy count_tokens to Anthropic directly.
+ * Note: This endpoint requires ANTHROPIC_API_KEY to be configured.
+ * Bedrock doesn't have an equivalent count_tokens endpoint.
  */
 export const anthropicCountTokens = httpAction(async (_ctx, req) => {
+  const anthropicApiKey = env.ANTHROPIC_API_KEY;
+  if (!anthropicApiKey) {
+    // Bedrock doesn't have count_tokens API - return unavailable
+    return jsonResponse(
+      {
+        error: "Token counting is not available in Bedrock-only mode. Configure ANTHROPIC_API_KEY to enable this feature.",
+        type: "service_unavailable",
+      },
+      503
+    );
+  }
+
   try {
     const body = await req.json();
     const response = await fetch(
@@ -206,7 +220,7 @@ export const anthropicCountTokens = httpAction(async (_ctx, req) => {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-api-key": env.ANTHROPIC_API_KEY || "",
+          "x-api-key": anthropicApiKey,
           "anthropic-version": "2023-06-01",
         },
         body: JSON.stringify(body),
@@ -216,7 +230,10 @@ export const anthropicCountTokens = httpAction(async (_ctx, req) => {
     return jsonResponse(data, response.status);
   } catch (error) {
     console.error("[anthropic-proxy] count_tokens error:", error);
-    return jsonResponse({ input_tokens: 0 });
+    return jsonResponse(
+      { error: "Failed to count tokens", type: "internal_error" },
+      500
+    );
   }
 });
 
