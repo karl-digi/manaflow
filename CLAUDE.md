@@ -68,6 +68,8 @@ Use `tools/convex-swift-gen/generate-swift.ts` to emit Swift `Decodable` structs
 - Convenience script (same output, formatted by default):
   `bun run gen:swift-types`
 - Formatting: `swift-format` runs by default (requires it on PATH). Use `--no-format` to skip.
+- API feasibility report (args/return types from generated Convex API types):
+  `bun run gen:swift-api-report`
 
 ## Sandboxes
 
