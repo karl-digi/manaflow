@@ -236,10 +236,14 @@ const upload = multer({
   storage: multer.memoryStorage(),
 });
 
+// Ensure middleware uses the same Express types to avoid overload mismatch in app.post
+const uploadImageMiddleware: express.RequestHandler = (req, res, next) =>
+  upload.single("image")(req as any, res as any, next);
+
 const ALLOWED_UPLOAD_ROOT = "/root/prompt";
 
 // File upload endpoint
-app.post("/upload-image", upload.single("image"), async (req, res) => {
+app.post("/upload-image", uploadImageMiddleware, async (req, res) => {
   try {
     const token = req.header("x-cmux-token");
     const secret = process.env.CMUX_TASK_RUN_JWT_SECRET;
