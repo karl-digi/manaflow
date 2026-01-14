@@ -7,6 +7,8 @@ ConditionPathExists=/usr/local/sbin/cmux-configure-memory
 
 [Service]
 Type=oneshot
+Environment=CMUX_FORCE_SWAP=1
+Environment=CMUX_SWAPFILE_SIZE_GIB=6
 ExecStart=/usr/local/sbin/cmux-configure-memory
 RemainAfterExit=yes
 
