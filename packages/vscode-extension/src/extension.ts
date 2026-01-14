@@ -47,6 +47,79 @@ function log(message: string, ...args: unknown[]) {
   }
 }
 
+/**
+ * Waits for the git extension to discover at least one repository.
+ * The git extension activates asynchronously and discovers repositories in the background,
+ * so we need to wait for the repository list to be populated.
+ *
+ * @param api The git extension API
+ * @param maxWaitMs Maximum time to wait for repository discovery
+ * @param pollIntervalMs How often to check for repositories
+ * @returns The first discovered repository, or null if timeout
+ */
+async function waitForRepository(
+  api: { repositories: { rootUri: vscode.Uri }[]; onDidOpenRepository: (cb: (repo: unknown) => void) => { dispose: () => void } },
+  maxWaitMs: number = 10000,
+  pollIntervalMs: number = 200
+): Promise<{ rootUri: vscode.Uri } | null> {
+  // Check if repositories are already available
+  if (api.repositories.length > 0) {
+    log(`Repository already available: ${api.repositories[0].rootUri.fsPath}`);
+    return api.repositories[0];
+  }
+
+  log("Waiting for git repository discovery...");
+
+  return new Promise((resolve) => {
+    let resolved = false;
+    let pollTimer: NodeJS.Timeout | null = null;
+    let timeoutTimer: NodeJS.Timeout | null = null;
+    let disposable: { dispose: () => void } | null = null;
+
+    const cleanup = () => {
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+      if (timeoutTimer) {
+        clearTimeout(timeoutTimer);
+        timeoutTimer = null;
+      }
+      if (disposable) {
+        disposable.dispose();
+        disposable = null;
+      }
+    };
+
+    const finish = (repo: { rootUri: vscode.Uri } | null) => {
+      if (resolved) return;
+      resolved = true;
+      cleanup();
+      resolve(repo);
+    };
+
+    // Listen for repository open events (primary mechanism)
+    disposable = api.onDidOpenRepository((_repo) => {
+      log(`Repository discovered via event: ${api.repositories[0]?.rootUri.fsPath}`);
+      finish(api.repositories[0] ?? null);
+    });
+
+    // Also poll periodically in case the event was missed (belt and suspenders)
+    pollTimer = setInterval(() => {
+      if (api.repositories.length > 0) {
+        log(`Repository discovered via polling: ${api.repositories[0].rootUri.fsPath}`);
+        finish(api.repositories[0]);
+      }
+    }, pollIntervalMs);
+
+    // Set a timeout to avoid waiting forever
+    timeoutTimer = setTimeout(() => {
+      log(`Repository discovery timeout after ${maxWaitMs}ms`);
+      finish(null);
+    }, maxWaitMs);
+  });
+}
+
 async function resolveDefaultBaseRef(repositoryPath: string): Promise<string> {
   try {
     const out = execSync(
@@ -123,10 +196,12 @@ async function openMultiDiffEditor(
   const git = gitExtension.exports;
   const api = git.getAPI(1);
 
-  // Get the first repository (or you can select a specific one)
-  const repository = api.repositories[0];
+  // Wait for repository discovery - the git extension discovers repos asynchronously
+  // after activation, so we need to wait for this process to complete
+  const repository = await waitForRepository(api);
   if (!repository) {
-    vscode.window.showErrorMessage("No Git repository found");
+    log("No repository found after waiting - this may be a non-git workspace");
+    vscode.window.showErrorMessage("No Git repository found. Please ensure this is a git repository.");
     return;
   }
 
@@ -462,7 +537,8 @@ export function activate(context: vscode.ExtensionContext) {
         if (gitExtension) {
           const git = gitExtension.exports;
           const api = git.getAPI(1);
-          const repository = api.repositories[0];
+          // Use the same waiting mechanism for repository discovery
+          const repository = await waitForRepository(api, 5000); // shorter timeout for watcher setup
 
           if (repository) {
             const repoPath = repository.rootUri.fsPath;
@@ -493,6 +569,8 @@ export function activate(context: vscode.ExtensionContext) {
 
             // Clean up watcher on disposal
             context.subscriptions.push(fileWatcher);
+          } else {
+            log("Could not set up file watcher - no repository found");
           }
         }
       }
