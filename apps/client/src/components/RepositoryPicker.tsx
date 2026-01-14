@@ -584,23 +584,36 @@ function RepositoryConnectionsSection({
     }
   }, [handlePopupClosedRefetch, installNewUrl, mintState, openCenteredPopup, teamSlugOrId]);
 
-  // Check for pending GitHub App install intent on mount (after OAuth redirect)
+  // Check for pending GitHub App install intent on mount and when github-connect-complete is received
   useEffect(() => {
     if (!installNewUrl) {
       return;
     }
 
-    // Atomically get and clear - second call in Strict Mode returns null
-    const installIntent = consumeGitHubAppInstallIntent();
+    const checkAndConsumeInstallIntent = () => {
+      // Atomically get and clear - second call in Strict Mode returns null
+      const installIntent = consumeGitHubAppInstallIntent();
 
-    // Only proceed if there's an install intent for THIS team
-    if (!installIntent || installIntent.teamSlugOrId !== teamSlugOrId) {
-      return;
-    }
+      // Only proceed if there's an install intent for THIS team
+      if (!installIntent || installIntent.teamSlugOrId !== teamSlugOrId) {
+        return;
+      }
 
-    void openGitHubAppInstallPopup().catch((err) => {
-      console.error("Failed to continue GitHub install after OAuth:", err);
-    });
+      void openGitHubAppInstallPopup().catch((err) => {
+        console.error("Failed to continue GitHub install after OAuth:", err);
+      });
+    };
+
+    // Check on mount
+    checkAndConsumeInstallIntent();
+
+    // Also check when github-connect-complete event is received (Electron deep link)
+    const cmux = (window as Window & { cmux?: { on?: (event: string, cb: () => void) => () => void } }).cmux;
+    const off = cmux?.on?.("github-connect-complete", checkAndConsumeInstallIntent);
+
+    return () => {
+      off?.();
+    };
   }, [installNewUrl, openGitHubAppInstallPopup, teamSlugOrId]);
 
   const handleInstallApp = useCallback(async () => {
