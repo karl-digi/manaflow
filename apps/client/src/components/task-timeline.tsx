@@ -47,6 +47,13 @@ interface TimelineEvent {
   screenshotCapturedAt?: number;
 }
 
+interface CodeReviewFileSummary {
+  filePath: string;
+  summary: string | null;
+  criticalCount: number;
+  warningCount: number;
+}
+
 interface CodeReviewSummary {
   state: "pending" | "running" | "completed" | "failed" | "error";
   filesReviewed: number;
@@ -54,6 +61,7 @@ interface CodeReviewSummary {
   warningCount: number;
   infoCount: number;
   totalFindings: number;
+  topFiles?: CodeReviewFileSummary[];
 }
 
 type TaskRunWithChildren = Doc<"taskRuns"> & {
@@ -322,8 +330,9 @@ export function TaskTimeline({
 
             {/* Code review summary card - shown for crowned runs */}
             {event.isCrowned && codeReviewSummary && (
-              <div className="mt-3 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-900/50 p-3">
-                <div className="flex items-center gap-2">
+              <div className="mt-3 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-900/50 overflow-hidden">
+                {/* Header */}
+                <div className="flex items-center gap-2 px-3 py-2 border-b border-neutral-200 dark:border-neutral-800">
                   <Shield className="size-4 text-blue-600 dark:text-blue-400" />
                   <span className="text-sm font-medium text-neutral-700 dark:text-neutral-200">
                     Code Review
@@ -338,8 +347,10 @@ export function TaskTimeline({
                     {codeReviewSummary.state}
                   </span>
                 </div>
+
+                {/* Overall stats */}
                 {codeReviewSummary.state === "completed" && (
-                  <div className="mt-2 flex gap-4 text-xs">
+                  <div className="px-3 py-2 border-b border-neutral-200 dark:border-neutral-800 flex gap-4 text-xs bg-neutral-100/50 dark:bg-neutral-800/50">
                     {codeReviewSummary.criticalCount > 0 && (
                       <span className="flex items-center gap-1 text-red-600 dark:text-red-400">
                         <AlertCircle className="size-3" />
@@ -358,10 +369,49 @@ export function TaskTimeline({
                       </span>
                     )}
                     <span className="text-neutral-500 dark:text-neutral-400 ml-auto">
-                      {codeReviewSummary.filesReviewed} files
+                      {codeReviewSummary.filesReviewed} files reviewed
                     </span>
                   </div>
                 )}
+
+                {/* File-level findings */}
+                {codeReviewSummary.state === "completed" &&
+                  codeReviewSummary.topFiles &&
+                  codeReviewSummary.topFiles.length > 0 && (
+                    <div className="divide-y divide-neutral-200 dark:divide-neutral-800">
+                      {codeReviewSummary.topFiles.map((file) => (
+                        <div
+                          key={file.filePath}
+                          className="px-3 py-2 text-xs"
+                        >
+                          <div className="flex items-center gap-2">
+                            <code className="font-mono text-neutral-700 dark:text-neutral-300 truncate flex-1">
+                              {file.filePath}
+                            </code>
+                            {(file.criticalCount > 0 || file.warningCount > 0) && (
+                              <div className="flex gap-2 shrink-0">
+                                {file.criticalCount > 0 && (
+                                  <span className="text-red-600 dark:text-red-400">
+                                    {file.criticalCount} critical
+                                  </span>
+                                )}
+                                {file.warningCount > 0 && (
+                                  <span className="text-amber-600 dark:text-amber-400">
+                                    {file.warningCount} warning
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          {file.summary && (
+                            <p className="mt-1 text-neutral-600 dark:text-neutral-400 line-clamp-2">
+                              {file.summary}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
               </div>
             )}
 

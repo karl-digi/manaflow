@@ -1194,6 +1194,51 @@ export const getReviewSummaryForPr = authQuery({
       }
     }
 
+    // Extract file summaries for display
+    const fileSummaries: Array<{
+      filePath: string;
+      summary: string | null;
+      criticalCount: number;
+      warningCount: number;
+    }> = [];
+
+    for (const output of fileOutputs) {
+      const review = output.codexReviewOutput;
+      let summary: string | null = null;
+      let fileCritical = 0;
+      let fileWarning = 0;
+
+      if (review && typeof review === "object") {
+        // Try to extract summary text if available
+        const reviewObj = review as { summary?: string; lines?: unknown[] };
+        summary = reviewObj.summary ?? null;
+
+        // Count findings for this file
+        if (Array.isArray(reviewObj.lines)) {
+          for (const line of reviewObj.lines) {
+            const lineObj = line as { score?: number };
+            if (typeof lineObj.score === "number") {
+              if (lineObj.score >= 8) fileCritical++;
+              else if (lineObj.score >= 5) fileWarning++;
+            }
+          }
+        }
+      }
+
+      fileSummaries.push({
+        filePath: output.filePath,
+        summary,
+        criticalCount: fileCritical,
+        warningCount: fileWarning,
+      });
+    }
+
+    // Sort by most issues first
+    fileSummaries.sort(
+      (a, b) =>
+        b.criticalCount + b.warningCount - (a.criticalCount + a.warningCount),
+    );
+
     return {
       jobId: job._id,
       state: job.state,
@@ -1204,6 +1249,8 @@ export const getReviewSummaryForPr = authQuery({
       warningCount,
       infoCount,
       totalFindings: criticalCount + warningCount + infoCount,
+      // Include top files with issues for display
+      topFiles: fileSummaries.slice(0, 5),
     };
   },
 });

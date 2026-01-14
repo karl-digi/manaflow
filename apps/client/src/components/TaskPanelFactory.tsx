@@ -133,6 +133,13 @@ const dispatchPanelDragEvent = (event: string) => {
 };
 
 
+interface CodeReviewFileSummary {
+  filePath: string;
+  summary: string | null;
+  criticalCount: number;
+  warningCount: number;
+}
+
 interface CodeReviewSummary {
   state: "pending" | "running" | "completed" | "failed" | "error";
   filesReviewed: number;
@@ -140,6 +147,7 @@ interface CodeReviewSummary {
   warningCount: number;
   infoCount: number;
   totalFindings: number;
+  topFiles?: CodeReviewFileSummary[];
 }
 
 interface PanelFactoryProps {
