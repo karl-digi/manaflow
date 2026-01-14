@@ -75,3 +75,40 @@ export function hasPendingGitHubAction(): boolean {
     return false;
   }
 }
+
+/**
+ * Peek at the pending action without consuming it.
+ * Returns null if no action or if action is stale (> 5 minutes old).
+ * Use this to check if the action matches before consuming.
+ */
+export function getPendingGitHubAction(): PendingGitHubAction | null {
+  try {
+    const raw = sessionStorage.getItem(PENDING_ACTION_KEY);
+    if (!raw) return null;
+
+    const pending = JSON.parse(raw) as PendingGitHubAction;
+
+    // Ignore stale actions (> 5 minutes old)
+    const MAX_AGE_MS = 5 * 60 * 1000;
+    if (Date.now() - pending.timestamp > MAX_AGE_MS) {
+      // Clean up stale action
+      sessionStorage.removeItem(PENDING_ACTION_KEY);
+      return null;
+    }
+
+    return pending;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Clear the pending action (use after successfully handling it).
+ */
+export function clearPendingGitHubAction(): void {
+  try {
+    sessionStorage.removeItem(PENDING_ACTION_KEY);
+  } catch {
+    // Ignore errors
+  }
+}

@@ -5,9 +5,11 @@ import { api } from "@cmux/convex/api";
 import { DEFAULT_MORPH_SNAPSHOT_ID, type MorphSnapshotId } from "@cmux/shared";
 import { isElectron } from "@/lib/electron";
 import {
-  consumePendingGitHubAction,
+  clearPendingGitHubAction,
+  getPendingGitHubAction,
   setPendingGitHubAction,
 } from "@/lib/github-oauth-flow";
+import { WWW_ORIGIN } from "@/lib/wwwOrigin";
 import { useUser } from "@stackframe/react";
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
@@ -596,17 +598,29 @@ function RepositoryConnectionsSection({
       return;
     }
 
-    const pendingAction = consumePendingGitHubAction();
-    console.log("[GitHubOAuth] RepositoryPicker checking pending action:", { pendingAction, teamSlugOrId });
-    if (pendingAction && pendingAction.teamSlugOrId === teamSlugOrId) {
-      pendingActionHandledRef.current = true;
-      console.log("[GitHubOAuth] RepositoryPicker found matching pending action, opening GitHub App install popup");
-      // Continue with GitHub App installation after OAuth completed
-      void openGitHubAppInstallPopup().catch((err) => {
-        console.error("Failed to continue GitHub install after OAuth:", err);
-      });
+    // Don't act on pending action if we can't complete it (install URL not ready)
+    if (!installNewUrl) {
+      return;
     }
-  }, [openGitHubAppInstallPopup, teamSlugOrId]);
+
+    // Peek at pending action first - only consume if team matches
+    const pendingAction = getPendingGitHubAction();
+    console.log("[GitHubOAuth] RepositoryPicker checking pending action:", { pendingAction, teamSlugOrId });
+
+    // Only proceed if there's a pending action for THIS team
+    if (!pendingAction || pendingAction.teamSlugOrId !== teamSlugOrId) {
+      return;
+    }
+
+    // Team matches - clear the pending action and handle it
+    clearPendingGitHubAction();
+    pendingActionHandledRef.current = true;
+    console.log("[GitHubOAuth] RepositoryPicker found matching pending action, opening GitHub App install popup");
+    // Continue with GitHub App installation after OAuth completed
+    void openGitHubAppInstallPopup().catch((err) => {
+      console.error("Failed to continue GitHub install after OAuth:", err);
+    });
+  }, [installNewUrl, openGitHubAppInstallPopup, teamSlugOrId]);
 
   const handleInstallApp = useCallback(async () => {
     if (!installNewUrl) return;
@@ -619,7 +633,16 @@ function RepositoryConnectionsSection({
         if (!githubAccount) {
           // Store intent to continue with app installation after OAuth
           setPendingGitHubAction(teamSlugOrId);
-          // Redirect to GitHub OAuth to connect the account
+
+          if (isElectron) {
+            // In Electron, open OAuth flow in system browser
+            // The www endpoint will handle OAuth and return via deep link
+            const oauthUrl = `${WWW_ORIGIN}/handler/connect-github?team=${encodeURIComponent(teamSlugOrId)}`;
+            window.open(oauthUrl, "_blank", "noopener,noreferrer");
+            return;
+          }
+
+          // In web, use Stack Auth's redirect
           await user.getConnectedAccount("github", { or: "redirect" });
           return; // Will redirect, so don't continue
         }

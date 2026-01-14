@@ -1931,6 +1931,7 @@ export function setupSocketHandlers(
           await fs.mkdir(projectPaths.worktreesPath, { recursive: true });
 
           // Inject GitHub OAuth token for private repo access
+          // Use authenticated URL for git operations, but store clean URL as remote
           let authenticatedRepoUrl = targetRepoUrl;
           const githubToken = await getGitHubOAuthToken();
           if (githubToken && targetRepoUrl.startsWith("https://github.com/")) {
@@ -1940,9 +1941,12 @@ export function setupSocketHandlers(
             );
           }
 
+          // Pass clean URL as remoteUrl to avoid persisting OAuth token in .git/config
           await repoManager.ensureRepository(
             authenticatedRepoUrl,
-            projectPaths.originPath
+            projectPaths.originPath,
+            undefined, // branch
+            targetRepoUrl // clean URL for remote storage
           );
 
           const baseBranch =
@@ -1952,7 +1956,8 @@ export function setupSocketHandlers(
           await repoManager.ensureRepository(
             authenticatedRepoUrl,
             projectPaths.originPath,
-            baseBranch
+            baseBranch,
+            targetRepoUrl // clean URL for remote storage
           );
 
           const worktreeInfo = {

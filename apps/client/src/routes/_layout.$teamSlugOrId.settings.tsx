@@ -17,6 +17,8 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useConvex } from "convex/react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { isElectron } from "@/lib/electron";
+import { WWW_ORIGIN } from "@/lib/wwwOrigin";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_layout/$teamSlugOrId/settings")({
@@ -87,7 +89,7 @@ function GitHubIcon({ className }: { className?: string }) {
   );
 }
 
-function ConnectedAccountsSection() {
+function ConnectedAccountsSection({ teamSlugOrId }: { teamSlugOrId: string }) {
   const user = useUser({ or: "return-null" });
   const [githubConnected, setGithubConnected] = useState<boolean | null>(null);
   const [githubUsername, setGithubUsername] = useState<string | null>(null);
@@ -129,12 +131,22 @@ function ConnectedAccountsSection() {
     if (!user) return;
     setIsConnecting(true);
     try {
+      if (isElectron) {
+        // In Electron, open OAuth flow in system browser
+        // The www endpoint will handle OAuth and return via deep link
+        const oauthUrl = `${WWW_ORIGIN}/handler/connect-github?team=${encodeURIComponent(teamSlugOrId)}`;
+        window.open(oauthUrl, "_blank", "noopener,noreferrer");
+        setIsConnecting(false);
+        return;
+      }
+
+      // In web, use Stack Auth's redirect
       await user.getConnectedAccount("github", { or: "redirect" });
     } catch (error) {
       console.error("Failed to connect GitHub:", error);
       setIsConnecting(false);
     }
-  }, [user]);
+  }, [user, teamSlugOrId]);
 
   if (!user) return null;
 
@@ -861,7 +873,7 @@ function SettingsComponent() {
             </div>
 
             {/* Connected Accounts */}
-            <ConnectedAccountsSection />
+            <ConnectedAccountsSection teamSlugOrId={teamSlugOrId} />
 
             {/* Appearance */}
             <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">

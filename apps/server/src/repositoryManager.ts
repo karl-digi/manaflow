@@ -440,18 +440,30 @@ export class RepositoryManager {
     }
   }
 
+  /**
+   * Ensure a repository is cloned/fetched and ready to use.
+   * @param repoUrl - URL used for git operations (may include auth token)
+   * @param originPath - Local path for the bare/origin repository
+   * @param branch - Optional branch to fetch
+   * @param remoteUrl - Optional clean URL to store as the remote origin (without auth tokens).
+   *                    If not provided, repoUrl is used. Use this to avoid persisting tokens in .git/config.
+   */
   async ensureRepository(
     repoUrl: string,
     originPath: string,
-    branch?: string
+    branch?: string,
+    remoteUrl?: string
   ): Promise<void> {
     this.cleanupStaleOperations();
+
+    // Use remoteUrl for storage if provided, otherwise use repoUrl
+    const urlForRemote = remoteUrl ?? repoUrl;
 
     // Check if repo exists
     const repoExists = await this.checkIfRepoExists(originPath);
 
     if (!repoExists) {
-      await this.handleCloneOperation(repoUrl, originPath);
+      await this.handleCloneOperation(repoUrl, originPath, urlForRemote);
       // After cloning, set the remote HEAD reference
       try {
         await this.executeGitCommand(`git remote set-head origin -a`, {
@@ -463,8 +475,8 @@ export class RepositoryManager {
     } else {
       // Configure git pull strategy for existing repos
       await this.configureGitPullStrategy(originPath);
-      // Ensure a usable remote named 'origin' exists and points to repoUrl
-      await this.ensureRemoteOrigin(originPath, repoUrl);
+      // Ensure a usable remote named 'origin' exists and points to the clean URL
+      await this.ensureRemoteOrigin(originPath, urlForRemote);
     }
 
     // If no branch specified, detect the default branch
@@ -523,7 +535,8 @@ export class RepositoryManager {
 
   private async handleCloneOperation(
     repoUrl: string,
-    originPath: string
+    originPath: string,
+    remoteUrl: string
   ): Promise<void> {
     // Key the clone operation by both repo URL and destination path to avoid
     // reusing a clone into a different directory, which can cause ENOENT when
@@ -542,7 +555,7 @@ export class RepositoryManager {
       // After the in-flight operation completes, remove it so the next call can proceed freshly
       this.operations.delete(cloneKey);
     } else {
-      const clonePromise = this.cloneRepository(repoUrl, originPath);
+      const clonePromise = this.cloneRepository(repoUrl, originPath, remoteUrl);
       this.operations.set(cloneKey, {
         promise: clonePromise,
         timestamp: Date.now(),
@@ -571,7 +584,7 @@ export class RepositoryManager {
       Date.now() - existingFetch.timestamp < this.config.operationCacheTime
     ) {
       serverLogger.info(
-        `Reusing existing fetch operation for ${repoUrl} branch ${branch}`
+        `Reusing existing fetch operation for branch ${branch}`
       );
       await existingFetch.promise.catch(() => {
         /* swallow to allow retry below */
@@ -579,7 +592,8 @@ export class RepositoryManager {
       // Remove completed entry to allow a fresh fetch
       this.operations.delete(fetchKey);
     } else {
-      const fetchPromise = this.fetchAndCheckoutBranch(originPath, branch);
+      // Pass the authenticated URL for fetching (repoUrl may contain auth token)
+      const fetchPromise = this.fetchAndCheckoutBranch(originPath, branch, repoUrl);
       this.operations.set(fetchKey, {
         promise: fetchPromise,
         timestamp: Date.now(),
@@ -604,16 +618,31 @@ export class RepositoryManager {
 
   private async cloneRepository(
     repoUrl: string,
-    originPath: string
+    originPath: string,
+    remoteUrl: string
   ): Promise<void> {
     serverLogger.info(
-      `Cloning repository ${repoUrl} with depth ${this.config.fetchDepth}...`
+      `Cloning repository with depth ${this.config.fetchDepth}...`
     );
     try {
       await this.executeGitCommand(
         `git clone --depth ${this.config.fetchDepth} "${repoUrl}" "${originPath}"`
       );
-      serverLogger.info(`Successfully cloned ${repoUrl}`);
+      serverLogger.info(`Successfully cloned repository`);
+
+      // SECURITY: Reset the remote URL to the clean URL (without auth tokens)
+      // to avoid persisting credentials in .git/config
+      if (remoteUrl !== repoUrl) {
+        try {
+          await this.executeGitCommand(
+            `git remote set-url origin "${remoteUrl}"`,
+            { cwd: originPath }
+          );
+          serverLogger.info("Reset remote origin to clean URL");
+        } catch (error) {
+          serverLogger.warn("Failed to reset remote origin URL:", error);
+        }
+      }
 
       // Set the remote HEAD reference explicitly
       try {
@@ -630,7 +659,7 @@ export class RepositoryManager {
       // Set up git hooks
       await this.setupGitHooks(originPath);
     } catch (error) {
-      serverLogger.error(`Failed to clone ${repoUrl}:`, error);
+      serverLogger.error(`Failed to clone repository:`, error);
       throw error;
     }
   }
@@ -693,7 +722,8 @@ export class RepositoryManager {
 
   private async pullLatestChanges(
     repoPath: string,
-    branch: string
+    branch: string,
+    authenticatedUrl?: string
   ): Promise<void> {
     const pullFlags =
       this.config.pullStrategy === "rebase"
@@ -702,11 +732,14 @@ export class RepositoryManager {
           ? "--ff-only"
           : "";
 
+    // Use authenticated URL if provided to support private repos
+    const fetchSource = authenticatedUrl ? `"${authenticatedUrl}"` : "origin";
+
     try {
       // Clear any stale shallow.lock before invoking a pull (pull may fetch)
       await this.removeStaleGitLock(repoPath, "shallow.lock", 15_000);
       await this.executeGitCommand(
-        `git pull ${pullFlags} --depth ${this.config.fetchDepth} origin ${branch}`,
+        `git pull ${pullFlags} --depth ${this.config.fetchDepth} ${fetchSource} ${branch}`,
         { cwd: repoPath }
       );
       serverLogger.info(`Successfully pulled latest changes for ${branch}`);
@@ -722,10 +755,10 @@ export class RepositoryManager {
           `Pull failed (likely conflicts/divergence). Attempting hard reset to origin/${branch}`
         );
         try {
-          // Fetch the latest state
+          // Fetch the latest state using authenticated URL if provided
           await this.removeStaleGitLock(repoPath, "shallow.lock", 15_000);
           await this.executeGitCommand(
-            `git fetch --depth ${this.config.fetchDepth} origin ${branch}`,
+            `git fetch --depth ${this.config.fetchDepth} ${fetchSource} ${branch}`,
             { cwd: repoPath }
           );
           // Reset to the remote branch
@@ -748,14 +781,15 @@ export class RepositoryManager {
 
   private async fetchAndCheckoutBranch(
     originPath: string,
-    branch: string
+    branch: string,
+    authenticatedUrl?: string
   ): Promise<void> {
     serverLogger.info(`Fetching and checking out branch ${branch}...`);
     try {
       // Always fetch and checkout explicitly to reduce reliance on shell availability for rev-parse
-      await this.switchToBranch(originPath, branch);
+      await this.switchToBranch(originPath, branch, authenticatedUrl);
       // Then pull latest changes for safety (fast and idempotent)
-      await this.pullLatestChanges(originPath, branch);
+      await this.pullLatestChanges(originPath, branch, authenticatedUrl);
       serverLogger.info(`Successfully on branch ${branch}`);
     } catch (error) {
       serverLogger.error(`Failed to fetch/checkout branch ${branch}:`, error);
@@ -766,14 +800,17 @@ export class RepositoryManager {
 
   private async switchToBranch(
     repoPath: string,
-    branch: string
+    branch: string,
+    authenticatedUrl?: string
   ): Promise<void> {
     // Fetch the specific branch and explicitly update the remote-tracking ref
     // even if the clone was created with --single-branch.
     // Force-update the remote-tracking ref to tolerate non-fast-forward updates
     // (e.g., when the remote branch was force-pushed). Using a leading '+'
     // mirrors the default fetch refspec behavior: +refs/heads/*:refs/remotes/origin/*
-    const fetchCmd = `git fetch --depth ${this.config.fetchDepth} origin +refs/heads/${branch}:refs/remotes/origin/${branch}`;
+    // Use the authenticated URL if provided to support private repos (tokens not stored in .git/config)
+    const fetchSource = authenticatedUrl ? `"${authenticatedUrl}"` : "origin";
+    const fetchCmd = `git fetch --depth ${this.config.fetchDepth} ${fetchSource} +refs/heads/${branch}:refs/remotes/origin/${branch}`;
     // First, proactively clear stale shallow.lock if present (older than 15s)
     await this.removeStaleGitLock(repoPath, "shallow.lock", 15_000);
     try {
