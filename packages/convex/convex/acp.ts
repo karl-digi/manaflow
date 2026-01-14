@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { SignJWT } from "jose";
+import { getDefaultSnapshotId, type SandboxProvider } from "@cmux/shared/convex-safe";
 import { env } from "../_shared/convex-env";
 import { getDefaultSandboxProvider } from "../_shared/sandbox-providers";
 import { getTeamId } from "../_shared/team";
@@ -485,8 +486,8 @@ export const spawnSandbox = internalAction({
     // Get the sandbox provider (currently supports morph, freestyle, daytona)
     const provider = getDefaultSandboxProvider();
 
-    // Get snapshot ID from config
-    const snapshotId = env.ACP_SNAPSHOT_ID ?? "snap_default";
+    // Get snapshot ID from sandbox-snapshots.json based on provider
+    const snapshotId = getDefaultSnapshotId(provider.name as SandboxProvider) ?? "snap_default";
 
     // Create sandbox record first to get ID for JWT
     const sandboxId = await ctx.runMutation(internal.acpSandboxes.create, {

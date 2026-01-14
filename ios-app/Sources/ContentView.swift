@@ -66,6 +66,12 @@ struct SettingsView: View {
                 }
 
                 #if DEBUG
+                Section("External Accounts") {
+                    NavigationLink("OpenAI Codex") {
+                        CodexOAuthView()
+                    }
+                }
+
                 Section("Debug") {
                     Toggle("Show chat debug overlays", isOn: $showChatOverlays)
                     NavigationLink("Chat Keyboard Approaches") {

@@ -18,7 +18,6 @@ export const env = createEnv({
     CMUX_CONVERSATION_JWT_SECRET: z.string().min(1).optional(),
     // ACP (Agent Client Protocol) settings
     ACP_CALLBACK_SECRET: z.string().min(1).optional(),
-    ACP_SNAPSHOT_ID: z.string().min(1).optional(),
     CONVEX_SITE_URL: z.string().min(1).optional(),
     OPENAI_API_KEY: z.string().min(1).optional(),
     ANTHROPIC_API_KEY: z.string().min(1).optional(),

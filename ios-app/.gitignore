@@ -43,3 +43,6 @@ fastlane/test_output
 dev-docs/
 
 .sentryclirc
+
+# Local developer config (use LocalConfig.example.plist as template)
+Sources/Config/LocalConfig.plist
