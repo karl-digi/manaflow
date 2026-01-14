@@ -12,6 +12,17 @@ enum Environment {
         #endif
     }
 
+    // MARK: - Local Config Override
+
+    /// Reads from LocalConfig.plist (gitignored) for per-developer overrides
+    private static let localConfig: [String: Any]? = {
+        guard let path = Bundle.main.path(forResource: "LocalConfig", ofType: "plist"),
+              let dict = NSDictionary(contentsOfFile: path) as? [String: Any] else {
+            return nil
+        }
+        return dict
+    }()
+
     // MARK: - Stack Auth
 
     var stackAuthProjectId: String {
@@ -35,6 +46,11 @@ enum Environment {
     // MARK: - Convex
 
     var convexURL: String {
+        // Check for local override first (from LocalConfig.plist)
+        if let override = Self.localConfig?["CONVEX_URL"] as? String, !override.isEmpty {
+            return override
+        }
+
         switch self {
         case .development:
             return "https://polite-canary-804.convex.cloud"

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+    Local developer configuration overrides.
+    Copy this file to LocalConfig.plist and customize for your environment.
+    LocalConfig.plist is gitignored.
+-->
+<dict>
+    <!-- Override the Convex URL for local development / preview deployments -->
+    <key>CONVEX_URL</key>
+    <string></string>
+</dict>
+</plist>
