@@ -22,17 +22,26 @@ interface TestResult {
   status: "pass" | "fail" | "skip";
   details?: string;
   data?: unknown;
+  durationMs?: number;
 }
 
 const results: TestResult[] = [];
+let stepStartTime: number;
+
+function startStep(step: string) {
+  stepStartTime = performance.now();
+  console.log(`\n--- ${step} ---`);
+}
 
 function log(step: string, status: "pass" | "fail" | "skip", details?: string, data?: unknown) {
+  const durationMs = performance.now() - stepStartTime;
   const emoji = status === "pass" ? "✅" : status === "fail" ? "❌" : "⏭️";
-  console.log(`${emoji} ${step}${details ? `: ${details}` : ""}`);
+  const timing = `(${(durationMs / 1000).toFixed(2)}s)`;
+  console.log(`${emoji} ${step} ${timing}${details ? `: ${details}` : ""}`);
   if (data) {
     console.log("   Data:", JSON.stringify(data, null, 2).split("\n").join("\n   "));
   }
-  results.push({ step, status, details, data });
+  results.push({ step, status, details, data, durationMs });
 }
 
 function convexRun(functionName: string, args: Record<string, unknown>): unknown {
@@ -70,6 +79,7 @@ async function sleep(ms: number) {
 }
 
 async function runTests() {
+  const testStartTime = performance.now();
   console.log("\n========================================");
   console.log("ACP E2E Test Suite");
   console.log("========================================\n");
@@ -79,7 +89,7 @@ async function runTests() {
   let sandboxUrl: string | undefined;
 
   // Step 1: Spawn sandbox via internal action
-  console.log("\n--- Step 1: Spawn Sandbox ---");
+  startStep("Step 1: Spawn Sandbox");
   try {
     const result = convexRun("acp:spawnSandbox", { teamId: TEST_TEAM_ID }) as {
       sandboxId: Id<"acpSandboxes">;
@@ -92,7 +102,7 @@ async function runTests() {
   }
 
   // Step 2: Wait for sandbox to be ready
-  console.log("\n--- Step 2: Wait for Sandbox Ready ---");
+  startStep("Step 2: Wait for Sandbox Ready");
   try {
     const maxWait = 60000;
     const pollInterval = 2000;
@@ -128,7 +138,7 @@ async function runTests() {
   }
 
   // Step 3: Create conversation via internal mutation
-  console.log("\n--- Step 3: Create Conversation ---");
+  startStep("Step 3: Create Conversation");
   try {
     const sessionId = `e2e-test-${Date.now()}`;
     conversationId = convexRun("acp:createConversationInternal", {
@@ -147,7 +157,7 @@ async function runTests() {
   }
 
   // Step 4: Initialize conversation on sandbox
-  console.log("\n--- Step 4: Initialize on Sandbox ---");
+  startStep("Step 4: Initialize on Sandbox");
   try {
     const conversation = convexRun("acp:getConversationInternal", {
       conversationId,
@@ -185,7 +195,7 @@ async function runTests() {
   }
 
   // Step 5: Send a prompt
-  console.log("\n--- Step 5: Send Prompt ---");
+  startStep("Step 5: Send Prompt");
   try {
     const conversation = convexRun("acp:getConversationInternal", {
       conversationId,
@@ -227,7 +237,7 @@ async function runTests() {
   }
 
   // Step 6: Wait for response and check messages in Convex
-  console.log("\n--- Step 6: Verify Messages Persisted ---");
+  startStep("Step 6: Verify Messages Persisted");
   try {
     const maxWait = 60000;
     const pollInterval = 3000;
@@ -254,9 +264,9 @@ async function runTests() {
           }
         }
 
-        // Check for assistant message with content
-        const assistantMsg = messages.find((m) => m.role === "assistant");
-        if (assistantMsg && assistantMsg.content.length > 0) {
+        // Check for assistant message with content (find one with non-empty content)
+        const assistantMsg = messages.find((m) => m.role === "assistant" && m.content.length > 0);
+        if (assistantMsg) {
           foundAssistantMessage = true;
           log("Messages persisted", "pass", "Found assistant response", {
             messageCount: messages.length,
@@ -278,7 +288,7 @@ async function runTests() {
   }
 
   // Cleanup
-  console.log("\n--- Cleanup ---");
+  startStep("Step 7: Cleanup");
   try {
     if (sandboxId) {
       const sandbox = convexRun("acpSandboxes:getById", { sandboxId }) as {
@@ -294,11 +304,12 @@ async function runTests() {
     log("Cleanup", "skip", String(error));
   }
 
-  return results;
+  const totalDuration = performance.now() - testStartTime;
+  return { results, totalDuration };
 }
 
 async function main() {
-  const results = await runTests();
+  const { results, totalDuration } = await runTests();
 
   console.log("\n========================================");
   console.log("Test Summary");
@@ -308,9 +319,19 @@ async function main() {
   const failed = results.filter((r) => r.status === "fail").length;
   const skipped = results.filter((r) => r.status === "skip").length;
 
-  console.log(`✅ Passed: ${passed}`);
+  console.log(`\n✅ Passed: ${passed}`);
   console.log(`❌ Failed: ${failed}`);
   console.log(`⏭️ Skipped: ${skipped}`);
+
+  console.log("\n--- Timings ---");
+  for (const r of results) {
+    if (r.durationMs !== undefined) {
+      const seconds = (r.durationMs / 1000).toFixed(2);
+      const bar = "█".repeat(Math.min(Math.floor(r.durationMs / 1000), 30));
+      console.log(`${r.step.padEnd(25)} ${seconds.padStart(7)}s  ${bar}`);
+    }
+  }
+  console.log(`${"TOTAL".padEnd(25)} ${(totalDuration / 1000).toFixed(2).padStart(7)}s`);
 
   if (failed > 0) {
     console.log("\nFailed tests:");
