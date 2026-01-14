@@ -104,8 +104,9 @@ function EnvironmentsPage() {
       return;
     }
 
-    // Skip if already have instanceId or already triggered
-    if (activeInstanceId || provisioningTriggeredRef.current) {
+    // Skip if already have instanceId, already triggered, or mutation is in-flight
+    // Note: isPending check prevents duplicate calls when user navigates away and back quickly
+    if (activeInstanceId || provisioningTriggeredRef.current || setupInstanceMutation.isPending) {
       return;
     }
 
