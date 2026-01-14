@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -57,6 +58,7 @@ type StringLiteralValidator = {
 type CliOptions = {
   schemaPath: string;
   outFile: string;
+  format: boolean;
 };
 
 const swiftKeywords = new Set<string>([
@@ -119,11 +121,13 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..", "..");
 const defaultSchemaPath = join(repoRoot, "packages", "convex", "convex", "schema.ts");
 const defaultOutFile = join(here, "out", "ConvexTables.swift");
+const defaultFormat = false;
 
 try {
   const options = parseArgs(process.argv.slice(2));
   const schemaPath = options.schemaPath;
   const outFile = options.outFile;
+  const shouldFormat = options.format;
   const outDir = dirname(outFile);
   const irPath = join(outDir, "schema-ir.json");
   const reportPath = join(outDir, "schema-report.json");
@@ -154,6 +158,9 @@ try {
 
   const swiftOutput = generateSwift(schema);
   writeFileSync(outFile, swiftOutput, "utf8");
+  if (shouldFormat) {
+    runSwiftFormat(outFile);
+  }
 
   console.log(`Wrote ${irPath}, ${reportPath}, and ${outFile}`);
 } catch (error) {
@@ -164,12 +171,23 @@ try {
 function parseArgs(args: string[]): CliOptions {
   let schemaPath = defaultSchemaPath;
   let outFile = defaultOutFile;
+  let format = defaultFormat;
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--help" || arg === "-h") {
       printUsage();
       process.exit(0);
+    }
+
+    if (arg === "--format") {
+      format = true;
+      continue;
+    }
+
+    if (arg === "--no-format") {
+      format = false;
+      continue;
     }
 
     if (arg === "--schema" || arg === "--out") {
@@ -199,7 +217,7 @@ function parseArgs(args: string[]): CliOptions {
     throw new Error(`Unknown argument: ${arg}`);
   }
 
-  return { schemaPath, outFile };
+  return { schemaPath, outFile, format };
 }
 
 function resolvePath(value: string): string {
@@ -212,13 +230,29 @@ function resolvePath(value: string): string {
 function printUsage(): void {
   const lines = [
     "Usage:",
-    "  bun run tools/convex-swift-gen/generate-swift.ts [--schema=PATH] [--out=PATH]",
+    "  bun run tools/convex-swift-gen/generate-swift.ts [--schema=PATH] [--out=PATH] [--format]",
     "",
     "Options:",
     `  --schema=PATH  Defaults to ${defaultSchemaPath}`,
     `  --out=PATH     Defaults to ${defaultOutFile}`,
+    `  --format       Run swift-format after generating (default: ${defaultFormat})`,
+    "  --no-format    Disable formatting",
   ];
   console.log(lines.join("\n"));
+}
+
+function runSwiftFormat(outFile: string): void {
+  const result = spawnSync("swift-format", ["-i", outFile], {
+    encoding: "utf-8",
+    stdio: "inherit",
+  });
+
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    throw new Error("swift-format failed");
+  }
 }
 
 function findDefineSchemaObject(
