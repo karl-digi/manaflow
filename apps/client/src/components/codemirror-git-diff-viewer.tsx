@@ -77,6 +77,23 @@ export function GitDiffViewer({
     () => new Set(diffs.map((diff) => diff.filePath)),
   );
 
+  // Expand newly added diffs by default (handles async data loading)
+  useEffect(() => {
+    setExpandedFiles((prev) => {
+      const newPaths = diffs
+        .map((diff) => diff.filePath)
+        .filter((path) => !prev.has(path));
+      if (newPaths.length === 0) {
+        return prev;
+      }
+      const next = new Set(prev);
+      for (const path of newPaths) {
+        next.add(path);
+      }
+      return next;
+    });
+  }, [diffs]);
+
   // Group diffs by file
   const fileGroups: FileGroup[] = useMemo(
     () =>
