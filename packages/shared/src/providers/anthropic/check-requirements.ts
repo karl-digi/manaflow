@@ -26,6 +26,12 @@ export async function checkClaudeRequirements(
     return missing;
   }
 
+  // In cmux, Claude runs via the platform proxy even without user credentials.
+  // When checking provider status for a team, don't block availability.
+  if (context?.teamSlugOrId) {
+    return missing;
+  }
+
   try {
     // Check for .claude.json
     await access(join(homedir(), ".claude.json"));
