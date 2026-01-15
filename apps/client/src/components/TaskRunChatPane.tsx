@@ -4,23 +4,6 @@ import type { TaskRunWithChildren } from "@/types/task";
 import clsx from "clsx";
 import { MessageCircle, GripVertical, X, Maximize2, Minimize2 } from "lucide-react";
 
-interface CodeReviewFileSummary {
-  filePath: string;
-  summary: string | null;
-  criticalCount: number;
-  warningCount: number;
-}
-
-interface CodeReviewSummary {
-  state: "pending" | "running" | "completed" | "failed" | "error";
-  filesReviewed: number;
-  criticalCount: number;
-  warningCount: number;
-  infoCount: number;
-  totalFindings: number;
-  topFiles?: CodeReviewFileSummary[];
-}
-
 export interface TaskRunChatPaneProps {
   task: Doc<"tasks"> | null | undefined;
   taskRuns: TaskRunWithChildren[] | null | undefined;
@@ -29,9 +12,7 @@ export interface TaskRunChatPaneProps {
     winnerRunId?: Id<"taskRuns">;
     reason?: string;
   } | null;
-  // New props for enhanced activity bar
   screenshotUrls?: Record<string, { url: string | null; capturedAt: number } | null>;
-  codeReviewSummary?: CodeReviewSummary | null;
   hideHeader?: boolean;
   className?: string;
   onDragStart?: (e: React.DragEvent) => void;
@@ -47,7 +28,6 @@ export function TaskRunChatPane({
   taskRuns,
   crownEvaluation,
   screenshotUrls,
-  codeReviewSummary,
   hideHeader = false,
   className,
   onDragStart,
@@ -127,7 +107,6 @@ export function TaskRunChatPane({
             taskRuns={taskRuns}
             crownEvaluation={crownEvaluation ?? null}
             screenshotUrls={screenshotUrls}
-            codeReviewSummary={codeReviewSummary}
           />
         ) : (
           <div className="flex h-full items-center justify-center text-sm text-neutral-500 dark:text-neutral-400">

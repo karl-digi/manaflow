@@ -7,6 +7,7 @@ import { PersistentWebView } from "@/components/persistent-webview";
 import { WorkspaceLoadingIndicator } from "@/components/workspace-loading-indicator";
 import { FlexiblePanelLayout } from "@/components/FlexiblePanelLayout";
 import { TaskRunGitDiffPanel } from "@/components/TaskRunGitDiffPanel";
+import { ClaimsBoardPanel } from "@/components/ClaimsBoardPanel";
 import { RenderPanel } from "@/components/TaskPanelFactory";
 import { PanelConfigModal } from "@/components/PanelConfigModal";
 import {
@@ -53,6 +54,7 @@ import {
   TerminalSquare,
   GitCompare,
   MessageCircle,
+  Sparkles,
 } from "lucide-react";
 import z from "zod";
 import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
@@ -248,6 +250,8 @@ function EmptyPanelSlot({
         return <Globe2 className="size-4" />;
       case "gitDiff":
         return <GitCompare className="size-4" />;
+      case "claims":
+        return <Sparkles className="size-4" />;
     }
   };
 
@@ -342,34 +346,6 @@ function TaskDetailPage() {
       ? {
           teamSlugOrId,
           runIds: allRunIds,
-        }
-      : "skip",
-  );
-
-  // Get the crowned run's PR info for code review summary
-  const crownedRun = useMemo(() => {
-    if (!taskRuns || !crownEvaluation?.winnerRunId) return null;
-    const stack = [...taskRuns];
-    while (stack.length > 0) {
-      const run = stack.pop();
-      if (run?._id === crownEvaluation.winnerRunId) {
-        return run;
-      }
-      if (run?.children) {
-        stack.push(...run.children);
-      }
-    }
-    return null;
-  }, [taskRuns, crownEvaluation]);
-
-  // Fetch code review summary for the PR
-  const codeReviewSummary = useQuery(
-    api.codeReview.getReviewSummaryForPr,
-    task?.projectFullName && crownedRun?.pullRequestNumber
-      ? {
-          teamSlugOrId,
-          repoFullName: task.projectFullName,
-          prNumber: crownedRun.pullRequestNumber,
         }
       : "skip",
   );
@@ -772,7 +748,6 @@ function TaskDetailPage() {
       taskRuns: taskRuns ?? null,
       crownEvaluation,
       screenshotUrls: screenshotUrls ?? undefined,
-      codeReviewSummary: codeReviewSummary ?? undefined,
       workspaceUrl,
       workspacePersistKey,
       selectedRun: selectedRun ?? null,
@@ -797,6 +772,7 @@ function TaskDetailPage() {
       WorkspaceLoadingIndicator,
       TaskRunTerminalPane,
       TaskRunGitDiffPanel,
+      ClaimsBoardPanel,
       TASK_RUN_IFRAME_ALLOW,
       TASK_RUN_IFRAME_SANDBOX,
       onClose: handlePanelClose,
@@ -808,7 +784,6 @@ function TaskDetailPage() {
       taskRuns,
       crownEvaluation,
       screenshotUrls,
-      codeReviewSummary,
       workspaceUrl,
       workspacePersistKey,
       selectedRun,
