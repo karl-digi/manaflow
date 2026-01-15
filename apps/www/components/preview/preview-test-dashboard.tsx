@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   ChevronDown,
   Loader2,
@@ -180,7 +180,10 @@ function PreviewTestDashboardInner({
     enabled: Boolean(selectedTeam),
   });
 
-  const jobs = (jobsData?.jobs ?? []) as TestJob[];
+  const jobs = useMemo(
+    () => (jobsData?.jobs ?? []) as TestJob[],
+    [jobsData?.jobs]
+  );
 
   // Create test job mutation
   const createJobMutation = useMutation({
@@ -789,6 +792,7 @@ function PreviewTestDashboardInner({
                                       target="_blank"
                                       rel="noopener noreferrer"
                                     >
+                                      {/* eslint-disable-next-line @next/next/no-img-element -- dynamic external URL */}
                                       <img
                                         src={image.url}
                                         alt={

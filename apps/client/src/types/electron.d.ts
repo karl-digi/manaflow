@@ -86,7 +86,7 @@ interface CmuxWebContentsViewAPI {
   ) => Promise<{ ok: boolean; focused: boolean }>;
 }
 
-interface CmuxAPI {
+export interface CmuxAPI {
   getCurrentWebContentsId?: () => number | undefined;
   register: (meta: {
     auth?: string;
@@ -128,5 +128,3 @@ declare global {
     cmux: CmuxAPI;
   }
 }
-
-export {};

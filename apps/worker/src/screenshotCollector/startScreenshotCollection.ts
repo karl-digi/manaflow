@@ -43,8 +43,18 @@ export type ScreenshotCollectionResult =
       commitSha: string;
       hasUiChanges?: boolean;
     }
-  | { status: "skipped"; reason: string; commitSha?: string }
-  | { status: "failed"; error: string; commitSha?: string };
+  | {
+      status: "skipped";
+      reason: string;
+      commitSha?: string;
+      hasUiChanges?: boolean;
+    }
+  | {
+      status: "failed";
+      error: string;
+      commitSha?: string;
+      hasUiChanges?: boolean;
+    };
 
 function sanitizeSegment(segment: string | null | undefined): string {
   if (!segment) {
@@ -518,14 +528,31 @@ export async function startScreenshotCollection(
           const reason = "No UI changes detected in this PR";
           await logToScreenshotCollector(reason);
           log("INFO", reason, { headBranch, outputDir });
-          return { status: "skipped", reason, commitSha };
+          return { status: "skipped", reason, commitSha, hasUiChanges: false };
+        }
+        if (claudeResult.hasUiChanges === undefined) {
+          const reason = "No UI changes detected in this PR";
+          await logToScreenshotCollector(
+            `${reason} (collector returned no screenshots)`
+          );
+          log(
+            "WARN",
+            "Claude collector returned no screenshots without hasUiChanges; treating as no UI changes",
+            { headBranch, outputDir }
+          );
+          return { status: "skipped", reason, commitSha, hasUiChanges: false };
         }
         // Otherwise, Claude thought there were UI changes but returned no files - unexpected
         const error =
           "Claude collector reported success but returned no files";
         await logToScreenshotCollector(error);
         log("ERROR", error, { headBranch, outputDir });
-        return { status: "failed", error, commitSha };
+        return {
+          status: "failed",
+          error,
+          commitSha,
+          hasUiChanges: claudeResult.hasUiChanges,
+        };
       }
 
       const screenshotEntries: CapturedScreenshot[] =
