@@ -70,6 +70,8 @@ Use `tools/convex-swift-gen/generate-swift.ts` to emit Swift `Decodable` structs
 - Formatting: `swift-format` runs by default (requires it on PATH). Use `--no-format` to skip.
 - API feasibility report (args/return types from generated Convex API types):
   `bun run gen:swift-api-report`
+- API types PoC (currently tasks.get only, emits to `ios-app/Sources/Generated/ConvexApiTypes.swift`):
+  `bun run gen:swift-api-types`
 
 ## Sandboxes
 
