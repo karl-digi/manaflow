@@ -260,7 +260,6 @@ const StartSandboxBody = z
     taskRunId: z.string().optional(),
     taskRunJwt: z.string().optional(),
     isCloudWorkspace: z.boolean().optional(),
-    theme: z.enum(["dark", "light", "system"]).optional(),
     // Optional hydration parameters to clone a repo into the sandbox on start
     repoUrl: z.string().optional(),
     branch: z.string().optional(),
@@ -360,7 +359,6 @@ sandboxesRouter.openapi(
         hasSnapshotId: Boolean(body.snapshotId),
         repoUrl: body.repoUrl,
         branch: body.branch,
-        theme: body.theme ?? "(none)",
       });
     } catch {
       /* noop */
@@ -576,12 +574,7 @@ sandboxesRouter.openapi(
         envVarsToApply += `\nCMUX_TASK_RUN_JWT="${body.taskRunJwt}"`;
       }
 
-      // If a theme was provided at start time, prepend VSCODE_THEME so the IDE picks it up via envctl/envd
-      if (body.theme) {
-        envVarsToApply = `VSCODE_THEME="${body.theme}"\n${envVarsToApply}`;
-      }
-
-      // Apply all environment variables if any (including theme-only case)
+      // Apply all environment variables if any
       if (envVarsToApply.trim().length > 0) {
         try {
           const encodedEnv = encodeEnvContentForEnvctl(envVarsToApply);
@@ -594,7 +587,6 @@ sandboxesRouter.openapi(
                 hasWorkspaceVars: Boolean(workspaceConfig?.envVarsContent),
                 hasTaskRunId: Boolean(body.taskRunId),
                 hasTaskRunJwt: Boolean(body.taskRunJwt),
-                themeApplied: Boolean(body.theme),
               },
             );
           } else {
@@ -605,46 +597,6 @@ sandboxesRouter.openapi(
         } catch (error) {
           console.error(
             "[sandboxes.start] Failed to apply environment variables",
-            error,
-          );
-        }
-      }
-
-      // If a theme is provided, also write it to /etc/cmux/ide.env and run the configure script
-      // Defense-in-depth: explicit allowlist even though zod validates the enum
-      const VALID_THEMES = ["dark", "light", "system"] as const;
-      const safeTheme =
-        body.theme && VALID_THEMES.includes(body.theme) ? body.theme : null;
-      if (safeTheme) {
-        try {
-          const themeScript = [
-            "set -euo pipefail",
-            'tmp=$(mktemp)',
-            // Remove existing VSCODE_THEME line if present, then append the desired one
-            'if [ -f /etc/cmux/ide.env ]; then grep -v "^VSCODE_THEME=" /etc/cmux/ide.env > "$tmp"; else : > "$tmp"; fi',
-            `echo 'VSCODE_THEME="${safeTheme}"' >> "$tmp"`,
-            "install -m 0644 \"$tmp\" /etc/cmux/ide.env",
-            "rm -f \"$tmp\"",
-            // Run configure script to rewrite settings without restarting the IDE service
-            `if [ -x /usr/local/lib/cmux/configure-cmux-code ]; then VSCODE_THEME="${safeTheme}" /usr/local/lib/cmux/configure-cmux-code; ` +
-              `elif [ -x /usr/local/lib/cmux/configure-openvscode ]; then VSCODE_THEME="${safeTheme}" /usr/local/lib/cmux/configure-openvscode; ` +
-              `elif [ -x /usr/local/lib/cmux/configure-coder ]; then VSCODE_THEME="${safeTheme}" /usr/local/lib/cmux/configure-coder; ` +
-              "else :; fi",
-          ].join("; ");
-
-          const setThemeRes = await instance.exec(`bash -lc '${themeScript}'`);
-          if (setThemeRes.exit_code !== 0) {
-            console.warn(
-              `[sandboxes.start] Failed to write theme to /etc/cmux/ide.env (exit ${setThemeRes.exit_code}) stderr=${(setThemeRes.stderr || "").slice(0, 200)}`,
-            );
-          } else {
-            console.log(
-              `[sandboxes.start] Applied VSCODE_THEME=${safeTheme} to /etc/cmux/ide.env and ran configure script`,
-            );
-          }
-        } catch (error) {
-          console.error(
-            "[sandboxes.start] Failed to persist/apply theme for IDE service",
             error,
           );
         }

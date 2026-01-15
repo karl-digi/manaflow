@@ -58,7 +58,6 @@ export class CmuxVSCodeInstance extends VSCodeInstance {
         taskRunId: this.taskRunId,
         taskRunJwt: this.taskRunJwt || "",
         isCloudWorkspace: this.config.agentName === "cloud-workspace",
-        ...(this.config.theme ? { theme: this.config.theme } : {}),
         ...(this.environmentId ? { environmentId: this.environmentId } : {}),
         ...(this.repoUrl
           ? {

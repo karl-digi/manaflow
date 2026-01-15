@@ -604,7 +604,6 @@ export type StartSandboxBody = {
     taskRunId?: string;
     taskRunJwt?: string;
     isCloudWorkspace?: boolean;
-    theme?: 'dark' | 'light' | 'system';
     repoUrl?: string;
     branch?: string;
     newBranch?: string;
