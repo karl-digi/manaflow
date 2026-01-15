@@ -691,7 +691,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                         <img
                           src={image.url}
                           alt={displayName}
-                          className="h-48 w-[220px] object-contain bg-neutral-100 dark:bg-neutral-950"
+                          className="h-48 w-[220px] object-contain bg-neutral-100 dark:bg-neutral-950 ring-1 ring-inset ring-neutral-200 dark:ring-neutral-800"
                           loading="lazy"
                         />
                         <div className="absolute top-2 right-2 text-neutral-600 opacity-0 transition group-hover:opacity-100 dark:text-neutral-300">
