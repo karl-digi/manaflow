@@ -11,6 +11,7 @@
  */
 
 import type {
+  ConfigStep,
   EnvVar,
   LayoutPhase,
 } from "@cmux/shared/components/environment";
@@ -43,6 +44,7 @@ import {
 import { toast } from "sonner";
 import { EnvironmentInitialSetup } from "./EnvironmentInitialSetup";
 import { EnvironmentWorkspaceConfig } from "./EnvironmentWorkspaceConfig";
+import type { Id } from "@cmux/convex/dataModel";
 
 interface EnvironmentSetupFlowProps {
   teamSlugOrId: string;
@@ -56,7 +58,7 @@ interface EnvironmentSetupFlowProps {
   /** Initial layout phase restored from draft - determines whether to show config form or VS Code/browser */
   initialLayoutPhase?: LayoutPhase;
   /** Initial config step restored from draft - determines which panel (vscode/browser) is shown */
-  initialConfigStep?: import("@cmux/shared/components/environment").ConfigStep;
+  initialConfigStep?: ConfigStep;
   onEnvironmentSaved?: () => void;
   onBack?: () => void;
 }
@@ -82,12 +84,15 @@ export function EnvironmentSetupFlow({
     () => initialLayoutPhase ?? "initial-setup"
   );
 
-  // Sync layoutPhase when initialLayoutPhase prop changes (e.g., when draft loads after navigation)
+  // Track previous initialLayoutPhase to detect external changes (e.g., draft loading after navigation)
+  const prevInitialLayoutPhaseRef = useRef(initialLayoutPhase);
   useEffect(() => {
-    if (initialLayoutPhase && initialLayoutPhase !== layoutPhase) {
+    // Only sync when initialLayoutPhase actually changes from outside (not from our own updates)
+    if (initialLayoutPhase && initialLayoutPhase !== prevInitialLayoutPhaseRef.current) {
+      prevInitialLayoutPhaseRef.current = initialLayoutPhase;
       setLayoutPhase(initialLayoutPhase);
     }
-  }, [initialLayoutPhase]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [initialLayoutPhase]);
 
   // Configuration state - blank by default, placeholder shows the default pattern
   const [envName, setEnvName] = useState(initialEnvName);
@@ -311,7 +316,7 @@ export function EnvironmentSetupFlow({
   }, [teamSlugOrId]);
 
   const handleConfigStepChange = useCallback(
-    (step: import("@cmux/shared/components/environment").ConfigStep) => {
+    (step: ConfigStep) => {
       // Persist configStep to draft so it survives navigation
       updateEnvironmentDraftConfigStep(teamSlugOrId, step);
     },
@@ -386,7 +391,7 @@ export function EnvironmentSetupFlow({
             to: "/$teamSlugOrId/environments/$environmentId",
             params: {
               teamSlugOrId,
-              environmentId: data.id as import("@cmux/convex/dataModel").Id<"environments">,
+              environmentId: data.id as Id<"environments">,
             },
             search: {
               step: undefined,

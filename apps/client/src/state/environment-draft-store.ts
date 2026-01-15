@@ -259,31 +259,32 @@ export const updateEnvironmentDraftConfig = (
     );
   });
 
-export const updateEnvironmentDraftLayoutPhase = (
+/** Update specific fields in the draft (layoutPhase, configStep, etc.) */
+const updateEnvironmentDraftField = <K extends keyof EnvironmentDraft>(
   teamSlugOrId: string,
-  layoutPhase: LayoutPhase,
+  field: K,
+  value: EnvironmentDraft[K],
 ): EnvironmentDraft | null =>
   store.update(teamSlugOrId, (prev) => {
     if (!prev) return null;
     return {
       ...prev,
-      layoutPhase,
+      [field]: value,
       lastUpdatedAt: now(),
     };
   });
+
+export const updateEnvironmentDraftLayoutPhase = (
+  teamSlugOrId: string,
+  layoutPhase: LayoutPhase,
+): EnvironmentDraft | null =>
+  updateEnvironmentDraftField(teamSlugOrId, "layoutPhase", layoutPhase);
 
 export const updateEnvironmentDraftConfigStep = (
   teamSlugOrId: string,
   configStep: ConfigStep,
 ): EnvironmentDraft | null =>
-  store.update(teamSlugOrId, (prev) => {
-    if (!prev) return null;
-    return {
-      ...prev,
-      configStep,
-      lastUpdatedAt: now(),
-    };
-  });
+  updateEnvironmentDraftField(teamSlugOrId, "configStep", configStep);
 
 export const clearEnvironmentDraft = (teamSlugOrId: string): void => {
   store.set(teamSlugOrId, null);

@@ -107,9 +107,12 @@ export function EnvironmentWorkspaceConfig({
     () => initialConfigStep ?? "run-scripts"
   );
 
-  // Sync configStep when initialConfigStep prop changes (e.g., when draft loads after navigation)
+  // Track previous initialConfigStep to detect external changes (e.g., draft loading after navigation)
+  const prevInitialConfigStepRef = useRef(initialConfigStep);
   useEffect(() => {
-    if (initialConfigStep && initialConfigStep !== currentConfigStep) {
+    // Only sync when initialConfigStep actually changes from outside (not from our own updates)
+    if (initialConfigStep && initialConfigStep !== prevInitialConfigStepRef.current) {
+      prevInitialConfigStepRef.current = initialConfigStep;
       setCurrentConfigStep(initialConfigStep);
       // Also update completedSteps to include all steps before the restored step
       const stepIndex = ALL_CONFIG_STEPS.indexOf(initialConfigStep);
@@ -121,7 +124,7 @@ export function EnvironmentWorkspaceConfig({
         return next;
       });
     }
-  }, [initialConfigStep]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [initialConfigStep]);
 
   // Notify parent when config step changes
   useEffect(() => {
