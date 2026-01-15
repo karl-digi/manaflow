@@ -4,6 +4,7 @@ import UIKit
 
 enum DebugInputBarMetrics {
     static let inputHeight: CGFloat = 42
+    static let maxInputHeight: CGFloat = 120
     static let topPadding: CGFloat = 8
 }
 
@@ -33,7 +34,7 @@ struct DebugInputBar: View {
 
     var body: some View {
         GlassEffectContainer {
-            HStack(spacing: 12) {
+            HStack(alignment: .bottom, spacing: 12) {
                 // Plus button with glass circle
                 Button {} label: {
                     Image(systemName: "plus")
@@ -45,29 +46,32 @@ struct DebugInputBar: View {
                 .frame(width: DebugInputBarMetrics.inputHeight, height: DebugInputBarMetrics.inputHeight)
                 .glassEffect(.regular.interactive(), in: .circle)
 
-                // Text field with glass capsule
+                // Text field pill
                 HStack(spacing: 8) {
                     TextField("Message", text: $text, axis: .vertical)
-                        .lineLimit(1...5)
+                        .lineLimit(1)
                         .focused($textFieldFocused)
                         .accessibilityIdentifier("chat.inputField")
+                        .textFieldStyle(.plain)
 
-                    ZStack {
-                        if text.isEmpty {
-                            Image(systemName: "mic.fill")
-                                .font(.title2)
-                                .foregroundStyle(.secondary)
-                        } else {
-                            Button(action: onSend) {
-                                Image(systemName: "arrow.up.circle.fill")
-                                    .font(.title)
-                                    .foregroundStyle(.blue)
-                            }
+                    // Send/mic button
+                    if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Image(systemName: "mic.fill")
+                            .font(.system(size: 16))
+                            .foregroundStyle(.secondary)
+                            .padding(.trailing, 8)
+                    } else {
+                        Button(action: onSend) {
+                            Image(systemName: "arrow.up.circle.fill")
+                                .font(.system(size: 30))
+                                .foregroundStyle(.blue)
                         }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("chat.sendButton")
                     }
-                    .frame(width: 32, height: 32)
                 }
-                .padding(.horizontal, 16)
+                .padding(.leading, 16)
+                .padding(.trailing, 6)
                 .frame(height: DebugInputBarMetrics.inputHeight)
                 .glassEffect(.regular.interactive(), in: .capsule)
                 .accessibilityIdentifier("chat.inputPill")
@@ -102,9 +106,13 @@ struct DebugInputBar: View {
 
 /// UIKit wrapper for the glass input bar
 final class DebugInputBarViewController: UIViewController {
-    var text: String = ""
+    var text: String {
+        get { textModel.text }
+        set { textModel.text = newValue }
+    }
     var onSend: (() -> Void)?
     var onTextChange: ((String) -> Void)?
+    private let textModel = InputBarTextModel()
     var onLayoutChange: (() -> Void)?
     var contentTopInset: CGFloat { DebugInputBarMetrics.topPadding }
     var contentBottomInset: CGFloat { layoutModel.bottomPadding }
@@ -176,12 +184,11 @@ final class DebugInputBarViewController: UIViewController {
     }
 
     func updateText(_ newText: String) {
-        text = newText
-        hostingController.rootView = makeWrapper()
+        textModel.text = newText
     }
 
     func clearText() {
-        updateText("")
+        textModel.text = ""
     }
 
     func updateLayout(horizontalPadding: CGFloat, bottomPadding: CGFloat, animationDuration: Double) {
@@ -198,6 +205,11 @@ final class DebugInputBarViewController: UIViewController {
 
     func setFocused(_ focused: Bool) {
         focusModel.isFocused = focused
+    }
+
+    func setEnabled(_ enabled: Bool) {
+        view.isUserInteractionEnabled = enabled
+        view.alpha = enabled ? 1.0 : 0.6
     }
 
     func preferredHeight(for width: CGFloat) -> CGFloat {
@@ -228,25 +240,30 @@ final class DebugInputBarViewController: UIViewController {
 
     private func makeWrapper() -> DebugInputBarWrapper {
         DebugInputBarWrapper(
-            text: Binding(get: { self.text }, set: { self.text = $0; self.onTextChange?($0) }),
+            textModel: textModel,
             focus: focusModel,
             geometry: geometryModel,
             layout: layoutModel,
+            onTextChange: onTextChange,
             onSend: { self.onSend?() }
         )
     }
 }
 
 private struct DebugInputBarWrapper: View {
-    @Binding var text: String
+    @ObservedObject var textModel: InputBarTextModel
     @ObservedObject var focus: InputBarFocusModel
     @ObservedObject var geometry: InputBarGeometryModel
     @ObservedObject var layout: InputBarLayoutModel
+    let onTextChange: ((String) -> Void)?
     let onSend: () -> Void
 
     var body: some View {
         DebugInputBar(
-            text: $text,
+            text: Binding(
+                get: { textModel.text },
+                set: { textModel.text = $0; onTextChange?($0) }
+            ),
             isFocused: $focus.isFocused,
             geometry: geometry,
             layout: layout,
@@ -269,6 +286,10 @@ final class InputBarLayoutModel: ObservableObject {
 
 final class InputBarFocusModel: ObservableObject {
     @Published var isFocused = false
+}
+
+final class InputBarTextModel: ObservableObject {
+    @Published var text = ""
 }
 
 final class InputBarGeometryModel: ObservableObject {
