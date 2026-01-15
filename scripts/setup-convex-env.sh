@@ -188,6 +188,7 @@ show_optional_value() {
     echo "(will be deleted)"
   fi
 }
+# Optional AI API keys (all may be unset; provider is chosen dynamically in crown/actions)
 echo "  - OPENAI_API_KEY: $(show_optional_value "$(get_env_value OPENAI_API_KEY)")"
 echo "  - ANTHROPIC_API_KEY: $(show_optional_value "$(get_env_value ANTHROPIC_API_KEY)")"
 echo "  - GEMINI_API_KEY: $(show_optional_value "$(get_env_value GEMINI_API_KEY)")"
@@ -259,7 +260,7 @@ build_json_changes() {
   add_change "NEXT_PUBLIC_GITHUB_APP_SLUG" "$(get_env_value NEXT_PUBLIC_GITHUB_APP_SLUG)"
   add_change "NEXT_PUBLIC_CMUX_PROTOCOL" "$(get_env_value NEXT_PUBLIC_CMUX_PROTOCOL)"
   add_change "INSTALL_STATE_SECRET" "$INSTALL_STATE_SECRET"
-  # AI API keys: use add_optional_change to delete when not set in .env
+  # AI API keys: optional and deleted when not set (provider selection is dynamic)
   add_optional_change "OPENAI_API_KEY" "$(get_env_value OPENAI_API_KEY)"
   add_optional_change "ANTHROPIC_API_KEY" "$(get_env_value ANTHROPIC_API_KEY)"
   add_optional_change "GEMINI_API_KEY" "$(get_env_value GEMINI_API_KEY)"
