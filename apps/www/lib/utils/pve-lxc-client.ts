@@ -624,13 +624,15 @@ export class PveLxcClient {
     } else {
       execUrl = `http://${host}:39375/exec`;
     }
-    // Set HOME explicitly since cmux-execd may not have it set,
-    // and many tools (gh, git) require HOME to be defined.
-    // The command is passed directly to the execd service which runs it via sh -c.
+    // Set HOME and XDG_RUNTIME_DIR explicitly since cmux-execd may not have them set.
+    // HOME is required by many tools (gh, git).
+    // XDG_RUNTIME_DIR is required by cmux-envd to locate its socket at /run/user/0/cmux-envd/envd.sock,
+    // ensuring envctl load and envctl export (in shell hooks) use the same socket path.
+    // The command is passed directly to the execd service which runs it via bash -c.
     const effectiveTimeoutMs = timeoutMs ?? 300000;
 
     const body = JSON.stringify({
-      command: `HOME=/root ${command}`,
+      command: `HOME=/root XDG_RUNTIME_DIR=/run/user/0 ${command}`,
       timeout_ms: effectiveTimeoutMs,
     });
 
