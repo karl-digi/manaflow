@@ -19,7 +19,7 @@ import {
 } from "@cmux/shared";
 import { action } from "../_generated/server";
 
-const OPENAI_CROWN_MODEL = "gpt-5-mini";
+const OPENAI_CROWN_MODEL = "gpt-5-mini-2025-08-07";
 const ANTHROPIC_CROWN_MODEL = "claude-sonnet-4-5-20250929";
 const GEMINI_CROWN_MODEL = "gemini-3-flash-preview";
 
@@ -132,7 +132,6 @@ IMPORTANT: Respond ONLY with the JSON object, no other text.`;
       system:
         "You select the best implementation from structured diff inputs and explain briefly why.",
       prompt: evaluationPrompt,
-      ...(provider === "openai" ? {} : { temperature: 0 }),
       maxRetries: 2,
     });
 
@@ -184,7 +183,6 @@ OUTPUT FORMAT (Markdown)
       system:
         "You are an expert reviewer summarizing pull requests. Provide a clear, concise summary following the requested format.",
       prompt: summarizationPrompt,
-      ...(provider === "openai" ? {} : { temperature: 0 }),
       maxRetries: 2,
     });
 

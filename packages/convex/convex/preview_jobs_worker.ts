@@ -260,8 +260,10 @@ interface ScreenshotCollectorOptions {
   headBranch: string;
   outputDir: string;
   pathToClaudeCodeExecutable?: string;
+  setupScript?: string;
   installCommand?: string;
   devCommand?: string;
+  convexSiteUrl?: string;
   auth: { taskRunJwt: string } | { anthropicApiKey: string };
 }
 
@@ -701,22 +703,22 @@ async function ensureCommitAvailable({
     description: string;
     command: string[];
   }> = [
-    {
-      description: "fetch commit by sha",
-      command: ["git", "-C", repoDir, "fetch", "origin", commitSha],
-    },
-    {
-      description: "fetch PR head ref",
-      command: [
-        "git",
-        "-C",
-        repoDir,
-        "fetch",
-        "origin",
-        `+refs/pull/${prNumber}/head:refs/cmux/preview/pull/${prNumber}`,
-      ],
-    },
-  ];
+      {
+        description: "fetch commit by sha",
+        command: ["git", "-C", repoDir, "fetch", "origin", commitSha],
+      },
+      {
+        description: "fetch PR head ref",
+        command: [
+          "git",
+          "-C",
+          repoDir,
+          "fetch",
+          "origin",
+          `+refs/pull/${prNumber}/head:refs/cmux/preview/pull/${prNumber}`,
+        ],
+      },
+    ];
 
   // If PR is from a fork, add fork fetch as the highest priority
   if (headRepoCloneUrl && headRef) {
@@ -1468,14 +1470,14 @@ export async function runPreviewJob(
     // Generate JWT for screenshot upload authentication now that we have taskRunId
     const previewJwt = taskRunId
       ? await new SignJWT({
-          taskRunId,
-          teamId: run.teamId,
-          userId: config.createdByUserId,
-        })
-          .setProtectedHeader({ alg: "HS256" })
-          .setIssuedAt()
-          .setExpirationTime("12h")
-          .sign(new TextEncoder().encode(env.CMUX_TASK_RUN_JWT_SECRET))
+        taskRunId,
+        teamId: run.teamId,
+        userId: config.createdByUserId,
+      })
+        .setProtectedHeader({ alg: "HS256" })
+        .setIssuedAt()
+        .setExpirationTime("12h")
+        .sign(new TextEncoder().encode(env.CMUX_TASK_RUN_JWT_SECRET))
       : null;
 
     // Update taskRun with VM instance info and URLs
@@ -1558,7 +1560,7 @@ export async function runPreviewJob(
 
       if (accessToken) {
         const escapedToken = singleQuote(accessToken);
-        
+
         let lastError: Error | undefined;
         let authSucceeded = false;
         const maxRetries = 5;
@@ -1835,13 +1837,14 @@ export async function runPreviewJob(
 
     if (taskRunId && previewJwt) {
       // Apply environment variables via envctl (same as crown runs)
-      // CMUX_IS_STAGING tells the screenshot collector to use staging vs production releases
+      // CMUX_IS_STAGING=false tells the screenshot collector to use production releases
+      // We always use production releases to avoid missing release issues in dev
       const envLines = [
         `CMUX_TASK_RUN_ID="${taskRunId}"`,
         `CMUX_TASK_RUN_JWT="${previewJwt}"`,
         `CONVEX_SITE_URL="${convexUrl}"`,
         `CONVEX_URL="${convexUrl}"`,
-        `CMUX_IS_STAGING="${env.CMUX_IS_STAGING ?? "true"}"`,
+        `CMUX_IS_STAGING="false"`,
       ];
       const envVarsContent = envLines.join("\n");
       if (envVarsContent.length === 0) {
@@ -1881,7 +1884,7 @@ export async function runPreviewJob(
         previewRunId,
         taskRunId,
         convexUrl,
-        cmuxIsStaging: env.CMUX_IS_STAGING ?? "true",
+        cmuxIsStaging: "false",
         envctlStdout: sliceOutput(envctlResponse.data?.stdout),
         envctlStderr: sliceOutput(envctlResponse.data?.stderr),
       });
@@ -1956,8 +1959,9 @@ export async function runPreviewJob(
       }
 
       // Trigger screenshot collection via Morph exec (bypasses worker)
-      // Convex determines staging and downloads/runs the collector directly
-      const isStaging = env.CMUX_IS_STAGING === "true";
+      // Always use production releases (staging=false) to avoid missing release issues
+      // Both staging and production Convex deployments will fetch from the same release pool
+      const isStaging = false;
 
       // Fetch the screenshot collector release URL
       const collectorRelease = await fetchScreenshotCollectorRelease({
@@ -1984,6 +1988,12 @@ export async function runPreviewJob(
         });
       } else {
         // Build screenshot collector options
+        const setupScript = [
+          environment.maintenanceScript?.trim(),
+          environment.devScript?.trim(),
+        ]
+          .filter((value): value is string => Boolean(value))
+          .join("\n\n");
         const screenshotOptions: ScreenshotCollectorOptions = {
           workspaceDir: repoDir,
           changedFiles,
@@ -1993,8 +2003,10 @@ export async function runPreviewJob(
           headBranch: run.headRef || run.headSha,
           outputDir: `/root/screenshots/${Date.now()}-pr-${run.prNumber}`,
           pathToClaudeCodeExecutable: "/root/.bun/bin/claude",
+          setupScript: setupScript.length > 0 ? setupScript : undefined,
           installCommand: environment.maintenanceScript ?? undefined,
           devCommand: environment.devScript ?? undefined,
+          convexSiteUrl: convexUrl,
           auth: { taskRunJwt: previewJwt },
         };
 

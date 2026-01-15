@@ -17,7 +17,6 @@ import {
   Globe,
 } from "lucide-react";
 import Link from "next/link";
-import Image from "next/image";
 import clsx from "clsx";
 import {
   QueryClient,
@@ -793,7 +792,8 @@ function PreviewTestDashboardInner({
                                       target="_blank"
                                       rel="noopener noreferrer"
                                     >
-                                      <Image
+                                      {/* eslint-disable-next-line @next/next/no-img-element -- dynamic external URL */}
+                                      <img
                                         src={image.url}
                                         alt={
                                           image.description ??
