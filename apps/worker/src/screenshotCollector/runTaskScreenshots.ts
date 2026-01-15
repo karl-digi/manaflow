@@ -1,4 +1,4 @@
-import type { ScreenshotUploadPayload } from "@cmux/shared";
+import type { ScreenshotUploadPayload, ScreenshotStoredVideo } from "@cmux/shared";
 import type { Id } from "@cmux/convex/dataModel";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
@@ -20,7 +20,7 @@ export interface RunTaskScreenshotsOptions {
   devCommand?: string | null;
 }
 
-function resolveContentType(filePath: string): string {
+function resolveImageContentType(filePath: string): string {
   const extension = path.extname(filePath).toLowerCase();
   if (extension === ".jpg" || extension === ".jpeg") {
     return "image/jpeg";
@@ -29,6 +29,18 @@ function resolveContentType(filePath: string): string {
     return "image/webp";
   }
   return "image/png";
+}
+
+function resolveVideoContentType(filePath: string): string {
+  const extension = path.extname(filePath).toLowerCase();
+  if (extension === ".mp4") {
+    return "video/mp4";
+  }
+  if (extension === ".mov") {
+    return "video/quicktime";
+  }
+  // Default to webm
+  return "video/webm";
 }
 
 async function uploadScreenshotFile(params: {
@@ -42,7 +54,7 @@ async function uploadScreenshotFile(params: {
   const { screenshotPath, fileName, commitSha, token, convexUrl, description } =
     params;
   const resolvedFileName = fileName ?? path.basename(screenshotPath);
-  const contentType = resolveContentType(screenshotPath);
+  const contentType = resolveImageContentType(screenshotPath);
 
   const uploadUrl = await createScreenshotUploadUrl({
     token,
@@ -82,6 +94,57 @@ async function uploadScreenshotFile(params: {
   };
 }
 
+async function uploadVideoFile(params: {
+  videoPath: string;
+  fileName?: string;
+  token: string;
+  convexUrl?: string;
+  description?: string;
+  durationMs?: number;
+}): Promise<ScreenshotStoredVideo> {
+  const { videoPath, fileName, token, convexUrl, description, durationMs } =
+    params;
+  const resolvedFileName = fileName ?? path.basename(videoPath);
+  const contentType = resolveVideoContentType(videoPath);
+
+  const uploadUrl = await createScreenshotUploadUrl({
+    token,
+    baseUrlOverride: convexUrl,
+    contentType,
+  });
+
+  const bytes = await fs.readFile(videoPath);
+  const uploadResponse = await fetch(uploadUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": contentType,
+    },
+    body: new Uint8Array(bytes),
+  });
+
+  if (!uploadResponse.ok) {
+    const body = await uploadResponse.text();
+    throw new Error(
+      `Video upload failed with status ${uploadResponse.status}: ${body}`
+    );
+  }
+
+  const uploadResult = (await uploadResponse.json()) as {
+    storageId?: string;
+  };
+  if (!uploadResult.storageId) {
+    throw new Error("Video upload response missing storageId");
+  }
+
+  return {
+    storageId: uploadResult.storageId,
+    mimeType: contentType,
+    fileName: resolvedFileName,
+    description,
+    durationMs,
+  };
+}
+
 export async function runTaskScreenshots(
   options: RunTaskScreenshotsOptions
 ): Promise<void> {
@@ -103,6 +166,7 @@ export async function runTaskScreenshots(
   });
 
   let images: ScreenshotUploadPayload["images"];
+  let videos: ScreenshotUploadPayload["videos"];
   let hasUiChanges: boolean | undefined;
   let status: ScreenshotUploadPayload["status"] = "failed";
   let error: string | undefined;
@@ -111,12 +175,14 @@ export async function runTaskScreenshots(
   if (result.status === "completed") {
     commitSha = result.commitSha;
     const capturedScreens = result.screenshots ?? [];
+    const capturedVideos = result.videos ?? [];
     hasUiChanges = result.hasUiChanges;
     if (capturedScreens.length === 0) {
       status = "failed";
       error = "Claude collector returned no screenshots";
       log("ERROR", error, { taskRunId });
     } else {
+      // Upload screenshots
       const uploadPromises = capturedScreens.map((screenshot) =>
         uploadScreenshotFile({
           screenshotPath: screenshot.path,
@@ -150,12 +216,54 @@ export async function runTaskScreenshots(
         }
       });
 
+      // Upload videos (don't fail the workflow if video upload fails)
+      if (capturedVideos.length > 0) {
+        const videoUploadPromises = capturedVideos.map((video) =>
+          uploadVideoFile({
+            videoPath: video.path,
+            fileName: video.fileName,
+            token,
+            convexUrl,
+            description: video.description,
+            durationMs: video.durationMs,
+          })
+        );
+
+        const settledVideoUploads = await Promise.allSettled(videoUploadPromises);
+        const successfulVideos: ScreenshotStoredVideo[] = [];
+
+        settledVideoUploads.forEach((settled, index) => {
+          if (settled.status === "fulfilled") {
+            successfulVideos.push(settled.value);
+          } else {
+            const reason =
+              settled.reason instanceof Error
+                ? settled.reason.message
+                : String(settled.reason);
+            log("WARN", "Failed to upload video (non-fatal)", {
+              taskRunId,
+              videoPath: capturedVideos[index]?.path,
+              error: reason,
+            });
+          }
+        });
+
+        if (successfulVideos.length > 0) {
+          videos = successfulVideos;
+          log("INFO", "Videos uploaded", {
+            taskRunId,
+            videoCount: successfulVideos.length,
+          });
+        }
+      }
+
       if (failures.length === 0) {
         images = successfulScreens;
         status = "completed";
         log("INFO", "Screenshots uploaded", {
           taskRunId,
           screenshotCount: successfulScreens.length,
+          videoCount: videos?.length ?? 0,
           commitSha: result.commitSha,
         });
       } else {
@@ -212,6 +320,7 @@ export async function runTaskScreenshots(
       // Only include commitSha if available (required for completed, optional for failed/skipped)
       ...(commitSha && { commitSha }),
       images,
+      videos,
       error,
       hasUiChanges,
     },

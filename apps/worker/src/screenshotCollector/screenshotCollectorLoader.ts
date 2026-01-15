@@ -9,10 +9,20 @@ export type ClaudeCodeAuthConfig =
   | { auth: { taskRunJwt: string } }
   | { auth: { anthropicApiKey: string } };
 
+/** Video captured during screenshot collection */
+export interface CapturedVideo {
+  path: string;
+  fileName: string;
+  mimeType: string;
+  durationMs: number;
+  description: string;
+}
+
 /** Result from screenshot collection */
 export interface ScreenshotResult {
   status: "completed" | "failed" | "skipped";
   screenshots?: { path: string; description?: string }[];
+  videos?: CapturedVideo[];
   hasUiChanges?: boolean;
   error?: string;
   reason?: string;

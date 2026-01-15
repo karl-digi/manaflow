@@ -36,10 +36,19 @@ interface CapturedScreenshot {
   description?: string;
 }
 
+interface CapturedVideo {
+  path: string;
+  fileName: string;
+  mimeType: string;
+  durationMs: number;
+  description: string;
+}
+
 export type ScreenshotCollectionResult =
   | {
       status: "completed";
       screenshots: CapturedScreenshot[];
+      videos?: CapturedVideo[];
       commitSha: string;
       hasUiChanges?: boolean;
     }
@@ -522,6 +531,7 @@ export async function startScreenshotCollection(
 
     if (claudeResult.status === "completed") {
       const collectedScreenshots = claudeResult.screenshots ?? [];
+      const collectedVideos = claudeResult.videos ?? [];
       if (collectedScreenshots.length === 0) {
         // If Claude explicitly reported no UI changes, this is expected - not an error
         if (claudeResult.hasUiChanges === false) {
@@ -561,6 +571,15 @@ export async function startScreenshotCollection(
           fileName: path.basename(screenshot.path),
           description: screenshot.description,
         }));
+
+      // Convert collected videos to CapturedVideo format
+      const videoEntries: CapturedVideo[] = collectedVideos.map((video) => ({
+        path: video.path,
+        fileName: video.fileName,
+        mimeType: video.mimeType,
+        durationMs: video.durationMs,
+        description: video.description,
+      }));
 
       if (screenshotEntries.length === 0) {
         const error = "Claude collector produced no screenshot entries";
@@ -631,13 +650,18 @@ export async function startScreenshotCollection(
         );
       }
 
-      // Write manifest.json with hasUiChanges and image info for local docker workflows
+      // Write manifest.json with hasUiChanges and image/video info for local docker workflows
       const manifestPath = path.join(outputDir, "manifest.json");
       const manifest = {
         hasUiChanges: claudeResult.hasUiChanges,
         images: screenshotEntries.map((entry) => ({
           path: entry.path,
           description: entry.description,
+        })),
+        videos: videoEntries.map((entry) => ({
+          path: entry.path,
+          description: entry.description,
+          durationMs: entry.durationMs,
         })),
       };
       try {
@@ -658,11 +682,13 @@ export async function startScreenshotCollection(
         baseBranch,
         commitSha,
         screenshotCount: screenshotEntries.length,
+        videoCount: videoEntries.length,
       });
 
       return {
         status: "completed",
         screenshots: screenshotEntries,
+        videos: videoEntries.length > 0 ? videoEntries : undefined,
         commitSha,
         hasUiChanges: claudeResult.hasUiChanges,
       };

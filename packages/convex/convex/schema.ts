@@ -343,6 +343,18 @@ const convexSchema = defineSchema({
         description: v.optional(v.string()),
       }),
     ),
+    videos: v.optional(
+      v.array(
+        v.object({
+          storageId: v.id("_storage"),
+          mimeType: v.string(),
+          fileName: v.optional(v.string()),
+          description: v.optional(v.string()),
+          /** Duration of the video in milliseconds */
+          durationMs: v.optional(v.number()),
+        }),
+      ),
+    ),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

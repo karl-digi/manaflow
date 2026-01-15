@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { logToScreenshotCollector } from "./logger";
 import { formatClaudeMessage } from "./claudeMessageFormatter";
+import { VideoRecorder, type VideoRecordingResult } from "./videoRecorder";
 
 export const SCREENSHOT_STORAGE_ROOT = "/root/screenshots";
 
@@ -96,6 +97,8 @@ type BranchBaseOptions = {
   /** Command to start the dev server (e.g., "bun run dev", "npm run dev") */
   devCommand?: string;
   convexSiteUrl?: string;
+  /** Enable video recording of the session (default: true) */
+  enableVideoRecording?: boolean;
 };
 
 type BranchCaptureOptions =
@@ -111,9 +114,18 @@ export type CaptureScreenshotsOptions =
   | (CaptureScreenshotsBaseOptions & { auth: { taskRunJwt: string } })
   | (CaptureScreenshotsBaseOptions & { auth: { anthropicApiKey: string } });
 
+export interface CapturedVideo {
+  path: string;
+  fileName: string;
+  mimeType: string;
+  durationMs: number;
+  description: string;
+}
+
 export interface ScreenshotResult {
   status: "completed" | "failed" | "skipped";
   screenshots?: { path: string; description?: string }[];
+  videos?: CapturedVideo[];
   hasUiChanges?: boolean;
   error?: string;
   reason?: string;
@@ -153,6 +165,7 @@ export async function captureScreenshotsForBranch(
   options: BranchCaptureOptions
 ): Promise<{
   screenshots: { path: string; description?: string }[];
+  videos?: CapturedVideo[];
   hasUiChanges?: boolean;
 }> {
   const {
@@ -167,6 +180,7 @@ export async function captureScreenshotsForBranch(
     installCommand,
     devCommand,
     convexSiteUrl,
+    enableVideoRecording = true,
   } = options;
   const outputDir = normalizeScreenshotOutputDir(requestedOutputDir);
   const useTaskRunJwt = isTaskRunJwtAuth(auth);
@@ -335,6 +349,17 @@ INCOMPLETE CAPTURE: Missing important UI elements. Ensure full components are vi
 
   const screenshotPaths: string[] = [];
   let structuredOutput: ScreenshotStructuredOutput | null = null;
+  let videoResult: VideoRecordingResult | null = null;
+
+  // Initialize video recorder if enabled
+  let videoRecorder: VideoRecorder | null = null;
+  if (enableVideoRecording) {
+    videoRecorder = new VideoRecorder({
+      outputDir,
+      fileName: `session-recording-${branch.replace(/[^a-zA-Z0-9-_]/g, "-")}.webm`,
+      frameRate: 2, // 2 fps is sufficient for review and keeps file size small
+    });
+  }
 
   if (useTaskRunJwt && !convexSiteUrl) {
     await logToScreenshotCollector(
@@ -415,6 +440,19 @@ INCOMPLETE CAPTURE: Missing important UI elements. Ensure full components are vi
         ),
       })}`
     );
+
+    // Start video recording if enabled
+    if (videoRecorder) {
+      try {
+        await videoRecorder.start();
+      } catch (videoError) {
+        await logToScreenshotCollector(
+          `[WARN] Failed to start video recording: ${videoError instanceof Error ? videoError.message : String(videoError)}`
+        );
+        // Continue without video recording - don't fail the screenshot capture
+        videoRecorder = null;
+      }
+    }
 
     try {
       for await (const message of query({
@@ -497,6 +535,28 @@ INCOMPLETE CAPTURE: Missing important UI elements. Ensure full components are vi
       }
     }
 
+    // Stop video recording and get the result
+    if (videoRecorder) {
+      try {
+        videoResult = await videoRecorder.stop();
+        if (videoResult) {
+          await logToScreenshotCollector(
+            `[VideoRecorder] Video saved: ${videoResult.path} (${videoResult.durationMs}ms)`
+          );
+        }
+      } catch (videoError) {
+        await logToScreenshotCollector(
+          `[WARN] Failed to stop video recording: ${videoError instanceof Error ? videoError.message : String(videoError)}`
+        );
+        // Try to abort to cleanup
+        try {
+          await videoRecorder.abort();
+        } catch {
+          // Ignore abort errors
+        }
+      }
+    }
+
     // Find all screenshot files in the output directory
     try {
       const { files, hasNestedDirectories } =
@@ -551,6 +611,7 @@ INCOMPLETE CAPTURE: Missing important UI elements. Ensure full components are vi
 
     return {
       screenshots: screenshotsWithDescriptions,
+      videos: videoResult ? [videoResult] : undefined,
       hasUiChanges: structuredOutput?.hasUiChanges,
     };
   } catch (error) {
@@ -573,6 +634,15 @@ INCOMPLETE CAPTURE: Missing important UI elements. Ensure full components are vi
         .join(", ");
       if (additionalProps) {
         await logToScreenshotCollector(`Error details: ${additionalProps}`);
+      }
+    }
+
+    // Try to cleanup video recorder on error
+    if (videoRecorder) {
+      try {
+        await videoRecorder.abort();
+      } catch {
+        // Ignore abort errors
       }
     }
 
@@ -617,6 +687,7 @@ export async function claudeCodeCapturePRScreenshots(
     await fs.mkdir(outputDir, { recursive: true });
 
     const allScreenshots: { path: string; description?: string }[] = [];
+    const allVideos: CapturedVideo[] = [];
     let hasUiChanges: boolean | undefined;
 
     const CAPTURE_BEFORE = false;
@@ -658,11 +729,14 @@ export async function claudeCodeCapturePRScreenshots(
         }
       );
       allScreenshots.push(...beforeScreenshots.screenshots);
+      if (beforeScreenshots.videos) {
+        allVideos.push(...beforeScreenshots.videos);
+      }
       if (beforeScreenshots.hasUiChanges !== undefined) {
         hasUiChanges = beforeScreenshots.hasUiChanges;
       }
       await logToScreenshotCollector(
-        `Captured ${beforeScreenshots.screenshots.length} 'before' screenshots`
+        `Captured ${beforeScreenshots.screenshots.length} 'before' screenshots, ${beforeScreenshots.videos?.length ?? 0} videos`
       );
     }
 
@@ -702,24 +776,29 @@ export async function claudeCodeCapturePRScreenshots(
         }
     );
     allScreenshots.push(...afterScreenshots.screenshots);
+    if (afterScreenshots.videos) {
+      allVideos.push(...afterScreenshots.videos);
+    }
     if (afterScreenshots.hasUiChanges !== undefined) {
       hasUiChanges = afterScreenshots.hasUiChanges;
     }
     await logToScreenshotCollector(
-      `Captured ${afterScreenshots.screenshots.length} 'after' screenshots`
+      `Captured ${afterScreenshots.screenshots.length} 'after' screenshots, ${afterScreenshots.videos?.length ?? 0} videos`
     );
 
     await logToScreenshotCollector(
-      `Screenshot capture completed. Total: ${allScreenshots.length} screenshots saved to ${outputDir}`
+      `Screenshot capture completed. Total: ${allScreenshots.length} screenshots, ${allVideos.length} videos saved to ${outputDir}`
     );
     log("INFO", "PR screenshot capture completed", {
       screenshotCount: allScreenshots.length,
+      videoCount: allVideos.length,
       outputDir,
     });
 
     return {
       status: "completed",
       screenshots: allScreenshots,
+      videos: allVideos.length > 0 ? allVideos : undefined,
       hasUiChanges,
     };
   } catch (error) {
@@ -739,6 +818,7 @@ export async function claudeCodeCapturePRScreenshots(
 // Re-export utilities
 export { logToScreenshotCollector } from "./logger";
 export { formatClaudeMessage } from "./claudeMessageFormatter";
+export { VideoRecorder, type VideoRecordingResult } from "./videoRecorder";
 
 // CLI entry point - runs when executed directly
   const cliOptionsSchema = z.object({

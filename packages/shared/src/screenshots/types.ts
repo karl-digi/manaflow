@@ -23,6 +23,18 @@ export type ScreenshotStoredImage = z.infer<
   typeof ScreenshotStoredImageSchema
 >;
 
+export const ScreenshotStoredVideoSchema = z.object({
+  storageId: z.string(),
+  mimeType: z.string(),
+  fileName: z.string().optional(),
+  description: z.string().optional(),
+  /** Duration of the video in milliseconds */
+  durationMs: z.number().optional(),
+});
+export type ScreenshotStoredVideo = z.infer<
+  typeof ScreenshotStoredVideoSchema
+>;
+
 export const ScreenshotUploadPayloadSchema = z.object({
   taskId: typedZid("tasks"),
   runId: typedZid("taskRuns"),
@@ -30,6 +42,7 @@ export const ScreenshotUploadPayloadSchema = z.object({
   /** Required for completed status, optional for failed/skipped */
   commitSha: z.string().optional(),
   images: z.array(ScreenshotStoredImageSchema).optional(),
+  videos: z.array(ScreenshotStoredVideoSchema).optional(),
   error: z.string().optional(),
   hasUiChanges: z.boolean().optional(),
 });

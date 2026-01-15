@@ -84,6 +84,14 @@ export const uploadScreenshot = httpAction(async (ctx, req) => {
     description: image.description,
   }));
 
+  const storedVideos = (payload.videos ?? []).map((video) => ({
+    storageId: video.storageId as Id<"_storage">,
+    mimeType: video.mimeType,
+    fileName: video.fileName,
+    description: video.description,
+    durationMs: video.durationMs,
+  }));
+
   if (payload.status === "completed") {
     if (!payload.commitSha) {
       return jsonResponse(
@@ -108,6 +116,7 @@ export const uploadScreenshot = httpAction(async (ctx, req) => {
       commitSha: payload.commitSha,
       hasUiChanges: payload.hasUiChanges,
       screenshots: storedScreens,
+      videos: storedVideos.length > 0 ? storedVideos : undefined,
       error: payload.error,
     }
   );

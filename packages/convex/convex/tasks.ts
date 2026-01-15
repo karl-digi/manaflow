@@ -849,6 +849,17 @@ export const recordScreenshotResult = internalMutation({
         }),
       ),
     ),
+    videos: v.optional(
+      v.array(
+        v.object({
+          storageId: v.id("_storage"),
+          mimeType: v.string(),
+          fileName: v.optional(v.string()),
+          description: v.optional(v.string()),
+          durationMs: v.optional(v.number()),
+        }),
+      ),
+    ),
     error: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -864,6 +875,7 @@ export const recordScreenshotResult = internalMutation({
 
     const now = Date.now();
     const screenshots = args.screenshots ?? [];
+    const videos = args.videos ?? [];
 
     const screenshotSetId = await ctx.db.insert("taskRunScreenshotSets", {
       taskId: args.taskId,
@@ -879,6 +891,16 @@ export const recordScreenshotResult = internalMutation({
         fileName: screenshot.fileName,
         description: screenshot.description,
       })),
+      videos:
+        videos.length > 0
+          ? videos.map((video) => ({
+              storageId: video.storageId,
+              mimeType: video.mimeType,
+              fileName: video.fileName,
+              description: video.description,
+              durationMs: video.durationMs,
+            }))
+          : undefined,
       createdAt: now,
       updatedAt: now,
     });
