@@ -258,6 +258,10 @@ export const anthropicProxy = httpAction(async (_ctx, req) => {
 
     if (useUserApiKey) {
       // User provided their own Anthropic API key - proxy directly to Anthropic
+      // TODO: get user's ANTHROPIC_BASE_URL from request/config to override default
+      const userBaseUrl = process.env.AIGATEWAY_ANTHROPIC_BASE_URL;
+      const baseUrl = userBaseUrl || CLOUDFLARE_ANTHROPIC_BASE_URL;
+
       const headers: Record<string, string> = {};
       req.headers.forEach((value, key) => {
         // Skip hop-by-hop headers and internal headers
@@ -268,28 +272,64 @@ export const anthropicProxy = httpAction(async (_ctx, req) => {
         }
       });
 
-      const response = await fetch(
-        `${CLOUDFLARE_ANTHROPIC_BASE_URL}/v1/messages`,
-        {
-          method: "POST",
-          headers,
-          body: JSON.stringify(body),
-        }
-      );
+      const response = await fetch(`${baseUrl}/v1/messages`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      });
 
       // Return response directly to user (including any errors)
       return handleResponse(response, body.stream);
     }
 
-    // AWS Bedrock path: using platform credits (placeholder key)
+    // Platform credits path: try AI Gateway first, then fall back to Bedrock
+    // Note: AIGATEWAY_* accessed via process.env to avoid Convex static analysis
+    const aiGatewayBaseUrl = process.env.AIGATEWAY_ANTHROPIC_BASE_URL;
+
+    if (aiGatewayBaseUrl) {
+      // AI Gateway path: proxy request directly without modification
+      const headers: Record<string, string> = {};
+      req.headers.forEach((value, key) => {
+        // Skip hop-by-hop headers and internal headers
+        if (
+          !["host", "x-cmux-token", "content-length"].includes(key.toLowerCase())
+        ) {
+          headers[key] = value;
+        }
+      });
+
+      console.log("[anthropic-proxy] AI Gateway request summary:", {
+        requestedModel,
+        stream: payloadSummary.stream ?? false,
+        maxTokens: payloadSummary.maxTokens ?? null,
+        messageCount: payloadSummary.messages.count,
+        contentBlocks: payloadSummary.messages.contentBlocks,
+        textChars: payloadSummary.messages.textChars,
+        toolUseCount: payloadSummary.messages.toolUseCount,
+        toolResultCount: payloadSummary.messages.toolResultCount,
+        toolsCount: payloadSummary.tools.count,
+        toolNamesPreview: payloadSummary.tools.namePreview,
+        toolChoiceType: payloadSummary.toolChoiceType ?? null,
+      });
+
+      const response = await fetch(`${aiGatewayBaseUrl}/v1/messages`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      });
+
+      return handleResponse(response, body.stream);
+    }
+
+    // AWS Bedrock fallback: using platform credits (placeholder key)
     {
       const bedrockToken = process.env.AWS_BEARER_TOKEN_BEDROCK;
       if (!bedrockToken) {
         console.error(
-          "[anthropic-proxy] AWS_BEARER_TOKEN_BEDROCK environment variable is not set"
+          "[anthropic-proxy] Neither AIGATEWAY_ANTHROPIC_BASE_URL+ANTHROPIC_API_KEY nor AWS_BEARER_TOKEN_BEDROCK is configured"
         );
         return jsonResponse(
-          { error: "Bedrock proxy not configured" },
+          { error: "No backend proxy configured" },
           503
         );
       }
