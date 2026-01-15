@@ -3,7 +3,37 @@ import Foundation
 
 // Generated from /Users/lawrencechen/fun/cmux-wt-swift-autogen/packages/convex/convex/_generated/api.d.ts
 
-// Functions: tasks.get
+// Functions: tasks.get, tasks.getArchivedPaginated, tasks.getWithNotificationOrder, tasks.getPreviewTasks
+
+struct ConvexId<Table>: Decodable, Hashable, Sendable {
+
+  let rawValue: String
+
+  init(rawValue: String) {
+
+    self.rawValue = rawValue
+
+  }
+
+  init(from decoder: Decoder) throws {
+
+    let container = try decoder.singleValueContainer()
+
+    rawValue = try container.decode(String.self)
+
+  }
+
+}
+
+enum ConvexTableEnvironments {}
+
+enum ConvexTableStorage {}
+
+enum ConvexTableTaskRunScreenshotSets {}
+
+enum ConvexTableTaskRuns {}
+
+enum ConvexTableTasks {}
 
 enum TasksGetItemCrownEvaluationStatusEnum: String, Decodable {
   case pending = "pending"
@@ -30,15 +60,95 @@ enum TasksGetItemScreenshotStatusEnum: String, Decodable {
   case skipped = "skipped"
 }
 
+enum TasksGetArchivedPaginatedReturnPageItemCrownEvaluationStatusEnum: String, Decodable {
+  case pending = "pending"
+  case inProgress = "in_progress"
+  case succeeded = "succeeded"
+  case error = "error"
+}
+
+enum TasksGetArchivedPaginatedReturnPageItemMergeStatusEnum: String, Decodable {
+  case none = "none"
+  case prDraft = "pr_draft"
+  case prOpen = "pr_open"
+  case prApproved = "pr_approved"
+  case prChangesRequested = "pr_changes_requested"
+  case prMerged = "pr_merged"
+  case prClosed = "pr_closed"
+}
+
+enum TasksGetArchivedPaginatedReturnPageItemScreenshotStatusEnum: String, Decodable {
+  case pending = "pending"
+  case running = "running"
+  case completed = "completed"
+  case failed = "failed"
+  case skipped = "skipped"
+}
+
+enum TasksGetArchivedPaginatedReturnPageStatusEnum: String, Decodable {
+  case splitRecommended = "SplitRecommended"
+  case splitRequired = "SplitRequired"
+}
+
+enum TasksGetWithNotificationOrderItemCrownEvaluationStatusEnum: String, Decodable {
+  case pending = "pending"
+  case inProgress = "in_progress"
+  case succeeded = "succeeded"
+  case error = "error"
+}
+
+enum TasksGetWithNotificationOrderItemMergeStatusEnum: String, Decodable {
+  case none = "none"
+  case prDraft = "pr_draft"
+  case prOpen = "pr_open"
+  case prApproved = "pr_approved"
+  case prChangesRequested = "pr_changes_requested"
+  case prMerged = "pr_merged"
+  case prClosed = "pr_closed"
+}
+
+enum TasksGetWithNotificationOrderItemScreenshotStatusEnum: String, Decodable {
+  case pending = "pending"
+  case running = "running"
+  case completed = "completed"
+  case failed = "failed"
+  case skipped = "skipped"
+}
+
+enum TasksGetPreviewTasksItemCrownEvaluationStatusEnum: String, Decodable {
+  case pending = "pending"
+  case inProgress = "in_progress"
+  case succeeded = "succeeded"
+  case error = "error"
+}
+
+enum TasksGetPreviewTasksItemMergeStatusEnum: String, Decodable {
+  case none = "none"
+  case prDraft = "pr_draft"
+  case prOpen = "pr_open"
+  case prApproved = "pr_approved"
+  case prChangesRequested = "pr_changes_requested"
+  case prMerged = "pr_merged"
+  case prClosed = "pr_closed"
+}
+
+enum TasksGetPreviewTasksItemScreenshotStatusEnum: String, Decodable {
+  case pending = "pending"
+  case running = "running"
+  case completed = "completed"
+  case failed = "failed"
+  case skipped = "skipped"
+}
+
 struct TasksGetItemImagesItem: Decodable {
   let fileName: String?
-  let storageId: String
+  let storageId: ConvexId<ConvexTableStorage>
   let altText: String
 }
 
 struct TasksGetItem: Decodable {
   let hasUnread: Bool
-  let _id: String
+  let _id: ConvexId<ConvexTableTasks>
   @ConvexFloat var _creationTime: Double
   @OptionalConvexFloat var createdAt: Double?
   @OptionalConvexFloat var updatedAt: Double?
@@ -55,22 +165,179 @@ struct TasksGetItem: Decodable {
   let worktreePath: String?
   let generatedBranchName: String?
   @OptionalConvexFloat var lastActivityAt: Double?
-  let environmentId: String?
+  let environmentId: ConvexId<ConvexTableEnvironments>?
   let crownEvaluationStatus: TasksGetItemCrownEvaluationStatusEnum?
   let crownEvaluationError: String?
   let mergeStatus: TasksGetItemMergeStatusEnum?
   let images: [TasksGetItemImagesItem]?
   let screenshotStatus: TasksGetItemScreenshotStatusEnum?
-  let screenshotRunId: String?
+  let screenshotRunId: ConvexId<ConvexTableTaskRuns>?
   let screenshotRequestId: String?
   @OptionalConvexFloat var screenshotRequestedAt: Double?
   @OptionalConvexFloat var screenshotCompletedAt: Double?
   let screenshotError: String?
-  let screenshotStorageId: String?
+  let screenshotStorageId: ConvexId<ConvexTableStorage>?
   let screenshotMimeType: String?
   let screenshotFileName: String?
   let screenshotCommitSha: String?
-  let latestScreenshotSetId: String?
+  let latestScreenshotSetId: ConvexId<ConvexTableTaskRunScreenshotSets>?
+  let teamId: String
+  let userId: String
+  let text: String
+  let isCompleted: Bool
+}
+
+struct TasksGetArchivedPaginatedArgsPaginationOpts: Encodable {
+  let id: Double?
+  let endCursor: String?
+  let maximumRowsRead: Double?
+  let maximumBytesRead: Double?
+  let numItems: Double
+  let cursor: String?
+}
+
+struct TasksGetArchivedPaginatedReturnPageItemImagesItem: Decodable {
+  let fileName: String?
+  let storageId: ConvexId<ConvexTableStorage>
+  let altText: String
+}
+
+struct TasksGetArchivedPaginatedReturnPageItem: Decodable {
+  let hasUnread: Bool
+  let _id: ConvexId<ConvexTableTasks>
+  @ConvexFloat var _creationTime: Double
+  @OptionalConvexFloat var createdAt: Double?
+  @OptionalConvexFloat var updatedAt: Double?
+  let isArchived: Bool?
+  let pinned: Bool?
+  let isPreview: Bool?
+  let isLocalWorkspace: Bool?
+  let isCloudWorkspace: Bool?
+  let description: String?
+  let pullRequestTitle: String?
+  let pullRequestDescription: String?
+  let projectFullName: String?
+  let baseBranch: String?
+  let worktreePath: String?
+  let generatedBranchName: String?
+  @OptionalConvexFloat var lastActivityAt: Double?
+  let environmentId: ConvexId<ConvexTableEnvironments>?
+  let crownEvaluationStatus: TasksGetArchivedPaginatedReturnPageItemCrownEvaluationStatusEnum?
+  let crownEvaluationError: String?
+  let mergeStatus: TasksGetArchivedPaginatedReturnPageItemMergeStatusEnum?
+  let images: [TasksGetArchivedPaginatedReturnPageItemImagesItem]?
+  let screenshotStatus: TasksGetArchivedPaginatedReturnPageItemScreenshotStatusEnum?
+  let screenshotRunId: ConvexId<ConvexTableTaskRuns>?
+  let screenshotRequestId: String?
+  @OptionalConvexFloat var screenshotRequestedAt: Double?
+  @OptionalConvexFloat var screenshotCompletedAt: Double?
+  let screenshotError: String?
+  let screenshotStorageId: ConvexId<ConvexTableStorage>?
+  let screenshotMimeType: String?
+  let screenshotFileName: String?
+  let screenshotCommitSha: String?
+  let latestScreenshotSetId: ConvexId<ConvexTableTaskRunScreenshotSets>?
+  let teamId: String
+  let userId: String
+  let text: String
+  let isCompleted: Bool
+}
+
+struct TasksGetArchivedPaginatedReturn: Decodable {
+  let page: [TasksGetArchivedPaginatedReturnPageItem]
+  let isDone: Bool
+  let continueCursor: String
+  let splitCursor: String?
+  let pageStatus: TasksGetArchivedPaginatedReturnPageStatusEnum?
+}
+
+struct TasksGetWithNotificationOrderItemImagesItem: Decodable {
+  let fileName: String?
+  let storageId: ConvexId<ConvexTableStorage>
+  let altText: String
+}
+
+struct TasksGetWithNotificationOrderItem: Decodable {
+  let hasUnread: Bool
+  let _id: ConvexId<ConvexTableTasks>
+  @ConvexFloat var _creationTime: Double
+  @OptionalConvexFloat var createdAt: Double?
+  @OptionalConvexFloat var updatedAt: Double?
+  let isArchived: Bool?
+  let pinned: Bool?
+  let isPreview: Bool?
+  let isLocalWorkspace: Bool?
+  let isCloudWorkspace: Bool?
+  let description: String?
+  let pullRequestTitle: String?
+  let pullRequestDescription: String?
+  let projectFullName: String?
+  let baseBranch: String?
+  let worktreePath: String?
+  let generatedBranchName: String?
+  @OptionalConvexFloat var lastActivityAt: Double?
+  let environmentId: ConvexId<ConvexTableEnvironments>?
+  let crownEvaluationStatus: TasksGetWithNotificationOrderItemCrownEvaluationStatusEnum?
+  let crownEvaluationError: String?
+  let mergeStatus: TasksGetWithNotificationOrderItemMergeStatusEnum?
+  let images: [TasksGetWithNotificationOrderItemImagesItem]?
+  let screenshotStatus: TasksGetWithNotificationOrderItemScreenshotStatusEnum?
+  let screenshotRunId: ConvexId<ConvexTableTaskRuns>?
+  let screenshotRequestId: String?
+  @OptionalConvexFloat var screenshotRequestedAt: Double?
+  @OptionalConvexFloat var screenshotCompletedAt: Double?
+  let screenshotError: String?
+  let screenshotStorageId: ConvexId<ConvexTableStorage>?
+  let screenshotMimeType: String?
+  let screenshotFileName: String?
+  let screenshotCommitSha: String?
+  let latestScreenshotSetId: ConvexId<ConvexTableTaskRunScreenshotSets>?
+  let teamId: String
+  let userId: String
+  let text: String
+  let isCompleted: Bool
+}
+
+struct TasksGetPreviewTasksItemImagesItem: Decodable {
+  let fileName: String?
+  let storageId: ConvexId<ConvexTableStorage>
+  let altText: String
+}
+
+struct TasksGetPreviewTasksItem: Decodable {
+  let _id: ConvexId<ConvexTableTasks>
+  @ConvexFloat var _creationTime: Double
+  @OptionalConvexFloat var createdAt: Double?
+  @OptionalConvexFloat var updatedAt: Double?
+  let isArchived: Bool?
+  let pinned: Bool?
+  let isPreview: Bool?
+  let isLocalWorkspace: Bool?
+  let isCloudWorkspace: Bool?
+  let description: String?
+  let pullRequestTitle: String?
+  let pullRequestDescription: String?
+  let projectFullName: String?
+  let baseBranch: String?
+  let worktreePath: String?
+  let generatedBranchName: String?
+  @OptionalConvexFloat var lastActivityAt: Double?
+  let environmentId: ConvexId<ConvexTableEnvironments>?
+  let crownEvaluationStatus: TasksGetPreviewTasksItemCrownEvaluationStatusEnum?
+  let crownEvaluationError: String?
+  let mergeStatus: TasksGetPreviewTasksItemMergeStatusEnum?
+  let images: [TasksGetPreviewTasksItemImagesItem]?
+  let screenshotStatus: TasksGetPreviewTasksItemScreenshotStatusEnum?
+  let screenshotRunId: ConvexId<ConvexTableTaskRuns>?
+  let screenshotRequestId: String?
+  @OptionalConvexFloat var screenshotRequestedAt: Double?
+  @OptionalConvexFloat var screenshotCompletedAt: Double?
+  let screenshotError: String?
+  let screenshotStorageId: ConvexId<ConvexTableStorage>?
+  let screenshotMimeType: String?
+  let screenshotFileName: String?
+  let screenshotCommitSha: String?
+  let latestScreenshotSetId: ConvexId<ConvexTableTaskRunScreenshotSets>?
   let teamId: String
   let userId: String
   let text: String
@@ -93,4 +360,52 @@ struct TasksGetArgs {
   }
 }
 
+struct TasksGetArchivedPaginatedArgs {
+  let excludeLocalWorkspaces: Bool?
+  let teamSlugOrId: String
+  let paginationOpts: TasksGetArchivedPaginatedArgsPaginationOpts
+
+  func asDictionary() -> [String: Any] {
+    var result: [String: Any] = [:]
+    if let value = excludeLocalWorkspaces { result["excludeLocalWorkspaces"] = value }
+    result["teamSlugOrId"] = teamSlugOrId
+    result["paginationOpts"] = paginationOpts
+    return result
+  }
+}
+
+struct TasksGetWithNotificationOrderArgs {
+  let projectFullName: String?
+  let archived: Bool?
+  let excludeLocalWorkspaces: Bool?
+  let teamSlugOrId: String
+
+  func asDictionary() -> [String: Any] {
+    var result: [String: Any] = [:]
+    if let value = projectFullName { result["projectFullName"] = value }
+    if let value = archived { result["archived"] = value }
+    if let value = excludeLocalWorkspaces { result["excludeLocalWorkspaces"] = value }
+    result["teamSlugOrId"] = teamSlugOrId
+    return result
+  }
+}
+
+struct TasksGetPreviewTasksArgs {
+  let limit: Double?
+  let teamSlugOrId: String
+
+  func asDictionary() -> [String: Any] {
+    var result: [String: Any] = [:]
+    if let value = limit { result["limit"] = value }
+    result["teamSlugOrId"] = teamSlugOrId
+    return result
+  }
+}
+
 typealias TasksGetReturn = [TasksGetItem]
+
+typealias TasksGetArchivedPaginatedReturn = TasksGetArchivedPaginatedReturn
+
+typealias TasksGetWithNotificationOrderReturn = [TasksGetWithNotificationOrderItem]
+
+typealias TasksGetPreviewTasksReturn = [TasksGetPreviewTasksItem]

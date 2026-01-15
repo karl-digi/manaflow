@@ -42,6 +42,7 @@ type SwiftType = {
 type SwiftDefs = {
   structs: Map<string, string>;
   enums: Map<string, string>;
+  idTables: Set<string>;
 };
 
 type SwiftArgStruct = {
@@ -142,6 +143,7 @@ try {
   const defs: SwiftDefs = {
     structs: new Map<string, string>(),
     enums: new Map<string, string>(),
+    idTables: new Set<string>(),
   };
 
   const swiftArgStructs: SwiftArgStruct[] = [];
@@ -185,7 +187,12 @@ try {
 function parseArgs(args: string[]): CliOptions {
   let apiPath = defaultApiPath;
   let outFile = defaultOutFile;
-  let include: string[] = ["tasks.get"];
+  let include: string[] = [
+    "tasks.get",
+    "tasks.getArchivedPaginated",
+    "tasks.getPreviewTasks",
+    "tasks.getWithNotificationOrder",
+  ];
   let format = true;
 
   for (let index = 0; index < args.length; index += 1) {
@@ -257,7 +264,7 @@ function printUsage(): void {
     "Options:",
     `  --api=PATH      Defaults to ${defaultApiPath}`,
     `  --out=PATH      Defaults to ${defaultOutFile}`,
-    "  --include=LIST  Comma-separated function paths (default: tasks.get)",
+    "  --include=LIST  Comma-separated function paths (default: tasks.get + related)",
     "  --format        Run swift-format after generating (default: true)",
     "  --no-format     Disable formatting",
   ];
@@ -404,8 +411,14 @@ function renderSwiftType(
       return { type: "Bool", wrapper: null };
     case "number":
       return { type: "Double", wrapper: "@ConvexFloat" };
-    case "id":
-      return { type: "String", wrapper: null };
+    case "id": {
+      if (!schema.table) {
+        return { type: "String", wrapper: null };
+      }
+      const marker = `ConvexTable${pascalCase(schema.table)}`;
+      defs.idTables.add(marker);
+      return { type: `ConvexId<${marker}>`, wrapper: null };
+    }
     case "record": {
       const valueType = renderSwiftType(checker, defs, schema.value, path.concat("Value"), sourceFile);
       return { type: `[String: ${stripOptional(valueType.type)}]`, wrapper: null };
@@ -494,7 +507,7 @@ function renderSwiftArgType(
           const typeName = `${stripOptional(swift.type)}${optionalSuffix}`;
           return `    let ${fieldName}: ${typeName}`;
         });
-        const body = `struct ${structName}: Encodable {\\n${fields.join("\\n")}\\n}`;
+        const body = `struct ${structName}: Encodable {\n${fields.join("\n")}\n}`;
         defs.structs.set(structName, body);
       }
       return { type: structName, wrapper: null };
@@ -506,7 +519,7 @@ function renderSwiftArgType(
           const caseName = escapeSwiftIdentifier(sanitizeEnumCase(value));
           return `    case ${caseName} = "${value}"`;
         });
-        const body = `enum ${enumName}: String, Encodable {\\n${cases.join("\\n")}\\n}`;
+        const body = `enum ${enumName}: String, Encodable {\n${cases.join("\n")}\n}`;
         defs.enums.set(enumName, body);
       }
       return { type: enumName, wrapper: null };
@@ -523,24 +536,17 @@ function schemaFromType(
 ): { schema: Schema; optional: boolean } {
   const { baseType, optional } = unwrapOptional(checker, type);
 
-  if (isStringType(baseType)) return { schema: { kind: "string" }, optional };
-  if (isBooleanType(baseType)) return { schema: { kind: "boolean" }, optional };
-  if (isNumberType(baseType)) return { schema: { kind: "number" }, optional };
-
+  const typeString = checker.typeToString(baseType, sourceFile, ts.TypeFormatFlags.NoTruncation);
+  const idMatch =
+    /^Id<"([^"]+)">$/.exec(typeString) ?? /^import\(.+\)\.Id<"([^"]+)">$/.exec(typeString);
   const aliasName = baseType.aliasSymbol?.getName();
-  if (aliasName === "Id") {
-    const typeString = checker.typeToString(baseType, sourceFile, ts.TypeFormatFlags.NoTruncation);
-    const idMatch =
-      /^Id<"([^"]+)">$/.exec(typeString) ?? /^import\\(.+\\)\\.Id<"([^"]+)">$/.exec(typeString);
+  if (aliasName === "Id" || idMatch) {
     return { schema: { kind: "id", table: idMatch?.[1] ?? null }, optional };
   }
 
-  const typeString = checker.typeToString(baseType, sourceFile, ts.TypeFormatFlags.NoTruncation);
-  const idMatch =
-    /^Id<"([^"]+)">$/.exec(typeString) ?? /^import\\(.+\\)\\.Id<"([^"]+)">$/.exec(typeString);
-  if (idMatch) {
-    return { schema: { kind: "id", table: idMatch[1] ?? null }, optional };
-  }
+  if (isStringType(baseType)) return { schema: { kind: "string" }, optional };
+  if (isBooleanType(baseType)) return { schema: { kind: "boolean" }, optional };
+  if (isNumberType(baseType)) return { schema: { kind: "number" }, optional };
 
   if (checker.isArrayType(baseType)) {
     const element = checker.getElementTypeOfArrayType(baseType);
@@ -678,13 +684,28 @@ function renderSwiftFile(
     `// Generated from ${apiPath}`,
     `// Functions: ${selected.map((fn) => fn.path.replace(/^api\./, "")).join(", ")}`,
     "",
+    "struct ConvexId<Table>: Decodable, Hashable, Sendable {",
+    "  let rawValue: String",
+    "",
+    "  init(rawValue: String) {",
+    "    self.rawValue = rawValue",
+    "  }",
+    "",
+    "  init(from decoder: Decoder) throws {",
+    "    let container = try decoder.singleValueContainer()",
+    "    rawValue = try container.decode(String.self)",
+    "  }",
+    "}",
+    "",
   ];
 
+  const idMarkers = Array.from(defs.idTables.values()).sort().map((name) => `enum ${name} {}`);
   const enums = Array.from(defs.enums.values());
   const structs = Array.from(defs.structs.values());
   const argBodies = argStructs.map((item) => item.body);
 
   return header
+    .concat(idMarkers)
     .concat(enums)
     .concat(structs)
     .concat(argBodies)
