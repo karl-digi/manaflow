@@ -50,7 +50,7 @@ curl -fsSL https://raw.githubusercontent.com/karlorz/cmux/main/scripts/pve/pve-l
 uv run --env-file .env ./scripts/snapshot-pvelxc.py \
 --template-vmid 9000 \
 --standard-vcpus 4 \
---standard-memory 6144 \
+--standard-memory 8192 \
 --standard-disk-size 32768 \
 --boosted-vcpus 6 \
 --boosted-memory 8192 \
@@ -68,7 +68,7 @@ uv run --env-file .env ./scripts/snapshot-pvelxc.py \
 uv run --env-file .env ./scripts/snapshot.py \
 --snapshot-id snapshot_7wbqo5jd \
 --standard-vcpus 4 \    
---standard-memory 6144 \
+--standard-memory 8192 \
 --standard-disk-size 32768 \
 --boosted-vcpus 6 \
 --boosted-memory 8192 \

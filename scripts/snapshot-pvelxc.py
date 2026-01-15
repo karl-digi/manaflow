@@ -28,7 +28,7 @@ Optional environment variables:
 Examples:
     uv run --env-file .env ./scripts/snapshot-pvelxc.py
     uv run --env-file .env ./scripts/snapshot-pvelxc.py --template-vmid 9000
-    uv run --env-file .env ./scripts/snapshot-pvelxc.py --standard-vcpus 4 --standard-memory 6144
+    uv run --env-file .env ./scripts/snapshot-pvelxc.py --standard-vcpus 4 --standard-memory 8192
 """
 
 from __future__ import annotations
@@ -4337,7 +4337,7 @@ def parse_args() -> argparse.Namespace:
         "--memory",
         dest="standard_memory",
         type=int,
-        default=6144,
+        default=8192,
         help="Memory (MiB) for the standard preset",
     )
     parser.add_argument(

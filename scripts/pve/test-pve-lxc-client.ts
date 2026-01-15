@@ -55,7 +55,7 @@ async function main() {
 
   // Test 2: Try to parse a snapshot ID
   console.log("\n--- Test 2: Parse snapshot ID format ---");
-  const testSnapshotId = "pve_102_cmux-4vcpu_6gb_32gb-20251227-030007";
+  const testSnapshotId = "pve_102_cmux-4vcpu_8gb_32gb-20251227-030007";
   try {
     // We'll manually test the parsing logic
     const match = testSnapshotId.match(/^pve_(\d+)_(.+)$/);
@@ -73,7 +73,7 @@ async function main() {
   // Test 3: Test starting a container from snapshot (dry run - parse only)
   console.log("\n--- Test 3: Validate snapshot ID for start operation ---");
   try {
-    const testSnapshotId2 = "pve_102_cmux-4vcpu_6gb_32gb-20251227-030007";
+    const testSnapshotId2 = "pve_102_cmux-4vcpu_8gb_32gb-20251227-030007";
     console.log(`  Input: ${testSnapshotId2}`);
 
     // This would trigger: client.instances.start({ snapshotId: testSnapshotId2 })

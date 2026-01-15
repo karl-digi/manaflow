@@ -66,7 +66,7 @@ jobs:
           PVE_NODE: ${{ secrets.PVE_NODE }}
           TEMPLATE_VMID: ${{ vars.PVE_TEMPLATE_VMID || '9000' }}
           STANDARD_VCPUS: ${{ vars.PVE_STANDARD_VCPUS || '4' }}
-          STANDARD_MEMORY: ${{ vars.PVE_STANDARD_MEMORY || '6144' }}
+          STANDARD_MEMORY: ${{ vars.PVE_STANDARD_MEMORY || '8192' }}
           STANDARD_DISK_SIZE: ${{ vars.PVE_STANDARD_DISK_SIZE || '32768' }}
           BOOSTED_VCPUS: ${{ vars.PVE_BOOSTED_VCPUS || '6' }}
           BOOSTED_MEMORY: ${{ vars.PVE_BOOSTED_MEMORY || '8192' }}

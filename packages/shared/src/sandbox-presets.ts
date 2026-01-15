@@ -120,9 +120,9 @@ export interface SandboxConfig {
  * while maintaining consistent "standard" and "performance" tiers in the UI.
  */
 export const UI_VISIBLE_PRESET_IDS_BY_PROVIDER: Record<SandboxProviderType, readonly string[]> = {
-  morph: ["4vcpu_6gb_32gb", "6vcpu_8gb_32gb", "4vcpu_16gb_48gb", "8vcpu_32gb_48gb"],
+  morph: ["4vcpu_8gb_32gb", "6vcpu_8gb_32gb", "4vcpu_16gb_48gb", "8vcpu_32gb_48gb"],
   // Keep in sync with the latest pve-lxc snapshot manifest; disk size bumped to 40GB
-  "pve-lxc": ["4vcpu_6gb_32gb", "6vcpu_8gb_40gb"],
+  "pve-lxc": ["4vcpu_8gb_32gb", "6vcpu_8gb_40gb"],
   "pve-vm": [], // TODO: Add when PVE VM presets are defined
 };
 

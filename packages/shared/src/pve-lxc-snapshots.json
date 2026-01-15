@@ -3,10 +3,10 @@
   "updatedAt": "2026-01-14T11:41:02Z",
   "presets": [
     {
-      "presetId": "4vcpu_6gb_32gb",
+      "presetId": "4vcpu_8gb_32gb",
       "label": "Standard workspace",
       "cpu": "4 vCPU",
-      "memory": "6 GB RAM",
+      "memory": "8 GB RAM",
       "disk": "32 GB SSD",
       "versions": [
         {
