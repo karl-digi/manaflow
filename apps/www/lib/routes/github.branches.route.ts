@@ -117,10 +117,19 @@ const BranchesResponse = z
     branches: z.array(GithubBranch),
     defaultBranch: z.string().nullable(),
     error: z.string().nullable(),
-    nextOffset: z.number().nullable(),
+    nextOffset: z.number().optional(),
     hasMore: z.boolean(),
   })
   .openapi("GithubBranchesResponse");
+
+type BranchesResponseType = z.infer<typeof BranchesResponse>;
+
+const branchesErrorResponse = (error: string): BranchesResponseType => ({
+  branches: [],
+  defaultBranch: null,
+  error,
+  hasMore: false,
+});
 
 githubBranchesRouter.openapi(
   createRoute({
@@ -152,36 +161,18 @@ githubBranchesRouter.openapi(
     try {
       const githubAccount = await user.getConnectedAccount("github");
       if (!githubAccount) {
-        return c.json({
-          branches: [],
-          defaultBranch: null,
-          error: "GitHub account not connected",
-          nextOffset: null,
-          hasMore: false,
-        }, 200);
+        return c.json(branchesErrorResponse("GitHub account not connected"), 200);
       }
 
       const { accessToken } = await githubAccount.getAccessToken();
       if (!accessToken || accessToken.trim().length === 0) {
-        return c.json({
-          branches: [],
-          defaultBranch: null,
-          error: "GitHub access token not found",
-          nextOffset: null,
-          hasMore: false,
-        }, 200);
+        return c.json(branchesErrorResponse("GitHub access token not found"), 200);
       }
 
       const octokit = new Octokit({ auth: accessToken.trim() });
       const [owner, repoName] = repo.split("/");
       if (!owner || !repoName) {
-        return c.json({
-          branches: [],
-          defaultBranch: null,
-          error: "Invalid repository format",
-          nextOffset: null,
-          hasMore: false,
-        }, 200);
+        return c.json(branchesErrorResponse("Invalid repository format"), 200);
       }
 
       const normalizedSearch = search?.trim().toLowerCase() ?? "";
@@ -269,13 +260,7 @@ githubBranchesRouter.openapi(
         const parsed = graphqlResponse.parse(rawResponse);
         const repoData = parsed.repository;
         if (!repoData) {
-          return c.json({
-            branches: [],
-            defaultBranch: null,
-            error: "Repository not found",
-            nextOffset: null,
-            hasMore: false,
-          }, 200);
+          return c.json(branchesErrorResponse("Repository not found"), 200);
         }
 
         if (defaultBranchName === null) {
@@ -322,7 +307,7 @@ githubBranchesRouter.openapi(
       const branches = allBranches.slice(offset, offset + limit);
 
       const hasMore = allBranches.length > offset + limit || githubHasMore;
-      const nextOffset = hasMore ? offset + limit : null;
+      const nextOffset = hasMore ? offset + limit : undefined;
 
       return c.json({
         branches,
@@ -333,13 +318,8 @@ githubBranchesRouter.openapi(
       }, 200);
     } catch (error) {
       console.error("[github.branches] Error fetching branches:", error);
-      return c.json({
-        branches: [],
-        defaultBranch: null,
-        error: error instanceof Error ? error.message : "Failed to fetch branches",
-        nextOffset: null,
-        hasMore: false,
-      }, 200);
+      const message = error instanceof Error ? error.message : "Failed to fetch branches";
+      return c.json(branchesErrorResponse(message), 200);
     }
   }
 );

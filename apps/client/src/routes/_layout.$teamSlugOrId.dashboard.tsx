@@ -219,8 +219,6 @@ function DashboardComponent() {
   // Branches query - infinite scroll with server-side ordering by recent commits
   // Each search term is cached separately by React Query
   const branchPageSize = 10;
-  // Track previous repo to detect repo changes
-  const prevRepoRef = useRef<string | null>(null);
   const currentRepo = selectedProject[0] ?? "";
 
   const branchesQuery = useInfiniteQuery<
@@ -271,11 +269,6 @@ function DashboardComponent() {
       return previousData;
     },
   });
-
-  // Update previous repo ref after render
-  useEffect(() => {
-    prevRepoRef.current = currentRepo;
-  }, [currentRepo]);
 
   // Show loading in search input when search is pending or fetching
   const isBranchSearchLoading =

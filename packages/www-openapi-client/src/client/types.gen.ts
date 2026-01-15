@@ -383,7 +383,7 @@ export type GithubBranchesResponse = {
     branches: Array<GithubBranch>;
     defaultBranch: string | null;
     error: string | null;
-    nextOffset: number | null;
+    nextOffset?: number;
     hasMore: boolean;
 };
 

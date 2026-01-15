@@ -497,26 +497,25 @@ const SearchableSelect = forwardRef<
     return () => el.removeEventListener("scroll", onScroll);
   }, [open, triggerLoadMore]);
 
+  // Trigger load more when dropdown opens or when options change (to fill viewport if needed)
+  // Note: canLoadMore is already checked inside triggerLoadMore, no need to add as dependency
   useEffect(() => {
     if (!open) return;
     triggerLoadMore();
-  }, [open, filteredOptions.length, triggerLoadMore, canLoadMore]);
+  }, [open, filteredOptions.length, triggerLoadMore]);
 
-  // Reset lock only when isLoadingMore transitions from true to false
-  // This prevents the race condition where the lock is reset before isLoadingMore becomes true
+  // Reset lock when dropdown closes or when loading finishes (isLoadingMore: true → false)
   useEffect(() => {
+    if (!open) {
+      loadMoreLockRef.current = false;
+      prevIsLoadingMoreRef.current = false;
+      return;
+    }
     if (prevIsLoadingMoreRef.current && !isLoadingMore) {
       loadMoreLockRef.current = false;
     }
     prevIsLoadingMoreRef.current = isLoadingMore;
-  }, [isLoadingMore]);
-
-  // Reset lock when dropdown closes to ensure clean state on next open
-  useEffect(() => {
-    if (!open) {
-      loadMoreLockRef.current = false;
-    }
-  }, [open]);
+  }, [open, isLoadingMore]);
 
   useEffect(() => {
     if (open) {
