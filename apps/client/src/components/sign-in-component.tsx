@@ -2,14 +2,16 @@
 
 import { isElectron } from "@/lib/electron";
 import { WWW_ORIGIN } from "@/lib/wwwOrigin";
-import { SignIn, useUser } from "@stackframe/react";
+import { SignIn, SignUp, useUser } from "@stackframe/react";
 import { AnimatePresence, motion } from "framer-motion";
-import { type CSSProperties } from "react";
+import { useState, type CSSProperties } from "react";
 
 export function SignInComponent() {
   const user = useUser({ or: "return-null" });
   const showSignIn = !user;
   const showEmbeddedSignIn = !isElectron || import.meta.env.DEV;
+  const [isSignUp, setIsSignUp] = useState(false);
+
   return (
     <AnimatePresence mode="wait">
       {showSignIn ? (
@@ -30,7 +32,7 @@ export function SignInComponent() {
             <div className="flex flex-col items-center gap-4 p-6 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900">
               <div className="text-center">
                 <p className="text-neutral-900 dark:text-neutral-100 font-medium">
-                  Sign in required
+                  {isSignUp ? "Create an account" : "Sign in required"}
                 </p>
                 <p className="text-sm text-neutral-600 dark:text-neutral-400">
                   We'll open your browser to continue.
@@ -43,15 +45,36 @@ export function SignInComponent() {
                 }}
                 className="px-4 py-2 rounded-md bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900 hover:opacity-90"
               >
-                Sign in with browser
+                {isSignUp ? "Sign up with browser" : "Sign in with browser"}
               </button>
               <p className="text-xs text-neutral-500 dark:text-neutral-500 text-center">
-                After signing in, you'll be returned automatically.
+                After {isSignUp ? "signing up" : "signing in"}, you'll be
+                returned automatically.
               </p>
-              {showEmbeddedSignIn ? <SignIn /> : null}
+              <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                {isSignUp ? "Already have an account? " : "Don't have an account? "}
+                <button
+                  onClick={() => setIsSignUp(!isSignUp)}
+                  className="text-neutral-900 dark:text-neutral-100 font-medium hover:underline"
+                >
+                  {isSignUp ? "Sign in" : "Sign up"}
+                </button>
+              </p>
+              {showEmbeddedSignIn ? (isSignUp ? <SignUp /> : <SignIn />) : null}
             </div>
           ) : (
-            <SignIn />
+            <div className="flex flex-col items-center gap-4">
+              {isSignUp ? <SignUp /> : <SignIn />}
+              <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                {isSignUp ? "Already have an account? " : "Don't have an account? "}
+                <button
+                  onClick={() => setIsSignUp(!isSignUp)}
+                  className="text-neutral-900 dark:text-neutral-100 font-medium hover:underline"
+                >
+                  {isSignUp ? "Sign in" : "Sign up"}
+                </button>
+              </p>
+            </div>
           )}
         </motion.div>
       ) : null}
