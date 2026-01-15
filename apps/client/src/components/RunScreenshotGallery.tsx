@@ -89,19 +89,20 @@ const getImageKey = (
 ) => `${setId}:${image.storageId}:${indexInSet}`;
 
 export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
-  const { screenshotSets, highlightedSetId } = props;
-  const sortedScreenshotSets = useMemo(
-    () =>
-      [...screenshotSets].sort((a, b) => {
-        if (a.capturedAt === b.capturedAt) {
-          return a._id.localeCompare(b._id);
-        }
-        return a.capturedAt - b.capturedAt;
-      }),
-    [screenshotSets],
-  );
+  const { screenshotSets } = props;
+  // Only show the latest screenshot set
+  const latestScreenshotSet = useMemo(() => {
+    if (screenshotSets.length === 0) return null;
+    return [...screenshotSets].sort((a, b) => {
+      if (a.capturedAt === b.capturedAt) {
+        return a._id.localeCompare(b._id);
+      }
+      return a.capturedAt - b.capturedAt;
+    })[screenshotSets.length - 1];
+  }, [screenshotSets]);
 
   const flattenedImages = useMemo(() => {
+    if (!latestScreenshotSet) return [];
     const entries: Array<{
       set: RunScreenshotSet;
       image: ScreenshotImage;
@@ -109,22 +110,20 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
       key: string;
       globalIndex: number;
     }> = [];
-    sortedScreenshotSets.forEach((set) => {
-      set.images.forEach((image, indexInSet) => {
-        if (!image.url) {
-          return;
-        }
-        entries.push({
-          set,
-          image,
-          indexInSet,
-          key: getImageKey(set._id, image, indexInSet),
-          globalIndex: entries.length,
-        });
+    latestScreenshotSet.images.forEach((image, indexInSet) => {
+      if (!image.url) {
+        return;
+      }
+      entries.push({
+        set: latestScreenshotSet,
+        image,
+        indexInSet,
+        key: getImageKey(latestScreenshotSet._id, image, indexInSet),
+        globalIndex: entries.length,
       });
     });
     return entries;
-  }, [sortedScreenshotSets]);
+  }, [latestScreenshotSet]);
 
   const globalIndexByKey = useMemo(() => {
     const indexMap = new Map<string, number>();
@@ -235,10 +234,6 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
     currentEntry?.globalIndex !== undefined
       ? currentEntry.globalIndex + 1
       : null;
-
-  const effectiveHighlight =
-    highlightedSetId ??
-    sortedScreenshotSets[sortedScreenshotSets.length - 1]?._id ?? null;
 
   useEffect(() => {
     if (activeImageKey === null) {
@@ -439,7 +434,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
     };
   }, [goNext, goPrev, isSlideshowOpen]);
 
-  if (sortedScreenshotSets.length === 0) {
+  if (!latestScreenshotSet) {
     return null;
   }
 
@@ -450,8 +445,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
           Screenshots
         </h2>
         <span className="text-xs text-neutral-600 dark:text-neutral-400">
-          {sortedScreenshotSets.length}{" "}
-          {sortedScreenshotSets.length === 1 ? "capture" : "captures"}
+          Latest capture
         </span>
       </div>
       <div className="px-3.5 pb-4 space-y-4">
@@ -620,13 +614,13 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
             </Dialog.Portal>
           </Dialog.Root>
         ) : null}
-        {sortedScreenshotSets.map((set) => {
+        {(() => {
+          const set = latestScreenshotSet;
           const capturedAtDate = new Date(set.capturedAt);
           const relativeCapturedAt = formatDistanceToNow(capturedAtDate, {
             addSuffix: true,
           });
           const shortCommit = set.commitSha?.slice(0, 12);
-          const isHighlighted = effectiveHighlight === set._id;
           const isNoUiChanges =
             set.hasUiChanges === false || isNoUiChangesError(set.error);
           const statusLabel = isNoUiChanges
@@ -645,7 +639,6 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
 
           return (
             <article
-              key={set._id}
               className={cn(
                 "rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950/70 p-3 transition-shadow"
               )}
@@ -659,11 +652,6 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                 >
                   {statusLabel}
                 </span>
-                {isHighlighted && (
-                  <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-emerald-100/80 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300">
-                    Latest
-                  </span>
-                )}
                 <span
                   className="text-xs text-neutral-600 dark:text-neutral-400"
                   title={capturedAtDate.toLocaleString()}
@@ -741,7 +729,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
               ) : null}
             </article>
           );
-        })}
+        })()}
       </div>
     </section>
   );

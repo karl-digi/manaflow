@@ -95,13 +95,17 @@ function EnvironmentsPage() {
   const setupInstanceMutation = useRQMutation(postApiMorphSetupInstanceMutation());
 
   // Trigger provisioning when on configure step without instanceId
+  // Note: setupInstanceMutation is intentionally excluded from deps to prevent infinite loops.
+  // The mutation object changes on every render, which would cause the effect to re-fire.
+  // Combined with resetting provisioningTriggeredRef on error, this created a DDoS-like loop.
   useEffect(() => {
     if (activeStep !== "configure") {
       provisioningTriggeredRef.current = false;
       return;
     }
 
-    // Skip if already have instanceId or already triggered or mutation is pending
+    // Skip if already have instanceId, already triggered, or mutation is in-flight
+    // Note: isPending check prevents duplicate calls when user navigates away and back quickly
     if (activeInstanceId || provisioningTriggeredRef.current || setupInstanceMutation.isPending) {
       return;
     }
@@ -141,10 +145,12 @@ function EnvironmentsPage() {
         },
         onError: (error) => {
           console.error("Failed to provision instance:", error);
-          provisioningTriggeredRef.current = false; // Allow retry
+          // Don't reset provisioningTriggeredRef here - it causes infinite retry loops
+          // when combined with effect dependencies. User must navigate away and back to retry.
         },
       }
     );
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setupInstanceMutation excluded to prevent infinite loops
   }, [
     activeStep,
     activeInstanceId,
@@ -152,7 +158,6 @@ function EnvironmentsPage() {
     activeSnapshotId,
     teamSlugOrId,
     navigate,
-    setupInstanceMutation,
   ]);
 
   useEffect(() => {
