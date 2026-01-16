@@ -40,6 +40,16 @@ COPY scripts/package.json ./scripts/
 RUN bun install --frozen-lockfile --production --ignore-scripts || \
     (echo "Retrying without scripts..." && bun install --frozen-lockfile --production --ignore-scripts)
 
+# Resolve workspace symlinks to actual directories so they copy correctly
+# This converts symlinks in node_modules to real directories
+RUN for link in node_modules/@cmux/*; do \
+        if [ -L "$link" ]; then \
+            target=$(readlink -f "$link"); \
+            rm "$link"; \
+            cp -r "$target" "$link" 2>/dev/null || true; \
+        fi; \
+    done
+
 # =============================================================================
 # Stage 2: Production
 # =============================================================================
@@ -71,8 +81,12 @@ COPY apps/server ./apps/server
 # Copy root config files
 COPY package.json bun.lock .npmrc ./
 
-# Re-link workspace packages so bun can resolve subpath exports like @cmux/convex/api
-RUN bun install --frozen-lockfile --production --ignore-scripts 2>/dev/null || true
+# Re-link workspace packages to use local source instead of copied empty dirs from deps
+# This ensures subpath exports like @cmux/convex/api resolve correctly at runtime
+RUN rm -rf node_modules/@cmux && mkdir -p node_modules/@cmux \
+    && ln -sf ../../packages/shared node_modules/@cmux/shared \
+    && ln -sf ../../packages/convex node_modules/@cmux/convex \
+    && ln -sf ../../packages/www-openapi-client node_modules/@cmux/www-openapi-client
 
 # Set ownership to non-root user
 RUN chown -R cmux:cmux /app
