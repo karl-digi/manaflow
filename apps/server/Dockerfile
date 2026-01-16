@@ -2,12 +2,11 @@
 
 # Multi-stage Dockerfile for cmux server
 # Optimized for Coolify deployment
-# Uses Bun's recommended temp directory pattern for workspace projects
 
 # =============================================================================
-# Stage 1: Install dependencies in temp directory (isolated from workspaces)
+# Stage 1: Install all dependencies (for proper hoisting in monorepo)
 # =============================================================================
-FROM oven/bun:1 AS install
+FROM oven/bun:1 AS deps
 
 WORKDIR /app
 
@@ -35,15 +34,10 @@ COPY packages/vscode-extension/package.json ./packages/vscode-extension/
 COPY packages/host-screenshot-collector/package.json ./packages/host-screenshot-collector/
 COPY scripts/package.json ./scripts/
 
-# Install production dependencies into a temp directory (Bun recommended pattern)
-# This creates a clean node_modules without workspace symlinks pointing to /app
-RUN mkdir -p /temp/prod \
-    && cp package.json bun.lock .npmrc /temp/prod/ \
-    && cp -r apps /temp/prod/apps \
-    && cp -r packages /temp/prod/packages \
-    && cp -r scripts /temp/prod/scripts \
-    && cd /temp/prod \
-    && bun install --frozen-lockfile --production --ignore-scripts
+# Install ALL dependencies (not --production) to ensure proper hoisting
+# Bun's --production flag breaks hoisting in monorepos
+RUN bun install --frozen-lockfile --ignore-scripts || \
+    (echo "Retrying without scripts..." && bun install --frozen-lockfile --ignore-scripts)
 
 # =============================================================================
 # Stage 2: Production
@@ -62,8 +56,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN groupadd --gid 1001 cmux \
     && useradd --uid 1001 --gid cmux --shell /bin/bash --create-home cmux
 
-# Copy node_modules from temp directory (clean, no broken symlinks)
-COPY --from=install /temp/prod/node_modules ./node_modules
+# Copy node_modules from deps stage (properly hoisted)
+COPY --from=deps /app/node_modules ./node_modules
 
 # Copy workspace packages source code
 COPY packages/shared ./packages/shared
@@ -82,13 +76,6 @@ RUN rm -rf node_modules/@cmux && mkdir -p node_modules/@cmux \
     && ln -s ../../packages/shared node_modules/@cmux/shared \
     && ln -s ../../packages/convex node_modules/@cmux/convex \
     && ln -s ../../packages/www-openapi-client node_modules/@cmux/www-openapi-client
-
-# Hoist critical npm packages from .bun/ cache to node_modules root
-# This ensures packages like 'convex' are resolvable from workspace packages
-RUN CONVEX_PATH=$(find node_modules/.bun -type d -name "convex" -path "*convex@*/node_modules/convex" 2>/dev/null | head -1) \
-    && if [ -n "$CONVEX_PATH" ] && [ ! -e "node_modules/convex" ]; then \
-         ln -s "${CONVEX_PATH#node_modules/}" node_modules/convex; \
-       fi
 
 # Set ownership to non-root user
 RUN chown -R cmux:cmux /app
