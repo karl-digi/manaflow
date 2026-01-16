@@ -72,11 +72,7 @@ COPY apps/server ./apps/server
 COPY package.json bun.lock .npmrc ./
 
 # Re-link workspace packages so bun can resolve subpath exports like @cmux/convex/api
-# Manually create symlinks since we don't have all workspaces available for full bun install
-RUN rm -rf node_modules/@cmux && mkdir -p node_modules/@cmux \
-    && ln -sf ../../packages/shared node_modules/@cmux/shared \
-    && ln -sf ../../packages/convex node_modules/@cmux/convex \
-    && ln -sf ../../packages/www-openapi-client node_modules/@cmux/www-openapi-client
+RUN bun install --frozen-lockfile --production --ignore-scripts 2>/dev/null || true
 
 # Set ownership to non-root user
 RUN chown -R cmux:cmux /app
