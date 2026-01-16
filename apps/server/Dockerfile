@@ -83,6 +83,13 @@ RUN rm -rf node_modules/@cmux && mkdir -p node_modules/@cmux \
     && ln -s ../../packages/convex node_modules/@cmux/convex \
     && ln -s ../../packages/www-openapi-client node_modules/@cmux/www-openapi-client
 
+# Hoist critical npm packages from .bun/ cache to node_modules root
+# This ensures packages like 'convex' are resolvable from workspace packages
+RUN CONVEX_PATH=$(find node_modules/.bun -type d -name "convex" -path "*convex@*/node_modules/convex" 2>/dev/null | head -1) \
+    && if [ -n "$CONVEX_PATH" ] && [ ! -e "node_modules/convex" ]; then \
+         ln -s "${CONVEX_PATH#node_modules/}" node_modules/convex; \
+       fi
+
 # Set ownership to non-root user
 RUN chown -R cmux:cmux /app
 
