@@ -122,15 +122,93 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
     );
   }
 
-  const [auth, teamsResult, githubAccount, gitlabAccount, bitbucketAccount] = await Promise.all([
+  // Try to get auth tokens - if this fails, we'll try to create a fresh session
+  let accessToken: string | null = null;
+  let teams: StackTeam[] = [];
+  let githubAccount: Awaited<ReturnType<typeof user.getConnectedAccount>> = null;
+  let gitlabAccount: Awaited<ReturnType<typeof user.getConnectedAccount>> = null;
+  let bitbucketAccount: Awaited<ReturnType<typeof user.getConnectedAccount>> = null;
+
+  const [auth, teamsResult, github, gitlab, bitbucket] = await Promise.all([
     user.getAuthJson(),
     user.listTeams(),
     user.getConnectedAccount("github"),
     user.getConnectedAccount("gitlab"),
     user.getConnectedAccount("bitbucket"),
   ]);
-  const teams: StackTeam[] = teamsResult;
-  const { accessToken } = auth;
+  teams = teamsResult;
+  githubAccount = github;
+  gitlabAccount = gitlab;
+  bitbucketAccount = bitbucket;
+  accessToken = auth.accessToken;
+
+  // If accessToken is null, try creating a fresh session to get valid tokens
+  // This can happen right after OAuth sign-in when tokens aren't fully propagated
+  if (!accessToken) {
+    console.log("[PreviewLandingPage] accessToken is null, attempting to create fresh session");
+    try {
+      const freshSession = await user.createSession({ expiresInMillis: 24 * 60 * 60 * 1000 });
+      const freshTokens = await freshSession.getTokens();
+      if (freshTokens.accessToken) {
+        accessToken = freshTokens.accessToken;
+        console.log("[PreviewLandingPage] Got fresh access token from new session");
+      }
+    } catch (error) {
+      console.error("[PreviewLandingPage] Failed to create fresh session", error);
+    }
+  }
+
+  // If we still don't have an access token, show the unauthenticated view
+  // This allows the user to sign in again rather than seeing a crash
+  if (!accessToken) {
+    console.error("[PreviewLandingPage] No access token available after retry, showing unauthenticated view");
+    return (
+      <div className="relative isolate min-h-dvh bg-[#05050a] text-white flex justify-center">
+        <svg
+          className="absolute inset-0 -z-10 w-full h-full -mx-8 sm:mx-0"
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 832 252"
+          fill="none"
+          preserveAspectRatio="none"
+        >
+          <ellipse className="sm:hidden" cx="446" cy="96" rx="500" ry="126" fill="url(#paint0_radial_preview_1_sm)" />
+          <ellipse className="hidden sm:block" cx="446" cy="96" rx="416" ry="126" fill="url(#paint0_radial_preview_1)" />
+          <defs>
+            <radialGradient
+              id="paint0_radial_preview_1_sm"
+              cx="0"
+              cy="0"
+              r="1"
+              gradientUnits="userSpaceOnUse"
+              gradientTransform="translate(446 96) scale(500 126)"
+            >
+              <stop stopColor="rgba(4,120,255,0.25)" />
+              <stop offset="1" stopColor="rgba(4,120,255,0)" />
+            </radialGradient>
+            <radialGradient
+              id="paint0_radial_preview_1"
+              cx="0"
+              cy="0"
+              r="1"
+              gradientUnits="userSpaceOnUse"
+              gradientTransform="translate(446 96) scale(416 126)"
+            >
+              <stop stopColor="rgba(4,120,255,0.25)" />
+              <stop offset="1" stopColor="rgba(4,120,255,0)" />
+            </radialGradient>
+          </defs>
+        </svg>
+
+        <PreviewDashboard
+          selectedTeamSlugOrId=""
+          teamOptions={[]}
+          providerConnectionsByTeam={{}}
+          isAuthenticated={false}
+          previewConfigs={[]}
+        />
+      </div>
+    );
+  }
 
   // Check if user authenticated with GitLab or Bitbucket but not GitHub
   // These providers are still in beta, so show waitlist in the repo selection box
@@ -166,10 +244,6 @@ export default async function PreviewLandingPage({ searchParams }: PageProps) {
         })
       );
     }
-  }
-
-  if (!accessToken) {
-    throw new Error("Missing Stack access token");
   }
 
   const searchTeam = (() => {

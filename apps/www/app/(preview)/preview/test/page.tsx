@@ -40,10 +40,29 @@ export default async function PreviewTestPage({ searchParams }: PageProps) {
     user.listTeams(),
   ]);
   const teams: StackTeam[] = teamsResult;
-  const { accessToken } = auth;
+  let accessToken = auth.accessToken;
 
+  // If accessToken is null, try creating a fresh session to get valid tokens
+  // This can happen right after OAuth sign-in when tokens aren't fully propagated
   if (!accessToken) {
-    throw new Error("Missing Stack access token");
+    console.log("[PreviewTestPage] accessToken is null, attempting to create fresh session");
+    try {
+      const freshSession = await user.createSession({ expiresInMillis: 24 * 60 * 60 * 1000 });
+      const freshTokens = await freshSession.getTokens();
+      if (freshTokens.accessToken) {
+        accessToken = freshTokens.accessToken;
+        console.log("[PreviewTestPage] Got fresh access token from new session");
+      }
+    } catch (error) {
+      console.error("[PreviewTestPage] Failed to create fresh session", error);
+    }
+  }
+
+  // If we still don't have an access token, redirect to sign-in
+  if (!accessToken) {
+    console.error("[PreviewTestPage] No access token available after retry, redirecting to sign-in");
+    const signInUrl = `/handler/sign-in?after_auth_return_to=${encodeURIComponent("/preview/test")}`;
+    return redirect(signInUrl);
   }
 
   const searchTeam = (() => {
