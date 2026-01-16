@@ -4,7 +4,7 @@
 # Optimized for Coolify deployment
 
 # =============================================================================
-# Stage 1: Install all dependencies (for proper hoisting in monorepo)
+# Stage 1: Install dependencies
 # =============================================================================
 FROM oven/bun:1 AS deps
 
@@ -34,10 +34,9 @@ COPY packages/vscode-extension/package.json ./packages/vscode-extension/
 COPY packages/host-screenshot-collector/package.json ./packages/host-screenshot-collector/
 COPY scripts/package.json ./scripts/
 
-# Install ALL dependencies (not --production) to ensure proper hoisting
-# Bun's --production flag breaks hoisting in monorepos
-RUN bun install --frozen-lockfile --ignore-scripts || \
-    (echo "Retrying without scripts..." && bun install --frozen-lockfile --ignore-scripts)
+# Install production dependencies
+RUN bun install --frozen-lockfile --production --ignore-scripts || \
+    (echo "Retrying without scripts..." && bun install --frozen-lockfile --production --ignore-scripts)
 
 # =============================================================================
 # Stage 2: Production
@@ -56,7 +55,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN groupadd --gid 1001 cmux \
     && useradd --uid 1001 --gid cmux --shell /bin/bash --create-home cmux
 
-# Copy node_modules from deps stage (properly hoisted)
+# Copy node_modules from deps stage
 COPY --from=deps /app/node_modules ./node_modules
 
 # Copy workspace packages source code
@@ -76,6 +75,17 @@ RUN rm -rf node_modules/@cmux && mkdir -p node_modules/@cmux \
     && ln -s ../../packages/shared node_modules/@cmux/shared \
     && ln -s ../../packages/convex node_modules/@cmux/convex \
     && ln -s ../../packages/www-openapi-client node_modules/@cmux/www-openapi-client
+
+# Hoist packages from .bun/ cache to node_modules root for module resolution
+# Bun's --production install puts packages in nested .bun/ directory
+RUN for pkg in convex socket.io chokidar express ws archiver tar dockerode \
+               http-proxy http-proxy-middleware dotenv ai octokit minimatch \
+               ignore fuzzysort vite-node; do \
+      PKG_PATH=$(find node_modules/.bun -type d -name "$pkg" -path "*${pkg}@*/node_modules/${pkg}" 2>/dev/null | head -1); \
+      if [ -n "$PKG_PATH" ] && [ ! -e "node_modules/$pkg" ]; then \
+        ln -s "${PKG_PATH#node_modules/}" "node_modules/$pkg"; \
+      fi; \
+    done
 
 # Set ownership to non-root user
 RUN chown -R cmux:cmux /app
