@@ -1,12 +1,12 @@
 # syntax=docker/dockerfile:1
 
 # Multi-stage Dockerfile for cmux server
-# Optimized for Coolify deployment
+# Optimized for Coolify deployment using bun build bundler
 
 # =============================================================================
-# Stage 1: Dependencies
+# Stage 1: Build
 # =============================================================================
-FROM oven/bun:1 AS deps
+FROM oven/bun:1 AS build
 
 WORKDIR /app
 
@@ -36,9 +36,19 @@ COPY packages/vscode-extension/package.json ./packages/vscode-extension/
 COPY packages/host-screenshot-collector/package.json ./packages/host-screenshot-collector/
 COPY scripts/package.json ./scripts/
 
-# Install all dependencies (production only, ignore optional native modules that fail)
-RUN bun install --frozen-lockfile --production --ignore-scripts || \
-    (echo "Retrying without scripts..." && bun install --frozen-lockfile --production --ignore-scripts)
+# Install all dependencies
+RUN bun install --frozen-lockfile --ignore-scripts || \
+    (echo "Retrying..." && bun install --frozen-lockfile --ignore-scripts)
+
+# Copy all source code needed for build
+COPY packages/shared ./packages/shared
+COPY packages/convex ./packages/convex
+COPY packages/www-openapi-client ./packages/www-openapi-client
+COPY apps/server ./apps/server
+
+# Bundle the server into a single file using bun build
+# This eliminates all workspace symlink issues
+RUN bun build --target=bun --outdir=dist ./apps/server/src/local-dev.ts
 
 # =============================================================================
 # Stage 2: Production
@@ -57,22 +67,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN groupadd --gid 1001 cmux \
     && useradd --uid 1001 --gid cmux --shell /bin/bash --create-home cmux
 
-# Copy node_modules from deps stage
-COPY --from=deps /app/node_modules ./node_modules
-
-# Copy workspace packages source code (needed at runtime)
-COPY packages/shared ./packages/shared
-COPY packages/convex ./packages/convex
-COPY packages/www-openapi-client ./packages/www-openapi-client
-
-# Copy server source code
-COPY apps/server ./apps/server
-
-# Copy root config files
-COPY package.json bun.lock .npmrc ./
-
-# Re-link workspace packages so bun can resolve subpath exports like @cmux/convex/api
-RUN bun install --frozen-lockfile --production --ignore-scripts 2>/dev/null || true
+# Copy bundled output from build stage
+COPY --from=build /app/dist ./dist
 
 # Set ownership to non-root user
 RUN chown -R cmux:cmux /app
@@ -91,5 +87,5 @@ EXPOSE 9776
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD bun -e "const net = require('net'); const s = net.createConnection(9776, 'localhost'); s.on('connect', () => process.exit(0)); s.on('error', () => process.exit(1));" || exit 1
 
-# Start the server
-CMD ["bun", "run", "apps/server/src/local-dev.ts"]
+# Start the bundled server
+CMD ["bun", "dist/local-dev.js"]
