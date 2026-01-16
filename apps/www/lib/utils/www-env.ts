@@ -60,7 +60,7 @@ export const env = createEnv({
     // Convex HTTP actions URL (for self-hosted setups where HTTP actions are on a different port)
     // Falls back to NEXT_PUBLIC_CONVEX_URL with .convex.cloud -> .convex.site transformation
     CONVEX_SITE_URL: z.string().min(1).optional(),
-    // AWS Bedrock for Claude (optional override for Anthropic)
+    // AWS Bedrock credentials (optional - only required when spawning Claude agents)
     AWS_BEARER_TOKEN_BEDROCK: z.string().min(1).optional(),
     AWS_REGION: z.string().min(1).default("us-west-1"),
     ANTHROPIC_MODEL: z

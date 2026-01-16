@@ -26,6 +26,11 @@ import {
   syncRelease as syncHostScreenshotCollectorRelease,
   getLatest as getLatestHostScreenshotCollector,
 } from "./hostScreenshotCollector_http";
+import {
+  anthropicProxy,
+  anthropicCountTokens,
+  anthropicEventLogging,
+} from "./anthropic_http";
 
 const http = httpRouter();
 
@@ -147,6 +152,24 @@ http.route({
   path: "/api/host-screenshot-collector/latest",
   method: "GET",
   handler: getLatestHostScreenshotCollector,
+});
+
+http.route({
+  path: "/api/anthropic/v1/messages",
+  method: "POST",
+  handler: anthropicProxy,
+});
+
+http.route({
+  path: "/api/anthropic/v1/messages/count_tokens",
+  method: "POST",
+  handler: anthropicCountTokens,
+});
+
+http.route({
+  path: "/api/anthropic/api/event_logging/batch",
+  method: "POST",
+  handler: anthropicEventLogging,
 });
 
 export default http;

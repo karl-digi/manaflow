@@ -16,15 +16,16 @@ export const env = createEnv({
     NEXT_PUBLIC_CMUX_PROTOCOL: z.string().min(1).optional(),
     BASE_APP_URL: z.string().min(1),
     CMUX_TASK_RUN_JWT_SECRET: z.string().min(1),
-    // Note: AI API keys (OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY) and
-    // AIGATEWAY_*_BASE_URL variables are accessed via process.env directly in
-    // crown/actions.ts to allow proper deletion via `npx convex env remove`
-    // without validation errors (same pattern as PVE_* variables)
+    // Note: OPENAI_API_KEY is accessed via process.env directly in crown/actions.ts
+    // to allow deployments without forcing an OpenAI key. Keep other AI keys optional
+    // so Convex does not require them. Anthropic/Bedrock/Vertex are also read via
+    // process.env where needed, so omit them here to avoid validation requirements.
     MORPH_API_KEY: z.string().min(1).optional(),
     // Note: PVE_* variables are accessed via process.env directly in
     // sandboxInstanceMaintenance.ts to avoid Convex static analysis
     // requiring them to be set in all deployments
-    CMUX_IS_STAGING: z.string().optional(),
+    // Note: CMUX_IS_STAGING was removed - preview_jobs_worker.ts now hardcodes
+    // CMUX_IS_STAGING="false" in sandbox env to always use production releases
     CONVEX_IS_PRODUCTION: z.string().optional(),
   },
   runtimeEnv: process.env,

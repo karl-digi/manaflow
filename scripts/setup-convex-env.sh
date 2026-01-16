@@ -188,6 +188,7 @@ show_optional_value() {
     echo "(will be deleted)"
   fi
 }
+# Optional AI API keys (all may be unset; provider is chosen dynamically in crown/actions)
 echo "  - OPENAI_API_KEY: $(show_optional_value "$(get_env_value OPENAI_API_KEY)")"
 echo "  - ANTHROPIC_API_KEY: $(show_optional_value "$(get_env_value ANTHROPIC_API_KEY)")"
 echo "  - GEMINI_API_KEY: $(show_optional_value "$(get_env_value GEMINI_API_KEY)")"
@@ -201,7 +202,7 @@ echo "  - PVE_NODE: $(get_env_value PVE_NODE)"
 echo "  - PVE_PUBLIC_DOMAIN: $(get_env_value PVE_PUBLIC_DOMAIN)"
 echo "  - PVE_STORAGE: $(get_env_value PVE_STORAGE)"
 echo "  - SANDBOX_PROVIDER: $(get_env_value SANDBOX_PROVIDER)"
-echo "  - CMUX_IS_STAGING: $(get_env_value CMUX_IS_STAGING)"
+# Note: CMUX_IS_STAGING removed from Convex - preview_jobs_worker hardcodes "false" in sandbox
 CONVEX_IS_PRODUCTION_DISPLAY=$(get_env_value CONVEX_IS_PRODUCTION)
 if [ -z "$CONVEX_IS_PRODUCTION_DISPLAY" ]; then
   CONVEX_IS_PRODUCTION_DISPLAY=$( [ "$MODE" = "production" ] && echo "true" || echo "false" )
@@ -259,7 +260,7 @@ build_json_changes() {
   add_change "NEXT_PUBLIC_GITHUB_APP_SLUG" "$(get_env_value NEXT_PUBLIC_GITHUB_APP_SLUG)"
   add_change "NEXT_PUBLIC_CMUX_PROTOCOL" "$(get_env_value NEXT_PUBLIC_CMUX_PROTOCOL)"
   add_change "INSTALL_STATE_SECRET" "$INSTALL_STATE_SECRET"
-  # AI API keys: use add_optional_change to delete when not set in .env
+  # AI API keys: optional and deleted when not set (provider selection is dynamic)
   add_optional_change "OPENAI_API_KEY" "$(get_env_value OPENAI_API_KEY)"
   add_optional_change "ANTHROPIC_API_KEY" "$(get_env_value ANTHROPIC_API_KEY)"
   add_optional_change "GEMINI_API_KEY" "$(get_env_value GEMINI_API_KEY)"
@@ -274,7 +275,7 @@ build_json_changes() {
   add_change "PVE_PUBLIC_DOMAIN" "$(get_env_value PVE_PUBLIC_DOMAIN)"
   add_change "PVE_STORAGE" "$(get_env_value PVE_STORAGE)"
   add_change "SANDBOX_PROVIDER" "$(get_env_value SANDBOX_PROVIDER)"
-  add_change "CMUX_IS_STAGING" "$(get_env_value CMUX_IS_STAGING)"
+  # Note: CMUX_IS_STAGING removed from Convex schema - preview_jobs_worker hardcodes "false" in sandbox
 
   # Set CONVEX_IS_PRODUCTION: first check env file, then fall back to MODE
   CONVEX_IS_PRODUCTION_ENV=$(get_env_value CONVEX_IS_PRODUCTION)

@@ -2005,22 +2005,12 @@ async def task_build_worker(ctx: TaskContext) -> None:
           --target node \\
           --outdir ./apps/worker/build \\
           --external @cmux/convex \\
-          --external path-to-regexp \\
           --external 'node:*'
         if [ ! -f ./apps/worker/build/index.js ]; then
           echo "Worker build output missing at ./apps/worker/build/index.js" >&2
           exit 1
         fi
         install -d ./apps/worker/build/node_modules
-        # Prefer express-pinned path-to-regexp (0.1.x) to avoid bundling newer incompatible version
-        if [ -d ./node_modules/express/node_modules/path-to-regexp ]; then
-          cp -RL ./node_modules/express/node_modules/path-to-regexp ./apps/worker/build/node_modules/path-to-regexp
-        elif [ -d ./node_modules/path-to-regexp ]; then
-          cp -RL ./node_modules/path-to-regexp ./apps/worker/build/node_modules/path-to-regexp
-        else
-          echo "Missing express path-to-regexp dependency" >&2
-          exit 1
-        fi
         install -d /builtins
         cat <<'JSON' > /builtins/package.json
 {{"name":"builtins","type":"module","version":"1.0.0"}}
