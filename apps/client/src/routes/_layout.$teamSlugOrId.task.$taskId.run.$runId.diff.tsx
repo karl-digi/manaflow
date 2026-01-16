@@ -1092,10 +1092,7 @@ function RunDiffPage() {
                 Loading screenshots...
               </div>
             ) : screenshotSets.length > 0 ? (
-              <RunScreenshotGallery
-                screenshotSets={screenshotSets}
-                highlightedSetId={selectedRun?.latestScreenshotSetId ?? null}
-              />
+              <RunScreenshotGallery screenshotSets={screenshotSets} />
             ) : null}
             <div
               className={cn("flex-1 min-h-0", screenshotSets.length > 0 && "mt-6")}

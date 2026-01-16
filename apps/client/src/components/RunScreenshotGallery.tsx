@@ -44,7 +44,7 @@ interface RunScreenshotSet {
 
 interface RunScreenshotGalleryProps {
   screenshotSets: RunScreenshotSet[];
-  highlightedSetId?: Id<"taskRunScreenshotSets"> | null;
+  // Note: highlightedSetId was removed as the component now only shows the latest set
 }
 
 const MIN_ZOOM = 0.2;
