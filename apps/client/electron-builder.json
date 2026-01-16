@@ -72,7 +72,7 @@
       "dmg",
       "zip"
     ],
-    "x64ArchFiles": "Contents/Resources/{native,app.asar.unpacked}/**/*.{node,dylib}",
+    "x64ArchFiles": "Contents/Resources/{native,app.asar.unpacked}/**/*",
     "extendInfo": {
       "CFBundleIconFile": "icon"
     }
