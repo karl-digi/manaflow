@@ -71,6 +71,9 @@ COPY apps/server ./apps/server
 # Copy root config files
 COPY package.json bun.lock .npmrc ./
 
+# Re-link workspace packages so bun can resolve subpath exports like @cmux/convex/api
+RUN bun install --frozen-lockfile --production --ignore-scripts 2>/dev/null || true
+
 # Set ownership to non-root user
 RUN chown -R cmux:cmux /app
 
