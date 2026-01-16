@@ -9,7 +9,7 @@ import { formatClaudeMessage } from "./claudeMessageFormatter";
 export const SCREENSHOT_STORAGE_ROOT = "/root/screenshots";
 
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
-const VIDEO_EXTENSIONS = new Set([".mp4", ".webm", ".mkv"]);
+const VIDEO_EXTENSIONS = new Set([".mp4", ".webm", ".mkv", ".gif"]);
 
 function isScreenshotFile(fileName: string): boolean {
   return IMAGE_EXTENSIONS.has(path.extname(fileName).toLowerCase());
@@ -355,26 +355,41 @@ INCOMPLETE CAPTURE: Missing important UI elements. Ensure full components are vi
 </CRITICAL_MISTAKES>
 
 <VIDEO_RECORDING>
-You have access to video recording tools for capturing end-to-end workflows. Use these ONLY when the PR changes involve multi-step interactions that are better demonstrated as video than static screenshots.
+You can create videos from sequential screenshots to demonstrate workflows. This works on any platform (macOS, Linux).
 
 USE VIDEO WHEN:
+- New buttons or links that navigate to other pages (show: before click → click → destination page)
 - Before/after workflows where you need to show a state transition (e.g., form submission with validation feedback)
 - Multi-step user flows (login → dashboard, checkout process, onboarding wizard)
 - Animation or transition changes that can't be captured in a static image
-- Drag-and-drop interactions or complex gestures
-- Real-time updates or live data changes
+- Any clickable element that triggers navigation or state changes
 
 DO NOT USE VIDEO WHEN:
-- Simple static UI changes (button styles, colors, text, layout)
-- Single-state component changes (these are better as screenshots)
-- The change can be clearly shown in 1-2 screenshots
+- Pure styling changes (colors, fonts, spacing) with no interaction
+- Static text or content changes
+- The change has no interactive behavior to demonstrate
 
-HOW TO RECORD:
-1. Call start_video with a descriptive name (e.g., "login-flow", "checkout-process")
-2. Perform the complete workflow in the browser
-3. Call end_video with the same name to stop and save the recording
+HOW TO CREATE A VIDEO from screenshots:
 
-IMPORTANT: Most PRs will only need screenshots. Only use video when the workflow nature of the change is essential to understanding it.
+1. Create a frames directory:
+   mkdir -p ${outputDir}/video-frames
+
+2. Capture screenshots at each step of the workflow using the Chrome MCP tools:
+   - Take a screenshot BEFORE the action (e.g., showing the button)
+   - Perform the action (click, navigate, etc.)
+   - Take a screenshot AFTER the action (e.g., showing the result)
+   - Save each screenshot as: ${outputDir}/video-frames/frame-001.png, frame-002.png, etc.
+   - Use sequential numbering: frame-001.png, frame-002.png, frame-003.png...
+
+3. Assemble into a compressed video using ffmpeg (2 seconds per frame for clear viewing):
+   ffmpeg -y -framerate 0.5 -pattern_type glob -i '${outputDir}/video-frames/frame-*.png' -c:v libx264 -preset slow -crf 28 -r 30 -pix_fmt yuv420p -movflags +faststart ${outputDir}/workflow-name.mp4
+
+4. Clean up frames:
+   rm -rf ${outputDir}/video-frames
+
+This creates a slideshow video where each step is shown for 2 seconds.
+
+IMPORTANT: If the PR adds a button, link, or any clickable element, you MUST create a video showing the before/after states.
 </VIDEO_RECORDING>
 
 <OUTPUT_REQUIREMENTS>
@@ -478,37 +493,15 @@ IMPORTANT: Most PRs will only need screenshots. Only use video when the workflow
       for await (const message of query({
         prompt,
         options: {
-          // model: "claude-haiku-4-5",
           model: "claude-opus-4-5",
-          // mcpServers: {
-          //   "playwright": {
-          //     command: "bunx",
-          //     args: [
-          //       "@playwright/mcp",
-          //       "--cdp-endpoint",
-          //       "http://0.0.0.0:39382",
-          //     ],
-          //   },
-          // },
           mcpServers: {
             chrome: {
               command: "bunx",
               args: [
                 "chrome-devtools-mcp",
                 "--browserUrl",
-                "http://0.0.0.0:39382",
+                process.env.CDP_BROWSER_URL || "http://0.0.0.0:39382",
               ],
-            },
-            video: {
-              command: "bun",
-              args: [
-                "run",
-                new URL("./videoRecordingServer.ts", import.meta.url).pathname,
-              ],
-              env: {
-                VIDEO_OUTPUT_DIR: outputDir,
-                DISPLAY: process.env.DISPLAY || ":99",
-              },
             },
           },
           allowDangerouslySkipPermissions: true,
@@ -730,33 +723,33 @@ export async function claudeCodeCapturePRScreenshots(
       const beforeCapture = await captureScreenshotsForBranch(
         isTaskRunJwtAuth(auth)
           ? {
-          workspaceDir,
-          changedFiles,
-          prTitle,
-          prDescription,
-          branch: baseBranch,
-          outputDir,
-          auth: { taskRunJwt: auth.taskRunJwt },
-          pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
-          setupScript: options.setupScript,
-          installCommand: options.installCommand,
-          devCommand: options.devCommand,
-          convexSiteUrl: options.convexSiteUrl,
-        }
-        : {
-          workspaceDir,
-          changedFiles,
-          prTitle,
-          prDescription,
-          branch: baseBranch,
-          outputDir,
-          auth: { anthropicApiKey: auth.anthropicApiKey },
-          pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
-          setupScript: options.setupScript,
-          installCommand: options.installCommand,
-          devCommand: options.devCommand,
-          convexSiteUrl: options.convexSiteUrl,
-        }
+            workspaceDir,
+            changedFiles,
+            prTitle,
+            prDescription,
+            branch: baseBranch,
+            outputDir,
+            auth: { taskRunJwt: auth.taskRunJwt },
+            pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
+            setupScript: options.setupScript,
+            installCommand: options.installCommand,
+            devCommand: options.devCommand,
+            convexSiteUrl: options.convexSiteUrl,
+          }
+          : {
+            workspaceDir,
+            changedFiles,
+            prTitle,
+            prDescription,
+            branch: baseBranch,
+            outputDir,
+            auth: { anthropicApiKey: auth.anthropicApiKey },
+            pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
+            setupScript: options.setupScript,
+            installCommand: options.installCommand,
+            devCommand: options.devCommand,
+            convexSiteUrl: options.convexSiteUrl,
+          }
       );
       allScreenshots.push(...beforeCapture.screenshots);
       allVideos.push(...beforeCapture.videos);
@@ -846,19 +839,19 @@ export { logToScreenshotCollector } from "./logger";
 export { formatClaudeMessage } from "./claudeMessageFormatter";
 
 // CLI entry point - runs when executed directly
-  const cliOptionsSchema = z.object({
-    workspaceDir: z.string(),
-    changedFiles: z.array(z.string()),
-    prTitle: z.string(),
-    prDescription: z.string(),
-    baseBranch: z.string(),
-    headBranch: z.string(),
-    outputDir: z.string(),
-    pathToClaudeCodeExecutable: z.string().optional(),
-    setupScript: z.string().optional(),
-    installCommand: z.string().optional(),
-    devCommand: z.string().optional(),
-    convexSiteUrl: z.string().optional(),
+const cliOptionsSchema = z.object({
+  workspaceDir: z.string(),
+  changedFiles: z.array(z.string()),
+  prTitle: z.string(),
+  prDescription: z.string(),
+  baseBranch: z.string(),
+  headBranch: z.string(),
+  outputDir: z.string(),
+  pathToClaudeCodeExecutable: z.string().optional(),
+  setupScript: z.string().optional(),
+  installCommand: z.string().optional(),
+  devCommand: z.string().optional(),
+  convexSiteUrl: z.string().optional(),
   auth: z.union([
     z.object({ taskRunJwt: z.string() }),
     z.object({ anthropicApiKey: z.string() }),
