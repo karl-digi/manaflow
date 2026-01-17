@@ -80,7 +80,7 @@ RUN rm -rf node_modules/@cmux && mkdir -p node_modules/@cmux \
 # Bun's --production install puts packages in nested .bun/ directory
 RUN for pkg in convex socket.io chokidar express ws archiver tar dockerode \
                http-proxy http-proxy-middleware dotenv ai octokit minimatch \
-               ignore fuzzysort vite-node; do \
+               ignore fuzzysort vite-node zod electron; do \
       PKG_PATH=$(find node_modules/.bun -type d -name "$pkg" -path "*${pkg}@*/node_modules/${pkg}" 2>/dev/null | head -1); \
       if [ -n "$PKG_PATH" ] && [ ! -e "node_modules/$pkg" ]; then \
         ln -s "${PKG_PATH#node_modules/}" "node_modules/$pkg"; \
