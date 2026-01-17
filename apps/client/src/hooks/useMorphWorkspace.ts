@@ -5,12 +5,13 @@ import {
   type Options,
   type PostApiMorphTaskRunsByTaskRunIdResumeData,
   type PostApiMorphTaskRunsByTaskRunIdResumeResponse,
-  type PostApiMorphTaskRunsByTaskRunIdRefreshGithubAuthData,
   type PostApiMorphTaskRunsByTaskRunIdRefreshGithubAuthResponse,
+  type PostApiSandboxesByIdRefreshGithubAuthResponse,
+  postApiMorphTaskRunsByTaskRunIdRefreshGithubAuth,
+  postApiSandboxesByIdRefreshGithubAuth,
 } from "@cmux/www-openapi-client";
 import {
   postApiMorphTaskRunsByTaskRunIdResumeMutation,
-  postApiMorphTaskRunsByTaskRunIdRefreshGithubAuthMutation,
 } from "@cmux/www-openapi-client/react-query";
 import { toast } from "sonner";
 import { queryClient } from "@/query-client";
@@ -104,25 +105,62 @@ export function useResumeMorphWorkspace({
 
 interface UseRefreshGitHubAuthArgs {
   taskRunId: Id<"taskRuns">;
+  sandboxId?: string | null;
+  provider?: string | null;
   teamSlugOrId: string;
   onSuccess?: () => void;
   onError?: (error: unknown) => void;
 }
 
-export function useRefreshMorphGitHubAuth({
+type RefreshGitHubAuthResponse =
+  | PostApiMorphTaskRunsByTaskRunIdRefreshGithubAuthResponse
+  | PostApiSandboxesByIdRefreshGithubAuthResponse;
+
+export function useRefreshGitHubAuth({
   taskRunId,
-  teamSlugOrId: _teamSlugOrId,
+  sandboxId,
+  provider,
+  teamSlugOrId,
   onSuccess,
   onError,
 }: UseRefreshGitHubAuthArgs) {
   return useMutation<
-    PostApiMorphTaskRunsByTaskRunIdRefreshGithubAuthResponse,
+    RefreshGitHubAuthResponse,
     Error,
-    Options<PostApiMorphTaskRunsByTaskRunIdRefreshGithubAuthData>,
+    void,
     { toastId: string | number }
   >({
-    ...postApiMorphTaskRunsByTaskRunIdRefreshGithubAuthMutation(),
-    mutationKey: ["refresh-github-auth", "task-run", taskRunId],
+    mutationKey: [
+      "refresh-github-auth",
+      "task-run",
+      taskRunId,
+      provider,
+      sandboxId,
+    ],
+    mutationFn: async () => {
+      if (provider === "morph") {
+        const { data } = await postApiMorphTaskRunsByTaskRunIdRefreshGithubAuth({
+          path: { taskRunId },
+          body: { teamSlugOrId },
+          throwOnError: true,
+        });
+        return data;
+      }
+
+      if (provider === "pve-lxc") {
+        if (!sandboxId) {
+          throw new Error("Sandbox ID is required to refresh GitHub auth");
+        }
+        const { data } = await postApiSandboxesByIdRefreshGithubAuth({
+          path: { id: sandboxId },
+          body: { teamSlugOrId },
+          throwOnError: true,
+        });
+        return data;
+      }
+
+      throw new Error("Unsupported provider for GitHub auth refresh");
+    },
     onMutate: async () => {
       const toastId = toast.loading("Refreshing GitHub authentication…");
       return { toastId };
@@ -135,13 +173,22 @@ export function useRefreshMorphGitHubAuth({
       let message = "Failed to refresh GitHub auth.";
       if (error instanceof Error) {
         // Handle specific error cases
-        if (error.message.includes("409") || error.message.includes("paused")) {
-          message = "VM is paused. Resume it first.";
+        if (
+          error.message.includes("409") ||
+          error.message.includes("paused") ||
+          error.message.includes("stopped")
+        ) {
+          message =
+            provider === "pve-lxc"
+              ? "Container is stopped. Resume it first."
+              : "VM is paused. Resume it first.";
         } else if (
           error.message.includes("401") ||
           error.message.includes("GitHub")
         ) {
           message = "GitHub account not connected. Check your settings.";
+        } else if (error.message.includes("Unsupported provider")) {
+          message = "This workspace type does not support GitHub refresh.";
         } else {
           message = error.message;
         }
@@ -150,4 +197,15 @@ export function useRefreshMorphGitHubAuth({
       onError?.(error);
     },
   });
+}
+
+type UseRefreshMorphGitHubAuthArgs = Omit<
+  UseRefreshGitHubAuthArgs,
+  "provider" | "sandboxId"
+>;
+
+export function useRefreshMorphGitHubAuth(
+  args: UseRefreshMorphGitHubAuthArgs
+) {
+  return useRefreshGitHubAuth({ ...args, provider: "morph" });
 }

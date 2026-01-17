@@ -5,6 +5,14 @@ import { api } from "@cmux/convex/api";
 import type { ConvexClient } from "./snapshot";
 import { singleQuote } from "./shell";
 
+type ConnectedAccountUser = {
+  getConnectedAccount(
+    provider: "github"
+  ): Promise<{
+    getAccessToken: () => Promise<{ accessToken?: string | null }>;
+  } | null>;
+} | null;
+
 /**
  * Instance type for sandbox operations.
  * Now uses the unified SandboxInstance interface to support both Morph and PVE LXC.
@@ -85,3 +93,25 @@ export const configureGithubAccess = async (
     `GitHub authentication failed after ${maxRetries} attempts: ${lastError?.message || "Unknown error"}`
   );
 };
+
+/**
+ * Fetches a fresh GitHub access token for the authenticated user.
+ * Shared helper for refreshing GitHub CLI auth inside sandboxes.
+ */
+export async function getFreshGitHubToken(
+  user: ConnectedAccountUser
+): Promise<{ token: string } | { error: string; status: 401 }> {
+  if (!user) {
+    return { error: "Unauthorized", status: 401 };
+  }
+  const githubAccount = await user.getConnectedAccount("github");
+  if (!githubAccount) {
+    return { error: "GitHub account not connected", status: 401 };
+  }
+  const { accessToken: githubAccessToken } =
+    await githubAccount.getAccessToken();
+  if (!githubAccessToken) {
+    return { error: "Failed to get GitHub access token", status: 401 };
+  }
+  return { token: githubAccessToken };
+}

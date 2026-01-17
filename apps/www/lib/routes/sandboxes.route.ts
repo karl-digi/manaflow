@@ -26,6 +26,7 @@ import {
   configureGithubAccess,
   configureGitIdentity,
   fetchGitIdentityInputs,
+  getFreshGitHubToken,
 } from "./sandboxes/git";
 import type { HydrateRepoConfig } from "./sandboxes/hydration";
 import { hydrateWorkspace } from "./sandboxes/hydration";
@@ -758,6 +759,149 @@ sandboxesRouter.openapi(
       return c.text(errorMessage, 500);
     }
   },
+);
+
+const SandboxRefreshGitHubAuthBody = z
+  .object({
+    teamSlugOrId: z.string(),
+  })
+  .openapi("SandboxRefreshGitHubAuthBody");
+
+const SandboxRefreshGitHubAuthResponse = z
+  .object({
+    refreshed: z.literal(true),
+  })
+  .openapi("SandboxRefreshGitHubAuthResponse");
+
+// Refresh GitHub authentication inside a sandbox (Morph or PVE LXC)
+sandboxesRouter.openapi(
+  createRoute({
+    method: "post" as const,
+    path: "/sandboxes/{id}/refresh-github-auth",
+    tags: ["Sandboxes"],
+    summary: "Refresh GitHub authentication inside a sandbox",
+    description:
+      "Fetches a fresh GitHub token via Stack Auth and re-authenticates the GitHub CLI inside the sandbox.",
+    request: {
+      params: z.object({ id: z.string() }),
+      body: {
+        content: {
+          "application/json": {
+            schema: SandboxRefreshGitHubAuthBody,
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: SandboxRefreshGitHubAuthResponse,
+          },
+        },
+        description: "GitHub authentication refreshed successfully",
+      },
+      400: { description: "Unsupported sandbox provider" },
+      401: { description: "Unauthorized or GitHub not connected" },
+      403: { description: "Forbidden - sandbox does not belong to this team" },
+      404: { description: "Sandbox not found" },
+      409: { description: "Sandbox is paused/stopped and must be resumed first" },
+      500: { description: "Failed to refresh GitHub authentication" },
+      503: { description: "Sandbox provider not configured" },
+    },
+  }),
+  async (c) => {
+    const user = await stackServerAppJs.getUser({ tokenStore: c.req.raw });
+    if (!user) {
+      return c.text("Unauthorized", 401);
+    }
+    const { accessToken } = await user.getAuthJson();
+    if (!accessToken) {
+      return c.text("Unauthorized", 401);
+    }
+
+    const { id } = c.req.valid("param");
+    const { teamSlugOrId } = c.req.valid("json");
+
+    const convex = getConvex({ accessToken });
+    const team = await verifyTeamAccess({ req: c.req.raw, teamSlugOrId });
+
+    const activity = await convex.query(api.sandboxInstances.getActivity, {
+      instanceId: id,
+    });
+    if (!activity) {
+      return c.text("Sandbox not found", 404);
+    }
+    if (activity.teamId && activity.teamId !== team.uuid) {
+      return c.text("Forbidden", 403);
+    }
+
+    const provider =
+      activity.provider ||
+      (isPveLxcInstanceId(id)
+        ? "pve-lxc"
+        : id.startsWith("morphvm_")
+          ? "morph"
+          : undefined);
+
+    const tokenResult = await getFreshGitHubToken(user);
+    if ("error" in tokenResult) {
+      return c.text(tokenResult.error, tokenResult.status);
+    }
+
+    try {
+      if (provider === "morph") {
+        const morphClient = getMorphClient();
+        const instance = await morphClient.instances.get({ instanceId: id });
+
+        const metadataTeamId = (
+          instance as unknown as { metadata?: { teamId?: string } }
+        ).metadata?.teamId;
+        if (metadataTeamId && metadataTeamId !== team.uuid) {
+          return c.text("Forbidden", 403);
+        }
+
+        if (instance.status === "paused") {
+          return c.text("Instance is paused - resume it first", 409);
+        }
+
+        await configureGithubAccess(wrapMorphInstance(instance), tokenResult.token);
+      } else if (provider === "pve-lxc") {
+        if (!env.PVE_API_URL || !env.PVE_API_TOKEN) {
+          return c.text("PVE LXC provider not configured", 503);
+        }
+
+        const pveClient = getPveLxcClient();
+        const instance = await pveClient.instances.get({ instanceId: id });
+
+        const metadataTeamId = instance.metadata?.teamId;
+        if (metadataTeamId && metadataTeamId !== team.uuid) {
+          return c.text("Forbidden", 403);
+        }
+
+        if (instance.status !== "running") {
+          return c.text("Container is stopped - resume it first", 409);
+        }
+
+        await configureGithubAccess(wrapPveLxcInstance(instance), tokenResult.token);
+      } else {
+        return c.text("Unsupported sandbox provider", 400);
+      }
+
+      console.log(
+        `[sandboxes.refresh-github-auth] Successfully refreshed GitHub auth for sandbox ${id}`
+      );
+
+      return c.json({ refreshed: true });
+    } catch (error) {
+      console.error(
+        `[sandboxes.refresh-github-auth] Failed to refresh GitHub auth for sandbox ${id}:`,
+        error
+      );
+      return c.text("Failed to refresh GitHub authentication", 500);
+    }
+  }
 );
 
 sandboxesRouter.openapi(

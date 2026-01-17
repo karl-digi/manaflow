@@ -21,6 +21,7 @@ import {
   configureGithubAccess,
   configureGitIdentity,
   fetchGitIdentityInputs,
+  getFreshGitHubToken,
 } from "./sandboxes/git";
 import { wrapMorphInstance, wrapPveLxcInstance, type SandboxInstance } from "@/lib/utils/sandbox-instance";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
@@ -302,28 +303,6 @@ const RefreshGitHubAuthResponse = z
     refreshed: z.literal(true),
   })
   .openapi("RefreshGitHubAuthResponse");
-
-/**
- * Fetches a fresh GitHub access token for the authenticated user.
- * This is a reusable helper to avoid duplicating token retrieval logic.
- */
-async function getFreshGitHubToken(
-  user: Awaited<ReturnType<typeof stackServerAppJs.getUser>>
-): Promise<{ token: string } | { error: string; status: 401 }> {
-  if (!user) {
-    return { error: "Unauthorized", status: 401 };
-  }
-  const githubAccount = await user.getConnectedAccount("github");
-  if (!githubAccount) {
-    return { error: "GitHub account not connected", status: 401 };
-  }
-  const { accessToken: githubAccessToken } =
-    await githubAccount.getAccessToken();
-  if (!githubAccessToken) {
-    return { error: "Failed to get GitHub access token", status: 401 };
-  }
-  return { token: githubAccessToken };
-}
 
 morphRouter.openapi(
   createRoute({

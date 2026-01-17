@@ -610,6 +610,14 @@ export type StartSandboxBody = {
     depth?: number;
 };
 
+export type SandboxRefreshGitHubAuthResponse = {
+    refreshed: true;
+};
+
+export type SandboxRefreshGitHubAuthBody = {
+    teamSlugOrId: string;
+};
+
 export type UpdateSandboxEnvResponse = {
     applied: true;
 };
@@ -2643,6 +2651,55 @@ export type PostApiSandboxesStartResponses = {
 };
 
 export type PostApiSandboxesStartResponse = PostApiSandboxesStartResponses[keyof PostApiSandboxesStartResponses];
+
+export type PostApiSandboxesByIdRefreshGithubAuthData = {
+    body: SandboxRefreshGitHubAuthBody;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/sandboxes/{id}/refresh-github-auth';
+};
+
+export type PostApiSandboxesByIdRefreshGithubAuthErrors = {
+    /**
+     * Unsupported sandbox provider
+     */
+    400: unknown;
+    /**
+     * Unauthorized or GitHub not connected
+     */
+    401: unknown;
+    /**
+     * Forbidden - sandbox does not belong to this team
+     */
+    403: unknown;
+    /**
+     * Sandbox not found
+     */
+    404: unknown;
+    /**
+     * Sandbox is paused/stopped and must be resumed first
+     */
+    409: unknown;
+    /**
+     * Failed to refresh GitHub authentication
+     */
+    500: unknown;
+    /**
+     * Sandbox provider not configured
+     */
+    503: unknown;
+};
+
+export type PostApiSandboxesByIdRefreshGithubAuthResponses = {
+    /**
+     * GitHub authentication refreshed successfully
+     */
+    200: SandboxRefreshGitHubAuthResponse;
+};
+
+export type PostApiSandboxesByIdRefreshGithubAuthResponse = PostApiSandboxesByIdRefreshGithubAuthResponses[keyof PostApiSandboxesByIdRefreshGithubAuthResponses];
 
 export type PostApiSandboxesByIdEnvData = {
     body: UpdateSandboxEnvBody;

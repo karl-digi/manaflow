@@ -8,7 +8,7 @@ import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { useArchiveTask } from "@/hooks/useArchiveTask";
 import {
   useResumeMorphWorkspace,
-  useRefreshMorphGitHubAuth,
+  useRefreshGitHubAuth,
 } from "@/hooks/useMorphWorkspace";
 import { useResumePveLxcWorkspace } from "@/hooks/usePveLxcWorkspace";
 import { useOpenWithActions } from "@/hooks/useOpenWithActions";
@@ -1565,8 +1565,10 @@ function TaskRunTreeInner({
     });
   }, [resumePveLxcWorkspace, run._id, teamSlugOrId]);
 
-  const refreshGitHubAuth = useRefreshMorphGitHubAuth({
+  const refreshGitHubAuth = useRefreshGitHubAuth({
     taskRunId: run._id,
+    sandboxId: run.vscode?.containerName,
+    provider: run.vscode?.provider,
     teamSlugOrId,
   });
 
@@ -1575,11 +1577,16 @@ function TaskRunTreeInner({
       return;
     }
 
-    void refreshGitHubAuth.mutateAsync({
-      path: { taskRunId: run._id },
-      body: { teamSlugOrId },
-    });
-  }, [refreshGitHubAuth, run._id, teamSlugOrId]);
+    void refreshGitHubAuth.mutateAsync();
+  }, [refreshGitHubAuth]);
+
+  const supportsGitHubAuthRefresh = ["morph", "pve-lxc"].includes(
+    run.vscode?.provider ?? ""
+  );
+  const canRefreshGitHubAuth =
+    supportsGitHubAuthRefresh &&
+    (run.vscode?.provider !== "pve-lxc" ||
+      Boolean(run.vscode?.containerName));
 
   const shouldRenderPullRequestLink = Boolean(
     (run.pullRequestUrl && run.pullRequestUrl !== "pending") ||
@@ -1681,7 +1688,7 @@ function TaskRunTreeInner({
                   {resumePveLxcWorkspace.isPending ? "Resuming…" : "Resume Container"}
                 </ContextMenu.Item>
               ) : null}
-              {run.vscode?.provider === "morph" ? (
+              {canRefreshGitHubAuth ? (
                 <ContextMenu.Item
                   className="flex items-center gap-2 cursor-default py-1.5 pr-8 pl-3 text-[13px] leading-5 outline-none select-none data-[highlighted]:relative data-[highlighted]:z-0 data-[highlighted]:text-white data-[highlighted]:before:absolute data-[highlighted]:before:inset-x-1 data-[highlighted]:before:inset-y-0 data-[highlighted]:before:z-[-1] data-[highlighted]:before:rounded-sm data-[highlighted]:before:bg-neutral-900 dark:data-[highlighted]:before:bg-neutral-700"
                   onClick={handleRefreshGitHubAuth}
