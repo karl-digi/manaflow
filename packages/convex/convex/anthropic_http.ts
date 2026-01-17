@@ -271,6 +271,8 @@ export const anthropicProxy = httpAction(async (_ctx, req) => {
           headers[key] = value;
         }
       });
+      // Ensure upstream returns identity encoding so Convex can parse it.
+      headers["accept-encoding"] = "identity";
 
       const response = await fetch(`${baseUrl}/v1/messages`, {
         method: "POST",
@@ -297,6 +299,7 @@ export const anthropicProxy = httpAction(async (_ctx, req) => {
           headers[key] = value;
         }
       });
+      headers["accept-encoding"] = "identity";
 
       console.log("[anthropic-proxy] AI Gateway request summary:", {
         requestedModel,
@@ -416,7 +419,38 @@ async function handleResponse(
     });
   }
 
-  const data = await response.json();
+  // Clone before reading so we can fall back to text if JSON parsing fails.
+  const clonedResponse = response.clone();
+  let data: unknown;
+  try {
+    data = await response.json();
+  } catch (error) {
+    // Upstream sometimes returns non-JSON (e.g. HTML error pages or gzip
+    // without proper headers). Fall back to text so we can return a useful
+    // payload instead of throwing and masking the real issue.
+    const raw = new Uint8Array(await clonedResponse.arrayBuffer());
+    const decoded = new TextDecoder().decode(raw.slice(0, 2048));
+    const hexPreview = Array.from(raw.slice(0, 64))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    console.error("[anthropic-proxy] Failed to parse JSON response", {
+      status: response.status,
+      contentType: response.headers.get("content-type"),
+      error,
+      textPreview: decoded.slice(0, 300),
+      hexPreview,
+    });
+    return jsonResponse(
+      {
+        error: "Invalid JSON response from upstream",
+        status: response.status,
+        contentType: response.headers.get("content-type"),
+        bodyPreview: decoded.slice(0, 300),
+        hexPreview,
+      },
+      response.status || 500
+    );
+  }
 
   if (!response.ok) {
     console.error("[anthropic-proxy] API error:", data);
@@ -454,6 +488,7 @@ export const anthropicCountTokens = httpAction(async (_ctx, req) => {
           "Content-Type": "application/json",
           "x-api-key": anthropicApiKey,
           "anthropic-version": "2023-06-01",
+          "accept-encoding": "identity",
         },
         body: JSON.stringify(body),
       }
