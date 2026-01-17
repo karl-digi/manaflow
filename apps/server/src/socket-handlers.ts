@@ -1924,25 +1924,36 @@ export function setupSocketHandlers(
           repoFullName?: string;
           branchOverride?: string;
         }): Promise<FileInfo[]> => {
+          // Use unauthenticated URL for path derivation (consistent folder names)
           const projectPaths = await getProjectPaths(targetRepoUrl, safeTeam);
 
           await fs.mkdir(projectPaths.projectPath, { recursive: true });
           await fs.mkdir(projectPaths.worktreesPath, { recursive: true });
 
+          // Inject GitHub OAuth token for private repo access
+          // Use authenticated URL for git operations, but store clean URL as remote
+          let authenticatedRepoUrl = targetRepoUrl;
+          const githubToken = await getGitHubOAuthToken();
+          if (githubToken && targetRepoUrl.startsWith("https://github.com/")) {
+            authenticatedRepoUrl = targetRepoUrl.replace(
+              "https://github.com/",
+              `https://x-access-token:${githubToken}@github.com/`
+            );
+          }
+
+          // Pass clean URL as remoteUrl to avoid persisting OAuth token in .git/config
+          // If branchOverride is undefined, ensureRepository auto-detects and fetches default branch
           await repoManager.ensureRepository(
-            targetRepoUrl,
-            projectPaths.originPath
+            authenticatedRepoUrl,
+            projectPaths.originPath,
+            branchOverride,
+            targetRepoUrl // clean URL for remote storage
           );
 
+          // Get the branch name for worktree path (either override or detected default)
           const baseBranch =
             branchOverride ||
             (await repoManager.getDefaultBranch(projectPaths.originPath));
-
-          await repoManager.ensureRepository(
-            targetRepoUrl,
-            projectPaths.originPath,
-            baseBranch
-          );
 
           const worktreeInfo = {
             ...projectPaths,

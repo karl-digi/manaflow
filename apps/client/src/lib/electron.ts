@@ -1,3 +1,5 @@
+import type { CmuxAPI } from "@/types/electron";
+
 export const getIsElectron = () => {
   // Only return true if running in the cmux Electron app with proper IPC bridge.
   // We explicitly check for the cmux-specific IPC methods to avoid false positives
@@ -20,3 +22,12 @@ export const getIsElectron = () => {
   return false;
 };
 export const isElectron = getIsElectron();
+
+/**
+ * Safely access the Electron bridge (window.cmux) in contexts where it may not exist.
+ * Returns undefined in non-Electron environments.
+ */
+export function getElectronBridge(): CmuxAPI | undefined {
+  if (!isElectron || !("cmux" in window)) return undefined;
+  return window.cmux;
+}

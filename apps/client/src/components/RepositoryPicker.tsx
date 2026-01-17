@@ -3,8 +3,15 @@ import { GitHubIcon } from "@/components/icons/github";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@cmux/convex/api";
 import { DEFAULT_MORPH_SNAPSHOT_ID, type MorphSnapshotId } from "@cmux/shared";
-import { isElectron } from "@/lib/electron";
-import { useNavigate, useRouter } from "@tanstack/react-router";
+import { getElectronBridge, isElectron } from "@/lib/electron";
+import {
+  consumeGitHubAppInstallIntent,
+  setGitHubAppInstallIntent,
+} from "@/lib/github-oauth-flow";
+import { WWW_ORIGIN } from "@/lib/wwwOrigin";
+import { useUser } from "@stackframe/react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
 import { Check, Loader2, X } from "lucide-react";
 import {
@@ -107,8 +114,8 @@ export function RepositoryPicker({
   topAccessory,
   autoContinue,
 }: RepositoryPickerProps) {
-  const router = useRouter();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [selectedRepos, setSelectedRepos] = useState<string[]>(() =>
     Array.from(new Set(initialSelectedRepos))
   );
@@ -136,12 +143,9 @@ export function RepositoryPicker({
   }, [initialSnapshotId]);
 
   const handleConnectionsInvalidated = useCallback((): void => {
-    const qc = router.options.context?.queryClient;
-    if (qc) {
-      qc.invalidateQueries();
-    }
+    void queryClient.invalidateQueries();
     window.focus?.();
-  }, [router]);
+  }, [queryClient]);
 
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
@@ -436,6 +440,7 @@ function RepositoryConnectionsSection({
   onConnectionsInvalidated,
   onInstallHandlerReady,
 }: RepositoryConnectionsSectionProps) {
+  const user = useUser({ or: "return-null" });
   const connections = useQuery(api.github.listProviderConnections, {
     teamSlugOrId,
   });
@@ -495,8 +500,8 @@ function RepositoryConnectionsSection({
             window.clearInterval(timer);
             onClose();
           }
-        } catch (_error) {
-          void 0;
+        } catch (err) {
+          console.error("[GitHubOAuthFlow] Popup window failed to close:", err);
         }
       }, 600);
     },
@@ -562,10 +567,16 @@ function RepositoryConnectionsSection({
     onConnectionsInvalidated();
   }, [onConnectionsInvalidated]);
 
-  const handleInstallApp = useCallback(async () => {
+  // Function to open GitHub App installation popup (without OAuth check)
+  const openGitHubAppInstallPopup = useCallback(async () => {
     if (!installNewUrl) return;
     try {
-      const { state } = await mintState({ teamSlugOrId });
+      // In web mode, pass a returnUrl so github_setup redirects back to the web
+      // instead of using the cmux:// deep link (which opens Electron)
+      const returnUrl = !isElectron
+        ? new URL(`/${teamSlugOrId}/connect-complete?popup=true`, window.location.origin).toString()
+        : undefined;
+      const { state } = await mintState({ teamSlugOrId, returnUrl });
       const sep = installNewUrl.includes("?") ? "&" : "?";
       const url = `${installNewUrl}${sep}state=${encodeURIComponent(state)}`;
       openCenteredPopup(
@@ -577,12 +588,76 @@ function RepositoryConnectionsSection({
       console.error("Failed to start GitHub install:", err);
       alert("Failed to start installation. Please try again.");
     }
+  }, [handlePopupClosedRefetch, installNewUrl, mintState, openCenteredPopup, teamSlugOrId]);
+
+  // Check for pending GitHub App install intent on mount and when github-connect-complete is received
+  useEffect(() => {
+    if (!installNewUrl) {
+      return;
+    }
+
+    const checkAndConsumeInstallIntent = () => {
+      // Atomically get and clear - second call in Strict Mode returns null
+      const installIntent = consumeGitHubAppInstallIntent();
+
+      // Only proceed if there's an install intent for THIS team
+      if (!installIntent || installIntent.teamSlugOrId !== teamSlugOrId) {
+        return;
+      }
+
+      void openGitHubAppInstallPopup().catch((err) => {
+        console.error("Failed to continue GitHub install after OAuth:", err);
+      });
+    };
+
+    // Check on mount
+    checkAndConsumeInstallIntent();
+
+    // Also check when github-connect-complete event is received (Electron deep link)
+    const off = getElectronBridge()?.on("github-connect-complete", checkAndConsumeInstallIntent);
+
+    return () => {
+      off?.();
+    };
+  }, [installNewUrl, openGitHubAppInstallPopup, teamSlugOrId]);
+
+  const handleInstallApp = useCallback(async () => {
+    if (!installNewUrl) return;
+
+    // First, ensure GitHub OAuth is connected via Stack Auth
+    // This is needed for cloning private repos
+    if (user) {
+      try {
+        const githubAccount = await user.getConnectedAccount("github");
+        if (!githubAccount) {
+          // Store intent to continue with app installation after OAuth
+          setGitHubAppInstallIntent(teamSlugOrId);
+
+          if (isElectron) {
+            // In Electron, open OAuth flow in system browser
+            // The www endpoint will handle OAuth and return via deep link
+            const oauthUrl = `${WWW_ORIGIN}/handler/connect-github?team=${encodeURIComponent(teamSlugOrId)}`;
+            window.open(oauthUrl, "_blank", "noopener,noreferrer");
+            return;
+          }
+
+          // In web, use Stack Auth's redirect
+          await user.getConnectedAccount("github", { or: "redirect" });
+          return; // Will redirect, so don't continue
+        }
+      } catch (err) {
+        console.error("Failed to check GitHub connected account:", err);
+        // Continue with app installation even if connected account check fails
+      }
+    }
+
+    // OAuth connected, proceed with app installation
+    await openGitHubAppInstallPopup();
   }, [
-    handlePopupClosedRefetch,
     installNewUrl,
-    mintState,
-    openCenteredPopup,
+    openGitHubAppInstallPopup,
     teamSlugOrId,
+    user,
   ]);
 
   // Expose the install handler to parent component
@@ -752,16 +827,14 @@ function RepositoryListSection({
                   >
                     <div className="text-sm flex items-center gap-2 min-w-0 flex-1">
                       <div
-                        className={`mr-1 h-4 w-4 rounded-sm border grid place-items-center shrink-0 ${
-                          isSelected
-                            ? "border-neutral-700 bg-neutral-800"
-                            : "border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-950"
-                        }`}
+                        className={`mr-1 h-4 w-4 rounded-sm border grid place-items-center shrink-0 ${isSelected
+                          ? "border-neutral-700 bg-neutral-800"
+                          : "border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-950"
+                          }`}
                       >
                         <Check
-                          className={`w-3 h-3 text-white transition-opacity ${
-                            isSelected ? "opacity-100" : "opacity-0"
-                          }`}
+                          className={`w-3 h-3 text-white transition-opacity ${isSelected ? "opacity-100" : "opacity-0"
+                            }`}
                         />
                       </div>
                       <GitHubIcon className="h-4 w-4 shrink-0 text-neutral-700 dark:text-neutral-200" />

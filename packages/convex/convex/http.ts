@@ -27,7 +27,11 @@ import {
   getLatest as getLatestHostScreenshotCollector,
 } from "./hostScreenshotCollector_http";
 import { acpCallback } from "./acp_http";
-import { anthropicProxy } from "./anthropic_http";
+import {
+  anthropicProxy,
+  anthropicCountTokens,
+  anthropicEventLogging,
+} from "./anthropic_http";
 import { openaiProxy } from "./openai_http";
 import { codexOAuthRefresh } from "./codex_oauth_http";
 
@@ -163,6 +167,18 @@ http.route({
   path: "/api/anthropic/v1/messages",
   method: "POST",
   handler: anthropicProxy,
+});
+
+http.route({
+  path: "/api/anthropic/v1/messages/count_tokens",
+  method: "POST",
+  handler: anthropicCountTokens,
+});
+
+http.route({
+  path: "/api/anthropic/api/event_logging/batch",
+  method: "POST",
+  handler: anthropicEventLogging,
 });
 
 // OpenAI proxy routes for Codex CLI and other OpenAI-based agents
