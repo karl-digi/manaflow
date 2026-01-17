@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     make \
     g++ \
+    jq \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy package files for workspace resolution
@@ -36,7 +37,13 @@ COPY scripts/package.json ./scripts/
 
 # Install production dependencies
 RUN bun install --frozen-lockfile --production --ignore-scripts || \
-    (echo "Retrying without scripts..." && bun install --frozen-lockfile --production --ignore-scripts)
+    (echo "Retrying..." && bun install --frozen-lockfile --production --ignore-scripts)
+
+# Extract all non-workspace dependencies from server and convex packages
+# These need to be hoisted for proper module resolution
+RUN jq -r '.dependencies | keys[] | select(startswith("@cmux") | not)' \
+    apps/server/package.json packages/convex/package.json 2>/dev/null | \
+    sort -u > /tmp/deps-to-hoist.txt
 
 # =============================================================================
 # Stage 2: Production
@@ -55,8 +62,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN groupadd --gid 1001 cmux \
     && useradd --uid 1001 --gid cmux --shell /bin/bash --create-home cmux
 
-# Copy node_modules from deps stage
+# Copy node_modules and hoisting list from deps stage
 COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /tmp/deps-to-hoist.txt /tmp/deps-to-hoist.txt
 
 # Copy workspace packages source code
 COPY packages/shared ./packages/shared
@@ -76,16 +84,16 @@ RUN rm -rf node_modules/@cmux && mkdir -p node_modules/@cmux \
     && ln -s ../../packages/convex node_modules/@cmux/convex \
     && ln -s ../../packages/www-openapi-client node_modules/@cmux/www-openapi-client
 
-# Hoist packages from .bun/ cache to node_modules root for module resolution
+# Auto-hoist packages from .bun/ cache to node_modules root
 # Bun's --production install puts packages in nested .bun/ directory
-RUN for pkg in convex socket.io chokidar express ws archiver tar dockerode \
-               http-proxy http-proxy-middleware dotenv ai octokit minimatch \
-               ignore fuzzysort vite-node zod electron; do \
+# Read the list generated in deps stage and create symlinks
+RUN while read pkg; do \
+      [ -z "$pkg" ] && continue; \
       PKG_PATH=$(find node_modules/.bun -type d -name "$pkg" -path "*${pkg}@*/node_modules/${pkg}" 2>/dev/null | head -1); \
       if [ -n "$PKG_PATH" ] && [ ! -e "node_modules/$pkg" ]; then \
         ln -s "${PKG_PATH#node_modules/}" "node_modules/$pkg"; \
       fi; \
-    done
+    done < /tmp/deps-to-hoist.txt && rm /tmp/deps-to-hoist.txt
 
 # Set ownership to non-root user
 RUN chown -R cmux:cmux /app
