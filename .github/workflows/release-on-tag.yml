@@ -618,6 +618,10 @@ jobs:
       - name: Generate icons
         working-directory: apps/client
         run: bun run ./scripts/generate-icons.mjs
+      - name: Dereference Bun symlinks for electron-builder
+        working-directory: apps/client
+        shell: bash
+        run: node scripts/dereference-bun-symlinks.cjs
       - name: Build unsigned macOS arm64 artifacts
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
@@ -764,6 +768,10 @@ jobs:
       - name: Generate icons
         working-directory: apps/client
         run: bun run ./scripts/generate-icons.mjs
+      - name: Dereference Bun symlinks for electron-builder
+        working-directory: apps/client
+        shell: bash
+        run: node scripts/dereference-bun-symlinks.cjs
       - name: Build unsigned macOS universal artifacts
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
@@ -873,6 +881,10 @@ jobs:
       - name: Generate icons
         working-directory: apps/client
         run: bun run ./scripts/generate-icons.mjs
+      - name: Dereference Bun symlinks for electron-builder
+        working-directory: apps/client
+        shell: bash
+        run: node scripts/dereference-bun-symlinks.cjs
       - name: Build & publish Windows x64 to GitHub Releases
         env:
           GH_TOKEN: ${{ github.token }}
@@ -929,6 +941,10 @@ jobs:
       - name: Generate icons
         working-directory: apps/client
         run: bun run ./scripts/generate-icons.mjs
+      - name: Dereference Bun symlinks for electron-builder
+        working-directory: apps/client
+        shell: bash
+        run: node scripts/dereference-bun-symlinks.cjs
       - name: Build & publish Linux AppImage x64 to GitHub Releases
         env:
           GH_TOKEN: ${{ github.token }}
