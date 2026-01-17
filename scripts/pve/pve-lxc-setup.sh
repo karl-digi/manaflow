@@ -181,13 +181,22 @@ create_container() {
         --rootfs "${storage}:${disk}" \
         --net0 "name=eth0,bridge=vmbr0,ip=dhcp" \
         --unprivileged 0 \
-        --features "nesting=1" \
+        --features "nesting=1,keyctl=1" \
         --start 0; then
         log_success "Container ${vmid} created"
     else
         log_error "Failed to create container"
         exit 1
     fi
+
+    # Add LXC raw config for Docker-in-LXC support (AppArmor unconfined)
+    log_info "Adding LXC config for Docker support..."
+    cat >> "/etc/pve/lxc/${vmid}.conf" << 'LXC_RAW'
+lxc.apparmor.profile: unconfined
+lxc.cap.drop:
+lxc.mount.auto: proc:rw sys:rw
+LXC_RAW
+    log_success "LXC config updated for Docker support"
 }
 
 # Generate setup script for container
