@@ -1,3 +1,4 @@
+import { $convertToMarkdownString, TRANSFORMERS } from "@lexical/markdown";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import {
   $getRoot,
@@ -7,7 +8,6 @@ import {
   ParagraphNode,
   type LexicalNode,
   ElementNode,
-  TextNode,
 } from "lexical";
 import { useEffect } from "react";
 import { $isImageNode } from "./ImageNode";
@@ -49,44 +49,30 @@ export function EditorStatePlugin({ onEditorReady }: { onEditorReady?: (api: Edi
 
           editor.getEditorState().read(() => {
             const root = $getRoot();
-            const textParts: string[] = [];
-            
-            // Walk through all nodes to build text with image references
-            const walkNode = (node: LexicalNode): void => {
+
+            // First, collect all images from the editor
+            const collectImages = (node: LexicalNode): void => {
               if ($isImageNode(node)) {
                 const fileName = node.getFileName();
                 const altText = node.getAltText();
-                
-                // Add image to images array
+
                 content.images.push({
                   src: node.getSrc(),
                   fileName: fileName,
                   altText: altText
                 });
-                
-                // Add image reference to text
-                if (fileName) {
-                  textParts.push(fileName);
-                } else {
-                  textParts.push(`[Image: ${altText}]`);
-                }
-              } else if (node instanceof TextNode) {
-                textParts.push(node.getTextContent());
               } else if (node instanceof ElementNode) {
                 const children = node.getChildren();
-                children.forEach(walkNode);
-                // Add newline after paragraphs
-                if (node.getType() === 'paragraph' && textParts.length > 0) {
-                  textParts.push('\n');
-                }
+                children.forEach(collectImages);
               }
             };
 
             const children = root.getChildren();
-            children.forEach(walkNode);
+            children.forEach(collectImages);
 
-            // Build final text
-            content.text = textParts.join('').trim();
+            // Use $convertToMarkdownString to preserve formatting (newlines, headers, etc.)
+            // This properly handles paragraphs, headings, lists, code blocks, etc.
+            content.text = $convertToMarkdownString(TRANSFORMERS).trim();
           });
 
           return content;
