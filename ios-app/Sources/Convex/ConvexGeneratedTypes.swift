@@ -86,6 +86,24 @@ extension ConversationMessagesListByConversationReturnMessagesItem {
         role == .user
     }
 
+    var hasUserVisibleContent: Bool {
+        for block in content {
+            switch block.type {
+            case .text:
+                if let text = block.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return true
+                }
+            case .image, .audio, .resourceLink, .resource:
+                return true
+            }
+        }
+        return false
+    }
+
+    var isUnreadCandidate: Bool {
+        role == .assistant && hasUserVisibleContent
+    }
+
     var textContent: String {
         content
             .filter { $0.type == .text }

@@ -39,6 +39,7 @@ export const create = internalMutation({
     instanceId: v.string(),
     snapshotId: v.string(),
     callbackJwtHash: v.string(),
+    streamSecret: v.string(),
     sandboxUrl: v.optional(v.string()),
     poolState: v.optional(poolStateValidator),
     warmExpiresAt: v.optional(v.number()),
@@ -56,6 +57,7 @@ export const create = internalMutation({
       status: "starting",
       sandboxUrl: args.sandboxUrl,
       callbackJwtHash: args.callbackJwtHash,
+      streamSecret: args.streamSecret,
       lastActivityAt: now,
       conversationCount: 0,
       snapshotId: args.snapshotId,
@@ -141,6 +143,26 @@ export const clearLastError = internalMutation({
     }
     await ctx.db.patch(args.sandboxId, {
       lastError: undefined,
+      lastActivityAt: Date.now(),
+    });
+  },
+});
+
+/**
+ * Update stream secret for sandbox auth.
+ */
+export const updateStreamSecret = internalMutation({
+  args: {
+    sandboxId: v.id("acpSandboxes"),
+    streamSecret: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const sandbox = await ctx.db.get(args.sandboxId);
+    if (!sandbox) {
+      return;
+    }
+    await ctx.db.patch(args.sandboxId, {
+      streamSecret: args.streamSecret,
       lastActivityAt: Date.now(),
     });
   },

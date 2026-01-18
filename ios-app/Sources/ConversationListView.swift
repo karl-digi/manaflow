@@ -168,11 +168,18 @@ struct ConversationListView: View {
         }
     }
 
+    private var dotLeadingPadding: CGFloat { 12 }
+    private var dotOffset: CGFloat { -5 }
+
     private var conversationsList: some View {
         List {
             ForEach(filteredConversations) { conversation in
                 NavigationLink(destination: ChatView(conversation: conversation)) {
-                    ConversationRow(conversation: conversation)
+                    ConversationRow(
+                        conversation: conversation,
+                        dotLeadingPadding: dotLeadingPadding,
+                        dotOffset: dotOffset
+                    )
                 }
                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                     Button(role: .destructive) {
@@ -349,18 +356,14 @@ struct InstantFocusTextView: UIViewRepresentable {
 
 struct ConversationRow: View {
     let conversation: ConvexConversation
+    let dotLeadingPadding: CGFloat
+    let dotOffset: CGFloat
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(conversation.displayName)
                     .font(.headline)
-
-                if conversation.isActive {
-                    Circle()
-                        .fill(.green)
-                        .frame(width: 8, height: 8)
-                }
 
                 Spacer()
 
@@ -373,6 +376,14 @@ struct ConversationRow: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+        }
+        .padding(.leading, dotLeadingPadding)
+        .overlay(alignment: .leading) {
+            Circle()
+                .fill(Color(uiColor: .systemBlue))
+                .frame(width: 8, height: 8)
+                .opacity(conversation.unread ? 1 : 0)
+                .offset(x: dotOffset)
         }
         .padding(.vertical, 4)
     }

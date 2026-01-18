@@ -3,20 +3,25 @@
 //! Provides HTTP endpoints for Convex to control the sandbox (init/prompt).
 //! The sandbox can ONLY communicate back to Convex via callbacks using JWT.
 
+use std::collections::VecDeque;
+use std::convert::Infallible;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use axum::extract::State;
-use axum::http::StatusCode;
+use axum::extract::{Path, Query, State};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
+use axum::response::sse::{Event, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use dashmap::DashMap;
+use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, ChildStdout};
 use tokio::sync::{Mutex, RwLock};
+use futures::stream::unfold;
 use tracing::{debug, error, info, warn};
 use utoipa::{OpenApi, ToSchema};
 
@@ -24,7 +29,20 @@ use super::api_proxy::ConversationApiProxies;
 use super::callback::{
     CallbackClient, CallbackRawEvent, CallbackToolCall, CallbackToolCallStatus, StopReason,
 };
+use super::stream::{StreamEvent, StreamOffset, StreamStore};
 use super::spawner::{AcpProvider, CliSpawner, IsolationMode as SpawnerIsolationMode};
+
+const STREAM_NEXT_OFFSET_HEADER: &str = "Acp-Next-Offset";
+const STREAM_UP_TO_DATE_HEADER: &str = "Acp-Up-To-Date";
+const STREAM_LONG_POLL_TIMEOUT: Duration = Duration::from_secs(25);
+const STREAM_SECRET_TTL: Duration = Duration::from_secs(60 * 60);
+const STREAM_SECRET_MAX: usize = 4;
+
+#[derive(Clone)]
+struct StreamSecretEntry {
+    secret: String,
+    set_at: Instant,
+}
 
 /// State for a single conversation.
 struct ConversationState {
@@ -54,6 +72,10 @@ pub struct RestApiState {
     /// Per-conversation API proxies (set via configure endpoint)
     /// Routes CLI API requests through outer proxy with JWT authentication
     api_proxies: Arc<RwLock<Option<Arc<ConversationApiProxies>>>>,
+    /// Stream store for ACP events (sandbox -> browser streaming)
+    stream_store: Arc<StreamStore>,
+    /// Shared secrets for validating browser stream tokens
+    stream_secrets: Arc<RwLock<Vec<StreamSecretEntry>>>,
 }
 
 impl RestApiState {
@@ -65,6 +87,8 @@ impl RestApiState {
             default_cwd: PathBuf::from("/workspace"),
             sandbox_id: Arc::new(RwLock::new(None)),
             api_proxies: Arc::new(RwLock::new(None)),
+            stream_store: Arc::new(StreamStore::new(20_000)),
+            stream_secrets: Arc::new(RwLock::new(Vec::new())),
         }
     }
 
@@ -97,6 +121,7 @@ impl RestApiState {
         sandbox_jwt: String,
         sandbox_id: String,
         api_proxy_url: Option<String>,
+        stream_secret: Option<String>,
     ) -> Result<(), String> {
         // Set callback client
         let client = CallbackClient::new(callback_url, sandbox_jwt.clone());
@@ -138,6 +163,18 @@ impl RestApiState {
             let mut guard = self.api_proxies.write().await;
             *guard = Some(Arc::new(proxies));
         }
+        if let Some(secret) = stream_secret {
+            let mut guard = self.stream_secrets.write().await;
+            let now = Instant::now();
+            if let Some(entry) = guard.iter_mut().find(|entry| entry.secret == secret) {
+                entry.set_at = now;
+            } else {
+                guard.push(StreamSecretEntry { secret, set_at: now });
+            }
+            guard.retain(|entry| now.duration_since(entry.set_at) < STREAM_SECRET_TTL);
+            guard.sort_by(|a, b| b.set_at.cmp(&a.set_at));
+            guard.truncate(STREAM_SECRET_MAX);
+        }
         Ok(())
     }
 
@@ -160,6 +197,22 @@ impl RestApiState {
     /// Get the callback client (if configured).
     pub async fn get_callback_client(&self) -> Option<Arc<CallbackClient>> {
         self.callback_client.read().await.clone()
+    }
+
+    pub async fn get_sandbox_id(&self) -> Option<String> {
+        self.sandbox_id.read().await.clone()
+    }
+
+    pub fn stream_store(&self) -> Arc<StreamStore> {
+        self.stream_store.clone()
+    }
+
+    pub async fn get_stream_secrets(&self) -> Vec<String> {
+        let mut guard = self.stream_secrets.write().await;
+        let now = Instant::now();
+        guard.retain(|entry| now.duration_since(entry.set_at) < STREAM_SECRET_TTL);
+        guard.sort_by(|a, b| b.set_at.cmp(&a.set_at));
+        guard.iter().map(|entry| entry.secret.clone()).collect()
     }
 }
 
@@ -415,6 +468,28 @@ pub struct ConfigureRequest {
     /// If provided, spawned CLIs will route API requests through this proxy.
     #[serde(rename = "api_proxy_url")]
     pub api_proxy_url: Option<String>,
+    /// Shared secret for sandbox streaming auth (optional).
+    #[serde(rename = "stream_secret")]
+    pub stream_secret: Option<String>,
+}
+
+/// Query parameters for ACP stream endpoint.
+#[derive(Debug, Deserialize)]
+pub struct StreamQuery {
+    pub offset: Option<String>,
+    pub live: Option<String>,
+}
+
+/// Claims for sandbox stream token verification.
+#[derive(Debug, Deserialize)]
+struct StreamTokenClaims {
+    #[serde(rename = "conversationId")]
+    conversation_id: String,
+    #[serde(rename = "sandboxId")]
+    sandbox_id: String,
+    #[allow(dead_code)]
+    #[serde(rename = "teamId")]
+    team_id: String,
 }
 
 /// Response from configure endpoint.
@@ -456,6 +531,7 @@ pub async fn configure(
             request.sandbox_jwt.clone(),
             request.sandbox_id.clone(),
             request.api_proxy_url.clone(),
+            request.stream_secret.clone(),
         )
         .await
     {
@@ -472,6 +548,430 @@ pub async fn configure(
     info!(sandbox_id = %request.sandbox_id, "Sandbox configured");
 
     Ok(Json(ConfigureResponse { success: true }))
+}
+
+// ============================================================================
+// ACP Stream Endpoints (sandbox -> browser streaming)
+// ============================================================================
+
+fn parse_stream_offset(raw: Option<String>) -> Result<StreamOffset, String> {
+    match raw.as_deref() {
+        None => Ok(StreamOffset::Start),
+        Some("now") => Ok(StreamOffset::Now),
+        Some("-1") => Ok(StreamOffset::Start),
+        Some(value) => value
+            .parse::<u64>()
+            .map(StreamOffset::Value)
+            .map_err(|_| "Invalid offset value".to_string()),
+    }
+}
+
+async fn verify_stream_auth(
+    state: &RestApiState,
+    headers: &HeaderMap,
+    conversation_id: &str,
+) -> Result<(), StreamError> {
+    let auth_header = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+
+    if !auth_header.starts_with("Bearer ") {
+        return Err(StreamError::new(
+            StatusCode::UNAUTHORIZED,
+            "Missing or invalid Authorization header",
+            Some("UNAUTHORIZED"),
+        ));
+    }
+
+    let token = auth_header.trim_start_matches("Bearer ").trim();
+    let secrets = state.get_stream_secrets().await;
+    if secrets.is_empty() {
+        return Err(StreamError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Stream secret not configured",
+            Some("STREAM_SECRET_MISSING"),
+        ));
+    }
+
+    let mut validation = Validation::new(Algorithm::HS256);
+    validation.validate_exp = true;
+    let mut decoded: Option<jsonwebtoken::TokenData<StreamTokenClaims>> = None;
+    let mut last_error: Option<jsonwebtoken::errors::Error> = None;
+    for secret in secrets {
+        match decode::<StreamTokenClaims>(
+            token,
+            &DecodingKey::from_secret(secret.as_bytes()),
+            &validation,
+        ) {
+            Ok(data) => {
+                decoded = Some(data);
+                break;
+            }
+            Err(error) => {
+                last_error = Some(error);
+            }
+        }
+    }
+
+    let decoded = decoded.ok_or_else(|| {
+        if let Some(error) = last_error {
+            error!(error = %error, "Stream token verification failed");
+        } else {
+            warn!("Stream token verification failed without error details");
+        }
+        StreamError::new(
+            StatusCode::UNAUTHORIZED,
+            "Invalid stream token",
+            Some("INVALID_TOKEN"),
+        )
+    })?;
+
+    if decoded.claims.conversation_id != conversation_id {
+        return Err(StreamError::new(
+            StatusCode::UNAUTHORIZED,
+            "Conversation mismatch",
+            Some("CONVERSATION_MISMATCH"),
+        ));
+    }
+
+    if let Some(sandbox_id) = state.get_sandbox_id().await {
+        if decoded.claims.sandbox_id != sandbox_id {
+            return Err(StreamError::new(
+                StatusCode::UNAUTHORIZED,
+                "Sandbox mismatch",
+                Some("SANDBOX_MISMATCH"),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn build_stream_control_payload(
+    next_offset: u64,
+    up_to_date: bool,
+    truncated: bool,
+) -> String {
+    json!({
+        "nextOffset": next_offset,
+        "upToDate": up_to_date,
+        "truncated": truncated,
+    })
+    .to_string()
+}
+
+fn apply_stream_cors(headers: &mut HeaderMap) {
+    headers.insert(
+        "access-control-allow-origin",
+        HeaderValue::from_static("*"),
+    );
+    headers.insert(
+        "access-control-allow-headers",
+        HeaderValue::from_static("authorization, content-type"),
+    );
+    headers.insert(
+        "access-control-allow-methods",
+        HeaderValue::from_static("GET, OPTIONS"),
+    );
+}
+
+#[derive(Debug)]
+pub struct StreamError {
+    status: StatusCode,
+    body: ErrorResponse,
+}
+
+impl StreamError {
+    fn new(status: StatusCode, error: impl Into<String>, code: Option<&str>) -> Self {
+        Self {
+            status,
+            body: ErrorResponse {
+                error: error.into(),
+                code: code.map(str::to_string),
+            },
+        }
+    }
+}
+
+impl IntoResponse for StreamError {
+    fn into_response(self) -> Response {
+        let mut response = (self.status, Json(self.body)).into_response();
+        apply_stream_cors(response.headers_mut());
+        response
+    }
+}
+
+#[utoipa::path(
+    options,
+    path = "/api/acp/stream/{conversation_id}",
+    params(("conversation_id" = String, Path, description = "Convex conversation ID")),
+    responses((status = 204, description = "CORS preflight ok")),
+    tag = "acp"
+)]
+pub async fn stream_preflight(Path(_conversation_id): Path<String>) -> Response {
+    let mut response = Response::builder()
+        .status(StatusCode::NO_CONTENT)
+        .body(axum::body::Body::empty())
+        .unwrap_or_else(|_| Response::new(axum::body::Body::empty()));
+    apply_stream_cors(response.headers_mut());
+    response
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/acp/stream/{conversation_id}",
+    params(
+        ("conversation_id" = String, Path, description = "Convex conversation ID"),
+        ("offset" = Option<String>, Query, description = "Last seen seq (-1, now, or number)"),
+        ("live" = Option<String>, Query, description = "Live mode: sse or long-poll")
+    ),
+    responses(
+        (status = 200, description = "Stream events or SSE connection"),
+        (status = 204, description = "Long-poll timeout"),
+        (status = 400, description = "Bad request", body = ErrorResponse),
+        (status = 401, description = "Unauthorized", body = ErrorResponse),
+        (status = 404, description = "Conversation not found", body = ErrorResponse),
+        (status = 410, description = "Stream truncated", body = ErrorResponse)
+    ),
+    tag = "acp"
+)]
+pub async fn stream_acp_events(
+    State(state): State<RestApiState>,
+    Path(conversation_id): Path<String>,
+    Query(query): Query<StreamQuery>,
+    headers: HeaderMap,
+) -> Result<Response, StreamError> {
+    verify_stream_auth(&state, &headers, &conversation_id).await?;
+
+    let offset = parse_stream_offset(query.offset.clone()).map_err(|error| {
+        StreamError::new(StatusCode::BAD_REQUEST, error, Some("INVALID_OFFSET"))
+    })?;
+
+    let live = query.live.as_deref();
+    if (live == Some("sse") || live == Some("long-poll")) && query.offset.is_none() {
+        return Err(StreamError::new(
+            StatusCode::BAD_REQUEST,
+            "Live streaming requires an offset",
+            Some("OFFSET_REQUIRED"),
+        ));
+    }
+
+    let store = state.stream_store();
+
+    if live == Some("sse") {
+        let initial_read = store
+            .read(&conversation_id, StreamOffset::Now)
+            .await
+            .ok_or_else(|| {
+                StreamError::new(
+                    StatusCode::NOT_FOUND,
+                    "Conversation not found",
+                    Some("NOT_FOUND"),
+                )
+            })?;
+        let current_offset = match offset {
+            StreamOffset::Start => 0,
+            StreamOffset::Now => initial_read.next_offset,
+            StreamOffset::Value(value) => value,
+        };
+
+        let stream = unfold(
+            StreamSseState {
+                conversation_id: conversation_id.clone(),
+                store,
+                current_offset,
+                pending: VecDeque::new(),
+                done: false,
+            },
+            |mut state| async move {
+                if state.done && state.pending.is_empty() {
+                    return None;
+                }
+
+                if let Some(event) = state.pending.pop_front() {
+                    return Some((Ok::<Event, Infallible>(event), state));
+                }
+
+                let read = state
+                    .store
+                    .read(&state.conversation_id, StreamOffset::Value(state.current_offset))
+                    .await?;
+
+                if read.truncated {
+                    let control = build_stream_control_payload(
+                        read.next_offset,
+                        read.up_to_date,
+                        true,
+                    );
+                    state.pending.push_back(
+                        Event::default().event("control").data(control),
+                    );
+                    state.current_offset = read.next_offset;
+                    state.done = true;
+                    let next = state
+                        .pending
+                        .pop_front()
+                        .map(|event| (Ok::<Event, Infallible>(event), state));
+                    return next;
+                }
+
+                let mut next_read = read.clone();
+                if read.events.is_empty() && read.up_to_date {
+                    if let Some(waited) = state
+                        .store
+                        .wait_for_events(
+                            &state.conversation_id,
+                            state.current_offset,
+                            STREAM_LONG_POLL_TIMEOUT,
+                        )
+                        .await
+                    {
+                        next_read = waited;
+                    }
+                }
+
+                for event in &next_read.events {
+                    let payload = serde_json::to_string(event).unwrap_or_else(|_| "{}".to_string());
+                    state
+                        .pending
+                        .push_back(Event::default().event("data").data(payload));
+                }
+
+                let control_payload = build_stream_control_payload(
+                    next_read.next_offset,
+                    next_read.up_to_date,
+                    false,
+                );
+                state
+                    .pending
+                    .push_back(Event::default().event("control").data(control_payload));
+
+                state.current_offset = next_read.next_offset;
+
+                state
+                    .pending
+                    .pop_front()
+                    .map(|event| (Ok::<Event, Infallible>(event), state))
+            },
+        );
+
+        let sse = Sse::new(stream).keep_alive(axum::response::sse::KeepAlive::default());
+        let mut response = sse.into_response();
+        if let Ok(value) = HeaderValue::from_str(&initial_read.next_offset.to_string()) {
+            response
+                .headers_mut()
+                .insert(STREAM_NEXT_OFFSET_HEADER, value);
+        }
+        response
+            .headers_mut()
+            .insert("cache-control", HeaderValue::from_static("no-cache"));
+        apply_stream_cors(response.headers_mut());
+        return Ok(response);
+    }
+
+    let initial = store
+        .read(&conversation_id, offset)
+        .await
+        .ok_or_else(|| {
+            StreamError::new(
+                StatusCode::NOT_FOUND,
+                "Conversation not found",
+                Some("NOT_FOUND"),
+            )
+        })?;
+
+    if initial.truncated {
+        return Err(StreamError::new(
+            StatusCode::GONE,
+            "Stream history truncated",
+            Some("STREAM_TRUNCATED"),
+        ));
+    }
+
+    let read = if live == Some("long-poll") {
+        if !initial.events.is_empty() || !initial.up_to_date {
+            initial
+        } else {
+            let waited = store
+                .wait_for_events(
+                    &conversation_id,
+                    initial.next_offset,
+                    STREAM_LONG_POLL_TIMEOUT,
+                )
+                .await
+                .unwrap_or(initial);
+            if waited.truncated {
+                return Err(StreamError::new(
+                    StatusCode::GONE,
+                    "Stream history truncated",
+                    Some("STREAM_TRUNCATED"),
+                ));
+            }
+            waited
+        }
+    } else {
+        initial
+    };
+
+    if live == Some("long-poll") && read.events.is_empty() {
+        let mut response = Response::builder()
+            .status(StatusCode::NO_CONTENT)
+            .header(STREAM_NEXT_OFFSET_HEADER, read.next_offset.to_string())
+            .header(STREAM_UP_TO_DATE_HEADER, read.up_to_date.to_string())
+            .body(axum::body::Body::empty())
+            .map_err(|error| {
+                error!(error = %error, "Failed to build long-poll response");
+                StreamError::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Failed to build response",
+                    Some("RESPONSE_ERROR"),
+                )
+            })?;
+        response
+            .headers_mut()
+            .insert("cache-control", HeaderValue::from_static("no-store"));
+        apply_stream_cors(response.headers_mut());
+        return Ok(response);
+    }
+
+    let payload = serde_json::to_string(&read.events).map_err(|error| {
+        error!(error = %error, "Failed to encode stream events");
+        StreamError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to encode events",
+            Some("ENCODE_ERROR"),
+        )
+    })?;
+
+    let mut response = Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "application/json")
+        .header(STREAM_NEXT_OFFSET_HEADER, read.next_offset.to_string())
+        .header(STREAM_UP_TO_DATE_HEADER, read.up_to_date.to_string())
+        .body(axum::body::Body::from(payload))
+        .map_err(|error| {
+            error!(error = %error, "Failed to build stream response");
+            StreamError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to build response",
+                Some("RESPONSE_ERROR"),
+            )
+        })?;
+
+    response
+        .headers_mut()
+        .insert("cache-control", HeaderValue::from_static("no-store"));
+    apply_stream_cors(response.headers_mut());
+    Ok(response)
+}
+
+struct StreamSseState {
+    conversation_id: String,
+    store: Arc<StreamStore>,
+    current_offset: u64,
+    pending: VecDeque<Event>,
+    done: bool,
 }
 
 /// Initialize a conversation on this sandbox.
@@ -600,10 +1100,14 @@ pub async fn init_conversation(
     state
         .conversations
         .insert(request.conversation_id.clone(), conversation_state.clone());
+    state
+        .stream_store()
+        .ensure_conversation(&request.conversation_id);
 
     // Always spawn stdout reader task to consume CLI output (prevents EPIPE)
     // In callback mode, send updates to Convex; otherwise just log
     let callback_client = state.get_callback_client().await;
+    let stream_store = state.stream_store();
     let conversation_id = request.conversation_id.clone();
     let current_message_id = conversation_state.current_message_id.clone();
     let stdin_for_responses = conversation_state.stdin.clone();
@@ -647,11 +1151,27 @@ pub async fn init_conversation(
                         }
                     };
                     let line_created_at = created_at;
+                    let trimmed_line = line.trim_end().to_string();
                     raw_events.push(CallbackRawEvent {
                         seq: raw_seq,
-                        raw: line.trim_end().to_string(),
+                        raw: trimmed_line.clone(),
                         created_at,
                     });
+                    let parsed_event = parse_acp_event(&trimmed_line);
+                    let event_type = parsed_event
+                        .as_ref()
+                        .map(|event| event.event_type().to_string());
+                    stream_store
+                        .append(
+                            &conversation_id,
+                            StreamEvent {
+                                seq: raw_seq,
+                                raw: trimmed_line,
+                                created_at: line_created_at,
+                                event_type,
+                            },
+                        )
+                        .await;
                     if raw_events.len() >= RAW_EVENT_BATCH_SIZE
                         || last_raw_flush.elapsed() >= raw_flush_interval
                     {
@@ -733,7 +1253,7 @@ pub async fn init_conversation(
                     }
 
                     // Parse ACP event and handle appropriately
-                    if let Some(event) = parse_acp_event(&line) {
+                    if let Some(event) = parsed_event {
                         match event {
                             AcpEvent::MessageChunk(text) => {
                                 // Buffer text - only persist at message boundaries
@@ -1028,6 +1548,18 @@ enum AcpEvent {
     },
 }
 
+impl AcpEvent {
+    fn event_type(&self) -> &'static str {
+        match self {
+            Self::MessageChunk(_) => "message_chunk",
+            Self::ReasoningChunk(_) => "reasoning_chunk",
+            Self::ToolCall { .. } => "tool_call",
+            Self::ToolCallUpdate { .. } => "tool_call_update",
+            Self::MessageComplete { .. } => "message_complete",
+        }
+    }
+}
+
 /// Parse ACP events from a JSON-RPC line.
 ///
 /// Handles multiple formats from both Claude Code and Codex:
@@ -1113,7 +1645,7 @@ fn parse_acp_event(line: &str) -> Option<AcpEvent> {
                         .get("status")
                         .or_else(|| update.get("fields").and_then(|f| f.get("status")))
                         .and_then(|v| v.as_str());
-                    let mut result = update
+                    let result = update
                         .get("result")
                         .or_else(|| update.get("fields").and_then(|f| f.get("result")))
                         .and_then(|v| v.as_str());
@@ -1640,6 +2172,7 @@ async fn update_codex_config_base_url(openai_base_url: &str) -> Result<(), Strin
 #[derive(OpenApi)]
 #[openapi(
     paths(
+        stream_acp_events,
         init_conversation,
         receive_prompt,
         send_rpc,

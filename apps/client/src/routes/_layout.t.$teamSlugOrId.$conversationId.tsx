@@ -24,6 +24,7 @@ import { toast } from "sonner";
 import { z } from "zod";
 import clsx from "clsx";
 import { Streamdown } from "streamdown";
+import { useAcpSandboxStream, type AcpStreamStatus } from "@/hooks/useAcpSandboxStream";
 
 const PAGE_SIZE = 40;
 const RAW_EVENTS_PAGE_SIZE = 120;
@@ -49,6 +50,18 @@ type PendingImage = {
 };
 
 type ContentBlock = Doc<"conversationMessages">["content"][number];
+type RawEventView = {
+  _id: string;
+  seq: number;
+  raw: string;
+  createdAt: number;
+  source: "convex" | "sandbox";
+};
+type StreamingMessage = {
+  content: ContentBlock[];
+  createdAt: number;
+  lastSeq: number;
+};
 
 type PendingMessageStatus = "sending" | "queued" | "sent" | "error";
 
@@ -61,6 +74,24 @@ type PendingMessage = {
   status: PendingMessageStatus;
   error?: string;
 };
+
+function isUnreadCandidateMessage(
+  message: Doc<"conversationMessages">
+): boolean {
+  if (message.role !== "assistant") return false;
+
+  return message.content.some((block) => {
+    if (block.type === "text") {
+      return Boolean(block.text?.trim());
+    }
+    return (
+      block.type === "image" ||
+      block.type === "audio" ||
+      block.type === "resource_link" ||
+      block.type === "resource"
+    );
+  });
+}
 
 function isDeliveryStatus(value: unknown): value is PendingMessageStatus {
   return (
@@ -141,6 +172,15 @@ function ConversationThread() {
           conversationId,
         }
   );
+  const streamInfo = useQuery(
+    api.acp.getStreamInfo,
+    isOptimisticConversation
+      ? "skip"
+      : {
+          teamSlugOrId,
+          conversationId,
+        }
+  );
 
   const { results, status, loadMore } = usePaginatedQuery(
     api.conversationMessages.listByConversationPaginated,
@@ -158,7 +198,40 @@ function ConversationThread() {
   );
 
   const messages = useMemo(() => results ?? [], [results]);
-  const rawEvents = useMemo(() => rawEventsResults ?? [], [rawEventsResults]);
+  const convexRawEvents = useMemo(
+    () => rawEventsResults ?? [],
+    [rawEventsResults]
+  );
+  const latestConvexSeq = useMemo(() => {
+    if (convexRawEvents.length === 0) return 0;
+    return convexRawEvents.reduce(
+      (max, event) => (event.seq > max ? event.seq : max),
+      0
+    );
+  }, [convexRawEvents]);
+  const stream = useAcpSandboxStream({
+    enabled: !isOptimisticConversation,
+    streamUrl: streamInfo?.sandboxUrl
+      ? `${streamInfo.sandboxUrl}/api/acp/stream/${conversationId}`
+      : null,
+    token: streamInfo?.token ?? null,
+    startOffset: latestConvexSeq,
+  });
+  const streamRawEvents = useMemo<RawEventView[]>(
+    () =>
+      stream.events.map((event) => ({
+        _id: `stream-${event.seq}`,
+        seq: event.seq,
+        raw: event.raw,
+        createdAt: event.createdAt,
+        source: "sandbox",
+      })),
+    [stream.events]
+  );
+  const rawEvents = useMemo(
+    () => mergeRawEvents(convexRawEvents, streamRawEvents),
+    [convexRawEvents, streamRawEvents]
+  );
 
   const markRead = useMutation(api.conversationReads.markRead);
   const sendMessage = useAction(api.acp.sendMessage);
@@ -185,7 +258,7 @@ function ConversationThread() {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
   const shouldScrollToBottom = useRef(false);
-  const lastMarkedAt = useRef<number | null>(null);
+  const lastMarkedAtByConversation = useRef<Map<string, number>>(new Map());
   const attachmentsRef = useRef<PendingImage[]>([]);
 
   const conversation = detail?.conversation ?? null;
@@ -194,31 +267,64 @@ function ConversationThread() {
     (conversation?.permissionMode as PermissionMode | undefined) ??
     "auto_allow_always";
 
-  const latestMessageAt =
-    messages[0]?.createdAt ?? conversation?.lastMessageAt ?? null;
+  const latestReadableMessageAt = useMemo(() => {
+    for (const message of messages) {
+      if (isUnreadCandidateMessage(message)) {
+        return message.createdAt;
+      }
+    }
+    return null;
+  }, [messages]);
   const isSending = pendingMessages.some(
     (pending) => pending.status === "sending"
   );
 
   useEffect(() => {
     if (isOptimisticConversation) return;
-    if (!latestMessageAt) return;
-    if (
-      lastMarkedAt.current !== null &&
-      latestMessageAt <= lastMarkedAt.current
-    ) {
+    if (!latestReadableMessageAt) return;
+    if (typeof document === "undefined") return;
+
+    const firstMessageConversationId = messages[0]?.conversationId;
+    if (messages.length > 0 && firstMessageConversationId !== conversationId) {
       return;
     }
 
-    lastMarkedAt.current = latestMessageAt;
-    void markRead({
-      teamSlugOrId,
-      conversationId,
-      lastReadAt: latestMessageAt,
-    }).catch((error) => {
-      console.error("Failed to mark conversation read", error);
-    });
-  }, [conversationId, isOptimisticConversation, latestMessageAt, markRead, teamSlugOrId]);
+    const markReadIfFocused = () => {
+      const isFocused = document.hasFocus();
+      if (!isFocused) {
+        return;
+      }
+      const lastMarkedAt = lastMarkedAtByConversation.current.get(
+        conversationId
+      );
+      if (lastMarkedAt !== undefined && latestReadableMessageAt <= lastMarkedAt) {
+        return;
+      }
+
+      lastMarkedAtByConversation.current.set(
+        conversationId,
+        latestReadableMessageAt
+      );
+      void markRead({
+        teamSlugOrId,
+        conversationId,
+        lastReadAt: latestReadableMessageAt,
+      }).catch((error) => {
+        console.error("Failed to mark conversation read", error);
+      });
+    };
+
+    markReadIfFocused();
+    window.addEventListener("focus", markReadIfFocused);
+    return () => window.removeEventListener("focus", markReadIfFocused);
+  }, [
+    conversationId,
+    isOptimisticConversation,
+    latestReadableMessageAt,
+    markRead,
+    messages,
+    teamSlugOrId,
+  ]);
 
   useEffect(() => {
     if (!scrollRef.current) return;
@@ -665,6 +771,20 @@ function ConversationThread() {
     );
   }, [rawEvents]);
 
+  const lastAssistantSeq = useMemo(() => {
+    const seqs = visibleMessages
+      .filter((message) => message.role === "assistant")
+      .map((message) => message.acpSeq)
+      .filter((seq): seq is number => typeof seq === "number");
+    if (seqs.length === 0) return 0;
+    return Math.max(...seqs);
+  }, [visibleMessages]);
+
+  const streamingMessage = useMemo(
+    () => buildStreamingMessage(rawEvents, lastAssistantSeq),
+    [rawEvents, lastAssistantSeq]
+  );
+
   const combinedItems = useMemo(() => {
     const pendingItems = pendingMessages.map((pending) => ({
       kind: "pending" as const,
@@ -672,6 +792,16 @@ function ConversationThread() {
       sortSeq: null as number | null,
       pending,
     }));
+    const streamItems = streamingMessage
+      ? [
+          {
+            kind: "stream" as const,
+            createdAt: streamingMessage.createdAt,
+            sortSeq: streamingMessage.lastSeq,
+            message: streamingMessage,
+          },
+        ]
+      : [];
     const serverItems = visibleMessages.map((message) => ({
       kind: "server" as const,
       createdAt: message.createdAt,
@@ -685,7 +815,8 @@ function ConversationThread() {
       toolCall,
     }));
 
-    return [...pendingItems, ...serverItems, ...toolItems].sort((a, b) => {
+    return [...pendingItems, ...streamItems, ...serverItems, ...toolItems].sort(
+      (a, b) => {
       if (a.sortSeq !== null && b.sortSeq !== null) {
         if (a.sortSeq !== b.sortSeq) return b.sortSeq - a.sortSeq;
       }
@@ -694,9 +825,10 @@ function ConversationThread() {
       const aSeq = a.sortSeq ?? 0;
       const bSeq = b.sortSeq ?? 0;
       if (aSeq !== bSeq) return bSeq - aSeq;
-      return 0;
-    });
-  }, [pendingMessages, toolCalls, visibleMessages]);
+        return 0;
+      }
+    );
+  }, [pendingMessages, streamingMessage, toolCalls, visibleMessages]);
 
   const latestUserMessageAt = useMemo(() => {
     const serverUser = visibleMessages
@@ -896,6 +1028,11 @@ function ConversationThread() {
                     pending={item.pending}
                     onRetry={() => sendPendingMessage(item.pending.localId)}
                   />
+                ) : item.kind === "stream" ? (
+                  <StreamingConversationMessage
+                    key={`stream-${item.message.lastSeq}`}
+                    message={item.message}
+                  />
                 ) : item.kind === "server" ? (
                   <ConversationMessage
                     key={item.message._id}
@@ -949,6 +1086,7 @@ function ConversationThread() {
           <RawAcpEventsPanel
             rawEvents={rawEvents}
             status={rawEventsStatus}
+            streamStatus={stream.status}
             onLoadMore={() => loadMoreRawEvents(RAW_EVENTS_PAGE_SIZE)}
           />
         ) : null}
@@ -1057,6 +1195,21 @@ function SandboxStatusIcon({ status }: { status: ConversationSandboxStatus }) {
     default:
       return <CircleDashed className="h-4 w-4 text-neutral-400" aria-hidden />;
   }
+}
+
+function StreamingConversationMessage({
+  message,
+}: {
+  message: StreamingMessage;
+}) {
+  return (
+    <div className="flex flex-col gap-2 items-start">
+      <div className="max-w-[680px] rounded-2xl bg-white px-4 py-3 text-sm leading-relaxed text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100">
+        <MessageContent blocks={message.content} renderMarkdown />
+      </div>
+      <div className="text-[11px] text-neutral-400">Streaming…</div>
+    </div>
+  );
 }
 
 function ConversationMessage({
@@ -1560,12 +1713,33 @@ function ToolCallMessage({ call }: { call: ToolCallEntry }) {
 function RawAcpEventsPanel({
   rawEvents,
   status,
+  streamStatus,
   onLoadMore,
 }: {
-  rawEvents: Doc<"acpRawEvents">[];
+  rawEvents: RawEventView[];
   status: PaginatedStatus;
+  streamStatus: AcpStreamStatus;
   onLoadMore: () => void;
 }) {
+  const streamLabel =
+    streamStatus === "live"
+      ? "Live"
+      : streamStatus === "connecting"
+        ? "Connecting"
+        : streamStatus === "error"
+          ? "Stream error"
+          : streamStatus === "fallback"
+            ? "Convex fallback"
+            : "Idle";
+  const streamTone =
+    streamStatus === "live"
+      ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+      : streamStatus === "connecting"
+        ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+        : streamStatus === "error"
+          ? "bg-rose-500/10 text-rose-600 dark:text-rose-400"
+          : "bg-neutral-400/10 text-neutral-500 dark:text-neutral-400";
+
   const handleCopyAll = async () => {
     if (rawEvents.length === 0) return;
     try {
@@ -1581,8 +1755,16 @@ function RawAcpEventsPanel({
   return (
     <div className="flex w-full min-h-0 max-h-[40vh] flex-col overflow-hidden border-t border-neutral-200/70 bg-neutral-50/70 px-4 py-4 dark:border-neutral-800/70 dark:bg-neutral-900/40 lg:h-full lg:max-h-none lg:w-[360px] lg:min-h-0 lg:border-l lg:border-t-0">
       <div className="flex items-center justify-between">
-        <div className="text-[11px] font-semibold text-neutral-400">
-          Raw ACP events
+        <div className="flex items-center gap-2 text-[11px] font-semibold text-neutral-400">
+          <span>Raw ACP events</span>
+          <span
+            className={clsx(
+              "rounded-full px-2 py-0.5 text-[10px] font-semibold",
+              streamTone
+            )}
+          >
+            {streamLabel}
+          </span>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -1638,7 +1820,8 @@ function RawAcpEventsPanel({
 function safeParseJson(value: string): unknown | null {
   try {
     return JSON.parse(value);
-  } catch {
+  } catch (error) {
+    console.error("Failed to parse JSON", error);
     return null;
   }
 }
@@ -1664,4 +1847,240 @@ function appendUnique(list: string[], value: string): void {
   if (!list.includes(value)) {
     list.push(value);
   }
+}
+
+function mergeRawEvents(
+  convexEvents: Doc<"acpRawEvents">[],
+  streamEvents: RawEventView[]
+): RawEventView[] {
+  const merged = new Map<number, RawEventView>();
+  for (const event of convexEvents) {
+    merged.set(event.seq, {
+      _id: event._id,
+      seq: event.seq,
+      raw: event.raw,
+      createdAt: event.createdAt,
+      source: "convex",
+    });
+  }
+  for (const event of streamEvents) {
+    if (!merged.has(event.seq)) {
+      merged.set(event.seq, event);
+    }
+  }
+  return Array.from(merged.values()).sort((a, b) => b.seq - a.seq);
+}
+
+type ParsedAcpEvent =
+  | { type: "message_chunk"; text: string }
+  | { type: "reasoning_chunk"; text: string }
+  | { type: "tool_call"; id: string; name: string; arguments: string }
+  | {
+      type: "tool_call_update";
+      id: string;
+      status: string;
+      result: string | null;
+    }
+  | { type: "message_complete"; stopReason: string; content: string | null };
+
+function parseAcpEvent(raw: string): ParsedAcpEvent | null {
+  const value = safeParseJson(raw);
+  if (!value || !isRecord(value)) {
+    return null;
+  }
+
+  const result = value.result;
+  if (isRecord(result)) {
+    const stopReason =
+      typeof result.stopReason === "string" ? result.stopReason : null;
+    const contentText = extractTextFromResult(result);
+    if (stopReason) {
+      return {
+        type: "message_complete",
+        stopReason,
+        content: contentText,
+      };
+    }
+    if (contentText) {
+      return { type: "message_chunk", text: contentText };
+    }
+  }
+
+  if (value.type === "event_msg" && isRecord(value.payload)) {
+    if (value.payload.type === "agent_message") {
+      const message = value.payload.message;
+      if (typeof message === "string") {
+        return { type: "message_chunk", text: message };
+      }
+    }
+  }
+
+  const params = value.params;
+  if (isRecord(params)) {
+    const update = params.update;
+    if (isRecord(update)) {
+      const sessionUpdate =
+        typeof update.sessionUpdate === "string" ? update.sessionUpdate : null;
+
+      switch (sessionUpdate) {
+        case "agent_message_chunk": {
+          const text = extractTextFromContent(update.content);
+          if (text) {
+            return { type: "message_chunk", text };
+          }
+          break;
+        }
+        case "agent_thought_chunk": {
+          const text = extractTextFromContent(update.content);
+          if (text) {
+            return { type: "reasoning_chunk", text };
+          }
+          break;
+        }
+        case "tool_call": {
+          const toolCallId =
+            typeof update.toolCallId === "string"
+              ? update.toolCallId
+              : typeof update.id === "string"
+                ? update.id
+                : null;
+          if (!toolCallId) break;
+          const name =
+            typeof update.title === "string"
+              ? update.title
+              : typeof update.name === "string"
+                ? update.name
+                : "unknown";
+          const rawInput = update.rawInput ?? update.input ?? null;
+          const argumentsValue = rawInput ? JSON.stringify(rawInput) : "{}";
+          return {
+            type: "tool_call",
+            id: toolCallId,
+            name,
+            arguments: argumentsValue,
+          };
+        }
+        case "tool_call_update": {
+          const toolCallId =
+            typeof update.toolCallId === "string"
+              ? update.toolCallId
+              : typeof update.id === "string"
+                ? update.id
+                : null;
+          if (!toolCallId) break;
+          const status =
+            typeof update.status === "string"
+              ? update.status
+              : isRecord(update.fields) && typeof update.fields.status === "string"
+                ? update.fields.status
+                : "unknown";
+          const resultValue =
+            typeof update.result === "string"
+              ? update.result
+              : isRecord(update.fields) && typeof update.fields.result === "string"
+                ? update.fields.result
+                : extractToolOutput(update);
+          return {
+            type: "tool_call_update",
+            id: toolCallId,
+            status,
+            result: resultValue ?? null,
+          };
+        }
+        default:
+          break;
+      }
+    }
+
+    const contentText = extractTextFromContent(params.content);
+    if (contentText) {
+      return { type: "message_chunk", text: contentText };
+    }
+    if (typeof params.text === "string") {
+      return { type: "message_chunk", text: params.text };
+    }
+  }
+
+  return null;
+}
+
+function extractTextFromResult(result: Record<string, unknown>): string | null {
+  if (isRecord(result.content)) {
+    const text = extractTextFromContent(result.content);
+    if (text) {
+      return text;
+    }
+  }
+  if (typeof result.text === "string") {
+    const trimmed = result.text.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  return null;
+}
+
+function extractToolOutput(update: Record<string, unknown>): string | null {
+  const meta = update._meta;
+  if (isRecord(meta) && isRecord(meta.claudeCode)) {
+    const toolResponse = meta.claudeCode.toolResponse;
+    if (isRecord(toolResponse) && typeof toolResponse.stdout === "string") {
+      const stdout = toolResponse.stdout.trim();
+      return stdout.length > 0 ? stdout : null;
+    }
+  }
+
+  const content = update.content;
+  if (!Array.isArray(content)) return null;
+  for (const item of content) {
+    if (isRecord(item) && isRecord(item.content)) {
+      const nested = extractTextFromContent(item.content);
+      if (nested) return nested;
+    }
+    const direct = extractTextFromContent(item);
+    if (direct) return direct;
+  }
+  return null;
+}
+
+function buildStreamingMessage(
+  rawEvents: RawEventView[],
+  lastAssistantSeq: number
+): StreamingMessage | null {
+  if (rawEvents.length === 0) return null;
+  const ordered = [...rawEvents].sort((a, b) => a.seq - b.seq);
+  let activeText = "";
+  let activeCreatedAt = 0;
+  let activeLastSeq = 0;
+
+  for (const event of ordered) {
+    const parsed = parseAcpEvent(event.raw);
+    if (!parsed) continue;
+
+    if (parsed.type === "message_complete") {
+      activeText = "";
+      activeCreatedAt = 0;
+      activeLastSeq = 0;
+      continue;
+    }
+
+    if (parsed.type === "message_chunk") {
+      if (activeCreatedAt === 0) {
+        activeCreatedAt = event.createdAt;
+      }
+      activeText += parsed.text;
+      activeLastSeq = event.seq;
+    }
+  }
+
+  if (activeText.trim().length === 0) {
+    return null;
+  }
+  if (activeLastSeq <= lastAssistantSeq) {
+    return null;
+  }
+
+  return {
+    content: [{ type: "text", text: activeText }],
+    createdAt: activeCreatedAt || Date.now(),
+    lastSeq: activeLastSeq,
+  };
 }

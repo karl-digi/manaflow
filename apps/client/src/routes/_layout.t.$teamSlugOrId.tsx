@@ -2,6 +2,7 @@ import { WebShell } from "@/components/web-ui/WebShell";
 import {
   ConversationsSidebar,
   type ConversationScope,
+  type ProviderId,
 } from "@/components/web-ui/ConversationsSidebar";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { cachedGetUser } from "@/lib/cachedGetUser";
@@ -91,6 +92,8 @@ function ConversationsLayout() {
   const sendMessage = useAction(api.acp.sendMessage);
   const prewarmSandbox = useAction(api.acp.prewarmSandbox);
   const [isCreating, setIsCreating] = useState(false);
+  const [selectedProvider, setSelectedProvider] =
+    useState<ProviderId>("claude");
   const [optimisticConversations, setOptimisticConversations] = useState<
     OptimisticConversation[]
   >([]);
@@ -134,7 +137,29 @@ function ConversationsLayout() {
       ...serverEntries.filter((entry) => !optimisticIds.has(entry.conversationId)),
     ];
 
-    return merged.sort((a, b) => b.latestMessageAt - a.latestMessageAt);
+    const deduped = new Map<string, (typeof merged)[number]>();
+    for (const entry of merged) {
+      const existing = deduped.get(entry.conversationId);
+      if (!existing) {
+        deduped.set(entry.conversationId, entry);
+        continue;
+      }
+      if (entry.latestMessageAt > existing.latestMessageAt) {
+        deduped.set(entry.conversationId, entry);
+        continue;
+      }
+      if (
+        entry.latestMessageAt === existing.latestMessageAt &&
+        entry.unread &&
+        !existing.unread
+      ) {
+        deduped.set(entry.conversationId, entry);
+      }
+    }
+
+    return Array.from(deduped.values()).sort(
+      (a, b) => b.latestMessageAt - a.latestMessageAt
+    );
   }, [optimisticConversations, serverEntries]);
 
   useEffect(() => {
@@ -160,14 +185,17 @@ function ConversationsLayout() {
     });
   };
 
-  const handleNewConversation = async (initialPrompt?: string) => {
+  const handleNewConversation = async (
+    initialPrompt?: string,
+    providerId: ProviderId = selectedProvider
+  ) => {
     const previousConversationId = activeConversationId;
     const optimisticId = `${OPTIMISTIC_CONVERSATION_PREFIX}${crypto.randomUUID()}`;
     const now = Date.now();
     setOptimisticConversations((current) => [
       {
         id: optimisticId,
-        providerId: "claude",
+        providerId,
         modelId: null,
         cwd: "/root",
         latestMessageAt: now,
@@ -186,7 +214,7 @@ function ConversationsLayout() {
     try {
       const result = await startConversation({
         teamSlugOrId,
-        providerId: "claude",
+        providerId,
         cwd: "/root",
       });
       setOptimisticConversations((current) =>
@@ -253,8 +281,8 @@ function ConversationsLayout() {
     });
   };
 
-  const handleSubmitDraft = (prompt: string) => {
-    void handleNewConversation(prompt);
+  const handleSubmitDraft = (prompt: string, providerId: ProviderId) => {
+    void handleNewConversation(prompt, providerId);
   };
 
   return (
@@ -268,10 +296,12 @@ function ConversationsLayout() {
           status={status}
           onLoadMore={loadMore}
           activeConversationId={activeConversationId}
-          onNewConversation={() => handleNewConversation()}
+          onNewConversation={(providerId) => handleNewConversation(undefined, providerId)}
           onSubmitDraft={handleSubmitDraft}
           onPrewarm={handlePrewarm}
           isCreating={isCreating}
+          providerId={selectedProvider}
+          onProviderChange={setSelectedProvider}
         />
       }
     >

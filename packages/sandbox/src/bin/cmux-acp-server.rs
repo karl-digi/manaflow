@@ -13,14 +13,14 @@ use std::sync::Arc;
 use axum::routing::{get, post};
 use axum::Router;
 use clap::Parser;
-use tracing::{info, warn, Level};
+use tracing::{error, info, warn, Level};
 use tracing_subscriber::EnvFilter;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use cmux_sandbox::acp_server::{
-    configure, init_conversation, receive_prompt, send_rpc, ApiProxies, CallbackClient, RestApiDoc,
-    RestApiState,
+    configure, init_conversation, receive_prompt, send_rpc, stream_acp_events, stream_preflight,
+    ApiProxies, CallbackClient, RestApiDoc, RestApiState,
 };
 
 /// ACP Server for sandbox integration.
@@ -232,12 +232,16 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/acp/init", post(init_conversation))
         .route("/api/acp/prompt", post(receive_prompt))
         .route("/api/acp/rpc", post(send_rpc))
+        .route(
+            "/api/acp/stream/{conversation_id}",
+            get(stream_acp_events).options(stream_preflight),
+        )
         .with_state(rest_state)
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", merged_openapi()));
 
-    // Bind and serve
-    let addr = SocketAddr::from(([0, 0, 0, 0], args.port));
-    info!("Listening on {}", addr);
+    // Bind and serve (IPv4 + best-effort IPv6)
+    let addr_v4 = SocketAddr::from(([0, 0, 0, 0], args.port));
+    info!("Listening on {}", addr_v4);
 
     // If in callback mode, notify Convex that sandbox is ready
     if let (Some(client), Some(sandbox_id)) = (&callback_client, &args.sandbox_id) {
@@ -266,8 +270,25 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    let listener_v4 = tokio::net::TcpListener::bind(addr_v4).await?;
+
+    let addr_v6 = SocketAddr::from(([0u16; 8], args.port));
+    match tokio::net::TcpListener::bind(addr_v6).await {
+        Ok(listener_v6) => {
+            let app_v6 = app.clone();
+            tokio::spawn(async move {
+                if let Err(err) = axum::serve(listener_v6, app_v6).await {
+                    error!("IPv6 server error: {err}");
+                }
+            });
+            info!("Listening on {}", addr_v6);
+        }
+        Err(err) => {
+            warn!("Failed to bind IPv6 listener: {err}");
+        }
+    }
+
+    axum::serve(listener_v4, app).await?;
 
     Ok(())
 }

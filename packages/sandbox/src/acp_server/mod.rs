@@ -15,6 +15,7 @@ mod api_proxy;
 pub mod callback;
 pub mod rest;
 mod spawner;
+mod stream;
 
 pub use api_proxy::{
     ApiProxies, ApiProxy, ConversationApiProxies, ConversationApiProxy, JwtHolder,
@@ -22,5 +23,9 @@ pub use api_proxy::{
 pub use callback::{
     CallbackClient, CallbackContentBlock, CallbackToolCall, CallbackToolCallStatus, StopReason,
 };
-pub use rest::{configure, init_conversation, receive_prompt, send_rpc, RestApiDoc, RestApiState};
+pub use rest::{
+    configure, init_conversation, receive_prompt, send_rpc, stream_acp_events, stream_preflight,
+    RestApiDoc, RestApiState,
+};
 pub use spawner::{AcpProvider, CliSpawner, IsolationMode};
+pub use stream::{StreamEvent, StreamOffset, StreamReadResult, StreamStore};

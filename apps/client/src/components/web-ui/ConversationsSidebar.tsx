@@ -16,6 +16,15 @@ import { useEffect, useRef, useState } from "react";
 
 export type ConversationScope = "mine" | "all";
 
+export const AVAILABLE_PROVIDERS = [
+  "claude",
+  "codex",
+  "gemini",
+  "opencode",
+] as const;
+
+export type ProviderId = (typeof AVAILABLE_PROVIDERS)[number];
+
 export type ConversationListEntry = {
   conversationId: string;
   providerId: string;
@@ -39,23 +48,28 @@ interface ConversationsSidebarProps {
   status: "LoadingFirstPage" | "CanLoadMore" | "LoadingMore" | "Exhausted";
   onLoadMore: (count: number) => void;
   activeConversationId?: string;
-  onNewConversation: () => void;
+  onNewConversation: (providerId: ProviderId) => void;
   onPrewarm?: () => void;
-  onSubmitDraft?: (text: string) => void;
+  onSubmitDraft?: (text: string, providerId: ProviderId) => void;
   isCreating: boolean;
+  providerId: ProviderId;
+  onProviderChange: (providerId: ProviderId) => void;
 }
 
 const PAGE_SIZE = 30;
 
-const providerMeta: Record<
-  string,
-  { label: string; icon: LucideIcon; tone: string }
-> = {
+const providerMeta: Record<ProviderId, { label: string; icon: LucideIcon; tone: string }> = {
   claude: { label: "claude", icon: Bot, tone: "text-emerald-500" },
   codex: { label: "codex", icon: TerminalSquare, tone: "text-sky-500" },
   gemini: { label: "gemini", icon: Sparkles, tone: "text-amber-500" },
   opencode: { label: "opencode", icon: Cpu, tone: "text-violet-500" },
 };
+
+const providerSet = new Set<string>(AVAILABLE_PROVIDERS);
+
+function isProviderId(value: string): value is ProviderId {
+  return providerSet.has(value);
+}
 
 function formatTimestamp(value: number | null | undefined): string {
   if (!value || Number.isNaN(value)) return "";
@@ -95,7 +109,7 @@ function getProviderMeta(providerId: string | undefined): {
   icon: LucideIcon;
   tone: string;
 } {
-  if (providerId && providerMeta[providerId]) {
+  if (providerId && isProviderId(providerId)) {
     return providerMeta[providerId];
   }
   return { label: providerId ?? "agent", icon: Cpu, tone: "text-neutral-500" };
@@ -113,11 +127,17 @@ export function ConversationsSidebar({
   onPrewarm,
   onSubmitDraft,
   isCreating,
+  providerId,
+  onProviderChange,
 }: ConversationsSidebarProps) {
   const canLoadMore = status === "CanLoadMore";
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const isLoadingMore = status === "LoadingMore";
+  const [isWindowFocused, setIsWindowFocused] = useState(() => {
+    if (typeof document === "undefined") return true;
+    return document.hasFocus();
+  });
   const [draft, setDraft] = useState("");
   const hasPrewarmedRef = useRef(false);
   const prewarmTimeoutRef = useRef<number | null>(null);
@@ -127,6 +147,18 @@ export function ConversationsSidebar({
       if (prewarmTimeoutRef.current) {
         window.clearTimeout(prewarmTimeoutRef.current);
       }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleFocus = () => setIsWindowFocused(true);
+    const handleBlur = () => setIsWindowFocused(false);
+    window.addEventListener("focus", handleFocus);
+    window.addEventListener("blur", handleBlur);
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("blur", handleBlur);
     };
   }, []);
 
@@ -153,7 +185,7 @@ export function ConversationsSidebar({
     if (!onSubmitDraft) return;
     const trimmed = draft.trim();
     if (!trimmed) return;
-    onSubmitDraft(trimmed);
+    onSubmitDraft(trimmed, providerId);
     setDraft("");
     hasPrewarmedRef.current = false;
   };
@@ -211,7 +243,7 @@ export function ConversationsSidebar({
           </Link>
           <button
             type="button"
-            onClick={onNewConversation}
+            onClick={() => onNewConversation(providerId)}
             disabled={isCreating}
             className={clsx(
               "flex h-9 w-9 items-center justify-center rounded-full border border-neutral-200/80 bg-white text-neutral-700 transition",
@@ -226,6 +258,28 @@ export function ConversationsSidebar({
 
       <div className="mt-5 px-5">
         <div className="flex items-center gap-2 rounded-2xl border border-neutral-200/80 bg-neutral-50/80 px-3 py-2 dark:border-neutral-800/80 dark:bg-neutral-900/70">
+          <select
+            value={providerId}
+            onChange={(event) => {
+              const selected = AVAILABLE_PROVIDERS.find(
+                (value) => value === event.target.value
+              );
+              if (selected) {
+                onProviderChange(selected);
+              }
+            }}
+            className={clsx(
+              "min-w-[96px] appearance-none rounded-full border border-neutral-200/80 bg-white/80 px-2 py-1 text-[11px] font-semibold text-neutral-600",
+              "dark:border-neutral-800/80 dark:bg-neutral-950/70 dark:text-neutral-300"
+            )}
+            aria-label="agent"
+          >
+            {AVAILABLE_PROVIDERS.map((provider) => (
+              <option key={provider} value={provider}>
+                {providerMeta[provider].label}
+              </option>
+            ))}
+          </select>
           <input
             type="text"
             value={draft}
@@ -294,6 +348,7 @@ export function ConversationsSidebar({
             entries={entries}
             teamSlugOrId={teamSlugOrId}
             activeConversationId={activeConversationId}
+            isWindowFocused={isWindowFocused}
             status={status}
           />
         )}
@@ -306,6 +361,7 @@ interface ConversationListProps {
   teamSlugOrId: string;
   entries: ConversationListEntry[];
   activeConversationId?: string;
+  isWindowFocused: boolean;
   status: "LoadingFirstPage" | "CanLoadMore" | "LoadingMore" | "Exhausted";
 }
 
@@ -313,6 +369,7 @@ function ConversationList({
   teamSlugOrId,
   entries,
   activeConversationId,
+  isWindowFocused,
   status,
 }: ConversationListProps) {
   const isLoadingMore = status === "LoadingMore";
@@ -325,6 +382,7 @@ function ConversationList({
           entry={entry}
           teamSlugOrId={teamSlugOrId}
           isActive={activeConversationId === entry.conversationId}
+          isWindowFocused={isWindowFocused}
         />
       ))}
       {isLoadingMore ? (
@@ -346,10 +404,12 @@ function ConversationRow({
   entry,
   teamSlugOrId,
   isActive,
+  isWindowFocused,
 }: {
   entry: ConversationListEntry;
   teamSlugOrId: string;
   isActive: boolean;
+  isWindowFocused: boolean;
 }) {
   const { preview, unread, latestMessageAt, isOptimistic, title } = entry;
   const provider = getProviderMeta(entry.providerId);
@@ -364,6 +424,7 @@ function ConversationRow({
         : preview.kind === "resource"
           ? "attachment"
           : "no messages yet");
+  const showUnread = unread && !(isActive && isWindowFocused);
 
   return (
     <Link
@@ -373,7 +434,7 @@ function ConversationRow({
         conversationId: entry.conversationId,
       }}
       className={clsx(
-        "group flex h-20 items-center gap-3 border-b border-neutral-200/70 px-4 transition-colors",
+        "group relative flex h-20 items-center gap-3 border-b border-neutral-200/70 pl-6 pr-4 transition-colors",
         "hover:bg-neutral-100/80 dark:border-neutral-800/70 dark:hover:bg-neutral-900/60",
         isActive && "bg-neutral-200/60 dark:bg-neutral-900"
       )}
@@ -381,15 +442,21 @@ function ConversationRow({
         className: "bg-neutral-200/60 dark:bg-neutral-900",
       }}
     >
+      <span
+        className={clsx(
+          "pointer-events-none absolute left-2 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-[#007AFF] transition-opacity",
+          showUnread ? "opacity-100" : "opacity-0"
+        )}
+        aria-hidden
+      />
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline justify-between gap-2">
-          <span className="truncate text-[14px] font-semibold text-neutral-900 dark:text-neutral-100">
-            {displayTitle}
-          </span>
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="truncate text-[14px] font-semibold text-neutral-900 dark:text-neutral-100">
+              {displayTitle}
+            </span>
+          </div>
           <div className="flex items-center gap-2">
-            {unread ? (
-              <span className="h-2 w-2 rounded-full bg-emerald-500" />
-            ) : null}
             <span className="text-[12px] text-neutral-500 dark:text-neutral-400">
               {timeLabel}
             </span>

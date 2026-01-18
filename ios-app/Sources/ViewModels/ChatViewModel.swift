@@ -14,6 +14,9 @@ class ChatViewModel: ObservableObject {
     private let convex = ConvexClientManager.shared
     let conversationId: String
     private var teamId: String?
+    private var lastMarkedAt: Double?
+    private var isViewVisible = false
+    private var isAppActive = true
 
     init(conversationId: String) {
         self.conversationId = conversationId
@@ -111,9 +114,24 @@ class ChatViewModel: ObservableObject {
                     print("📱 ChatViewModel: Received \(page.messages.count) messages")
                     self?.messages = page.messages
                     self?.isLoading = false
+                    self?.markReadIfNeeded()
                 }
             )
             .store(in: &cancellables)
+    }
+
+    func setViewVisible(_ visible: Bool) {
+        isViewVisible = visible
+        if visible {
+            markReadIfNeeded()
+        }
+    }
+
+    func setAppActive(_ active: Bool) {
+        isAppActive = active
+        if active {
+            markReadIfNeeded()
+        }
     }
 
     private func getFirstTeamId() async -> String? {
@@ -138,6 +156,42 @@ class ChatViewModel: ObservableObject {
                         continuation.resume(returning: memberships.first?.teamId)
                     }
                 )
+        }
+    }
+
+    private func latestUnreadCandidateAt() -> Double? {
+        for message in messages.reversed() {
+            if message.isUnreadCandidate {
+                return message.createdAt
+            }
+        }
+        return nil
+    }
+
+    private func markReadIfNeeded() {
+        guard isViewVisible, isAppActive else { return }
+        guard let teamId else { return }
+        guard let latest = latestUnreadCandidateAt() else { return }
+        if let lastMarkedAt, latest <= lastMarkedAt {
+            return
+        }
+
+        lastMarkedAt = latest
+        Task {
+            do {
+                let args = ConversationReadsMarkReadArgs(
+                    lastReadAt: latest,
+                    conversationId: ConvexId(rawValue: conversationId),
+                    teamSlugOrId: teamId
+                )
+                let _: ConversationReadsMarkReadReturn = try await convex.client.mutation(
+                    "conversationReads:markRead",
+                    with: args.asDictionary()
+                )
+                NSLog("📱 ChatViewModel: Marked read at \(latest)")
+            } catch {
+                NSLog("📱 ChatViewModel: Failed to mark read: \(error)")
+            }
         }
     }
 }

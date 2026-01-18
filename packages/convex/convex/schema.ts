@@ -1229,6 +1229,7 @@ const convexSchema = defineSchema({
     // Whether conversation has been initialized on the sandbox (CLI spawned)
     initializedOnSandbox: v.optional(v.boolean()),
     lastMessageAt: v.optional(v.number()),
+    lastAssistantVisibleAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -1366,6 +1367,8 @@ const convexSchema = defineSchema({
     sandboxUrl: v.optional(v.string()), // e.g., https://port-39384-morphvm_xxx.http.cloud.morph.so
     // Security - hash of callback JWT for verification
     callbackJwtHash: v.string(), // SHA-256 hash
+    // Stream auth secret (sandbox -> browser streaming)
+    streamSecret: v.optional(v.string()),
     // Lifecycle tracking
     lastError: v.optional(v.string()),
     lastActivityAt: v.number(),

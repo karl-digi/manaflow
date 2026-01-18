@@ -16,6 +16,8 @@ export interface ProvisioningContext extends TaskContext {
   vm: VmHandle;
   /** Execute a command quietly (only show output on failure) */
   run(label: string, command: string): Promise<string>;
+  /** Task outputs for host-side validation */
+  outputs: Map<string, string>;
 }
 
 /**
@@ -36,9 +38,11 @@ export function createProvisioningContext(
 ): ProvisioningContext {
   const { verbose = false } = options;
   const timings = new Map<string, number>();
+  const outputs = new Map<string, string>();
 
   return {
     vm,
+    outputs,
     log: (message: string) => {
       // Only log DAG-level messages (task start/complete)
       if (verbose || message.startsWith("→") || message.startsWith("✓") || message.startsWith("✗")) {
@@ -557,13 +561,23 @@ SERVICE
 
         # Start the service now - since Morph uses memory snapshots,
         # the running process will be included in the snapshot
-        systemctl start cmux-acp-server
+        if ! systemctl start cmux-acp-server; then
+          echo "cmux-acp-server failed to start"
+          systemctl status cmux-acp-server --no-pager || true
+          journalctl -u cmux-acp-server -n 100 --no-pager || true
+          exit 1
+        fi
 
         # Wait for it to be ready
         sleep 2
 
         # Verify it's running
-        systemctl status cmux-acp-server --no-pager || true
+        if ! systemctl is-active --quiet cmux-acp-server; then
+          echo "cmux-acp-server failed to start"
+          systemctl status cmux-acp-server --no-pager || true
+          journalctl -u cmux-acp-server -n 100 --no-pager || true
+          exit 1
+        fi
 
         echo "cmux-acp-server systemd service installed and started"
         `
@@ -576,9 +590,60 @@ SERVICE
   // =========================================================================
 
   registry.register({
+    name: "allow-acp-port",
+    description: "Allow ACP port through firewall",
+    deps: ["setup-acp-service"],
+    func: async (ctx) => {
+      await ctx.run(
+        "allow-acp-port",
+        `
+        set -e
+
+        echo "Ensuring ACP port is reachable..."
+
+        if command -v ufw > /dev/null 2>&1; then
+          if ufw status | grep -q "Status: active"; then
+            ufw allow 39384/tcp || true
+            echo "✓ ufw rule added for 39384/tcp"
+          else
+            echo "ufw inactive"
+          fi
+        else
+          echo "ufw not installed"
+        fi
+
+        if command -v iptables > /dev/null 2>&1; then
+          if iptables -C INPUT -p tcp --dport 39384 -j ACCEPT 2>/dev/null; then
+            echo "iptables rule already present"
+          else
+            iptables -I INPUT -p tcp --dport 39384 -j ACCEPT
+            echo "✓ iptables rule added for 39384/tcp"
+          fi
+        else
+          echo "iptables not installed"
+        fi
+
+        if command -v ip6tables > /dev/null 2>&1; then
+          if ip6tables -C INPUT -p tcp --dport 39384 -j ACCEPT 2>/dev/null; then
+            echo "ip6tables rule already present"
+          else
+            ip6tables -I INPUT -p tcp --dport 39384 -j ACCEPT
+            echo "✓ ip6tables rule added for 39384/tcp"
+          fi
+        else
+          echo "ip6tables not installed"
+        fi
+
+        ss -ltnp | grep ':39384' || true
+        `
+      );
+    },
+  });
+
+  registry.register({
     name: "verify",
     description: "Verify all installations",
-    deps: ["setup-dirs", "setup-user", "install-bun", "install-rust", "install-uv", "setup-docker", "setup-acp-service", "setup-cli-configs"],
+    deps: ["setup-dirs", "setup-user", "install-bun", "install-rust", "install-uv", "setup-docker", "setup-acp-service", "setup-cli-configs", "allow-acp-port"],
     func: async (ctx) => {
       await ctx.run(
         "verify",
@@ -781,48 +846,7 @@ EOF
       ctx.log("Exposing port 39384 as 'acp'...");
       const { url } = await ctx.vm.exposeHttp("acp", 39384);
       ctx.log(`✓ Exposed at: ${url}`);
-
-      // Verify the endpoint is accessible from the public internet
-      // We do this from within the VM using curl to an external endpoint
-      // This confirms the Morph HTTP proxy is routing correctly
-      await ctx.run(
-        "verify-public-access",
-        `
-        set -e
-
-        PUBLIC_URL="${url}"
-        echo "Testing public URL: $PUBLIC_URL"
-
-        # Wait a moment for the HTTP service to be fully routed
-        sleep 2
-
-        # Test health endpoint from within VM (goes out to internet and back)
-        RESPONSE=$(curl -sf "$PUBLIC_URL/health" || echo "FAILED")
-        echo "Response: $RESPONSE"
-
-        if echo "$RESPONSE" | grep -q '"status":"ok"'; then
-          echo "✓ Public health endpoint accessible!"
-        else
-          echo "✗ Public health endpoint NOT accessible"
-          echo "This means instances from this snapshot won't have working HTTP"
-          exit 1
-        fi
-
-        # Also test the configure endpoint returns expected error (proves routing works)
-        CONFIGURE_RESPONSE=$(curl -sf -X POST "$PUBLIC_URL/api/acp/configure" \
-          -H "Content-Type: application/json" \
-          -d '{"test":true}' 2>&1 || true)
-        echo "Configure response: $CONFIGURE_RESPONSE"
-
-        if echo "$CONFIGURE_RESPONSE" | grep -q "callback_url"; then
-          echo "✓ ACP configure endpoint responding correctly"
-        else
-          echo "⚠ Unexpected configure response (may still be ok)"
-        fi
-
-        echo "Public HTTP access verified!"
-        `
-      );
+      ctx.outputs.set("acpPublicUrl", url);
     },
   });
 

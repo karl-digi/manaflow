@@ -10,6 +10,7 @@ struct ChatFix1MainView: View {
     let conversationId: String
     let providerId: String
     private let topShimHeight: CGFloat
+    @SwiftUI.Environment(\.scenePhase) private var scenePhase
 
     init(conversationId: String, providerId: String) {
         self.conversationId = conversationId
@@ -47,6 +48,16 @@ struct ChatFix1MainView: View {
         }
         .background(Color.clear)
         .ignoresSafeArea()
+        .onAppear {
+            viewModel.setViewVisible(true)
+            viewModel.setAppActive(scenePhase == .active)
+        }
+        .onDisappear {
+            viewModel.setViewVisible(false)
+        }
+        .onChange(of: scenePhase) { newPhase in
+            viewModel.setAppActive(newPhase == .active)
+        }
     }
 
     /// Convert Convex messages to the legacy Message format used by Fix1MainViewController

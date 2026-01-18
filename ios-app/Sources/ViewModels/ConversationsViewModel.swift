@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import UIKit
 import ConvexMobile
 
 /// ViewModel for managing conversations list from Convex
@@ -20,6 +21,7 @@ class ConversationsViewModel: ObservableObject {
     private var continueCursor: String?
     private var lastLoadedCursor: String?
     private let pageSize: Double = 50
+    private var lastBadgeCount = -1
 
     init() {
         // Start loading when auth is ready
@@ -151,6 +153,7 @@ class ConversationsViewModel: ObservableObject {
                         self.hasMore = !page.isDone
                     }
                     self.conversations = self.mergeConversations(firstPage: page.page)
+                    self.updateAppBadge()
                     self.isLoading = false
                 }
             )
@@ -203,6 +206,7 @@ class ConversationsViewModel: ObservableObject {
                 hasMore = false
             }
             conversations = mergeConversations(firstPage: firstPage)
+            updateAppBadge()
         } catch {
             NSLog("📱 ConversationsViewModel: Load more failed: \(error)")
         }
@@ -235,6 +239,15 @@ class ConversationsViewModel: ObservableObject {
         } catch {
             print("📱 ConversationsViewModel: Prewarm failed: \(error)")
         }
+    }
+
+    private func updateAppBadge() {
+        let unreadCount = conversations.filter { $0.unread }.count
+        if unreadCount == lastBadgeCount {
+            return
+        }
+        lastBadgeCount = unreadCount
+        UIApplication.shared.applicationIconBadgeNumber = unreadCount
     }
 
     private func getFirstTeamId() async -> String? {

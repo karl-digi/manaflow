@@ -66,6 +66,13 @@ class FreestyleVmHandle implements VmHandle {
     const result = await this.vm.exec(command);
     // exec returns { stdout, stderr, statusCode }
     const output = result.stdout ?? "";
+    if (typeof result.statusCode === "number" && result.statusCode !== 0) {
+      const stderr = result.stderr ?? "";
+      const combined = [output, stderr].filter((value) => value.trim().length > 0).join("\n");
+      throw new Error(
+        `Command failed with exit code ${result.statusCode}: ${combined || "no output"}`
+      );
+    }
     if (result.stderr) {
       return output + (output ? "\n" : "") + result.stderr;
     }
@@ -179,6 +186,14 @@ class MorphVmHandle implements VmHandle {
     });
     // Streaming mode may not populate result.stdout/stderr
     const output = stdout || result.stdout || "";
+    const exitCode = result.exit_code;
+    if (typeof exitCode === "number" && exitCode !== 0) {
+      const stderrOutput = stderr || result.stderr || "";
+      const combined = [output, stderrOutput].filter((value) => value.trim().length > 0).join("\n");
+      throw new Error(
+        `Command failed with exit code ${exitCode}: ${combined || "no output"}`
+      );
+    }
     if (stderr || result.stderr) {
       return output + (output ? "\n" : "") + (stderr || result.stderr);
     }

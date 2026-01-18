@@ -56,6 +56,13 @@ type MessagePreview = {
   kind: "text" | "image" | "resource" | "empty";
 };
 
+const unreadContentTypes = new Set([
+  "image",
+  "audio",
+  "resource_link",
+  "resource",
+]);
+
 function buildMessagePreview(
   message: Doc<"conversationMessages"> | null
 ): MessagePreview {
@@ -81,6 +88,25 @@ function buildMessagePreview(
   }
 
   return { text: null, kind: "empty" };
+}
+
+function isUnreadCandidateMessage(
+  message: Doc<"conversationMessages">
+): boolean {
+  if (message.role !== "assistant") {
+    return false;
+  }
+
+  for (const block of message.content) {
+    if (block.type === "text" && block.text?.trim()) {
+      return true;
+    }
+    if (unreadContentTypes.has(block.type)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 async function requireTeamMembership(
@@ -270,6 +296,20 @@ export const listPagedWithLatest = authQuery({
           .first();
 
         const preview = buildMessagePreview(latestMessage);
+        let lastUnreadAt: number | null =
+          conversation.lastAssistantVisibleAt ?? null;
+        if (lastUnreadAt === null) {
+          const recentMessages = await ctx.db
+            .query("conversationMessages")
+            .withIndex("by_conversation", (q) =>
+              q.eq("conversationId", conversation._id)
+            )
+            .order("desc")
+            .take(100);
+          const latestUnreadMessage =
+            recentMessages.find(isUnreadCandidateMessage) ?? null;
+          lastUnreadAt = latestUnreadMessage?.createdAt ?? 0;
+        }
 
         const read = await ctx.db
           .query("conversationReads")
@@ -286,7 +326,7 @@ export const listPagedWithLatest = authQuery({
         return {
           conversation,
           preview,
-          unread: lastMessageAt > lastReadAt,
+          unread: lastUnreadAt > lastReadAt,
           lastReadAt: read?.lastReadAt ?? null,
           latestMessageAt: lastActivityAt,
           title: conversation.title ?? null,

@@ -49,6 +49,26 @@ const contentBlockValidator = v.object({
   name: v.optional(v.string()),
 });
 
+function hasVisibleAssistantContent(
+  content: Array<{
+    type: string;
+    text?: string | null;
+  }>
+): boolean {
+  for (const block of content) {
+    if (block.type === "text") {
+      if (block.text?.trim()) {
+        return true;
+      }
+      continue;
+    }
+    if (block.type === "image" || block.type === "resource_link") {
+      return true;
+    }
+  }
+  return false;
+}
+
 const providerIdValidator = v.union(
   v.literal("claude"),
   v.literal("codex"),
@@ -216,6 +236,14 @@ async function ensureSandboxReady(
     }
   }
 
+  if (returnStatus === "running" && sandboxUrl && !sandbox.streamSecret) {
+    try {
+      await ensureStreamSecretConfigured(ctx, sandbox, sandboxUrl);
+    } catch (error) {
+      console.error("[acp] Failed to configure stream secret:", error);
+    }
+  }
+
   return {
     status: returnStatus,
     sandboxUrl: returnStatus === "running" ? sandboxUrl : null,
@@ -375,6 +403,51 @@ async function generateSandboxJwt(
   return { jwt, hash };
 }
 
+function bytesToHex(buffer: Uint8Array): string {
+  return Array.from(buffer, (byte) => byte.toString(16).padStart(2, "0")).join(
+    "",
+  );
+}
+
+function generateStreamSecret(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return bytesToHex(bytes);
+}
+
+async function ensureStreamSecretConfigured(
+  ctx: ActionCtx,
+  sandbox: Doc<"acpSandboxes">,
+  sandboxUrl: string,
+): Promise<void> {
+  if (sandbox.streamSecret) {
+    return;
+  }
+
+  const { jwt: callbackJwt, hash: callbackJwtHash } = await generateSandboxJwt(
+    sandbox._id,
+    sandbox.teamId,
+  );
+  const streamSecret = generateStreamSecret();
+
+  await configureSandbox(sandboxUrl, {
+    callbackUrl: `${env.CONVEX_SITE_URL}/api/acp/callback`,
+    sandboxJwt: callbackJwt,
+    sandboxId: sandbox._id,
+    apiProxyUrl: env.CONVEX_SITE_URL,
+    streamSecret,
+  });
+
+  await ctx.runMutation(internal.acp.updateSandboxJwtHash, {
+    sandboxId: sandbox._id,
+    callbackJwtHash,
+  });
+  await ctx.runMutation(internal.acpSandboxes.updateStreamSecret, {
+    sandboxId: sandbox._id,
+    streamSecret,
+  });
+}
+
 async function reconfigureSandboxForTeam(
   ctx: ActionCtx,
   sandbox: Doc<"acpSandboxes">,
@@ -388,17 +461,23 @@ async function reconfigureSandboxForTeam(
     sandbox._id,
     teamId,
   );
+  const streamSecret = generateStreamSecret();
 
   await configureSandbox(sandbox.sandboxUrl, {
     callbackUrl: `${env.CONVEX_SITE_URL}/api/acp/callback`,
     sandboxJwt: callbackJwt,
     sandboxId: sandbox._id,
     apiProxyUrl: env.CONVEX_SITE_URL,
+    streamSecret,
   });
 
   await ctx.runMutation(internal.acp.updateSandboxJwtHash, {
     sandboxId: sandbox._id,
     callbackJwtHash,
+  });
+  await ctx.runMutation(internal.acpSandboxes.updateStreamSecret, {
+    sandboxId: sandbox._id,
+    streamSecret,
   });
 
   await ctx.runMutation(internal.acpSandboxes.clearWarmReservation, {
@@ -1441,7 +1520,8 @@ export const createMessageInternal = internalMutation({
     content: v.array(contentBlockValidator),
   },
   handler: async (ctx, args) => {
-    return await ctx.db.insert("conversationMessages", {
+    const now = Date.now();
+    const messageId = await ctx.db.insert("conversationMessages", {
       conversationId: args.conversationId,
       role: args.role,
       deliveryStatus: args.role === "user" ? "queued" : undefined,
@@ -1454,8 +1534,19 @@ export const createMessageInternal = internalMutation({
         uri: block.uri,
         name: block.name,
       })),
-      createdAt: Date.now(),
+      createdAt: now,
     });
+
+    if (
+      args.role === "assistant" &&
+      hasVisibleAssistantContent(args.content)
+    ) {
+      await ctx.db.patch(args.conversationId, {
+        lastAssistantVisibleAt: now,
+      });
+    }
+
+    return messageId;
   },
 });
 
@@ -1490,6 +1581,7 @@ export const spawnSandbox = internalAction({
     const snapshotId =
       getDefaultSnapshotId(provider.name as SnapshotSandboxProvider) ??
       "snap_default";
+    const streamSecret = generateStreamSecret();
 
     // Create sandbox record first to get ID for JWT
     const sandboxId = await ctx.runMutation(internal.acpSandboxes.create, {
@@ -1498,6 +1590,7 @@ export const spawnSandbox = internalAction({
       instanceId: "pending",
       snapshotId,
       callbackJwtHash: "pending",
+      streamSecret,
     });
 
     // Parallelize: JWT generation + Morph spawn (both only need sandboxId)
@@ -1540,6 +1633,7 @@ export const spawnSandbox = internalAction({
         // API proxy URL routes CLI requests through Convex HTTP proxy which
         // validates the JWT and injects the real API key (with Vertex fallback)
         apiProxyUrl: env.CONVEX_SITE_URL,
+        streamSecret,
       });
     }
 
@@ -1560,6 +1654,7 @@ export const spawnWarmSandbox = internalAction({
     const snapshotId =
       getDefaultSnapshotId(provider.name as SnapshotSandboxProvider) ??
       "snap_default";
+    const streamSecret = generateStreamSecret();
 
     const now = Date.now();
     const sandboxId = await ctx.runMutation(internal.acpSandboxes.create, {
@@ -1568,6 +1663,7 @@ export const spawnWarmSandbox = internalAction({
       instanceId: "pending",
       snapshotId,
       callbackJwtHash: "pending",
+      streamSecret,
       poolState: "reserved",
       warmExpiresAt: now + WARM_SANDBOX_TTL_MS,
       warmReservedUserId: args.reservedUserId,
@@ -1608,6 +1704,7 @@ export const spawnWarmSandbox = internalAction({
         sandboxJwt: callbackJwt,
         sandboxId,
         apiProxyUrl: env.CONVEX_SITE_URL,
+        streamSecret,
       });
     }
 
@@ -1917,6 +2014,7 @@ async function configureSandbox(
     sandboxJwt: string;
     sandboxId: string;
     apiProxyUrl?: string;
+    streamSecret: string;
   },
 ): Promise<void> {
   console.log(`[acp] Configuring sandbox at ${sandboxUrl}`);
@@ -1931,6 +2029,7 @@ async function configureSandbox(
       sandbox_jwt: config.sandboxJwt,
       sandbox_id: config.sandboxId,
       api_proxy_url: config.apiProxyUrl,
+      stream_secret: config.streamSecret,
     }),
   });
 
@@ -2098,6 +2197,49 @@ async function sendRpcToSandbox(
 // ============================================================================
 // Query APIs for iOS subscriptions
 // ============================================================================
+
+/**
+ * Get streaming info for a conversation (sandbox URL + short-lived stream token).
+ */
+export const getStreamInfo = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    conversationId: v.id("conversations"),
+  },
+  handler: async (ctx, args) => {
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
+    const conversation = await ctx.db.get(args.conversationId);
+    if (!conversation || conversation.teamId !== teamId) {
+      return { sandboxUrl: null, token: null, status: "offline" };
+    }
+
+    if (!conversation.acpSandboxId) {
+      return { sandboxUrl: null, token: null, status: "offline" };
+    }
+
+    const sandbox = await ctx.db.get(conversation.acpSandboxId);
+    if (!sandbox || !sandbox.sandboxUrl || !sandbox.streamSecret) {
+      return { sandboxUrl: null, token: null, status: "offline" };
+    }
+
+    const status = normalizeSandboxStatus(sandbox.status);
+    if (status !== "running") {
+      return { sandboxUrl: sandbox.sandboxUrl, token: null, status };
+    }
+
+    const token = await new SignJWT({
+      conversationId: args.conversationId,
+      sandboxId: sandbox._id,
+      teamId,
+    })
+      .setProtectedHeader({ alg: "HS256" })
+      .setIssuedAt()
+      .setExpirationTime("10m")
+      .sign(new TextEncoder().encode(sandbox.streamSecret));
+
+    return { sandboxUrl: sandbox.sandboxUrl, token, status };
+  },
+});
 
 /**
  * Get conversation details.

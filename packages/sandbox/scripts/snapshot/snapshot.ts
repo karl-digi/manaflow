@@ -38,6 +38,57 @@ import {
   createProvisioningContext,
 } from "./tasks";
 
+async function fetchWithTimeout(
+  url: string,
+  timeoutMs: number
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function verifyPublicHttpAccess(url: string): Promise<void> {
+  const healthUrl = `${url}/health`;
+  const maxAttempts = 10;
+  const delayMs = 3000;
+  let lastError: string | null = null;
+
+  console.log(`Verifying public access: ${healthUrl}`);
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const response = await fetchWithTimeout(healthUrl, 8000);
+      const body = await response.text();
+      if (response.ok && body.includes('"status":"ok"')) {
+        console.log("✓ Public health endpoint accessible from host");
+        return;
+      }
+      lastError = `HTTP ${response.status}: ${body.slice(0, 200)}`;
+      console.warn(
+        `Public health check attempt ${attempt}/${maxAttempts} failed: ${lastError}`
+      );
+    } catch (error) {
+      console.error(
+        `Public health check attempt ${attempt}/${maxAttempts} error:`,
+        error
+      );
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+
+    if (attempt < maxAttempts) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+
+  throw new Error(
+    `Public HTTP access verification failed for ${healthUrl}: ${lastError ?? "unknown error"}`
+  );
+}
+
 /**
  * Get the source directory path for cmux-acp-server.
  */
@@ -54,12 +105,33 @@ async function uploadSourceCode(vm: VmHandle): Promise<void> {
   console.log("Uploading source code to VM...");
 
   const sourceDir = getSourceDir();
+  let shouldUseTarball = false;
 
   if (vm.syncFiles) {
     // Use provider's native file sync (Morph uses rsync with respectGitignore)
-    await vm.syncFiles(sourceDir, "/tmp/cmux-build/sandbox");
-    console.log("Source code synced via SDK");
+    const syncPromise = vm.syncFiles(sourceDir, "/tmp/cmux-build/sandbox");
+    const timeoutMs = 120_000;
+    const timeoutPromise = new Promise<"timeout">((resolve) => {
+      setTimeout(() => resolve("timeout"), timeoutMs);
+    });
+    const syncResult = await Promise.race([syncPromise, timeoutPromise]);
+    if (syncResult === "timeout") {
+      console.warn(
+        `SDK file sync timed out after ${timeoutMs / 1000}s; falling back to tarball upload.`
+      );
+      shouldUseTarball = true;
+    } else {
+      console.log("Source code synced via SDK");
+      // Verify extraction
+      await vm.exec("ls -la /tmp/cmux-build/sandbox/");
+      console.log("Source code ready at /tmp/cmux-build/sandbox");
+      return;
+    }
   } else {
+    shouldUseTarball = true;
+  }
+
+  if (shouldUseTarball) {
     // Create tarball locally (excludes build artifacts)
     const tarballPath = "/tmp/cmux-sandbox-src.tar.gz";
 
@@ -270,6 +342,12 @@ Environment Variables:
           }
 
           console.log(`\nProvisioning completed in ${(result.totalDurationMs / 1000).toFixed(2)}s`);
+
+          const publicUrl = ctx.outputs.get("acpPublicUrl");
+          if (!publicUrl) {
+            throw new Error("Public URL not captured during provisioning");
+          }
+          await verifyPublicHttpAccess(publicUrl);
         }
       );
 
