@@ -29,6 +29,15 @@ const toolCallValidator = v.object({
   result: v.optional(v.string()),
 });
 
+function isVisibleContentBlock(
+  content: { type: string; text?: string | null }
+): boolean {
+  if (content.type === "text") {
+    return Boolean(content.text?.trim());
+  }
+  return content.type === "image" || content.type === "resource_link";
+}
+
 /**
  * Append a message chunk to an existing or new assistant message.
  * Called by sandbox during streaming responses.
@@ -43,6 +52,7 @@ export const appendMessageChunk = internalMutation({
   },
   handler: async (ctx, args) => {
     const now = args.createdAt ?? Date.now();
+    const shouldUpdateVisible = isVisibleContentBlock(args.content);
 
     // If no messageId, create a new assistant message
     if (!args.messageId) {
@@ -58,6 +68,7 @@ export const appendMessageChunk = internalMutation({
       await ctx.db.patch(args.conversationId, {
         lastMessageAt: now,
         updatedAt: now,
+        ...(shouldUpdateVisible ? { lastAssistantVisibleAt: now } : {}),
       });
 
       return newMessageId;
@@ -107,6 +118,9 @@ export const appendMessageChunk = internalMutation({
     await ctx.db.patch(args.conversationId, {
       lastMessageAt: now,
       updatedAt: now,
+      ...(shouldUpdateVisible
+        ? { lastAssistantVisibleAt: message.createdAt }
+        : {}),
     });
 
     return args.messageId;

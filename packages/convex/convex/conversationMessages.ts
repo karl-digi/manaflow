@@ -47,6 +47,31 @@ const contentBlockValidator = v.object({
   ),
 });
 
+function hasVisibleAssistantContent(
+  content: Array<{
+    type: string;
+    text?: string | null;
+  }>
+): boolean {
+  for (const block of content) {
+    if (block.type === "text") {
+      if (block.text?.trim()) {
+        return true;
+      }
+      continue;
+    }
+    if (
+      block.type === "image" ||
+      block.type === "audio" ||
+      block.type === "resource_link" ||
+      block.type === "resource"
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Tool call validator
 const toolCallValidator = v.object({
   id: v.string(),
@@ -105,6 +130,7 @@ export const create = internalMutation({
       throw new Error("Conversation not found");
     }
 
+    const now = Date.now();
     const messageId = await ctx.db.insert("conversationMessages", {
       conversationId: args.conversationId,
       role: args.role,
@@ -112,12 +138,16 @@ export const create = internalMutation({
       toolCalls: args.toolCalls,
       deliveryStatus: args.role === "user" ? "queued" : undefined,
       deliverySwapAttempted: args.role === "user" ? false : undefined,
-      createdAt: Date.now(),
+      createdAt: now,
     });
 
     // Update conversation's updatedAt
     await ctx.db.patch(args.conversationId, {
-      updatedAt: Date.now(),
+      updatedAt: now,
+      ...(args.role === "assistant" &&
+      hasVisibleAssistantContent(args.content)
+        ? { lastAssistantVisibleAt: now }
+        : {}),
     });
 
     return messageId;
@@ -219,6 +249,10 @@ export const appendContent = internalMutation({
     // Update conversation's updatedAt
     await ctx.db.patch(message.conversationId, {
       updatedAt: Date.now(),
+      ...(message.role === "assistant" &&
+      hasVisibleAssistantContent(args.content)
+        ? { lastAssistantVisibleAt: message.createdAt }
+        : {}),
     });
   },
 });
