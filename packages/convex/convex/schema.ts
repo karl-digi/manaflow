@@ -1167,6 +1167,7 @@ const convexSchema = defineSchema({
     teamId: v.string(),
     userId: v.optional(v.string()),
     sessionId: v.string(), // ACP SessionId - unique identifier for the conversation session
+    clientConversationId: v.optional(v.string()),
     providerId: v.string(), // "claude" | "codex" | "gemini" | "opencode"
     modelId: v.optional(v.string()),
     cwd: v.string(), // Working directory for the session
@@ -1237,6 +1238,7 @@ const convexSchema = defineSchema({
     .index("by_user", ["userId", "createdAt"])
     .index("by_team_updated", ["teamId", "updatedAt"])
     .index("by_team_user_updated", ["teamId", "userId", "updatedAt"])
+    .index("by_team_client_conversation_id", ["teamId", "clientConversationId"])
     .index("by_session", ["sessionId"])
     .index("by_namespace", ["namespaceId"])
     .index("by_sandbox", ["sandboxInstanceId"])
@@ -1246,6 +1248,7 @@ const convexSchema = defineSchema({
   // Messages within ACP conversations
   conversationMessages: defineTable({
     conversationId: v.id("conversations"),
+    clientMessageId: v.optional(v.string()),
     role: v.union(v.literal("user"), v.literal("assistant")),
     deliveryStatus: v.optional(
       v.union(v.literal("queued"), v.literal("sent"), v.literal("error"))
@@ -1316,7 +1319,11 @@ const convexSchema = defineSchema({
     createdAt: v.number(),
   })
     .index("by_conversation", ["conversationId", "createdAt"])
-    .index("by_conversation_desc", ["conversationId"]), // For reverse chronological queries
+    .index("by_conversation_desc", ["conversationId"]) // For reverse chronological queries
+    .index("by_conversation_client_message_id", [
+      "conversationId",
+      "clientMessageId",
+    ]),
 
   acpRawEvents: defineTable({
     conversationId: v.id("conversations"),

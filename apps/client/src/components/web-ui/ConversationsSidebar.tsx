@@ -27,6 +27,7 @@ export type ProviderId = (typeof AVAILABLE_PROVIDERS)[number];
 
 export type ConversationListEntry = {
   conversationId: string;
+  clientConversationId?: string | null;
   providerId: string;
   modelId: string | null;
   cwd: string;
@@ -416,14 +417,15 @@ function ConversationRow({
   const timeLabel = formatTimestamp(latestMessageAt);
   // Show title if available, otherwise fallback to provider label (e.g., "claude")
   const displayTitle = title ?? provider.label;
-  const subtitle = isOptimistic
-    ? "creating conversation…"
-    : preview.text ??
-      (preview.kind === "image"
-        ? "image"
-        : preview.kind === "resource"
-          ? "attachment"
-          : "no messages yet");
+  const fallbackSubtitle =
+    preview.kind === "image"
+      ? "image"
+      : preview.kind === "resource"
+        ? "attachment"
+        : "no messages yet";
+  const optimisticSubtitle =
+    preview.text ?? (preview.kind === "empty" ? "creating conversation…" : fallbackSubtitle);
+  const subtitle = isOptimistic ? optimisticSubtitle : preview.text ?? fallbackSubtitle;
   const showUnread = unread && !(isActive && isWindowFocused);
 
   return (

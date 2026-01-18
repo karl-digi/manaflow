@@ -625,6 +625,7 @@ export const startConversation = action({
     providerId: providerIdValidator,
     cwd: v.string(),
     sandboxId: v.optional(v.id("acpSandboxes")), // Reuse existing sandbox
+    clientConversationId: v.optional(v.string()),
   },
   handler: async (
     ctx,
@@ -645,6 +646,30 @@ export const startConversation = action({
       teamSlugOrId: args.teamSlugOrId,
       userId: identity.subject,
     });
+
+    if (args.clientConversationId) {
+      const existing = await ctx.runQuery(
+        internal.acp.getConversationByClientConversationId,
+        {
+          teamId,
+          clientConversationId: args.clientConversationId,
+        },
+      );
+      if (existing) {
+        if (!existing.acpSandboxId) {
+          throw new Error("Conversation missing sandbox");
+        }
+        const sandbox = await ctx.runQuery(internal.acpSandboxes.getById, {
+          sandboxId: existing.acpSandboxId,
+        });
+        const status = sandbox?.status === "running" ? "ready" : "starting";
+        return {
+          conversationId: existing._id,
+          sandboxId: existing.acpSandboxId,
+          status,
+        };
+      }
+    }
 
     // Always use a new sandbox per conversation (warm pool eligible)
     let sandboxId = args.sandboxId;
@@ -697,6 +722,7 @@ export const startConversation = action({
         providerId: args.providerId,
         cwd: args.cwd,
         acpSandboxId: sandboxId,
+        clientConversationId: args.clientConversationId,
       },
     );
 
@@ -776,6 +802,7 @@ export const sendMessage = action({
   args: {
     conversationId: v.id("conversations"),
     content: v.array(contentBlockValidator),
+    clientMessageId: v.optional(v.string()),
   },
   handler: async (
     ctx,
@@ -807,6 +834,30 @@ export const sendMessage = action({
       userId: identity.subject,
     });
 
+    if (args.clientMessageId) {
+      const existing = await ctx.runQuery(
+        internal.conversationMessages.getByConversationClientMessageId,
+        {
+          conversationId: args.conversationId,
+          clientMessageId: args.clientMessageId,
+        },
+      );
+      if (existing && existing.role === "user") {
+        const status =
+          existing.deliveryStatus === "queued"
+            ? "queued"
+            : existing.deliveryStatus === "error"
+              ? "error"
+              : "sent";
+        return {
+          messageId: existing._id,
+          status,
+          error:
+            status === "error" ? existing.deliveryError ?? undefined : undefined,
+        };
+      }
+    }
+
     // Persist user message
     const messageId = await ctx.runMutation(
       internal.acp.createMessageInternal,
@@ -814,6 +865,7 @@ export const sendMessage = action({
         conversationId: args.conversationId,
         role: "user",
         content: args.content,
+        clientMessageId: args.clientMessageId,
       },
     );
 
@@ -1428,6 +1480,7 @@ export const createConversationInternal = internalMutation({
     providerId: providerIdValidator,
     cwd: v.string(),
     acpSandboxId: v.id("acpSandboxes"),
+    clientConversationId: v.optional(v.string()),
     initializedOnSandbox: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
@@ -1436,6 +1489,7 @@ export const createConversationInternal = internalMutation({
       teamId: args.teamId,
       userId: args.userId,
       sessionId: args.sessionId,
+      clientConversationId: args.clientConversationId,
       providerId: args.providerId,
       modelId: resolveDefaultModelId(args.providerId),
       cwd: args.cwd,
@@ -1492,6 +1546,24 @@ export const getConversationInternal = internalQuery({
   },
 });
 
+export const getConversationByClientConversationId = internalQuery({
+  args: {
+    teamId: v.string(),
+    clientConversationId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("conversations")
+      .withIndex("by_team_client_conversation_id", (q) =>
+        q.eq("teamId", args.teamId).eq(
+          "clientConversationId",
+          args.clientConversationId,
+        ),
+      )
+      .first();
+  },
+});
+
 /**
  * Get messages for a conversation (internal).
  */
@@ -1518,12 +1590,14 @@ export const createMessageInternal = internalMutation({
     conversationId: v.id("conversations"),
     role: v.union(v.literal("user"), v.literal("assistant")),
     content: v.array(contentBlockValidator),
+    clientMessageId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
     const messageId = await ctx.db.insert("conversationMessages", {
       conversationId: args.conversationId,
       role: args.role,
+      clientMessageId: args.clientMessageId,
       deliveryStatus: args.role === "user" ? "queued" : undefined,
       deliverySwapAttempted: args.role === "user" ? false : undefined,
       content: args.content.map((block) => ({

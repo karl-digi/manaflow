@@ -357,6 +357,24 @@ export const getByIdInternal = internalQuery({
   },
 });
 
+export const getByConversationClientMessageId = internalQuery({
+  args: {
+    conversationId: v.id("conversations"),
+    clientMessageId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("conversationMessages")
+      .withIndex("by_conversation_client_message_id", (q) =>
+        q.eq("conversationId", args.conversationId).eq(
+          "clientMessageId",
+          args.clientMessageId
+        )
+      )
+      .first();
+  },
+});
+
 // Get message count for a conversation
 export const count = internalQuery({
   args: {

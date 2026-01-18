@@ -32,11 +32,13 @@ const OPTIMISTIC_CONVERSATION_PREFIX = "optimistic-";
 
 type OptimisticConversation = {
   id: string;
+  clientConversationId: string;
   providerId: string;
   modelId: string | null;
   cwd: string;
   latestMessageAt: number;
   state: "creating" | "ready";
+  draftText?: string | null;
 };
 
 export const Route = createFileRoute("/_layout/t/$teamSlugOrId")({
@@ -102,6 +104,7 @@ function ConversationsLayout() {
     const base = results ?? [];
     return base.map((entry) => ({
       conversationId: entry.conversation._id,
+      clientConversationId: entry.conversation.clientConversationId ?? null,
       providerId: entry.conversation.providerId,
       modelId: entry.conversation.modelId ?? null,
       cwd: entry.conversation.cwd,
@@ -116,13 +119,16 @@ function ConversationsLayout() {
   const entries = useMemo(() => {
     const optimisticEntries = optimisticConversations.map((entry) => ({
       conversationId: entry.id,
+      clientConversationId: entry.clientConversationId,
       providerId: entry.providerId,
       modelId: entry.modelId,
       cwd: entry.cwd,
       title: null, // Title will be generated after first message
       preview: {
-        text: entry.state === "creating" ? "Creating conversation…" : null,
-        kind: "empty" as const,
+        text:
+          entry.draftText?.trim() ??
+          (entry.state === "creating" ? "Creating conversation…" : null),
+        kind: entry.draftText?.trim() ? ("text" as const) : ("empty" as const),
       },
       unread: false,
       latestMessageAt: entry.latestMessageAt,
@@ -132,9 +138,23 @@ function ConversationsLayout() {
     const optimisticIds = new Set(
       optimisticEntries.map((entry) => entry.conversationId)
     );
+    const optimisticClientIds = new Set(
+      optimisticEntries
+        .map((entry) => entry.clientConversationId)
+        .filter((value): value is string => Boolean(value))
+    );
     const merged = [
       ...optimisticEntries,
-      ...serverEntries.filter((entry) => !optimisticIds.has(entry.conversationId)),
+      ...serverEntries.filter((entry) => {
+        if (optimisticIds.has(entry.conversationId)) return false;
+        if (
+          entry.clientConversationId &&
+          optimisticClientIds.has(entry.clientConversationId)
+        ) {
+          return false;
+        }
+        return true;
+      }),
     ];
 
     const deduped = new Map<string, (typeof merged)[number]>();
@@ -168,12 +188,20 @@ function ConversationsLayout() {
 
   useEffect(() => {
     if (!results || optimisticConversations.length === 0) return;
-    const serverIds = new Set(
-      results.map((entry) => entry.conversation._id.toString())
+    const serverById = new Map(
+      results.map((entry) => [entry.conversation._id.toString(), entry] as const)
     );
     setOptimisticConversations((current) => {
       if (current.length === 0) return current;
-      const next = current.filter((entry) => !serverIds.has(entry.id));
+      const next = current.filter((entry) => {
+        const serverEntry = serverById.get(entry.id);
+        if (!serverEntry) return true;
+        const hasDraft = Boolean(entry.draftText?.trim());
+        if (hasDraft && serverEntry.preview.kind === "empty") {
+          return true;
+        }
+        return false;
+      });
       return next.length === current.length ? current : next;
     });
   }, [optimisticConversations.length, results]);
@@ -190,16 +218,20 @@ function ConversationsLayout() {
     providerId: ProviderId = selectedProvider
   ) => {
     const previousConversationId = activeConversationId;
-    const optimisticId = `${OPTIMISTIC_CONVERSATION_PREFIX}${crypto.randomUUID()}`;
+    const clientConversationId = crypto.randomUUID();
+    const optimisticId = `${OPTIMISTIC_CONVERSATION_PREFIX}${clientConversationId}`;
     const now = Date.now();
+    const trimmedPrompt = initialPrompt?.trim() ?? null;
     setOptimisticConversations((current) => [
       {
         id: optimisticId,
+        clientConversationId,
         providerId,
         modelId: null,
         cwd: "/root",
         latestMessageAt: now,
         state: "creating",
+        draftText: trimmedPrompt,
       },
       ...current,
     ]);
@@ -216,17 +248,20 @@ function ConversationsLayout() {
         teamSlugOrId,
         providerId,
         cwd: "/root",
+        clientConversationId,
       });
       setOptimisticConversations((current) =>
         current.map((entry) =>
           entry.id === optimisticId
-            ? {
-                ...entry,
-                id: result.conversationId,
-                latestMessageAt: Date.now(),
-                state: "ready",
-              }
-            : entry
+              ? {
+                  ...entry,
+                  id: result.conversationId,
+                  clientConversationId,
+                  latestMessageAt: Date.now(),
+                  state: "ready",
+                  draftText: trimmedPrompt,
+                }
+              : entry
         )
       );
       await navigate({

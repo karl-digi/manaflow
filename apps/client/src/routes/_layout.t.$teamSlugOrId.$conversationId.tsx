@@ -375,20 +375,27 @@ function ConversationThread() {
   useEffect(() => {
     if (pendingMessages.length === 0) return;
     const serverIds = new Set(messages.map((message) => message._id));
+    const serverClientIds = new Set(
+      messages
+        .map((message) => message.clientMessageId)
+        .filter((value): value is string => typeof value === "string")
+    );
 
     setPendingMessages((current) => {
       const next = current.filter((pending) => {
-        if (!pending.serverId) return true;
         if (pending.status !== "sent") return true;
-        return !serverIds.has(pending.serverId);
+        if (pending.serverId) {
+          return !serverIds.has(pending.serverId);
+        }
+        return !serverClientIds.has(pending.localId);
       });
 
       if (next.length !== current.length) {
         const removed = current.filter(
           (pending) =>
-            pending.serverId &&
             pending.status === "sent" &&
-            serverIds.has(pending.serverId)
+            ((pending.serverId && serverIds.has(pending.serverId)) ||
+              (!pending.serverId && serverClientIds.has(pending.localId)))
         );
         removed.forEach((pending) => {
           pending.attachments.forEach((attachment) => {
@@ -404,32 +411,45 @@ function ConversationThread() {
   useEffect(() => {
     if (pendingMessages.length === 0 || messages.length === 0) return;
     const byId = new Map(messages.map((message) => [message._id, message]));
+    const byClientMessageId = new Map<string, Doc<"conversationMessages">>();
+    messages.forEach((message) => {
+      if (message.clientMessageId) {
+        byClientMessageId.set(message.clientMessageId, message);
+      }
+    });
 
     setPendingMessages((current) => {
       let changed = false;
       const next = current.map((pending): PendingMessage => {
-        if (!pending.serverId) return pending;
-        const message = byId.get(pending.serverId);
-        if (!message?.deliveryStatus || !isDeliveryStatus(message.deliveryStatus)) {
-          return pending;
-        }
-        if (message.deliveryStatus === "sent" && pending.status !== "sent") {
+        const message = pending.serverId
+          ? byId.get(pending.serverId)
+          : byClientMessageId.get(pending.localId);
+        if (!message) return pending;
+        let updated = pending;
+        if (!pending.serverId) {
+          updated = { ...updated, serverId: message._id };
           changed = true;
-          return { ...pending, status: "sent", error: undefined };
         }
-        if (message.deliveryStatus === "error" && pending.status !== "error") {
+        if (!message.deliveryStatus || !isDeliveryStatus(message.deliveryStatus)) {
+          return updated;
+        }
+        if (message.deliveryStatus === "sent" && updated.status !== "sent") {
+          changed = true;
+          return { ...updated, status: "sent", error: undefined };
+        }
+        if (message.deliveryStatus === "error" && updated.status !== "error") {
           changed = true;
           return {
-            ...pending,
+            ...updated,
             status: "error",
-            error: message.deliveryError ?? pending.error ?? "Delivery failed",
+            error: message.deliveryError ?? updated.error ?? "Delivery failed",
           };
         }
-        if (message.deliveryStatus === "queued" && pending.status === "sending") {
+        if (message.deliveryStatus === "queued" && updated.status !== "queued") {
           changed = true;
-          return { ...pending, status: "queued" };
+          return { ...updated, status: "queued" };
         }
-        return pending;
+        return updated;
       });
 
       return changed ? next : current;
@@ -584,6 +604,7 @@ function ConversationThread() {
       const result = await sendMessage({
         conversationId,
         content,
+        clientMessageId: pending.localId,
       });
 
       if (result.status === "sent") {
@@ -647,9 +668,27 @@ function ConversationThread() {
     return map;
   }, [pendingMessages]);
 
+  const pendingByClientMessageId = useMemo(() => {
+    const map = new Map<string, PendingMessage>();
+    pendingMessages.forEach((pending) => {
+      map.set(pending.localId, pending);
+    });
+    return map;
+  }, [pendingMessages]);
+
   const visibleMessages = useMemo(
-    () => messages.filter((message) => !pendingByServerId.has(message._id)),
-    [messages, pendingByServerId]
+    () =>
+      messages.filter((message) => {
+        if (pendingByServerId.has(message._id)) return false;
+        if (
+          message.clientMessageId &&
+          pendingByClientMessageId.has(message.clientMessageId)
+        ) {
+          return false;
+        }
+        return true;
+      }),
+    [messages, pendingByClientMessageId, pendingByServerId]
   );
 
   const toolCalls = useMemo<ToolCallEntry[]>(() => {
