@@ -17,7 +17,9 @@ import {
   CLOUDFLARE_ANTHROPIC_BASE_URL,
   CLOUDFLARE_GEMINI_BASE_URL,
 } from "@cmux/shared";
-import { action } from "../_generated/server";
+import { action, internalAction } from "../_generated/server";
+import { internal } from "../_generated/api";
+import type { Id } from "../_generated/dataModel";
 
 const OPENAI_CROWN_MODEL = "gpt-5-mini-2025-08-07";
 const ANTHROPIC_CROWN_MODEL = "claude-sonnet-4-5-20250929";
@@ -25,6 +27,61 @@ const GEMINI_CROWN_MODEL = "gemini-3-flash-preview";
 
 const CROWN_PROVIDERS = ["openai", "anthropic", "gemini"] as const;
 type CrownProvider = (typeof CROWN_PROVIDERS)[number];
+
+// Configuration for retry logic
+const MAX_CROWN_EVALUATION_ATTEMPTS = 3;
+const RETRY_BASE_DELAY_MS = 1000; // 1 second base delay, doubles each retry
+
+/**
+ * Build PR title from task prompt (inline version for Convex action)
+ */
+function buildPullRequestTitle(prompt: string): string {
+  const base = prompt.trim() || "cmux changes";
+  const title = `[Crown] ${base}`;
+  return title.length > 72 ? `${title.slice(0, 69)}...` : title;
+}
+
+/**
+ * Build PR body/description from task details (inline version for Convex action)
+ */
+function buildPullRequestBody({
+  summary,
+  prompt,
+  agentName,
+  branch,
+  taskId,
+  runId,
+}: {
+  summary?: string;
+  prompt: string;
+  agentName: string;
+  branch: string;
+  taskId: string;
+  runId: string;
+}): string {
+  const bodySummary = summary?.trim() || "Summary not available.";
+  return `## Crown Winner: ${agentName}
+
+### Task Description
+${prompt}
+
+### Summary
+${bodySummary}
+
+### Implementation Details
+- **Agent**: ${agentName}
+- **Task ID**: ${taskId}
+- **Run ID**: ${runId}
+- **Branch**: ${branch}
+- **Created**: ${new Date().toISOString()}`;
+}
+
+/**
+ * Delays execution for exponential backoff
+ */
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 const CrownEvaluationCandidateValidator = v.object({
   runId: v.optional(v.string()),
@@ -125,22 +182,70 @@ Example response:
 
 IMPORTANT: Respond ONLY with the JSON object, no other text.`;
 
-  try {
-    const { object } = await generateObject({
-      model,
-      schema: CrownEvaluationResponseSchema,
-      system:
-        "You select the best implementation from structured diff inputs and explain briefly why.",
-      prompt: evaluationPrompt,
-      maxRetries: 2,
-    });
+  // Track errors for diagnostics
+  const attemptErrors: Array<{ attempt: number; error: unknown }> = [];
 
-    console.info(`[convex.crown] Evaluation completed via ${provider}`);
-    return CrownEvaluationResponseSchema.parse(object);
-  } catch (error) {
-    console.error(`[convex.crown] ${provider} evaluation error`, error);
-    throw new ConvexError("Evaluation failed");
+  // Retry loop with exponential backoff
+  for (let attempt = 1; attempt <= MAX_CROWN_EVALUATION_ATTEMPTS; attempt++) {
+    try {
+      console.info(
+        `[convex.crown] Evaluation attempt ${attempt}/${MAX_CROWN_EVALUATION_ATTEMPTS} via ${provider}`
+      );
+
+      const { object } = await generateObject({
+        model,
+        schema: CrownEvaluationResponseSchema,
+        system:
+          "You select the best implementation from structured diff inputs and explain briefly why.",
+        prompt: evaluationPrompt,
+        maxRetries: 2,
+      });
+
+      console.info(`[convex.crown] Evaluation completed via ${provider}`);
+      return CrownEvaluationResponseSchema.parse(object);
+    } catch (error) {
+      attemptErrors.push({ attempt, error });
+
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      console.error(
+        `[convex.crown] ${provider} evaluation attempt ${attempt}/${MAX_CROWN_EVALUATION_ATTEMPTS} failed:`,
+        errorMessage
+      );
+
+      // If not the last attempt, wait with exponential backoff before retrying
+      if (attempt < MAX_CROWN_EVALUATION_ATTEMPTS) {
+        const backoffDelay = RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1);
+        console.info(
+          `[convex.crown] Retrying in ${backoffDelay}ms (attempt ${attempt + 1}/${MAX_CROWN_EVALUATION_ATTEMPTS})`
+        );
+        await delay(backoffDelay);
+      }
+    }
   }
+
+  // All retry attempts exhausted - fall back to "no winner" state
+  console.warn(
+    `[convex.crown] All ${MAX_CROWN_EVALUATION_ATTEMPTS} evaluation attempts failed via ${provider}. Falling back to no-winner state.`,
+    {
+      provider,
+      totalAttempts: MAX_CROWN_EVALUATION_ATTEMPTS,
+      errors: attemptErrors.map((e) => ({
+        attempt: e.attempt,
+        error: e.error instanceof Error ? e.error.message : String(e.error),
+      })),
+    }
+  );
+
+  // Return fallback response with metadata (null winner indicates failure)
+  const fallbackReason =
+    "Evaluation service unavailable - no winner selected";
+  return {
+    winner: null,
+    reason: fallbackReason,
+    isFallback: true,
+    evaluationNote: `Crown evaluation failed after ${MAX_CROWN_EVALUATION_ATTEMPTS} attempts (provider: ${provider}). No winner was selected.`,
+  };
 }
 
 export async function performCrownSummarization(
@@ -213,5 +318,242 @@ export const summarize = action({
   },
   handler: async (_ctx, args) => {
     return performCrownSummarization(args.prompt, args.gitDiff);
+  },
+});
+
+/**
+ * Schema for parsing the stored retry data
+ */
+interface CrownRetryData {
+  evaluationPrompt: string;
+  candidateRunIds: string[];
+  teamId: string;
+  userId: string;
+}
+
+/**
+ * Schema for parsing evaluation prompt to extract candidates
+ * Format: "Task: <prompt>\nCandidates: <JSON array>"
+ */
+interface ParsedEvaluationData {
+  prompt: string;
+  candidates: Array<{
+    runId: string;
+    agentName: string;
+    modelName?: string;
+    gitDiff: string;
+    newBranch?: string | null;
+    index: number;
+  }>;
+}
+
+function parseEvaluationPrompt(evaluationPrompt: string): ParsedEvaluationData | null {
+  try {
+    // Format is "Task: <prompt>\nCandidates: <JSON>"
+    const taskMatch = evaluationPrompt.match(/^Task:\s*(.+?)\nCandidates:\s*/s);
+    if (!taskMatch) {
+      console.error("[Crown] Failed to parse evaluation prompt: no Task match");
+      return null;
+    }
+
+    const prompt = taskMatch[1].trim();
+    const candidatesJson = evaluationPrompt.slice(taskMatch[0].length);
+
+    const candidates = JSON.parse(candidatesJson);
+    if (!Array.isArray(candidates)) {
+      console.error("[Crown] Failed to parse evaluation prompt: candidates not array");
+      return null;
+    }
+
+    return { prompt, candidates };
+  } catch (error) {
+    console.error("[Crown] Failed to parse evaluation prompt:", error);
+    return null;
+  }
+}
+
+/**
+ * Internal action to retry a failed crown evaluation.
+ * Called after retryCrownEvaluation mutation resets the status.
+ */
+export const retryEvaluation = internalAction({
+  args: {
+    taskId: v.id("tasks"),
+  },
+  handler: async (ctx, args) => {
+    console.log(`[Crown] Starting retry evaluation for task ${args.taskId}`);
+
+    // Get task with retry data
+    const task = await ctx.runQuery(internal.tasks.getByIdInternal, {
+      id: args.taskId,
+    });
+
+    if (!task) {
+      throw new Error("Task not found");
+    }
+
+    if (!task.crownEvaluationRetryData) {
+      await ctx.runMutation(internal.tasks.setCrownEvaluationStatusInternal, {
+        taskId: args.taskId,
+        teamId: task.teamId,
+        userId: task.userId,
+        status: "error",
+        errorMessage: "No retry data available for this task",
+      });
+      throw new Error("No retry data available for this task");
+    }
+
+    // Parse retry data
+    let retryData: CrownRetryData;
+    try {
+      retryData = JSON.parse(task.crownEvaluationRetryData);
+    } catch (error) {
+      await ctx.runMutation(internal.tasks.setCrownEvaluationStatusInternal, {
+        taskId: args.taskId,
+        teamId: task.teamId,
+        userId: task.userId,
+        status: "error",
+        errorMessage: "Invalid retry data format",
+      });
+      throw new Error("Invalid retry data format");
+    }
+
+    // Parse the evaluation prompt to extract candidates
+    const parsedData = parseEvaluationPrompt(retryData.evaluationPrompt);
+    if (!parsedData) {
+      // Mark as error if we can't parse the data
+      await ctx.runMutation(internal.tasks.setCrownEvaluationStatusInternal, {
+        taskId: args.taskId,
+        teamId: retryData.teamId,
+        userId: retryData.userId,
+        status: "error",
+        errorMessage: "Failed to parse stored evaluation data",
+      });
+      throw new Error("Failed to parse stored evaluation data");
+    }
+
+    // Mark as in_progress
+    await ctx.runMutation(internal.tasks.setCrownEvaluationStatusInternal, {
+      taskId: args.taskId,
+      teamId: retryData.teamId,
+      userId: retryData.userId,
+      status: "in_progress",
+      clearError: true,
+    });
+
+    // Prepare candidates for evaluation
+    const evaluationCandidates: CrownEvaluationCandidate[] = parsedData.candidates.map(
+      (candidate, idx) => ({
+        runId: candidate.runId,
+        agentName: candidate.agentName,
+        modelName: candidate.modelName || candidate.agentName,
+        gitDiff: candidate.gitDiff,
+        newBranch: candidate.newBranch,
+        index: candidate.index ?? idx,
+      })
+    );
+
+    console.log(`[Crown] Retrying evaluation with ${evaluationCandidates.length} candidates`);
+
+    try {
+      // Perform the evaluation
+      const evaluationResponse = await performCrownEvaluation(
+        parsedData.prompt,
+        evaluationCandidates
+      );
+
+      console.log(`[Crown] Retry evaluation result:`, {
+        winner: evaluationResponse.winner,
+        isFallback: evaluationResponse.isFallback,
+      });
+
+      // Handle the result
+      if (evaluationResponse.winner === null) {
+        // Still failing - update error state
+        await ctx.runMutation(internal.crown.workerFinalize, {
+          taskId: args.taskId,
+          teamId: retryData.teamId,
+          userId: retryData.userId,
+          winnerRunId: null,
+          reason: evaluationResponse.reason,
+          evaluationPrompt: retryData.evaluationPrompt,
+          evaluationResponse: JSON.stringify(evaluationResponse),
+          candidateRunIds: retryData.candidateRunIds.map((id) => id as Id<"taskRuns">),
+          isFallback: true,
+          evaluationNote: evaluationResponse.evaluationNote || "Retry evaluation failed",
+        });
+
+        return { success: false, reason: evaluationResponse.reason };
+      }
+
+      // Success! Get the winner candidate
+      const winnerCandidate = parsedData.candidates[evaluationResponse.winner];
+      if (!winnerCandidate) {
+        throw new Error(`Winner index ${evaluationResponse.winner} out of bounds`);
+      }
+
+      // Generate summary for the winning candidate (same as normal path)
+      let summary: string | undefined;
+      try {
+        console.log(`[Crown] Generating summary for retry winner ${winnerCandidate.runId}`);
+        const summaryResponse = await performCrownSummarization(
+          parsedData.prompt,
+          winnerCandidate.gitDiff
+        );
+        summary = summaryResponse?.summary?.slice(0, 8000);
+        console.log(`[Crown] Summary generated for retry winner`, {
+          summaryLength: summary?.length ?? 0,
+        });
+      } catch (summaryError) {
+        // Log but don't fail the retry if summarization fails
+        console.error("[Crown] Summary generation failed during retry, continuing without summary:", summaryError);
+      }
+
+      // Generate PR title and description (for consistency with normal path)
+      const pullRequestTitle = buildPullRequestTitle(parsedData.prompt);
+      const pullRequestDescription = buildPullRequestBody({
+        summary,
+        prompt: parsedData.prompt,
+        agentName: winnerCandidate.agentName,
+        branch: winnerCandidate.newBranch || "",
+        taskId: args.taskId,
+        runId: winnerCandidate.runId,
+      });
+
+      // Finalize with winner (now includes summary and PR metadata)
+      await ctx.runMutation(internal.crown.workerFinalize, {
+        taskId: args.taskId,
+        teamId: retryData.teamId,
+        userId: retryData.userId,
+        winnerRunId: winnerCandidate.runId as Id<"taskRuns">,
+        reason: evaluationResponse.reason,
+        evaluationPrompt: retryData.evaluationPrompt,
+        evaluationResponse: JSON.stringify(evaluationResponse),
+        candidateRunIds: retryData.candidateRunIds.map((id) => id as Id<"taskRuns">),
+        isFallback: false,
+        summary,
+        pullRequestTitle,
+        pullRequestDescription,
+      });
+
+      // Clear retry data on success
+      await ctx.runMutation(internal.tasks.clearCrownRetryData, {
+        taskId: args.taskId,
+      });
+
+      console.log(`[Crown] Retry evaluation succeeded, winner: ${winnerCandidate.runId}`);
+      return { success: true, winnerRunId: winnerCandidate.runId };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("[Crown] Retry evaluation failed", { taskId: args.taskId, error: message });
+      await ctx.runMutation(internal.tasks.setCrownEvaluationStatusInternal, {
+        taskId: args.taskId,
+        teamId: retryData.teamId,
+        userId: retryData.userId,
+        status: "error",
+        errorMessage: message,
+      });
+      throw error;
+    }
   },
 });

@@ -720,6 +720,29 @@ export const crownWorkerFinalize = httpAction(async (ctx, req) => {
     });
   }
 
+  // Extract isFallback and evaluationNote from evaluationResponse JSON if not provided directly
+  // This maintains backward compatibility with workers that don't send these fields separately
+  let isFallback = validation.data.isFallback;
+  let evaluationNote = validation.data.evaluationNote;
+
+  if (isFallback === undefined || evaluationNote === undefined) {
+    try {
+      const parsedEvalResponse = JSON.parse(validation.data.evaluationResponse);
+      if (isFallback === undefined && typeof parsedEvalResponse.isFallback === "boolean") {
+        isFallback = parsedEvalResponse.isFallback;
+      }
+      if (evaluationNote === undefined && typeof parsedEvalResponse.evaluationNote === "string") {
+        evaluationNote = parsedEvalResponse.evaluationNote;
+      }
+    } catch (error) {
+      // evaluationResponse might not be valid JSON - this is expected for older workers
+      console.error("[convex.crown] Failed to parse evaluationResponse for fallback fields", {
+        taskId,
+        error,
+      });
+    }
+  }
+
   try {
     const winningId = await ctx.runMutation(internal.crown.workerFinalize, {
       taskId,
@@ -734,6 +757,8 @@ export const crownWorkerFinalize = httpAction(async (ctx, req) => {
       pullRequest: validation.data.pullRequest,
       pullRequestTitle: validation.data.pullRequestTitle,
       pullRequestDescription: validation.data.pullRequestDescription,
+      isFallback,
+      evaluationNote,
     });
 
     return jsonResponse({ ok: true, winnerRunId: winningId });

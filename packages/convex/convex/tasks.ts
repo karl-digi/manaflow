@@ -653,6 +653,23 @@ export const setCrownEvaluationStatusInternal = internalMutation({
   },
 });
 
+/**
+ * Clear crown evaluation retry data after successful retry
+ */
+export const clearCrownRetryData = internalMutation({
+  args: {
+    taskId: v.id("tasks"),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.taskId, {
+      crownEvaluationRetryData: undefined,
+      crownEvaluationRetryCount: undefined,
+      crownEvaluationLastRetryAt: undefined,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
 // Try to atomically begin a crown evaluation; returns true if we acquired the lock
 export const tryBeginCrownEvaluation = authMutation({
   args: {

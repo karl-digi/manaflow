@@ -11,6 +11,10 @@ export interface TaskRunChatPaneProps {
     evaluatedAt?: number;
     winnerRunId?: Id<"taskRuns">;
     reason?: string;
+    /** Whether this evaluation was produced by fallback due to AI service failure */
+    isFallback?: boolean;
+    /** Human-readable note about the evaluation process */
+    evaluationNote?: string;
   } | null;
   hideHeader?: boolean;
   className?: string;

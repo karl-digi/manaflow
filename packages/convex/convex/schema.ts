@@ -121,6 +121,12 @@ const convexSchema = defineSchema({
       ),
     ), // State of crown evaluation workflow
     crownEvaluationError: v.optional(v.string()), // Error message if crown evaluation failed
+    /** Stored evaluation data for retry (JSON string with prompt, candidates, etc.) */
+    crownEvaluationRetryData: v.optional(v.string()),
+    /** Number of times the user has retried crown evaluation */
+    crownEvaluationRetryCount: v.optional(v.number()),
+    /** Timestamp of the last retry attempt */
+    crownEvaluationLastRetryAt: v.optional(v.number()),
     mergeStatus: v.optional(
       v.union(
         v.literal("none"), // No PR activity yet
@@ -671,6 +677,10 @@ const convexSchema = defineSchema({
     createdAt: v.number(),
     userId: v.string(),
     teamId: v.string(),
+    /** Whether this evaluation was produced by fallback due to AI service failure */
+    isFallback: v.optional(v.boolean()),
+    /** Human-readable note about the evaluation process (e.g., fallback details) */
+    evaluationNote: v.optional(v.string()),
   })
     .index("by_task", ["taskId"])
     .index("by_winner", ["winnerRunId"])

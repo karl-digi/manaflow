@@ -641,17 +641,42 @@ async function startCrownEvaluation({
     taskRunId,
     winner: evaluationResponse.winner,
     reason: evaluationResponse.reason,
+    isFallback: evaluationResponse.isFallback,
   });
 
-  const winnerIndex =
-    typeof evaluationResponse.winner === "number"
-      ? evaluationResponse.winner
-      : 0;
-  const winnerCandidate = candidates[winnerIndex] ?? candidates[0];
+  // Handle "no winner" case (fallback)
+  if (evaluationResponse.winner === null) {
+      log("WARN", "No winner selected by crown evaluation (fallback)", {
+          taskRunId,
+          reason: evaluationResponse.reason,
+      });
+
+      await convexRequest(
+        "/api/crown/finalize",
+        runContext.token,
+        {
+          taskId: crownData.taskId,
+          winnerRunId: null,
+          reason: evaluationResponse.reason,
+          evaluationPrompt: `Task: ${promptText}\nCandidates: ${JSON.stringify(candidates)}`,
+          evaluationResponse: JSON.stringify(evaluationResponse),
+          candidateRunIds: candidates.map((candidate) => candidate.runId),
+          isFallback: true,
+          evaluationNote: evaluationResponse.evaluationNote || "No winner selected",
+        },
+        baseUrlOverride
+      );
+      return;
+  }
+
+  const winnerIndex = evaluationResponse.winner;
+  const winnerCandidate = candidates[winnerIndex];
+  
   if (!winnerCandidate) {
-    log("ERROR", "Unable to determine crown winner", {
+    log("ERROR", "Unable to find winner candidate by index", {
       taskRunId,
       winnerIndex,
+      totalCandidates: candidates.length,
     });
     return;
   }
@@ -706,6 +731,8 @@ async function startCrownEvaluation({
       pullRequest: prMetadata?.pullRequest,
       pullRequestTitle: prMetadata?.title,
       pullRequestDescription: prMetadata?.description,
+      isFallback: evaluationResponse.isFallback,
+      evaluationNote: evaluationResponse.evaluationNote,
     },
     baseUrlOverride
   );
