@@ -36,7 +36,7 @@ export const listByConversationPaginated = authQuery({
   handler: async (ctx, args) => {
     const teamId = await requireTeamMembership(ctx, args.teamSlugOrId);
     const conversation = await ctx.db.get(args.conversationId);
-    if (!conversation || conversation.teamId !== teamId) {
+    if (conversation && conversation.teamId !== teamId) {
       throw new Error("Conversation not found");
     }
 

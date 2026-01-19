@@ -6,6 +6,7 @@ import {
   internalQuery,
   type QueryCtx,
 } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
 import { authQuery } from "./users/utils";
 
 // Content block validator matching ACP ContentBlock types
@@ -92,6 +93,7 @@ const deliveryStatusValidator = v.union(
   v.literal("sent"),
   v.literal("error")
 );
+const OPTIMISTIC_CONVERSATION_PREFIX = "client-";
 
 async function requireTeamMembership(
   ctx: QueryCtx,
@@ -288,7 +290,7 @@ export const listByConversation = authQuery({
 
     // Verify conversation belongs to team
     const conversation = await ctx.db.get(args.conversationId);
-    if (!conversation || conversation.teamId !== teamId) {
+    if (conversation && conversation.teamId !== teamId) {
       throw new Error("Conversation not found");
     }
 
@@ -312,20 +314,23 @@ export const listByConversation = authQuery({
 export const listByConversationPaginated = authQuery({
   args: {
     teamSlugOrId: v.string(),
-    conversationId: v.id("conversations"),
+    conversationId: v.union(v.id("conversations"), v.string()),
     paginationOpts: paginationOptsValidator,
   },
   handler: async (ctx, args) => {
     const teamId = await requireTeamMembership(ctx, args.teamSlugOrId);
-    const conversation = await ctx.db.get(args.conversationId);
-    if (!conversation || conversation.teamId !== teamId) {
-      throw new Error("Conversation not found");
+    const conversationId = args.conversationId as Id<"conversations">;
+    if (!args.conversationId.startsWith(OPTIMISTIC_CONVERSATION_PREFIX)) {
+      const conversation = await ctx.db.get(conversationId);
+      if (conversation && conversation.teamId !== teamId) {
+        throw new Error("Conversation not found");
+      }
     }
 
     return await ctx.db
       .query("conversationMessages")
       .withIndex("by_conversation", (q) =>
-        q.eq("conversationId", args.conversationId)
+        q.eq("conversationId", conversationId)
       )
       .order("desc")
       .paginate(args.paginationOpts);

@@ -795,6 +795,169 @@ export const startConversation = action({
 });
 
 /**
+ * Create (if needed) a conversation, persist a user message, and queue delivery.
+ * This mutation is used for optimistic UI updates on the client.
+ */
+export const sendMessageOptimistic = authMutation({
+  args: {
+    teamSlugOrId: v.string(),
+    conversationId: v.optional(v.id("conversations")),
+    providerId: v.optional(providerIdValidator),
+    cwd: v.optional(v.string()),
+    content: v.array(contentBlockValidator),
+    clientMessageId: v.optional(v.string()),
+    clientConversationId: v.optional(v.string()),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    conversationId: Id<"conversations">;
+    messageId: Id<"conversationMessages">;
+    status: "sent" | "queued" | "error";
+    error?: string;
+  }> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error("Not authenticated");
+    }
+
+    const teamId = await getTeamId(ctx, args.teamSlugOrId);
+    let conversation: Doc<"conversations"> | null = null;
+    let conversationId = args.conversationId ?? null;
+
+    if (conversationId) {
+      conversation = await ctx.db.get(conversationId);
+      if (!conversation || conversation.teamId !== teamId) {
+        throw new Error("Conversation not found");
+      }
+    }
+
+    if (!conversation && args.clientConversationId) {
+      conversation = await ctx.runQuery(
+        internal.acp.getConversationByClientConversationId,
+        {
+          teamId,
+          clientConversationId: args.clientConversationId,
+        },
+      );
+      if (conversation) {
+        conversationId = conversation._id;
+      }
+    }
+
+    if (!conversation) {
+      if (!args.providerId || !args.cwd) {
+        throw new Error("providerId and cwd are required to start a conversation");
+      }
+
+      const snapshotId = getCurrentSnapshotId();
+      const claimed = await ctx.runMutation(
+        internal.acpSandboxes.claimWarmSandbox,
+        {
+          userId: identity.subject,
+          teamId,
+          snapshotId,
+        },
+      );
+      const sandboxId = claimed?._id;
+      const sessionId = `acp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+      conversationId = await ctx.runMutation(
+        internal.acp.createConversationInternal,
+        {
+          teamId,
+          userId: identity.subject,
+          sessionId,
+          providerId: args.providerId,
+          cwd: args.cwd,
+          acpSandboxId: sandboxId,
+          clientConversationId: args.clientConversationId,
+          initializedOnSandbox: false,
+        },
+      );
+
+      if (sandboxId) {
+        await ctx.runMutation(internal.acpSandboxes.incrementConversationCount, {
+          sandboxId,
+        });
+      }
+    }
+
+    if (!conversationId) {
+      throw new Error("Conversation not found");
+    }
+
+    let existing: Doc<"conversationMessages"> | null = null;
+    if (args.clientMessageId) {
+      existing = await ctx.runQuery(
+        internal.conversationMessages.getByConversationClientMessageId,
+        {
+          conversationId,
+          clientMessageId: args.clientMessageId,
+        },
+      );
+    }
+
+    let messageId: Id<"conversationMessages">;
+    let created = false;
+    if (existing && existing.role === "user") {
+      messageId = existing._id;
+    } else {
+      messageId = await ctx.runMutation(internal.acp.createMessageInternal, {
+        conversationId,
+        role: "user",
+        content: args.content,
+        clientMessageId: args.clientMessageId,
+      });
+      created = true;
+      await ctx.runMutation(internal.acp.updateConversationActivity, {
+        conversationId,
+      });
+
+      const textContent = args.content
+        .filter((block) => block.type === "text" && block.text)
+        .map((block) => block.text)
+        .join(" ");
+      if (textContent) {
+        await ctx.runMutation(internal.conversationTitle.maybeScheduleTitle, {
+          conversationId,
+          messageText: textContent,
+        });
+      }
+    }
+
+    const shouldScheduleDelivery =
+      !existing || existing.deliveryStatus !== "sent";
+    if (shouldScheduleDelivery) {
+      await ctx.scheduler.runAfter(0, internal.acp.deliverMessageInternal, {
+        conversationId,
+        messageId,
+        attempt: 0,
+      });
+    }
+
+    if (existing && !created) {
+      const status =
+        existing.deliveryStatus === "error"
+          ? "error"
+          : existing.deliveryStatus === "sent"
+            ? "sent"
+            : "queued";
+      return {
+        conversationId,
+        messageId,
+        status,
+        error:
+          status === "error" ? existing.deliveryError ?? undefined : undefined,
+      };
+    }
+
+    return { conversationId, messageId, status: "queued" };
+  },
+});
+
+/**
  * Send a message in a conversation.
  * Persists user message and forwards to sandbox.
  */
@@ -884,6 +1047,17 @@ export const sendMessage = action({
         conversationId: args.conversationId,
         messageText: textContent,
       });
+    }
+
+    if (!conversation.acpSandboxId) {
+      await replaceSandboxForConversation(
+        ctx,
+        conversation,
+        identity.subject,
+        teamId,
+      );
+      await scheduleMessageDelivery(ctx, args.conversationId, messageId, 0);
+      return { messageId, status: "queued", error: "Waiting for sandbox" };
     }
 
     // Get sandbox and forward message
@@ -1479,7 +1653,7 @@ export const createConversationInternal = internalMutation({
     sessionId: v.string(),
     providerId: providerIdValidator,
     cwd: v.string(),
-    acpSandboxId: v.id("acpSandboxes"),
+    acpSandboxId: v.optional(v.id("acpSandboxes")),
     clientConversationId: v.optional(v.string()),
     initializedOnSandbox: v.optional(v.boolean()),
   },
@@ -1809,7 +1983,7 @@ export const deliverMessageInternal = internalAction({
       },
     );
 
-    if (!conversation || !conversation.acpSandboxId) {
+    if (!conversation) {
       return;
     }
 
@@ -1826,8 +2000,29 @@ export const deliverMessageInternal = internalAction({
       return;
     }
 
+    let sandboxId = conversation.acpSandboxId ?? null;
+    if (!sandboxId) {
+      const replacement = await replaceSandboxForConversation(
+        ctx,
+        conversation,
+        conversation.userId ?? null,
+        conversation.teamId,
+      );
+      sandboxId = replacement ?? null;
+    }
+
+    if (!sandboxId) {
+      await scheduleMessageDelivery(
+        ctx,
+        args.conversationId,
+        args.messageId,
+        args.attempt,
+      );
+      return;
+    }
+
     const sandbox = await ctx.runQuery(internal.acpSandboxes.getById, {
-      sandboxId: conversation.acpSandboxId,
+      sandboxId,
     });
 
     if (!sandbox) {
@@ -1878,7 +2073,7 @@ export const deliverMessageInternal = internalAction({
       if (!conversation.initializedOnSandbox) {
         await recordOutboundEvent(ctx, {
           conversationId: args.conversationId,
-          sandboxId: conversation.acpSandboxId,
+          sandboxId,
           teamId: conversation.teamId,
           raw: JSON.stringify({
             conversation_id: args.conversationId,
@@ -1899,7 +2094,7 @@ export const deliverMessageInternal = internalAction({
           ctx,
           readiness.sandboxUrl,
           args.conversationId,
-          conversation.acpSandboxId,
+          sandboxId,
           conversation.teamId,
           conversation.modelId ??
             resolveDefaultModelId(conversation.providerId),
@@ -1912,7 +2107,7 @@ export const deliverMessageInternal = internalAction({
           ctx,
           readiness.sandboxUrl,
           args.conversationId,
-          conversation.acpSandboxId,
+          sandboxId,
           conversation.teamId,
           conversation.modelId ??
             resolveDefaultModelId(conversation.providerId),
@@ -1921,7 +2116,7 @@ export const deliverMessageInternal = internalAction({
 
       await recordOutboundEvent(ctx, {
         conversationId: args.conversationId,
-        sandboxId: conversation.acpSandboxId,
+        sandboxId,
         teamId: conversation.teamId,
         raw: JSON.stringify({
           conversation_id: args.conversationId,
@@ -1938,7 +2133,7 @@ export const deliverMessageInternal = internalAction({
       );
 
       await ctx.runMutation(internal.acpSandboxes.recordActivity, {
-        sandboxId: conversation.acpSandboxId,
+        sandboxId,
       });
 
       await ctx.runMutation(
@@ -1952,7 +2147,7 @@ export const deliverMessageInternal = internalAction({
       console.error("[acp] Failed to deliver queued message:", error);
       await recordSandboxError(
         ctx,
-        conversation.acpSandboxId,
+        sandboxId,
         error,
         "Failed to deliver queued message",
         {

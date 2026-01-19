@@ -9,6 +9,8 @@ export const env = createEnv({
     STACK_SUPER_SECRET_ADMIN_KEY: z.string().min(1).optional(),
     NEXT_PUBLIC_STACK_PROJECT_ID: z.string().optional(),
     NEXT_PUBLIC_STACK_PUBLISHABLE_CLIENT_KEY: z.string().optional(),
+    STACK_API_BASE_URL: z.string().url().optional(),
+    STACK_APPLE_CLIENT_IDS: z.string().min(1).optional(),
     GITHUB_APP_WEBHOOK_SECRET: z.string().min(1).optional(),
     INSTALL_STATE_SECRET: z.string().min(1).optional(),
     CMUX_GITHUB_APP_ID: z.string().min(1).optional(),

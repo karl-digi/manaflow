@@ -16,9 +16,10 @@ import {
   useMatch,
 } from "@tanstack/react-router";
 import { useAction, usePaginatedQuery } from "convex/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
+import { useSendMessageOptimistic } from "@/hooks/useSendMessageOptimistic";
 
 const searchSchema = z.object({
   scope: z.enum(["mine", "all"]).optional(),
@@ -28,18 +29,7 @@ type SearchParams = z.infer<typeof searchSchema>;
 
 const DEFAULT_SCOPE: ConversationScope = "mine";
 const PAGE_SIZE = 30;
-const OPTIMISTIC_CONVERSATION_PREFIX = "optimistic-";
-
-type OptimisticConversation = {
-  id: string;
-  clientConversationId: string;
-  providerId: string;
-  modelId: string | null;
-  cwd: string;
-  latestMessageAt: number;
-  state: "creating" | "ready";
-  draftText?: string | null;
-};
+const OPTIMISTIC_CONVERSATION_PREFIX = "client-";
 
 export const Route = createFileRoute("/_layout/t/$teamSlugOrId")({
   component: ConversationsLayout,
@@ -90,120 +80,38 @@ function ConversationsLayout() {
   });
   const activeConversationId = match?.params.conversationId;
 
+  const sendMessage = useSendMessageOptimistic();
   const startConversation = useAction(api.acp.startConversation);
   const prewarmSandbox = useAction(api.acp.prewarmSandbox);
   const [isCreating, setIsCreating] = useState(false);
   const [selectedProvider, setSelectedProvider] =
     useState<ProviderId>("claude");
-  const [optimisticConversations, setOptimisticConversations] = useState<
-    OptimisticConversation[]
-  >([]);
-
-  const serverEntries = useMemo(() => {
-    const base = results ?? [];
-    return base.map((entry) => ({
-      conversationId: entry.conversation._id,
-      clientConversationId: entry.conversation.clientConversationId ?? null,
-      providerId: entry.conversation.providerId,
-      modelId: entry.conversation.modelId ?? null,
-      cwd: entry.conversation.cwd,
-      title: entry.title,
-      preview: entry.preview,
-      unread: entry.unread,
-      latestMessageAt: entry.latestMessageAt,
-      isOptimistic: false,
-    }));
-  }, [results]);
+  const latestStartRef = useRef(0);
 
   const entries = useMemo(() => {
-    const optimisticEntries = optimisticConversations.map((entry) => ({
-      conversationId: entry.id,
-      clientConversationId: entry.clientConversationId,
-      providerId: entry.providerId,
-      modelId: entry.modelId,
-      cwd: entry.cwd,
-      title: null, // Title will be generated after first message
-      preview: {
-        text:
-          entry.draftText?.trim() ??
-          (entry.state === "creating" ? "Creating conversation…" : null),
-        kind: entry.draftText?.trim() ? ("text" as const) : ("empty" as const),
-      },
-      unread: false,
-      latestMessageAt: entry.latestMessageAt,
-      isOptimistic: true,
-    }));
-
-    const optimisticIds = new Set(
-      optimisticEntries.map((entry) => entry.conversationId)
-    );
-    const optimisticClientIds = new Set(
-      optimisticEntries
-        .map((entry) => entry.clientConversationId)
-        .filter((value): value is string => Boolean(value))
-    );
-    const merged = [
-      ...optimisticEntries,
-      ...serverEntries.filter((entry) => {
-        if (optimisticIds.has(entry.conversationId)) return false;
-        if (
-          entry.clientConversationId &&
-          optimisticClientIds.has(entry.clientConversationId)
-        ) {
-          return false;
-        }
-        return true;
-      }),
-    ];
-
-    const deduped = new Map<string, (typeof merged)[number]>();
-    for (const entry of merged) {
-      const existing = deduped.get(entry.conversationId);
-      if (!existing) {
-        deduped.set(entry.conversationId, entry);
-        continue;
-      }
-      if (entry.latestMessageAt > existing.latestMessageAt) {
-        deduped.set(entry.conversationId, entry);
-        continue;
-      }
-      if (
-        entry.latestMessageAt === existing.latestMessageAt &&
-        entry.unread &&
-        !existing.unread
-      ) {
-        deduped.set(entry.conversationId, entry);
-      }
-    }
-
-    return Array.from(deduped.values()).sort(
-      (a, b) => b.latestMessageAt - a.latestMessageAt
-    );
-  }, [optimisticConversations, serverEntries]);
+    const base = results ?? [];
+    return base
+      .map((entry) => ({
+        conversationId: entry.conversation._id,
+        clientConversationId: entry.conversation.clientConversationId ?? null,
+        providerId: entry.conversation.providerId,
+        modelId: entry.conversation.modelId ?? null,
+        cwd: entry.conversation.cwd,
+        title: entry.title,
+        preview: entry.preview,
+        unread: entry.unread,
+        latestMessageAt: entry.latestMessageAt,
+        isOptimistic: entry.conversation._id.startsWith(
+          OPTIMISTIC_CONVERSATION_PREFIX
+        ),
+      }))
+      .sort((a, b) => b.latestMessageAt - a.latestMessageAt);
+  }, [results]);
 
   useEffect(() => {
     setLastTeamSlugOrId(teamSlugOrId);
   }, [teamSlugOrId]);
 
-  useEffect(() => {
-    if (!results || optimisticConversations.length === 0) return;
-    const serverById = new Map(
-      results.map((entry) => [entry.conversation._id.toString(), entry] as const)
-    );
-    setOptimisticConversations((current) => {
-      if (current.length === 0) return current;
-      const next = current.filter((entry) => {
-        const serverEntry = serverById.get(entry.id);
-        if (!serverEntry) return true;
-        const hasDraft = Boolean(entry.draftText?.trim());
-        if (hasDraft && serverEntry.preview.kind === "empty") {
-          return true;
-        }
-        return false;
-      });
-      return next.length === current.length ? current : next;
-    });
-  }, [optimisticConversations.length, results]);
 
   const handleScopeChange = (next: ConversationScope) => {
     if (next === scope) return;
@@ -217,52 +125,61 @@ function ConversationsLayout() {
     providerId: ProviderId = selectedProvider
   ) => {
     const previousConversationId = activeConversationId;
+    latestStartRef.current += 1;
+    const requestId = latestStartRef.current;
+    const trimmedPrompt = initialPrompt?.trim() ?? "";
     const clientConversationId = crypto.randomUUID();
-    const optimisticId = `${OPTIMISTIC_CONVERSATION_PREFIX}${clientConversationId}`;
-    const now = Date.now();
-    const trimmedPrompt = initialPrompt?.trim() ?? null;
-    setOptimisticConversations((current) => [
-      {
-        id: optimisticId,
-        clientConversationId,
-        providerId,
-        modelId: null,
-        cwd: "/root",
-        latestMessageAt: now,
-        state: "creating",
-        draftText: trimmedPrompt,
-      },
-      ...current,
-    ]);
-    setIsCreating(true);
-    void navigate({
-      to: "/t/$teamSlugOrId/$conversationId",
-      params: {
-        teamSlugOrId,
-        conversationId: optimisticId,
-      },
-    });
+    const clientMessageId = trimmedPrompt ? crypto.randomUUID() : null;
+    const optimisticCreatedAt = Date.now();
     try {
-      const result = await startConversation({
+      if (!trimmedPrompt) {
+        setIsCreating(true);
+        const result = await startConversation({
+          teamSlugOrId,
+          providerId,
+          cwd: "/root",
+          clientConversationId,
+        });
+        if (latestStartRef.current !== requestId) {
+          return;
+        }
+        await navigate({
+          to: "/t/$teamSlugOrId/$conversationId",
+          params: {
+            teamSlugOrId,
+            conversationId: result.conversationId,
+          },
+          replace: true,
+        });
+        return;
+      }
+
+      const optimisticConversationId = `${OPTIMISTIC_CONVERSATION_PREFIX}${clientConversationId}`;
+      const sendPromise = sendMessage({
         teamSlugOrId,
         providerId,
         cwd: "/root",
+        content: [{ type: "text", text: trimmedPrompt }],
+        clientMessageId: clientMessageId ?? undefined,
         clientConversationId,
       });
-      setOptimisticConversations((current) =>
-        current.map((entry) =>
-          entry.id === optimisticId
-              ? {
-                  ...entry,
-                  id: result.conversationId,
-                  clientConversationId,
-                  latestMessageAt: Date.now(),
-                  state: "ready",
-                  draftText: trimmedPrompt,
-                }
-              : entry
-        )
-      );
+      void navigate({
+        to: "/t/$teamSlugOrId/$conversationId",
+        params: {
+          teamSlugOrId,
+          conversationId: optimisticConversationId,
+        },
+        state: {
+          optimisticText: trimmedPrompt,
+          optimisticClientMessageId: clientMessageId,
+          optimisticCreatedAt,
+        },
+        replace: true,
+      });
+      const result = await sendPromise;
+      if (latestStartRef.current !== requestId) {
+        return;
+      }
       await navigate({
         to: "/t/$teamSlugOrId/$conversationId",
         params: {
@@ -270,17 +187,16 @@ function ConversationsLayout() {
           conversationId: result.conversationId,
         },
         replace: true,
-        state: {
-          initialPrompt: trimmedPrompt,
-          clientMessageId: trimmedPrompt ? crypto.randomUUID() : null,
-        },
       });
     } catch (error) {
+      if (latestStartRef.current !== requestId) {
+        return;
+      }
       console.error("Failed to start conversation", error);
       toast.error("Failed to start conversation");
-      setOptimisticConversations((current) =>
-        current.filter((entry) => entry.id !== optimisticId)
-      );
+      if (!trimmedPrompt) {
+        setIsCreating(false);
+      }
       if (previousConversationId) {
         void navigate({
           to: "/t/$teamSlugOrId/$conversationId",
@@ -298,7 +214,9 @@ function ConversationsLayout() {
         });
       }
     } finally {
-      setIsCreating(false);
+      if (!trimmedPrompt) {
+        setIsCreating(false);
+      }
     }
   };
 

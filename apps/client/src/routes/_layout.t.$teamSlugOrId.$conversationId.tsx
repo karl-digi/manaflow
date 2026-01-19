@@ -24,11 +24,20 @@ import { toast } from "sonner";
 import { z } from "zod";
 import clsx from "clsx";
 import { Streamdown } from "streamdown";
-import { useAcpSandboxStream, type AcpStreamStatus } from "@/hooks/useAcpSandboxStream";
+import {
+  useAcpSandboxStream,
+  type AcpStreamStatus,
+} from "@/hooks/useAcpSandboxStream";
+import { useSendMessageOptimistic } from "@/hooks/useSendMessageOptimistic";
 
 const PAGE_SIZE = 40;
 const RAW_EVENTS_PAGE_SIZE = 120;
-const OPTIMISTIC_CONVERSATION_PREFIX = "optimistic-";
+const OPTIMISTIC_CONVERSATION_PREFIX = "client-";
+const optimisticStateSchema = z.object({
+  optimisticText: z.string().nullable().optional(),
+  optimisticClientMessageId: z.string().nullable().optional(),
+  optimisticCreatedAt: z.number().optional(),
+});
 const conversationIdSchema = z.custom<Id<"conversations">>(
   (value) => typeof value === "string"
 );
@@ -36,10 +45,6 @@ const storageIdSchema = z.custom<Id<"_storage">>(
   (value) => typeof value === "string"
 );
 const uploadResponseSchema = z.object({ storageId: storageIdSchema });
-const initialPromptStateSchema = z.object({
-  initialPrompt: z.string().nullable().optional(),
-  clientMessageId: z.string().nullable().optional(),
-});
 
 export const Route = createFileRoute(
   "/_layout/t/$teamSlugOrId/$conversationId"
@@ -67,17 +72,15 @@ type StreamingMessage = {
   lastSeq: number;
 };
 
-type PendingMessageStatus = "sending" | "queued" | "sent" | "error";
-
-type PendingMessage = {
-  localId: string;
-  serverId?: Id<"conversationMessages">;
+type DraftState = {
   text: string;
   attachments: PendingImage[];
-  createdAt: number;
-  status: PendingMessageStatus;
-  error?: string;
 };
+
+const createEmptyDraftState = (): DraftState => ({
+  text: "",
+  attachments: [],
+});
 
 function isUnreadCandidateMessage(
   message: Doc<"conversationMessages">
@@ -97,14 +100,6 @@ function isUnreadCandidateMessage(
   });
 }
 
-function isDeliveryStatus(value: unknown): value is PendingMessageStatus {
-  return (
-    value === "queued" ||
-    value === "sent" ||
-    value === "error" ||
-    value === "sending"
-  );
-}
 
 type PaginatedStatus = ReturnType<typeof usePaginatedQuery>["status"];
 
@@ -168,6 +163,14 @@ function ConversationThread() {
     OPTIMISTIC_CONVERSATION_PREFIX
   );
   const conversationId = conversationIdSchema.parse(conversationIdParam);
+  const optimisticState = useMemo(() => {
+    const parsed = optimisticStateSchema.safeParse(location.state);
+    return parsed.success ? parsed.data : null;
+  }, [location.state]);
+  const optimisticText = optimisticState?.optimisticText?.trim() ?? "";
+  const optimisticClientMessageId =
+    optimisticState?.optimisticClientMessageId ?? null;
+  const optimisticCreatedAt = optimisticState?.optimisticCreatedAt ?? Date.now();
   const detail = useQuery(
     api.conversations.getDetail,
     isOptimisticConversation
@@ -189,7 +192,7 @@ function ConversationThread() {
 
   const { results, status, loadMore } = usePaginatedQuery(
     api.conversationMessages.listByConversationPaginated,
-    isOptimisticConversation ? "skip" : { teamSlugOrId, conversationId },
+    { teamSlugOrId, conversationId },
     { initialNumItems: PAGE_SIZE }
   );
   const {
@@ -202,6 +205,31 @@ function ConversationThread() {
     { initialNumItems: RAW_EVENTS_PAGE_SIZE }
   );
 
+  const optimisticMessage = useMemo(() => {
+    if (!isOptimisticConversation || !optimisticText) return null;
+    return {
+      _id: ((optimisticClientMessageId ??
+        `client-message-${optimisticCreatedAt}`) as Id<"conversationMessages">),
+      _creationTime: optimisticCreatedAt,
+      conversationId: conversationId as Id<"conversations">,
+      clientMessageId: optimisticClientMessageId ?? undefined,
+      role: "user",
+      deliveryStatus: "queued",
+      deliveryError: undefined,
+      deliverySwapAttempted: false,
+      content: [{ type: "text", text: optimisticText }],
+      toolCalls: undefined,
+      reasoning: undefined,
+      acpSeq: undefined,
+      createdAt: optimisticCreatedAt,
+    } satisfies Doc<"conversationMessages">;
+  }, [
+    conversationId,
+    isOptimisticConversation,
+    optimisticClientMessageId,
+    optimisticCreatedAt,
+    optimisticText,
+  ]);
   const messages = useMemo(() => results ?? [], [results]);
   const convexRawEvents = useMemo(
     () => rawEventsResults ?? [],
@@ -215,7 +243,7 @@ function ConversationThread() {
     );
   }, [convexRawEvents]);
   const stream = useAcpSandboxStream({
-    enabled: !isOptimisticConversation,
+    enabled: true,
     streamUrl: streamInfo?.sandboxUrl
       ? `${streamInfo.sandboxUrl}/api/acp/stream/${conversationId}`
       : null,
@@ -239,7 +267,7 @@ function ConversationThread() {
   );
 
   const markRead = useMutation(api.conversationReads.markRead);
-  const sendMessage = useAction(api.acp.sendMessage);
+  const sendMessage = useSendMessageOptimistic();
   const retryMessage = useAction(api.acp.retryMessage);
   const sendRpc = useAction(api.acp.sendRpc);
   const updatePermissionMode = useMutation(
@@ -248,10 +276,20 @@ function ConversationThread() {
   const generateUploadUrl = useMutation(api.storage.generateUploadUrl);
   const convex = useConvex();
 
-  const [text, setText] = useState("");
-  const [attachments, setAttachments] = useState<PendingImage[]>([]);
-  const [pendingMessages, setPendingMessages] = useState<PendingMessage[]>([]);
+  const conversation = detail?.conversation ?? null;
+  const sandbox = detail?.sandbox ?? null;
+  const effectivePermissionMode: PermissionMode =
+    (conversation?.permissionMode as PermissionMode | undefined) ??
+    "auto_allow_always";
+
+  const conversationKey = conversation?.clientConversationId ?? conversationIdParam;
+
+  const [draftsByConversation, setDraftsByConversation] = useState<
+    Map<string, DraftState>
+  >(() => new Map());
+  const draftsRef = useRef<Map<string, DraftState>>(new Map());
   const [showRawEvents, setShowRawEvents] = useState(false);
+  const [isSending, setIsSending] = useState(false);
   const [permissionInFlight, setPermissionInFlight] = useState<string | null>(
     null
   );
@@ -259,19 +297,47 @@ function ConversationThread() {
     string[]
   >([]);
   const lastAutoPermissionId = useRef<string | null>(null);
-  const consumedInitialPromptRef = useRef<Set<string>>(new Set());
-
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
-  const shouldScrollToBottom = useRef(false);
   const lastMarkedAtByConversation = useRef<Map<string, number>>(new Map());
-  const attachmentsRef = useRef<PendingImage[]>([]);
+  const currentDraft = draftsByConversation.get(conversationKey) ??
+    createEmptyDraftState();
+  const text = currentDraft.text;
+  const attachments = currentDraft.attachments;
 
-  const conversation = detail?.conversation ?? null;
-  const sandbox = detail?.sandbox ?? null;
-  const effectivePermissionMode: PermissionMode =
-    (conversation?.permissionMode as PermissionMode | undefined) ??
-    "auto_allow_always";
+  const updateDraft = useCallback(
+    (updater: (draft: DraftState) => DraftState) => {
+      setDraftsByConversation((current) => {
+        const next = new Map(current);
+        const draft = next.get(conversationKey) ?? createEmptyDraftState();
+        next.set(conversationKey, updater(draft));
+        draftsRef.current = next;
+        return next;
+      });
+    },
+    [conversationKey]
+  );
+
+  const setText = useCallback(
+    (value: string) => {
+      updateDraft((draft) =>
+        draft.text === value ? draft : { ...draft, text: value }
+      );
+    },
+    [updateDraft]
+  );
+
+  const setAttachments = useCallback(
+    (value: SetStateAction<PendingImage[]>) => {
+      updateDraft((draft) => {
+        const next =
+          typeof value === "function" ? value(draft.attachments) : value;
+        return { ...draft, attachments: next };
+      });
+    },
+    [updateDraft]
+  );
+
 
   const latestReadableMessageAt = useMemo(() => {
     for (const message of messages) {
@@ -281,14 +347,6 @@ function ConversationThread() {
     }
     return null;
   }, [messages]);
-  const isSending = pendingMessages.some(
-    (pending) => pending.status === "sending"
-  );
-
-  const initialPromptState = useMemo(() => {
-    const parsed = initialPromptStateSchema.safeParse(location.state);
-    return parsed.success ? parsed.data : null;
-  }, [location.state]);
 
   useEffect(() => {
     if (isOptimisticConversation) return;
@@ -343,12 +401,6 @@ function ConversationThread() {
   }, [conversationId]);
 
   useEffect(() => {
-    if (!shouldScrollToBottom.current || !scrollRef.current) return;
-    scrollRef.current.scrollTop = 0;
-    shouldScrollToBottom.current = false;
-  }, [messages.length]);
-
-  useEffect(() => {
     if (isOptimisticConversation) return;
     const root = scrollRef.current;
     const target = loadMoreRef.current;
@@ -372,100 +424,14 @@ function ConversationThread() {
   }, [isOptimisticConversation, loadMore, status]);
 
   useEffect(() => {
-    attachmentsRef.current = attachments;
-  }, [attachments]);
-
-  useEffect(() => {
     return () => {
-      attachmentsRef.current.forEach((attachment) => {
-        URL.revokeObjectURL(attachment.previewUrl);
+      draftsRef.current.forEach((draft) => {
+        draft.attachments.forEach((attachment) => {
+          URL.revokeObjectURL(attachment.previewUrl);
+        });
       });
     };
   }, []);
-
-  useEffect(() => {
-    if (pendingMessages.length === 0) return;
-    const serverIds = new Set(messages.map((message) => message._id));
-    const serverClientIds = new Set(
-      messages
-        .map((message) => message.clientMessageId)
-        .filter((value): value is string => typeof value === "string")
-    );
-
-    setPendingMessages((current) => {
-      const next = current.filter((pending) => {
-        if (pending.status !== "sent") return true;
-        if (pending.serverId) {
-          return !serverIds.has(pending.serverId);
-        }
-        return !serverClientIds.has(pending.localId);
-      });
-
-      if (next.length !== current.length) {
-        const removed = current.filter(
-          (pending) =>
-            pending.status === "sent" &&
-            ((pending.serverId && serverIds.has(pending.serverId)) ||
-              (!pending.serverId && serverClientIds.has(pending.localId)))
-        );
-        removed.forEach((pending) => {
-          pending.attachments.forEach((attachment) => {
-            URL.revokeObjectURL(attachment.previewUrl);
-          });
-        });
-      }
-
-      return next;
-    });
-  }, [messages, pendingMessages.length]);
-
-  useEffect(() => {
-    if (pendingMessages.length === 0 || messages.length === 0) return;
-    const byId = new Map(messages.map((message) => [message._id, message]));
-    const byClientMessageId = new Map<string, Doc<"conversationMessages">>();
-    messages.forEach((message) => {
-      if (message.clientMessageId) {
-        byClientMessageId.set(message.clientMessageId, message);
-      }
-    });
-
-    setPendingMessages((current) => {
-      let changed = false;
-      const next = current.map((pending): PendingMessage => {
-        const message = pending.serverId
-          ? byId.get(pending.serverId)
-          : byClientMessageId.get(pending.localId);
-        if (!message) return pending;
-        let updated = pending;
-        if (!pending.serverId) {
-          updated = { ...updated, serverId: message._id };
-          changed = true;
-        }
-        if (!message.deliveryStatus || !isDeliveryStatus(message.deliveryStatus)) {
-          return updated;
-        }
-        if (message.deliveryStatus === "sent" && updated.status !== "sent") {
-          changed = true;
-          return { ...updated, status: "sent", error: undefined };
-        }
-        if (message.deliveryStatus === "error" && updated.status !== "error") {
-          changed = true;
-          return {
-            ...updated,
-            status: "error",
-            error: message.deliveryError ?? updated.error ?? "Delivery failed",
-          };
-        }
-        if (message.deliveryStatus === "queued" && updated.status !== "queued") {
-          changed = true;
-          return { ...updated, status: "queued" };
-        }
-        return updated;
-      });
-
-      return changed ? next : current;
-    });
-  }, [messages, pendingMessages.length]);
 
   const handleAttachFiles = (files: FileList | null) => {
     if (!files) return;
@@ -492,56 +458,23 @@ function ConversationThread() {
     }
   };
 
-  const sendPendingMessage = useCallback(
-    async (pendingOrId: PendingMessage | string) => {
-    const pending =
-      typeof pendingOrId === "string"
-        ? pendingMessages.find((entry) => entry.localId === pendingOrId)
-        : pendingOrId;
-    if (!pending) {
-      return;
-    }
+  const handleSend = useCallback(async () => {
+    if (isSending) return;
+    const trimmed = text.trim();
+    if (!trimmed && attachments.length === 0) return;
 
-    setPendingMessages((current) =>
-      current.map((entry) =>
-        entry.localId === pending.localId
-          ? { ...entry, status: "sending", error: undefined }
-          : entry
-      )
-    );
+    const previousText = text;
+    const previousAttachments = attachments;
+    const clientMessageId = crypto.randomUUID();
+    const attachmentsToUpload = [...attachments];
+
+    setIsSending(true);
+    setText("");
+    setAttachments([]);
 
     try {
-      if (pending.serverId) {
-        const result = await retryMessage({
-          conversationId,
-          messageId: pending.serverId,
-        });
-        if (result.status === "sent") {
-          setPendingMessages((current) =>
-            current.map((entry) =>
-              entry.localId === pending.localId
-                ? { ...entry, status: "sent" }
-                : entry
-            )
-          );
-        } else {
-          setPendingMessages((current) =>
-            current.map((entry) =>
-              entry.localId === pending.localId
-                ? {
-                    ...entry,
-                    status: "error",
-                    error: result.error ?? "Delivery failed",
-                  }
-                : entry
-            )
-          );
-        }
-        return;
-      }
-
       const uploaded = await Promise.all(
-        pending.attachments.map(async (attachment) => {
+        attachmentsToUpload.map(async (attachment) => {
           const uploadUrl = await generateUploadUrl({ teamSlugOrId });
           const response = await fetch(uploadUrl, {
             method: "POST",
@@ -573,11 +506,11 @@ function ConversationThread() {
         text?: string;
         uri?: string;
         name?: string;
-        description?: string;
+        mimeType?: string;
       }> = [];
 
-      if (pending.text) {
-        content.push({ type: "text", text: pending.text });
+      if (trimmed) {
+        content.push({ type: "text", text: trimmed });
       }
 
       uploaded.forEach((item) => {
@@ -585,158 +518,74 @@ function ConversationThread() {
           type: "resource_link",
           uri: item.url,
           name: item.name,
-          description: item.mimeType,
+          mimeType: item.mimeType,
         });
       });
 
-      const result = await sendMessage({
+      await sendMessage({
+        teamSlugOrId,
         conversationId,
         content,
-        clientMessageId: pending.localId,
+        clientMessageId,
       });
 
-      if (result.status === "sent") {
-        setPendingMessages((current) =>
-          current.map((entry) =>
-            entry.localId === pending.localId
-              ? { ...entry, status: "sent", serverId: result.messageId }
-              : entry
-          )
-        );
-      } else if (result.status === "queued") {
-        setPendingMessages((current) =>
-          current.map((entry) =>
-            entry.localId === pending.localId
-              ? {
-                  ...entry,
-                  status: "queued",
-                  serverId: result.messageId,
-                  error: result.error ?? "Waiting for sandbox",
-                }
-              : entry
-          )
-        );
-      } else {
-        const errorMessage = result.error
-          ? `Saved · ${result.error}`
-          : "Message saved but delivery failed";
-        setPendingMessages((current) =>
-          current.map((entry) =>
-            entry.localId === pending.localId
-              ? {
-                  ...entry,
-                  status: "error",
-                  serverId: result.messageId,
-                  error: errorMessage,
-                }
-              : entry
-          )
-        );
-      }
+      attachmentsToUpload.forEach((attachment) => {
+        URL.revokeObjectURL(attachment.previewUrl);
+      });
     } catch (error) {
       console.error("Failed to send message", error);
-      setPendingMessages((current) =>
-        current.map((entry) =>
-          entry.localId === pending.localId
-            ? { ...entry, status: "error", error: "Failed to send message" }
-            : entry
-        )
-      );
+      setText(previousText);
+      setAttachments(previousAttachments);
       toast.error("Failed to send message");
+    } finally {
+      setIsSending(false);
     }
-  },
-  [
+  }, [
+    attachments,
     conversationId,
     convex,
     generateUploadUrl,
-    pendingMessages,
-    retryMessage,
+    isSending,
     sendMessage,
+    setAttachments,
+    setText,
     teamSlugOrId,
-  ]
-  );
-
-  const handleSend = async () => {
-    if (isOptimisticConversation) {
-      toast.message("Conversation is still starting");
-      return;
-    }
-    const trimmed = text.trim();
-    if (!trimmed && attachments.length === 0) return;
-
-    const localId = crypto.randomUUID();
-    const pending: PendingMessage = {
-      localId,
-      text: trimmed,
-      attachments: [...attachments],
-      createdAt: Date.now(),
-      status: "sending",
-    };
-
-    setPendingMessages((current) => [pending, ...current]);
-    setText("");
-    setAttachments([]);
-
-    await sendPendingMessage(pending);
-  };
-
-  useEffect(() => {
-    if (isOptimisticConversation) return;
-    const prompt = initialPromptState?.initialPrompt?.trim() ?? "";
-    const clientMessageId = initialPromptState?.clientMessageId ?? null;
-    if (!prompt || !clientMessageId) return;
-    const key = `${conversationId}-${clientMessageId}`;
-    if (consumedInitialPromptRef.current.has(key)) return;
-    consumedInitialPromptRef.current.add(key);
-
-    const pending: PendingMessage = {
-      localId: clientMessageId,
-      text: prompt,
-      attachments: [],
-      createdAt: Date.now(),
-      status: "sending",
-    };
-    setPendingMessages((current) => [pending, ...current]);
-    void sendPendingMessage(pending);
-  }, [
-    conversationId,
-    initialPromptState,
-    isOptimisticConversation,
-    sendPendingMessage,
+    text,
   ]);
 
-  const pendingByServerId = useMemo(() => {
-    const map = new Map<Id<"conversationMessages">, PendingMessage>();
-    pendingMessages.forEach((pending) => {
-      if (pending.serverId) {
-        map.set(pending.serverId, pending);
-      }
-    });
-    return map;
-  }, [pendingMessages]);
-
-  const pendingByClientMessageId = useMemo(() => {
-    const map = new Map<string, PendingMessage>();
-    pendingMessages.forEach((pending) => {
-      map.set(pending.localId, pending);
-    });
-    return map;
-  }, [pendingMessages]);
-
-  const visibleMessages = useMemo(
-    () =>
-      messages.filter((message) => {
-        if (pendingByServerId.has(message._id)) return false;
-        if (
-          message.clientMessageId &&
-          pendingByClientMessageId.has(message.clientMessageId)
-        ) {
-          return false;
+  const handleRetryMessage = useCallback(
+    async (messageId: Id<"conversationMessages">) => {
+      try {
+        const result = await retryMessage({ conversationId, messageId });
+        if (result.status === "error") {
+          toast.error(result.error ?? "Delivery failed");
         }
-        return true;
-      }),
-    [messages, pendingByClientMessageId, pendingByServerId]
+      } catch (error) {
+        console.error("Failed to retry message", error);
+        toast.error("Failed to retry message");
+      }
+    },
+    [conversationId, retryMessage]
   );
+
+  const visibleMessages = useMemo(() => {
+    if (!isOptimisticConversation) {
+      return messages;
+    }
+    if (!optimisticMessage) {
+      return messages;
+    }
+    const matchesClientId =
+      optimisticMessage.clientMessageId &&
+      messages.some(
+        (message) =>
+          message.clientMessageId === optimisticMessage.clientMessageId
+      );
+    if (matchesClientId) {
+      return messages;
+    }
+    return [optimisticMessage, ...messages];
+  }, [isOptimisticConversation, messages, optimisticMessage]);
 
   const toolCalls = useMemo<ToolCallEntry[]>(() => {
     if (rawEvents.length === 0) return [];
@@ -872,12 +721,6 @@ function ConversationThread() {
   );
 
   const combinedItems = useMemo(() => {
-    const pendingItems = pendingMessages.map((pending) => ({
-      kind: "pending" as const,
-      createdAt: pending.createdAt,
-      sortSeq: null as number | null,
-      pending,
-    }));
     const streamItems = streamingMessage
       ? [
           {
@@ -901,8 +744,7 @@ function ConversationThread() {
       toolCall,
     }));
 
-    return [...pendingItems, ...streamItems, ...serverItems, ...toolItems].sort(
-      (a, b) => {
+    return [...streamItems, ...serverItems, ...toolItems].sort((a, b) => {
       if (a.sortSeq !== null && b.sortSeq !== null) {
         if (a.sortSeq !== b.sortSeq) return b.sortSeq - a.sortSeq;
       }
@@ -911,10 +753,9 @@ function ConversationThread() {
       const aSeq = a.sortSeq ?? 0;
       const bSeq = b.sortSeq ?? 0;
       if (aSeq !== bSeq) return bSeq - aSeq;
-        return 0;
-      }
-    );
-  }, [pendingMessages, streamingMessage, toolCalls, visibleMessages]);
+      return 0;
+    });
+  }, [streamingMessage, toolCalls, visibleMessages]);
 
   const latestUserMessageAt = useMemo(() => {
     const serverUser = visibleMessages
@@ -923,13 +764,9 @@ function ConversationThread() {
           message.role === "user" && message.deliveryStatus !== "error"
       )
       .map((message) => message.createdAt);
-    const pendingUser = pendingMessages
-      .filter((pending) => pending.status !== "error")
-      .map((pending) => pending.createdAt);
-    const all = [...serverUser, ...pendingUser];
-    if (all.length === 0) return null;
-    return Math.max(...all);
-  }, [pendingMessages, visibleMessages]);
+    if (serverUser.length === 0) return null;
+    return Math.max(...serverUser);
+  }, [visibleMessages]);
 
   const latestAssistantMessageAt = useMemo(() => {
     const assistant = visibleMessages
@@ -1074,13 +911,7 @@ function ConversationThread() {
         sandboxUrl: sandbox.sandboxUrl ?? null,
         lastActivityAt: sandbox.lastActivityAt,
       }
-    : isOptimisticConversation
-      ? {
-          status: "starting",
-          sandboxUrl: null,
-          lastActivityAt: Date.now(),
-        }
-      : null;
+    : null;
 
   return (
     <div className="flex h-dvh min-h-dvh flex-1 flex-col overflow-hidden">
@@ -1108,13 +939,7 @@ function ConversationThread() {
           <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-6">
             <div className="flex flex-col-reverse gap-4">
               {combinedItems.map((item) =>
-                item.kind === "pending" ? (
-                  <PendingConversationMessage
-                    key={item.pending.localId}
-                    pending={item.pending}
-                    onRetry={() => sendPendingMessage(item.pending.localId)}
-                  />
-                ) : item.kind === "stream" ? (
+                item.kind === "stream" ? (
                   <StreamingConversationMessage
                     key={`stream-${item.message.lastSeq}`}
                     message={item.message}
@@ -1124,6 +949,12 @@ function ConversationThread() {
                     key={item.message._id}
                     message={item.message}
                     isOwn={item.message.role === "user"}
+                    onRetry={
+                      item.message.role === "user" &&
+                      item.message.deliveryStatus === "error"
+                        ? () => handleRetryMessage(item.message._id)
+                        : undefined
+                    }
                   />
                 ) : (
                   <ToolCallMessage key={item.toolCall.id} call={item.toolCall} />
@@ -1301,9 +1132,11 @@ function StreamingConversationMessage({
 function ConversationMessage({
   message,
   isOwn,
+  onRetry,
 }: {
   message: Doc<"conversationMessages">;
   isOwn: boolean;
+  onRetry?: () => void;
 }) {
   const timeLabel = formatDistanceToNow(new Date(message.createdAt), {
     addSuffix: true,
@@ -1326,50 +1159,32 @@ function ConversationMessage({
       >
         <MessageContent blocks={message.content} renderMarkdown={!isOwn} />
       </div>
-      <div className="text-[11px] text-neutral-400">
-        {isOwn ? "Saved" : "Received"} · {timeLabel}
-      </div>
+      {isOwn ? (
+        <MessageDeliveryStatus
+          status={message.deliveryStatus}
+          error={message.deliveryError}
+          timeLabel={timeLabel}
+          onRetry={onRetry}
+        />
+      ) : (
+        <div className="text-[11px] text-neutral-400">
+          Received · {timeLabel}
+        </div>
+      )}
     </div>
   );
 }
 
-function PendingConversationMessage({
-  pending,
+function MessageDeliveryStatus({
+  status,
+  error,
+  timeLabel,
   onRetry,
 }: {
-  pending: PendingMessage;
-  onRetry: () => void;
-}) {
-  return (
-    <div className="flex flex-col items-end gap-2">
-      <div className="max-w-[680px] rounded-2xl bg-neutral-900 px-4 py-3 text-sm leading-relaxed text-neutral-50 dark:bg-neutral-100 dark:text-neutral-950">
-        {pending.text ? (
-          <p className="whitespace-pre-wrap text-sm">{pending.text}</p>
-        ) : null}
-        {pending.attachments.length > 0 ? (
-          <div className="mt-3 grid grid-cols-2 gap-2">
-            {pending.attachments.map((attachment) => (
-              <img
-                key={attachment.id}
-                src={attachment.previewUrl}
-                alt={attachment.file.name}
-                className="h-28 w-full rounded-xl border border-neutral-200/20 object-cover"
-              />
-            ))}
-          </div>
-        ) : null}
-      </div>
-      <PendingMessageStatus pending={pending} onRetry={onRetry} />
-    </div>
-  );
-}
-
-function PendingMessageStatus({
-  pending,
-  onRetry,
-}: {
-  pending: PendingMessage;
-  onRetry: () => void;
+  status?: "queued" | "sent" | "error";
+  error?: string;
+  timeLabel: string;
+  onRetry?: () => void;
 }) {
   const handleCopyError = async (value: string) => {
     try {
@@ -1381,53 +1196,50 @@ function PendingMessageStatus({
     }
   };
 
-  if (pending.status === "sending") {
-    return (
-      <div className="flex items-center gap-2 text-[11px] text-neutral-400">
-        <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
-        Sending…
-      </div>
-    );
-  }
-
-  if (pending.status === "queued") {
+  if (status === "queued") {
     return (
       <div className="flex items-center gap-2 text-[11px] text-amber-400">
         <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
-        {pending.error ?? "Waiting for sandbox"}
+        {error ?? "Waiting for sandbox"} · {timeLabel}
       </div>
     );
   }
 
-  if (pending.status === "sent") {
+  if (status === "error") {
+    const errorText = error ?? "Delivery failed";
     return (
-      <div className="text-[11px] text-neutral-400">
-        Delivered
+      <div className="flex flex-col items-end gap-2">
+        <div className="flex items-center gap-3 rounded-full border border-rose-400/40 bg-rose-500/10 px-2 py-1 text-[11px] text-rose-400">
+          <span className="max-w-[360px] truncate">{errorText}</span>
+          {onRetry ? (
+            <button
+              type="button"
+              onClick={onRetry}
+              className="rounded-full border border-rose-400/40 px-2 py-1 text-[10px] font-semibold text-rose-600 hover:border-rose-300 hover:text-rose-500 dark:text-rose-200 dark:hover:text-rose-100"
+            >
+              Retry
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => {
+              void handleCopyError(errorText);
+            }}
+            className="rounded-full border border-rose-400/40 px-2 py-1 text-[10px] font-semibold text-rose-600 hover:border-rose-300 hover:text-rose-500 dark:text-rose-200 dark:hover:text-rose-100"
+          >
+            Copy
+          </button>
+        </div>
+        <div className="text-[11px] text-neutral-400">
+          Failed · {timeLabel}
+        </div>
       </div>
     );
   }
-
-  const errorText = pending.error ?? "Delivery failed";
 
   return (
-    <div className="flex items-center gap-3 rounded-full border border-rose-400/40 bg-rose-500/10 px-2 py-1 text-[11px] text-rose-400">
-      <span className="max-w-[360px] truncate">{errorText}</span>
-      <button
-        type="button"
-        onClick={onRetry}
-        className="rounded-full border border-rose-400/40 px-2 py-1 text-[10px] font-semibold text-rose-600 hover:border-rose-300 hover:text-rose-500 dark:text-rose-200 dark:hover:text-rose-100"
-      >
-        Retry
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          void handleCopyError(errorText);
-        }}
-        className="rounded-full border border-rose-400/40 px-2 py-1 text-[10px] font-semibold text-rose-600 hover:border-rose-300 hover:text-rose-500 dark:text-rose-200 dark:hover:text-rose-100"
-      >
-        Copy
-      </button>
+    <div className="text-[11px] text-neutral-400">
+      Saved · {timeLabel}
     </div>
   );
 }
@@ -1626,6 +1438,7 @@ function ConversationComposer({
       return next;
     });
   };
+
 
   return (
     <div className="border-t border-neutral-200/70 bg-white/80 px-6 py-4 dark:border-neutral-800/70 dark:bg-neutral-950/80">
