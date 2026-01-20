@@ -505,7 +505,7 @@ Do not close the browser when done. Do not create summary documents.
               args: [
                 "chrome-devtools-mcp",
                 "--browserUrl",
-                "http://0.0.0.0:39382",
+                process.env.CDP_BROWSER_URL || "http://0.0.0.0:39382",
               ],
             },
           },
