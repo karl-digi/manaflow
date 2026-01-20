@@ -1956,6 +1956,31 @@ registry = TaskRegistry()
 update_registry = TaskRegistry()  # Subset of tasks for --update mode
 
 
+# Shell helper to wait for apt/dpkg lock before running apt commands.
+# This prevents race conditions when multiple tasks try to use apt concurrently.
+APT_WAIT_LOCK_HELPER = """
+wait_for_apt_lock() {
+    local max_wait=${1:-120}
+    local waited=0
+    echo "[apt] Waiting for dpkg/apt lock (max ${max_wait}s)..."
+    while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || \
+          fuser /var/lib/apt/lists/lock >/dev/null 2>&1 || \
+          fuser /var/cache/apt/archives/lock >/dev/null 2>&1; do
+        if [ "$waited" -ge "$max_wait" ]; then
+            echo "[apt] Timeout waiting for apt lock after ${max_wait}s" >&2
+            return 1
+        fi
+        sleep 2
+        waited=$((waited + 2))
+    done
+    if [ "$waited" -gt 0 ]; then
+        echo "[apt] Lock acquired after ${waited}s"
+    fi
+    return 0
+}
+"""
+
+
 @registry.task(
     name="apt-bootstrap",
     description="Install core apt utilities and set up package sources",
@@ -2050,9 +2075,12 @@ async def task_install_base_packages(ctx: PveTaskContext) -> None:
     description="Install Docker engine and CLI plugins",
 )
 async def task_ensure_docker(ctx: PveTaskContext) -> None:
-    install_cmd = textwrap.dedent(
+    install_cmd = APT_WAIT_LOCK_HELPER + textwrap.dedent(
         """
         set -euo pipefail
+
+        # Wait for any existing apt/dpkg processes to release the lock
+        wait_for_apt_lock 120
 
         echo "[docker] ensuring Docker APT repository"
         DEBIAN_FRONTEND=noninteractive apt-get update
@@ -2345,9 +2373,11 @@ async def task_install_go_toolchain(ctx: PveTaskContext) -> None:
     description="Install uv CLI and provision default Python runtime",
 )
 async def task_install_uv_python(ctx: PveTaskContext) -> None:
-    cmd = textwrap.dedent(
+    cmd = APT_WAIT_LOCK_HELPER + textwrap.dedent(
         """
         set -eux
+        # Wait for any existing apt/dpkg processes to release the lock
+        wait_for_apt_lock 120
         DEBIAN_FRONTEND=noninteractive apt-get update
         DEBIAN_FRONTEND=noninteractive apt-get install -y python3-pip
         python3 -m pip install --break-system-packages uv
