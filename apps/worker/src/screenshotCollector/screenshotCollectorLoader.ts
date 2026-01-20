@@ -139,25 +139,14 @@ async function downloadScreenshotCollector(providedConvexUrl?: string): Promise<
   const jsContent = await jsResponse.text();
 
   // Save to a temp file for dynamic import
+  // Use a unique filename with timestamp to avoid any caching issues
   const tempDir = path.join(os.tmpdir(), "cmux-screenshot-collector");
   await fs.mkdir(tempDir, { recursive: true });
 
-  const tempFile = path.join(tempDir, `collector-${releaseInfo.version}.mjs`);
-
-  // Check if we already have this version cached
-  try {
-    await fs.access(tempFile);
-    log("INFO", "Using cached screenshot collector", {
-      version: releaseInfo.version,
-      path: tempFile,
-    });
-    return tempFile;
-  } catch {
-    // File doesn't exist, write it
-  }
+  const tempFile = path.join(tempDir, `collector-${releaseInfo.version}-${Date.now()}.mjs`);
 
   await fs.writeFile(tempFile, jsContent);
-  log("INFO", "Downloaded and cached screenshot collector", {
+  log("INFO", "Downloaded screenshot collector", {
     version: releaseInfo.version,
     path: tempFile,
     size: jsContent.length,
@@ -166,22 +155,16 @@ async function downloadScreenshotCollector(providedConvexUrl?: string): Promise<
   return tempFile;
 }
 
-let cachedModule: ScreenshotCollectorModule | null = null;
-
 /**
  * Loads the screenshot collector module from Convex storage.
+ * Always downloads the latest version - no caching.
  *
  * @param convexUrl - The Convex site URL for fetching the remote screenshot collector.
  *                    Falls back to environment variables if not provided.
  * @throws Error if the screenshot collector cannot be fetched or loaded.
  */
 export async function loadScreenshotCollector(convexUrl?: string): Promise<ScreenshotCollectorModule> {
-  // Return cached module if available
-  if (cachedModule) {
-    return cachedModule;
-  }
-
-  // Download the latest version from Convex (throws on failure)
+  // Always download the latest version from Convex (no caching)
   const remotePath = await downloadScreenshotCollector(convexUrl);
 
   // Use file:// URL for dynamic import
@@ -192,13 +175,5 @@ export async function loadScreenshotCollector(convexUrl?: string): Promise<Scree
     path: remotePath,
   });
 
-  cachedModule = remoteModule as ScreenshotCollectorModule;
-  return cachedModule;
-}
-
-/**
- * Clears the cached module (useful for testing or forcing a refresh)
- */
-export function clearScreenshotCollectorCache(): void {
-  cachedModule = null;
+  return remoteModule as ScreenshotCollectorModule;
 }

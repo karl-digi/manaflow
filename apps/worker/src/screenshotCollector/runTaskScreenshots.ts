@@ -6,6 +6,13 @@ import * as path from "node:path";
 import { log } from "../logger";
 import { startScreenshotCollection } from "./startScreenshotCollection";
 import { createScreenshotUploadUrl, uploadScreenshot } from "./upload";
+import {
+  startVideoRecording,
+  stopVideoRecording,
+  isFFmpegAvailable,
+  type ActiveRecording,
+  type VideoRecordingResult,
+} from "./videoRecorder";
 
 export interface RunTaskScreenshotsOptions {
   taskId: Id<"tasks">;
@@ -22,27 +29,49 @@ export interface RunTaskScreenshotsOptions {
 
 function resolveContentType(filePath: string): string {
   const extension = path.extname(filePath).toLowerCase();
+  // Image types
   if (extension === ".jpg" || extension === ".jpeg") {
     return "image/jpeg";
   }
   if (extension === ".webp") {
     return "image/webp";
   }
+  if (extension === ".png") {
+    return "image/png";
+  }
+  // Video types
+  if (extension === ".mp4") {
+    return "video/mp4";
+  }
+  if (extension === ".webm") {
+    return "video/webm";
+  }
+  if (extension === ".mov") {
+    return "video/quicktime";
+  }
+  // Default to png for unknown image types
   return "image/png";
 }
 
-async function uploadScreenshotFile(params: {
-  screenshotPath: string;
+function resolveMediaType(contentType: string): "image" | "video" {
+  return contentType.startsWith("video/") ? "video" : "image";
+}
+
+async function uploadMediaFile(params: {
+  mediaPath: string;
   fileName?: string;
   commitSha: string;
   token: string;
   convexUrl?: string;
   description?: string;
+  /** Duration in milliseconds (for videos) */
+  durationMs?: number;
 }): Promise<NonNullable<ScreenshotUploadPayload["images"]>[number]> {
-  const { screenshotPath, fileName, commitSha, token, convexUrl, description } =
+  const { mediaPath, fileName, commitSha, token, convexUrl, description, durationMs } =
     params;
-  const resolvedFileName = fileName ?? path.basename(screenshotPath);
-  const contentType = resolveContentType(screenshotPath);
+  const resolvedFileName = fileName ?? path.basename(mediaPath);
+  const contentType = resolveContentType(mediaPath);
+  const mediaType = resolveMediaType(contentType);
 
   const uploadUrl = await createScreenshotUploadUrl({
     token,
@@ -50,7 +79,7 @@ async function uploadScreenshotFile(params: {
     contentType,
   });
 
-  const bytes = await fs.readFile(screenshotPath);
+  const bytes = await fs.readFile(mediaPath);
   const uploadResponse = await fetch(uploadUrl, {
     method: "POST",
     headers: {
@@ -79,6 +108,8 @@ async function uploadScreenshotFile(params: {
     fileName: resolvedFileName,
     commitSha,
     description,
+    mediaType,
+    durationMs,
   };
 }
 
@@ -118,8 +149,8 @@ export async function runTaskScreenshots(
       log("ERROR", error, { taskRunId });
     } else {
       const uploadPromises = capturedScreens.map((screenshot) =>
-        uploadScreenshotFile({
-          screenshotPath: screenshot.path,
+        uploadMediaFile({
+          mediaPath: screenshot.path,
           fileName: screenshot.fileName,
           commitSha: result.commitSha,
           token,
@@ -217,3 +248,81 @@ export async function runTaskScreenshots(
     },
   });
 }
+
+/**
+ * Options for uploading a video to a task run
+ */
+export interface UploadVideoOptions {
+  taskId: Id<"tasks">;
+  taskRunId: Id<"taskRuns">;
+  token: string;
+  convexUrl?: string;
+  /** Video recording result from stopVideoRecording() */
+  video: VideoRecordingResult;
+  /** Git commit SHA for the video */
+  commitSha: string;
+}
+
+/**
+ * Uploads a video recording to a task run's screenshot set.
+ * The video will be added as a media item alongside any existing screenshots.
+ */
+export async function uploadTaskVideo(
+  options: UploadVideoOptions
+): Promise<void> {
+  const { taskId, taskRunId, token, convexUrl, video, commitSha } = options;
+
+  log("INFO", "Uploading video to task run", {
+    taskId,
+    taskRunId,
+    videoPath: video.path,
+    durationMs: video.durationMs,
+  });
+
+  try {
+    const uploadedMedia = await uploadMediaFile({
+      mediaPath: video.path,
+      fileName: video.fileName,
+      commitSha,
+      token,
+      convexUrl,
+      description: video.description,
+      durationMs: video.durationMs,
+    });
+
+    await uploadScreenshot({
+      token,
+      baseUrlOverride: convexUrl,
+      payload: {
+        taskId,
+        runId: taskRunId,
+        status: "completed",
+        commitSha,
+        images: [uploadedMedia],
+      },
+    });
+
+    log("INFO", "Video uploaded successfully", {
+      taskId,
+      taskRunId,
+      storageId: uploadedMedia.storageId,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    log("ERROR", "Failed to upload video", {
+      taskId,
+      taskRunId,
+      error: message,
+    });
+    throw error;
+  }
+}
+
+// Re-export video recording functions for convenience
+export {
+  startVideoRecording,
+  stopVideoRecording,
+  isFFmpegAvailable,
+  type ActiveRecording,
+  type VideoRecordingResult,
+};
