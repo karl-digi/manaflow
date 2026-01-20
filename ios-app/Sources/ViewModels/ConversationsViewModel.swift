@@ -23,6 +23,17 @@ class ConversationsViewModel: ObservableObject {
     private let pageSize: Double = 50
     private var lastBadgeCount = -1
 
+    private enum ConversationListSource {
+        case firstPage
+        case extra
+    }
+
+    private struct RemovedConversation {
+        let entry: ConvexConversation
+        let source: ConversationListSource
+        let index: Int
+    }
+
     init() {
         // Start loading when auth is ready
         Task {
@@ -45,6 +56,7 @@ class ConversationsViewModel: ObservableObject {
 
         // Call acp:startConversation action
         let startArgs = AcpStartConversationArgs(
+            clientConversationId: nil,
             sandboxId: nil,
             providerId: .claude,
             cwd: "/workspace",
@@ -68,6 +80,7 @@ class ConversationsViewModel: ObservableObject {
                 type: .text
             )
             let sendArgs = AcpSendMessageArgs(
+                clientMessageId: nil,
                 content: [contentItem],
                 conversationId: response.conversationId
             )
@@ -83,6 +96,14 @@ class ConversationsViewModel: ObservableObject {
     }
 
     func loadConversations() async {
+        if UITestConfig.mockDataEnabled {
+            conversations = UITestMockData.conversations()
+            isLoading = false
+            error = nil
+            hasMore = false
+            isLoadingMore = false
+            return
+        }
         // Wait for auth with retry loop (up to 30 seconds)
         var attempts = 0
         while !convex.isAuthenticated && attempts < 30 {
@@ -125,6 +146,7 @@ class ConversationsViewModel: ObservableObject {
             cursor: nil
         )
         let listArgs = ConversationsListPagedWithLatestArgs(
+            includeArchived: nil,
             teamSlugOrId: teamId,
             paginationOpts: paginationOpts,
             scope: .all
@@ -190,6 +212,7 @@ class ConversationsViewModel: ObservableObject {
                 cursor: cursor
             )
             let listArgs = ConversationsListPagedWithLatestArgs(
+                includeArchived: nil,
                 teamSlugOrId: teamId,
                 paginationOpts: paginationOpts,
                 scope: .all
@@ -241,6 +264,143 @@ class ConversationsViewModel: ObservableObject {
         }
     }
 
+    func togglePin(_ conversation: ConvexConversation) async {
+        guard let teamId else { return }
+        let conversationId = conversation._id
+        let isPinned = conversation.conversation.pinned == true
+
+        updateConversation(conversationId.rawValue) { entry in
+            let updatedConversation = entry.conversation.updating(
+                pinned: !isPinned,
+                isArchived: nil
+            )
+            return entry.updating(conversation: updatedConversation)
+        }
+
+        do {
+            if isPinned {
+                let args = ConversationsUnpinArgs(
+                    conversationId: conversationId,
+                    teamSlugOrId: teamId
+                )
+                let _: ConversationsUnpinReturn = try await convex.client.mutation(
+                    "conversations:unpin",
+                    with: args.asDictionary()
+                )
+            } else {
+                let args = ConversationsPinArgs(
+                    conversationId: conversationId,
+                    teamSlugOrId: teamId
+                )
+                let _: ConversationsPinReturn = try await convex.client.mutation(
+                    "conversations:pin",
+                    with: args.asDictionary()
+                )
+            }
+        } catch {
+            updateConversation(conversationId.rawValue) { entry in
+                let updatedConversation = entry.conversation.updating(
+                    pinned: isPinned,
+                    isArchived: nil
+                )
+                return entry.updating(conversation: updatedConversation)
+            }
+            NSLog("📱 ConversationsViewModel: Failed to toggle pin: \(error)")
+        }
+    }
+
+    func deleteConversation(_ conversation: ConvexConversation) async {
+        guard let teamId else { return }
+        let conversationId = conversation._id
+
+        let removed = removeConversation(conversationId.rawValue)
+        do {
+            let args = ConversationsRemoveArgs(
+                conversationId: conversationId,
+                teamSlugOrId: teamId
+            )
+            let _: ConversationsRemoveReturn = try await convex.client.mutation(
+                "conversations:remove",
+                with: args.asDictionary()
+            )
+        } catch {
+            if let removed {
+                restoreConversation(removed)
+            }
+            NSLog("📱 ConversationsViewModel: Failed to delete conversation: \(error)")
+        }
+    }
+
+    func markRead(_ conversation: ConvexConversation) async {
+        guard let teamId else { return }
+        let conversationId = conversation._id
+        let lastReadAt = conversation.latestMessageAt
+        let wasUnread = conversation.unread
+        let previousLastReadAt = conversation.lastReadAt
+        let wasManualUnread = ConversationReadOverrides.isManualUnread(conversationId.rawValue)
+
+        ConversationReadOverrides.clearManualUnread(conversationId.rawValue)
+        updateConversation(conversationId.rawValue) { entry in
+            entry.updating(unread: false, lastReadAt: lastReadAt)
+        }
+
+        do {
+            let args = ConversationReadsMarkReadArgs(
+                lastReadAt: lastReadAt,
+                conversationId: conversationId,
+                teamSlugOrId: teamId
+            )
+            let _: ConversationReadsMarkReadReturn = try await convex.client.mutation(
+                "conversationReads:markRead",
+                with: args.asDictionary()
+            )
+        } catch {
+            if wasManualUnread {
+                ConversationReadOverrides.markManualUnread(conversationId.rawValue)
+            } else {
+                ConversationReadOverrides.clearManualUnread(conversationId.rawValue)
+            }
+            updateConversation(conversationId.rawValue) { entry in
+                entry.updating(unread: wasUnread, lastReadAt: previousLastReadAt)
+            }
+            NSLog("📱 ConversationsViewModel: Failed to mark read: \(error)")
+        }
+    }
+
+    func markUnread(_ conversation: ConvexConversation) async {
+        guard let teamId else { return }
+        let conversationId = conversation._id
+        let wasUnread = conversation.unread
+        let previousLastReadAt = conversation.lastReadAt
+        let wasManualUnread = ConversationReadOverrides.isManualUnread(conversationId.rawValue)
+
+        ConversationReadOverrides.markManualUnread(conversationId.rawValue)
+        updateConversation(conversationId.rawValue) { entry in
+            entry.updating(unread: true, lastReadAt: 0)
+        }
+
+        do {
+            let args = ConversationReadsMarkUnreadArgs(
+                conversationId: conversationId,
+                teamSlugOrId: teamId
+            )
+            let _: ConversationReadsMarkUnreadReturn = try await convex.client.mutation(
+                "conversationReads:markUnread",
+                with: args.asDictionary()
+            )
+        } catch {
+            if wasManualUnread {
+                ConversationReadOverrides.markManualUnread(conversationId.rawValue)
+            } else {
+                ConversationReadOverrides.clearManualUnread(conversationId.rawValue)
+            }
+            updateConversation(conversationId.rawValue) { entry in
+                entry.updating(unread: wasUnread, lastReadAt: previousLastReadAt)
+            }
+            NSLog("📱 ConversationsViewModel: Failed to mark unread: \(error)")
+        }
+    }
+
     private func updateAppBadge() {
         let unreadCount = conversations.filter { $0.unread }.count
         if unreadCount == lastBadgeCount {
@@ -248,6 +408,63 @@ class ConversationsViewModel: ObservableObject {
         }
         lastBadgeCount = unreadCount
         UIApplication.shared.applicationIconBadgeNumber = unreadCount
+    }
+
+    private func updateConversation(
+        _ conversationId: String,
+        transform: (ConvexConversation) -> ConvexConversation
+    ) {
+        firstPage = firstPage.map { entry in
+            entry.id == conversationId ? transform(entry) : entry
+        }
+        extraConversations = extraConversations.map { entry in
+            entry.id == conversationId ? transform(entry) : entry
+        }
+        conversations = mergeConversations(firstPage: firstPage)
+        updateAppBadge()
+    }
+
+    private func removeConversation(_ conversationId: String) -> RemovedConversation? {
+        var removed: RemovedConversation?
+        if let index = firstPage.firstIndex(where: { $0.id == conversationId }) {
+            let entry = firstPage.remove(at: index)
+            removed = RemovedConversation(entry: entry, source: .firstPage, index: index)
+        }
+        if let index = extraConversations.firstIndex(where: { $0.id == conversationId }) {
+            let entry = extraConversations.remove(at: index)
+            if removed == nil {
+                removed = RemovedConversation(entry: entry, source: .extra, index: index)
+            }
+        }
+        conversations = mergeConversations(firstPage: firstPage)
+        updateAppBadge()
+        return removed
+    }
+
+    private func restoreConversation(_ removed: RemovedConversation) {
+        let conversationId = removed.entry.id
+        switch removed.source {
+        case .firstPage:
+            if firstPage.contains(where: { $0.id == conversationId }) {
+                return
+            }
+            if removed.index <= firstPage.count {
+                firstPage.insert(removed.entry, at: removed.index)
+            } else {
+                firstPage.append(removed.entry)
+            }
+        case .extra:
+            if extraConversations.contains(where: { $0.id == conversationId }) {
+                return
+            }
+            if removed.index <= extraConversations.count {
+                extraConversations.insert(removed.entry, at: removed.index)
+            } else {
+                extraConversations.append(removed.entry)
+            }
+        }
+        conversations = mergeConversations(firstPage: firstPage)
+        updateAppBadge()
     }
 
     private func getFirstTeamId() async -> String? {

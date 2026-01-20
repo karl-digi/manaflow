@@ -77,6 +77,56 @@ extension ConversationsListPagedWithLatestReturnPageItem {
     }
 }
 
+extension ConversationsListPagedWithLatestReturnPageItemConversation {
+    func updating(pinned: Bool? = nil, isArchived: Bool? = nil) -> Self {
+        ConversationsListPagedWithLatestReturnPageItemConversation(
+            _id: _id,
+            _creationTime: _creationTime,
+            userId: userId,
+            isArchived: isArchived ?? self.isArchived,
+            pinned: pinned ?? self.pinned,
+            sandboxInstanceId: sandboxInstanceId,
+            title: title,
+            clientConversationId: clientConversationId,
+            modelId: modelId,
+            permissionMode: permissionMode,
+            stopReason: stopReason,
+            namespaceId: namespaceId,
+            isolationMode: isolationMode,
+            modes: modes,
+            agentInfo: agentInfo,
+            acpSandboxId: acpSandboxId,
+            initializedOnSandbox: initializedOnSandbox,
+            lastMessageAt: lastMessageAt,
+            lastAssistantVisibleAt: lastAssistantVisibleAt,
+            teamId: teamId,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            status: status,
+            sessionId: sessionId,
+            providerId: providerId,
+            cwd: cwd
+        )
+    }
+}
+
+extension ConversationsListPagedWithLatestReturnPageItem {
+    func updating(
+        conversation: ConversationsListPagedWithLatestReturnPageItemConversation? = nil,
+        unread: Bool? = nil,
+        lastReadAt: Double? = nil
+    ) -> Self {
+        ConversationsListPagedWithLatestReturnPageItem(
+            conversation: conversation ?? self.conversation,
+            preview: preview,
+            unread: unread ?? self.unread,
+            lastReadAt: lastReadAt ?? self.lastReadAt,
+            latestMessageAt: latestMessageAt,
+            title: title
+        )
+    }
+}
+
 extension ConversationMessagesListByConversationReturnMessagesItem: Identifiable {
     var id: String { _id.rawValue }
 }

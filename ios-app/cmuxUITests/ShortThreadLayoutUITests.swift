@@ -12,6 +12,7 @@ final class ShortThreadLayoutUITests: XCTestCase {
     func testShortThreadSticksToTopWithoutLargeGaps() {
         let app = XCUIApplication()
         app.launchEnvironment["CMUX_DEBUG_AUTOFOCUS"] = "0"
+        app.launchEnvironment["CMUX_UITEST_MOCK_DATA"] = "1"
         app.launch()
 
         ensureSignedIn(app: app)

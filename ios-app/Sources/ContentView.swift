@@ -39,6 +39,7 @@ struct SettingsView: View {
     @StateObject private var authManager = AuthManager.shared
     #if DEBUG
     @AppStorage(DebugSettingsKeys.showChatOverlays) private var showChatOverlays = false
+    @AppStorage(DebugSettingsKeys.showChatInputTuning) private var showChatInputTuning = false
     #endif
 
     var body: some View {
@@ -74,6 +75,7 @@ struct SettingsView: View {
 
                 Section("Debug") {
                     Toggle("Show chat debug overlays", isOn: $showChatOverlays)
+                    Toggle("Show input tuning panel", isOn: $showChatInputTuning)
                     NavigationLink("Chat Keyboard Approaches") {
                         ChatDebugMenu()
                     }

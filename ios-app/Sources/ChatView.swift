@@ -117,10 +117,11 @@ struct MessageInputBar: View {
     var isFocused: FocusState<Bool>.Binding
     let onSend: () -> Void
     private let inputHeight: CGFloat = 42
+    private let maxInputHeight: CGFloat = 120
 
     var body: some View {
         GlassEffectContainer {
-            HStack(spacing: 12) {
+            HStack(alignment: .bottom, spacing: 12) {
                 // Plus button with glass circle
                 Button {} label: {
                     Image(systemName: "plus")
@@ -133,9 +134,9 @@ struct MessageInputBar: View {
                 .glassEffect(.regular.interactive(), in: .circle)
 
                 // Text field with glass capsule
-                HStack(spacing: 8) {
+                HStack(alignment: .bottom, spacing: 8) {
                     TextField("iMessage", text: $text, axis: .vertical)
-                        .lineLimit(1...5)
+                        .lineLimit(1...4)
                         .focused(isFocused)
 
                     // Fixed size container to prevent layout shift
@@ -155,7 +156,7 @@ struct MessageInputBar: View {
                     .frame(width: 32, height: 32)
                 }
                 .padding(.horizontal, 16)
-                .frame(height: inputHeight)
+                .frame(minHeight: inputHeight, maxHeight: maxInputHeight, alignment: .bottom)
                 .glassEffect(.regular.interactive(), in: .capsule)
                 .contentShape(Rectangle())
                 .onTapGesture {

@@ -13,10 +13,12 @@
 		2283F03332355B2A6F811710 /* ChatApproachI_Fix1Default.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E3A23AD3BA4B17B7605CCBC /* ChatApproachI_Fix1Default.swift */; };
 		24D8752AB97DB126660D8F81 /* ConvexTestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6A61F42F94D17993038F637 /* ConvexTestView.swift */; };
 		2CE5BEC0FE0F92E3F298C570 /* StackAuthClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DEEADB25149C285A0422125 /* StackAuthClient.swift */; };
+		2EAEA1238FB4E804F35A28F6 /* MultilineInputUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6673EB0D4EAD00E8605146E /* MultilineInputUITests.swift */; };
 		35DD00750B94902B2CF0CDF6 /* ShortThreadLayoutUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F680356269E010CC8DDF11B /* ShortThreadLayoutUITests.swift */; };
 		361B05C412BFA1E44BDCAD39 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9BA577D046F9E3C331F4986 /* Models.swift */; };
 		3A6FD7E27F3723EF627744A9 /* StackAuthProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF2848CBEF6B2A130DF4C9D2 /* StackAuthProvider.swift */; };
 		3D80A48D3964369CC4BAB7DB /* LocalConfig.plist in Resources */ = {isa = PBXBuildFile; fileRef = 1946CEF6B86E10F327352AE4 /* LocalConfig.plist */; };
+		546B55F43E170A912E2EC394 /* UITestMockData.swift in Sources */ = {isa = PBXBuildFile; fileRef = B79B9D0409D6912DC37DC5B0 /* UITestMockData.swift */; };
 		5479917679421FDD8C3C2995 /* ChatFix4_ScrollViewDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2371E50D0E3E362104DE9177 /* ChatFix4_ScrollViewDelegate.swift */; };
 		6A5960808C1C40C3C1DEEA2E /* ChatFix5_ReducePadding.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C74190A1F266AB5E2C38455 /* ChatFix5_ReducePadding.swift */; };
 		6ED3832765AAB169F7254054 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B8CDE2F6CDCAB37E3107C76 /* ContentView.swift */; };
@@ -32,6 +34,7 @@
 		8DF015A1566E9F288F30C460 /* DebugSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAECD9944A3CB4779597B8A3 /* DebugSettings.swift */; };
 		8FB1CB1D89D93D703FFE61BA /* ChatFix3_AdjustedContentInset.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B4E7CFD0EE433DFB9F348A0 /* ChatFix3_AdjustedContentInset.swift */; };
 		9A0A85BFEEC1B1AE2E063847 /* ConversationsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5B2D4A0933DB97461CCAB77 /* ConversationsViewModel.swift */; };
+		C335C06261DCD7CA24B1D003 /* UITestConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EFD4970FE1D3699CBDB7029 /* UITestConfig.swift */; };
 		C9E3B69A93DD87E682311505 /* SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88ED9D7168B6FC097B490637 /* SignInView.swift */; };
 		CC62BB48ED0957484E001EFB /* ConversationE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4D3B3CB64500DDB27D7C781 /* ConversationE2ETests.swift */; };
 		D593A476423097F95F227570 /* ChatFix2_InputBarHeightOnly.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1AB960D917D344F2BB227AC /* ChatFix2_InputBarHeightOnly.swift */; };
@@ -39,6 +42,7 @@
 		DCEF7D27D2624C7E3F7B4E14 /* ChatDebugMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80C3A9D5662A04DE39FD3844 /* ChatDebugMenu.swift */; };
 		E3FA94BC78BB51AAFD61D055 /* ConvexMobile in Frameworks */ = {isa = PBXBuildFile; productRef = 4C0C333BDE07456C757877E2 /* ConvexMobile */; };
 		E53E64DA59BFCB7E396E0865 /* AuthPersistenceUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7D3C06944393B0EE29C331C /* AuthPersistenceUITests.swift */; };
+		E573D865E627EE8A10F0599A /* ConversationReadOverrides.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D62642C09CEB3EB28FD2733 /* ConversationReadOverrides.swift */; };
 		E9D2BFC8E39842DB720CAD9D /* ConversationListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCD6DF60D6756BE09A1CFEE9 /* ConversationListView.swift */; };
 		EC388CAF55CB58BE5B5D2654 /* Environment.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8732D7AB61D4190BACAAB03 /* Environment.swift */; };
 		F024C0FD39B57208895F9153 /* ConvexClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6679E0C9833E77D4A4295D4C /* ConvexClient.swift */; };
@@ -69,6 +73,8 @@
 		38A50394379F40101C8A95FC /* ChatFix1_ContentInsetNever.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFix1_ContentInsetNever.swift; sourceTree = "<group>"; };
 		4296ACD1C15CC2E35AE162CC /* ChatFix1MainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFix1MainView.swift; sourceTree = "<group>"; };
 		46410B90D2F45E6882E585AD /* cmux.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = cmux.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		4EFD4970FE1D3699CBDB7029 /* UITestConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestConfig.swift; sourceTree = "<group>"; };
+		5D62642C09CEB3EB28FD2733 /* ConversationReadOverrides.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationReadOverrides.swift; sourceTree = "<group>"; };
 		6679E0C9833E77D4A4295D4C /* ConvexClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConvexClient.swift; sourceTree = "<group>"; };
 		72E20F7A729081D044495605 /* CMuxApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CMuxApp.swift; sourceTree = "<group>"; };
 		79D367AC3D322118AE559DBF /* AuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthManager.swift; sourceTree = "<group>"; };
@@ -80,8 +86,10 @@
 		9E4AC3E9289C53B42C020633 /* ChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModel.swift; sourceTree = "<group>"; };
 		9F680356269E010CC8DDF11B /* ShortThreadLayoutUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortThreadLayoutUITests.swift; sourceTree = "<group>"; };
 		A5B2D4A0933DB97461CCAB77 /* ConversationsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationsViewModel.swift; sourceTree = "<group>"; };
+		A6673EB0D4EAD00E8605146E /* MultilineInputUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultilineInputUITests.swift; sourceTree = "<group>"; };
 		AEA367B39118F09C4A8989FF /* ChatKeyboardContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatKeyboardContainer.swift; sourceTree = "<group>"; };
 		B005E08ACAAF83F6A13F9D8C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		B79B9D0409D6912DC37DC5B0 /* UITestMockData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestMockData.swift; sourceTree = "<group>"; };
 		B87CA70AD58D024077E85845 /* DebugInputBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugInputBar.swift; sourceTree = "<group>"; };
 		BCD6DF60D6756BE09A1CFEE9 /* ConversationListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationListView.swift; sourceTree = "<group>"; };
 		BF2848CBEF6B2A130DF4C9D2 /* StackAuthProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StackAuthProvider.swift; sourceTree = "<group>"; };
@@ -126,6 +134,7 @@
 				F7D3C06944393B0EE29C331C /* AuthPersistenceUITests.swift */,
 				D4D3B3CB64500DDB27D7C781 /* ConversationE2ETests.swift */,
 				C18818FD4536DFDC6D6FA1D5 /* KeyboardSyncUITests.swift */,
+				A6673EB0D4EAD00E8605146E /* MultilineInputUITests.swift */,
 				9F680356269E010CC8DDF11B /* ShortThreadLayoutUITests.swift */,
 			);
 			path = cmuxUITests;
@@ -166,6 +175,7 @@
 				D8732D7AB61D4190BACAAB03 /* Environment.swift */,
 				D01F9176DE666BAE97AA807B /* LocalConfig.example.plist */,
 				1946CEF6B86E10F327352AE4 /* LocalConfig.plist */,
+				4EFD4970FE1D3699CBDB7029 /* UITestConfig.swift */,
 			);
 			path = Config;
 			sourceTree = "<group>";
@@ -184,6 +194,7 @@
 				298CBAF0C277F506858D625E /* CodexOAuthView.swift */,
 				E6A61F42F94D17993038F637 /* ConvexTestView.swift */,
 				B87CA70AD58D024077E85845 /* DebugInputBar.swift */,
+				B79B9D0409D6912DC37DC5B0 /* UITestMockData.swift */,
 			);
 			path = Debug;
 			sourceTree = "<group>";
@@ -200,6 +211,7 @@
 		F58C4F0A497799570589D124 /* Convex */ = {
 			isa = PBXGroup;
 			children = (
+				5D62642C09CEB3EB28FD2733 /* ConversationReadOverrides.swift */,
 				6679E0C9833E77D4A4295D4C /* ConvexClient.swift */,
 				D59F90F1B493E1462D1AD361 /* ConvexGeneratedTypes.swift */,
 			);
@@ -345,6 +357,7 @@
 				7BCA02347A773584F73D8374 /* CodexOAuthView.swift in Sources */,
 				6ED3832765AAB169F7254054 /* ContentView.swift in Sources */,
 				E9D2BFC8E39842DB720CAD9D /* ConversationListView.swift in Sources */,
+				E573D865E627EE8A10F0599A /* ConversationReadOverrides.swift in Sources */,
 				9A0A85BFEEC1B1AE2E063847 /* ConversationsViewModel.swift in Sources */,
 				FA5C9FC319F208F785750A51 /* ConvexApiTypes.swift in Sources */,
 				F024C0FD39B57208895F9153 /* ConvexClient.swift in Sources */,
@@ -357,6 +370,8 @@
 				C9E3B69A93DD87E682311505 /* SignInView.swift in Sources */,
 				2CE5BEC0FE0F92E3F298C570 /* StackAuthClient.swift in Sources */,
 				3A6FD7E27F3723EF627744A9 /* StackAuthProvider.swift in Sources */,
+				C335C06261DCD7CA24B1D003 /* UITestConfig.swift in Sources */,
+				546B55F43E170A912E2EC394 /* UITestMockData.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -367,6 +382,7 @@
 				E53E64DA59BFCB7E396E0865 /* AuthPersistenceUITests.swift in Sources */,
 				CC62BB48ED0957484E001EFB /* ConversationE2ETests.swift in Sources */,
 				1AB68DA70F76F585B6332F68 /* KeyboardSyncUITests.swift in Sources */,
+				2EAEA1238FB4E804F35A28F6 /* MultilineInputUITests.swift in Sources */,
 				35DD00750B94902B2CF0CDF6 /* ShortThreadLayoutUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

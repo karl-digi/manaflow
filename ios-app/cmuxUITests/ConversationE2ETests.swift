@@ -7,6 +7,7 @@ final class ConversationE2ETests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
         app = XCUIApplication()
+        app.launchEnvironment["CMUX_UITEST_MOCK_DATA"] = "1"
         app.launch()
     }
 

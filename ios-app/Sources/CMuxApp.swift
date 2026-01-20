@@ -1,9 +1,15 @@
 import SwiftUI
 import Sentry
+import UIKit
 
 @main
 struct CMuxApp: App {
     init() {
+        #if DEBUG
+        if UITestConfig.mockDataEnabled {
+            UIView.setAnimationsEnabled(false)
+        }
+        #endif
         SentrySDK.start { options in
             options.dsn = "https://834d19a3077c4adbff534dca1e93de4f@o4507547940749312.ingest.us.sentry.io/4510604800491520"
             options.debug = false

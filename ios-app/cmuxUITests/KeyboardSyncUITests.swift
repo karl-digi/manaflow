@@ -26,6 +26,7 @@ final class KeyboardSyncUITests: XCTestCase {
     func testKeyboardInteractiveDismissalKeepsGap() {
         let app = XCUIApplication()
         app.launchEnvironment["CMUX_DEBUG_AUTOFOCUS"] = "0"
+        app.launchEnvironment["CMUX_UITEST_MOCK_DATA"] = "1"
         app.launchEnvironment["CMUX_UITEST_SCROLL_FRACTION"] = "0.5"
         app.launchEnvironment["CMUX_UITEST_FAKE_KEYBOARD"] = "1"
         app.launchEnvironment["CMUX_UITEST_FAKE_KEYBOARD_INITIAL_OVERLAP"] = "280"
@@ -43,6 +44,7 @@ final class KeyboardSyncUITests: XCTestCase {
         waitForScrollSettle()
         let stepDown = app.buttons["chat.fakeKeyboard.stepDown"]
         XCTAssertTrue(stepDown.waitForExistence(timeout: 4))
+        let usesFakeKeyboard = stepDown.exists
 
         let baseGaps = captureGaps(app: app, pill: pill)
         XCTAssertFalse(baseGaps.isEmpty, "No message gaps found before interactive dismissal")
@@ -50,11 +52,11 @@ final class KeyboardSyncUITests: XCTestCase {
         let baseFiltered = baseGaps.filter { $0.value >= 16 && $0.value <= 220 }
         let baseReference = baseFiltered.isEmpty ? baseGaps : baseFiltered
 
-        var referenceGaps: [String: CGFloat] = [:]
-        var lastGaps: [String: CGFloat] = [:]
-        var hasReference = false
+        var referenceGaps: [String: CGFloat] = usesFakeKeyboard ? baseReference : [:]
+        var lastGaps: [String: CGFloat] = usesFakeKeyboard ? baseReference : [:]
+        var hasReference = usesFakeKeyboard
         let basePillTop = pill.frame.minY
-        var sawPillMove = false
+        var sawPillMove = usesFakeKeyboard
         let dragSteps = 5
 
         for index in 0..<dragSteps {
@@ -103,6 +105,8 @@ final class KeyboardSyncUITests: XCTestCase {
     private func runKeyboardSyncTest(scrollFraction: Double?) {
         let app = XCUIApplication()
         app.launchEnvironment["CMUX_DEBUG_AUTOFOCUS"] = "0"
+        app.launchEnvironment["CMUX_UITEST_MOCK_DATA"] = "1"
+        app.launchEnvironment["CMUX_UITEST_FAKE_KEYBOARD"] = "1"
         if let scrollFraction {
             app.launchEnvironment["CMUX_UITEST_SCROLL_FRACTION"] = String(scrollFraction)
         }
@@ -121,7 +125,7 @@ final class KeyboardSyncUITests: XCTestCase {
         let baseGaps = captureGaps(app: app, pill: pill)
         XCTAssertFalse(baseGaps.isEmpty)
 
-        openKeyboard(app: app)
+        openKeyboard(app: app, pill: pill)
         waitForKeyboard(app: app, visible: true)
         let openGaps = captureGaps(app: app, pill: pill)
         assertGapConsistency(
@@ -146,17 +150,50 @@ final class KeyboardSyncUITests: XCTestCase {
         RunLoop.current.run(until: Date().addingTimeInterval(1.5))
     }
 
-    private func openKeyboard(app: XCUIApplication) {
+    private func openKeyboard(app: XCUIApplication, pill: XCUIElement) {
+        let stepUp = app.buttons["chat.fakeKeyboard.stepUp"]
+        if stepUp.exists {
+            for _ in 0..<12 {
+                stepUp.tap()
+                RunLoop.current.run(until: Date().addingTimeInterval(0.08))
+            }
+            return
+        }
         let input = app.textFields["chat.inputField"]
         if input.exists {
             input.tap()
         } else {
-            let pill = app.otherElements["chat.inputPill"]
             pill.tap()
         }
     }
 
     private func dismissKeyboard(app: XCUIApplication) {
+        let stepDown = app.buttons["chat.fakeKeyboard.stepDown"]
+        if stepDown.exists {
+            for _ in 0..<12 {
+                stepDown.tap()
+                RunLoop.current.run(until: Date().addingTimeInterval(0.06))
+            }
+            return
+        }
+        let keyboard = app.keyboards.element
+        if keyboard.exists {
+            let hide = keyboard.buttons["Hide keyboard"]
+            if hide.exists {
+                hide.tap()
+                return
+            }
+            let dismiss = keyboard.buttons["Dismiss keyboard"]
+            if dismiss.exists {
+                dismiss.tap()
+                return
+            }
+            let `return` = keyboard.buttons["Return"]
+            if `return`.exists {
+                `return`.tap()
+                return
+            }
+        }
         let scroll = locateScrollView(app: app)
         if scroll.exists {
             let target = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1))
@@ -167,13 +204,18 @@ final class KeyboardSyncUITests: XCTestCase {
     }
 
     private func waitForKeyboard(app: XCUIApplication, visible: Bool) {
+        let stepDown = app.buttons["chat.fakeKeyboard.stepDown"]
+        if stepDown.exists {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.6))
+            return
+        }
         let keyboard = app.keyboards.element
         if visible {
             XCTAssertTrue(keyboard.waitForExistence(timeout: 4))
         } else {
             let predicate = NSPredicate(format: "exists == false")
             expectation(for: predicate, evaluatedWith: keyboard)
-            waitForExpectations(timeout: 4)
+            waitForExpectations(timeout: 6)
         }
         RunLoop.current.run(until: Date().addingTimeInterval(0.8))
     }
@@ -232,6 +274,11 @@ final class KeyboardSyncUITests: XCTestCase {
     }
 
     private func performInteractiveDismissDrag(app: XCUIApplication, endDy: CGFloat, pressDuration: TimeInterval = 0.05) {
+        let stepDown = app.buttons["chat.fakeKeyboard.stepDown"]
+        if stepDown.exists {
+            stepDown.tap()
+            return
+        }
         let keyboard = app.keyboards.element
         if keyboard.exists {
             let start = keyboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1))

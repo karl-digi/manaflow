@@ -183,23 +183,39 @@ struct ConversationListView: View {
                 }
                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                     Button(role: .destructive) {
-                        // TODO: Delete conversation via Convex
+                        Task {
+                            await viewModel.deleteConversation(conversation)
+                        }
                     } label: {
                         Label("Delete", systemImage: "trash")
                     }
 
                     Button {
-                        // Pin action
+                        Task {
+                            await viewModel.togglePin(conversation)
+                        }
                     } label: {
-                        Label("Pin", systemImage: "pin")
+                        Label(
+                            conversation.conversation.pinned == true ? "Unpin" : "Pin",
+                            systemImage: conversation.conversation.pinned == true ? "pin.slash" : "pin"
+                        )
                     }
                     .tint(.orange)
                 }
                 .swipeActions(edge: .leading) {
                     Button {
-                        // Mark as unread
+                        Task {
+                            if conversation.unread {
+                                await viewModel.markRead(conversation)
+                            } else {
+                                await viewModel.markUnread(conversation)
+                            }
+                        }
                     } label: {
-                        Label("Unread", systemImage: "message.badge")
+                        Label(
+                            conversation.unread ? "Read" : "Unread",
+                            systemImage: conversation.unread ? "message" : "message.badge"
+                        )
                     }
                     .tint(.blue)
                 }

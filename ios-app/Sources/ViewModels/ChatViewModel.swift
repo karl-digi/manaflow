@@ -15,6 +15,7 @@ class ChatViewModel: ObservableObject {
     let conversationId: String
     private var teamId: String?
     private var lastMarkedAt: Double?
+    private var isMarkingRead = false
     private var isViewVisible = false
     private var isAppActive = true
 
@@ -47,6 +48,7 @@ class ChatViewModel: ObservableObject {
         do {
             // Call acp:sendMessage action
             let sendArgs = AcpSendMessageArgs(
+                clientMessageId: nil,
                 content: [contentItem],
                 conversationId: ConvexId(rawValue: conversationId)
             )
@@ -62,6 +64,12 @@ class ChatViewModel: ObservableObject {
     }
 
     func loadMessages() async {
+        if UITestConfig.mockDataEnabled {
+            messages = UITestMockData.messages(for: conversationId)
+            isLoading = false
+            error = nil
+            return
+        }
         // Wait for auth with retry loop (up to 30 seconds)
         var attempts = 0
         while !convex.isAuthenticated && attempts < 30 {
@@ -175,9 +183,22 @@ class ChatViewModel: ObservableObject {
         if let lastMarkedAt, latest <= lastMarkedAt {
             return
         }
+        if isMarkingRead {
+            return
+        }
 
-        lastMarkedAt = latest
-        Task {
+        Task { @MainActor in
+            if isMarkingRead {
+                return
+            }
+            isMarkingRead = true
+            defer { isMarkingRead = false }
+            if ConversationReadOverrides.isManualUnread(conversationId) {
+                return
+            }
+            if let lastMarkedAt, latest <= lastMarkedAt {
+                return
+            }
             do {
                 let args = ConversationReadsMarkReadArgs(
                     lastReadAt: latest,
@@ -188,6 +209,7 @@ class ChatViewModel: ObservableObject {
                     "conversationReads:markRead",
                     with: args.asDictionary()
                 )
+                lastMarkedAt = latest
                 NSLog("📱 ChatViewModel: Marked read at \(latest)")
             } catch {
                 NSLog("📱 ChatViewModel: Failed to mark read: \(error)")

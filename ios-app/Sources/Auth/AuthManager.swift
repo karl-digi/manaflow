@@ -24,6 +24,16 @@ class AuthManager: ObservableObject {
     // MARK: - Session Management
 
     private func primeSessionState() {
+        if UITestConfig.mockDataEnabled {
+            self.currentUser = StackAuthClient.User(
+                id: "uitest_user",
+                primary_email: "uitest@cmux.local",
+                display_name: "UI Test"
+            )
+            self.isAuthenticated = true
+            self.isRestoringSession = false
+            return
+        }
         #if DEBUG
         if ProcessInfo.processInfo.environment["CMUX_UITEST_CLEAR_AUTH"] == "1" {
             keychain.delete("access_token")
@@ -51,6 +61,9 @@ class AuthManager: ObservableObject {
     }
 
     private func checkExistingSession() async {
+        if UITestConfig.mockDataEnabled {
+            return
+        }
         let hasRefresh = keychain.get("refresh_token")
         let hasAccess = keychain.get("access_token")
         print("🔐 Checking session - refresh: \(hasRefresh != nil), access: \(hasAccess != nil)")

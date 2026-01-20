@@ -11,6 +11,15 @@ struct ChatFix1MainView: View {
     let providerId: String
     private let topShimHeight: CGFloat
     @SwiftUI.Environment(\.scenePhase) private var scenePhase
+    @AppStorage(DebugSettingsKeys.showChatInputTuning) private var showTuningPanel = false
+    @AppStorage("debug.input.bottomInsetSingleExtra") private var bottomInsetSingleExtra: Double = 0
+    @AppStorage("debug.input.bottomInsetMultiExtra") private var bottomInsetMultiExtra: Double = 4
+    @AppStorage("debug.input.topInsetMultiExtra") private var topInsetMultiExtra: Double = 4
+    @AppStorage("debug.input.placeholderOffset") private var placeholderOffset: Double = 2
+    @AppStorage("debug.input.micOffset") private var micOffset: Double = -12
+    @AppStorage("debug.input.sendOffset") private var sendOffset: Double = -4
+    @AppStorage("debug.input.sendXOffset") private var sendXOffset: Double = 1
+    @AppStorage("debug.input.isMultiline") private var isMultilineFlag = false
 
     init(conversationId: String, providerId: String) {
         self.conversationId = conversationId
@@ -45,6 +54,23 @@ struct ChatFix1MainView: View {
             Color.clear
                 .frame(height: topShimHeight)
                 .accessibilityHidden(true)
+            if showTuningPanel {
+                ChatInputTuningPanel(
+                    bottomInsetSingleExtra: $bottomInsetSingleExtra,
+                    bottomInsetMultiExtra: $bottomInsetMultiExtra,
+                    topInsetMultiExtra: $topInsetMultiExtra,
+                    placeholderOffset: $placeholderOffset,
+                    micOffset: $micOffset,
+                    sendOffset: $sendOffset,
+                    sendXOffset: $sendXOffset,
+                    isMultiline: isMultilineFlag,
+                    showPanel: $showTuningPanel
+                )
+                .padding(.top, 152)
+                .padding(.trailing, 16)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                .zIndex(2)
+            }
         }
         .background(Color.clear)
         .ignoresSafeArea()
@@ -71,6 +97,89 @@ struct ChatFix1MainView: View {
                 status: .delivered
             )
         }
+    }
+}
+
+private struct ChatInputTuningPanel: View {
+    @Binding var bottomInsetSingleExtra: Double
+    @Binding var bottomInsetMultiExtra: Double
+    @Binding var topInsetMultiExtra: Double
+    @Binding var placeholderOffset: Double
+    @Binding var micOffset: Double
+    @Binding var sendOffset: Double
+    @Binding var sendXOffset: Double
+    let isMultiline: Bool
+    @Binding var showPanel: Bool
+    @State private var copied = false
+
+    private var summaryText: String {
+        "bottomInsetSingleExtra=\(format(bottomInsetSingleExtra)), bottomInsetMultiExtra=\(format(bottomInsetMultiExtra)), topInsetMultiExtra=\(format(topInsetMultiExtra)), placeholderOffset=\(format(placeholderOffset)), micOffset=\(format(micOffset)), sendOffset=\(format(sendOffset)), sendXOffset=\(format(sendXOffset))"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Input tuning")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            tuningRow(label: "Bottom (1 line)", value: $bottomInsetSingleExtra, range: -6...20, step: 1)
+            tuningRow(label: "Bottom (multi)", value: $bottomInsetMultiExtra, range: -6...20, step: 1)
+            if isMultiline {
+                tuningRow(label: "Top (multi)", value: $topInsetMultiExtra, range: -6...20, step: 1)
+            }
+            tuningRow(label: "Placeholder Y", value: $placeholderOffset, range: -6...12, step: 1)
+            tuningRow(label: "Mic Y", value: $micOffset, range: -12...12, step: 1)
+            tuningRow(label: "Send Y", value: $sendOffset, range: -12...12, step: 1)
+            tuningRow(label: "Send X", value: $sendXOffset, range: -20...20, step: 1)
+            HStack(spacing: 8) {
+                Text(summaryText)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+                Button(copied ? "Copied" : "Copy") {
+                    UIPasteboard.general.string = summaryText
+                    copied = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                        copied = false
+                    }
+                }
+                .buttonStyle(.bordered)
+                .font(.caption2)
+                Button("Hide") {
+                    showPanel = false
+                }
+                .buttonStyle(.bordered)
+                .font(.caption2)
+            }
+        }
+        .padding(8)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.black.opacity(0.1), lineWidth: 1)
+        )
+        .frame(maxWidth: 260)
+    }
+
+    private func tuningRow(
+        label: String,
+        value: Binding<Double>,
+        range: ClosedRange<Double>,
+        step: Double
+    ) -> some View {
+        HStack(spacing: 8) {
+            Text(label)
+                .font(.caption2)
+                .frame(width: 90, alignment: .leading)
+            Stepper(value: value, in: range, step: step) {
+                Text(format(value.wrappedValue))
+                    .font(.caption2)
+                    .frame(width: 36, alignment: .trailing)
+            }
+        }
+    }
+
+    private func format(_ value: Double) -> String {
+        String(format: "%.0f", value)
     }
 }
 
@@ -1521,18 +1630,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     }
 
     private func computedPillFrameInView() -> CGRect {
-        let viewHeight = inputBarVC.view.bounds.height
-        guard viewHeight > 0 else { return .zero }
-        let contentTopInset = inputBarVC.contentTopInset
-        let contentBottomInset = inputBarVC.contentBottomInset
-        let expectedHeight = contentTopInset + contentBottomInset + DebugInputBarMetrics.inputHeight
-        let extra = max(0, viewHeight - expectedHeight)
-        let offset = extra / 2
-        let topLimit = contentTopInset + offset
-        let bottomLimit = max(topLimit, viewHeight - contentBottomInset - offset)
-        let availableHeight = max(0, bottomLimit - topLimit)
-        let height = min(DebugInputBarMetrics.inputHeight, availableHeight)
-        return CGRect(x: 0, y: topLimit, width: inputBarVC.view.bounds.width, height: height)
+        inputBarVC.pillFrameInView
     }
 
     private func maybeScrollToBottomIfNeeded() {
