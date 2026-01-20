@@ -1958,26 +1958,10 @@ update_registry = TaskRegistry()  # Subset of tasks for --update mode
 
 # Shell helper to wait for apt/dpkg lock before running apt commands.
 # This prevents race conditions when multiple tasks try to use apt concurrently.
+# Uses apt-get options to wait for locks instead of fuser (which may not be installed).
 APT_WAIT_LOCK_HELPER = """
-wait_for_apt_lock() {
-    local max_wait=${1:-120}
-    local waited=0
-    echo "[apt] Waiting for dpkg/apt lock (max ${max_wait}s)..."
-    while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || \
-          fuser /var/lib/apt/lists/lock >/dev/null 2>&1 || \
-          fuser /var/cache/apt/archives/lock >/dev/null 2>&1; do
-        if [ "$waited" -ge "$max_wait" ]; then
-            echo "[apt] Timeout waiting for apt lock after ${max_wait}s" >&2
-            return 1
-        fi
-        sleep 2
-        waited=$((waited + 2))
-    done
-    if [ "$waited" -gt 0 ]; then
-        echo "[apt] Lock acquired after ${waited}s"
-    fi
-    return 0
-}
+# Configure apt to wait for locks instead of failing immediately
+export APT_LOCK_WAIT_OPTS="-o DPkg::Lock::Timeout=120"
 """
 
 
@@ -2079,12 +2063,10 @@ async def task_ensure_docker(ctx: PveTaskContext) -> None:
         """
         set -euo pipefail
 
-        # Wait for any existing apt/dpkg processes to release the lock
-        wait_for_apt_lock 120
-
         echo "[docker] ensuring Docker APT repository"
-        DEBIAN_FRONTEND=noninteractive apt-get update
-        DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl
+        # Use DPkg::Lock::Timeout to wait for locks instead of failing immediately
+        DEBIAN_FRONTEND=noninteractive apt-get $APT_LOCK_WAIT_OPTS update
+        DEBIAN_FRONTEND=noninteractive apt-get $APT_LOCK_WAIT_OPTS install -y ca-certificates curl
         os_release="/etc/os-release"
         if [ ! -f "$os_release" ]; then
           echo "Missing /etc/os-release; unable to determine distribution" >&2
@@ -2115,7 +2097,7 @@ async def task_ensure_docker(ctx: PveTaskContext) -> None:
         echo "[docker] installing engine and CLI plugins"
         # Retry apt-get update up to 3 times
         for i in 1 2 3; do
-          DEBIAN_FRONTEND=noninteractive apt-get update && break || {
+          DEBIAN_FRONTEND=noninteractive apt-get $APT_LOCK_WAIT_OPTS update && break || {
             if [ $i -eq 3 ]; then
               echo "apt-get update failed after 3 attempts" >&2
               exit 1
@@ -2124,7 +2106,7 @@ async def task_ensure_docker(ctx: PveTaskContext) -> None:
             sleep 5
           }
         done
-        DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        DEBIAN_FRONTEND=noninteractive apt-get $APT_LOCK_WAIT_OPTS install -y \
           docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
         systemctl enable docker.service || true
@@ -2376,10 +2358,9 @@ async def task_install_uv_python(ctx: PveTaskContext) -> None:
     cmd = APT_WAIT_LOCK_HELPER + textwrap.dedent(
         """
         set -eux
-        # Wait for any existing apt/dpkg processes to release the lock
-        wait_for_apt_lock 120
-        DEBIAN_FRONTEND=noninteractive apt-get update
-        DEBIAN_FRONTEND=noninteractive apt-get install -y python3-pip
+        # Use DPkg::Lock::Timeout to wait for locks instead of failing immediately
+        DEBIAN_FRONTEND=noninteractive apt-get $APT_LOCK_WAIT_OPTS update
+        DEBIAN_FRONTEND=noninteractive apt-get $APT_LOCK_WAIT_OPTS install -y python3-pip
         python3 -m pip install --break-system-packages uv
         export PATH="${HOME}/.local/bin:/usr/local/cargo/bin:${PATH}"
         uv python install --default
