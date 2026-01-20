@@ -7,6 +7,7 @@ Provides streaming command execution over HTTP as an alternative to SSH.
 from __future__ import annotations
 
 import asyncio
+import http.client
 import json
 import shlex
 import ssl
@@ -224,6 +225,11 @@ class HttpExecClient:
                 else:
                     stderr_parts.append(f"unknown event type: {line}")
                     self._console.info(f"[{label}][stderr] unknown event: {line}")
+        except (ConnectionResetError, BrokenPipeError, http.client.IncompleteRead) as exc:
+            # Connection dropped during streaming response
+            stderr_parts.append(f"connection error during exec: {exc}")
+            self._console.info(f"[{label}][stderr] connection error: {exc}")
+            exit_code = 125
         finally:
             response.close()
 
