@@ -12,6 +12,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Maximize2,
+  Play,
   RotateCcw,
   X,
   ZoomIn,
@@ -87,6 +88,10 @@ const getImageKey = (
   image: ScreenshotImage,
   indexInSet: number,
 ) => `${setId}:${image.storageId}:${indexInSet}`;
+
+function isVideoMimeType(mimeType: string): boolean {
+  return mimeType.startsWith("video/");
+}
 
 export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
   const { screenshotSets } = props;
@@ -461,10 +466,10 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                   <div className="space-y-1">
                     <Dialog.Title className="text-base font-semibold text-neutral-900 dark:text-neutral-100">
                       {activeOverallIndex !== null ? `${activeOverallIndex}. ` : ""}
-                      {currentEntry.image.fileName ?? "Screenshot"}
+                      {currentEntry.image.fileName ?? (isVideoMimeType(currentEntry.image.mimeType) ? "Recording" : "Screenshot")}
                     </Dialog.Title>
                     <Dialog.Description className="text-xs text-neutral-600 dark:text-neutral-400">
-                      Image {currentEntry.indexInSet + 1} of {currentEntry.set.images.length}
+                      {isVideoMimeType(currentEntry.image.mimeType) ? "Video" : "Image"} {currentEntry.indexInSet + 1} of {currentEntry.set.images.length}
                       <span className="px-1 text-neutral-400 dark:text-neutral-600">•</span>
                       {formatDistanceToNow(new Date(currentEntry.set.capturedAt), {
                         addSuffix: true,
@@ -472,38 +477,40 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                     </Dialog.Description>
                   </div>
                   <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-1 rounded-full border border-neutral-200 bg-white/90 px-2 py-1 text-xs font-medium text-neutral-600 shadow-sm dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-200">
-                      <button
-                        type="button"
-                        onClick={handleZoomOut}
-                        disabled={!canZoomOut}
-                        className="rounded-full p-1 transition disabled:opacity-40 hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400/70 dark:focus-visible:ring-neutral-500/70 dark:hover:bg-neutral-800/80"
-                        aria-label="Zoom out"
-                      >
-                        <ZoomOut className="h-3.5 w-3.5" />
-                      </button>
-                      <span className="min-w-[3rem] text-center tabular-nums">
-                        {zoomPercent}%
-                      </span>
-                      <button
-                        type="button"
-                        onClick={handleZoomIn}
-                        disabled={!canZoomIn}
-                        className="rounded-full p-1 transition disabled:opacity-40 hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400/70 dark:focus-visible:ring-neutral-500/70 dark:hover:bg-neutral-800/80"
-                        aria-label="Zoom in"
-                      >
-                        <ZoomIn className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => resetZoomState()}
-                        disabled={!canResetZoom}
-                        className="rounded-full p-1 transition disabled:opacity-40 hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400/70 dark:focus-visible:ring-neutral-500/70 dark:hover:bg-neutral-800/80"
-                        aria-label="Reset zoom"
-                      >
-                        <RotateCcw className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
+                    {!isVideoMimeType(currentEntry.image.mimeType) && (
+                      <div className="flex items-center gap-1 rounded-full border border-neutral-200 bg-white/90 px-2 py-1 text-xs font-medium text-neutral-600 shadow-sm dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-200">
+                        <button
+                          type="button"
+                          onClick={handleZoomOut}
+                          disabled={!canZoomOut}
+                          className="rounded-full p-1 transition disabled:opacity-40 hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400/70 dark:focus-visible:ring-neutral-500/70 dark:hover:bg-neutral-800/80"
+                          aria-label="Zoom out"
+                        >
+                          <ZoomOut className="h-3.5 w-3.5" />
+                        </button>
+                        <span className="min-w-[3rem] text-center tabular-nums">
+                          {zoomPercent}%
+                        </span>
+                        <button
+                          type="button"
+                          onClick={handleZoomIn}
+                          disabled={!canZoomIn}
+                          className="rounded-full p-1 transition disabled:opacity-40 hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400/70 dark:focus-visible:ring-neutral-500/70 dark:hover:bg-neutral-800/80"
+                          aria-label="Zoom in"
+                        >
+                          <ZoomIn className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => resetZoomState()}
+                          disabled={!canResetZoom}
+                          className="rounded-full p-1 transition disabled:opacity-40 hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400/70 dark:focus-visible:ring-neutral-500/70 dark:hover:bg-neutral-800/80"
+                          aria-label="Reset zoom"
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    )}
                     <Dialog.Close asChild>
                       <button
                         type="button"
@@ -531,32 +538,45 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                     ref={viewportRef}
                     className={cn(
                       "relative flex h-[70vh] max-h-[calc(100vh-10rem)] min-h-[360px] w-full flex-1 items-center justify-center overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900",
-                      zoom > 1
-                        ? isPanning
-                          ? "cursor-grabbing"
-                          : "cursor-grab"
-                        : "cursor-zoom-in",
+                      isVideoMimeType(currentEntry.image.mimeType)
+                        ? "cursor-default"
+                        : zoom > 1
+                          ? isPanning
+                            ? "cursor-grabbing"
+                            : "cursor-grab"
+                          : "cursor-zoom-in",
                     )}
-                    onWheel={handleWheel}
-                    onPointerDown={startPanning}
-                    onPointerMove={handlePointerMove}
-                    onPointerUp={handlePointerUp}
-                    onPointerLeave={handlePointerLeave}
-                    onPointerCancel={handlePointerCancel}
-                    onDoubleClick={() => resetZoomState()}
-                    style={{ touchAction: "none" }}
+                    onWheel={isVideoMimeType(currentEntry.image.mimeType) ? undefined : handleWheel}
+                    onPointerDown={isVideoMimeType(currentEntry.image.mimeType) ? undefined : startPanning}
+                    onPointerMove={isVideoMimeType(currentEntry.image.mimeType) ? undefined : handlePointerMove}
+                    onPointerUp={isVideoMimeType(currentEntry.image.mimeType) ? undefined : handlePointerUp}
+                    onPointerLeave={isVideoMimeType(currentEntry.image.mimeType) ? undefined : handlePointerLeave}
+                    onPointerCancel={isVideoMimeType(currentEntry.image.mimeType) ? undefined : handlePointerCancel}
+                    onDoubleClick={isVideoMimeType(currentEntry.image.mimeType) ? undefined : () => resetZoomState()}
+                    style={{ touchAction: isVideoMimeType(currentEntry.image.mimeType) ? "auto" : "none" }}
                   >
-                    <img
-                      src={currentEntry.image.url ?? undefined}
-                      alt={currentEntry.image.fileName ?? "Screenshot"}
-                      className="select-none h-full w-full object-contain"
-                      draggable={false}
-                      onLoad={handleImageLoad}
-                      style={{
-                        transform: `translate3d(${offset.x}px, ${offset.y}px, 0) scale(${zoom})`,
-                        transition: isPanning ? "none" : "transform 120ms ease-out",
-                      }}
-                    />
+                    {isVideoMimeType(currentEntry.image.mimeType) ? (
+                      <video
+                        src={currentEntry.image.url ?? undefined}
+                        className="select-none h-full w-full object-contain"
+                        controls
+                        autoPlay
+                        loop
+                        playsInline
+                      />
+                    ) : (
+                      <img
+                        src={currentEntry.image.url ?? undefined}
+                        alt={currentEntry.image.fileName ?? "Screenshot"}
+                        className="select-none h-full w-full object-contain"
+                        draggable={false}
+                        onLoad={handleImageLoad}
+                        style={{
+                          transform: `translate3d(${offset.x}px, ${offset.y}px, 0) scale(${zoom})`,
+                          transition: isPanning ? "none" : "transform 120ms ease-out",
+                        }}
+                      />
+                    )}
                   </div>
                   {showNavButtons ? (
                     <button
@@ -581,7 +601,8 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                       {flattenedImages.map((entry) => {
                         const isActiveThumb = entry.key === currentEntry?.key;
                         const label = entry.globalIndex + 1;
-                        const displayName = entry.image.fileName ?? "Screenshot";
+                        const isVideo = isVideoMimeType(entry.image.mimeType);
+                        const displayName = entry.image.fileName ?? (isVideo ? "Recording" : "Screenshot");
                         return (
                           <button
                             key={entry.key}
@@ -594,16 +615,31 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                             aria-current={isActiveThumb ? "true" : undefined}
                             title={displayName}
                           >
-                            <img
-                              src={entry.image.url ?? undefined}
-                              alt={displayName}
-                              className="h-full w-full object-contain"
-                              loading="lazy"
-                              decoding="async"
-                            />
+                            {isVideo ? (
+                              <video
+                                src={entry.image.url ?? undefined}
+                                className="h-full w-full object-contain"
+                                muted
+                                playsInline
+                                preload="metadata"
+                              />
+                            ) : (
+                              <img
+                                src={entry.image.url ?? undefined}
+                                alt={displayName}
+                                className="h-full w-full object-contain"
+                                loading="lazy"
+                                decoding="async"
+                              />
+                            )}
                             <span className="pointer-events-none absolute bottom-1 left-1 rounded-full bg-neutral-950/80 px-1 text-[10px] font-semibold text-white shadow-sm dark:bg-neutral-900/90">
                               {label}
                             </span>
+                            {isVideo && (
+                              <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                                <Play className="h-6 w-6 text-white drop-shadow-lg opacity-80" />
+                              </span>
+                            )}
                           </button>
                         );
                       })}
@@ -666,7 +702,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                 {set.images.length > 0 && (
                   <span className="text-xs text-neutral-500 dark:text-neutral-500">
                     {set.images.length}{" "}
-                    {set.images.length === 1 ? "image" : "images"}
+                    {set.images.length === 1 ? "item" : "items"}
                   </span>
                 )}
               </div>
@@ -678,8 +714,9 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
               {set.images.length > 0 ? (
                 <div className="mt-3 flex gap-3 overflow-x-auto pb-1">
                   {set.images.map((image, indexInSet) => {
-                    const displayName = image.fileName ?? "Screenshot";
                     const stableKey = getImageKey(set._id, image, indexInSet);
+                    const isVideo = isVideoMimeType(image.mimeType);
+                    const displayName = image.fileName ?? (isVideo ? "Recording" : "Screenshot");
                     if (!image.url) {
                       return (
                         <div
@@ -703,15 +740,30 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                         )}
                         aria-label={`Open ${displayName} in slideshow`}
                       >
-                        <img
-                          src={image.url}
-                          alt={displayName}
-                          className="h-48 w-[220px] object-contain bg-neutral-100 dark:bg-neutral-950"
-                          loading="lazy"
-                        />
+                        {isVideo ? (
+                          <video
+                            src={image.url}
+                            className="h-48 w-[220px] object-contain bg-neutral-100 dark:bg-neutral-950"
+                            muted
+                            playsInline
+                            preload="metadata"
+                          />
+                        ) : (
+                          <img
+                            src={image.url}
+                            alt={displayName}
+                            className="h-48 w-[220px] object-contain bg-neutral-100 dark:bg-neutral-950"
+                            loading="lazy"
+                          />
+                        )}
                         <div className="absolute top-2 right-2 text-neutral-600 opacity-0 transition group-hover:opacity-100 dark:text-neutral-300">
                           <Maximize2 className="h-3.5 w-3.5" />
                         </div>
+                        {isVideo && (
+                          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                            <Play className="h-8 w-8 text-white drop-shadow-lg opacity-80" />
+                          </div>
+                        )}
                         <div className="border-t border-neutral-200 px-2 py-1 text-xs text-neutral-600 dark:border-neutral-700 dark:text-neutral-300 truncate">
                           {humanIndex !== null ? `${humanIndex}. ` : ""}
                           {displayName}

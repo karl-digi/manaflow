@@ -22,12 +22,33 @@ export interface RunTaskScreenshotsOptions {
 
 function resolveContentType(filePath: string): string {
   const extension = path.extname(filePath).toLowerCase();
+  // Image types
   if (extension === ".jpg" || extension === ".jpeg") {
     return "image/jpeg";
   }
   if (extension === ".webp") {
     return "image/webp";
   }
+  if (extension === ".gif") {
+    return "image/gif";
+  }
+  // Video types
+  if (extension === ".mp4") {
+    return "video/mp4";
+  }
+  if (extension === ".webm") {
+    return "video/webm";
+  }
+  if (extension === ".mov") {
+    return "video/quicktime";
+  }
+  if (extension === ".avi") {
+    return "video/x-msvideo";
+  }
+  if (extension === ".mkv") {
+    return "video/x-matroska";
+  }
+  // Default to PNG for images
   return "image/png";
 }
 
