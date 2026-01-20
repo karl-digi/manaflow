@@ -60,14 +60,6 @@ const STYLE_PROMPTS: Record<TitleStyle, { instruction: string; examples: string 
 const FIRST_PERSON_INSTRUCTION =
   "Avoid first-person pronouns (I, we, my, our, us, me). Use third-person phrasing.";
 
-const FIRST_PERSON_PATTERN =
-  /\b(i|me|my|mine|myself|we|us|our|ours|ourselves)\b/i;
-
-export function containsFirstPersonPronoun(text: string): boolean {
-  const normalized = text.replace(/I\/O/gi, "IO");
-  return FIRST_PERSON_PATTERN.test(normalized);
-}
-
 function buildSystemPrompt(style: TitleStyle): string {
   const styleConfig = STYLE_PROMPTS[style];
   return [
@@ -134,35 +126,14 @@ export const generateTitle = internalAction({
 
     try {
       const openai = createOpenAI({ apiKey });
-      const generateTitle = async (systemPrompt: string): Promise<string> => {
-        const { text } = await generateText({
-          model: openai("gpt-4.1-nano"),
-          system: systemPrompt,
-          prompt,
-          maxRetries: 2,
-        });
-        return text.trim().slice(0, 100); // Cap at 100 chars just in case
-      };
+      const { text } = await generateText({
+        model: openai("gpt-4.1-nano"),
+        system,
+        prompt,
+        maxRetries: 2,
+      });
 
-      let title = await generateTitle(system);
-      if (title && containsFirstPersonPronoun(title)) {
-        console.warn(
-          "[conversationTitle] First-person title detected, retrying",
-          { title }
-        );
-        const retryTitle = await generateTitle(
-          `${system}\nRewrite any first-person phrasing into third-person wording.`
-        );
-        if (!retryTitle || containsFirstPersonPronoun(retryTitle)) {
-          console.warn(
-            "[conversationTitle] First-person title persisted after retry",
-            { title: retryTitle || title }
-          );
-          return;
-        }
-        title = retryTitle;
-      }
-
+      const title = text.trim().slice(0, 100); // Cap at 100 chars just in case
       if (!title) {
         return;
       }
