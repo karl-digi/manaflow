@@ -4,11 +4,8 @@
   "description": "Screenshot collector script for cmux sandbox environments",
   "type": "module",
   "main": "dist/index.js",
-  "bin": {
-    "video-recording-mcp": "./dist/videoRecordingServer.js"
-  },
   "scripts": {
-    "build": "bun build src/index.ts src/videoRecordingServer.ts --outdir dist --target bun --format esm --minify",
+    "build": "bun build src/index.ts --outdir dist --target bun --format esm --minify",
     "typecheck": "bunx tsgo --noEmit -p tsconfig.json"
   },
   "dependencies": {
