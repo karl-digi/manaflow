@@ -41,39 +41,9 @@ const screenshotOutputSchema = z.object({
 
 type ScreenshotStructuredOutput = z.infer<typeof screenshotOutputSchema>;
 
-const screenshotOutputJsonSchema = {
-  $schema: "http://json-schema.org/draft-07/schema#",
-  type: "object",
-  additionalProperties: false,
-  required: ["hasUiChanges", "images"],
-  properties: {
-    hasUiChanges: { type: "boolean" },
-    images: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["path", "description"],
-        properties: {
-          path: { type: "string" },
-          description: { type: "string" },
-        },
-      },
-    },
-    videos: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["path", "description"],
-        properties: {
-          path: { type: "string" },
-          description: { type: "string" },
-        },
-      },
-    },
-  },
-} as const;
+// Note: We previously used a JSON schema with outputFormat, but that caused
+// the SDK to not yield assistant messages (a bug). Now we parse structured
+// output from text content instead, using the zod schema for validation.
 
 async function collectMediaFiles(
   directory: string
@@ -393,15 +363,27 @@ IMPORTANT: If the PR adds a button, link, or any clickable element, you MUST cre
 </VIDEO_RECORDING>
 
 <OUTPUT_REQUIREMENTS>
-When you are finished with your task, you MUST call the StructuredOutput tool to provide your final response. This is required - do not attempt to stop without calling this tool.
+When you are finished with your task, you MUST output a JSON block with your final response. This is required.
 
-The StructuredOutput tool requires a JSON object with this schema:
+Your final output MUST include a JSON code block with this exact format:
+
+\`\`\`json:screenshot-result
+{
+  "hasUiChanges": <boolean>,
+  "images": [{"path": "<absolute-path>", "description": "<description>"}],
+  "videos": [{"path": "<absolute-path>", "description": "<description>"}]
+}
+\`\`\`
+
+Field definitions:
 - hasUiChanges (boolean, required): true only if the PR modifies UI-rendering code AND you captured screenshots or videos; false if no UI changes
 - images (array, required): Array of objects with "path" (string) and "description" (string) for each screenshot
 - videos (array, optional): Array of objects with "path" (string) and "description" (string) for each video
 
-Example call:
-StructuredOutput({ "hasUiChanges": true, "images": [{"path": "/root/screenshots/button-hover.png", "description": "Button hover state"}], "videos": [] })
+Example output:
+\`\`\`json:screenshot-result
+{"hasUiChanges": true, "images": [{"path": "/root/screenshots/button-hover.png", "description": "Button hover state"}], "videos": []}
+\`\`\`
 
 Do not close the browser when done. Do not create summary documents.
 </OUTPUT_REQUIREMENTS>`;
@@ -447,7 +429,7 @@ Do not close the browser when done. Do not create summary documents.
         `ANTHROPIC_BASE_URL: ${anthropicBaseUrl}`
       );
       await logToScreenshotCollector(
-        `[DEBUG] ANTHROPIC_CUSTOM_HEADERS will be: x-cmux-token:<jwt>`
+        `[DEBUG] ANTHROPIC_CUSTOM_HEADERS will be: x-cmux-token: <jwt>`
       );
     } else if (providedApiKey) {
       process.env.ANTHROPIC_API_KEY = providedApiKey;
@@ -471,9 +453,11 @@ Do not close the browser when done. Do not create summary documents.
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
       ...(useTaskRunJwt
         ? {
-          ANTHROPIC_API_KEY: "sk_placeholder_cmux_anthropic_api_key",
+          // NOTE: This placeholder must match the proxy's hardCodedApiKey in anthropic_http.ts
+          // and must start with "sk-ant-api03-" so Claude Code CLI accepts it.
+          ANTHROPIC_API_KEY: "sk-ant-api03-cmux-placeholder-bedrock-proxy",
           ANTHROPIC_BASE_URL: anthropicBaseUrl,
-          ANTHROPIC_CUSTOM_HEADERS: `x-cmux-token:${auth.taskRunJwt}`,
+          ANTHROPIC_CUSTOM_HEADERS: `x-cmux-token: ${auth.taskRunJwt}`,
         }
         : {}),
     };
@@ -498,7 +482,7 @@ Do not close the browser when done. Do not create summary documents.
       for await (const message of query({
         prompt,
         options: {
-          model: "claude-opus-4-5",
+          model: "claude-opus-4-5-20251101",
           mcpServers: {
             chrome: {
               command: "bunx",
@@ -513,34 +497,68 @@ Do not close the browser when done. Do not create summary documents.
           permissionMode: "bypassPermissions",
           cwd: workspaceDir,
           pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
-          outputFormat: {
-            type: "json_schema",
-            schema: screenshotOutputJsonSchema,
-          },
+          // NOTE: We intentionally don't use outputFormat here because it causes
+          // the SDK to not yield assistant messages (a bug/limitation). Instead,
+          // we instruct Claude to call a "StructuredOutput" tool and parse it manually.
           env: claudeEnv,
           stderr: (data) =>
             logToScreenshotCollector(`[claude-code-stderr] ${data}`),
         },
       })) {
+        // DEBUG: Log all messages in detail
+        await logToScreenshotCollector(
+          `[DEBUG] Message type=${message.type}, full=${JSON.stringify(message).slice(0, 2000)}`
+        );
+
+        // If this is a result message, log its subtype for debugging
+        if (message.type === "result") {
+          await logToScreenshotCollector(
+            `[DEBUG RESULT] subtype=${message.subtype ?? "none"}, success=${message.is_success ?? "N/A"}`
+          );
+        }
+
         // Format and log all message types
         const formatted = formatClaudeMessage(message);
         if (formatted) {
           await logToScreenshotCollector(formatted);
         }
 
-        if (message.type === "result" && "structured_output" in message) {
-          const parsed = screenshotOutputSchema.safeParse(
-            message.structured_output
-          );
-          if (parsed.success) {
-            structuredOutput = parsed.data;
-            await logToScreenshotCollector(
-              `Structured output captured (hasUiChanges=${parsed.data.hasUiChanges}, images=${parsed.data.images.length})`
-            );
-          } else {
-            await logToScreenshotCollector(
-              `Structured output validation failed: ${parsed.error.message}`
-            );
+        // Parse structured output from text content
+        // Since we can't use outputFormat (SDK bug), we instruct Claude to output
+        // a JSON code block with marker "json:screenshot-result" that we parse
+        if (message.type === "assistant") {
+          const content = message.message.content;
+          for (const block of content) {
+            if (block.type === "text") {
+              // Look for JSON code block with our marker
+              const jsonMatch = block.text.match(
+                /```json:screenshot-result\s*([\s\S]*?)```/
+              );
+              if (jsonMatch) {
+                const jsonStr = jsonMatch[1].trim();
+                await logToScreenshotCollector(
+                  `Found screenshot-result JSON block: ${jsonStr.slice(0, 500)}`
+                );
+                try {
+                  const jsonData = JSON.parse(jsonStr);
+                  const parsed = screenshotOutputSchema.safeParse(jsonData);
+                  if (parsed.success) {
+                    structuredOutput = parsed.data;
+                    await logToScreenshotCollector(
+                      `Structured output captured (hasUiChanges=${parsed.data.hasUiChanges}, images=${parsed.data.images.length})`
+                    );
+                  } else {
+                    await logToScreenshotCollector(
+                      `Structured output validation failed: ${parsed.error.message}`
+                    );
+                  }
+                } catch (parseError) {
+                  await logToScreenshotCollector(
+                    `Failed to parse screenshot-result JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`
+                  );
+                }
+              }
+            }
           }
         }
       }

@@ -7,15 +7,11 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGE_DIR="$(dirname "$SCRIPT_DIR")"
 
-# Default to staging
-IS_STAGING="true"
-ENVIRONMENT="staging"
-
 # Parse arguments
 while [[ $# -gt 0 ]]; do
   case $1 in
     --staging)
-      IS_STAGING="true"
+      IS_STAGING="false"
       ENVIRONMENT="staging"
       shift
       ;;

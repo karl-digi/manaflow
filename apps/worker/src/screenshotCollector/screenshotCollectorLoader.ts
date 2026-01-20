@@ -79,10 +79,15 @@ function getConvexSiteUrl(providedUrl?: string): string | null {
   return null;
 }
 
+interface DownloadResult {
+  path: string;
+  version: string;
+}
+
 /**
  * Downloads the latest screenshot collector from Convex storage
  */
-async function downloadScreenshotCollector(providedConvexUrl?: string): Promise<string> {
+async function downloadScreenshotCollector(providedConvexUrl?: string): Promise<DownloadResult> {
   const convexUrl = getConvexSiteUrl(providedConvexUrl);
   if (!convexUrl) {
     throw new Error(
@@ -145,14 +150,14 @@ async function downloadScreenshotCollector(providedConvexUrl?: string): Promise<
 
   const tempFile = path.join(tempDir, `collector-${releaseInfo.version}.mjs`);
 
-  // Check if we already have this version cached
+  // Check if we already have this version cached on disk
   try {
     await fs.access(tempFile);
     log("INFO", "Using cached screenshot collector", {
       version: releaseInfo.version,
       path: tempFile,
     });
-    return tempFile;
+    return { path: tempFile, version: releaseInfo.version };
   } catch {
     // File doesn't exist, write it
   }
@@ -164,36 +169,56 @@ async function downloadScreenshotCollector(providedConvexUrl?: string): Promise<
     size: jsContent.length,
   });
 
-  return tempFile;
+  return { path: tempFile, version: releaseInfo.version };
 }
 
 let cachedModule: ScreenshotCollectorModule | null = null;
+let cachedVersion: string | null = null;
 
 /**
  * Loads the screenshot collector module from Convex storage.
+ * Always fetches the latest version info to ensure we have the newest code,
+ * even if an older version is cached in memory (e.g., from a Morph snapshot).
  *
  * @param convexUrl - The Convex site URL for fetching the remote screenshot collector.
  *                    Falls back to environment variables if not provided.
  * @throws Error if the screenshot collector cannot be fetched or loaded.
  */
 export async function loadScreenshotCollector(convexUrl?: string): Promise<ScreenshotCollectorModule> {
-  // Return cached module if available
-  if (cachedModule) {
+  // Always check for a newer version - don't blindly use cached module
+  // because Morph snapshots can preserve stale in-memory caches
+
+  // Download the latest version from Convex (throws on failure)
+  const { path: remotePath, version } = await downloadScreenshotCollector(convexUrl);
+
+  // Check if we already have this exact version loaded in memory
+  if (cachedModule && cachedVersion === version) {
+    log("INFO", "Using in-memory cached screenshot collector", {
+      version,
+      path: remotePath,
+    });
     return cachedModule;
   }
 
-  // Download the latest version from Convex (throws on failure)
-  const remotePath = await downloadScreenshotCollector(convexUrl);
+  // Need to load (either first time or new version)
+  if (cachedVersion && cachedVersion !== version) {
+    log("INFO", "Screenshot collector version changed, reloading", {
+      oldVersion: cachedVersion,
+      newVersion: version,
+    });
+  }
 
-  // Use file:// URL for dynamic import
-  const moduleUrl = `file://${remotePath}`;
+  // Use file:// URL for dynamic import with cache-busting query param
+  const moduleUrl = `file://${remotePath}?v=${Date.now()}`;
   const remoteModule = await import(moduleUrl);
 
   log("INFO", "Successfully loaded remote screenshot collector", {
     path: remotePath,
+    version,
   });
 
   cachedModule = remoteModule as ScreenshotCollectorModule;
+  cachedVersion = version;
   return cachedModule;
 }
 

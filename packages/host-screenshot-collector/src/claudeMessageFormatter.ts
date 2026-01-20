@@ -4,16 +4,29 @@ import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
  * Format Claude Agent SDK messages for human-readable logging
  */
 export function formatClaudeMessage(message: SDKMessage): string {
+  // Debug: Log all message types to understand what's being received
+  const debugPrefix = `[DEBUG type=${message.type}]`;
+
   switch (message.type) {
     case "assistant": {
       const content = message.message.content;
       const parts: string[] = [];
+
+      // Always log that we received an assistant message
+      parts.push(`${debugPrefix} content_blocks=${content.length}, stop_reason=${message.message.stop_reason ?? "none"}`);
+
+      if (content.length === 0) {
+        parts.push(`🤖 Assistant: (empty content)`);
+      }
 
       for (const block of content) {
         if (block.type === "text") {
           parts.push(`💬 ${block.text}`);
         } else if (block.type === "tool_use") {
           parts.push(formatToolUse(block.name, block.input));
+        } else {
+          // Log any unexpected block types
+          parts.push(`❓ Unknown block type: ${(block as { type: string }).type}`);
         }
       }
 
@@ -22,6 +35,11 @@ export function formatClaudeMessage(message: SDKMessage): string {
         parts.push(
           `   └─ tokens: in=${message.message.usage.input_tokens} out=${message.message.usage.output_tokens}`
         );
+      }
+
+      // Ensure we always return something for assistant messages
+      if (parts.length === 0) {
+        return `🤖 Assistant: (no displayable content, stop_reason=${message.message.stop_reason ?? "none"})`;
       }
 
       return parts.join("\n");
@@ -99,12 +117,20 @@ export function formatClaudeMessage(message: SDKMessage): string {
     }
 
     case "stream_event": {
-      // Skip streaming events for cleaner logs (they're partial)
+      // Log stream events for debugging the stop hook issue
+      const event = message.event;
+      if (event.type === "message_stop" || event.type === "message_start") {
+        return `📡 Stream: ${event.type}`;
+      }
+      if (event.type === "content_block_start" || event.type === "content_block_stop") {
+        return `📡 Stream: ${event.type} (index=${(event as { index?: number }).index ?? "?"})`;
+      }
+      // Skip other stream events to reduce noise
       return "";
     }
 
     default: {
-      return `❓ Unknown message type`;
+      return `❓ Unknown message type: ${debugPrefix}`;
     }
   }
 }

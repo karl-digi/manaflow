@@ -7,7 +7,10 @@ import {
   convertBedrockStreamToSSE,
 } from "./bedrock_utils";
 
-const hardCodedApiKey = "sk_placeholder_cmux_anthropic_api_key";
+// NOTE: This placeholder must start with "sk-ant-api03-" so Claude Code CLI
+// accepts it (Claude Code validates API key format locally). The proxy will
+// recognize this specific placeholder and route requests to Bedrock.
+const hardCodedApiKey = "sk-ant-api03-cmux-placeholder-bedrock-proxy";
 
 export const CLOUDFLARE_ANTHROPIC_BASE_URL =
   "https://gateway.ai.cloudflare.com/v1/0c1675e0def6de1ab3a50a4e17dc5656/cmux-ai-proxy/anthropic";
@@ -330,6 +333,19 @@ export const anthropicProxy = httpAction(async (_ctx, req) => {
         },
         body: JSON.stringify(bedrockBody),
       });
+
+      // Debug: Log non-streaming responses to see what model outputs
+      if (!body.stream && response.ok) {
+        const responseData = await response.json();
+        console.log("[anthropic-proxy] DEBUG Bedrock response:", {
+          stopReason: responseData.stop_reason,
+          contentBlockCount: responseData.content?.length ?? 0,
+          contentTypes: responseData.content?.map((b: { type: string }) => b.type) ?? [],
+          textPreview: responseData.content?.find((b: { type: string }) => b.type === "text")?.text?.slice(0, 500) ?? "(none)",
+          toolUseNames: responseData.content?.filter((b: { type: string }) => b.type === "tool_use")?.map((b: { name: string }) => b.name) ?? [],
+        });
+        return jsonResponse(responseData);
+      }
 
       // Pass isBedrock=true to convert streaming format
       return handleResponse(response, body.stream, true);

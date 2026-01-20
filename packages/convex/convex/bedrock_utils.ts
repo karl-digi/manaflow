@@ -221,6 +221,16 @@ export function parseBedrockEventToSSE(messageBytes: Uint8Array): string | null 
     // The payload has a "bytes" field with base64-encoded Anthropic event
     if (payload.bytes) {
       const decodedBytes = base64Decode(payload.bytes);
+      // DEBUG: Log certain event types to see what model outputs
+      try {
+        const event = JSON.parse(decodedBytes);
+        if (event.type === "message_stop" || event.type === "message_delta") {
+          console.log("[bedrock-utils] DEBUG event:", event.type, JSON.stringify(event).slice(0, 500));
+        }
+        if (event.type === "content_block_delta" && event.delta?.type === "text_delta") {
+          console.log("[bedrock-utils] DEBUG text:", event.delta.text?.slice(0, 200));
+        }
+      } catch { /* ignore parse errors */ }
       // Return as SSE format
       return `data: ${decodedBytes}\n\n`;
     }
