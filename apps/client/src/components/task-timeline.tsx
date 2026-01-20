@@ -10,6 +10,7 @@ import {
   AlertCircle,
   CheckCircle2,
   Clock,
+  Loader2,
   Play,
   RefreshCw,
   Sparkles,
@@ -46,6 +47,8 @@ interface TimelineEvent {
   isFallback?: boolean;
   /** Human-readable note about the evaluation process */
   evaluationNote?: string;
+  /** Whether this crown evaluation is currently in progress (initial evaluation, not retry) */
+  isEvaluating?: boolean;
 }
 
 type TaskRunWithChildren = Doc<"taskRuns"> & {
@@ -273,23 +276,47 @@ export function TaskTimeline({
       task?.crownEvaluationStatus === "in_progress" ||
       isSubmittingRetry // Include optimistic state
     ) {
-      // Fallback display for failed evaluation or retry in progress
-      // Use optimistic state OR server state for immediate UI feedback
+      // Distinguish between initial evaluation and retry scenarios:
+      // - Initial evaluation: pending/in_progress with no prior retry attempts
+      // - Retry in progress: user clicked retry (optimistic or retryCount > 0)
+      // - Failed: error status after evaluation failed
+      const isInitialEvaluation =
+        (task?.crownEvaluationStatus === "pending" ||
+          task?.crownEvaluationStatus === "in_progress") &&
+        !isSubmittingRetry &&
+        (task?.crownEvaluationRetryCount ?? 0) === 0;
+
       const isRetryingNow =
         isSubmittingRetry ||
-        task?.crownEvaluationStatus === "pending" ||
-        task?.crownEvaluationStatus === "in_progress";
-      timelineEvents.push({
-        id: "crown-evaluation-failed",
-        type: "crown_evaluation",
-        timestamp: task?.updatedAt || Date.now(),
-        isFallback: true,
-        evaluationNote: isRetryingNow
-          ? "Retrying crown evaluation..."
-          : task?.crownEvaluationError ||
-            "Crown evaluation failed. No winner was selected.",
-        crownReason: isRetryingNow ? "Retry in progress" : "Evaluation failed",
-      });
+        ((task?.crownEvaluationStatus === "pending" ||
+          task?.crownEvaluationStatus === "in_progress") &&
+          (task?.crownEvaluationRetryCount ?? 0) > 0);
+
+      if (isInitialEvaluation) {
+        // Initial evaluation in progress - show neutral evaluating message
+        timelineEvents.push({
+          id: "crown-evaluation-pending",
+          type: "crown_evaluation",
+          timestamp: task?.updatedAt || Date.now(),
+          isFallback: false,
+          isEvaluating: true,
+          evaluationNote: "Evaluating submissions...",
+          crownReason: "Crown evaluation in progress",
+        });
+      } else {
+        // Failed evaluation or retry in progress - show fallback/retry UI
+        timelineEvents.push({
+          id: "crown-evaluation-failed",
+          type: "crown_evaluation",
+          timestamp: task?.updatedAt || Date.now(),
+          isFallback: true,
+          evaluationNote: isRetryingNow
+            ? "Retrying crown evaluation..."
+            : task?.crownEvaluationError ||
+              "Crown evaluation failed. No winner was selected.",
+          crownReason: isRetryingNow ? "Retry in progress" : "Evaluation failed",
+        });
+      }
     }
 
     // Sort by timestamp
@@ -541,9 +568,16 @@ export function TaskTimeline({
           </>
         );
         break;
-      case "crown_evaluation":
-        // Use amber/orange styling for fallback evaluations to indicate service unavailability
-        icon = event.isFallback ? (
+      case "crown_evaluation": {
+        // Use different styling based on evaluation state:
+        // - Blue for initial evaluation in progress
+        // - Amber/orange for fallback (failed or retrying)
+        // - Purple for successful evaluation
+        icon = event.isEvaluating ? (
+          <div className="size-4 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
+            <Loader2 className="size-2.5 text-blue-600 dark:text-blue-400 animate-spin" />
+          </div>
+        ) : event.isFallback ? (
           <div className="size-4 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
             <AlertCircle className="size-2.5 text-amber-600 dark:text-amber-400" />
           </div>
@@ -552,6 +586,18 @@ export function TaskTimeline({
             <Sparkles className="size-2.5 text-purple-600 dark:text-purple-400" />
           </div>
         );
+        // Determine display text based on state
+        const evalTitle = event.isEvaluating
+          ? "Crown evaluation"
+          : event.isFallback
+            ? "Evaluation unavailable"
+            : "Crown evaluation";
+        const evalSuffix = event.isEvaluating
+          ? " in progress"
+          : event.isFallback
+            ? " - no winner selected"
+            : " completed";
+
         content = (
           <>
             {event.runId ? (
@@ -566,14 +612,10 @@ export function TaskTimeline({
                 className="hover:underline inline"
               >
                 <span className="font-medium text-neutral-900 dark:text-neutral-100">
-                  {event.isFallback
-                    ? "Evaluation unavailable"
-                    : "Crown evaluation"}
+                  {evalTitle}
                 </span>
                 <span className="text-neutral-600 dark:text-neutral-400">
-                  {event.isFallback
-                    ? " - no winner selected"
-                    : " completed"}
+                  {evalSuffix}
                 </span>
                 <span className="text-neutral-500 dark:text-neutral-500 ml-1">
                   {formatDistanceToNow(event.timestamp, { addSuffix: true })}
@@ -582,19 +624,22 @@ export function TaskTimeline({
             ) : (
               <>
                 <span className="font-medium text-neutral-900 dark:text-neutral-100">
-                  {event.isFallback
-                    ? "Evaluation unavailable"
-                    : "Crown evaluation"}
+                  {evalTitle}
                 </span>
                 <span className="text-neutral-600 dark:text-neutral-400">
-                  {event.isFallback
-                    ? " - no winner selected"
-                    : " completed"}
+                  {evalSuffix}
                 </span>
                 <span className="text-neutral-500 dark:text-neutral-500 ml-1">
                   {formatDistanceToNow(event.timestamp, { addSuffix: true })}
                 </span>
               </>
+            )}
+            {/* Show evaluating note with blue styling */}
+            {event.isEvaluating && event.evaluationNote && (
+              <div className="mt-2 text-[13px] text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 rounded-md p-3">
+                <Loader2 className="inline size-3 mr-2 animate-spin" />
+                {event.evaluationNote}
+              </div>
             )}
             {/* Show fallback notice with amber styling */}
             {event.isFallback && event.evaluationNote && (
@@ -627,7 +672,7 @@ export function TaskTimeline({
               </div>
             )}
             {/* Show normal crown reason with purple styling */}
-            {!event.isFallback && event.crownReason && (
+            {!event.isFallback && !event.isEvaluating && event.crownReason && (
               <div className="mt-2 text-[13px] text-purple-700 dark:text-purple-400 bg-purple-50 dark:bg-purple-900/20 rounded-md p-3">
                 {event.crownReason}
               </div>
@@ -635,6 +680,7 @@ export function TaskTimeline({
           </>
         );
         break;
+      }
       default:
         icon = (
           <div className="size-4 rounded-full bg-neutral-100 dark:bg-neutral-800 flex items-center justify-center">
