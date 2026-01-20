@@ -42,6 +42,7 @@ if hasattr(sys.stderr, "reconfigure"):
 
 import argparse
 import asyncio
+import http.client
 import json
 import os
 import shlex
@@ -908,6 +909,15 @@ class PveLxcClient:
         except TimeoutError:
             stderr_lines.append(f"HTTP exec timed out after {timeout}s")
             exit_code = 124
+        except (ConnectionResetError, BrokenPipeError, http.client.IncompleteRead) as e:
+            # Connection dropped during streaming response - treat as timeout/failure
+            # This can happen when Cloudflare Tunnel drops the connection mid-stream
+            stderr_lines.append(f"HTTP exec connection error: {e}")
+            exit_code = 125
+        except OSError as e:
+            # Other OS errors (e.g., network unreachable, connection refused)
+            # Return None to trigger SSH fallback if available
+            return None
 
         if exit_code is None:
             exit_code = 0
@@ -3874,6 +3884,10 @@ async def update_existing_template(
         for line in summary:
             console.always(line)
 
+    # Verify critical artifacts exist before converting to template
+    console.info("Verifying critical build artifacts...")
+    await _verify_template_artifacts(work_vmid, client, console)
+
     # Gracefully shutdown container before converting to template
     console.info(f"Shutting down container {work_vmid} for template conversion...")
     upid = await client.ashutdown_lxc(work_vmid, node)
@@ -3930,6 +3944,89 @@ async def update_existing_template(
         console.always(f"\nContainer {work_vmid} converted to template")
 
     return work_vmid
+
+
+async def _verify_template_artifacts(
+    vmid: int,
+    client: PveLxcClient,
+    console: Console,
+) -> None:
+    """Verify critical build artifacts exist in the container before converting to template.
+
+    Raises RuntimeError if critical artifacts are missing to prevent creating broken templates.
+    """
+    ide_provider = get_ide_provider()
+
+    # Define critical artifacts that must exist based on IDE provider
+    artifacts: list[tuple[str, str]] = []
+
+    if ide_provider == IDE_PROVIDER_CODER:
+        artifacts = [
+            ("/app/code-server/bin/code-server", "code-server binary"),
+            ("/root/.code-server/extensions", "code-server extensions directory"),
+        ]
+    elif ide_provider == IDE_PROVIDER_CMUX_CODE:
+        artifacts = [
+            ("/app/cmux-code/bin/code-server-oss", "cmux-code binary"),
+            ("/root/.vscode-server-oss/extensions", "VS Code extensions directory"),
+        ]
+    else:  # openvscode
+        artifacts = [
+            ("/app/openvscode-server/bin/openvscode-server", "openvscode-server binary"),
+            ("/root/.openvscode-server/extensions", "VS Code extensions directory"),
+        ]
+
+    # Also check for common critical artifacts regardless of IDE provider
+    artifacts.extend([
+        ("/root/.nvm/nvm.sh", "Node Version Manager"),
+        ("/usr/local/cargo/bin/cargo", "Rust/Cargo"),
+        ("/usr/local/go/bin/go", "Go toolchain"),
+        ("/root/.bun/bin/bun", "Bun runtime"),
+    ])
+
+    # Verify artifacts exist
+    missing: list[str] = []
+    for path, description in artifacts:
+        check_cmd = f"test -e {shlex.quote(path)} && echo exists || echo missing"
+        try:
+            result = await client.aexec_in_container(vmid, check_cmd, timeout=30, check=False)
+            if result.returncode != 0 or "missing" in result.stdout:
+                missing.append(f"  - {description}: {path}")
+                console.info(f"[verify] MISSING: {description} at {path}")
+            else:
+                console.info(f"[verify] OK: {description}")
+        except Exception as e:
+            missing.append(f"  - {description}: {path} (check failed: {e})")
+            console.info(f"[verify] ERROR checking {description}: {e}")
+
+    # Check for cmux extension specifically (critical for IDE functionality)
+    ext_dir = (
+        "/root/.code-server/extensions" if ide_provider == IDE_PROVIDER_CODER
+        else "/root/.vscode-server-oss/extensions" if ide_provider == IDE_PROVIDER_CMUX_CODE
+        else "/root/.openvscode-server/extensions"
+    )
+    ext_check_cmd = f"ls {shlex.quote(ext_dir)} 2>/dev/null | grep -q cmux && echo found || echo notfound"
+    try:
+        result = await client.aexec_in_container(vmid, ext_check_cmd, timeout=30, check=False)
+        if "notfound" in result.stdout or result.returncode != 0:
+            missing.append(f"  - cmux VS Code extension: not found in {ext_dir}")
+            console.info(f"[verify] MISSING: cmux VS Code extension in {ext_dir}")
+        else:
+            console.info("[verify] OK: cmux VS Code extension")
+    except Exception as e:
+        missing.append(f"  - cmux VS Code extension: check failed ({e})")
+        console.info(f"[verify] ERROR checking cmux extension: {e}")
+
+    if missing:
+        error_msg = (
+            "Template verification failed - critical artifacts are missing:\n"
+            + "\n".join(missing)
+            + "\n\nThis indicates the build tasks did not complete successfully. "
+            "Refusing to create a broken template."
+        )
+        raise RuntimeError(error_msg)
+
+    console.info("[verify] All critical artifacts verified successfully")
 
 
 async def provision_and_create_template(
@@ -4061,6 +4158,10 @@ async def provision_and_create_template(
             console.always("\nTiming Summary")
             for line in summary:
                 console.always(line)
+
+        # Verify critical artifacts exist before converting to template
+        console.info("Verifying critical build artifacts...")
+        await _verify_template_artifacts(new_vmid, client, console)
 
         # Gracefully shutdown container before converting to template
         console.info(f"Shutting down container {new_vmid} for template conversion...")

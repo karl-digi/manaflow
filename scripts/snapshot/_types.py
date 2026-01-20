@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Sequence
 
 Command = str | Sequence[str]
 
 
 class Console:
-    """Simple console output with quiet mode support."""
+    """Simple console output with quiet mode support.
+
+    Always flushes stdout to ensure output is visible in CI/CD pipelines
+    where stdout may be block-buffered.
+    """
 
     quiet: bool
 
@@ -17,10 +22,14 @@ class Console:
 
     def info(self, value: str) -> None:
         if not self.quiet:
-            print(value)
+            print(value, flush=True)
 
     def always(self, value: str) -> None:
-        print(value)
+        print(value, flush=True)
+
+    def error(self, value: str) -> None:
+        """Print error message to stderr."""
+        print(value, file=sys.stderr, flush=True)
 
 
 class TimingsCollector:
