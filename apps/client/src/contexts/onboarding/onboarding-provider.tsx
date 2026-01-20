@@ -1,3 +1,4 @@
+import { env } from "@/client-env";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   OnboardingContext,
@@ -51,24 +52,22 @@ export function OnboardingProvider({ children }: OnboardingProviderProps) {
   );
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(
     () => loadStoredState().completed || loadStoredState().skipped
-  );
-
-  // Auto-start onboarding for new users
-  useEffect(() => {
-    const stored = loadStoredState();
-    if (!stored.completed && !stored.skipped) {
-      // Small delay to let the UI render first
-      const timer = setTimeout(() => {
-        setIsOnboardingActive(true);
-      }, 500);
-      return () => clearTimeout(timer);
+  )
+  // Filter steps based on environment - skip cloud-mode in web mode
+  const filteredSteps = useMemo(() => {
+    if (env.NEXT_PUBLIC_WEB_MODE) {
+      return ONBOARDING_STEPS.filter((step) => step.id !== "cloud-mode");
     }
+    return ONBOARDING_STEPS;
   }, []);
+
+  // NOTE: Auto-start is now handled by the dashboard component
+  // which checks if the user has any tasks before showing onboarding
 
   const currentStep = useMemo(() => {
     if (!isOnboardingActive) return null;
-    return ONBOARDING_STEPS[currentStepIndex] ?? null;
-  }, [isOnboardingActive, currentStepIndex]);
+    return filteredSteps[currentStepIndex] ?? null;
+  }, [isOnboardingActive, currentStepIndex, filteredSteps]);
 
   const startOnboarding = useCallback(() => {
     setCurrentStepIndex(0);
@@ -76,7 +75,7 @@ export function OnboardingProvider({ children }: OnboardingProviderProps) {
   }, []);
 
   const nextStep = useCallback(() => {
-    const currentId = ONBOARDING_STEPS[currentStepIndex]?.id;
+    const currentId = filteredSteps[currentStepIndex]?.id;
     if (currentId) {
       setCompletedSteps((prev) => {
         const next = new Set(prev);
@@ -85,20 +84,20 @@ export function OnboardingProvider({ children }: OnboardingProviderProps) {
       });
     }
 
-    if (currentStepIndex < ONBOARDING_STEPS.length - 1) {
+    if (currentStepIndex < filteredSteps.length - 1) {
       setCurrentStepIndex((prev) => prev + 1);
     } else {
       // Last step - complete the onboarding
       setIsOnboardingActive(false);
       setHasCompletedOnboarding(true);
-      const allStepIds = ONBOARDING_STEPS.map((s) => s.id);
+      const allStepIds = filteredSteps.map((s) => s.id);
       saveStoredState({
         completed: true,
         completedSteps: allStepIds,
         skipped: false,
       });
     }
-  }, [currentStepIndex]);
+  }, [currentStepIndex, filteredSteps]);
 
   const previousStep = useCallback(() => {
     if (currentStepIndex > 0) {
@@ -119,21 +118,21 @@ export function OnboardingProvider({ children }: OnboardingProviderProps) {
   const completeOnboarding = useCallback(() => {
     setIsOnboardingActive(false);
     setHasCompletedOnboarding(true);
-    const allStepIds = ONBOARDING_STEPS.map((s) => s.id);
+    const allStepIds = filteredSteps.map((s) => s.id);
     saveStoredState({
       completed: true,
       completedSteps: allStepIds,
       skipped: false,
     });
-  }, []);
+  }, [filteredSteps]);
 
   const goToStep = useCallback((stepId: OnboardingStepId) => {
-    const index = ONBOARDING_STEPS.findIndex((s) => s.id === stepId);
+    const index = filteredSteps.findIndex((s) => s.id === stepId);
     if (index >= 0) {
       setCurrentStepIndex(index);
       setIsOnboardingActive(true);
     }
-  }, []);
+  }, [filteredSteps]);
 
   const resetOnboarding = useCallback(() => {
     setCompletedSteps(new Set());
@@ -176,7 +175,7 @@ export function OnboardingProvider({ children }: OnboardingProviderProps) {
       isOnboardingActive,
       currentStepIndex,
       currentStep,
-      steps: ONBOARDING_STEPS,
+      steps: filteredSteps,
       completedSteps,
       hasCompletedOnboarding,
       startOnboarding,
@@ -191,6 +190,7 @@ export function OnboardingProvider({ children }: OnboardingProviderProps) {
       isOnboardingActive,
       currentStepIndex,
       currentStep,
+      filteredSteps,
       completedSteps,
       hasCompletedOnboarding,
       startOnboarding,

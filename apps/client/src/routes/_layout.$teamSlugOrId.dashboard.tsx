@@ -20,6 +20,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
+import { useOnboardingOptional } from "@/contexts/onboarding";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { createFakeConvexId } from "@/lib/fakeConvexId";
 import { attachTaskLifecycleListeners } from "@/lib/socket/taskLifecycleListeners";
@@ -109,6 +110,38 @@ function DashboardComponent() {
   const { socket } = useSocket();
   const { theme } = useTheme();
   const { addTaskToExpand } = useExpandTasks();
+  const onboarding = useOnboardingOptional();
+
+  // Query tasks to check if user is new (has no tasks)
+  const tasksQuery = useQuery(
+    convexQuery(api.tasks.get, { teamSlugOrId })
+  );
+
+  // Auto-start onboarding for new users on the dashboard
+  useEffect(() => {
+    // Only start if onboarding context is available
+    if (!onboarding) return;
+
+    // Don't start if user has already completed or skipped onboarding
+    if (onboarding.hasCompletedOnboarding) return;
+
+    // Don't start if onboarding is already active
+    if (onboarding.isOnboardingActive) return;
+
+    // Wait for tasks query to load
+    if (tasksQuery.isLoading) return;
+
+    // Only start for new users (no tasks)
+    const hasTasks = (tasksQuery.data?.length ?? 0) > 0;
+    if (hasTasks) return;
+
+    // Start onboarding for new users
+    onboarding.startOnboarding();
+  }, [
+    onboarding,
+    tasksQuery.isLoading,
+    tasksQuery.data?.length,
+  ]);
 
   const [selectedProject, setSelectedProject] = useState<string[]>(() => {
     const stored = localStorage.getItem(`selectedProject-${teamSlugOrId}`);
