@@ -9,16 +9,29 @@ export type ClaudeCodeAuthConfig =
   | { auth: { taskRunJwt: string } }
   | { auth: { anthropicApiKey: string } };
 
+/** A captured media item (screenshot or video) */
+export interface CapturedMedia {
+  path: string;
+  description?: string;
+  /** Media type: "image" for screenshots, "video" for recordings */
+  mediaType?: "image" | "video";
+  /** Duration in milliseconds (for videos only) */
+  durationMs?: number;
+}
+
 /** Result from screenshot collection */
 export interface ScreenshotResult {
   status: "completed" | "failed" | "skipped";
-  screenshots?: { path: string; description?: string }[];
+  /** Screenshots captured (legacy field, use 'media' for new code) */
+  screenshots?: CapturedMedia[];
+  /** All captured media (screenshots and videos) */
+  media?: CapturedMedia[];
   hasUiChanges?: boolean;
   error?: string;
   reason?: string;
 }
 
-/** Options for capturing PR screenshots */
+/** Options for capturing PR screenshots and videos */
 export type CaptureScreenshotsOptions = {
   workspaceDir: string;
   changedFiles: string[];
@@ -33,10 +46,35 @@ export type CaptureScreenshotsOptions = {
   convexSiteUrl?: string;
 } & ({ auth: { taskRunJwt: string } } | { auth: { anthropicApiKey: string } });
 
+/** Options for starting a video recording */
+export interface StartVideoRecordingOptions {
+  /** Output directory for the video file */
+  outputDir?: string;
+  /** Video filename (without extension) */
+  fileName?: string;
+  /** Description of what's being recorded */
+  description?: string;
+  /** X11 display to capture (defaults to :99) */
+  display?: string;
+}
+
+/** Handle for an active video recording */
+export interface ActiveVideoRecording {
+  /** Stop the recording and get the result */
+  stop: () => Promise<CapturedMedia>;
+}
+
 export interface ScreenshotCollectorModule {
+  /** Capture PR screenshots and/or videos based on the UI changes */
   claudeCodeCapturePRScreenshots: (options: CaptureScreenshotsOptions) => Promise<ScreenshotResult>;
+  /** Normalize an output directory path */
   normalizeScreenshotOutputDir: (outputDir: string) => string;
+  /** Root directory for storing screenshots/videos */
   SCREENSHOT_STORAGE_ROOT: string;
+  /** Start recording video (Claude can call this when it decides to record) */
+  startVideoRecording?: (options: StartVideoRecordingOptions) => Promise<ActiveVideoRecording>;
+  /** Check if video recording is available (ffmpeg installed, display available) */
+  isVideoRecordingAvailable?: () => Promise<boolean>;
 }
 
 /**

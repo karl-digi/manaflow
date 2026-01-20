@@ -30,16 +30,24 @@ export interface StartScreenshotCollectionOptions {
   devCommand?: string | null;
 }
 
-interface CapturedScreenshot {
+interface CapturedMedia {
   path: string;
   fileName: string;
   description?: string;
+  /** Media type: "image" for screenshots, "video" for recordings */
+  mediaType?: "image" | "video";
+  /** Duration in milliseconds (for videos only) */
+  durationMs?: number;
 }
+
+// Backwards compatible alias
+type CapturedScreenshot = CapturedMedia;
 
 export type ScreenshotCollectionResult =
   | {
       status: "completed";
-      screenshots: CapturedScreenshot[];
+      /** All captured media (screenshots and videos) */
+      screenshots: CapturedMedia[];
       commitSha: string;
       hasUiChanges?: boolean;
     }
@@ -555,11 +563,14 @@ export async function startScreenshotCollection(
         };
       }
 
-      const screenshotEntries: CapturedScreenshot[] =
+      const screenshotEntries: CapturedMedia[] =
         collectedScreenshots.map((screenshot) => ({
           path: screenshot.path,
           fileName: path.basename(screenshot.path),
           description: screenshot.description,
+          // Preserve media type and duration from the collector result
+          mediaType: screenshot.mediaType,
+          durationMs: screenshot.durationMs,
         }));
 
       if (screenshotEntries.length === 0) {
@@ -588,21 +599,23 @@ export async function startScreenshotCollection(
         });
         return { status: "failed", error, commitSha };
       }
-      let primaryScreenshot: CapturedScreenshot = initialPrimary;
+      let primaryMedia: CapturedMedia = initialPrimary;
 
       if (typeof copyTarget === "string" && copyTarget.length > 0) {
         try {
           await fs.mkdir(path.dirname(copyTarget), { recursive: true });
-          await fs.copyFile(primaryScreenshot.path, copyTarget);
-          const updatedScreenshot: CapturedScreenshot = {
+          await fs.copyFile(primaryMedia.path, copyTarget);
+          const updatedMedia: CapturedMedia = {
             path: copyTarget,
             fileName: path.basename(copyTarget),
-            description: primaryScreenshot.description,
+            description: primaryMedia.description,
+            mediaType: primaryMedia.mediaType,
+            durationMs: primaryMedia.durationMs,
           };
-          screenshotEntries[0] = updatedScreenshot;
-          primaryScreenshot = updatedScreenshot;
+          screenshotEntries[0] = updatedMedia;
+          primaryMedia = updatedMedia;
           await logToScreenshotCollector(
-            `Primary screenshot copied to requested path: ${copyTarget}`
+            `Primary media copied to requested path: ${copyTarget}`
           );
         } catch (copyError) {
           const message =
@@ -610,9 +623,9 @@ export async function startScreenshotCollection(
               ? copyError.message
               : String(copyError ?? "unknown copy error");
           await logToScreenshotCollector(
-            `Failed to copy screenshot to requested path: ${message}`
+            `Failed to copy media to requested path: ${message}`
           );
-          log("WARN", "Failed to copy screenshot to requested path", {
+          log("WARN", "Failed to copy media to requested path", {
             headBranch,
             outputDir,
             copyTarget,
@@ -621,23 +634,39 @@ export async function startScreenshotCollection(
         }
       }
 
+      // Count images and videos for logging
+      const imageCount = screenshotEntries.filter(e => e.mediaType !== "video").length;
+      const videoCount = screenshotEntries.filter(e => e.mediaType === "video").length;
+
       if (screenshotEntries.length > 1) {
+        const parts = [];
+        if (imageCount > 0) parts.push(`${imageCount} screenshot${imageCount > 1 ? "s" : ""}`);
+        if (videoCount > 0) parts.push(`${videoCount} video${videoCount > 1 ? "s" : ""}`);
         await logToScreenshotCollector(
-          `Captured ${screenshotEntries.length} screenshots; uploading all and marking ${primaryScreenshot.path} as primary`
+          `Captured ${parts.join(" and ")}; marking ${primaryMedia.path} as primary`
         );
       } else {
+        const mediaType = primaryMedia.mediaType === "video" ? "video" : "screenshot";
         await logToScreenshotCollector(
-          `Captured 1 screenshot at ${primaryScreenshot.path}`
+          `Captured 1 ${mediaType} at ${primaryMedia.path}`
         );
       }
 
-      // Write manifest.json with hasUiChanges and image info for local docker workflows
+      // Write manifest.json with hasUiChanges and media info for local docker workflows
       const manifestPath = path.join(outputDir, "manifest.json");
       const manifest = {
         hasUiChanges: claudeResult.hasUiChanges,
+        // Legacy field for backwards compatibility
         images: screenshotEntries.map((entry) => ({
           path: entry.path,
           description: entry.description,
+        })),
+        // New field with full media info
+        media: screenshotEntries.map((entry) => ({
+          path: entry.path,
+          description: entry.description,
+          mediaType: entry.mediaType ?? "image",
+          durationMs: entry.durationMs,
         })),
       };
       try {
@@ -657,7 +686,9 @@ export async function startScreenshotCollection(
         headBranch,
         baseBranch,
         commitSha,
-        screenshotCount: screenshotEntries.length,
+        mediaCount: screenshotEntries.length,
+        imageCount,
+        videoCount,
       });
 
       return {
