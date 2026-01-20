@@ -6,8 +6,7 @@ import {
   Camera,
   Check,
   CheckCircle2,
-  Clock,
-  Infinity,
+  Clock,upo  Infinity as InfinityIcon,
   Loader2,
   Rocket,
   Server,
@@ -39,7 +38,7 @@ const PREVIEW_PRO_PRODUCT_ID = "preview-pro";
 
 const FEATURES = [
   {
-    icon: Infinity,
+    icon: InfinityIcon,
     title: "Unlimited previews",
     description: "No limits on screenshot previews for your PRs",
   },
