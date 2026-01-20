@@ -78,7 +78,6 @@ function getConvexSiteUrl(providedUrl?: string): string | null {
 
   return null;
 }
-
 interface DownloadResult {
   path: string;
   version: string;

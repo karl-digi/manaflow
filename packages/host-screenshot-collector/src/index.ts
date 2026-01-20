@@ -446,11 +446,18 @@ Do not close the browser when done. Do not create summary documents.
       })}`
     );
 
+    // Create a copy of process.env and explicitly remove ANTHROPIC_API_KEY
+    // to prevent any .env files from leaking through
+    const baseEnv = { ...process.env };
+    delete baseEnv.ANTHROPIC_API_KEY;
+
     const claudeEnv = {
-      ...process.env,
+      ...baseEnv,
       IS_SANDBOX: "1",
       CLAUDE_CODE_ENABLE_TELEMETRY: "0",
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+      // Prevent Claude Code from loading .env files
+      DOTENV_CONFIG_PATH: "/dev/null",
       ...(useTaskRunJwt
         ? {
           // NOTE: This placeholder must match the proxy's hardCodedApiKey in anthropic_http.ts
@@ -459,21 +466,25 @@ Do not close the browser when done. Do not create summary documents.
           ANTHROPIC_BASE_URL: anthropicBaseUrl,
           ANTHROPIC_CUSTOM_HEADERS: `x-cmux-token: ${auth.taskRunJwt}`,
         }
-        : {}),
+        : {
+          // When using API key auth, set it explicitly
+          ...(providedApiKey ? { ANTHROPIC_API_KEY: providedApiKey } : {}),
+        }),
     };
 
+    const envRecord = claudeEnv as Record<string, string | undefined>;
     await logToScreenshotCollector(
       `[DEBUG] Claude env: ${JSON.stringify({
-        ANTHROPIC_BASE_URL: formatOptionalValue(claudeEnv.ANTHROPIC_BASE_URL),
+        ANTHROPIC_BASE_URL: formatOptionalValue(envRecord.ANTHROPIC_BASE_URL),
         ANTHROPIC_CUSTOM_HEADERS: formatSecretValue(
-          claudeEnv.ANTHROPIC_CUSTOM_HEADERS
+          envRecord.ANTHROPIC_CUSTOM_HEADERS
         ),
-        ANTHROPIC_API_KEY: formatSecretValue(claudeEnv.ANTHROPIC_API_KEY),
+        ANTHROPIC_API_KEY: formatSecretValue(envRecord.ANTHROPIC_API_KEY),
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: formatOptionalValue(
-          claudeEnv.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
+          envRecord.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
         ),
         CLAUDE_CODE_ENABLE_TELEMETRY: formatOptionalValue(
-          claudeEnv.CLAUDE_CODE_ENABLE_TELEMETRY
+          envRecord.CLAUDE_CODE_ENABLE_TELEMETRY
         ),
       })}`
     );
@@ -482,7 +493,7 @@ Do not close the browser when done. Do not create summary documents.
       for await (const message of query({
         prompt,
         options: {
-          model: "claude-opus-4-5-20251101",
+          model: "claude-opus-4-5",
           mcpServers: {
             chrome: {
               command: "bunx",
@@ -499,8 +510,10 @@ Do not close the browser when done. Do not create summary documents.
           pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
           // NOTE: We intentionally don't use outputFormat here because it causes
           // the SDK to not yield assistant messages (a bug/limitation). Instead,
-          // we instruct Claude to call a "StructuredOutput" tool and parse it manually.
+          // we instruct Claude to output a JSON code block that we parse manually.
           env: claudeEnv,
+          // Disable all hooks to prevent interference from user's global settings
+          hooks: {},
           stderr: (data) =>
             logToScreenshotCollector(`[claude-code-stderr] ${data}`),
         },
@@ -512,8 +525,9 @@ Do not close the browser when done. Do not create summary documents.
 
         // If this is a result message, log its subtype for debugging
         if (message.type === "result") {
+          const resultMsg = message as { subtype?: string; is_success?: boolean };
           await logToScreenshotCollector(
-            `[DEBUG RESULT] subtype=${message.subtype ?? "none"}, success=${message.is_success ?? "N/A"}`
+            `[DEBUG RESULT] subtype=${resultMsg.subtype ?? "none"}, success=${resultMsg.is_success ?? "N/A"}`
           );
         }
 
