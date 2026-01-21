@@ -44,19 +44,19 @@ export type AnonymousSignUpResponse = {
     message?: string;
 };
 
-export type UserList = {
-    users: Array<User>;
-    total: number;
-    page: number;
-    pageSize: number;
-};
-
 export type User = {
     id: string;
     name: string;
     email: string;
     age?: number;
     createdAt: string;
+};
+
+export type UserList = {
+    users: Array<User>;
+    total: number;
+    page: number;
+    pageSize: number;
 };
 
 export type _Error = {
@@ -86,11 +86,6 @@ export type UpdateUser = {
     age?: number;
 };
 
-export type BookList = {
-    books: Array<Book>;
-    total: number;
-};
-
 export type Book = {
     id: string;
     title: string;
@@ -99,6 +94,11 @@ export type Book = {
     publishedYear: number;
     genre: 'fiction' | 'non-fiction' | 'science' | 'history' | 'biography';
     available: boolean;
+};
+
+export type BookList = {
+    books: Array<Book>;
+    total: number;
 };
 
 export type CreateBook = {
@@ -126,10 +126,6 @@ export type ErrorResponse = {
     error?: string;
 };
 
-export type GithubReposResponse = {
-    repos: Array<GithubRepo>;
-};
-
 export type GithubRepo = {
     name: string;
     full_name: string;
@@ -138,20 +134,19 @@ export type GithubRepo = {
     pushed_at?: string | null;
 };
 
-export type FrameworkDetectionResponse = {
-    framework: FrameworkPreset;
-    packageManager: PackageManager;
-    maintenanceScript: string;
-    devScript: string;
+export type GithubReposResponse = {
+    repos: Array<GithubRepo>;
 };
 
 export type FrameworkPreset = 'other' | 'next' | 'vite' | 'remix' | 'nuxt' | 'sveltekit' | 'angular' | 'cra' | 'vue';
 
 export type PackageManager = 'npm' | 'yarn' | 'pnpm' | 'bun';
 
-export type GithubPullRequestsResponse = {
-    total_count: number;
-    pullRequests: Array<GithubPullRequestItem>;
+export type FrameworkDetectionResponse = {
+    framework: FrameworkPreset;
+    packageManager: PackageManager;
+    maintenanceScript: string;
+    devScript: string;
 };
 
 export type GithubPullRequestItem = {
@@ -169,6 +164,11 @@ export type GithubPullRequestItem = {
     created_at?: string;
     updated_at?: string;
     comments?: number;
+};
+
+export type GithubPullRequestsResponse = {
+    total_count: number;
+    pullRequests: Array<GithubPullRequestItem>;
 };
 
 export type GithubPrsBackfillBody = {
@@ -201,20 +201,6 @@ export type GithubPrsBackfillRepoBody = {
     maxPages?: number;
 };
 
-export type GithubPrCodeResponse = {
-    repoFullName: string;
-    number: number;
-    head: {
-        ref?: string;
-        sha?: string;
-    };
-    base: {
-        ref?: string;
-        sha?: string;
-    };
-    files: Array<GithubPrFile>;
-};
-
 export type GithubPrFile = {
     filename: string;
     status: string;
@@ -239,6 +225,20 @@ export type GithubPrFile = {
     html_url?: string;
     raw_url?: string;
     blob_url?: string;
+};
+
+export type GithubPrCodeResponse = {
+    repoFullName: string;
+    number: number;
+    head: {
+        ref?: string;
+        sha?: string;
+    };
+    base: {
+        ref?: string;
+        sha?: string;
+    };
+    files: Array<GithubPrFile>;
 };
 
 export type GithubOpenPrResponse = {
@@ -394,16 +394,16 @@ export type GithubDefaultBranchResponse = {
     error: string | null;
 };
 
-export type GithubBranchesResponse = {
-    branches: Array<GithubBranch>;
-    defaultBranch: string | null;
-    error: string | null;
-};
-
 export type GithubBranch = {
     name: string;
     lastCommitSha?: string;
     isDefault?: boolean;
+};
+
+export type GithubBranchesResponse = {
+    branches: Array<GithubBranch>;
+    defaultBranch: string | null;
+    error: string | null;
 };
 
 export type ResumeTaskRunResponse = {
@@ -447,8 +447,6 @@ export type SetupInstanceBody = {
     snapshotId?: string | ('snapshot_8lakqugu' | 'snapshot_cq0i2hpy');
 };
 
-export type ListInstancesResponse = Array<InstanceInfo>;
-
 export type InstanceInfo = {
     id: string;
     status: string;
@@ -459,6 +457,8 @@ export type InstanceInfo = {
         teamId?: string;
     };
 };
+
+export type ListInstancesResponse = Array<InstanceInfo>;
 
 export type PveLxcResumeTaskRunResponse = {
     resumed: true;
@@ -495,8 +495,6 @@ export type CreateEnvironmentBody = {
     exposedPorts?: Array<number>;
 };
 
-export type ListEnvironmentsResponse = Array<GetEnvironmentResponse>;
-
 export type GetEnvironmentResponse = {
     id: string;
     name: string;
@@ -513,6 +511,8 @@ export type GetEnvironmentResponse = {
     updatedAt: number;
 };
 
+export type ListEnvironmentsResponse = Array<GetEnvironmentResponse>;
+
 export type GetEnvironmentVarsResponse = {
     envVarsContent: string;
 };
@@ -525,14 +525,14 @@ export type UpdateEnvironmentBody = {
     devScript?: string;
 };
 
-export type UpdateEnvironmentPortsResponse = {
-    exposedPorts: Array<number>;
-    services?: Array<ExposedService>;
-};
-
 export type ExposedService = {
     port: number;
     url: string;
+};
+
+export type UpdateEnvironmentPortsResponse = {
+    exposedPorts: Array<number>;
+    services?: Array<ExposedService>;
 };
 
 export type UpdateEnvironmentPortsBody = {
@@ -540,8 +540,6 @@ export type UpdateEnvironmentPortsBody = {
     ports: Array<number>;
     instanceId?: string;
 };
-
-export type ListSnapshotVersionsResponse = Array<SnapshotVersionResponse>;
 
 export type SnapshotVersionResponse = {
     id: string;
@@ -556,6 +554,8 @@ export type SnapshotVersionResponse = {
     maintenanceScript?: string;
     devScript?: string;
 };
+
+export type ListSnapshotVersionsResponse = Array<SnapshotVersionResponse>;
 
 export type CreateSnapshotVersionResponse = {
     snapshotVersionId: string;
@@ -658,10 +658,6 @@ export type SandboxResumeResponse = {
     resumed: true;
 };
 
-export type ListTeamsResponse = {
-    teams: Array<Team>;
-};
-
 export type Team = {
     /**
      * Team ID
@@ -675,6 +671,10 @@ export type Team = {
      * URL slug
      */
     slug: string | null;
+};
+
+export type ListTeamsResponse = {
+    teams: Array<Team>;
 };
 
 export type CreateTeamErrorResponse = {
@@ -795,14 +795,6 @@ export type CodeReviewStartBody = {
     tooltipLanguage?: string;
 };
 
-export type SandboxConfig = {
-    provider: 'morph' | 'pve-lxc' | 'pve-vm';
-    providerDisplayName: string;
-    presets: Array<SandboxPreset>;
-    defaultPresetId: string;
-    capabilities: SandboxProviderCapabilities;
-};
-
 export type SandboxPreset = {
     id: string;
     presetId: string;
@@ -821,6 +813,14 @@ export type SandboxProviderCapabilities = {
     supportsGpu: boolean;
 };
 
+export type SandboxConfig = {
+    provider: 'morph' | 'pve-lxc' | 'pve-vm';
+    providerDisplayName: string;
+    presets: Array<SandboxPreset>;
+    defaultPresetId: string;
+    capabilities: SandboxProviderCapabilities;
+};
+
 export type WorkspaceConfigResponse = {
     projectFullName: string;
     maintenanceScript?: string;
@@ -835,10 +835,6 @@ export type WorkspaceConfigBody = {
     envVarsContent?: string;
 };
 
-export type PreviewConfigListResponse = {
-    configs: Array<PreviewConfig>;
-};
-
 export type PreviewConfig = {
     id: string;
     repoFullName: string;
@@ -851,6 +847,10 @@ export type PreviewConfig = {
     updatedAt: number;
 };
 
+export type PreviewConfigListResponse = {
+    configs: Array<PreviewConfig>;
+};
+
 export type PreviewConfigMutationBody = {
     previewConfigId?: string;
     teamSlugOrId: string;
@@ -859,10 +859,6 @@ export type PreviewConfigMutationBody = {
     repoInstallationId?: number;
     repoDefaultBranch?: string;
     status?: 'active' | 'paused' | 'disabled';
-};
-
-export type PreviewRunsResponse = {
-    runs: Array<PreviewRun>;
 };
 
 export type PreviewRun = {
@@ -877,6 +873,10 @@ export type PreviewRun = {
     dispatchedAt?: number | null;
     startedAt?: number | null;
     completedAt?: number | null;
+};
+
+export type PreviewRunsResponse = {
+    runs: Array<PreviewRun>;
 };
 
 export type EditorSettingsResponse = {
@@ -3291,7 +3291,7 @@ export type GetApiPreviewTestCheckAccessResponses = {
         hasConfig: boolean;
         hasActiveInstallation: boolean;
         repoFullName: string | null;
-        errorCode: 'invalid_url' | 'no_config' | 'no_installation' | 'installation_inactive' | null;
+        errorCode: 'invalid_url' | 'no_config' | 'no_installation' | 'installation_inactive';
         errorMessage: string | null;
         suggestedAction: string | null;
     };

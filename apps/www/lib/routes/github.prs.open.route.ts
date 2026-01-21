@@ -264,9 +264,11 @@ githubPrsOpenRouter.openapi(
     const title = task.pullRequestTitle || task.text || "cmux changes";
     const truncatedTitle =
       title.length > 72 ? `${title.slice(0, 69)}...` : title;
-    const description =
-      task.text ||
-      `## Summary\n\n${title}`;
+    const description = buildPrDescription({
+      taskText: task.text,
+      title,
+      summary: run.summary,
+    });
 
     const existingByRepo = new Map(
       (run.pullRequests ?? []).map(
@@ -1427,4 +1429,33 @@ function emptyAggregate(): AggregatePullRequestSummary {
     isDraft: false,
     mergeStatus: "none",
   };
+}
+
+/**
+ * Build the PR description body, including the PR Review Summary when available.
+ */
+function buildPrDescription({
+  taskText,
+  title,
+  summary,
+}: {
+  taskText?: string;
+  title: string;
+  summary?: string;
+}): string {
+  const parts: string[] = [];
+
+  // Add task description section
+  if (taskText) {
+    parts.push(`## Task\n\n${taskText}`);
+  } else {
+    parts.push(`## Summary\n\n${title}`);
+  }
+
+  // Add PR Review Summary section if available
+  if (summary && summary.trim().length > 0) {
+    parts.push(summary);
+  }
+
+  return parts.join("\n\n");
 }

@@ -213,6 +213,35 @@ function buildPlaceholderWorkspaceUrl(folderPath: string): string {
   return buildServeWebWorkspaceUrl(LOCAL_VSCODE_PLACEHOLDER_ORIGIN, folderPath);
 }
 
+/**
+ * Build the PR description body, including the PR Review Summary when available.
+ */
+function buildPrDescription({
+  taskText,
+  title,
+  summary,
+}: {
+  taskText?: string;
+  title: string;
+  summary?: string;
+}): string {
+  const parts: string[] = [];
+
+  // Add task description section
+  if (taskText) {
+    parts.push(`## Task\n\n${taskText}`);
+  } else {
+    parts.push(`## Summary\n\n${title}`);
+  }
+
+  // Add PR Review Summary section if available
+  if (summary && summary.trim().length > 0) {
+    parts.push(summary);
+  }
+
+  return parts.join("\n\n");
+}
+
 export function setupSocketHandlers(
   rt: RealtimeServer,
   gitDiffManager: GitDiffManager,
@@ -2361,12 +2390,11 @@ Please address the issue mentioned in the comment above.`;
         const title = task.pullRequestTitle || task.text || "cmux changes";
         const truncatedTitle =
           title.length > 72 ? `${title.slice(0, 69)}...` : title;
-        const body =
-          task.pullRequestDescription ||
-          task.text ||
-          `## Summary
-
-${title}`;
+        const body = buildPrDescription({
+          taskText: task.text,
+          title,
+          summary: run.summary,
+        });
 
         const existingByRepo = new Map(
           (run.pullRequests ?? []).map(
