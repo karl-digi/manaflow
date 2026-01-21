@@ -390,7 +390,7 @@ DO NOT USE VIDEO WHEN:
 - Pure styling changes (colors, fonts, spacing)
 - Static text or content changes
 
-HOW TO RECORD A VIDEO:
+RECORDING STEPS:
 
 1. BEFORE recording, position cursor at starting element:
    - Get element position via Chrome MCP (getBoundingClientRect)
@@ -398,27 +398,37 @@ HOW TO RECORD A VIDEO:
    - Run: DISPLAY=:1 xdotool mousemove --sync X Y
 
 2. Start ffmpeg recording in background:
-\`\`\`bash
-DISPLAY=:1 ffmpeg -y -f x11grab -draw_mouse 1 -framerate 24 -video_size 1920x1080 -i :1+0,0 -c:v libx264 -preset ultrafast -crf 26 -pix_fmt yuv420p -movflags +faststart ${outputDir}/workflow.mp4 &
-FFMPEG_PID=$!
-\`\`\`
+   \`\`\`bash
+   DISPLAY=:1 ffmpeg -y -f x11grab -draw_mouse 1 -framerate 24 -video_size 1920x1080 -i :1+0,0 -c:v libx264 -preset ultrafast -crf 26 -pix_fmt yuv420p -movflags +faststart ${outputDir}/workflow.mp4 &
+   FFMPEG_PID=$!
+   \`\`\`
 
 3. Immediately use Chrome MCP to click/navigate. For each subsequent action:
    - Move cursor with xdotool: DISPLAY=:1 xdotool mousemove --sync X Y
    - Immediately click with Chrome MCP (NO sleeps between actions)
 
-4. Stop recording when done:
-\`\`\`bash
-kill -INT $FFMPEG_PID
-wait $FFMPEG_PID 2>/dev/null || true
-\`\`\`
+4. After last action, wait for content to fully load, then STOP:
+   \`\`\`bash
+   kill -INT $FFMPEG_PID
+   wait $FFMPEG_PID 2>/dev/null || true
+   \`\`\`
 
-CURSOR COORDINATE CALCULATION:
+WHEN TO STOP RECORDING:
+- After your last click, wait for the page/content to fully load and render
+- Once the final result is visible on screen, STOP - do not record beyond that
+- Do NOT keep recording while you think about what to do next
+- Do NOT record empty time where nothing is happening
+
+Example timing:
+- Click button -> page navigates -> new page fully loads -> STOP
+- Click link -> content appears -> STOP
+- Bad: clicking, then 10 seconds of nothing, then stopping
+
+COORDINATE CALCULATION (add 85 to Y for Chrome toolbar):
 \`\`\`javascript
-const el = document.querySelector('button');
 const rect = el.getBoundingClientRect();
 const x = Math.round(rect.x + rect.width/2);
-const y = Math.round(rect.y + rect.height/2) + 85; // +85 for Chrome toolbar
+const y = Math.round(rect.y + rect.height/2) + 85;
 \`\`\`
 
 IMPORTANT:
