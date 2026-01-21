@@ -20,6 +20,7 @@ import {
 import { action, internalAction } from "../_generated/server";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
+import { parseCrownEvaluationPrompt } from "./retryData";
 
 const OPENAI_CROWN_MODEL = "gpt-5-mini-2025-08-07";
 const ANTHROPIC_CROWN_MODEL = "claude-sonnet-4-5-20250929";
@@ -30,6 +31,7 @@ type CrownProvider = (typeof CROWN_PROVIDERS)[number];
 
 // Configuration for retry logic
 const MAX_CROWN_EVALUATION_ATTEMPTS = 3;
+const MAX_CROWN_SUMMARIZATION_ATTEMPTS = 3;
 const RETRY_BASE_DELAY_MS = 1000; // 1 second base delay, doubles each retry
 
 /**
@@ -298,22 +300,59 @@ OUTPUT FORMAT (Markdown)
 - Follow-ups: optional bullets if applicable
 `;
 
-  try {
-    const { object } = await generateObject({
-      model,
-      schema: CrownSummarizationResponseSchema,
-      system:
-        "You are an expert reviewer summarizing pull requests. Provide a clear, concise summary following the requested format.",
-      prompt: summarizationPrompt,
-      maxRetries: 2,
-    });
+  const attemptErrors: Array<{ attempt: number; error: unknown }> = [];
 
-    console.info(`[convex.crown] Summarization completed via ${provider}`);
-    return CrownSummarizationResponseSchema.parse(object);
-  } catch (error) {
-    console.error(`[convex.crown] ${provider} summarization error`, error);
-    throw new ConvexError("Summarization failed");
+  for (let attempt = 1; attempt <= MAX_CROWN_SUMMARIZATION_ATTEMPTS; attempt++) {
+    try {
+      console.info(
+        `[convex.crown] Summarization attempt ${attempt}/${MAX_CROWN_SUMMARIZATION_ATTEMPTS} via ${provider}`
+      );
+
+      const { object } = await generateObject({
+        model,
+        schema: CrownSummarizationResponseSchema,
+        system:
+          "You are an expert reviewer summarizing pull requests. Provide a clear, concise summary following the requested format.",
+        prompt: summarizationPrompt,
+        maxRetries: 2,
+      });
+
+      console.info(`[convex.crown] Summarization completed via ${provider}`);
+      return CrownSummarizationResponseSchema.parse(object);
+    } catch (error) {
+      attemptErrors.push({ attempt, error });
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      console.error(
+        `[convex.crown] ${provider} summarization attempt ${attempt}/${MAX_CROWN_SUMMARIZATION_ATTEMPTS} failed:`,
+        errorMessage
+      );
+
+      if (attempt < MAX_CROWN_SUMMARIZATION_ATTEMPTS) {
+        const backoffDelay = RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1);
+        console.info(
+          `[convex.crown] Retrying summarization in ${backoffDelay}ms (attempt ${attempt + 1}/${MAX_CROWN_SUMMARIZATION_ATTEMPTS})`
+        );
+        await delay(backoffDelay);
+      }
+    }
   }
+
+  const lastError = attemptErrors[attemptErrors.length - 1]?.error;
+  const lastMessage =
+    lastError instanceof Error ? lastError.message : String(lastError ?? "");
+  console.warn(
+    `[convex.crown] All ${MAX_CROWN_SUMMARIZATION_ATTEMPTS} summarization attempts failed via ${provider}`,
+    {
+      provider,
+      totalAttempts: MAX_CROWN_SUMMARIZATION_ATTEMPTS,
+      lastMessage,
+    }
+  );
+
+  throw new ConvexError(
+    `Summarization failed after ${MAX_CROWN_SUMMARIZATION_ATTEMPTS} attempts (provider: ${provider})`
+  );
 }
 
 export const evaluate = action({
@@ -352,43 +391,6 @@ interface CrownRetryData {
  * Schema for parsing evaluation prompt to extract candidates
  * Format: "Task: <prompt>\nCandidates: <JSON array>"
  */
-interface ParsedEvaluationData {
-  prompt: string;
-  candidates: Array<{
-    runId: string;
-    agentName: string;
-    modelName?: string;
-    gitDiff: string;
-    newBranch?: string | null;
-    index: number;
-  }>;
-}
-
-function parseEvaluationPrompt(evaluationPrompt: string): ParsedEvaluationData | null {
-  try {
-    // Format is "Task: <prompt>\nCandidates: <JSON>"
-    const taskMatch = evaluationPrompt.match(/^Task:\s*(.+?)\nCandidates:\s*/s);
-    if (!taskMatch) {
-      console.error("[Crown] Failed to parse evaluation prompt: no Task match");
-      return null;
-    }
-
-    const prompt = taskMatch[1].trim();
-    const candidatesJson = evaluationPrompt.slice(taskMatch[0].length);
-
-    const candidates = JSON.parse(candidatesJson);
-    if (!Array.isArray(candidates)) {
-      console.error("[Crown] Failed to parse evaluation prompt: candidates not array");
-      return null;
-    }
-
-    return { prompt, candidates };
-  } catch (error) {
-    console.error("[Crown] Failed to parse evaluation prompt:", error);
-    return null;
-  }
-}
-
 /**
  * Internal action to retry a failed crown evaluation.
  * Called after retryCrownEvaluation mutation resets the status.
@@ -436,7 +438,7 @@ export const retryEvaluation = internalAction({
     }
 
     // Parse the evaluation prompt to extract candidates
-    const parsedData = parseEvaluationPrompt(retryData.evaluationPrompt);
+    const parsedData = parseCrownEvaluationPrompt(retryData.evaluationPrompt);
     if (!parsedData) {
       // Mark as error if we can't parse the data
       await ctx.runMutation(internal.tasks.setCrownEvaluationStatusInternal, {
@@ -509,21 +511,62 @@ export const retryEvaluation = internalAction({
         throw new Error(`Winner index ${evaluationResponse.winner} out of bounds`);
       }
 
-      // Generate summary for the winning candidate (same as normal path)
+      // Generate summary for the winning candidate (atomic: must succeed)
       let summary: string | undefined;
       try {
-        console.log(`[Crown] Generating summary for retry winner ${winnerCandidate.runId}`);
+        console.log(
+          `[Crown] Generating summary for retry winner ${winnerCandidate.runId}`
+        );
         const summaryResponse = await performCrownSummarization(
           parsedData.prompt,
           winnerCandidate.gitDiff
         );
         summary = summaryResponse?.summary?.slice(0, 8000);
-        console.log(`[Crown] Summary generated for retry winner`, {
-          summaryLength: summary?.length ?? 0,
-        });
       } catch (summaryError) {
-        // Log but don't fail the retry if summarization fails
-        console.error("[Crown] Summary generation failed during retry, continuing without summary:", summaryError);
+        const message =
+          summaryError instanceof Error
+            ? summaryError.message
+            : String(summaryError);
+
+        console.error(
+          "[Crown] Summary generation failed during retry; marking crown as failed",
+          { taskId: args.taskId, error: message }
+        );
+
+        await ctx.runMutation(internal.crown.workerFinalize, {
+          taskId: args.taskId,
+          teamId: retryData.teamId,
+          userId: retryData.userId,
+          winnerRunId: null,
+          reason: "Summarization failed",
+          evaluationPrompt: retryData.evaluationPrompt,
+          evaluationResponse: JSON.stringify(evaluationResponse),
+          candidateRunIds: retryData.candidateRunIds.map(
+            (id) => id as Id<"taskRuns">
+          ),
+          isFallback: false,
+          evaluationNote: `Summarization failed: ${message}`,
+        });
+
+        return { success: false, reason: "Summarization failed" };
+      }
+
+      if (!summary || summary.trim().length === 0) {
+        await ctx.runMutation(internal.crown.workerFinalize, {
+          taskId: args.taskId,
+          teamId: retryData.teamId,
+          userId: retryData.userId,
+          winnerRunId: null,
+          reason: "Summarization returned empty output",
+          evaluationPrompt: retryData.evaluationPrompt,
+          evaluationResponse: JSON.stringify(evaluationResponse),
+          candidateRunIds: retryData.candidateRunIds.map(
+            (id) => id as Id<"taskRuns">
+          ),
+          isFallback: false,
+          evaluationNote: "Summarization returned empty output",
+        });
+        return { success: false, reason: "Summarization returned empty output" };
       }
 
       // Generate PR title and description (for consistency with normal path)

@@ -670,6 +670,37 @@ export const clearCrownRetryData = internalMutation({
   },
 });
 
+/**
+ * Set crown evaluation retry data (used to re-run evaluation + summarization).
+ * Intended to be called by worker-facing httpActions before finalization so we
+ * have enough context to retry (especially for single-run scenarios).
+ */
+export const setCrownRetryDataInternal = internalMutation({
+  args: {
+    taskId: v.id("tasks"),
+    teamId: v.string(),
+    userId: v.string(),
+    retryData: v.string(),
+    overwrite: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const task = await ctx.db.get(args.taskId);
+    if (!task || task.teamId !== args.teamId || task.userId !== args.userId) {
+      throw new Error("Task not found or unauthorized");
+    }
+
+    if (task.crownEvaluationRetryData && !args.overwrite) {
+      return false;
+    }
+
+    await ctx.db.patch(args.taskId, {
+      crownEvaluationRetryData: args.retryData,
+      updatedAt: Date.now(),
+    });
+    return true;
+  },
+});
+
 // Try to atomically begin a crown evaluation; returns true if we acquired the lock
 export const tryBeginCrownEvaluation = authMutation({
   args: {

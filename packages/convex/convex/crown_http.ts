@@ -16,6 +16,10 @@ import { httpAction } from "./_generated/server";
 import type { ActionCtx } from "./_generated/server";
 import { getWorkerAuth } from "./users/utils/getWorkerAuth";
 import type { WorkerAuthContext } from "./users/utils/getWorkerAuth";
+import {
+  buildCrownEvaluationPrompt,
+  parseCrownEvaluationPrompt,
+} from "./crown/retryData";
 
 type TaskRunDoc = Doc<"taskRuns">;
 type TeamMembershipDoc = Doc<"teamMemberships">;
@@ -302,6 +306,38 @@ export const crownEvaluate = httpAction(async (ctx, req) => {
     }
   }
 
+  if (workerAuth && targetTaskId) {
+    try {
+      const evaluationPrompt = buildCrownEvaluationPrompt(
+        data.prompt,
+        data.candidates
+      );
+      const candidateRunIds = data.candidates
+        .map((candidate) => candidate.runId)
+        .filter((id): id is string => Boolean(id));
+
+      const retryData = JSON.stringify({
+        evaluationPrompt,
+        candidateRunIds,
+        teamId: teamContext.teamId,
+        userId: teamContext.userId,
+      });
+
+      await ctx.runMutation(internal.tasks.setCrownRetryDataInternal, {
+        taskId: targetTaskId,
+        teamId: teamContext.teamId,
+        userId: teamContext.userId,
+        retryData,
+        overwrite: true,
+      });
+    } catch (error) {
+      console.error("[convex.crown] Failed to store crown retry data", {
+        taskId: targetTaskId,
+        error,
+      });
+    }
+  }
+
   try {
     const candidates = data.candidates.map((candidate, index) => ({
       modelName:
@@ -361,6 +397,74 @@ export const crownSummarize = httpAction(async (ctx, req) => {
       { code: 400, message: "teamSlugOrId is required" },
       400
     );
+  }
+
+  if (workerAuth) {
+    try {
+      const taskRunId = workerAuth.payload.taskRunId as Id<"taskRuns"> | undefined;
+      if (taskRunId) {
+        const run = await ctx.runQuery(internal.taskRuns.getById, {
+          id: taskRunId,
+        });
+        if (
+          run &&
+          run.teamId === workerAuth.payload.teamId &&
+          run.userId === workerAuth.payload.userId
+        ) {
+          const runsForTeam = await ctx.runQuery(
+            internal.taskRuns.listByTaskAndTeamInternal,
+            {
+              taskId: run.taskId,
+              teamId: workerAuth.payload.teamId,
+              userId: workerAuth.payload.userId,
+            }
+          );
+          const completedRuns = runsForTeam.filter(
+            (candidateRun: TaskRunDoc) => candidateRun.status === "completed"
+          );
+
+          const isSingleRunTask =
+            runsForTeam.length === 1 && completedRuns.length === 1;
+
+          if (isSingleRunTask) {
+            const candidates = [
+              {
+                runId: run._id,
+                agentName: run.agentName ?? "unknown agent",
+                modelName: run.agentName ?? "unknown agent",
+                gitDiff: data.gitDiff,
+                newBranch: run.newBranch ?? null,
+                index: 0,
+              },
+            ];
+
+            const evaluationPrompt = buildCrownEvaluationPrompt(
+              data.prompt,
+              candidates
+            );
+
+            const retryData = JSON.stringify({
+              evaluationPrompt,
+              candidateRunIds: [run._id],
+              teamId: workerAuth.payload.teamId,
+              userId: workerAuth.payload.userId,
+            });
+
+            await ctx.runMutation(internal.tasks.setCrownRetryDataInternal, {
+              taskId: run.taskId,
+              teamId: workerAuth.payload.teamId,
+              userId: workerAuth.payload.userId,
+              retryData,
+              overwrite: false,
+            });
+          }
+        }
+      }
+    } catch (error) {
+      console.error("[convex.crown] Failed to store single-run retry data", {
+        error,
+      });
+    }
   }
 
   try {
@@ -744,13 +848,96 @@ export const crownWorkerFinalize = httpAction(async (ctx, req) => {
   }
 
   try {
+    const summaryMissing =
+      !validation.data.summary || validation.data.summary.trim().length === 0;
+
+    let summary = validation.data.summary;
+
+    if (winnerRunId && summaryMissing) {
+      const parsedFromRequest = parseCrownEvaluationPrompt(
+        validation.data.evaluationPrompt
+      );
+
+      let parsedFromTask: ReturnType<typeof parseCrownEvaluationPrompt> | null =
+        null;
+      if (!parsedFromRequest && task.crownEvaluationRetryData) {
+        try {
+          const stored = JSON.parse(task.crownEvaluationRetryData) as {
+            evaluationPrompt?: string;
+          };
+          if (stored.evaluationPrompt) {
+            parsedFromTask = parseCrownEvaluationPrompt(stored.evaluationPrompt);
+          }
+        } catch (error) {
+          console.error("[convex.crown] Failed to parse stored retry data", {
+            taskId,
+            error,
+          });
+        }
+      }
+
+      const parsed = parsedFromRequest ?? parsedFromTask;
+      const candidate = parsed?.candidates.find(
+        (candidateItem) => candidateItem.runId === winnerRunId
+      );
+
+      if (!parsed || !candidate) {
+        const winningId = await ctx.runMutation(internal.crown.workerFinalize, {
+          taskId,
+          teamId: workerAuth.payload.teamId,
+          userId: workerAuth.payload.userId,
+          winnerRunId: null,
+          reason: "Summarization failed (missing summary)",
+          summary: undefined,
+          evaluationPrompt: validation.data.evaluationPrompt,
+          evaluationResponse: validation.data.evaluationResponse,
+          candidateRunIds,
+          pullRequest: validation.data.pullRequest,
+          pullRequestTitle: validation.data.pullRequestTitle,
+          pullRequestDescription: validation.data.pullRequestDescription,
+          isFallback,
+          evaluationNote:
+            "Summarization failed (missing summary) and Convex could not reconstruct the winner diff",
+        });
+        return jsonResponse({ ok: true, winnerRunId: winningId });
+      }
+
+      try {
+        const summaryResponse = await ctx.runAction(api.crown.actions.summarize, {
+          prompt: parsed.prompt,
+          gitDiff: candidate.gitDiff,
+          teamSlugOrId: workerAuth.payload.teamId,
+        });
+        summary = summaryResponse.summary.slice(0, 8000);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const winningId = await ctx.runMutation(internal.crown.workerFinalize, {
+          taskId,
+          teamId: workerAuth.payload.teamId,
+          userId: workerAuth.payload.userId,
+          winnerRunId: null,
+          reason: "Summarization failed",
+          summary: undefined,
+          evaluationPrompt: validation.data.evaluationPrompt,
+          evaluationResponse: validation.data.evaluationResponse,
+          candidateRunIds,
+          pullRequest: validation.data.pullRequest,
+          pullRequestTitle: validation.data.pullRequestTitle,
+          pullRequestDescription: validation.data.pullRequestDescription,
+          isFallback,
+          evaluationNote: `Summarization failed: ${message}`,
+        });
+        return jsonResponse({ ok: true, winnerRunId: winningId });
+      }
+    }
+
     const winningId = await ctx.runMutation(internal.crown.workerFinalize, {
       taskId,
       teamId: workerAuth.payload.teamId,
       userId: workerAuth.payload.userId,
       winnerRunId,
       reason: validation.data.reason,
-      summary: validation.data.summary,
+      summary,
       evaluationPrompt: validation.data.evaluationPrompt,
       evaluationResponse: validation.data.evaluationResponse,
       candidateRunIds,

@@ -4,6 +4,7 @@ import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery } from "./_generated/server";
 import { authMutation, authQuery, taskIdWithFake } from "./users/utils";
+import { parseCrownEvaluationPrompt } from "./crown/retryData";
 
 const CROWN_RETRY_COOLDOWN_MS = 30_000;
 
@@ -409,10 +410,11 @@ export const workerFinalize = internalMutation({
 
     const now = Date.now();
 
-    // If no winner was selected (failure fallback), mark task as error and store retry data
-    if (!args.winnerRunId) {
+    const summaryMissing = !args.summary || args.summary.trim().length === 0;
+
+    // If no winner was selected, or summarization failed, mark task as error and store retry data
+    if (!args.winnerRunId || summaryMissing) {
       const currentRetryCount = task.crownEvaluationRetryCount ?? 0;
-      // Store evaluation data for potential retry
       const retryData = {
         evaluationPrompt: args.evaluationPrompt,
         candidateRunIds: args.candidateRunIds,
@@ -420,10 +422,24 @@ export const workerFinalize = internalMutation({
         userId: args.userId,
       };
 
+      const hasParseablePrompt = Boolean(
+        parseCrownEvaluationPrompt(args.evaluationPrompt)
+      );
+      const retryDataJson = JSON.stringify(retryData);
+      const retryDataToStore =
+        !hasParseablePrompt && task.crownEvaluationRetryData
+          ? task.crownEvaluationRetryData
+          : retryDataJson;
+
+      const errorMessage = summaryMissing
+        ? args.evaluationNote ||
+          "Crown summarization failed (missing summary); retry to rerun evaluation and summarization."
+        : args.evaluationNote || args.reason;
+
       await ctx.db.patch(args.taskId, {
         crownEvaluationStatus: "error",
-        crownEvaluationError: args.evaluationNote || args.reason,
-        crownEvaluationRetryData: JSON.stringify(retryData),
+        crownEvaluationError: errorMessage,
+        crownEvaluationRetryData: retryDataToStore,
         crownEvaluationRetryCount: currentRetryCount,
         crownEvaluationLastRetryAt: task.crownEvaluationLastRetryAt,
         isCompleted: true, // Mark completed to unblock the task flow
@@ -467,7 +483,7 @@ export const workerFinalize = internalMutation({
     await ctx.db.patch(args.winnerRunId, {
       isCrowned: true,
       crownReason: args.reason,
-      ...(args.summary ? { summary: args.summary } : {}),
+      summary: args.summary,
       ...(args.pullRequest?.url ? { pullRequestUrl: args.pullRequest.url } : {}),
       ...(args.pullRequest?.isDraft !== undefined
         ? { pullRequestIsDraft: args.pullRequest.isDraft }
