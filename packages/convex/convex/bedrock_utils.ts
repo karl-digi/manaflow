@@ -231,6 +231,7 @@ export function parseBedrockEventToSSE(messageBytes: Uint8Array): string | null 
         }
       } catch {
         // If parsing fails, just return the original
+        console.log("[bedrock-utils] SSE event (unparsed):", decodedBytes.slice(0, 200));
       }
       // Return as SSE format
       return `data: ${decodedBytes}\n\n`;
@@ -263,6 +264,9 @@ export function convertBedrockStreamToSSE(
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   let buffer = new Uint8Array(0);
+  let eventCount = 0;
+
+  console.log("[bedrock-utils] Starting stream conversion");
 
   return new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -272,6 +276,7 @@ export function convertBedrockStreamToSSE(
         while (true) {
           const { done, value } = await reader.read();
           if (done) {
+            console.log("[bedrock-utils] Stream done, total events:", eventCount);
             break;
           }
 
@@ -299,13 +304,15 @@ export function convertBedrockStreamToSSE(
             // Parse the event and convert to SSE
             const sseEvent = parseBedrockEventToSSE(messageBytes);
             if (sseEvent) {
+              eventCount++;
               controller.enqueue(encoder.encode(sseEvent));
             }
           }
         }
+        console.log("[bedrock-utils] Stream closed successfully");
         controller.close();
       } catch (error) {
-        console.error("[bedrock-utils] Stream conversion error:", error);
+        console.error("[bedrock-utils] Stream conversion error:", error, "events so far:", eventCount);
         controller.error(error);
       }
     },

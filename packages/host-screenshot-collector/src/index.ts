@@ -452,9 +452,21 @@ Do not create summary documents.
     );
     const originalApiKey = process.env.ANTHROPIC_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
+
+    // Also delete OAuth token from process.env BEFORE creating claudeEnv
+    // This prevents Claude Code from bypassing ANTHROPIC_BASE_URL
+    const hadOriginalOAuthToken = Object.prototype.hasOwnProperty.call(
+      process.env,
+      "CLAUDE_CODE_OAUTH_TOKEN"
+    );
+    const originalOAuthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
     // Log JWT info for debugging
     await logToScreenshotCollector(
       `Using taskRun JWT auth. JWT present: ${!!auth.taskRunJwt}, JWT length: ${auth.taskRunJwt?.length ?? 0}, JWT first 20 chars: ${auth.taskRunJwt?.substring(0, 20) ?? "N/A"}`
+    );
+    await logToScreenshotCollector(
+      `[DEBUG] Removed from process.env before creating claudeEnv: ANTHROPIC_API_KEY=${hadOriginalApiKey ? "was present" : "was not present"}, CLAUDE_CODE_OAUTH_TOKEN=${hadOriginalOAuthToken ? "was present (BYPASSES PROXY!)" : "was not present"}`
     );
     await logToScreenshotCollector(`ANTHROPIC_BASE_URL: ${anthropicBaseUrl}`);
     await logToScreenshotCollector(
@@ -475,17 +487,27 @@ Do not create summary documents.
       // Don't set CLAUDE_CONFIG_DIR - we use settingSources: [] to ignore config files
       CLAUDE_CODE_ENABLE_TELEMETRY: "0",
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+      // Ensure HOME and USER are set (required by Claude CLI, may be missing in sandbox)
+      HOME: process.env.HOME || "/root",
+      USER: process.env.USER || "root",
     };
 
     // Remove environment variables that may interfere with our configured auth path.
     // CLAUDE_CODE_OAUTH_TOKEN: If present, Claude Code may bypass ANTHROPIC_BASE_URL and go direct to Anthropic.
-    // AWS_*/BEDROCK: These can cause Claude Code to use Bedrock directly instead of our proxy.
+    // AWS_*: These can cause Claude Code to use Bedrock directly instead of our proxy.
     // ANTHROPIC_MODEL/SMALL_FAST_MODEL: We want Claude Code to use its defaults, not inherited values.
     delete claudeEnv.CLAUDE_CODE_OAUTH_TOKEN;
     delete claudeEnv.AWS_BEARER_TOKEN_BEDROCK;
     delete claudeEnv.CLAUDE_CODE_USE_BEDROCK;
     delete claudeEnv.ANTHROPIC_MODEL;
     delete claudeEnv.ANTHROPIC_SMALL_FAST_MODEL;
+    // Remove AWS credentials that could cause Claude Code to bypass our proxy
+    delete claudeEnv.AWS_ACCESS_KEY_ID;
+    delete claudeEnv.AWS_SECRET_ACCESS_KEY;
+    delete claudeEnv.AWS_SESSION_TOKEN;
+    delete claudeEnv.AWS_REGION;
+    delete claudeEnv.AWS_DEFAULT_REGION;
+    delete claudeEnv.AWS_PROFILE;
 
     // Configure proxy auth via env vars (works both locally and in sandbox)
     // We use settingSources: [] to ignore user/project settings, so env vars take precedence
@@ -515,6 +537,11 @@ Do not create summary documents.
       "CLAUDE_CODE_OAUTH_TOKEN",
       "CLAUDE_CONFIG_DIR",
       "AWS_BEARER_TOKEN_BEDROCK",
+      "AWS_ACCESS_KEY_ID",
+      "AWS_SECRET_ACCESS_KEY",
+      "AWS_SESSION_TOKEN",
+      "AWS_REGION",
+      "AWS_DEFAULT_REGION",
       "CLAUDE_CODE_USE_BEDROCK",
       "HOME",
       "USER",
@@ -535,6 +562,8 @@ Do not create summary documents.
         ANTHROPIC_API_KEY: claudeEnv.ANTHROPIC_API_KEY ?? "<unset>",
         CLAUDE_CODE_OAUTH_TOKEN: claudeEnv.CLAUDE_CODE_OAUTH_TOKEN ?? "<unset>",
         CLAUDE_CONFIG_DIR: claudeEnv.CLAUDE_CONFIG_DIR ?? "<unset>",
+        HOME: claudeEnv.HOME ?? "<unset>",
+        USER: claudeEnv.USER ?? "<unset>",
       }, null, 2)}`
     );
 
@@ -585,6 +614,7 @@ Do not create summary documents.
       });
       throw error;
     } finally {
+      // Restore original API key
       if (hadOriginalApiKey) {
         if (originalApiKey !== undefined) {
           process.env.ANTHROPIC_API_KEY = originalApiKey;
@@ -593,6 +623,16 @@ Do not create summary documents.
         }
       } else {
         delete process.env.ANTHROPIC_API_KEY;
+      }
+      // Restore original OAuth token
+      if (hadOriginalOAuthToken) {
+        if (originalOAuthToken !== undefined) {
+          process.env.CLAUDE_CODE_OAUTH_TOKEN = originalOAuthToken;
+        } else {
+          delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+        }
+      } else {
+        delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
       }
     }
 

@@ -544,8 +544,24 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
 });
 
 /**
+ * Parse a GitHub PR URL to extract owner, repo, and PR number.
+ */
+function parsePrUrl(prUrl: string): { owner: string; repo: string; prNumber: number } | null {
+  const match = prUrl.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
+  if (!match) {
+    return null;
+  }
+  return {
+    owner: match[1],
+    repo: match[2],
+    prNumber: parseInt(match[3], 10),
+  };
+}
+
+/**
  * HTTP action to create a test preview task run for development/testing.
- * Creates a task and taskRun with isPreviewJob=true, returns JWT for worker auth.
+ * Creates a full chain: previewConfig → previewRun → task → taskRun, returns JWT for worker auth.
+ * This ensures the `/api/preview/complete` endpoint can find the previewRun.
  * Authenticated via bearer token (CMUX_TASK_RUN_JWT_SECRET).
  */
 export const createTestPreviewTask = httpAction(async (ctx, req) => {
@@ -583,22 +599,59 @@ export const createTestPreviewTask = httpAction(async (ctx, req) => {
     repoUrl?: string;
   };
 
+  // Parse PR URL to get owner/repo and PR number
+  const prInfo = parsePrUrl(prUrl);
+  if (!prInfo) {
+    return jsonResponse({
+      error: "Invalid PR URL format. Expected: https://github.com/<owner>/<repo>/pull/<number>",
+    }, 400);
+  }
+
+  const repoFullName = `${prInfo.owner}/${prInfo.repo}`.toLowerCase();
+
   console.log("[preview-jobs-http] Creating test preview task", {
     teamId,
     userId,
     prUrl,
+    repoFullName,
+    prNumber: prInfo.prNumber,
   });
 
   try {
-    // Create a test task for this preview run
+    // Step 1: Create or find a preview config for this repo
+    const previewConfigId = await ctx.runMutation(internal.previewConfigs.upsertInternal, {
+      teamId,
+      userId,
+      repoFullName,
+    });
+
+    // Step 2: Create a preview run (following the webhook flow)
+    const testHeadSha = `test-${Date.now()}`; // Use a unique test SHA
+    const previewRunId = await ctx.runMutation(internal.previewRuns.enqueueFromWebhook, {
+      previewConfigId,
+      teamId,
+      repoFullName,
+      repoInstallationId: undefined,
+      prNumber: prInfo.prNumber,
+      prUrl,
+      prTitle: `Test Preview: ${prUrl}`,
+      prDescription: undefined,
+      headSha: testHeadSha,
+      baseSha: undefined,
+      headRef: undefined,
+      headRepoFullName: undefined,
+      headRepoCloneUrl: undefined,
+    });
+
+    // Step 3: Create a test task for this preview run
     const taskId = await ctx.runMutation(internal.tasks.createTestTask, {
       teamId,
       userId,
       name: `Test Preview: ${prUrl}`,
-      repoUrl,
+      repoUrl: repoUrl ?? `https://github.com/${repoFullName}`,
     });
 
-    // Create the preview task run
+    // Step 4: Create the preview task run
     const result = await ctx.runMutation(internal.taskRuns.createForPreview, {
       taskId,
       teamId,
@@ -606,13 +659,23 @@ export const createTestPreviewTask = httpAction(async (ctx, req) => {
       prUrl,
     });
 
+    // Step 5: Link the taskRun to the previewRun
+    await ctx.runMutation(internal.previewRuns.linkTaskRun, {
+      previewRunId,
+      taskRunId: result.taskRunId,
+    });
+
     console.log("[preview-jobs-http] Test preview task created", {
+      previewConfigId,
+      previewRunId,
       taskId,
       taskRunId: result.taskRunId,
     });
 
     return jsonResponse({
       success: true,
+      previewConfigId,
+      previewRunId,
       taskId,
       taskRunId: result.taskRunId,
       jwt: result.jwt,

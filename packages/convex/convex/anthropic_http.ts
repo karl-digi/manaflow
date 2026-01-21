@@ -232,6 +232,7 @@ function hasUserApiKey(key: string | null): boolean {
 }
 
 const TEMPORARY_DISABLE_AUTH = true;
+const KILL_ALL_REQUESTS = false; // EMERGENCY: Set to true to block all requests
 
 /**
  * HTTP action to proxy Anthropic API requests.
@@ -244,6 +245,14 @@ export const anthropicProxy = httpAction(async (_ctx, req) => {
   const workerAuth = await getWorkerAuth(req, {
     loggerPrefix: "[anthropic-proxy]",
   });
+
+  if (KILL_ALL_REQUESTS) {
+    console.log("[anthropic-proxy] EMERGENCY: Blocking request from:", {
+      sessionId: workerAuth?.sessionId ?? "unknown",
+      jobId: workerAuth?.jobId ?? "unknown",
+    });
+    return jsonResponse({ error: "Service temporarily unavailable" }, 503);
+  }
 
   if (!TEMPORARY_DISABLE_AUTH && !workerAuth) {
     console.error("[anthropic-proxy] Auth error: Missing or invalid token");
@@ -295,23 +304,6 @@ export const anthropicProxy = httpAction(async (_ctx, req) => {
         );
       }
 
-      // Return a 503 error for Haiku requests
-      // The SDK makes internal Haiku requests that we can't properly mock
-      // Returning an error allows the SDK to gracefully skip these operations
-      if (requestedModel?.includes("haiku")) {
-        console.log("[anthropic-proxy] Rejecting Haiku request (not supported via Bedrock proxy)");
-        return jsonResponse(
-          {
-            type: "error",
-            error: {
-              type: "overloaded_error",
-              message: "Haiku model is temporarily unavailable. Please use a different model.",
-            },
-          },
-          503
-        );
-      }
-
       const bedrockModelId = toBedrockModelId(requestedModel);
       const streamSuffix = body.stream ? "-with-response-stream" : "";
       const bedrockUrl = `${BEDROCK_BASE_URL}/model/${bedrockModelId}/invoke${streamSuffix}`;
@@ -347,6 +339,23 @@ export const anthropicProxy = httpAction(async (_ctx, req) => {
         },
         body: JSON.stringify(bedrockBody),
       });
+
+      // Log response status for debugging
+      console.log("[anthropic-proxy] Bedrock response:", {
+        status: response.status,
+        ok: response.ok,
+        statusText: response.statusText,
+      });
+
+      if (!response.ok) {
+        // Log the error body for debugging
+        const errorText = await response.text();
+        console.error("[anthropic-proxy] Bedrock error response:", errorText);
+        return new Response(errorText, {
+          status: response.status,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
 
       // Pass isBedrock=true to convert streaming format
       return handleResponse(response, body.stream, true);

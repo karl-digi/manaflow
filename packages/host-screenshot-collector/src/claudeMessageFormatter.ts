@@ -57,7 +57,20 @@ export function formatClaudeMessage(message: SDKMessage): string {
 ✅ Success (${baseInfo}, $${message.total_cost_usd.toFixed(4)})
    Result: ${message.result}`;
       }
-      return `❌ Error: ${message.subtype} (${baseInfo}, $${message.total_cost_usd.toFixed(4)})`;
+      // Log full error details for debugging
+      const errorDetails: string[] = [];
+      if (message.is_error) {
+        errorDetails.push(`is_error: true`);
+      }
+      if ("errors" in message && Array.isArray(message.errors)) {
+        errorDetails.push(`errors: ${JSON.stringify(message.errors)}`);
+      }
+      if ("result" in message && message.result) {
+        errorDetails.push(`result: ${message.result}`);
+      }
+      // Log the full message for debugging
+      errorDetails.push(`full_message: ${JSON.stringify(message, null, 2)}`);
+      return `❌ Error: ${message.subtype} (${baseInfo}, $${message.total_cost_usd.toFixed(4)})\n   ${errorDetails.join("\n   ")}`;
     }
 
     case "system": {
