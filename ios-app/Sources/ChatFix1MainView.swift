@@ -664,7 +664,9 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         inputBarVC.onLayoutChange = { [weak self] in
             guard let self else { return }
             DispatchQueue.main.async {
-                self.updateBottomInsetsForKeyboard()
+                UIView.performWithoutAnimation {
+                    self.updateBottomInsetsForKeyboard()
+                }
             }
         }
 
