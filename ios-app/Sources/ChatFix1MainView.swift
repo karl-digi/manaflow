@@ -19,6 +19,8 @@ struct ChatFix1MainView: View {
     @AppStorage("debug.input.micOffset") private var micOffset: Double = -12
     @AppStorage("debug.input.sendOffset") private var sendOffset: Double = -4
     @AppStorage("debug.input.sendXOffset") private var sendXOffset: Double = 1
+    @AppStorage("debug.input.barYOffset") private var barYOffset: Double = 34
+    @AppStorage("debug.input.bottomMessageGap") private var bottomMessageGap: Double = -4
     @AppStorage("debug.input.isMultiline") private var isMultilineFlag = false
 
     init(conversationId: String, providerId: String) {
@@ -47,7 +49,9 @@ struct ChatFix1MainView: View {
                         Task {
                             await viewModel.sendMessage(text)
                         }
-                    }
+                    },
+                    inputBarYOffset: CGFloat(barYOffset),
+                    bottomMessageGap: CGFloat(bottomMessageGap)
                 )
                 .ignoresSafeArea()
             }
@@ -63,6 +67,8 @@ struct ChatFix1MainView: View {
                     micOffset: $micOffset,
                     sendOffset: $sendOffset,
                     sendXOffset: $sendXOffset,
+                    barYOffset: $barYOffset,
+                    bottomMessageGap: $bottomMessageGap,
                     isMultiline: isMultilineFlag,
                     showPanel: $showTuningPanel
                 )
@@ -108,12 +114,14 @@ private struct ChatInputTuningPanel: View {
     @Binding var micOffset: Double
     @Binding var sendOffset: Double
     @Binding var sendXOffset: Double
+    @Binding var barYOffset: Double
+    @Binding var bottomMessageGap: Double
     let isMultiline: Bool
     @Binding var showPanel: Bool
     @State private var copied = false
 
     private var summaryText: String {
-        "bottomInsetSingleExtra=\(format(bottomInsetSingleExtra)), bottomInsetMultiExtra=\(format(bottomInsetMultiExtra)), topInsetMultiExtra=\(format(topInsetMultiExtra)), placeholderOffset=\(format(placeholderOffset)), micOffset=\(format(micOffset)), sendOffset=\(format(sendOffset)), sendXOffset=\(format(sendXOffset))"
+        "bottomInsetSingleExtra=\(format(bottomInsetSingleExtra)), bottomInsetMultiExtra=\(format(bottomInsetMultiExtra)), topInsetMultiExtra=\(format(topInsetMultiExtra)), placeholderOffset=\(format(placeholderOffset)), micOffset=\(format(micOffset)), sendOffset=\(format(sendOffset)), sendXOffset=\(format(sendXOffset)), barYOffset=\(format(barYOffset)), bottomMessageGap=\(format(bottomMessageGap))"
     }
 
     var body: some View {
@@ -130,6 +138,8 @@ private struct ChatInputTuningPanel: View {
             tuningRow(label: "Mic Y", value: $micOffset, range: -12...12, step: 1)
             tuningRow(label: "Send Y", value: $sendOffset, range: -12...12, step: 1)
             tuningRow(label: "Send X", value: $sendXOffset, range: -20...20, step: 1)
+            tuningRow(label: "Bar Y", value: $barYOffset, range: -40...40, step: 1)
+            tuningRow(label: "Bottom gap", value: $bottomMessageGap, range: -80...80, step: 1)
             HStack(spacing: 8) {
                 Text(summaryText)
                     .font(.caption2)
@@ -187,14 +197,23 @@ private struct Fix1MainViewController_Wrapper: UIViewControllerRepresentable {
     let messages: [Message]
     let isSending: Bool
     let onSend: (String) -> Void
+    let inputBarYOffset: CGFloat
+    let bottomMessageGap: CGFloat
 
     func makeUIViewController(context: Context) -> Fix1MainViewController {
-        Fix1MainViewController(messages: messages, onSend: onSend)
+        Fix1MainViewController(
+            messages: messages,
+            onSend: onSend,
+            inputBarYOffset: inputBarYOffset,
+            bottomMessageGap: bottomMessageGap
+        )
     }
 
     func updateUIViewController(_ uiViewController: Fix1MainViewController, context: Context) {
         uiViewController.updateMessages(messages)
         uiViewController.updateSendingState(isSending)
+        uiViewController.updateInputBarYOffset(inputBarYOffset)
+        uiViewController.updateBottomMessageGap(bottomMessageGap)
     }
 }
 
@@ -228,6 +247,8 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     private var hasUserScrolled = false
     private var didInitialScrollToBottom = false
     private var isInputBarMeasuring = false
+    private var inputBarYOffset: CGFloat
+    private var bottomMessageGap: CGFloat
     private var inputBarBottomConstraint: NSLayoutConstraint!
     private var inputBarHeightConstraint: NSLayoutConstraint!
     private var contentStackBottomConstraint: NSLayoutConstraint!
@@ -331,9 +352,16 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     private var uiTestLastDismissTranslation: CGFloat = 0
 #endif
 
-    init(messages: [Message], onSend: ((String) -> Void)? = nil) {
+    init(
+        messages: [Message],
+        onSend: ((String) -> Void)? = nil,
+        inputBarYOffset: CGFloat = 0,
+        bottomMessageGap: CGFloat = 16
+    ) {
         self.messages = messages
         self.onSend = onSend
+        self.inputBarYOffset = inputBarYOffset
+        self.bottomMessageGap = bottomMessageGap
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -342,6 +370,27 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         isSending = sending
         // Optionally disable input while sending
         inputBarVC?.setEnabled(!sending)
+    }
+
+    func updateInputBarYOffset(_ offset: CGFloat) {
+        if abs(inputBarYOffset - offset) < 0.5 {
+            return
+        }
+        inputBarYOffset = offset
+        guard isViewLoaded else { return }
+        updateBottomInsetsForKeyboard()
+        view.setNeedsLayout()
+    }
+
+    func updateBottomMessageGap(_ gap: CGFloat) {
+        let clampedGap = max(-80, min(80, gap))
+        if abs(bottomMessageGap - clampedGap) < 0.5 {
+            return
+        }
+        bottomMessageGap = clampedGap
+        guard isViewLoaded else { return }
+        updateBottomInsetsForKeyboard()
+        view.setNeedsLayout()
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -921,6 +970,8 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
             #else
             newInputBarConstant = 0
             #endif
+            let effectiveBarYOffset = keyboardVisible ? min(0, self.inputBarYOffset) : self.inputBarYOffset
+            let adjustedInputBarConstant = newInputBarConstant + effectiveBarYOffset
             let keyboardIsMovingDown = self.keyboardIsMovingDown(current: keyboardOverlap)
             let gestureIsDismissing = self.isDismissingKeyboardGesture()
             self.updateInteractiveDismissalAnchorIfNeeded(
@@ -948,8 +999,8 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
                 }
             }
 
-            if abs(self.inputBarBottomConstraint.constant - newInputBarConstant) > 0.5 {
-                self.inputBarBottomConstraint.constant = newInputBarConstant
+            if abs(self.inputBarBottomConstraint.constant - adjustedInputBarConstant) > 0.5 {
+                self.inputBarBottomConstraint.constant = adjustedInputBarConstant
                 needsLayout = true
             }
 
@@ -982,7 +1033,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
                 && self.isInteractiveDismissalActive
                 && self.interactiveDismissalAnchor != nil
 
-            let desiredGap: CGFloat = 16
+            let desiredGap: CGFloat = self.bottomMessageGap
             let pillFrame = self.computedPillFrameInView()
             let pillTopY = self.pixelAlign(self.inputBarVC.view.frame.minY + pillFrame.minY, scale: scale)
             let pillBottomY = self.pixelAlign(self.inputBarVC.view.frame.minY + pillFrame.maxY, scale: scale)
@@ -990,7 +1041,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
             let targetExtraSpacerHeight = self.pixelAlign(desiredGap, scale: scale)
             let targetBottomSpacerHeight = self.pixelAlign(pillFrame.height, scale: scale)
             let targetBelowPillHeight = self.pixelAlign(belowPillGap, scale: scale)
-            let targetBottomInset = self.pixelAlign(self.view.bounds.maxY - pillTopY + desiredGap, scale: scale)
+            let targetBottomInset = self.pixelAlign(max(0, self.view.bounds.maxY - pillTopY + desiredGap), scale: scale)
             if self.extraSpacerHeightConstraint.constant != 0 {
                 self.extraSpacerHeightConstraint.constant = 0
             }
