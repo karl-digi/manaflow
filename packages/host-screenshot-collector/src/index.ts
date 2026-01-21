@@ -378,41 +378,85 @@ INCOMPLETE CAPTURE: Missing important UI elements. Ensure full components are vi
 </CRITICAL_MISTAKES>
 
 <VIDEO_RECORDING>
-You can create videos from sequential screenshots to demonstrate workflows. This works on any platform (macOS, Linux).
+Record SHORT screen videos (5-15 sec) with VISIBLE CURSOR MOVEMENT using xdotool + ffmpeg.
+
+CRITICAL: Chrome CDP doesn't move the real cursor! You MUST use xdotool to move the cursor.
 
 USE VIDEO WHEN:
-- New buttons or links that navigate to other pages (show: before click → click → destination page)
-- Before/after workflows where you need to show a state transition (e.g., form submission with validation feedback)
-- Multi-step user flows (login → dashboard, checkout process, onboarding wizard)
-- Animation or transition changes that can't be captured in a static image
-- Any clickable element that triggers navigation or state changes
+- New buttons or links (show: hover → click → result)
+- Form submissions with feedback
+- Navigation flows
+- Animations or transitions
 
 DO NOT USE VIDEO WHEN:
-- Pure styling changes (colors, fonts, spacing) with no interaction
-- Static text or content changes
-- The change has no interactive behavior to demonstrate
+- Pure styling changes (use screenshots instead)
+- Static content changes
+- No interactive behavior
 
-HOW TO CREATE A VIDEO from screenshots:
+RECORDING WORKFLOW:
 
-1. Create a frames directory:
-   mkdir -p ${outputDir}/video-frames
+1. FIRST, get the element's screen coordinates. Use Chrome MCP to run JavaScript:
+   \`\`\`javascript
+   const el = document.querySelector('button.my-button'); // or whatever selector
+   const rect = el.getBoundingClientRect();
+   // Chrome window starts at ~0,0 in this environment
+   console.log(JSON.stringify({x: Math.round(rect.x + rect.width/2), y: Math.round(rect.y + rect.height/2)}));
+   \`\`\`
 
-2. Capture screenshots at each step of the workflow using the Chrome MCP tools:
-   - Take a screenshot BEFORE the action (e.g., showing the button)
-   - Perform the action (click, navigate, etc.)
-   - Take a screenshot AFTER the action (e.g., showing the result)
-   - Save each screenshot as: ${outputDir}/video-frames/frame-001.png, frame-002.png, etc.
-   - Use sequential numbering: frame-001.png, frame-002.png, frame-003.png...
+2. Start ffmpeg recording (20 sec max, display :1):
+   \`\`\`bash
+   DISPLAY=:1 ffmpeg -y -f x11grab -draw_mouse 1 -framerate 10 -video_size 1920x1080 -i :1 -t 20 -c:v libx264 -preset ultrafast -crf 28 -pix_fmt yuv420p -movflags +faststart ${outputDir}/demo.mp4 &
+   FFMPEG_PID=$!
+   sleep 1
+   \`\`\`
 
-3. Assemble into a compressed video using ffmpeg (2 seconds per frame for clear viewing):
-   ffmpeg -y -framerate 0.5 -pattern_type glob -i '${outputDir}/video-frames/frame-*.png' -c:v libx264 -preset slow -crf 28 -r 30 -pix_fmt yuv420p -movflags +faststart ${outputDir}/workflow-name.mp4
+3. Use xdotool to MOVE THE REAL CURSOR and click (this is what gets recorded!):
+   \`\`\`bash
+   # Move cursor to element (use coordinates from step 1)
+   DISPLAY=:1 xdotool mousemove --sync 500 300
+   sleep 0.5  # Show hover state
 
-4. Clean up frames:
-   rm -rf ${outputDir}/video-frames
+   # Click the element
+   DISPLAY=:1 xdotool click 1
+   sleep 2  # Wait for result/animation
+   \`\`\`
 
-This creates a slideshow video where each step is shown for 2 seconds.
+4. Stop recording gracefully:
+   \`\`\`bash
+   kill -INT $FFMPEG_PID
+   sleep 2
+   wait $FFMPEG_PID 2>/dev/null || true
+   \`\`\`
 
-IMPORTANT: If the PR adds a button, link, or any clickable element, you MUST create a video showing the before/after states.
+COMPLETE EXAMPLE - Recording a button click:
+\`\`\`bash
+# Step 1: Start recording
+DISPLAY=:1 ffmpeg -y -f x11grab -draw_mouse 1 -framerate 10 -video_size 1920x1080 -i :1 -t 20 -c:v libx264 -preset ultrafast -crf 28 -pix_fmt yuv420p -movflags +faststart ${outputDir}/button-click.mp4 &
+FFMPEG_PID=$!
+sleep 1
+
+# Step 2: Move cursor to button position (get coords from getBoundingClientRect)
+DISPLAY=:1 xdotool mousemove --sync 450 320
+sleep 0.5
+
+# Step 3: Click
+DISPLAY=:1 xdotool click 1
+sleep 2  # Wait for result
+
+# Step 4: Stop recording
+kill -INT $FFMPEG_PID
+sleep 2
+wait $FFMPEG_PID 2>/dev/null || true
+\`\`\`
+
+KEY POINTS:
+- ALWAYS use DISPLAY=:1 with xdotool
+- xdotool mousemove moves the REAL cursor (visible in recording)
+- xdotool click 1 = left click
+- Get element coordinates via JavaScript getBoundingClientRect()
+- Keep videos SHORT: 5-15 seconds ideal, 20 seconds max
+
+MULTIPLE FEATURES = MULTIPLE SHORT VIDEOS (don't combine into one long video)
 </VIDEO_RECORDING>
 
 <OUTPUT>

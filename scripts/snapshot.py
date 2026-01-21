@@ -920,7 +920,8 @@ async def task_install_base_packages(ctx: TaskContext) -> None:
             zsh \
             zsh-autosuggestions \
             ripgrep \
-            ffmpeg
+            ffmpeg \
+            xdotool
 
 
         # Download and install Chrome
