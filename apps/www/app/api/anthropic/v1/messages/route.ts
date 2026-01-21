@@ -122,6 +122,18 @@ export async function POST(request: NextRequest) {
             "anthropic-version": "2023-06-01",
           };
 
+    // Forward cmux headers to Convex so it can extract auth for tracking
+    if (!USE_CLOUDFLARE_AI_GATEWAY) {
+      const cmuxToken = request.headers.get("x-cmux-token");
+      const cmuxSource = request.headers.get("x-cmux-source");
+      if (cmuxToken) {
+        headers["x-cmux-token"] = cmuxToken;
+      }
+      if (cmuxSource) {
+        headers["x-cmux-source"] = cmuxSource;
+      }
+    }
+
     // Add beta header if beta param is present
     if (!useOriginalApiKey) {
       if (beta === "true") {
