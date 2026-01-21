@@ -511,11 +511,12 @@ async function startCrownEvaluation({
       baseBranch
     );
     if (!branchesReady) {
-      log("WARN", "Branches not ready for single-run crown; continuing", {
+      // Branch may not be on remote (e.g., push failed due to permissions)
+      // but we can still proceed with crown evaluation using local diff
+      log("WARN", "Branches not ready on remote; proceeding with local diff", {
         taskRunId,
         elapsedMs,
       });
-      return;
     }
 
     log("INFO", "Single run detected, skipping evaluation", {
