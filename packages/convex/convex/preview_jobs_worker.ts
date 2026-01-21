@@ -622,6 +622,18 @@ console.log(JSON.stringify(result));`;
 
   try {
     const result = JSON.parse(jsonLine) as ScreenshotCollectorResult;
+    // Log full stdout when no screenshots captured for debugging
+    if (!result.screenshots || result.screenshots.length === 0) {
+      console.log("[preview-jobs] Collector returned 0 screenshots, showing logs", {
+        previewRunId,
+        status: result.status,
+        hasUiChanges: result.hasUiChanges,
+        error: result.error,
+        reason: result.reason,
+        // Show last 50 lines of stdout for debugging
+        stdoutTail: stdoutLines.slice(-50).join("\n"),
+      });
+    }
     return result;
   } catch {
     console.error("[preview-jobs] Failed to parse collector JSON output", {

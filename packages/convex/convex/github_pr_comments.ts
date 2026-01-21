@@ -1109,6 +1109,7 @@ async function getScreenshotsForPr(
     const screenshots: Array<{ url: string; fileName?: string; description?: string }> = [];
 
     for (const run of taskRuns) {
+      // TEMPORARY: Always process all runs - never skip based on existing screenshot set
       if (run.latestScreenshotSetId) {
         const screenshotSet = await ctx.runQuery(
           internal.github_pr_queries.getScreenshotSet,

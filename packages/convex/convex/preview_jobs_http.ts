@@ -318,51 +318,27 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
       return jsonResponse({ error: "Task not found" }, 404);
     }
 
-    if (!taskRun.latestScreenshotSetId) {
-      console.log("[preview-jobs-http] No screenshots found for task run", {
-        taskRunId,
-      });
-      await ctx.runMutation(internal.previewRuns.updateStatus, {
-        previewRunId: previewRun._id,
-        status: "skipped",
-      });
+    // TEMPORARY: Never skip - always proceed regardless of screenshot set status
+    // Get the task run screenshot set if one exists
+    const taskScreenshotSet = taskRun.latestScreenshotSetId
+      ? await ctx.runQuery(internal.github_pr_queries.getScreenshotSet, {
+          screenshotSetId: taskRun.latestScreenshotSetId,
+        })
+      : null;
 
-      const taskCompletion = await markPreviewTaskCompleted(ctx, taskRun, task);
+    const screenshotSetId = taskRun.latestScreenshotSetId;
+    const imageCount = taskScreenshotSet?.images.length ?? 0;
 
-      return jsonResponse({
-        success: true,
-        skipped: true,
-        reason: "No screenshots available",
-        runStatusUpdated: taskCompletion.runStatusUpdated,
-        alreadyCompleted: taskCompletion.taskAlreadyCompleted,
-      });
-    }
-
-    // Get the task run screenshot set
-    const taskScreenshotSet = await ctx.runQuery(
-      internal.github_pr_queries.getScreenshotSet,
-      {
-        screenshotSetId: taskRun.latestScreenshotSetId,
-      }
-    );
-
-    if (!taskScreenshotSet) {
-      console.error("[preview-jobs-http] Screenshot set not found", {
-        taskRunId,
-        screenshotSetId: taskRun.latestScreenshotSetId,
-      });
-      return jsonResponse({ error: "Screenshot set not found" }, 404);
-    }
-
-    console.log("[preview-jobs-http] Found screenshot set for task run", {
+    console.log("[preview-jobs-http] Processing task run (never skipping)", {
       taskRunId,
       previewRunId: previewRun._id,
-      screenshotSetId: taskRun.latestScreenshotSetId,
-      imageCount: taskScreenshotSet.images.length,
+      screenshotSetId,
+      imageCount,
+      hasScreenshotSet: !!taskScreenshotSet,
     });
 
-    // Post or update GitHub comment if we have installation ID
-    if (previewRun.repoInstallationId) {
+    // Post or update GitHub comment if we have installation ID AND a valid screenshot set
+    if (previewRun.repoInstallationId && screenshotSetId) {
       const team = await ctx.runQuery(internal.teams.getByTeamIdInternal, {
         teamId: taskRun.teamId,
       });
@@ -389,7 +365,7 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
             repoFullName: previewRun.repoFullName,
             prNumber: previewRun.prNumber,
             commentId: commentIdToUpdate,
-            screenshotSetId: taskRun.latestScreenshotSetId,
+            screenshotSetId,
             previewRunId: previewRun._id,
             workspaceUrl,
             devServerUrl,
@@ -412,8 +388,8 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
               pr_number: previewRun.prNumber,
               preview_run_id: previewRun._id,
               comment_type: "update",
-              has_screenshots: taskScreenshotSet.images.length > 0,
-              screenshot_count: taskScreenshotSet.images.length,
+              has_screenshots: imageCount > 0,
+              screenshot_count: imageCount,
             },
           });
 
@@ -451,7 +427,7 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
             installationId: previewRun.repoInstallationId,
             repoFullName: previewRun.repoFullName,
             prNumber: previewRun.prNumber,
-            screenshotSetId: taskRun.latestScreenshotSetId,
+            screenshotSetId,
             previewRunId: previewRun._id,
             workspaceUrl,
             devServerUrl,
@@ -474,8 +450,8 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
               pr_number: previewRun.prNumber,
               preview_run_id: previewRun._id,
               comment_type: "new",
-              has_screenshots: taskScreenshotSet.images.length > 0,
-              screenshot_count: taskScreenshotSet.images.length,
+              has_screenshots: imageCount > 0,
+              screenshot_count: imageCount,
             },
           });
 
@@ -500,8 +476,8 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
           }, 500);
         }
       }
-    } else {
-      console.log("[preview-jobs-http] No GitHub installation ID, skipping comment", {
+    } else if (!previewRun.repoInstallationId) {
+      console.log("[preview-jobs-http] No GitHub installation ID, proceeding without comment", {
         taskRunId,
         previewRunId: previewRun._id,
       });
@@ -510,15 +486,37 @@ export const completePreviewJob = httpAction(async (ctx, req) => {
       await ctx.runMutation(internal.previewRuns.updateStatus, {
         previewRunId: previewRun._id,
         status: "completed",
-        screenshotSetId: taskRun.latestScreenshotSetId ?? undefined,
+        screenshotSetId: screenshotSetId ?? undefined,
       });
 
       const taskCompletion = await markPreviewTaskCompleted(ctx, taskRun, task);
 
       return jsonResponse({
         success: true,
-        skipped: true,
-        reason: "No GitHub installation ID",
+        skipped: false,
+        reason: "No GitHub installation ID - proceeding anyway",
+        runStatusUpdated: taskCompletion.runStatusUpdated,
+        alreadyCompleted: taskCompletion.taskAlreadyCompleted,
+      });
+    } else {
+      // Has installation ID but no screenshot set - still proceed
+      console.log("[preview-jobs-http] No screenshot set yet, proceeding without comment", {
+        taskRunId,
+        previewRunId: previewRun._id,
+        hasInstallationId: !!previewRun.repoInstallationId,
+      });
+
+      await ctx.runMutation(internal.previewRuns.updateStatus, {
+        previewRunId: previewRun._id,
+        status: "completed",
+      });
+
+      const taskCompletion = await markPreviewTaskCompleted(ctx, taskRun, task);
+
+      return jsonResponse({
+        success: true,
+        skipped: false,
+        reason: "No screenshot set - proceeding anyway",
         runStatusUpdated: taskCompletion.runStatusUpdated,
         alreadyCompleted: taskCompletion.taskAlreadyCompleted,
       });

@@ -46,11 +46,10 @@ export const createScreenshotSet = internalMutation({
       throw new Error("Task run not found for preview run");
     }
 
-    if (args.status === "completed" && args.images.length === 0) {
-      throw new Error(
-        "At least one screenshot is required for completed status"
-      );
-    }
+    // Allow completed status with 0 images - this can happen when:
+    // 1. The PR has no UI changes (hasUiChanges=false)
+    // 2. Screenshot collection failed but we still want to record the attempt
+    // The hasUiChanges field indicates whether UI changes were detected
 
     const screenshots = args.images.map((image) => ({
       storageId: image.storageId,

@@ -571,11 +571,13 @@ Do not create summary documents.
       `[DEBUG] JWT token being used: ${auth.taskRunJwt}`
     );
 
+    let detectedHasUiChanges: boolean | undefined;
+
     try {
       for await (const message of query({
         prompt,
         options: {
-          model: "claude-opus-4-5",
+          model: "claude-opus-4-5-20251101",
           mcpServers: {
             chrome: {
               command: "bunx",
@@ -604,6 +606,46 @@ Do not create summary documents.
           await logToScreenshotCollector(formatted);
         }
 
+        // Extract hasUiChanges from result message
+        if (message.type === "result") {
+          await logToScreenshotCollector(
+            `[DEBUG] Full result message: ${JSON.stringify(message, null, 2)}`
+          );
+
+          // Try to parse hasUiChanges from the result text
+          // Claude may express this as "hasUiChanges=false", "hasUiChanges: false", or in JSON
+          if ("result" in message && typeof message.result === "string") {
+            const resultText = message.result.toLowerCase();
+            // Check for explicit false indicators
+            if (
+              resultText.includes("hasuichanges=false") ||
+              resultText.includes("hasuichanges: false") ||
+              resultText.includes("hasuichanges\":false") ||
+              resultText.includes("hasuichanges\": false") ||
+              resultText.includes("no ui changes") ||
+              resultText.includes("no visual changes") ||
+              resultText.includes("backend-only") ||
+              resultText.includes("does not contain ui changes")
+            ) {
+              detectedHasUiChanges = false;
+              await logToScreenshotCollector(
+                `[DEBUG] Detected hasUiChanges=false from result text`
+              );
+            } else if (
+              resultText.includes("hasuichanges=true") ||
+              resultText.includes("hasuichanges: true") ||
+              resultText.includes("hasuichanges\":true") ||
+              resultText.includes("hasuichanges\": true") ||
+              resultText.includes("captured") ||
+              resultText.includes("screenshot")
+            ) {
+              detectedHasUiChanges = true;
+              await logToScreenshotCollector(
+                `[DEBUG] Detected hasUiChanges=true from result text`
+              );
+            }
+          }
+        }
       }
     } catch (error) {
       await logToScreenshotCollector(
@@ -676,9 +718,26 @@ Do not create summary documents.
       };
     });
 
+    // Determine hasUiChanges:
+    // 1. Use explicitly detected value from Claude's result
+    // 2. If we have screenshots/videos, UI changes exist
+    // 3. Otherwise, leave undefined (caller can decide)
+    let finalHasUiChanges = detectedHasUiChanges;
+    if (finalHasUiChanges === undefined && (screenshotsWithDescriptions.length > 0 || videosWithDescriptions.length > 0)) {
+      finalHasUiChanges = true;
+      await logToScreenshotCollector(
+        `[DEBUG] Inferred hasUiChanges=true because screenshots/videos were captured`
+      );
+    }
+
+    await logToScreenshotCollector(
+      `[DEBUG] Final hasUiChanges: ${finalHasUiChanges}, screenshots: ${screenshotsWithDescriptions.length}, videos: ${videosWithDescriptions.length}`
+    );
+
     return {
       screenshots: screenshotsWithDescriptions,
       videos: videosWithDescriptions,
+      hasUiChanges: finalHasUiChanges,
     };
   } catch (error) {
     const message =
