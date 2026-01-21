@@ -331,6 +331,13 @@ export const anthropicProxy = httpAction(async (_ctx, req) => {
         body: JSON.stringify(bedrockBody),
       });
 
+      // Log Bedrock response status for debugging
+      console.log("[anthropic-proxy] Bedrock response:", {
+        status: response.status,
+        statusText: response.statusText,
+        ok: response.ok,
+      });
+
       // Pass isBedrock=true to convert streaming format
       return handleResponse(response, body.stream, true);
     }

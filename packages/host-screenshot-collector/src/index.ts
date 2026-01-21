@@ -45,19 +45,24 @@ const screenshotOutputSchema = z.object({
       z.object({
         path: z.string().min(1),
         description: z.string().min(1),
-        mediaType: z.enum(["image", "video"]).optional(),
-        durationMs: z.number().optional(),
-      })
+        // Accept any string for mediaType, normalize to image/video
+        mediaType: z.string().optional().transform(v =>
+          v === "video" ? "video" as const : "image" as const
+        ),
+        // Accept string or number for durationMs
+        durationMs: z.union([z.number(), z.string().transform(Number)]).optional(),
+      }) // Allow extra fields without failing
     )
     .default([]),
 });
 
 type ScreenshotStructuredOutput = z.infer<typeof screenshotOutputSchema>;
 
+// Lenient JSON schema - no additionalProperties:false, no strict enums
+// The Zod schema handles validation and normalization
 const screenshotOutputJsonSchema = {
   $schema: "http://json-schema.org/draft-07/schema#",
   type: "object",
-  additionalProperties: false,
   required: ["hasUiChanges", "images"],
   properties: {
     hasUiChanges: { type: "boolean" },
@@ -65,12 +70,11 @@ const screenshotOutputJsonSchema = {
       type: "array",
       items: {
         type: "object",
-        additionalProperties: false,
         required: ["path", "description"],
         properties: {
           path: { type: "string" },
           description: { type: "string" },
-          mediaType: { type: "string", enum: ["image", "video"] },
+          mediaType: { type: "string" },
           durationMs: { type: "number" },
         },
       },
@@ -241,7 +245,12 @@ The user did not provide installation or dev commands. You will need to discover
     return "\n" + parts.join("\n");
   })();
 
-  const prompt = `You are a media collector for pull request reviews. Your job is to determine if a PR contains UI changes and, if so, capture screenshots AND/OR record videos of those changes.
+  const prompt = `IMPORTANT: This is a tool-using task. You MUST use tools to complete it. Do NOT respond with just text.
+
+You are a media collector for pull request reviews. Your task:
+1. Use tools to analyze the changed files
+2. If UI changes exist, use tools to capture screenshots/videos
+3. Save all media to the output directory with descriptive filenames
 
 You can capture BOTH screenshots and videos - choose the appropriate medium:
 - **Screenshots**: For static UI (layouts, styling, content, colors, typography)
@@ -398,14 +407,22 @@ LONG VIDEOS: Recording excessively long videos. Keep videos SHORT (3-10 seconds)
 </CRITICAL_MISTAKES>
 
 <OUTPUT_REQUIREMENTS>
-- Set hasUiChanges to true only if the PR modifies UI-rendering code AND you captured media (screenshots and/or videos)
-- Set hasUiChanges to false if the PR has no UI changes (with zero media files)
-- Include every media file path with:
-  - A description of what it shows
-  - The mediaType: "image" for screenshots, "video" for recordings
-  - For videos, include durationMs (approximate duration in milliseconds)
+When you are done capturing media, you will be asked to provide structured output with the following fields:
+- hasUiChanges: boolean - whether the PR has UI changes
+- images: array of captured media, each with:
+  - path: absolute path to the saved file
+  - description: what the media shows
+  - mediaType: "image" for screenshots, "video" for recordings (optional)
+  - durationMs: duration in milliseconds for videos (optional)
+
+File naming convention:
+- Screenshots: descriptive-name.png (e.g., "homepage-with-new-button.png")
+- Videos: descriptive-name.mp4 (e.g., "button-click-interaction.mp4")
+
+Additional rules:
 - Do not close the browser when done
-- Do not create summary documents
+- Do not create summary documents or markdown files
+- Save all media files to the output directory: ${outputDir}
 </OUTPUT_REQUIREMENTS>`;
 
   await logToScreenshotCollector(
@@ -471,11 +488,18 @@ LONG VIDEOS: Recording excessively long videos. Keep videos SHORT (3-10 seconds)
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
       ...(useTaskRunJwt
         ? {
-          ANTHROPIC_API_KEY: "sk_placeholder_cmux_anthropic_api_key",
+          // Use a dummy key that doesn't start with "sk-ant-" so proxy routes to Bedrock
+          // The JWT in ANTHROPIC_CUSTOM_HEADERS handles actual authentication
+          ANTHROPIC_API_KEY: "bedrock-proxy-placeholder",
           ANTHROPIC_BASE_URL: anthropicBaseUrl,
           ANTHROPIC_CUSTOM_HEADERS: `x-cmux-token:${auth.taskRunJwt}`,
         }
-        : {}),
+        : providedApiKey
+          ? {
+            // Explicitly set API key to override any apiKeyHelper configuration
+            ANTHROPIC_API_KEY: providedApiKey,
+          }
+          : {}),
     };
 
     await logToScreenshotCollector(
@@ -520,17 +544,32 @@ LONG VIDEOS: Recording excessively long videos. Keep videos SHORT (3-10 seconds)
               ],
             },
           },
-          allowDangerouslySkipPermissions: true,
-          permissionMode: "bypassPermissions",
+          // Note: allowDangerouslySkipPermissions cannot be used with root privileges
+          // Using acceptEdits mode which auto-accepts file operations
+          permissionMode: "acceptEdits",
+          // Grant permissions for bash and MCP chrome tools
+          allowedTools: [
+            "Bash",
+            "mcp__chrome__list_pages",
+            "mcp__chrome__new_page",
+            "mcp__chrome__navigate",
+            "mcp__chrome__screenshot",
+            "mcp__chrome__click",
+            "mcp__chrome__type",
+            "mcp__chrome__scroll",
+            "mcp__chrome__evaluate",
+            "mcp__chrome__close_page",
+            "mcp__chrome__list_elements",
+          ],
           cwd: workspaceDir,
           pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
+          env: claudeEnv,
+          stderr: (data) =>
+            logToScreenshotCollector(`[claude-code-stderr] ${data}`),
           outputFormat: {
             type: "json_schema",
             schema: screenshotOutputJsonSchema,
           },
-          env: claudeEnv,
-          stderr: (data) =>
-            logToScreenshotCollector(`[claude-code-stderr] ${data}`),
         },
       })) {
         // Format and log all message types

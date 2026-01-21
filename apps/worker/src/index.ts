@@ -715,6 +715,9 @@ managementIO.on("connection", (socket) => {
         const result = await startScreenshotCollection({
           anthropicApiKey: config?.anthropicApiKey,
           outputPath: config?.outputPath,
+          convexUrl: config?.convexUrl,
+          installCommand: config?.installCommand,
+          devCommand: config?.devCommand,
         });
         log(
           "INFO",

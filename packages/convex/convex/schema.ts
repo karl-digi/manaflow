@@ -299,6 +299,23 @@ const convexSchema = defineSchema({
         })
       )
     ),
+    // Claims extracted from screenshot analysis
+    claims: v.optional(
+      v.array(
+        v.object({
+          claim: v.string(),
+          evidence: v.object({
+            type: v.string(),
+            screenshotIndex: v.optional(v.number()),
+            filePath: v.optional(v.string()),
+            startLine: v.optional(v.number()),
+            endLine: v.optional(v.number()),
+          }),
+          timestamp: v.number(),
+        })
+      )
+    ),
+    claimsGeneratedAt: v.optional(v.number()),
   })
     .index("by_task", ["taskId", "createdAt"])
     .index("by_parent", ["parentRunId"])
