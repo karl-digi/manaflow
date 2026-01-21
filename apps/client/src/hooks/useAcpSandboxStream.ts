@@ -205,8 +205,9 @@ export function useAcpSandboxStream(options: StreamOptions): {
         });
 
         if (!response.ok || !response.body) {
-          console.error(
-            "[acp.stream] Stream connection failed",
+          // Expected when sandbox is unavailable - will fallback to Convex
+          console.debug(
+            "[acp.stream] Stream unavailable, falling back to Convex",
             response.status
           );
           setStatus("fallback");
@@ -278,7 +279,9 @@ export function useAcpSandboxStream(options: StreamOptions): {
         if (controller.signal.aborted) {
           return;
         }
-        console.error("[acp.stream] Stream connection error", error);
+        // Note: Browser will also log CORS/network errors in console - these are unavoidable
+        // but harmless since we gracefully fallback to Convex
+        console.debug("[acp.stream] Stream unavailable, falling back to Convex", error);
         setStatus("error");
         reconnectAttemptRef.current += 1;
         if (reconnectAttemptRef.current <= MAX_RECONNECT_ATTEMPTS) {
