@@ -30,6 +30,12 @@ struct ChatDebugMenu: View {
                 }
             }
 
+            Section("Markdown") {
+                NavigationLink("Markdown Debug") {
+                    MarkdownDebugView()
+                }
+            }
+
             Section("Notes") {
                 Text("Fix 1: contentInsetAdjustmentBehavior=.never")
                     .font(.caption)

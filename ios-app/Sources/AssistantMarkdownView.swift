@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct MarkdownBlock: Identifiable {
     let id = UUID()
@@ -263,10 +264,86 @@ enum MarkdownImagePolicy: Equatable {
 struct MarkdownRenderPolicy: Equatable {
     let linkPolicy: MarkdownLinkPolicy
     let imagePolicy: MarkdownImagePolicy
+    let linkSafetyPolicy: MarkdownLinkSafetyPolicy
 
     static let assistantDefault = MarkdownRenderPolicy(
         linkPolicy: .default,
-        imagePolicy: .default
+        imagePolicy: .default,
+        linkSafetyPolicy: .default
+    )
+}
+
+enum MarkdownLinkConfirmationMode: Equatable {
+    case always
+    case unsafeOnly
+}
+
+struct MarkdownLinkSafetyPolicy: Equatable {
+    let confirmationMode: MarkdownLinkConfirmationMode
+    let safeSchemes: Set<String>
+    let safeHosts: Set<String>
+    let safeHostSuffixes: [String]
+
+    static let `default` = MarkdownLinkSafetyPolicy(
+        confirmationMode: .always,
+        safeSchemes: ["https"],
+        safeHosts: [],
+        safeHostSuffixes: []
+    )
+
+    func requiresConfirmation(url: URL) -> Bool {
+        switch confirmationMode {
+        case .always:
+            return true
+        case .unsafeOnly:
+            return !isSafe(url: url)
+        }
+    }
+
+    func isSafe(url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased(),
+              safeSchemes.contains(scheme) else { return false }
+        guard let host = url.host?.lowercased() else { return false }
+        if safeHosts.contains(host) {
+            return true
+        }
+        for suffix in safeHostSuffixes {
+            let normalizedSuffix = suffix.lowercased()
+            if host == normalizedSuffix || host.hasSuffix(".\(normalizedSuffix)") {
+                return true
+            }
+        }
+        return false
+    }
+}
+
+struct MarkdownLayoutConfig: Equatable {
+    let tableHeaderPaddingLeading: CGFloat
+    let tableHeaderPaddingTrailing: CGFloat
+    let tableBodyPaddingLeading: CGFloat
+    let tableBodyPaddingTrailing: CGFloat
+    let tableRowVerticalPadding: CGFloat
+    let tableBlockVerticalPadding: CGFloat
+    let codeBlockVerticalPadding: CGFloat
+    let paragraphSpacing: CGFloat
+    let assistantMessageTopPadding: CGFloat
+    let assistantMessageBottomPadding: CGFloat
+    let inlineCodeFontSizeDelta: CGFloat
+    let lineHeightMultiple: CGFloat
+
+    static let `default` = MarkdownLayoutConfig(
+        tableHeaderPaddingLeading: 16,
+        tableHeaderPaddingTrailing: 10,
+        tableBodyPaddingLeading: 16,
+        tableBodyPaddingTrailing: 10,
+        tableRowVerticalPadding: 12,
+        tableBlockVerticalPadding: 12,
+        codeBlockVerticalPadding: 12,
+        paragraphSpacing: 8,
+        assistantMessageTopPadding: 12,
+        assistantMessageBottomPadding: 12,
+        inlineCodeFontSizeDelta: -1,
+        lineHeightMultiple: 1.12
     )
 }
 
@@ -285,64 +362,233 @@ struct MarkdownURLValidator {
 struct AssistantMarkdownView: View {
     let text: String
     let policy: MarkdownRenderPolicy
+    let layout: MarkdownLayoutConfig
+    @State private var pendingLink: URL?
 
-    init(text: String, policy: MarkdownRenderPolicy = .assistantDefault) {
+    init(
+        text: String,
+        policy: MarkdownRenderPolicy = .assistantDefault,
+        layout: MarkdownLayoutConfig = .default
+    ) {
         self.text = text
         self.policy = policy
+        self.layout = layout
     }
 
     var body: some View {
         let blocks = MarkdownParser.parse(text)
+        let items = makeRenderItems(blocks)
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(blocks) { block in
-                blockView(block.type)
+            ForEach(items) { item in
+                renderItem(item)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .textSelection(.enabled)
+        .environment(\.openURL, OpenURLAction { url in
+            handleLinkTap(url)
+        })
+        .alert("Open Link?", isPresented: Binding(
+            get: { pendingLink != nil },
+            set: { isPresented in
+                if !isPresented {
+                    pendingLink = nil
+                }
+            }
+        )) {
+            Button("Cancel", role: .cancel) {
+                pendingLink = nil
+            }
+            Button("Open") {
+                openPendingLink()
+            }
+        } message: {
+            Text(pendingLink?.absoluteString ?? "")
+        }
     }
 
     @ViewBuilder
-    private func blockView(_ type: MarkdownBlockType) -> some View {
-        switch type {
-        case .paragraph(let text):
-            MarkdownInlineView(tokens: MarkdownInlineParser.parse(text), policy: policy)
-                .font(.body)
-                .foregroundStyle(.primary)
-
-        case .heading(let text):
-            MarkdownInlineView(tokens: MarkdownInlineParser.parse(text), policy: policy)
-                .font(.body.weight(.semibold))
-                .foregroundStyle(.primary)
-
+    private func renderItem(_ item: MarkdownRenderItem) -> some View {
+        switch item.type {
+        case .textGroup(let blocks):
+            MarkdownTextGroupView(
+                blocks: blocks,
+                policy: policy,
+                paragraphSpacing: layout.paragraphSpacing,
+                lineHeightMultiple: layout.lineHeightMultiple,
+                inlineCodeFontSizeDelta: layout.inlineCodeFontSizeDelta,
+                onOpenURL: handleURLTap
+            )
+        case .inlineText(let tokens, let baseFont):
+            MarkdownInlineView(
+                tokens: tokens,
+                policy: policy,
+                baseFont: baseFont,
+                lineHeightMultiple: layout.lineHeightMultiple,
+                inlineCodeFontSizeDelta: layout.inlineCodeFontSizeDelta,
+                onOpenURL: handleURLTap
+            )
         case .codeBlock(let language, let code):
             MarkdownCodeBlockView(language: language, code: code)
-
+                .padding(.vertical, layout.codeBlockVerticalPadding)
         case .table(let headers, let rows):
-            MarkdownTableView(headers: headers, rows: rows)
+            MarkdownTableView(headers: headers, rows: rows, layout: layout)
+                .padding(.vertical, layout.tableBlockVerticalPadding)
+        }
+    }
+
+    private func makeRenderItems(_ blocks: [MarkdownBlock]) -> [MarkdownRenderItem] {
+        var items: [MarkdownRenderItem] = []
+        var pendingTextBlocks: [MarkdownTextBlock] = []
+
+        func flushTextGroup() {
+            guard !pendingTextBlocks.isEmpty else { return }
+            items.append(
+                MarkdownRenderItem(
+                    type: .textGroup(pendingTextBlocks)
+                )
+            )
+            pendingTextBlocks.removeAll(keepingCapacity: true)
+        }
+
+        for block in blocks {
+            switch block.type {
+            case .paragraph(let text):
+                let tokens = MarkdownInlineParser.parse(text)
+                let baseFont = MarkdownAttributedStringBuilder.baseFont(style: .body, weight: .regular)
+                if containsImage(tokens) {
+                    flushTextGroup()
+                    items.append(
+                        MarkdownRenderItem(
+                            type: .inlineText(tokens: tokens, baseFont: baseFont)
+                        )
+                    )
+                } else {
+                    pendingTextBlocks.append(MarkdownTextBlock(tokens: tokens, baseFont: baseFont))
+                }
+            case .heading(let text):
+                let tokens = MarkdownInlineParser.parse(text)
+                let baseFont = MarkdownAttributedStringBuilder.baseFont(style: .body, weight: .semibold)
+                if containsImage(tokens) {
+                    flushTextGroup()
+                    items.append(
+                        MarkdownRenderItem(
+                            type: .inlineText(tokens: tokens, baseFont: baseFont)
+                        )
+                    )
+                } else {
+                    pendingTextBlocks.append(MarkdownTextBlock(tokens: tokens, baseFont: baseFont))
+                }
+            case .codeBlock(let language, let code):
+                flushTextGroup()
+                items.append(
+                    MarkdownRenderItem(
+                        type: .codeBlock(language: language, code: code)
+                    )
+                )
+            case .table(let headers, let rows):
+                flushTextGroup()
+                items.append(
+                    MarkdownRenderItem(
+                        type: .table(headers: headers, rows: rows)
+                    )
+                )
+            }
+        }
+
+        flushTextGroup()
+        return items
+    }
+
+    private func containsImage(_ tokens: [MarkdownInlineToken]) -> Bool {
+        tokens.contains { token in
+            if case .image = token {
+                return true
+            }
+            return false
+        }
+    }
+
+    private func handleLinkTap(_ url: URL) -> OpenURLAction.Result {
+        handleURLTap(url)
+        return .handled
+    }
+
+    private func handleURLTap(_ url: URL) {
+        if policy.linkSafetyPolicy.requiresConfirmation(url: url) {
+            pendingLink = url
+            return
+        }
+        openURL(url)
+    }
+
+    private func openPendingLink() {
+        guard let url = pendingLink else { return }
+        pendingLink = nil
+        openURL(url)
+    }
+
+    private func openURL(_ url: URL) {
+        UIApplication.shared.open(url) { success in
+            if !success {
+                print("⚠️ Failed to open URL: \(url)")
+            }
         }
     }
 }
 
-private enum MarkdownInlineSegment: Identifiable {
+private enum MarkdownInlineSegmentType: Equatable {
     case text([MarkdownInlineToken])
     case image(alt: String, url: String)
+}
 
-    var id: UUID { UUID() }
+private struct MarkdownInlineSegment: Identifiable, Equatable {
+    let id: UUID
+    let type: MarkdownInlineSegmentType
+}
+
+private struct MarkdownTextBlock: Equatable {
+    let tokens: [MarkdownInlineToken]
+    let baseFont: UIFont
+}
+
+private enum MarkdownRenderItemType: Equatable {
+    case textGroup([MarkdownTextBlock])
+    case inlineText(tokens: [MarkdownInlineToken], baseFont: UIFont)
+    case codeBlock(language: String?, code: String)
+    case table(headers: [String], rows: [[String]])
+}
+
+private struct MarkdownRenderItem: Identifiable, Equatable {
+    let id = UUID()
+    let type: MarkdownRenderItemType
 }
 
 private struct MarkdownInlineView: View {
     let tokens: [MarkdownInlineToken]
     let policy: MarkdownRenderPolicy
+    let baseFont: UIFont
+    let lineHeightMultiple: CGFloat
+    let inlineCodeFontSizeDelta: CGFloat
+    let onOpenURL: (URL) -> Void
 
     var body: some View {
         let segments = splitSegments(tokens)
         VStack(alignment: .leading, spacing: 6) {
             ForEach(segments) { segment in
-                switch segment {
+                switch segment.type {
                 case .text(let textTokens):
-                    Text(MarkdownAttributedStringBuilder.build(tokens: textTokens, policy: policy))
-                        .fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
+                    SelectableTextView(
+                        attributedText: MarkdownAttributedStringBuilder.buildInline(
+                            tokens: textTokens,
+                            policy: policy,
+                            baseFont: baseFont,
+                            lineHeightMultiple: lineHeightMultiple,
+                            inlineCodeFontSizeDelta: inlineCodeFontSizeDelta
+                        ),
+                        onOpenURL: onOpenURL
+                    )
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 case .image(let alt, let url):
                     MarkdownImageView(alt: alt, url: url, policy: policy.imagePolicy)
                 }
@@ -356,7 +602,12 @@ private struct MarkdownInlineView: View {
 
         func flush() {
             guard !buffer.isEmpty else { return }
-            segments.append(.text(buffer))
+            segments.append(
+                MarkdownInlineSegment(
+                    id: UUID(),
+                    type: .text(buffer)
+                )
+            )
             buffer.removeAll(keepingCapacity: true)
         }
 
@@ -364,7 +615,12 @@ private struct MarkdownInlineView: View {
             switch token {
             case .image(let alt, let url):
                 flush()
-                segments.append(.image(alt: alt, url: url))
+                segments.append(
+                    MarkdownInlineSegment(
+                        id: UUID(),
+                        type: .image(alt: alt, url: url)
+                    )
+                )
             default:
                 buffer.append(token)
             }
@@ -375,36 +631,168 @@ private struct MarkdownInlineView: View {
     }
 }
 
+private struct MarkdownTextGroupView: View {
+    let blocks: [MarkdownTextBlock]
+    let policy: MarkdownRenderPolicy
+    let paragraphSpacing: CGFloat
+    let lineHeightMultiple: CGFloat
+    let inlineCodeFontSizeDelta: CGFloat
+    let onOpenURL: (URL) -> Void
+
+    var body: some View {
+        SelectableTextView(
+            attributedText: buildText(),
+            onOpenURL: onOpenURL
+        )
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func buildText() -> NSAttributedString {
+        let result = NSMutableAttributedString()
+        for (index, block) in blocks.enumerated() {
+            let isLast = index == blocks.count - 1
+            let spacing = isLast ? 0 : paragraphSpacing
+            let paragraph = MarkdownAttributedStringBuilder.buildParagraph(
+                tokens: block.tokens,
+                policy: policy,
+                baseFont: block.baseFont,
+                paragraphSpacing: spacing,
+                paragraphSpacingBefore: index == 0 ? 0 : paragraphSpacing,
+                lineHeightMultiple: lineHeightMultiple,
+                inlineCodeFontSizeDelta: inlineCodeFontSizeDelta,
+                addTrailingNewline: !isLast
+            )
+            result.append(paragraph)
+        }
+        return result
+    }
+}
+
 private struct MarkdownAttributedStringBuilder {
-    static func build(tokens: [MarkdownInlineToken], policy: MarkdownRenderPolicy) -> AttributedString {
-        var result = AttributedString()
+    static func buildInline(
+        tokens: [MarkdownInlineToken],
+        policy: MarkdownRenderPolicy,
+        baseFont: UIFont,
+        lineHeightMultiple: CGFloat,
+        inlineCodeFontSizeDelta: CGFloat
+    ) -> NSAttributedString {
+        let result = NSMutableAttributedString()
         for token in tokens {
             switch token {
             case .text(let text):
-                result.append(AttributedString(text))
+                result.append(textSegment(text, font: baseFont))
             case .inlineCode(let code):
-                var segment = AttributedString(code)
-                segment.font = .system(.body, design: .monospaced)
-                segment.backgroundColor = Color(.secondarySystemBackground)
-                result.append(segment)
+                result.append(inlineCodeSegment(code, font: baseFont, sizeDelta: inlineCodeFontSizeDelta))
             case .link(let label, let urlString):
                 let display = label.isEmpty ? urlString : label
-                var segment = AttributedString(display)
-                if let url = URL(string: urlString),
-                   MarkdownURLValidator.isAllowed(
-                    url: url,
-                    allowedSchemes: policy.linkPolicy.allowedSchemes,
-                    allowedHosts: policy.linkPolicy.allowedHosts
-                   ) {
-                    segment.link = url
-                    segment.foregroundColor = .blue
-                }
-                result.append(segment)
+                result.append(linkSegment(display, urlString: urlString, policy: policy, font: baseFont))
             case .image:
                 continue
             }
         }
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineHeightMultiple = lineHeightMultiple
+        result.addAttribute(
+            .paragraphStyle,
+            value: paragraphStyle,
+            range: NSRange(location: 0, length: result.length)
+        )
         return result
+    }
+
+    static func buildParagraph(
+        tokens: [MarkdownInlineToken],
+        policy: MarkdownRenderPolicy,
+        baseFont: UIFont,
+        paragraphSpacing: CGFloat,
+        paragraphSpacingBefore: CGFloat,
+        lineHeightMultiple: CGFloat,
+        inlineCodeFontSizeDelta: CGFloat,
+        addTrailingNewline: Bool
+    ) -> NSAttributedString {
+        let paragraph = NSMutableAttributedString(
+            attributedString: buildInline(
+                tokens: tokens,
+                policy: policy,
+                baseFont: baseFont,
+                lineHeightMultiple: lineHeightMultiple,
+                inlineCodeFontSizeDelta: inlineCodeFontSizeDelta
+            )
+        )
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.paragraphSpacing = paragraphSpacing
+        paragraphStyle.paragraphSpacingBefore = paragraphSpacingBefore
+        paragraphStyle.lineHeightMultiple = lineHeightMultiple
+        paragraph.addAttribute(
+            .paragraphStyle,
+            value: paragraphStyle,
+            range: NSRange(location: 0, length: paragraph.length)
+        )
+        if addTrailingNewline {
+            let newline = NSAttributedString(
+                string: "\n",
+                attributes: [
+                    .font: baseFont,
+                    .paragraphStyle: paragraphStyle,
+                    .foregroundColor: UIColor.label
+                ]
+            )
+            paragraph.append(newline)
+        }
+        return paragraph
+    }
+
+    static func baseFont(style: UIFont.TextStyle, weight: UIFont.Weight) -> UIFont {
+        let preferred = UIFont.preferredFont(forTextStyle: style)
+        return UIFont.systemFont(ofSize: preferred.pointSize, weight: weight)
+    }
+
+    private static func textSegment(_ text: String, font: UIFont) -> NSAttributedString {
+        NSAttributedString(
+            string: text,
+            attributes: [
+                .font: font,
+                .foregroundColor: UIColor.label
+            ]
+        )
+    }
+
+    private static func inlineCodeSegment(
+        _ code: String,
+        font: UIFont,
+        sizeDelta: CGFloat
+    ) -> NSAttributedString {
+        let targetSize = max(1, font.pointSize + sizeDelta)
+        let codeFont = UIFont.monospacedSystemFont(ofSize: targetSize, weight: .regular)
+        return NSAttributedString(
+            string: code,
+            attributes: [
+                .font: codeFont,
+                .backgroundColor: UIColor.secondarySystemBackground,
+                .foregroundColor: UIColor.label
+            ]
+        )
+    }
+
+    private static func linkSegment(
+        _ text: String,
+        urlString: String,
+        policy: MarkdownRenderPolicy,
+        font: UIFont
+    ) -> NSAttributedString {
+        var attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: UIColor.systemBlue
+        ]
+        if let url = URL(string: urlString),
+           MarkdownURLValidator.isAllowed(
+            url: url,
+            allowedSchemes: policy.linkPolicy.allowedSchemes,
+            allowedHosts: policy.linkPolicy.allowedHosts
+           ) {
+            attributes[.link] = url
+        }
+        return NSAttributedString(string: text, attributes: attributes)
     }
 }
 
@@ -440,6 +828,7 @@ private struct MarkdownCodeBlockView: View {
 private struct MarkdownTableView: View {
     let headers: [String]
     let rows: [[String]]
+    let layout: MarkdownLayoutConfig
     @State private var columnWidths: [Int: CGFloat] = [:]
 
     private var columnCount: Int {
@@ -451,43 +840,34 @@ private struct MarkdownTableView: View {
         let columns = max(columnCount, 1)
 
         ScrollView(.horizontal, showsIndicators: true) {
-            let cornerRadius: CGFloat = 10
-            ZStack {
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(Color(.secondarySystemBackground))
-                Grid(horizontalSpacing: 0, verticalSpacing: 0) {
+            Grid(horizontalSpacing: 0, verticalSpacing: 0) {
+                GridRow {
+                    ForEach(0..<columns, id: \.self) { column in
+                        tableCell(
+                            text: cellText(headers, column),
+                            isHeader: true,
+                            row: -1,
+                            column: column,
+                            isEvenRow: true
+                        )
+                    }
+                }
+                ForEach(rows.indices, id: \.self) { rowIndex in
                     GridRow {
                         ForEach(0..<columns, id: \.self) { column in
                             tableCell(
-                                text: cellText(headers, column),
-                                isHeader: true,
-                                row: -1,
+                                text: cellText(rows[rowIndex], column),
+                                isHeader: false,
+                                row: rowIndex,
                                 column: column,
-                                isEvenRow: true
+                                isEvenRow: rowIndex % 2 == 0
                             )
-                        }
-                    }
-                    ForEach(rows.indices, id: \.self) { rowIndex in
-                        GridRow {
-                            ForEach(0..<columns, id: \.self) { column in
-                                tableCell(
-                                    text: cellText(rows[rowIndex], column),
-                                    isHeader: false,
-                                    row: rowIndex,
-                                    column: column,
-                                    isEvenRow: rowIndex % 2 == 0
-                                )
-                            }
                         }
                     }
                 }
             }
-            .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(Color(.separator), lineWidth: 1)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         }
+        .padding(.horizontal, -16)
         .coordinateSpace(name: "markdown.table")
         .onPreferenceChange(TableCellLayoutPreferenceKey.self) { layouts in
             updateColumnWidths(layouts)
@@ -507,20 +887,22 @@ private struct MarkdownTableView: View {
         column: Int,
         isEvenRow: Bool
     ) -> some View {
-        let background = isHeader
-            ? Color(.tertiarySystemBackground)
-            : (isEvenRow ? Color(.secondarySystemBackground) : Color(.tertiarySystemBackground))
+        let leadingPadding = isHeader ? layout.tableHeaderPaddingLeading : layout.tableBodyPaddingLeading
+        let trailingPadding = isHeader ? layout.tableHeaderPaddingTrailing : layout.tableBodyPaddingTrailing
 
         Text(verbatim: text.isEmpty ? " " : text)
-            .font(isHeader ? .caption.weight(.semibold) : .caption)
+            .font(isHeader ? .subheadline.weight(.bold) : .subheadline)
             .foregroundStyle(.primary)
-            .padding(8)
+            .padding(.leading, leadingPadding)
+            .padding(.trailing, trailingPadding)
+            .padding(.vertical, layout.tableRowVerticalPadding)
             .fixedSize(horizontal: true, vertical: false)
             .frame(width: columnWidths[column], alignment: .leading)
-            .background(background)
             .overlay(
                 Rectangle()
-                    .stroke(Color(.separator), lineWidth: 0.5)
+                    .fill(Color(.separator))
+                    .frame(height: 1),
+                alignment: .bottom
             )
             .background(
                 GeometryReader { proxy in
@@ -624,12 +1006,6 @@ private struct MarkdownImageView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(8)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(Color(.separator), lineWidth: 1)
-        )
         .accessibilityLabel(alt.isEmpty ? "Image" : "Image: \(alt)")
     }
 
@@ -656,6 +1032,67 @@ private struct MarkdownImageView: View {
         case .tapToLoad(let schemes, let hosts),
              .allow(let schemes, let hosts):
             return MarkdownURLValidator.isAllowed(url: url, allowedSchemes: schemes, allowedHosts: hosts)
+        }
+    }
+}
+
+private struct SelectableTextView: UIViewRepresentable {
+    let attributedText: NSAttributedString
+    let onOpenURL: (URL) -> Void
+
+    func makeUIView(context: Context) -> UITextView {
+        let textView = UITextView()
+        textView.backgroundColor = .clear
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isScrollEnabled = false
+        textView.textContainerInset = .zero
+        textView.textContainer.lineFragmentPadding = 0
+        textView.textContainer.widthTracksTextView = true
+        textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        textView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        textView.delegate = context.coordinator
+        textView.dataDetectorTypes = []
+        textView.linkTextAttributes = [
+            .foregroundColor: UIColor.systemBlue
+        ]
+        textView.adjustsFontForContentSizeCategory = true
+        return textView
+    }
+
+    func updateUIView(_ uiView: UITextView, context: Context) {
+        uiView.attributedText = attributedText
+        if uiView.textColor != .label {
+            uiView.textColor = .label
+        }
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
+        guard let width = proposal.width else { return nil }
+        let targetSize = CGSize(width: width, height: .greatestFiniteMagnitude)
+        let size = uiView.sizeThatFits(targetSize)
+        return CGSize(width: width, height: size.height)
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onOpenURL: onOpenURL)
+    }
+
+    final class Coordinator: NSObject, UITextViewDelegate {
+        let onOpenURL: (URL) -> Void
+
+        init(onOpenURL: @escaping (URL) -> Void) {
+            self.onOpenURL = onOpenURL
+        }
+
+        func textView(
+            _ textView: UITextView,
+            shouldInteractWith url: URL,
+            in characterRange: NSRange,
+            interaction: UITextItemInteraction
+        ) -> Bool {
+            onOpenURL(url)
+            return false
         }
     }
 }

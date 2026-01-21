@@ -47,6 +47,19 @@ struct MessageBubble: View {
     let message: Message
     let showTail: Bool
     let showTimestamp: Bool
+    let markdownLayout: MarkdownLayoutConfig
+
+    init(
+        message: Message,
+        showTail: Bool,
+        showTimestamp: Bool,
+        markdownLayout: MarkdownLayoutConfig = .default
+    ) {
+        self.message = message
+        self.showTail = showTail
+        self.showTimestamp = showTimestamp
+        self.markdownLayout = markdownLayout
+    }
 
     var body: some View {
         VStack(spacing: 4) {
@@ -58,23 +71,21 @@ struct MessageBubble: View {
                     .padding(.bottom, 4)
             }
 
-            HStack(alignment: .bottom, spacing: 4) {
-                if message.isFromMe { Spacer(minLength: 60) }
-
-                Group {
-                    if message.isFromMe {
-                        Text(message.content)
-                            .foregroundStyle(.white)
-                    } else {
-                        AssistantMarkdownView(text: message.content)
-                    }
+            if message.isFromMe {
+                HStack(alignment: .bottom, spacing: 4) {
+                    Spacer(minLength: 60)
+                    Text(message.content)
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Color.blue)
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(message.isFromMe ? Color.blue : Color(.systemGray5))
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-
-                if !message.isFromMe { Spacer(minLength: 60) }
+            } else {
+                AssistantMarkdownView(text: message.content, layout: markdownLayout)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, markdownLayout.assistantMessageTopPadding)
+                    .padding(.bottom, markdownLayout.assistantMessageBottomPadding)
             }
 
             // Delivery status for sent messages (only on last message)
