@@ -1,4 +1,3 @@
-import { SignJWT } from "jose";
 import { env } from "../_shared/convex-env";
 import { capturePosthogEvent, drainPosthogEvents } from "../_shared/posthog";
 import { internal } from "./_generated/api";

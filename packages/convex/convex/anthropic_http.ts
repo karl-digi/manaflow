@@ -324,7 +324,7 @@ function hasUserApiKey(key: string | null): boolean {
 }
 
 const TEMPORARY_DISABLE_AUTH = true;
-const KILL_ALL_REQUESTS = false; // EMERGENCY: Set to true to block all requests
+const _KILL_ALL_REQUESTS = false; // EMERGENCY: Set to true to block all requests
 
 /**
  * HTTP action to proxy Anthropic API requests.
