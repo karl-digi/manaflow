@@ -378,72 +378,135 @@ INCOMPLETE CAPTURE: Missing important UI elements. Ensure full components are vi
 </CRITICAL_MISTAKES>
 
 <VIDEO_RECORDING>
-You can record screen videos to demonstrate workflows. Use ffmpeg for recording and xdotool to move the cursor.
+Record screen videos to demonstrate workflows. The cursor is added in post-processing.
 
-USE VIDEO WHEN:
-- New buttons or links that navigate to other pages
-- Before/after workflows with state transitions
-- Multi-step user flows
-- Any clickable element that triggers navigation or state changes
+YOU MUST RECORD A VIDEO IF:
+- There is a button, link, or clickable element
+- There is navigation or page transitions
+- There is any UI flow or state change
+- The PR adds/modifies interactive elements
 
-DO NOT USE VIDEO WHEN:
-- Pure styling changes (colors, fonts, spacing)
-- Static text or content changes
+Screenshots alone are NOT enough for interactive changes - you MUST record a video showing the interaction.
 
-RECORDING STEPS:
+SKIP VIDEO ONLY FOR: pure styling changes (colors, fonts, spacing), static text-only changes
 
-1. BEFORE recording, position cursor at starting element:
-   - Get element position via Chrome MCP (getBoundingClientRect)
-   - Add 85 to Y coordinate for Chrome toolbar offset
-   - Run: DISPLAY=:1 xdotool mousemove --sync X Y
+STEP 1 - PREPARE (before recording):
+Get the coordinates of the FIRST element you will CLICK via Chrome MCP (getBoundingClientRect, add 85 to Y).
 
-2. Start ffmpeg recording in background:
-   \`\`\`bash
-   DISPLAY=:1 ffmpeg -y -f x11grab -draw_mouse 1 -framerate 24 -video_size 1920x1080 -i :1+0,0 -c:v libx264 -preset ultrafast -crf 26 -pix_fmt yuv420p -movflags +faststart ${outputDir}/workflow.mp4 &
-   FFMPEG_PID=$!
-   \`\`\`
+STEP 2 - START RECORDING (right before first click):
+\`\`\`bash
+CLICKS_LOG="${outputDir}/clicks.log"
+echo -n "" > "$CLICKS_LOG"
+DISPLAY=:1 ffmpeg -y -f x11grab -draw_mouse 0 -framerate 24 -video_size 1920x1080 -i :1+0,0 -c:v libx264 -preset ultrafast -crf 26 -pix_fmt yuv420p "${outputDir}/raw.mp4" &
+FFMPEG_PID=$!
+sleep 0.3
+echo "$(date +%s.%N) X Y" >> "$CLICKS_LOG"
+\`\`\`
+Then IMMEDIATELY CLICK with Chrome MCP (not hover - actually CLICK the element).
+DO NOT call list_pages or select_page after clicking - just click and move on.
 
-3. Immediately use Chrome MCP to click/navigate. For each subsequent action:
-   - Move cursor with xdotool: DISPLAY=:1 xdotool mousemove --sync X Y
-   - Immediately click with Chrome MCP (NO sleeps between actions)
+STEP 3 - FOR ADDITIONAL CLICKS:
+a) Get element coordinates (getBoundingClientRect, add 85 to Y)
+b) Log: echo "$(date +%s.%N) X Y" >> "$CLICKS_LOG"
+c) CLICK with Chrome MCP
 
-4. Once result is visible, kill ffmpeg - this MUST be your next command after clicking:
-   \`\`\`bash
-   kill -INT $FFMPEG_PID
-   wait $FFMPEG_PID 2>/dev/null || true
-   \`\`\`
-   NEVER call list_pages or select_page after clicking - the video already captured it.
+STEP 4 - STOP RECORDING:
+\`\`\`bash
+kill -INT $FFMPEG_PID
+wait $FFMPEG_PID 2>/dev/null || true
+\`\`\`
+After the last click, just STOP. Do not sleep to "wait for page to load" - kill ffmpeg immediately.
+If you absolutely must wait, 0.5 seconds MAX. But prefer to just stop immediately.
 
-WHEN TO STOP RECORDING:
-- After your last click, wait for the page/content to fully load and render
-- Once the final result is visible on screen, STOP - do not record beyond that
-- Do NOT keep recording while you think about what to do next
-- Do NOT record empty time where nothing is happening
-- The kill command should be your VERY NEXT action after the result appears - do not hesitate
-- 1-2 seconds after content loads is enough, then STOP immediately
-- Do NOT use sleep before killing ffmpeg - just kill it directly
+CRITICAL: CLICK elements (not hover). Show the full end-to-end flow - click the button/link and show where it goes.
 
-IMPORTANT: The video records the X11 SCREEN, not the Chrome MCP state. If a new tab opens, you can SEE it on screen - no need to call list_pages or select_page. Just kill ffmpeg immediately after the click shows its result.
+⚠️⚠️⚠️ CRITICAL - NEVER CALL list_pages OR select_page AFTER CLICKING ⚠️⚠️⚠️
+The video is recording the X11 SCREEN directly via ffmpeg. When you click with Chrome MCP:
+- The result (page navigation, modal opening, new tab, etc.) is ALREADY being recorded on screen
+- Do NOT call list_pages - the screen recording already shows everything
+- Do NOT call select_page - even if a new tab opens, the SCREEN shows it
+- Just: click → kill ffmpeg → done
+This is NON-NEGOTIABLE. Calling list_pages/select_page after clicking is WRONG.
 
-Example timing:
-- Click button -> page navigates -> new page fully loads -> kill ffmpeg
-- Click link that opens new tab -> new tab visible on screen -> kill ffmpeg immediately
-- WRONG: click -> list_pages -> select_page -> kill (unnecessary MCP calls)
-- WRONG: click -> sleep -> kill (unnecessary sleep)
+STEP 5 - ADD CURSOR OVERLAY:
+\`\`\`bash
+python3 << PYSCRIPT
+import subprocess, os, sys
+outdir = "${outputDir}"
+clicks = []
+try:
+    with open(f"{outdir}/clicks.log") as f:
+        for line in f:
+            parts = line.strip().split()
+            if len(parts) >= 3:
+                clicks.append((float(parts[0]), int(parts[1]), int(parts[2])))
+except Exception as e:
+    print(f"Error reading clicks: {e}", file=sys.stderr)
 
-COORDINATE CALCULATION (add 85 to Y for Chrome toolbar):
-\`\`\`javascript
-const rect = el.getBoundingClientRect();
-const x = Math.round(rect.x + rect.width/2);
-const y = Math.round(rect.y + rect.height/2) + 85;
+print(f"Found {len(clicks)} clicks (raw): {clicks}", file=sys.stderr)
+
+if clicks:
+    # Convert absolute timestamps to relative (first click = 0)
+    first_t = clicks[0][0]
+    clicks = [(t - first_t, x, y) for t, x, y in clicks]
+    print(f"Adjusted clicks: {clicks}", file=sys.stderr)
+
+    filters = []
+
+    # Cursor starts at screen center and animates to first click over 0.3s
+    cx, cy = 960, 540  # screen center
+    first_x, first_y = clicks[0][1], clicks[0][2]
+    anim_dur = 0.3  # animation duration in seconds
+
+    # Animate from center to first click (0 to anim_dur)
+    # Using linear interpolation: pos = start + (end - start) * (t / dur)
+    yellow_x_expr = f"({cx-14}+({first_x-14}-{cx-14})*(t/{anim_dur}))"
+    yellow_y_expr = f"({cy-20}+({first_y-20}-{cy-20})*(t/{anim_dur}))"
+    black_x_expr = f"({cx-3}+({first_x-3}-{cx-3})*(t/{anim_dur}))"
+    black_y_expr = f"({cy-8}+({first_y-8}-{cy-8})*(t/{anim_dur}))"
+
+    filters.append(f"drawtext=text='●':x='{yellow_x_expr}':y='{yellow_y_expr}':fontsize=36:fontcolor=yellow@0.5:enable='between(t,0,{anim_dur:.2f})'")
+    filters.append(f"drawtext=text='●':x='{black_x_expr}':y='{black_y_expr}':fontsize=12:fontcolor=black:enable='between(t,0,{anim_dur:.2f})'")
+
+    # Static positions for each click (after animation)
+    for i, (t, x, y) in enumerate(clicks):
+        start_t = max(t, anim_dur)  # don't overlap with animation
+        end_t = clicks[i+1][0] if i+1 < len(clicks) else 9999
+        if end_t <= start_t:
+            continue
+        e = f"enable='between(t,{start_t:.2f},{end_t:.2f})'"
+        # Yellow outer circle - bigger, more visible
+        filters.append(f"drawtext=text='●':x={x-14}:y={y-20}:fontsize=36:fontcolor=yellow@0.5:{e}")
+        # Black inner circle - centered inside yellow (concentric)
+        filters.append(f"drawtext=text='●':x={x-3}:y={y-8}:fontsize=12:fontcolor=black:{e}")
+
+    # Add 2x speed (setpts=0.5*PTS)
+    filter_str = ",".join(filters) + ",setpts=0.5*PTS"
+    print(f"Running ffmpeg with {len(filters)} filter elements + 2x speed", file=sys.stderr)
+    result = subprocess.run(f'ffmpeg -y -i "{outdir}/raw.mp4" -vf "{filter_str}" "{outdir}/workflow.mp4"', shell=True)
+    if result.returncode == 0:
+        os.remove(f"{outdir}/raw.mp4")
+    else:
+        print(f"ffmpeg failed with code {result.returncode}", file=sys.stderr)
+        os.rename(f"{outdir}/raw.mp4", f"{outdir}/workflow.mp4")
+else:
+    # No clicks, but still speed up 2x
+    print("No clicks found, speeding up raw video 2x", file=sys.stderr)
+    result = subprocess.run(f'ffmpeg -y -i "{outdir}/raw.mp4" -vf "setpts=0.5*PTS" "{outdir}/workflow.mp4"', shell=True)
+    if result.returncode == 0:
+        os.remove(f"{outdir}/raw.mp4")
+    else:
+        os.rename(f"{outdir}/raw.mp4", f"{outdir}/workflow.mp4")
+PYSCRIPT
 \`\`\`
 
 IMPORTANT:
-- NO sleep commands between actions - move as fast as possible
-- Position cursor BEFORE starting recording so it's ready
-- Record complete end-to-end flows
-- Keep videos SHORT: 5-10 seconds preferred
-- Always use DISPLAY=:1 with xdotool and ffmpeg
+- CLICK elements, not hover - show the full interaction flow
+- Log clicks BEFORE clicking so timestamp is accurate
+- Kill ffmpeg immediately when result is visible
+- Show end-to-end: click button → see result (new page, modal, state change)
+- NEVER call list_pages or select_page after clicking - screen recording captures everything
+- After last click: kill ffmpeg. That's it. Done. No more MCP calls.
 </VIDEO_RECORDING>
 
 <OUTPUT>

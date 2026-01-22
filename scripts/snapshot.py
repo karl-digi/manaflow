@@ -919,7 +919,7 @@ async def task_install_base_packages(ctx: TaskContext) -> None:
             gh \
             zsh \
             zsh-autosuggestions \
-            ripgrep \
+            ripgrep \w
             ffmpeg \
             xdotool
 

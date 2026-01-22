@@ -124,6 +124,52 @@ const formatScreenshotImageMarkdown = (
   return lines;
 };
 
+/**
+ * Formats a single video into markdown lines with HTML video element.
+ * Uses <video> tag for inline playback with a fallback download link.
+ *
+ * SECURITY: This function sanitizes user-controlled content (fileName, description)
+ * to prevent markdown injection and data exfiltration attacks.
+ */
+const formatScreenshotVideoMarkdown = (
+  storageUrl: string,
+  fileName: string,
+  description?: string,
+  options?: { includeHeader?: boolean },
+): string[] => {
+  // Validate storage URL to prevent external URLs
+  const validatedUrl = validateStorageUrl(storageUrl);
+  if (!validatedUrl) {
+    console.warn("[github_pr_comments] Skipping video with invalid storage URL", {
+      storageUrl,
+      fileName,
+    });
+    return [];
+  }
+
+  // Sanitize user-controlled content to prevent injection
+  const safeFileName = sanitizeFileName(fileName);
+  const safeDescription = sanitizeDescription(description);
+
+  const lines: string[] = [];
+  if (options?.includeHeader) {
+    lines.push(`### 🎬 ${safeFileName}`);
+  }
+  if (safeDescription) {
+    lines.push(`**${safeDescription}**`, "");
+  }
+  // Use HTML video element for inline playback
+  // Include controls attribute and reasonable max width
+  // Add a fallback link in case video tag doesn't render
+  lines.push(
+    `<video src="${validatedUrl}" controls width="100%" style="max-width: 800px;"></video>`,
+    "",
+    `[Download video](${validatedUrl})`,
+    "",
+  );
+  return lines;
+};
+
 async function renderScreenshotSetMarkdown(
   ctx: ActionCtx,
   set: ScreenshotSetDoc,
@@ -133,7 +179,11 @@ async function renderScreenshotSetMarkdown(
   const timestamp = formatTimestamp(set.capturedAt);
   const lines: string[] = [heading, ""];
 
-  if (set.status === "completed" && set.images.length > 0) {
+  const imageCount = set.images.length;
+  const videoCount = set.videos?.length ?? 0;
+  const hasMedia = imageCount > 0 || videoCount > 0;
+
+  if (set.status === "completed" && hasMedia) {
     // Check if the model explicitly detected no UI changes
     // hasUiChanges === false means model analyzed and found no UI changes - skip screenshots
     // hasUiChanges === undefined means not analyzed - show screenshots
@@ -143,16 +193,35 @@ async function renderScreenshotSetMarkdown(
         `> **No UI changes detected** - The model analyzed this PR and determined there are no visual changes to the UI.`,
         "",
       );
-      // Don't render screenshots when model says no UI changes
+      // Don't render screenshots/videos when model says no UI changes
     } else {
-      const count = set.images.length;
-      const intro = `Captured ${count} screenshot${count === 1 ? "" : "s"} for commit ${commitLabel} (${timestamp}).`;
+      // Build intro message with counts
+      const parts: string[] = [];
+      if (imageCount > 0) {
+        parts.push(`${imageCount} screenshot${imageCount === 1 ? "" : "s"}`);
+      }
+      if (videoCount > 0) {
+        parts.push(`${videoCount} video${videoCount === 1 ? "" : "s"}`);
+      }
+      const intro = `Captured ${parts.join(" and ")} for commit ${commitLabel} (${timestamp}).`;
       lines.push(intro, "");
+
+      // Render images
       for (const image of set.images) {
         const storageUrl = await ctx.storage.getUrl(image.storageId);
         if (!storageUrl) continue;
         const fileName = image.fileName || "screenshot";
         lines.push(...formatScreenshotImageMarkdown(storageUrl, fileName, image.description));
+      }
+
+      // Render videos
+      if (set.videos && set.videos.length > 0) {
+        for (const video of set.videos) {
+          const storageUrl = await ctx.storage.getUrl(video.storageId);
+          if (!storageUrl) continue;
+          const fileName = video.fileName || "video";
+          lines.push(...formatScreenshotVideoMarkdown(storageUrl, fileName, video.description));
+        }
       }
     }
   } else if (set.status === "failed") {
@@ -1080,7 +1149,9 @@ export const addPrComment = internalAction({
   },
 });
 
-async function getScreenshotsForPr(
+type MediaItem = { url: string; fileName?: string; description?: string; type: "image" | "video" };
+
+async function getMediaForPr(
   ctx: ActionCtx,
   {
     teamId,
@@ -1091,7 +1162,7 @@ async function getScreenshotsForPr(
     repoFullName: string;
     prNumber: number;
   },
-): Promise<Array<{ url: string; fileName?: string; description?: string }>> {
+): Promise<{ images: MediaItem[]; videos: MediaItem[] }> {
   try {
     const taskRuns = await ctx.runQuery(
       internal.github_pr_queries.findTaskRunsForPr,
@@ -1103,10 +1174,11 @@ async function getScreenshotsForPr(
     );
 
     if (taskRuns.length === 0) {
-      return [];
+      return { images: [], videos: [] };
     }
 
-    const screenshots: Array<{ url: string; fileName?: string; description?: string }> = [];
+    const images: MediaItem[] = [];
+    const videos: MediaItem[] = [];
 
     for (const run of taskRuns) {
       // TEMPORARY: Always process all runs - never skip based on existing screenshot set
@@ -1121,21 +1193,35 @@ async function getScreenshotsForPr(
         if (screenshotSet && screenshotSet.status === "completed") {
           for (const image of screenshotSet.images) {
             if (image.url) {
-              screenshots.push({
+              images.push({
                 url: image.url,
                 fileName: image.fileName,
                 description: image.description,
+                type: "image",
               });
+            }
+          }
+          // Also collect videos
+          if (screenshotSet.videos) {
+            for (const video of screenshotSet.videos) {
+              if (video.url) {
+                videos.push({
+                  url: video.url,
+                  fileName: video.fileName,
+                  description: video.description,
+                  type: "video",
+                });
+              }
             }
           }
         }
       }
     }
 
-    return screenshots;
+    return { images, videos };
   } catch (error) {
     console.error(
-      "[github_pr_comments] Error fetching screenshots for PR",
+      "[github_pr_comments] Error fetching media for PR",
       {
         teamId,
         repoFullName,
@@ -1143,24 +1229,34 @@ async function getScreenshotsForPr(
         error,
       },
     );
-    return [];
+    return { images: [], videos: [] };
   }
 }
 
-function formatScreenshotComment(
-  screenshots: Array<{ url: string; fileName?: string; description?: string }>,
+function formatMediaComment(
+  media: { images: MediaItem[]; videos: MediaItem[] },
 ): string {
-  if (screenshots.length === 0) {
+  const hasImages = media.images.length > 0;
+  const hasVideos = media.videos.length > 0;
+
+  if (!hasImages && !hasVideos) {
     return "";
   }
 
   let markdown = "## Screenshots\n\n";
-  markdown +=
-    "Here are the screenshots from the latest run:\n\n";
+  markdown += "Here are the screenshots from the latest run:\n\n";
 
-  for (const screenshot of screenshots) {
-    const title = screenshot.fileName || "Screenshot";
-    const lines = formatScreenshotImageMarkdown(screenshot.url, title, screenshot.description, { includeHeader: true });
+  // Render images
+  for (const image of media.images) {
+    const title = image.fileName || "Screenshot";
+    const lines = formatScreenshotImageMarkdown(image.url, title, image.description, { includeHeader: true });
+    markdown += lines.join("\n") + "\n";
+  }
+
+  // Render videos
+  for (const video of media.videos) {
+    const title = video.fileName || "Video";
+    const lines = formatScreenshotVideoMarkdown(video.url, title, video.description, { includeHeader: true });
     markdown += lines.join("\n") + "\n";
   }
 
@@ -1182,25 +1278,25 @@ export const addScreenshotCommentToPr = internalAction({
     | { ok: false; error: string }
   > => {
     try {
-      const screenshots = await getScreenshotsForPr(ctx, {
+      const media = await getMediaForPr(ctx, {
         teamId,
         repoFullName,
         prNumber,
       });
 
-      if (screenshots.length === 0) {
+      if (media.images.length === 0 && media.videos.length === 0) {
         console.log(
-          "[github_pr_comments] No screenshots found for PR",
+          "[github_pr_comments] No screenshots or videos found for PR",
           {
             installationId,
             repoFullName,
             prNumber,
           },
         );
-        return { ok: true, skipped: true, reason: "No screenshots found" };
+        return { ok: true, skipped: true, reason: "No screenshots or videos found" };
       }
 
-      const body = formatScreenshotComment(screenshots);
+      const body = formatMediaComment(media);
 
       const result = await ctx.runAction(internal.github_pr_comments.addPrComment, {
         installationId,
