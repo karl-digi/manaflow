@@ -128,8 +128,8 @@ function DashboardComponent() {
     // Don't start if onboarding is already active
     if (onboarding.isOnboardingActive) return;
 
-    // Wait for tasks query to load
-    if (tasksQuery.isLoading) return;
+    // Only proceed once tasks are fetched successfully
+    if (!tasksQuery.isSuccess) return;
 
     // Only start for new users - check for real tasks (not standalone workspaces)
     // Standalone workspaces (isCloudWorkspace/isLocalWorkspace) don't count as "tasks"
@@ -143,7 +143,7 @@ function DashboardComponent() {
     onboarding.startOnboarding();
   }, [
     onboarding,
-    tasksQuery.isLoading,
+    tasksQuery.isSuccess,
     tasksQuery.data,
   ]);
 

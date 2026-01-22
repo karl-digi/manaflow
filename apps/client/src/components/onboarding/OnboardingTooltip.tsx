@@ -151,6 +151,18 @@ export function OnboardingTooltip({
   // Handle keyboard navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target;
+      if (target instanceof HTMLElement) {
+        if (target.isContentEditable) {
+          return;
+        }
+        const interactiveElement = target.closest(
+          "input, textarea, select, [contenteditable], [role='textbox'], [role='combobox']"
+        );
+        if (interactiveElement) {
+          return;
+        }
+      }
       if (e.key === "Escape") {
         onSkip();
       } else if (e.key === "ArrowRight" || e.key === "Enter") {
