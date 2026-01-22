@@ -146,6 +146,14 @@ enum CallbackPayload {
         #[serde(rename = "sandboxUrl")]
         sandbox_url: String,
     },
+    #[serde(rename = "sandbox_error")]
+    SandboxError {
+        #[serde(rename = "sandboxId")]
+        sandbox_id: String,
+        code: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
+    },
 }
 
 /// Callback response from Convex.
@@ -396,6 +404,24 @@ impl CallbackClient {
         };
 
         self.post_callback(payload).await
+    }
+
+    /// Report an error for a sandbox (when conversation ID is not available).
+    /// Used by the API proxy when it detects persistent errors after retries.
+    pub async fn report_sandbox_error(&self, sandbox_id: &str, code: &str, detail: Option<&str>) {
+        let payload = CallbackPayload::SandboxError {
+            sandbox_id: sandbox_id.to_string(),
+            code: code.to_string(),
+            detail: detail.map(|s| s.to_string()),
+        };
+
+        if let Err(e) = self.post_callback(payload).await {
+            error!(
+                sandbox_id = %sandbox_id,
+                error = %e,
+                "Failed to send sandbox error callback"
+            );
+        }
     }
 }
 

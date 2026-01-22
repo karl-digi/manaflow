@@ -11,7 +11,7 @@
 //! In outer proxy mode, the local proxy injects the conversation JWT, and the
 //! Vercel proxy verifies it and adds the real API key.
 
-use axum::body::Body;
+use axum::body::{Body, Bytes};
 use axum::extract::State;
 use axum::http::{HeaderMap, Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
@@ -19,8 +19,12 @@ use axum::routing::any;
 use axum::Router;
 use reqwest::Client;
 use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::TcpListener;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
+
+use super::callback::CallbackClient;
 
 /// API provider configuration.
 #[derive(Clone)]
@@ -396,6 +400,45 @@ impl JwtHolder {
     }
 }
 
+/// Configuration for error callbacks (set dynamically after proxy starts).
+#[derive(Clone)]
+pub struct ErrorCallbackConfig {
+    pub callback_url: String,
+    pub sandbox_id: String,
+}
+
+/// Holder for error callback configuration that can be set dynamically.
+#[derive(Clone)]
+pub struct ErrorCallbackHolder {
+    config: Arc<tokio::sync::RwLock<Option<ErrorCallbackConfig>>>,
+}
+
+impl ErrorCallbackHolder {
+    /// Create a new holder without config.
+    pub fn new() -> Self {
+        Self {
+            config: Arc::new(tokio::sync::RwLock::new(None)),
+        }
+    }
+
+    /// Set the error callback configuration.
+    pub async fn set(&self, config: ErrorCallbackConfig) {
+        let mut guard = self.config.write().await;
+        *guard = Some(config);
+    }
+
+    /// Get the config (if set).
+    pub async fn get(&self) -> Option<ErrorCallbackConfig> {
+        self.config.read().await.clone()
+    }
+}
+
+impl Default for ErrorCallbackHolder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Provider route configuration.
 #[derive(Clone)]
 struct ProviderRoute {
@@ -404,6 +447,11 @@ struct ProviderRoute {
     /// Outer proxy URL (e.g., "https://cmux.sh/api/anthropic")
     outer_proxy_url: String,
 }
+
+/// Retry configuration for API requests.
+const MAX_RETRIES: u32 = 3;
+const INITIAL_BACKOFF_MS: u64 = 500;
+const MAX_BACKOFF_MS: u64 = 5000;
 
 /// State for the unified outer proxy handler that routes by path prefix.
 #[derive(Clone)]
@@ -416,6 +464,8 @@ struct UnifiedProxyState {
     jwt_holder: JwtHolder,
     /// Timeout for waiting for JWT
     jwt_timeout: std::time::Duration,
+    /// Error callback holder for reporting persistent errors
+    error_callback_holder: ErrorCallbackHolder,
 }
 
 impl UnifiedProxyState {
@@ -551,7 +601,69 @@ async fn outer_proxy_handler(
     builder.body(Body::from(response_bytes)).unwrap()
 }
 
+/// Check if a status code is retryable (429 or 5xx).
+fn is_retryable_status(status: StatusCode) -> bool {
+    status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
+}
+
+/// Calculate backoff duration for a given attempt (0-indexed).
+fn calculate_backoff(attempt: u32) -> Duration {
+    let backoff_ms = INITIAL_BACKOFF_MS * 2u64.pow(attempt);
+    Duration::from_millis(backoff_ms.min(MAX_BACKOFF_MS))
+}
+
+/// Build headers for upstream request, filtering out hop-by-hop headers.
+fn build_upstream_headers(headers: &HeaderMap) -> Vec<(String, String)> {
+    headers
+        .iter()
+        .filter_map(|(name, value)| {
+            let name_str = name.as_str().to_lowercase();
+            // Skip hop-by-hop headers and auth (we add our own)
+            if name_str == "host"
+                || name_str == "content-length"
+                || name_str == "transfer-encoding"
+                || name_str == "connection"
+                || name_str == "authorization"
+                || name_str == "x-api-key"
+            {
+                return None;
+            }
+            value
+                .to_str()
+                .ok()
+                .map(|v| (name.to_string(), v.to_string()))
+        })
+        .collect()
+}
+
+/// Send error callback to Convex if error callback is configured.
+async fn send_error_callback_if_configured(
+    state: &UnifiedProxyState,
+    jwt: &str,
+    code: &str,
+    detail: Option<&str>,
+) {
+    let config = match state.error_callback_holder.get().await {
+        Some(config) => config,
+        None => {
+            debug!("Error callback not configured, skipping");
+            return;
+        }
+    };
+
+    let callback_client = CallbackClient::new(&config.callback_url, jwt);
+    callback_client
+        .report_sandbox_error(&config.sandbox_id, code, detail)
+        .await;
+    info!(
+        sandbox_id = %config.sandbox_id,
+        code = %code,
+        "Sent error callback to Convex"
+    );
+}
+
 /// Handle requests by routing based on path prefix and forwarding to outer proxy.
+/// Includes retry logic for transient errors (429, 5xx) with exponential backoff.
 async fn unified_proxy_handler(
     State(state): State<UnifiedProxyState>,
     method: Method,
@@ -597,32 +709,8 @@ async fn unified_proxy_handler(
         "Proxying request to outer proxy"
     );
 
-    // Build request to upstream
-    let mut request_builder = state.client.request(method.clone(), &upstream_url);
-
-    // Copy headers, excluding host and content-length (will be recalculated)
-    for (name, value) in headers.iter() {
-        let name_str = name.as_str().to_lowercase();
-        // Skip hop-by-hop headers and auth (we add our own)
-        if name_str == "host"
-            || name_str == "content-length"
-            || name_str == "transfer-encoding"
-            || name_str == "connection"
-            || name_str == "authorization"
-            || name_str == "x-api-key"
-        {
-            continue;
-        }
-        if let Ok(header_value) = value.to_str() {
-            request_builder = request_builder.header(name.as_str(), header_value);
-        }
-    }
-
-    // Add JWT as Bearer token
-    request_builder = request_builder.header("Authorization", format!("Bearer {}", jwt));
-
-    // Get body bytes
-    let body_bytes = match axum::body::to_bytes(body, 10 * 1024 * 1024).await {
+    // Get body bytes upfront (needed for retries)
+    let body_bytes: Bytes = match axum::body::to_bytes(body, 10 * 1024 * 1024).await {
         Ok(bytes) => bytes,
         Err(e) => {
             error!(error = %e, "Failed to read request body");
@@ -633,33 +721,154 @@ async fn unified_proxy_handler(
         }
     };
 
-    // Send request
-    let response = match request_builder.body(body_bytes).send().await {
-        Ok(resp) => resp,
-        Err(e) => {
-            error!(error = %e, upstream = %upstream_url, "Outer proxy request failed");
-            return Response::builder()
-                .status(StatusCode::BAD_GATEWAY)
-                .body(Body::from(format!("Outer proxy request failed: {}", e)))
-                .unwrap();
-        }
-    };
+    // Build headers once (for retries)
+    let upstream_headers = build_upstream_headers(&headers);
 
-    // Build response
-    let status = response.status();
-    let response_headers = response.headers().clone();
+    // Retry loop
+    let mut last_status: Option<StatusCode> = None;
+    let mut last_response_bytes: Option<Bytes> = None;
+    let mut last_response_headers: Option<reqwest::header::HeaderMap> = None;
 
-    // Get response body
-    let response_bytes = match response.bytes().await {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            error!(error = %e, "Failed to read outer proxy response");
-            return Response::builder()
-                .status(StatusCode::BAD_GATEWAY)
-                .body(Body::from("Failed to read outer proxy response"))
-                .unwrap();
+    for attempt in 0..=MAX_RETRIES {
+        if attempt > 0 {
+            let backoff = calculate_backoff(attempt - 1);
+            warn!(
+                attempt = attempt,
+                backoff_ms = backoff.as_millis(),
+                upstream = %upstream_url,
+                "Retrying request after backoff"
+            );
+            tokio::time::sleep(backoff).await;
         }
-    };
+
+        // Build request
+        let mut request_builder = state.client.request(method.clone(), &upstream_url);
+
+        // Add headers
+        for (name, value) in &upstream_headers {
+            request_builder = request_builder.header(name.as_str(), value.as_str());
+        }
+
+        // Add JWT as Bearer token
+        request_builder = request_builder.header("Authorization", format!("Bearer {}", jwt));
+
+        // Send request
+        let response = match request_builder.body(body_bytes.clone()).send().await {
+            Ok(resp) => resp,
+            Err(e) => {
+                error!(
+                    error = %e,
+                    upstream = %upstream_url,
+                    attempt = attempt,
+                    "Outer proxy request failed"
+                );
+                // Network errors are retryable
+                if attempt < MAX_RETRIES {
+                    continue;
+                }
+                // After all retries, send error callback and return error
+                send_error_callback_if_configured(
+                    &state,
+                    &jwt,
+                    "network_error",
+                    Some(&format!(
+                        "Request failed after {} retries: {}",
+                        MAX_RETRIES + 1,
+                        e
+                    )),
+                )
+                .await;
+                return Response::builder()
+                    .status(StatusCode::BAD_GATEWAY)
+                    .body(Body::from(format!("Outer proxy request failed: {}", e)))
+                    .unwrap();
+            }
+        };
+
+        let status = response.status();
+        let response_headers = response.headers().clone();
+
+        // Get response body
+        let response_bytes = match response.bytes().await {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                error!(error = %e, "Failed to read outer proxy response");
+                if attempt < MAX_RETRIES {
+                    continue;
+                }
+                send_error_callback_if_configured(
+                    &state,
+                    &jwt,
+                    "response_error",
+                    Some(&format!("Failed to read response: {}", e)),
+                )
+                .await;
+                return Response::builder()
+                    .status(StatusCode::BAD_GATEWAY)
+                    .body(Body::from("Failed to read outer proxy response"))
+                    .unwrap();
+            }
+        };
+
+        // Check if error is retryable
+        if is_retryable_status(status) && attempt < MAX_RETRIES {
+            warn!(
+                status = %status,
+                attempt = attempt,
+                upstream = %upstream_url,
+                "Retryable error, will retry"
+            );
+            last_status = Some(status);
+            last_response_bytes = Some(response_bytes);
+            last_response_headers = Some(response_headers);
+            continue;
+        }
+
+        // Success or non-retryable error after all retries
+        if is_retryable_status(status) {
+            // All retries exhausted for a retryable error - send error callback
+            let error_code = if status == StatusCode::TOO_MANY_REQUESTS {
+                "rate_limit"
+            } else {
+                "server_error"
+            };
+            let detail = String::from_utf8_lossy(&response_bytes);
+            let detail_preview = if detail.len() > 500 {
+                format!("{}...", &detail[..500])
+            } else {
+                detail.to_string()
+            };
+            error!(
+                status = %status,
+                upstream = %upstream_url,
+                detail = %detail_preview,
+                "All retries exhausted, reporting error"
+            );
+            send_error_callback_if_configured(
+                &state,
+                &jwt,
+                error_code,
+                Some(&format!(
+                    "API error {} after {} retries: {}",
+                    status.as_u16(),
+                    MAX_RETRIES + 1,
+                    detail_preview
+                )),
+            )
+            .await;
+        }
+
+        // Build and return response
+        last_status = Some(status);
+        last_response_bytes = Some(response_bytes);
+        last_response_headers = Some(response_headers);
+        break;
+    }
+
+    // Build final response
+    let status = last_status.unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let response_bytes = last_response_bytes.unwrap_or_default();
+    let response_headers = last_response_headers.unwrap_or_default();
 
     // Build axum response
     let mut builder = Response::builder().status(status);
@@ -683,6 +892,8 @@ pub struct UnifiedApiProxy {
     pub addr: SocketAddr,
     /// JWT holder for setting JWT dynamically
     jwt_holder: JwtHolder,
+    /// Error callback holder for reporting persistent errors
+    error_callback_holder: ErrorCallbackHolder,
     /// Shutdown signal sender
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
 }
@@ -702,6 +913,7 @@ impl UnifiedApiProxy {
         jwt_timeout: std::time::Duration,
     ) -> anyhow::Result<Self> {
         let jwt_holder = JwtHolder::new(initial_jwt);
+        let error_callback_holder = ErrorCallbackHolder::new();
 
         // Build routes for each provider
         let mut routes: Vec<ProviderRoute> = providers
@@ -733,6 +945,7 @@ impl UnifiedApiProxy {
             routes,
             jwt_holder: jwt_holder.clone(),
             jwt_timeout,
+            error_callback_holder: error_callback_holder.clone(),
         };
 
         let app = Router::new()
@@ -761,6 +974,7 @@ impl UnifiedApiProxy {
         Ok(Self {
             addr: actual_addr,
             jwt_holder,
+            error_callback_holder,
             shutdown_tx: Some(shutdown_tx),
         })
     }
@@ -768,6 +982,17 @@ impl UnifiedApiProxy {
     /// Set the JWT for this proxy.
     pub async fn set_jwt(&self, jwt: String) {
         self.jwt_holder.set(jwt).await;
+    }
+
+    /// Set the error callback configuration for this proxy.
+    /// When set, the proxy will report persistent errors (429/5xx after retries) to Convex.
+    pub async fn set_error_callback(&self, callback_url: String, sandbox_id: String) {
+        self.error_callback_holder
+            .set(ErrorCallbackConfig {
+                callback_url,
+                sandbox_id,
+            })
+            .await;
     }
 
     /// Get the base URL for this proxy.
@@ -913,6 +1138,14 @@ impl ConversationApiProxies {
     /// Set JWT on the unified proxy.
     pub async fn set_jwt(&self, jwt: String) {
         self.proxy.set_jwt(jwt).await;
+    }
+
+    /// Set error callback configuration on the unified proxy.
+    /// When set, the proxy will report persistent errors (429/5xx after retries) to Convex.
+    pub async fn set_error_callback(&self, callback_url: String, sandbox_id: String) {
+        self.proxy
+            .set_error_callback(callback_url, sandbox_id)
+            .await;
     }
 
     /// Get the Anthropic proxy (for logging/compatibility).

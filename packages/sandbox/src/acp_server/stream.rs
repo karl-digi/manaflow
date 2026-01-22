@@ -142,9 +142,7 @@ impl StreamStore {
                 max_seq,
             }),
             StreamOffset::Value(value) => {
-                let truncated = min_seq
-                    .map(|min| value + 1 < min)
-                    .unwrap_or(false);
+                let truncated = min_seq.map(|min| value + 1 < min).unwrap_or(false);
 
                 if truncated {
                     return Some(StreamReadResult {
@@ -198,7 +196,8 @@ impl StreamStore {
             return Some(initial);
         }
 
-        self.read(conversation_id, StreamOffset::Value(offset)).await
+        self.read(conversation_id, StreamOffset::Value(offset))
+            .await
     }
 }
 

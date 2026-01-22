@@ -15,13 +15,13 @@ use axum::response::sse::{Event, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use dashmap::DashMap;
+use futures::stream::unfold;
 use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, ChildStdout};
 use tokio::sync::{Mutex, RwLock};
-use futures::stream::unfold;
 use tracing::{debug, error, info, warn};
 use utoipa::{OpenApi, ToSchema};
 
@@ -29,8 +29,8 @@ use super::api_proxy::ConversationApiProxies;
 use super::callback::{
     CallbackClient, CallbackRawEvent, CallbackToolCall, CallbackToolCallStatus, StopReason,
 };
-use super::stream::{StreamEvent, StreamOffset, StreamStore};
 use super::spawner::{AcpProvider, CliSpawner, IsolationMode as SpawnerIsolationMode};
+use super::stream::{StreamEvent, StreamOffset, StreamStore};
 
 const STREAM_NEXT_OFFSET_HEADER: &str = "Acp-Next-Offset";
 const STREAM_UP_TO_DATE_HEADER: &str = "Acp-Up-To-Date";
@@ -124,7 +124,7 @@ impl RestApiState {
         stream_secret: Option<String>,
     ) -> Result<(), String> {
         // Set callback client
-        let client = CallbackClient::new(callback_url, sandbox_jwt.clone());
+        let client = CallbackClient::new(callback_url.clone(), sandbox_jwt.clone());
         {
             let mut guard = self.callback_client.write().await;
             *guard = Some(Arc::new(client));
@@ -132,7 +132,7 @@ impl RestApiState {
         // Set sandbox ID
         {
             let mut guard = self.sandbox_id.write().await;
-            *guard = Some(sandbox_id);
+            *guard = Some(sandbox_id.clone());
         }
         // Start API proxies if proxy URL is provided
         if let Some(ref proxy_url) = api_proxy_url {
@@ -144,6 +144,10 @@ impl RestApiState {
             )
             .await
             .map_err(|e| format!("Failed to start API proxies: {}", e))?;
+
+            // Set error callback configuration so the proxy can report persistent errors
+            proxies.set_error_callback(callback_url, sandbox_id).await;
+            info!("API proxy error callback configured");
 
             if let Some(proxy) = proxies.anthropic() {
                 info!(base_url = %proxy.provider_url("anthropic"), "Anthropic proxy route configured");
@@ -169,7 +173,10 @@ impl RestApiState {
             if let Some(entry) = guard.iter_mut().find(|entry| entry.secret == secret) {
                 entry.set_at = now;
             } else {
-                guard.push(StreamSecretEntry { secret, set_at: now });
+                guard.push(StreamSecretEntry {
+                    secret,
+                    set_at: now,
+                });
             }
             guard.retain(|entry| now.duration_since(entry.set_at) < STREAM_SECRET_TTL);
             guard.sort_by(|a, b| b.set_at.cmp(&a.set_at));
@@ -657,11 +664,7 @@ async fn verify_stream_auth(
     Ok(())
 }
 
-fn build_stream_control_payload(
-    next_offset: u64,
-    up_to_date: bool,
-    truncated: bool,
-) -> String {
+fn build_stream_control_payload(next_offset: u64, up_to_date: bool, truncated: bool) -> String {
     json!({
         "nextOffset": next_offset,
         "upToDate": up_to_date,
@@ -671,10 +674,7 @@ fn build_stream_control_payload(
 }
 
 fn apply_stream_cors(headers: &mut HeaderMap) {
-    headers.insert(
-        "access-control-allow-origin",
-        HeaderValue::from_static("*"),
-    );
+    headers.insert("access-control-allow-origin", HeaderValue::from_static("*"));
     headers.insert(
         "access-control-allow-headers",
         HeaderValue::from_static("authorization, content-type"),
@@ -804,18 +804,18 @@ pub async fn stream_acp_events(
 
                 let read = state
                     .store
-                    .read(&state.conversation_id, StreamOffset::Value(state.current_offset))
+                    .read(
+                        &state.conversation_id,
+                        StreamOffset::Value(state.current_offset),
+                    )
                     .await?;
 
                 if read.truncated {
-                    let control = build_stream_control_payload(
-                        read.next_offset,
-                        read.up_to_date,
-                        true,
-                    );
-                    state.pending.push_back(
-                        Event::default().event("control").data(control),
-                    );
+                    let control =
+                        build_stream_control_payload(read.next_offset, read.up_to_date, true);
+                    state
+                        .pending
+                        .push_back(Event::default().event("control").data(control));
                     state.current_offset = read.next_offset;
                     state.done = true;
                     let next = state
@@ -879,16 +879,13 @@ pub async fn stream_acp_events(
         return Ok(response);
     }
 
-    let initial = store
-        .read(&conversation_id, offset)
-        .await
-        .ok_or_else(|| {
-            StreamError::new(
-                StatusCode::NOT_FOUND,
-                "Conversation not found",
-                Some("NOT_FOUND"),
-            )
-        })?;
+    let initial = store.read(&conversation_id, offset).await.ok_or_else(|| {
+        StreamError::new(
+            StatusCode::NOT_FOUND,
+            "Conversation not found",
+            Some("NOT_FOUND"),
+        )
+    })?;
 
     if initial.truncated {
         return Err(StreamError::new(

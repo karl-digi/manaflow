@@ -314,6 +314,78 @@ export const recordError = internalMutation({
 });
 
 /**
+ * Record an error on a sandbox (when conversation ID is not available).
+ * Looks up the most recent active conversation for the sandbox and marks it as error.
+ * Used by the API proxy when it detects persistent errors (e.g., 429 after retries).
+ */
+export const recordSandboxError = internalMutation({
+  args: {
+    sandboxId: v.id("acpSandboxes"),
+    teamId: v.string(),
+    code: v.string(),
+    detail: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    console.error("[acp.callback] Sandbox error", {
+      sandboxId: args.sandboxId,
+      teamId: args.teamId,
+      code: args.code,
+      detail: args.detail,
+    });
+
+    const now = Date.now();
+
+    // Find the most recent active conversation for this sandbox
+    const conversation = await ctx.db
+      .query("conversations")
+      .withIndex("by_acp_sandbox", (q) => q.eq("acpSandboxId", args.sandboxId))
+      .filter((q) => q.eq(q.field("status"), "active"))
+      .order("desc")
+      .first();
+
+    if (!conversation) {
+      console.warn(
+        "[acp.callback] No active conversation found for sandbox error",
+        { sandboxId: args.sandboxId }
+      );
+      return;
+    }
+
+    // Update conversation status to error
+    await ctx.db.patch(conversation._id, {
+      status: "error",
+      updatedAt: now,
+    });
+
+    // Log error to raw events for debugging
+    await ctx.db.insert("acpRawEvents", {
+      conversationId: conversation._id,
+      sandboxId: args.sandboxId,
+      teamId: args.teamId,
+      seq: now,
+      raw: JSON.stringify({
+        type: "sandbox_error",
+        code: args.code,
+        detail: args.detail,
+        timestamp: new Date(now).toISOString(),
+      }),
+      direction: "inbound",
+      eventType: "error",
+      createdAt: now,
+    });
+
+    // Decrement sandbox conversation count
+    const sandbox = await ctx.db.get(args.sandboxId);
+    if (sandbox) {
+      await ctx.db.patch(args.sandboxId, {
+        conversationCount: Math.max(0, sandbox.conversationCount - 1),
+        lastActivityAt: now,
+      });
+    }
+  },
+});
+
+/**
  * Record raw ACP events for a conversation.
  */
 export const appendRawEvents = internalMutation({
