@@ -73,8 +73,11 @@ COPY apps/server/native/core/.cargo ./apps/server/native/core/.cargo
 # Build native module
 WORKDIR /app/apps/server/native/core
 RUN npm install @napi-rs/cli
-# Pin home crate to version compatible with current Rust (0.5.12 requires Rust 1.88)
-RUN cargo update home --precise 0.5.11
+# Pin crates to versions compatible with stable Rust 1.85
+# - home 0.5.12 requires Rust 1.88
+# - human_format 1.2.1 uses unstable let-chains feature
+RUN cargo update home --precise 0.5.11 && \
+    cargo update human_format --precise 1.1.0
 RUN npx napi build --platform --release
 
 # =============================================================================
