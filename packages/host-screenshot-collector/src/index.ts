@@ -9,19 +9,21 @@ import { formatClaudeMessage } from "./claudeMessageFormatter";
 export const SCREENSHOT_STORAGE_ROOT = "/root/screenshots";
 export const EVENTS_LOG_FILENAME = "events.log";
 
-// Chrome DevTools Protocol port (same as chrome-devtools-mcp)
+// Chrome DevTools Protocol port
 const CDP_PORT = 39382;
 
+// Cache for element bounding boxes from snapshots
+// Maps uid -> {x, y, width, height}
+// This gets populated when we see snapshot tool results
+const elementBoundingBoxCache = new Map<string, { x: number; y: number; width: number; height: number }>();
+
 /**
- * Get bounding rect for an element via Chrome DevTools Protocol.
- * The uid from chrome-devtools-mcp is assumed to be "contextId_nodeId" or similar format.
- * We extract the nodeId and call DOM.getBoxModel.
+ * Get all element bounding boxes via CDP and cache them.
+ * Called after take_snapshot to build uid -> bounding_rect mapping.
+ * Uses Accessibility.getFullAXTree which returns nodes with boundingBox property.
  */
-async function getBoundingRectFromCDP(
-  uid: string
-): Promise<{ x: number; y: number; width: number; height: number } | null> {
+async function cacheElementBoundingBoxes(): Promise<number> {
   try {
-    // Get CDP WebSocket URL
     const targetsResponse = await fetch(`http://0.0.0.0:${CDP_PORT}/json`);
     const targets = (await targetsResponse.json()) as Array<{
       type?: string;
@@ -32,24 +34,11 @@ async function getBoundingRectFromCDP(
     );
 
     if (!pageTarget?.webSocketDebuggerUrl) {
-      return null;
-    }
-
-    // Parse uid to extract nodeId (assume format "contextId_nodeId" or just nodeId)
-    const parts = uid.split("_");
-    const nodeIdStr = parts[parts.length - 1] ?? "";
-    const nodeId = parseInt(nodeIdStr, 10);
-
-    if (isNaN(nodeId)) {
-      return null;
+      return 0;
     }
 
     const wsUrl = pageTarget.webSocketDebuggerUrl;
-    if (!wsUrl) {
-      return null;
-    }
 
-    // Connect to CDP via WebSocket and get box model
     return new Promise((resolve) => {
       const ws = new WebSocket(wsUrl);
       let resolved = false;
@@ -57,7 +46,7 @@ async function getBoundingRectFromCDP(
       const cleanup = () => {
         if (!resolved) {
           resolved = true;
-          resolve(null);
+          resolve(0);
         }
         try {
           ws.close();
@@ -66,16 +55,14 @@ async function getBoundingRectFromCDP(
         }
       };
 
-      // Timeout after 3 seconds
-      const timeout = setTimeout(cleanup, 3000);
+      const timeout = setTimeout(cleanup, 5000);
 
       ws.addEventListener("open", () => {
-        // Call DOM.getBoxModel to get element bounds
         ws.send(
           JSON.stringify({
             id: 1,
-            method: "DOM.getBoxModel",
-            params: { nodeId },
+            method: "Accessibility.getFullAXTree",
+            params: {},
           })
         );
       });
@@ -85,9 +72,11 @@ async function getBoundingRectFromCDP(
           const response = JSON.parse(String(event.data)) as {
             id?: number;
             result?: {
-              model?: {
-                content?: number[];
-              };
+              nodes?: Array<{
+                nodeId?: string;
+                backendDOMNodeId?: number;
+                boundingBox?: { x: number; y: number; width: number; height: number };
+              }>;
             };
           };
 
@@ -96,18 +85,33 @@ async function getBoundingRectFromCDP(
             resolved = true;
             ws.close();
 
-            const c = response.result?.model?.content;
-            if (c && c.length >= 6) {
-              // content is quad: [x1,y1, x2,y2, x3,y3, x4,y4]
-              resolve({
-                x: c[0] ?? 0,
-                y: c[1] ?? 0,
-                width: (c[2] ?? 0) - (c[0] ?? 0),
-                height: (c[5] ?? 0) - (c[1] ?? 0),
-              });
-            } else {
-              resolve(null);
+            const nodes = response.result?.nodes;
+            if (!nodes || nodes.length === 0) {
+              resolve(0);
+              return;
             }
+
+            // Clear old cache and rebuild
+            elementBoundingBoxCache.clear();
+
+            // chrome-devtools-mcp assigns uids as "frameIndex_nodeIndex"
+            // We cache by nodeIndex (the second number) for quick lookup
+            let cached = 0;
+            for (let i = 0; i < nodes.length; i++) {
+              const node = nodes[i];
+              if (node?.boundingBox && node.boundingBox.width > 0 && node.boundingBox.height > 0) {
+                // Cache by index (for uids like "0_48" we'll look up by "48")
+                elementBoundingBoxCache.set(String(i), {
+                  x: node.boundingBox.x,
+                  y: node.boundingBox.y,
+                  width: node.boundingBox.width,
+                  height: node.boundingBox.height,
+                });
+                cached++;
+              }
+            }
+
+            resolve(cached);
           }
         } catch {
           cleanup();
@@ -117,8 +121,20 @@ async function getBoundingRectFromCDP(
       ws.addEventListener("error", cleanup);
     });
   } catch {
-    return null;
+    return 0;
   }
+}
+
+/**
+ * Look up cached bounding box for a uid.
+ * uid format is "frameIndex_nodeIndex", we look up by nodeIndex.
+ */
+function getCachedBoundingBox(uid: string): { x: number; y: number; width: number; height: number } | null {
+  // uid format: "0_48" -> we want "48"
+  const parts = uid.split("_");
+  const nodeIndex = parts[parts.length - 1];
+  if (!nodeIndex) return null;
+  return elementBoundingBoxCache.get(nodeIndex) ?? null;
 }
 
 // Placeholder API key that signals to the proxy to use platform credits (Bedrock)
@@ -511,12 +527,8 @@ sleep 0.3
 \`\`\`
 
 STEP 2 - CLICK ELEMENTS:
-For each click, you MUST:
-1. First, get the element's bounding rect via Chrome MCP evaluate: \`element.getBoundingClientRect()\`
-2. Then click the element
-
-This ensures the cursor position is captured in the trajectory for the video overlay.
-The cursor starts at screen center and animates to your first click, then follows subsequent clicks.
+Just click elements normally using their uid. The cursor position is captured automatically.
+The cursor overlay starts at screen center and animates to each click position.
 
 STEP 3 - STOP RECORDING:
 \`\`\`bash
@@ -614,10 +626,15 @@ if clicks:
 
     print(f"Animation: center ({cx},{cy}) -> ({first_x},{first_y}) over {anim_dur:.2f}s", file=sys.stderr)
 
-    yellow_x_expr = f"({cx-14}+({first_x-14}-{cx-14})*min(t/{anim_dur},1))"
-    yellow_y_expr = f"({cy-20}+({first_y-20}-{cy-20})*min(t/{anim_dur},1))"
-    black_x_expr = f"({cx-3}+({first_x-3}-{cx-3})*min(t/{anim_dur},1))"
-    black_y_expr = f"({cy-8}+({first_y-8}-{cy-8})*min(t/{anim_dur},1))"
+    # Cursor offsets: yellow outer circle and black center dot
+    # Black dot should be centered within yellow circle
+    yo_x, yo_y = -14, -20  # yellow offset
+    bo_x, bo_y = -6, -12   # black offset (up and left relative to yellow)
+
+    yellow_x_expr = f"({cx+yo_x}+({first_x+yo_x}-{cx+yo_x})*min(t/{anim_dur},1))"
+    yellow_y_expr = f"({cy+yo_y}+({first_y+yo_y}-{cy+yo_y})*min(t/{anim_dur},1))"
+    black_x_expr = f"({cx+bo_x}+({first_x+bo_x}-{cx+bo_x})*min(t/{anim_dur},1))"
+    black_y_expr = f"({cy+bo_y}+({first_y+bo_y}-{cy+bo_y})*min(t/{anim_dur},1))"
 
     # Animation phase - cursor moves from center to first click
     filters.append(f"drawtext=text='●':x='{yellow_x_expr}':y='{yellow_y_expr}':fontsize=36:fontcolor=yellow@0.5:enable='between(t,0,{anim_dur:.2f})'")
@@ -629,20 +646,92 @@ if clicks:
         if end_t <= t:
             continue
         e = f"enable='between(t,{t:.2f},{end_t:.2f})'"
-        filters.append(f"drawtext=text='●':x={x-14}:y={y-20}:fontsize=36:fontcolor=yellow@0.5:{e}")
-        filters.append(f"drawtext=text='●':x={x-3}:y={y-8}:fontsize=12:fontcolor=black:{e}")
+        filters.append(f"drawtext=text='●':x={x+yo_x}:y={y+yo_y}:fontsize=36:fontcolor=yellow@0.5:{e}")
+        filters.append(f"drawtext=text='●':x={x+bo_x}:y={y+bo_y}:fontsize=12:fontcolor=black:{e}")
 
-    filter_str = ",".join(filters) + ",setpts=0.5*PTS"
-    print(f"Running ffmpeg with {len(filters)} filter elements + 2x speed", file=sys.stderr)
-    result = subprocess.run(f'ffmpeg -y -i "{outdir}/raw.mp4" -vf "{filter_str}" "{outdir}/workflow.mp4"', shell=True)
-    if result.returncode == 0:
-        os.remove(f"{outdir}/raw.mp4")
-    else:
-        print(f"ffmpeg failed with code {result.returncode}", file=sys.stderr)
+    # STEP 1: Draw cursor overlay at original timing (no speed change yet)
+    filter_str = ",".join(filters)
+    print(f"Drawing cursor overlay with {len(filters)} filter elements", file=sys.stderr)
+    result = subprocess.run(f'ffmpeg -y -i "{outdir}/raw.mp4" -vf "{filter_str}" "{outdir}/with_cursor.mp4"', shell=True)
+    if result.returncode != 0:
+        print(f"Cursor overlay failed with code {result.returncode}", file=sys.stderr)
         os.rename(f"{outdir}/raw.mp4", f"{outdir}/workflow.mp4")
+    else:
+        os.remove(f"{outdir}/raw.mp4")
+
+        # Get video duration
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", f"{outdir}/with_cursor.mp4"],
+            capture_output=True, text=True
+        )
+        video_duration = float(probe.stdout.strip()) if probe.stdout.strip() else 60.0
+        print(f"Video duration: {video_duration:.1f}s", file=sys.stderr)
+
+        # STEP 2: Apply variable speed - 1x during actions, 4x between actions
+        # NO TRIMMING - entire video is kept, just at different speeds
+        FAST_SPEED = 4
+        ACTION_BEFORE = 0.3  # seconds before click at normal speed
+        ACTION_AFTER = 0.5   # seconds after click at normal speed
+
+        # Build segments covering the ENTIRE video
+        video_segments = []  # (start, end, speed)
+        prev_end = 0.0
+
+        for t, x, y in clicks:
+            action_start = max(0, t - ACTION_BEFORE)
+            action_end = min(video_duration, t + ACTION_AFTER)
+
+            # Fast segment before this action (if there's a gap)
+            if action_start > prev_end:
+                video_segments.append((prev_end, action_start, FAST_SPEED))
+
+            # Normal speed during action (merge if overlapping with previous)
+            if video_segments and video_segments[-1][2] == 1 and action_start <= video_segments[-1][1]:
+                # Merge with previous normal-speed segment
+                video_segments[-1] = (video_segments[-1][0], action_end, 1)
+            else:
+                video_segments.append((action_start, action_end, 1))
+
+            prev_end = action_end
+
+        # Add final fast segment after last click (if any video remains)
+        if prev_end < video_duration:
+            video_segments.append((prev_end, video_duration, FAST_SPEED))
+
+        print(f"Video segments: {video_segments}", file=sys.stderr)
+
+        # Build ffmpeg filter for variable speed
+        filter_parts = []
+        concat_inputs = []
+        for i, (start, end, speed) in enumerate(video_segments):
+            pts = 1.0 / speed  # 4x speed = 0.25, 1x = 1.0
+            filter_parts.append(f"[0:v]trim=start={start}:end={end},setpts={pts}*(PTS-STARTPTS)[v{i}]")
+            concat_inputs.append(f"[v{i}]")
+
+        concat_filter = f"{''.join(concat_inputs)}concat=n={len(video_segments)}:v=1:a=0[out]"
+        full_filter = ";".join(filter_parts) + ";" + concat_filter
+
+        print(f"Applying variable speed: 1x during actions, {FAST_SPEED}x between", file=sys.stderr)
+        speed_result = subprocess.run([
+            "ffmpeg", "-y", "-i", f"{outdir}/with_cursor.mp4",
+            "-filter_complex", full_filter,
+            "-map", "[out]",
+            f"{outdir}/workflow.mp4"
+        ])
+
+        if speed_result.returncode != 0:
+            print(f"Variable speed failed, using cursor video as-is", file=sys.stderr)
+            os.rename(f"{outdir}/with_cursor.mp4", f"{outdir}/workflow.mp4")
+        else:
+            os.remove(f"{outdir}/with_cursor.mp4")
+
+        # Log final duration
+        total_dur = sum((end - start) / speed for start, end, speed in video_segments)
+        print(f"Final video: {len(video_segments)} segments, ~{total_dur:.1f}s (from {video_duration:.1f}s original)", file=sys.stderr)
+
 else:
-    print("No clicks found, speeding up raw video 2x", file=sys.stderr)
-    result = subprocess.run(f'ffmpeg -y -i "{outdir}/raw.mp4" -vf "setpts=0.5*PTS" "{outdir}/workflow.mp4"', shell=True)
+    print("No clicks found, speeding up raw video 4x", file=sys.stderr)
+    result = subprocess.run(f'ffmpeg -y -i "{outdir}/raw.mp4" -vf "setpts=0.25*PTS" "{outdir}/workflow.mp4"', shell=True)
     if result.returncode == 0:
         os.remove(f"{outdir}/raw.mp4")
     else:
@@ -859,8 +948,11 @@ Do not create summary documents.
         };
         await trajectoryStream.write(JSON.stringify(trajectoryEntry) + "\n");
 
-        // PRETOOL HOOK: When we see a tool_use with uid, call CDP to get bounding rect
-        // This captures cursor position BEFORE the click happens
+        // HOOK: Cache bounding boxes when snapshot is taken, use them for click events
+        // This is faster than calling CDP on every click
+
+        // When we see a tool_use for snapshot, cache bounding boxes after it completes
+        // (We detect snapshot calls here, the cache happens when we see the result)
         if (message.type === "assistant") {
           const content = message.message?.content;
           if (Array.isArray(content)) {
@@ -879,53 +971,54 @@ Do not create summary documents.
                   : {};
                 const uid = typeof input.uid === "string" ? input.uid : undefined;
 
-                const isClickTool = toolNameLower.includes("click");
-
-                // If we have a uid, call CDP to get bounding rect
-                if (uid) {
-                  try {
-                    const rect = await getBoundingRectFromCDP(uid);
-                    if (rect) {
-                      // Log bounding_rect event FIRST (before pretool)
-                      await fs.appendFile(
-                        eventsLogPath,
-                        JSON.stringify({
-                          timestamp,
-                          event: "bounding_rect",
-                          ...rect,
-                          uid,
-                        }) + "\n"
-                      );
-
-                      await logToScreenshotCollector(
-                        `[PRETOOL] Got bounding rect for uid=${uid}: x=${rect.x}, y=${rect.y}, w=${rect.width}, h=${rect.height}`
-                      );
-                    } else {
-                      await logToScreenshotCollector(
-                        `[PRETOOL] Could not get bounding rect for uid=${uid}`
-                      );
-                    }
-                  } catch (cdpError) {
+                // When snapshot is called, refresh our bounding box cache
+                if (toolNameLower.includes("snapshot")) {
+                  // Cache will be populated when we process this - give it a moment
+                  setTimeout(async () => {
+                    const cached = await cacheElementBoundingBoxes();
                     await logToScreenshotCollector(
-                      `[PRETOOL] CDP error for uid=${uid}: ${cdpError instanceof Error ? cdpError.message : String(cdpError)}`
+                      `[HOOK] Cached ${cached} element bounding boxes after snapshot`
                     );
-                  }
+                  }, 100);
                 }
 
-                // Log pretool event for click tools
-                if (isClickTool) {
+                // For click tools with uid, look up cached bounding rect
+                if (toolNameLower.includes("click") && uid) {
+                  const rect = getCachedBoundingBox(uid);
+                  if (rect) {
+                    // Log bounding_rect event FIRST
+                    await fs.appendFile(
+                      eventsLogPath,
+                      JSON.stringify({
+                        timestamp,
+                        event: "bounding_rect",
+                        ...rect,
+                        uid,
+                      }) + "\n"
+                    );
+
+                    await logToScreenshotCollector(
+                      `[HOOK] Bounding rect for uid=${uid}: x=${rect.x}, y=${rect.y}, w=${rect.width}, h=${rect.height}`
+                    );
+                  } else {
+                    await logToScreenshotCollector(
+                      `[HOOK] No cached bounding rect for uid=${uid} (cache size: ${elementBoundingBoxCache.size})`
+                    );
+                  }
+
+                  // Log pretool click event
                   await fs.appendFile(
                     eventsLogPath,
                     JSON.stringify({
                       timestamp,
                       event: "pretool",
                       tool: toolName,
-                      ...(uid ? { uid } : {}),
+                      uid,
                     }) + "\n"
                   );
 
                   await logToScreenshotCollector(
-                    `[PRETOOL] Click: ${toolName}${uid ? ` uid=${uid}` : ""}`
+                    `[HOOK] Click: ${toolName} uid=${uid}`
                   );
                 }
               }
