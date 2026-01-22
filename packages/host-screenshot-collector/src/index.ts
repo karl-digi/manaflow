@@ -326,12 +326,6 @@ function formatOptionalValue(value: string | null | undefined): string {
   return trimmed ? trimmed : "<unset>";
 }
 
-function formatSecretValue(value: string | null | undefined): string {
-  const trimmed = value?.trim();
-  if (!trimmed) return "<unset>";
-  return `present(length=${trimmed.length})`;
-}
-
 export async function captureScreenshotsForBranch(
   options: BranchCaptureOptions
 ): Promise<{
@@ -835,18 +829,7 @@ Do not create summary documents.
   const normalizedConvexSiteUrl = formatOptionalValue(convexSiteUrl)
     .replace(".convex.cloud", ".convex.site");
 
-  await logToScreenshotCollector(
-    `[DEBUG] convexSiteUrl (original): ${formatOptionalValue(convexSiteUrl)}`
-  );
-  await logToScreenshotCollector(
-    `[DEBUG] convexSiteUrl (normalized): ${normalizedConvexSiteUrl}`
-  );
-
   const anthropicBaseUrl = `${normalizedConvexSiteUrl}/api/anthropic`;
-
-  await logToScreenshotCollector(
-    `[DEBUG] anthropicBaseUrl: ${anthropicBaseUrl}`
-  );
 
   try {
     const hadOriginalApiKey = Object.prototype.hasOwnProperty.call(
@@ -864,25 +847,7 @@ Do not create summary documents.
     );
     const originalOAuthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
     delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
-    // Log JWT info for debugging
-    await logToScreenshotCollector(
-      `Using taskRun JWT auth. JWT present: ${!!auth.taskRunJwt}, JWT length: ${auth.taskRunJwt?.length ?? 0}, JWT first 20 chars: ${auth.taskRunJwt?.substring(0, 20) ?? "N/A"}`
-    );
-    await logToScreenshotCollector(
-      `[DEBUG] Removed from process.env before creating claudeEnv: ANTHROPIC_API_KEY=${hadOriginalApiKey ? "was present" : "was not present"}, CLAUDE_CODE_OAUTH_TOKEN=${hadOriginalOAuthToken ? "was present (BYPASSES PROXY!)" : "was not present"}`
-    );
     await logToScreenshotCollector(`ANTHROPIC_BASE_URL: ${anthropicBaseUrl}`);
-    await logToScreenshotCollector(
-      `[DEBUG] ANTHROPIC_CUSTOM_HEADERS will be: x-cmux-token:<jwt>`
-    );
-
-    await logToScreenshotCollector(
-      `Arguments to Claude Code: ${JSON.stringify({
-        prompt,
-        cwd: workspaceDir,
-        pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
-      })}`
-    );
 
     const claudeEnv: NodeJS.ProcessEnv = {
       ...process.env,
@@ -925,54 +890,6 @@ Do not create summary documents.
     claudeEnv.ANTHROPIC_BASE_URL = anthropicBaseUrl;
     claudeEnv.ANTHROPIC_CUSTOM_HEADERS = customHeaders;
     claudeEnv.ANTHROPIC_API_KEY = CMUX_ANTHROPIC_PROXY_PLACEHOLDER_API_KEY;
-
-    await logToScreenshotCollector(
-      `[DEBUG] Using env vars for proxy routing (settingSources: [] ignores user config)`
-    );
-
-    // Log process.env for debugging sandbox vs local differences (FULL VALUES for debugging)
-    const relevantEnvVars = [
-      "ANTHROPIC_API_KEY",
-      "ANTHROPIC_BASE_URL",
-      "ANTHROPIC_CUSTOM_HEADERS",
-      "ANTHROPIC_AUTH_TOKEN",
-      "CLAUDE_API_KEY",
-      "CLAUDE_CODE_OAUTH_TOKEN",
-      "CLAUDE_CONFIG_DIR",
-      "AWS_BEARER_TOKEN_BEDROCK",
-      "AWS_ACCESS_KEY_ID",
-      "AWS_SECRET_ACCESS_KEY",
-      "AWS_SESSION_TOKEN",
-      "AWS_REGION",
-      "AWS_DEFAULT_REGION",
-      "CLAUDE_CODE_USE_BEDROCK",
-      "HOME",
-      "USER",
-    ];
-    const processEnvSnapshot: Record<string, string> = {};
-    for (const key of relevantEnvVars) {
-      const val = process.env[key];
-      processEnvSnapshot[key] = val ?? "<unset>";
-    }
-    await logToScreenshotCollector(
-      `[DEBUG] process.env (before query): ${JSON.stringify(processEnvSnapshot, null, 2)}`
-    );
-
-    await logToScreenshotCollector(
-      `[DEBUG] claudeEnv passed to query(): ${JSON.stringify({
-        ANTHROPIC_BASE_URL: claudeEnv.ANTHROPIC_BASE_URL ?? "<unset>",
-        ANTHROPIC_CUSTOM_HEADERS: claudeEnv.ANTHROPIC_CUSTOM_HEADERS ?? "<unset>",
-        ANTHROPIC_API_KEY: claudeEnv.ANTHROPIC_API_KEY ?? "<unset>",
-        CLAUDE_CODE_OAUTH_TOKEN: claudeEnv.CLAUDE_CODE_OAUTH_TOKEN ?? "<unset>",
-        CLAUDE_CONFIG_DIR: claudeEnv.CLAUDE_CONFIG_DIR ?? "<unset>",
-        HOME: claudeEnv.HOME ?? "<unset>",
-        USER: claudeEnv.USER ?? "<unset>",
-      }, null, 2)}`
-    );
-
-    await logToScreenshotCollector(
-      `[DEBUG] JWT token being used: ${auth.taskRunJwt}`
-    );
 
     let detectedHasUiChanges: boolean | undefined;
 
@@ -1023,12 +940,7 @@ Do not create summary documents.
         };
         await trajectoryStream.write(JSON.stringify(trajectoryEntry) + "\n");
 
-        // HOOK: Track mouse clicks via CDP
-        // Inject tracker when recording starts, retrieve clicks after each MCP click completes
-
-        // Debug: log all message types
-        await logToScreenshotCollector(`[HOOK DEBUG] Message type: ${message.type}`);
-
+        // HOOK: Track mouse clicks via CDP for video cursor overlay
         if (message.type === "assistant") {
           const content = message.message?.content;
           if (Array.isArray(content)) {
@@ -1059,10 +971,6 @@ Do not create summary documents.
                       const screenX = viewportX;
                       const screenY = viewportY + BROWSER_CHROME_OFFSET;
 
-                      await logToScreenshotCollector(
-                        `[HOOK] Click detected: viewport(${viewportX}, ${viewportY}) -> screen(${screenX}, ${screenY})`
-                      );
-
                       await fs.appendFile(
                         eventsLogPath,
                         JSON.stringify({
@@ -1073,10 +981,6 @@ Do not create summary documents.
                         }) + "\n"
                       );
                     });
-
-                    await logToScreenshotCollector(
-                      `[HOOK] Click listener started: ${!!stopClickListener}`
-                    );
 
                     // Log recording start
                     await fs.appendFile(
@@ -1089,33 +993,16 @@ Do not create summary documents.
                   }
 
                   // Recording stop: stop click listener when ffmpeg is killed
-                  // Match both "kill -INT $FFMPEG_PID" and "kill -INT 12345"
                   if (cmd.includes("kill") && cmd.includes("-INT")) {
                     if (stopClickListener) {
                       stopClickListener();
                       stopClickListener = null;
-                      await logToScreenshotCollector("[HOOK] Click listener stopped");
                     }
                   }
-                }
-
-                // Log click tool calls for debugging (actual coordinates come from DOM listener)
-                const toolNameLower = toolName.toLowerCase();
-                if (toolNameLower.includes("click")) {
-                  const uid = typeof input.uid === "string" ? input.uid : undefined;
-                  await logToScreenshotCollector(`[HOOK] Click tool called: ${toolName}, uid: ${uid}`);
                 }
               }
             }
           }
-        }
-
-        // After each MCP click completes, immediately retrieve clicks before page navigates away
-        if (message.type === "user") {
-          const content = message.message?.content;
-          await logToScreenshotCollector(`[HOOK DEBUG] User message, content is array: ${Array.isArray(content)}`);
-          // Tool results are logged via formatClaudeMessage
-          // Click coordinates are captured via CDP console event streaming (startClickListener)
         }
 
         // Format and log all message types
@@ -1126,10 +1013,6 @@ Do not create summary documents.
 
         // Extract hasUiChanges from result message
         if (message.type === "result") {
-          await logToScreenshotCollector(
-            `[DEBUG] Full result message: ${JSON.stringify(message, null, 2)}`
-          );
-
           // Try to parse hasUiChanges from the result text
           // Claude may express this as "hasUiChanges=false", "hasUiChanges: false", or in JSON
           if ("result" in message && typeof message.result === "string") {
@@ -1146,9 +1029,6 @@ Do not create summary documents.
               resultText.includes("does not contain ui changes")
             ) {
               detectedHasUiChanges = false;
-              await logToScreenshotCollector(
-                `[DEBUG] Detected hasUiChanges=false from result text`
-              );
             } else if (
               resultText.includes("hasuichanges=true") ||
               resultText.includes("hasuichanges: true") ||
@@ -1158,9 +1038,6 @@ Do not create summary documents.
               resultText.includes("screenshot")
             ) {
               detectedHasUiChanges = true;
-              await logToScreenshotCollector(
-                `[DEBUG] Detected hasUiChanges=true from result text`
-              );
             }
           }
         }
@@ -1178,7 +1055,6 @@ Do not create summary documents.
       if (stopClickListener) {
         stopClickListener();
         stopClickListener = null;
-        await logToScreenshotCollector("[HOOK] Click listener stopped in finally block");
       }
 
       // Close trajectory stream
@@ -1253,14 +1129,7 @@ Do not create summary documents.
     let finalHasUiChanges = detectedHasUiChanges;
     if (finalHasUiChanges === undefined && (screenshotsWithDescriptions.length > 0 || videosWithDescriptions.length > 0)) {
       finalHasUiChanges = true;
-      await logToScreenshotCollector(
-        `[DEBUG] Inferred hasUiChanges=true because screenshots/videos were captured`
-      );
     }
-
-    await logToScreenshotCollector(
-      `[DEBUG] Final hasUiChanges: ${finalHasUiChanges}, screenshots: ${screenshotsWithDescriptions.length}, videos: ${videosWithDescriptions.length}`
-    );
 
     return {
       screenshots: screenshotsWithDescriptions,
@@ -1273,23 +1142,7 @@ Do not create summary documents.
     await logToScreenshotCollector(
       `Failed to capture screenshots with Claude Agent: ${message}`
     );
-
-    // Log full error details for debugging
-    if (error instanceof Error) {
-      if (error.stack) {
-        await logToScreenshotCollector(`Stack trace: ${error.stack}`);
-      }
-      // Log any additional error properties
-      const errorObj = error as Error & Record<string, unknown>;
-      const additionalProps = Object.keys(errorObj)
-        .filter((key) => !["message", "stack", "name"].includes(key))
-        .map((key) => `${key}: ${JSON.stringify(errorObj[key])}`)
-        .join(", ");
-      if (additionalProps) {
-        await logToScreenshotCollector(`Error details: ${additionalProps}`);
-      }
-    }
-
+    console.error("Screenshot capture error:", error);
     throw error;
   }
 }

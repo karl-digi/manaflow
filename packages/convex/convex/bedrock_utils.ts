@@ -201,6 +201,33 @@ function parseEventStreamHeaders(
 }
 
 /**
+ * Transform Bedrock tool IDs from `toolu_bdrk_*` format to Anthropic `tooluse_*` format.
+ * This is needed because Claude Agent SDK 0.2.8+ only accepts Anthropic-native tool IDs.
+ *
+ * Transforms only IDs within "id" or "tool_use_id" JSON fields to prevent
+ * accidental mutation of user content containing similar patterns.
+ *
+ * - "id": "toolu_bdrk_01ABC..." → "id": "tooluse_ABC..."
+ * - "tool_use_id": "toolu_bdrk_01ABC..." → "tool_use_id": "tooluse_ABC..."
+ */
+function transformBedrockToolIds(jsonString: string): string {
+  // Quick check - if no Bedrock tool IDs, return as-is
+  if (!jsonString.includes("toolu_bdrk_")) {
+    return jsonString;
+  }
+
+  // Transform toolu_bdrk_* IDs to tooluse_* format, but ONLY within JSON id fields
+  // This prevents accidental mutation of user content containing similar patterns
+  // The regex matches: "id": "toolu_bdrk_01..." or "tool_use_id": "toolu_bdrk_01..."
+  // Bedrock format: toolu_bdrk_01 + 22 alphanumeric chars
+  // Anthropic format: tooluse_ + 22 alphanumeric chars
+  return jsonString.replace(
+    /("(?:id|tool_use_id)"\s*:\s*")toolu_bdrk_01([A-Za-z0-9]{22})(")/g,
+    (_, prefix, uniquePart, suffix) => `${prefix}tooluse_${uniquePart}${suffix}`
+  );
+}
+
+/**
  * Parse a single Bedrock event message and convert to SSE format.
  *
  * Bedrock event format:
@@ -256,7 +283,7 @@ export function parseBedrockEventToSSE(messageBytes: Uint8Array): string | null 
           message: `Bedrock error: ${exceptionType} - ${payloadText}`,
         },
       };
-      return `event: ${errorEvent.type}\ndata: ${JSON.stringify(errorEvent)}\n\n`;
+      return `data: ${JSON.stringify(errorEvent)}\n\n`;
     }
 
     // Parse the JSON payload
@@ -265,72 +292,23 @@ export function parseBedrockEventToSSE(messageBytes: Uint8Array): string | null 
     // The payload has a "bytes" field with base64-encoded Anthropic event
     if (payload.bytes) {
       const decodedBytes = base64Decode(payload.bytes);
-      // Parse the event to normalize Bedrock-specific fields
+      // Transform Bedrock tool IDs to Anthropic format
+      // SDK 0.2.8+ requires tooluse_* format, not toolu_bdrk_*
+      const transformedBytes = transformBedrockToolIds(decodedBytes);
+
+      // Extract event type from the decoded JSON for proper SSE format
+      // Anthropic SSE format requires both "event: <type>" and "data: <json>" lines
       try {
-        const event = JSON.parse(decodedBytes);
-        const eventType = event.type as string;
-
-        // Normalize Bedrock-specific IDs to standard Anthropic format
-        // This is critical for Claude Code SDK compatibility
-        let needsNormalization = false;
-        const normalizations: string[] = [];
-
-        // Normalize message ID (msg_bdrk_xxx -> msg_xxx)
-        if (event.message?.id?.startsWith("msg_bdrk_")) {
-          const oldId = event.message.id;
-          event.message.id = event.message.id.replace("msg_bdrk_", "msg_");
-          normalizations.push(`msg_id: ${oldId} -> ${event.message.id}`);
-          needsNormalization = true;
-        }
-
-        // Normalize tool_use IDs in content_block_start (toolu_bdrk_xxx -> toolu_xxx)
-        if (event.content_block?.type === "tool_use" && event.content_block?.id?.startsWith("toolu_bdrk_")) {
-          const oldId = event.content_block.id;
-          event.content_block.id = event.content_block.id.replace("toolu_bdrk_", "toolu_");
-          normalizations.push(`tool_id: ${oldId} -> ${event.content_block.id}`);
-          needsNormalization = true;
-        }
-
-        // NOTE: Keeping empty input:{} field in tool_use content blocks
-        // The Anthropic API spec requires input field to be present in content_block_start
-        // The actual input comes via content_block_delta events with input_json_delta
-
-        // Clean up Bedrock-specific usage fields that may confuse the SDK
-        // Bedrock adds: cache_creation (nested object), cache_creation_input_tokens, cache_read_input_tokens
-        if (event.message?.usage) {
-          const usage = event.message.usage;
-          if ("cache_creation" in usage) {
-            delete usage.cache_creation;
-            normalizations.push("removed usage.cache_creation");
-            needsNormalization = true;
-          }
-        }
-
-        // Remove Bedrock-specific fields that may confuse clients
-        if (event.type === "message_stop" && "amazon-bedrock-invocationMetrics" in event) {
-          delete event["amazon-bedrock-invocationMetrics"];
-          normalizations.push("removed invocationMetrics");
-          needsNormalization = true;
-        }
-
-        // Log event type with normalization info
-        const eventSummary = event.type === "content_block_delta"
-          ? `${event.type} (index=${event.index})`
-          : event.type;
-        const normInfo = needsNormalization ? ` [NORMALIZED: ${normalizations.join(", ")}]` : "";
-        console.log("[bedrock-utils] SSE event:", eventSummary + normInfo, JSON.stringify(event).slice(0, 500));
-
-        // CRITICAL: Use Anthropic SSE format with "event:" prefix
-        // The Claude Code SDK requires proper SSE format: event: {type}\ndata: {json}\n\n
-        if (needsNormalization) {
-          return `event: ${eventType}\ndata: ${JSON.stringify(event)}\n\n`;
-        }
-        // No normalization needed - return original decoded bytes with event prefix
-        return `event: ${eventType}\ndata: ${decodedBytes}\n\n`;
-      } catch {
-        // If parsing fails, return without event prefix as best effort
-        console.log("[bedrock-utils] SSE event (unparsed):", decodedBytes.slice(0, 200));
-        return `data: ${decodedBytes}\n\n`;
+        const eventData = JSON.parse(transformedBytes);
+        // Validate eventType is a string to prevent invalid SSE event lines
+        const eventType =
+          typeof eventData.type === "string" ? eventData.type : "message";
+        return `event: ${eventType}\ndata: ${transformedBytes}\n\n`;
+      } catch (error) {
+        // Log parsing errors for debugging (repo rule: never suppress errors)
+        console.error("[bedrock-utils] Error parsing event JSON:", error);
+        // Fall back to data-only SSE format
+        return `data: ${transformedBytes}\n\n`;
       }
     }
 
@@ -354,16 +332,13 @@ export function parseBedrockEventToSSE(messageBytes: Uint8Array): string | null 
  * - payload (JSON with "bytes" field containing base64-encoded Anthropic event)
  * - 4 bytes: message CRC
  *
- * We convert this to SSE format: `event: {type}\ndata: {anthropic_event_json}\n\n`
+ * We convert this to SSE format: `data: {anthropic_event_json}\n\n`
  */
 export function convertBedrockStreamToSSE(
   bedrockStream: ReadableStream<Uint8Array>
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   let buffer = new Uint8Array(0);
-  let eventCount = 0;
-
-  console.log("[bedrock-utils] Starting stream conversion");
 
   return new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -373,7 +348,6 @@ export function convertBedrockStreamToSSE(
         while (true) {
           const { done, value } = await reader.read();
           if (done) {
-            console.log("[bedrock-utils] Stream done, total events:", eventCount);
             break;
           }
 
@@ -401,15 +375,13 @@ export function convertBedrockStreamToSSE(
             // Parse the event and convert to SSE
             const sseEvent = parseBedrockEventToSSE(messageBytes);
             if (sseEvent) {
-              eventCount++;
               controller.enqueue(encoder.encode(sseEvent));
             }
           }
         }
-        console.log("[bedrock-utils] Stream closed successfully");
         controller.close();
       } catch (error) {
-        console.error("[bedrock-utils] Stream conversion error:", error, "events so far:", eventCount);
+        console.error("[bedrock-utils] Stream conversion error:", error);
         controller.error(error);
       }
     },
