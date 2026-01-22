@@ -652,19 +652,23 @@ if clicks:
 
     print(f"Animation: center ({cx},{cy}) -> ({first_x},{first_y}) over {anim_dur:.2f}s", file=sys.stderr)
 
-    # Cursor offsets: yellow outer circle and black center dot
-    # Black dot should be centered within yellow circle
-    yo_x, yo_y = -14, -20  # yellow offset
-    bo_x, bo_y = -6, -12   # black offset (up and left relative to yellow)
+    # ScreenStudio-style cursor: white pointer with black shadow
+    # Offset to position cursor tip at click point
+    cursor_char = "⬆"  # Unicode up arrow, will be styled as pointer
+    shadow_offset = 2  # Shadow offset in pixels
+    cursor_size = 28
+    tip_offset_x = -4  # Offset to align cursor tip with click point
+    tip_offset_y = -2
 
-    yellow_x_expr = f"({cx+yo_x}+({first_x+yo_x}-{cx+yo_x})*min(t/{anim_dur},1))"
-    yellow_y_expr = f"({cy+yo_y}+({first_y+yo_y}-{cy+yo_y})*min(t/{anim_dur},1))"
-    black_x_expr = f"({cx+bo_x}+({first_x+bo_x}-{cx+bo_x})*min(t/{anim_dur},1))"
-    black_y_expr = f"({cy+bo_y}+({first_y+bo_y}-{cy+bo_y})*min(t/{anim_dur},1))"
+    # Animation expressions for smooth movement from center to first click
+    shadow_x_expr = f"({cx+tip_offset_x+shadow_offset}+({first_x+tip_offset_x+shadow_offset}-{cx+tip_offset_x+shadow_offset})*min(t/{anim_dur},1))"
+    shadow_y_expr = f"({cy+tip_offset_y+shadow_offset}+({first_y+tip_offset_y+shadow_offset}-{cy+tip_offset_y+shadow_offset})*min(t/{anim_dur},1))"
+    cursor_x_expr = f"({cx+tip_offset_x}+({first_x+tip_offset_x}-{cx+tip_offset_x})*min(t/{anim_dur},1))"
+    cursor_y_expr = f"({cy+tip_offset_y}+({first_y+tip_offset_y}-{cy+tip_offset_y})*min(t/{anim_dur},1))"
 
-    # Animation phase - cursor moves from center to first click
-    filters.append(f"drawtext=text='●':x='{yellow_x_expr}':y='{yellow_y_expr}':fontsize=36:fontcolor=yellow@0.5:enable='between(t,0,{anim_dur:.2f})'")
-    filters.append(f"drawtext=text='●':x='{black_x_expr}':y='{black_y_expr}':fontsize=12:fontcolor=black:enable='between(t,0,{anim_dur:.2f})'")
+    # Animation phase - cursor moves from center to first click (shadow first, then white cursor)
+    filters.append(f"drawtext=text='{cursor_char}':x='{shadow_x_expr}':y='{shadow_y_expr}':fontsize={cursor_size}:fontcolor=black@0.6:enable='between(t,0,{anim_dur:.2f})'")
+    filters.append(f"drawtext=text='{cursor_char}':x='{cursor_x_expr}':y='{cursor_y_expr}':fontsize={cursor_size}:fontcolor=white:enable='between(t,0,{anim_dur:.2f})'")
 
     # Static cursor at each click position
     for i, (t, x, y) in enumerate(clicks):
@@ -672,8 +676,10 @@ if clicks:
         if end_t <= t:
             continue
         e = f"enable='between(t,{t:.2f},{end_t:.2f})'"
-        filters.append(f"drawtext=text='●':x={x+yo_x}:y={y+yo_y}:fontsize=36:fontcolor=yellow@0.5:{e}")
-        filters.append(f"drawtext=text='●':x={x+bo_x}:y={y+bo_y}:fontsize=12:fontcolor=black:{e}")
+        # Shadow layer (slightly offset, semi-transparent black)
+        filters.append(f"drawtext=text='{cursor_char}':x={x+tip_offset_x+shadow_offset}:y={y+tip_offset_y+shadow_offset}:fontsize={cursor_size}:fontcolor=black@0.6:{e}")
+        # Main cursor layer (white)
+        filters.append(f"drawtext=text='{cursor_char}':x={x+tip_offset_x}:y={y+tip_offset_y}:fontsize={cursor_size}:fontcolor=white:{e}")
 
     # STEP 1: Draw cursor overlay at original timing (no speed change yet)
     filter_str = ",".join(filters)
@@ -768,9 +774,13 @@ else:
     # No clicks - still draw cursor at center, then speed up
     print("No clicks found, drawing cursor at center and speeding up 2x", file=sys.stderr)
     cx, cy = 960, 540  # screen center
-    yo_x, yo_y = -14, -20  # yellow offset
-    bo_x, bo_y = -6, -12   # black offset
-    cursor_filter = f"drawtext=text='●':x={cx+yo_x}:y={cy+yo_y}:fontsize=36:fontcolor=yellow@0.5,drawtext=text='●':x={cx+bo_x}:y={cy+bo_y}:fontsize=12:fontcolor=black"
+    cursor_char = "⬆"
+    shadow_offset = 2
+    cursor_size = 28
+    tip_offset_x = -4
+    tip_offset_y = -2
+    # ScreenStudio-style cursor: white with black shadow
+    cursor_filter = f"drawtext=text='{cursor_char}':x={cx+tip_offset_x+shadow_offset}:y={cy+tip_offset_y+shadow_offset}:fontsize={cursor_size}:fontcolor=black@0.6,drawtext=text='{cursor_char}':x={cx+tip_offset_x}:y={cy+tip_offset_y}:fontsize={cursor_size}:fontcolor=white"
     # Draw cursor then speed up
     result = subprocess.run(f'ffmpeg -y -i "{outdir}/raw.mp4" -vf "{cursor_filter},setpts=0.5*PTS" -movflags +faststart "{outdir}/workflow.mp4"', shell=True, capture_output=True, text=True)
     if result.returncode == 0:
