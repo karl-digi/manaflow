@@ -60,12 +60,14 @@ type MutationLogRef = z.infer<typeof MutationLogRefSchema>;
 const MessageMutationRefSchema = z.object({
   messageId: z.string(),
   messageKey: z.string().nullable(),
+  renderId: z.string().nullable(),
 });
 
 const MessageMutationItemSchema = MessageMutationRefSchema.extend({
   role: z.string().nullable(),
   text: z.string(),
 });
+
 
 const MessageMutationEntrySchema = z.object({
   at: z.number(),
@@ -627,14 +629,79 @@ describe("optimistic conversations e2e", () => {
         }
       }
 
+      // Find our user message key
+      const userMessageItem = messageSlice[0].items.find(
+        (item) => item.role === "user" && item.text.includes(message)
+      );
+      const ourUserKey = userMessageItem
+        ? messageKeyFor(userMessageItem)
+        : undefined;
+
+      // Track messages added AFTER our user message first appeared.
+      // Only these are part of our test conversation.
+      const ourConversationKeys = new Set<string>();
+      let userMessageSeen = false;
+      for (const entry of messageSlice) {
+        // Check if our user message appears in this entry
+        const hasOurUser =
+          ourUserKey !== undefined &&
+          entry.items.some((item) => messageKeyFor(item) === ourUserKey);
+
+        if (hasOurUser && !userMessageSeen) {
+          // First entry with our user message - add the user message key
+          userMessageSeen = true;
+          ourConversationKeys.add(ourUserKey);
+        }
+
+        // After seeing user message, track messages that were ADDED (new to DOM)
+        if (userMessageSeen) {
+          for (const added of entry.added) {
+            ourConversationKeys.add(messageKeyFor(added));
+          }
+        }
+      }
+
+      // Only track removals for messages that belong to our conversation.
+      // A removal doesn't count as a flash if the same key was re-added in the same batch.
       const seenKeys = new Set<string>();
       for (const entry of messageSlice) {
         for (const item of entry.items) {
-          seenKeys.add(messageKeyFor(item));
+          const key = messageKeyFor(item);
+          if (ourConversationKeys.has(key)) {
+            seenKeys.add(key);
+          }
         }
+        const addedKeysInEntry = new Set(
+          entry.added.map((item) => messageKeyFor(item))
+        );
         const removedKeys = entry.removed.map((item) => messageKeyFor(item));
-        const removedAfterSeen = removedKeys.some((key) => seenKeys.has(key));
+        // A flash is when a message was seen, removed, AND NOT re-added in the same batch
+        const removedAfterSeen = removedKeys.some(
+          (key) =>
+            seenKeys.has(key) &&
+            ourConversationKeys.has(key) &&
+            !addedKeysInEntry.has(key)
+        );
         expect(removedAfterSeen).toBe(false);
+      }
+
+      // Verify DOM node identity stability - renderId should not change for a given messageKey.
+      // If renderId changes, it means the component was remounted (causes visual flash).
+      const renderIdByMessageKey = new Map<string, string>();
+      for (const entry of messageSlice) {
+        for (const item of entry.items) {
+          const msgKey = messageKeyFor(item);
+          if (!ourConversationKeys.has(msgKey)) continue;
+          if (!item.renderId) continue;
+
+          const existingRenderId = renderIdByMessageKey.get(msgKey);
+          if (existingRenderId === undefined) {
+            renderIdByMessageKey.set(msgKey, item.renderId);
+          } else {
+            // renderId should stay the same - if it changes, the component remounted
+            expect(item.renderId).toBe(existingRenderId);
+          }
+        }
       }
     },
     40_000

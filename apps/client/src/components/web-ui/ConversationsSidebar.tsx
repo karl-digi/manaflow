@@ -46,9 +46,6 @@ import {
 import { Menu } from "@base-ui-components/react/menu";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 
-const PREWARM_MESSAGES_PAGE_SIZE = 40;
-const PREWARM_RAW_EVENTS_PAGE_SIZE = 120;
-
 function ListFilterIcon({ className }: { className?: string }) {
   return (
     <svg
@@ -221,42 +218,71 @@ function isRealConversationEntry(
   return !entry.isOptimistic;
 }
 
+const PREWARM_COOLDOWN_MS = 30_000; // 30 seconds
+
 function SidebarComposeVariantC({
-  draft,
   isCreating,
   providerId,
   onProviderChange,
-  onDraftChange,
+  onPrewarm,
   onSubmit,
 }: {
-  draft: string;
   isCreating: boolean;
   providerId: ProviderId;
   onProviderChange: (providerId: ProviderId) => void;
-  onDraftChange: (value: string) => void;
-  onSubmit: () => void;
+  onPrewarm?: () => void;
+  onSubmit: (text: string) => void;
 }) {
+  const [draft, setDraft] = useState("");
+  const lastPrewarmRef = useRef<{ time: number; providerId: ProviderId } | null>(null);
+
+  const handleDraftChange = (value: string) => {
+    setDraft(value);
+
+    if (!onPrewarm || value.trim().length === 0) {
+      return;
+    }
+
+    const now = Date.now();
+    const last = lastPrewarmRef.current;
+
+    // Skip if recently prewarmed for the same provider
+    if (last && last.providerId === providerId && now - last.time < PREWARM_COOLDOWN_MS) {
+      return;
+    }
+
+    // Trigger prewarm immediately on first keystroke (or after cooldown/provider change)
+    lastPrewarmRef.current = { time: now, providerId };
+    onPrewarm();
+  };
+
+  const handleSubmit = () => {
+    const trimmed = draft.trim();
+    if (!trimmed) return;
+    onSubmit(trimmed);
+    setDraft("");
+    // Don't reset prewarm - cooldown handles deduplication
+  };
+
   return (
-    <div className="rounded-2xl border border-neutral-200/80 bg-neutral-50/80 dark:border-neutral-800/80 dark:bg-neutral-900/70">
-      <div className="px-3 py-2">
-        <SidebarDraftInput
-          value={draft}
-          onChange={onDraftChange}
-          onSubmit={onSubmit}
-          placeholder="Start a new conversation…"
-          minRows={3}
-          className={clsx(
-            "w-full bg-transparent text-sm text-neutral-900 placeholder:text-neutral-400 focus:outline-none",
-            "dark:text-neutral-100 dark:placeholder:text-neutral-500"
-          )}
-        />
-      </div>
-      <div className="flex items-center justify-between border-t border-neutral-200/70 px-1.5 py-1 dark:border-neutral-800/70">
+    <div className="rounded-lg border border-neutral-200 bg-neutral-50 pl-3 pt-3 pr-2 pb-2 dark:border-neutral-700 dark:bg-neutral-800">
+      <SidebarDraftInput
+        value={draft}
+        onChange={handleDraftChange}
+        onSubmit={handleSubmit}
+        placeholder="Start a new conversation…"
+        minRows={3}
+        className={clsx(
+          "w-full resize-none bg-transparent text-sm text-neutral-900 placeholder:text-neutral-400 focus:outline-none",
+          "dark:text-neutral-100 dark:placeholder:text-neutral-500 max-h-32 overflow-y-auto"
+        )}
+      />
+      <div className="flex items-center justify-between mt-1">
         <div className="flex items-center gap-2">
           <button
             type="button"
             disabled
-            className="flex h-8 w-8 items-center justify-center text-neutral-400 opacity-60 dark:text-neutral-500"
+            className="text-neutral-400 hover:text-neutral-600 dark:text-neutral-500 dark:hover:text-neutral-300 transition disabled:opacity-60"
             aria-label="attach image"
           >
             <ImagePlus className="h-4 w-4" aria-hidden />
@@ -270,15 +296,12 @@ function SidebarComposeVariantC({
         </div>
         <button
           type="button"
-          onClick={onSubmit}
+          onClick={handleSubmit}
           disabled={draft.trim().length === 0 || isCreating}
-          className={clsx(
-            "flex h-8 w-8 items-center justify-center rounded-full bg-blue-600 text-white shadow-sm transition",
-            "hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-blue-500 dark:hover:bg-blue-400"
-          )}
+          className="flex h-7 w-7 items-center justify-center rounded-md bg-blue-500 text-white transition hover:bg-blue-600 disabled:opacity-40"
           aria-label="create conversation"
         >
-          <ArrowUp className="h-4 w-4" aria-hidden />
+          <ArrowUp className="h-3.5 w-3.5" aria-hidden />
         </button>
       </div>
     </div>
@@ -428,17 +451,6 @@ export function ConversationsSidebar({
     if (typeof document === "undefined") return true;
     return document.hasFocus();
   });
-  const [draft, setDraft] = useState("");
-  const hasPrewarmedRef = useRef(false);
-  const prewarmTimeoutRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (prewarmTimeoutRef.current) {
-        window.clearTimeout(prewarmTimeoutRef.current);
-      }
-    };
-  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -471,42 +483,13 @@ export function ConversationsSidebar({
     };
   }, [canLoadMore, isLoadingMore, onLoadMore]);
 
-  const submitDraft = () => {
-    if (!onSubmitDraft) return;
-    const trimmed = draft.trim();
-    if (!trimmed) return;
-    onSubmitDraft(trimmed, providerId);
-    setDraft("");
-    hasPrewarmedRef.current = false;
-  };
-
-  const handleDraftChange = (value: string) => {
-    setDraft(value);
-
-    if (!onPrewarm) return;
-
-    if (value.trim().length === 0) {
-      hasPrewarmedRef.current = false;
-      if (prewarmTimeoutRef.current) {
-        window.clearTimeout(prewarmTimeoutRef.current);
-      }
-      return;
-    }
-
-    if (hasPrewarmedRef.current) {
-      return;
-    }
-
-    if (prewarmTimeoutRef.current) {
-      window.clearTimeout(prewarmTimeoutRef.current);
-    }
-
-    prewarmTimeoutRef.current = window.setTimeout(() => {
-      if (hasPrewarmedRef.current) return;
-      hasPrewarmedRef.current = true;
-      onPrewarm();
-    }, 600);
-  };
+  const handleSubmitDraft = useCallback(
+    (text: string) => {
+      if (!onSubmitDraft) return;
+      onSubmitDraft(text, providerId);
+    },
+    [onSubmitDraft, providerId]
+  );
 
   const pinLeftPx = DEFAULT_PIN_LEFT_PX;
   const pinTopPx = DEFAULT_PIN_TOP_PX;
@@ -593,12 +576,11 @@ export function ConversationsSidebar({
 
       <div className="mt-3 px-4">
         <SidebarComposeVariantC
-          draft={draft}
           isCreating={isCreating}
           providerId={providerId}
           onProviderChange={onProviderChange}
-          onDraftChange={handleDraftChange}
-          onSubmit={submitDraft}
+          onPrewarm={onPrewarm}
+          onSubmit={handleSubmitDraft}
         />
       </div>
 
@@ -1230,29 +1212,10 @@ function ConversationRow({
       return;
     }
     hasPrefetchedRef.current = true;
+    // Prewarm the full conversation query (includes messages, raw events, detail, stream info)
     convexQueryClient.convexClient.prewarmQuery({
-      query: api.conversations.getDetail,
+      query: api.conversations.getFullConversation,
       args: { teamSlugOrId, conversationId },
-    });
-    convexQueryClient.convexClient.prewarmQuery({
-      query: api.acp.getStreamInfo,
-      args: { teamSlugOrId, conversationId },
-    });
-    convexQueryClient.convexClient.prewarmQuery({
-      query: api.conversationMessages.listByConversationFirstPage,
-      args: {
-        teamSlugOrId,
-        conversationId,
-        numItems: PREWARM_MESSAGES_PAGE_SIZE,
-      },
-    });
-    convexQueryClient.convexClient.prewarmQuery({
-      query: api.acpRawEvents.listByConversationFirstPage,
-      args: {
-        teamSlugOrId,
-        conversationId,
-        numItems: PREWARM_RAW_EVENTS_PAGE_SIZE,
-      },
     });
   }, [conversationId, teamSlugOrId]);
 

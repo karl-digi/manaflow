@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import type { ReactNode } from "react";
+import { type ReactNode, useId } from "react";
 
 type MessageWrapperProps = {
   isOwn: boolean;
@@ -18,6 +18,9 @@ export function MessageWrapper({
   messageKey,
   messageRole,
 }: MessageWrapperProps) {
+  // Stable ID generated on mount - changes if component remounts
+  const renderId = useId();
+
   return (
     <div
       className={clsx(
@@ -27,6 +30,7 @@ export function MessageWrapper({
       data-message-id={messageId}
       data-message-key={messageKey}
       data-message-role={messageRole}
+      data-render-id={renderId}
     >
       <div
         className={clsx(

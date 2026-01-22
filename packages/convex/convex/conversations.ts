@@ -689,3 +689,112 @@ export const generateJwt = internalMutation({
     return { jwt };
   },
 });
+
+const DEFAULT_MESSAGES_LIMIT = 200;
+const DEFAULT_RAW_EVENTS_LIMIT = 500;
+
+// Normalize sandbox status for UI display (stopping -> paused)
+function normalizeSandboxStatus(status: string): string {
+  if (status === "stopping") {
+    return "paused";
+  }
+  return status;
+}
+
+/**
+ * Get full conversation data for the web UI.
+ * Returns conversation detail, messages, raw events, and stream info in one query.
+ * This avoids multiple round trips and allows for better caching.
+ */
+export const getFullConversation = authQuery({
+  args: {
+    teamSlugOrId: v.string(),
+    conversationId: v.id("conversations"),
+    messagesLimit: v.optional(v.number()),
+    rawEventsLimit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const { teamId, userId } = await requireTeamMembership(
+      ctx,
+      args.teamSlugOrId
+    );
+    const conversation = await ctx.db.get(args.conversationId);
+    if (!conversation || conversation.teamId !== teamId) {
+      return null;
+    }
+
+    // Get sandbox info
+    const sandbox = conversation.acpSandboxId
+      ? await ctx.db.get(conversation.acpSandboxId)
+      : null;
+
+    // Get read status
+    const read = await ctx.db
+      .query("conversationReads")
+      .withIndex("by_conversation_user", (q) =>
+        q.eq("conversationId", conversation._id).eq("userId", userId)
+      )
+      .first();
+
+    // Get messages (most recent first, limited)
+    const messagesLimit = args.messagesLimit ?? DEFAULT_MESSAGES_LIMIT;
+    const messages = await ctx.db
+      .query("conversationMessages")
+      .withIndex("by_conversation", (q) =>
+        q.eq("conversationId", args.conversationId)
+      )
+      .order("desc")
+      .take(messagesLimit);
+
+    // Get raw events (most recent first, limited)
+    const rawEventsLimit = args.rawEventsLimit ?? DEFAULT_RAW_EVENTS_LIMIT;
+    const rawEvents = await ctx.db
+      .query("acpRawEvents")
+      .withIndex("by_conversation", (q) =>
+        q.eq("conversationId", args.conversationId)
+      )
+      .order("desc")
+      .take(rawEventsLimit);
+
+    // Build stream info
+    let streamInfo: {
+      sandboxUrl: string | null;
+      token: string | null;
+      status: string;
+    } = { sandboxUrl: null, token: null, status: "offline" };
+
+    if (sandbox?.sandboxUrl && sandbox?.streamSecret) {
+      const status = normalizeSandboxStatus(sandbox.status);
+      if (status === "running") {
+        const token = await new SignJWT({
+          conversationId: args.conversationId,
+          sandboxId: sandbox._id,
+          teamId,
+        })
+          .setProtectedHeader({ alg: "HS256" })
+          .setIssuedAt()
+          .setExpirationTime("5m")
+          .sign(new TextEncoder().encode(sandbox.streamSecret));
+        streamInfo = { sandboxUrl: sandbox.sandboxUrl, token, status };
+      } else {
+        streamInfo = { sandboxUrl: sandbox.sandboxUrl, token: null, status };
+      }
+    }
+
+    return {
+      conversation,
+      sandbox: sandbox
+        ? {
+            status: sandbox.status,
+            sandboxUrl: sandbox.sandboxUrl ?? null,
+            lastActivityAt: sandbox.lastActivityAt,
+            errorMessage: sandbox.lastError ?? null,
+          }
+        : null,
+      lastReadAt: read?.lastReadAt ?? null,
+      messages,
+      rawEvents,
+      streamInfo,
+    };
+  },
+});

@@ -39,6 +39,8 @@ import type * as effect_observability from "../effect/observability.js";
 import type * as effect_runtime from "../effect/runtime.js";
 import type * as effect_services from "../effect/services.js";
 import type * as effect_testLayers from "../effect/testLayers.js";
+import type * as effect_traceContext from "../effect/traceContext.js";
+import type * as effect_traced from "../effect/traced.js";
 import type * as effect_tracing from "../effect/tracing.js";
 import type * as environmentSnapshots from "../environmentSnapshots.js";
 import type * as environments from "../environments.js";
@@ -132,6 +134,8 @@ declare const fullApi: ApiFromModules<{
   "effect/runtime": typeof effect_runtime;
   "effect/services": typeof effect_services;
   "effect/testLayers": typeof effect_testLayers;
+  "effect/traceContext": typeof effect_traceContext;
+  "effect/traced": typeof effect_traced;
   "effect/tracing": typeof effect_tracing;
   environmentSnapshots: typeof environmentSnapshots;
   environments: typeof environments;

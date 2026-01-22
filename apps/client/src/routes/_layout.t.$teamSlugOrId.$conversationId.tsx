@@ -1,17 +1,17 @@
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
+import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { createFileRoute, useLocation } from "@tanstack/react-router";
 import {
   useAction,
   useConvex,
   useMutation,
-  usePaginatedQuery,
   useQuery,
 } from "convex/react";
 import { formatDistanceToNow } from "date-fns";
 import { Loader2 } from "lucide-react";
 import type { SetStateAction } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 import clsx from "clsx";
@@ -30,8 +30,6 @@ import {
 } from "@/components/chat-layouts";
 import { isConversationManualUnread } from "@/lib/conversationReadOverrides";
 
-const PAGE_SIZE = 40;
-const RAW_EVENTS_PAGE_SIZE = 120;
 const OPTIMISTIC_CONVERSATION_PREFIX = "client-";
 const optimisticStateSchema = z.object({
   optimisticText: z.string().nullable().optional(),
@@ -54,7 +52,41 @@ export const Route = createFileRoute(
 )({
   component: ConversationThread,
   validateSearch: searchSchema,
+  beforeLoad: ({ params }) => {
+    const { teamSlugOrId, conversationId } = params;
+    // Skip prewarming for optimistic (client-side) conversations
+    if (conversationId.startsWith(OPTIMISTIC_CONVERSATION_PREFIX)) {
+      return;
+    }
+    // Prewarm the full conversation query
+    convexQueryClient.convexClient.prewarmQuery({
+      query: api.conversations.getFullConversation,
+      args: {
+        teamSlugOrId,
+        conversationId: conversationId as Id<"conversations">,
+      },
+    });
+  },
 });
+
+// Debug logging for conversation caching
+const DEBUG_CACHE = false;
+function debugCache(label: string, data: Record<string, unknown>) {
+  if (DEBUG_CACHE) {
+    console.log(`[ConvCache] ${label}`, {
+      ...data,
+      _ts: Date.now(),
+    });
+  }
+}
+
+type ConversationSandboxStatus =
+  | "starting"
+  | "running"
+  | "paused"
+  | "stopped"
+  | "offline"
+  | "error";
 
 type PendingImage = {
   id: string;
@@ -104,9 +136,6 @@ function isUnreadCandidateMessage(
   });
 }
 
-
-type PaginatedStatus = ReturnType<typeof usePaginatedQuery>["status"];
-
 type PermissionMode = "manual" | "auto_allow_once" | "auto_allow_always";
 
 type PermissionOption = {
@@ -139,14 +168,6 @@ type ToolCallEntry = {
   lastUpdatedSeq: number | null;
 };
 
-type ConversationSandboxStatus =
-  | "starting"
-  | "running"
-  | "paused"
-  | "stopped"
-  | "offline"
-  | "error";
-
 type SandboxMeta = {
   status: ConversationSandboxStatus;
   sandboxUrl: string | null;
@@ -167,6 +188,30 @@ function ConversationThread() {
     OPTIMISTIC_CONVERSATION_PREFIX
   );
   const conversationId = conversationIdSchema.parse(conversationIdParam);
+
+  // Debug: log conversation navigation
+  const prevConversationIdRef = useRef<string | null>(null);
+  const mountIdRef = useRef<string>(crypto.randomUUID().slice(0, 8));
+  useEffect(() => {
+    if (prevConversationIdRef.current !== conversationId) {
+      debugCache("conversationChange", {
+        from: prevConversationIdRef.current,
+        to: conversationId,
+        mountId: mountIdRef.current,
+      });
+      prevConversationIdRef.current = conversationId;
+    }
+  }, [conversationId]);
+
+  // Debug: log mount/unmount
+  useEffect(() => {
+    const mountId = mountIdRef.current;
+    debugCache("mount", { conversationId, mountId });
+    return () => {
+      debugCache("unmount", { conversationId, mountId });
+    };
+  }, [conversationId]);
+
   const optimisticState = useMemo(() => {
     const parsed = optimisticStateSchema.safeParse(location.state);
     return parsed.success ? parsed.data : null;
@@ -180,8 +225,9 @@ function ConversationThread() {
     (isOptimisticConversation
       ? conversationIdParam.slice(OPTIMISTIC_CONVERSATION_PREFIX.length)
       : null);
-  const detail = useQuery(
-    api.conversations.getDetail,
+  // Single query for all conversation data - prewarmed in beforeLoad
+  const fullConversation = useQuery(
+    api.conversations.getFullConversation,
     isOptimisticConversation
       ? "skip"
       : {
@@ -189,44 +235,18 @@ function ConversationThread() {
           conversationId,
         }
   );
-  const streamInfo = useQuery(
-    api.acp.getStreamInfo,
-    isOptimisticConversation
-      ? "skip"
-      : {
-          teamSlugOrId,
-          conversationId,
-        }
-  );
-  const conversation = detail?.conversation ?? null;
-  const sandbox = detail?.sandbox ?? null;
 
-  const { results, status, loadMore } = usePaginatedQuery(
-    api.conversationMessages.listByConversationPaginated,
-    { teamSlugOrId, conversationId },
-    { initialNumItems: PAGE_SIZE }
-  );
-  const firstPageMessages = useQuery(
-    api.conversationMessages.listByConversationFirstPage,
-    isOptimisticConversation
-      ? "skip"
-      : { teamSlugOrId, conversationId, numItems: PAGE_SIZE }
-  );
-  const {
-    results: rawEventsResults,
-    status: rawEventsStatus,
-    loadMore: loadMoreRawEvents,
-  } = usePaginatedQuery(
-    api.acpRawEvents.listByConversationPaginated,
-    isOptimisticConversation ? "skip" : { teamSlugOrId, conversationId },
-    { initialNumItems: RAW_EVENTS_PAGE_SIZE }
-  );
-  const firstPageRawEvents = useQuery(
-    api.acpRawEvents.listByConversationFirstPage,
-    isOptimisticConversation
-      ? "skip"
-      : { teamSlugOrId, conversationId, numItems: RAW_EVENTS_PAGE_SIZE }
-  );
+  const conversation = fullConversation?.conversation ?? null;
+  const sandbox = fullConversation?.sandbox ?? null;
+  const streamInfo = fullConversation?.streamInfo ?? null;
+
+  // Debug: log query states on every render
+  debugCache("queryStates", {
+    conversationId,
+    fullConversation: fullConversation === undefined ? "loading" : "ready",
+    messagesCount: fullConversation?.messages?.length ?? null,
+    rawEventsCount: fullConversation?.rawEvents?.length ?? null,
+  });
 
   const optimisticMessage = useMemo(() => {
     if (!optimisticText) return null;
@@ -253,27 +273,11 @@ function ConversationThread() {
     optimisticText,
   ]);
   const messages = useMemo(() => {
-    if (firstPageMessages && firstPageMessages.page) {
-      if (!results || results.length === 0) {
-        return firstPageMessages.page;
-      }
-    }
-    if (results !== undefined) {
-      return results;
-    }
-    return [];
-  }, [firstPageMessages, results]);
+    return fullConversation?.messages ?? [];
+  }, [fullConversation?.messages]);
   const convexRawEvents = useMemo(() => {
-    if (firstPageRawEvents && firstPageRawEvents.page) {
-      if (!rawEventsResults || rawEventsResults.length === 0) {
-        return firstPageRawEvents.page;
-      }
-    }
-    if (rawEventsResults !== undefined) {
-      return rawEventsResults;
-    }
-    return [];
-  }, [firstPageRawEvents, rawEventsResults]);
+    return fullConversation?.rawEvents ?? [];
+  }, [fullConversation?.rawEvents]);
 
   const latestConvexSeq = useMemo(() => {
     if (convexRawEvents.length === 0) return 0;
@@ -443,28 +447,7 @@ function ConversationThread() {
   ]);
 
 
-  useEffect(() => {
-    if (isOptimisticConversation) return;
-    const root = scrollContainerRef.current;
-    const target = loadMoreRef.current;
-    if (!root || !target) return;
-    if (status !== "CanLoadMore") return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0]?.isIntersecting) {
-          loadMore(PAGE_SIZE);
-        }
-      },
-      { root, threshold: 0.1 }
-    );
-
-    observer.observe(target);
-
-    return () => {
-      observer.unobserve(target);
-    };
-  }, [isOptimisticConversation, loadMore, status]);
+  // Note: pagination removed - we now fetch all messages in one query
 
   useEffect(() => {
     return () => {
@@ -1038,13 +1021,31 @@ function ConversationThread() {
     ) : null;
 
   const hasVisibleMessages = visibleMessages.length > 0;
-  const isDataReady =
+  const isDataReadyNow =
     isOptimisticConversation ||
     hasVisibleMessages ||
-    (firstPageMessages !== undefined && firstPageRawEvents !== undefined);
+    fullConversation !== undefined;
+
+  // Defer the "not ready" state to give Convex a chance to return cached data
+  // on the second render before showing the loading spinner
+  const deferredIsDataReady = useDeferredValue(isDataReadyNow);
+  const isDataReady = isDataReadyNow || deferredIsDataReady;
+
+  // Debug: log data ready computation
+  debugCache("isDataReady", {
+    conversationId,
+    isDataReady,
+    isDataReadyNow,
+    deferredIsDataReady,
+    isOptimisticConversation,
+    hasVisibleMessages,
+    visibleMessagesCount: visibleMessages.length,
+    fullConversationDefined: fullConversation !== undefined,
+  });
 
   // Show loading state while waiting for initial data
   if (!isDataReady) {
+    debugCache("showingLoading", { conversationId });
     return (
       <div className="flex h-dvh min-h-dvh flex-1 flex-col overflow-hidden lg:flex-row">
         <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
@@ -1078,7 +1079,7 @@ function ConversationThread() {
           permissionPrompt={permissionPromptContent}
           scrollContainerRef={scrollContainerRef}
           loadMoreRef={loadMoreRef}
-          isLoadingMore={status === "LoadingMore"}
+          isLoadingMore={false}
           scrollToBottomOnMount
           resetKey={conversationResetKey}
         />
@@ -1087,9 +1088,7 @@ function ConversationThread() {
       {showRawEvents ? (
         <RawAcpEventsPanel
           rawEvents={rawEvents}
-          status={rawEventsStatus}
           streamStatus={stream.status}
-          onLoadMore={() => loadMoreRawEvents(RAW_EVENTS_PAGE_SIZE)}
         />
       ) : null}
     </div>
@@ -1423,14 +1422,10 @@ function ToolCallMessage({
 
 function RawAcpEventsPanel({
   rawEvents,
-  status,
   streamStatus,
-  onLoadMore,
 }: {
   rawEvents: RawEventView[];
-  status: PaginatedStatus;
   streamStatus: AcpStreamStatus;
-  onLoadMore: () => void;
 }) {
   const streamLabel =
     streamStatus === "live"
@@ -1477,25 +1472,14 @@ function RawAcpEventsPanel({
             {streamLabel}
           </span>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={handleCopyAll}
-            disabled={rawEvents.length === 0}
-            className="rounded-full border border-neutral-200/70 px-3 py-1 text-[10px] font-semibold text-neutral-500 transition hover:border-neutral-300 hover:text-neutral-800 disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-800/70 dark:text-neutral-400 dark:hover:border-neutral-700 dark:hover:text-neutral-200"
-          >
-            Copy all
-          </button>
-          {status === "CanLoadMore" ? (
-            <button
-              type="button"
-              onClick={onLoadMore}
-              className="rounded-full border border-neutral-200/70 px-3 py-1 text-[10px] font-semibold text-neutral-500 transition hover:border-neutral-300 hover:text-neutral-800 dark:border-neutral-800/70 dark:text-neutral-400 dark:hover:border-neutral-700 dark:hover:text-neutral-200"
-            >
-              Load more
-            </button>
-          ) : null}
-        </div>
+        <button
+          type="button"
+          onClick={handleCopyAll}
+          disabled={rawEvents.length === 0}
+          className="rounded-full border border-neutral-200/70 px-3 py-1 text-[10px] font-semibold text-neutral-500 transition hover:border-neutral-300 hover:text-neutral-800 disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-800/70 dark:text-neutral-400 dark:hover:border-neutral-700 dark:hover:text-neutral-200"
+        >
+          Copy all
+        </button>
       </div>
       <div className="mt-3 min-h-0 flex-1 overflow-y-auto">
         {rawEvents.length === 0 ? (
@@ -1520,9 +1504,6 @@ function RawAcpEventsPanel({
             ))}
           </div>
         )}
-        {status === "LoadingMore" ? (
-          <div className="mt-3 text-xs text-neutral-400">Loading…</div>
-        ) : null}
       </div>
     </div>
   );
@@ -1543,13 +1524,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function extractTextFromContent(value: unknown): string | null {
   if (!isRecord(value)) return null;
-  if (typeof value.text === "string" && value.text.trim().length > 0) {
-    return value.text.trim();
+  // Don't trim - preserve whitespace for proper streaming concatenation
+  // LLM tokens often have leading spaces like " the" " meaning" " of"
+  if (typeof value.text === "string" && value.text.length > 0) {
+    return value.text;
   }
   const nested = value.content;
   if (isRecord(nested) && typeof nested.text === "string") {
-    const text = nested.text.trim();
-    return text.length > 0 ? text : null;
+    return nested.text.length > 0 ? nested.text : null;
   }
   return null;
 }
@@ -1722,9 +1704,9 @@ function extractTextFromResult(result: Record<string, unknown>): string | null {
       return text;
     }
   }
+  // Don't trim - preserve whitespace for proper streaming concatenation
   if (typeof result.text === "string") {
-    const trimmed = result.text.trim();
-    return trimmed.length > 0 ? trimmed : null;
+    return result.text.length > 0 ? result.text : null;
   }
   return null;
 }

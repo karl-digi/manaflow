@@ -29,6 +29,7 @@ const AT_BOTTOM_THRESHOLD = 8;
 type MessageMutationRef = {
   messageId: string;
   messageKey: string | null;
+  renderId: string | null;
 };
 
 type MessageMutationItem = MessageMutationRef & {
@@ -73,6 +74,7 @@ function collectMessageItems(container: HTMLElement): MessageMutationItem[] {
     items.push({
       messageId,
       messageKey: normalizeMessageKey(element.dataset.messageKey),
+      renderId: element.dataset.renderId ?? null,
       role: normalizeMessageRole(element.dataset.messageRole),
       text: element.textContent?.trim() ?? "",
     });
@@ -83,11 +85,12 @@ function collectMessageItems(container: HTMLElement): MessageMutationItem[] {
 function upsertMessageRef(
   target: Map<string, MessageMutationRef>,
   messageId: string,
-  messageKey: string | null
+  messageKey: string | null,
+  renderId: string | null
 ) {
   const key = `${messageId}::${messageKey ?? ""}`;
   if (!target.has(key)) {
-    target.set(key, { messageId, messageKey });
+    target.set(key, { messageId, messageKey, renderId });
   }
 }
 
@@ -110,7 +113,8 @@ function collectMessageRefsFromNode(
     upsertMessageRef(
       target,
       messageId,
-      normalizeMessageKey(element.dataset.messageKey)
+      normalizeMessageKey(element.dataset.messageKey),
+      element.dataset.renderId ?? null
     );
   }
 }
@@ -228,7 +232,8 @@ export function ChatLayout({
     }, 150);
   }, []);
 
-  // Initial scroll to bottom on mount - use useLayoutEffect for synchronous execution before paint
+  // Initial scroll to bottom on mount or when resetKey changes (navigation between conversations)
+  // useLayoutEffect for synchronous execution before paint
   useLayoutEffect(() => {
     if (!scrollToBottomOnMount) return;
     if (hasScrolledToBottomRef.current) return;
@@ -243,7 +248,7 @@ export function ChatLayout({
     scrollToBottom(true);
     isAtBottomRef.current = true;
     setIsAtBottom(true);
-  }, [scrollToBottomOnMount, scrollToBottom]);
+  }, [scrollToBottomOnMount, scrollToBottom, resetKey]);
 
   // Auto-scroll when content changes - useLayoutEffect runs synchronously before paint
   // This prevents the "flash" of old scroll position that MutationObserver causes

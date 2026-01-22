@@ -23,6 +23,7 @@ import {
 } from "./_generated/server";
 import { withObservability } from "./effect/observability";
 import { runTracedEffect } from "./effect/runtime";
+import { getTraceContext, withTraceContext, type TraceContext } from "./effect/traceContext";
 import { traced } from "./effect/traced";
 import { TracingLive } from "./effect/tracing";
 import { authMutation, authQuery } from "./users/utils";
@@ -560,6 +561,7 @@ async function scheduleMessageDelivery(
   conversationId: Id<"conversations">,
   messageId: Id<"conversationMessages">,
   attempt: number,
+  traceContext?: TraceContext | null,
 ): Promise<void> {
   if (attempt >= MESSAGE_DELIVERY_MAX_ATTEMPTS) {
     const conversation = await ctx.runQuery(
@@ -594,6 +596,7 @@ async function scheduleMessageDelivery(
           conversationId,
           messageId,
           attempt: 0,
+          traceContext: traceContext ?? undefined,
         });
         return;
       }
@@ -617,6 +620,7 @@ async function scheduleMessageDelivery(
     conversationId,
     messageId,
     attempt: attempt + 1,
+    traceContext: traceContext ?? undefined,
   });
 }
 
@@ -1173,6 +1177,9 @@ export const sendMessageEffect = (
       }),
     );
 
+    // Capture trace context for propagation to scheduled actions
+    const traceContext = yield* getTraceContext;
+
     yield* Effect.tryPromise(() =>
       ctx.runMutation(internal.acp.updateConversationActivity, {
         conversationId: args.conversationId,
@@ -1197,7 +1204,7 @@ export const sendMessageEffect = (
         replaceSandboxForConversation(ctx, conversation, identity.subject, teamId),
       );
       yield* Effect.tryPromise(() =>
-        scheduleMessageDelivery(ctx, args.conversationId, messageId, 0),
+        scheduleMessageDelivery(ctx, args.conversationId, messageId, 0, traceContext),
       );
       return { messageId, status: "queued" as const, error: "Waiting for sandbox" };
     }
@@ -1216,7 +1223,7 @@ export const sendMessageEffect = (
         replaceSandboxForConversation(ctx, conversation, identity.subject, teamId),
       );
       yield* Effect.tryPromise(() =>
-        scheduleMessageDelivery(ctx, args.conversationId, messageId, 0),
+        scheduleMessageDelivery(ctx, args.conversationId, messageId, 0, traceContext),
       );
       return { messageId, status: "queued" as const, error: "Waiting for sandbox" };
     }
@@ -1226,7 +1233,7 @@ export const sendMessageEffect = (
         replaceSandboxForConversation(ctx, conversation, identity.subject, teamId),
       );
       yield* Effect.tryPromise(() =>
-        scheduleMessageDelivery(ctx, args.conversationId, messageId, 0),
+        scheduleMessageDelivery(ctx, args.conversationId, messageId, 0, traceContext),
       );
       return { messageId, status: "queued" as const, error: "Waiting for sandbox" };
     }
@@ -1237,14 +1244,14 @@ export const sendMessageEffect = (
         replaceSandboxForConversation(ctx, conversation, identity.subject, teamId),
       );
       yield* Effect.tryPromise(() =>
-        scheduleMessageDelivery(ctx, args.conversationId, messageId, 0),
+        scheduleMessageDelivery(ctx, args.conversationId, messageId, 0, traceContext),
       );
       return { messageId, status: "queued" as const, error: "Waiting for sandbox" };
     }
 
     if (!readiness.sandboxUrl || readiness.status !== "running") {
       yield* Effect.tryPromise(() =>
-        scheduleMessageDelivery(ctx, args.conversationId, messageId, 0),
+        scheduleMessageDelivery(ctx, args.conversationId, messageId, 0, traceContext),
       );
       return { messageId, status: "queued" as const, error: "Waiting for sandbox" };
     }
@@ -1426,12 +1433,15 @@ export const retryMessageEffect = (
       return yield* Effect.fail(new Error("Only user messages can be retried"));
     }
 
+    // Capture trace context for propagation to scheduled actions
+    const traceContext = yield* getTraceContext;
+
     if (!conversation.acpSandboxId) {
       yield* Effect.tryPromise(() =>
         replaceSandboxForConversation(ctx, conversation, identity.subject, teamId),
       );
       yield* Effect.tryPromise(() =>
-        scheduleMessageDelivery(ctx, args.conversationId, args.messageId, 0),
+        scheduleMessageDelivery(ctx, args.conversationId, args.messageId, 0, traceContext),
       );
       return { status: "queued" as const, error: "Waiting for sandbox" };
     }
@@ -1446,7 +1456,7 @@ export const retryMessageEffect = (
         replaceSandboxForConversation(ctx, conversation, identity.subject, teamId),
       );
       yield* Effect.tryPromise(() =>
-        scheduleMessageDelivery(ctx, args.conversationId, args.messageId, 0),
+        scheduleMessageDelivery(ctx, args.conversationId, args.messageId, 0, traceContext),
       );
       return { status: "queued" as const, error: "Waiting for sandbox" };
     }
@@ -1457,14 +1467,14 @@ export const retryMessageEffect = (
         replaceSandboxForConversation(ctx, conversation, identity.subject, teamId),
       );
       yield* Effect.tryPromise(() =>
-        scheduleMessageDelivery(ctx, args.conversationId, args.messageId, 0),
+        scheduleMessageDelivery(ctx, args.conversationId, args.messageId, 0, traceContext),
       );
       return { status: "queued" as const, error: "Waiting for sandbox" };
     }
 
     if (!readiness.sandboxUrl || readiness.status !== "running") {
       yield* Effect.tryPromise(() =>
-        scheduleMessageDelivery(ctx, args.conversationId, args.messageId, 0),
+        scheduleMessageDelivery(ctx, args.conversationId, args.messageId, 0, traceContext),
       );
       return { status: "queued" as const, error: "Waiting for sandbox" };
     }
@@ -2181,6 +2191,7 @@ type DeliverMessageArgs = {
   conversationId: Id<"conversations">;
   messageId: Id<"conversationMessages">;
   attempt: number;
+  traceContext?: TraceContext | null;
 };
 
 export const deliverMessageInternalEffect = (
@@ -2227,7 +2238,7 @@ export const deliverMessageInternalEffect = (
 
     if (!sandboxId) {
       yield* Effect.tryPromise(() =>
-        scheduleMessageDelivery(ctx, args.conversationId, args.messageId, args.attempt),
+        scheduleMessageDelivery(ctx, args.conversationId, args.messageId, args.attempt, args.traceContext),
       );
       return;
     }
@@ -2241,7 +2252,7 @@ export const deliverMessageInternalEffect = (
         replaceSandboxForConversation(ctx, conversation, conversation.userId ?? null, conversation.teamId),
       );
       yield* Effect.tryPromise(() =>
-        scheduleMessageDelivery(ctx, args.conversationId, args.messageId, args.attempt),
+        scheduleMessageDelivery(ctx, args.conversationId, args.messageId, args.attempt, args.traceContext),
       );
       return;
     }
@@ -2252,14 +2263,14 @@ export const deliverMessageInternalEffect = (
         replaceSandboxForConversation(ctx, conversation, conversation.userId ?? null, conversation.teamId),
       );
       yield* Effect.tryPromise(() =>
-        scheduleMessageDelivery(ctx, args.conversationId, args.messageId, args.attempt),
+        scheduleMessageDelivery(ctx, args.conversationId, args.messageId, args.attempt, args.traceContext),
       );
       return;
     }
 
     if (!readiness.sandboxUrl || readiness.status !== "running") {
       yield* Effect.tryPromise(() =>
-        scheduleMessageDelivery(ctx, args.conversationId, args.messageId, args.attempt),
+        scheduleMessageDelivery(ctx, args.conversationId, args.messageId, args.attempt, args.traceContext),
       );
       return;
     }
@@ -2368,12 +2379,13 @@ export const deliverMessageInternalEffect = (
             }),
           );
           yield* Effect.tryPromise(() =>
-            scheduleMessageDelivery(ctx, args.conversationId, args.messageId, args.attempt),
+            scheduleMessageDelivery(ctx, args.conversationId, args.messageId, args.attempt, args.traceContext),
           );
         }),
       ),
     );
   }).pipe(
+    withTraceContext(args.traceContext),
     withObservability("acp.deliverMessageInternal", {
       conversationId: args.conversationId,
       messageId: args.messageId,
@@ -2386,6 +2398,13 @@ export const deliverMessageInternal = internalAction({
     conversationId: v.id("conversations"),
     messageId: v.id("conversationMessages"),
     attempt: v.number(),
+    traceContext: v.optional(
+      v.object({
+        traceId: v.string(),
+        spanId: v.string(),
+        traceFlags: v.optional(v.number()),
+      }),
+    ),
   },
   handler: (ctx, args) => runTracedEffect(deliverMessageInternalEffect(ctx, args), TracingLive),
 });
