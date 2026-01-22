@@ -84,6 +84,8 @@ const convexSchema = defineSchema({
     ),
     // Anonymous flag
     isAnonymous: v.optional(v.boolean()),
+    // Onboarding
+    onboardingCompletedAt: v.optional(v.number()), // Timestamp when user completed/skipped onboarding
     // Local bookkeeping
     createdAt: v.number(),
     updatedAt: v.number(),
