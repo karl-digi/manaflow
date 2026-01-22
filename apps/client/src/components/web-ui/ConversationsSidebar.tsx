@@ -188,9 +188,9 @@ function formatTimestamp(value: number | null | undefined): string {
       })
       .toLowerCase();
   }
-  if (isYesterday) return "yesterday";
+  if (isYesterday) return "Yesterday";
   if (days < 7) {
-    return date.toLocaleDateString(undefined, { weekday: "long" }).toLowerCase();
+    return date.toLocaleDateString(undefined, { weekday: "long" });
   }
   return date
     .toLocaleDateString(undefined, {
