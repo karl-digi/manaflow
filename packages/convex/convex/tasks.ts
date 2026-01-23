@@ -121,10 +121,9 @@ export const getArchivedPaginated = authQuery({
   },
 });
 
-// Get tasks sorted by most recent activity (iMessage-style):
-// - Sorted by lastActivityAt desc (most recently active first)
-// - lastActivityAt is updated when a run is started OR notification is received
-// - Includes hasUnread for visual indicator (blue dot)
+// Get tasks with notification status (hasUnread indicator for blue dot).
+// Uses stable createdAt ordering to prevent sidebar from jumping when notifications arrive.
+// lastActivityAt is still tracked for other purposes but not used for sidebar sorting.
 export const getWithNotificationOrder = authQuery({
   args: {
     teamSlugOrId: v.string(),
@@ -177,12 +176,10 @@ export const getWithNotificationOrder = authQuery({
       unreadRuns.map((ur) => ur.taskId).filter((id): id is Id<"tasks"> => id !== undefined)
     );
 
-    // Sort by lastActivityAt desc (most recently active first)
-    // Fall back to createdAt for tasks without lastActivityAt (pre-migration)
+    // Sort by createdAt desc for stable ordering.
+    // This prevents the sidebar from jumping when notifications arrive.
     const sorted = [...tasks].sort((a, b) => {
-      const aTime = a.lastActivityAt ?? a.createdAt ?? 0;
-      const bTime = b.lastActivityAt ?? b.createdAt ?? 0;
-      return bTime - aTime;
+      return (b.createdAt ?? 0) - (a.createdAt ?? 0);
     });
 
     // Return tasks with hasUnread indicator

@@ -331,12 +331,8 @@ export const createInternal = internalMutation({
       createdAt: now,
     });
 
-    // NOTE: We intentionally do NOT update lastActivityAt here.
-    // Updating lastActivityAt on notification creation causes the sidebar to
-    // reorder tasks when notifications arrive, which is disruptive UX.
-    // The blue dot indicator (via unreadTaskRuns) is sufficient for notification visibility.
-    // lastActivityAt should only be updated when the user actively interacts with a task
-    // (e.g., creating it, starting a run, etc.) - not on passive notification events.
+    // Update task's lastActivityAt for tracking (but sidebar uses stable createdAt ordering)
+    await ctx.db.patch(args.taskId, { lastActivityAt: now });
 
     // Insert unread row for this task run (if taskRunId provided)
     if (args.taskRunId) {
