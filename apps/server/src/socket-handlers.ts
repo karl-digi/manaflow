@@ -436,18 +436,23 @@ export function setupSocketHandlers(
           );
         }
 
-        const diffs = await getGitDiff({
-          headRef: parsed.headRef,
-          baseRef: parsed.baseRef,
-          repoFullName: parsed.repoFullName,
-          repoUrl: parsed.repoUrl,
-          originPathOverride: parsed.originPathOverride,
-          includeContents: parsed.includeContents ?? true,
-          maxBytes: parsed.maxBytes,
-          teamSlugOrId: safeTeam,
-          lastKnownBaseSha: parsed.lastKnownBaseSha,
-          lastKnownMergeCommitSha: parsed.lastKnownMergeCommitSha,
-        });
+        const diffs = await runWithAuth(
+          currentAuthToken,
+          currentAuthHeaderJson,
+          () =>
+            getGitDiff({
+              headRef: parsed.headRef,
+              baseRef: parsed.baseRef,
+              repoFullName: parsed.repoFullName,
+              repoUrl: parsed.repoUrl,
+              originPathOverride: parsed.originPathOverride,
+              includeContents: parsed.includeContents ?? true,
+              maxBytes: parsed.maxBytes,
+              teamSlugOrId: safeTeam,
+              lastKnownBaseSha: parsed.lastKnownBaseSha,
+              lastKnownMergeCommitSha: parsed.lastKnownMergeCommitSha,
+            })
+        );
 
         if (parsed.originPathOverride) {
           const workspacePath = parsed.originPathOverride;
@@ -591,7 +596,7 @@ export function setupSocketHandlers(
               });
               return;
             }
-            // Check if the worker image is available
+            // Check if the worker image is available, auto-pull if not
             if (docker.workerImage && !docker.workerImage.isAvailable) {
               const imageName = docker.workerImage.name;
               if (docker.workerImage.isPulling) {
@@ -599,13 +604,58 @@ export function setupSocketHandlers(
                   taskId,
                   error: `Docker image "${imageName}" is currently being pulled. Please wait for the pull to complete and try again.`,
                 });
-              } else {
+                return;
+              }
+
+              // Auto-pull the image
+              serverLogger.info(
+                `Docker image "${imageName}" not available locally, auto-pulling...`
+              );
+
+              try {
+                const dockerClient = DockerVSCodeInstance.getDocker();
+                const stream = await dockerClient.pull(imageName);
+
+                // Wait for the pull to complete
+                await new Promise<void>((resolve, reject) => {
+                  dockerClient.modem.followProgress(
+                    stream,
+                    (err: Error | null) => {
+                      if (err) {
+                        reject(err);
+                      } else {
+                        resolve();
+                      }
+                    },
+                    (event: {
+                      status: string;
+                      progress?: string;
+                      id?: string;
+                    }) => {
+                      if (event.status) {
+                        serverLogger.info(
+                          `Docker pull progress: ${event.status}${event.id ? ` (${event.id})` : ""}${event.progress ? ` - ${event.progress}` : ""}`
+                        );
+                      }
+                    }
+                  );
+                });
+
+                serverLogger.info(
+                  `Successfully pulled Docker image: ${imageName}`
+                );
+              } catch (pullError) {
+                serverLogger.error("Error auto-pulling Docker image:", pullError);
+                const errorMessage =
+                  pullError instanceof Error
+                    ? pullError.message
+                    : "Unknown error";
                 callback({
                   taskId,
-                  error: `Docker image "${imageName}" is not available. Please pull the image first using: docker pull ${imageName}`,
+                  error: `Failed to pull Docker image "${imageName}": ${errorMessage}`,
                 });
+                return;
               }
-              return;
             }
           } catch (e) {
             serverLogger.warn(
