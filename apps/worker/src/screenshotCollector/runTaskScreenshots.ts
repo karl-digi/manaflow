@@ -39,6 +39,9 @@ function resolveVideoContentType(filePath: string): string {
   if (extension === ".mkv") {
     return "video/x-matroska";
   }
+  if (extension === ".mov") {
+    return "video/quicktime";
+  }
   if (extension === ".gif") {
     return "image/gif";
   }

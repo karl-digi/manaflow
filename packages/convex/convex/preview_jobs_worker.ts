@@ -465,8 +465,16 @@ function getMimeTypeFromPath(filePath: string): string {
       return "image/webp";
     case "gif":
       return "image/gif";
+    case "mp4":
+      return "video/mp4";
+    case "webm":
+      return "video/webm";
+    case "mov":
+      return "video/quicktime";
+    case "mkv":
+      return "video/x-matroska";
     default:
-      return "image/png";
+      return "application/octet-stream";
   }
 }
 

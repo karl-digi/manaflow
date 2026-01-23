@@ -457,6 +457,7 @@ export async function startScreenshotCollection(
   }
 
   const trimmedTaskRunJwt = options.taskRunJwt?.trim();
+  const trimmedAnthropicApiKey = options.anthropicApiKey?.trim();
 
   let claudeAuth: ClaudeCodeAuthConfig | null = null;
 
@@ -468,12 +469,17 @@ export async function startScreenshotCollection(
     await logToScreenshotCollector(
       `JWT details: present=${!!trimmedTaskRunJwt}, length=${trimmedTaskRunJwt?.length ?? 0}, first 20 chars=${trimmedTaskRunJwt?.substring(0, 20) ?? "N/A"}`
     );
+  } else if (trimmedAnthropicApiKey) {
+    claudeAuth = { auth: { anthropicApiKey: trimmedAnthropicApiKey } };
+    await logToScreenshotCollector(
+      "Using Anthropic API key for Claude Code screenshot collection"
+    );
   } else {
     const reason =
-      "Missing taskRunJwt for screenshot collection (proxy-only mode).";
+      "Missing taskRunJwt and anthropicApiKey for screenshot collection (proxy-only mode).";
     await logToScreenshotCollector(reason);
     await logToScreenshotCollector(
-      `Auth debug: taskRunJwt=${options.taskRunJwt ? "present" : "missing"}`
+      `Auth debug: taskRunJwt=${options.taskRunJwt ? "present" : "missing"}, anthropicApiKey=${options.anthropicApiKey ? "present" : "missing"}`
     );
     log("ERROR", reason, { baseBranch, mergeBase });
     return { status: "skipped", reason, commitSha };
