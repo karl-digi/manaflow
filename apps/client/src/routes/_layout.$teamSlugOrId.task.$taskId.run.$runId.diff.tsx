@@ -8,6 +8,9 @@ import type {
 import { MonacoGitDiffViewer } from "@/components/monaco/monaco-git-diff-viewer";
 import { RunScreenshotGallery } from "@/components/RunScreenshotGallery";
 import { TaskDetailHeader } from "@/components/task-detail-header";
+import { PersistentWebView } from "@/components/persistent-webview";
+import { WorkspaceLoadingIndicator } from "@/components/workspace-loading-indicator";
+import type { PersistentIframeStatus } from "@/components/persistent-iframe";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { cachedGetUser } from "@/lib/cachedGetUser";
 import type { ReviewHeatmapLine } from "@/lib/heatmap";
@@ -16,13 +19,22 @@ import { WWW_ORIGIN } from "@/lib/wwwOrigin";
 import { normalizeGitRef } from "@/lib/refWithOrigin";
 import { cn } from "@/lib/utils";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
+import { getTaskRunPersistKey, getTaskRunLocalWorkspacePersistKey } from "@/lib/persistent-webview-keys";
+import { getWorkspaceUrl } from "@/lib/workspace-url";
+import {
+  TASK_RUN_IFRAME_ALLOW,
+  TASK_RUN_IFRAME_SANDBOX,
+} from "../lib/preloadTaskRunIframes";
+import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
 import { api } from "@cmux/convex/api";
 import type { CreateLocalWorkspaceResponse, ReplaceDiffEntry } from "@cmux/shared";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { convexQuery } from "@convex-dev/react-query";
 import { useQuery as useRQ } from "@tanstack/react-query";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useQuery } from "convex/react";
+import { createFileRoute } from "@tanstack/react-router";
 import { useMutation } from "convex/react";
+import { Cloud, Monitor } from "lucide-react";
 import {
   Suspense,
   useCallback,
@@ -335,6 +347,13 @@ function RunDiffPage() {
   const [isAiReviewActive, setIsAiReviewActive] = useState(false);
   const [hasVisitedAiReview, setHasVisitedAiReview] = useState(false);
   const { socket } = useSocket();
+
+  // State for inline workspaces (shown when folder icon is clicked)
+  const [showInlineWorkspaces, setShowInlineWorkspaces] = useState(false);
+  const [localWorkspaceTaskRunId, setLocalWorkspaceTaskRunId] = useState<string | null>(null);
+  const [_localWorkspaceStatus, setLocalWorkspaceStatus] = useState<PersistentIframeStatus>("loading");
+  const [_cloudWorkspaceStatus, setCloudWorkspaceStatus] = useState<PersistentIframeStatus>("loading");
+  const localServeWeb = useLocalVSCodeServeWebQuery();
   // Use React Query-wrapped Convex queries to avoid real-time subscriptions
   // that cause excessive re-renders. The data is prefetched in the loader.
   const taskQuery = useRQ({
@@ -971,9 +990,52 @@ function RunDiffPage() {
 
   const taskRunId = selectedRun?._id ?? runId;
 
-  const navigate = useNavigate();
+  // Query local workspace taskRun when we have one
+  const localWorkspaceTaskRun = useQuery(
+    api.taskRuns.get,
+    localWorkspaceTaskRunId
+      ? { teamSlugOrId, id: localWorkspaceTaskRunId as typeof runId }
+      : "skip"
+  );
+
+  // Compute workspace URLs
+  const cloudWorkspaceUrl = useMemo(
+    () =>
+      getWorkspaceUrl(
+        selectedRun?.vscode?.workspaceUrl,
+        selectedRun?.vscode?.provider,
+        localServeWeb.data?.baseUrl
+      ),
+    [selectedRun?.vscode?.workspaceUrl, selectedRun?.vscode?.provider, localServeWeb.data?.baseUrl]
+  );
+
+  const localWorkspaceUrl = useMemo(
+    () =>
+      localWorkspaceTaskRun
+        ? getWorkspaceUrl(
+            localWorkspaceTaskRun.vscode?.workspaceUrl,
+            localWorkspaceTaskRun.vscode?.provider,
+            localServeWeb.data?.baseUrl
+          )
+        : null,
+    [localWorkspaceTaskRun, localServeWeb.data?.baseUrl]
+  );
+
+  // Persist keys for iframes
+  const cloudWorkspacePersistKey = selectedRun?._id
+    ? getTaskRunPersistKey(selectedRun._id)
+    : null;
+  const localWorkspacePersistKey = localWorkspaceTaskRunId
+    ? getTaskRunLocalWorkspacePersistKey(localWorkspaceTaskRunId)
+    : null;
 
   const handleOpenLocalWorkspace = useCallback(() => {
+    // If already showing inline workspaces, toggle off
+    if (showInlineWorkspaces) {
+      setShowInlineWorkspaces(false);
+      return;
+    }
+
     if (!socket) {
       toast.error("Socket not connected");
       return;
@@ -1006,16 +1068,12 @@ function RunDiffPage() {
             description: `Opening workspace at ${response.workspacePath}`,
           });
 
-          // Navigate to the vscode view for this task run
+          // Show inline workspaces instead of navigating
           if (response.taskRunId) {
-            navigate({
-              to: "/$teamSlugOrId/task/$taskId/run/$runId/vscode",
-              params: {
-                teamSlugOrId,
-                taskId,
-                runId: response.taskRunId,
-              },
-            });
+            setLocalWorkspaceTaskRunId(response.taskRunId);
+            setShowInlineWorkspaces(true);
+            setLocalWorkspaceStatus("loading");
+            setCloudWorkspaceStatus("loading");
           }
         } else {
           toast.error(response.error || "Failed to create workspace", {
@@ -1024,7 +1082,7 @@ function RunDiffPage() {
         }
       }
     );
-  }, [socket, teamSlugOrId, primaryRepo, selectedRun?.newBranch, navigate, taskId]);
+  }, [socket, teamSlugOrId, primaryRepo, selectedRun?.newBranch, showInlineWorkspaces]);
 
   // 404 if selected run is missing
   if (!selectedRun) {
@@ -1061,6 +1119,103 @@ function RunDiffPage() {
             isAiReviewActive={isAiReviewActive}
             onToggleAiReview={handleToggleAiReview}
           />
+          {/* Inline VSCode Views (shown when folder icon is clicked) */}
+          {showInlineWorkspaces && (
+            <div className="flex flex-col border-b border-neutral-200 dark:border-neutral-800">
+              {/* Local VSCode (top) with computer icon */}
+              <div className="relative flex-1 min-h-[300px] border-b border-neutral-200 dark:border-neutral-800">
+                <div className="absolute top-2 right-2 z-10 flex items-center gap-1.5 px-2 py-1 bg-neutral-100/90 dark:bg-neutral-800/90 rounded text-xs text-neutral-600 dark:text-neutral-400 select-none backdrop-blur-sm">
+                  <Monitor className="w-3.5 h-3.5" />
+                  <span>Local</span>
+                </div>
+                {localWorkspaceUrl && localWorkspacePersistKey ? (
+                  <PersistentWebView
+                    persistKey={localWorkspacePersistKey}
+                    src={localWorkspaceUrl}
+                    className="w-full h-full"
+                    iframeClassName="select-none"
+                    sandbox={TASK_RUN_IFRAME_SANDBOX}
+                    allow={TASK_RUN_IFRAME_ALLOW}
+                    retainOnUnmount
+                    suspended={false}
+                    preflight
+                    onLoad={() => {
+                      console.log("Local workspace loaded");
+                    }}
+                    onError={(error) => {
+                      console.error("Local workspace error:", error);
+                    }}
+                    fallback={
+                      <WorkspaceLoadingIndicator
+                        variant="vscode"
+                        status="loading"
+                        loadingDescription="Loading local workspace..."
+                      />
+                    }
+                    errorFallback={
+                      <WorkspaceLoadingIndicator variant="vscode" status="error" />
+                    }
+                    onStatusChange={setLocalWorkspaceStatus}
+                    loadTimeoutMs={60_000}
+                  />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center">
+                    <WorkspaceLoadingIndicator
+                      variant="vscode"
+                      status="loading"
+                      loadingDescription="Preparing local workspace..."
+                    />
+                  </div>
+                )}
+              </div>
+              {/* Cloud VSCode (bottom) with cloud icon */}
+              <div className="relative flex-1 min-h-[300px]">
+                <div className="absolute top-2 right-2 z-10 flex items-center gap-1.5 px-2 py-1 bg-neutral-100/90 dark:bg-neutral-800/90 rounded text-xs text-neutral-600 dark:text-neutral-400 select-none backdrop-blur-sm">
+                  <Cloud className="w-3.5 h-3.5" />
+                  <span>Cloud</span>
+                </div>
+                {cloudWorkspaceUrl && cloudWorkspacePersistKey ? (
+                  <PersistentWebView
+                    persistKey={cloudWorkspacePersistKey}
+                    src={cloudWorkspaceUrl}
+                    className="w-full h-full"
+                    iframeClassName="select-none"
+                    sandbox={TASK_RUN_IFRAME_SANDBOX}
+                    allow={TASK_RUN_IFRAME_ALLOW}
+                    retainOnUnmount
+                    suspended={false}
+                    preflight
+                    onLoad={() => {
+                      console.log("Cloud workspace loaded");
+                    }}
+                    onError={(error) => {
+                      console.error("Cloud workspace error:", error);
+                    }}
+                    fallback={
+                      <WorkspaceLoadingIndicator
+                        variant="vscode"
+                        status="loading"
+                        loadingDescription="Loading cloud workspace..."
+                      />
+                    }
+                    errorFallback={
+                      <WorkspaceLoadingIndicator variant="vscode" status="error" />
+                    }
+                    onStatusChange={setCloudWorkspaceStatus}
+                    loadTimeoutMs={60_000}
+                  />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center">
+                    <WorkspaceLoadingIndicator
+                      variant="vscode"
+                      status="loading"
+                      loadingDescription="No cloud workspace available"
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
           {task?.text && (
             <div className="mb-2 px-3.5">
               <div className="text-xs text-neutral-600 dark:text-neutral-300">

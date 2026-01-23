@@ -44,7 +44,7 @@ import { api } from "@cmux/convex/api";
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { convexQuery } from "@convex-dev/react-query";
 import { useQuery } from "convex/react";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Plus,
@@ -304,6 +304,7 @@ function EmptyPanelSlot({
 function TaskDetailPage() {
   const { taskId, teamSlugOrId } = Route.useParams();
   const search = Route.useSearch();
+  const navigate = useNavigate();
   const localServeWeb = useLocalVSCodeServeWebQuery();
   const task = useQuery(api.tasks.getById, {
     teamSlugOrId,
@@ -483,6 +484,23 @@ function TaskDetailPage() {
     setExpandedPanel(null);
   }, [selectedRunId]);
   const headerTaskRunId = selectedRunId ?? taskRuns?.[0]?._id ?? null;
+
+  // Handler to navigate to diff page where local workspace can be opened
+  const handleOpenLocalWorkspace = useCallback(() => {
+    if (!selectedRunId) {
+      return;
+    }
+    // Navigate to the diff page where the user can click the folder icon
+    // to show inline local and cloud workspaces
+    navigate({
+      to: "/$teamSlugOrId/task/$taskId/run/$runId/diff",
+      params: {
+        teamSlugOrId,
+        taskId,
+        runId: selectedRunId,
+      },
+    });
+  }, [navigate, teamSlugOrId, taskId, selectedRunId]);
 
   const rawWorkspaceUrl = selectedRun?.vscode?.workspaceUrl ?? null;
   const workspaceUrl = getWorkspaceUrl(
@@ -784,6 +802,11 @@ function TaskDetailPage() {
           taskRunId={headerTaskRunId}
           teamSlugOrId={teamSlugOrId}
           onPanelSettings={handleOpenPanelSettings}
+          onOpenLocalWorkspace={
+            isLocalWorkspaceTask || isCloudWorkspaceTask
+              ? undefined
+              : handleOpenLocalWorkspace
+          }
         />
         <PanelConfigModal
           open={isPanelSettingsOpen}
