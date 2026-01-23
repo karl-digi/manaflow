@@ -3,6 +3,9 @@ import UIKit
 
 struct ChatView: View {
     let conversation: ConvexConversation
+    #if DEBUG
+    @State private var didCopyLogs = false
+    #endif
 
     init(conversation: ConvexConversation) {
         self.conversation = conversation
@@ -12,6 +15,22 @@ struct ChatView: View {
         ChatFix1MainView(conversationId: conversation._id.rawValue, providerId: conversation.providerId)
             .navigationTitle(conversation.providerDisplayName)
             .navigationBarTitleDisplayMode(.inline)
+            #if DEBUG
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        UIPasteboard.general.string = DebugLog.read()
+                        didCopyLogs = true
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                    }
+                    .accessibilityIdentifier("chat.copyLogs")
+                }
+            }
+            .alert("Logs copied", isPresented: $didCopyLogs) {
+                Button("OK", role: .cancel) {}
+            }
+            #endif
     }
 }
 
@@ -19,11 +38,30 @@ struct ChatView: View {
 struct ChatViewById: View {
     let conversationId: String
     var providerId: String = "claude"
+    #if DEBUG
+    @State private var didCopyLogs = false
+    #endif
 
     var body: some View {
         ChatFix1MainView(conversationId: conversationId, providerId: providerId)
             .navigationTitle("Task")
             .navigationBarTitleDisplayMode(.inline)
+            #if DEBUG
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        UIPasteboard.general.string = DebugLog.read()
+                        didCopyLogs = true
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                    }
+                    .accessibilityIdentifier("chat.copyLogs")
+                }
+            }
+            .alert("Logs copied", isPresented: $didCopyLogs) {
+                Button("OK", role: .cancel) {}
+            }
+            #endif
     }
 }
 

@@ -3,10 +3,27 @@ import Sentry
 
 struct ContentView: View {
     @StateObject private var authManager = AuthManager.shared
+    private let uiTestDirectChat: Bool = {
+        ProcessInfo.processInfo.environment["CMUX_UITEST_DIRECT_CHAT"] == "1"
+    }()
+    private let uiTestChatView: Bool = {
+        ProcessInfo.processInfo.environment["CMUX_UITEST_CHAT_VIEW"] == "1"
+    }()
+    private let uiTestConversationId: String = {
+        ProcessInfo.processInfo.environment["CMUX_UITEST_CONVERSATION_ID"] ?? "uitest_conversation_claude"
+    }()
+    private let uiTestProviderId: String = {
+        ProcessInfo.processInfo.environment["CMUX_UITEST_PROVIDER_ID"] ?? "claude"
+    }()
 
     var body: some View {
         Group {
-            if authManager.isRestoringSession {
+            if uiTestChatView {
+                ChatFix1MainView(conversationId: uiTestConversationId, providerId: uiTestProviderId)
+                    .ignoresSafeArea()
+            } else if uiTestDirectChat {
+                InputBarUITestHarnessView()
+            } else if authManager.isRestoringSession {
                 SessionRestoreView()
             } else if authManager.isAuthenticated {
                 MainTabView()
@@ -34,6 +51,45 @@ struct MainTabView: View {
         ConversationListView()
     }
 }
+
+#if DEBUG
+struct InputBarUITestHarnessView: View {
+    var body: some View {
+        InputBarUITestHarnessWrapper()
+            .ignoresSafeArea()
+    }
+}
+
+private struct InputBarUITestHarnessWrapper: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> InputBarUITestHarnessViewController {
+        InputBarUITestHarnessViewController()
+    }
+
+    func updateUIViewController(_ uiViewController: InputBarUITestHarnessViewController, context: Context) {}
+}
+
+private final class InputBarUITestHarnessViewController: UIViewController {
+    private var inputBarVC: DebugInputBarViewController!
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .systemBackground
+
+        inputBarVC = DebugInputBarViewController()
+        inputBarVC.view.translatesAutoresizingMaskIntoConstraints = false
+
+        addChild(inputBarVC)
+        view.addSubview(inputBarVC.view)
+        inputBarVC.didMove(toParent: self)
+
+        NSLayoutConstraint.activate([
+            inputBarVC.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            inputBarVC.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            inputBarVC.view.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor)
+        ])
+    }
+}
+#endif
 
 struct SettingsView: View {
     @StateObject private var authManager = AuthManager.shared
@@ -78,6 +134,9 @@ struct SettingsView: View {
                     Toggle("Show input tuning panel", isOn: $showChatInputTuning)
                     NavigationLink("Chat Keyboard Approaches") {
                         ChatDebugMenu()
+                    }
+                    NavigationLink("Debug Logs") {
+                        DebugLogsView()
                     }
                     NavigationLink("Convex Test") {
                         ConvexTestView()

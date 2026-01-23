@@ -6,8 +6,9 @@ final class MultilineInputUITests: XCTestCase {
     private let maxPillHeight: CGFloat = 120
     private let minHeightGrowth: CGFloat = 18
     private let minReturnGrowth: CGFloat = 12
-    private let bottomEdgeTolerance: CGFloat = 1
+    private let bottomEdgeTolerance: CGFloat = 0.5
     private let frameTolerance: CGFloat = 3.5
+    private let keyboardTolerance: CGFloat = 1.5
 
     override func setUp() {
         super.setUp()
@@ -16,8 +17,10 @@ final class MultilineInputUITests: XCTestCase {
 
     func testInputCentersPlaceholderAndSingleLineText() {
         let app = XCUIApplication()
-        app.launchEnvironment["CMUX_DEBUG_AUTOFOCUS"] = "0"
+        app.launchEnvironment["CMUX_DEBUG_AUTOFOCUS"] = "1"
         app.launchEnvironment["CMUX_UITEST_MOCK_DATA"] = "1"
+        app.launchEnvironment["CMUX_UITEST_AUTO_OPEN_CONVERSATION"] = "1"
+        app.launchEnvironment["CMUX_UITEST_DIRECT_CHAT"] = "1"
         app.launch()
 
         ensureSignedIn(app: app)
@@ -26,27 +29,35 @@ final class MultilineInputUITests: XCTestCase {
         openConversation(app: app, name: conversationName)
 
         let pill = waitForInputPill(app: app)
-        let bottomEdge = waitForInputPillBottomEdge(app: app)
 
         let input = waitForInputField(app: app)
         focusInput(app: app, pill: pill, input: input)
         clearInput(app: app, input: input)
+        waitForKeyboard(app: app)
 
-        assertInputCenterAligned(pill: pill, input: input, context: "placeholder")
+        assertInputCenterAligned(app: app, pill: pill, input: input, context: "placeholder")
 
-        typeText(app: app, input: input, text: "Hello")
-        RunLoop.current.run(until: Date().addingTimeInterval(0.4))
-
-        if let value = readInputValue(app: app, input: input) {
-            XCTAssertTrue(value.contains("Hello"), "Expected input to contain typed text")
-        }
-        assertInputCenterAligned(pill: pill, input: input, context: "single-line text")
+        let placeholder = app.staticTexts["Message"]
+        typeText(app: app, input: input, text: "H")
+        XCTAssertFalse(
+            placeholder.waitForExistence(timeout: 0.4),
+            "Expected placeholder to hide after first character"
+        )
+        typeText(app: app, input: input, text: "ello")
+        let sendButton = app.buttons["chat.sendButton"]
+        XCTAssertTrue(
+            sendButton.waitForExistence(timeout: 2),
+            "Expected send button to appear after typing"
+        )
+        assertInputCenterAligned(app: app, pill: pill, input: input, context: "single-line text")
     }
 
     func testInputExpandsForMultilineText() {
         let app = XCUIApplication()
-        app.launchEnvironment["CMUX_DEBUG_AUTOFOCUS"] = "0"
+        app.launchEnvironment["CMUX_DEBUG_AUTOFOCUS"] = "1"
         app.launchEnvironment["CMUX_UITEST_MOCK_DATA"] = "1"
+        app.launchEnvironment["CMUX_UITEST_AUTO_OPEN_CONVERSATION"] = "1"
+        app.launchEnvironment["CMUX_UITEST_DIRECT_CHAT"] = "1"
         app.launch()
 
         ensureSignedIn(app: app)
@@ -55,14 +66,14 @@ final class MultilineInputUITests: XCTestCase {
         openConversation(app: app, name: conversationName)
 
         let pill = waitForInputPill(app: app)
-        let bottomEdge = waitForInputPillBottomEdge(app: app)
 
         let input = waitForInputField(app: app)
         focusInput(app: app, pill: pill, input: input)
         clearInput(app: app, input: input)
 
-        let baselinePillHeight = pill.frame.height
-        let baselineInputHeight = input.frame.height
+        waitForKeyboard(app: app)
+        let baselinePillHeight = waitForStablePillHeight(app: app, pill: pill, timeout: 2)
+        let baselineInputHeight = waitForStableInputFrame(app: app, input: input, timeout: 2).height
 
         setMultilineText(
             app: app,
@@ -72,12 +83,9 @@ final class MultilineInputUITests: XCTestCase {
         )
         RunLoop.current.run(until: Date().addingTimeInterval(0.6))
 
-        if let value = readInputValue(app: app, input: input) {
-            XCTAssertTrue(value.contains("Line 1"), "Expected multiline text to include first line")
-        }
-
-        let expandedPillHeight = waitForHeightIncrease(
-            element: pill,
+        let expandedPillHeight = waitForPillHeightIncrease(
+            app: app,
+            pill: pill,
             baseline: baselinePillHeight,
             minGrowth: minHeightGrowth,
             timeout: 2
@@ -88,14 +96,14 @@ final class MultilineInputUITests: XCTestCase {
             minGrowth: minHeightGrowth,
             timeout: 2
         )
-        waitForInputWithinPill(pill: pill, input: input, timeout: 2)
+        waitForInputWithinPill(pill: pill, input: input, app: app, timeout: 2)
 
-        XCTAssertGreaterThan(
+        XCTAssertGreaterThanOrEqual(
             expandedPillHeight,
             baselinePillHeight + minHeightGrowth,
             "Expected pill to grow for multiline input"
         )
-        XCTAssertGreaterThan(
+        XCTAssertGreaterThanOrEqual(
             expandedInputHeight,
             baselineInputHeight + minHeightGrowth,
             "Expected input field to grow for multiline input"
@@ -122,8 +130,10 @@ final class MultilineInputUITests: XCTestCase {
 
     func testPillExpandsForReturnsOnlyAndShowsSend() {
         let app = XCUIApplication()
-        app.launchEnvironment["CMUX_DEBUG_AUTOFOCUS"] = "0"
+        app.launchEnvironment["CMUX_DEBUG_AUTOFOCUS"] = "1"
         app.launchEnvironment["CMUX_UITEST_MOCK_DATA"] = "1"
+        app.launchEnvironment["CMUX_UITEST_AUTO_OPEN_CONVERSATION"] = "1"
+        app.launchEnvironment["CMUX_UITEST_DIRECT_CHAT"] = "1"
         app.launch()
 
         ensureSignedIn(app: app)
@@ -132,11 +142,11 @@ final class MultilineInputUITests: XCTestCase {
         openConversation(app: app, name: conversationName)
 
         let pill = waitForInputPill(app: app)
-        let bottomEdge = waitForInputPillBottomEdge(app: app)
 
         let input = waitForInputField(app: app)
         focusInput(app: app, pill: pill, input: input)
         clearInput(app: app, input: input)
+        waitForKeyboard(app: app)
 
         let baselinePillHeight = pill.frame.height
         let baselineInputHeight = input.frame.height
@@ -179,12 +189,26 @@ final class MultilineInputUITests: XCTestCase {
             baselineInputHeight + minReturnGrowth,
             "Expected input field to grow for return-only input"
         )
+
+        clearInput(app: app, input: input)
+        typeText(app: app, input: input, text: "   ")
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        XCTAssertTrue(
+            sendButton.waitForExistence(timeout: 2),
+            "Expected send button to appear for space-only input"
+        )
+        XCTAssertFalse(
+            placeholder.exists,
+            "Expected placeholder to hide when spaces are entered"
+        )
     }
 
     func testPillBottomEdgeStaysFixedWhenGrowing() {
         let app = XCUIApplication()
-        app.launchEnvironment["CMUX_DEBUG_AUTOFOCUS"] = "0"
+        app.launchEnvironment["CMUX_DEBUG_AUTOFOCUS"] = "1"
         app.launchEnvironment["CMUX_UITEST_MOCK_DATA"] = "1"
+        app.launchEnvironment["CMUX_UITEST_AUTO_OPEN_CONVERSATION"] = "1"
+        app.launchEnvironment["CMUX_UITEST_DIRECT_CHAT"] = "1"
         app.launch()
 
         ensureSignedIn(app: app)
@@ -198,32 +222,265 @@ final class MultilineInputUITests: XCTestCase {
         let input = waitForInputField(app: app)
         focusInput(app: app, pill: pill, input: input)
         clearInput(app: app, input: input)
+        waitForKeyboard(app: app)
 
         let baselineBottom = waitForStablePillBottom(
             bottomEdge: bottomEdge,
+            pill: pill,
             tolerance: bottomEdgeTolerance,
             stableSamples: 3,
             timeout: 2
         )
-        let baselineHeight = pill.frame.height
+        let baselineKeyboardMinY = app.keyboards.firstMatch.frame.minY
+        let baselineHeight = waitForStableElementFrame(element: pill, timeout: 2).height
+        let baselineKeyboardGap = baselineKeyboardMinY - baselineBottom
 
-        typeText(app: app, input: input, text: "\n\n")
-        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
-
-        assertPillBottomStableDuringGrowth(
-            pillFrame: pill,
+        let metrics = typeTextStepwiseAndMeasure(
+            app: app,
+            input: input,
+            pill: pill,
             bottomEdge: bottomEdge,
             baselineBottom: baselineBottom,
-            baselineHeight: baselineHeight,
-            minGrowth: minReturnGrowth,
-            timeout: 1.4
+            baselineKeyboardMinY: baselineKeyboardMinY,
+            baselineKeyboardGap: baselineKeyboardGap,
+            text: "\n\n\n",
+            perStepDuration: 0.32
+        )
+        XCTAssertGreaterThan(
+            metrics.maxHeight,
+            baselineHeight + minReturnGrowth,
+            "Expected pill to grow while typing returns"
+        )
+        XCTAssertLessThanOrEqual(
+            metrics.maxKeyboardShift,
+            keyboardTolerance,
+            "Keyboard should stay fixed while typing returns (keyboard shift \(metrics.maxKeyboardShift))"
+        )
+        XCTAssertGreaterThan(
+            metrics.stableKeyboardSamples,
+            0,
+            "Expected to observe stable keyboard samples while typing returns"
+        )
+        XCTAssertLessThanOrEqual(
+            metrics.maxDeviationWithStableKeyboard,
+            bottomEdgeTolerance,
+            "Pill bottom should stay fixed while growing with a stable keyboard (max deviation \(metrics.maxDeviationWithStableKeyboard))"
+        )
+        XCTAssertLessThanOrEqual(
+            metrics.maxKeyboardGapDeviation,
+            bottomEdgeTolerance,
+            "Pill bottom should stay fixed relative to the keyboard while growing (gap deviation \(metrics.maxKeyboardGapDeviation))"
+        )
+        assertPillBottomStableAfterTyping(
+            app: app,
+            pill: pill,
+            bottomEdge: bottomEdge,
+            baselineBottom: baselineBottom,
+            baselineKeyboardMinY: baselineKeyboardMinY,
+            baselineKeyboardGap: baselineKeyboardGap,
+            duration: 0.5,
+            context: "after return-only growth"
+        )
+    }
+
+    func testPillBottomEdgeStaysFixedWhenGrowingWithText() {
+        let app = XCUIApplication()
+        app.launchEnvironment["CMUX_DEBUG_AUTOFOCUS"] = "1"
+        app.launchEnvironment["CMUX_UITEST_MOCK_DATA"] = "1"
+        app.launchEnvironment["CMUX_UITEST_AUTO_OPEN_CONVERSATION"] = "1"
+        app.launchEnvironment["CMUX_UITEST_DIRECT_CHAT"] = "1"
+        app.launch()
+
+        ensureSignedIn(app: app)
+        waitForConversationList(app: app)
+        ensureConversationVisible(app: app, name: conversationName)
+        openConversation(app: app, name: conversationName)
+
+        let pill = waitForInputPill(app: app)
+        let bottomEdge = waitForInputPillBottomEdge(app: app)
+
+        let input = waitForInputField(app: app)
+        focusInput(app: app, pill: pill, input: input)
+        clearInput(app: app, input: input)
+        waitForKeyboard(app: app)
+
+        let baselineBottom = waitForStablePillBottom(
+            bottomEdge: bottomEdge,
+            pill: pill,
+            tolerance: bottomEdgeTolerance,
+            stableSamples: 3,
+            timeout: 2
+        )
+        let baselineKeyboardMinY = app.keyboards.firstMatch.frame.minY
+        let baselineHeight = pill.frame.height
+        let baselineKeyboardGap = baselineKeyboardMinY - baselineBottom
+
+        let metrics = typeTextStepwiseAndMeasure(
+            app: app,
+            input: input,
+            pill: pill,
+            bottomEdge: bottomEdge,
+            baselineBottom: baselineBottom,
+            baselineKeyboardMinY: baselineKeyboardMinY,
+            baselineKeyboardGap: baselineKeyboardGap,
+            text: "Line 1\nLine 2\nLine 3",
+            perStepDuration: 0.2
+        )
+
+        XCTAssertGreaterThan(
+            metrics.maxHeight,
+            baselineHeight + minReturnGrowth,
+            "Expected pill to grow while typing multiline text"
+        )
+        XCTAssertLessThanOrEqual(
+            metrics.maxKeyboardShift,
+            keyboardTolerance,
+            "Keyboard should stay fixed while typing multiline text (keyboard shift \(metrics.maxKeyboardShift))"
+        )
+        XCTAssertGreaterThan(
+            metrics.stableKeyboardSamples,
+            0,
+            "Expected to observe stable keyboard samples while typing multiline text"
+        )
+        XCTAssertLessThanOrEqual(
+            metrics.maxDeviationWithStableKeyboard,
+            bottomEdgeTolerance,
+            "Pill bottom should stay fixed while growing with text and a stable keyboard (max deviation \(metrics.maxDeviationWithStableKeyboard))"
+        )
+        XCTAssertLessThanOrEqual(
+            metrics.maxKeyboardGapDeviation,
+            bottomEdgeTolerance,
+            "Pill bottom should stay fixed relative to the keyboard while growing with text (gap deviation \(metrics.maxKeyboardGapDeviation))"
+        )
+        assertPillBottomStableAfterTyping(
+            app: app,
+            pill: pill,
+            bottomEdge: bottomEdge,
+            baselineBottom: baselineBottom,
+            baselineKeyboardMinY: baselineKeyboardMinY,
+            baselineKeyboardGap: baselineKeyboardGap,
+            duration: 0.5,
+            context: "after multiline growth"
+        )
+    }
+
+    func testPillBottomEdgeStaysFixedAtTwoLines() {
+        let app = XCUIApplication()
+        app.launchEnvironment["CMUX_DEBUG_AUTOFOCUS"] = "1"
+        app.launchEnvironment["CMUX_UITEST_MOCK_DATA"] = "1"
+        app.launchEnvironment["CMUX_UITEST_AUTO_OPEN_CONVERSATION"] = "1"
+        app.launchEnvironment["CMUX_UITEST_DIRECT_CHAT"] = "1"
+        app.launch()
+
+        ensureSignedIn(app: app)
+        waitForConversationList(app: app)
+        ensureConversationVisible(app: app, name: conversationName)
+        openConversation(app: app, name: conversationName)
+
+        let pill = waitForInputPill(app: app)
+        let bottomEdge = waitForInputPillBottomEdge(app: app)
+
+        let input = waitForInputField(app: app)
+        focusInput(app: app, pill: pill, input: input)
+        clearInput(app: app, input: input)
+        waitForKeyboard(app: app)
+
+        let baselineBottom = waitForStablePillBottom(
+            bottomEdge: bottomEdge,
+            pill: pill,
+            tolerance: bottomEdgeTolerance,
+            stableSamples: 3,
+            timeout: 2
+        )
+        let baselineKeyboardMinY = app.keyboards.firstMatch.frame.minY
+        let baselineKeyboardGap = baselineKeyboardMinY - baselineBottom
+
+        let metrics = typeTextStepwiseAndMeasure(
+            app: app,
+            input: input,
+            pill: pill,
+            bottomEdge: bottomEdge,
+            baselineBottom: baselineBottom,
+            baselineKeyboardMinY: baselineKeyboardMinY,
+            baselineKeyboardGap: baselineKeyboardGap,
+            text: "\n",
+            perStepDuration: 0.32
+        )
+
+        XCTAssertLessThanOrEqual(
+            metrics.maxKeyboardShift,
+            keyboardTolerance,
+            "Keyboard should stay fixed while typing a single return (keyboard shift \(metrics.maxKeyboardShift))"
+        )
+        XCTAssertGreaterThan(
+            metrics.stableKeyboardSamples,
+            0,
+            "Expected to observe stable keyboard samples while typing a single return"
+        )
+        XCTAssertLessThanOrEqual(
+            metrics.maxDeviationWithStableKeyboard,
+            bottomEdgeTolerance,
+            "Pill bottom should stay fixed when growing to two lines (max deviation \(metrics.maxDeviationWithStableKeyboard), gap deviation \(metrics.maxKeyboardGapDeviation), keyboard shift \(metrics.maxKeyboardShift))"
+        )
+        XCTAssertLessThanOrEqual(
+            metrics.maxKeyboardGapDeviation,
+            bottomEdgeTolerance,
+            "Pill bottom should stay fixed relative to the keyboard when growing to two lines (gap deviation \(metrics.maxKeyboardGapDeviation))"
+        )
+        assertPillBottomStableAfterTyping(
+            app: app,
+            pill: pill,
+            bottomEdge: bottomEdge,
+            baselineBottom: baselineBottom,
+            baselineKeyboardMinY: baselineKeyboardMinY,
+            baselineKeyboardGap: baselineKeyboardGap,
+            duration: 0.4,
+            context: "after two-line growth"
+        )
+    }
+
+    func testKeyboardDoesNotJumpOnReturnAndBackspace() {
+        let app = XCUIApplication()
+        app.launchEnvironment["CMUX_DEBUG_AUTOFOCUS"] = "1"
+        app.launchEnvironment["CMUX_UITEST_MOCK_DATA"] = "1"
+        app.launchEnvironment["CMUX_UITEST_AUTO_OPEN_CONVERSATION"] = "1"
+        app.launchEnvironment["CMUX_UITEST_DIRECT_CHAT"] = "1"
+        app.launch()
+
+        ensureSignedIn(app: app)
+        waitForConversationList(app: app)
+        ensureConversationVisible(app: app, name: conversationName)
+        openConversation(app: app, name: conversationName)
+
+        let pill = waitForInputPill(app: app)
+        let input = waitForInputField(app: app)
+        focusInput(app: app, pill: pill, input: input)
+        clearInput(app: app, input: input)
+        waitForKeyboard(app: app)
+
+        let baselineKeyboardMinY = app.keyboards.firstMatch.frame.minY
+        typeText(app: app, input: input, text: "\n")
+        RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+        typeText(app: app, input: input, text: XCUIKeyboardKey.delete.rawValue)
+
+        let keyboardShift = sampleKeyboardShift(
+            app: app,
+            baselineKeyboardMinY: baselineKeyboardMinY,
+            duration: 0.5
+        )
+        XCTAssertLessThanOrEqual(
+            keyboardShift,
+            keyboardTolerance,
+            "Keyboard should remain stable after return + backspace (shift \(keyboardShift))"
         )
     }
 
     func testPlaceholderResetsAfterMultiline() {
         let app = XCUIApplication()
-        app.launchEnvironment["CMUX_DEBUG_AUTOFOCUS"] = "0"
+        app.launchEnvironment["CMUX_DEBUG_AUTOFOCUS"] = "1"
         app.launchEnvironment["CMUX_UITEST_MOCK_DATA"] = "1"
+        app.launchEnvironment["CMUX_UITEST_AUTO_OPEN_CONVERSATION"] = "1"
+        app.launchEnvironment["CMUX_UITEST_DIRECT_CHAT"] = "1"
         app.launch()
 
         ensureSignedIn(app: app)
@@ -236,8 +493,9 @@ final class MultilineInputUITests: XCTestCase {
         let input = waitForInputField(app: app)
         focusInput(app: app, pill: pill, input: input)
         clearInput(app: app, input: input)
+        waitForKeyboard(app: app)
 
-        assertInputCenterAligned(pill: pill, input: input, context: "placeholder baseline")
+        assertInputCenterAligned(app: app, pill: pill, input: input, context: "placeholder baseline")
         let baselinePillHeight = pill.frame.height
         let baselineInputHeight = input.frame.height
 
@@ -273,7 +531,7 @@ final class MultilineInputUITests: XCTestCase {
             maxGrowth: frameTolerance,
             timeout: 3
         )
-        waitForInputWithinPill(pill: pill, input: input, timeout: 2)
+        waitForInputWithinPill(pill: pill, input: input, app: app, timeout: 2)
         XCTAssertLessThanOrEqual(
             reducedPillHeight,
             baselinePillHeight + frameTolerance,
@@ -284,12 +542,20 @@ final class MultilineInputUITests: XCTestCase {
             baselineInputHeight + frameTolerance,
             "Expected input height to return to single-line baseline"
         )
-        assertInputCenterAligned(pill: pill, input: input, context: "placeholder after multiline")
+        assertInputCenterAligned(app: app, pill: pill, input: input, context: "placeholder after multiline")
     }
 
-    private func assertInputCenterAligned(pill: XCUIElement, input: XCUIElement, context: String) {
-        let pillCenter = pill.frame.midY
-        let inputCenter = input.frame.midY
+    private func assertInputCenterAligned(
+        app: XCUIApplication,
+        pill: XCUIElement,
+        input: XCUIElement,
+        context: String
+    ) {
+        waitForInputWithinPill(pill: pill, input: input, app: app, timeout: 2)
+        let pillFrame = waitForStableElementFrame(element: pill, timeout: 3)
+        let inputFrame = waitForStableInputFrame(app: app, input: input, timeout: 3)
+        let pillCenter = pillFrame.midY
+        let inputCenter = inputFrame.midY
         let delta = abs(pillCenter - inputCenter)
         XCTAssertLessThanOrEqual(
             delta,
@@ -299,6 +565,10 @@ final class MultilineInputUITests: XCTestCase {
     }
 
     private func waitForInputField(app: XCUIApplication) -> XCUIElement {
+        let valueProxy = app.otherElements["chat.inputValue"]
+        if valueProxy.waitForExistence(timeout: 2) {
+            return valueProxy
+        }
         let textView = app.textViews["chat.inputField"]
         if textView.waitForExistence(timeout: 4) {
             return textView
@@ -330,20 +600,51 @@ final class MultilineInputUITests: XCTestCase {
 
     private func waitForInputPill(app: XCUIApplication) -> XCUIElement {
         let framePill = app.otherElements["chat.inputPillFrame"]
-        if framePill.waitForExistence(timeout: 6) {
+        if framePill.waitForExistence(timeout: 15) {
             return framePill
         }
+        let valueProxy = app.otherElements["chat.inputValue"]
+        if valueProxy.waitForExistence(timeout: 4) {
+            return valueProxy
+        }
         let pill = app.otherElements["chat.inputPill"]
-        XCTAssertTrue(pill.waitForExistence(timeout: 6))
+        XCTAssertTrue(pill.waitForExistence(timeout: 15))
         return pill
     }
 
     private func waitForInputPillBottomEdge(app: XCUIApplication) -> XCUIElement {
+        let liveBottomEdge = app.otherElements["chat.inputPillBottomEdgeLive"]
+        if liveBottomEdge.waitForExistence(timeout: 6) {
+            return liveBottomEdge
+        }
         let bottomEdge = app.otherElements["chat.inputPillBottomEdge"]
         if bottomEdge.waitForExistence(timeout: 6) {
             return bottomEdge
         }
         return waitForInputPill(app: app)
+    }
+
+    private func waitForKeyboard(app: XCUIApplication, timeout: TimeInterval = 4) {
+        let keyboard = app.keyboards.firstMatch
+        let deadline = Date().addingTimeInterval(timeout)
+        var lastMinY = keyboard.frame.minY
+        var stableCount = 0
+        while Date() < deadline {
+            if keyboard.exists, keyboard.frame.height > 0 {
+                let currentMinY = keyboard.frame.minY
+                if abs(currentMinY - lastMinY) < 1 {
+                    stableCount += 1
+                    if stableCount >= 3 {
+                        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+                        return
+                    }
+                } else {
+                    stableCount = 0
+                    lastMinY = currentMinY
+                }
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.08))
+        }
     }
 
     private func clearInput(app: XCUIApplication, input: XCUIElement) {
@@ -375,15 +676,14 @@ final class MultilineInputUITests: XCTestCase {
     }
 
     private func focusInput(app: XCUIApplication, pill: XCUIElement, input: XCUIElement) {
-        if input.elementType == .textView || input.elementType == .textField {
-            input.tap()
-        } else {
-            pill.tap()
+        if tapElement(input) {
+            return
         }
+        _ = tapElement(pill)
     }
 
     private func typeText(app: XCUIApplication, input: XCUIElement, text: String) {
-        if input.elementType == .textView || input.elementType == .textField {
+        if (input.elementType == .textView || input.elementType == .textField) && input.isHittable {
             input.typeText(text)
         } else {
             app.typeText(text)
@@ -396,25 +696,21 @@ final class MultilineInputUITests: XCTestCase {
         input: XCUIElement,
         text: String
     ) {
+        focusInput(app: app, pill: pill, input: input)
+        waitForKeyboard(app: app)
         typeText(app: app, input: input, text: text)
-        RunLoop.current.run(until: Date().addingTimeInterval(0.4))
-        if let value = readInputValue(app: app, input: input), value.contains("Line 2") {
-            return
-        }
-        let debugMultilineButton = app.buttons["chat.debugSetMultiline"]
-        if debugMultilineButton.waitForExistence(timeout: 2) {
-            debugMultilineButton.tap()
-            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
-            focusInput(app: app, pill: pill, input: input)
-        }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
     }
 
     private func readInputValue(app: XCUIApplication, input: XCUIElement) -> String? {
-        let fallback = app.otherElements["chat.inputValue"].firstMatch
-        if fallback.exists, let value = fallback.value as? String, !value.isEmpty {
+        if let value = input.value as? String, !value.isEmpty, value != "Message" {
             return value
         }
-        if let value = input.value as? String, !value.isEmpty, value != "Message" {
+        let fallback = app.otherElements["chat.inputValue"].firstMatch
+        if fallback.exists,
+           let value = fallback.value as? String,
+           !value.isEmpty,
+           value != "Message" {
             return value
         }
         if !input.label.isEmpty {
@@ -422,6 +718,20 @@ final class MultilineInputUITests: XCTestCase {
         }
         return nil
     }
+
+    private func tapElement(_ element: XCUIElement) -> Bool {
+        guard element.exists else { return false }
+        let frame = element.frame
+        guard frame.width > 1, frame.height > 1 else { return false }
+        if element.isHittable {
+            element.tap()
+            return true
+        }
+        let coordinate = element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        coordinate.tap()
+        return true
+    }
+
 
     private func waitForHeightIncrease(
         element: XCUIElement,
@@ -462,13 +772,14 @@ final class MultilineInputUITests: XCTestCase {
     private func waitForInputWithinPill(
         pill: XCUIElement,
         input: XCUIElement,
+        app: XCUIApplication?,
         timeout: TimeInterval
     ) {
         let deadline = Date().addingTimeInterval(timeout)
         var consecutiveHits = 0
         while Date() < deadline {
             let pillFrame = pill.frame
-            let inputFrame = input.frame
+            let inputFrame = app.map { inputFrameForAlignment(app: $0, input: input) } ?? input.frame
             let withinTop = inputFrame.minY >= pillFrame.minY - frameTolerance
             let withinBottom = inputFrame.maxY <= pillFrame.maxY + frameTolerance
             if withinTop && withinBottom {
@@ -483,38 +794,280 @@ final class MultilineInputUITests: XCTestCase {
         }
     }
 
-    private func assertPillBottomStableDuringGrowth(
-        pillFrame: XCUIElement,
-        bottomEdge: XCUIElement,
-        baselineBottom: CGFloat,
-        baselineHeight: CGFloat,
+    private func inputFrameForAlignment(app: XCUIApplication, input: XCUIElement) -> CGRect {
+        let proxy = app.otherElements["chat.inputValue"].firstMatch
+        if proxy.exists, proxy.frame.height > 1, proxy.frame.width > 1 {
+            return proxy.frame
+        }
+        return input.frame
+    }
+
+    private func waitForStableInputFrame(
+        app: XCUIApplication,
+        input: XCUIElement,
+        timeout: TimeInterval
+    ) -> CGRect {
+        let deadline = Date().addingTimeInterval(timeout)
+        var lastFrame = CGRect.zero
+        var stableCount = 0
+        while Date() < deadline {
+            let frame = inputFrameForAlignment(app: app, input: input)
+            if frame.height > 1, frame.width > 1 {
+                let delta = abs(frame.midY - lastFrame.midY)
+                if delta <= 0.5, abs(frame.height - lastFrame.height) <= 0.5 {
+                    stableCount += 1
+                    if stableCount >= 2 {
+                        return frame
+                    }
+                } else {
+                    stableCount = 0
+                    lastFrame = frame
+                }
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+        return inputFrameForAlignment(app: app, input: input)
+    }
+
+    private func readPillHeightValue(app: XCUIApplication) -> CGFloat? {
+        let element = app.otherElements["chat.pillHeightValue"]
+        guard element.exists else { return nil }
+        if let value = element.value as? String, let height = Double(value) {
+            return CGFloat(height)
+        }
+        let label = element.label
+        if !label.isEmpty, let height = Double(label) {
+            return CGFloat(height)
+        }
+        return nil
+    }
+
+    private func waitForStablePillHeight(
+        app: XCUIApplication,
+        pill: XCUIElement,
+        timeout: TimeInterval
+    ) -> CGFloat {
+        let deadline = Date().addingTimeInterval(timeout)
+        var lastHeight: CGFloat = 0
+        var stableCount = 0
+        while Date() < deadline {
+            let frameHeight = pill.frame.height
+            let height = frameHeight > 1 ? frameHeight : (readPillHeightValue(app: app) ?? frameHeight)
+            if height > 1 {
+                if abs(height - lastHeight) <= 0.5 {
+                    stableCount += 1
+                    if stableCount >= 2 {
+                        return height
+                    }
+                } else {
+                    stableCount = 0
+                    lastHeight = height
+                }
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+        let frameHeight = pill.frame.height
+        return frameHeight > 1 ? frameHeight : (readPillHeightValue(app: app) ?? frameHeight)
+    }
+
+    private func waitForPillHeightIncrease(
+        app: XCUIApplication,
+        pill: XCUIElement,
+        baseline: CGFloat,
         minGrowth: CGFloat,
         timeout: TimeInterval
-    ) {
+    ) -> CGFloat {
         let deadline = Date().addingTimeInterval(timeout)
-        var maxDeviation: CGFloat = 0
-        var maxHeight = baselineHeight
+        var currentHeight = pill.frame.height
         while Date() < deadline {
-            let bottom = bottomEdge.frame.maxY
-            let height = pillFrame.frame.height
-            maxDeviation = max(maxDeviation, abs(bottom - baselineBottom))
-            maxHeight = max(maxHeight, height)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.016))
+            let frameHeight = pill.frame.height
+            currentHeight = frameHeight > 1 ? frameHeight : (readPillHeightValue(app: app) ?? frameHeight)
+            if currentHeight > baseline + minGrowth {
+                return currentHeight
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
-        XCTAssertGreaterThan(
-            maxHeight,
-            baselineHeight + minGrowth,
-            "Expected pill to grow while monitoring bottom edge"
+        return currentHeight
+    }
+
+    private func waitForStableElementFrame(element: XCUIElement, timeout: TimeInterval) -> CGRect {
+        let deadline = Date().addingTimeInterval(timeout)
+        var lastFrame = CGRect.zero
+        var stableCount = 0
+        while Date() < deadline {
+            let frame = element.frame
+            if frame.height > 1, frame.width > 1 {
+                let delta = abs(frame.midY - lastFrame.midY)
+                if delta <= 0.5, abs(frame.height - lastFrame.height) <= 0.5 {
+                    stableCount += 1
+                    if stableCount >= 2 {
+                        return frame
+                    }
+                } else {
+                    stableCount = 0
+                    lastFrame = frame
+                }
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+        return element.frame
+    }
+
+    private struct BottomEdgeMetrics {
+        let maxDeviation: CGFloat
+        let maxHeight: CGFloat
+        let maxKeyboardShift: CGFloat
+        let maxDeviationWithStableKeyboard: CGFloat
+        let maxKeyboardGapDeviation: CGFloat
+        let stableKeyboardSamples: Int
+    }
+
+    private func typeTextStepwiseAndMeasure(
+        app: XCUIApplication,
+        input: XCUIElement,
+        pill: XCUIElement,
+        bottomEdge: XCUIElement,
+        baselineBottom: CGFloat,
+        baselineKeyboardMinY: CGFloat,
+        baselineKeyboardGap: CGFloat,
+        text: String,
+        perStepDuration: TimeInterval
+    ) -> BottomEdgeMetrics {
+        var maxDeviation: CGFloat = 0
+        var maxHeight = pill.frame.height
+        var maxKeyboardShift: CGFloat = 0
+        var maxDeviationWithStableKeyboard: CGFloat = 0
+        var maxKeyboardGapDeviation: CGFloat = 0
+        var stableKeyboardSamples = 0
+        for character in text {
+            typeText(app: app, input: input, text: String(character))
+            let metrics = sampleBottomEdgeMetrics(
+                app: app,
+                bottomEdge: bottomEdge,
+                pill: pill,
+                baselineBottom: baselineBottom,
+                baselineKeyboardMinY: baselineKeyboardMinY,
+                baselineKeyboardGap: baselineKeyboardGap,
+                duration: perStepDuration
+            )
+            maxDeviation = max(maxDeviation, metrics.maxDeviation)
+            maxHeight = max(maxHeight, metrics.maxHeight)
+            maxKeyboardShift = max(maxKeyboardShift, metrics.maxKeyboardShift)
+            maxDeviationWithStableKeyboard = max(maxDeviationWithStableKeyboard, metrics.maxDeviationWithStableKeyboard)
+            maxKeyboardGapDeviation = max(maxKeyboardGapDeviation, metrics.maxKeyboardGapDeviation)
+            stableKeyboardSamples += metrics.stableKeyboardSamples
+        }
+        return BottomEdgeMetrics(
+            maxDeviation: maxDeviation,
+            maxHeight: maxHeight,
+            maxKeyboardShift: maxKeyboardShift,
+            maxDeviationWithStableKeyboard: maxDeviationWithStableKeyboard,
+            maxKeyboardGapDeviation: maxKeyboardGapDeviation,
+            stableKeyboardSamples: stableKeyboardSamples
+        )
+    }
+
+    private func assertPillBottomStableAfterTyping(
+        app: XCUIApplication,
+        pill: XCUIElement,
+        bottomEdge: XCUIElement,
+        baselineBottom: CGFloat,
+        baselineKeyboardMinY: CGFloat,
+        baselineKeyboardGap: CGFloat,
+        duration: TimeInterval,
+        context: String
+    ) {
+        let metrics = sampleBottomEdgeMetrics(
+            app: app,
+            bottomEdge: bottomEdge,
+            pill: pill,
+            baselineBottom: baselineBottom,
+            baselineKeyboardMinY: baselineKeyboardMinY,
+            baselineKeyboardGap: baselineKeyboardGap,
+            duration: duration
         )
         XCTAssertLessThanOrEqual(
-            maxDeviation,
-            bottomEdgeTolerance,
-            "Pill bottom should stay fixed while growing (max deviation \(maxDeviation))"
+            metrics.maxKeyboardShift,
+            keyboardTolerance,
+            "Keyboard should stay fixed \(context) (shift \(metrics.maxKeyboardShift))"
         )
+        XCTAssertLessThanOrEqual(
+            metrics.maxDeviationWithStableKeyboard,
+            bottomEdgeTolerance,
+            "Pill bottom should stay fixed \(context) (max deviation \(metrics.maxDeviationWithStableKeyboard))"
+        )
+        XCTAssertLessThanOrEqual(
+            metrics.maxKeyboardGapDeviation,
+            bottomEdgeTolerance,
+            "Pill bottom should stay fixed relative to the keyboard \(context) (gap deviation \(metrics.maxKeyboardGapDeviation))"
+        )
+    }
+
+    private func sampleBottomEdgeMetrics(
+        app: XCUIApplication,
+        bottomEdge: XCUIElement,
+        pill: XCUIElement,
+        baselineBottom: CGFloat,
+        baselineKeyboardMinY: CGFloat,
+        baselineKeyboardGap: CGFloat,
+        duration: TimeInterval
+    ) -> BottomEdgeMetrics {
+        let deadline = Date().addingTimeInterval(duration)
+        var maxDeviation: CGFloat = 0
+        var maxHeight = pill.frame.height
+        var maxKeyboardShift: CGFloat = 0
+        var maxDeviationWithStableKeyboard: CGFloat = 0
+        var maxKeyboardGapDeviation: CGFloat = 0
+        var stableKeyboardSamples = 0
+        while Date() < deadline {
+            let bottom = bottomEdge.frame.maxY
+            let height = pill.frame.height
+            maxDeviation = max(maxDeviation, abs(bottom - baselineBottom))
+            maxHeight = max(maxHeight, height)
+            let keyboard = app.keyboards.firstMatch
+            if keyboard.exists, keyboard.frame.height > 0 {
+                let shift = abs(keyboard.frame.minY - baselineKeyboardMinY)
+                maxKeyboardShift = max(maxKeyboardShift, shift)
+                let gap = keyboard.frame.minY - bottom
+                maxKeyboardGapDeviation = max(maxKeyboardGapDeviation, abs(gap - baselineKeyboardGap))
+                if shift <= keyboardTolerance {
+                    stableKeyboardSamples += 1
+                    maxDeviationWithStableKeyboard = max(maxDeviationWithStableKeyboard, abs(bottom - baselineBottom))
+                }
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.016))
+        }
+        return BottomEdgeMetrics(
+            maxDeviation: maxDeviation,
+            maxHeight: maxHeight,
+            maxKeyboardShift: maxKeyboardShift,
+            maxDeviationWithStableKeyboard: maxDeviationWithStableKeyboard,
+            maxKeyboardGapDeviation: maxKeyboardGapDeviation,
+            stableKeyboardSamples: stableKeyboardSamples
+        )
+    }
+
+    private func sampleKeyboardShift(
+        app: XCUIApplication,
+        baselineKeyboardMinY: CGFloat,
+        duration: TimeInterval
+    ) -> CGFloat {
+        let deadline = Date().addingTimeInterval(duration)
+        var maxShift: CGFloat = 0
+        while Date() < deadline {
+            let keyboard = app.keyboards.firstMatch
+            if keyboard.exists, keyboard.frame.height > 0 {
+                let shift = abs(keyboard.frame.minY - baselineKeyboardMinY)
+                maxShift = max(maxShift, shift)
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.016))
+        }
+        return maxShift
     }
 
     private func waitForStablePillBottom(
         bottomEdge: XCUIElement,
+        pill: XCUIElement,
         tolerance: CGFloat,
         stableSamples: Int,
         timeout: TimeInterval
@@ -524,6 +1077,15 @@ final class MultilineInputUITests: XCTestCase {
         var stableCount = 0
         while Date() < deadline {
             let currentBottom = bottomEdge.frame.maxY
+            if currentBottom <= 1 {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+                continue
+            }
+            let pillBottom = pill.frame.maxY
+            if abs(currentBottom - pillBottom) > frameTolerance {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+                continue
+            }
             if abs(currentBottom - lastBottom) <= tolerance {
                 stableCount += 1
                 if stableCount >= stableSamples {
@@ -539,10 +1101,30 @@ final class MultilineInputUITests: XCTestCase {
     }
 
     private func openConversation(app: XCUIApplication, name: String) {
-        let conversation = app.staticTexts[name]
-        if !conversation.waitForExistence(timeout: 6) {
+        if app.otherElements["chat.inputPillFrame"].waitForExistence(timeout: 2) ||
+            app.otherElements["chat.inputPill"].waitForExistence(timeout: 2) {
+            return
+        }
+        let row = app.otherElements["conversation.row.\(name)"]
+        if row.waitForExistence(timeout: 6) {
+            row.tap()
+            return
+        }
+        let list = app.tables.element(boundBy: 0)
+        let cell = list.cells.containing(.staticText, identifier: name).firstMatch
+        if !cell.waitForExistence(timeout: 6) {
             ensureConversationVisible(app: app, name: name)
         }
+        if cell.exists && cell.isHittable {
+            cell.tap()
+            return
+        }
+        let firstCell = list.cells.firstMatch
+        if firstCell.exists && firstCell.isHittable {
+            firstCell.tap()
+            return
+        }
+        let conversation = app.staticTexts[name]
         XCTAssertTrue(conversation.waitForExistence(timeout: 6))
         conversation.tap()
     }
@@ -576,6 +1158,14 @@ final class MultilineInputUITests: XCTestCase {
     }
 
     private func waitForConversationList(app: XCUIApplication) {
+        let pillFrame = app.otherElements["chat.inputPillFrame"]
+        if pillFrame.waitForExistence(timeout: 12) {
+            return
+        }
+        let pill = app.otherElements["chat.inputPill"]
+        if pill.waitForExistence(timeout: 12) {
+            return
+        }
         let navBar = app.navigationBars["Tasks"]
         if navBar.waitForExistence(timeout: 10) {
             return

@@ -35,6 +35,23 @@ enum UITestMockData {
         let earlier = now - 60_000
         let first = earlier - 30_000
         let idPrefix = conversationId.replacingOccurrences(of: "uitest_conversation_", with: "uitest_msg_")
+        if let messageCount = messageCountOverride(), messageCount > 3 {
+            let startWithAssistant = startWithAssistant(messageCount: messageCount)
+            let baseTime = now - Double(messageCount) * 900
+            return (0..<messageCount).map { index in
+                let isAssistant = startWithAssistant ? index % 2 == 0 : index % 2 == 1
+                let role: ConversationMessagesListByConversationReturnMessagesItemRoleEnum = isAssistant ? .assistant : .user
+                let text = isAssistant ? "Assistant message \(index + 1)" : "User message \(index + 1)"
+                let createdAt = baseTime + Double(index) * 900
+                return makeMessage(
+                    id: "\(idPrefix)_\(index + 1)",
+                    conversationId: conversationId,
+                    role: role,
+                    text: text,
+                    createdAt: createdAt
+                )
+            }
+        }
 
         let messages: [(String, ConversationMessagesListByConversationReturnMessagesItemRoleEnum, String, Double)] = [
             ("\(idPrefix)_1", .assistant, "Here’s a quick plan for the task.", first),
@@ -51,6 +68,26 @@ enum UITestMockData {
                 createdAt: entry.3
             )
         }
+    }
+
+    private static func messageCountOverride() -> Int? {
+        guard let raw = ProcessInfo.processInfo.environment["CMUX_UITEST_MESSAGE_COUNT"],
+              let count = Int(raw) else {
+            return nil
+        }
+        return max(3, min(200, count))
+    }
+
+    private static func startWithAssistant(messageCount: Int) -> Bool {
+        guard let raw = ProcessInfo.processInfo.environment["CMUX_UITEST_ENDS_WITH_USER"] else {
+            return messageCount % 2 == 1
+        }
+        let lower = raw.lowercased()
+        let endsWithUser = lower == "1" || lower == "true"
+        if endsWithUser {
+            return messageCount % 2 == 0
+        }
+        return messageCount % 2 == 1
     }
 
     private static func makeConversation(

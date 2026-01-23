@@ -20,7 +20,7 @@ struct ChatFix1MainView: View {
     @AppStorage("debug.input.sendOffset") private var sendOffset: Double = -4
     @AppStorage("debug.input.sendXOffset") private var sendXOffset: Double = 1
     @AppStorage("debug.input.barYOffset") private var barYOffset: Double = 34
-    @AppStorage("debug.input.bottomMessageGap") private var bottomMessageGap: Double = -4
+    @AppStorage("debug.input.bottomMessageGap") private var bottomMessageGap: Double = 10
     @AppStorage("debug.input.isMultiline") private var isMultilineFlag = false
 
     init(conversationId: String, providerId: String) {
@@ -83,6 +83,10 @@ struct ChatFix1MainView: View {
         .onAppear {
             viewModel.setViewVisible(true)
             viewModel.setAppActive(scenePhase == .active)
+            let clampedGap = min(120, max(-20, bottomMessageGap))
+            if bottomMessageGap != clampedGap {
+                bottomMessageGap = clampedGap
+            }
         }
         .onDisappear {
             viewModel.setViewVisible(false)
@@ -139,7 +143,7 @@ private struct ChatInputTuningPanel: View {
             tuningRow(label: "Send Y", value: $sendOffset, range: -12...12, step: 1)
             tuningRow(label: "Send X", value: $sendXOffset, range: -20...20, step: 1)
             tuningRow(label: "Bar Y", value: $barYOffset, range: -40...40, step: 1)
-            tuningRow(label: "Bottom gap", value: $bottomMessageGap, range: -80...80, step: 1)
+            tuningRow(label: "Bottom gap", value: $bottomMessageGap, range: -20...120, step: 1)
             HStack(spacing: 8) {
                 Text(summaryText)
                     .font(.caption2)
@@ -201,19 +205,31 @@ private struct Fix1MainViewController_Wrapper: UIViewControllerRepresentable {
     let bottomMessageGap: CGFloat
 
     func makeUIViewController(context: Context) -> Fix1MainViewController {
-        Fix1MainViewController(
+        let clampedGap = max(-20, min(120, bottomMessageGap))
+        return Fix1MainViewController(
             messages: messages,
             onSend: onSend,
-            inputBarYOffset: inputBarYOffset,
-            bottomMessageGap: bottomMessageGap
+            inputBarYOffset: resolvedInputBarYOffset(),
+            bottomMessageGap: clampedGap
         )
     }
 
     func updateUIViewController(_ uiViewController: Fix1MainViewController, context: Context) {
+        let clampedGap = max(-20, min(120, bottomMessageGap))
         uiViewController.updateMessages(messages)
         uiViewController.updateSendingState(isSending)
-        uiViewController.updateInputBarYOffset(inputBarYOffset)
-        uiViewController.updateBottomMessageGap(bottomMessageGap)
+        uiViewController.updateInputBarYOffset(resolvedInputBarYOffset())
+        uiViewController.updateBottomMessageGap(clampedGap)
+    }
+
+    private func resolvedInputBarYOffset() -> CGFloat {
+#if DEBUG
+        if let raw = ProcessInfo.processInfo.environment["CMUX_UITEST_BAR_Y_OFFSET"],
+           let value = Double(raw) {
+            return CGFloat(value)
+        }
+#endif
+        return inputBarYOffset
     }
 }
 
@@ -238,11 +254,14 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     private var debugPillLine: UIView!
     private var debugInfoLabel: UILabel!
     private var debugSettingsObserver: NSObjectProtocol?
+    private var isHandlingInputBarLayout = false
 
     private var messages: [Message]
     private var onSend: ((String) -> Void)?
     private var isSending = false
     private var lastAppliedTopInset: CGFloat = 0
+    private var lastAppliedBottomInset: CGFloat?
+    private var lastAppliedPillTopY: CGFloat?
     private var lastContentHeight: CGFloat = 0
     private var hasUserScrolled = false
     private var didInitialScrollToBottom = false
@@ -250,7 +269,6 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     private var inputBarYOffset: CGFloat
     private var bottomMessageGap: CGFloat
     private var inputBarBottomConstraint: NSLayoutConstraint!
-    private var inputBarHeightConstraint: NSLayoutConstraint!
     private var contentStackBottomConstraint: NSLayoutConstraint!
     private var contentStackTopConstraint: NSLayoutConstraint!
     private var contentStackMinHeightConstraint: NSLayoutConstraint!
@@ -264,8 +282,22 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     private var bottomFadeView: BottomFadeView!
     private var didLogGeometryOnce = false
     private var isKeyboardVisible = false
+    private var isKeyboardAnimating = false
+    private var keyboardAnimationEndWorkItem: DispatchWorkItem?
     private var keyboardAnimationDuration: TimeInterval = 0.25
     private var keyboardAnimationOptions: UIView.AnimationOptions = [.curveEaseInOut, .beginFromCurrentState, .allowUserInteraction]
+    private var isUpdatingBottomInsets = false
+    private var pendingBottomInsetsUpdate = false
+#if DEBUG
+    private let uiTestTrackMessagePositions: Bool = {
+        UITestConfig.mockDataEnabled &&
+            ProcessInfo.processInfo.environment["CMUX_UITEST_TRACK_MESSAGE_POS"] == "1"
+    }()
+    private var uiTestAssistantBottomMarker: UIView?
+    private var uiTestAssistantTextBottomMarker: UIView?
+    private var uiTestBottomInsetMarker: UIView?
+    private var uiTestKeyboardOverlapMarker: UIView?
+#endif
     private let debugAutoFocusInput: Bool = {
         #if DEBUG
         if let value = ProcessInfo.processInfo.environment["CMUX_DEBUG_AUTOFOCUS"] {
@@ -331,16 +363,47 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     private var pendingInteractiveDismissalAnchor: InteractiveDismissalAnchor?
     private let interactiveDismissalActivationDelta: CGFloat = 0
     private var lastKeyboardOverlap: CGFloat?
+    private var lockedKeyboardOverlap: CGFloat?
+    private var lockedPillBottomY: CGFloat?
     private var didConfigureInteractivePopGesture = false
 #if DEBUG
     private let uiTestFakeKeyboardEnabled: Bool = {
         let value = ProcessInfo.processInfo.environment["CMUX_UITEST_FAKE_KEYBOARD"] ?? "0"
         return value == "1" || value.lowercased() == "true"
     }()
-    private let uiTestFakeKeyboardInitialOverlap: CGFloat = {
+    private let uiTestFakeKeyboardAutoOpenDelay: TimeInterval? = {
+        guard let raw = ProcessInfo.processInfo.environment["CMUX_UITEST_FAKE_KEYBOARD_AUTO_OPEN_DELAY"],
+              let value = Double(raw) else {
+            return nil
+        }
+        return max(0, value)
+    }()
+    private let uiTestFakeKeyboardAutoCloseDelay: TimeInterval? = {
+        guard let raw = ProcessInfo.processInfo.environment["CMUX_UITEST_FAKE_KEYBOARD_AUTO_CLOSE_DELAY"],
+              let value = Double(raw) else {
+            return nil
+        }
+        return max(0, value)
+    }()
+    private var uiTestKeyboardVisibilityOverride: Bool?
+    private let uiTestFakeKeyboardInitialOverlap: CGFloat? = {
         guard let raw = ProcessInfo.processInfo.environment["CMUX_UITEST_FAKE_KEYBOARD_INITIAL_OVERLAP"],
               let value = Double(raw) else {
-            return 0
+            return nil
+        }
+        return CGFloat(max(0, value))
+    }()
+    private let uiTestFakeKeyboardOpenOverlap: CGFloat = {
+        guard let raw = ProcessInfo.processInfo.environment["CMUX_UITEST_FAKE_KEYBOARD_OPEN_OVERLAP"],
+              let value = Double(raw) else {
+            return 335
+        }
+        return CGFloat(max(0, value))
+    }()
+    private let uiTestFakeKeyboardClosedOverlap: CGFloat? = {
+        guard let raw = ProcessInfo.processInfo.environment["CMUX_UITEST_FAKE_KEYBOARD_CLOSED_OVERLAP"],
+              let value = Double(raw) else {
+            return nil
         }
         return CGFloat(max(0, value))
     }()
@@ -350,18 +413,21 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     private var uiTestKeyboardStepDownButton: UIButton?
     private var uiTestKeyboardStepUpButton: UIButton?
     private var uiTestLastDismissTranslation: CGFloat = 0
+    private var uiTestKeyboardFocusButton: UIButton?
+    private var uiTestKeyboardDismissButton: UIButton?
+    private var didScheduleUiTestKeyboardAutoCycle = false
 #endif
 
     init(
         messages: [Message],
         onSend: ((String) -> Void)? = nil,
         inputBarYOffset: CGFloat = 0,
-        bottomMessageGap: CGFloat = 16
+        bottomMessageGap: CGFloat = 10
     ) {
         self.messages = messages
         self.onSend = onSend
         self.inputBarYOffset = inputBarYOffset
-        self.bottomMessageGap = bottomMessageGap
+        self.bottomMessageGap = max(-20, min(120, bottomMessageGap))
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -383,7 +449,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     }
 
     func updateBottomMessageGap(_ gap: CGFloat) {
-        let clampedGap = max(-80, min(80, gap))
+        let clampedGap = max(-20, min(120, gap))
         if abs(bottomMessageGap - clampedGap) < 0.5 {
             return
         }
@@ -466,6 +532,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         setupScrollView()
         setupInputBar()
         setupDebugOverlay()
+        setupUiTestMarkers()
         observeDebugSettingsChanges()
         setupTopFade()
         setupBottomFade()
@@ -494,6 +561,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         super.viewDidAppear(animated)
         enableInteractivePopGesture()
         #if DEBUG
+        scheduleUiTestKeyboardAutoCycleIfNeeded()
         if debugAutoFocusInput {
             let focusWork: () -> Void = { [weak self] in
                 self?.inputBarVC.setFocused(true)
@@ -578,7 +646,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     private func setupScrollView() {
         scrollView = UIScrollView()
         scrollView.alwaysBounceVertical = true
-        scrollView.keyboardDismissMode = .interactive
+        scrollView.keyboardDismissMode = .none
         scrollView.showsVerticalScrollIndicator = false
         scrollView.backgroundColor = .clear
         scrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -663,12 +731,15 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         }
         inputBarVC.onLayoutChange = { [weak self] in
             guard let self else { return }
-            DispatchQueue.main.async {
-                UIView.performWithoutAnimation {
-                    self.updateBottomInsetsForKeyboard()
-                }
+            if self.isHandlingInputBarLayout {
+                return
             }
+            self.isHandlingInputBarLayout = true
+            defer { self.isHandlingInputBarLayout = false }
+            self.updateBottomInsetsForKeyboard(animateHeightChanges: false)
         }
+        inputBarVC.view.setContentCompressionResistancePriority(.required, for: .vertical)
+        inputBarVC.view.setContentHuggingPriority(.required, for: .vertical)
 
         addChild(inputBarVC)
         view.addSubview(inputBarVC.view)
@@ -718,6 +789,70 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         view.addSubview(debugGreenLabel)
         view.addSubview(debugInfoLabel)
         updateDebugOverlayVisibility()
+#endif
+    }
+
+    private func setupUiTestMarkers() {
+#if DEBUG
+        guard uiTestTrackMessagePositions else { return }
+        let marker = UIView()
+        marker.translatesAutoresizingMaskIntoConstraints = true
+        marker.backgroundColor = .clear
+        marker.isUserInteractionEnabled = false
+        marker.isAccessibilityElement = true
+        marker.accessibilityIdentifier = "chat.lastAssistantMessageBottom"
+        view.addSubview(marker)
+        uiTestAssistantBottomMarker = marker
+        let textMarker = UIView()
+        textMarker.translatesAutoresizingMaskIntoConstraints = true
+        textMarker.backgroundColor = .clear
+        textMarker.isUserInteractionEnabled = false
+        textMarker.isAccessibilityElement = true
+        textMarker.accessibilityIdentifier = "chat.lastAssistantTextBottom"
+        view.addSubview(textMarker)
+        uiTestAssistantTextBottomMarker = textMarker
+        let insetMarker = UIView()
+        insetMarker.translatesAutoresizingMaskIntoConstraints = true
+        insetMarker.backgroundColor = .clear
+        insetMarker.isUserInteractionEnabled = false
+        insetMarker.isAccessibilityElement = true
+        insetMarker.accessibilityIdentifier = "chat.bottomInsetValue"
+        view.addSubview(insetMarker)
+        uiTestBottomInsetMarker = insetMarker
+        let overlapMarker = UIView()
+        overlapMarker.translatesAutoresizingMaskIntoConstraints = true
+        overlapMarker.backgroundColor = .clear
+        overlapMarker.isUserInteractionEnabled = false
+        overlapMarker.isAccessibilityElement = true
+        overlapMarker.accessibilityIdentifier = "chat.keyboardOverlapValue"
+        view.addSubview(overlapMarker)
+        uiTestKeyboardOverlapMarker = overlapMarker
+        let focusButton = UIButton(type: .custom)
+        focusButton.translatesAutoresizingMaskIntoConstraints = false
+        focusButton.alpha = 0.2
+        focusButton.isAccessibilityElement = true
+        focusButton.accessibilityIdentifier = "chat.keyboard.focus"
+        focusButton.addTarget(self, action: #selector(handleUiTestKeyboardFocus), for: .touchUpInside)
+        view.addSubview(focusButton)
+        uiTestKeyboardFocusButton = focusButton
+        let dismissButton = UIButton(type: .custom)
+        dismissButton.translatesAutoresizingMaskIntoConstraints = false
+        dismissButton.alpha = 0.2
+        dismissButton.isAccessibilityElement = true
+        dismissButton.accessibilityIdentifier = "chat.keyboard.dismiss"
+        dismissButton.addTarget(self, action: #selector(handleUiTestKeyboardDismiss), for: .touchUpInside)
+        view.addSubview(dismissButton)
+        uiTestKeyboardDismissButton = dismissButton
+        NSLayoutConstraint.activate([
+            focusButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+            focusButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -8),
+            focusButton.widthAnchor.constraint(equalToConstant: 44),
+            focusButton.heightAnchor.constraint(equalToConstant: 44),
+            dismissButton.topAnchor.constraint(equalTo: focusButton.bottomAnchor, constant: 8),
+            dismissButton.trailingAnchor.constraint(equalTo: focusButton.trailingAnchor),
+            dismissButton.widthAnchor.constraint(equalToConstant: 44),
+            dismissButton.heightAnchor.constraint(equalToConstant: 44)
+        ])
 #endif
     }
 
@@ -771,6 +906,50 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
 #endif
     }
 
+    private func updateUiTestMarkers() {
+#if DEBUG
+        guard let marker = uiTestAssistantBottomMarker else { return }
+        let frame = lastAssistantMessageFrameInView()
+        if frame == .zero {
+            marker.frame = .zero
+            uiTestAssistantTextBottomMarker?.frame = .zero
+            if let insetMarker = uiTestBottomInsetMarker {
+                insetMarker.frame = .zero
+                insetMarker.accessibilityValue = "0"
+            }
+            if let overlapMarker = uiTestKeyboardOverlapMarker {
+                overlapMarker.frame = .zero
+                overlapMarker.accessibilityValue = "0"
+            }
+            return
+        }
+        let scale = max(1, view.traitCollection.displayScale)
+        let bottomY = pixelAlign(frame.maxY, scale: scale)
+        let assistantTextBottom = max(
+            0,
+            pixelAlign(
+                frame.maxY - MarkdownLayoutConfig.default.assistantMessageBottomPadding,
+                scale: scale
+            )
+        )
+        let clampedX = max(0, min(frame.minX, view.bounds.maxX - 1))
+        marker.frame = CGRect(x: clampedX, y: bottomY - 1, width: 1, height: 1)
+        if let textMarker = uiTestAssistantTextBottomMarker {
+            textMarker.frame = CGRect(x: clampedX, y: assistantTextBottom - 1, width: 1, height: 1)
+        }
+        if let insetMarker = uiTestBottomInsetMarker {
+            let insetHeight = pixelAlign(scrollView.contentInset.bottom, scale: scale)
+            insetMarker.frame = CGRect(x: 0, y: 0, width: 1, height: insetHeight)
+            insetMarker.accessibilityValue = String(format: "%.1f", insetHeight)
+        }
+        if let overlapMarker = uiTestKeyboardOverlapMarker {
+            let overlap = pixelAlign(currentKeyboardOverlap(), scale: scale)
+            overlapMarker.frame = CGRect(x: 0, y: 0, width: 1, height: overlap)
+            overlapMarker.accessibilityValue = String(format: "%.1f", overlap)
+        }
+#endif
+    }
+
     private func setupTopFade() {
         topFadeView = TopFadeView()
         topFadeView.translatesAutoresizingMaskIntoConstraints = false
@@ -786,10 +965,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
     }
 
     private func setupConstraints() {
-        inputBarBottomConstraint = inputBarVC.view.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor, constant: 0)
-        inputBarHeightConstraint = inputBarVC.view.heightAnchor.constraint(
-            equalToConstant: DebugInputBarMetrics.inputHeight + DebugInputBarMetrics.topPadding + 28
-        )
+        inputBarBottomConstraint = inputBarVC.view.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: 0)
         contentStackBottomConstraint = contentStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: 0)
         contentStackTopConstraint = contentStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 0)
         contentStackMinHeightConstraint = contentStack.heightAnchor.constraint(greaterThanOrEqualTo: scrollView.frameLayoutGuide.heightAnchor, constant: 0)
@@ -817,7 +993,6 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
             inputBarVC.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             inputBarVC.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             inputBarBottomConstraint,
-            inputBarHeightConstraint,
 
             topFadeView.topAnchor.constraint(equalTo: view.topAnchor),
             topFadeView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -842,9 +1017,12 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         }
         updateTopFadeHeightIfNeeded()
         updateTopInsetIfNeeded()
-        updateBottomInsetsForKeyboard()
+        let keyboardAnimating = isKeyboardAnimating
+        updateBottomInsetsForKeyboard(animated: keyboardAnimating)
         updateContentMinHeightIfNeeded()
-        clampContentOffsetIfNeeded(keyboardOverlap: currentKeyboardOverlap())
+        if !keyboardAnimating {
+            clampContentOffsetIfNeeded(keyboardOverlap: currentKeyboardOverlap())
+        }
         maybeScrollToBottomIfNeeded()
         let scale = max(1, view.traitCollection.displayScale)
         let pillTopY = currentPillTopY(scale: scale)
@@ -852,6 +1030,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         lastLayoutPillTopY = pillTopY
         logContentGeometry(reason: "viewDidLayoutSubviews")
         logVisibleMessages(reason: "viewDidLayoutSubviews")
+        updateUiTestMarkers()
         if !didLogGeometryOnce, view.window != nil {
             didLogGeometryOnce = true
             logContentGeometry(reason: "layoutOnce")
@@ -919,25 +1098,64 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         return size.height
     }
 
-    private func updateBottomInsetsForKeyboard(animated: Bool = false) {
+    private func updateBottomInsetsForKeyboard(
+        animated: Bool = false,
+        animateHeightChanges _: Bool = false,
+        force: Bool = false
+    ) {
+        if !force {
+            if isUpdatingBottomInsets {
+                pendingBottomInsetsUpdate = true
+                return
+            }
+            if isKeyboardAnimating && !animated {
+                pendingBottomInsetsUpdate = true
+                return
+            }
+        }
+        isUpdatingBottomInsets = true
+        defer {
+            isUpdatingBottomInsets = false
+            if pendingBottomInsetsUpdate {
+                if !isKeyboardAnimating {
+                    pendingBottomInsetsUpdate = false
+                    DispatchQueue.main.async { [weak self] in
+                        self?.updateBottomInsetsForKeyboard()
+                    }
+                }
+            }
+        }
         let scale = max(1, view.traitCollection.displayScale)
         view.layoutIfNeeded()
         let oldPillFrame = computedPillFrameInView()
         let currentPillTopY = pixelAlign(inputBarVC.view.frame.minY + oldPillFrame.minY, scale: scale)
-        let liveOldPillTopY = animated ? currentPillTopY : (lastLayoutPillTopY ?? currentPillTopY)
+        let fallbackOldPillTopY = lastLayoutPillTopY ?? currentPillTopY
+        let liveOldPillTopY = animated ? currentPillTopY : (lastAppliedPillTopY ?? fallbackOldPillTopY)
         let liveOldOffsetY = scrollView.contentOffset.y
-        let liveOldMaxOffsetY = max(0, scrollView.contentSize.height - scrollView.bounds.height + scrollView.contentInset.bottom)
+        let oldBottomInset = lastAppliedBottomInset ?? scrollView.contentInset.bottom
+        let liveOldMaxOffsetY = max(0, scrollView.contentSize.height - scrollView.bounds.height + oldBottomInset)
         let liveDistanceFromBottom = max(0, liveOldMaxOffsetY - liveOldOffsetY)
-        let oldBottomInset = scrollView.contentInset.bottom
-        let liveIsAtBottom = liveDistanceFromBottom <= 1
+        let desiredGap: CGFloat = max(-20, min(120, bottomMessageGap))
+        let bottomAnchorTolerance = max(2, desiredGap)
+        let liveIsAtBottom = liveDistanceFromBottom <= bottomAnchorTolerance
         let transitionSnapshot = pendingKeyboardTransition
         let useTransitionSnapshot = transitionSnapshot?.applied == false
         let oldPillTopY = useTransitionSnapshot ? (transitionSnapshot?.oldPillTopY ?? liveOldPillTopY) : liveOldPillTopY
         let oldOffsetY = useTransitionSnapshot ? (transitionSnapshot?.oldOffsetY ?? liveOldOffsetY) : liveOldOffsetY
         let rawDistanceFromBottom = useTransitionSnapshot ? (transitionSnapshot?.distanceFromBottom ?? liveDistanceFromBottom) : liveDistanceFromBottom
-        let wasAnchoredToBottom = (useTransitionSnapshot ? (transitionSnapshot?.wasAtBottom ?? liveIsAtBottom) : liveIsAtBottom)
-            && !scrollView.isDragging
-            && !scrollView.isDecelerating
+        let isScrollIdle = !scrollView.isDragging && !scrollView.isDecelerating
+        let shouldAssumeBottom = !hasUserScrolled && isScrollIdle
+        let lastMessageIndex = messageArrangedViews().count - 1
+        let lastMessageGap = lastMessageIndex >= 0
+            ? anchorSample(index: lastMessageIndex, pillTopY: oldPillTopY)?.gap
+            : nil
+        let gapAnchored = lastMessageGap.map { gap in
+            gap >= 0 && abs(gap - desiredGap) <= bottomAnchorTolerance
+        } ?? false
+        let wasAnchoredToBottom = isScrollIdle
+            && ((useTransitionSnapshot ? (transitionSnapshot?.wasAtBottom ?? liveIsAtBottom) : liveIsAtBottom)
+                || gapAnchored
+                || shouldAssumeBottom)
         let visibleAnchorIndex = {
             let anchor = visibleMessageAnchor()
             return anchor.index >= 0 ? anchor.index : nil
@@ -949,33 +1167,61 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         let applyUpdates = { [weak self] in
             guard let self else { return }
             self.view.layoutIfNeeded()
-            let keyboardFrame = self.view.keyboardLayoutGuide.layoutFrame
-            let safeBottom = self.view.window?.safeAreaInsets.bottom ?? self.view.safeAreaInsets.bottom
-            let keyboardOverlap: CGFloat
+            let measuredOverlap: CGFloat
+            let guideVisible: Bool
             #if DEBUG
             if let uiTestKeyboardOverlap = self.uiTestKeyboardOverlap {
-                keyboardOverlap = uiTestKeyboardOverlap
+                measuredOverlap = uiTestKeyboardOverlap
+                if let visibilityOverride = self.uiTestKeyboardVisibilityOverride {
+                    guideVisible = visibilityOverride
+                } else {
+                    guideVisible = uiTestKeyboardOverlap > 1
+                }
             } else {
-                keyboardOverlap = max(0, keyboardFrame.height - safeBottom)
+                let resolved = self.keyboardOverlapFromLayoutGuide()
+                measuredOverlap = resolved.overlap
+                guideVisible = resolved.isVisible
             }
             #else
-            keyboardOverlap = max(0, keyboardFrame.height - safeBottom)
+            let resolved = self.keyboardOverlapFromLayoutGuide()
+            measuredOverlap = resolved.overlap
+            guideVisible = resolved.isVisible
             #endif
-            let keyboardVisible = keyboardOverlap > 1
-            let newInputBarConstant: CGFloat
-            #if DEBUG
-            if self.uiTestKeyboardOverlap != nil {
-                newInputBarConstant = -keyboardOverlap
+            let keyboardOverlap: CGFloat
+            let shouldUseLockedOverlap = !animated
+                && guideVisible
+                && self.lockedKeyboardOverlap != nil
+                && !self.scrollView.isTracking
+                && !self.scrollView.isDecelerating
+            if shouldUseLockedOverlap, let lockedOverlap = self.lockedKeyboardOverlap {
+                keyboardOverlap = lockedOverlap
             } else {
-                newInputBarConstant = 0
+                keyboardOverlap = measuredOverlap
             }
-            #else
-            newInputBarConstant = 0
-            #endif
+            let keyboardVisible = guideVisible && keyboardOverlap > 1
+            let newInputBarConstant = -keyboardOverlap
             let effectiveBarYOffset = keyboardVisible ? min(0, self.inputBarYOffset) : self.inputBarYOffset
             let adjustedInputBarConstant = newInputBarConstant + effectiveBarYOffset
             let keyboardIsMovingDown = self.keyboardIsMovingDown(current: keyboardOverlap)
             let gestureIsDismissing = self.isDismissingKeyboardGesture()
+            if !animated {
+                if keyboardVisible, self.lockedKeyboardOverlap == nil {
+                    self.lockedKeyboardOverlap = keyboardOverlap
+                    #if DEBUG
+                    DebugLog.addDedup("keyboard.lock", "Locked keyboard overlap \(String(format: "%.1f", keyboardOverlap))")
+                    #endif
+                } else if !keyboardVisible {
+                    self.lockedKeyboardOverlap = nil
+                    #if DEBUG
+                    DebugLog.addDedup("keyboard.lock", "Cleared keyboard overlap lock")
+                    #endif
+                }
+            }
+            #if DEBUG
+            if keyboardVisible != self.isKeyboardVisible {
+                DebugLog.addDedup("keyboard.visibility", "Keyboard visibility change target=\(keyboardVisible) measured=\(String(format: "%.1f", measuredOverlap)) overlap=\(String(format: "%.1f", keyboardOverlap)) adjustedConst=\(String(format: "%.1f", adjustedInputBarConstant)) barYOffset=\(String(format: "%.1f", self.inputBarYOffset))")
+            }
+            #endif
             self.updateInteractiveDismissalAnchorIfNeeded(
                 keyboardOverlap: keyboardOverlap,
                 keyboardIsMovingDown: keyboardIsMovingDown,
@@ -983,39 +1229,40 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
             )
             self.lastKeyboardOverlap = keyboardOverlap
 
-            var needsLayout = false
-            var didToggleKeyboard = false
-            if animated {
-                let wasKeyboardVisible = self.isKeyboardVisible
-                if keyboardVisible != wasKeyboardVisible {
-                    didToggleKeyboard = true
-                    self.isKeyboardVisible = keyboardVisible
-                    let horizontalPadding: CGFloat = keyboardVisible ? 12 : 20
-                    let bottomPadding: CGFloat = keyboardVisible ? 8 : 28
-                    self.inputBarVC.updateLayout(
-                        horizontalPadding: horizontalPadding,
-                        bottomPadding: bottomPadding,
-                        animationDuration: self.keyboardAnimationDuration
-                    )
-                    needsLayout = true
+            let shouldFreezeKeyboard = keyboardOverlap > 1
+                && self.scrollView.keyboardDismissMode == .interactive
+                && !self.scrollView.isTracking
+                && !self.scrollView.isDecelerating
+            let previousDismissMode = self.scrollView.keyboardDismissMode
+            if shouldFreezeKeyboard {
+                self.scrollView.keyboardDismissMode = .none
+            }
+            defer {
+                if shouldFreezeKeyboard {
+                    self.scrollView.keyboardDismissMode = previousDismissMode
                 }
             }
 
-            if abs(self.inputBarBottomConstraint.constant - adjustedInputBarConstant) > 0.5 {
-                self.inputBarBottomConstraint.constant = adjustedInputBarConstant
+            var needsLayout = false
+            if keyboardVisible != self.isKeyboardVisible {
+                self.isKeyboardVisible = keyboardVisible
+                let horizontalPadding: CGFloat = keyboardVisible ? 12 : 20
+                let bottomPadding: CGFloat = keyboardVisible ? 8 : 28
+                let animationDuration = animated ? self.keyboardAnimationDuration : 0
+                self.inputBarVC.updateLayout(
+                    horizontalPadding: horizontalPadding,
+                    bottomPadding: bottomPadding,
+                    animationDuration: animationDuration
+                )
+                self.lockedKeyboardOverlap = keyboardVisible ? keyboardOverlap : nil
                 needsLayout = true
             }
 
-            let targetBarHeight: CGFloat
-            if didToggleKeyboard {
-                let bottomPadding: CGFloat = keyboardVisible ? 8 : 28
-                targetBarHeight = DebugInputBarMetrics.inputHeight + DebugInputBarMetrics.topPadding + bottomPadding
-            } else {
-                targetBarHeight = self.inputBarVC.preferredHeight(for: self.view.bounds.width)
-            }
-            if targetBarHeight > 1,
-               abs(self.inputBarHeightConstraint.constant - targetBarHeight) > 0.5 {
-                self.inputBarHeightConstraint.constant = targetBarHeight
+            if abs(self.inputBarBottomConstraint.constant - adjustedInputBarConstant) > 0.5 {
+                #if DEBUG
+                DebugLog.addDedup("keyboard.bottom", "InputBar bottom constant \(String(format: "%.1f", self.inputBarBottomConstraint.constant)) -> \(String(format: "%.1f", adjustedInputBarConstant)) keyboardVisible=\(keyboardVisible)")
+                #endif
+                self.inputBarBottomConstraint.constant = adjustedInputBarConstant
                 needsLayout = true
             }
 
@@ -1023,27 +1270,54 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
                 self.view.layoutIfNeeded()
             }
 
+            let isInteractiveDismissal = keyboardOverlap > 1
+                && self.isInteractiveDismissalActive
+                && self.interactiveDismissalAnchor != nil
+
+            var pillFrame = self.computedPillFrameInView()
+            var pillTopY = self.pixelAlign(self.inputBarVC.view.frame.minY + pillFrame.minY, scale: scale)
+            var pillBottomY = self.pixelAlign(self.inputBarVC.view.frame.minY + pillFrame.maxY, scale: scale)
+            let shouldLockPillBottom = !animated
+                && keyboardVisible
+                && keyboardOverlap > 1
+                && !self.keyboardIsMoving(current: keyboardOverlap)
+                && !self.scrollView.isTracking
+                && !self.scrollView.isDecelerating
+                && !isInteractiveDismissal
+                && !gestureIsDismissing
+            if shouldLockPillBottom {
+                if let lockedBottom = self.lockedPillBottomY {
+                    let delta = self.pixelAlign(lockedBottom - pillBottomY, scale: scale)
+                    if abs(delta) > 0.1 {
+                        self.inputBarBottomConstraint.constant += delta
+                        self.view.layoutIfNeeded()
+                        pillFrame = self.computedPillFrameInView()
+                        pillTopY = self.pixelAlign(self.inputBarVC.view.frame.minY + pillFrame.minY, scale: scale)
+                        pillBottomY = self.pixelAlign(self.inputBarVC.view.frame.minY + pillFrame.maxY, scale: scale)
+                    }
+                } else {
+                    self.lockedPillBottomY = pillBottomY
+                }
+            } else {
+                self.lockedPillBottomY = nil
+            }
+            #if DEBUG
+            let keyboardFrame = self.view.keyboardLayoutGuide.layoutFrame
+            #endif
+            let viewBottomY = self.pixelAlign(self.view.bounds.maxY, scale: scale)
+            let belowPillGap = max(0, viewBottomY - pillBottomY)
+            let targetExtraSpacerHeight = self.pixelAlign(desiredGap, scale: scale)
+            let targetBottomSpacerHeight = self.pixelAlign(pillFrame.height, scale: scale)
+            let targetBelowPillHeight = self.pixelAlign(belowPillGap, scale: scale)
+            let targetBottomInset = self.pixelAlign(max(0, viewBottomY - pillTopY + desiredGap), scale: scale)
             let naturalHeight = self.naturalContentHeight()
             let fitsAboveInput = self.contentFitsAboveInput(
                 contentHeight: naturalHeight,
                 boundsHeight: self.scrollView.bounds.height,
                 topInset: self.scrollView.adjustedContentInset.top,
-                bottomInset: self.scrollView.contentInset.bottom
+                bottomInset: targetBottomInset
             )
-            let shouldAnchorToBottom = wasAnchoredToBottom && !fitsAboveInput
-            let isInteractiveDismissal = keyboardOverlap > 1
-                && self.isInteractiveDismissalActive
-                && self.interactiveDismissalAnchor != nil
-
-            let desiredGap: CGFloat = self.bottomMessageGap
-            let pillFrame = self.computedPillFrameInView()
-            let pillTopY = self.pixelAlign(self.inputBarVC.view.frame.minY + pillFrame.minY, scale: scale)
-            let pillBottomY = self.pixelAlign(self.inputBarVC.view.frame.minY + pillFrame.maxY, scale: scale)
-            let belowPillGap = max(0, self.view.bounds.maxY - pillBottomY)
-            let targetExtraSpacerHeight = self.pixelAlign(desiredGap, scale: scale)
-            let targetBottomSpacerHeight = self.pixelAlign(pillFrame.height, scale: scale)
-            let targetBelowPillHeight = self.pixelAlign(belowPillGap, scale: scale)
-            let targetBottomInset = self.pixelAlign(max(0, self.view.bounds.maxY - pillTopY + desiredGap), scale: scale)
+            let shouldAnchorToBottom = wasAnchoredToBottom && (!fitsAboveInput || gapAnchored)
             if self.extraSpacerHeightConstraint.constant != 0 {
                 self.extraSpacerHeightConstraint.constant = 0
             }
@@ -1058,14 +1332,16 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
             log("CMUX_CHAT_SPACER keyboard=\(keyboardVisible) pillTop=\(pillTopY) pillBottom=\(pillBottomY) belowGap=\(belowPillGap) extra=\(targetExtraSpacerHeight) red=\(targetBottomSpacerHeight) green=\(targetBelowPillHeight) inputBarFrame=\(self.inputBarVC.view.frame)")
             #endif
             if self.scrollView.contentInset.bottom != targetBottomInset {
-            self.scrollView.contentInset.bottom = targetBottomInset
-            self.scrollView.verticalScrollIndicatorInsets.bottom = targetBottomInset
-        }
+                self.scrollView.contentInset.bottom = targetBottomInset
+                self.scrollView.verticalScrollIndicatorInsets.bottom = targetBottomInset
+            }
+            self.lastAppliedBottomInset = targetBottomInset
+            self.lastAppliedPillTopY = pillTopY
 
-        self.view.layoutIfNeeded()
-        self.scrollView.layoutIfNeeded()
+            self.view.layoutIfNeeded()
+            self.scrollView.layoutIfNeeded()
 
-        let newMaxOffsetY = max(0, self.scrollView.contentSize.height - self.scrollView.bounds.height + targetBottomInset)
+            let newMaxOffsetY = max(0, self.scrollView.contentSize.height - self.scrollView.bounds.height + targetBottomInset)
             let deltaInset = targetBottomInset - oldBottomInset
             let deltaPill = pillTopY - oldPillTopY
             let shouldAdjustOffset = animated || abs(deltaPill) > 0.5 || oldAnchorSample != nil || useTransitionSnapshot
@@ -1175,6 +1451,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
                 height: overlayLabelHeight
             )
             let lastMessageFrame = self.lastMessageFrameInView()
+            let lastAssistantFrame = self.lastAssistantMessageFrameInView()
             let gapToPill = lastMessageFrame == .zero ? 0 : (pillTopY - lastMessageFrame.maxY)
             let expectedHeight = self.inputBarVC.contentTopInset + self.inputBarVC.contentBottomInset + DebugInputBarMetrics.inputHeight
             let extra = max(0, self.inputBarVC.view.bounds.height - expectedHeight)
@@ -1188,6 +1465,25 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
             let pillDelta = self.lastPillTopYClosed == nil || self.lastPillTopYOpen == nil ? 0 : (pillTopOpen - pillTopClosed)
             let anchorIndex = self.lastAnchorIndexUsed ?? (self.anchorCandidateIndex(pillTopY: pillTopY) ?? -1)
             let anchorGap = self.anchorSample(index: anchorIndex, pillTopY: pillTopY)?.gap ?? 0
+            let lastMessageBottom = lastMessageFrame == .zero ? 0 : self.pixelAlign(lastMessageFrame.maxY, scale: scale)
+            let lastAssistantBottom = lastAssistantFrame == .zero ? 0 : self.pixelAlign(lastAssistantFrame.maxY, scale: scale)
+            let assistantGapToPill = lastAssistantFrame == .zero ? 0 : (pillTopY - lastAssistantBottom)
+            DebugLog.addDedup(
+                "chat.position",
+                String(
+                    format: "Chat position pillTop=%.1f pillBottom=%.1f lastMsgBottom=%.1f lastAsstBottom=%.1f gapAsst=%.1f bottomInset=%.1f contentH=%.1f boundsH=%.1f inputBarY=%.1f inputBarH=%.1f",
+                    pillTopY,
+                    pillBottomY,
+                    lastMessageBottom,
+                    lastAssistantBottom,
+                    assistantGapToPill,
+                    self.scrollView.contentInset.bottom,
+                    self.scrollView.contentSize.height,
+                    self.scrollView.bounds.height,
+                    self.inputBarVC.view.frame.minY,
+                    self.inputBarVC.view.bounds.height
+                )
+            )
             self.debugInfoLabel.text = String(
                 format: "barH=%.1f pillY=%.1f pillH=%.1f gap=%.1f\nmeasY=%.1f measH=%.1f extra=%.1f below=%.1f\nkbdH=%.1f kbdMinY=%.1f kbdVis=%@ dist=%.1f anchor=%@ idx=%d aGap=%.1f %@ %@ %@ pΔ=%.1f",
                 self.inputBarVC.view.bounds.height,
@@ -1247,6 +1543,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
             self.view.bringSubviewToFront(self.debugInfoLabel)
             self.updateDebugOverlayVisibility()
             #endif
+            self.updateUiTestMarkers()
         }
 
         if animated {
@@ -1320,6 +1617,10 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         let isInteractiveDismiss = isDismissingKeyboardGesture()
             || scrollView.isTracking
             || scrollView.isDecelerating
+        let visibilityChanged = willBeVisible != isKeyboardVisible
+        if !visibilityChanged && !isInteractiveDismiss {
+            return
+        }
         let duration: Double
         if rawDuration > 0 {
             duration = rawDuration
@@ -1332,6 +1633,24 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         let curve = UIView.AnimationOptions(rawValue: UInt(curveRaw << 16))
         keyboardAnimationDuration = duration
         keyboardAnimationOptions = [curve, .beginFromCurrentState, .allowUserInteraction]
+        if duration > 0 {
+            isKeyboardAnimating = true
+            keyboardAnimationEndWorkItem?.cancel()
+            let workItem = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                self.isKeyboardAnimating = false
+                if self.pendingBottomInsetsUpdate {
+                    self.pendingBottomInsetsUpdate = false
+                    self.updateBottomInsetsForKeyboard()
+                }
+            }
+            keyboardAnimationEndWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.01, execute: workItem)
+        } else {
+            isKeyboardAnimating = false
+            keyboardAnimationEndWorkItem?.cancel()
+            keyboardAnimationEndWorkItem = nil
+        }
         pendingKeyboardWillChange(userInfo)
         prepareKeyboardTransitionSnapshot()
 
@@ -1387,7 +1706,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         view.layoutIfNeeded()
         let scale = max(1, view.traitCollection.displayScale)
         let currentPillTopY = self.currentPillTopY(scale: scale)
-        let previousPillTopY = previousLayoutPillTopY
+        let previousPillTopY = lastAppliedPillTopY ?? previousLayoutPillTopY
         let oldPillTopY: CGFloat
         if let previousPillTopY, abs(currentPillTopY - previousPillTopY) > 1 {
             oldPillTopY = previousPillTopY
@@ -1395,9 +1714,19 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
             oldPillTopY = currentPillTopY
         }
         let oldOffsetY = scrollView.contentOffset.y
-        let oldMaxOffsetY = max(0, scrollView.contentSize.height - scrollView.bounds.height + scrollView.contentInset.bottom)
+        let effectiveBottomInset = lastAppliedBottomInset ?? scrollView.contentInset.bottom
+        let oldMaxOffsetY = max(0, scrollView.contentSize.height - scrollView.bounds.height + effectiveBottomInset)
         let distanceFromBottom = max(0, oldMaxOffsetY - oldOffsetY)
-        let wasAtBottom = distanceFromBottom <= 1
+        let desiredGap = max(-20, min(120, bottomMessageGap))
+        let bottomAnchorTolerance = max(2, desiredGap)
+        let lastMessageIndex = messageArrangedViews().count - 1
+        let lastMessageGap = lastMessageIndex >= 0
+            ? anchorSample(index: lastMessageIndex, pillTopY: oldPillTopY)?.gap
+            : nil
+        let gapAnchored = lastMessageGap.map { gap in
+            gap >= 0 && abs(gap - desiredGap) <= bottomAnchorTolerance
+        } ?? false
+        let wasAtBottom = distanceFromBottom <= bottomAnchorTolerance || gapAnchored
         pendingKeyboardTransition = KeyboardTransition(
             oldPillTopY: oldPillTopY,
             oldOffsetY: oldOffsetY,
@@ -1470,16 +1799,39 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         guard uiTestFakeKeyboardEnabled else { return }
         let stepDown = UIButton(type: .custom)
         stepDown.translatesAutoresizingMaskIntoConstraints = false
-        stepDown.alpha = 0.01
+        stepDown.alpha = 0.2
+        stepDown.isAccessibilityElement = true
         stepDown.accessibilityIdentifier = "chat.fakeKeyboard.stepDown"
         stepDown.addTarget(self, action: #selector(handleUiTestKeyboardStepDown), for: .touchUpInside)
         view.addSubview(stepDown)
         let stepUp = UIButton(type: .custom)
         stepUp.translatesAutoresizingMaskIntoConstraints = false
-        stepUp.alpha = 0.01
+        stepUp.alpha = 0.2
+        stepUp.isAccessibilityElement = true
         stepUp.accessibilityIdentifier = "chat.fakeKeyboard.stepUp"
         stepUp.addTarget(self, action: #selector(handleUiTestKeyboardStepUp), for: .touchUpInside)
         view.addSubview(stepUp)
+        let snapOpen = UIButton(type: .custom)
+        snapOpen.translatesAutoresizingMaskIntoConstraints = false
+        snapOpen.alpha = 0.2
+        snapOpen.isAccessibilityElement = true
+        snapOpen.accessibilityIdentifier = "chat.fakeKeyboard.snapOpen"
+        snapOpen.addTarget(self, action: #selector(handleUiTestKeyboardSnapOpen), for: .touchUpInside)
+        view.addSubview(snapOpen)
+        let snapZero = UIButton(type: .custom)
+        snapZero.translatesAutoresizingMaskIntoConstraints = false
+        snapZero.alpha = 0.2
+        snapZero.isAccessibilityElement = true
+        snapZero.accessibilityIdentifier = "chat.fakeKeyboard.snapZero"
+        snapZero.addTarget(self, action: #selector(handleUiTestKeyboardSnapZero), for: .touchUpInside)
+        view.addSubview(snapZero)
+        let snapClosed = UIButton(type: .custom)
+        snapClosed.translatesAutoresizingMaskIntoConstraints = false
+        snapClosed.alpha = 0.2
+        snapClosed.isAccessibilityElement = true
+        snapClosed.accessibilityIdentifier = "chat.fakeKeyboard.snapClosed"
+        snapClosed.addTarget(self, action: #selector(handleUiTestKeyboardSnapClosed), for: .touchUpInside)
+        view.addSubview(snapClosed)
         uiTestKeyboardStepDownButton = stepDown
         uiTestKeyboardStepUpButton = stepUp
 
@@ -1491,11 +1843,24 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
             stepUp.topAnchor.constraint(equalTo: stepDown.bottomAnchor, constant: 8),
             stepUp.leadingAnchor.constraint(equalTo: stepDown.leadingAnchor),
             stepUp.widthAnchor.constraint(equalToConstant: 44),
-            stepUp.heightAnchor.constraint(equalToConstant: 44)
+            stepUp.heightAnchor.constraint(equalToConstant: 44),
+            snapOpen.topAnchor.constraint(equalTo: stepUp.bottomAnchor, constant: 8),
+            snapOpen.leadingAnchor.constraint(equalTo: stepDown.leadingAnchor),
+            snapOpen.widthAnchor.constraint(equalToConstant: 44),
+            snapOpen.heightAnchor.constraint(equalToConstant: 44),
+            snapZero.topAnchor.constraint(equalTo: snapOpen.bottomAnchor, constant: 8),
+            snapZero.leadingAnchor.constraint(equalTo: stepDown.leadingAnchor),
+            snapZero.widthAnchor.constraint(equalToConstant: 44),
+            snapZero.heightAnchor.constraint(equalToConstant: 44),
+            snapClosed.topAnchor.constraint(equalTo: snapZero.bottomAnchor, constant: 8),
+            snapClosed.leadingAnchor.constraint(equalTo: stepDown.leadingAnchor),
+            snapClosed.widthAnchor.constraint(equalToConstant: 44),
+            snapClosed.heightAnchor.constraint(equalToConstant: 44)
         ])
 
-        if uiTestFakeKeyboardInitialOverlap > 0 {
-            uiTestKeyboardOverlap = uiTestFakeKeyboardInitialOverlap
+        if let initialOverlap = uiTestFakeKeyboardInitialOverlap {
+            uiTestKeyboardOverlap = initialOverlap
+            uiTestKeyboardVisibilityOverride = false
             DispatchQueue.main.async { [weak self] in
                 self?.applyUiTestKeyboardOverlap(animated: true)
             }
@@ -1504,20 +1869,66 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
 
     @objc private func handleUiTestKeyboardStepDown() {
         let current = uiTestKeyboardOverlap ?? 0
+        uiTestKeyboardVisibilityOverride = nil
         uiTestKeyboardOverlap = max(0, current - uiTestKeyboardStep)
         applyUiTestKeyboardOverlap(animated: true)
     }
 
     @objc private func handleUiTestKeyboardStepUp() {
         let current = uiTestKeyboardOverlap ?? 0
+        uiTestKeyboardVisibilityOverride = nil
         uiTestKeyboardOverlap = current + uiTestKeyboardStep
         applyUiTestKeyboardOverlap(animated: true)
     }
 
-    private func applyUiTestKeyboardOverlap(animated: Bool) {
-        uiTestInteractiveDismissalActive = true
-        updateBottomInsetsForKeyboard(animated: animated)
+    @objc private func handleUiTestKeyboardSnapOpen() {
+        uiTestKeyboardVisibilityOverride = true
+        uiTestKeyboardOverlap = uiTestFakeKeyboardOpenOverlap
+        print("uiTest snapOpen overlap=\(uiTestFakeKeyboardOpenOverlap)")
+        applyUiTestKeyboardOverlap(animated: false)
+    }
+
+    @objc private func handleUiTestKeyboardFocus() {
+        inputBarVC.setFocused(true)
+    }
+
+    @objc private func handleUiTestKeyboardDismiss() {
+        dismissKeyboard()
+    }
+
+    @objc private func handleUiTestKeyboardSnapZero() {
+        uiTestKeyboardVisibilityOverride = false
+        uiTestKeyboardOverlap = 0
+        print("uiTest snapZero overlap=0")
+        applyUiTestKeyboardOverlap(animated: false)
+    }
+
+    @objc private func handleUiTestKeyboardSnapClosed() {
+        uiTestKeyboardVisibilityOverride = false
+        let safeAreaOverlap = max(0, view.safeAreaInsets.bottom)
+        let targetOverlap = uiTestFakeKeyboardClosedOverlap ?? safeAreaOverlap
+        uiTestKeyboardOverlap = max(0, targetOverlap)
+        print("uiTest snapClosed overlap=\(uiTestKeyboardOverlap ?? 0)")
+        applyUiTestKeyboardOverlap(animated: false)
+    }
+
+    private func applyUiTestKeyboardOverlap(
+        animated: Bool,
+        treatAsInteractiveDismissal: Bool = false
+    ) {
+        lockedKeyboardOverlap = nil
+        if !treatAsInteractiveDismissal {
+            prepareKeyboardTransitionSnapshot()
+        }
+        uiTestInteractiveDismissalActive = treatAsInteractiveDismissal
+        updateBottomInsetsForKeyboard(animated: animated, force: true)
         uiTestInteractiveDismissalActive = false
+        if animated {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.updateBottomInsetsForKeyboard(animated: true, force: true)
+            }
+        }
     }
 
     private func applyUiTestKeyboardDragIfNeeded() {
@@ -1529,9 +1940,25 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         guard abs(delta) > 0.1 else { return }
         uiTestLastDismissTranslation = translation.y
         uiTestKeyboardOverlap = max(0, overlap - delta)
-        applyUiTestKeyboardOverlap(animated: false)
+        applyUiTestKeyboardOverlap(animated: false, treatAsInteractiveDismissal: true)
         uiTestLastDismissTranslation = 0
         scrollView.panGestureRecognizer.setTranslation(.zero, in: view)
+    }
+
+    private func scheduleUiTestKeyboardAutoCycleIfNeeded() {
+        guard uiTestFakeKeyboardEnabled, !didScheduleUiTestKeyboardAutoCycle else { return }
+        guard uiTestFakeKeyboardAutoOpenDelay != nil || uiTestFakeKeyboardAutoCloseDelay != nil else { return }
+        didScheduleUiTestKeyboardAutoCycle = true
+        if let openDelay = uiTestFakeKeyboardAutoOpenDelay {
+            DispatchQueue.main.asyncAfter(deadline: .now() + openDelay) { [weak self] in
+                self?.handleUiTestKeyboardSnapOpen()
+            }
+        }
+        if let closeDelay = uiTestFakeKeyboardAutoCloseDelay {
+            DispatchQueue.main.asyncAfter(deadline: .now() + closeDelay) { [weak self] in
+                self?.handleUiTestKeyboardSnapClosed()
+            }
+        }
     }
     #endif
 
@@ -1541,9 +1968,17 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
             return uiTestKeyboardOverlap
         }
         #endif
+        let resolved = keyboardOverlapFromLayoutGuide()
+        return resolved.overlap
+    }
+
+    private func keyboardOverlapFromLayoutGuide() -> (overlap: CGFloat, isVisible: Bool) {
         let keyboardFrame = view.keyboardLayoutGuide.layoutFrame
-        let safeBottom = view.window?.safeAreaInsets.bottom ?? view.safeAreaInsets.bottom
-        return max(0, keyboardFrame.height - safeBottom)
+        let safeBottom = view.safeAreaInsets.bottom
+        let viewMaxY = view.bounds.maxY
+        let isVisible = keyboardFrame.minY < viewMaxY - safeBottom - 1
+        let height = max(0, keyboardFrame.height)
+        return (overlap: height, isVisible: isVisible)
     }
 
     private func isDismissingKeyboardGesture() -> Bool {
@@ -1921,8 +2356,15 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         guard !text.isEmpty else { return }
         guard !isSending else { return }
 
+        #if DEBUG
+        DebugLog.addDedup("sendMessage.start", "sendMessage start rawLen=\(inputBarVC.text.count) trimmedLen=\(text.count) keyboardVisible=\(isKeyboardVisible) overlap=\(String(format: "%.1f", currentKeyboardOverlap())) inputBarConst=\(String(format: "%.1f", inputBarBottomConstraint.constant))")
+        #endif
+
         // Clear input immediately for better UX
         inputBarVC.clearText()
+        #if DEBUG
+        DebugLog.addDedup("sendMessage.cleared", "sendMessage cleared input keyboardVisible=\(isKeyboardVisible) inputBarConst=\(String(format: "%.1f", inputBarBottomConstraint.constant))")
+        #endif
 
         // Call the onSend callback to send via Convex
         // The message will appear via subscription update
@@ -1938,6 +2380,9 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
 
         DispatchQueue.main.async {
             self.scrollToBottom(animated: true)
+            #if DEBUG
+            DebugLog.addDedup("sendMessage.scroll", "sendMessage scrollToBottom complete keyboardVisible=\(self.isKeyboardVisible) inputBarConst=\(String(format: "%.1f", self.inputBarBottomConstraint.constant))")
+            #endif
         }
     }
 
@@ -1982,6 +2427,17 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
         let messageViews = messageArrangedViews()
         guard let lastMessageView = messageViews.last else { return .zero }
         return contentStack.convert(lastMessageView.frame, to: view)
+    }
+
+    private func lastAssistantMessageFrameInView() -> CGRect {
+        let messageViews = messageArrangedViews()
+        guard let index = messages.lastIndex(where: { !$0.isFromMe }),
+              index >= 0,
+              index < messageViews.count else {
+            return .zero
+        }
+        let messageView = messageViews[index]
+        return contentStack.convert(messageView.frame, to: view)
     }
 
     private struct DebugShiftSample {

@@ -9,6 +9,7 @@ enum DebugInputBarMetrics {
     static let textVerticalPadding: CGFloat = 8
     static let pillCornerRadius: CGFloat = 18
     static let singleLineTolerance: CGFloat = 8
+    static let minStableMeasureWidth: CGFloat = 120
 
     static var singleLineEditorHeight: CGFloat {
         UIFont.preferredFont(forTextStyle: .body).lineHeight + textVerticalPadding
@@ -31,14 +32,37 @@ enum DebugInputBarMetrics {
         return min(maxInputHeight, max(minHeight, rawHeight))
     }
 
+    static func editorHeight(
+        forLineCount lineCount: Int,
+        topInsetExtra: CGFloat = 0,
+        bottomInsetExtra: CGFloat = 0
+    ) -> CGFloat {
+        let lineHeight = UIFont.preferredFont(forTextStyle: .body).lineHeight
+        let safeLineCount = max(1, lineCount)
+        let insetExtra = topInsetExtra + bottomInsetExtra
+        let rawHeight = lineHeight * CGFloat(safeLineCount) + textVerticalPadding + insetExtra
+        let minHeight = lineHeight + textVerticalPadding + insetExtra
+        return min(maxInputHeight, max(minHeight, rawHeight))
+    }
+
     static func pillHeight(for text: String) -> CGFloat {
         max(inputHeight, editorHeight(for: text))
+    }
+}
+
+final class InputBarContainerView: UIView {
+    var preferredHeightProvider: (() -> CGFloat)?
+
+    override var intrinsicContentSize: CGSize {
+        let height = preferredHeightProvider?() ?? UIView.noIntrinsicMetric
+        return CGSize(width: UIView.noIntrinsicMetric, height: height)
     }
 }
 
 /// Shared floating glass input bar for all debug approaches
 struct DebugInputBar: View {
     @Binding var text: String
+    @Binding var programmaticChangeToken: Int
     let onSend: () -> Void
     @Binding var isFocused: Bool
     @ObservedObject var layout: InputBarLayoutModel
@@ -47,6 +71,8 @@ struct DebugInputBar: View {
     @State private var textFieldFocused = false
     @State private var measuredTextHeight = DebugInputBarMetrics.singleLineEditorHeight
     @State private var measuredLineCount = 1
+    @State private var textViewIsEmpty = true
+    @SwiftUI.Environment(\.displayScale) private var displayScale
     @AppStorage("debug.input.bottomInsetSingleExtra") private var bottomInsetSingleExtra: Double = 0
     @AppStorage("debug.input.bottomInsetMultiExtra") private var bottomInsetMultiExtra: Double = 4
     @AppStorage("debug.input.topInsetMultiExtra") private var topInsetMultiExtra: Double = 4
@@ -58,44 +84,44 @@ struct DebugInputBar: View {
 
     init(
         text: Binding<String>,
+        programmaticChangeToken: Binding<Int>,
         isFocused: Binding<Bool> = .constant(false),
         geometry: InputBarGeometryModel,
         layout: InputBarLayoutModel,
         onSend: @escaping () -> Void
     ) {
         self._text = text
+        self._programmaticChangeToken = programmaticChangeToken
         self._isFocused = isFocused
+        self._textViewIsEmpty = State(initialValue: text.wrappedValue.isEmpty)
         self.geometry = geometry
         self.layout = layout
         self.onSend = onSend
     }
 
     var body: some View {
-        let rawText = text
-        let isTextEmpty = rawText.isEmpty
-        let fallbackLineCount = DebugInputBarMetrics.lineCount(for: rawText)
-        let effectiveLineCount = max(1, measuredLineCount)
-        let isMultilineCandidate = !isTextEmpty && (effectiveLineCount > 1 || fallbackLineCount > 1)
-        let candidateBottomInsetExtra = isMultilineCandidate ? bottomInsetMultiExtra : bottomInsetSingleExtra
-        let candidateTopInsetExtra = isMultilineCandidate ? topInsetMultiExtra : 0
+        let scale = max(1, displayScale)
+        func pixelAlign(_ value: CGFloat) -> CGFloat {
+            (value * scale).rounded(.toNearestOrAwayFromZero) / scale
+        }
+        let isTextEmpty = textViewIsEmpty
+        let effectiveLineCount = isTextEmpty ? 1 : max(1, measuredLineCount)
+        let candidateBottomInsetExtra = isTextEmpty ? bottomInsetSingleExtra : bottomInsetMultiExtra
+        let candidateTopInsetExtra = isTextEmpty ? 0 : topInsetMultiExtra
         let fallbackHeight = DebugInputBarMetrics.editorHeight(
-            for: rawText,
+            forLineCount: effectiveLineCount,
             topInsetExtra: CGFloat(candidateTopInsetExtra),
             bottomInsetExtra: CGFloat(candidateBottomInsetExtra)
         )
         let resolvedHeight = measuredTextHeight > 0 ? measuredTextHeight : fallbackHeight
-        let singleLineHeightCap = DebugInputBarMetrics.singleLineEditorHeight
-            + DebugInputBarMetrics.singleLineTolerance
-        let isSingleLine = isTextEmpty
-            || ((effectiveLineCount <= 1 && fallbackLineCount <= 1)
-                && resolvedHeight <= singleLineHeightCap)
+        let isSingleLine = isTextEmpty || effectiveLineCount <= 1
         let targetHeight = isSingleLine ? fallbackHeight : max(fallbackHeight, resolvedHeight)
-        let editorHeight = min(DebugInputBarMetrics.maxInputHeight, targetHeight)
+        let editorHeight = pixelAlign(min(DebugInputBarMetrics.maxInputHeight, targetHeight))
         let shouldCenter = isTextEmpty || isSingleLine
         let showDebugOverlays = DebugSettings.showChatOverlays
-        let bottomInsetExtra = isSingleLine ? bottomInsetSingleExtra : bottomInsetMultiExtra
-        let topInsetExtra = isSingleLine ? 0 : topInsetMultiExtra
-        let pillHeight = max(DebugInputBarMetrics.inputHeight, editorHeight)
+        let bottomInsetExtra = isTextEmpty ? bottomInsetSingleExtra : bottomInsetMultiExtra
+        let topInsetExtra = isTextEmpty ? 0 : topInsetMultiExtra
+        let pillHeight = pixelAlign(max(DebugInputBarMetrics.inputHeight, editorHeight))
         let singleLineCap = DebugInputBarMetrics.inputHeight + DebugInputBarMetrics.singleLineTolerance
         let cornerRadius: CGFloat = pillHeight <= singleLineCap
             ? pillHeight / 2
@@ -108,29 +134,35 @@ struct DebugInputBar: View {
         )
 
         return GlassEffectContainer {
-            HStack(alignment: .bottom, spacing: 12) {
-                plusButton
-                inputPillView(
-                    editorHeight: editorHeight,
-                    isSingleLine: isSingleLine,
-                    isTextEmpty: isTextEmpty,
-                    shouldCenter: shouldCenter,
-                    pillHeight: pillHeight,
-                    pillShape: pillShape,
-                    showDebugOverlays: showDebugOverlays,
-                    placeholderOffset: CGFloat(placeholderOffset),
-                    micOffset: CGFloat(micOffset),
-                    bottomInsetExtra: CGFloat(bottomInsetExtra),
-                    topInsetExtra: CGFloat(topInsetExtra),
-                    sendOffset: CGFloat(sendOffset),
-                    sendXOffset: CGFloat(sendXOffset)
-                )
+            GeometryReader { proxy in
+                VStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    HStack(alignment: .bottom, spacing: 12) {
+                        plusButton
+                        inputPillView(
+                            editorHeight: editorHeight,
+                            isSingleLine: isSingleLine,
+                            isTextEmpty: isTextEmpty,
+                            shouldCenter: shouldCenter,
+                            pillHeight: pillHeight,
+                            pillShape: pillShape,
+                            showDebugOverlays: showDebugOverlays,
+                            placeholderOffset: CGFloat(placeholderOffset),
+                            micOffset: CGFloat(micOffset),
+                            bottomInsetExtra: CGFloat(bottomInsetExtra),
+                            topInsetExtra: CGFloat(topInsetExtra),
+                            sendOffset: CGFloat(sendOffset),
+                            sendXOffset: CGFloat(sendXOffset)
+                        )
+                    }
+                    .padding(.horizontal, layout.horizontalPadding)
+                    .padding(.top, DebugInputBarMetrics.topPadding)
+                    .padding(.bottom, layout.bottomPadding)
+                }
+                .frame(width: proxy.size.width, height: proxy.size.height, alignment: .bottom)
             }
-            .padding(.horizontal, layout.horizontalPadding)
-            .padding(.top, DebugInputBarMetrics.topPadding)
-            .padding(.bottom, layout.bottomPadding)
-            .frame(maxHeight: .infinity, alignment: .bottom)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         .animation(.easeInOut(duration: layout.animationDuration), value: layout.horizontalPadding)
         .animation(.easeInOut(duration: layout.animationDuration), value: layout.bottomPadding)
         .onAppear {
@@ -144,6 +176,33 @@ struct DebugInputBar: View {
                 geometry.pillHeight = newValue
             }
         }
+        .onChange(of: pillHeight) { _, newValue in
+            DebugLog.addDedup(
+                "input.pill.height",
+                "InputBar pillHeight=\(String(format: "%.1f", newValue)) editorHeight=\(String(format: "%.1f", editorHeight)) lineCount=\(effectiveLineCount) textLen=\(text.count)"
+            )
+        }
+        .onChange(of: measuredLineCount) { _, newValue in
+            DebugLog.addDedup(
+                "input.measure.lines",
+                "InputBar measuredLineCount=\(newValue) textLen=\(text.count) measuredHeight=\(String(format: "%.1f", measuredTextHeight))"
+            )
+        }
+        .onChange(of: measuredTextHeight) { _, newValue in
+            DebugLog.addDedup(
+                "input.measure.height",
+                "InputBar measuredHeight=\(String(format: "%.1f", newValue)) lineCount=\(measuredLineCount) textLen=\(text.count)"
+            )
+        }
+        .onChange(of: text) { _, newValue in
+            DebugLog.addDedup(
+                "input.text.binding",
+                "InputBar text binding len=\(newValue.count) viewEmpty=\(textViewIsEmpty)"
+            )
+        }
+        .onChange(of: textViewIsEmpty) { _, newValue in
+            DebugLog.addDedup("input.placeholder.state", "InputBar placeholderEmpty=\(newValue) textLen=\(text.count)")
+        }
         .onChange(of: textFieldFocused) { _, newValue in
             isFocused = newValue
         }
@@ -155,6 +214,10 @@ struct DebugInputBar: View {
         }
         .onChange(of: isSingleLine) { _, newValue in
             isMultilineFlag = !newValue
+            DebugLog.addDedup(
+                "input.multiline",
+                "InputBar isSingleLine=\(newValue) textLen=\(text.count) lineCount=\(measuredLineCount)"
+            )
         }
     }
 
@@ -186,46 +249,43 @@ struct DebugInputBar: View {
         sendOffset: CGFloat,
         sendXOffset: CGFloat
     ) -> some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 0)
-            HStack(alignment: .bottom, spacing: 8) {
-                inputFieldView(
-                    editorHeight: editorHeight,
-                    isSingleLine: isSingleLine,
-                    isTextEmpty: isTextEmpty,
-                    shouldCenter: shouldCenter,
-                    showDebugOverlays: showDebugOverlays,
-                    placeholderOffset: placeholderOffset,
-                    bottomInsetExtra: bottomInsetExtra,
-                    topInsetExtra: topInsetExtra
-                )
-                if isTextEmpty {
-                    Image(systemName: "mic.fill")
-                        .font(.system(size: 16))
-                        .foregroundStyle(.secondary)
-                        .offset(y: micOffset)
-                        .padding(.trailing, 8)
-                } else {
-                    Button(action: onSend) {
-                        Image(systemName: "arrow.up.circle.fill")
-                            .font(.system(size: 30))
-                            .symbolRenderingMode(.palette)
-                            .foregroundStyle(.white, .blue)
-                            .offset(x: sendXOffset, y: sendOffset)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("chat.sendButton")
+        HStack(alignment: .bottom, spacing: 8) {
+            inputFieldView(
+                editorHeight: editorHeight,
+                isSingleLine: isSingleLine,
+                isTextEmpty: isTextEmpty,
+                shouldCenter: shouldCenter,
+                pillHeight: pillHeight,
+                showDebugOverlays: showDebugOverlays,
+                placeholderOffset: placeholderOffset,
+                bottomInsetExtra: bottomInsetExtra,
+                topInsetExtra: topInsetExtra
+            )
+            if isTextEmpty {
+                Image(systemName: "mic.fill")
+                    .font(.system(size: 16))
+                    .foregroundStyle(.secondary)
+                    .offset(y: micOffset)
+                    .padding(.trailing, 8)
+            } else {
+                Button(action: onSend) {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: 30))
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(.white, .blue)
+                        .offset(x: sendXOffset, y: sendOffset)
                 }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("chat.sendButton")
             }
-            .padding(.leading, 16)
-            .padding(.trailing, 6)
         }
+        .padding(.leading, 16)
+        .padding(.trailing, 6)
         .frame(height: pillHeight, alignment: .bottom)
         .glassEffect(.regular.interactive(), in: pillShape)
         .clipShape(pillShape)
         .mask(pillShape)
         .clipped()
-        .animation(.easeInOut(duration: 0.15), value: pillHeight)
         .background(
             InputBarFrameReader { frame in
                 geometry.pillFrameInWindow = frame
@@ -242,13 +302,6 @@ struct DebugInputBar: View {
         .overlay(
             Color.clear
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .accessibilityIdentifier("chat.inputPillFrame")
-                .accessibilityElement(children: .ignore)
-                .allowsHitTesting(false)
-        )
-        .overlay(
-            Color.clear
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .accessibilityIdentifier("chat.inputPill")
                 .accessibilityElement(children: .ignore)
                 .allowsHitTesting(false)
@@ -256,6 +309,15 @@ struct DebugInputBar: View {
         .overlay(alignment: .bottom) {
             Color.clear
                 .frame(height: 1)
+                .background(
+                    Group {
+                        if UITestConfig.mockDataEnabled {
+                            InputBarFrameReader(usePresentationLayer: true) { frame in
+                                geometry.pillBottomEdgePresentationFrameInWindow = frame
+                            }
+                        }
+                    }
+                )
                 .accessibilityIdentifier("chat.inputPillBottomEdge")
                 .accessibilityElement(children: .ignore)
                 .allowsHitTesting(false)
@@ -287,6 +349,10 @@ struct DebugInputBar: View {
                 }
             }
         }
+        .transaction { transaction in
+            transaction.animation = nil
+            transaction.disablesAnimations = true
+        }
     }
 
     @ViewBuilder
@@ -295,31 +361,37 @@ struct DebugInputBar: View {
         isSingleLine: Bool,
         isTextEmpty: Bool,
         shouldCenter: Bool,
+        pillHeight: CGFloat,
         showDebugOverlays: Bool,
         placeholderOffset: CGFloat,
         bottomInsetExtra: CGFloat,
         topInsetExtra: CGFloat
     ) -> some View {
         let singleLineOffset = isSingleLine ? -bottomInsetExtra / 2 : 0
-        let inputField = ZStack(alignment: .topLeading) {
+        let inputField = InputTextView(
+            text: $text,
+            programmaticChangeToken: $programmaticChangeToken,
+            textIsEmpty: $textViewIsEmpty,
+            measuredHeight: $measuredTextHeight,
+            measuredLineCount: $measuredLineCount,
+            bottomInsetExtra: bottomInsetExtra,
+            topInsetExtra: topInsetExtra,
+            isFocused: $textFieldFocused
+        )
+        .frame(height: editorHeight)
+        .id("chat.inputTextView")
+        .overlay(alignment: .topLeading) {
             if isTextEmpty {
                 Text("Message")
                     .foregroundStyle(.secondary)
                     .font(.body)
                     .padding(.top, 2 + placeholderOffset)
+                    .allowsHitTesting(false)
                     .transaction { transaction in
                         transaction.animation = nil
+                        transaction.disablesAnimations = true
                     }
             }
-            InputTextView(
-                text: $text,
-                measuredHeight: $measuredTextHeight,
-                measuredLineCount: $measuredLineCount,
-                bottomInsetExtra: bottomInsetExtra,
-                topInsetExtra: topInsetExtra,
-                isFocused: $textFieldFocused
-            )
-                .frame(height: editorHeight)
         }
         .clipped()
         .offset(y: singleLineOffset)
@@ -337,8 +409,10 @@ struct DebugInputBar: View {
                 geometry.inputFrameInWindow = frame
             }
         )
-        inputField
-            .frame(maxHeight: .infinity, alignment: shouldCenter ? .center : .top)
+        ZStack(alignment: shouldCenter ? .center : .topLeading) {
+            inputField
+        }
+        .frame(height: pillHeight)
     }
 }
 
@@ -356,21 +430,23 @@ final class DebugInputBarViewController: UIViewController {
     var contentBottomInset: CGFloat { layoutModel.bottomPadding }
     var pillMeasuredFrame: CGRect { geometryModel.pillFrameInWindow }
     var pillFrameInView: CGRect {
-        if let window = view.window, pillMeasuredFrame != .zero {
-            return view.convert(pillMeasuredFrame, from: window)
-        }
         let viewHeight = view.bounds.height
         guard viewHeight > 0 else { return .zero }
         let fallbackHeight = DebugInputBarMetrics.pillHeight(for: textModel.text)
         let targetPillHeight = geometryModel.pillHeight > 0 ? geometryModel.pillHeight : fallbackHeight
-        let expectedHeight = contentTopInset + contentBottomInset + targetPillHeight
-        let extra = max(0, viewHeight - expectedHeight)
-        let offset = extra / 2
-        let topLimit = contentTopInset + offset
-        let bottomLimit = max(topLimit, viewHeight - contentBottomInset - offset)
-        let availableHeight = max(0, bottomLimit - topLimit)
+        let availableHeight = max(0, viewHeight - contentTopInset - contentBottomInset)
         let height = min(targetPillHeight, availableHeight)
-        return CGRect(x: 0, y: topLimit, width: view.bounds.width, height: height)
+        let bottomLimit = viewHeight - contentBottomInset
+        let topLimit = max(contentTopInset, bottomLimit - height)
+        let resolvedHeight = max(0, bottomLimit - topLimit)
+        let fallbackFrame = CGRect(x: 0, y: topLimit, width: view.bounds.width, height: resolvedHeight)
+        if let window = view.window, pillMeasuredFrame != .zero {
+            let converted = view.convert(pillMeasuredFrame, from: window)
+            if abs(converted.maxY - bottomLimit) <= 1 {
+                return converted
+            }
+        }
+        return fallbackFrame
     }
     var pillHeight: CGFloat { max(0, pillFrameInView.height) }
 
@@ -383,11 +459,32 @@ final class DebugInputBarViewController: UIViewController {
     private var inputGeometryCancellable: AnyCancellable?
     private var pillHeightCancellable: AnyCancellable?
     private var textCancellable: AnyCancellable?
-    private let inputAccessibilityView = UIView()
+    private var liveBottomEdgeCancellable: AnyCancellable?
+    private let inputAccessibilityView = UIControl()
+    private let liveBottomEdgeView = UIView()
+    private let pillHeightAccessibilityView = UIView()
+    private let pillFrameAccessibilityView = UIView()
+    private let debugSetMultilineView = UIControl()
+    private let debugClearInputView = UIControl()
+    private var didLogInitialLayout = false
+    private var containerView: InputBarContainerView? {
+        view as? InputBarContainerView
+    }
+
+    override func loadView() {
+        let container = InputBarContainerView()
+        container.preferredHeightProvider = { [weak self, weak container] in
+            guard let self, let container else { return UIView.noIntrinsicMetric }
+            let width = max(1, container.bounds.width)
+            return self.preferredHeight(for: width)
+        }
+        view = container
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .clear
+        DebugLog.add("InputBarVC viewDidLoad mockData=\(UITestConfig.mockDataEnabled)")
 
         hostingController = UIHostingController(rootView: makeWrapper())
         hostingController.view.backgroundColor = .clear
@@ -404,6 +501,49 @@ final class DebugInputBarViewController: UIViewController {
         inputAccessibilityView.isUserInteractionEnabled = false
         view.addSubview(inputAccessibilityView)
 
+        pillFrameAccessibilityView.isAccessibilityElement = true
+        pillFrameAccessibilityView.accessibilityIdentifier = "chat.inputPillFrame"
+        pillFrameAccessibilityView.backgroundColor = .clear
+        pillFrameAccessibilityView.isUserInteractionEnabled = false
+        view.addSubview(pillFrameAccessibilityView)
+
+        liveBottomEdgeView.isAccessibilityElement = true
+        liveBottomEdgeView.accessibilityIdentifier = "chat.inputPillBottomEdgeLive"
+        liveBottomEdgeView.backgroundColor = .clear
+        liveBottomEdgeView.isUserInteractionEnabled = false
+        view.addSubview(liveBottomEdgeView)
+
+        pillHeightAccessibilityView.isAccessibilityElement = true
+        pillHeightAccessibilityView.accessibilityIdentifier = "chat.pillHeightValue"
+        pillHeightAccessibilityView.backgroundColor = .clear
+        pillHeightAccessibilityView.isUserInteractionEnabled = false
+        view.addSubview(pillHeightAccessibilityView)
+
+        debugSetMultilineView.isAccessibilityElement = true
+        debugSetMultilineView.accessibilityIdentifier = "chat.debugSetMultiline"
+        debugSetMultilineView.accessibilityTraits = .button
+        debugSetMultilineView.backgroundColor = .clear
+        debugSetMultilineView.isUserInteractionEnabled = false
+        view.addSubview(debugSetMultilineView)
+
+        debugClearInputView.isAccessibilityElement = true
+        debugClearInputView.accessibilityIdentifier = "chat.debugClearInput"
+        debugClearInputView.accessibilityTraits = .button
+        debugClearInputView.backgroundColor = .clear
+        debugClearInputView.isUserInteractionEnabled = false
+        view.addSubview(debugClearInputView)
+
+        if UITestConfig.mockDataEnabled {
+            inputAccessibilityView.isUserInteractionEnabled = true
+            inputAccessibilityView.addTarget(self, action: #selector(handleInputTapTarget), for: .touchUpInside)
+            debugSetMultilineView.isUserInteractionEnabled = true
+            debugSetMultilineView.addTarget(self, action: #selector(handleDebugSetMultiline), for: .touchUpInside)
+            debugSetMultilineView.addTarget(self, action: #selector(handleDebugSetMultiline), for: .primaryActionTriggered)
+            debugClearInputView.isUserInteractionEnabled = true
+            debugClearInputView.addTarget(self, action: #selector(handleDebugClearInput), for: .touchUpInside)
+            debugClearInputView.addTarget(self, action: #selector(handleDebugClearInput), for: .primaryActionTriggered)
+        }
+
         NSLayoutConstraint.activate([
             hostingController.view.topAnchor.constraint(equalTo: view.topAnchor),
             hostingController.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -414,11 +554,14 @@ final class DebugInputBarViewController: UIViewController {
         geometryCancellable = geometryModel.$pillFrameInWindow
             .removeDuplicates()
             .sink { [weak self] _ in
+                self?.updatePillFrameAccessibility()
                 self?.onLayoutChange?()
             }
         pillHeightCancellable = geometryModel.$pillHeight
             .removeDuplicates()
             .sink { [weak self] _ in
+                self?.containerView?.invalidateIntrinsicContentSize()
+                self?.updatePillHeightAccessibilityValue()
                 self?.onLayoutChange?()
             }
         inputGeometryCancellable = geometryModel.$inputFrameInWindow
@@ -426,12 +569,36 @@ final class DebugInputBarViewController: UIViewController {
             .sink { [weak self] _ in
                 self?.updateInputAccessibilityFrame()
             }
+        liveBottomEdgeCancellable = geometryModel.$pillBottomEdgePresentationFrameInWindow
+            .removeDuplicates()
+            .sink { [weak self] _ in
+                self?.updateLiveBottomEdgeFrame()
+            }
         textCancellable = textModel.$text
             .removeDuplicates()
             .sink { [weak self] value in
                 self?.inputAccessibilityView.accessibilityValue = value
+                self?.containerView?.invalidateIntrinsicContentSize()
                 self?.onLayoutChange?()
             }
+        updatePillHeightAccessibilityValue()
+
+        if UITestConfig.mockDataEnabled {
+            view.accessibilityElements = [
+                pillFrameAccessibilityView,
+                liveBottomEdgeView,
+                pillHeightAccessibilityView,
+                inputAccessibilityView,
+                debugSetMultilineView,
+                debugClearInputView
+            ]
+        }
+
+        if UITestConfig.mockDataEnabled,
+           let raw = ProcessInfo.processInfo.environment["CMUX_UITEST_INPUT_TEXT"] {
+            let resolved = raw.replacingOccurrences(of: "\\n", with: "\n")
+            textModel.setTextProgrammatically(resolved)
+        }
     }
 
     override func viewDidLayoutSubviews() {
@@ -441,15 +608,22 @@ final class DebugInputBarViewController: UIViewController {
             lastReportedHeight = height
             onLayoutChange?()
         }
+        if !didLogInitialLayout, height > 0 {
+            didLogInitialLayout = true
+            DebugLog.add("InputBarVC layout height=\(String(format: "%.1f", height)) pillHeight=\(String(format: "%.1f", pillHeight))")
+        }
         updateInputAccessibilityFrame()
+        updatePillFrameAccessibility()
+        updateLiveBottomEdgeFrame()
+        updateDebugActionFrames()
     }
 
     func updateText(_ newText: String) {
-        textModel.text = newText
+        textModel.setTextProgrammatically(newText)
     }
 
     func clearText() {
-        textModel.text = ""
+        textModel.setTextProgrammatically("")
     }
 
     func updateLayout(horizontalPadding: CGFloat, bottomPadding: CGFloat, animationDuration: Double) {
@@ -462,6 +636,7 @@ final class DebugInputBarViewController: UIViewController {
         if abs(layoutModel.animationDuration - animationDuration) > 0.001 {
             layoutModel.animationDuration = animationDuration
         }
+        containerView?.invalidateIntrinsicContentSize()
     }
 
     func setFocused(_ focused: Bool) {
@@ -474,25 +649,104 @@ final class DebugInputBarViewController: UIViewController {
     }
 
     func preferredHeight(for width: CGFloat) -> CGFloat {
+        let scale = max(1, view.window?.screen.scale ?? view.traitCollection.displayScale)
+        func pixelAlign(_ value: CGFloat) -> CGFloat {
+            (value * scale).rounded(.toNearestOrAwayFromZero) / scale
+        }
         let maxHeight = DebugInputBarMetrics.maxInputHeight + contentTopInset + contentBottomInset
-        let fallbackHeight = DebugInputBarMetrics.pillHeight(for: textModel.text)
-        let measuredFrameHeight = pillFrameInView.height
-        let measuredHeight = geometryModel.pillHeight
-        let pillHeight = max(
-            fallbackHeight,
-            max(measuredFrameHeight, measuredHeight)
-        )
-        let targetHeight = pillHeight + contentTopInset + contentBottomInset
+        let fallbackHeight = pixelAlign(DebugInputBarMetrics.pillHeight(for: textModel.text))
+        let measuredHeight = pixelAlign(geometryModel.pillHeight)
+        let pillHeight = max(fallbackHeight, measuredHeight)
+        let targetHeight = pixelAlign(pillHeight + contentTopInset + contentBottomInset)
+        return min(targetHeight, maxHeight)
+    }
+
+    func estimatedHeight(for _: CGFloat) -> CGFloat {
+        let scale = max(1, view.window?.screen.scale ?? view.traitCollection.displayScale)
+        func pixelAlign(_ value: CGFloat) -> CGFloat {
+            (value * scale).rounded(.toNearestOrAwayFromZero) / scale
+        }
+        let maxHeight = DebugInputBarMetrics.maxInputHeight + contentTopInset + contentBottomInset
+        let pillHeight = pixelAlign(DebugInputBarMetrics.pillHeight(for: textModel.text))
+        let targetHeight = pixelAlign(pillHeight + contentTopInset + contentBottomInset)
         return min(targetHeight, maxHeight)
     }
 
     private func updateInputAccessibilityFrame() {
+        let window = view.window
         let frame = geometryModel.inputFrameInWindow
-        guard let window = view.window, frame != .zero else { return }
-        let converted = view.convert(frame, from: window)
+        let sourceFrame = frame != .zero ? frame : geometryModel.pillFrameInWindow
+        let converted: CGRect
+        if let window, sourceFrame != .zero {
+            converted = view.convert(sourceFrame, from: window)
+        } else {
+            let fallbackFrame = pillFrameInView
+            guard fallbackFrame != .zero else { return }
+            converted = fallbackFrame
+        }
         if converted != inputAccessibilityView.frame {
             inputAccessibilityView.frame = converted
         }
+    }
+
+    private func updatePillFrameAccessibility() {
+        let frame = pillFrameInView
+        guard frame != .zero else { return }
+        if frame != pillFrameAccessibilityView.frame {
+            pillFrameAccessibilityView.frame = frame
+        }
+    }
+
+    private func updateDebugActionFrames() {
+        let size: CGFloat = 44
+        let setFrame = CGRect(x: 0, y: 0, width: size, height: size)
+        let clearFrame = CGRect(x: size, y: 0, width: size, height: size)
+        if debugSetMultilineView.frame != setFrame {
+            debugSetMultilineView.frame = setFrame
+        }
+        if debugClearInputView.frame != clearFrame {
+            debugClearInputView.frame = clearFrame
+        }
+    }
+
+    private func updateLiveBottomEdgeFrame() {
+        let frame = geometryModel.pillBottomEdgePresentationFrameInWindow
+        if let window = view.window, frame != .zero {
+            let converted = view.convert(frame, from: window)
+            if converted != liveBottomEdgeView.frame {
+                liveBottomEdgeView.frame = converted
+            }
+            return
+        }
+
+        let fallbackFrame = pillFrameInView
+        guard fallbackFrame != .zero else { return }
+        let fallbackBottom = CGRect(
+            x: fallbackFrame.minX,
+            y: max(0, fallbackFrame.maxY - 1),
+            width: max(1, fallbackFrame.width),
+            height: 1
+        )
+        if fallbackBottom != liveBottomEdgeView.frame {
+            liveBottomEdgeView.frame = fallbackBottom
+        }
+    }
+
+    private func updatePillHeightAccessibilityValue() {
+        let height = geometryModel.pillHeight
+        pillHeightAccessibilityView.accessibilityValue = String(format: "%.1f", height)
+    }
+
+    @objc private func handleInputTapTarget() {
+        focusModel.isFocused = true
+    }
+
+    @objc private func handleDebugSetMultiline() {
+        textModel.setTextProgrammatically("Line 1\nLine 2\nLine 3")
+    }
+
+    @objc private func handleDebugClearInput() {
+        textModel.setTextProgrammatically("")
     }
 
     private func makeWrapper() -> DebugInputBarWrapper {
@@ -521,6 +775,7 @@ private struct DebugInputBarWrapper: View {
                 get: { textModel.text },
                 set: { textModel.text = $0; onTextChange?($0) }
             ),
+            programmaticChangeToken: $textModel.programmaticChangeToken,
             isFocused: $focus.isFocused,
             geometry: geometry,
             layout: layout,
@@ -547,16 +802,27 @@ final class InputBarFocusModel: ObservableObject {
 
 final class InputBarTextModel: ObservableObject {
     @Published var text = ""
+    @Published var programmaticChangeToken: Int = 0
+
+    func setTextProgrammatically(_ newText: String) {
+        if text != newText {
+            text = newText
+        }
+        programmaticChangeToken &+= 1
+    }
 }
 
 final class InputBarGeometryModel: ObservableObject {
     @Published var pillFrameInWindow: CGRect = .zero
     @Published var inputFrameInWindow: CGRect = .zero
     @Published var pillHeight: CGFloat = DebugInputBarMetrics.inputHeight
+    @Published var pillBottomEdgePresentationFrameInWindow: CGRect = .zero
 }
 
 private struct InputTextView: UIViewRepresentable {
     @Binding var text: String
+    @Binding var programmaticChangeToken: Int
+    @Binding var textIsEmpty: Bool
     @Binding var measuredHeight: CGFloat
     @Binding var measuredLineCount: Int
     let bottomInsetExtra: CGFloat
@@ -570,6 +836,7 @@ private struct InputTextView: UIViewRepresentable {
         textView.clipsToBounds = true
         textView.backgroundColor = .clear
         textView.font = UIFont.preferredFont(forTextStyle: .body)
+        textView.layoutManager.allowsNonContiguousLayout = false
         let verticalInset = DebugInputBarMetrics.textVerticalPadding / 2
         textView.textContainerInset = UIEdgeInsets(
             top: verticalInset + topInsetExtra,
@@ -580,20 +847,69 @@ private struct InputTextView: UIViewRepresentable {
         textView.textContainer.lineFragmentPadding = 0
         textView.returnKeyType = .default
         textView.text = text
+        context.coordinator.lastUserText = text
+        context.coordinator.lastAppliedText = text
+        context.coordinator.lastProgrammaticToken = programmaticChangeToken
+        let viewIsEmpty = textView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if textIsEmpty != viewIsEmpty {
+            textIsEmpty = viewIsEmpty
+            DebugLog.addDedup(
+                "input.placeholder.state",
+                "InputTextView placeholderEmpty=\(viewIsEmpty) reason=makeUIView textLen=\(text.count)"
+            )
+        }
         textView.accessibilityIdentifier = "chat.inputField"
         textView.accessibilityValue = text
-        textView.onHeightChange = { [weak coordinator = context.coordinator] height in
-            coordinator?.updateMeasuredHeight(height)
-        }
-        textView.onLineCountChange = { [weak coordinator = context.coordinator] lineCount in
-            coordinator?.updateMeasuredLineCount(lineCount)
+        textView.onLayout = { [weak coordinator = context.coordinator] view in
+            coordinator?.handleLayout(view)
         }
         return textView
     }
 
     func updateUIView(_ uiView: MeasuringTextView, context: Context) {
+        let isComposing = uiView.markedTextRange != nil
+        let programmaticChanged = programmaticChangeToken != context.coordinator.lastProgrammaticToken
+        if programmaticChanged {
+            context.coordinator.lastProgrammaticToken = programmaticChangeToken
+        }
+        var didApplyText = false
         if uiView.text != text {
-            uiView.text = text
+            var shouldApplyText = true
+            if uiView.isFirstResponder {
+                // Never overwrite the live text view during user edits or echo updates.
+                // Only allow focused programmatic updates for clears to avoid clobbering returns/spaces.
+                shouldApplyText = programmaticChanged && text.isEmpty && !isComposing
+                #if DEBUG
+                if !shouldApplyText {
+                    let reason = programmaticChanged ? "programmatic=nonEmpty" : "programmatic=false"
+                    DebugLog.addDedup(
+                        "input.text.skip",
+                        "InputTextView skip apply focused=true reason=\(reason) bindingLen=\(text.count) viewLen=\(uiView.text.count) composing=\(isComposing)"
+                    )
+                }
+                #endif
+            }
+            if shouldApplyText {
+                #if DEBUG
+                DebugLog.addDedup(
+                    "input.text.sync",
+                    "InputTextView updateUIView apply text len=\(text.count) currentLen=\(uiView.text.count) focused=\(uiView.isFirstResponder)"
+                )
+                #endif
+                uiView.text = text
+                didApplyText = true
+                context.coordinator.lastAppliedText = text
+                context.coordinator.lastUserText = text
+                context.coordinator.scheduleMeasurement(textView: uiView, reason: "programmatic")
+            }
+        }
+        let viewIsEmpty = uiView.text.isEmpty
+        if textIsEmpty != viewIsEmpty && (!uiView.isFirstResponder || didApplyText) {
+            textIsEmpty = viewIsEmpty
+            DebugLog.addDedup(
+                "input.placeholder.state",
+                "InputTextView placeholderEmpty=\(viewIsEmpty) reason=updateUIView textLen=\(text.count) viewLen=\(uiView.text.count)"
+            )
         }
         let verticalInset = DebugInputBarMetrics.textVerticalPadding / 2
         let targetInset = UIEdgeInsets(
@@ -602,14 +918,12 @@ private struct InputTextView: UIViewRepresentable {
             bottom: verticalInset + bottomInsetExtra,
             right: 0
         )
-        if uiView.textContainerInset != targetInset {
+        if !uiView.isFirstResponder && uiView.textContainerInset != targetInset {
             uiView.textContainerInset = targetInset
+            context.coordinator.scheduleMeasurement(textView: uiView, reason: "insets")
         }
-        uiView.onHeightChange = { [weak coordinator = context.coordinator] height in
-            coordinator?.updateMeasuredHeight(height)
-        }
-        uiView.onLineCountChange = { [weak coordinator = context.coordinator] lineCount in
-            coordinator?.updateMeasuredLineCount(lineCount)
+        uiView.onLayout = { [weak coordinator = context.coordinator] view in
+            coordinator?.handleLayout(view)
         }
         if isFocused && !uiView.isFirstResponder {
             uiView.becomeFirstResponder()
@@ -617,7 +931,9 @@ private struct InputTextView: UIViewRepresentable {
             uiView.resignFirstResponder()
         }
         uiView.accessibilityValue = text
-        uiView.setNeedsLayout()
+        if programmaticChanged {
+            context.coordinator.scheduleMeasurement(textView: uiView, reason: "token")
+        }
     }
 
     func makeCoordinator() -> Coordinator {
@@ -626,28 +942,69 @@ private struct InputTextView: UIViewRepresentable {
 
     final class Coordinator: NSObject, UITextViewDelegate {
         private let parent: InputTextView
+        var isUserInputInFlight = false
+        var lastUserText = ""
+        var lastAppliedText = ""
+        var lastProgrammaticToken = 0
+        private var pendingMeasurement = false
+        private var lastMeasuredWidth: CGFloat = 0
 
         init(parent: InputTextView) {
             self.parent = parent
         }
 
         func textViewDidChange(_ textView: UITextView) {
+            isUserInputInFlight = true
             parent.text = textView.text
-            if let measuringView = textView as? MeasuringTextView {
-                let lineCount = measuringView.currentLineCount()
-                if parent.measuredLineCount != lineCount {
-                    parent.measuredLineCount = lineCount
-                }
+            lastUserText = textView.text
+            lastAppliedText = textView.text
+            let viewIsEmpty = textView.text.isEmpty
+            if parent.textIsEmpty != viewIsEmpty {
+                parent.textIsEmpty = viewIsEmpty
+                DebugLog.addDedup(
+                    "input.placeholder.state",
+                    "InputTextView placeholderEmpty=\(viewIsEmpty) reason=didChange textLen=\(textView.text.count)"
+                )
             }
-            textView.setNeedsLayout()
+            if viewIsEmpty {
+                updateMeasuredLineCount(1)
+                updateMeasuredHeight(DebugInputBarMetrics.singleLineEditorHeight)
+            }
+            if let measuringView = textView as? MeasuringTextView {
+                scheduleMeasurement(textView: measuringView, reason: "didChange")
+                #if DEBUG
+                let textLength = textView.text.count
+                let lastChar = textView.text.last.map(String.init) ?? ""
+                let fallbackLineCount = DebugInputBarMetrics.lineCount(for: textView.text)
+                DebugLog.addDedup(
+                    "input.text.change",
+                    "InputTextView didChange len=\(textLength) last=\"\(lastChar)\" lineCount=\(fallbackLineCount)"
+                )
+                #endif
+            }
+            DispatchQueue.main.async { [weak self] in
+                self?.isUserInputInFlight = false
+            }
+        }
+
+        func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+            if text == "\n" {
+                DebugLog.addDedup(
+                    "input.text.return",
+                    "InputTextView return allowed textLen=\(textView.text.count)"
+                )
+            }
+            return true
         }
 
         func textViewDidBeginEditing(_ textView: UITextView) {
             parent.isFocused = true
+            DebugLog.add("InputTextView didBeginEditing")
         }
 
         func textViewDidEndEditing(_ textView: UITextView) {
             parent.isFocused = false
+            DebugLog.add("InputTextView didEndEditing")
         }
 
         func updateMeasuredHeight(_ height: CGFloat) {
@@ -661,39 +1018,74 @@ private struct InputTextView: UIViewRepresentable {
                 parent.measuredLineCount = lineCount
             }
         }
+
+        func handleLayout(_ textView: MeasuringTextView) {
+            let width = textView.bounds.width
+            guard width >= DebugInputBarMetrics.minStableMeasureWidth else { return }
+            if abs(width - lastMeasuredWidth) > 0.5 {
+                lastMeasuredWidth = width
+                scheduleMeasurement(textView: textView, reason: "layout")
+            }
+        }
+
+        func scheduleMeasurement(textView: MeasuringTextView, reason: String) {
+            guard !pendingMeasurement else { return }
+            pendingMeasurement = true
+            DispatchQueue.main.async { [weak self, weak textView] in
+                guard let self, let textView else { return }
+                self.pendingMeasurement = false
+                self.applyMeasurement(textView: textView, reason: reason)
+            }
+        }
+
+        private func applyMeasurement(textView: MeasuringTextView, reason: String) {
+            let width = textView.bounds.width
+            guard width >= DebugInputBarMetrics.minStableMeasureWidth else { return }
+            let metrics = textView.measureTextMetrics()
+            let shouldScroll = metrics.rawHeight > DebugInputBarMetrics.maxInputHeight + 0.5
+            if textView.isScrollEnabled != shouldScroll {
+                textView.isScrollEnabled = shouldScroll
+            }
+            DebugLog.addDedup(
+                "input.measure.height",
+                "InputTextView measuredHeight=\(String(format: "%.1f", metrics.height)) reason=\(reason)"
+            )
+            updateMeasuredLineCount(metrics.lineCount)
+            updateMeasuredHeight(metrics.height)
+        }
     }
 }
 
 private final class MeasuringTextView: UITextView {
-    var onHeightChange: ((CGFloat) -> Void)?
-    var onLineCountChange: ((Int) -> Void)?
-    private var lastMeasuredHeight: CGFloat = 0
-    private var lastMeasuredLineCount: Int = 0
+    var onLayout: ((MeasuringTextView) -> Void)?
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        guard bounds.width > 0 else { return }
-        let fittingSize = CGSize(width: bounds.width, height: .greatestFiniteMagnitude)
-        let fittingHeight = sizeThatFits(fittingSize).height
-        let clampedHeight = min(DebugInputBarMetrics.maxInputHeight, fittingHeight)
-        let shouldScroll = fittingHeight > DebugInputBarMetrics.maxInputHeight + 0.5
-        if isScrollEnabled != shouldScroll {
-            isScrollEnabled = shouldScroll
-        }
-        if abs(clampedHeight - lastMeasuredHeight) > 0.5 {
-            lastMeasuredHeight = clampedHeight
-            onHeightChange?(clampedHeight)
-        }
-        let lineCount = max(1, measuredLineCount())
-        if lineCount != lastMeasuredLineCount {
-            lastMeasuredLineCount = lineCount
-            onLineCountChange?(lineCount)
-        }
+        onLayout?(self)
     }
 
-    func currentLineCount() -> Int {
+    func measureTextMetrics() -> (height: CGFloat, rawHeight: CGFloat, lineCount: Int) {
+        let insets = textContainerInset
+        let lineHeight = font?.lineHeight ?? UIFont.preferredFont(forTextStyle: .body).lineHeight
+        if text.isEmpty {
+            let rawHeight = insets.top + lineHeight + insets.bottom
+            let clampedHeight = min(DebugInputBarMetrics.maxInputHeight, rawHeight)
+            let scale = max(1, traitCollection.displayScale)
+            let alignedHeight = (clampedHeight * scale).rounded(.toNearestOrAwayFromZero) / scale
+            return (height: alignedHeight, rawHeight: rawHeight, lineCount: 1)
+        }
         layoutManager.ensureLayout(for: textContainer)
-        return measuredLineCount()
+        let usedRect = layoutManager.usedRect(for: textContainer)
+        let caretRect = self.caretRect(for: endOfDocument)
+        let contentMaxY = max(usedRect.maxY + insets.top, caretRect.maxY)
+        let rawHeight = contentMaxY + insets.bottom
+        let clampedHeight = min(DebugInputBarMetrics.maxInputHeight, rawHeight)
+        let scale = max(1, traitCollection.displayScale)
+        let alignedHeight = (clampedHeight * scale).rounded(.toNearestOrAwayFromZero) / scale
+        let layoutLineCount = max(0, measuredLineCount())
+        let fallbackLineCount = DebugInputBarMetrics.lineCount(for: text)
+        let lineCount = max(1, layoutLineCount, fallbackLineCount)
+        return (height: alignedHeight, rawHeight: rawHeight, lineCount: lineCount)
     }
 
     private func measuredLineCount() -> Int {
@@ -713,23 +1105,39 @@ private final class MeasuringTextView: UITextView {
 
 private struct InputBarFrameReader: UIViewRepresentable {
     let onFrame: (CGRect) -> Void
+    var usePresentationLayer = false
+
+    init(usePresentationLayer: Bool = false, onFrame: @escaping (CGRect) -> Void) {
+        self.onFrame = onFrame
+        self.usePresentationLayer = usePresentationLayer
+    }
 
     func makeUIView(context: Context) -> InputBarFrameReaderView {
-        InputBarFrameReaderView(onFrame: onFrame)
+        InputBarFrameReaderView(onFrame: onFrame, usePresentationLayer: usePresentationLayer)
     }
 
     func updateUIView(_ uiView: InputBarFrameReaderView, context: Context) {
         uiView.onFrame = onFrame
+        uiView.usePresentationLayer = usePresentationLayer
         uiView.setNeedsLayout()
     }
 }
 
 private final class InputBarFrameReaderView: UIView {
     var onFrame: (CGRect) -> Void
+    var usePresentationLayer: Bool {
+        didSet {
+            if oldValue != usePresentationLayer {
+                refreshDisplayLink()
+            }
+        }
+    }
     private var lastFrame: CGRect = .zero
+    private var displayLink: CADisplayLink?
 
-    init(onFrame: @escaping (CGRect) -> Void) {
+    init(onFrame: @escaping (CGRect) -> Void, usePresentationLayer: Bool) {
         self.onFrame = onFrame
+        self.usePresentationLayer = usePresentationLayer
         super.init(frame: .zero)
         isUserInteractionEnabled = false
         backgroundColor = .clear
@@ -739,10 +1147,48 @@ private final class InputBarFrameReaderView: UIView {
         return nil
     }
 
+    deinit {
+        displayLink?.invalidate()
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
+        updateFrame()
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        refreshDisplayLink()
+    }
+
+    override func action(for layer: CALayer, forKey event: String) -> CAAction? {
+        if usePresentationLayer {
+            return NSNull()
+        }
+        return super.action(for: layer, forKey: event)
+    }
+
+    private func refreshDisplayLink() {
+        displayLink?.invalidate()
+        displayLink = nil
+        guard usePresentationLayer, window != nil, UITestConfig.mockDataEnabled else { return }
+        let link = CADisplayLink(target: self, selector: #selector(handleDisplayLink))
+        link.add(to: .main, forMode: .common)
+        displayLink = link
+    }
+
+    @objc private func handleDisplayLink() {
+        updateFrame()
+    }
+
+    private func updateFrame() {
         guard let window else { return }
-        let frameInWindow = convert(bounds, to: window)
+        let frameInWindow: CGRect
+        if usePresentationLayer, let superlayer = layer.superlayer, let presentation = layer.presentation() {
+            frameInWindow = superlayer.convert(presentation.frame, to: window.layer)
+        } else {
+            frameInWindow = convert(bounds, to: window)
+        }
         if frameInWindow != lastFrame {
             lastFrame = frameInWindow
             onFrame(frameInWindow)

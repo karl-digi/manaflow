@@ -8,6 +8,15 @@ struct ConversationListView: View {
     @State private var navigationPath = NavigationPath()
     @FocusState private var isSearchFocused: Bool
     @State private var isSearchActive = false
+    @State private var didAutoOpenConversation = false
+    private let uiTestAutoOpenConversation: Bool = {
+        #if DEBUG
+        return UITestConfig.mockDataEnabled &&
+            ProcessInfo.processInfo.environment["CMUX_UITEST_AUTO_OPEN_CONVERSATION"] == "1"
+        #else
+        return false
+        #endif
+    }()
 
     var isSearching: Bool {
         isSearchFocused || !searchText.isEmpty || isSearchActive
@@ -164,6 +173,11 @@ struct ConversationListView: View {
             .navigationDestination(for: String.self) { conversationId in
                 // Navigate by conversation ID (from new task creation)
                 ChatViewById(conversationId: conversationId)
+            }
+            .onChange(of: filteredConversations.count) { _, _ in
+                guard uiTestAutoOpenConversation, !didAutoOpenConversation, let first = filteredConversations.first else { return }
+                didAutoOpenConversation = true
+                navigationPath.append(first._id.rawValue)
             }
         }
     }
@@ -402,6 +416,8 @@ struct ConversationRow: View {
                 .offset(x: dotOffset)
         }
         .padding(.vertical, 4)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("conversation.row.\(conversation.displayName)")
     }
 
     func formatTimestamp(_ date: Date) -> String {
@@ -413,9 +429,16 @@ struct ConversationRow: View {
         } else if calendar.isDateInYesterday(date) {
             return "Yesterday"
         } else {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "MM/dd/yy"
-            return formatter.string(from: date)
+            let days = calendar.dateComponents([.day], from: date, to: Date()).day ?? 0
+            if days < 7 {
+                let formatter = DateFormatter()
+                formatter.dateFormat = "EEEE"
+                return formatter.string(from: date)
+            } else {
+                let formatter = DateFormatter()
+                formatter.dateFormat = "M/d/yy"
+                return formatter.string(from: date)
+            }
         }
     }
 }
