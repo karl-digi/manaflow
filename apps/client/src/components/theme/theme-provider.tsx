@@ -58,6 +58,7 @@ export function ThemeProvider({
       const updateTheme = () => {
         root.classList.remove("light", "dark");
         root.classList.add(next);
+        root.style.colorScheme = next;
 
         if (resolvedThemeRef.current !== next) {
           resolvedThemeRef.current = next;

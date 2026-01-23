@@ -169,6 +169,7 @@ class PersistentIframeManager {
       visibility: hidden;
       pointer-events: none;
       overflow: hidden;
+      background: var(--background);
       transform: translate(-100vw, -100vh);
       width: 100vw;
       height: 100vh;
@@ -189,7 +190,7 @@ class PersistentIframeManager {
       width: 100%;
       height: 100%;
       border: 0;
-      background: white;
+      background: var(--background);
       display: block;
     `;
 
