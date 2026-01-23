@@ -15,7 +15,7 @@ import { convexQuery } from "@convex-dev/react-query";
 import { Switch } from "@heroui/react";
 import { useUser } from "@stackframe/react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useConvex } from "convex/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isElectron } from "@/lib/electron";
@@ -202,16 +202,28 @@ function ConnectedAccountsSection({ teamSlugOrId }: { teamSlugOrId: string }) {
   );
 }
 
-function OnboardingTourSection() {
+function OnboardingTourSection({ teamSlugOrId }: { teamSlugOrId: string }) {
   const onboarding = useOnboardingOptional();
+  const navigate = useNavigate();
 
-  const handleStartTour = () => {
-    onboarding?.resetOnboarding();
+  const handleStartTour = useCallback(async () => {
+    if (!onboarding) return;
+    onboarding.resetOnboarding();
+    try {
+      await navigate({
+        to: "/$teamSlugOrId/dashboard",
+        params: { teamSlugOrId },
+      });
+    } catch (error) {
+      console.error("Failed to navigate to dashboard for onboarding:", error);
+      return;
+    }
     // Small delay to ensure reset completes before starting
-    setTimeout(() => {
-      onboarding?.startOnboarding();
-    }, 100);
-  };
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 100);
+    });
+    onboarding.startOnboarding();
+  }, [navigate, onboarding, teamSlugOrId]);
 
   return (
     <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">
@@ -954,7 +966,7 @@ function SettingsComponent() {
             </div>
 
             {/* Onboarding Tour */}
-            <OnboardingTourSection />
+            <OnboardingTourSection teamSlugOrId={teamSlugOrId} />
 
             {/* Crown Evaluator */}
             <div className="bg-white dark:bg-neutral-950 rounded-lg border border-neutral-200 dark:border-neutral-800">

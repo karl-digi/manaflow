@@ -1425,6 +1425,21 @@ export function CommandBar({
       } else if (value === "onboarding:start") {
         if (onboarding) {
           onboarding.resetOnboarding();
+          try {
+            await navigate({
+              to: "/$teamSlugOrId/dashboard",
+              params: { teamSlugOrId },
+            });
+          } catch (error) {
+            console.error(
+              "Failed to navigate to dashboard for onboarding:",
+              error
+            );
+            return;
+          }
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, 100);
+          });
           onboarding.startOnboarding();
         }
       } else if (value === "sidebar-toggle") {
