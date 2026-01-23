@@ -226,7 +226,7 @@ class PersistentIframeManager {
 
     this.iframes.set(key, entry);
     this.moveIframeOffscreen(entry);
-    this.cleanupOldIframes();
+    this.cleanupOldIframes({ keepKeys: [key] });
 
     return iframe;
   }
@@ -549,12 +549,20 @@ class PersistentIframeManager {
    * Clean up old iframes
    * More conservative cleanup: never remove pinned iframes, prioritize keeping stabilized ones
    */
-  private cleanupOldIframes(): void {
+  private cleanupOldIframes(options?: { keepKeys?: Set<string> | string[] }): void {
     if (this.iframes.size <= this.maxIframes) return;
+
+    const keepKeys =
+      options?.keepKeys instanceof Set
+        ? options.keepKeys
+        : new Set(options?.keepKeys ?? []);
 
     const sorted = Array.from(this.iframes.entries())
       // Never remove visible or pinned iframes
-      .filter(([, entry]) => !entry.isVisible && !entry.pinned)
+      .filter(
+        ([key, entry]) =>
+          !entry.isVisible && !entry.pinned && !keepKeys.has(key)
+      )
       .sort(([, a], [, b]) => {
         // Prioritize keeping stabilized (fully loaded) iframes
         if (a.isStabilized !== b.isStabilized) {
@@ -564,10 +572,8 @@ class PersistentIframeManager {
         return a.lastUsed - b.lastUsed;
       });
 
-    const toRemove = sorted.slice(
-      0,
-      Math.max(0, this.iframes.size - this.maxIframes)
-    );
+    const toRemoveCount = Math.max(0, this.iframes.size - this.maxIframes);
+    const toRemove = sorted.slice(0, toRemoveCount);
 
     for (const [key] of toRemove) {
       this.removeIframe(key);
