@@ -1,3 +1,4 @@
+import { VSCodeIcon } from "@/components/icons/VSCodeIcon";
 import { OpenEditorSplitButton } from "@/components/OpenEditorSplitButton";
 import { Dropdown } from "@/components/ui/dropdown";
 import { MergeButton, type MergeMethod } from "@/components/ui/merge-button";
@@ -31,13 +32,14 @@ import clsx from "clsx";
 import {
   Check,
   ChevronDown,
+  Cloud,
   Copy,
   Crown,
   ExternalLink,
   Flame,
-  FolderOpen,
   GitBranch,
   GitMerge,
+  Monitor,
   Settings,
   Trash2,
 } from "lucide-react";
@@ -73,6 +75,7 @@ interface TaskDetailHeaderProps {
   onCollapseAllChecks?: () => void;
   onPanelSettings?: () => void;
   onOpenLocalWorkspace?: () => void;
+  onOpenCloudWorkspace?: () => void;
   teamSlugOrId: string;
   isAiReviewActive?: boolean;
   onToggleAiReview?: () => void;
@@ -211,6 +214,7 @@ export function TaskDetailHeader({
   onCollapseAllChecks,
   onPanelSettings,
   onOpenLocalWorkspace,
+  onOpenCloudWorkspace,
   teamSlugOrId,
   isAiReviewActive,
   onToggleAiReview,
@@ -382,15 +386,34 @@ export function TaskDetailHeader({
             </button>
           )}
 
-          {onOpenLocalWorkspace && (
-            <button
-              onClick={onOpenLocalWorkspace}
-              className="p-1 text-neutral-400 hover:text-neutral-700 dark:hover:text-white select-none"
-              aria-label="Open local workspace"
-              title="Open local workspace from this branch"
-            >
-              <FolderOpen className="w-3.5 h-3.5" />
-            </button>
+          {(onOpenLocalWorkspace || onOpenCloudWorkspace) && (
+            <div className="flex items-center border border-neutral-200 dark:border-neutral-700 rounded overflow-hidden">
+              {onOpenLocalWorkspace && (
+                <button
+                  onClick={onOpenLocalWorkspace}
+                  className="flex items-center gap-1.5 px-2 py-1 text-neutral-600 hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-800 select-none transition-colors text-[11px]"
+                  aria-label="Open local VSCode"
+                  title="Open local VSCode in this branch"
+                >
+                  <VSCodeIcon className="w-3.5 h-3.5" />
+                  <Monitor className="w-3 h-3 text-neutral-400" />
+                </button>
+              )}
+              {onOpenCloudWorkspace && (
+                <button
+                  onClick={onOpenCloudWorkspace}
+                  className={cn(
+                    "flex items-center gap-1.5 px-2 py-1 text-neutral-600 hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-800 select-none transition-colors text-[11px]",
+                    onOpenLocalWorkspace && "border-l border-neutral-200 dark:border-neutral-700"
+                  )}
+                  aria-label="Open cloud VSCode"
+                  title="Open cloud VSCode workspace"
+                >
+                  <VSCodeIcon className="w-3.5 h-3.5" />
+                  <Cloud className="w-3 h-3 text-neutral-400" />
+                </button>
+              )}
+            </div>
           )}
 
           {onPanelSettings && (

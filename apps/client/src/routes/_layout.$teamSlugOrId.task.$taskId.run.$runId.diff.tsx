@@ -1026,6 +1026,24 @@ function RunDiffPage() {
     );
   }, [socket, teamSlugOrId, primaryRepo, selectedRun?.newBranch, navigate, taskId]);
 
+  // Handler to open the cloud VSCode workspace for the current run
+  const handleOpenCloudWorkspace = useCallback(() => {
+    if (!selectedRun?._id) {
+      toast.error("No run selected");
+      return;
+    }
+
+    // Navigate to the vscode view for this task run (cloud workspace)
+    navigate({
+      to: "/$teamSlugOrId/task/$taskId/run/$runId/vscode",
+      params: {
+        teamSlugOrId,
+        taskId,
+        runId: selectedRun._id,
+      },
+    });
+  }, [navigate, teamSlugOrId, taskId, selectedRun?._id]);
+
   // 404 if selected run is missing
   if (!selectedRun) {
     return (
@@ -1057,6 +1075,7 @@ function RunDiffPage() {
             onExpandAllChecks={expandAllChecks}
             onCollapseAllChecks={collapseAllChecks}
             onOpenLocalWorkspace={isWorkspace ? undefined : handleOpenLocalWorkspace}
+            onOpenCloudWorkspace={isWorkspace ? undefined : handleOpenCloudWorkspace}
             teamSlugOrId={teamSlugOrId}
             isAiReviewActive={isAiReviewActive}
             onToggleAiReview={handleToggleAiReview}
