@@ -1317,6 +1317,90 @@ async function createTerminal(
           pid: session.pid,
         });
 
+        // 2.5. Set up WebSocket monitoring for session exit
+        // The cmux-pty server sends exit events as control messages prefixed with \x00
+        const processStartTime = Date.now();
+        const sessionWsUrl = ptyClient.getSessionWsUrl(session.id);
+        log("INFO", `[cmux-pty] Connecting to session WebSocket for exit monitoring: ${sessionWsUrl}`, {
+          terminalId,
+          sessionId: session.id,
+        });
+
+        try {
+          const sessionWs = new WebSocket(sessionWsUrl);
+          let exitHandled = false;
+
+          sessionWs.on("open", () => {
+            log("INFO", `[cmux-pty] Session WebSocket connected for ${terminalId}`, {
+              sessionId: session.id,
+            });
+          });
+
+          sessionWs.on("message", (data: Buffer | string) => {
+            const message = data.toString();
+            // Control messages are prefixed with \x00
+            if (message.startsWith("\x00")) {
+              try {
+                const controlJson = message.slice(1);
+                const controlEvent = JSON.parse(controlJson) as { type: string; exit_code?: number };
+                if (controlEvent.type === "exit" && !exitHandled) {
+                  exitHandled = true;
+                  const elapsedMs = Date.now() - processStartTime;
+                  log("INFO", `[cmux-pty] Session exited for ${terminalId}`, {
+                    sessionId: session.id,
+                    exitCode: controlEvent.exit_code,
+                    elapsedMs,
+                    taskRunId: options.taskRunId,
+                  });
+
+                  // Emit terminal exit event to main server
+                  emitToMainServer("worker:terminal-exit", {
+                    workerId: WORKER_ID,
+                    terminalId,
+                    exitCode: controlEvent.exit_code ?? 0,
+                  });
+
+                  sessionWs.close();
+                }
+              } catch (parseErr) {
+                log("WARN", `[cmux-pty] Failed to parse control message for ${terminalId}`, {
+                  error: parseErr instanceof Error ? parseErr.message : String(parseErr),
+                });
+              }
+            }
+          });
+
+          sessionWs.on("close", () => {
+            if (!exitHandled) {
+              const elapsedMs = Date.now() - processStartTime;
+              log("INFO", `[cmux-pty] Session WebSocket closed unexpectedly for ${terminalId}`, {
+                sessionId: session.id,
+                elapsedMs,
+                taskRunId: options.taskRunId,
+              });
+
+              // Session WebSocket closed without receiving exit event - session may have been terminated
+              emitToMainServer("worker:terminal-exit", {
+                workerId: WORKER_ID,
+                terminalId,
+                exitCode: 1, // Unknown exit, use non-zero to indicate potential issue
+              });
+            }
+          });
+
+          sessionWs.on("error", (err) => {
+            log("WARN", `[cmux-pty] Session WebSocket error for ${terminalId}`, {
+              sessionId: session.id,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
+        } catch (wsError) {
+          log("WARN", `[cmux-pty] Failed to connect session WebSocket for ${terminalId}`, {
+            sessionId: session.id,
+            error: wsError instanceof Error ? wsError.message : String(wsError),
+          });
+        }
+
         // 3. Send startup commands as input
         for (const cmd of startupCommands) {
           log("INFO", `[createTerminal] Sending startup command: ${cmd}`);
@@ -1347,7 +1431,7 @@ async function createTerminal(
         }
 
         // 6. Set up completion detection (same as tmux backend)
-        const processStartTime = Date.now();
+        // Note: processStartTime is declared earlier for WebSocket exit monitoring
         const agentConfig = options.agentModel
           ? AGENT_CONFIGS.find((c) => c.name === options.agentModel)
           : undefined;
