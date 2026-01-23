@@ -102,6 +102,14 @@ class PersistentIframeManager {
     this.initializeContainer();
   }
 
+  /**
+   * Get the current theme background color
+   */
+  private getThemeBackground(): string {
+    const isDark = document.documentElement.classList.contains("dark");
+    return isDark ? "oklch(0.145 0 0)" : "oklch(1 0 0)";
+  }
+
   private initializeContainer() {
     if (typeof document === "undefined") return;
 
@@ -160,8 +168,9 @@ class PersistentIframeManager {
       return existing.iframe;
     }
 
-    // Create wrapper div
+    // Create wrapper div with theme-aware background to prevent flash
     const wrapper = document.createElement("div");
+    const bgColor = this.getThemeBackground();
     wrapper.style.cssText = `
       position: fixed;
       top: 0;
@@ -179,17 +188,18 @@ class PersistentIframeManager {
       opacity: 0;
       transition: opacity 50ms ease-out;
       contain: strict;
+      background: ${bgColor};
     `;
     wrapper.setAttribute("data-iframe-key", key);
     wrapper.setAttribute("data-drag-disable-pointer", "");
 
-    // Create iframe
+    // Create iframe with theme-aware background to prevent flash
     const iframe = document.createElement("iframe");
     iframe.style.cssText = `
       width: 100%;
       height: 100%;
       border: 0;
-      background: white;
+      background: ${bgColor};
       display: block;
     `;
 
@@ -308,6 +318,11 @@ class PersistentIframeManager {
 
         // Ensure position is synced before revealing
         this.syncIframePositionImmediate(key);
+
+        // Sync background color to current theme before showing (prevents flash on theme change)
+        const bgColor = this.getThemeBackground();
+        currentEntry.wrapper.style.background = bgColor;
+        currentEntry.iframe.style.background = bgColor;
 
         // Fade in with opacity transition (smoother than visibility toggle)
         currentEntry.wrapper.style.opacity = "1";
