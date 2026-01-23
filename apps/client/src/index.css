@@ -312,6 +312,12 @@ pre,
   font-family: "JetBrains Mono", monospace;
 }
 
+.streamdown pre,
+.streamdown code {
+  font-family: Menlo, monospace;
+  font-size: 0.8rem;
+}
+
 /* Hide scrollbars while keeping scroll functional */
 .hide-scrollbar {
   -ms-overflow-style: none;

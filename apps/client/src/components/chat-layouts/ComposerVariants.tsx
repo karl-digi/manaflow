@@ -18,7 +18,7 @@ type ComposerProps = {
   isSending: boolean;
   isLocked: boolean;
   autoFocusKey: string;
-  statusMessage: string | null;
+  statusMessage?: string | null;
 };
 
 export function ComposerVariant({

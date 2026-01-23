@@ -328,10 +328,9 @@ export function ChatLayout({
         )}
 
         <div className="absolute inset-x-0 bottom-0 pointer-events-none">
-          <div className="h-10 bg-gradient-to-t from-white to-transparent dark:from-[#191919]" />
-          <div className="bg-white/80 backdrop-blur-2xl dark:bg-[#191919]/80 pointer-events-auto">
+          <div className="bg-white dark:bg-[#191919] pointer-events-auto">
             {permissionPrompt}
-            <div className={clsx("mx-auto px-6 py-4", MAX_WIDTH)}>
+            <div className={clsx("mx-auto px-6 pb-4", MAX_WIDTH)}>
               {composer}
             </div>
           </div>

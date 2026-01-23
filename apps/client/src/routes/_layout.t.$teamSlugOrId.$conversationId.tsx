@@ -338,6 +338,7 @@ function ConversationThread() {
   const draftsRef = useRef<Map<string, DraftState>>(new Map());
   const [showRawEvents, setShowRawEvents] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [lastSubmittedAt, setLastSubmittedAt] = useState<number | null>(null);
   const [permissionInFlight, setPermissionInFlight] = useState<string | null>(
     null
   );
@@ -495,6 +496,7 @@ function ConversationThread() {
     const attachmentsToUpload = [...attachments];
 
     setIsSending(true);
+    setLastSubmittedAt(Date.now());
     setText("");
     setAttachments([]);
 
@@ -810,6 +812,18 @@ function ConversationThread() {
     (latestAssistantMessageAt === null ||
       latestUserMessageAt > latestAssistantMessageAt);
 
+  const latestUserMessageError = useMemo(() => {
+    const userMessages = visibleMessages.filter((m) => m.role === "user");
+    if (userMessages.length === 0) return null;
+    const latest = userMessages.reduce((a, b) =>
+      a.createdAt > b.createdAt ? a : b
+    );
+    if (latest.deliveryStatus === "error") {
+      return latest.deliveryError ?? "Delivery failed";
+    }
+    return null;
+  }, [visibleMessages]);
+
   const permissionRequest = useMemo<PermissionRequest | null>(() => {
     // First, collect all permission request IDs that have already been responded to
     const respondedIds = new Set<string>();
@@ -963,9 +977,55 @@ function ConversationThread() {
     />
   );
 
+  // Use lastSubmittedAt if set (user just submitted), otherwise fall back to persisted data:
+  // - optimisticCreatedAt for new conversations
+  // - latestUserMessageAt for existing conversations awaiting response (persists across navigation)
+  const submittedAt = lastSubmittedAt
+    ?? (shouldUseOptimisticMessage ? optimisticCreatedAt : null)
+    ?? (isAwaitingResponse ? latestUserMessageAt : null);
+  const showTimingOrError = (isAwaitingResponse || isOptimisticConversation || latestUserMessageError) && submittedAt !== null;
+
+  // Group consecutive tool calls while preserving assistant messages in their original positions
+  // This maintains the model's actual output flow: message, tools, message, tools, message
+  const groupedItems = useMemo(() => {
+    const result: Array<
+      | { kind: "stream"; message: StreamingMessage }
+      | { kind: "server"; message: Doc<"conversationMessages"> }
+      | { kind: "collapsed-group"; toolCalls: ToolCallEntry[] }
+    > = [];
+
+    let pendingToolCalls: ToolCallEntry[] = [];
+
+    const flushToolCalls = () => {
+      if (pendingToolCalls.length > 0) {
+        result.push({ kind: "collapsed-group", toolCalls: pendingToolCalls });
+        pendingToolCalls = [];
+      }
+    };
+
+    for (const item of combinedItems) {
+      if (item.kind === "tool") {
+        pendingToolCalls.push(item.toolCall);
+      } else if (item.kind === "stream") {
+        flushToolCalls();
+        result.push({ kind: "stream", message: item.message });
+      } else {
+        flushToolCalls();
+        result.push({ kind: "server", message: item.message });
+      }
+    }
+
+    flushToolCalls();
+
+    return result;
+  }, [combinedItems]);
+
   const messagesContent = (
     <>
-      {combinedItems.map((item) =>
+      {showTimingOrError && (
+        <SubmissionTimingDisplay submittedAt={submittedAt} error={latestUserMessageError} />
+      )}
+      {groupedItems.map((item, index) =>
         item.kind === "stream" ? (
           <StreamingConversationMessage
             key={`stream-${item.message.createdAt}`}
@@ -984,7 +1044,10 @@ function ConversationThread() {
             }
           />
         ) : (
-          <ToolCallMessage key={item.toolCall.id} call={item.toolCall} />
+          <CollapsibleGroup
+            key={`collapsed-group-${index}`}
+            toolCalls={item.toolCalls}
+          />
         )
       )}
     </>
@@ -1001,13 +1064,6 @@ function ConversationThread() {
       isSending={isSending}
       isLocked={isOptimisticConversation}
       autoFocusKey={conversationIdParam}
-      statusMessage={
-        isOptimisticConversation
-          ? "Creating conversation..."
-          : isAwaitingResponse
-            ? "Waiting for agent response..."
-            : null
-      }
     />
   );
 
@@ -1298,6 +1354,40 @@ function MessageBlock({
   return null;
 }
 
+function SubmissionTimingDisplay({
+  submittedAt,
+  error,
+}: {
+  submittedAt: number;
+  error: string | null;
+}) {
+  const [elapsed, setElapsed] = useState(() => Date.now() - submittedAt);
+
+  useEffect(() => {
+    if (error) return;
+    const interval = setInterval(() => {
+      setElapsed(Date.now() - submittedAt);
+    }, 100);
+    return () => clearInterval(interval);
+  }, [submittedAt, error]);
+
+  if (error) {
+    return (
+      <div className="py-2 text-[11px] text-rose-500">
+        {error}
+      </div>
+    );
+  }
+
+  const seconds = (elapsed / 1000).toFixed(1);
+
+  return (
+    <div className="py-2 text-[11px] text-neutral-400 tabular-nums">
+      {seconds}s
+    </div>
+  );
+}
+
 function PermissionPrompt({
   request,
   busy,
@@ -1416,6 +1506,36 @@ function ToolCallMessage({
           ) : null}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function CollapsibleGroup({ toolCalls }: { toolCalls: ToolCallEntry[] }) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (toolCalls.length === 0) return null;
+
+  const summary = `${toolCalls.length} tool call${toolCalls.length > 1 ? "s" : ""}`;
+
+  return (
+    <div className="py-1">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex items-center gap-1 text-[11px] text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200"
+      >
+        <span className={clsx("transition-transform", expanded ? "rotate-90" : "")}>
+          ▶
+        </span>
+        <span>{summary}</span>
+      </button>
+      {expanded && (
+        <div className="mt-1 space-y-1 border-l border-neutral-200/70 pl-3 dark:border-neutral-800/70">
+          {toolCalls.map((call) => (
+            <ToolCallMessage key={call.id} call={call} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
