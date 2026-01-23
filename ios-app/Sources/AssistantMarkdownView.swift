@@ -167,6 +167,7 @@ enum MarkdownInlineToken: Equatable {
     case inlineCode(String)
     case link(text: String, url: String)
     case image(alt: String, url: String)
+    case strong([MarkdownInlineToken])
 }
 
 struct MarkdownInlineParser {
@@ -211,12 +212,37 @@ struct MarkdownInlineParser {
                 continue
             }
 
+            if let strong = parseStrongToken(text, start: index) {
+                flushBuffer()
+                tokens.append(.strong(strong.tokens))
+                index = strong.nextIndex
+                continue
+            }
+
             buffer.append(char)
             index = text.index(after: index)
         }
 
         flushBuffer()
         return tokens
+    }
+
+    private static func parseStrongToken(
+        _ text: String,
+        start: String.Index
+    ) -> (tokens: [MarkdownInlineToken], nextIndex: String.Index)? {
+        let marker = text[start]
+        guard marker == "*" || marker == "_" else { return nil }
+        let second = text.index(after: start)
+        guard second < text.endIndex, text[second] == marker else { return nil }
+        let contentStart = text.index(after: second)
+        guard let closingRange = text[contentStart...].range(of: String(repeating: marker, count: 2)) else {
+            return nil
+        }
+        let content = String(text[contentStart..<closingRange.lowerBound])
+        guard !content.isEmpty else { return nil }
+        let innerTokens = parse(content)
+        return (tokens: innerTokens, nextIndex: closingRange.upperBound)
     }
 
     private static func parseLinkToken(
@@ -432,7 +458,7 @@ struct AssistantMarkdownView: View {
             MarkdownCodeBlockView(language: language, code: code)
                 .padding(.vertical, layout.codeBlockVerticalPadding)
         case .table(let headers, let rows):
-            MarkdownTableView(headers: headers, rows: rows, layout: layout)
+            MarkdownTableView(headers: headers, rows: rows, policy: policy, layout: layout)
                 .padding(.vertical, layout.tableBlockVerticalPadding)
         }
     }
@@ -668,7 +694,7 @@ private struct MarkdownTextGroupView: View {
     }
 }
 
-private struct MarkdownAttributedStringBuilder {
+struct MarkdownAttributedStringBuilder {
     static func buildInline(
         tokens: [MarkdownInlineToken],
         policy: MarkdownRenderPolicy,
@@ -688,6 +714,17 @@ private struct MarkdownAttributedStringBuilder {
                 result.append(linkSegment(display, urlString: urlString, policy: policy, font: baseFont))
             case .image:
                 continue
+            case .strong(let strongTokens):
+                let boldFont = boldFont(for: baseFont)
+                result.append(
+                    buildInline(
+                        tokens: strongTokens,
+                        policy: policy,
+                        baseFont: boldFont,
+                        lineHeightMultiple: lineHeightMultiple,
+                        inlineCodeFontSizeDelta: inlineCodeFontSizeDelta
+                    )
+                )
             }
         }
         let paragraphStyle = NSMutableParagraphStyle()
@@ -755,6 +792,14 @@ private struct MarkdownAttributedStringBuilder {
                 .foregroundColor: UIColor.label
             ]
         )
+    }
+
+    private static func boldFont(for font: UIFont) -> UIFont {
+        let traits = font.fontDescriptor.symbolicTraits.union(.traitBold)
+        if let descriptor = font.fontDescriptor.withSymbolicTraits(traits) {
+            return UIFont(descriptor: descriptor, size: font.pointSize)
+        }
+        return UIFont.systemFont(ofSize: font.pointSize, weight: .bold)
     }
 
     private static func inlineCodeSegment(
@@ -828,6 +873,7 @@ private struct MarkdownCodeBlockView: View {
 private struct MarkdownTableView: View {
     let headers: [String]
     let rows: [[String]]
+    let policy: MarkdownRenderPolicy
     let layout: MarkdownLayoutConfig
     @State private var columnWidths: [Int: CGFloat] = [:]
 
@@ -889,10 +935,9 @@ private struct MarkdownTableView: View {
     ) -> some View {
         let leadingPadding = isHeader ? layout.tableHeaderPaddingLeading : layout.tableBodyPaddingLeading
         let trailingPadding = isHeader ? layout.tableHeaderPaddingTrailing : layout.tableBodyPaddingTrailing
+        let attributedText = buildCellText(text: text, isHeader: isHeader)
 
-        Text(verbatim: text.isEmpty ? " " : text)
-            .font(isHeader ? .subheadline.weight(.bold) : .subheadline)
-            .foregroundStyle(.primary)
+        Text(attributedText)
             .padding(.leading, leadingPadding)
             .padding(.trailing, trailingPadding)
             .padding(.vertical, layout.tableRowVerticalPadding)
@@ -921,6 +966,23 @@ private struct MarkdownTableView: View {
                 }
             )
             .textSelection(.enabled)
+    }
+
+    private func buildCellText(text: String, isHeader: Bool) -> AttributedString {
+        guard !text.isEmpty else { return AttributedString(" ") }
+        let tokens = MarkdownInlineParser.parse(text)
+        let baseFont = MarkdownAttributedStringBuilder.baseFont(
+            style: .subheadline,
+            weight: isHeader ? .bold : .regular
+        )
+        let attributed = MarkdownAttributedStringBuilder.buildInline(
+            tokens: tokens,
+            policy: policy,
+            baseFont: baseFont,
+            lineHeightMultiple: layout.lineHeightMultiple,
+            inlineCodeFontSizeDelta: layout.inlineCodeFontSizeDelta
+        )
+        return AttributedString(attributed)
     }
 
     private func updateColumnWidths(_ layouts: [TableCellLayout]) {

@@ -1,3 +1,4 @@
+import UIKit
 import XCTest
 @testable import cmux_DEV
 
@@ -173,6 +174,92 @@ final class AssistantMarkdownParserTests: XCTestCase {
             .inlineCode("code()"),
             .text(" here.")
         ])
+    }
+
+    func testInlineParserParsesBoldWithAsterisks() {
+        let input = "Make **bold** text."
+        let tokens = MarkdownInlineParser.parse(input)
+        XCTAssertEqual(tokens, [
+            .text("Make "),
+            .strong([.text("bold")]),
+            .text(" text.")
+        ])
+    }
+
+    func testInlineParserParsesBoldWithUnderscores() {
+        let input = "Make __bold__ text."
+        let tokens = MarkdownInlineParser.parse(input)
+        XCTAssertEqual(tokens, [
+            .text("Make "),
+            .strong([.text("bold")]),
+            .text(" text.")
+        ])
+    }
+
+    func testInlineParserParsesBoldAroundLink() {
+        let input = "See **[Docs](https://example.com)** now."
+        let tokens = MarkdownInlineParser.parse(input)
+        XCTAssertEqual(tokens, [
+            .text("See "),
+            .strong([.link(text: "Docs", url: "https://example.com")]),
+            .text(" now.")
+        ])
+    }
+
+    func testInlineParserLeavesUnclosedBoldMarkers() {
+        let input = "Unclosed **bold"
+        let tokens = MarkdownInlineParser.parse(input)
+        XCTAssertEqual(tokens, [.text("Unclosed **bold")])
+    }
+
+    func testAttributedStringBuilderAppliesBoldFont() {
+        let tokens = MarkdownInlineParser.parse("A **bold** move")
+        let baseFont = MarkdownAttributedStringBuilder.baseFont(style: .body, weight: .regular)
+        let attributed = MarkdownAttributedStringBuilder.buildInline(
+            tokens: tokens,
+            policy: .assistantDefault,
+            baseFont: baseFont,
+            lineHeightMultiple: 1.0,
+            inlineCodeFontSizeDelta: 0
+        )
+
+        let boldRange = (attributed.string as NSString).range(of: "bold")
+        var effectiveRange = NSRange()
+        let boldFont = attributed.attribute(.font, at: boldRange.location, effectiveRange: &effectiveRange) as? UIFont
+        XCTAssertNotNil(boldFont)
+        XCTAssertTrue(boldFont?.fontDescriptor.symbolicTraits.contains(.traitBold) ?? false)
+
+        let plainFont = attributed.attribute(.font, at: 0, effectiveRange: nil) as? UIFont
+        XCTAssertNotNil(plainFont)
+        XCTAssertFalse(plainFont?.fontDescriptor.symbolicTraits.contains(.traitBold) ?? true)
+    }
+
+    func testBoldInsideTableCellUsesBoldFont() {
+        let input = "| A | B |\n| --- | --- |\n| **Bold** | Plain |"
+        let blocks = MarkdownParser.parse(input)
+        XCTAssertEqual(blocks.count, 1)
+
+        guard case .table(_, let rows) = blocks[0].type else {
+            XCTFail("Expected table block")
+            return
+        }
+        XCTAssertEqual(rows.first?.first, "**Bold**")
+
+        let tokens = MarkdownInlineParser.parse(rows[0][0])
+        XCTAssertEqual(tokens, [.strong([.text("Bold")])])
+
+        let baseFont = MarkdownAttributedStringBuilder.baseFont(style: .subheadline, weight: .regular)
+        let attributed = MarkdownAttributedStringBuilder.buildInline(
+            tokens: tokens,
+            policy: .assistantDefault,
+            baseFont: baseFont,
+            lineHeightMultiple: 1.0,
+            inlineCodeFontSizeDelta: 0
+        )
+        let boldRange = (attributed.string as NSString).range(of: "Bold")
+        let boldFont = attributed.attribute(.font, at: boldRange.location, effectiveRange: nil) as? UIFont
+        XCTAssertNotNil(boldFont)
+        XCTAssertTrue(boldFont?.fontDescriptor.symbolicTraits.contains(.traitBold) ?? false)
     }
 
     func testInlineParserIgnoresMalformedLink() {
