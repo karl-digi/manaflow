@@ -296,7 +296,7 @@ export async function computeGitDiff(
       );
       return fallback;
     }
-    log("ERROR,", `[FileWatcher] Failed to compute git diff:`, error);
+    log("ERROR", `[FileWatcher] Failed to compute git diff:`, error);
     return "";
   }
 }

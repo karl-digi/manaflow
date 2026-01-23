@@ -1247,7 +1247,7 @@ managementIO.on("connection", (socket) => {
         emitToMainServer("worker:file-changes", {
           workerId: WORKER_ID,
           taskRunId,
-          changes,
+          changes: limitedChanges,
           gitDiff,
           fileDiffs,
           timestamp: Date.now(),
