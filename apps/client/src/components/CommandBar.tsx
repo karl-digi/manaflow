@@ -2133,7 +2133,10 @@ export function CommandBar({
   const hasSearchQuery = search.trim().length > 0;
 
   const rootSuggestedEntries = useMemo(
-    () => selectSuggestedItems(rootSuggestionHistory, filteredRootEntries, 5),
+    () =>
+      selectSuggestedItems(rootSuggestionHistory, filteredRootEntries, 5).filter(
+        (entry) => entry.value !== "onboarding:start"
+      ),
     [filteredRootEntries, rootSuggestionHistory]
   );
   const rootSuggestedValueSet = useMemo(

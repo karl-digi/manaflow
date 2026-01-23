@@ -279,8 +279,8 @@ export function OnboardingTooltip({
             disabled={isFirstStep}
             className="inline-flex items-center gap-0.5 text-xs text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
-            <ChevronLeft className="w-3 h-3 shrink-0" />
-            <span>Back</span>
+            <ChevronLeft className="w-3 h-3" />
+            Back
           </button>
           <div className="flex items-center gap-3">
             <button
@@ -291,10 +291,10 @@ export function OnboardingTooltip({
             </button>
             <button
               onClick={onNext}
-              className="inline-flex items-center justify-center gap-0.5 px-2 py-1 text-xs font-medium rounded bg-neutral-900 text-white hover:bg-neutral-800 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200 transition-colors"
+              className="inline-flex items-center gap-0.5 text-xs text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white transition-colors"
             >
-              <span>{isLastStep ? "Done" : "Next"}</span>
-              {!isLastStep && <ChevronRight className="w-3 h-3 shrink-0" />}
+              {isLastStep ? "Done" : "Next"}
+              {!isLastStep && <ChevronRight className="w-3 h-3" />}
             </button>
           </div>
         </div>

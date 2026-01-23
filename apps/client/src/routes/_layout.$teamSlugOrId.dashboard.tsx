@@ -338,7 +338,7 @@ function DashboardComponent() {
     const names: string[] = [];
     const seen = new Set<string>();
     for (const page of branchPages) {
-      for (const branch of page.branches) {
+      for (const branch of page.branches ?? []) {
         if (seen.has(branch.name)) continue;
         seen.add(branch.name);
         names.push(branch.name);
