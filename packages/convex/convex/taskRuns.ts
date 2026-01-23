@@ -559,7 +559,7 @@ export const updateStatus = internalMutation({
       await updateTaskStatusFromRuns(ctx, run.taskId, run.teamId, run.userId);
 
       // Create a notification for the user (also marks as unread)
-      console.log("[taskNotifications] Creating notification", {
+      console.log("[taskNotifications] Ensuring notification", {
         taskId: run.taskId,
         taskRunId: args.id,
         type: args.status === "completed" ? "run_completed" : "run_failed",
@@ -996,7 +996,7 @@ export const updateStatusPublic = authMutation({
       await updateTaskStatusFromRuns(ctx, doc.taskId, teamId, userId);
 
       // Create a notification for the user (also marks as unread)
-      console.log("[taskNotifications] Creating notification (crown)", {
+      console.log("[taskNotifications] Ensuring notification (crown)", {
         taskId: doc.taskId,
         taskRunId: args.id,
         type: args.status === "completed" ? "run_completed" : "run_failed",

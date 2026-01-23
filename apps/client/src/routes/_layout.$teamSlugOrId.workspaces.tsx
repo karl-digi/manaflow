@@ -28,14 +28,14 @@ function WorkspacesRoute() {
   const { teamSlugOrId } = Route.useParams();
   // In web mode, exclude local workspaces
   const excludeLocalWorkspaces = env.NEXT_PUBLIC_WEB_MODE || undefined;
-  // Use notification-aware ordering: unread notifications first, then by createdAt
+  // Use activity ordering (lastActivityAt desc)
   const tasks = useQuery(api.tasks.getWithNotificationOrder, { teamSlugOrId, excludeLocalWorkspaces });
   const tasksWithUnread = useQuery(api.taskNotifications.getTasksWithUnread, {
     teamSlugOrId,
   });
   const { expandTaskIds } = useExpandTasks();
 
-  // Tasks are already sorted by the query (unread notifications first)
+  // Tasks are already sorted by the query (lastActivityAt desc)
   const orderedTasks = useMemo(
     () => tasks ?? ([] as NonNullable<typeof tasks>),
     [tasks]

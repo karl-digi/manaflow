@@ -19,8 +19,8 @@ const AgentStoppedRequestSchema = z.object({
 
 /**
  * HTTP endpoint called by the stop hook when Claude Code stops responding.
- * This creates a notification every time it's called - each stop is a
- * meaningful event the user should know about.
+ * This creates a notification for the task run unless one already exists.
+ * Each stop is meaningful; duplicate calls are treated as retries.
  *
  * This is separate from crown/complete which handles status updates.
  * The stop hook should call BOTH endpoints:
@@ -90,7 +90,7 @@ export const agentStopped = httpAction(async (ctx, req) => {
   }
 
   // Create the notification
-  await ctx.runMutation(
+  const creationResult = await ctx.runMutation(
     internal.notifications_http.createAgentStoppedNotification,
     {
       taskRunId,
@@ -100,10 +100,17 @@ export const agentStopped = httpAction(async (ctx, req) => {
     }
   );
 
-  console.log("[convex.notifications] Created agent-stopped notification", {
-    taskRunId,
-    taskId: taskRun.taskId,
-  });
+  if (creationResult?.created) {
+    console.log("[convex.notifications] Created agent-stopped notification", {
+      taskRunId,
+      taskId: taskRun.taskId,
+    });
+  } else {
+    console.log("[convex.notifications] Skipped duplicate agent-stopped notification", {
+      taskRunId,
+      taskId: taskRun.taskId,
+    });
+  }
 
   return jsonResponse({ ok: true });
 });
@@ -123,44 +130,41 @@ export const createAgentStoppedNotification = internalMutation({
     const now = Date.now();
 
     // Check if notification already exists for this task run (avoid duplicates)
-    // Since taskRunId is optional and not indexed, we scan with filter
-    const existingNotifications = await ctx.db
+    const existingNotification = await ctx.db
       .query("taskNotifications")
-      .withIndex("by_team_user_created", (q) =>
-        q.eq("teamId", args.teamId).eq("userId", args.userId)
+      .withIndex("by_run_user", (q) =>
+        q.eq("taskRunId", args.taskRunId).eq("userId", args.userId)
       )
-      .filter((q) => q.eq(q.field("taskRunId"), args.taskRunId))
       .first();
 
-    if (!existingNotifications) {
-      // Fetch the task run to determine the notification type based on actual status
-      const taskRun = await ctx.db.get(args.taskRunId);
-      const notificationType =
-        taskRun?.status === "completed" ? "run_completed" : "run_failed";
-
-      await ctx.db.insert("taskNotifications", {
-        taskId: args.taskId,
-        taskRunId: args.taskRunId,
-        teamId: args.teamId,
-        userId: args.userId,
-        type: notificationType,
-        createdAt: now,
-      });
+    if (existingNotification) {
+      return { success: true, created: false };
     }
 
-    // Update task's lastActivityAt for sorting (notification received = activity)
-    await ctx.db.patch(args.taskId, { lastActivityAt: now });
+    // Fetch the task run to determine the notification type based on actual status
+    const taskRun = await ctx.db.get(args.taskRunId);
+    const notificationType =
+      taskRun?.status === "completed" ? "run_completed" : "run_failed";
+
+    await ctx.db.insert("taskNotifications", {
+      taskId: args.taskId,
+      taskRunId: args.taskRunId,
+      teamId: args.teamId,
+      userId: args.userId,
+      type: notificationType,
+      createdAt: now,
+    });
 
     // Insert unread row for this task run (explicit unread tracking)
     // Check if already unread (avoid duplicates)
-    const existing = await ctx.db
+    const existingUnread = await ctx.db
       .query("unreadTaskRuns")
       .withIndex("by_run_user", (q) =>
         q.eq("taskRunId", args.taskRunId).eq("userId", args.userId)
       )
       .first();
 
-    if (!existing) {
+    if (!existingUnread) {
       await ctx.db.insert("unreadTaskRuns", {
         taskRunId: args.taskRunId,
         taskId: args.taskId,
@@ -169,6 +173,6 @@ export const createAgentStoppedNotification = internalMutation({
       });
     }
 
-    return { success: true };
+    return { success: true, created: true };
   },
 });

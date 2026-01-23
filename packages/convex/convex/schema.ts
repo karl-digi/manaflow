@@ -108,7 +108,7 @@ const convexSchema = defineSchema({
     generatedBranchName: v.optional(v.string()),
     createdAt: v.optional(v.number()),
     updatedAt: v.optional(v.number()),
-    lastActivityAt: v.optional(v.number()), // Updated on run start or notification received, for sorting
+    lastActivityAt: v.optional(v.number()), // Updated on run start for sorting
     userId: v.string(), // Link to user who created the task
     teamId: v.string(),
     environmentId: v.optional(v.id("environments")),
@@ -1130,6 +1130,7 @@ const convexSchema = defineSchema({
     .index("by_team_user_created", ["teamId", "userId", "createdAt"]) // List notifications for user
     .index("by_team_user_unread", ["teamId", "userId", "readAt", "createdAt"]) // Filter unread
     .index("by_task", ["taskId", "createdAt"]) // Get notifications for a task
+    .index("by_run_user", ["taskRunId", "userId"]) // Deduplicate by run + user
     .index("by_task_user_unread", ["taskId", "userId", "readAt"]), // Check unread per task
 
   // Explicit unread tracking for task runs

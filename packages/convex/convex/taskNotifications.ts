@@ -321,6 +321,19 @@ export const createInternal = internalMutation({
   handler: async (ctx, args) => {
     const now = Date.now();
 
+    if (args.taskRunId) {
+      const existingNotification = await ctx.db
+        .query("taskNotifications")
+        .withIndex("by_run_user", (q) =>
+          q.eq("taskRunId", args.taskRunId).eq("userId", args.userId),
+        )
+        .first();
+
+      if (existingNotification) {
+        return { created: false };
+      }
+    }
+
     await ctx.db.insert("taskNotifications", {
       taskId: args.taskId,
       taskRunId: args.taskRunId,
@@ -331,16 +344,13 @@ export const createInternal = internalMutation({
       createdAt: now,
     });
 
-    // Update task's lastActivityAt for sorting (notification received = activity)
-    await ctx.db.patch(args.taskId, { lastActivityAt: now });
-
     // Insert unread row for this task run (if taskRunId provided)
     if (args.taskRunId) {
       // Check if already unread (avoid duplicates)
       const existing = await ctx.db
         .query("unreadTaskRuns")
         .withIndex("by_run_user", (q) =>
-          q.eq("taskRunId", args.taskRunId!).eq("userId", args.userId),
+          q.eq("taskRunId", args.taskRunId).eq("userId", args.userId),
         )
         .first();
 
@@ -353,6 +363,8 @@ export const createInternal = internalMutation({
         });
       }
     }
+
+    return { created: true };
   },
 });
 

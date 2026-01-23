@@ -66,14 +66,14 @@ function LayoutComponent() {
   const excludeLocalWorkspaces = env.NEXT_PUBLIC_WEB_MODE || undefined;
   // Use React Query-wrapped Convex queries to avoid real-time subscriptions
   // that cause excessive re-renders cascading to all child components.
-  // Uses getWithNotificationOrder which sorts tasks with unread notifications first
+  // Uses getWithNotificationOrder which sorts tasks by lastActivityAt
   const tasksQuery = useRQ({
     ...convexQuery(api.tasks.getWithNotificationOrder, { teamSlugOrId, excludeLocalWorkspaces }),
     enabled: Boolean(teamSlugOrId),
   });
   const tasks = tasksQuery.data;
 
-  // Tasks are already sorted by the query (unread notifications first, then by createdAt)
+  // Tasks are already sorted by the query (lastActivityAt desc)
   const displayTasks = tasks;
 
   return (

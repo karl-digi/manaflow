@@ -123,7 +123,7 @@ export const getArchivedPaginated = authQuery({
 
 // Get tasks sorted by most recent activity (iMessage-style):
 // - Sorted by lastActivityAt desc (most recently active first)
-// - lastActivityAt is updated when a run is started OR notification is received
+// - lastActivityAt is updated when a run is started
 // - Includes hasUnread for visual indicator (blue dot)
 export const getWithNotificationOrder = authQuery({
   args: {
