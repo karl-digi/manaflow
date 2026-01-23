@@ -53,14 +53,47 @@ export function GuidedOnboarding({
 
       const data = await response.json();
       setVscodeUrl(data.vscodeUrl);
-      setSandboxId(data.sandboxId);
+      setSandboxId(data.instanceId);
+
+      // Spawn Claude Code to help with environment setup
+      setStatus("Starting setup assistant...");
+      try {
+        const repoName = repo.split("/").pop() || repo;
+        const spawnResponse = await fetch(`/api/sandboxes/${data.instanceId}/spawn-agent`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            teamSlugOrId,
+            prompt: `You are helping set up the development environment for the ${repoName} repository.
+
+Your goal is to guide the user through:
+1. Installing dependencies (check package.json, requirements.txt, Cargo.toml, etc.)
+2. Setting up environment variables (look for .env.example, .env.template)
+3. Starting the development server
+
+Be concise and helpful. Start by exploring the repository structure and identifying what needs to be done. Ask the user questions if you need clarification.
+
+Important: The user can see and interact with the terminal. Guide them through each step and explain what commands do.`,
+          }),
+        });
+
+        if (!spawnResponse.ok) {
+          console.warn("Failed to spawn Claude Code agent, continuing without it");
+        } else {
+          console.log("Claude Code agent spawned for environment setup");
+        }
+      } catch (spawnErr) {
+        // Non-fatal: continue even if agent spawn fails
+        console.warn("Failed to spawn Claude Code agent:", spawnErr);
+      }
 
       setStatus("Machine ready");
       setPhase("ready");
 
       posthog.capture("guided_onboarding_sandbox_ready", {
         repo_full_name: repo,
-        sandbox_id: data.sandboxId,
+        sandbox_id: data.instanceId,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to start machine";

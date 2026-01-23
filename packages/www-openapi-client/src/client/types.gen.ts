@@ -605,6 +605,19 @@ export type SandboxResumeResponse = {
     resumed: true;
 };
 
+export type SpawnAgentResponse = {
+    spawned: true;
+    terminalId: string;
+};
+
+export type SpawnAgentBody = {
+    teamSlugOrId: string;
+    /**
+     * Task description for the agent
+     */
+    prompt?: string;
+};
+
 export type Team = {
     /**
      * Team ID
@@ -2725,6 +2738,43 @@ export type PostApiSandboxesByIdResumeResponses = {
 };
 
 export type PostApiSandboxesByIdResumeResponse = PostApiSandboxesByIdResumeResponses[keyof PostApiSandboxesByIdResumeResponses];
+
+export type PostApiSandboxesByIdSpawnAgentData = {
+    body: SpawnAgentBody;
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/sandboxes/{id}/spawn-agent';
+};
+
+export type PostApiSandboxesByIdSpawnAgentErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Forbidden
+     */
+    403: unknown;
+    /**
+     * Sandbox not found
+     */
+    404: unknown;
+    /**
+     * Failed to spawn agent
+     */
+    500: unknown;
+};
+
+export type PostApiSandboxesByIdSpawnAgentResponses = {
+    /**
+     * Agent spawned successfully
+     */
+    200: SpawnAgentResponse;
+};
+
+export type PostApiSandboxesByIdSpawnAgentResponse = PostApiSandboxesByIdSpawnAgentResponses[keyof PostApiSandboxesByIdSpawnAgentResponses];
 
 export type GetApiTeamsData = {
     body?: never;
