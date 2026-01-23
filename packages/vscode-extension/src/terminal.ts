@@ -292,12 +292,14 @@ class PtyClient {
       console.log('[cmux] PtyClient connecting to:', fullUrl);
       this._ws = new WebSocket(fullUrl);
 
+      // Increased timeout to 20s for Docker containers where the PTY server
+      // may take longer to start (especially during initial container boot)
       const timeout = setTimeout(() => {
         if (!this._connected) {
-          console.error('[cmux] PtyClient connection timeout after 10s');
+          console.error('[cmux] PtyClient connection timeout after 20s');
           reject(new Error('Connection timeout'));
         }
-      }, 10000); // Increased from 5s to 10s to allow for slower startup
+      }, 20000);
 
       this._ws.onopen = () => {
         clearTimeout(timeout);
@@ -485,13 +487,15 @@ class CmuxTerminalManager {
       console.log('[cmux] Connecting to PTY server...');
       await this._ptyClient.connect();
       console.log('[cmux] Connected to PTY server');
+      this._initialized = true;
     } catch (err) {
       console.error('[cmux] Failed to connect to PTY server:', err);
-      this._retryConnect();
-      return;
+      // Await the retry so initialization doesn't complete until we're connected
+      // This is important for Docker containers where the PTY server may take longer to start
+      console.log('[cmux] Starting connection retry sequence...');
+      await this._retryConnect();
+      // Note: _initialized is set by _retryConnect on success
     }
-
-    this._initialized = true;
   }
 
   private _registerEventHandlers(): void {
@@ -539,17 +543,29 @@ class CmuxTerminalManager {
   }
 
   private async _retryConnect(): Promise<void> {
-    for (let i = 0; i < 10; i++) {
-      await new Promise(r => setTimeout(r, 1000));
+    // Increased retry count and delay for Docker containers where
+    // the PTY server may take longer to become available
+    const maxRetries = 20;
+    const retryDelayMs = 1500;
+
+    for (let i = 0; i < maxRetries; i++) {
+      console.log(`[cmux] Retry ${i + 1}/${maxRetries} connecting to PTY server...`);
+      await new Promise(r => setTimeout(r, retryDelayMs));
       try {
         await this._ptyClient.connect();
         // Handlers already registered in initialize(), just mark as initialized
         this._initialized = true;
+        console.log(`[cmux] Successfully connected to PTY server on retry ${i + 1}`);
         return;
-      } catch {
-        console.log(`Retry ${i + 1} failed`);
+      } catch (err) {
+        console.log(`[cmux] Retry ${i + 1}/${maxRetries} failed:`, err instanceof Error ? err.message : err);
       }
     }
+    // After all retries exhausted, throw an error so callers know PTY is unavailable
+    // The extension will fall back to tmux in this case
+    const errMsg = `Failed to connect to PTY server after ${maxRetries} retries`;
+    console.error(`[cmux] ${errMsg}`);
+    throw new Error(errMsg);
   }
 
   private _handleStateSync(terminals: TerminalInfo[]): void {
@@ -1284,10 +1300,15 @@ export function hasAnyCmuxPtyTerminals(): boolean {
  * maintenance/dev terminals may be created before the agent's "cmux" terminal.
  */
 export async function waitForAnyCmuxPtyTerminals(maxWaitMs: number = 15000): Promise<boolean> {
-  if (!terminalManager) return false;
+  if (!terminalManager) {
+    console.log('[cmux] waitForAnyCmuxPtyTerminals: terminal manager not initialized');
+    return false;
+  }
 
   // Wait for initial sync to complete (with longer timeout)
-  const syncTimeout = 10000; // 10 seconds - increased from 5s
+  // Increased to 15 seconds for Docker containers where PTY server may take longer to start
+  const syncTimeout = 15000;
+  console.log(`[cmux] waitForAnyCmuxPtyTerminals: waiting for initial sync (timeout: ${syncTimeout}ms)...`);
   try {
     await Promise.race([
       terminalManager.waitForInitialSync(),
@@ -1295,9 +1316,10 @@ export async function waitForAnyCmuxPtyTerminals(maxWaitMs: number = 15000): Pro
         setTimeout(() => reject(new Error('Initial sync timeout')), syncTimeout)
       )
     ]);
-  } catch {
+    console.log('[cmux] waitForAnyCmuxPtyTerminals: initial sync complete');
+  } catch (err) {
     // Timeout or connection failure - fall back to tmux
-    console.log('[cmux] waitForAnyCmuxPtyTerminals: initial sync failed/timed out');
+    console.log('[cmux] waitForAnyCmuxPtyTerminals: initial sync failed/timed out:', err instanceof Error ? err.message : err);
     return false;
   }
 

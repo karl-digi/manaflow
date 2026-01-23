@@ -270,6 +270,68 @@ async function waitForTmuxSession(
   return false;
 }
 
+/**
+ * Wait for VSCode to be fully ready before setting up terminals.
+ * This is especially important for Docker containers where VSCode
+ * may take longer to initialize (settings sync, extensions, etc.)
+ */
+async function waitForVSCodeReady(maxWaitMs: number = 30000): Promise<void> {
+  const startTime = Date.now();
+
+  log("Waiting for VSCode to be ready...");
+
+  // 1. Wait for window focus state to stabilize
+  // VSCode window may not be focused during initial load
+  if (!vscode.window.state.focused) {
+    log("Waiting for VSCode window to be ready (not focused yet)...");
+    await new Promise<void>((resolve) => {
+      const disposable = vscode.window.onDidChangeWindowState((state) => {
+        if (state.focused) {
+          log("VSCode window is now focused");
+          disposable.dispose();
+          resolve();
+        }
+      });
+      // Also resolve after timeout to not block forever
+      setTimeout(() => {
+        disposable.dispose();
+        log("VSCode window focus wait timed out, continuing anyway");
+        resolve();
+      }, Math.min(5000, maxWaitMs - (Date.now() - startTime)));
+    });
+  }
+
+  // 2. Wait for Git extension to be available (we need it for diff view)
+  const gitExtension = vscode.extensions.getExtension("vscode.git");
+  if (gitExtension && !gitExtension.isActive) {
+    log("Waiting for Git extension to activate...");
+    try {
+      await Promise.race([
+        gitExtension.activate(),
+        new Promise<void>((_, reject) =>
+          setTimeout(() => reject(new Error("Git extension activation timeout")),
+            Math.min(10000, maxWaitMs - (Date.now() - startTime)))
+        )
+      ]);
+      log("Git extension activated");
+    } catch (e) {
+      log("Git extension activation failed or timed out, continuing anyway", e);
+    }
+  }
+
+  // 3. Small delay for settings sync to complete
+  // This is especially important for Docker containers where settings
+  // sync can take a while after the window is ready
+  const remainingTime = maxWaitMs - (Date.now() - startTime);
+  if (remainingTime > 0) {
+    const settingsSyncDelay = Math.min(2000, remainingTime);
+    log(`Waiting ${settingsSyncDelay}ms for settings sync...`);
+    await new Promise(resolve => setTimeout(resolve, settingsSyncDelay));
+  }
+
+  log(`VSCode ready check complete (took ${Date.now() - startTime}ms)`);
+}
+
 async function setupDefaultTerminal() {
   log("Setting up default terminal");
 
@@ -277,6 +339,14 @@ async function setupDefaultTerminal() {
   if (isSetupComplete) {
     log("Setup already complete, skipping");
     return;
+  }
+
+  // Wait for VSCode to be fully ready before proceeding
+  // This prevents terminals from being created before VSCode is initialized
+  try {
+    await waitForVSCodeReady();
+  } catch (e) {
+    log("VSCode readiness check failed, continuing anyway", e);
   }
 
   // If any meaningful editors exist (not just system/onboarding tabs), preserve focus and skip UI setup
@@ -301,9 +371,10 @@ async function setupDefaultTerminal() {
 
   // Check if cmux-pty is managing ANY terminals (not just "cmux")
   // The orchestrator may create maintenance/dev terminals before the agent creates "cmux"
-  // We use a longer timeout (15s) to allow the orchestrator to finish
-  log("Waiting for cmux-pty terminals (up to 15s)...");
-  const hasCmuxPtyTerminals = await waitForAnyCmuxPtyTerminals(15000);
+  // We use a longer timeout (30s) to allow the orchestrator to finish
+  // This is especially important for Docker containers where startup may be slower
+  log("Waiting for cmux-pty terminals (up to 30s)...");
+  const hasCmuxPtyTerminals = await waitForAnyCmuxPtyTerminals(30000);
 
   if (hasCmuxPtyTerminals) {
     // cmux-pty has terminals - create all of them from the restore queue
