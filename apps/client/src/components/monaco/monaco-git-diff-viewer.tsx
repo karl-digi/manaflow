@@ -1051,6 +1051,28 @@ export function MonacoGitDiffViewer({
     () => new Set(diffs.map((diff) => diff.filePath)),
   );
 
+  // Ensure new files are expanded by default when diffs change
+  useEffect(() => {
+    setExpandedFiles((prev) => {
+      const currentFilePaths = new Set(diffs.map((diff) => diff.filePath));
+      const newFilePaths = diffs.filter((diff) => !prev.has(diff.filePath));
+      if (newFilePaths.length === 0) {
+        return prev;
+      }
+      const next = new Set(prev);
+      for (const diff of newFilePaths) {
+        next.add(diff.filePath);
+      }
+      // Remove files that no longer exist in diffs
+      for (const filePath of prev) {
+        if (!currentFilePaths.has(filePath)) {
+          next.delete(filePath);
+        }
+      }
+      return next;
+    });
+  }, [diffs]);
+
   const fileGroups: MonacoFileGroup[] = useMemo(
     () =>
       diffs.map((diff) => {
