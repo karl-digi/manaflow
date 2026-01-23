@@ -19,6 +19,17 @@ type IframeEntry = {
   isStabilized: boolean; // Tracks if the iframe has completed initial stabilization
 };
 
+// Theme-aware background colors matching index.css
+const LIGHT_BACKGROUND = "oklch(1 0 0)"; // --background in :root
+const DARK_BACKGROUND = "oklch(0.145 0 0)"; // --background in .dark
+
+function getThemeBackground(): string {
+  if (typeof document === "undefined") return LIGHT_BACKGROUND;
+  return document.documentElement.classList.contains("dark")
+    ? DARK_BACKGROUND
+    : LIGHT_BACKGROUND;
+}
+
 interface MountOptions {
   className?: string;
   style?: React.CSSProperties;
@@ -82,6 +93,7 @@ class PersistentIframeManager {
   private maxIframes = 10;
   private container: HTMLDivElement | null = null;
   private resizeObserver: ResizeObserver;
+  private themeObserver: MutationObserver | null = null;
   private debugMode = false;
   private syncTimeouts = new Map<string, number>();
 
@@ -100,6 +112,46 @@ class PersistentIframeManager {
     });
 
     this.initializeContainer();
+    this.initializeThemeObserver();
+  }
+
+  /**
+   * Watch for theme changes and update iframe backgrounds
+   */
+  private initializeThemeObserver() {
+    if (typeof document === "undefined" || typeof MutationObserver === "undefined") return;
+
+    const init = () => {
+      this.themeObserver = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+          if (mutation.type === "attributes" && mutation.attributeName === "class") {
+            this.updateAllIframeBackgrounds();
+          }
+        }
+      });
+
+      this.themeObserver.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ["class"],
+      });
+    };
+
+    if (document.documentElement) {
+      init();
+    } else {
+      document.addEventListener("DOMContentLoaded", init);
+    }
+  }
+
+  /**
+   * Update background color for all existing iframes and wrappers to match current theme
+   */
+  private updateAllIframeBackgrounds() {
+    const background = getThemeBackground();
+    for (const entry of this.iframes.values()) {
+      entry.iframe.style.background = background;
+      entry.wrapper.style.background = background;
+    }
   }
 
   private initializeContainer() {
@@ -160,7 +212,8 @@ class PersistentIframeManager {
       return existing.iframe;
     }
 
-    // Create wrapper div
+    // Create wrapper div with theme-aware background
+    const themeBackground = getThemeBackground();
     const wrapper = document.createElement("div");
     wrapper.style.cssText = `
       position: fixed;
@@ -179,17 +232,18 @@ class PersistentIframeManager {
       opacity: 0;
       transition: opacity 50ms ease-out;
       contain: strict;
+      background: ${themeBackground};
     `;
     wrapper.setAttribute("data-iframe-key", key);
     wrapper.setAttribute("data-drag-disable-pointer", "");
 
-    // Create iframe
+    // Create iframe with theme-aware background
     const iframe = document.createElement("iframe");
     iframe.style.cssText = `
       width: 100%;
       height: 100%;
       border: 0;
-      background: white;
+      background: ${themeBackground};
       display: block;
     `;
 
