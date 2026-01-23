@@ -37,7 +37,13 @@ const getRepoHint = (): string | null => {
 const hasGitDirectory = (candidatePath: string): boolean => {
   try {
     const gitPath = join(candidatePath, ".git");
-    return existsSync(gitPath) && statSync(gitPath).isDirectory();
+    if (!existsSync(gitPath)) {
+      return false;
+    }
+    const stats = statSync(gitPath);
+    // .git can be a directory (normal repos) or a file (worktrees/submodules)
+    // In worktrees/submodules, .git is a file containing "gitdir: <path>"
+    return stats.isDirectory() || stats.isFile();
   } catch {
     return false;
   }
