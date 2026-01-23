@@ -5,6 +5,23 @@
     <link rel="icon" type="image/png" href="/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>cmux</title>
+    <script>
+      (function () {
+        try {
+          const storageKey = "vite-ui-theme";
+          const root = document.documentElement;
+          const stored = localStorage.getItem(storageKey);
+          const theme =
+            stored === "light" || stored === "dark"
+              ? stored
+              : window.matchMedia("(prefers-color-scheme: dark)").matches
+                ? "dark"
+                : "light";
+          root.classList.remove("light", "dark");
+          root.classList.add(theme);
+        } catch {}
+      })();
+    </script>
   </head>
   <body class="antialiased">
     <div id="root" class="h-dvh flex flex-col"></div>
