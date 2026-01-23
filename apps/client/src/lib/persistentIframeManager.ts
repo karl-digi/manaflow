@@ -226,7 +226,7 @@ class PersistentIframeManager {
 
     this.iframes.set(key, entry);
     this.moveIframeOffscreen(entry);
-    this.cleanupOldIframes();
+    this.cleanupOldIframes(key);
 
     return iframe;
   }
@@ -542,19 +542,23 @@ class PersistentIframeManager {
       return;
     }
     entry.pinned = pinned;
-    this.cleanupOldIframes();
+    this.cleanupOldIframes(key);
   }
 
   /**
    * Clean up old iframes
    * More conservative cleanup: never remove pinned iframes, prioritize keeping stabilized ones
+   * @param excludeKey - Optional key to exclude from cleanup (e.g., a just-created iframe)
    */
-  private cleanupOldIframes(): void {
+  private cleanupOldIframes(excludeKey?: string): void {
     if (this.iframes.size <= this.maxIframes) return;
 
     const sorted = Array.from(this.iframes.entries())
-      // Never remove visible or pinned iframes
-      .filter(([, entry]) => !entry.isVisible && !entry.pinned)
+      // Never remove visible, pinned, or explicitly excluded iframes
+      .filter(
+        ([key, entry]) =>
+          !entry.isVisible && !entry.pinned && key !== excludeKey
+      )
       .sort(([, a], [, b]) => {
         // Prioritize keeping stabilized (fully loaded) iframes
         if (a.isStabilized !== b.isStabilized) {
