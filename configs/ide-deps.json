@@ -8,12 +8,12 @@
     {
       "publisher": "openai",
       "name": "chatgpt",
-      "version": "0.5.63"
+      "version": "0.5.64"
     },
     {
       "publisher": "ms-vscode",
       "name": "vscode-typescript-next",
-      "version": "6.0.20260121"
+      "version": "6.0.20260122"
     },
     {
       "publisher": "ms-python",
