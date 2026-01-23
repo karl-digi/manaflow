@@ -1912,9 +1912,11 @@ function TaskRunDetails({
   const navigate = useNavigate();
 
   // Fetch linked local workspace for cloud runs (skip for local/cloud workspaces)
+  // PERF: Only query when expanded AND when the run might have a linked workspace
+  // This prevents N+1 queries for every task run in the sidebar
   const linkedLocalWorkspace = useQuery(
     api.tasks.getLinkedLocalWorkspace,
-    !isLocalWorkspace && !isCloudWorkspace
+    isExpanded && !isLocalWorkspace && !isCloudWorkspace
       ? { teamSlugOrId, cloudTaskRunId: run._id }
       : "skip"
   );
