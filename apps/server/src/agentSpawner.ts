@@ -11,6 +11,7 @@ import type {
 } from "@cmux/shared/worker-schemas";
 import { parseGithubRepoUrl } from "@cmux/shared/utils/parse-github-repo-url";
 import { parse as parseDotenv } from "dotenv";
+import path from "node:path";
 import { sanitizeTmuxSessionName } from "./sanitizeTmuxSessionName";
 import {
   generateNewBranchName,
@@ -183,16 +184,28 @@ export async function spawnAgent(
         `[AgentSpawner] Original task description: ${options.taskDescription}`
       );
 
+      const promptImageDir = "/root/prompt/";
+      const escapeRegex = (value: string): string =>
+        value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+      const buildPromptSafeRegex = (token: string): RegExp =>
+        new RegExp(
+          `(?<!${escapeRegex(promptImageDir)})${escapeRegex(token)}`,
+          "g"
+        );
+
       // Create image files and update prompt
       imagesToProcess.forEach((image, index) => {
         // Sanitize filename to remove special characters
-        let fileName = image.fileName || `image_${index + 1}.png`;
+        const originalFileName = image.fileName;
+        let fileName = originalFileName || `image_${index + 1}.png`;
         serverLogger.info(`[AgentSpawner] Original filename: ${fileName}`);
+        fileName = path.basename(fileName);
         // Replace non-ASCII characters and spaces with underscores
         fileName = fileName.replace(/[^\x20-\x7E]/g, "_").replace(/\s+/g, "_");
         serverLogger.info(`[AgentSpawner] Sanitized filename: ${fileName}`);
 
-        const imagePath = `/root/prompt/${fileName}`;
+        const imagePath = `${promptImageDir}${fileName}`;
         imageFiles.push({
           path: imagePath,
           base64: image.src.split(",")[1] || image.src, // Remove data URL prefix if present
@@ -200,44 +213,45 @@ export async function spawnAgent(
 
         // Replace image reference in prompt with file path
         // First try to replace the original filename (exact match, no word boundaries)
-        if (image.fileName) {
+        const promptHasImagePath = processedTaskDescription.includes(imagePath);
+        const replaceTokenOutsidePromptPath = (token: string): boolean => {
+          if (!token) return false;
           const beforeReplace = processedTaskDescription;
-          // Escape special regex characters in the filename
-          const escapedFileName = image.fileName.replace(
-            /[.*+?^${}()|[\]\\]/g,
-            "\\$&"
-          );
           processedTaskDescription = processedTaskDescription.replace(
-            new RegExp(escapedFileName, "g"),
+            buildPromptSafeRegex(token),
             imagePath
           );
-          if (beforeReplace !== processedTaskDescription) {
+          return beforeReplace !== processedTaskDescription;
+        };
+
+        let replacedFileName = false;
+        if (originalFileName) {
+          replacedFileName = replaceTokenOutsidePromptPath(originalFileName);
+          if (replacedFileName) {
             serverLogger.info(
-              `[AgentSpawner] Replaced "${image.fileName}" with "${imagePath}"`
+              `[AgentSpawner] Replaced "${originalFileName}" with "${imagePath}"`
+            );
+          } else if (promptHasImagePath) {
+            serverLogger.info(
+              `[AgentSpawner] Prompt already contains "${imagePath}", skipping filename replacement`
             );
           } else {
             serverLogger.warn(
-              `[AgentSpawner] Failed to find "${image.fileName}" in prompt text`
+              `[AgentSpawner] Failed to find "${originalFileName}" in prompt text`
             );
           }
         }
 
         // Also replace just the filename without extension in case it appears that way
-        const nameWithoutExt = image.fileName?.replace(/\.[^/.]+$/, "");
+        const nameWithoutExt = originalFileName?.replace(/\.[^/.]+$/, "");
         if (
           nameWithoutExt &&
+          !replacedFileName &&
+          !promptHasImagePath &&
           processedTaskDescription.includes(nameWithoutExt)
         ) {
-          const beforeReplace = processedTaskDescription;
-          const escapedName = nameWithoutExt.replace(
-            /[.*+?^${}()|[\]\\]/g,
-            "\\$&"
-          );
-          processedTaskDescription = processedTaskDescription.replace(
-            new RegExp(escapedName, "g"),
-            imagePath
-          );
-          if (beforeReplace !== processedTaskDescription) {
+          const replacedName = replaceTokenOutsidePromptPath(nameWithoutExt);
+          if (replacedName) {
             serverLogger.info(
               `[AgentSpawner] Replaced "${nameWithoutExt}" with "${imagePath}"`
             );
