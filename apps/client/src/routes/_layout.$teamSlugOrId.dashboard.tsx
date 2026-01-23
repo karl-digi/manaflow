@@ -1193,6 +1193,7 @@ function DashboardComponent() {
               teamSlugOrId={teamSlugOrId}
               selectedProject={selectedProject}
               isEnvSelected={isEnvSelected}
+              branch={isEnvSelected ? undefined : effectiveSelectedBranch[0]}
             />
 
             <DashboardMainCard

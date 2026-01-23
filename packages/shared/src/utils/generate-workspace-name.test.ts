@@ -18,6 +18,25 @@ describe("generateWorkspaceName", () => {
     expect(generateWorkspaceName({ sequence: 2 })).toBe("workspace-c");
   });
 
+  it("prefers branch name when provided", () => {
+    expect(
+      generateWorkspaceName({
+        repoName: "cmux",
+        branchName: "feature/cool",
+        sequence: 0,
+      }),
+    ).toBe("feature-cool-a");
+  });
+
+  it("truncates long branch names before appending suffix", () => {
+    expect(
+      generateWorkspaceName({
+        branchName: "feature/this-is-a-very-long-branch-name",
+        sequence: 2,
+      }),
+    ).toBe("feature-this-is-a-ve-c");
+  });
+
   it("supports multi-letter suffixes", () => {
     expect(
       generateWorkspaceName({ repoName: "example", sequence: 27 }),

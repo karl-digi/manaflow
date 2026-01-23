@@ -71,7 +71,12 @@ export const reserve = authMutation({
     const now = Date.now();
     const sequence = existingSetting?.nextLocalWorkspaceSequence ?? 0;
     const repoName = deriveRepoBaseName({ projectFullName, repoUrl });
-    const workspaceName = generateWorkspaceName({ repoName, sequence });
+    const branchName = branch?.trim() ? branch : undefined;
+    const workspaceName = generateWorkspaceName({
+      repoName,
+      branchName,
+      sequence,
+    });
     const descriptor = DEFAULT_WORKSPACE_DESCRIPTOR({
       workspaceName,
       branch,

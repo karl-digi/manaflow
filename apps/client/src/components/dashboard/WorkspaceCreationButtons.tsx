@@ -22,12 +22,14 @@ type WorkspaceCreationButtonsProps = {
   teamSlugOrId: string;
   selectedProject: string[];
   isEnvSelected: boolean;
+  branch?: string;
 };
 
 export function WorkspaceCreationButtons({
   teamSlugOrId,
   selectedProject,
   isEnvSelected,
+  branch,
 }: WorkspaceCreationButtonsProps) {
   const { socket } = useSocket();
   const { addTaskToExpand } = useExpandTasks();
@@ -60,11 +62,12 @@ export function WorkspaceCreationButtons({
     setIsCreatingLocal(true);
 
     try {
-      const reservation = await reserveLocalWorkspace({
-        teamSlugOrId,
-        projectFullName,
-        repoUrl,
-      });
+    const reservation = await reserveLocalWorkspace({
+      teamSlugOrId,
+      projectFullName,
+      repoUrl,
+      ...(branch ? { branch } : {}),
+    });
 
       if (!reservation) {
         throw new Error("Unable to reserve workspace name");
@@ -79,6 +82,7 @@ export function WorkspaceCreationButtons({
             teamSlugOrId,
             projectFullName,
             repoUrl,
+            ...(branch ? { branch } : {}),
             taskId: reservation.taskId,
             taskRunId: reservation.taskRunId,
             workspaceName: reservation.workspaceName,
@@ -111,6 +115,7 @@ export function WorkspaceCreationButtons({
     teamSlugOrId,
     reserveLocalWorkspace,
     addTaskToExpand,
+    branch,
   ]);
 
   const handleCreateCloudWorkspace = useCallback(async () => {
