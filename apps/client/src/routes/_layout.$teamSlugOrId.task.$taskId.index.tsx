@@ -57,6 +57,7 @@ import {
 import z from "zod";
 import { useLocalVSCodeServeWebQuery } from "@/queries/local-vscode-serve-web";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
+import { waitForConnectedSocket } from "@/contexts/socket/socket-boot";
 import { useSocket } from "@/contexts/socket/use-socket";
 import type { CreateLocalWorkspaceResponse } from "@cmux/shared";
 import { toast } from "sonner";
@@ -654,7 +655,7 @@ function TaskDetailPage() {
   const primaryRepo = task?.projectFullName;
 
   // Handle opening a local workspace for the current task run
-  const handleOpenLocalWorkspace = useCallback(() => {
+  const handleOpenLocalWorkspace = useCallback(async () => {
     // If query is still loading (undefined), don't allow creation to prevent duplicates
     // linkedLocalWorkspace is undefined while loading, null when no linked workspace exists
     if (linkedLocalWorkspace === undefined) {
@@ -672,8 +673,20 @@ function TaskDetailPage() {
       return;
     }
 
-    if (!socket) {
-      toast.error("Socket not connected");
+    let activeSocket = socket;
+    if (!activeSocket?.connected) {
+      try {
+        activeSocket = await waitForConnectedSocket();
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : String(error ?? "Unknown");
+        console.error("Socket not connected:", message);
+        toast.error("Unable to connect to the local server. Please try again.");
+        return;
+      }
+    }
+    if (!activeSocket) {
+      toast.error("Socket is not connected. Please try again.");
       return;
     }
 
@@ -689,7 +702,7 @@ function TaskDetailPage() {
 
     const loadingToast = toast.loading("Creating local workspace...");
 
-    socket.emit(
+    activeSocket.emit(
       "create-local-workspace",
       {
         teamSlugOrId,

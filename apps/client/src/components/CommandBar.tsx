@@ -3,6 +3,7 @@ import { GitHubIcon } from "@/components/icons/github";
 import { useTheme } from "@/components/theme/use-theme";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
 import { useOnboardingOptional } from "@/contexts/onboarding/onboarding-context";
+import { waitForConnectedSocket } from "@/contexts/socket/socket-boot";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { isElectron } from "@/lib/electron";
 import { copyAllElectronLogs } from "@/lib/electron-logs/electron-logs";
@@ -699,18 +700,28 @@ export function CommandBar({
       if (isCreatingLocalWorkspace) {
         return;
       }
-      if (!socket) {
-        console.warn(
-          "Socket is not connected yet. Please try again momentarily."
-        );
-        return;
-      }
-
       setIsCreatingLocalWorkspace(true);
       let reservedTaskId: Id<"tasks"> | null = null;
       let reservedTaskRunId: Id<"taskRuns"> | null = null;
 
       try {
+        let activeSocket = socket;
+        if (!activeSocket?.connected) {
+          try {
+            activeSocket = await waitForConnectedSocket();
+          } catch (error) {
+            const message =
+              error instanceof Error ? error.message : String(error ?? "Unknown");
+            console.error("Socket not connected:", message);
+            toast.error("Unable to connect to the local server. Please try again.");
+            return;
+          }
+        }
+        if (!activeSocket) {
+          toast.error("Socket is not connected. Please try again.");
+          return;
+        }
+
         const repoUrl = `https://github.com/${projectFullName}.git`;
         const reservation = await reserveLocalWorkspace({
           teamSlugOrId,
@@ -727,7 +738,7 @@ export function CommandBar({
         addTaskToExpand(reservation.taskId);
 
         await new Promise<void>((resolve) => {
-          socket.emit(
+          activeSocket.emit(
             "create-local-workspace",
             {
               teamSlugOrId,

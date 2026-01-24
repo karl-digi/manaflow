@@ -1,3 +1,4 @@
+import { env } from "@/client-env";
 import { waitForConnectedSocket } from "@/contexts/socket/socket-boot";
 import { normalizeWorkspaceOrigin } from "@/lib/toProxyWorkspaceUrl";
 import { queryOptions, useQuery } from "@tanstack/react-query";
@@ -60,6 +61,13 @@ export function localVSCodeServeWebQueryOptions() {
     },
     staleTime: 30_000,
     gcTime: 5 * 60 * 1000,
+    refetchInterval: (query) => {
+      if (env.NEXT_PUBLIC_WEB_MODE) {
+        return false;
+      }
+      const baseUrl = query.state.data?.baseUrl ?? null;
+      return baseUrl ? false : 1000;
+    },
   });
 }
 

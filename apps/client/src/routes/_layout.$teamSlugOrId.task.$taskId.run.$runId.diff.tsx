@@ -8,6 +8,7 @@ import type {
 import { MonacoGitDiffViewer } from "@/components/monaco/monaco-git-diff-viewer";
 import { RunScreenshotGallery } from "@/components/RunScreenshotGallery";
 import { TaskDetailHeader } from "@/components/task-detail-header";
+import { waitForConnectedSocket } from "@/contexts/socket/socket-boot";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { cachedGetUser } from "@/lib/cachedGetUser";
 import type { ReviewHeatmapLine } from "@/lib/heatmap";
@@ -982,7 +983,7 @@ function RunDiffPage() {
 
   const taskRunId = selectedRun?._id ?? runId;
 
-  const handleOpenLocalWorkspace = useCallback(() => {
+  const handleOpenLocalWorkspace = useCallback(async () => {
     // If query is still loading, don't allow creation to prevent duplicates
     if (linkedLocalWorkspaceQuery.isLoading) {
       toast.info("Checking for existing workspace...", {
@@ -999,8 +1000,20 @@ function RunDiffPage() {
       return;
     }
 
-    if (!socket) {
-      toast.error("Socket not connected");
+    let activeSocket = socket;
+    if (!activeSocket?.connected) {
+      try {
+        activeSocket = await waitForConnectedSocket();
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : String(error ?? "Unknown");
+        console.error("Socket not connected:", message);
+        toast.error("Unable to connect to the local server. Please try again.");
+        return;
+      }
+    }
+    if (!activeSocket) {
+      toast.error("Socket is not connected. Please try again.");
       return;
     }
 
@@ -1016,7 +1029,7 @@ function RunDiffPage() {
 
     const loadingToast = toast.loading("Creating local workspace...");
 
-    socket.emit(
+    activeSocket.emit(
       "create-local-workspace",
       {
         teamSlugOrId,

@@ -5,6 +5,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
+import { waitForConnectedSocket } from "@/contexts/socket/socket-boot";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { useTheme } from "@/components/theme/use-theme";
 import { api } from "@cmux/convex/api";
@@ -39,11 +40,6 @@ export function WorkspaceCreationButtons({
   const createTask = useMutation(api.tasks.create);
 
   const handleCreateLocalWorkspace = useCallback(async () => {
-    if (!socket) {
-      toast.error("Socket not connected");
-      return;
-    }
-
     if (selectedProject.length === 0) {
       toast.error("Please select a repository first");
       return;
@@ -60,6 +56,23 @@ export function WorkspaceCreationButtons({
     setIsCreatingLocal(true);
 
     try {
+      let activeSocket = socket;
+      if (!activeSocket?.connected) {
+        try {
+          activeSocket = await waitForConnectedSocket();
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error ?? "Unknown");
+          console.error("Socket not connected:", message);
+          toast.error("Unable to connect to the local server. Please try again.");
+          return;
+        }
+      }
+      if (!activeSocket) {
+        toast.error("Socket is not connected. Please try again.");
+        return;
+      }
+
       const reservation = await reserveLocalWorkspace({
         teamSlugOrId,
         projectFullName,
@@ -73,7 +86,7 @@ export function WorkspaceCreationButtons({
       addTaskToExpand(reservation.taskId);
 
       await new Promise<void>((resolve) => {
-        socket.emit(
+        activeSocket.emit(
           "create-local-workspace",
           {
             teamSlugOrId,

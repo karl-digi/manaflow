@@ -1131,10 +1131,12 @@ export function setupSocketHandlers(
           };
 
           const baseServeWebUrl =
-            (await waitForVSCodeServeWebBaseUrl()) ??
+            (await waitForVSCodeServeWebBaseUrl(30_000)) ??
             getVSCodeServeWebBaseUrl();
           if (!baseServeWebUrl) {
-            throw new Error("VS Code serve-web proxy is not ready");
+            throw new Error(
+              "VS Code serve-web proxy is not ready. Make sure the VS Code CLI (code) is installed and try again."
+            );
           }
 
           const folderForUrl = resolvedWorkspacePath.replace(/\\/g, "/");

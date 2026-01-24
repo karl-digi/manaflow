@@ -20,7 +20,7 @@ const execFileAsync = promisify(execFile);
 export const LOCAL_VSCODE_HOST = "localhost";
 const SERVE_WEB_PORT_START = 39_400;
 const SERVE_WEB_MAX_PORT_ATTEMPTS = 200;
-const SERVER_READY_TIMEOUT_MS = 15_000;
+const SERVER_READY_TIMEOUT_MS = 30_000;
 const SERVE_WEB_AGENT_FOLDER = path.join(
   os.homedir(),
   ".cmux",
