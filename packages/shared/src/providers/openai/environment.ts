@@ -48,6 +48,37 @@ export function applyCodexApiKeys(
   return { files, env };
 }
 
+// Target model for migrations - change this when a new latest model is released
+const MIGRATION_TARGET_MODEL = "gpt-5.2-codex";
+
+// Models to migrate (models without model_reasoning_effort support)
+const MODELS_TO_MIGRATE = [
+  "gpt-5.1-codex-max",
+  "gpt-5.2",
+  "gpt-5.1",
+  "gpt-5.1-codex",
+  "gpt-5.1-codex-mini",
+  "gpt-5",
+  "o3",
+  "o4-mini",
+  "gpt-4.1",
+  "gpt-5-codex-mini",
+];
+
+// Generate model_migrations TOML section
+function generateModelMigrations(): string {
+  const migrations = MODELS_TO_MIGRATE.map(
+    (model) => `"${model}" = "${MIGRATION_TARGET_MODEL}"`
+  ).join("\n");
+  return `\n[notice.model_migrations]\n${migrations}\n`;
+}
+
+// Strip existing [notice.model_migrations] section from TOML
+// Regex matches from [notice.model_migrations] to next section header or EOF
+function stripModelMigrations(toml: string): string {
+  return toml.replace(/\[notice\.model_migrations\][\s\S]*?(?=\n\[|$)/g, "");
+}
+
 export async function getOpenAIEnvironment(
   _ctx: EnvironmentContext
 ): Promise<EnvironmentResult> {
@@ -105,21 +136,24 @@ touch /root/lifecycle/codex-done.txt /root/lifecycle/done.txt
     }
   }
 
-  // Ensure config.toml exists and contains a notify hook pointing to our script
+  // Ensure config.toml exists and contains notify hook + model migrations
   try {
     const rawToml = await readFile(`${homedir()}/.codex/config.toml`, "utf-8");
     const hasNotify = /(^|\n)\s*notify\s*=/.test(rawToml);
-    const tomlOut = hasNotify
+    let tomlOut = hasNotify
       ? rawToml
       : `notify = ["/root/lifecycle/codex-notify.sh"]\n` + rawToml;
+    // Strip existing model_migrations and append managed ones
+    tomlOut = stripModelMigrations(tomlOut) + generateModelMigrations();
     files.push({
       destinationPath: `$HOME/.codex/config.toml`,
       contentBase64: Buffer.from(tomlOut).toString("base64"),
       mode: "644",
     });
   } catch (_error) {
-    // No host config.toml; create a minimal one that sets notify
-    const toml = `notify = ["/root/lifecycle/codex-notify.sh"]\n`;
+    // No host config.toml; create minimal one with notify + model migrations
+    const toml =
+      `notify = ["/root/lifecycle/codex-notify.sh"]\n` + generateModelMigrations();
     files.push({
       destinationPath: `$HOME/.codex/config.toml`,
       contentBase64: Buffer.from(toml).toString("base64"),
