@@ -135,7 +135,11 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
         key: getMediaKey(latestScreenshotSet._id, "image", image, indexInSet),
       });
     });
-    latestScreenshotSet.videos?.forEach((video, indexInSet) => {
+    // Filter out animated preview images (GIF/APNG) - they are only used for GitHub comment embedding, not gallery display
+    const displayableVideos = latestScreenshotSet.videos?.filter(
+      (video) => video.mimeType !== "image/apng" && video.mimeType !== "image/gif"
+    );
+    displayableVideos?.forEach((video, indexInSet) => {
       entries.push({
         set: latestScreenshotSet,
         media: video,
@@ -506,7 +510,7 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
                       {currentEntry.kind === "video" ? "Video" : "Image"}{" "}
                       {currentEntry.indexInSet + 1} of{" "}
                       {currentEntry.kind === "video"
-                        ? currentEntry.set.videos?.length ?? 0
+                        ? currentEntry.set.videos?.filter((v) => v.mimeType !== "image/apng" && v.mimeType !== "image/gif").length ?? 0
                         : currentEntry.set.images.length}
                       <span className="px-1 text-neutral-400 dark:text-neutral-600">•</span>
                       {formatDistanceToNow(new Date(currentEntry.set.capturedAt), {
@@ -709,7 +713,8 @@ export function RunScreenshotGallery(props: RunScreenshotGalleryProps) {
             ? "text-neutral-500 dark:text-neutral-400"
             : "text-rose-600 dark:text-rose-400";
           const imageCount = set.images.length;
-          const videoCount = set.videos?.length ?? 0;
+          // Exclude animated previews (GIF/APNG) from video count - they are only for GitHub comment embedding
+          const videoCount = set.videos?.filter((v) => v.mimeType !== "image/apng" && v.mimeType !== "image/gif").length ?? 0;
           const totalMediaCount = imageCount + videoCount;
           const showEmptyStateMessage = totalMediaCount === 0 && !isNoUiChanges;
 

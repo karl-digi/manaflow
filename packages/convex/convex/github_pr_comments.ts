@@ -50,11 +50,12 @@ const getVideoExtension = (mimeType: string): string => {
 };
 
 /**
- * Check if a MIME type is for APNG (animated PNG).
- * APNG files render as animated images in GitHub comments.
+ * Check if a MIME type is for an animated image preview (GIF or APNG).
+ * These render as animated images in GitHub comments.
  */
-const isApngMimeType = (mimeType: string): boolean => {
-  return mimeType.toLowerCase() === "image/apng";
+const isAnimatedPreviewMimeType = (mimeType: string): boolean => {
+  const lower = mimeType.toLowerCase();
+  return lower === "image/gif" || lower === "image/apng";
 };
 
 /**
@@ -450,11 +451,11 @@ async function renderScreenshotSetMarkdown(
       }
 
       // Render videos - upload to GitHub Release Assets
-      // Group videos by base name to pair APNG (preview) with MP4 (download)
+      // Group videos by base name to pair animated preview (GIF/APNG) with MP4 (download)
       if (set.videos && set.videos.length > 0 && options?.accessToken && options?.repoFullName) {
-        // Group videos by base name (e.g., "workflow.mp4" and "workflow.apng" share base "workflow")
+        // Group videos by base name (e.g., "workflow.mp4" and "workflow.gif" share base "workflow")
         const videoGroups = new Map<string, {
-          apng?: typeof set.videos[0];
+          preview?: typeof set.videos[0];  // GIF or APNG for animated preview
           mp4?: typeof set.videos[0];
           other?: typeof set.videos[0];
         }>();
@@ -464,8 +465,8 @@ async function renderScreenshotSetMarkdown(
           const baseName = getBaseName(fileName);
           const group = videoGroups.get(baseName) ?? {};
 
-          if (isApngMimeType(video.mimeType)) {
-            group.apng = video;
+          if (isAnimatedPreviewMimeType(video.mimeType)) {
+            group.preview = video;
           } else if (video.mimeType === "video/mp4") {
             group.mp4 = video;
           } else {
@@ -478,151 +479,134 @@ async function renderScreenshotSetMarkdown(
         // Process each video group
         for (const [baseName, group] of videoGroups) {
           try {
-            // If we have an APNG, show it as an image (renders as animated) with optional MP4 download
-            if (group.apng) {
-              const apngFile = group.apng;
-              const apngFileName = apngFile.fileName || `${baseName}.apng`;
+            let previewUrl: string | null = null;
+            let mp4Url: string | null = null;
+            const description = group.preview?.description || group.mp4?.description || group.other?.description;
 
-              // Get APNG from Convex storage
-              const apngStorageUrl = await ctx.storage.getUrl(apngFile.storageId);
-              if (!apngStorageUrl) {
-                console.warn("[github_pr_comments] Could not get storage URL for APNG", {
-                  storageId: apngFile.storageId,
-                });
-                continue;
-              }
+            // Try to upload animated preview (GIF or APNG) if available
+            if (group.preview) {
+              const previewFile = group.preview;
+              const ext = getVideoExtension(previewFile.mimeType);
+              const previewFileName = previewFile.fileName || `${baseName}.${ext}`;
 
-              // Fetch APNG data
-              const apngResponse = await fetch(apngStorageUrl);
-              if (!apngResponse.ok) {
-                console.error("[github_pr_comments] Failed to fetch APNG from storage", {
-                  storageId: apngFile.storageId,
-                  status: apngResponse.status,
-                });
-                continue;
-              }
-
-              const apngData = await apngResponse.arrayBuffer();
-
-              // Upload APNG to GitHub
-              const apngUploadResult = await uploadVideoToGitHub({
-                repoFullName: options.repoFullName,
-                accessToken: options.accessToken,
-                videoData: apngData,
-                fileName: apngFileName,
-                contentType: "image/apng",
-              });
-
-              if (!apngUploadResult.ok) {
-                console.error("[github_pr_comments] Failed to upload APNG to GitHub", {
-                  storageId: apngFile.storageId,
-                  error: apngUploadResult.error,
-                });
-                continue;
-              }
-
-              // Upload MP4 if available (for download link)
-              let mp4Url: string | null = null;
-              if (group.mp4) {
-                const mp4File = group.mp4;
-                const mp4FileName = mp4File.fileName || `${baseName}.mp4`;
-
-                const mp4StorageUrl = await ctx.storage.getUrl(mp4File.storageId);
-                if (mp4StorageUrl) {
-                  const mp4Response = await fetch(mp4StorageUrl);
-                  if (mp4Response.ok) {
-                    const mp4Data = await mp4Response.arrayBuffer();
-                    const mp4UploadResult = await uploadVideoToGitHub({
-                      repoFullName: options.repoFullName,
-                      accessToken: options.accessToken,
-                      videoData: mp4Data,
-                      fileName: mp4FileName,
-                      contentType: "video/mp4",
+              const previewStorageUrl = await ctx.storage.getUrl(previewFile.storageId);
+              if (previewStorageUrl) {
+                const previewResponse = await fetch(previewStorageUrl);
+                if (previewResponse.ok) {
+                  const previewData = await previewResponse.arrayBuffer();
+                  const previewUploadResult = await uploadVideoToGitHub({
+                    repoFullName: options.repoFullName,
+                    accessToken: options.accessToken,
+                    videoData: previewData,
+                    fileName: previewFileName,
+                    contentType: previewFile.mimeType,
+                  });
+                  if (previewUploadResult.ok) {
+                    previewUrl = previewUploadResult.assetUrl;
+                    console.log("[github_pr_comments] Animated preview uploaded", {
+                      storageId: previewFile.storageId,
+                      mimeType: previewFile.mimeType,
+                      assetUrl: previewUrl,
                     });
-                    if (mp4UploadResult.ok) {
-                      mp4Url = mp4UploadResult.assetUrl;
-                    }
+                  } else {
+                    console.error("[github_pr_comments] Failed to upload preview to GitHub", {
+                      storageId: previewFile.storageId,
+                      error: previewUploadResult.error,
+                    });
+                  }
+                } else {
+                  console.error("[github_pr_comments] Failed to fetch preview from storage", {
+                    storageId: previewFile.storageId,
+                    status: previewResponse.status,
+                  });
+                }
+              } else {
+                console.warn("[github_pr_comments] Could not get storage URL for preview", {
+                  storageId: previewFile.storageId,
+                });
+              }
+            }
+
+            // Try to upload MP4 if available
+            if (group.mp4) {
+              const mp4File = group.mp4;
+              const mp4FileName = mp4File.fileName || `${baseName}.mp4`;
+
+              const mp4StorageUrl = await ctx.storage.getUrl(mp4File.storageId);
+              if (mp4StorageUrl) {
+                const mp4Response = await fetch(mp4StorageUrl);
+                if (mp4Response.ok) {
+                  const mp4Data = await mp4Response.arrayBuffer();
+                  const mp4UploadResult = await uploadVideoToGitHub({
+                    repoFullName: options.repoFullName,
+                    accessToken: options.accessToken,
+                    videoData: mp4Data,
+                    fileName: mp4FileName,
+                    contentType: "video/mp4",
+                  });
+                  if (mp4UploadResult.ok) {
+                    mp4Url = mp4UploadResult.assetUrl;
+                    console.log("[github_pr_comments] MP4 uploaded", {
+                      storageId: mp4File.storageId,
+                      assetUrl: mp4Url,
+                    });
+                  } else {
+                    console.error("[github_pr_comments] Failed to upload MP4 to GitHub", {
+                      storageId: mp4File.storageId,
+                      error: mp4UploadResult.error,
+                    });
                   }
                 }
               }
+            }
 
-              // Render APNG as image (will animate in GitHub) with optional MP4 download
-              // Use description from MP4 if APNG doesn't have one (APNG is generated from MP4)
-              const description = apngFile.description || group.mp4?.description;
-              const safeDescription = sanitizeDescription(description);
-              const safeFileName = sanitizeFileName(apngFileName);
+            // Render based on what we have
+            const safeDescription = sanitizeDescription(description);
 
+            if (previewUrl) {
+              // Have animated preview - show as animated image with optional MP4 download
               if (safeDescription) {
                 lines.push(`### 🎬 Workflow Preview`, "");
                 lines.push(`**${safeDescription}**`, "");
               }
-
-              // Show APNG as an image (GitHub will render it as animated)
-              lines.push(`![${safeFileName}](${apngUploadResult.assetUrl})`, "");
-
-              // Add MP4 download link if available
+              const ext = group.preview ? getVideoExtension(group.preview.mimeType) : "gif";
+              const safeFileName = sanitizeFileName(group.preview?.fileName || `${baseName}.${ext}`);
+              lines.push(`![${safeFileName}](${previewUrl})`, "");
               if (mp4Url) {
                 lines.push(`[📥 Download full video (MP4)](${mp4Url})`, "");
               }
-
-              console.log("[github_pr_comments] APNG preview rendered", {
-                apngStorageId: apngFile.storageId,
-                apngUrl: apngUploadResult.assetUrl,
-                mp4Url,
-              });
-            } else if (group.mp4 || group.other) {
-              // No APNG, fall back to showing video URL (may not auto-embed)
-              const video = group.mp4 ?? group.other;
-              if (!video) continue;
-
+            } else if (mp4Url) {
+              // No APNG but have MP4 - show download link
+              if (safeDescription) {
+                lines.push(`### 🎬 Workflow Video`, "");
+                lines.push(`**${safeDescription}**`, "");
+              }
+              lines.push(`[📥 Download video](${mp4Url})`, "");
+            } else if (group.other) {
+              // Fall back to other video format
+              const video = group.other;
               const fileName = video.fileName || `${baseName}.mp4`;
 
               const storageUrl = await ctx.storage.getUrl(video.storageId);
-              if (!storageUrl) {
-                console.warn("[github_pr_comments] Could not get storage URL for video", {
-                  storageId: video.storageId,
-                });
-                continue;
-              }
-
-              const videoResponse = await fetch(storageUrl);
-              if (!videoResponse.ok) {
-                console.error("[github_pr_comments] Failed to fetch video from storage", {
-                  storageId: video.storageId,
-                  status: videoResponse.status,
-                });
-                continue;
-              }
-
-              const videoData = await videoResponse.arrayBuffer();
-
-              const uploadResult = await uploadVideoToGitHub({
-                repoFullName: options.repoFullName,
-                accessToken: options.accessToken,
-                videoData,
-                fileName,
-                contentType: video.mimeType,
-              });
-
-              if (uploadResult.ok) {
-                const safeDescription = sanitizeDescription(video.description);
-
-                if (safeDescription) {
-                  lines.push(`### 🎬 Workflow Video`, "");
-                  lines.push(`**${safeDescription}**`, "");
+              if (storageUrl) {
+                const videoResponse = await fetch(storageUrl);
+                if (videoResponse.ok) {
+                  const videoData = await videoResponse.arrayBuffer();
+                  const uploadResult = await uploadVideoToGitHub({
+                    repoFullName: options.repoFullName,
+                    accessToken: options.accessToken,
+                    videoData,
+                    fileName,
+                    contentType: video.mimeType,
+                  });
+                  if (uploadResult.ok) {
+                    if (safeDescription) {
+                      lines.push(`### 🎬 Workflow Video`, "");
+                      lines.push(`**${safeDescription}**`, "");
+                    }
+                    lines.push(`[📥 Download video](${uploadResult.assetUrl})`, "");
+                  }
                 }
-                // Show as download link since MP4 URLs don't auto-embed reliably
-                lines.push(`[📥 Download video](${uploadResult.assetUrl})`, "");
-
-                console.log("[github_pr_comments] Video uploaded (no APNG preview)", {
-                  storageId: video.storageId,
-                  assetUrl: uploadResult.assetUrl,
-                });
-              } else {
-                console.error("[github_pr_comments] Failed to upload video to GitHub", {
-                  storageId: video.storageId,
-                  error: uploadResult.error,
-                });
               }
             }
           } catch (error) {

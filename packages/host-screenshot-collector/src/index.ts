@@ -850,13 +850,13 @@ if clicks:
         print(f"Video duration: {video_duration:.1f}s", file=sys.stderr)
 
         # STEP 2: Trim inactive sections and speed up transitions
-        # Goal: Videos showing complete end-to-end workflows with FULL action results
-        FAST_SPEED = 4  # Speed for transition segments (slower = less jarring)
-        ACTION_BEFORE = 0.5  # seconds before click at normal speed (shows hover/approach)
-        ACTION_AFTER = 4.0   # seconds after click at normal speed (shows result: navigation, modals, page loads)
-        LAST_ACTION_AFTER = 6.0  # extra time for LAST click to show final result
-        MAX_TRANSITION = 1.5  # max seconds to keep from gaps (before speedup) - gives context between actions
-        END_OF_VIDEO_BUFFER = 3.0  # seconds to keep at end of video to show final state
+        # Goal: Snappy videos that cut/speed through inactivity aggressively
+        FAST_SPEED = 10  # Speed for transition segments (10x = very fast)
+        ACTION_BEFORE = 0.3  # seconds before click at normal speed
+        ACTION_AFTER = 2.0   # seconds after click at normal speed (shows immediate result)
+        LAST_ACTION_AFTER = 3.0  # extra time for LAST click to show final result
+        MAX_TRANSITION = 0.3  # max seconds to keep from gaps (before speedup) - minimal context
+        END_OF_VIDEO_BUFFER = 1.5  # seconds to keep at end of video to show final state
 
         # Build segments - TRIM long gaps, keep only action windows
         video_segments = []  # (start, end, speed)
@@ -942,8 +942,8 @@ if clicks:
         print(f"Final video: {len(video_segments)} segments, ~{total_dur:.1f}s (from {video_duration:.1f}s original)", file=sys.stderr)
 
 else:
-    # No clicks - still draw cursor at center, then speed up
-    print("No clicks found, drawing cursor at center and speeding up 2x", file=sys.stderr)
+    # No clicks - still draw cursor at center, then speed up 4x
+    print("No clicks found, drawing cursor at center and speeding up 4x", file=sys.stderr)
     cx, cy = 960, 540  # screen center
 
     # Use pre-rendered cursor PNG for no-click case
@@ -963,12 +963,12 @@ else:
         print(f"Failed to create cursor PNG for no-click case: {e}, using drawtext fallback", file=sys.stderr)
 
     if use_cursor_png:
-        # Use overlay filter with cursor PNG (offset by tip position), then speed up
+        # Use overlay filter with cursor PNG (offset by tip position), then speed up 4x
         result = subprocess.run([
             "ffmpeg", "-y",
             "-i", f"{outdir}/raw.mp4",
             "-i", cursor_path,
-            "-filter_complex", f"[0:v][1:v]overlay=x={cx-tip_offset}:y={cy-tip_offset},setpts=0.5*PTS[out]",
+            "-filter_complex", f"[0:v][1:v]overlay=x={cx-tip_offset}:y={cy-tip_offset},setpts=0.25*PTS[out]",
             "-map", "[out]",
             "-movflags", "+faststart",
             f"{outdir}/workflow.mp4"
@@ -987,13 +987,13 @@ else:
         tip_offset_x = -4
         tip_offset_y = -2
         cursor_filter = f"drawtext=text='{cursor_char}':x={cx+tip_offset_x+shadow_offset}:y={cy+tip_offset_y+shadow_offset}:fontsize={cursor_size}:fontcolor=black@0.6,drawtext=text='{cursor_char}':x={cx+tip_offset_x}:y={cy+tip_offset_y}:fontsize={cursor_size}:fontcolor=white"
-        result = subprocess.run(f'ffmpeg -y -i "{outdir}/raw.mp4" -vf "{cursor_filter},setpts=0.5*PTS" -movflags +faststart "{outdir}/workflow.mp4"', shell=True, capture_output=True, text=True)
+        result = subprocess.run(f'ffmpeg -y -i "{outdir}/raw.mp4" -vf "{cursor_filter},setpts=0.25*PTS" -movflags +faststart "{outdir}/workflow.mp4"', shell=True, capture_output=True, text=True)
         if result.returncode == 0:
             os.remove(f"{outdir}/raw.mp4")
         else:
             print(f"No-click processing failed with code {result.returncode}", file=sys.stderr)
             print(f"ffmpeg stderr: {result.stderr}", file=sys.stderr)
-            fallback = subprocess.run(f'ffmpeg -y -i "{outdir}/raw.mp4" -vf "setpts=0.5*PTS" -movflags +faststart "{outdir}/workflow.mp4"', shell=True)
+            fallback = subprocess.run(f'ffmpeg -y -i "{outdir}/raw.mp4" -vf "setpts=0.25*PTS" -movflags +faststart "{outdir}/workflow.mp4"', shell=True)
             if fallback.returncode != 0:
                 fallback2 = subprocess.run(f'ffmpeg -y -i "{outdir}/raw.mp4" -c copy -movflags +faststart "{outdir}/workflow.mp4"', shell=True)
                 if fallback2.returncode != 0:
@@ -1016,37 +1016,92 @@ if os.path.exists(workflow_path):
 else:
     print(f"ERROR: Output video not found at {workflow_path}", file=sys.stderr)
 
-# Generate APNG preview from the video (for GitHub comment embedding)
-# APNG renders inline in GitHub comments as an animated image with full color support
-apng_path = f"{outdir}/workflow.apng"
+# Generate GIF preview from the video (for GitHub comment embedding)
+# GIF with two-pass palette is much more efficient than APNG for screen recordings
+# - 256 colors optimized for actual content
+# - stats_mode=diff only considers changing pixels (perfect for UIs)
+# - floyd_steinberg dithering for smooth gradients
+gif_path = f"{outdir}/workflow.gif"
+palette_path = f"{outdir}/palette.png"
+CONVEX_SIZE_LIMIT_MB = 20
+
 if os.path.exists(workflow_path):
-    print(f"Generating APNG preview from video...", file=sys.stderr)
+    gif_success = False
+    fps = 15  # Good balance of smoothness and file size
+
+    print(f"Generating GIF preview (two-pass palette @ {fps}fps)...", file=sys.stderr)
 
     try:
-        # Simple APNG conversion: -plays 0 means loop forever
-        apng_result = subprocess.run([
+        # Pass 1: Generate optimized palette (stats_mode=diff for screen recordings)
+        palette_result = subprocess.run([
             "ffmpeg", "-y",
             "-i", workflow_path,
-            "-plays", "0",
-            "-f", "apng",
-            apng_path
-        ], capture_output=True, text=True, timeout=120)
+            "-vf", f"fps={fps},palettegen=stats_mode=diff:max_colors=256",
+            palette_path
+        ], capture_output=True, text=True, timeout=60)
 
-        if apng_result.returncode == 0 and os.path.exists(apng_path):
-            apng_size = os.path.getsize(apng_path)
-            apng_size_mb = apng_size / 1024 / 1024
-            print(f"APNG generated: {apng_path} ({apng_size_mb:.2f} MB)", file=sys.stderr)
+        if palette_result.returncode == 0 and os.path.exists(palette_path):
+            # Pass 2: Generate GIF using optimized palette
+            gif_result = subprocess.run([
+                "ffmpeg", "-y",
+                "-i", workflow_path,
+                "-i", palette_path,
+                "-lavfi", f"fps={fps}[x];[x][1:v]paletteuse=dither=floyd_steinberg:diff_mode=rectangle",
+                gif_path
+            ], capture_output=True, text=True, timeout=90)
 
-            # If too large (>25MB), delete and skip
-            if apng_size_mb > 25:
-                print(f"APNG too large ({apng_size_mb:.2f} MB), removing...", file=sys.stderr)
-                os.remove(apng_path)
+            if gif_result.returncode == 0 and os.path.exists(gif_path):
+                gif_size = os.path.getsize(gif_path)
+                gif_size_mb = gif_size / 1024 / 1024
+                print(f"GIF generated: {gif_size_mb:.2f} MB", file=sys.stderr)
+
+                if gif_size_mb <= CONVEX_SIZE_LIMIT_MB:
+                    gif_success = True
+                    print(f"GIF fits within {CONVEX_SIZE_LIMIT_MB}MB limit!", file=sys.stderr)
+                else:
+                    print(f"GIF too large ({gif_size_mb:.2f} MB), trying lower fps...", file=sys.stderr)
+                    os.remove(gif_path)
+
+                    # Try again with lower fps
+                    for lower_fps in [10, 8, 6]:
+                        print(f"Retrying GIF @ {lower_fps}fps...", file=sys.stderr)
+                        subprocess.run([
+                            "ffmpeg", "-y", "-i", workflow_path,
+                            "-vf", f"fps={lower_fps},palettegen=stats_mode=diff:max_colors=256",
+                            palette_path
+                        ], capture_output=True, text=True, timeout=60)
+
+                        if os.path.exists(palette_path):
+                            subprocess.run([
+                                "ffmpeg", "-y", "-i", workflow_path, "-i", palette_path,
+                                "-lavfi", f"fps={lower_fps}[x];[x][1:v]paletteuse=dither=floyd_steinberg:diff_mode=rectangle",
+                                gif_path
+                            ], capture_output=True, text=True, timeout=90)
+
+                            if os.path.exists(gif_path):
+                                gif_size = os.path.getsize(gif_path)
+                                gif_size_mb = gif_size / 1024 / 1024
+                                print(f"GIF @ {lower_fps}fps: {gif_size_mb:.2f} MB", file=sys.stderr)
+                                if gif_size_mb <= CONVEX_SIZE_LIMIT_MB:
+                                    gif_success = True
+                                    print(f"GIF fits within limit!", file=sys.stderr)
+                                    break
+                                else:
+                                    os.remove(gif_path)
+            else:
+                print(f"GIF generation failed: {gif_result.stderr}", file=sys.stderr)
         else:
-            print(f"APNG generation failed: {apng_result.stderr}", file=sys.stderr)
+            print(f"Palette generation failed: {palette_result.stderr}", file=sys.stderr)
+
     except subprocess.TimeoutExpired:
-        print(f"APNG generation timed out, skipping", file=sys.stderr)
-        if os.path.exists(apng_path):
-            os.remove(apng_path)
+        print(f"GIF generation timed out", file=sys.stderr)
+
+    # Cleanup palette file
+    if os.path.exists(palette_path):
+        os.remove(palette_path)
+
+    if not gif_success and os.path.exists(gif_path):
+        os.remove(gif_path)
 
 # Read video metadata and rename files if custom filename is specified
 metadata_path = f"{outdir}/video-metadata.json"
@@ -1061,15 +1116,15 @@ if os.path.exists(metadata_path):
             safe_filename = re.sub(r'[^a-zA-Z0-9_-]', '-', custom_filename)
             safe_filename = re.sub(r'-+', '-', safe_filename).strip('-')
             if safe_filename:
-                # Rename workflow.mp4 to custom name
+                # Rename workflow.mp4 and workflow.gif to custom name
                 new_mp4_path = f"{outdir}/{safe_filename}.mp4"
-                new_apng_path = f"{outdir}/{safe_filename}.apng"
+                new_gif_path = f"{outdir}/{safe_filename}.gif"
                 if os.path.exists(workflow_path) and workflow_path != new_mp4_path:
                     os.rename(workflow_path, new_mp4_path)
                     print(f"Renamed video: {workflow_path} -> {new_mp4_path}", file=sys.stderr)
-                if os.path.exists(apng_path) and apng_path != new_apng_path:
-                    os.rename(apng_path, new_apng_path)
-                    print(f"Renamed APNG: {apng_path} -> {new_apng_path}", file=sys.stderr)
+                if os.path.exists(gif_path) and gif_path != new_gif_path:
+                    os.rename(gif_path, new_gif_path)
+                    print(f"Renamed GIF: {gif_path} -> {new_gif_path}", file=sys.stderr)
         print(f"Video metadata: {metadata}", file=sys.stderr)
     except Exception as e:
         print(f"Warning: Could not process video metadata: {e}", file=sys.stderr)
