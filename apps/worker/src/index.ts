@@ -4,6 +4,7 @@ import {
   WorkerCreateTerminalSchema,
   WorkerExecSchema,
   WorkerStartScreenshotCollectionSchema,
+  WorkerUploadFilesSchema,
   type ClientToServerEvents,
   type InterServerEvents,
   type PostStartCommand,
@@ -1070,6 +1071,78 @@ managementIO.on("connection", (socket) => {
         error: error instanceof Error ? error : new Error(String(error)),
         data: null,
       });
+    }
+  });
+
+  socket.on("worker:upload-files", async (data, callback) => {
+    try {
+      const validated = WorkerUploadFilesSchema.parse(data);
+      const workspaceRoot = "/root/workspace";
+
+      const resolveWorkspacePath = (candidate: string): string | null => {
+        const normalized = path.posix.normalize(candidate);
+        const absolutePath = path.posix.isAbsolute(normalized)
+          ? normalized
+          : path.posix.join(workspaceRoot, normalized);
+        const resolved = path.posix.normalize(absolutePath);
+        if (resolved === workspaceRoot || resolved.startsWith(`${workspaceRoot}/`)) {
+          return resolved;
+        }
+        return null;
+      };
+
+      const deletePaths = validated.deletePaths ?? [];
+      for (const deletePath of deletePaths) {
+        const resolved = resolveWorkspacePath(deletePath);
+        if (!resolved) {
+          log("WARN", "[worker:upload-files] Skipping delete outside workspace", {
+            deletePath,
+          });
+          continue;
+        }
+        try {
+          await fs.rm(resolved, { recursive: true, force: true });
+        } catch (error) {
+          log("WARN", "[worker:upload-files] Failed to delete path", {
+            deletePath,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
+      for (const file of validated.files) {
+        const resolved = resolveWorkspacePath(file.destinationPath);
+        if (!resolved) {
+          log("WARN", "[worker:upload-files] Skipping write outside workspace", {
+            destinationPath: file.destinationPath,
+          });
+          continue;
+        }
+
+        const payload = Buffer.from(file.content, "base64");
+        await fs.mkdir(path.posix.dirname(resolved), { recursive: true });
+
+        const mode =
+          file.mode !== undefined
+            ? Number.parseInt(file.mode, 8)
+            : undefined;
+        await fs.writeFile(resolved, payload, mode ? { mode } : undefined);
+      }
+
+      if (callback) {
+        callback({
+          error: null,
+          data: { success: true },
+        });
+      }
+    } catch (error) {
+      log("ERROR", "[worker:upload-files] Failed to apply file upload", error);
+      if (callback) {
+        callback({
+          error: error instanceof Error ? error : new Error(String(error)),
+          data: null,
+        });
+      }
     }
   });
 

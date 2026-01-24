@@ -1,4 +1,5 @@
 import { GitDiffManager } from "@cmux/server/gitDiff";
+import { LocalWorkspaceSyncManager } from "@cmux/server/localWorkspaceSync";
 import type { RealtimeServer, RealtimeSocket } from "@cmux/server/realtime";
 import { setupSocketHandlers } from "@cmux/server/socket-handlers";
 import {
@@ -15,12 +16,18 @@ export async function startEmbeddedServer() {
 
   // Initialize the git diff manager
   const gitDiffManager = new GitDiffManager();
+  const localWorkspaceSyncManager = new LocalWorkspaceSyncManager();
 
   // Create IPC-based realtime server that implements the RealtimeServer interface
   const ipcRealtimeServer = createIPCRealtimeServer();
 
   // Setup the FULL server socket handlers - this gives us complete parity
-  setupSocketHandlers(ipcRealtimeServer, gitDiffManager, null);
+  setupSocketHandlers(
+    ipcRealtimeServer,
+    gitDiffManager,
+    localWorkspaceSyncManager,
+    null
+  );
 
   let vscodeServeHandle: VSCodeServeWebHandle | null = null;
   try {
@@ -42,6 +49,7 @@ export async function startEmbeddedServer() {
   return {
     async cleanup() {
       gitDiffManager.dispose();
+      localWorkspaceSyncManager.dispose();
       await ipcRealtimeServer.close();
       stopVSCodeServeWeb(vscodeServeHandle, serverLogger);
       vscodeServeHandle = null;

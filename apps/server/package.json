@@ -21,6 +21,10 @@
       "import": "./src/gitDiff.ts",
       "types": "./src/gitDiff.ts"
     },
+    "./localWorkspaceSync": {
+      "import": "./src/localWorkspaceSync.ts",
+      "types": "./src/localWorkspaceSync.ts"
+    },
     "./realtime": {
       "import": "./src/realtime.ts",
       "types": "./src/realtime.ts"

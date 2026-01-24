@@ -41,6 +41,7 @@ import { stopContainersForRuns } from "./archiveTask";
 import { execWithEnv } from "./execWithEnv";
 import { getGitDiff } from "./diffs/gitDiff";
 import { GitDiffManager } from "./gitDiff";
+import { LocalWorkspaceSyncManager } from "./localWorkspaceSync";
 import { getRustTime } from "./native/core";
 import type { RealtimeServer } from "./realtime";
 import { RepositoryManager } from "./repositoryManager";
@@ -216,6 +217,7 @@ function buildPlaceholderWorkspaceUrl(folderPath: string): string {
 export function setupSocketHandlers(
   rt: RealtimeServer,
   gitDiffManager: GitDiffManager,
+  localWorkspaceSyncManager: LocalWorkspaceSyncManager,
   defaultRepo?: GitRepoInfo | null
 ) {
   let hasRefreshedGithub = false;
@@ -1286,6 +1288,13 @@ export function setupSocketHandlers(
               "Could not set up file watching for workspace:",
               error
             );
+          }
+
+          if (linkedFromCloudTaskRunId) {
+            void localWorkspaceSyncManager.startSync({
+              localWorkspacePath: resolvedWorkspacePath,
+              cloudTaskRunId: linkedFromCloudTaskRunId,
+            });
           }
         } catch (error) {
           serverLogger.error("Error creating local workspace:", error);
@@ -2675,6 +2684,7 @@ ${title}`;
           if (worktreePaths.length > 0) {
             for (const worktreePath of worktreePaths) {
               gitDiffManager.unwatchWorkspace(worktreePath);
+              localWorkspaceSyncManager.stopSync(worktreePath);
             }
             serverLogger.info(
               `Stopped git diff watchers for archived task ${taskId}: ${worktreePaths.join(", ")}`

@@ -176,6 +176,7 @@ export const WorkerUploadFilesSchema = z.object({
       mode: z.string().optional(), // File permissions (e.g., "644")
     })
   ),
+  deletePaths: z.array(z.string()).optional(), // Paths in container to delete
   terminalId: z.string().optional(), // Optional terminal context
 });
 
@@ -286,7 +287,10 @@ export interface ServerToWorkerEvents {
   "worker:terminal-input": (data: WorkerTerminalInput) => void;
 
   // File operations
-  "worker:upload-files": (data: WorkerUploadFiles) => void;
+  "worker:upload-files": (
+    data: WorkerUploadFiles,
+    callback: (result: ErrorOr<{ success: true }>) => void
+  ) => void;
 
   // Git configuration
   "worker:configure-git": (data: WorkerConfigureGit) => void;

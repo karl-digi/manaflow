@@ -3,6 +3,7 @@ import { exec } from "node:child_process";
 import { createServer } from "node:http";
 import { promisify } from "node:util";
 import { GitDiffManager } from "./gitDiff";
+import { LocalWorkspaceSyncManager } from "./localWorkspaceSync";
 
 import { setupSocketHandlers } from "./socket-handlers";
 import { createSocketIOTransport } from "./transports/socketio-transport";
@@ -50,6 +51,7 @@ export async function startServer({
 
   // Git diff manager instance
   const gitDiffManager = new GitDiffManager();
+  const localWorkspaceSyncManager = new LocalWorkspaceSyncManager();
 
   // Create HTTP server for socket connections (no HTTP proxying)
   const httpServer = createServer((_, res) => {
@@ -61,7 +63,7 @@ export async function startServer({
   const rt = createSocketIOTransport(httpServer);
 
   // Set up all socket handlers
-  setupSocketHandlers(rt, gitDiffManager, defaultRepo);
+  setupSocketHandlers(rt, gitDiffManager, localWorkspaceSyncManager, defaultRepo);
 
   let vscodeServeHandle: VSCodeServeWebHandle | null = null;
 
@@ -141,6 +143,7 @@ export async function startServer({
     // Dispose of all file watchers
     serverLogger.info("Disposing file watchers...");
     gitDiffManager.dispose();
+    localWorkspaceSyncManager.dispose();
 
     // Stop Docker container state sync
     DockerVSCodeInstance.stopContainerStateSync();
@@ -188,6 +191,7 @@ export async function startServer({
 
     // Clean up git diff manager
     gitDiffManager.dispose();
+    localWorkspaceSyncManager.dispose();
 
     // Close the HTTP server
     serverLogger.info("Closing HTTP server...");
