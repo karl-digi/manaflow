@@ -500,6 +500,14 @@ mv ./apps/worker/build/browser-agent/runBrowserAgentFromPrompt.js ./apps/worker/
 rm -rf ./apps/worker/build/browser-agent
 echo "Built worker"
 mkdir -p ./apps/worker/build/node_modules
+# Install express-compatible path-to-regexp 0.1.x explicitly
+# bun hoisting can place dependencies differently, so we install directly
+cd ./apps/worker/build/node_modules
+npm pack path-to-regexp@0.1.12 --silent
+tar -xzf path-to-regexp-0.1.12.tgz
+mv package path-to-regexp
+rm -f path-to-regexp-0.1.12.tgz
+cd /app
 shopt -s nullglob
 declare -A COPIED_PACKAGES=()
 

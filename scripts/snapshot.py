@@ -2011,6 +2011,14 @@ async def task_build_worker(ctx: TaskContext) -> None:
           exit 1
         fi
         install -d ./apps/worker/build/node_modules
+        # Install express-compatible path-to-regexp 0.1.x explicitly
+        # bun hoisting can place dependencies differently, so we install directly
+        cd ./apps/worker/build/node_modules
+        npm pack path-to-regexp@0.1.12 --silent
+        tar -xzf path-to-regexp-0.1.12.tgz
+        mv package path-to-regexp
+        rm -f path-to-regexp-0.1.12.tgz
+        cd {repo}
         install -d /builtins
         cat <<'JSON' > /builtins/package.json
 {{"name":"builtins","type":"module","version":"1.0.0"}}
