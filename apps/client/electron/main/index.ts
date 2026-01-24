@@ -933,11 +933,25 @@ app.whenReady().then(async () => {
   // Try to register the custom protocol handler with the OS. electron-builder
   // will add CFBundleURLTypes on macOS, but calling this is harmless and also
   // helps on Windows/Linux when packaged.
+  // Use env variable for protocol (cmux-dev in dev, cmux-next in prod)
+  const cmuxProtocol = env.NEXT_PUBLIC_CMUX_PROTOCOL;
   try {
-    const ok = app.setAsDefaultProtocolClient("cmux-next");
-    mainLog("setAsDefaultProtocolClient(cmux-next)", {
+    let ok: boolean;
+    // In dev mode (process.defaultApp), pass execPath and script path for proper registration
+    // See: https://www.electronjs.org/docs/latest/tutorial/launch-app-from-url-in-another-app
+    if (process.defaultApp && process.argv.length >= 2) {
+      ok = app.setAsDefaultProtocolClient(
+        cmuxProtocol,
+        process.execPath,
+        [path.resolve(process.argv[1])]
+      );
+    } else {
+      ok = app.setAsDefaultProtocolClient(cmuxProtocol);
+    }
+    mainLog(`setAsDefaultProtocolClient(${cmuxProtocol})`, {
       ok,
       packaged: app.isPackaged,
+      defaultApp: process.defaultApp,
     });
   } catch (e) {
     mainWarn("setAsDefaultProtocolClient failed", e);
