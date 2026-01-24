@@ -1779,6 +1779,7 @@ function TaskRunTreeInner({
         onArchiveToggle={onArchiveToggle}
         showRunNumbers={showRunNumbers}
         isLocalWorkspace={Boolean(isLocalWorkspaceRunEntry)}
+        isCloudWorkspace={Boolean(isCloudWorkspaceRunEntry)}
       />
     </div>
   );
@@ -1922,6 +1923,7 @@ interface TaskRunDetailsProps {
   onArchiveToggle: (runId: Id<"taskRuns">, archive: boolean) => void;
   showRunNumbers: boolean;
   isLocalWorkspace: boolean;
+  isCloudWorkspace: boolean;
 }
 
 function TaskRunDetails({
@@ -1938,9 +1940,18 @@ function TaskRunDetails({
   onArchiveToggle,
   showRunNumbers,
   isLocalWorkspace,
+  isCloudWorkspace,
 }: TaskRunDetailsProps) {
   const location = useLocation();
   const navigate = useNavigate();
+
+  // Fetch linked local workspace for cloud runs (skip for local/cloud workspaces)
+  const linkedLocalWorkspace = useQuery(
+    api.tasks.getLinkedLocalWorkspace,
+    !isLocalWorkspace && !isCloudWorkspace
+      ? { teamSlugOrId, cloudTaskRunId: run._id }
+      : "skip"
+  );
 
   // Extract current previewId from URL if on preview route
   const currentPreviewId = location.pathname.includes("/preview/")
@@ -2154,11 +2165,53 @@ function TaskRunDetails({
     <Loader2 className="w-3 h-3 animate-spin text-neutral-400" />
   ) : null;
 
+  // Determine linked local workspace status
+  const hasLinkedLocalWorkspace = Boolean(linkedLocalWorkspace);
+  const linkedLocalTaskRunId = linkedLocalWorkspace?.taskRun?._id;
+  const linkedLocalTaskId = linkedLocalWorkspace?.task?._id;
+  const isLinkedLocalVSCodeReady =
+    linkedLocalWorkspace?.taskRun?.vscode?.status === "running";
+
   // For VSCode, combine environment error with status indicator
   const vscodeTrailing = environmentErrorIndicator || statusIndicator;
 
+  // Trailing for linked local VS Code - show loading or Monitor icon
+  const linkedLocalVSCodeTrailing = !isLinkedLocalVSCodeReady ? (
+    <Loader2 className="w-3 h-3 animate-spin text-neutral-400" />
+  ) : (
+    <Monitor className="w-3 h-3 text-neutral-400" />
+  );
+
+  // Trailing for cloud VS Code when there's a linked local workspace
+  // Compose Cloud icon with existing status/error indicator to preserve visibility
+  const cloudVSCodeTrailing = hasLinkedLocalWorkspace ? (
+    <span className="flex items-center gap-1">
+      {vscodeTrailing}
+      <Cloud className="w-3 h-3 text-neutral-400" />
+    </span>
+  ) : (
+    vscodeTrailing
+  );
+
   return (
     <Fragment>
+      {/* Linked local workspace VS Code (shown first with Monitor icon on trailing) */}
+      {hasLinkedLocalWorkspace && linkedLocalTaskId && linkedLocalTaskRunId ? (
+        <TaskRunDetailLink
+          to="/$teamSlugOrId/task/$taskId/run/$runId/vscode"
+          params={{
+            teamSlugOrId,
+            taskId: linkedLocalTaskId,
+            runId: linkedLocalTaskRunId,
+          }}
+          icon={<VSCodeIcon className="w-3 h-3 mr-2 text-neutral-400 grayscale opacity-60" />}
+          label="VS Code"
+          indentLevel={indentLevel}
+          trailing={linkedLocalVSCodeTrailing}
+        />
+      ) : null}
+
+      {/* Cloud VS Code (with Cloud icon on trailing if there's a linked local workspace) */}
       <TaskRunDetailLink
         to="/$teamSlugOrId/task/$taskId/run/$runId/vscode"
         params={{
@@ -2166,22 +2219,22 @@ function TaskRunDetails({
           taskId,
           runId: run._id,
         }}
-        icon={
-          <VSCodeIcon className="w-3 h-3 mr-2 text-neutral-400 grayscale opacity-60" />
-        }
+        icon={<VSCodeIcon className="w-3 h-3 mr-2 text-neutral-400 grayscale opacity-60" />}
         label="VS Code"
         indentLevel={indentLevel}
-        trailing={vscodeTrailing}
+        trailing={cloudVSCodeTrailing}
         onReload={handleReloadVSCode}
       />
 
-      <TaskRunDetailLink
-        to="/$teamSlugOrId/task/$taskId/run/$runId/diff"
-        params={{ teamSlugOrId, taskId, runId: run._id }}
-        icon={<GitCompare className="w-3 h-3 mr-2 text-neutral-400" />}
-        label="Git diff"
-        indentLevel={indentLevel}
-      />
+      {!isCloudWorkspace ? (
+        <TaskRunDetailLink
+          to="/$teamSlugOrId/task/$taskId/run/$runId/diff"
+          params={{ teamSlugOrId, taskId, runId: run._id }}
+          icon={<GitCompare className="w-3 h-3 mr-2 text-neutral-400" />}
+          label="Git diff"
+          indentLevel={indentLevel}
+        />
+      ) : null}
 
       {!isLocalWorkspace ? (
         <TaskRunDetailLink

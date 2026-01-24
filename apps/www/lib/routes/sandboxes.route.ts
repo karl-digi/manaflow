@@ -689,12 +689,20 @@ sandboxesRouter.openapi(
         }
         console.log(`[sandboxes.start] Parsed owner/repo: ${parsedRepoUrl.fullName}`);
 
+        // Use authenticated URL for cloning when token available (required for private repos)
+        const authenticatedGitUrl = gitAuthToken
+          ? `https://x-access-token:${gitAuthToken}@github.com/${parsedRepoUrl.owner}/${parsedRepoUrl.repo}.git`
+          : parsedRepoUrl.gitUrl;
+        const maskedGitUrl = gitAuthToken
+          ? `https://x-access-token:***@github.com/${parsedRepoUrl.owner}/${parsedRepoUrl.repo}.git`
+          : parsedRepoUrl.gitUrl;
+
         repoConfig = {
           owner: parsedRepoUrl.owner,
           name: parsedRepoUrl.repo,
           repoFull: parsedRepoUrl.fullName,
-          cloneUrl: parsedRepoUrl.gitUrl,
-          maskedCloneUrl: parsedRepoUrl.gitUrl,
+          cloneUrl: authenticatedGitUrl,
+          maskedCloneUrl: maskedGitUrl,
           depth: Math.max(1, Math.floor(body.depth ?? 1)),
           baseBranch: body.branch || "main",
           newBranch: body.newBranch ?? "",

@@ -5,6 +5,7 @@ import {
   toBedrockModelId,
   convertBedrockStreamToSSE,
 } from "./bedrock_utils";
+import { capturePosthogEvent, drainPosthogEvents } from "../_shared/posthog";
 
 const hardCodedApiKey = "sk_placeholder_cmux_anthropic_api_key";
 
@@ -215,6 +216,97 @@ function summarizeAnthropicPayload(body: unknown): AnthropicPayloadSummary {
   return summary;
 }
 
+// Source identifies which product/feature is making the API call
+type AnthropicProxySource = "cmux" | "preview-new";
+
+type AnthropicProxyEvent = {
+  // Core identifiers
+  teamId: string;
+  userId: string;
+  taskRunId: string;
+
+  // Source/product identifier
+  source: AnthropicProxySource;
+
+  // Request metadata
+  model: string;
+  stream: boolean;
+  isOAuthToken: boolean;
+
+  // Response metadata
+  responseStatus: number;
+  latencyMs: number;
+
+  // Token usage (only available for non-streaming responses)
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
+
+  // Error info (if applicable)
+  errorType?: string;
+};
+
+// Map source to span name for PostHog AI analytics
+function getSpanName(source: AnthropicProxySource): string {
+  switch (source) {
+    case "cmux":
+      return "claude-code-cmux";
+    case "preview-new":
+      return "claude-code-preview-new";
+  }
+}
+
+/**
+ * Track Anthropic proxy request in PostHog.
+ * Uses PostHog's $ai_generation event for LLM analytics.
+ */
+function trackAnthropicProxyRequest(event: AnthropicProxyEvent): void {
+  capturePosthogEvent({
+    distinctId: event.userId,
+    event: "$ai_generation",
+    properties: {
+      // PostHog AI properties
+      $ai_model: event.model,
+      $ai_provider: "anthropic",
+      $ai_input_tokens: event.inputTokens,
+      $ai_output_tokens: event.outputTokens,
+      $ai_latency: event.latencyMs / 1000, // PostHog expects seconds
+      $ai_http_status: event.responseStatus,
+      $ai_is_error: event.responseStatus >= 400,
+      $ai_error: event.errorType,
+      $ai_stream: event.stream,
+      $ai_trace_id: event.taskRunId,
+      $ai_span_name: getSpanName(event.source),
+      $ai_cache_read_input_tokens: event.cacheReadInputTokens,
+      $ai_cache_creation_input_tokens: event.cacheCreationInputTokens,
+
+      // Custom cmux properties
+      cmux_source: event.source,
+      cmux_team_id: event.teamId,
+      cmux_task_run_id: event.taskRunId,
+      cmux_is_oauth_token: event.isOAuthToken,
+
+      // Associate user properties with this distinctId
+      $set: {
+        team_id: event.teamId,
+      },
+    },
+  });
+}
+
+function getSource(req: Request): AnthropicProxySource {
+  const sourceHeader = req.headers.get("x-cmux-source");
+  if (sourceHeader === "preview-new") {
+    return "preview-new";
+  }
+  return "cmux";
+}
+
+function getIsOAuthToken(token: string | null): boolean {
+  return token !== null && token.includes("sk-ant-oat");
+}
+
 /**
  * Check if the key is a valid Anthropic API key format.
  * Anthropic keys start with "sk-ant-" (regular) or "sk-ant-oat" (OAuth).
@@ -239,21 +331,55 @@ const TEMPORARY_DISABLE_AUTH = true;
  * 2. AWS Bedrock (direct) - when using platform credits (placeholder key)
  */
 export const anthropicProxy = httpAction(async (_ctx, req) => {
+  const startTime = Date.now();
+  const source = getSource(req);
+  const xApiKey = req.headers.get("x-api-key");
+  const isOAuthToken = getIsOAuthToken(xApiKey);
+
   // Try to extract token payload for tracking
   const workerAuth = await getWorkerAuth(req, {
     loggerPrefix: "[anthropic-proxy]",
   });
 
+  // Helper to track events consistently
+  const trackEvent = (
+    model: string,
+    stream: boolean,
+    responseStatus: number,
+    options?: {
+      inputTokens?: number;
+      outputTokens?: number;
+      cacheCreationInputTokens?: number;
+      cacheReadInputTokens?: number;
+      errorType?: string;
+    }
+  ) => {
+    trackAnthropicProxyRequest({
+      teamId: workerAuth?.payload.teamId ?? "unknown",
+      userId: workerAuth?.payload.userId ?? "unknown",
+      taskRunId: workerAuth?.payload.taskRunId ?? "unknown",
+      source,
+      model,
+      stream,
+      isOAuthToken,
+      responseStatus,
+      latencyMs: Date.now() - startTime,
+      ...options,
+    });
+  };
+
   if (!TEMPORARY_DISABLE_AUTH && !workerAuth) {
     console.error("[anthropic-proxy] Auth error: Missing or invalid token");
+    trackEvent("unknown", false, 401, { errorType: "unauthorized" });
+    await drainPosthogEvents();
     return jsonResponse({ error: "Unauthorized" }, 401);
   }
 
   try {
-    const xApiKey = req.headers.get("x-api-key");
     const useUserApiKey = hasUserApiKey(xApiKey);
     const body = await req.json();
-    const requestedModel = body.model;
+    const requestedModel = body.model ?? "unknown";
+    const isStreaming = body.stream ?? false;
     const payloadSummary = summarizeAnthropicPayload(body);
 
     if (useUserApiKey) {
@@ -280,8 +406,25 @@ export const anthropicProxy = httpAction(async (_ctx, req) => {
         body: JSON.stringify(body),
       });
 
+      // Track non-streaming responses with token usage
+      if (!isStreaming) {
+        const responseData = await response.clone().json().catch(() => null);
+        trackEvent(requestedModel, false, response.status, {
+          inputTokens: responseData?.usage?.input_tokens,
+          outputTokens: responseData?.usage?.output_tokens,
+          cacheCreationInputTokens: responseData?.usage?.cache_creation_input_tokens,
+          cacheReadInputTokens: responseData?.usage?.cache_read_input_tokens,
+          errorType: response.ok ? undefined : responseData?.error?.type,
+        });
+        await drainPosthogEvents();
+      } else {
+        // For streaming, track without token usage (not available until stream ends)
+        trackEvent(requestedModel, true, response.status);
+        await drainPosthogEvents();
+      }
+
       // Return response directly to user (including any errors)
-      return handleResponse(response, body.stream);
+      return handleResponse(response, isStreaming);
     }
 
     // Platform credits path: try AI Gateway first, then fall back to Bedrock
@@ -331,6 +474,8 @@ export const anthropicProxy = httpAction(async (_ctx, req) => {
         console.error(
           "[anthropic-proxy] Neither AIGATEWAY_ANTHROPIC_BASE_URL+ANTHROPIC_API_KEY nor AWS_BEARER_TOKEN_BEDROCK is configured"
         );
+        trackEvent(requestedModel, isStreaming, 503, { errorType: "bedrock_not_configured" });
+        await drainPosthogEvents();
         return jsonResponse(
           { error: "No backend proxy configured" },
           503
@@ -338,7 +483,7 @@ export const anthropicProxy = httpAction(async (_ctx, req) => {
       }
 
       const bedrockModelId = toBedrockModelId(requestedModel);
-      const streamSuffix = body.stream ? "-with-response-stream" : "";
+      const streamSuffix = isStreaming ? "-with-response-stream" : "";
       const bedrockUrl = `${BEDROCK_BASE_URL}/model/${bedrockModelId}/invoke${streamSuffix}`;
       console.log("[anthropic-proxy] Bedrock request summary:", {
         requestedModel,
@@ -373,11 +518,30 @@ export const anthropicProxy = httpAction(async (_ctx, req) => {
         body: JSON.stringify(bedrockBody),
       });
 
+      // Track non-streaming responses with token usage
+      if (!isStreaming) {
+        const responseData = await response.clone().json().catch(() => null);
+        trackEvent(requestedModel, false, response.status, {
+          inputTokens: responseData?.usage?.input_tokens,
+          outputTokens: responseData?.usage?.output_tokens,
+          cacheCreationInputTokens: responseData?.usage?.cache_creation_input_tokens,
+          cacheReadInputTokens: responseData?.usage?.cache_read_input_tokens,
+          errorType: response.ok ? undefined : responseData?.error?.type,
+        });
+        await drainPosthogEvents();
+      } else {
+        // For streaming, track without token usage (not available until stream ends)
+        trackEvent(requestedModel, true, response.status);
+        await drainPosthogEvents();
+      }
+
       // Pass isBedrock=true to convert streaming format
-      return handleResponse(response, body.stream, true);
+      return handleResponse(response, isStreaming, true);
     }
   } catch (error) {
     console.error("[anthropic-proxy] Error:", error);
+    trackEvent("unknown", false, 500, { errorType: "internal_error" });
+    await drainPosthogEvents();
     return jsonResponse({ error: "Failed to proxy request" }, 500);
   }
 });

@@ -21,7 +21,7 @@ import type { CreateLocalWorkspaceResponse, ReplaceDiffEntry } from "@cmux/share
 import { typedZid } from "@cmux/shared/utils/typed-zid";
 import { convexQuery } from "@convex-dev/react-query";
 import { useQuery as useRQ } from "@tanstack/react-query";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useMutation } from "convex/react";
 import {
   Suspense,
@@ -350,6 +350,17 @@ function RunDiffPage() {
   const selectedRun = useMemo(() => {
     return taskRuns?.find((run) => run._id === runId);
   }, [runId, taskRuns]);
+
+  // Query for existing linked local workspace (to prevent creating duplicates)
+  const linkedLocalWorkspaceQuery = useRQ({
+    ...convexQuery(api.tasks.getLinkedLocalWorkspace, {
+      teamSlugOrId,
+      cloudTaskRunId: runId,
+    }),
+    enabled: Boolean(teamSlugOrId && runId),
+  });
+  const linkedLocalWorkspace = linkedLocalWorkspaceQuery.data;
+
   const [streamStateByFile, setStreamStateByFile] = useState<
     Map<string, StreamFileState>
   >(() => new Map());
@@ -971,9 +982,23 @@ function RunDiffPage() {
 
   const taskRunId = selectedRun?._id ?? runId;
 
-  const navigate = useNavigate();
-
   const handleOpenLocalWorkspace = useCallback(() => {
+    // If query is still loading, don't allow creation to prevent duplicates
+    if (linkedLocalWorkspaceQuery.isLoading) {
+      toast.info("Checking for existing workspace...", {
+        description: "Please wait a moment and try again",
+      });
+      return;
+    }
+
+    // If a linked local workspace already exists, just show a message
+    if (linkedLocalWorkspace) {
+      toast.info("Local workspace already exists", {
+        description: "VS Code (Local) is available in the sidebar",
+      });
+      return;
+    }
+
     if (!socket) {
       toast.error("Socket not connected");
       return;
@@ -998,25 +1023,15 @@ function RunDiffPage() {
         projectFullName: primaryRepo,
         repoUrl: `https://github.com/${primaryRepo}.git`,
         branch: selectedRun.newBranch,
+        linkedFromCloudTaskRunId: selectedRun._id, // Link to the current cloud task run
       },
       (response: CreateLocalWorkspaceResponse) => {
         if (response.success && response.workspacePath) {
-          toast.success("Workspace created successfully!", {
+          toast.success("Local workspace created!", {
             id: loadingToast,
-            description: `Opening workspace at ${response.workspacePath}`,
+            description: "VS Code (Local) is now available in the sidebar",
           });
-
-          // Navigate to the vscode view for this task run
-          if (response.taskRunId) {
-            navigate({
-              to: "/$teamSlugOrId/task/$taskId/run/$runId/vscode",
-              params: {
-                teamSlugOrId,
-                taskId,
-                runId: response.taskRunId,
-              },
-            });
-          }
+          // Don't navigate - the local VS Code entry will appear under the current task run
         } else {
           toast.error(response.error || "Failed to create workspace", {
             id: loadingToast,
@@ -1024,7 +1039,7 @@ function RunDiffPage() {
         }
       }
     );
-  }, [socket, teamSlugOrId, primaryRepo, selectedRun?.newBranch, navigate, taskId]);
+  }, [socket, teamSlugOrId, primaryRepo, selectedRun?.newBranch, selectedRun?._id, linkedLocalWorkspace, linkedLocalWorkspaceQuery.isLoading]);
 
   // 404 if selected run is missing
   if (!selectedRun) {

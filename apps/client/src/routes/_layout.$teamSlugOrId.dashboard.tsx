@@ -20,10 +20,11 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useExpandTasks } from "@/contexts/expand-tasks/ExpandTasksContext";
+import { useOnboardingOptional } from "@/contexts/onboarding";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { createFakeConvexId } from "@/lib/fakeConvexId";
 import { attachTaskLifecycleListeners } from "@/lib/socket/taskLifecycleListeners";
-import { getApiIntegrationsGithubBranchesOptions } from "@/queries/branches";
+import { getApiIntegrationsGithubBranches } from "@/queries/branches";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
@@ -34,8 +35,13 @@ import type {
   TaskStarted,
 } from "@cmux/shared";
 import { AGENT_CONFIGS } from "@cmux/shared/agentConfig";
+import type { GithubBranchesResponse } from "@cmux/www-openapi-client";
 import { convexQuery } from "@convex-dev/react-query";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useQuery,
+  type InfiniteData,
+} from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useAction, useMutation } from "convex/react";
 import { Server as ServerIcon } from "lucide-react";
@@ -109,6 +115,58 @@ function DashboardComponent() {
   const { socket } = useSocket();
   const { theme } = useTheme();
   const { addTaskToExpand } = useExpandTasks();
+  const onboarding = useOnboardingOptional();
+
+  // Query tasks to check if user is new (has no tasks)
+  const tasksQuery = useQuery(
+    convexQuery(api.tasks.get, { teamSlugOrId })
+  );
+  const archivedTasksQuery = useQuery(
+    convexQuery(api.tasks.get, { teamSlugOrId, archived: true })
+  );
+
+  const tasksReady = tasksQuery.isSuccess && archivedTasksQuery.isSuccess;
+  const { hasRealTasks, hasCompletedRealTasks } = useMemo(() => {
+    const activeTasks = tasksQuery.data ?? [];
+    const archivedTasks = archivedTasksQuery.data ?? [];
+    const allTasks = [...activeTasks, ...archivedTasks];
+    const realTasks = allTasks.filter(
+      (task) => !task.isCloudWorkspace && !task.isLocalWorkspace
+    );
+    return {
+      hasRealTasks: realTasks.length > 0,
+      hasCompletedRealTasks: realTasks.some((task) => task.isCompleted),
+    };
+  }, [tasksQuery.data, archivedTasksQuery.data]);
+
+  // Auto-start onboarding for new users on the dashboard
+  useEffect(() => {
+    // Only start if onboarding context is available
+    if (!onboarding) return;
+
+    // Don't start if user has already completed or skipped onboarding
+    if (onboarding.hasCompletedOnboarding) return;
+
+    // Don't start if onboarding is already active
+    if (onboarding.isOnboardingActive) return;
+
+    // Wait for tasks queries to load
+    if (!tasksReady) return;
+
+    // Only start for new users - check for real tasks (not standalone workspaces),
+    // including archived tasks.
+    // Standalone workspaces (isCloudWorkspace/isLocalWorkspace) don't count as "tasks"
+    if (hasRealTasks) return;
+    if (hasCompletedRealTasks) return;
+
+    // Start onboarding for new users
+    onboarding.startOnboarding();
+  }, [
+    onboarding,
+    tasksReady,
+    hasRealTasks,
+    hasCompletedRealTasks,
+  ]);
 
   const [selectedProject, setSelectedProject] = useState<string[]>(() => {
     const stored = localStorage.getItem(`selectedProject-${teamSlugOrId}`);
@@ -211,36 +269,92 @@ function DashboardComponent() {
   // This prevents delay when user clears the search
   const effectiveBranchSearch = branchSearch === "" ? "" : debouncedBranchSearch;
 
-  // Branches query - uses GraphQL to get default branch AND branches in a single API call
-  // Server-side search via GitHub GraphQL API (prefix match)
+  // Branches query - infinite scroll with server-side ordering by recent commits
   // Each search term is cached separately by React Query
-  const branchesQuery = useQuery({
-    ...getApiIntegrationsGithubBranchesOptions({
-      query: {
-        repo: selectedProject[0] || "",
-        limit: 5,
-        search: effectiveBranchSearch || undefined,
-      },
-    }),
+  const branchPageSize = 10;
+  const currentRepo = selectedProject[0] ?? "";
+
+  const branchesQuery = useInfiniteQuery<
+    GithubBranchesResponse,
+    Error,
+    InfiniteData<GithubBranchesResponse, number | null>,
+    Array<string | number>,
+    number | null
+  >({
+    queryKey: [
+      "github-branches",
+      currentRepo,
+      effectiveBranchSearch,
+      branchPageSize,
+    ],
+    initialPageParam: 0,
+    queryFn: async ({ pageParam, signal }) => {
+      const offset = typeof pageParam === "number" ? pageParam : 0;
+      const { data } = await getApiIntegrationsGithubBranches({
+        query: {
+          repo: currentRepo,
+          limit: branchPageSize,
+          search: effectiveBranchSearch || undefined,
+          offset,
+        },
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    getNextPageParam: (lastPage) => {
+      if (!lastPage.hasMore) {
+        return undefined;
+      }
+      return lastPage.nextOffset ?? undefined;
+    },
     staleTime: 30_000,
-    enabled: !!selectedProject[0] && !isEnvSelected,
+    enabled: !!currentRepo && !isEnvSelected,
     // Keep previous data visible while fetching new search results
-    // This prevents "No options" flash and button skeleton during search
-    placeholderData: keepPreviousData,
+    // BUT only if the repo hasn't changed - otherwise show loading state
+    placeholderData: (previousData, previousQuery) => {
+      // Don't use placeholder data if repo changed
+      const prevRepo = previousQuery?.queryKey?.[1];
+      if (prevRepo !== currentRepo) {
+        return undefined;
+      }
+      // For same repo, keep previous data during search
+      return previousData;
+    },
   });
 
   // Show loading in search input when search is pending or fetching
   const isBranchSearchLoading =
     branchSearch !== "" &&
-    (branchSearch !== effectiveBranchSearch || branchesQuery.isFetching);
+    (branchSearch !== effectiveBranchSearch ||
+      (branchesQuery.isFetching && !branchesQuery.isFetchingNextPage));
 
   // Extract branch names and default branch from the query
-  const branchNames = useMemo(
-    () => branchesQuery.data?.branches?.map((branch) => branch.name) ?? [],
+  const branchPages = useMemo(
+    () => branchesQuery.data?.pages ?? [],
     [branchesQuery.data]
   );
+  const branchNames = useMemo(() => {
+    const names: string[] = [];
+    const seen = new Set<string>();
+    for (const page of branchPages) {
+      for (const branch of page.branches ?? []) {
+        if (seen.has(branch.name)) continue;
+        seen.add(branch.name);
+        names.push(branch.name);
+      }
+    }
+    return names;
+  }, [branchPages]);
 
-  const defaultBranchName = branchesQuery.data?.defaultBranch ?? null;
+  const defaultBranchName = useMemo(() => {
+    for (const page of branchPages) {
+      if (page.defaultBranch) {
+        return page.defaultBranch;
+      }
+    }
+    return null;
+  }, [branchPages]);
 
   // Handle branch search changes from SearchableSelect
   const handleBranchSearchChange = useCallback((search: string) => {
@@ -509,19 +623,48 @@ function DashboardComponent() {
             return;
           }
 
-          // Check if Docker worker image is available
+          // Check if Docker worker image is available, auto-pull if not
           if (dockerCheck.workerImage && !dockerCheck.workerImage.isAvailable) {
             const imageName = dockerCheck.workerImage.name;
             if (dockerCheck.workerImage.isPulling) {
               toast.error(
                 `Docker image "${imageName}" is currently being pulled. Please wait for it to complete.`
               );
-            } else {
-              toast.error(
-                `Docker image "${imageName}" is not available. Please pull it first: docker pull ${imageName}`
-              );
+              return;
             }
-            return;
+
+            // Auto-pull the image
+            const pullToastId = toast.loading(
+              `Pulling Docker image "${imageName}"... This may take a few minutes on first run.`
+            );
+
+            try {
+              const pullResult = await new Promise<{
+                success: boolean;
+                imageName?: string;
+                error?: string;
+              }>((resolve) => {
+                socket.emit("docker-pull-image", (response) => {
+                  resolve(response);
+                });
+              });
+
+              if (!pullResult.success) {
+                toast.dismiss(pullToastId);
+                toast.error(
+                  pullResult.error || `Failed to pull Docker image "${imageName}"`
+                );
+                return;
+              }
+
+              toast.dismiss(pullToastId);
+              toast.success(`Docker image "${imageName}" pulled successfully`);
+            } catch (pullError) {
+              toast.dismiss(pullToastId);
+              console.error("Error pulling Docker image:", pullError);
+              toast.error(`Failed to pull Docker image "${imageName}"`);
+              return;
+            }
           }
         } else {
           // If socket is not connected, we can't verify Docker status
@@ -817,6 +960,15 @@ function DashboardComponent() {
   // }, []);
 
   const branchOptions = branchNames;
+  const { fetchNextPage, hasNextPage, isFetchingNextPage } = branchesQuery;
+  const canLoadMoreBranches = hasNextPage ?? false;
+  const isLoadingMoreBranches = isFetchingNextPage;
+  const handleBranchLoadMore = useCallback(() => {
+    if (!canLoadMoreBranches || isLoadingMoreBranches) {
+      return;
+    }
+    void fetchNextPage();
+  }, [fetchNextPage, canLoadMoreBranches, isLoadingMoreBranches]);
 
   // Cloud mode toggle handler
   const handleCloudModeToggle = useCallback(() => {
@@ -1059,12 +1211,15 @@ function DashboardComponent() {
               onBranchChange={handleBranchChange}
               onBranchSearchChange={handleBranchSearchChange}
               isBranchSearchLoading={isBranchSearchLoading}
+              onBranchLoadMore={handleBranchLoadMore}
+              canLoadMoreBranches={canLoadMoreBranches}
+              isLoadingMoreBranches={isLoadingMoreBranches}
               selectedAgents={selectedAgents}
               onAgentChange={handleAgentChange}
               isCloudMode={isCloudMode}
               onCloudModeToggle={handleCloudModeToggle}
               isLoadingProjects={reposByOrgQuery.isLoading}
-              isLoadingBranches={branchesQuery.isFetching && effectiveSelectedBranch.length === 0}
+              isLoadingBranches={branchesQuery.isLoading && effectiveSelectedBranch.length === 0}
               teamSlugOrId={teamSlugOrId}
               cloudToggleDisabled={isEnvSelected}
               branchDisabled={isEnvSelected || !selectedProject[0]}
@@ -1139,6 +1294,9 @@ type DashboardMainCardProps = {
   onBranchChange: (newBranches: string[]) => void;
   onBranchSearchChange: (search: string) => void;
   isBranchSearchLoading: boolean;
+  onBranchLoadMore: () => void;
+  canLoadMoreBranches: boolean;
+  isLoadingMoreBranches: boolean;
   selectedAgents: string[];
   onAgentChange: (newAgents: string[]) => void;
   isCloudMode: boolean;
@@ -1170,6 +1328,9 @@ function DashboardMainCard({
   onBranchChange,
   onBranchSearchChange,
   isBranchSearchLoading,
+  onBranchLoadMore,
+  canLoadMoreBranches,
+  isLoadingMoreBranches,
   selectedAgents,
   onAgentChange,
   isCloudMode,
@@ -1185,7 +1346,10 @@ function DashboardMainCard({
   isStartingTask,
 }: DashboardMainCardProps) {
   return (
-    <div className="relative bg-white dark:bg-neutral-700/50 border border-neutral-500/15 dark:border-neutral-500/15 rounded-2xl transition-all">
+    <div
+      className="relative bg-white dark:bg-neutral-700/50 border border-neutral-500/15 dark:border-neutral-500/15 rounded-2xl transition-all"
+      data-onboarding="dashboard-input"
+    >
       <DashboardInput
         ref={editorApiRef}
         onTaskDescriptionChange={onTaskDescriptionChange}
@@ -1208,6 +1372,9 @@ function DashboardMainCard({
           onBranchChange={onBranchChange}
           onBranchSearchChange={onBranchSearchChange}
           isBranchSearchLoading={isBranchSearchLoading}
+          onBranchLoadMore={onBranchLoadMore}
+          canLoadMoreBranches={canLoadMoreBranches}
+          isLoadingMoreBranches={isLoadingMoreBranches}
           selectedAgents={selectedAgents}
           onAgentChange={onAgentChange}
           isCloudMode={isCloudMode}
