@@ -135,7 +135,8 @@ export class CmuxIpcSocketClient {
         .catch((err: unknown) => {
           const message = formatRpcErrorMessage(key, err);
           console.error("[CmuxIpcSocketClient] RPC error", { event: key, err });
-          cb({ error: message });
+          // Return proper response format with success: false for consistency
+          cb({ success: false, error: message });
         });
     } else {
       void window.cmux.rpc(key, ...args);

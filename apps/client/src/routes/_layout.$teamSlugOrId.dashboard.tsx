@@ -633,12 +633,43 @@ function DashboardComponent() {
               return;
             }
 
-            // Auto-pull the image
+            // Auto-pull the image with progress tracking
             const pullToastId = toast.loading(
               `Pulling Docker image "${imageName}"... This may take a few minutes on first run.`
             );
 
             try {
+              // Set up progress listener before starting pull
+              const progressHandler = (data: {
+                imageName: string;
+                status: string;
+                progress?: string;
+                layerId?: string;
+                error?: string;
+                attempt: number;
+                maxAttempts: number;
+                retrying?: boolean;
+                complete?: boolean;
+                failed?: boolean;
+              }) => {
+                if (data.imageName !== imageName) return;
+
+                // Build progress message
+                let message = data.status;
+                if (data.progress) {
+                  message += ` ${data.progress}`;
+                }
+                if (data.retrying) {
+                  message = `Retrying (attempt ${data.attempt}/${data.maxAttempts})... ${data.error || ""}`;
+                } else if (data.attempt > 1 && !data.complete && !data.failed) {
+                  message = `[${data.attempt}/${data.maxAttempts}] ${message}`;
+                }
+
+                toast.loading(message, { id: pullToastId });
+              };
+
+              socket.on("docker-pull-progress", progressHandler);
+
               const pullResult = await new Promise<{
                 success: boolean;
                 imageName?: string;
@@ -648,6 +679,9 @@ function DashboardComponent() {
                   resolve(response);
                 });
               });
+
+              // Clean up progress listener
+              socket.off("docker-pull-progress", progressHandler);
 
               if (!pullResult.success) {
                 toast.dismiss(pullToastId);
@@ -662,7 +696,13 @@ function DashboardComponent() {
             } catch (pullError) {
               toast.dismiss(pullToastId);
               console.error("Error pulling Docker image:", pullError);
-              toast.error(`Failed to pull Docker image "${imageName}"`);
+              const errorMessage =
+                pullError instanceof Error ? pullError.message : String(pullError);
+              toast.error(
+                errorMessage.includes("RPC")
+                  ? `Docker pull failed: ${errorMessage.replace(/^RPC '[^']+' failed: /, "")}`
+                  : `Failed to pull Docker image "${imageName}"`
+              );
               return;
             }
           }

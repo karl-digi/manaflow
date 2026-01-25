@@ -180,12 +180,17 @@ export class IPCSocketClient {
       const callbackId = `${Date.now()}_callback_${Math.random()}`;
       const handler = lastArg as (response: unknown) => void;
 
-      // Set up timeout to clean up stale callbacks
+      // Set up timeout to clean up stale callbacks and return error response
       const timeoutId = setTimeout(() => {
         const entry = this.pendingCallbacks.get(callbackId);
         if (entry) {
           this.pendingCallbacks.delete(callbackId);
           console.warn(`[IPCSocket] Callback ${callbackId} timed out for event: ${String(event)}`);
+          // Return error response to prevent hanging promises
+          entry.handler({
+            success: false,
+            error: `Request timed out after ${CALLBACK_TIMEOUT_MS / 1000}s`,
+          });
         }
       }, CALLBACK_TIMEOUT_MS);
 
