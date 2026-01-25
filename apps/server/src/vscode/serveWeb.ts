@@ -21,6 +21,7 @@ export const LOCAL_VSCODE_HOST = "localhost";
 const SERVE_WEB_PORT_START = 39_400;
 const SERVE_WEB_MAX_PORT_ATTEMPTS = 200;
 const SERVER_READY_TIMEOUT_MS = 15_000;
+const SERVE_WEB_PORT_KILL_DELAY_MS = 200;
 const SERVE_WEB_AGENT_FOLDER = path.join(
   os.homedir(),
   ".cmux",
@@ -28,10 +29,32 @@ const SERVE_WEB_AGENT_FOLDER = path.join(
 );
 const SERVE_WEB_PROFILE_ID = "default-profile";
 const BUILD_WITH_AGENT_SETTING_KEY = "cmux.buildWithAgent";
+const SERVE_WEB_KILL_PATTERNS = [
+  "serve-web",
+  "openvscode-server",
+  "openvscode",
+  "code-server-oss",
+  "code-server",
+  "vscode-server",
+  "cmux-code",
+];
+const SERVE_WEB_PROTECTED_PATTERNS = [
+  "orbstack",
+  "com.orbstack",
+  "docker",
+  "docker-desktop",
+  "systemd",
+  "launchd",
+  "kernel_task",
+  "chrome",
+  "google chrome",
+];
 
 let resolvedVSCodeExecutable: string | null = null;
 let currentServeWebBaseUrl: string | null = null;
 let currentServeWebPort: number | null = null;
+let lsofAvailable: boolean | null = null;
+let psAvailable: boolean | null = null;
 
 export type VSCodeServeWebHandle = {
   process: ChildProcess;
@@ -657,6 +680,14 @@ async function claimServeWebPort(logger: Logger): Promise<number> {
     if (isAvailable) {
       return port;
     }
+    // eslint-disable-next-line no-await-in-loop
+    const freed = await tryFreeServeWebPort(port, logger);
+    if (freed) {
+      logger.info(
+        `Freed VS Code serve-web port ${port} by terminating a stale process.`
+      );
+      return port;
+    }
     logger.debug?.(
       `VS Code serve-web port ${port} unavailable, trying next candidate...`
     );
@@ -691,4 +722,159 @@ function isPortAvailable(port: number): Promise<boolean> {
       resolve(false);
     }
   });
+}
+
+type PortProcessInfo = {
+  pid: number;
+  commandLine: string;
+};
+
+function shouldKillServeWebProcess(commandLine: string): boolean {
+  if (!commandLine) {
+    return false;
+  }
+  const lower = commandLine.toLowerCase();
+  if (SERVE_WEB_PROTECTED_PATTERNS.some((pattern) => lower.includes(pattern))) {
+    return false;
+  }
+  return SERVE_WEB_KILL_PATTERNS.some((pattern) => lower.includes(pattern));
+}
+
+async function tryFreeServeWebPort(
+  port: number,
+  logger: Logger
+): Promise<boolean> {
+  if (process.platform === "win32") {
+    return false;
+  }
+
+  const processes = await listPortProcesses(port, logger);
+  if (processes.length === 0) {
+    return false;
+  }
+
+  const killTargets = processes.filter((proc) =>
+    shouldKillServeWebProcess(proc.commandLine)
+  );
+  if (killTargets.length === 0) {
+    return false;
+  }
+
+  logger.warn(
+    `Detected ${killTargets.length} serve-web process(es) on port ${port}; terminating...`
+  );
+
+  for (const target of killTargets) {
+    // eslint-disable-next-line no-await-in-loop
+    await terminateProcess(target.pid, logger);
+  }
+
+  await new Promise((resolve) =>
+    setTimeout(resolve, SERVE_WEB_PORT_KILL_DELAY_MS)
+  );
+  return await isPortAvailable(port);
+}
+
+async function listPortProcesses(
+  port: number,
+  logger: Logger
+): Promise<PortProcessInfo[]> {
+  if (process.platform === "win32") {
+    return [];
+  }
+
+  if (lsofAvailable === false) {
+    return [];
+  }
+
+  try {
+    const { stdout } = await execFileAsync("lsof", [
+      "-n",
+      `-iTCP:${port}`,
+      "-sTCP:LISTEN",
+      "-P",
+      "-t",
+    ]);
+    lsofAvailable = true;
+    const pids = stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .map((line) => Number.parseInt(line, 10))
+      .filter((pid) => Number.isFinite(pid));
+
+    const results: PortProcessInfo[] = [];
+    for (const pid of pids) {
+      if (pid === process.pid) {
+        continue;
+      }
+      // eslint-disable-next-line no-await-in-loop
+      const commandLine = await readProcessCommand(pid, logger);
+      results.push({ pid, commandLine });
+    }
+
+    return results;
+  } catch (error) {
+    console.error(`Failed to list processes on port ${port}:`, error);
+    logger.warn(`Failed to list processes on port ${port}:`, error);
+    if (isErrnoException(error) && error.code === "ENOENT") {
+      lsofAvailable = false;
+    }
+    return [];
+  }
+}
+
+async function readProcessCommand(
+  pid: number,
+  logger: Logger
+): Promise<string> {
+  if (psAvailable === false) {
+    return "";
+  }
+
+  try {
+    const { stdout } = await execFileAsync("ps", [
+      "-p",
+      String(pid),
+      "-o",
+      "args=",
+    ]);
+    psAvailable = true;
+    return stdout.trim();
+  } catch (error) {
+    console.error(`Failed to read process ${pid} command:`, error);
+    logger.warn(`Failed to read process ${pid} command:`, error);
+    if (isErrnoException(error) && error.code === "ENOENT") {
+      psAvailable = false;
+    }
+    return "";
+  }
+}
+
+async function terminateProcess(pid: number, logger: Logger): Promise<void> {
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch (error) {
+    console.error(`Failed to SIGTERM process ${pid}:`, error);
+    logger.warn(`Failed to SIGTERM process ${pid}:`, error);
+  }
+
+  await new Promise((resolve) =>
+    setTimeout(resolve, SERVE_WEB_PORT_KILL_DELAY_MS)
+  );
+
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch (error) {
+    console.error(`Failed to SIGKILL process ${pid}:`, error);
+    logger.warn(`Failed to SIGKILL process ${pid}:`, error);
+  }
+}
+
+function isErrnoException(value: unknown): value is NodeJS.ErrnoException {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "code" in value
+  );
 }
