@@ -3,6 +3,7 @@ import {
   DashboardInput,
   type EditorApi,
 } from "@/components/dashboard/DashboardInput";
+import { DockerPullToast } from "@/components/dashboard/DockerPullToast";
 import { DashboardInputControls } from "@/components/dashboard/DashboardInputControls";
 import { DashboardInputFooter } from "@/components/dashboard/DashboardInputFooter";
 import { DashboardStartTaskButton } from "@/components/dashboard/DashboardStartTaskButton";
@@ -29,6 +30,8 @@ import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { api } from "@cmux/convex/api";
 import type { Doc, Id } from "@cmux/convex/dataModel";
 import type {
+  DockerPullImageResponse,
+  DockerPullProgress,
   ProviderStatusResponse,
   TaskAcknowledged,
   TaskError,
@@ -634,36 +637,180 @@ function DashboardComponent() {
             }
 
             // Auto-pull the image
-            const pullToastId = toast.loading(
-              `Pulling Docker image "${imageName}"... This may take a few minutes on first run.`
+            const layerProgress = new Map<
+              string,
+              { current?: number; total?: number }
+            >();
+            let latestStatus = "Preparing Docker pull...";
+            let latestProgressText: string | undefined;
+            let latestLayerId: string | undefined;
+
+            const computeOverallPercent = () => {
+              let total = 0;
+              let current = 0;
+              for (const entry of layerProgress.values()) {
+                if (typeof entry.total === "number") {
+                  total += entry.total;
+                }
+                if (typeof entry.current === "number") {
+                  current += entry.current;
+                }
+              }
+              if (total <= 0) {
+                return null;
+              }
+              return (current / total) * 100;
+            };
+
+            const pullToastId = toast.custom(
+              () => (
+                <DockerPullToast
+                  imageName={imageName}
+                  status={latestStatus}
+                  progressText={latestProgressText}
+                  percent={computeOverallPercent()}
+                  layerId={latestLayerId}
+                />
+              ),
+              {
+                duration: Infinity,
+                unstyled: true,
+                className: "border-none bg-transparent p-0 shadow-none",
+              }
             );
 
+            const updatePullToast = () => {
+              toast.custom(
+                () => (
+                  <DockerPullToast
+                    imageName={imageName}
+                    status={latestStatus}
+                    progressText={latestProgressText}
+                    percent={computeOverallPercent()}
+                  layerId={latestLayerId}
+                />
+              ),
+                {
+                  id: pullToastId,
+                  duration: Infinity,
+                  unstyled: true,
+                  className: "border-none bg-transparent p-0 shadow-none",
+                }
+              );
+            };
+
+            const handlePullProgress = (event: DockerPullProgress) => {
+              if (event.imageName !== imageName) {
+                return;
+              }
+
+              if (event.status) {
+                latestStatus = event.status;
+              }
+              if (event.progress) {
+                latestProgressText = event.progress;
+              }
+              if (event.id) {
+                latestLayerId = event.id;
+              }
+
+              if (event.id && event.progressDetail) {
+                const current =
+                  typeof event.progressDetail.current === "number"
+                    ? event.progressDetail.current
+                    : undefined;
+                const total =
+                  typeof event.progressDetail.total === "number"
+                    ? event.progressDetail.total
+                    : undefined;
+                if (current !== undefined || total !== undefined) {
+                  layerProgress.set(event.id, { current, total });
+                }
+              }
+
+              updatePullToast();
+            };
+
+            socket.on("docker-pull-progress", handlePullProgress);
+
             try {
-              const pullResult = await new Promise<{
-                success: boolean;
-                imageName?: string;
-                error?: string;
-              }>((resolve) => {
-                socket.emit("docker-pull-image", (response) => {
-                  resolve(response);
-                });
-              });
+              const pullResult = await new Promise<DockerPullImageResponse>(
+                (resolve) => {
+                  socket.emit("docker-pull-image", (response) => {
+                    resolve(response);
+                  });
+                }
+              );
 
               if (!pullResult.success) {
+                const hints = pullResult.hints ?? [];
+                const hasDetails = Boolean(pullResult.errorDetails);
+                const hasHints = hints.length > 0;
+                const description =
+                  hasDetails || hasHints ? (
+                    <div className="space-y-2 text-xs text-neutral-600 dark:text-neutral-300">
+                      {pullResult.errorDetails ? (
+                        <div className="rounded-md bg-neutral-100/80 px-2 py-1 font-mono text-[11px] text-neutral-600 dark:bg-neutral-900/60 dark:text-neutral-300">
+                          {pullResult.errorDetails}
+                        </div>
+                      ) : null}
+                      {hasHints ? (
+                        <div className="space-y-1">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+                            Common causes
+                          </p>
+                          <ul className="list-disc space-y-1 pl-4">
+                            {hints.map((hint) => (
+                              <li
+                                key={hint}
+                                className="text-[11px] text-neutral-500 dark:text-neutral-400"
+                              >
+                                {hint}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : undefined;
+
                 toast.dismiss(pullToastId);
                 toast.error(
-                  pullResult.error || `Failed to pull Docker image "${imageName}"`
+                  pullResult.error ||
+                    `Failed to pull Docker image "${imageName}"`,
+                  description ? { description } : undefined
                 );
                 return;
               }
 
               toast.dismiss(pullToastId);
-              toast.success(`Docker image "${imageName}" pulled successfully`);
+              toast.success(`Docker image "${imageName}" pulled successfully`, {
+                duration: 4000,
+              });
             } catch (pullError) {
-              toast.dismiss(pullToastId);
               console.error("Error pulling Docker image:", pullError);
-              toast.error(`Failed to pull Docker image "${imageName}"`);
+              const errorDetails =
+                pullError instanceof Error
+                  ? pullError.message
+                  : String(pullError);
+              const description = (
+                <div className="space-y-2 text-xs text-neutral-600 dark:text-neutral-300">
+                  <div className="rounded-md bg-neutral-100/80 px-2 py-1 font-mono text-[11px] text-neutral-600 dark:bg-neutral-900/60 dark:text-neutral-300">
+                    {errorDetails}
+                  </div>
+                  <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
+                    Common causes: low disk space, slow network, or registry
+                    access issues.
+                  </p>
+                </div>
+              );
+              toast.dismiss(pullToastId);
+              toast.error(`Failed to pull Docker image "${imageName}"`, {
+                description,
+              });
               return;
+            } finally {
+              socket.off("docker-pull-progress", handlePullProgress);
             }
           }
         } else {

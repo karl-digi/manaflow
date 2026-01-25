@@ -18,6 +18,7 @@ import {
   CreateCloudWorkspaceSchema,
   type CreateCloudWorkspaceResponse,
   type AvailableEditors,
+  type DockerPullProgress,
   type FileInfo,
   isLoopbackHostname,
   LOCAL_VSCODE_PLACEHOLDER_ORIGIN,
@@ -78,6 +79,65 @@ import {
 } from "./pullRequestState";
 
 const execAsync = promisify(exec);
+
+const getDockerPullHints = (errorMessage: string): string[] => {
+  const normalized = errorMessage.toLowerCase();
+  const hints = new Set<string>();
+
+  if (
+    normalized.includes("no space left") ||
+    normalized.includes("not enough space") ||
+    normalized.includes("insufficient space") ||
+    normalized.includes("disk full")
+  ) {
+    hints.add("Free up disk space (Docker images can be large).");
+  }
+
+  if (
+    normalized.includes("timeout") ||
+    normalized.includes("timed out") ||
+    normalized.includes("deadline exceeded") ||
+    normalized.includes("connection reset") ||
+    normalized.includes("tls handshake timeout")
+  ) {
+    hints.add("Check network connectivity and registry availability.");
+  }
+
+  if (
+    normalized.includes("unauthorized") ||
+    normalized.includes("authentication") ||
+    normalized.includes("access denied") ||
+    normalized.includes("denied") ||
+    normalized.includes("forbidden")
+  ) {
+    hints.add("Verify Docker registry credentials and access.");
+  }
+
+  if (
+    normalized.includes("not found") ||
+    normalized.includes("manifest unknown") ||
+    normalized.includes("name unknown")
+  ) {
+    hints.add("Confirm the image name and tag exist.");
+  }
+
+  if (
+    normalized.includes("econnrefused") ||
+    normalized.includes("connection refused") ||
+    normalized.includes("cannot connect") ||
+    normalized.includes("connect to the docker daemon")
+  ) {
+    hints.add("Ensure Docker Desktop or the Docker daemon is running.");
+  }
+
+  if (hints.size === 0) {
+    hints.add(
+      "Free up disk space, check network connectivity, and verify registry access."
+    );
+  }
+
+  return Array.from(hints);
+};
 const execFileAsync = promisify(execFile);
 
 interface ExecError extends Error {
@@ -2539,6 +2599,8 @@ ${title}`;
         return;
       }
 
+      let imageName = "docker.io/manaflow/cmux:latest";
+
       try {
         const { checkDockerStatus } = await import(
           "@cmux/shared/providers/common/check-docker"
@@ -2553,10 +2615,10 @@ ${title}`;
           return;
         }
 
-        const imageName =
+        imageName =
           docker.workerImage?.name ||
           process.env.WORKER_IMAGE_NAME ||
-          "docker.io/manaflow/cmux:latest";
+          imageName;
 
         // Check if already pulling
         if (docker.workerImage?.isPulling) {
@@ -2578,6 +2640,10 @@ ${title}`;
         }
 
         serverLogger.info(`Starting Docker pull for image: ${imageName}`);
+        socket.emit("docker-pull-progress", {
+          imageName,
+          status: "Starting Docker pull",
+        } satisfies DockerPullProgress);
 
         // Use dockerode to pull the image
         const dockerClient = DockerVSCodeInstance.getDocker();
@@ -2585,6 +2651,8 @@ ${title}`;
         const stream = await dockerClient.pull(imageName);
 
         // Wait for the pull to complete
+        let lastProgressEmit = 0;
+        let lastProgressKey = "";
         await new Promise<void>((resolve, reject) => {
           dockerClient.modem.followProgress(
             stream,
@@ -2595,12 +2663,47 @@ ${title}`;
                 resolve();
               }
             },
-            (event: { status: string; progress?: string; id?: string }) => {
+            (event: {
+              status?: string;
+              progress?: string;
+              id?: string;
+              progressDetail?: { current?: number; total?: number };
+            }) => {
               if (event.status) {
                 serverLogger.info(
                   `Docker pull progress: ${event.status}${event.id ? ` (${event.id})` : ""}${event.progress ? ` - ${event.progress}` : ""}`
                 );
               }
+
+              const current =
+                typeof event.progressDetail?.current === "number"
+                  ? event.progressDetail.current
+                  : undefined;
+              const total =
+                typeof event.progressDetail?.total === "number"
+                  ? event.progressDetail.total
+                  : undefined;
+              const progressDetail =
+                typeof current === "number" || typeof total === "number"
+                  ? { current, total }
+                  : undefined;
+              const progressPayload = {
+                imageName,
+                status: event.status,
+                id: event.id,
+                progress: event.progress,
+                progressDetail,
+              } satisfies DockerPullProgress;
+
+              const now = Date.now();
+              const progressKey = `${progressPayload.status ?? ""}|${progressPayload.id ?? ""}|${progressPayload.progress ?? ""}|${progressDetail?.current ?? ""}|${progressDetail?.total ?? ""}`;
+              if (now - lastProgressEmit < 200 && progressKey === lastProgressKey) {
+                return;
+              }
+
+              lastProgressEmit = now;
+              lastProgressKey = progressKey;
+              socket.emit("docker-pull-progress", progressPayload);
             }
           );
         });
@@ -2614,30 +2717,41 @@ ${title}`;
         serverLogger.error("Error pulling Docker image:", error);
         const errorMessage =
           error instanceof Error ? error.message : "Unknown error";
+        const normalizedError = errorMessage.toLowerCase();
+        const hints = getDockerPullHints(errorMessage);
 
         // Provide user-friendly error messages
         let userFriendlyError: string;
         if (
-          errorMessage.includes("timeout") ||
-          errorMessage.includes("stalled")
+          normalizedError.includes("no space left") ||
+          normalizedError.includes("not enough space") ||
+          normalizedError.includes("insufficient space") ||
+          normalizedError.includes("disk full")
+        ) {
+          userFriendlyError =
+            "Not enough disk space to pull the Docker image. Free up space and try again.";
+        } else if (
+          normalizedError.includes("timeout") ||
+          normalizedError.includes("stalled") ||
+          normalizedError.includes("timed out")
         ) {
           userFriendlyError =
             "Docker image pull timed out. This may be due to slow network or Docker registry issues.";
         } else if (
-          errorMessage.includes("not found") ||
-          errorMessage.includes("manifest unknown")
+          normalizedError.includes("not found") ||
+          normalizedError.includes("manifest unknown")
         ) {
           userFriendlyError =
             "Docker image not found. Please check if the image name is correct.";
         } else if (
-          errorMessage.includes("unauthorized") ||
-          errorMessage.includes("authentication")
+          normalizedError.includes("unauthorized") ||
+          normalizedError.includes("authentication")
         ) {
           userFriendlyError =
             "Docker authentication failed. Please ensure you have access to the Docker registry.";
         } else if (
-          errorMessage.includes("ECONNREFUSED") ||
-          errorMessage.includes("connection refused")
+          normalizedError.includes("econnrefused") ||
+          normalizedError.includes("connection refused")
         ) {
           userFriendlyError =
             "Cannot connect to Docker daemon. Please ensure Docker is running.";
@@ -2647,7 +2761,10 @@ ${title}`;
 
         callback({
           success: false,
+          imageName,
           error: userFriendlyError,
+          errorDetails: errorMessage,
+          hints,
         });
       }
     });
