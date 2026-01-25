@@ -382,6 +382,30 @@ export const listTestRuns = authQuery({
           );
         }
 
+        // Get video URLs if we have videos
+        let videosWithUrls: Array<{
+          storageId: string;
+          mimeType: string;
+          fileName?: string;
+          description?: string;
+          url?: string;
+        }> = [];
+
+        if (screenshotSet?.videos) {
+          videosWithUrls = await Promise.all(
+            screenshotSet.videos.map(async (video) => {
+              const url = await ctx.storage.getUrl(video.storageId);
+              return {
+                storageId: video.storageId,
+                mimeType: video.mimeType,
+                fileName: video.fileName,
+                description: video.description,
+                url: url ?? undefined,
+              };
+            })
+          );
+        }
+
         return {
           _id: run._id,
           prNumber: run.prNumber,
@@ -407,6 +431,7 @@ export const listTestRuns = authQuery({
                 capturedAt: screenshotSet.capturedAt,
                 error: screenshotSet.error,
                 images: imagesWithUrls,
+                videos: videosWithUrls,
               }
             : null,
         };
@@ -468,6 +493,30 @@ export const getTestRunDetails = authQuery({
       );
     }
 
+    // Get video URLs if we have videos
+    let videosWithUrls: Array<{
+      storageId: string;
+      mimeType: string;
+      fileName?: string;
+      description?: string;
+      url?: string;
+    }> = [];
+
+    if (screenshotSet?.videos) {
+      videosWithUrls = await Promise.all(
+        screenshotSet.videos.map(async (video) => {
+          const url = await ctx.storage.getUrl(video.storageId);
+          return {
+            storageId: video.storageId,
+            mimeType: video.mimeType,
+            fileName: video.fileName,
+            description: video.description,
+            url: url ?? undefined,
+          };
+        })
+      );
+    }
+
     // Get taskRun for trajectory link
     let taskRun: Doc<"taskRuns"> | null = null;
     if (run.taskRunId) {
@@ -503,6 +552,7 @@ export const getTestRunDetails = authQuery({
             capturedAt: screenshotSet.capturedAt,
             error: screenshotSet.error,
             images: imagesWithUrls,
+            videos: videosWithUrls,
           }
         : null,
     };

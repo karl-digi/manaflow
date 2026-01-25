@@ -21,6 +21,7 @@ import {
   createScreenshotSet,
   dispatchPreviewJob,
   completePreviewJob,
+  createTestPreviewTask,
 } from "./preview_jobs_http";
 import {
   syncRelease as syncHostScreenshotCollectorRelease,
@@ -31,6 +32,7 @@ import {
   anthropicCountTokens,
   anthropicEventLogging,
 } from "./anthropic_http";
+import { serveMedia } from "./media_proxy_http";
 
 const http = httpRouter();
 
@@ -143,6 +145,12 @@ http.route({
 });
 
 http.route({
+  path: "/api/preview/test-task",
+  method: "POST",
+  handler: createTestPreviewTask,
+});
+
+http.route({
   path: "/api/host-screenshot-collector/sync",
   method: "POST",
   handler: syncHostScreenshotCollectorRelease,
@@ -170,6 +178,15 @@ http.route({
   path: "/api/anthropic/api/event_logging/batch",
   method: "POST",
   handler: anthropicEventLogging,
+});
+
+// Media proxy endpoint for serving storage files with proper Content-Type headers
+// This is used for GitHub PR comments where videos need stable URLs ending in .mp4
+// Path format: /api/media/{storageId}.{ext}
+http.route({
+  pathPrefix: "/api/media/",
+  method: "GET",
+  handler: serveMedia,
 });
 
 export default http;

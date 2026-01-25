@@ -36,25 +36,32 @@ interface CapturedScreenshot {
   description?: string;
 }
 
+interface CapturedVideo {
+  path: string;
+  fileName: string;
+  description?: string;
+}
+
 export type ScreenshotCollectionResult =
   | {
-      status: "completed";
-      screenshots: CapturedScreenshot[];
-      commitSha: string;
-      hasUiChanges?: boolean;
-    }
+    status: "completed";
+    screenshots: CapturedScreenshot[];
+    videos: CapturedVideo[];
+    commitSha: string;
+    hasUiChanges?: boolean;
+  }
   | {
-      status: "skipped";
-      reason: string;
-      commitSha?: string;
-      hasUiChanges?: boolean;
-    }
+    status: "skipped";
+    reason: string;
+    commitSha?: string;
+    hasUiChanges?: boolean;
+  }
   | {
-      status: "failed";
-      error: string;
-      commitSha?: string;
-      hasUiChanges?: boolean;
-    };
+    status: "failed";
+    error: string;
+    commitSha?: string;
+    hasUiChanges?: boolean;
+  };
 
 function sanitizeSegment(segment: string | null | undefined): string {
   if (!segment) {
@@ -271,8 +278,8 @@ export async function startScreenshotCollection(
     const reason =
       repoSelectionErrors.length > 0
         ? `Unable to determine a merge base for any repository candidate: ${repoSelectionErrors
-            .map(({ path: repoPath, error }) => `${repoPath}: ${error}`)
-            .join("; ")}`
+          .map(({ path: repoPath, error }) => `${repoPath}: ${error}`)
+          .join("; ")}`
         : `Unable to determine a git repository within ${workspaceRoot}`;
     await logToScreenshotCollector(reason);
     log("ERROR", reason, {
@@ -317,12 +324,12 @@ export async function startScreenshotCollection(
     options.changedFiles && options.changedFiles.length > 0
       ? options.changedFiles
       : parseFileList(
-          await runCommandCapture(
-            "git",
-            ["diff", "--name-only", `${mergeBase}..HEAD`],
-            { cwd: workspaceDir }
-          )
-        );
+        await runCommandCapture(
+          "git",
+          ["diff", "--name-only", `${mergeBase}..HEAD`],
+          { cwd: workspaceDir }
+        )
+      );
 
   let usedWorkingTreeFallback = false;
 
@@ -450,8 +457,7 @@ export async function startScreenshotCollection(
   }
 
   const trimmedTaskRunJwt = options.taskRunJwt?.trim();
-  const trimmedAnthropicKey =
-    options.anthropicApiKey?.trim() ?? process.env.ANTHROPIC_API_KEY;
+  const trimmedAnthropicApiKey = options.anthropicApiKey?.trim();
 
   let claudeAuth: ClaudeCodeAuthConfig | null = null;
 
@@ -463,24 +469,17 @@ export async function startScreenshotCollection(
     await logToScreenshotCollector(
       `JWT details: present=${!!trimmedTaskRunJwt}, length=${trimmedTaskRunJwt?.length ?? 0}, first 20 chars=${trimmedTaskRunJwt?.substring(0, 20) ?? "N/A"}`
     );
-  } else if (trimmedAnthropicKey) {
-    claudeAuth = { auth: { anthropicApiKey: trimmedAnthropicKey } };
+  } else if (trimmedAnthropicApiKey) {
+    claudeAuth = { auth: { anthropicApiKey: trimmedAnthropicApiKey } };
     await logToScreenshotCollector(
-      `ANTHROPIC_API_KEY source: ${
-        options.anthropicApiKey?.trim() ? "payload" : "environment"
-      }`
-    );
-    await logToScreenshotCollector(
-      `ANTHROPIC_API_KEY (first 8 chars): ${
-        trimmedAnthropicKey.slice(0, 8) ?? "<none>"
-      }`
+      "Using Anthropic API key for Claude Code screenshot collection"
     );
   } else {
     const reason =
-      "Missing Claude auth (taskRunJwt or ANTHROPIC_API_KEY required for screenshot collection)";
+      "Missing taskRunJwt and anthropicApiKey for screenshot collection (proxy-only mode).";
     await logToScreenshotCollector(reason);
     await logToScreenshotCollector(
-      `Auth debug: taskRunJwt=${options.taskRunJwt ? "present" : "missing"}, anthropicApiKey=${options.anthropicApiKey ? "present" : "missing"}, env ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY ? "present" : "missing"}`
+      `Auth debug: taskRunJwt=${options.taskRunJwt ? "present" : "missing"}, anthropicApiKey=${options.anthropicApiKey ? "present" : "missing"}`
     );
     log("ERROR", reason, { baseBranch, mergeBase });
     return { status: "skipped", reason, commitSha };
@@ -522,7 +521,8 @@ export async function startScreenshotCollection(
 
     if (claudeResult.status === "completed") {
       const collectedScreenshots = claudeResult.screenshots ?? [];
-      if (collectedScreenshots.length === 0) {
+      const collectedVideos = claudeResult.videos ?? [];
+      if (collectedScreenshots.length === 0 && collectedVideos.length === 0) {
         // If Claude explicitly reported no UI changes, this is expected - not an error
         if (claudeResult.hasUiChanges === false) {
           const reason = "No UI changes detected in this PR";
@@ -533,11 +533,11 @@ export async function startScreenshotCollection(
         if (claudeResult.hasUiChanges === undefined) {
           const reason = "No UI changes detected in this PR";
           await logToScreenshotCollector(
-            `${reason} (collector returned no screenshots)`
+            `${reason} (collector returned no screenshots or videos)`
           );
           log(
             "WARN",
-            "Claude collector returned no screenshots without hasUiChanges; treating as no UI changes",
+            "Claude collector returned no media without hasUiChanges; treating as no UI changes",
             { headBranch, outputDir }
           );
           return { status: "skipped", reason, commitSha, hasUiChanges: false };
@@ -562,8 +562,16 @@ export async function startScreenshotCollection(
           description: screenshot.description,
         }));
 
-      if (screenshotEntries.length === 0) {
-        const error = "Claude collector produced no screenshot entries";
+      const videoEntries: CapturedVideo[] =
+        collectedVideos.map((video) => ({
+          path: video.path,
+          fileName: path.basename(video.path),
+          description: video.description,
+        }));
+
+      // At least one of screenshots or videos must be present
+      if (screenshotEntries.length === 0 && videoEntries.length === 0) {
+        const error = "Claude collector produced no media entries";
         await logToScreenshotCollector(error);
         log("ERROR", error, {
           headBranch,
@@ -571,71 +579,61 @@ export async function startScreenshotCollection(
           screenshotPaths: collectedScreenshots.map(
             (screenshot) => screenshot.path
           ),
+          videoPaths: collectedVideos.map((video) => video.path),
         });
         return { status: "failed", error, commitSha };
       }
 
-      const initialPrimary = screenshotEntries[0];
-      if (!initialPrimary) {
-        const error = "Unable to determine primary screenshot entry";
-        await logToScreenshotCollector(error);
-        log("ERROR", error, {
-          headBranch,
-          outputDir,
-          screenshotPaths: collectedScreenshots.map(
-            (screenshot) => screenshot.path
-          ),
-        });
-        return { status: "failed", error, commitSha };
-      }
-      let primaryScreenshot: CapturedScreenshot = initialPrimary;
-
-      if (typeof copyTarget === "string" && copyTarget.length > 0) {
-        try {
-          await fs.mkdir(path.dirname(copyTarget), { recursive: true });
-          await fs.copyFile(primaryScreenshot.path, copyTarget);
-          const updatedScreenshot: CapturedScreenshot = {
-            path: copyTarget,
-            fileName: path.basename(copyTarget),
-            description: primaryScreenshot.description,
-          };
-          screenshotEntries[0] = updatedScreenshot;
-          primaryScreenshot = updatedScreenshot;
-          await logToScreenshotCollector(
-            `Primary screenshot copied to requested path: ${copyTarget}`
-          );
-        } catch (copyError) {
-          const message =
-            copyError instanceof Error
-              ? copyError.message
-              : String(copyError ?? "unknown copy error");
-          await logToScreenshotCollector(
-            `Failed to copy screenshot to requested path: ${message}`
-          );
-          log("WARN", "Failed to copy screenshot to requested path", {
-            headBranch,
-            outputDir,
-            copyTarget,
-            error: message,
-          });
+      // Handle primary screenshot for copy target (only if screenshots exist)
+      if (screenshotEntries.length > 0) {
+        const initialPrimary = screenshotEntries[0];
+        if (initialPrimary && typeof copyTarget === "string" && copyTarget.length > 0) {
+          try {
+            await fs.mkdir(path.dirname(copyTarget), { recursive: true });
+            await fs.copyFile(initialPrimary.path, copyTarget);
+            const updatedScreenshot: CapturedScreenshot = {
+              path: copyTarget,
+              fileName: path.basename(copyTarget),
+              description: initialPrimary.description,
+            };
+            screenshotEntries[0] = updatedScreenshot;
+            await logToScreenshotCollector(
+              `Primary screenshot copied to requested path: ${copyTarget}`
+            );
+          } catch (copyError) {
+            const message =
+              copyError instanceof Error
+                ? copyError.message
+                : String(copyError ?? "unknown copy error");
+            await logToScreenshotCollector(
+              `Failed to copy screenshot to requested path: ${message}`
+            );
+            log("WARN", "Failed to copy screenshot to requested path", {
+              headBranch,
+              outputDir,
+              copyTarget,
+              error: message,
+            });
+          }
         }
       }
 
-      if (screenshotEntries.length > 1) {
-        await logToScreenshotCollector(
-          `Captured ${screenshotEntries.length} screenshots; uploading all and marking ${primaryScreenshot.path} as primary`
-        );
-      } else {
-        await logToScreenshotCollector(
-          `Captured 1 screenshot at ${primaryScreenshot.path}`
-        );
-      }
+      // Log capture summary
+      const mediaSummary = [
+        screenshotEntries.length > 0 ? `${screenshotEntries.length} screenshot(s)` : null,
+        videoEntries.length > 0 ? `${videoEntries.length} video(s)` : null,
+      ].filter(Boolean).join(" and ");
+      await logToScreenshotCollector(`Captured ${mediaSummary}`);
 
-      // Write manifest.json with hasUiChanges and image info for local docker workflows
+      // Write manifest.json with hasUiChanges and media info for local docker workflows
       const manifestPath = path.join(outputDir, "manifest.json");
       const manifest = {
         hasUiChanges: claudeResult.hasUiChanges,
         images: screenshotEntries.map((entry) => ({
+          path: entry.path,
+          description: entry.description,
+        })),
+        videos: videoEntries.map((entry) => ({
           path: entry.path,
           description: entry.description,
         })),
@@ -653,16 +651,18 @@ export async function startScreenshotCollection(
         );
       }
 
-      log("INFO", "Claude screenshot collector completed", {
+      log("INFO", "Claude collector completed", {
         headBranch,
         baseBranch,
         commitSha,
         screenshotCount: screenshotEntries.length,
+        videoCount: videoEntries.length,
       });
 
       return {
         status: "completed",
         screenshots: screenshotEntries,
+        videos: videoEntries,
         commitSha,
         hasUiChanges: claudeResult.hasUiChanges,
       };

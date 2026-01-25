@@ -328,6 +328,14 @@ const PreviewTestImageSchema = z.object({
   url: z.string().optional().nullable(),
 });
 
+const PreviewTestVideoSchema = z.object({
+  storageId: z.string(),
+  mimeType: z.string(),
+  fileName: z.string().optional().nullable(),
+  description: z.string().optional().nullable(),
+  url: z.string().optional().nullable(),
+});
+
 const PreviewTestScreenshotSetSchema = z.object({
   _id: z.string(),
   status: z.enum(["completed", "failed", "skipped"]),
@@ -335,6 +343,7 @@ const PreviewTestScreenshotSetSchema = z.object({
   capturedAt: z.number(),
   error: z.string().optional().nullable(),
   images: z.array(PreviewTestImageSchema),
+  videos: z.array(PreviewTestVideoSchema).optional().nullable(),
 });
 
 const PreviewTestRunSchema = z.object({

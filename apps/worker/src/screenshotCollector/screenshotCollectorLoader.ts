@@ -13,6 +13,7 @@ export type ClaudeCodeAuthConfig =
 export interface ScreenshotResult {
   status: "completed" | "failed" | "skipped";
   screenshots?: { path: string; description?: string }[];
+  videos?: { path: string; description?: string }[];
   hasUiChanges?: boolean;
   error?: string;
   reason?: string;
@@ -166,7 +167,29 @@ async function downloadScreenshotCollector(providedConvexUrl?: string): Promise<
   return tempFile;
 }
 
-let cachedModule: ScreenshotCollectorModule | null = null;
+interface CachedCollector {
+  module: ScreenshotCollectorModule;
+  version: string;
+}
+
+let cachedCollector: CachedCollector | null = null;
+
+/**
+ * Fetches release info from Convex to get the current version
+ */
+async function fetchReleaseInfo(convexUrl: string, staging: boolean): Promise<{ version: string; url: string }> {
+  const endpoint = `${convexUrl}/api/host-screenshot-collector/latest?staging=${staging}`;
+  const response = await fetch(endpoint);
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Failed to fetch screenshot collector info (${response.status}): ${errorText}`);
+  }
+  const releaseInfo = await response.json();
+  if (!releaseInfo.url || !releaseInfo.version) {
+    throw new Error("Invalid release info from Convex: missing url or version");
+  }
+  return { version: releaseInfo.version, url: releaseInfo.url };
+}
 
 /**
  * Loads the screenshot collector module from Convex storage.
@@ -176,29 +199,58 @@ let cachedModule: ScreenshotCollectorModule | null = null;
  * @throws Error if the screenshot collector cannot be fetched or loaded.
  */
 export async function loadScreenshotCollector(convexUrl?: string): Promise<ScreenshotCollectorModule> {
-  // Return cached module if available
-  if (cachedModule) {
-    return cachedModule;
+  const resolvedConvexUrl = getConvexSiteUrl(convexUrl);
+  if (!resolvedConvexUrl) {
+    throw new Error(
+      "Convex URL is required to fetch screenshot collector. " +
+      "Pass convexUrl to loadScreenshotCollector() or set CONVEX_SITE_URL/CONVEX_URL environment variable."
+    );
+  }
+
+  const staging = isStaging();
+
+  // Always check the latest version from Convex
+  const releaseInfo = await fetchReleaseInfo(resolvedConvexUrl, staging);
+
+  // Return cached module if version matches
+  if (cachedCollector && cachedCollector.version === releaseInfo.version) {
+    log("INFO", "Using cached screenshot collector (version matches)", {
+      version: releaseInfo.version,
+    });
+    return cachedCollector.module;
+  }
+
+  // Version changed or no cache - download the new version
+  if (cachedCollector) {
+    log("INFO", "Screenshot collector version changed, downloading new version", {
+      oldVersion: cachedCollector.version,
+      newVersion: releaseInfo.version,
+    });
   }
 
   // Download the latest version from Convex (throws on failure)
   const remotePath = await downloadScreenshotCollector(convexUrl);
 
   // Use file:// URL for dynamic import
-  const moduleUrl = `file://${remotePath}`;
+  // Add cache-busting query param to force Node to reimport the module
+  const moduleUrl = `file://${remotePath}?v=${Date.now()}`;
   const remoteModule = await import(moduleUrl);
 
   log("INFO", "Successfully loaded remote screenshot collector", {
     path: remotePath,
+    version: releaseInfo.version,
   });
 
-  cachedModule = remoteModule as ScreenshotCollectorModule;
-  return cachedModule;
+  cachedCollector = {
+    module: remoteModule as ScreenshotCollectorModule,
+    version: releaseInfo.version,
+  };
+  return cachedCollector.module;
 }
 
 /**
  * Clears the cached module (useful for testing or forcing a refresh)
  */
 export function clearScreenshotCollectorCache(): void {
-  cachedModule = null;
+  cachedCollector = null;
 }

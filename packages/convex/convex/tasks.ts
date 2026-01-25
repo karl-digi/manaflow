@@ -905,6 +905,16 @@ export const recordScreenshotResult = internalMutation({
         }),
       ),
     ),
+    videos: v.optional(
+      v.array(
+        v.object({
+          storageId: v.id("_storage"),
+          mimeType: v.string(),
+          fileName: v.optional(v.string()),
+          description: v.optional(v.string()),
+        }),
+      ),
+    ),
     error: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -920,6 +930,7 @@ export const recordScreenshotResult = internalMutation({
 
     const now = Date.now();
     const screenshots = args.screenshots ?? [];
+    const videos = args.videos ?? [];
 
     const screenshotSetId = await ctx.db.insert("taskRunScreenshotSets", {
       taskId: args.taskId,
@@ -935,9 +946,17 @@ export const recordScreenshotResult = internalMutation({
         fileName: screenshot.fileName,
         description: screenshot.description,
       })),
+      videos: videos.length > 0 ? videos.map((video) => ({
+        storageId: video.storageId,
+        mimeType: video.mimeType,
+        fileName: video.fileName,
+        description: video.description,
+      })) : undefined,
       createdAt: now,
       updatedAt: now,
     });
+
+    const hasMedia = screenshots.length > 0 || videos.length > 0;
 
     const patch: Record<string, unknown> = {
       screenshotStatus: args.status,
@@ -945,16 +964,25 @@ export const recordScreenshotResult = internalMutation({
       screenshotRequestedAt: now,
       updatedAt: now,
       latestScreenshotSetId:
-        args.status === "completed" && screenshots.length > 0
+        args.status === "completed" && hasMedia
           ? screenshotSetId
           : undefined,
     };
 
     if (args.status === "completed" && screenshots.length > 0) {
+      // Use first screenshot for primary thumbnail
       patch.screenshotStorageId = screenshots[0].storageId;
       patch.screenshotMimeType = screenshots[0].mimeType;
       patch.screenshotFileName = screenshots[0].fileName;
       patch.screenshotCommitSha = screenshots[0].commitSha;
+      patch.screenshotCompletedAt = now;
+      patch.screenshotError = undefined;
+    } else if (args.status === "completed" && videos.length > 0) {
+      // No screenshot thumbnail available, but still mark as completed
+      patch.screenshotStorageId = undefined;
+      patch.screenshotMimeType = undefined;
+      patch.screenshotFileName = undefined;
+      patch.screenshotCommitSha = undefined;
       patch.screenshotCompletedAt = now;
       patch.screenshotError = undefined;
     } else {
@@ -1153,6 +1181,40 @@ export const createForPreview = internalMutation({
       teamId: args.teamId,
       environmentId: undefined,
       isCloudWorkspace: undefined,
+    });
+    return taskId;
+  },
+});
+
+/**
+ * Create a minimal test task for development/testing purposes.
+ * Used by the test preview task endpoint.
+ */
+export const createTestTask = internalMutation({
+  args: {
+    teamId: v.string(),
+    userId: v.string(),
+    name: v.string(),
+    repoUrl: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const taskId = await ctx.db.insert("tasks", {
+      text: args.name,
+      description: "Test task for screenshot collection development",
+      projectFullName: args.repoUrl,
+      baseBranch: undefined,
+      worktreePath: undefined,
+      isCompleted: false,
+      isPreview: true,
+      createdAt: now,
+      updatedAt: now,
+      lastActivityAt: now,
+      images: undefined,
+      userId: args.userId,
+      teamId: args.teamId,
+      environmentId: undefined,
+      isCloudWorkspace: true,
     });
     return taskId;
   },

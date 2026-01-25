@@ -665,9 +665,21 @@ export const getRunDiffContext = authQuery({
               };
             }),
           );
+          const videosWithUrls = set.videos
+            ? await Promise.all(
+                set.videos.map(async (video) => {
+                  const url = await ctx.storage.getUrl(video.storageId);
+                  return {
+                    ...video,
+                    url: url ?? undefined,
+                  };
+                }),
+              )
+            : undefined;
           return {
             ...set,
             images: imagesWithUrls,
+            videos: videosWithUrls,
           };
         }),
       );
