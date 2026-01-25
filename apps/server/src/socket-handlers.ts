@@ -917,6 +917,25 @@ export function setupSocketHandlers(
           return;
         }
 
+        // Early check: verify VS Code serve-web is available before doing expensive operations
+        // This provides a fast failure instead of waiting 15+ seconds for the timeout
+        const earlyServeWebCheck = getVSCodeServeWebBaseUrl();
+        if (!earlyServeWebCheck) {
+          // Give serve-web a short window to become ready (it might be starting up)
+          const serveWebUrl = await waitForVSCodeServeWebBaseUrl(5_000);
+          if (!serveWebUrl) {
+            serverLogger.warn(
+              "[create-local-workspace] VS Code serve-web is not available. Local workspaces require VS Code CLI to be installed."
+            );
+            callback({
+              success: false,
+              error:
+                "VS Code is not available. Please install VS Code and ensure the 'code' command is accessible from your terminal, then restart the app.",
+            });
+            return;
+          }
+        }
+
         const repoUrl =
           explicitRepoUrl ??
           (projectFullName

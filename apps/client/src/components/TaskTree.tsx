@@ -834,16 +834,17 @@ function TaskTreeInner({
       }
     }
 
-    if (task.isCompleted) {
-      return <CheckCircle className="w-3 h-3 text-green-500" />;
-    }
-
+    // Local/cloud workspaces should show their type icon, never a checkmark
     if (isLocalWorkspace) {
       return <Monitor className="w-3 h-3 text-neutral-400" />;
     }
 
     if (isCloudWorkspace) {
       return <Cloud className="w-3 h-3 text-neutral-400" />;
+    }
+
+    if (task.isCompleted) {
+      return <CheckCircle className="w-3 h-3 text-green-500" />;
     }
 
     return <Circle className="w-3 h-3 text-neutral-400 animate-pulse" />;

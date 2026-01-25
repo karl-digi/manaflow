@@ -509,6 +509,63 @@ async function resolveVSCodeExecutable(logger: Logger) {
     }
   }
 
+  // Fallback: check common installation paths on macOS
+  if (!resolvedVSCodeExecutable && process.platform === "darwin") {
+    const macOSPaths = [
+      "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code",
+      path.join(
+        os.homedir(),
+        "Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
+      ),
+      // VS Code Insiders
+      "/Applications/Visual Studio Code - Insiders.app/Contents/Resources/app/bin/code-insiders",
+      path.join(
+        os.homedir(),
+        "Applications/Visual Studio Code - Insiders.app/Contents/Resources/app/bin/code-insiders"
+      ),
+    ];
+
+    for (const codePath of macOSPaths) {
+      try {
+        await access(codePath, fsConstants.X_OK);
+        resolvedVSCodeExecutable = codePath;
+        logger.info(
+          `Resolved VS Code CLI executable via macOS path lookup: ${codePath}`
+        );
+        break;
+      } catch {
+        logger.debug?.(
+          `VS Code CLI not found at macOS path: ${codePath}`
+        );
+      }
+    }
+  }
+
+  // Fallback: check common installation paths on Linux
+  if (!resolvedVSCodeExecutable && process.platform === "linux") {
+    const linuxPaths = [
+      "/usr/share/code/bin/code",
+      "/usr/bin/code",
+      "/snap/bin/code",
+      path.join(os.homedir(), ".local/share/code/bin/code"),
+    ];
+
+    for (const codePath of linuxPaths) {
+      try {
+        await access(codePath, fsConstants.X_OK);
+        resolvedVSCodeExecutable = codePath;
+        logger.info(
+          `Resolved VS Code CLI executable via Linux path lookup: ${codePath}`
+        );
+        break;
+      } catch {
+        logger.debug?.(
+          `VS Code CLI not found at Linux path: ${codePath}`
+        );
+      }
+    }
+  }
+
   return resolvedVSCodeExecutable;
 }
 
