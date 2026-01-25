@@ -7,6 +7,7 @@ import * as path from "node:path";
 import { getDockerSocketCandidates } from "@cmux/shared/providers/common/check-docker";
 import { getConvex } from "../utils/convexClient";
 import { cleanupGitCredentials } from "../utils/dockerGitSetup";
+import { isRetryableDockerPullError } from "../utils/dockerPull";
 import { dockerLogger } from "../utils/fileLogger";
 import { getGitHubOAuthToken } from "../utils/getGitHubToken";
 import { getAuthToken, runWithAuthToken } from "../utils/requestContext";
@@ -190,129 +191,201 @@ export class DockerVSCodeInstance extends VSCodeInstance {
 
     // Set up a timeout for the pull operation (10 minutes)
     const PULL_TIMEOUT_MS = 10 * 60 * 1000;
-    let pullTimedOut = false;
-    let lastProgressTime = Date.now();
-    const progressInterval = setInterval(() => {
-      const currentTime = Date.now();
-      // If no progress for 2 minutes, consider it stalled
-      if (currentTime - lastProgressTime > 2 * 60 * 1000) {
-        pullTimedOut = true;
-      }
-    }, 30000);
+    const MAX_PULL_ATTEMPTS = 2;
+    const RETRY_DELAY_MS = 1500;
+    let lastErrorMessage: string | null = null;
 
-    try {
-      const stream = await docker.pull(this.imageName);
+    for (let attempt = 1; attempt <= MAX_PULL_ATTEMPTS; attempt += 1) {
+      let pullTimedOut = false;
+      let lastProgressTime = Date.now();
+      const progressInterval = setInterval(() => {
+        const currentTime = Date.now();
+        // If no progress for 2 minutes, consider it stalled
+        if (currentTime - lastProgressTime > 2 * 60 * 1000) {
+          pullTimedOut = true;
+        }
+      }, 30000);
 
-      await Promise.race([
-        new Promise((resolve, reject) => {
-          docker.modem.followProgress(
-            stream,
-            (err: Error | null, res: unknown[]) => {
-              if (err) {
-                reject(err);
-              } else {
-                resolve(res);
-              }
-            },
-            (event: { status: string; progress: string; id?: string }) => {
-              lastProgressTime = Date.now();
-              // Log pull progress
-              if (event.status) {
-                const progressMsg = event.progress
-                  ? `${event.status} ${event.id || ""}: ${event.progress}`
-                  : `${event.status} ${event.id || ""}`;
-                dockerLogger.info(`Pull progress: ${progressMsg}`);
+      const eventErrors = new Set<string>();
 
-                // Update status with progress (throttled - only major status changes)
-                if (
-                  event.status === "Downloading" ||
-                  event.status === "Extracting" ||
-                  event.status === "Pull complete"
-                ) {
-                  void this.updateStatusMessage(
-                    `Pulling Docker image: ${event.status}${event.id ? ` (${event.id})` : ""}`
+      try {
+        const stream = await docker.pull(this.imageName);
+
+        await Promise.race([
+          new Promise<void>((resolve, reject) => {
+            let settled = false;
+            const settleReject = (error: Error) => {
+              if (settled) return;
+              settled = true;
+              reject(error);
+            };
+            const settleResolve = () => {
+              if (settled) return;
+              settled = true;
+              resolve();
+            };
+
+            docker.modem.followProgress(
+              stream,
+              (err: Error | null, _res: unknown[]) => {
+                if (err) {
+                  settleReject(err);
+                  return;
+                }
+                if (eventErrors.size > 0) {
+                  settleReject(
+                    new Error(Array.from(eventErrors).join(" | "))
+                  );
+                  return;
+                }
+                settleResolve();
+              },
+              (event: {
+                status?: string;
+                progress?: string;
+                id?: string;
+                error?: string;
+                errorDetail?: { message?: string };
+              }) => {
+                const eventError = event.errorDetail?.message ?? event.error;
+                if (eventError) {
+                  eventErrors.add(eventError);
+                }
+
+                lastProgressTime = Date.now();
+                // Log pull progress
+                if (event.status) {
+                  const progressMsg = event.progress
+                    ? `${event.status} ${event.id || ""}: ${event.progress}`
+                    : `${event.status} ${event.id || ""}`;
+                  dockerLogger.info(`Pull progress: ${progressMsg}`);
+
+                  // Update status with progress (throttled - only major status changes)
+                  if (
+                    event.status === "Downloading" ||
+                    event.status === "Extracting" ||
+                    event.status === "Pull complete"
+                  ) {
+                    void this.updateStatusMessage(
+                      `Pulling Docker image: ${event.status}${event.id ? ` (${event.id})` : ""}`
+                    );
+                  }
+                }
+
+                if (pullTimedOut) {
+                  settleReject(
+                    new Error(
+                      "Docker pull stalled - no progress for 2 minutes"
+                    )
                   );
                 }
               }
-
-              if (pullTimedOut) {
-                throw new Error(
-                  "Docker pull stalled - no progress for 2 minutes"
-                );
-              }
-            }
-          );
-        }),
-        new Promise((_, reject) => {
-          setTimeout(() => {
-            reject(
-              new Error(
-                `Docker pull timed out after ${PULL_TIMEOUT_MS / 1000 / 60} minutes`
-              )
             );
-          }, PULL_TIMEOUT_MS);
-        }),
-      ]);
+          }),
+          new Promise((_, reject) => {
+            setTimeout(() => {
+              reject(
+                new Error(
+                  `Docker pull timed out after ${PULL_TIMEOUT_MS / 1000 / 60} minutes`
+                )
+              );
+            }, PULL_TIMEOUT_MS);
+          }),
+        ]);
 
-      clearInterval(progressInterval);
+        clearInterval(progressInterval);
 
-      // Clear status message on success
-      await this.updateStatusMessage(undefined);
-      dockerLogger.info(`Successfully pulled image ${this.imageName}`);
-
-      // Record pull time for TTL tracking
-      DockerVSCodeInstance.imagePullTimes.set(this.imageName, Date.now());
-    } catch (pullError) {
-      clearInterval(progressInterval);
-
-      const errorMessage =
-        pullError instanceof Error ? pullError.message : String(pullError);
-
-      dockerLogger.error(
-        `Failed to pull image ${this.imageName}:`,
-        pullError
-      );
-
-      // If image exists locally, fall back to using it instead of failing
-      if (imageExistsLocally) {
-        dockerLogger.warn(
-          `Pull failed but using cached image ${this.imageName}: ${errorMessage}`
-        );
+        // Clear status message on success
         await this.updateStatusMessage(undefined);
-        // Don't update pull time - we didn't successfully pull
+        dockerLogger.info(`Successfully pulled image ${this.imageName}`);
+
+        // Record pull time for TTL tracking
+        DockerVSCodeInstance.imagePullTimes.set(this.imageName, Date.now());
         return;
+      } catch (pullError) {
+        clearInterval(progressInterval);
+
+        const errorMessage = (
+          [
+            Array.from(eventErrors).filter(Boolean).join(" | "),
+            pullError instanceof Error ? pullError.message : String(pullError),
+          ]
+            .filter(Boolean)
+            .join(" | ") || "Unknown error"
+        );
+
+        lastErrorMessage = errorMessage;
+
+        dockerLogger.error(
+          `Failed to pull image ${this.imageName}:`,
+          pullError
+        );
+
+        if (
+          attempt < MAX_PULL_ATTEMPTS &&
+          isRetryableDockerPullError(errorMessage)
+        ) {
+          dockerLogger.warn(
+            `Retrying Docker pull (${attempt + 1}/${MAX_PULL_ATTEMPTS}): ${errorMessage}`
+          );
+          await this.updateStatusMessage(
+            `Retrying Docker pull (${attempt + 1}/${MAX_PULL_ATTEMPTS})`
+          );
+          await new Promise((resolve) =>
+            setTimeout(resolve, RETRY_DELAY_MS * attempt)
+          );
+          continue;
+        }
+
+        // If image exists locally, fall back to using it instead of failing
+        if (imageExistsLocally) {
+          dockerLogger.warn(
+            `Pull failed but using cached image ${this.imageName}: ${errorMessage}`
+          );
+          await this.updateStatusMessage(undefined);
+          // Don't update pull time - we didn't successfully pull
+          return;
+        }
+
+        // Image doesn't exist locally and pull failed - this is a hard failure
+        await this.updateStatusMessage(`Docker pull failed: ${errorMessage}`);
+
+        // Provide helpful error messages
+        let userFriendlyError: string;
+        if (
+          errorMessage.includes("timeout") ||
+          errorMessage.includes("stalled")
+        ) {
+          userFriendlyError = `Docker image pull timed out. This may be due to slow network or Docker registry issues. Please try again.`;
+        } else if (
+          errorMessage.includes("not found") ||
+          errorMessage.includes("manifest unknown")
+        ) {
+          userFriendlyError = `Docker image "${this.imageName}" not found. Please check if the image name is correct.`;
+        } else if (
+          errorMessage.includes("unauthorized") ||
+          errorMessage.includes("authentication")
+        ) {
+          userFriendlyError = `Docker authentication failed. Please ensure you have access to the Docker registry.`;
+        } else if (
+          errorMessage.includes("ECONNREFUSED") ||
+          errorMessage.includes("connection refused")
+        ) {
+          userFriendlyError = `Cannot connect to Docker daemon. Please ensure Docker is running.`;
+        } else {
+          userFriendlyError = `Failed to pull Docker image "${this.imageName}": ${errorMessage}`;
+        }
+
+        if (!userFriendlyError.includes(errorMessage)) {
+          userFriendlyError = `${userFriendlyError} (Details: ${errorMessage})`;
+        }
+
+        throw new Error(userFriendlyError);
       }
+    }
 
-      // Image doesn't exist locally and pull failed - this is a hard failure
-      await this.updateStatusMessage(`Docker pull failed: ${errorMessage}`);
-
-      // Provide helpful error messages
-      let userFriendlyError: string;
-      if (
-        errorMessage.includes("timeout") ||
-        errorMessage.includes("stalled")
-      ) {
-        userFriendlyError = `Docker image pull timed out. This may be due to slow network or Docker registry issues. Please try again.`;
-      } else if (
-        errorMessage.includes("not found") ||
-        errorMessage.includes("manifest unknown")
-      ) {
-        userFriendlyError = `Docker image "${this.imageName}" not found. Please check if the image name is correct.`;
-      } else if (
-        errorMessage.includes("unauthorized") ||
-        errorMessage.includes("authentication")
-      ) {
-        userFriendlyError = `Docker authentication failed. Please ensure you have access to the Docker registry.`;
-      } else if (
-        errorMessage.includes("ECONNREFUSED") ||
-        errorMessage.includes("connection refused")
-      ) {
-        userFriendlyError = `Cannot connect to Docker daemon. Please ensure Docker is running.`;
-      } else {
-        userFriendlyError = `Failed to pull Docker image "${this.imageName}": ${errorMessage}`;
-      }
-
-      throw new Error(userFriendlyError);
+    if (lastErrorMessage) {
+      throw new Error(lastErrorMessage);
     }
   }
 

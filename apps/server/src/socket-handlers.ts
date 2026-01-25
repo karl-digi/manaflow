@@ -47,6 +47,7 @@ import { RepositoryManager } from "./repositoryManager";
 import type { GitRepoInfo } from "./server";
 import { generatePRInfoAndBranchNames } from "./utils/branchNameGenerator";
 import { getConvex } from "./utils/convexClient";
+import { pullDockerImageWithRetry } from "./utils/dockerPull";
 import { ensureRunWorktreeAndBranch } from "./utils/ensureRunWorktree";
 import { serverLogger } from "./utils/fileLogger";
 import { getGitHubOAuthToken } from "./utils/getGitHubToken";
@@ -614,31 +615,25 @@ export function setupSocketHandlers(
 
               try {
                 const dockerClient = DockerVSCodeInstance.getDocker();
-                const stream = await dockerClient.pull(imageName);
-
-                // Wait for the pull to complete
-                await new Promise<void>((resolve, reject) => {
-                  dockerClient.modem.followProgress(
-                    stream,
-                    (err: Error | null) => {
-                      if (err) {
-                        reject(err);
-                      } else {
-                        resolve();
-                      }
-                    },
-                    (event: {
-                      status: string;
-                      progress?: string;
-                      id?: string;
-                    }) => {
-                      if (event.status) {
-                        serverLogger.info(
-                          `Docker pull progress: ${event.status}${event.id ? ` (${event.id})` : ""}${event.progress ? ` - ${event.progress}` : ""}`
-                        );
-                      }
+                await pullDockerImageWithRetry({
+                  docker: dockerClient,
+                  imageName,
+                  onProgress: (event) => {
+                    socket.emit("docker-pull-progress", event);
+                    if (event.phase === "progress") {
+                      serverLogger.info(
+                        `Docker pull progress: ${event.status}${event.id ? ` (${event.id})` : ""}${event.progress ? ` - ${event.progress}` : ""}`
+                      );
+                    } else if (event.phase === "retry") {
+                      serverLogger.warn(
+                        `Docker pull retrying (${event.attempt}/${event.maxAttempts}): ${event.error ?? "unknown error"}`
+                      );
+                    } else if (event.phase === "error") {
+                      serverLogger.error(
+                        `Docker pull failed: ${event.error ?? "unknown error"}`
+                      );
                     }
-                  );
+                  },
                 });
 
                 serverLogger.info(
@@ -2582,27 +2577,25 @@ ${title}`;
         // Use dockerode to pull the image
         const dockerClient = DockerVSCodeInstance.getDocker();
 
-        const stream = await dockerClient.pull(imageName);
-
-        // Wait for the pull to complete
-        await new Promise<void>((resolve, reject) => {
-          dockerClient.modem.followProgress(
-            stream,
-            (err: Error | null) => {
-              if (err) {
-                reject(err);
-              } else {
-                resolve();
-              }
-            },
-            (event: { status: string; progress?: string; id?: string }) => {
-              if (event.status) {
-                serverLogger.info(
-                  `Docker pull progress: ${event.status}${event.id ? ` (${event.id})` : ""}${event.progress ? ` - ${event.progress}` : ""}`
-                );
-              }
+        await pullDockerImageWithRetry({
+          docker: dockerClient,
+          imageName,
+          onProgress: (event) => {
+            socket.emit("docker-pull-progress", event);
+            if (event.phase === "progress") {
+              serverLogger.info(
+                `Docker pull progress: ${event.status}${event.id ? ` (${event.id})` : ""}${event.progress ? ` - ${event.progress}` : ""}`
+              );
+            } else if (event.phase === "retry") {
+              serverLogger.warn(
+                `Docker pull retrying (${event.attempt}/${event.maxAttempts}): ${event.error ?? "unknown error"}`
+              );
+            } else if (event.phase === "error") {
+              serverLogger.error(
+                `Docker pull failed: ${event.error ?? "unknown error"}`
+              );
             }
-          );
+          },
         });
 
         serverLogger.info(`Successfully pulled Docker image: ${imageName}`);
@@ -2643,6 +2636,10 @@ ${title}`;
             "Cannot connect to Docker daemon. Please ensure Docker is running.";
         } else {
           userFriendlyError = `Failed to pull Docker image: ${errorMessage}`;
+        }
+
+        if (errorMessage && !userFriendlyError.includes(errorMessage)) {
+          userFriendlyError = `${userFriendlyError} (Details: ${errorMessage})`;
         }
 
         callback({

@@ -3,10 +3,13 @@
 //! This module handles checking for Docker images, querying image sizes,
 //! and displaying download progress during first-run setup.
 
+use std::collections::VecDeque;
 use std::process::Stdio;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::mpsc;
+use tokio::time::sleep;
 
 /// The state of the onboarding process.
 #[derive(Debug, Clone, Default)]
@@ -430,28 +433,83 @@ async fn query_size_with_docker_manifest(image_name: &str) -> Option<u64> {
     }
 }
 
-/// Pull a Docker image and send progress updates.
-pub async fn pull_image_with_progress(
-    image_name: String,
-    event_tx: mpsc::UnboundedSender<OnboardEvent>,
-) {
+const MAX_PULL_ATTEMPTS: usize = 2;
+const RETRY_DELAY_MS: u64 = 1500;
+const MAX_ERROR_LINES: usize = 6;
+
+fn is_retryable_pull_error(message: &str) -> bool {
+    if message.is_empty() {
+        return false;
+    }
+
+    let normalized = message.to_lowercase();
+    if normalized.contains("unauthorized")
+        || normalized.contains("authentication")
+        || normalized.contains("manifest unknown")
+        || normalized.contains("not found")
+        || normalized.contains("no such image")
+        || normalized.contains("permission denied")
+        || normalized.contains("no space")
+        || normalized.contains("disk quota")
+        || normalized.contains("too many requests")
+    {
+        return false;
+    }
+
+    normalized.contains("rpc error")
+        || normalized.contains("error while receiving ack")
+        || normalized.contains("unexpected eof")
+        || normalized.contains("connection reset")
+        || normalized.contains("connection closed")
+        || normalized.contains("transport is closing")
+        || normalized.contains("error reading from server")
+        || normalized.contains("tls handshake timeout")
+        || normalized.contains("i/o timeout")
+        || normalized.contains("context deadline exceeded")
+}
+
+fn is_likely_error_line(line: &str) -> bool {
+    let normalized = line.to_lowercase();
+    normalized.contains("error")
+        || normalized.contains("manifest unknown")
+        || normalized.contains("unauthorized")
+        || normalized.contains("denied")
+        || normalized.contains("not found")
+        || normalized.contains("no space")
+        || normalized.contains("rpc")
+        || normalized.contains("timeout")
+        || normalized.contains("connection")
+}
+
+struct PullAttemptResult {
+    success: bool,
+    error_message: Option<String>,
+    retryable: bool,
+}
+
+async fn run_pull_attempt(
+    image_name: &str,
+    event_tx: &mpsc::UnboundedSender<OnboardEvent>,
+) -> PullAttemptResult {
     let mut child = match Command::new("docker")
-        .args(["pull", &image_name])
+        .args(["pull", image_name])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
     {
         Ok(child) => child,
         Err(e) => {
-            let _ = event_tx.send(OnboardEvent::Error {
-                message: format!("Failed to start docker pull: {}", e),
-            });
-            return;
+            return PullAttemptResult {
+                success: false,
+                error_message: Some(format!("Failed to start docker pull: {}", e)),
+                retryable: false,
+            };
         }
     };
 
     // Read stderr for progress (docker pull writes progress to stderr)
     let stderr = child.stderr.take();
+    let mut error_lines: VecDeque<String> = VecDeque::new();
     if let Some(stderr) = stderr {
         let mut reader = BufReader::new(stderr).lines();
         let mut layers_total = 0;
@@ -464,6 +522,13 @@ pub async fn pull_image_with_progress(
             // "abc123: Pull complete"
             // "Digest: sha256:..."
             // "Status: Downloaded newer image..."
+
+            if is_likely_error_line(&line) {
+                error_lines.push_back(line.clone());
+                if error_lines.len() > MAX_ERROR_LINES {
+                    error_lines.pop_front();
+                }
+            }
 
             if line.contains("Pulling fs layer") {
                 layers_total += 1;
@@ -506,19 +571,93 @@ pub async fn pull_image_with_progress(
 
     // Wait for the process to complete
     match child.wait().await {
-        Ok(status) if status.success() => {
-            let _ = event_tx.send(OnboardEvent::DownloadComplete);
-        }
+        Ok(status) if status.success() => PullAttemptResult {
+            success: true,
+            error_message: None,
+            retryable: false,
+        },
         Ok(status) => {
-            let _ = event_tx.send(OnboardEvent::Error {
-                message: format!("Docker pull failed with exit code: {}", status),
-            });
+            let mut message = if error_lines.is_empty() {
+                format!("Docker pull failed with exit code: {}", status)
+            } else {
+                error_lines.into_iter().collect::<Vec<_>>().join("\n")
+            };
+            if !message.contains("exit code") {
+                message = format!("{}\nExit status: {}", message, status);
+            }
+            let retryable = is_retryable_pull_error(&message);
+            PullAttemptResult {
+                success: false,
+                error_message: Some(message),
+                retryable,
+            }
         }
         Err(e) => {
-            let _ = event_tx.send(OnboardEvent::Error {
-                message: format!("Failed to wait for docker pull: {}", e),
-            });
+            let message = format!("Failed to wait for docker pull: {}", e);
+            let retryable = is_retryable_pull_error(&message);
+            PullAttemptResult {
+                success: false,
+                error_message: Some(message),
+                retryable,
+            }
         }
+    }
+}
+
+/// Pull a Docker image and send progress updates.
+pub async fn pull_image_with_progress(
+    image_name: String,
+    event_tx: mpsc::UnboundedSender<OnboardEvent>,
+) {
+    for attempt in 1..=MAX_PULL_ATTEMPTS {
+        let status = format!(
+            "Starting Docker pull (attempt {}/{})...",
+            attempt, MAX_PULL_ATTEMPTS
+        );
+        let _ = event_tx.send(OnboardEvent::DownloadProgress {
+            progress: 0.0,
+            status,
+            layers_downloaded: 0,
+            layers_total: 0,
+        });
+
+        let result = run_pull_attempt(&image_name, &event_tx).await;
+
+        if result.success {
+            let _ = event_tx.send(OnboardEvent::DownloadComplete);
+            return;
+        }
+
+        let message = result
+            .error_message
+            .unwrap_or_else(|| "Docker pull failed".to_string());
+
+        if attempt < MAX_PULL_ATTEMPTS && result.retryable {
+            let retry_status = format!(
+                "Retrying Docker pull (attempt {}/{})...",
+                attempt + 1,
+                MAX_PULL_ATTEMPTS
+            );
+            let _ = event_tx.send(OnboardEvent::DownloadProgress {
+                progress: 0.0,
+                status: retry_status,
+                layers_downloaded: 0,
+                layers_total: 0,
+            });
+            sleep(Duration::from_millis(RETRY_DELAY_MS * attempt as u64)).await;
+            continue;
+        }
+
+        let prefix = if attempt > 1 {
+            format!("Docker pull failed after {} attempts: ", attempt)
+        } else {
+            "Docker pull failed: ".to_string()
+        };
+
+        let _ = event_tx.send(OnboardEvent::Error {
+            message: format!("{}{}", prefix, message),
+        });
+        return;
     }
 }
 

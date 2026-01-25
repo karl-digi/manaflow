@@ -81,6 +81,8 @@ const DEFAULT_AGENT_SELECTION = DEFAULT_AGENTS.filter(
   (agent) => KNOWN_AGENT_NAMES.has(agent) && !DISABLED_AGENT_NAMES.has(agent)
 );
 
+const DOCKER_PULL_TOAST_THROTTLE_MS = 800;
+
 const AGENT_SELECTION_SCHEMA = z.array(z.string());
 
 // Filter to known agents and exclude disabled ones
@@ -210,6 +212,13 @@ function DashboardComponent() {
     useState<ProviderStatusResponse | null>(null);
   const [isStartingTask, setIsStartingTask] = useState(false);
   const isStartingTaskRef = useRef(false);
+  const dockerPullToastIdRef = useRef<ReturnType<typeof toast.loading> | null>(
+    null
+  );
+  const dockerPullImageRef = useRef<string | null>(null);
+  const dockerPullCompletedRef = useRef(false);
+  const lastDockerPullMessageRef = useRef<string>("");
+  const lastDockerPullUpdateRef = useRef<number>(0);
 
   // const [hasDismissedCloudRepoOnboarding, setHasDismissedCloudRepoOnboarding] =
   //   useState<boolean>(false);
@@ -235,6 +244,51 @@ function DashboardComponent() {
       console.warn("Failed to persist agent selection", error);
     }
   }, []);
+
+  const updateDockerPullToast = useCallback(
+    (message: string, description?: string) => {
+      const now = Date.now();
+      const combined = description ? `${message} ${description}` : message;
+      if (
+        combined === lastDockerPullMessageRef.current &&
+        now - lastDockerPullUpdateRef.current < DOCKER_PULL_TOAST_THROTTLE_MS
+      ) {
+        return;
+      }
+
+      lastDockerPullMessageRef.current = combined;
+      lastDockerPullUpdateRef.current = now;
+
+      if (dockerPullToastIdRef.current) {
+        toast.loading(message, {
+          id: dockerPullToastIdRef.current,
+          description,
+        });
+        return;
+      }
+
+      dockerPullToastIdRef.current = toast.loading(message, { description });
+    },
+    []
+  );
+
+  const finalizeDockerPullToast = useCallback(
+    (status: "success" | "error", message: string, description?: string) => {
+      dockerPullCompletedRef.current = true;
+      const toastId = dockerPullToastIdRef.current;
+      if (status === "success") {
+        toast.success(message, { id: toastId ?? undefined, description });
+      } else {
+        toast.error(message, { id: toastId ?? undefined, description });
+      }
+
+      dockerPullToastIdRef.current = null;
+      dockerPullImageRef.current = null;
+      lastDockerPullMessageRef.current = "";
+      lastDockerPullUpdateRef.current = 0;
+    },
+    []
+  );
 
   // Preselect environment if provided in URL search params
   useEffect(() => {
@@ -634,8 +688,11 @@ function DashboardComponent() {
             }
 
             // Auto-pull the image
-            const pullToastId = toast.loading(
-              `Pulling Docker image "${imageName}"... This may take a few minutes on first run.`
+            dockerPullCompletedRef.current = false;
+            dockerPullImageRef.current = imageName;
+            updateDockerPullToast(
+              `Pulling Docker image "${imageName}"...`,
+              "This may take a few minutes on first run."
             );
 
             try {
@@ -650,19 +707,31 @@ function DashboardComponent() {
               });
 
               if (!pullResult.success) {
-                toast.dismiss(pullToastId);
-                toast.error(
-                  pullResult.error || `Failed to pull Docker image "${imageName}"`
-                );
+                if (!dockerPullCompletedRef.current) {
+                  finalizeDockerPullToast(
+                    "error",
+                    `Failed to pull Docker image "${imageName}"`,
+                    pullResult.error
+                  );
+                }
                 return;
               }
 
-              toast.dismiss(pullToastId);
-              toast.success(`Docker image "${imageName}" pulled successfully`);
+              if (!dockerPullCompletedRef.current) {
+                finalizeDockerPullToast(
+                  "success",
+                  `Docker image "${imageName}" pulled successfully`
+                );
+              }
             } catch (pullError) {
-              toast.dismiss(pullToastId);
               console.error("Error pulling Docker image:", pullError);
-              toast.error(`Failed to pull Docker image "${imageName}"`);
+              if (!dockerPullCompletedRef.current) {
+                finalizeDockerPullToast(
+                  "error",
+                  `Failed to pull Docker image "${imageName}"`,
+                  pullError instanceof Error ? pullError.message : undefined
+                );
+              }
               return;
             }
           }
@@ -1020,6 +1089,76 @@ function DashboardComponent() {
     },
     [addManualRepo, teamSlugOrId, reposByOrgQuery]
   );
+
+  // Listen for Docker pull progress updates
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleDockerPullProgress = (event: {
+      imageName: string;
+      phase: "start" | "progress" | "retry" | "complete" | "error";
+      status: string;
+      id?: string;
+      progress?: string;
+      error?: string;
+      attempt?: number;
+      maxAttempts?: number;
+    }) => {
+      const imageName = event.imageName;
+      dockerPullImageRef.current = imageName;
+
+      const baseLabel = `Pulling Docker image "${imageName}"`;
+
+      if (event.phase === "start") {
+        dockerPullCompletedRef.current = false;
+        updateDockerPullToast(event.status || `${baseLabel}...`);
+        return;
+      }
+
+      if (event.phase === "retry") {
+        dockerPullCompletedRef.current = false;
+        updateDockerPullToast(
+          event.status || `${baseLabel} (retrying)`,
+          event.error
+        );
+        return;
+      }
+
+      if (event.phase === "progress") {
+        const statusParts = [event.status];
+        if (event.id) {
+          statusParts.push(`(${event.id})`);
+        }
+        if (event.progress) {
+          statusParts.push(`- ${event.progress}`);
+        }
+        updateDockerPullToast(`${baseLabel}: ${statusParts.join(" ")}`);
+        return;
+      }
+
+      if (event.phase === "complete") {
+        finalizeDockerPullToast(
+          "success",
+          `Docker image "${imageName}" pulled successfully`
+        );
+        return;
+      }
+
+      if (event.phase === "error") {
+        finalizeDockerPullToast(
+          "error",
+          `Failed to pull Docker image "${imageName}"`,
+          event.error
+        );
+      }
+    };
+
+    socket.on("docker-pull-progress", handleDockerPullProgress);
+
+    return () => {
+      socket.off("docker-pull-progress", handleDockerPullProgress);
+    };
+  }, [finalizeDockerPullToast, socket, updateDockerPullToast]);
 
   // Listen for VSCode spawned events
   useEffect(() => {
