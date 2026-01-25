@@ -48,6 +48,22 @@ export function applyCodexApiKeys(
   return { files, env };
 }
 
+// Keys to filter from user's config.toml (controlled by cmux CLI args)
+const FILTERED_CONFIG_KEYS = ["model", "model_reasoning_effort"] as const;
+
+// Strip top-level keys that are controlled by cmux CLI args
+// Matches: key = "value" or key = 'value' or key = bareword (entire line)
+export function stripFilteredConfigKeys(toml: string): string {
+  let result = toml;
+  for (const key of FILTERED_CONFIG_KEYS) {
+    // Match key at start of line (not in a section), with any value format
+    // Handles: model = "gpt-5.2", model_reasoning_effort = "high", etc.
+    result = result.replace(new RegExp(`^${key}\\s*=\\s*.*$`, "gm"), "");
+  }
+  // Clean up multiple blank lines
+  return result.replace(/\n{3,}/g, "\n\n").trim();
+}
+
 // Target model for migrations - change this when a new latest model is released
 const MIGRATION_TARGET_MODEL = "gpt-5.2-codex";
 
@@ -139,10 +155,12 @@ touch /root/lifecycle/codex-done.txt /root/lifecycle/done.txt
   // Ensure config.toml exists and contains notify hook + model migrations
   try {
     const rawToml = await readFile(`${homedir()}/.codex/config.toml`, "utf-8");
-    const hasNotify = /(^|\n)\s*notify\s*=/.test(rawToml);
+    // Filter out keys controlled by cmux CLI args (model, model_reasoning_effort)
+    const filteredToml = stripFilteredConfigKeys(rawToml);
+    const hasNotify = /(^|\n)\s*notify\s*=/.test(filteredToml);
     let tomlOut = hasNotify
-      ? rawToml
-      : `notify = ["/root/lifecycle/codex-notify.sh"]\n` + rawToml;
+      ? filteredToml
+      : `notify = ["/root/lifecycle/codex-notify.sh"]\n` + filteredToml;
     // Strip existing model_migrations and append managed ones
     tomlOut = stripModelMigrations(tomlOut) + generateModelMigrations();
     files.push({
