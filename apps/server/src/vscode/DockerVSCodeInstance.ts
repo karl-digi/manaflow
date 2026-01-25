@@ -186,7 +186,14 @@ export class DockerVSCodeInstance extends VSCodeInstance {
     dockerLogger.info(`Pulling image ${this.imageName}...`);
 
     // Update status to show we're pulling the image
-    await this.updateStatusMessage(`Pulling Docker image: ${this.imageName}`);
+    await this.updateStatusMessage(
+      JSON.stringify({
+        type: "docker-pull",
+        imageName: this.imageName,
+        status: "starting",
+        message: "Starting Docker image pull...",
+      })
+    );
 
     // Set up a timeout for the pull operation (10 minutes)
     const PULL_TIMEOUT_MS = 10 * 60 * 1000;
@@ -199,6 +206,11 @@ export class DockerVSCodeInstance extends VSCodeInstance {
         pullTimedOut = true;
       }
     }, 30000);
+
+    // Track layer progress for aggregate percentage
+    const layerProgress = new Map<string, { current: number; total: number }>();
+    let lastStatusUpdateTime = 0;
+    const STATUS_UPDATE_THROTTLE_MS = 500; // Update status at most every 500ms
 
     try {
       const stream = await docker.pull(this.imageName);
@@ -214,8 +226,14 @@ export class DockerVSCodeInstance extends VSCodeInstance {
                 resolve(res);
               }
             },
-            (event: { status: string; progress: string; id?: string }) => {
+            (event: {
+              status: string;
+              progress?: string;
+              id?: string;
+              progressDetail?: { current?: number; total?: number };
+            }) => {
               lastProgressTime = Date.now();
+
               // Log pull progress
               if (event.status) {
                 const progressMsg = event.progress
@@ -223,14 +241,58 @@ export class DockerVSCodeInstance extends VSCodeInstance {
                   : `${event.status} ${event.id || ""}`;
                 dockerLogger.info(`Pull progress: ${progressMsg}`);
 
-                // Update status with progress (throttled - only major status changes)
-                if (
-                  event.status === "Downloading" ||
-                  event.status === "Extracting" ||
-                  event.status === "Pull complete"
-                ) {
+                // Track layer progress
+                if (event.id && event.progressDetail) {
+                  const { current, total } = event.progressDetail;
+                  if (current !== undefined && total !== undefined && total > 0) {
+                    layerProgress.set(event.id, { current, total });
+                  }
+                }
+
+                // Mark layer as complete
+                if (event.id && (event.status === "Pull complete" || event.status === "Already exists")) {
+                  const existing = layerProgress.get(event.id);
+                  if (existing) {
+                    layerProgress.set(event.id, { current: existing.total, total: existing.total });
+                  }
+                }
+
+                // Calculate aggregate progress
+                let totalBytes = 0;
+                let downloadedBytes = 0;
+                for (const { current, total } of layerProgress.values()) {
+                  totalBytes += total;
+                  downloadedBytes += current;
+                }
+
+                const percentage = totalBytes > 0 ? Math.round((downloadedBytes / totalBytes) * 100) : 0;
+
+                // Throttle status updates
+                const now = Date.now();
+                if (now - lastStatusUpdateTime >= STATUS_UPDATE_THROTTLE_MS) {
+                  lastStatusUpdateTime = now;
+
+                  // Determine the current phase
+                  let phase: "downloading" | "extracting" | "verifying" = "downloading";
+                  if (event.status === "Extracting") {
+                    phase = "extracting";
+                  } else if (event.status === "Verifying Checksum" || event.status === "Download complete") {
+                    phase = "verifying";
+                  }
+
                   void this.updateStatusMessage(
-                    `Pulling Docker image: ${event.status}${event.id ? ` (${event.id})` : ""}`
+                    JSON.stringify({
+                      type: "docker-pull",
+                      imageName: this.imageName,
+                      status: "pulling",
+                      phase,
+                      percentage,
+                      layerId: event.id,
+                      layerStatus: event.status,
+                      downloadedBytes,
+                      totalBytes,
+                      message: `${phase === "downloading" ? "Downloading" : phase === "extracting" ? "Extracting" : "Verifying"} image layers...`,
+                    })
                   );
                 }
               }
@@ -283,37 +345,175 @@ export class DockerVSCodeInstance extends VSCodeInstance {
         return;
       }
 
-      // Image doesn't exist locally and pull failed - this is a hard failure
-      await this.updateStatusMessage(`Docker pull failed: ${errorMessage}`);
+      // Classify the error and provide helpful error messages
+      const errorInfo = this.classifyDockerPullError(errorMessage);
 
-      // Provide helpful error messages
-      let userFriendlyError: string;
-      if (
-        errorMessage.includes("timeout") ||
-        errorMessage.includes("stalled")
-      ) {
-        userFriendlyError = `Docker image pull timed out. This may be due to slow network or Docker registry issues. Please try again.`;
-      } else if (
-        errorMessage.includes("not found") ||
-        errorMessage.includes("manifest unknown")
-      ) {
-        userFriendlyError = `Docker image "${this.imageName}" not found. Please check if the image name is correct.`;
-      } else if (
-        errorMessage.includes("unauthorized") ||
-        errorMessage.includes("authentication")
-      ) {
-        userFriendlyError = `Docker authentication failed. Please ensure you have access to the Docker registry.`;
-      } else if (
-        errorMessage.includes("ECONNREFUSED") ||
-        errorMessage.includes("connection refused")
-      ) {
-        userFriendlyError = `Cannot connect to Docker daemon. Please ensure Docker is running.`;
-      } else {
-        userFriendlyError = `Failed to pull Docker image "${this.imageName}": ${errorMessage}`;
-      }
+      await this.updateStatusMessage(
+        JSON.stringify({
+          type: "docker-pull",
+          imageName: this.imageName,
+          status: "error",
+          errorCode: errorInfo.code,
+          message: errorInfo.userMessage,
+          troubleshooting: errorInfo.troubleshooting,
+        })
+      );
 
-      throw new Error(userFriendlyError);
+      throw new Error(errorInfo.userMessage);
     }
+  }
+
+  /**
+   * Classify Docker pull errors and provide user-friendly messages with troubleshooting steps
+   */
+  private classifyDockerPullError(errorMessage: string): {
+    code: string;
+    userMessage: string;
+    troubleshooting: string[];
+  } {
+    const lowerError = errorMessage.toLowerCase();
+
+    // Disk space errors
+    if (
+      lowerError.includes("no space left") ||
+      lowerError.includes("disk quota") ||
+      lowerError.includes("enospc") ||
+      lowerError.includes("not enough space") ||
+      lowerError.includes("insufficient storage")
+    ) {
+      return {
+        code: "DISK_SPACE",
+        userMessage: "Not enough disk space to pull the Docker image.",
+        troubleshooting: [
+          "Free up disk space by removing unused Docker images: docker image prune -a",
+          "Remove unused containers: docker container prune",
+          "Clear Docker build cache: docker builder prune",
+          "Check available disk space: df -h",
+        ],
+      };
+    }
+
+    // Network/timeout errors
+    if (
+      lowerError.includes("timeout") ||
+      lowerError.includes("stalled") ||
+      lowerError.includes("timed out")
+    ) {
+      return {
+        code: "TIMEOUT",
+        userMessage: "Docker image pull timed out due to slow or unstable network.",
+        troubleshooting: [
+          "Check your internet connection",
+          "Try again - the registry may be temporarily overloaded",
+          "If using a VPN, try disabling it temporarily",
+          "Consider using a Docker registry mirror closer to your location",
+        ],
+      };
+    }
+
+    // Image not found
+    if (
+      lowerError.includes("not found") ||
+      lowerError.includes("manifest unknown") ||
+      lowerError.includes("does not exist")
+    ) {
+      return {
+        code: "NOT_FOUND",
+        userMessage: `Docker image not found. Please verify the image name is correct.`,
+        troubleshooting: [
+          "Check the image name and tag for typos",
+          "Verify the image exists on Docker Hub or your registry",
+          "If using a private registry, ensure you're logged in: docker login",
+        ],
+      };
+    }
+
+    // Authentication errors
+    if (
+      lowerError.includes("unauthorized") ||
+      lowerError.includes("authentication") ||
+      lowerError.includes("access denied") ||
+      lowerError.includes("403")
+    ) {
+      return {
+        code: "AUTH_FAILED",
+        userMessage: "Docker authentication failed. You may not have access to this image.",
+        troubleshooting: [
+          "Log in to Docker: docker login",
+          "Check that your credentials are correct",
+          "Verify you have permission to access this private image",
+          "Try logging out and back in: docker logout && docker login",
+        ],
+      };
+    }
+
+    // Docker daemon not running
+    if (
+      lowerError.includes("econnrefused") ||
+      lowerError.includes("connection refused") ||
+      lowerError.includes("cannot connect") ||
+      lowerError.includes("is the docker daemon running")
+    ) {
+      return {
+        code: "DAEMON_NOT_RUNNING",
+        userMessage: "Cannot connect to Docker. Please ensure Docker is running.",
+        troubleshooting: [
+          "Start Docker Desktop (on macOS/Windows)",
+          "On Linux, start the Docker service: sudo systemctl start docker",
+          "Check Docker status: docker info",
+          "Verify Docker socket permissions",
+        ],
+      };
+    }
+
+    // Rate limiting
+    if (
+      lowerError.includes("rate limit") ||
+      lowerError.includes("too many requests") ||
+      lowerError.includes("429")
+    ) {
+      return {
+        code: "RATE_LIMITED",
+        userMessage: "Docker Hub rate limit exceeded. Please wait and try again.",
+        troubleshooting: [
+          "Wait a few hours before trying again",
+          "Log in to Docker Hub to increase your rate limit: docker login",
+          "Consider upgrading to a paid Docker Hub plan",
+          "Use a local registry mirror",
+        ],
+      };
+    }
+
+    // Network connectivity
+    if (
+      lowerError.includes("network") ||
+      lowerError.includes("dns") ||
+      lowerError.includes("resolve") ||
+      lowerError.includes("no such host") ||
+      lowerError.includes("getaddrinfo")
+    ) {
+      return {
+        code: "NETWORK_ERROR",
+        userMessage: "Network error while pulling Docker image.",
+        troubleshooting: [
+          "Check your internet connection",
+          "Verify DNS settings",
+          "Try: ping registry-1.docker.io",
+          "Check if a firewall is blocking Docker",
+        ],
+      };
+    }
+
+    // Generic fallback
+    return {
+      code: "UNKNOWN",
+      userMessage: `Failed to pull Docker image: ${errorMessage}`,
+      troubleshooting: [
+        "Check Docker logs: docker logs",
+        "Restart Docker and try again",
+        "Check Docker system info: docker system info",
+      ],
+    };
   }
 
   /**
