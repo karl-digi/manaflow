@@ -5,19 +5,12 @@ import { EnvService, HttpClientService, LiveServices } from "./effect/services";
 import { httpError, jsonResponse, runHttpEffect } from "./effect/http";
 import { withObservability } from "./effect/observability";
 
-/**
- * Cloudflare AI Gateway configuration.
- */
-const CLOUDFLARE_ACCOUNT_ID = "0c1675e0def6de1ab3a50a4e17dc5656";
-const CLOUDFLARE_GATEWAY_ID = "cmux-ai-proxy";
-
 const hardCodedApiKey = "sk-openai-proxy-placeholder";
 
 /**
- * Cloudflare AI Gateway base URL for OpenAI.
+ * OpenAI API base URL (direct, no caching proxy).
  */
-export const CLOUDFLARE_OPENAI_BASE_URL =
-  `https://gateway.ai.cloudflare.com/v1/${CLOUDFLARE_ACCOUNT_ID}/${CLOUDFLARE_GATEWAY_ID}/openai`;
+export const OPENAI_BASE_URL = "https://api.openai.com";
 
 /**
  * Check if the key is a valid OpenAI API key format.
@@ -72,7 +65,7 @@ export const openaiProxyEffect = (req: Request) =>
     const url = new URL(req.url);
     const path = url.pathname.replace(/^\/api\/openai/, "");
     const queryString = url.search;
-    const cloudflareUrl = `${CLOUDFLARE_OPENAI_BASE_URL}${path}${queryString}`;
+    const openaiUrl = `${OPENAI_BASE_URL}${path}${queryString}`;
 
     yield* Effect.annotateCurrentSpan({
       path,
@@ -93,7 +86,7 @@ export const openaiProxyEffect = (req: Request) =>
       },
     });
 
-    const response = yield* httpClient.fetch(cloudflareUrl, {
+    const response = yield* httpClient.fetch(openaiUrl, {
       method: req.method,
       headers,
       body: req.method !== "GET" && req.method !== "HEAD" ? body : undefined,
@@ -115,7 +108,7 @@ export const openaiProxyEffect = (req: Request) =>
 
 /**
  * HTTP action to proxy OpenAI API requests.
- * Routes through Cloudflare AI Gateway for logging/caching.
+ * Routes directly to OpenAI API.
  *
  * Uses platform OPENAI_API_KEY when user provides placeholder key.
  */
