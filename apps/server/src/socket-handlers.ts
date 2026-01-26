@@ -87,6 +87,56 @@ interface ExecError extends Error {
 
 const isWindows = process.platform === "win32";
 
+const DOCKER_PULL_TIMEOUT_MS = 10 * 60 * 1000;
+const DOCKER_PULL_PROGRESS_THROTTLE_MS = 2_000;
+
+type DockerPullProgressEvent = {
+  status?: string;
+  progress?: string;
+  id?: string;
+  progressDetail?: {
+    current?: number;
+    total?: number;
+  };
+};
+
+function isMutableDockerTag(imageName: string): boolean {
+  const digestSeparatorIndex = imageName.indexOf("@");
+  if (digestSeparatorIndex !== -1) {
+    return false;
+  }
+
+  const lastSlashIndex = imageName.lastIndexOf("/");
+  const lastColonIndex = imageName.lastIndexOf(":");
+
+  // No colon means no explicit tag, which is implicitly :latest.
+  if (lastColonIndex === -1) {
+    return true;
+  }
+
+  // If the last colon appears before the last slash, it belongs to the registry port.
+  if (lastColonIndex < lastSlashIndex) {
+    return true;
+  }
+
+  const tag = imageName.slice(lastColonIndex + 1);
+  return tag === "latest";
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const value = bytes / Math.pow(1024, exponent);
+  return `${value.toFixed(value >= 10 ? 1 : 2)}${units[exponent]}`;
+}
+
 function collectWorktreePaths(nodes: unknown): string[] {
   const paths = new Set<string>();
 
@@ -583,6 +633,34 @@ export function setupSocketHandlers(
 
         // For local mode, ensure Docker is running and image is available before attempting to spawn
         if (!taskData.isCloudMode) {
+          const updateTaskRunStatusMessage = async (
+            message: string | undefined
+          ): Promise<void> => {
+            if (!taskData.taskRunIds || taskData.taskRunIds.length === 0) {
+              return;
+            }
+            try {
+              await Promise.all(
+                taskData.taskRunIds.map((taskRunId) =>
+                  getConvex().mutation(api.taskRuns.updateVSCodeStatusMessage, {
+                    teamSlugOrId: safeTeam,
+                    id: taskRunId,
+                    statusMessage: message,
+                  })
+                )
+              );
+            } catch (error) {
+              console.error(
+                "[start-task] Failed to update VSCode status message",
+                error
+              );
+              serverLogger.warn(
+                "[start-task] Failed to update VSCode status message",
+                error
+              );
+            }
+          };
+
           try {
             const { checkDockerStatus } = await import(
               "@cmux/shared/providers/common/check-docker"
@@ -596,56 +674,206 @@ export function setupSocketHandlers(
               });
               return;
             }
-            // Check if the worker image is available, auto-pull if not
-            if (docker.workerImage && !docker.workerImage.isAvailable) {
-              const imageName = docker.workerImage.name;
-              if (docker.workerImage.isPulling) {
+
+            const imageName =
+              docker.workerImage?.name ||
+              process.env.WORKER_IMAGE_NAME ||
+              "docker.io/manaflow/cmux:latest";
+            const dockerClient = DockerVSCodeInstance.getDocker();
+            const shouldForcePull = isMutableDockerTag(imageName);
+            let imageAvailableAfterWait = false;
+
+            if (docker.workerImage?.isPulling) {
+              serverLogger.info(
+                `Docker image "${imageName}" is currently being pulled, waiting for completion...`
+              );
+              rt.emit("docker-pull-progress", {
+                imageName,
+                status: "Waiting for existing pull",
+                phase: "waiting",
+              });
+              await updateTaskRunStatusMessage(
+                `Waiting for Docker image pull: ${imageName}`
+              );
+
+              const deadline = Date.now() + DOCKER_PULL_TIMEOUT_MS;
+              let lastStatusUpdate = 0;
+              while (Date.now() < deadline) {
+                try {
+                  await dockerClient.getImage(imageName).inspect();
+                  imageAvailableAfterWait = true;
+                  await updateTaskRunStatusMessage(undefined);
+                  break;
+                } catch (error) {
+                  const now = Date.now();
+                  if (now - lastStatusUpdate > DOCKER_PULL_PROGRESS_THROTTLE_MS) {
+                    lastStatusUpdate = now;
+                    await updateTaskRunStatusMessage(
+                      `Waiting for Docker image pull: ${imageName}`
+                    );
+                  }
+                  await sleep(2_000);
+                }
+              }
+
+              if (Date.now() >= deadline) {
+                await updateTaskRunStatusMessage(undefined);
                 callback({
                   taskId,
-                  error: `Docker image "${imageName}" is currently being pulled. Please wait for the pull to complete and try again.`,
+                  error: `Timed out waiting for Docker image "${imageName}" to finish pulling.`,
                 });
                 return;
               }
+            }
 
-              // Auto-pull the image
+            if (!docker.workerImage?.isAvailable || shouldForcePull) {
               serverLogger.info(
-                `Docker image "${imageName}" not available locally, auto-pulling...`
+                `Ensuring Docker image "${imageName}" is pulled before starting task`
+              );
+              rt.emit("docker-pull-progress", {
+                imageName,
+                status: "Starting pull",
+                phase: "pulling",
+              });
+              await updateTaskRunStatusMessage(
+                `Pulling Docker image: ${imageName}`
               );
 
               try {
-                const dockerClient = DockerVSCodeInstance.getDocker();
                 const stream = await dockerClient.pull(imageName);
+                let lastProgressUpdate = 0;
+                let lastStatus = "";
+                let lastAggregatePercent = -1;
+                let lastAggregateProgress = "";
+                const layerStats = new Map<
+                  string,
+                  { current: number; total: number }
+                >();
 
-                // Wait for the pull to complete
                 await new Promise<void>((resolve, reject) => {
+                  const timeoutId = setTimeout(() => {
+                    reject(
+                      new Error(
+                        `Docker pull timed out after ${DOCKER_PULL_TIMEOUT_MS / 1000 / 60} minutes`
+                      )
+                    );
+                  }, DOCKER_PULL_TIMEOUT_MS);
+
                   dockerClient.modem.followProgress(
                     stream,
                     (err: Error | null) => {
+                      clearTimeout(timeoutId);
                       if (err) {
                         reject(err);
                       } else {
                         resolve();
                       }
                     },
-                    (event: {
-                      status: string;
-                      progress?: string;
-                      id?: string;
-                    }) => {
-                      if (event.status) {
-                        serverLogger.info(
-                          `Docker pull progress: ${event.status}${event.id ? ` (${event.id})` : ""}${event.progress ? ` - ${event.progress}` : ""}`
+                    (event: DockerPullProgressEvent) => {
+                      if (!event.status) {
+                        return;
+                      }
+
+                      const now = Date.now();
+                      if (
+                        event.id &&
+                        typeof event.progressDetail?.current === "number" &&
+                        typeof event.progressDetail?.total === "number" &&
+                        event.progressDetail.total > 0
+                      ) {
+                        const previous = layerStats.get(event.id);
+                        const current = Math.max(
+                          previous?.current ?? 0,
+                          event.progressDetail.current
+                        );
+                        layerStats.set(event.id, {
+                          current,
+                          total: event.progressDetail.total,
+                        });
+                      }
+
+                      let aggregateCurrent = 0;
+                      let aggregateTotal = 0;
+                      for (const layer of layerStats.values()) {
+                        aggregateTotal += layer.total;
+                        aggregateCurrent += Math.min(layer.current, layer.total);
+                      }
+
+                      let percent =
+                        aggregateTotal > 0
+                          ? Math.round((aggregateCurrent / aggregateTotal) * 100)
+                          : undefined;
+                      if (percent !== undefined && percent >= 100) {
+                        percent = 99;
+                      }
+                      const safePercent =
+                        percent !== undefined
+                          ? Math.max(percent, lastAggregatePercent)
+                          : undefined;
+                      const aggregateProgress =
+                        aggregateTotal > 0
+                          ? `${formatBytes(aggregateCurrent)}/${formatBytes(
+                              aggregateTotal
+                            )}`
+                          : "";
+
+                      const shouldEmit =
+                        event.status !== lastStatus ||
+                        (safePercent !== undefined &&
+                          safePercent !== lastAggregatePercent) ||
+                        aggregateProgress !== lastAggregateProgress ||
+                        now - lastProgressUpdate > DOCKER_PULL_PROGRESS_THROTTLE_MS;
+
+                      if (shouldEmit) {
+                        lastStatus = event.status;
+                        lastProgressUpdate = now;
+                        if (safePercent !== undefined) {
+                          lastAggregatePercent = safePercent;
+                        }
+                        if (aggregateProgress) {
+                          lastAggregateProgress = aggregateProgress;
+                        }
+                        rt.emit("docker-pull-progress", {
+                          imageName,
+                          status: event.status,
+                          progress: aggregateProgress || event.progress,
+                          id: event.id,
+                          current:
+                            aggregateTotal > 0 ? aggregateCurrent : undefined,
+                          total: aggregateTotal > 0 ? aggregateTotal : undefined,
+                          percent: safePercent,
+                          phase: "pulling",
+                        });
+                        void updateTaskRunStatusMessage(
+                          `Pulling Docker image: ${event.status}${event.id ? ` (${event.id})` : ""}`
                         );
                       }
                     }
                   );
                 });
 
+                await updateTaskRunStatusMessage(undefined);
+                rt.emit("docker-pull-progress", {
+                  imageName,
+                  status: "Pull complete",
+                  percent: 100,
+                  phase: "complete",
+                });
                 serverLogger.info(
                   `Successfully pulled Docker image: ${imageName}`
                 );
               } catch (pullError) {
-                serverLogger.error("Error auto-pulling Docker image:", pullError);
+                console.error("Error auto-pulling Docker image:", pullError);
+                serverLogger.error(
+                  "Error auto-pulling Docker image:",
+                  pullError
+                );
+                rt.emit("docker-pull-progress", {
+                  imageName,
+                  status: "Pull failed",
+                  phase: "error",
+                });
+                await updateTaskRunStatusMessage(undefined);
                 const errorMessage =
                   pullError instanceof Error
                     ? pullError.message
@@ -656,8 +884,19 @@ export function setupSocketHandlers(
                 });
                 return;
               }
+            } else if (imageAvailableAfterWait) {
+              rt.emit("docker-pull-progress", {
+                imageName,
+                status: "Pull complete",
+                percent: 100,
+                phase: "complete",
+              });
             }
           } catch (e) {
+            console.error(
+              "Failed to verify Docker status before start-task",
+              e
+            );
             serverLogger.warn(
               "Failed to verify Docker status before start-task",
               e
@@ -2560,10 +2799,31 @@ ${title}`;
 
         // Check if already pulling
         if (docker.workerImage?.isPulling) {
+          rt.emit("docker-pull-progress", {
+            imageName,
+            status: "Waiting for existing pull",
+            phase: "waiting",
+          });
+          const dockerClient = DockerVSCodeInstance.getDocker();
+          const deadline = Date.now() + DOCKER_PULL_TIMEOUT_MS;
+          while (Date.now() < deadline) {
+            try {
+              await dockerClient.getImage(imageName).inspect();
+              rt.emit("docker-pull-progress", {
+                imageName,
+                status: "Pull complete",
+                percent: 100,
+                phase: "complete",
+              });
+              callback({ success: true, imageName });
+              return;
+            } catch {
+              await sleep(2_000);
+            }
+          }
           callback({
             success: false,
-            imageName,
-            error: `Docker image "${imageName}" is already being pulled.`,
+            error: `Timed out waiting for Docker image "${imageName}" to finish pulling.`,
           });
           return;
         }
@@ -2578,11 +2838,20 @@ ${title}`;
         }
 
         serverLogger.info(`Starting Docker pull for image: ${imageName}`);
+        rt.emit("docker-pull-progress", {
+          imageName,
+          status: "Starting pull",
+          phase: "pulling",
+        });
 
         // Use dockerode to pull the image
         const dockerClient = DockerVSCodeInstance.getDocker();
-
         const stream = await dockerClient.pull(imageName);
+        let lastProgressUpdate = 0;
+        let lastStatus = "";
+        let lastAggregatePercent = -1;
+        let lastAggregateProgress = "";
+        const layerStats = new Map<string, { current: number; total: number }>();
 
         // Wait for the pull to complete
         await new Promise<void>((resolve, reject) => {
@@ -2595,23 +2864,102 @@ ${title}`;
                 resolve();
               }
             },
-            (event: { status: string; progress?: string; id?: string }) => {
-              if (event.status) {
-                serverLogger.info(
-                  `Docker pull progress: ${event.status}${event.id ? ` (${event.id})` : ""}${event.progress ? ` - ${event.progress}` : ""}`
+            (event: DockerPullProgressEvent) => {
+              if (!event.status) {
+                return;
+              }
+
+              const now = Date.now();
+              if (
+                event.id &&
+                typeof event.progressDetail?.current === "number" &&
+                typeof event.progressDetail?.total === "number" &&
+                event.progressDetail.total > 0
+              ) {
+                const previous = layerStats.get(event.id);
+                const current = Math.max(
+                  previous?.current ?? 0,
+                  event.progressDetail.current
                 );
+                layerStats.set(event.id, {
+                  current,
+                  total: event.progressDetail.total,
+                });
+              }
+
+              let aggregateCurrent = 0;
+              let aggregateTotal = 0;
+              for (const layer of layerStats.values()) {
+                aggregateTotal += layer.total;
+                aggregateCurrent += Math.min(layer.current, layer.total);
+              }
+
+              let percent =
+                aggregateTotal > 0
+                  ? Math.round((aggregateCurrent / aggregateTotal) * 100)
+                  : undefined;
+              if (percent !== undefined && percent >= 100) {
+                percent = 99;
+              }
+              const safePercent =
+                percent !== undefined
+                  ? Math.max(percent, lastAggregatePercent)
+                  : undefined;
+              const aggregateProgress =
+                aggregateTotal > 0
+                  ? `${formatBytes(aggregateCurrent)}/${formatBytes(
+                      aggregateTotal
+                    )}`
+                  : "";
+
+              const shouldEmit =
+                event.status !== lastStatus ||
+                (safePercent !== undefined &&
+                  safePercent !== lastAggregatePercent) ||
+                aggregateProgress !== lastAggregateProgress ||
+                now - lastProgressUpdate > DOCKER_PULL_PROGRESS_THROTTLE_MS;
+
+              if (shouldEmit) {
+                lastStatus = event.status;
+                lastProgressUpdate = now;
+                if (safePercent !== undefined) {
+                  lastAggregatePercent = safePercent;
+                }
+                if (aggregateProgress) {
+                  lastAggregateProgress = aggregateProgress;
+                }
+                rt.emit("docker-pull-progress", {
+                  imageName,
+                  status: event.status,
+                  progress: aggregateProgress || event.progress,
+                  id: event.id,
+                  current: aggregateTotal > 0 ? aggregateCurrent : undefined,
+                  total: aggregateTotal > 0 ? aggregateTotal : undefined,
+                  percent: safePercent,
+                  phase: "pulling",
+                });
               }
             }
           );
         });
 
         serverLogger.info(`Successfully pulled Docker image: ${imageName}`);
-        callback({
-          success: true,
+        rt.emit("docker-pull-progress", {
           imageName,
+          status: "Pull complete",
+          percent: 100,
+          phase: "complete",
         });
+        callback({ success: true, imageName });
+        return;
       } catch (error) {
         serverLogger.error("Error pulling Docker image:", error);
+        rt.emit("docker-pull-progress", {
+          imageName:
+            process.env.WORKER_IMAGE_NAME || "docker.io/manaflow/cmux:latest",
+          status: "Pull failed",
+          phase: "error",
+        });
         const errorMessage =
           error instanceof Error ? error.message : "Unknown error";
 

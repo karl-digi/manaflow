@@ -397,6 +397,17 @@ export const DockerPullImageResponseSchema = z.object({
   error: z.string().optional(),
 });
 
+export const DockerPullProgressSchema = z.object({
+  imageName: z.string(),
+  status: z.string(),
+  progress: z.string().optional(),
+  id: z.string().optional(),
+  current: z.number().optional(),
+  total: z.number().optional(),
+  percent: z.number().optional(),
+  phase: z.enum(["waiting", "pulling", "complete", "error"]).optional(),
+});
+
 export const GitStatusSchema = z.object({
   isAvailable: z.boolean(),
   version: z.string().optional(),
@@ -481,6 +492,7 @@ export type DockerStatus = z.infer<typeof DockerStatusSchema>;
 export type DockerPullImageResponse = z.infer<
   typeof DockerPullImageResponseSchema
 >;
+export type DockerPullProgress = z.infer<typeof DockerPullProgressSchema>;
 export type GitStatus = z.infer<typeof GitStatusSchema>;
 export type GitHubStatus = z.infer<typeof GitHubStatusSchema>;
 export type GitHubFetchRepos = z.infer<typeof GitHubFetchReposSchema>;
@@ -609,6 +621,7 @@ export interface ServerToClientEvents {
   "available-editors": (data: AvailableEditors) => void;
   "task-started": (data: TaskStarted) => void;
   "task-failed": (data: TaskError) => void;
+  "docker-pull-progress": (data: DockerPullProgress) => void;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
