@@ -890,6 +890,7 @@ export function setupSocketHandlers(
           projectFullName,
           repoUrl: explicitRepoUrl,
           branch: requestedBranch,
+          baseBranch: requestedBaseBranch,
           taskId: providedTaskId,
           taskRunId: providedTaskRunId,
           workspaceName: providedWorkspaceName,
@@ -1225,6 +1226,30 @@ export function setupSocketHandlers(
                   ? `Git clone failed to produce a checkout: ${error.message}`
                   : "Git clone failed to produce a checkout"
               );
+            }
+
+            // When cloning with --single-branch, also fetch the base branch for merge-base computation
+            const baseBranch = requestedBaseBranch?.trim();
+            if (branch && baseBranch && baseBranch !== branch) {
+              try {
+                // Fetch the base branch so git diff <baseBranch>...HEAD works
+                await execFileAsync(
+                  "git",
+                  [
+                    "fetch",
+                    "origin",
+                    `${baseBranch}:refs/remotes/origin/${baseBranch}`,
+                  ],
+                  { cwd: resolvedWorkspacePath }
+                );
+              } catch (error) {
+                // Non-fatal: log warning but continue - the workspace is still usable
+                serverLogger.warn(
+                  `Failed to fetch base branch ${baseBranch}: ${
+                    error instanceof Error ? error.message : String(error)
+                  }`
+                );
+              }
             }
           } else {
             try {

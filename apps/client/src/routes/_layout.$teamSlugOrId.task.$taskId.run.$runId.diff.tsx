@@ -1023,6 +1023,7 @@ function RunDiffPage() {
         projectFullName: primaryRepo,
         repoUrl: `https://github.com/${primaryRepo}.git`,
         branch: selectedRun.newBranch,
+        baseBranch: task?.baseBranch || "main", // Fetch base branch for merge-base computation
         linkedFromCloudTaskRunId: selectedRun._id, // Link to the current cloud task run
       },
       (response: CreateLocalWorkspaceResponse) => {
@@ -1039,7 +1040,7 @@ function RunDiffPage() {
         }
       }
     );
-  }, [socket, teamSlugOrId, primaryRepo, selectedRun?.newBranch, selectedRun?._id, linkedLocalWorkspace, linkedLocalWorkspaceQuery.isLoading]);
+  }, [socket, teamSlugOrId, primaryRepo, selectedRun?.newBranch, selectedRun?._id, linkedLocalWorkspace, linkedLocalWorkspaceQuery.isLoading, task?.baseBranch]);
 
   // 404 if selected run is missing
   if (!selectedRun) {
