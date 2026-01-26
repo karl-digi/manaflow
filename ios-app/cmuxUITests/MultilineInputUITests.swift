@@ -11,6 +11,10 @@ final class MultilineInputUITests: XCTestCase {
     private let caretCenterTolerance: CGFloat = 3.5
     private let caretShiftTolerance: CGFloat = 2
     private let keyboardTolerance: CGFloat = 1.5
+    private let caretBottomTolerance: CGFloat = 0.5
+    private let caretYTolerance: CGFloat = 0.25
+    private let caretViewportTolerance: CGFloat = 0.25
+    private let caretDriftRangeTolerance: CGFloat = 0.75
 
     override func setUp() {
         super.setUp()
@@ -495,6 +499,192 @@ final class MultilineInputUITests: XCTestCase {
             baselineKeyboardGap: baselineKeyboardGap,
             duration: 0.4,
             context: "after two-line growth"
+        )
+    }
+
+    func testCaretDistanceToBottomStaysFixedThroughReturns() {
+        let app = XCUIApplication()
+        app.launchEnvironment["CMUX_DEBUG_AUTOFOCUS"] = "1"
+        app.launchEnvironment["CMUX_UITEST_MOCK_DATA"] = "1"
+        app.launchEnvironment["CMUX_UITEST_AUTO_OPEN_CONVERSATION"] = "1"
+        app.launchEnvironment["CMUX_UITEST_DIRECT_CHAT"] = "1"
+        app.launch()
+
+        ensureSignedIn(app: app)
+        waitForConversationList(app: app)
+        ensureConversationVisible(app: app, name: conversationName)
+        openConversation(app: app, name: conversationName)
+
+        let pill = waitForInputPill(app: app)
+        let bottomEdge = waitForInputPillBottomEdge(app: app)
+        let input = waitForInputField(app: app)
+        focusInput(app: app, pill: pill, input: input)
+        clearInput(app: app, input: input)
+        waitForKeyboard(app: app)
+
+        let caret = waitForInputCaret(app: app)
+        typeText(app: app, input: input, text: "A")
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        let baselineDistance = waitForStableCaretDistanceToBottom(
+            caret: caret,
+            bottomEdge: bottomEdge,
+            timeout: 2,
+            tolerance: 0.5,
+            stableSamples: 3
+        )
+        let baselineCaretMaxY = waitForStableCaretMaxY(
+            caret: caret,
+            timeout: 2,
+            tolerance: 0.5,
+            stableSamples: 3
+        )
+        let baselineViewportBottom = waitForStableViewportBottom(
+            app: app,
+            timeout: 2,
+            tolerance: 0.5,
+            stableSamples: 3
+        )
+        let baselineCaretToViewportBottom = baselineViewportBottom - baselineCaretMaxY
+
+        var minCaretMaxY = baselineCaretMaxY
+        var maxCaretMaxY = baselineCaretMaxY
+        var minCaretToViewportBottom = baselineCaretToViewportBottom
+        var maxCaretToViewportBottom = baselineCaretToViewportBottom
+
+        for index in 1...20 {
+            let preReturnDistance = waitForStableCaretDistanceToBottom(
+                caret: caret,
+                bottomEdge: bottomEdge,
+                timeout: 2,
+                tolerance: 0.5,
+                stableSamples: 3
+            )
+            let preReturnMaxY = waitForStableCaretMaxY(
+                caret: caret,
+                timeout: 2,
+                tolerance: 0.5,
+                stableSamples: 3
+            )
+            let preReturnViewportBottom = waitForStableViewportBottom(
+                app: app,
+                timeout: 2,
+                tolerance: 0.5,
+                stableSamples: 3
+            )
+            let preReturnCaretToViewportBottom = preReturnViewportBottom - preReturnMaxY
+            minCaretMaxY = min(minCaretMaxY, preReturnMaxY)
+            maxCaretMaxY = max(maxCaretMaxY, preReturnMaxY)
+            minCaretToViewportBottom = min(minCaretToViewportBottom, preReturnCaretToViewportBottom)
+            maxCaretToViewportBottom = max(maxCaretToViewportBottom, preReturnCaretToViewportBottom)
+            XCTAssertLessThanOrEqual(
+                abs(preReturnDistance - baselineDistance),
+                caretBottomTolerance,
+                "Caret distance drifted before return \(index): baseline=\(baselineDistance) current=\(preReturnDistance)"
+            )
+            XCTAssertLessThanOrEqual(
+                abs(preReturnMaxY - baselineCaretMaxY),
+                caretYTolerance,
+                "Caret maxY drifted before return \(index): baseline=\(baselineCaretMaxY) current=\(preReturnMaxY)"
+            )
+            XCTAssertLessThanOrEqual(
+                abs(preReturnCaretToViewportBottom - baselineCaretToViewportBottom),
+                caretViewportTolerance,
+                "Caret distance to viewport bottom drifted before return \(index): baseline=\(baselineCaretToViewportBottom) current=\(preReturnCaretToViewportBottom)"
+            )
+            typeText(app: app, input: input, text: "\nA")
+            let cursorDistance = waitForStableCaretDistanceToBottom(
+                caret: caret,
+                bottomEdge: bottomEdge,
+                timeout: 2,
+                tolerance: 0.5,
+                stableSamples: 3
+            )
+            let cursorMaxY = waitForStableCaretMaxY(
+                caret: caret,
+                timeout: 2,
+                tolerance: 0.5,
+                stableSamples: 3
+            )
+            let cursorViewportBottom = waitForStableViewportBottom(
+                app: app,
+                timeout: 2,
+                tolerance: 0.5,
+                stableSamples: 3
+            )
+            let cursorCaretToViewportBottom = cursorViewportBottom - cursorMaxY
+            minCaretMaxY = min(minCaretMaxY, cursorMaxY)
+            maxCaretMaxY = max(maxCaretMaxY, cursorMaxY)
+            minCaretToViewportBottom = min(minCaretToViewportBottom, cursorCaretToViewportBottom)
+            maxCaretToViewportBottom = max(maxCaretToViewportBottom, cursorCaretToViewportBottom)
+            XCTAssertLessThanOrEqual(
+                abs(cursorDistance - baselineDistance),
+                caretBottomTolerance,
+                "Caret distance to bottom drifted on return \(index): baseline=\(baselineDistance) current=\(cursorDistance)"
+            )
+            XCTAssertLessThanOrEqual(
+                abs(cursorMaxY - baselineCaretMaxY),
+                caretYTolerance,
+                "Caret maxY drifted on return \(index): baseline=\(baselineCaretMaxY) current=\(cursorMaxY)"
+            )
+            XCTAssertLessThanOrEqual(
+                abs(cursorCaretToViewportBottom - baselineCaretToViewportBottom),
+                caretViewportTolerance,
+                "Caret distance to viewport bottom drifted on return \(index): baseline=\(baselineCaretToViewportBottom) current=\(cursorCaretToViewportBottom)"
+            )
+
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            let typingIndicatorDistance = waitForStableCaretDistanceToBottom(
+                caret: caret,
+                bottomEdge: bottomEdge,
+                timeout: 2,
+                tolerance: 0.5,
+                stableSamples: 3
+            )
+            let typingIndicatorMaxY = waitForStableCaretMaxY(
+                caret: caret,
+                timeout: 2,
+                tolerance: 0.5,
+                stableSamples: 3
+            )
+            let typingIndicatorViewportBottom = waitForStableViewportBottom(
+                app: app,
+                timeout: 2,
+                tolerance: 0.5,
+                stableSamples: 3
+            )
+            let typingIndicatorCaretToViewportBottom = typingIndicatorViewportBottom - typingIndicatorMaxY
+            minCaretMaxY = min(minCaretMaxY, typingIndicatorMaxY)
+            maxCaretMaxY = max(maxCaretMaxY, typingIndicatorMaxY)
+            minCaretToViewportBottom = min(minCaretToViewportBottom, typingIndicatorCaretToViewportBottom)
+            maxCaretToViewportBottom = max(maxCaretToViewportBottom, typingIndicatorCaretToViewportBottom)
+            XCTAssertLessThanOrEqual(
+                abs(typingIndicatorDistance - baselineDistance),
+                caretBottomTolerance,
+                "Typing indicator caret drifted on return \(index): baseline=\(baselineDistance) current=\(typingIndicatorDistance)"
+            )
+            XCTAssertLessThanOrEqual(
+                abs(typingIndicatorMaxY - baselineCaretMaxY),
+                caretYTolerance,
+                "Typing indicator caret maxY drifted on return \(index): baseline=\(baselineCaretMaxY) current=\(typingIndicatorMaxY)"
+            )
+            XCTAssertLessThanOrEqual(
+                abs(typingIndicatorCaretToViewportBottom - baselineCaretToViewportBottom),
+                caretViewportTolerance,
+                "Typing indicator caret distance to viewport bottom drifted on return \(index): baseline=\(baselineCaretToViewportBottom) current=\(typingIndicatorCaretToViewportBottom)"
+            )
+        }
+
+        let caretMaxYRange = maxCaretMaxY - minCaretMaxY
+        let caretViewportRange = maxCaretToViewportBottom - minCaretToViewportBottom
+        XCTAssertLessThanOrEqual(
+            caretMaxYRange,
+            caretDriftRangeTolerance,
+            "Caret maxY drift range exceeded tolerance: range=\(caretMaxYRange) min=\(minCaretMaxY) max=\(maxCaretMaxY)"
+        )
+        XCTAssertLessThanOrEqual(
+            caretViewportRange,
+            caretDriftRangeTolerance,
+            "Caret-to-viewport-bottom drift range exceeded tolerance: range=\(caretViewportRange) min=\(minCaretToViewportBottom) max=\(maxCaretToViewportBottom)"
         )
     }
 
@@ -1200,6 +1390,94 @@ final class MultilineInputUITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.016))
         }
         return bottomEdge.frame.maxY
+    }
+
+    private func waitForStableCaretDistanceToBottom(
+        caret: XCUIElement,
+        bottomEdge: XCUIElement,
+        timeout: TimeInterval,
+        tolerance: CGFloat,
+        stableSamples: Int
+    ) -> CGFloat {
+        let deadline = Date().addingTimeInterval(timeout)
+        var lastDistance = caretBottomDistance(caret: caret, bottomEdge: bottomEdge)
+        var stableCount = 0
+        while Date() < deadline {
+            let caretFrame = caret.frame
+            let bottomFrame = bottomEdge.frame
+            if caretFrame.height > 1, bottomFrame.height > 0 {
+                let currentDistance = caretBottomDistance(caret: caret, bottomEdge: bottomEdge)
+                if abs(currentDistance - lastDistance) <= tolerance {
+                    stableCount += 1
+                    if stableCount >= stableSamples {
+                        return currentDistance
+                    }
+                } else {
+                    stableCount = 0
+                    lastDistance = currentDistance
+                }
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+        return caretBottomDistance(caret: caret, bottomEdge: bottomEdge)
+    }
+
+    private func caretBottomDistance(caret: XCUIElement, bottomEdge: XCUIElement) -> CGFloat {
+        bottomEdge.frame.maxY - caret.frame.maxY
+    }
+
+    private func waitForStableCaretMaxY(
+        caret: XCUIElement,
+        timeout: TimeInterval,
+        tolerance: CGFloat,
+        stableSamples: Int
+    ) -> CGFloat {
+        let deadline = Date().addingTimeInterval(timeout)
+        var lastMaxY = caret.frame.maxY
+        var stableCount = 0
+        while Date() < deadline {
+            let frame = caret.frame
+            if frame.height > 1, frame.width > 1 {
+                let currentMaxY = frame.maxY
+                if abs(currentMaxY - lastMaxY) <= tolerance {
+                    stableCount += 1
+                    if stableCount >= stableSamples {
+                        return currentMaxY
+                    }
+                } else {
+                    stableCount = 0
+                    lastMaxY = currentMaxY
+                }
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+        return caret.frame.maxY
+    }
+
+    private func waitForStableViewportBottom(
+        app: XCUIApplication,
+        timeout: TimeInterval,
+        tolerance: CGFloat,
+        stableSamples: Int
+    ) -> CGFloat {
+        let window = app.windows.firstMatch
+        let deadline = Date().addingTimeInterval(timeout)
+        var lastBottom = window.exists ? window.frame.maxY : app.frame.maxY
+        var stableCount = 0
+        while Date() < deadline {
+            let currentBottom = window.exists ? window.frame.maxY : app.frame.maxY
+            if abs(currentBottom - lastBottom) <= tolerance {
+                stableCount += 1
+                if stableCount >= stableSamples {
+                    return currentBottom
+                }
+            } else {
+                stableCount = 0
+                lastBottom = currentBottom
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+        return window.exists ? window.frame.maxY : app.frame.maxY
     }
 
     private func openConversation(app: XCUIApplication, name: String) {

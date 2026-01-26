@@ -376,6 +376,7 @@ struct StrategyTextView: UIViewRepresentable {
         textView.isScrollEnabled = strategy.scrollMode == .always
         textView.clipsToBounds = !strategy.allowCaretOverflow
         textView.backgroundColor = .clear
+        textView.contentInsetAdjustmentBehavior = .never
         textView.font = UIFont.preferredFont(forTextStyle: .body)
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         textView.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -516,22 +517,30 @@ struct StrategyTextView: UIViewRepresentable {
             textView.layoutIfNeeded()
             let width = max(1, textView.bounds.width)
             let size = textView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
-            let layoutManager = textView.layoutManager
-            layoutManager.ensureLayout(for: textView.textContainer)
-            var contentHeight = layoutManager.usedRect(for: textView.textContainer).height
-            if textView.text.isEmpty || textView.text.hasSuffix("\n") {
-                let extraRect = layoutManager.extraLineFragmentRect
-                if extraRect.height > 0 {
-                    contentHeight = max(contentHeight, extraRect.maxY)
+            let includesTrailingLine = textView.text.isEmpty || textView.text.hasSuffix("\n")
+            let sizeHeight = size.height
+            var contentHeight = sizeHeight
+            let fallbackLineCount = DebugInputBarMetrics.lineCount(for: textView.text)
+            let expectedHeight = DebugInputBarMetrics.editorHeight(
+                forLineCount: fallbackLineCount,
+                topInsetExtra: parent.strategy.topInsetExtra,
+                bottomInsetExtra: parent.strategy.bottomInsetExtra
+            )
+            if !includesTrailingLine {
+                let lineHeight = textView.font?.lineHeight ?? UIFont.preferredFont(forTextStyle: .body).lineHeight
+                let extra = sizeHeight - expectedHeight
+                if abs(extra) <= lineHeight * 0.5 {
+                    contentHeight = expectedHeight
+                } else if extra > lineHeight * 0.5, extra < lineHeight * 1.5 {
+                    contentHeight = max(0, sizeHeight - lineHeight)
                 }
             }
-            contentHeight += textView.textContainerInset.top + textView.textContainerInset.bottom
             let minHeight = DebugInputBarMetrics.editorHeight(
                 forLineCount: 1,
                 topInsetExtra: parent.strategy.topInsetExtra,
                 bottomInsetExtra: parent.strategy.bottomInsetExtra
             )
-            let rawHeight = max(minHeight, max(size.height, contentHeight))
+            let rawHeight = max(minHeight, contentHeight)
             let scale = max(1, textView.traitCollection.displayScale)
             let alignedHeight = (rawHeight * scale).rounded(.up) / scale
             let clampedHeight = min(parent.strategy.maxHeight, alignedHeight)
