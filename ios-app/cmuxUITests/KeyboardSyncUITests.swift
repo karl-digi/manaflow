@@ -27,6 +27,7 @@ final class KeyboardSyncUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["CMUX_DEBUG_AUTOFOCUS"] = "0"
         app.launchEnvironment["CMUX_UITEST_MOCK_DATA"] = "1"
+        app.launchEnvironment["CMUX_UITEST_MESSAGE_COUNT"] = "60"
         app.launchEnvironment["CMUX_UITEST_SCROLL_FRACTION"] = "0.5"
         app.launchEnvironment["CMUX_UITEST_FAKE_KEYBOARD"] = "1"
         app.launchEnvironment["CMUX_UITEST_FAKE_KEYBOARD_INITIAL_OVERLAP"] = "280"
@@ -106,6 +107,7 @@ final class KeyboardSyncUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["CMUX_DEBUG_AUTOFOCUS"] = "0"
         app.launchEnvironment["CMUX_UITEST_MOCK_DATA"] = "1"
+        app.launchEnvironment["CMUX_UITEST_MESSAGE_COUNT"] = "60"
         app.launchEnvironment["CMUX_UITEST_FAKE_KEYBOARD"] = "1"
         if let scrollFraction {
             app.launchEnvironment["CMUX_UITEST_SCROLL_FRACTION"] = String(scrollFraction)
@@ -302,6 +304,12 @@ final class KeyboardSyncUITests: XCTestCase {
         for message in messages where message.frame.intersects(scrollFrame) {
             let gap = pill.frame.minY - message.frame.maxY
             gaps[message.identifier] = gap
+        }
+        if gaps.isEmpty {
+            for message in messages {
+                let gap = pill.frame.minY - message.frame.maxY
+                gaps[message.identifier] = gap
+            }
         }
         return gaps
     }

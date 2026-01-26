@@ -35,7 +35,7 @@ enum UITestMockData {
         let earlier = now - 60_000
         let first = earlier - 30_000
         let idPrefix = conversationId.replacingOccurrences(of: "uitest_conversation_", with: "uitest_msg_")
-        if let messageCount = messageCountOverride(), messageCount > 3 {
+        if let messageCount = messageCountOverride(), messageCount >= 2 {
             let startWithAssistant = startWithAssistant(messageCount: messageCount)
             let baseTime = now - Double(messageCount) * 900
             return (0..<messageCount).map { index in
@@ -75,7 +75,7 @@ enum UITestMockData {
               let count = Int(raw) else {
             return nil
         }
-        return max(3, min(200, count))
+        return max(2, min(200, count))
     }
 
     private static func startWithAssistant(messageCount: Int) -> Bool {

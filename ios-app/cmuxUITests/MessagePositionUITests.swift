@@ -5,6 +5,8 @@ final class MessagePositionUITests: XCTestCase {
     private let gapTolerance: CGFloat = 2.5
     private let openOverlapMinDelta: CGFloat = 120
     private let minExpandedPillHeight: CGFloat = 56
+    private let frameStabilityTolerance: CGFloat = 0.5
+    private let frameSampleInterval: TimeInterval = 0.016
 
     override func setUp() {
         super.setUp()
@@ -205,6 +207,96 @@ final class MessagePositionUITests: XCTestCase {
         )
     }
 
+    func testShortThreadMessagesDoNotShiftDuringKeyboardAnimation() {
+        let app = XCUIApplication()
+        app.launchEnvironment["CMUX_DEBUG_AUTOFOCUS"] = "0"
+        app.launchEnvironment["CMUX_UITEST_CHAT_VIEW"] = "1"
+        app.launchEnvironment["CMUX_UITEST_CONVERSATION_ID"] = "uitest_conversation_claude"
+        app.launchEnvironment["CMUX_UITEST_PROVIDER_ID"] = "claude"
+        app.launchEnvironment["CMUX_UITEST_MOCK_DATA"] = "1"
+        app.launchEnvironment["CMUX_UITEST_MESSAGE_COUNT"] = "2"
+        app.launchEnvironment["CMUX_UITEST_ENDS_WITH_USER"] = "0"
+        if ProcessInfo.processInfo.environment["SIMULATOR_UDID"] != nil {
+            app.launchEnvironment["CMUX_UITEST_FAKE_KEYBOARD"] = "1"
+        }
+        app.launch()
+
+        waitForMessages(app: app)
+
+        let userMessage = app.otherElements["chat.message.uitest_msg_claude_1"]
+        XCTAssertTrue(userMessage.waitForExistence(timeout: 6))
+        let assistantMessage = app.otherElements["chat.message.uitest_msg_claude_2"]
+        XCTAssertTrue(assistantMessage.waitForExistence(timeout: 6))
+
+        waitForScrollSettle()
+
+        let snapClosed = app.buttons["chat.fakeKeyboard.snapClosed"]
+        if snapClosed.waitForExistence(timeout: 1) {
+            snapClosed.tap()
+        }
+
+        let baselineUserY = waitForStableMinY(
+            element: userMessage,
+            timeout: 3,
+            tolerance: 0.25,
+            stableSamples: 3
+        )
+        let baselineAssistantY = waitForStableMinY(
+            element: assistantMessage,
+            timeout: 3,
+            tolerance: 0.25,
+            stableSamples: 3
+        )
+
+        let stepUp = app.buttons["chat.fakeKeyboard.stepUp"]
+        let stepDown = app.buttons["chat.fakeKeyboard.stepDown"]
+        let usesFakeKeyboard = stepUp.waitForExistence(timeout: 1)
+            && stepDown.waitForExistence(timeout: 1)
+
+        if usesFakeKeyboard {
+            performKeyboardSteps(
+                button: stepUp,
+                steps: 12,
+                sampleDuration: 0.35,
+                userMessage: userMessage,
+                assistantMessage: assistantMessage,
+                baselineUserY: baselineUserY,
+                baselineAssistantY: baselineAssistantY,
+                context: "opening keyboard"
+            )
+
+            performKeyboardSteps(
+                button: stepDown,
+                steps: 12,
+                sampleDuration: 0.35,
+                userMessage: userMessage,
+                assistantMessage: assistantMessage,
+                baselineUserY: baselineUserY,
+                baselineAssistantY: baselineAssistantY,
+                context: "closing keyboard"
+            )
+        } else {
+            focusKeyboard(app: app)
+            assertMessagePositionsStable(
+                userMessage: userMessage,
+                assistantMessage: assistantMessage,
+                baselineUserY: baselineUserY,
+                baselineAssistantY: baselineAssistantY,
+                duration: 0.8,
+                context: "system keyboard opening"
+            )
+            dismissKeyboard(app: app)
+            assertMessagePositionsStable(
+                userMessage: userMessage,
+                assistantMessage: assistantMessage,
+                baselineUserY: baselineUserY,
+                baselineAssistantY: baselineAssistantY,
+                duration: 0.8,
+                context: "system keyboard closing"
+            )
+        }
+    }
+
     private func waitForScrollSettle() {
         RunLoop.current.run(until: Date().addingTimeInterval(1.6))
     }
@@ -342,6 +434,98 @@ final class MessagePositionUITests: XCTestCase {
             return CGFloat(truncating: number)
         }
         return element.frame.height
+    }
+
+    private func performKeyboardSteps(
+        button: XCUIElement,
+        steps: Int,
+        sampleDuration: TimeInterval,
+        userMessage: XCUIElement,
+        assistantMessage: XCUIElement,
+        baselineUserY: CGFloat,
+        baselineAssistantY: CGFloat,
+        context: String
+    ) {
+        for index in 0..<steps {
+            button.tap()
+            assertMessagePositionsStable(
+                userMessage: userMessage,
+                assistantMessage: assistantMessage,
+                baselineUserY: baselineUserY,
+                baselineAssistantY: baselineAssistantY,
+                duration: sampleDuration,
+                context: "\(context) step \(index + 1)"
+            )
+        }
+    }
+
+    private func assertMessagePositionsStable(
+        userMessage: XCUIElement,
+        assistantMessage: XCUIElement,
+        baselineUserY: CGFloat,
+        baselineAssistantY: CGFloat,
+        duration: TimeInterval,
+        context: String
+    ) {
+        let deadline = Date().addingTimeInterval(duration)
+        var sampleIndex = 0
+        while Date() < deadline {
+            let userY = userMessage.frame.minY
+            let assistantY = assistantMessage.frame.minY
+            let userDelta = abs(userY - baselineUserY)
+            let assistantDelta = abs(assistantY - baselineAssistantY)
+            XCTAssertLessThanOrEqual(
+                userDelta,
+                frameStabilityTolerance,
+                "User message moved during \(context) sample \(sampleIndex): baseline=\(baselineUserY) now=\(userY) delta=\(userDelta)"
+            )
+            XCTAssertLessThanOrEqual(
+                assistantDelta,
+                frameStabilityTolerance,
+                "Assistant message moved during \(context) sample \(sampleIndex): baseline=\(baselineAssistantY) now=\(assistantY) delta=\(assistantDelta)"
+            )
+            sampleIndex += 1
+            RunLoop.current.run(until: Date().addingTimeInterval(frameSampleInterval))
+        }
+    }
+
+    private func focusKeyboard(app: XCUIApplication) {
+        let textView = app.textViews["chat.inputField"]
+        let textField = app.textFields["chat.inputField"]
+        let pill = app.otherElements["chat.inputPill"]
+        if textView.exists {
+            textView.tap()
+        } else if textField.exists {
+            textField.tap()
+        } else if pill.exists {
+            pill.tap()
+        } else {
+            app.tap()
+        }
+    }
+
+    private func dismissKeyboard(app: XCUIApplication) {
+        let keyboard = app.keyboards.element
+        if keyboard.exists {
+            let hide = keyboard.buttons["Hide keyboard"]
+            if hide.exists {
+                hide.tap()
+            } else {
+                let dismiss = keyboard.buttons["Dismiss keyboard"]
+                if dismiss.exists {
+                    dismiss.tap()
+                } else {
+                    let `return` = keyboard.buttons["Return"]
+                    if `return`.exists {
+                        `return`.tap()
+                    } else {
+                        app.tap()
+                    }
+                }
+            }
+        } else {
+            app.tap()
+        }
     }
 
     private func waitForMessages(app: XCUIApplication) {

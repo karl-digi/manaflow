@@ -1454,7 +1454,7 @@ private final class Fix1MainViewController: UIViewController, UIScrollViewDelega
                 }
             }
 #endif
-            let shouldAnchorToBottom = wasAnchoredToBottom && (!fitsAboveInput || gapAnchored || shouldAssumeBottom)
+            let shouldAnchorToBottom = wasAnchoredToBottom && (!fitsAboveInput || gapAnchored)
             if self.extraSpacerHeightConstraint.constant != 0 {
                 self.extraSpacerHeightConstraint.constant = 0
             }
