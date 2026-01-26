@@ -322,11 +322,16 @@ async function findViaShell(
       .map((line) => line.trim())
       .find((line) => line.length > 0);
 
-    if (candidate && (await isExecutable(candidate))) {
-      logger.debug?.(
-        `Found VS Code ${variant} via shell lookup: ${candidate}`
-      );
-      return normalizeExecutablePath(candidate);
+    if (candidate) {
+      // Normalize first to handle alias/descriptor output from `command -v`
+      // (e.g., "alias code='/path/to/code'" or "code is /path/to/code")
+      const normalizedPath = normalizeExecutablePath(candidate);
+      if (await isExecutable(normalizedPath)) {
+        logger.debug?.(
+          `Found VS Code ${variant} via shell lookup: ${normalizedPath}`
+        );
+        return normalizedPath;
+      }
     }
   } catch {
     // Not found via shell

@@ -994,11 +994,11 @@ export function setupSocketHandlers(
         }
 
         // Early check: verify VS Code serve-web is available before doing expensive operations
-        // This provides a fast failure instead of waiting 15+ seconds for the timeout
         const earlyServeWebCheck = getVSCodeServeWebBaseUrl();
         if (!earlyServeWebCheck) {
-          // Give serve-web a short window to become ready (it might be starting up)
-          const serveWebUrl = await waitForVSCodeServeWebBaseUrl(5_000);
+          // Give serve-web the full startup window to become ready (it might be starting up)
+          // Using the default timeout (~15s) to avoid premature failures on slower machines
+          const serveWebUrl = await waitForVSCodeServeWebBaseUrl();
           if (!serveWebUrl) {
             // Get detailed detection result for better error messaging
             const detectionResult = getLastVSCodeDetectionResult();
