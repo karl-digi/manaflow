@@ -77,6 +77,7 @@ const NO_UI_CHANGES_MESSAGE =
 const NO_UI_CHANGES_ERROR_SNIPPETS = [
   "Claude collector reported success but returned no files",
   "returned no files in the git diff",
+  "No UI changes detected",
 ];
 
 function isNoUiChangesError(error?: string | null): boolean {

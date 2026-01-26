@@ -681,10 +681,10 @@ if [ "$RUN_ELECTRON" = "true" ]; then
     if [ "$ELECTRON_DEBUG" = "true" ]; then
         echo -e "${GREEN}Starting Electron app with remote debugging on port $ELECTRON_DEBUG_PORT...${NC}"
         export ELECTRON_DEBUG_PORT
-        (cd "$APP_DIR/apps/client" && exec bash -c 'trap "kill -9 0" EXIT; bunx dotenv-cli -e ../../.env -- pnpm dev:electron -- --remote-debugging-port='"$ELECTRON_DEBUG_PORT"' 2>&1 | tee "$LOG_DIR/electron.log" | prefix_output "ELECTRON" "$RED"') &
+        (cd "$APP_DIR/apps/client" && exec bash -c 'trap "kill -9 0" EXIT; bun run dev:electron -- --remote-debugging-port='"$ELECTRON_DEBUG_PORT"' 2>&1 | tee "$LOG_DIR/electron.log" | prefix_output "ELECTRON" "$RED"') &
     else
         echo -e "${GREEN}Starting Electron app...${NC}"
-        (cd "$APP_DIR/apps/client" && exec bash -c 'trap "kill -9 0" EXIT; bunx dotenv-cli -e ../../.env -- pnpm dev:electron 2>&1 | tee "$LOG_DIR/electron.log" | prefix_output "ELECTRON" "$RED"') &
+        (cd "$APP_DIR/apps/client" && exec bash -c 'trap "kill -9 0" EXIT; bun run dev:electron 2>&1 | tee "$LOG_DIR/electron.log" | prefix_output "ELECTRON" "$RED"') &
     fi
     ELECTRON_PID=$!
     check_process $ELECTRON_PID "Electron App"
