@@ -14,6 +14,35 @@ export const Route = createFileRoute("/_layout/t/$teamSlugOrId/settings")({
 });
 
 type TitleStyle = "sentence" | "lowercase" | "title";
+type SandboxProvider = "morph" | "freestyle" | "daytona" | "e2b" | "blaxel";
+
+const SANDBOX_PROVIDER_OPTIONS: { value: SandboxProvider; label: string; description: string }[] = [
+  {
+    value: "morph",
+    label: "Morph",
+    description: "Full VM with RAM snapshots (fastest cold start)",
+  },
+  {
+    value: "freestyle",
+    label: "Freestyle",
+    description: "Lightweight VM sandboxes",
+  },
+  {
+    value: "daytona",
+    label: "Daytona",
+    description: "Container-based sandboxes",
+  },
+  {
+    value: "e2b",
+    label: "E2B",
+    description: "Fast lightweight VMs (~150ms startup)",
+  },
+  {
+    value: "blaxel",
+    label: "Blaxel",
+    description: "Container sandboxes with preview URLs and snapshots",
+  },
+];
 
 const TITLE_STYLE_OPTIONS: { value: TitleStyle; label: string; example: string }[] = [
   {
@@ -52,6 +81,8 @@ function ConversationSettingsPage() {
   const [originalTitleStyle, setOriginalTitleStyle] = useState<TitleStyle>("sentence");
   const [customPrompt, setCustomPrompt] = useState("");
   const [originalCustomPrompt, setOriginalCustomPrompt] = useState("");
+  const [sandboxProvider, setSandboxProvider] = useState<SandboxProvider>("morph");
+  const [originalSandboxProvider, setOriginalSandboxProvider] = useState<SandboxProvider>("morph");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -68,12 +99,17 @@ function ConversationSettingsPage() {
     if (prompt) {
       setShowAdvanced(true);
     }
+
+    const provider = workspaceSettings?.acpSandboxProvider ?? "morph";
+    setSandboxProvider(provider);
+    setOriginalSandboxProvider(provider);
   }, [workspaceSettings]);
 
   const updateSettingsMutation = useMutation({
     mutationFn: async (data: {
       conversationTitleStyle?: TitleStyle;
       conversationTitleCustomPrompt?: string;
+      acpSandboxProvider?: SandboxProvider;
     }) => {
       return await convex.mutation(api.workspaceSettings.update, {
         teamSlugOrId,
@@ -83,7 +119,9 @@ function ConversationSettingsPage() {
   });
 
   const hasChanges =
-    titleStyle !== originalTitleStyle || customPrompt !== originalCustomPrompt;
+    titleStyle !== originalTitleStyle ||
+    customPrompt !== originalCustomPrompt ||
+    sandboxProvider !== originalSandboxProvider;
 
   const handleSave = async () => {
     setIsSaving(true);
@@ -91,9 +129,11 @@ function ConversationSettingsPage() {
       await updateSettingsMutation.mutateAsync({
         conversationTitleStyle: titleStyle,
         conversationTitleCustomPrompt: customPrompt || undefined,
+        acpSandboxProvider: sandboxProvider,
       });
       setOriginalTitleStyle(titleStyle);
       setOriginalCustomPrompt(customPrompt);
+      setOriginalSandboxProvider(sandboxProvider);
       toast.success("Settings saved");
     } catch (error) {
       console.error("Failed to save settings:", error);
@@ -265,7 +305,7 @@ function ConversationSettingsPage() {
               </div>
             </section>
 
-            {/* Conversation Defaults Section (placeholder for future settings) */}
+            {/* Conversation Defaults Section */}
             <section className="rounded-xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
               <div className="border-b border-neutral-200 px-5 py-4 dark:border-neutral-800">
                 <h2 className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
@@ -276,10 +316,56 @@ function ConversationSettingsPage() {
                 </p>
               </div>
 
-              <div className="p-5">
-                <p className="text-sm text-neutral-500 dark:text-neutral-400">
-                  More settings coming soon.
-                </p>
+              <div className="p-5 space-y-5">
+                {/* Sandbox Provider */}
+                <div>
+                  <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-3">
+                    Sandbox Provider
+                  </label>
+                  <div className="space-y-2">
+                    {SANDBOX_PROVIDER_OPTIONS.map((option) => {
+                      const isSelected = sandboxProvider === option.value;
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => setSandboxProvider(option.value)}
+                          className={`w-full flex items-start gap-3 rounded-lg border px-4 py-3 text-left transition-all ${
+                            isSelected
+                              ? "border-blue-500 bg-blue-50 dark:border-blue-400 dark:bg-blue-950/50"
+                              : "border-neutral-300 bg-white hover:border-neutral-400 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-800 dark:hover:border-neutral-600 dark:hover:bg-neutral-700"
+                          }`}
+                        >
+                          <div
+                            className={`mt-0.5 h-4 w-4 rounded-full border-2 flex items-center justify-center ${
+                              isSelected
+                                ? "border-blue-500 dark:border-blue-400"
+                                : "border-neutral-400 dark:border-neutral-500"
+                            }`}
+                          >
+                            {isSelected && (
+                              <div className="h-2 w-2 rounded-full bg-blue-500 dark:bg-blue-400" />
+                            )}
+                          </div>
+                          <div>
+                            <div
+                              className={`text-sm font-medium ${
+                                isSelected
+                                  ? "text-blue-700 dark:text-blue-300"
+                                  : "text-neutral-900 dark:text-neutral-100"
+                              }`}
+                            >
+                              {option.label}
+                            </div>
+                            <div className="text-xs text-neutral-500 dark:text-neutral-400">
+                              {option.description}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
             </section>
           </div>
