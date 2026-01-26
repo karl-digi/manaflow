@@ -321,6 +321,10 @@ describe("acp actions", () => {
   });
 
   it("spawnWarmSandbox returns sandboxId", async () => {
+    const runQuery: ActionCtx["runQuery"] = async (_query, ..._args) => {
+      // Return null for workspace settings (uses default provider)
+      return null;
+    };
     const runMutation: ActionCtx["runMutation"] = async (_mutation, ...args) => {
       if (hasKey(args[0], "streamSecret")) {
         return sandboxId;
@@ -328,6 +332,7 @@ describe("acp actions", () => {
       return undefined;
     };
     const ctx: Parameters<typeof spawnWarmSandboxEffect>[0] = {
+      runQuery,
       runMutation,
       scheduler: makeScheduler(),
     };
@@ -400,5 +405,106 @@ describe("acp actions", () => {
     };
 
     await Effect.runPromise(stopSandboxInternalEffect(ctx, { sandboxId }));
+  });
+
+  it("spawnSandbox uses provided providerName", async () => {
+    let capturedProviderName: string | undefined;
+
+    // Mock the resolver to capture provider name
+    setSandboxProviderResolverForTests({
+      getDefault: () => ({
+        name: "morph",
+        spawn: async () => ({
+          instanceId: "instance_1",
+          sandboxUrl: undefined,
+          provider: "morph",
+        }),
+        getStatus: async () => ({
+          status: "running",
+          sandboxUrl: undefined,
+        }),
+        stop: async () => undefined,
+      }),
+      getByName: (name) => {
+        capturedProviderName = name;
+        return {
+          name,
+          spawn: async () => ({
+            instanceId: `instance_${name}`,
+            sandboxUrl: undefined,
+            provider: name,
+          }),
+          getStatus: async () => ({
+            status: "running",
+            sandboxUrl: undefined,
+          }),
+          stop: async () => undefined,
+        };
+      },
+    });
+
+    const runMutation: ActionCtx["runMutation"] = async (_mutation, ...args) => {
+      if (hasKey(args[0], "streamSecret")) {
+        return sandboxId;
+      }
+      return undefined;
+    };
+    const ctx: Parameters<typeof spawnSandboxEffect>[0] = { runMutation };
+
+    await Effect.runPromise(
+      spawnSandboxEffect(ctx, { teamId: "team_1", providerName: "e2b" })
+    );
+
+    expect(capturedProviderName).toBe("e2b");
+  });
+
+  it("spawnSandbox falls back to default when providerName not specified", async () => {
+    let usedDefault = false;
+
+    setSandboxProviderResolverForTests({
+      getDefault: () => {
+        usedDefault = true;
+        return {
+          name: "morph",
+          spawn: async () => ({
+            instanceId: "instance_1",
+            sandboxUrl: undefined,
+            provider: "morph",
+          }),
+          getStatus: async () => ({
+            status: "running",
+            sandboxUrl: undefined,
+          }),
+          stop: async () => undefined,
+        };
+      },
+      getByName: () => ({
+        name: "morph",
+        spawn: async () => ({
+          instanceId: "instance_1",
+          sandboxUrl: undefined,
+          provider: "morph",
+        }),
+        getStatus: async () => ({
+          status: "running",
+          sandboxUrl: undefined,
+        }),
+        stop: async () => undefined,
+      }),
+    });
+
+    const runMutation: ActionCtx["runMutation"] = async (_mutation, ...args) => {
+      if (hasKey(args[0], "streamSecret")) {
+        return sandboxId;
+      }
+      return undefined;
+    };
+    const ctx: Parameters<typeof spawnSandboxEffect>[0] = { runMutation };
+
+    await Effect.runPromise(
+      spawnSandboxEffect(ctx, { teamId: "team_1" }) // No providerName
+    );
+
+    expect(usedDefault).toBe(true);
   });
 });

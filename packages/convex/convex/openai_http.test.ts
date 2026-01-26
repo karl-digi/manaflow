@@ -1,6 +1,6 @@
 import { Effect, Layer } from "effect";
 import { describe, expect, it } from "vitest";
-import { CLOUDFLARE_OPENAI_BASE_URL, openaiProxyEffect } from "./openai_http";
+import { OPENAI_BASE_URL, openaiProxyEffect } from "./openai_http";
 import { runHttpEffect } from "./effect/http";
 import { makeEnvLayer, makeHttpClientLayer } from "./effect/testLayers";
 import type { EnvValues } from "./effect/services";
@@ -28,7 +28,7 @@ describe("openai_http", () => {
     expect(response.status).toBe(500);
   });
 
-  it("rewrites path to Cloudflare gateway", async () => {
+  it("rewrites path to OpenAI API", async () => {
     const calls: string[] = [];
     const envLayer = makeEnvLayer({
       OPENAI_API_KEY: "sk-test",
@@ -57,6 +57,6 @@ describe("openai_http", () => {
 
     expect(response.status).toBe(200);
     expect(calls).toHaveLength(1);
-    expect(calls[0]).toBe(`${CLOUDFLARE_OPENAI_BASE_URL}/v1/responses?foo=bar`);
+    expect(calls[0]).toBe(`${OPENAI_BASE_URL}/v1/responses?foo=bar`);
   });
 });
