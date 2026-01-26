@@ -36,6 +36,12 @@ struct ChatDebugMenu: View {
                 }
             }
 
+            Section("Input Lab") {
+                NavigationLink("Input Strategy Lab") {
+                    InputStrategyLabView()
+                }
+            }
+
             Section("Notes") {
                 Text("Fix 1: contentInsetAdjustmentBehavior=.never")
                     .font(.caption)
