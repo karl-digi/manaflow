@@ -15,14 +15,6 @@ function getModelAndProvider(
   apiKeys: Record<string, string>
 ): { model: LanguageModel; providerName: string } | null {
   // Note: AIGATEWAY_* accessed via process.env to support custom AI gateway configurations
-  if (apiKeys.OPENAI_API_KEY) {
-    const openai = createOpenAI({
-      apiKey: apiKeys.OPENAI_API_KEY,
-      baseURL:
-        process.env.AIGATEWAY_OPENAI_BASE_URL || CLOUDFLARE_OPENAI_BASE_URL,
-    });
-    return { model: openai("gpt-5-nano"), providerName: "OpenAI" };
-  }
   if (apiKeys.GEMINI_API_KEY) {
     const google = createGoogleGenerativeAI({
       apiKey: apiKeys.GEMINI_API_KEY,
@@ -30,6 +22,14 @@ function getModelAndProvider(
         process.env.AIGATEWAY_GEMINI_BASE_URL || CLOUDFLARE_GEMINI_BASE_URL,
     });
     return { model: google("gemini-2.5-flash"), providerName: "Gemini" };
+  }
+  if (apiKeys.OPENAI_API_KEY) {
+    const openai = createOpenAI({
+      apiKey: apiKeys.OPENAI_API_KEY,
+      baseURL:
+        process.env.AIGATEWAY_OPENAI_BASE_URL || CLOUDFLARE_OPENAI_BASE_URL,
+    });
+    return { model: openai("gpt-5-nano"), providerName: "OpenAI" };
   }
   if (apiKeys.ANTHROPIC_API_KEY) {
     const anthropic = createAnthropic({

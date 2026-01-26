@@ -26,7 +26,7 @@ const OPENAI_CROWN_MODEL = "gpt-5-mini-2025-08-07";
 const ANTHROPIC_CROWN_MODEL = "claude-sonnet-4-5-20250929";
 const GEMINI_CROWN_MODEL = "gemini-3-flash-preview";
 
-const CROWN_PROVIDERS = ["openai", "anthropic", "gemini"] as const;
+const CROWN_PROVIDERS = ["gemini", "openai", "anthropic"] as const;
 type CrownProvider = (typeof CROWN_PROVIDERS)[number];
 
 // Configuration for retry logic
@@ -99,6 +99,15 @@ function resolveCrownModel(): {
   model: LanguageModel;
 } {
   // Note: AIGATEWAY_* accessed via process.env to avoid Convex static analysis
+  const geminiKey = process.env.GEMINI_API_KEY;
+  if (geminiKey) {
+    const google = createGoogleGenerativeAI({
+      apiKey: geminiKey,
+      baseURL: process.env.AIGATEWAY_GEMINI_BASE_URL || CLOUDFLARE_GEMINI_BASE_URL,
+    });
+    return { provider: "gemini", model: google(GEMINI_CROWN_MODEL) };
+  }
+
   const openaiKey = process.env.OPENAI_API_KEY;
   if (openaiKey) {
     const openai = createOpenAI({
@@ -121,17 +130,8 @@ function resolveCrownModel(): {
     };
   }
 
-  const geminiKey = process.env.GEMINI_API_KEY;
-  if (geminiKey) {
-    const google = createGoogleGenerativeAI({
-      apiKey: geminiKey,
-      baseURL: process.env.AIGATEWAY_GEMINI_BASE_URL || CLOUDFLARE_GEMINI_BASE_URL,
-    });
-    return { provider: "gemini", model: google(GEMINI_CROWN_MODEL) };
-  }
-
   throw new ConvexError(
-    "Crown evaluation is not configured (missing OpenAI, Anthropic, or Gemini API key)"
+    "Crown evaluation is not configured (missing Gemini, OpenAI, or Anthropic API key)"
   );
 }
 
