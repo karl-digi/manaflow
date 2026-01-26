@@ -99,11 +99,10 @@ function getCommonPaths(variant: VSCodeVariant): string[] {
     const paths: string[] = [];
 
     for (const app of apps) {
-      // Standard locations
-      paths.push(`/Applications/${app}/Contents/Resources/app/bin/code`);
-      paths.push(
-        path.join(home, `Applications/${app}/Contents/Resources/app/bin/code`)
-      );
+      // Standard locations - all VS Code variants use the same CLI path structure
+      const cliPath = `${app}/Contents/Resources/app/bin/code`;
+      paths.push(`/Applications/${cliPath}`);
+      paths.push(path.join(home, `Applications/${cliPath}`));
     }
 
     return paths;
@@ -472,21 +471,22 @@ export async function detectVSCode(
       }
     }
 
-    // Strategy 3: macOS Spotlight (very reliable on macOS)
-    if (process.platform === "darwin") {
-      const spotlightResult = await findViaMdfind(variant, logger);
-      if (spotlightResult) {
-        searchedLocations.push(`Spotlight search for ${MACOS_BUNDLE_IDS[variant]}`);
+    // Strategy 3: Common installation paths (no special permissions needed)
+    // Check these before Spotlight/Homebrew since they cover 95%+ of standard installs
+    const commonPaths = getCommonPaths(variant);
+    for (const commonPath of commonPaths) {
+      searchedLocations.push(commonPath);
+      if (await isExecutable(commonPath)) {
         const verified =
           options.skipVerification ||
-          (await verifyExecutable(spotlightResult, logger));
+          (await verifyExecutable(commonPath, logger));
         if (verified) {
           return {
             found: true,
             installation: {
-              executablePath: spotlightResult,
+              executablePath: commonPath,
               variant,
-              source: "spotlight",
+              source: "common-path",
             },
             searchedLocations,
             suggestions: [],
@@ -494,8 +494,12 @@ export async function detectVSCode(
           };
         }
       }
+    }
 
-      // Strategy 4: Homebrew Caskroom
+    // Strategy 4 & 5: macOS-specific fallbacks for non-standard locations
+    // These might require permissions but are useful for edge cases
+    if (process.platform === "darwin") {
+      // Homebrew Caskroom (no special permissions needed)
       const homebrewResult = await findViaHomebrew(variant, logger);
       if (homebrewResult) {
         searchedLocations.push(`Homebrew Caskroom for ${variant}`);
@@ -516,23 +520,21 @@ export async function detectVSCode(
           };
         }
       }
-    }
 
-    // Strategy 5: Common installation paths
-    const commonPaths = getCommonPaths(variant);
-    for (const commonPath of commonPaths) {
-      searchedLocations.push(commonPath);
-      if (await isExecutable(commonPath)) {
+      // Spotlight search (might need permissions, catches custom install locations)
+      const spotlightResult = await findViaMdfind(variant, logger);
+      if (spotlightResult) {
+        searchedLocations.push(`Spotlight search for ${MACOS_BUNDLE_IDS[variant]}`);
         const verified =
           options.skipVerification ||
-          (await verifyExecutable(commonPath, logger));
+          (await verifyExecutable(spotlightResult, logger));
         if (verified) {
           return {
             found: true,
             installation: {
-              executablePath: commonPath,
+              executablePath: spotlightResult,
               variant,
-              source: "common-path",
+              source: "spotlight",
             },
             searchedLocations,
             suggestions: [],
