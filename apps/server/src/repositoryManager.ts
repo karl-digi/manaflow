@@ -970,7 +970,12 @@ export class RepositoryManager {
       );
       // Parse worktree list properly to avoid false positives from partial path matching
       // e.g., "/path/to/foo" should not match "/path/to/foobar"
-      const normalizedTargetPath = path.resolve(worktreePath);
+      // Git reports canonical paths (e.g., macOS /tmp -> /private/tmp), while
+      // path.resolve() does not resolve symlinks. Use realpath() when possible
+      // to ensure consistent comparisons across platforms.
+      const normalizedTargetPath = await fs
+        .realpath(worktreePath)
+        .catch(() => path.resolve(worktreePath));
       const lines = stdout.split("\n");
       for (const line of lines) {
         if (line.startsWith("worktree ")) {
