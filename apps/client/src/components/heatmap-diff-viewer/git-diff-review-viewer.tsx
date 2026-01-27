@@ -17,6 +17,8 @@ import {
   Folder,
   FolderOpen,
   Loader2,
+  PanelLeft,
+  PanelLeftClose,
 } from "lucide-react";
 import {
   computeNewLineNumber,
@@ -1307,8 +1309,29 @@ export function GitDiffHeatmapReviewViewer({
 }: GitDiffHeatmapReviewViewerProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [scrollContainer, setScrollContainer] = useState<HTMLElement | null>(null);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const kitty = useMemo(() => {
     return kitties[Math.floor(Math.random() * kitties.length)];
+  }, []);
+
+  // Keyboard shortcut: F to toggle sidebar
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger if user is typing in an input/textarea
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        (e.target instanceof HTMLElement && e.target.isContentEditable)
+      ) {
+        return;
+      }
+      if (e.key === "f" || e.key === "F") {
+        e.preventDefault();
+        setIsSidebarCollapsed((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
   // Use useDeferredValue to defer color changes and prevent blocking renders
   // when color pickers are being used. This matches the 0github implementation.
@@ -2226,104 +2249,137 @@ export function GitDiffHeatmapReviewViewer({
 
   if (totalFileCount === 0) {
     return (
-      <div className="border border-neutral-200 bg-white p-8 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300">
-        This diff does not introduce any file changes.
+      <div className="grow bg-white dark:bg-neutral-900 px-3 py-6">
+        <div className="text-center">
+          <span className="select-none text-xs text-neutral-500 dark:text-neutral-400">
+            No diff detected
+          </span>
+          <div className="grid place-content-center">
+            <pre className="mt-2 select-none text-left text-[8px] font-mono text-neutral-500 dark:text-neutral-400">
+              {kitty}
+            </pre>
+          </div>
+        </div>
       </div>
     );
   }
 
   return (
-    <div ref={rootRef} className="flex flex-col gap-3">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-0">
-        <aside
-          id={sidebarPanelId}
-          className="relative w-full lg:sticky lg:top-[var(--cmux-diff-header-offset,0px)] lg:h-[calc(100vh-var(--cmux-diff-header-offset,0px))] lg:flex-none lg:flex lg:flex-col lg:w-[var(--pr-diff-sidebar-width)] lg:min-w-[15rem] lg:max-w-[32.5rem] lg:pl-3"
-          style={
-            {
-              "--pr-diff-sidebar-width": `${sidebarWidth}px`,
-            } as CSSProperties
-          }
+    <div ref={rootRef} className="grow flex flex-col bg-white dark:bg-neutral-900 min-h-0">
+      {/* Header bar */}
+      <div className="flex-shrink-0 flex items-center gap-2 px-2 py-1.5 border-b border-neutral-200/80 dark:border-neutral-800/70">
+        <button
+          type="button"
+          onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+          className="flex items-center gap-1.5 px-2 py-1 rounded text-sm font-medium text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
+          title={isSidebarCollapsed ? "Show files (F)" : "Hide files (F)"}
         >
-          {/* Fixed at top - does not scroll */}
-          <div className="flex-shrink-0 flex flex-col gap-3">
-            <ReviewProgressIndicator
-              totalFileCount={totalFileCount}
-              processedFileCount={processedFileCount}
-              isLoading={isLoadingFileOutputs}
-            />
-            <HeatmapThresholdControl
-              value={heatmapThreshold}
-              onChange={(next) => onHeatmapThresholdChange?.(next)}
-              colors={effectiveHeatmapColors}
-              onColorsChange={(next) => onHeatmapColorsChange?.(next)}
-              selectedModel={effectiveHeatmapModel}
-              onModelChange={(next) => onHeatmapModelChange?.(next)}
-              selectedLanguage={effectiveTooltipLanguage}
-              onLanguageChange={(next) => onHeatmapTooltipLanguageChange?.(next)}
-            />
-            {targetCount > 0 ? (
-              <div className="flex justify-center">
-                <ErrorNavigator
-                  totalCount={targetCount}
-                  currentIndex={focusedErrorIndex}
-                  onPrevious={handleFocusPrevious}
-                  onNext={handleFocusNext}
+          {isSidebarCollapsed ? (
+            <PanelLeft className="w-4 h-4" />
+          ) : (
+            <PanelLeftClose className="w-4 h-4" />
+          )}
+          <span>Files</span>
+        </button>
+        <div className="flex items-center gap-2 text-xs font-medium">
+          <span className="text-green-600 dark:text-green-400">+{totalAdditions}</span>
+          <span className="text-red-600 dark:text-red-400">−{totalDeletions}</span>
+        </div>
+      </div>
+
+      {/* Content area */}
+      <div className="flex flex-1 min-h-0">
+        {/* Sidebar */}
+        {!isSidebarCollapsed && (
+          <>
+            <aside
+              id={sidebarPanelId}
+              className="relative flex-shrink-0 flex flex-col border-r border-neutral-200/80 dark:border-neutral-800/70 h-[calc(100vh-var(--cmux-diff-header-offset,0px)-41px)] max-h-[calc(100vh-var(--cmux-diff-header-offset,0px)-41px)] overflow-hidden"
+              style={
+                {
+                  width: `${sidebarWidth}px`,
+                  minWidth: `${SIDEBAR_MIN_WIDTH}px`,
+                  maxWidth: `${SIDEBAR_MAX_WIDTH}px`,
+                } as CSSProperties
+              }
+            >
+              {/* Fixed at top - does not scroll */}
+              <div className="flex-shrink-0 flex flex-col gap-2 p-2">
+                <ReviewProgressIndicator
+                  totalFileCount={totalFileCount}
+                  processedFileCount={processedFileCount}
+                  isLoading={isLoadingFileOutputs}
+                />
+                <HeatmapThresholdControl
+                  value={heatmapThreshold}
+                  onChange={(next) => onHeatmapThresholdChange?.(next)}
+                  colors={effectiveHeatmapColors}
+                  onColorsChange={(next) => onHeatmapColorsChange?.(next)}
+                  selectedModel={effectiveHeatmapModel}
+                  onModelChange={(next) => onHeatmapModelChange?.(next)}
+                  selectedLanguage={effectiveTooltipLanguage}
+                  onLanguageChange={(next) => onHeatmapTooltipLanguageChange?.(next)}
+                />
+                {targetCount > 0 ? (
+                  <div className="flex justify-center">
+                    <ErrorNavigator
+                      totalCount={targetCount}
+                      currentIndex={focusedErrorIndex}
+                      onPrevious={handleFocusPrevious}
+                      onNext={handleFocusNext}
+                    />
+                  </div>
+                ) : null}
+              </div>
+              {/* Scrollable content below - only the file tree */}
+              <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain py-1">
+                <FileTreeNavigator
+                  nodes={fileTree}
+                  activePath={activeAnchor}
+                  expandedPaths={expandedPaths}
+                  onToggleDirectory={handleToggleDirectory}
+                  onSelectFile={handleNavigate}
                 />
               </div>
-            ) : null}
-          </div>
-          {/* Scrollable content below - only the file tree */}
-          <div className="flex flex-col gap-3 lg:overflow-y-auto lg:overscroll-contain lg:flex-1 lg:mt-3">
-            <div>
-              <FileTreeNavigator
-                nodes={fileTree}
-                activePath={activeAnchor}
-                expandedPaths={expandedPaths}
-                onToggleDirectory={handleToggleDirectory}
-                onSelectFile={handleNavigate}
-              />
-            </div>
-            <div className="h-[40px]" />
-          </div>
-        </aside>
+            </aside>
 
-        <div className="relative hidden lg:flex lg:flex-none lg:self-stretch lg:px-1 group/resize">
-          <div
-            className={cn(
-              "flex h-full w-full cursor-col-resize select-none items-center justify-center touch-none rounded",
-              "focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-sky-500",
-              isResizingSidebar
-                ? "bg-sky-200/60 dark:bg-sky-900/40"
-                : "bg-transparent hover:bg-sky-100/60 dark:hover:bg-sky-900/40"
-            )}
-            role="separator"
-            aria-label="Resize file navigation panel"
-            aria-orientation="vertical"
-            aria-controls={sidebarPanelId}
-            aria-valuenow={Math.round(sidebarWidth)}
-            aria-valuemin={SIDEBAR_MIN_WIDTH}
-            aria-valuemax={SIDEBAR_MAX_WIDTH}
-            tabIndex={0}
-            onPointerDown={handleSidebarResizePointerDown}
-            onKeyDown={handleSidebarResizeKeyDown}
-            onDoubleClick={handleSidebarResizeDoubleClick}
-          >
-            <span className="sr-only">
-              Drag to adjust file navigation width
-            </span>
+            {/* Resize handle */}
             <div
               className={cn(
-                "h-full w-[3px] rounded-full transition-opacity",
-                isResizingSidebar
-                  ? "bg-sky-500 dark:bg-sky-400 opacity-100"
-                  : "bg-neutral-400 opacity-0 group-hover/resize:opacity-100 dark:bg-neutral-500"
+                "absolute top-[41px] bottom-0 w-2 cursor-col-resize select-none touch-none group/resize z-10",
+                "focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-sky-500"
               )}
-              aria-hidden
-            />
-          </div>
-        </div>
+              style={{ left: `${sidebarWidth - 4}px` }}
+              role="separator"
+              aria-label="Resize file navigation panel"
+              aria-orientation="vertical"
+              aria-controls={sidebarPanelId}
+              aria-valuenow={Math.round(sidebarWidth)}
+              aria-valuemin={SIDEBAR_MIN_WIDTH}
+              aria-valuemax={SIDEBAR_MAX_WIDTH}
+              tabIndex={0}
+              onPointerDown={handleSidebarResizePointerDown}
+              onKeyDown={handleSidebarResizeKeyDown}
+              onDoubleClick={handleSidebarResizeDoubleClick}
+            >
+              <span className="sr-only">
+                Drag to adjust file navigation width
+              </span>
+              <div
+                className={cn(
+                  "absolute top-0 bottom-0 left-1/2 -translate-x-1/2 w-[3px] rounded-full transition-opacity",
+                  isResizingSidebar
+                    ? "bg-sky-500 dark:bg-sky-400 opacity-100"
+                    : "opacity-0 group-hover/resize:opacity-100 group-hover/resize:bg-sky-500 dark:group-hover/resize:bg-sky-400"
+                )}
+                aria-hidden
+              />
+            </div>
+          </>
+        )}
 
-        <div className="flex-1 min-w-0 space-y-3 pr-3">
+        {/* Main content */}
+        <div className="flex-1 min-w-0 overflow-y-auto">
           {fileEntries.map((fileEntry) => {
             const status = mapStatusToHeatmapStatus(fileEntry.entry.entry.status);
             const isFocusedFile =
@@ -2378,16 +2434,14 @@ export function GitDiffHeatmapReviewViewer({
             );
           })}
           <hr className="border-neutral-200 dark:border-neutral-800" />
-          <div className="h-[70dvh] w-full">
-            <div className="px-3 py-6 text-center">
-              <span className="select-none text-xs text-neutral-500 dark:text-neutral-400">
-                You&apos;ve reached the end of the diff!
-              </span>
-              <div className="grid place-content-center">
-                <pre className="mt-2 pb-20 select-none text-left text-[8px] font-mono text-neutral-500 dark:text-neutral-400">
-                  {kitty}
-                </pre>
-              </div>
+          <div className="px-3 py-6 text-center">
+            <span className="select-none text-xs text-neutral-500 dark:text-neutral-400">
+              You&apos;ve reached the end of the diff!
+            </span>
+            <div className="grid place-content-center">
+              <pre className="mt-2 pb-20 select-none text-left text-[8px] font-mono text-neutral-500 dark:text-neutral-400">
+                {kitty}
+              </pre>
             </div>
           </div>
         </div>

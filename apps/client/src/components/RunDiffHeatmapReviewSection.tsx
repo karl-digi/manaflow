@@ -147,18 +147,15 @@ export function RunDiffHeatmapReviewSection(
 
   if (combinedDiffs.length === 0) {
     return (
-      <div className="grow bg-white dark:bg-neutral-900">
-        <div className="flex flex-col">
-          <hr className="border-neutral-200 dark:border-neutral-800" />
-          <div className="px-3 py-6 text-center">
-            <span className="select-none text-xs text-neutral-500 dark:text-neutral-400">
-              You've reached the end of the diff!
-            </span>
-            <div className="grid place-content-center">
-              <pre className="mt-2 pb-20 select-none text-left text-[8px] font-mono text-neutral-500 dark:text-neutral-400">
-                {kitty}
-              </pre>
-            </div>
+      <div className="grow bg-white dark:bg-neutral-900 px-3 py-6">
+        <div className="text-center">
+          <span className="select-none text-xs text-neutral-500 dark:text-neutral-400">
+            No diff detected
+          </span>
+          <div className="grid place-content-center">
+            <pre className="mt-2 select-none text-left text-[8px] font-mono text-neutral-500 dark:text-neutral-400">
+              {kitty}
+            </pre>
           </div>
         </div>
       </div>

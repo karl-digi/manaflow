@@ -14,7 +14,6 @@ import type { ReviewHeatmapLine } from "@/lib/heatmap";
 import { stackClientApp } from "@/lib/stack";
 import { WWW_ORIGIN } from "@/lib/wwwOrigin";
 import { normalizeGitRef } from "@/lib/refWithOrigin";
-import { cn } from "@/lib/utils";
 import { gitDiffQueryOptions } from "@/queries/git-diff";
 import { api } from "@cmux/convex/api";
 import type { CreateLocalWorkspaceResponse, ReplaceDiffEntry } from "@cmux/shared";

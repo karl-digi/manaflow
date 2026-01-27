@@ -1408,7 +1408,7 @@ export function MonacoGitDiffViewerWithSidebar({
       <div className="flex flex-1 min-h-0">
         {/* Sidebar */}
         {!isSidebarCollapsed && (
-          <div className="flex-shrink-0 sticky top-[var(--cmux-diff-header-offset,0px)] self-start h-[calc(100vh-var(--cmux-diff-header-offset,0px)-41px)] max-h-[calc(100vh-var(--cmux-diff-header-offset,0px)-41px)] overflow-hidden">
+          <div className="flex-shrink-0 sticky top-[var(--cmux-diff-header-offset,0px)] h-[calc(100vh-var(--cmux-diff-header-offset,0px)-41px)] overflow-hidden">
             <DiffSidebarFilter
               diffs={diffs}
               viewedFiles={viewedFiles}

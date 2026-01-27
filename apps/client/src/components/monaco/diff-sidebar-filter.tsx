@@ -291,7 +291,7 @@ const FileTreeNavigator = memo(function FileTreeNavigatorComponent({
               type="button"
               onClick={() => onSelectFile(node.path)}
               className={cn(
-                "flex flex-1 items-center gap-1.5 py-1.5 text-left min-w-0",
+                "flex flex-1 items-center gap-1.5 py-1.5 text-left min-w-0 focus:outline-none",
                 isActive ? "font-semibold" : ""
               )}
             >
@@ -649,7 +649,7 @@ export function DiffSidebarFilter({
         </div>
 
         {/* File tree */}
-        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain py-1">
+        <div className="flex-1 min-h-0 overflow-y-auto py-1">
           {filteredFileTree.length > 0 ? (
             <FileTreeNavigator
               nodes={filteredFileTree}
