@@ -1,0 +1,384 @@
+/**
+ * Cloud-to-Local Sync: Watches files in the cloud workspace and syncs changes back to local.
+ * This is the mirror of localCloudSync.ts on the server side.
+ */
+
+import type { Id } from "@cmux/convex/dataModel";
+import type { WorkerSyncFile } from "@cmux/shared";
+import chokidar, { type FSWatcher } from "chokidar";
+import ignore, { type Ignore } from "ignore";
+import { promises as fs } from "node:fs";
+import * as path from "node:path";
+
+type SyncAction = "write" | "delete";
+
+type PendingChange = {
+  action: SyncAction;
+  absolutePath: string;
+  relativePath: string;
+};
+
+const DEFAULT_IGNORES = [
+  ".git/",
+  "node_modules/",
+  "dist/",
+  "build/",
+  ".next/",
+  "out/",
+  ".cache/",
+  ".turbo/",
+  ".parcel-cache/",
+  ".idea/",
+  ".vscode/",
+  "**/*.log",
+];
+
+const MAX_BATCH_FILES = 200;
+const MAX_BATCH_BYTES = 6 * 1024 * 1024;
+const MAX_SINGLE_FILE_BYTES = 50 * 1024 * 1024;
+
+function normalizeRelativePath(relPath: string): string {
+  return relPath.replace(/\\/g, "/");
+}
+
+async function buildIgnoreMatcher(workspacePath: string): Promise<Ignore> {
+  const ig = ignore();
+  try {
+    const giPath = path.join(workspacePath, ".gitignore");
+    const contents = await fs.readFile(giPath, "utf8");
+    ig.add(contents.split("\n"));
+  } catch {
+    // .gitignore may not exist
+  }
+  ig.add(DEFAULT_IGNORES);
+  return ig;
+}
+
+export type SyncFilesEmitter = (data: {
+  taskRunId: Id<"taskRuns">;
+  files: WorkerSyncFile[];
+  timestamp: number;
+}) => void;
+
+export class CloudToLocalSyncSession {
+  private readonly workspacePath: string;
+  private readonly taskRunId: Id<"taskRuns">;
+  private readonly pending = new Map<string, PendingChange>();
+  private readonly ignoreMatcher: Ignore;
+  private readonly emitSyncFiles: SyncFilesEmitter;
+  private watcher: FSWatcher | null = null;
+  private flushTimer: NodeJS.Timeout | null = null;
+  private syncing = false;
+  private disposed = false;
+  // Track files recently written by local->cloud sync to avoid echo loops
+  private recentlySyncedFromLocal = new Set<string>();
+
+  constructor({
+    workspacePath,
+    taskRunId,
+    ignoreMatcher,
+    emitSyncFiles,
+  }: {
+    workspacePath: string;
+    taskRunId: Id<"taskRuns">;
+    ignoreMatcher: Ignore;
+    emitSyncFiles: SyncFilesEmitter;
+  }) {
+    this.workspacePath = workspacePath;
+    this.taskRunId = taskRunId;
+    this.ignoreMatcher = ignoreMatcher;
+    this.emitSyncFiles = emitSyncFiles;
+  }
+
+  async start(): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+
+    console.log(
+      `[CloudToLocalSync] Starting sync for taskRun ${this.taskRunId} at ${this.workspacePath}`
+    );
+
+    this.watcher = chokidar.watch(this.workspacePath, {
+      ignored: (filePath: string) => {
+        const rel = path.relative(this.workspacePath, filePath);
+        if (!rel || rel.startsWith("..")) {
+          return false;
+        }
+        const normalizedRel = normalizeRelativePath(rel);
+        return this.ignoreMatcher.ignores(normalizedRel);
+      },
+      persistent: true,
+      ignoreInitial: true,
+      awaitWriteFinish: {
+        stabilityThreshold: 300,
+        pollInterval: 100,
+      },
+    });
+
+    this.watcher.on("add", (filePath) => this.recordChange(filePath, "write"));
+    this.watcher.on("change", (filePath) =>
+      this.recordChange(filePath, "write")
+    );
+    this.watcher.on("unlink", (filePath) =>
+      this.recordChange(filePath, "delete")
+    );
+    this.watcher.on("error", (error) => {
+      console.error("[CloudToLocalSync] Watcher error:", error);
+    });
+  }
+
+  /**
+   * Mark a file as recently synced from local, so we don't echo it back.
+   * Call this BEFORE writing files received from local sync.
+   */
+  markSyncedFromLocal(relativePath: string): void {
+    const normalized = normalizeRelativePath(relativePath);
+    this.recentlySyncedFromLocal.add(normalized);
+    // Clear after 3 seconds to allow future cloud edits
+    setTimeout(() => {
+      this.recentlySyncedFromLocal.delete(normalized);
+    }, 3000);
+  }
+
+  private recordChange(absolutePath: string, action: SyncAction): void {
+    if (this.disposed) {
+      return;
+    }
+
+    const rel = path.relative(this.workspacePath, absolutePath);
+    if (!rel || rel.startsWith("..")) {
+      return;
+    }
+
+    const relativePath = normalizeRelativePath(rel);
+
+    // Check ignore patterns
+    if (this.ignoreMatcher.ignores(relativePath)) {
+      return;
+    }
+
+    // Skip if this change was caused by local->cloud sync (avoid echo loop)
+    if (this.recentlySyncedFromLocal.has(relativePath)) {
+      console.log(
+        `[CloudToLocalSync] Ignoring echo for ${relativePath} (recently synced from local)`
+      );
+      return;
+    }
+
+    this.pending.set(relativePath, {
+      action,
+      absolutePath,
+      relativePath,
+    });
+
+    this.scheduleFlush(500);
+  }
+
+  private scheduleFlush(delay: number): void {
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+    }
+    this.flushTimer = setTimeout(() => {
+      void this.flush();
+    }, delay);
+  }
+
+  private async flush(): Promise<void> {
+    if (this.disposed || this.syncing || this.pending.size === 0) {
+      return;
+    }
+
+    this.syncing = true;
+    const entries = Array.from(this.pending.values());
+    this.pending.clear();
+
+    try {
+      const files: WorkerSyncFile[] = [];
+      let batchBytes = 0;
+
+      for (const entry of entries) {
+        if (files.length >= MAX_BATCH_FILES || batchBytes >= MAX_BATCH_BYTES) {
+          // Send current batch
+          this.emitSyncFiles({
+            taskRunId: this.taskRunId,
+            files: [...files],
+            timestamp: Date.now(),
+          });
+          files.length = 0;
+          batchBytes = 0;
+        }
+
+        if (entry.action === "delete") {
+          files.push({
+            relativePath: entry.relativePath,
+            action: "delete",
+          });
+          continue;
+        }
+
+        // Read file content for write action
+        try {
+          const stat = await fs.stat(entry.absolutePath);
+          if (!stat.isFile()) {
+            continue;
+          }
+          if (stat.size > MAX_SINGLE_FILE_BYTES) {
+            console.log(
+              `[CloudToLocalSync] Skipping large file: ${entry.relativePath} (${stat.size} bytes)`
+            );
+            continue;
+          }
+
+          const content = await fs.readFile(entry.absolutePath);
+          const contentBase64 = content.toString("base64");
+          const mode = (stat.mode & 0o777).toString(8);
+
+          files.push({
+            relativePath: entry.relativePath,
+            action: "write",
+            contentBase64,
+            mode,
+          });
+          batchBytes += content.length;
+        } catch (error) {
+          // File may have been deleted between detection and read
+          console.error(
+            `[CloudToLocalSync] Failed to read file ${entry.relativePath}:`,
+            error
+          );
+        }
+      }
+
+      // Send remaining files
+      if (files.length > 0) {
+        this.emitSyncFiles({
+          taskRunId: this.taskRunId,
+          files,
+          timestamp: Date.now(),
+        });
+      }
+
+      console.log(
+        `[CloudToLocalSync] Synced ${entries.length} files for taskRun ${this.taskRunId}`
+      );
+    } catch (error) {
+      console.error("[CloudToLocalSync] Flush error:", error);
+      // Re-queue failed entries
+      for (const entry of entries) {
+        if (!this.pending.has(entry.relativePath)) {
+          this.pending.set(entry.relativePath, entry);
+        }
+      }
+      this.scheduleFlush(2000);
+    } finally {
+      this.syncing = false;
+    }
+  }
+
+  async dispose(): Promise<void> {
+    this.disposed = true;
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    if (this.watcher) {
+      await this.watcher.close();
+      this.watcher = null;
+    }
+    console.log(
+      `[CloudToLocalSync] Disposed sync session for taskRun ${this.taskRunId}`
+    );
+  }
+}
+
+// Manager for multiple sync sessions
+export class CloudToLocalSyncManager {
+  private readonly sessions = new Map<string, CloudToLocalSyncSession>();
+  private readonly emitSyncFiles: SyncFilesEmitter;
+
+  constructor(emitSyncFiles: SyncFilesEmitter) {
+    this.emitSyncFiles = emitSyncFiles;
+  }
+
+  async startSync({
+    taskRunId,
+    workspacePath,
+  }: {
+    taskRunId: Id<"taskRuns">;
+    workspacePath: string;
+  }): Promise<void> {
+    const key = taskRunId;
+
+    // Check if session already exists
+    if (this.sessions.has(key)) {
+      console.log(
+        `[CloudToLocalSync] Session already exists for taskRun ${taskRunId}`
+      );
+      return;
+    }
+
+    const ignoreMatcher = await buildIgnoreMatcher(workspacePath);
+    const session = new CloudToLocalSyncSession({
+      workspacePath,
+      taskRunId,
+      ignoreMatcher,
+      emitSyncFiles: this.emitSyncFiles,
+    });
+
+    this.sessions.set(key, session);
+    await session.start();
+
+    console.log(
+      `[CloudToLocalSync] Started sync session for taskRun ${taskRunId}`
+    );
+  }
+
+  async stopSync(taskRunId: Id<"taskRuns">): Promise<void> {
+    const key = taskRunId;
+    const session = this.sessions.get(key);
+    if (session) {
+      await session.dispose();
+      this.sessions.delete(key);
+      console.log(
+        `[CloudToLocalSync] Stopped sync session for taskRun ${taskRunId}`
+      );
+    }
+  }
+
+  /**
+   * Mark files as recently synced from local to prevent echo loops.
+   * Call this BEFORE writing files received from local sync.
+   */
+  markSyncedFromLocal(
+    taskRunId: Id<"taskRuns">,
+    relativePaths: string[]
+  ): void {
+    const session = this.sessions.get(taskRunId);
+    if (session) {
+      for (const relativePath of relativePaths) {
+        session.markSyncedFromLocal(relativePath);
+      }
+    }
+  }
+
+  /**
+   * Mark files in ALL active sessions as synced from local.
+   * Use when taskRunId is not known (e.g., in upload-files handler).
+   */
+  markSyncedFromLocalAllSessions(relativePaths: string[]): void {
+    for (const session of this.sessions.values()) {
+      for (const relativePath of relativePaths) {
+        session.markSyncedFromLocal(relativePath);
+      }
+    }
+  }
+
+  async disposeAll(): Promise<void> {
+    const disposals = Array.from(this.sessions.values()).map((session) =>
+      session.dispose()
+    );
+    await Promise.all(disposals);
+    this.sessions.clear();
+  }
+}
