@@ -112,6 +112,87 @@ function tryExecGit(repoPath: string, cmd: string): string | null {
   }
 }
 
+// VSCode Git API type definitions (minimal)
+interface GitExtensionAPI {
+  repositories: GitRepository[];
+  onDidOpenRepository: (callback: (repo: GitRepository) => void) => { dispose: () => void };
+  toGitUri: (uri: vscode.Uri, ref: string) => vscode.Uri;
+}
+
+interface GitRepository {
+  rootUri: vscode.Uri;
+}
+
+/**
+ * Wait for the Git extension to scan and discover a repository.
+ * The git extension may take time to scan the workspace, especially in Docker containers
+ * or with large repositories. This function waits for the first repository to be discovered.
+ */
+async function waitForGitRepository(
+  api: GitExtensionAPI,
+  maxWaitMs: number = 30000,
+  pollIntervalMs: number = 500
+): Promise<GitRepository | null> {
+  // Check if a repository is already available
+  if (api.repositories.length > 0) {
+    log(`Git repository already available: ${api.repositories[0].rootUri.fsPath}`);
+    return api.repositories[0];
+  }
+
+  log(`No git repository found yet, waiting up to ${maxWaitMs}ms for scan to complete...`);
+
+  return new Promise<GitRepository | null>((resolve) => {
+    const startTime = Date.now();
+    let disposed = false;
+
+    // Listen for new repositories being discovered
+    const disposable = api.onDidOpenRepository((repo) => {
+      if (!disposed) {
+        disposed = true;
+        disposable.dispose();
+        log(`Git repository discovered via event: ${repo.rootUri.fsPath}`);
+        resolve(repo);
+      }
+    });
+
+    // Also poll in case the event was missed or already fired
+    const pollInterval = setInterval(() => {
+      if (disposed) {
+        clearInterval(pollInterval);
+        return;
+      }
+
+      if (api.repositories.length > 0) {
+        disposed = true;
+        disposable.dispose();
+        clearInterval(pollInterval);
+        log(`Git repository found via polling: ${api.repositories[0].rootUri.fsPath}`);
+        resolve(api.repositories[0]);
+        return;
+      }
+
+      if (Date.now() - startTime >= maxWaitMs) {
+        disposed = true;
+        disposable.dispose();
+        clearInterval(pollInterval);
+        log(`Git repository scan timed out after ${maxWaitMs}ms`);
+        resolve(null);
+      }
+    }, pollIntervalMs);
+
+    // Safety timeout in case both mechanisms fail
+    setTimeout(() => {
+      if (!disposed) {
+        disposed = true;
+        disposable.dispose();
+        clearInterval(pollInterval);
+        log(`Git repository wait reached safety timeout`);
+        resolve(api.repositories[0] || null);
+      }
+    }, maxWaitMs + 1000);
+  });
+}
+
 async function resolveMergeBase(
   repositoryPath: string,
   defaultBaseRef: string
@@ -157,12 +238,13 @@ async function openMultiDiffEditor(
   }
 
   const git = gitExtension.exports;
-  const api = git.getAPI(1);
+  const api = git.getAPI(1) as GitExtensionAPI;
 
-  // Get the first repository (or you can select a specific one)
-  const repository = api.repositories[0];
+  // Wait for the git extension to scan and discover a repository
+  // This is especially important in Docker containers where scanning may take longer
+  const repository = await waitForGitRepository(api, 30000, 500);
   if (!repository) {
-    vscode.window.showErrorMessage("No Git repository found");
+    vscode.window.showErrorMessage("No Git repository found after waiting for scan to complete");
     return;
   }
 
@@ -569,8 +651,9 @@ export function activate(context: vscode.ExtensionContext) {
         const gitExtension = vscode.extensions.getExtension("vscode.git");
         if (gitExtension) {
           const git = gitExtension.exports;
-          const api = git.getAPI(1);
-          const repository = api.repositories[0];
+          const api = git.getAPI(1) as GitExtensionAPI;
+          // Wait for repository to be scanned (use shorter timeout since openMultiDiffEditor already waited)
+          const repository = await waitForGitRepository(api, 5000, 250);
 
           if (repository) {
             const repoPath = repository.rootUri.fsPath;
