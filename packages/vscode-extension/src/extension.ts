@@ -83,6 +83,27 @@ async function pinTerminalEditor(
   }
 }
 
+async function restoreFocusAfterTerminalAction(
+  previousTerminal: vscode.Terminal | undefined,
+  previousEditor: vscode.TextEditor | undefined
+): Promise<void> {
+  try {
+    if (previousTerminal) {
+      previousTerminal.show(false);
+      return;
+    }
+    if (previousEditor) {
+      await vscode.window.showTextDocument(previousEditor.document, {
+        viewColumn: previousEditor.viewColumn,
+        preserveFocus: true,
+        preview: false,
+      });
+    }
+  } catch (error) {
+    console.error("[cmux] Failed to restore focus after terminal action:", error);
+  }
+}
+
 async function resolveDefaultBaseRef(repositoryPath: string): Promise<string> {
   try {
     const out = execSync(
@@ -413,11 +434,49 @@ async function setupDefaultTerminal() {
   const hasCmuxPtyTerminals = await waitForAnyCmuxPtyTerminals(30000);
 
   if (hasCmuxPtyTerminals) {
-    // cmux-pty has terminals - create all of them from the restore queue
-    log("cmux-pty is managing terminals, creating queued terminals");
-    // This directly creates the terminal using vscode.window.createTerminal with the PTY
-    // It bypasses provideTerminalProfile which requires user action to trigger
-    await createQueuedTerminals({ focus: !preserveFocus });
+    // cmux-pty has terminals - restore them into VS Code
+    log("cmux-pty is managing terminals, restoring into VS Code");
+    const defaultProfile = vscode.workspace
+      .getConfiguration("terminal.integrated")
+      .get<string>("defaultProfile.linux");
+    const usesCmuxProfile =
+      typeof defaultProfile === "string" &&
+      defaultProfile.trim().toLowerCase() === "cmux";
+    const hasExistingTerminals = vscode.window.terminals.length > 0;
+
+    if (usesCmuxProfile) {
+      if (hasExistingTerminals) {
+        log(
+          "Default terminal profile is cmux and terminals already exist; skipping restore to avoid duplicates"
+        );
+        if (!preserveFocus) {
+          const existingTerminal =
+            vscode.window.activeTerminal ?? vscode.window.terminals[0];
+          existingTerminal?.show(false);
+        }
+      } else {
+        log("Default terminal profile is cmux; triggering VS Code terminal creation");
+        const previousTerminal = vscode.window.activeTerminal;
+        const previousEditor = vscode.window.activeTextEditor;
+        try {
+          await vscode.commands.executeCommand("workbench.action.terminal.new");
+        } catch (error) {
+          console.error(
+            "[cmux] Failed to trigger VS Code terminal creation; falling back to manual restore:",
+            error
+          );
+          await createQueuedTerminals({ focus: !preserveFocus });
+        }
+        if (preserveFocus) {
+          await restoreFocusAfterTerminalAction(
+            previousTerminal,
+            previousEditor
+          );
+        }
+      }
+    } else {
+      await createQueuedTerminals({ focus: !preserveFocus });
+    }
 
     // Also check for the specific "cmux" terminal (main agent)
     // If not present yet, it might still be created by the agent spawner
