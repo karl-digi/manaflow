@@ -4,6 +4,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { env } from "@/client-env";
 import { convexQueryClient } from "@/contexts/convex/convex-query-client";
 import { useArchiveTask } from "@/hooks/useArchiveTask";
 import {
@@ -1932,7 +1933,7 @@ function TaskRunDetails({
   // Fetch linked local workspace for cloud runs (skip for local/cloud workspaces)
   const linkedLocalWorkspace = useQuery(
     api.tasks.getLinkedLocalWorkspace,
-    !isLocalWorkspace && !isCloudWorkspace
+    !isLocalWorkspace && !isCloudWorkspace && !env.NEXT_PUBLIC_WEB_MODE
       ? { teamSlugOrId, cloudTaskRunId: run._id }
       : "skip"
   );

@@ -8,6 +8,7 @@ import type {
 import { MonacoGitDiffViewer } from "@/components/monaco/monaco-git-diff-viewer";
 import { RunScreenshotGallery } from "@/components/RunScreenshotGallery";
 import { TaskDetailHeader } from "@/components/task-detail-header";
+import { env } from "@/client-env";
 import { useSocket } from "@/contexts/socket/use-socket";
 import { cachedGetUser } from "@/lib/cachedGetUser";
 import type { ReviewHeatmapLine } from "@/lib/heatmap";
@@ -335,6 +336,7 @@ function RunDiffPage() {
   const [isAiReviewActive, setIsAiReviewActive] = useState(false);
   const [hasVisitedAiReview, setHasVisitedAiReview] = useState(false);
   const { socket } = useSocket();
+  const isWebMode = env.NEXT_PUBLIC_WEB_MODE;
   // Use React Query-wrapped Convex queries to avoid real-time subscriptions
   // that cause excessive re-renders. The data is prefetched in the loader.
   const taskQuery = useRQ({
@@ -357,7 +359,7 @@ function RunDiffPage() {
       teamSlugOrId,
       cloudTaskRunId: runId,
     }),
-    enabled: Boolean(teamSlugOrId && runId),
+    enabled: Boolean(teamSlugOrId && runId) && !isWebMode,
   });
   const linkedLocalWorkspace = linkedLocalWorkspaceQuery.data;
 
@@ -1071,7 +1073,9 @@ function RunDiffPage() {
             onCollapseAll={diffControls?.collapseAll}
             onExpandAllChecks={expandAllChecks}
             onCollapseAllChecks={collapseAllChecks}
-            onOpenLocalWorkspace={isWorkspace ? undefined : handleOpenLocalWorkspace}
+            onOpenLocalWorkspace={
+              !isWorkspace && !isWebMode ? handleOpenLocalWorkspace : undefined
+            }
             teamSlugOrId={teamSlugOrId}
             isAiReviewActive={isAiReviewActive}
             onToggleAiReview={handleToggleAiReview}

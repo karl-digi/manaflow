@@ -9,6 +9,7 @@ import { FlexiblePanelLayout } from "@/components/FlexiblePanelLayout";
 import { TaskRunGitDiffPanel } from "@/components/TaskRunGitDiffPanel";
 import { RenderPanel } from "@/components/TaskPanelFactory";
 import { PanelConfigModal } from "@/components/PanelConfigModal";
+import { env } from "@/client-env";
 import {
   loadPanelConfig,
   savePanelConfig,
@@ -309,6 +310,7 @@ function TaskDetailPage() {
   const search = Route.useSearch();
   const localServeWeb = useLocalVSCodeServeWebQuery();
   const { socket } = useSocket();
+  const isWebMode = env.NEXT_PUBLIC_WEB_MODE;
   const task = useQuery(api.tasks.getById, {
     teamSlugOrId,
     id: taskId,
@@ -482,7 +484,9 @@ function TaskDetailPage() {
   // Query for existing linked local workspace (to prevent creating duplicates)
   const linkedLocalWorkspace = useQuery(
     api.tasks.getLinkedLocalWorkspace,
-    selectedRunId ? { teamSlugOrId, cloudTaskRunId: selectedRunId } : "skip"
+    selectedRunId && !isWebMode
+      ? { teamSlugOrId, cloudTaskRunId: selectedRunId }
+      : "skip"
   );
 
   useEffect(() => {
@@ -861,7 +865,7 @@ function TaskDetailPage() {
           onPanelSettings={handleOpenPanelSettings}
           onOpenLocalWorkspace={
             // Only show folder icon for regular tasks (not local/cloud workspaces)
-            !isLocalWorkspaceTask && !isCloudWorkspaceTask
+            !isLocalWorkspaceTask && !isCloudWorkspaceTask && !isWebMode
               ? handleOpenLocalWorkspace
               : undefined
           }
