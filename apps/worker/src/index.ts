@@ -1317,6 +1317,15 @@ async function createTerminal(
           pid: session.pid,
         });
 
+        // 2.5. Set index to 0 to ensure agent terminal is always first (Terminal 1)
+        // This handles race conditions where dev/maintenance terminals might be created first
+        try {
+          await ptyClient.updateSession(session.id, { index: 0 });
+          log("INFO", `[createTerminal] Set agent terminal index to 0 for ${session.id}`);
+        } catch (indexError) {
+          log("WARN", `[createTerminal] Failed to set index to 0, continuing anyway`, indexError);
+        }
+
         // 3. Send startup commands as input
         for (const cmd of startupCommands) {
           log("INFO", `[createTerminal] Sending startup command: ${cmd}`);
