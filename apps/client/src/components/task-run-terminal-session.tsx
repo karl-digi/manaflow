@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AttachAddon } from "@xterm/addon-attach";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
@@ -16,6 +15,62 @@ const MIN_COLS = 20;
 const MAX_COLS = 320;
 const MIN_ROWS = 8;
 const MAX_ROWS = 120;
+const CONTROL_MESSAGE_PREFIX = "\u0000";
+
+type PtyControlMessage = {
+  type: "output" | "exit" | "error";
+  data?: string;
+  exit_code?: number | null;
+  exitCode?: number | null;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function parseControlMessage(text: string): PtyControlMessage | null {
+  if (!text.startsWith(CONTROL_MESSAGE_PREFIX)) {
+    return null;
+  }
+  try {
+    const payload = JSON.parse(text.slice(1));
+    if (!isRecord(payload)) {
+      return null;
+    }
+    const type = payload.type;
+    if (type !== "output" && type !== "exit" && type !== "error") {
+      return null;
+    }
+    return {
+      type,
+      data: typeof payload.data === "string" ? payload.data : undefined,
+      exit_code:
+        typeof payload.exit_code === "number" || payload.exit_code === null
+          ? payload.exit_code
+          : undefined,
+      exitCode:
+        typeof payload.exitCode === "number" || payload.exitCode === null
+          ? payload.exitCode
+          : undefined,
+    };
+  } catch (error) {
+    console.error("[TaskRunTerminalSession] Failed to parse control message", error);
+    return null;
+  }
+}
+
+async function decodeWsMessage(data: unknown): Promise<string> {
+  if (typeof data === "string") {
+    return data;
+  }
+  if (data instanceof ArrayBuffer) {
+    return new TextDecoder().decode(data);
+  }
+  if (data instanceof Blob) {
+    return data.text();
+  }
+  return "";
+}
 
 export type TerminalConnectionState =
   | "connecting"
@@ -129,7 +184,6 @@ export function TaskRunTerminalSession({
   }, [isActive, terminal]);
 
   const socketRef = useRef<WebSocket | null>(null);
-  const attachAddonRef = useRef<AttachAddon | null>(null);
   const pendingResizeRef = useRef<{ cols: number; rows: number } | null>(null);
   const lastSentResizeRef = useRef<{ cols: number; rows: number } | null>(null);
 
@@ -259,10 +313,6 @@ export function TaskRunTerminalSession({
     socket.binaryType = "arraybuffer";
     socketRef.current = socket;
 
-    const attachAddon = new AttachAddon(socket, { bidirectional: true });
-    attachAddonRef.current = attachAddon;
-    terminal.loadAddon(attachAddon);
-
     notifyConnectionState("connecting");
 
     const handleOpen = () => {
@@ -289,18 +339,52 @@ export function TaskRunTerminalSession({
       notifyConnectionState("error");
     };
 
+    const handleMessage = async (event: MessageEvent) => {
+      if (cancelled || !terminal) {
+        return;
+      }
+      const text = await decodeWsMessage(event.data);
+      if (!text) {
+        return;
+      }
+      const control = parseControlMessage(text);
+      if (control) {
+        if (control.type === "exit") {
+          socket.close();
+          notifyConnectionState("closed");
+          return;
+        }
+        if (control.type === "error") {
+          console.error("[TaskRunTerminalSession] PTY error", control);
+          return;
+        }
+        if (control.type === "output" && control.data) {
+          terminal.write(control.data);
+        }
+        return;
+      }
+      terminal.write(text);
+    };
+
+    const inputDisposable = terminal.onData((data) => {
+      if (socket.readyState !== WebSocket.OPEN) {
+        return;
+      }
+      socket.send(JSON.stringify({ type: "input", data }));
+    });
+
     socket.addEventListener("open", handleOpen);
     socket.addEventListener("close", handleClose);
     socket.addEventListener("error", handleError);
+    socket.addEventListener("message", handleMessage);
 
     return () => {
       cancelled = true;
       socket.removeEventListener("open", handleOpen);
       socket.removeEventListener("close", handleClose);
       socket.removeEventListener("error", handleError);
-
-      attachAddon.dispose();
-      attachAddonRef.current = null;
+      socket.removeEventListener("message", handleMessage);
+      inputDisposable.dispose();
 
       if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
         socket.close();
